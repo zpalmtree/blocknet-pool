@@ -400,11 +400,8 @@ pub fn weight_shares(shares: &[DbShare]) -> (HashMap<String, u64>, u64) {
             continue;
         }
         let weight = share.difficulty;
-        *weights.entry(share.miner.clone()).or_default() = weights
-            .get(&share.miner)
-            .copied()
-            .unwrap_or(0)
-            .saturating_add(weight);
+        let entry = weights.entry(share.miner.clone()).or_default();
+        *entry = entry.saturating_add(weight);
         total = total.saturating_add(weight);
     }
 
@@ -474,6 +471,6 @@ mod tests {
         let (weights, total) = weight_shares(&shares);
         assert_eq!(total, 10);
         assert_eq!(weights.get("a1").copied(), Some(10));
-        assert!(weights.get("a2").is_none());
+        assert!(!weights.contains_key("a2"));
     }
 }

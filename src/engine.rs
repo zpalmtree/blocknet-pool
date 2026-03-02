@@ -185,87 +185,93 @@ impl PoolEngine {
             .get_job(&job_id)
             .ok_or_else(|| anyhow!("stale job"))?;
 
+        let seen_key = (job_id.clone(), nonce);
         {
             let mut seen = self.seen_in_memory.lock();
-            if !seen.insert((job_id.clone(), nonce)) {
+            if !seen.insert(seen_key.clone()) {
                 return Err(anyhow!("duplicate share"));
             }
         }
 
-        if self.store.is_share_seen(&job_id, nonce)? {
-            return Err(anyhow!("duplicate share"));
-        }
-
-        let claimed_hash = match claimed_hash_hex {
-            Some(ref value) if !value.trim().is_empty() => {
-                Some(parse_hash_hex(value).map_err(|err| anyhow!(err))?)
+        let result = (|| -> Result<SubmitAck> {
+            if self.store.is_share_seen(&job_id, nonce)? {
+                return Err(anyhow!("duplicate share"));
             }
-            _ => None,
-        };
 
-        if self.cfg.stratum_submit_v2_required && claimed_hash.is_none() {
-            return Err(anyhow!("claimed hash required"));
-        }
+            let claimed_hash = match claimed_hash_hex {
+                Some(ref value) if !value.trim().is_empty() => {
+                    Some(parse_hash_hex(value).map_err(|err| anyhow!(err))?)
+                }
+                _ => None,
+            };
 
-        let share_target = difficulty_to_target(session.difficulty.max(1));
+            if self.cfg.stratum_submit_v2_required && claimed_hash.is_none() {
+                return Err(anyhow!("claimed hash required"));
+            }
 
-        let candidate_hint = claimed_hash
-            .map(|hash| check_target(hash, job.network_target))
-            .unwrap_or(false);
+            let share_target = difficulty_to_target(session.difficulty.max(1));
 
-        let task = ValidationTask {
-            address: session.address.clone(),
-            nonce,
-            header_base: job.header_base.clone(),
-            share_target,
-            network_target: job.network_target,
-            claimed_hash,
-            force_full_verify: candidate_hint || claimed_hash.is_none(),
-        };
+            let candidate_hint = claimed_hash
+                .map(|hash| check_target(hash, job.network_target))
+                .unwrap_or(false);
 
-        let validation = self.validate_task(task, claimed_hash.is_some(), candidate_hint)?;
+            let task = ValidationTask {
+                address: session.address.clone(),
+                nonce,
+                header_base: job.header_base.clone(),
+                share_target,
+                network_target: job.network_target,
+                claimed_hash,
+                force_full_verify: candidate_hint || claimed_hash.is_none(),
+            };
 
-        if !validation.accepted {
-            return Err(anyhow!(
-                "{}",
-                validation.reject_reason.unwrap_or("invalid share")
-            ));
-        }
+            let validation = self.validate_task(task, claimed_hash.is_some(), candidate_hint)?;
 
-        self.store.mark_share_seen(&job_id, nonce)?;
+            if !validation.accepted {
+                return Err(anyhow!(
+                    "{}",
+                    validation.reject_reason.unwrap_or("invalid share")
+                ));
+            }
 
-        let status = if validation.verified {
-            SHARE_STATUS_VERIFIED
-        } else {
-            SHARE_STATUS_PROVISIONAL
-        };
+            self.store.mark_share_seen(&job_id, nonce)?;
 
-        let mut block_hash = None;
-        let mut block_accepted = false;
-        if validation.is_block_candidate {
-            block_hash = Some(hex_string(validation.hash));
-            let result = self.node.submit_block(&job, nonce)?;
-            block_accepted = result.accepted;
-        }
+            let status = if validation.verified {
+                SHARE_STATUS_VERIFIED
+            } else {
+                SHARE_STATUS_PROVISIONAL
+            };
 
-        self.store.add_share(ShareRecord {
-            job_id,
-            miner: session.address,
-            worker: session.worker,
-            difficulty: session.difficulty,
-            nonce,
-            status,
-            was_sampled: validation.verified,
-            block_hash,
-            created_at: SystemTime::now(),
-        })?;
+            let mut block_hash = None;
+            let mut block_accepted = false;
+            if validation.is_block_candidate {
+                block_hash = Some(hex_string(validation.hash));
+                let submit = self.node.submit_block(&job, nonce)?;
+                block_accepted = submit.accepted;
+            }
 
-        Ok(SubmitAck {
-            accepted: true,
-            verified: validation.verified,
-            status,
-            block_accepted,
-        })
+            self.store.add_share(ShareRecord {
+                job_id,
+                miner: session.address,
+                worker: session.worker,
+                difficulty: session.difficulty,
+                nonce,
+                status,
+                was_sampled: validation.verified,
+                block_hash,
+                created_at: SystemTime::now(),
+            })?;
+
+            Ok(SubmitAck {
+                accepted: true,
+                verified: validation.verified,
+                status,
+                block_accepted,
+            })
+        })();
+
+        self.seen_in_memory.lock().remove(&seen_key);
+        result
     }
 
     fn validate_task(
@@ -670,5 +676,59 @@ mod tests {
         engine
             .submit("conn1", "job1".to_string(), 3, None)
             .expect("legacy share should not be dropped");
+    }
+
+    #[test]
+    fn seen_cache_entry_is_released_after_rejected_submit() {
+        let mut cfg = cfg();
+        cfg.validation_mode = "full".to_string();
+
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .expect("login");
+
+        let err = engine
+            .submit("conn1", "job1".to_string(), 88, Some("ff".repeat(32)))
+            .expect_err("expected invalid share proof");
+        assert!(!err.to_string().is_empty());
+        assert!(engine.seen_in_memory.lock().is_empty());
+    }
+
+    #[test]
+    fn seen_cache_entry_is_released_after_accepted_submit() {
+        let cfg = cfg();
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .expect("login");
+        engine
+            .submit("conn1", "job1".to_string(), 89, Some("ff".repeat(32)))
+            .expect("share should be accepted");
+
+        assert!(engine.seen_in_memory.lock().is_empty());
     }
 }

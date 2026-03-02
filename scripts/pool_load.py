@@ -305,6 +305,8 @@ class Worker(threading.Thread):
         while time.monotonic() < deadline:
             msg = self._read_json(reader)
             if self._update_job(msg):
+                if login_ok and self._job_id is not None:
+                    return
                 continue
             msg_id = msg.get("id")
             if msg_id != login_id:

@@ -1,11 +1,13 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
+use parking_lot::Mutex;
 use serde::Serialize;
 
 use crate::db::PoolFeeEvent;
@@ -15,12 +17,28 @@ use crate::stats::PoolStats;
 use crate::store::PoolStore;
 use crate::validation::ValidationEngine;
 
+const DB_TOTALS_CACHE_TTL: Duration = Duration::from_secs(2);
+
 #[derive(Clone)]
 pub struct ApiState {
     pub store: Arc<PoolStore>,
     pub stats: Arc<PoolStats>,
     pub jobs: Arc<JobManager>,
     pub validation: Arc<ValidationEngine>,
+    pub db_totals_cache: Arc<Mutex<DbTotalsCache>>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct DbTotals {
+    total_shares: u64,
+    total_blocks: u64,
+    pool_fees_collected: u64,
+}
+
+#[derive(Debug, Default)]
+pub struct DbTotalsCache {
+    updated_at: Option<Instant>,
+    totals: DbTotals,
 }
 
 pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
@@ -87,21 +105,7 @@ struct FeesResponse {
 async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
     let snap = state.stats.snapshot();
     let validation = state.validation.snapshot();
-
-    let store = Arc::clone(&state.store);
-    let (total_shares, total_blocks, pool_fees_collected) =
-        match tokio::task::spawn_blocking(move || {
-            (
-                store.get_total_share_count().unwrap_or(0),
-                store.get_block_count().unwrap_or(0),
-                store.get_total_pool_fees().unwrap_or(0),
-            )
-        })
-        .await
-        {
-            Ok(v) => v,
-            Err(_) => (0, 0, 0),
-        };
+    let totals = state.db_totals().await;
     let current_job_height = state.jobs.current_job().map(|j| j.height);
 
     let response = StatsResponse {
@@ -112,9 +116,9 @@ async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
             shares_accepted: snap.total_shares_accepted,
             shares_rejected: snap.total_shares_rejected,
             blocks_found: snap.total_blocks_found,
-            total_shares,
-            total_blocks,
-            pool_fees_collected,
+            total_shares: totals.total_shares,
+            total_blocks: totals.total_blocks,
+            pool_fees_collected: totals.pool_fees_collected,
         },
         chain: ChainSummary { current_job_height },
         validation: ValidationSummary {
@@ -201,4 +205,32 @@ async fn handle_fees(State(state): State<ApiState>) -> impl IntoResponse {
         total_collected,
         recent,
     })
+}
+
+impl ApiState {
+    async fn db_totals(&self) -> DbTotals {
+        {
+            let cache = self.db_totals_cache.lock();
+            if cache
+                .updated_at
+                .is_some_and(|updated| updated.elapsed() < DB_TOTALS_CACHE_TTL)
+            {
+                return cache.totals;
+            }
+        }
+
+        let store = Arc::clone(&self.store);
+        let totals = tokio::task::spawn_blocking(move || DbTotals {
+            total_shares: store.get_total_share_count().unwrap_or(0),
+            total_blocks: store.get_block_count().unwrap_or(0),
+            pool_fees_collected: store.get_total_pool_fees().unwrap_or(0),
+        })
+        .await
+        .unwrap_or_default();
+
+        let mut cache = self.db_totals_cache.lock();
+        cache.totals = totals;
+        cache.updated_at = Some(Instant::now());
+        totals
+    }
 }

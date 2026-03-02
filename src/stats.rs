@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
@@ -40,7 +40,7 @@ pub struct PoolStats {
 
     miner_stats: RwLock<HashMap<String, MinerStats>>,
     connected_miners: RwLock<HashMap<String, String>>, // conn_id -> address
-    recent_shares: RwLock<Vec<ShareRecord>>,
+    recent_shares: RwLock<VecDeque<ShareRecord>>,
 }
 
 impl PoolStats {
@@ -92,7 +92,7 @@ impl PoolStats {
         }
 
         let mut recent = self.recent_shares.write();
-        recent.push(ShareRecord {
+        recent.push_back(ShareRecord {
             miner: address.to_string(),
             difficulty,
             timestamp: now,
@@ -101,12 +101,11 @@ impl PoolStats {
         let cutoff = now
             .checked_sub(Duration::from_secs(60 * 60))
             .unwrap_or(SystemTime::UNIX_EPOCH);
-        let keep_from = recent
-            .iter()
-            .position(|s| s.timestamp > cutoff)
-            .unwrap_or(recent.len());
-        if keep_from > 0 {
-            recent.drain(0..keep_from);
+        while recent
+            .front()
+            .is_some_and(|share| share.timestamp <= cutoff)
+        {
+            recent.pop_front();
         }
     }
 
@@ -131,11 +130,11 @@ impl PoolStats {
         }
 
         let oldest = recent
-            .first()
+            .front()
             .map(|r| r.timestamp)
             .unwrap_or(SystemTime::UNIX_EPOCH);
         let newest = recent
-            .last()
+            .back()
             .map(|r| r.timestamp)
             .unwrap_or(SystemTime::UNIX_EPOCH);
         let Ok(window) = newest.duration_since(oldest) else {
@@ -153,20 +152,26 @@ impl PoolStats {
 
     pub fn estimate_miner_hashrate(&self, address: &str) -> f64 {
         let recent = self.recent_shares.read();
-        let miner_shares: Vec<&ShareRecord> =
-            recent.iter().filter(|s| s.miner == address).collect();
-        if miner_shares.len() < 2 {
+        let mut first = None;
+        let mut last = None;
+        let mut total_diff = 0u64;
+        let mut count = 0usize;
+
+        for share in recent.iter().filter(|s| s.miner == address) {
+            if first.is_none() {
+                first = Some(share.timestamp);
+            }
+            last = Some(share.timestamp);
+            total_diff = total_diff.saturating_add(share.difficulty);
+            count += 1;
+        }
+
+        if count < 2 {
             return 0.0;
         }
 
-        let oldest = miner_shares
-            .first()
-            .map(|r| r.timestamp)
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        let newest = miner_shares
-            .last()
-            .map(|r| r.timestamp)
-            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let oldest = first.unwrap_or(SystemTime::UNIX_EPOCH);
+        let newest = last.unwrap_or(SystemTime::UNIX_EPOCH);
         let Ok(window) = newest.duration_since(oldest) else {
             return 0.0;
         };
@@ -174,9 +179,6 @@ impl PoolStats {
             return 0.0;
         }
 
-        let total_diff = miner_shares
-            .iter()
-            .fold(0u64, |acc, r| acc.saturating_add(r.difficulty));
         total_diff as f64 / window.as_secs_f64()
     }
 

@@ -291,7 +291,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 fn hex_decode(input: &str) -> anyhow::Result<Vec<u8>> {
     let v = input.trim();
-    if v.len() % 2 != 0 {
+    if !v.len().is_multiple_of(2) {
         return Err(anyhow::anyhow!("hex length must be even"));
     }
 

@@ -15,6 +15,7 @@ use blocknet_pool_rs::stats::PoolStats;
 use blocknet_pool_rs::store::PoolStore;
 use blocknet_pool_rs::stratum::StratumServer;
 use blocknet_pool_rs::validation::ValidationEngine;
+use parking_lot::Mutex;
 use tracing::{info, warn};
 
 #[tokio::main]
@@ -136,6 +137,7 @@ async fn main() -> Result<()> {
         stats: Arc::clone(&stats),
         jobs: Arc::clone(&jobs),
         validation: Arc::clone(&validation),
+        db_totals_cache: Arc::new(Mutex::new(blocknet_pool_rs::api::DbTotalsCache::default())),
     };
 
     info!(pool = %cfg.pool_name, "pool runtime started");

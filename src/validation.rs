@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -43,7 +43,7 @@ struct ValidationAddressState {
     sampled_shares: u64,
     invalid_samples: u64,
     forced_until: Option<Instant>,
-    provisional_at: Vec<Instant>,
+    provisional_at: VecDeque<Instant>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -275,9 +275,7 @@ impl ValidationInner {
         let now = Instant::now();
 
         let mut state = self.state.lock();
-        let st = state
-            .entry(address.to_string())
-            .or_insert_with(ValidationAddressState::default);
+        let st = get_or_insert_state(&mut state, address);
         self.prune_provisional_locked(st, now);
 
         if self.config.max_provisional_shares > 0
@@ -295,7 +293,7 @@ impl ValidationInner {
             return true;
         }
         if self.config.min_sample_every > 0
-            && next_share_idx % self.config.min_sample_every as u64 == 0
+            && next_share_idx.is_multiple_of(self.config.min_sample_every as u64)
         {
             return true;
         }
@@ -321,14 +319,12 @@ impl ValidationInner {
     ) -> bool {
         let now = Instant::now();
         let mut state = self.state.lock();
-        let st = state
-            .entry(address.to_string())
-            .or_insert_with(ValidationAddressState::default);
+        let st = get_or_insert_state(&mut state, address);
 
         st.total_shares = st.total_shares.saturating_add(1);
         self.prune_provisional_locked(st, now);
         if provisional_accepted {
-            st.provisional_at.push(now);
+            st.provisional_at.push_back(now);
         }
         if sampled {
             st.sampled_shares = st.sampled_shares.saturating_add(1);
@@ -373,14 +369,12 @@ impl ValidationInner {
         }
 
         let cutoff = now.checked_sub(delay).unwrap_or(now);
-        let keep_from = st
+        while st
             .provisional_at
-            .iter()
-            .position(|ts| *ts > cutoff)
-            .unwrap_or(st.provisional_at.len());
-
-        if keep_from > 0 {
-            st.provisional_at.drain(0..keep_from);
+            .front()
+            .is_some_and(|timestamp| *timestamp <= cutoff)
+        {
+            st.provisional_at.pop_front();
         }
     }
 
@@ -411,6 +405,18 @@ impl ValidationInner {
 
         snap
     }
+}
+
+fn get_or_insert_state<'a>(
+    state: &'a mut HashMap<String, ValidationAddressState>,
+    address: &str,
+) -> &'a mut ValidationAddressState {
+    if !state.contains_key(address) {
+        state.insert(address.to_string(), ValidationAddressState::default());
+    }
+    state
+        .get_mut(address)
+        .expect("address state must be present after insert")
 }
 
 #[cfg(test)]

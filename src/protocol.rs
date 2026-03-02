@@ -124,7 +124,7 @@ pub fn parse_hash_hex(v: &str) -> Result<[u8; 32], String> {
 }
 
 fn hex_decode(input: &str) -> Result<Vec<u8>, String> {
-    if input.len() % 2 != 0 {
+    if !input.len().is_multiple_of(2) {
         return Err("hex length must be even".to_string());
     }
     let mut out = Vec::with_capacity(input.len() / 2);
