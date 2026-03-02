@@ -1,12 +1,12 @@
+use std::mem::ManuallyDrop;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::{mem::ManuallyDrop};
 
 use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
 use postgres::{Client, NoTls};
 
-use crate::db::{AddressRiskState, Balance, DbBlock, DbShare, Payout, PendingPayout};
+use crate::db::{AddressRiskState, Balance, DbBlock, DbShare, Payout, PendingPayout, PoolFeeEvent};
 use crate::engine::{ShareRecord, ShareStore};
 
 const SEEN_SHARE_EXPIRY_SECS: i64 = 24 * 60 * 60;
@@ -83,6 +83,15 @@ CREATE TABLE IF NOT EXISTS pending_payouts (
     amount BIGINT NOT NULL,
     initiated_at BIGINT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS pool_fee_events (
+    id BIGSERIAL PRIMARY KEY,
+    block_height BIGINT NOT NULL UNIQUE,
+    amount BIGINT NOT NULL,
+    fee_address TEXT NOT NULL,
+    timestamp BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pool_fee_events_timestamp ON pool_fee_events(timestamp DESC);
 
 CREATE TABLE IF NOT EXISTS address_risk (
     address TEXT PRIMARY KEY,
@@ -343,6 +352,63 @@ CREATE TABLE IF NOT EXISTS address_risk (
             .collect())
     }
 
+    pub fn record_pool_fee(
+        &self,
+        block_height: u64,
+        amount: u64,
+        fee_address: &str,
+        timestamp: SystemTime,
+    ) -> Result<bool> {
+        if amount == 0 {
+            return Ok(false);
+        }
+
+        let destination = fee_address.trim();
+        if destination.is_empty() {
+            return Err(anyhow!("fee address is required"));
+        }
+
+        let inserted = self.conn.lock().execute(
+            "INSERT INTO pool_fee_events (block_height, amount, fee_address, timestamp)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT(block_height) DO NOTHING",
+            &[
+                &(block_height as i64),
+                &(amount as i64),
+                &destination,
+                &to_unix(timestamp),
+            ],
+        )?;
+        Ok(inserted > 0)
+    }
+
+    pub fn get_total_pool_fees(&self) -> Result<u64> {
+        let row = self
+            .conn
+            .lock()
+            .query_one("SELECT COALESCE(SUM(amount), 0) FROM pool_fee_events", &[])?;
+        let total: i64 = row.get(0);
+        Ok(total.max(0) as u64)
+    }
+
+    pub fn get_recent_pool_fees(&self, limit: i64) -> Result<Vec<PoolFeeEvent>> {
+        let rows = self.conn.lock().query(
+            "SELECT id, block_height, amount, fee_address, timestamp
+             FROM pool_fee_events ORDER BY id DESC LIMIT $1",
+            &[&limit],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| PoolFeeEvent {
+                id: row.get::<_, i64>(0),
+                block_height: row.get::<_, i64>(1).max(0) as u64,
+                amount: row.get::<_, i64>(2).max(0) as u64,
+                fee_address: row.get::<_, String>(3),
+                timestamp: from_unix(row.get::<_, i64>(4)),
+            })
+            .collect())
+    }
+
     pub fn set_meta(&self, key: &str, value: &[u8]) -> Result<()> {
         self.conn.lock().execute(
             "INSERT INTO meta (key, value) VALUES ($1, $2)
@@ -406,7 +472,10 @@ CREATE TABLE IF NOT EXISTS address_risk (
         }))
     }
 
-    pub fn is_address_quarantined(&self, address: &str) -> Result<(bool, Option<AddressRiskState>)> {
+    pub fn is_address_quarantined(
+        &self,
+        address: &str,
+    ) -> Result<(bool, Option<AddressRiskState>)> {
         let state = self.get_address_risk(address)?;
         let now = SystemTime::now();
         let quarantined = state
@@ -591,15 +660,19 @@ CREATE TABLE IF NOT EXISTS address_risk (
             &[&address, &(amount as i64), &tx_hash, &now_unix()],
         )?;
 
-        tx.execute("DELETE FROM pending_payouts WHERE address = $1", &[&address])?;
+        tx.execute(
+            "DELETE FROM pending_payouts WHERE address = $1",
+            &[&address],
+        )?;
         tx.commit()?;
         Ok(())
     }
 
     pub fn cancel_pending_payout(&self, address: &str) -> Result<()> {
-        self.conn
-            .lock()
-            .execute("DELETE FROM pending_payouts WHERE address = $1", &[&address])?;
+        self.conn.lock().execute(
+            "DELETE FROM pending_payouts WHERE address = $1",
+            &[&address],
+        )?;
         Ok(())
     }
 

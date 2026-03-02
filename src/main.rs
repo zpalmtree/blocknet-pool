@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use blocknet_pool_rs::api::{run_api, ApiState};
 use blocknet_pool_rs::config::{generate_default_env, Config};
 use blocknet_pool_rs::engine::{JobRepository, NodeApi, PoolEngine, ShareStore};
@@ -142,10 +142,14 @@ async fn main() -> Result<()> {
 
     tokio::select! {
         result = Arc::clone(&stratum).run() => {
-            result?;
+            if let Err(err) = result {
+                return Err(anyhow!("stratum server exited: {err}"));
+            }
         }
         result = run_api(api_addr, api_state) => {
-            result?;
+            if let Err(err) = result {
+                return Err(anyhow!("api server exited: {err}"));
+            }
         }
         _ = tokio::signal::ctrl_c() => {
             info!("received shutdown signal");

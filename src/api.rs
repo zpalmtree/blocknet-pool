@@ -8,6 +8,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
 
+use crate::db::PoolFeeEvent;
 use crate::engine::JobRepository;
 use crate::jobs::JobManager;
 use crate::stats::PoolStats;
@@ -29,10 +30,11 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
         .route("/api/miner/:address", get(handle_miner))
         .route("/api/blocks", get(handle_blocks))
         .route("/api/payouts", get(handle_payouts))
+        .route("/api/fees", get(handle_fees))
         .with_state(state);
 
-    tracing::info!(addr = %addr, "api listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    tracing::info!(addr = %addr, "api listening");
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -54,6 +56,7 @@ struct PoolSummary {
     blocks_found: u64,
     total_shares: u64,
     total_blocks: u64,
+    pool_fees_collected: u64,
 }
 
 #[derive(Serialize)]
@@ -75,22 +78,30 @@ struct ValidationSummary {
     fraud_detections: u64,
 }
 
+#[derive(Serialize)]
+struct FeesResponse {
+    total_collected: u64,
+    recent: Vec<PoolFeeEvent>,
+}
+
 async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
     let snap = state.stats.snapshot();
     let validation = state.validation.snapshot();
 
     let store = Arc::clone(&state.store);
-    let (total_shares, total_blocks) = match tokio::task::spawn_blocking(move || {
-        (
-            store.get_total_share_count().unwrap_or(0),
-            store.get_block_count().unwrap_or(0),
-        )
-    })
-    .await
-    {
-        Ok(v) => v,
-        Err(_) => (0, 0),
-    };
+    let (total_shares, total_blocks, pool_fees_collected) =
+        match tokio::task::spawn_blocking(move || {
+            (
+                store.get_total_share_count().unwrap_or(0),
+                store.get_block_count().unwrap_or(0),
+                store.get_total_pool_fees().unwrap_or(0),
+            )
+        })
+        .await
+        {
+            Ok(v) => v,
+            Err(_) => (0, 0, 0),
+        };
     let current_job_height = state.jobs.current_job().map(|j| j.height);
 
     let response = StatsResponse {
@@ -103,6 +114,7 @@ async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
             blocks_found: snap.total_blocks_found,
             total_shares,
             total_blocks,
+            pool_fees_collected,
         },
         chain: ChainSummary { current_job_height },
         validation: ValidationSummary {
@@ -158,16 +170,35 @@ async fn handle_miner(
 
 async fn handle_blocks(State(state): State<ApiState>) -> impl IntoResponse {
     let store = Arc::clone(&state.store);
-    let blocks = tokio::task::spawn_blocking(move || store.get_recent_blocks(100).unwrap_or_default())
-        .await
-        .unwrap_or_default();
+    let blocks =
+        tokio::task::spawn_blocking(move || store.get_recent_blocks(100).unwrap_or_default())
+            .await
+            .unwrap_or_default();
     Json(blocks)
 }
 
 async fn handle_payouts(State(state): State<ApiState>) -> impl IntoResponse {
     let store = Arc::clone(&state.store);
-    let payouts = tokio::task::spawn_blocking(move || store.get_recent_payouts(100).unwrap_or_default())
-        .await
-        .unwrap_or_default();
+    let payouts =
+        tokio::task::spawn_blocking(move || store.get_recent_payouts(100).unwrap_or_default())
+            .await
+            .unwrap_or_default();
     Json(payouts)
+}
+
+async fn handle_fees(State(state): State<ApiState>) -> impl IntoResponse {
+    let store = Arc::clone(&state.store);
+    let (total_collected, recent) = tokio::task::spawn_blocking(move || {
+        (
+            store.get_total_pool_fees().unwrap_or(0),
+            store.get_recent_pool_fees(100).unwrap_or_default(),
+        )
+    })
+    .await
+    .unwrap_or_else(|_| (0, Vec::new()));
+
+    Json(FeesResponse {
+        total_collected,
+        recent,
+    })
 }

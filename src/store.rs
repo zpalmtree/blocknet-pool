@@ -4,7 +4,9 @@ use std::time::{Duration, SystemTime};
 use anyhow::Result;
 
 use crate::config::Config;
-use crate::db::{AddressRiskState, Balance, DbBlock, DbShare, Payout, PendingPayout, SqliteStore};
+use crate::db::{
+    AddressRiskState, Balance, DbBlock, DbShare, Payout, PendingPayout, PoolFeeEvent, SqliteStore,
+};
 use crate::engine::{ShareRecord, ShareStore};
 use crate::pgdb::PostgresStore;
 
@@ -150,6 +152,35 @@ impl PoolStore {
         }
     }
 
+    pub fn record_pool_fee(
+        &self,
+        block_height: u64,
+        amount: u64,
+        fee_address: &str,
+        timestamp: SystemTime,
+    ) -> Result<bool> {
+        match self {
+            PoolStore::Sqlite(v) => v.record_pool_fee(block_height, amount, fee_address, timestamp),
+            PoolStore::Postgres(v) => {
+                v.record_pool_fee(block_height, amount, fee_address, timestamp)
+            }
+        }
+    }
+
+    pub fn get_total_pool_fees(&self) -> Result<u64> {
+        match self {
+            PoolStore::Sqlite(v) => v.get_total_pool_fees(),
+            PoolStore::Postgres(v) => v.get_total_pool_fees(),
+        }
+    }
+
+    pub fn get_recent_pool_fees(&self, limit: i64) -> Result<Vec<PoolFeeEvent>> {
+        match self {
+            PoolStore::Sqlite(v) => v.get_recent_pool_fees(limit),
+            PoolStore::Postgres(v) => v.get_recent_pool_fees(limit),
+        }
+    }
+
     pub fn set_meta(&self, key: &str, value: &[u8]) -> Result<()> {
         match self {
             PoolStore::Sqlite(v) => v.set_meta(key, value),
@@ -178,7 +209,10 @@ impl PoolStore {
         }
     }
 
-    pub fn is_address_quarantined(&self, address: &str) -> Result<(bool, Option<AddressRiskState>)> {
+    pub fn is_address_quarantined(
+        &self,
+        address: &str,
+    ) -> Result<(bool, Option<AddressRiskState>)> {
         match self {
             PoolStore::Sqlite(v) => v.is_address_quarantined(address),
             PoolStore::Postgres(v) => v.is_address_quarantined(address),

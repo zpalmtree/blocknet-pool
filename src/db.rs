@@ -64,6 +64,15 @@ pub struct PendingPayout {
     pub initiated_at: SystemTime,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct PoolFeeEvent {
+    pub id: i64,
+    pub block_height: u64,
+    pub amount: u64,
+    pub fee_address: String,
+    pub timestamp: SystemTime,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct AddressRiskState {
     pub address: String,
@@ -159,6 +168,15 @@ CREATE TABLE IF NOT EXISTS pending_payouts (
     amount INTEGER NOT NULL,
     initiated_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS pool_fee_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    block_height INTEGER NOT NULL UNIQUE,
+    amount INTEGER NOT NULL,
+    fee_address TEXT NOT NULL,
+    timestamp INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pool_fee_events_timestamp ON pool_fee_events(timestamp DESC);
 
 CREATE TABLE IF NOT EXISTS address_risk (
     address TEXT PRIMARY KEY,
@@ -428,6 +446,55 @@ CREATE TABLE IF NOT EXISTS address_risk (
                 timestamp: from_unix(row.get::<_, i64>(4)?),
             })
         })?;
+        collect_rows(rows)
+    }
+
+    pub fn record_pool_fee(
+        &self,
+        block_height: u64,
+        amount: u64,
+        fee_address: &str,
+        timestamp: SystemTime,
+    ) -> Result<bool> {
+        if amount == 0 {
+            return Ok(false);
+        }
+
+        let destination = fee_address.trim();
+        if destination.is_empty() {
+            return Err(anyhow!("fee address is required"));
+        }
+
+        let inserted = self.conn.lock().execute(
+            "INSERT OR IGNORE INTO pool_fee_events (block_height, amount, fee_address, timestamp)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                block_height as i64,
+                amount as i64,
+                destination,
+                to_unix(timestamp)
+            ],
+        )?;
+        Ok(inserted > 0)
+    }
+
+    pub fn get_total_pool_fees(&self) -> Result<u64> {
+        let total: Option<i64> =
+            self.conn
+                .lock()
+                .query_row("SELECT SUM(amount) FROM pool_fee_events", [], |row| {
+                    row.get(0)
+                })?;
+        Ok(total.unwrap_or(0).max(0) as u64)
+    }
+
+    pub fn get_recent_pool_fees(&self, limit: i64) -> Result<Vec<PoolFeeEvent>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, block_height, amount, fee_address, timestamp
+             FROM pool_fee_events ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], row_to_pool_fee_event)?;
         collect_rows(rows)
     }
 
@@ -823,6 +890,16 @@ fn row_to_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<DbBlock> {
     })
 }
 
+fn row_to_pool_fee_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<PoolFeeEvent> {
+    Ok(PoolFeeEvent {
+        id: row.get(0)?,
+        block_height: row.get::<_, i64>(1)?.max(0) as u64,
+        amount: row.get::<_, i64>(2)?.max(0) as u64,
+        fee_address: row.get(3)?,
+        timestamp: from_unix(row.get::<_, i64>(4)?),
+    })
+}
+
 fn collect_rows<T>(
     rows: rusqlite::MappedRows<'_, impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>>,
 ) -> Result<Vec<T>> {
@@ -930,5 +1007,23 @@ mod tests {
             .get_pending_payout("addr1")
             .expect("get after cancel")
             .is_none());
+    }
+
+    #[test]
+    fn pool_fee_events_are_idempotent_per_block() {
+        let store = test_store();
+
+        assert!(store
+            .record_pool_fee(100, 50, "pool-address", SystemTime::now())
+            .expect("insert first fee"));
+        assert!(!store
+            .record_pool_fee(100, 50, "pool-address", SystemTime::now())
+            .expect("duplicate fee should be ignored"));
+
+        assert_eq!(store.get_total_pool_fees().expect("total"), 50);
+        let events = store.get_recent_pool_fees(10).expect("recent fees");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].block_height, 100);
+        assert_eq!(events[0].amount, 50);
     }
 }

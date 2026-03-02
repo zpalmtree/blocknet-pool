@@ -170,6 +170,10 @@ impl JobManager {
     }
 
     fn resolve_reward_address(&self) -> Option<String> {
+        if let Some(configured) = configured_pool_address(&self.cfg.pool_wallet_address) {
+            return Some(configured);
+        }
+
         {
             let cache = self.reward_cache.lock();
             if cache
@@ -217,6 +221,15 @@ impl JobManager {
                 cache.address.clone()
             }
         }
+    }
+}
+
+fn configured_pool_address(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
     }
 }
 
@@ -316,6 +329,15 @@ fn from_hex(b: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_pool_address_prefers_non_empty_value() {
+        assert_eq!(
+            configured_pool_address("  addr123  ").as_deref(),
+            Some("addr123")
+        );
+        assert!(configured_pool_address("   ").is_none());
+    }
 
     #[test]
     fn miner_job_carries_targets_and_nonce_window() {

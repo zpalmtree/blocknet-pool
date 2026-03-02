@@ -120,6 +120,28 @@ impl PayoutProcessor {
 
             let fee = self.cfg.pool_fee(block.reward);
             let distributable = block.reward.saturating_sub(fee);
+            if fee > 0 {
+                if let Some(fee_address) = self.resolve_pool_fee_address(&block) {
+                    if let Err(err) =
+                        self.store
+                            .record_pool_fee(block.height, fee, &fee_address, block.timestamp)
+                    {
+                        tracing::warn!(
+                            height = block.height,
+                            fee,
+                            fee_address = %fee_address,
+                            error = %err,
+                            "failed to record pool fee"
+                        );
+                    }
+                } else {
+                    tracing::warn!(
+                        height = block.height,
+                        fee,
+                        "pool fee applied without an explicit fee destination"
+                    );
+                }
+            }
 
             let result = if self.cfg.payout_scheme.trim().eq_ignore_ascii_case("pplns") {
                 self.distribute_pplns(&block, distributable)
@@ -352,6 +374,19 @@ impl PayoutProcessor {
             Ok(addr) => !addr.address.trim().is_empty() && !addr.view_only,
             Err(_) => false,
         }
+    }
+
+    fn resolve_pool_fee_address(&self, block: &DbBlock) -> Option<String> {
+        let configured = self.cfg.pool_wallet_address.trim();
+        if !configured.is_empty() {
+            return Some(configured.to_string());
+        }
+
+        let finder = block.finder.trim();
+        if !finder.is_empty() {
+            return Some(finder.to_string());
+        }
+        None
     }
 }
 
