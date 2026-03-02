@@ -5,7 +5,8 @@
 *.swp
 *.swo
 
-# --- Go build outputs ---
+# --- Build outputs ---
+target/
 bin/
 dist/
 build/

@@ -10,7 +10,7 @@ git -C blocknet rev-parse --abbrev-ref HEAD
 git -C blocknet log --oneline -1
 
 # pool + miner local changes/build sanity
-go -C blocknet-pool test ./...
+cargo test --manifest-path blocknet-pool/Cargo.toml
 cargo test --no-run --manifest-path seine/Cargo.toml
 ```
 
@@ -55,8 +55,7 @@ cd /media/Code/blocknet/blocknet
 
 # terminal 2: pool
 cd /media/Code/blocknet/blocknet-pool
-go build
-./blocknet-pool -c config.json
+cargo run --release -- --config config.json
 
 # terminal 3: miner (pool mode)
 cd /media/Code/blocknet/seine
@@ -71,7 +70,7 @@ cargo run --release -- \
 
 Pass:
 - Pool log shows miner login and accepted shares.
-- `curl -s http://127.0.0.1:8080/api/pool/stats` shows `shares_accepted` increasing.
+- `curl -s http://127.0.0.1:8080/api/stats` shows accepted shares increasing.
 - No frequent `validation timeout` / `server busy, retry`.
 
 Fail:
@@ -192,7 +191,7 @@ Goal: verify the node remains stable under parallel submit pressure.
 Monitor:
 
 ```bash
-watch -n 1 'curl -s http://127.0.0.1:8080/api/pool/stats | jq "{accepted:.shares_accepted,rejected:.shares_rejected,inflight:.validation_inflight,qr:.validation_queue_regular,qc:.validation_queue_candidate,fraud:.validation_fraud_detections}"'
+watch -n 1 'curl -s http://127.0.0.1:8080/api/stats | jq'
 ```
 
 Pass:
@@ -259,7 +258,7 @@ Goal: verify provisional shares are tracked and age out to eligibility.
 ### Observe
 
 ```bash
-watch -n 2 'curl -s http://127.0.0.1:8080/api/pool/stats | jq "{pending_provisional:.validation_pending_provisional,sampled:.validation_sampled_shares,invalid_ratio:.validation_invalid_ratio}"'
+watch -n 2 'curl -s http://127.0.0.1:8080/api/stats | jq'
 ```
 
 Pass:
