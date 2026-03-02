@@ -61,6 +61,17 @@ const (
 	MethodSubmit = "submit"
 )
 
+const (
+	StratumProtocolVersionMin     = uint32(1)
+	StratumProtocolVersionCurrent = uint32(2)
+)
+
+const (
+	StratumCapabilityLoginNegotiation  = "login_negotiation"
+	StratumCapabilityValidationStatus  = "share_validation_status"
+	StratumCapabilitySubmitClaimedHash = "submit_claimed_hash"
+)
+
 type StratumRequest struct {
 	ID     uint64          `json:"id"`
 	Method string          `json:"method"`
@@ -80,8 +91,16 @@ type StratumNotify struct {
 }
 
 type LoginParams struct {
-	Address string `json:"address"`
-	Worker  string `json:"worker"`
+	Address         string   `json:"address"`
+	Worker          string   `json:"worker"`
+	ProtocolVersion uint32   `json:"protocol_version,omitempty"`
+	Capabilities    []string `json:"capabilities,omitempty"`
+}
+
+type LoginResult struct {
+	ProtocolVersion      uint32   `json:"protocol_version"`
+	Capabilities         []string `json:"capabilities,omitempty"`
+	RequiredCapabilities []string `json:"required_capabilities,omitempty"`
 }
 
 type SubmitParams struct {
@@ -95,14 +114,16 @@ type SubmitParams struct {
 // ============================================================================
 
 type Miner struct {
-	ID          string
-	Conn        net.Conn
-	Address     string
-	Worker      string
-	Difficulty  uint64
-	JobCh       chan *Job
-	ConnectedAt time.Time
-	writeMu     sync.Mutex
+	ID              string
+	Conn            net.Conn
+	Address         string
+	Worker          string
+	ProtocolVersion uint32
+	Capabilities    map[string]struct{}
+	Difficulty      uint64
+	JobCh           chan *Job
+	ConnectedAt     time.Time
+	writeMu         sync.Mutex
 
 	SharesAccepted atomic.Uint64
 	SharesRejected atomic.Uint64
@@ -507,17 +528,40 @@ func (s *StratumServer) handleLogin(miner *Miner, req *StratumRequest, loginTime
 	if len(worker) > maxWorkerNameLen {
 		worker = worker[:maxWorkerNameLen]
 	}
+	protocolVersion := normalizeStratumProtocolVersion(params.ProtocolVersion)
+	normalizedCapabilities := normalizeCapabilityList(params.Capabilities)
+	capabilities := capabilitySet(normalizedCapabilities)
+
+	if s.config.StratumSubmitV2Required && protocolVersion < StratumProtocolVersionCurrent {
+		s.sendError(miner, req.ID, "pool requires protocol_version >= 2")
+		miner.Conn.Close()
+		return
+	}
+	if s.config.StratumSubmitV2Required && len(normalizedCapabilities) > 0 {
+		if _, ok := capabilities[StratumCapabilitySubmitClaimedHash]; !ok {
+			s.sendError(miner, req.ID, "pool requires submit_claimed_hash capability")
+			miner.Conn.Close()
+			return
+		}
+	}
 
 	miner.Address = params.Address
 	miner.Worker = worker
+	miner.ProtocolVersion = protocolVersion
+	miner.Capabilities = capabilities
 
 	// Cancel the login timeout
 	loginTimer.Stop()
 
-	log.Printf("[stratum] login %s/%s from %s", miner.Address, miner.Worker, miner.ID)
+	log.Printf("[stratum] login %s/%s from %s (protocol=v%d, caps=%d)",
+		miner.Address, miner.Worker, miner.ID, miner.ProtocolVersion, len(normalizedCapabilities))
 
 	s.stats.AddMiner(miner)
-	s.sendJSON(miner, StratumResponse{ID: req.ID, Status: "ok"})
+	s.sendJSON(miner, StratumResponse{
+		ID:     req.ID,
+		Status: "ok",
+		Result: buildLoginResult(s.config, protocolVersion),
+	})
 
 	if job := s.jobs.CurrentJob(); job != nil {
 		s.sendJob(miner, job)
@@ -891,6 +935,69 @@ func shouldInlineValidationOnQueueFull(hasClaimedHash, candidateHint bool) bool 
 	// identified without full PoW verification. Preserve legacy behavior by
 	// processing inline instead of dropping potential solutions when the queue is full.
 	return candidateHint || !hasClaimedHash
+}
+
+func normalizeStratumProtocolVersion(version uint32) uint32 {
+	if version < StratumProtocolVersionMin {
+		return StratumProtocolVersionMin
+	}
+	if version > StratumProtocolVersionCurrent {
+		return StratumProtocolVersionCurrent
+	}
+	return version
+}
+
+func normalizeCapabilityList(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		capability := strings.ToLower(strings.TrimSpace(value))
+		if capability == "" {
+			continue
+		}
+		if _, ok := seen[capability]; ok {
+			continue
+		}
+		seen[capability] = struct{}{}
+		out = append(out, capability)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func capabilitySet(values []string) map[string]struct{} {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		out[value] = struct{}{}
+	}
+	return out
+}
+
+func buildLoginResult(config *Config, protocolVersion uint32) LoginResult {
+	capabilities := []string{
+		StratumCapabilityLoginNegotiation,
+		StratumCapabilityValidationStatus,
+	}
+	if protocolVersion >= StratumProtocolVersionCurrent {
+		capabilities = append(capabilities, StratumCapabilitySubmitClaimedHash)
+	}
+
+	result := LoginResult{
+		ProtocolVersion: protocolVersion,
+		Capabilities:    capabilities,
+	}
+	if config.StratumSubmitV2Required {
+		result.RequiredCapabilities = []string{StratumCapabilitySubmitClaimedHash}
+	}
+	return result
 }
 
 // MinerCount returns the number of connected miners.
