@@ -19,13 +19,13 @@ import (
 // ============================================================================
 
 const (
-	maxConnsPerIP    = 16                   // max stratum connections from one IP
-	maxConnsTotal    = 4096                 // max total stratum connections
-	loginTimeout     = 30 * time.Second     // must login within this or get kicked
-	maxSeenMapSize   = 500_000              // cap on duplicate-share tracker entries
-	banDuration      = 10 * time.Minute     // initial ban duration
-	maxBanDuration   = 24 * time.Hour       // maximum ban duration with exponential backoff
-	banThreshold     = 50                   // consecutive rejects before ban
+	maxConnsPerIP    = 16               // max stratum connections from one IP
+	maxConnsTotal    = 4096             // max total stratum connections
+	loginTimeout     = 30 * time.Second // must login within this or get kicked
+	maxSeenMapSize   = 500_000          // cap on duplicate-share tracker entries
+	banDuration      = 10 * time.Minute // initial ban duration
+	maxBanDuration   = 24 * time.Hour   // maximum ban duration with exponential backoff
+	banThreshold     = 50               // consecutive rejects before ban
 	maxWorkerNameLen = 64
 	maxAddressLen    = 128
 )
@@ -33,7 +33,7 @@ const (
 // AddressBanRecord tracks repeat offenders at the address level
 type AddressBanRecord struct {
 	Address      string
-	BanCount     int       // number of times banned
+	BanCount     int // number of times banned
 	LastBanTime  time.Time
 	BanExpiresAt time.Time
 }
@@ -43,13 +43,13 @@ type AddressBanRecord struct {
 // ============================================================================
 
 const (
-	targetShareInterval    = 10                 // target seconds between shares
-	minShareDifficulty     = uint64(1)
-	maxShareDifficulty     = uint64(1 << 30)
-	diffAdjustShares       = 5                  // re-evaluate every N accepted shares
-	minDiffAdjustInterval  = 60 * time.Second   // minimum time between difficulty adjustments
-	maxDifficultyIncrease  = 2.0                // max 2x increase per adjustment
-	maxDifficultyDecrease  = 1.5                // max 33% decrease per adjustment (1/1.5)
+	targetShareInterval   = 10 // target seconds between shares
+	minShareDifficulty    = uint64(1)
+	maxShareDifficulty    = uint64(1 << 30)
+	diffAdjustShares      = 5                // re-evaluate every N accepted shares
+	minDiffAdjustInterval = 60 * time.Second // minimum time between difficulty adjustments
+	maxDifficultyIncrease = 2.0              // max 2x increase per adjustment
+	maxDifficultyDecrease = 1.5              // max 33% decrease per adjustment (1/1.5)
 )
 
 // ============================================================================
@@ -85,8 +85,9 @@ type LoginParams struct {
 }
 
 type SubmitParams struct {
-	JobID string `json:"job_id"`
-	Nonce uint64 `json:"nonce"`
+	JobID       string `json:"job_id"`
+	Nonce       uint64 `json:"nonce"`
+	ClaimedHash string `json:"claimed_hash,omitempty"` // Stratum v2
 }
 
 // ============================================================================
@@ -146,12 +147,14 @@ type StratumServer struct {
 	seen   map[string]struct{}
 
 	// IP ban list
-	banMu   sync.RWMutex
-	banned  map[string]time.Time // IP -> ban expiry
-	
+	banMu  sync.RWMutex
+	banned map[string]time.Time // IP -> ban expiry
+
 	// Address-level ban tracking for repeat offenders
 	addressBanMu sync.RWMutex
 	addressBans  map[string]*AddressBanRecord
+
+	validator *ValidationEngine
 }
 
 func NewStratumServer(config *Config, jobs *JobManager, store *Store, stats *PoolStats) *StratumServer {
@@ -165,6 +168,7 @@ func NewStratumServer(config *Config, jobs *JobManager, store *Store, stats *Poo
 		seen:        make(map[string]struct{}),
 		banned:      make(map[string]time.Time),
 		addressBans: make(map[string]*AddressBanRecord),
+		validator:   NewValidationEngine(config),
 	}
 }
 
@@ -180,6 +184,8 @@ func (s *StratumServer) Start(ctx context.Context) error {
 	}
 	s.ln = ln
 	log.Printf("[stratum] listening on %s", addr)
+
+	s.validator.Start(ctx)
 
 	go func() {
 		<-ctx.Done()
@@ -292,7 +298,7 @@ func (s *StratumServer) banIP(ip string) {
 func (s *StratumServer) banAddress(address string, reason string) {
 	s.addressBanMu.Lock()
 	defer s.addressBanMu.Unlock()
-	
+
 	record, exists := s.addressBans[address]
 	if !exists {
 		record = &AddressBanRecord{
@@ -301,18 +307,18 @@ func (s *StratumServer) banAddress(address string, reason string) {
 		}
 		s.addressBans[address] = record
 	}
-	
+
 	// Exponential backoff: 10min, 1hr, 6hr, 24hr (capped)
 	record.BanCount++
 	duration := time.Duration(banDuration.Nanoseconds() * int64(1<<uint(record.BanCount-1)))
 	if duration > maxBanDuration {
 		duration = maxBanDuration
 	}
-	
+
 	record.LastBanTime = time.Now()
 	record.BanExpiresAt = time.Now().Add(duration)
-	
-	log.Printf("[stratum] BANNED ADDRESS %s for %v (ban #%d, reason: %s)", 
+
+	log.Printf("[stratum] BANNED ADDRESS %s for %v (ban #%d, reason: %s)",
 		address, duration, record.BanCount, reason)
 }
 
@@ -320,11 +326,11 @@ func (s *StratumServer) isAddressBanned(address string) bool {
 	s.addressBanMu.RLock()
 	record, exists := s.addressBans[address]
 	s.addressBanMu.RUnlock()
-	
+
 	if !exists {
 		return false
 	}
-	
+
 	if time.Now().After(record.BanExpiresAt) {
 		// Ban expired - clean up
 		s.addressBanMu.Lock()
@@ -332,7 +338,7 @@ func (s *StratumServer) isAddressBanned(address string) bool {
 		s.addressBanMu.Unlock()
 		return false
 	}
-	
+
 	return true
 }
 
@@ -479,10 +485,17 @@ func (s *StratumServer) handleLogin(miner *Miner, req *StratumRequest, loginTime
 		s.sendError(miner, req.ID, "invalid address")
 		return
 	}
-	
+
 	// Check if address is banned
 	if s.isAddressBanned(params.Address) {
 		s.sendError(miner, req.ID, "address banned")
+		miner.Conn.Close()
+		return
+	}
+	if quarantined, _, err := s.store.IsAddressQuarantined(params.Address); err != nil {
+		log.Printf("[stratum] risk check failed for %s: %v", params.Address, err)
+	} else if quarantined {
+		s.sendError(miner, req.ID, "address quarantined")
 		miner.Conn.Close()
 		return
 	}
@@ -537,6 +550,13 @@ func (s *StratumServer) handleSubmit(miner *Miner, req *StratumRequest, ip strin
 		}
 	}
 
+	if quarantined, _, err := s.store.IsAddressQuarantined(miner.Address); err != nil {
+		log.Printf("[stratum] risk check failed for %s: %v", miner.Address, err)
+	} else if quarantined {
+		reject("address quarantined")
+		return
+	}
+
 	// Stale job
 	job := s.jobs.GetJob(params.JobID)
 	if job == nil {
@@ -551,7 +571,7 @@ func (s *StratumServer) handleSubmit(miner *Miner, req *StratumRequest, ip strin
 		reject("duplicate share")
 		return
 	}
-	
+
 	// Check persistent storage for shares within 24h window
 	seen, err := s.store.IsShareSeen(params.JobID, params.Nonce)
 	if err != nil {
@@ -567,62 +587,151 @@ func (s *StratumServer) handleSubmit(miner *Miner, req *StratumRequest, ip strin
 		s.sendError(miner, req.ID, "internal error")
 		return
 	}
-
-	// Compute Argon2id hash (~2-3 seconds, 2GB RAM)
-	hash := PowHash(headerBase, params.Nonce)
-
-	// Check share target
 	shareTarget := difficultyToTarget(miner.Difficulty)
-	if !CheckTarget(hash, shareTarget) {
-		reject("low difficulty share")
+	networkTarget, err := parseHashHex(job.Target)
+	if err != nil {
+		s.sendError(miner, req.ID, "internal error")
+		return
+	}
+
+	var claimedHash [32]byte
+	hasClaimedHash := strings.TrimSpace(params.ClaimedHash) != ""
+	if s.config.StratumSubmitV2Required && !hasClaimedHash {
+		reject("claimed hash required")
+		return
+	}
+	if hasClaimedHash {
+		claimedHash, err = parseHashHex(params.ClaimedHash)
+		if err != nil {
+			reject("invalid claimed hash")
+			return
+		}
+	}
+
+	candidateHint := hasClaimedHash && CheckTarget(claimedHash, networkTarget)
+	resultCh := make(chan ValidationResult, 1)
+	task := &ValidationTask{
+		Address:         miner.Address,
+		Nonce:           params.Nonce,
+		HeaderBase:      headerBase,
+		ShareTarget:     shareTarget,
+		NetworkTarget:   networkTarget,
+		ClaimedHash:     claimedHash,
+		HasClaimedHash:  hasClaimedHash,
+		ForceFullVerify: candidateHint || !hasClaimedHash,
+		ResultCh:        resultCh,
+	}
+	if forced, _, err := s.store.ShouldForceVerifyAddress(miner.Address); err != nil {
+		log.Printf("[stratum] force-verify check failed for %s: %v", miner.Address, err)
+	} else if forced {
+		task.ForceFullVerify = true
+	}
+	var validation ValidationResult
+	queued := s.validator.Submit(task, candidateHint)
+	if !queued {
+		if shouldInlineValidationOnQueueFull(hasClaimedHash, candidateHint) {
+			validation = s.validator.ProcessInline(task)
+		} else {
+			reject("server busy, retry")
+			return
+		}
+	}
+
+	if queued {
+		validationTimeout := s.config.JobTimeoutDuration()
+		if validationTimeout < 5*time.Second {
+			validationTimeout = 5 * time.Second
+		}
+		if validationTimeout > 60*time.Second {
+			validationTimeout = 60 * time.Second
+		}
+
+		select {
+		case validation = <-resultCh:
+		case <-time.After(validationTimeout):
+			reject("validation timeout")
+			return
+		}
+	}
+
+	if !validation.Accepted {
+		if validation.RejectReason == "" {
+			reject("invalid share")
+		} else {
+			reject(validation.RejectReason)
+		}
+		if validation.SuspectedFraud || validation.EscalateRisk {
+			riskReason := validation.RejectReason
+			if riskReason == "" {
+				riskReason = "share validation escalation"
+			}
+			riskState, err := s.store.EscalateAddressRisk(
+				miner.Address,
+				riskReason,
+				s.config.QuarantineDurationDur(),
+				s.config.MaxQuarantineDurationDur(),
+				s.config.ForcedVerifyDurationDur(),
+				true,
+			)
+			if err != nil {
+				log.Printf("[stratum] failed to persist risk state for %s: %v", miner.Address, err)
+			} else {
+				log.Printf("[stratum] risk escalation for %s: strikes=%d quarantined_until=%s force_verify_until=%s reason=%s",
+					miner.Address, riskState.Strikes, riskState.QuarantinedUntil.Format(time.RFC3339),
+					riskState.ForceVerifyUntil.Format(time.RFC3339), riskState.LastReason)
+			}
+			s.banAddress(miner.Address, "share validation fraud")
+			s.banIP(ip)
+			miner.Conn.Close()
+		}
 		return
 	}
 
 	// --- Valid share ---
+	now := time.Now()
 	miner.SharesAccepted.Add(1)
-	miner.LastShareAt.Store(time.Now().Unix())
+	miner.LastShareAt.Store(now.Unix())
 	miner.consecutiveRejects.Store(0) // reset on valid share
-	
+
 	// Mark share as seen in persistent storage
 	if err := s.store.MarkShareSeen(params.JobID, params.Nonce); err != nil {
 		log.Printf("[stratum] error marking share as seen: %v", err)
 	}
 
-	share := &Share{
-		JobID:      params.JobID,
-		Miner:      miner.Address,
-		Worker:     miner.Worker,
-		Difficulty: miner.Difficulty,
-		Timestamp:  time.Now(),
-		Nonce:      params.Nonce,
+	validationStatus := ShareStatusProvisional
+	eligibleAt := now.Add(s.config.ProvisionalShareDelayDur())
+	if validation.Verified {
+		validationStatus = ShareStatusVerified
+		eligibleAt = now
 	}
 
-	// Check network target
-	networkTarget, err := hex.DecodeString(job.Target)
-	if err == nil && len(networkTarget) == 32 {
-		var nt [32]byte
-		copy(nt[:], networkTarget)
-		if CheckTarget(hash, nt) {
-			log.Printf("[stratum] BLOCK FOUND by %s/%s at height %d!", miner.Address, miner.Worker, job.Height)
-			share.BlockHash = fmt.Sprintf("%x", hash)
+	share := &Share{
+		JobID:            params.JobID,
+		Miner:            miner.Address,
+		Worker:           miner.Worker,
+		Difficulty:       miner.Difficulty,
+		Timestamp:        now,
+		Nonce:            params.Nonce,
+		ValidationStatus: validationStatus,
+		EligibleAt:       eligibleAt,
+		WasSampled:       validation.Verified,
+	}
 
-			result, err := s.jobs.SubmitBlock(job, params.Nonce)
-			if err != nil {
-				log.Printf("[stratum] block submit failed: %v", err)
-			} else if result.Accepted {
-				log.Printf("[stratum] block accepted! hash=%s height=%d", result.Hash, result.Height)
-				s.recordBlock(job, miner, result)
-			}
-			
-			// Block-finding shares are critical - write immediately
-			if err := s.store.AddShareImmediate(share); err != nil {
-				log.Printf("[stratum] failed to store block share: %v", err)
-			}
-		} else {
-			// Regular share - use batch writer
-			if err := s.store.AddShare(share); err != nil {
-				log.Printf("[stratum] failed to store share: %v", err)
-			}
+	if validation.IsBlockCandidate {
+		log.Printf("[stratum] BLOCK CANDIDATE by %s/%s at height %d!", miner.Address, miner.Worker, job.Height)
+		share.BlockHash = fmt.Sprintf("%x", validation.Hash)
+
+		result, err := s.jobs.SubmitBlock(job, params.Nonce)
+		if err != nil {
+			log.Printf("[stratum] block submit failed: %v", err)
+		} else if result.Accepted {
+			log.Printf("[stratum] block accepted! hash=%s height=%d", result.Hash, result.Height)
+			s.recordBlock(job, miner, result)
+		}
+
+		// Block-finding shares are critical - write immediately
+		if err := s.store.AddShareImmediate(share); err != nil {
+			log.Printf("[stratum] failed to store block share: %v", err)
 		}
 	} else {
 		// Regular share - use batch writer
@@ -636,7 +745,11 @@ func (s *StratumServer) handleSubmit(miner *Miner, req *StratumRequest, ip strin
 	s.sendJSON(miner, StratumResponse{
 		ID:     req.ID,
 		Status: "ok",
-		Result: map[string]any{"accepted": true},
+		Result: map[string]any{
+			"accepted": true,
+			"verified": validation.Verified,
+			"status":   validationStatus,
+		},
 	})
 
 	if miner.SharesAccepted.Load()%diffAdjustShares == 0 {
@@ -652,12 +765,12 @@ func (s *StratumServer) adjustDifficulty(miner *Miner) {
 	now := time.Now().Unix()
 	lastAdj := miner.lastAdjustAt.Load()
 	elapsed := now - lastAdj
-	
+
 	// Enforce minimum adjustment interval to prevent manipulation
 	if elapsed < int64(minDiffAdjustInterval.Seconds()) {
 		return
 	}
-	
+
 	if elapsed < 1 {
 		return
 	}
@@ -666,7 +779,7 @@ func (s *StratumServer) adjustDifficulty(miner *Miner) {
 	ratio := actualInterval / float64(targetShareInterval)
 
 	newDiff := miner.Difficulty
-	
+
 	// Apply capped adjustments to prevent manipulation
 	if ratio < 0.5 {
 		// Miner is too fast - increase difficulty
@@ -760,6 +873,26 @@ func (s *StratumServer) sendJSON(miner *Miner, v any) {
 	}
 }
 
+func parseHashHex(v string) ([32]byte, error) {
+	var out [32]byte
+	raw, err := hex.DecodeString(strings.TrimSpace(v))
+	if err != nil {
+		return out, err
+	}
+	if len(raw) != 32 {
+		return out, fmt.Errorf("expected 32-byte hash, got %d bytes", len(raw))
+	}
+	copy(out[:], raw)
+	return out, nil
+}
+
+func shouldInlineValidationOnQueueFull(hasClaimedHash, candidateHint bool) bool {
+	// Legacy submit (v1) has no claimed hash, so a true block candidate cannot be
+	// identified without full PoW verification. Preserve legacy behavior by
+	// processing inline instead of dropping potential solutions when the queue is full.
+	return candidateHint || !hasClaimedHash
+}
+
 // MinerCount returns the number of connected miners.
 func (s *StratumServer) MinerCount() int {
 	s.mu.RLock()
@@ -785,4 +918,18 @@ func (s *StratumServer) GetMiners() []*MinerSnapshot {
 		})
 	}
 	return miners
+}
+
+func (s *StratumServer) ValidationQueueDepths() (candidate, regular int) {
+	if s.validator == nil {
+		return 0, 0
+	}
+	return s.validator.QueueDepths()
+}
+
+func (s *StratumServer) ValidationSnapshot() ValidationSnapshot {
+	if s.validator == nil {
+		return ValidationSnapshot{}
+	}
+	return s.validator.Snapshot()
 }

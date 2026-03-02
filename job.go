@@ -16,11 +16,12 @@ import (
 // Job represents a mining job derived from a block template.
 type Job struct {
 	ID         string          `json:"id"`
+	TemplateID string          `json:"template_id,omitempty"`
 	Height     uint64          `json:"height"`
 	HeaderBase string          `json:"header_base"` // hex-encoded 92-byte header (no nonce)
-	Target     string          `json:"target"`       // hex-encoded 32-byte network target
-	Difficulty uint64          `json:"difficulty"`    // network difficulty
-	Block      json.RawMessage `json:"block"`        // full block JSON for submission
+	Target     string          `json:"target"`      // hex-encoded 32-byte network target
+	Difficulty uint64          `json:"difficulty"`  // network difficulty
+	Block      json.RawMessage `json:"block"`       // full block JSON for submission
 	CreatedAt  time.Time       `json:"created_at"`
 }
 
@@ -42,15 +43,15 @@ type JobManager struct {
 	subscribers []chan *Job
 
 	cancel context.CancelFunc
-	
+
 	// Rate limiting for job refreshes
 	lastRefresh time.Time
 	refreshMu   sync.Mutex
 
 	// Cached daemon wallet address used when pool_wallet_address is not configured.
-	rewardAddrMu            sync.Mutex
-	daemonRewardAddress     string
-	daemonRewardCheckedAt   time.Time
+	rewardAddrMu          sync.Mutex
+	daemonRewardAddress   string
+	daemonRewardCheckedAt time.Time
 }
 
 func NewJobManager(node *NodeClient, config *Config) *JobManager {
@@ -109,7 +110,7 @@ func (jm *JobManager) refreshTemplate() {
 	}
 	jm.lastRefresh = time.Now()
 	jm.refreshMu.Unlock()
-	
+
 	rewardAddress := jm.resolveRewardAddress()
 	tmpl, err := jm.node.GetBlockTemplate(rewardAddress)
 	if err != nil {
@@ -137,7 +138,7 @@ func (jm *JobManager) refreshTemplate() {
 			Type       string            `json:"type"`
 			IsCoinbase bool              `json:"is_coinbase"`
 			Inputs     []json.RawMessage `json:"inputs"`
-			Outputs []struct {
+			Outputs    []struct {
 				Address string `json:"address"`
 				Amount  uint64 `json:"amount"`
 			} `json:"outputs"`
@@ -147,7 +148,7 @@ func (jm *JobManager) refreshTemplate() {
 		log.Printf("[jobs] failed to parse block template header: %v", err)
 		return
 	}
-	
+
 	// Validate coinbase transaction pays to pool wallet
 	if rewardAddress != "" {
 		if !jm.validateCoinbase(&blockInfo, rewardAddress) {
@@ -168,6 +169,7 @@ func (jm *JobManager) refreshTemplate() {
 
 	job := &Job{
 		ID:         generateJobID(),
+		TemplateID: strings.TrimSpace(tmpl.TemplateID),
 		Height:     blockInfo.Header.Height,
 		HeaderBase: tmpl.HeaderBase,
 		Target:     tmpl.Target,
@@ -213,7 +215,7 @@ func (jm *JobManager) validateCoinbase(blockInfo *struct {
 		Type       string            `json:"type"`
 		IsCoinbase bool              `json:"is_coinbase"`
 		Inputs     []json.RawMessage `json:"inputs"`
-		Outputs []struct {
+		Outputs    []struct {
 			Address string `json:"address"`
 			Amount  uint64 `json:"amount"`
 		} `json:"outputs"`
@@ -344,6 +346,14 @@ func (jm *JobManager) notifySubscribers(job *Job) {
 
 // SubmitBlock submits a solved block to the node.
 func (jm *JobManager) SubmitBlock(job *Job, nonce uint64) (*SubmitBlockResponse, error) {
+	if job.TemplateID != "" {
+		result, err := jm.node.SubmitBlockCompact(job.TemplateID, nonce)
+		if err == nil {
+			return result, nil
+		}
+		log.Printf("[jobs] compact submit failed, falling back to full block payload: %v", err)
+	}
+
 	// Inject the nonce into the block JSON
 	var block map[string]json.RawMessage
 	if err := json.Unmarshal(job.Block, &block); err != nil {
@@ -374,12 +384,14 @@ func generateJobID() string {
 
 // BuildMinerJob creates the data sent to a miner over stratum.
 type MinerJob struct {
-	JobID      string `json:"job_id"`
-	HeaderBase string `json:"header_base"` // hex 92 bytes
-	Target     string `json:"target"`      // hex share target (not network target)
-	Height     uint64 `json:"height"`
-	NonceStart uint64 `json:"nonce_start"`
-	NonceEnd   uint64 `json:"nonce_end"`
+	JobID         string `json:"job_id"`
+	TemplateID    string `json:"template_id,omitempty"`
+	HeaderBase    string `json:"header_base"`              // hex 92 bytes
+	Target        string `json:"target"`                   // hex share target (not network target)
+	NetworkTarget string `json:"network_target,omitempty"` // hex network target
+	Height        uint64 `json:"height"`
+	NonceStart    uint64 `json:"nonce_start"`
+	NonceEnd      uint64 `json:"nonce_end"`
 }
 
 // BuildMinerJob creates a job tailored for a specific miner's share difficulty.
@@ -398,11 +410,13 @@ func (jm *JobManager) BuildMinerJob(shareDifficulty uint64) *MinerJob {
 	shareTarget := difficultyToTarget(shareDifficulty)
 
 	return &MinerJob{
-		JobID:      job.ID,
-		HeaderBase: job.HeaderBase,
-		Target:     hex.EncodeToString(shareTarget[:]),
-		Height:     job.Height,
-		NonceStart: start,
-		NonceEnd:   start + nonceRange - 1,
+		JobID:         job.ID,
+		TemplateID:    job.TemplateID,
+		HeaderBase:    job.HeaderBase,
+		Target:        hex.EncodeToString(shareTarget[:]),
+		NetworkTarget: job.Target,
+		Height:        job.Height,
+		NonceStart:    start,
+		NonceEnd:      start + nonceRange - 1,
 	}
 }

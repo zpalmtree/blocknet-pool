@@ -11,8 +11,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -83,17 +83,17 @@ func (ws *WebServer) newPageData(path, title, description string) map[string]any
 	}
 
 	return map[string]any{
-		"PoolName":         ws.config.PoolName,
-		"PoolURL":          ws.config.PoolURL,
-		"StratumHost":      stratumHost,
-		"StratumEndpoint":  fmt.Sprintf("%s:%d", stratumHost, ws.config.StratumPort),
-		"CurrentPage":      "pool",
-		"MetaTitle":        title,
-		"MetaDescription":  description,
-		"MetaURL":          metaURL,
-		"MetaImage":        metaImage,
-		"MetaImageAlt":     fmt.Sprintf("%s preview banner", ws.config.PoolName),
-		"MetaSiteName":     ws.config.PoolName,
+		"PoolName":        ws.config.PoolName,
+		"PoolURL":         ws.config.PoolURL,
+		"StratumHost":     stratumHost,
+		"StratumEndpoint": fmt.Sprintf("%s:%d", stratumHost, ws.config.StratumPort),
+		"CurrentPage":     "pool",
+		"MetaTitle":       title,
+		"MetaDescription": description,
+		"MetaURL":         metaURL,
+		"MetaImage":       metaImage,
+		"MetaImageAlt":    fmt.Sprintf("%s preview banner", ws.config.PoolName),
+		"MetaSiteName":    ws.config.PoolName,
 	}
 }
 
@@ -149,7 +149,7 @@ func (ws *WebServer) requireAuth(next http.Handler) http.Handler {
 	if ws.config.APIKey == "" {
 		return next
 	}
-	
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check API key in Authorization header: "Bearer <key>"
 		authHeader := r.Header.Get("Authorization")
@@ -160,7 +160,7 @@ func (ws *WebServer) requireAuth(next http.Handler) http.Handler {
 				authHeader = "Bearer " + authHeader
 			}
 		}
-		
+
 		expectedAuth := "Bearer " + ws.config.APIKey
 		if authHeader != expectedAuth {
 			w.Header().Set("Content-Type", "application/json")
@@ -170,7 +170,7 @@ func (ws *WebServer) requireAuth(next http.Handler) http.Handler {
 			})
 			return
 		}
-		
+
 		next.ServeHTTP(w, r)
 	})
 }
@@ -381,19 +381,41 @@ func (ws *WebServer) handleAPIStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	blockCount, _ := ws.store.GetBlockCount()
+	validation := ws.stratum.ValidationSnapshot()
+	quarantinedCount, forcedCount, err := ws.store.GetRiskSummary()
+	if err != nil {
+		log.Printf("[web] risk summary read failed: %v", err)
+	}
+	invalidRatio := 0.0
+	if validation.SampledShares > 0 {
+		invalidRatio = float64(validation.InvalidSamples) / float64(validation.SampledShares)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"pool_hashrate":     ws.stats.EstimateHashrate(),
-		"connected_miners":  ws.stats.ConnectedMinerCount(),
-		"connected_workers": ws.stats.ConnectedWorkerCount(),
-		"shares_accepted":   ws.stats.TotalSharesAccepted.Load(),
-		"shares_rejected":   ws.stats.TotalSharesRejected.Load(),
-		"blocks_found":      blockCount,
-		"network_height":    networkHeight,
-		"network_difficulty": networkDifficulty,
-		"payout_scheme":     ws.config.PayoutScheme,
-		"pool_fee_flat":     ws.config.PoolFeeFlat,
-		"pool_fee_pct":      ws.config.PoolFeePct,
+		"pool_hashrate":                  ws.stats.EstimateHashrate(),
+		"connected_miners":               ws.stats.ConnectedMinerCount(),
+		"connected_workers":              ws.stats.ConnectedWorkerCount(),
+		"shares_accepted":                ws.stats.TotalSharesAccepted.Load(),
+		"shares_rejected":                ws.stats.TotalSharesRejected.Load(),
+		"blocks_found":                   blockCount,
+		"network_height":                 networkHeight,
+		"network_difficulty":             networkDifficulty,
+		"payout_scheme":                  ws.config.PayoutScheme,
+		"pool_fee_flat":                  ws.config.PoolFeeFlat,
+		"pool_fee_pct":                   ws.config.PoolFeePct,
+		"validation_mode":                ws.config.ValidationMode,
+		"validation_inflight":            validation.InFlight,
+		"validation_queue_regular":       validation.RegularQueueDepth,
+		"validation_queue_candidate":     validation.CandidateQueueDepth,
+		"validation_tracked_addresses":   validation.TrackedAddresses,
+		"validation_forced_addresses":    validation.ForcedVerifyAddresses,
+		"validation_sampled_shares":      validation.SampledShares,
+		"validation_invalid_samples":     validation.InvalidSamples,
+		"validation_invalid_ratio":       invalidRatio,
+		"validation_pending_provisional": validation.PendingProvisional,
+		"validation_fraud_detections":    validation.FraudDetections,
+		"risk_quarantined_addresses":     quarantinedCount,
+		"risk_forced_verify_addresses":   forcedCount,
 	})
 }
 
@@ -423,10 +445,10 @@ func (ws *WebServer) handleAPIMiner(w http.ResponseWriter, r *http.Request) {
 	balance, _ := ws.store.GetBalance(address)
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"address":   address,
-		"stats":     minerStats,
-		"balance":   balance,
-		"hashrate":  ws.stats.EstimateMinerHashrate(address),
+		"address":  address,
+		"stats":    minerStats,
+		"balance":  balance,
+		"hashrate": ws.stats.EstimateMinerHashrate(address),
 	})
 }
 

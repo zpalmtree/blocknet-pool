@@ -37,6 +37,7 @@ type BlockTemplate struct {
 	Target            string          `json:"target"`
 	HeaderBase        string          `json:"header_base"`
 	RewardAddressUsed string          `json:"reward_address_used"`
+	TemplateID        string          `json:"template_id"`
 }
 
 // NodeStatus is the response from GET /api/status.
@@ -259,6 +260,38 @@ func (n *NodeClient) SubmitBlock(blockJSON json.RawMessage) (*SubmitBlockRespons
 	var result SubmitBlockResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("decode submitblock: %w", err)
+	}
+	return &result, nil
+}
+
+// SubmitBlockCompact submits a solved block via compact payload.
+func (n *NodeClient) SubmitBlockCompact(templateID string, nonce uint64) (*SubmitBlockResponse, error) {
+	body, err := json.Marshal(map[string]any{
+		"template_id": templateID,
+		"nonce":       nonce,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal compact submit payload: %w", err)
+	}
+
+	resp, err := n.doRequest("POST", "/api/mining/submitblock", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("submitblock compact: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, &HTTPError{
+			Path:       "/api/mining/submitblock",
+			StatusCode: resp.StatusCode,
+			Body:       string(respBody),
+		}
+	}
+
+	var result SubmitBlockResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("decode compact submitblock response: %w", err)
 	}
 	return &result, nil
 }

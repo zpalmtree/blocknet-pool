@@ -21,6 +21,7 @@ var (
 	bucketMeta           = []byte("meta")
 	bucketSeenShares     = []byte("seen_shares")     // persistent share deduplication
 	bucketPendingPayouts = []byte("pending_payouts") // atomicity for payouts
+	bucketAddressRisk    = []byte("address_risk")    // persistent risk/quarantine state
 )
 
 // BatchWriter handles buffered writes to reduce BoltDB lock contention
@@ -49,14 +50,17 @@ type Store struct {
 
 // Share represents a valid share submitted by a miner.
 type Share struct {
-	ID         uint64    `json:"id"`
-	JobID      string    `json:"job_id"`
-	Miner      string    `json:"miner"`      // wallet address
-	Worker     string    `json:"worker"`     // worker name
-	Difficulty uint64    `json:"difficulty"` // share difficulty
-	Timestamp  time.Time `json:"timestamp"`
-	Nonce      uint64    `json:"nonce"`
-	BlockHash  string    `json:"block_hash,omitempty"` // set if this share found a block
+	ID               uint64    `json:"id"`
+	JobID            string    `json:"job_id"`
+	Miner            string    `json:"miner"`      // wallet address
+	Worker           string    `json:"worker"`     // worker name
+	Difficulty       uint64    `json:"difficulty"` // share difficulty
+	Timestamp        time.Time `json:"timestamp"`
+	Nonce            uint64    `json:"nonce"`
+	ValidationStatus string    `json:"validation_status,omitempty"` // verified|provisional
+	EligibleAt       time.Time `json:"eligible_at,omitempty"`       // payout eligibility gate
+	WasSampled       bool      `json:"was_sampled,omitempty"`       // true when full PoW verification ran
+	BlockHash        string    `json:"block_hash,omitempty"`        // set if this share found a block
 }
 
 // PoolBlock represents a block found by the pool.
@@ -97,6 +101,16 @@ type PendingPayout struct {
 	InitiatedAt time.Time `json:"initiated_at"`
 }
 
+// AddressRiskState tracks persistent anti-abuse state per miner address.
+type AddressRiskState struct {
+	Address          string    `json:"address"`
+	Strikes          uint64    `json:"strikes"`
+	LastReason       string    `json:"last_reason,omitempty"`
+	LastEventAt      time.Time `json:"last_event_at,omitempty"`
+	QuarantinedUntil time.Time `json:"quarantined_until,omitempty"`
+	ForceVerifyUntil time.Time `json:"force_verify_until,omitempty"`
+}
+
 func OpenStore(path string) (*Store, error) {
 	db, err := bolt.Open(path, 0600, &bolt.Options{Timeout: 5 * time.Second})
 	if err != nil {
@@ -105,7 +119,16 @@ func OpenStore(path string) (*Store, error) {
 
 	// Create buckets
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketShares, bucketBlocks, bucketBalances, bucketPayouts, bucketMeta, bucketSeenShares, bucketPendingPayouts} {
+		for _, b := range [][]byte{
+			bucketShares,
+			bucketBlocks,
+			bucketBalances,
+			bucketPayouts,
+			bucketMeta,
+			bucketSeenShares,
+			bucketPendingPayouts,
+			bucketAddressRisk,
+		} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -721,6 +744,146 @@ func (s *Store) CleanExpiredSeenShares() error {
 
 		return nil
 	})
+}
+
+// ============================================================================
+// Persistent Address Risk State
+// ============================================================================
+
+func (s *Store) GetAddressRisk(address string) (*AddressRiskState, error) {
+	var state *AddressRiskState
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketAddressRisk)
+		data := b.Get([]byte(address))
+		if data == nil {
+			return nil
+		}
+		st := &AddressRiskState{}
+		state = st
+		return json.Unmarshal(data, st)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if state == nil {
+		return nil, nil
+	}
+	if state.Address == "" {
+		state.Address = address
+	}
+	return state, nil
+}
+
+func (s *Store) IsAddressQuarantined(address string) (bool, *AddressRiskState, error) {
+	state, err := s.GetAddressRisk(address)
+	if err != nil {
+		return false, nil, err
+	}
+	if state == nil {
+		return false, nil, nil
+	}
+	return time.Now().Before(state.QuarantinedUntil), state, nil
+}
+
+func (s *Store) ShouldForceVerifyAddress(address string) (bool, *AddressRiskState, error) {
+	state, err := s.GetAddressRisk(address)
+	if err != nil {
+		return false, nil, err
+	}
+	if state == nil {
+		return false, nil, nil
+	}
+	now := time.Now()
+	force := now.Before(state.ForceVerifyUntil) || now.Before(state.QuarantinedUntil)
+	return force, state, nil
+}
+
+func (s *Store) EscalateAddressRisk(
+	address, reason string,
+	quarantineBase, quarantineMax, forceVerifyDuration time.Duration,
+	applyQuarantine bool,
+) (*AddressRiskState, error) {
+	if address == "" {
+		return nil, fmt.Errorf("address is required")
+	}
+
+	var out AddressRiskState
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketAddressRisk)
+		out = AddressRiskState{Address: address}
+
+		if data := b.Get([]byte(address)); data != nil {
+			if err := json.Unmarshal(data, &out); err != nil {
+				return err
+			}
+		}
+
+		now := time.Now()
+		out.Address = address
+		out.Strikes++
+		out.LastReason = reason
+		out.LastEventAt = now
+
+		if forceVerifyDuration > 0 {
+			forceUntil := now.Add(forceVerifyDuration)
+			if forceUntil.After(out.ForceVerifyUntil) {
+				out.ForceVerifyUntil = forceUntil
+			}
+		}
+
+		if applyQuarantine && quarantineBase > 0 {
+			duration := quarantineBase
+			if quarantineMax > 0 && duration > quarantineMax {
+				duration = quarantineMax
+			}
+			for i := uint64(1); i < out.Strikes; i++ {
+				if quarantineMax > 0 && duration >= quarantineMax {
+					duration = quarantineMax
+					break
+				}
+				if quarantineMax > 0 && duration > quarantineMax/2 {
+					duration = quarantineMax
+					break
+				}
+				duration *= 2
+			}
+			quarantineUntil := now.Add(duration)
+			if quarantineUntil.After(out.QuarantinedUntil) {
+				out.QuarantinedUntil = quarantineUntil
+			}
+		}
+
+		encoded, err := json.Marshal(&out)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(address), encoded)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (s *Store) GetRiskSummary() (quarantined, forced int, err error) {
+	now := time.Now()
+	err = s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketAddressRisk)
+		return b.ForEach(func(_, v []byte) error {
+			var state AddressRiskState
+			if err := json.Unmarshal(v, &state); err != nil {
+				return nil
+			}
+			if now.Before(state.QuarantinedUntil) {
+				quarantined++
+			}
+			if now.Before(state.ForceVerifyUntil) || now.Before(state.QuarantinedUntil) {
+				forced++
+			}
+			return nil
+		})
+	})
+	return quarantined, forced, err
 }
 
 // ============================================================================

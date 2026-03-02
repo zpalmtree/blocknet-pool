@@ -268,11 +268,29 @@ func (pp *PayoutProcessor) distributeProportional(block *PoolBlock, reward uint6
 func weightShares(shares []Share) (map[string]uint64, uint64) {
 	weights := make(map[string]uint64)
 	var total uint64
+	now := time.Now()
 	for _, s := range shares {
+		if !isSharePayoutEligible(s, now) {
+			continue
+		}
 		weights[s.Miner] += s.Difficulty
 		total += s.Difficulty
 	}
 	return weights, total
+}
+
+func isSharePayoutEligible(share Share, now time.Time) bool {
+	switch share.ValidationStatus {
+	case "", ShareStatusVerified:
+		return true
+	case ShareStatusProvisional:
+		if share.EligibleAt.IsZero() {
+			return false
+		}
+		return !now.Before(share.EligibleAt)
+	default:
+		return false
+	}
 }
 
 // creditMiners distributes amount proportional to weights. Returns total credited.

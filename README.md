@@ -69,6 +69,20 @@ In `config.json`, set these first:
 - `api_port`
 - `daemon_api`
 - `daemon_data_dir` (for `api.cookie`)
+- `validation_mode` (`probabilistic` or `full`)
+- `max_verifiers`
+- `max_validation_queue`
+- `sample_rate`
+- `warmup_shares`
+- `min_sample_every`
+- `invalid_sample_threshold`
+- `invalid_sample_min`
+- `forced_verify_duration`
+- `quarantine_duration`
+- `max_quarantine_duration`
+- `provisional_share_delay`
+- `max_provisional_shares`
+- `stratum_submit_v2_required`
 - `pool_fee_flat` / `pool_fee_pct`
 - `payout_scheme` (`pplns` recommended)
 - `pplns_window_duration` (example: `24h`)
@@ -170,3 +184,18 @@ API security:
 - max 16 connections per source IP
 - miner must login within 30s
 - duplicate shares are rejected (memory + 24h persistent dedup)
+
+Stratum submit compatibility:
+
+- v1: `{job_id, nonce}`
+- v2: `{job_id, nonce, claimed_hash}`
+- set `stratum_submit_v2_required=true` to require v2 payloads
+
+Validation behavior:
+
+- `validation_mode=probabilistic` is the default for scale
+- candidate shares (potential blocks) are always fully verified
+- regular shares are sampled with warmup + periodic forced checks
+- addresses can be forced into full verification based on invalid sample rate
+- high-risk addresses are persisted in DB with quarantine + force-verify state
+- provisional (unverified) shares are capped per address via `max_provisional_shares`
