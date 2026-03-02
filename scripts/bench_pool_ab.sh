@@ -23,6 +23,8 @@ Usage:
     [--profile <cargo-profile>] \
     [--base-stratum-port <n>] \
     [--base-api-port <n>] \
+    [--max-conns-per-ip <n>] \
+    [--run-order baseline-first|alternate] \
     [--ready-timeout-secs <n>] \
     [--output-dir <path>]
 
@@ -33,7 +35,7 @@ Example:
     --daemon-api http://127.0.0.1:8332 \
     --pairs 3 \
     --duration-secs 90 \
-    --workers 96 \
+    --workers 12 \
     --shares-per-worker-per-sec 6 \
     --submit-mode legacy \
     --validation-mode full \
@@ -63,6 +65,8 @@ cooldown_secs=15
 profile="release"
 base_stratum_port=3433
 base_api_port=8180
+max_conns_per_ip=16
+run_order="alternate"
 ready_timeout_secs=45
 output_dir=""
 
@@ -140,6 +144,14 @@ while (($#)); do
             base_api_port="${2:-}"
             shift 2
             ;;
+        --max-conns-per-ip)
+            max_conns_per_ip="${2:-}"
+            shift 2
+            ;;
+        --run-order)
+            run_order="${2:-}"
+            shift 2
+            ;;
         --ready-timeout-secs)
             ready_timeout_secs="${2:-}"
             shift 2
@@ -186,6 +198,17 @@ if [[ "$validation_mode" != "full" && "$validation_mode" != "probabilistic" ]]; 
     exit 1
 fi
 
+if [[ "$run_order" != "baseline-first" && "$run_order" != "alternate" ]]; then
+    echo "error: --run-order must be baseline-first or alternate" >&2
+    exit 1
+fi
+
+if ((workers > max_conns_per_ip)); then
+    echo "error: workers=$workers exceeds max-conns-per-ip=$max_conns_per_ip" >&2
+    echo "hint: lower --workers or pass --max-conns-per-ip to match your pool limit" >&2
+    exit 1
+fi
+
 timestamp="$(date +%Y%m%d_%H%M%S)"
 if [[ -z "$output_dir" ]]; then
     output_dir="data/bench_pool_ab_${validation_mode}_${timestamp}"
@@ -214,6 +237,8 @@ max_validation_queue=$max_validation_queue
 stratum_submit_v2_required=$stratum_submit_v2_required
 cooldown_secs=$cooldown_secs
 profile=$profile
+max_conns_per_ip=$max_conns_per_ip
+run_order=$run_order
 baseline_dir=$baseline_dir
 candidate_dir=$candidate_dir
 EOF
@@ -483,16 +508,43 @@ for ((pair=1; pair<=pairs; pair++)); do
     candidate_stratum_port=$((baseline_stratum_port + 10))
     candidate_api_port=$((baseline_api_port + 10))
 
-    echo "[bench] pair $pair/$pairs baseline: ports $baseline_stratum_port/$baseline_api_port"
-    run_leg "$pair" "baseline" "$baseline_dir" "$baseline_bin" "$baseline_stratum_port" "$baseline_api_port"
+    first_leg="baseline"
+    second_leg="candidate"
+    if [[ "$run_order" == "alternate" ]] && ((pair % 2 == 0)); then
+        first_leg="candidate"
+        second_leg="baseline"
+    fi
+
+    if [[ "$first_leg" == "baseline" ]]; then
+        first_dir="$baseline_dir"
+        first_bin="$baseline_bin"
+        first_stratum_port="$baseline_stratum_port"
+        first_api_port="$baseline_api_port"
+        second_dir="$candidate_dir"
+        second_bin="$candidate_bin"
+        second_stratum_port="$candidate_stratum_port"
+        second_api_port="$candidate_api_port"
+    else
+        first_dir="$candidate_dir"
+        first_bin="$candidate_bin"
+        first_stratum_port="$candidate_stratum_port"
+        first_api_port="$candidate_api_port"
+        second_dir="$baseline_dir"
+        second_bin="$baseline_bin"
+        second_stratum_port="$baseline_stratum_port"
+        second_api_port="$baseline_api_port"
+    fi
+
+    echo "[bench] pair $pair/$pairs $first_leg: ports $first_stratum_port/$first_api_port"
+    run_leg "$pair" "$first_leg" "$first_dir" "$first_bin" "$first_stratum_port" "$first_api_port"
 
     if ((cooldown_secs > 0)); then
         echo "[bench] cooldown ${cooldown_secs}s"
         sleep "$cooldown_secs"
     fi
 
-    echo "[bench] pair $pair/$pairs candidate: ports $candidate_stratum_port/$candidate_api_port"
-    run_leg "$pair" "candidate" "$candidate_dir" "$candidate_bin" "$candidate_stratum_port" "$candidate_api_port"
+    echo "[bench] pair $pair/$pairs $second_leg: ports $second_stratum_port/$second_api_port"
+    run_leg "$pair" "$second_leg" "$second_dir" "$second_bin" "$second_stratum_port" "$second_api_port"
 
     if ((pair < pairs && cooldown_secs > 0)); then
         echo "[bench] cooldown ${cooldown_secs}s"

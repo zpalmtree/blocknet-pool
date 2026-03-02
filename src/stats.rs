@@ -23,6 +23,12 @@ struct ShareRecord {
 }
 
 #[derive(Debug, Clone)]
+struct ConnectedWorker {
+    address: String,
+    worker: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct PoolSnapshot {
     pub total_shares_accepted: u64,
     pub total_shares_rejected: u64,
@@ -39,7 +45,7 @@ pub struct PoolStats {
     total_blocks_found: AtomicU64,
 
     miner_stats: RwLock<HashMap<String, MinerStats>>,
-    connected_miners: RwLock<HashMap<String, String>>, // conn_id -> address
+    connected_miners: RwLock<HashMap<String, ConnectedWorker>>, // conn_id -> active miner/worker
     recent_shares: RwLock<VecDeque<ShareRecord>>,
 }
 
@@ -49,9 +55,13 @@ impl PoolStats {
     }
 
     pub fn add_miner(&self, conn_id: &str, address: &str, worker: &str) {
-        self.connected_miners
-            .write()
-            .insert(conn_id.to_string(), address.to_string());
+        self.connected_miners.write().insert(
+            conn_id.to_string(),
+            ConnectedWorker {
+                address: address.to_string(),
+                worker: worker.to_string(),
+            },
+        );
 
         let mut miners = self.miner_stats.write();
         let entry = miners
@@ -183,15 +193,21 @@ impl PoolStats {
     }
 
     pub fn connected_miner_count(&self) -> usize {
-        self.connected_miners.read().len()
+        self.connected_miners
+            .read()
+            .values()
+            .map(|entry| entry.address.as_str())
+            .collect::<HashSet<_>>()
+            .len()
     }
 
     pub fn connected_worker_count(&self) -> usize {
-        self.miner_stats
+        self.connected_miners
             .read()
             .values()
-            .map(|m| m.workers.len())
-            .sum()
+            .map(|entry| (entry.address.as_str(), entry.worker.as_str()))
+            .collect::<HashSet<_>>()
+            .len()
     }
 
     pub fn get_miner_stats(&self, address: &str) -> Option<MinerStats> {
@@ -228,5 +244,28 @@ mod tests {
         assert_eq!(stats.connected_miner_count(), 1);
         assert_eq!(stats.connected_worker_count(), 1);
         assert!(stats.snapshot().total_shares_accepted >= 2);
+    }
+
+    #[test]
+    fn connected_counts_track_active_connections() {
+        let stats = PoolStats::new();
+        stats.add_miner("c1", "addr1", "rig1");
+        stats.add_miner("c2", "addr1", "rig1");
+        stats.add_miner("c3", "addr2", "rig9");
+
+        assert_eq!(stats.connected_miner_count(), 2);
+        assert_eq!(stats.connected_worker_count(), 2);
+
+        stats.remove_miner("c1");
+        assert_eq!(stats.connected_miner_count(), 2);
+        assert_eq!(stats.connected_worker_count(), 2);
+
+        stats.remove_miner("c2");
+        assert_eq!(stats.connected_miner_count(), 1);
+        assert_eq!(stats.connected_worker_count(), 1);
+
+        stats.remove_miner("c3");
+        assert_eq!(stats.connected_miner_count(), 0);
+        assert_eq!(stats.connected_worker_count(), 0);
     }
 }
