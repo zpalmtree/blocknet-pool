@@ -47,6 +47,7 @@
 go build
 ./blocknet-pool init
 # edit config.json (see required keys below)
+# edit .env and set BLOCKNET_WALLET_PASSWORD
 ./blocknet-pool
 ```
 
@@ -141,13 +142,12 @@ Payout flow:
 
 Wallet auto recovery:
 
-- `BLOCKNET_WALLET_PASSWORD` (required for auto unlock/load)
-- `BLOCKNET_POOL_AUTO_LOAD_WALLET=true` (optional, off by default)
+- `BLOCKNET_WALLET_PASSWORD` (required for automatic wallet load/unlock)
 
 Safety:
 
 - If wallet is locked, pool tries unlock if password env is set.
-- If no wallet is loaded, pool only auto-loads when explicitly enabled.
+- If no wallet is loaded, pool auto-loads and unlocks when password env is set.
 - View-only wallet => payouts are skipped.
 
 ---

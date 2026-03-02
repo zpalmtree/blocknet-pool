@@ -191,3 +191,65 @@ func TestSubmitBlockFallsBackToFullPayloadAfterCompactFailure(t *testing.T) {
 		t.Fatalf("expected second request to be full payload without template_id, got body=%v", secondBody)
 	}
 }
+
+func TestResolveRewardAddressAutoLoadsAndUnlocksWallet(t *testing.T) {
+	const rewardAddr = "addr-auto-wallet-ready"
+
+	var loadCalls atomic.Int32
+	var unlockCalls atomic.Int32
+	var addressCalls atomic.Int32
+
+	var walletLoaded atomic.Bool
+	var walletUnlocked atomic.Bool
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/wallet/address":
+			addressCalls.Add(1)
+			if !walletLoaded.Load() {
+				http.Error(w, `{"error":"no wallet loaded"}`, http.StatusServiceUnavailable)
+				return
+			}
+			if !walletUnlocked.Load() {
+				http.Error(w, `{"error":"wallet is locked"}`, http.StatusForbidden)
+				return
+			}
+			io.WriteString(w, `{"address":"`+rewardAddr+`","view_only":false}`)
+		case "/api/wallet/load":
+			loadCalls.Add(1)
+			walletLoaded.Store(true)
+			io.WriteString(w, `{"loaded":true,"address":"`+rewardAddr+`"}`)
+		case "/api/wallet/unlock":
+			unlockCalls.Add(1)
+			if !walletLoaded.Load() {
+				http.Error(w, `{"error":"no wallet loaded"}`, http.StatusServiceUnavailable)
+				return
+			}
+			walletUnlocked.Store(true)
+			io.WriteString(w, `{"locked":false}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv(walletPasswordEnv, "test-password")
+
+	cfg := DefaultConfig()
+	node := NewNodeClient(srv.URL, "")
+	jm := NewJobManager(node, cfg)
+
+	addr := jm.resolveRewardAddress()
+	if addr != rewardAddr {
+		t.Fatalf("expected recovered reward address %q, got %q", rewardAddr, addr)
+	}
+	if loadCalls.Load() != 1 {
+		t.Fatalf("expected wallet load call, got %d", loadCalls.Load())
+	}
+	if unlockCalls.Load() != 1 {
+		t.Fatalf("expected wallet unlock call, got %d", unlockCalls.Load())
+	}
+	if addressCalls.Load() < 2 {
+		t.Fatalf("expected wallet address to be retried after recovery, got %d calls", addressCalls.Load())
+	}
+}

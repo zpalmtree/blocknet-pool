@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -268,6 +269,18 @@ func (jm *JobManager) resolveRewardAddress() string {
 	}
 
 	addrResp, err := jm.node.GetWalletAddress()
+	if err != nil {
+		if !jm.recoverDaemonWalletForTemplates(err) {
+			jm.rewardAddrMu.Lock()
+			jm.daemonRewardCheckedAt = time.Now()
+			cached := jm.daemonRewardAddress
+			jm.rewardAddrMu.Unlock()
+			return cached
+		}
+
+		addrResp, err = jm.node.GetWalletAddress()
+	}
+
 	jm.rewardAddrMu.Lock()
 	defer jm.rewardAddrMu.Unlock()
 	jm.daemonRewardCheckedAt = time.Now()
@@ -288,6 +301,38 @@ func (jm *JobManager) resolveRewardAddress() string {
 		log.Printf("[jobs] using daemon wallet address for templates: %s", resolved)
 	}
 	return jm.daemonRewardAddress
+}
+
+func (jm *JobManager) recoverDaemonWalletForTemplates(err error) bool {
+	password := strings.TrimSpace(os.Getenv(walletPasswordEnv))
+	if password == "" {
+		log.Printf("[jobs] daemon wallet unavailable and %s is not set; cannot fetch templates", walletPasswordEnv)
+		return false
+	}
+
+	switch {
+	case IsHTTPStatus(err, 403):
+		if _, unlockErr := jm.node.WalletUnlock(password); unlockErr != nil {
+			log.Printf("[jobs] daemon wallet locked and unlock failed: %v", unlockErr)
+			return false
+		}
+		log.Printf("[jobs] daemon wallet unlocked for template generation")
+		return true
+	case IsHTTPStatus(err, 503):
+		if _, loadErr := jm.node.WalletLoad(password); loadErr != nil && !IsHTTPStatus(loadErr, 409) {
+			log.Printf("[jobs] daemon wallet load failed: %v", loadErr)
+			return false
+		}
+		if _, unlockErr := jm.node.WalletUnlock(password); unlockErr != nil {
+			log.Printf("[jobs] daemon wallet unlock after load failed: %v", unlockErr)
+			return false
+		}
+		log.Printf("[jobs] daemon wallet loaded and unlocked for template generation")
+		return true
+	default:
+		log.Printf("[jobs] daemon wallet address unavailable: %v", err)
+		return false
+	}
 }
 
 // CurrentJob returns the current job.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
@@ -22,7 +25,18 @@ func main() {
 			if err := GenerateDefaultConfig(configPath); err != nil {
 				log.Fatalf("failed to generate config: %v", err)
 			}
+			envPath := filepath.Join(filepath.Dir(configPath), ".env")
+			createdEnv, err := GenerateDefaultEnv(envPath)
+			if err != nil {
+				log.Fatalf("failed to generate env file: %v", err)
+			}
 			fmt.Printf("wrote %s\n", configPath)
+			if createdEnv {
+				fmt.Printf("wrote %s\n", envPath)
+			} else {
+				fmt.Printf("kept existing %s\n", envPath)
+			}
+			fmt.Println("IMPORTANT: edit .env and set BLOCKNET_WALLET_PASSWORD before running the pool.")
 			return
 		case "--config", "-c":
 			if len(os.Args) > 2 {
@@ -32,13 +46,15 @@ func main() {
 			fmt.Println("usage: blocknet-pool [command] [flags]")
 			fmt.Println()
 			fmt.Println("commands:")
-			fmt.Println("  init          generate default config.json")
+			fmt.Println("  init          generate default config.json and .env")
 			fmt.Println()
 			fmt.Println("flags:")
 			fmt.Println("  -c, --config  path to config file (default: config.json)")
 			return
 		}
 	}
+
+	loadDotEnv(configPath)
 
 	// Load config
 	cfg, err := LoadConfig(configPath)
@@ -150,5 +166,30 @@ func main() {
 	log.Printf("web server starting on %s:%d", cfg.APIHost, cfg.APIPort)
 	if err := web.ListenAndServe(); err != nil {
 		log.Fatalf("web server: %v", err)
+	}
+}
+
+func loadDotEnv(configPath string) {
+	candidates := []string{
+		filepath.Join(filepath.Dir(configPath), ".env"),
+		".env",
+	}
+
+	seen := make(map[string]struct{}, len(candidates))
+	for _, path := range candidates {
+		path = filepath.Clean(path)
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+
+		if err := godotenv.Load(path); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			log.Printf("WARNING: failed loading env file %s: %v", path, err)
+			continue
+		}
+		log.Printf("loaded environment from %s", path)
 	}
 }

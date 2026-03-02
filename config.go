@@ -273,3 +273,23 @@ func GenerateDefaultConfig(path string) error {
 	}
 	return os.WriteFile(path, data, 0644)
 }
+
+func GenerateDefaultEnv(path string) (bool, error) {
+	if _, err := os.Stat(path); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+
+	content := strings.Join([]string{
+		"# Blocknet Pool environment",
+		"# REQUIRED: set your daemon wallet password before starting the pool.",
+		"BLOCKNET_WALLET_PASSWORD=CHANGE_ME",
+		"",
+	}, "\n")
+
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		return false, err
+	}
+	return true, nil
+}

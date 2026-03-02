@@ -25,7 +25,6 @@ type PayoutProcessor struct {
 
 const (
 	walletPasswordEnv = "BLOCKNET_WALLET_PASSWORD"
-	autoLoadWalletEnv = "BLOCKNET_POOL_AUTO_LOAD_WALLET"
 )
 
 func NewPayoutProcessor(config *Config, store *Store, node *NodeClient) *PayoutProcessor {
@@ -440,10 +439,6 @@ func (pp *PayoutProcessor) ensureWalletReady() bool {
 			}
 			log.Printf("[payout] wallet unlocked for payout processing")
 		case IsHTTPStatus(err, 503):
-			if !envEnabled(autoLoadWalletEnv) {
-				log.Printf("[payout] no wallet loaded; set %s=true to allow auto-load, skipping payouts", autoLoadWalletEnv)
-				return false
-			}
 			if _, loadErr := pp.node.WalletLoad(password); loadErr != nil && !IsHTTPStatus(loadErr, 409) {
 				log.Printf("[payout] wallet load failed: %v", loadErr)
 				return false
@@ -485,11 +480,6 @@ func (pp *PayoutProcessor) validateDaemonWalletAddress() bool {
 
 	log.Printf("[payout] using daemon wallet address for payouts: %s", daemonAddress)
 	return true
-}
-
-func envEnabled(name string) bool {
-	v := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
-	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
 
 func payoutIdempotencyKey(p PendingPayout) string {
