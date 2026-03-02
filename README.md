@@ -30,6 +30,20 @@ Custom config:
 cargo run --release -- --config /path/to/config.json
 ```
 
+## Database Backend
+
+Default backend is SQLite (`database_path`).
+
+To use Postgres, set `database_url` in `config.json`, for example:
+
+```json
+{
+  "database_url": "postgres://user:password@127.0.0.1:5432/blocknet_pool"
+}
+```
+
+When `database_url` is set, Postgres is used automatically and `database_path` is ignored.
+
 ## Runtime Components
 
 - Stratum server

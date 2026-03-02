@@ -287,7 +287,11 @@ impl NodeApi for NodeClient {
 
         let mut block = full_block.clone();
         if let Some(header) = block.get_mut("header").and_then(|v| v.as_object_mut()) {
-            header.insert("nonce".to_string(), serde_json::json!(nonce));
+            if header.contains_key("Nonce") {
+                header.insert("Nonce".to_string(), serde_json::json!(nonce));
+            } else {
+                header.insert("nonce".to_string(), serde_json::json!(nonce));
+            }
         }
 
         let resp: SubmitBlockRawResponse = self.post_json("/api/mining/submitblock", &block)?;

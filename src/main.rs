@@ -6,13 +6,13 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use blocknet_pool_rs::api::{run_api, ApiState};
 use blocknet_pool_rs::config::{generate_default_env, Config};
-use blocknet_pool_rs::db::SqliteStore;
 use blocknet_pool_rs::engine::{JobRepository, NodeApi, PoolEngine, ShareStore};
 use blocknet_pool_rs::jobs::JobManager;
 use blocknet_pool_rs::node::NodeClient;
 use blocknet_pool_rs::payout::PayoutProcessor;
 use blocknet_pool_rs::pow::Argon2PowHasher;
 use blocknet_pool_rs::stats::PoolStats;
+use blocknet_pool_rs::store::PoolStore;
 use blocknet_pool_rs::stratum::StratumServer;
 use blocknet_pool_rs::validation::ValidationEngine;
 use tracing::{info, warn};
@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
     let first = args.next();
 
     match first.as_deref() {
-        Some("init") => {
+        Some("init") | Some("--init") => {
             let config_path = PathBuf::from("config.json");
             Config::write_default(&config_path)?;
             let env_path = config_path
@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
             println!("usage: blocknet-pool-rs [command] [flags]");
             println!();
             println!("commands:");
-            println!("  init          generate default config.json and .env");
+            println!("  init, --init  generate default config.json and .env");
             println!();
             println!("flags:");
             println!("  -c, --config  path to config file (default: config.json)");
@@ -74,10 +74,22 @@ async fn main() -> Result<()> {
     load_dotenv(&config_path);
     let cfg = Config::load(&config_path)?;
 
-    let store = SqliteStore::open(&cfg.database_path)?;
-    let node = Arc::new(NodeClient::new(&cfg.daemon_api, &cfg.daemon_token)?);
+    let cfg_for_store = cfg.clone();
+    let store = tokio::task::spawn_blocking(move || PoolStore::open_from_config(&cfg_for_store))
+        .await
+        .context("join store initialization task")??;
+    let daemon_api = cfg.daemon_api.clone();
+    let daemon_token = cfg.daemon_token.clone();
+    let node = tokio::task::spawn_blocking(move || NodeClient::new(&daemon_api, &daemon_token))
+        .await
+        .context("join node client init task")??;
+    let node = Arc::new(node);
 
-    if let Err(err) = node.get_status() {
+    let node_for_probe = Arc::clone(&node);
+    if let Err(err) = tokio::task::spawn_blocking(move || node_for_probe.get_status())
+        .await
+        .context("join node startup probe task")?
+    {
         warn!(error = %err, "cannot reach daemon on startup; continuing");
     }
 

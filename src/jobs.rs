@@ -75,12 +75,22 @@ impl JobManager {
     pub fn start(self: &Arc<Self>) {
         let this = Arc::clone(self);
         tokio::spawn(async move {
-            this.refresh_template();
+            {
+                let this = Arc::clone(&this);
+                let _ = tokio::task::spawn_blocking(move || {
+                    this.refresh_template();
+                })
+                .await;
+            }
 
             let mut ticker = tokio::time::interval(this.cfg.block_poll_duration());
             loop {
                 ticker.tick().await;
-                this.refresh_template();
+                let this = Arc::clone(&this);
+                let _ = tokio::task::spawn_blocking(move || {
+                    this.refresh_template();
+                })
+                .await;
             }
         });
     }
@@ -228,11 +238,13 @@ fn parse_template_into_job(template: &crate::node::BlockTemplate) -> anyhow::Res
 
     let height = header
         .get("height")
+        .or_else(|| header.get("Height"))
         .and_then(|v| v.as_u64())
         .ok_or_else(|| anyhow::anyhow!("template header missing height"))?;
 
     let _difficulty = header
         .get("difficulty")
+        .or_else(|| header.get("Difficulty"))
         .and_then(|v| v.as_u64())
         .ok_or_else(|| anyhow::anyhow!("template header missing difficulty"))?;
 

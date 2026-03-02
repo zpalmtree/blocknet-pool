@@ -8,15 +8,15 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
 
-use crate::db::SqliteStore;
 use crate::engine::JobRepository;
 use crate::jobs::JobManager;
 use crate::stats::PoolStats;
+use crate::store::PoolStore;
 use crate::validation::ValidationEngine;
 
 #[derive(Clone)]
 pub struct ApiState {
-    pub store: Arc<SqliteStore>,
+    pub store: Arc<PoolStore>,
     pub stats: Arc<PoolStats>,
     pub jobs: Arc<JobManager>,
     pub validation: Arc<ValidationEngine>,
@@ -79,8 +79,18 @@ async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
     let snap = state.stats.snapshot();
     let validation = state.validation.snapshot();
 
-    let total_shares = state.store.get_total_share_count().unwrap_or(0);
-    let total_blocks = state.store.get_block_count().unwrap_or(0);
+    let store = Arc::clone(&state.store);
+    let (total_shares, total_blocks) = match tokio::task::spawn_blocking(move || {
+        (
+            store.get_total_share_count().unwrap_or(0),
+            store.get_block_count().unwrap_or(0),
+        )
+    })
+    .await
+    {
+        Ok(v) => v,
+        Err(_) => (0, 0),
+    };
     let current_job_height = state.jobs.current_job().map(|j| j.height);
 
     let response = StatsResponse {
@@ -121,10 +131,15 @@ async fn handle_miner(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
     let stats = state.stats.get_miner_stats(&address);
-    let shares = state
-        .store
-        .get_shares_for_miner(&address, 100)
-        .unwrap_or_default();
+    let store = Arc::clone(&state.store);
+    let address_for_query = address.clone();
+    let shares = tokio::task::spawn_blocking(move || {
+        store
+            .get_shares_for_miner(&address_for_query, 100)
+            .unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default();
 
     match stats {
         Some(miner_stats) => Json(serde_json::json!({
@@ -142,9 +157,17 @@ async fn handle_miner(
 }
 
 async fn handle_blocks(State(state): State<ApiState>) -> impl IntoResponse {
-    Json(state.store.get_recent_blocks(100).unwrap_or_default())
+    let store = Arc::clone(&state.store);
+    let blocks = tokio::task::spawn_blocking(move || store.get_recent_blocks(100).unwrap_or_default())
+        .await
+        .unwrap_or_default();
+    Json(blocks)
 }
 
 async fn handle_payouts(State(state): State<ApiState>) -> impl IntoResponse {
-    Json(state.store.get_recent_payouts(100).unwrap_or_default())
+    let store = Arc::clone(&state.store);
+    let payouts = tokio::task::spawn_blocking(move || store.get_recent_payouts(100).unwrap_or_default())
+        .await
+        .unwrap_or_default();
+    Json(payouts)
 }

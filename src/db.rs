@@ -1,3 +1,6 @@
+use std::fs::File;
+use std::io::Read;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -78,6 +81,7 @@ pub struct SqliteStore {
 
 impl SqliteStore {
     pub fn open(path: &str) -> Result<Arc<Self>> {
+        ensure_sqlite_compatible_path(path)?;
         let conn = Connection::open(path).with_context(|| format!("open sqlite {path}"))?;
         conn.pragma_update(None, "journal_mode", "WAL")
             .context("set WAL")?;
@@ -742,6 +746,37 @@ CREATE TABLE IF NOT EXISTS address_risk (
         .optional()
         .map_err(Into::into)
     }
+}
+
+fn ensure_sqlite_compatible_path(path: &str) -> Result<()> {
+    let p = Path::new(path);
+    if !p.exists() {
+        return Ok(());
+    }
+
+    let meta = std::fs::metadata(p).with_context(|| format!("stat {}", p.display()))?;
+    if meta.len() == 0 {
+        return Ok(());
+    }
+
+    let mut file = File::open(p).with_context(|| format!("open {}", p.display()))?;
+    let mut header = [0u8; 16];
+    let bytes_read = file
+        .read(&mut header)
+        .with_context(|| format!("read {}", p.display()))?;
+
+    const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
+    if bytes_read >= 16 && &header == SQLITE_HEADER {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "database path '{}' is not a SQLite file (likely legacy pool DB format). \
+move or rename it and restart, e.g. `mv {} {}.legacy`",
+        p.display(),
+        p.display(),
+        p.display()
+    ))
 }
 
 impl ShareStore for SqliteStore {

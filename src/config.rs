@@ -51,6 +51,8 @@ pub struct Config {
     pub payout_interval: String,
 
     pub database_path: String,
+    #[serde(default)]
+    pub database_url: String,
     pub template_path: String,
     pub static_path: String,
     pub api_key: String,
@@ -100,6 +102,7 @@ impl Default for Config {
             block_finder_bonus_pct: 5.0,
             payout_interval: "1h".to_string(),
             database_path: "pool.db".to_string(),
+            database_url: String::new(),
             template_path: "templates".to_string(),
             static_path: "static".to_string(),
             api_key: String::new(),

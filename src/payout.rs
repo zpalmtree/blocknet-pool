@@ -3,32 +3,43 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use crate::config::Config;
-use crate::db::{DbBlock, DbShare, PendingPayout, SqliteStore};
+use crate::db::{DbBlock, DbShare, PendingPayout};
 use crate::node::{is_http_status, NodeClient};
+use crate::store::PoolStore;
 use crate::validation::{SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED};
 
 #[derive(Debug)]
 pub struct PayoutProcessor {
     cfg: Config,
-    store: Arc<SqliteStore>,
+    store: Arc<PoolStore>,
     node: Arc<NodeClient>,
 }
 
 impl PayoutProcessor {
-    pub fn new(cfg: Config, store: Arc<SqliteStore>, node: Arc<NodeClient>) -> Arc<Self> {
+    pub fn new(cfg: Config, store: Arc<PoolStore>, node: Arc<NodeClient>) -> Arc<Self> {
         Arc::new(Self { cfg, store, node })
     }
 
     pub fn start(self: &Arc<Self>) {
         let this = Arc::clone(self);
         tokio::spawn(async move {
-            this.recover_pending_payouts();
-            this.tick();
+            {
+                let this = Arc::clone(&this);
+                let _ = tokio::task::spawn_blocking(move || {
+                    this.recover_pending_payouts();
+                    this.tick();
+                })
+                .await;
+            }
 
             let mut ticker = tokio::time::interval(this.cfg.payout_interval_duration());
             loop {
                 ticker.tick().await;
-                this.tick();
+                let this = Arc::clone(&this);
+                let _ = tokio::task::spawn_blocking(move || {
+                    this.tick();
+                })
+                .await;
             }
         });
     }

@@ -220,8 +220,15 @@ impl StratumServer {
                                 }
                             };
 
-                            match self.engine.submit(&conn_id, params.job_id, params.nonce, params.claimed_hash) {
-                                Ok(ack) => {
+                            let engine = Arc::clone(&self.engine);
+                            let submit_conn_id = conn_id.clone();
+                            let submit = tokio::task::spawn_blocking(move || {
+                                engine.submit(&submit_conn_id, params.job_id, params.nonce, params.claimed_hash)
+                            })
+                            .await;
+
+                            match submit {
+                                Ok(Ok(ack)) => {
                                     let response = StratumResponse {
                                         id: req.id,
                                         status: Some("ok".to_string()),
@@ -237,11 +244,22 @@ impl StratumServer {
                                     }
                                     send_json(&writer, &response).await?;
                                 }
-                                Err(err) => {
+                                Ok(Err(err)) => {
                                     if let Some((address, _, _)) = logged_in.as_ref() {
                                         self.stats.record_rejected_share(address);
                                     }
                                     send_error(&writer, req.id, &err.to_string()).await?;
+                                }
+                                Err(err) => {
+                                    if let Some((address, _, _)) = logged_in.as_ref() {
+                                        self.stats.record_rejected_share(address);
+                                    }
+                                    send_error(
+                                        &writer,
+                                        req.id,
+                                        &format!("submit worker failure: {err}"),
+                                    )
+                                    .await?;
                                 }
                             }
                         }

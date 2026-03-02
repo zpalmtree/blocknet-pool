@@ -37,6 +37,7 @@
   "block_finder_bonus_pct": 5,
   "payout_interval": "1h",
   "database_path": "pool.db",
+  "database_url": "",
   "template_path": "templates",
   "static_path": "static",
   "api_key": ""
