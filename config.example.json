@@ -1,8 +1,8 @@
 {
   "pool_name": "blocknet pool",
-  "pool_url": "http://localhost:8080",
+  "pool_url": "http://localhost:24783",
   "stratum_port": 3333,
-  "api_port": 8080,
+  "api_port": 24783,
   "api_host": "0.0.0.0",
   "daemon_binary": "./blocknet",
   "daemon_data_dir": "data",
