@@ -26,6 +26,8 @@ const VARDIFF_MIN_SAMPLE_COUNT: usize = 3;
 const VARDIFF_RATIO_DAMPING_EXPONENT: f64 = 0.45;
 const VARDIFF_MIN_ADJUSTMENT_FACTOR: f64 = 1.02;
 const VARDIFF_MAX_ADJUSTMENT_FACTOR: f64 = 1.5;
+const VARDIFF_HINT_MAX_AGE: Duration = Duration::from_secs(60 * 60);
+const VARDIFF_HINT_PERSIST_INTERVAL: Duration = Duration::from_secs(60);
 const FOUND_BLOCK_OUTBOX_ENV: &str = "BLOCKNET_POOL_FOUND_BLOCK_OUTBOX";
 const FOUND_BLOCK_OUTBOX_DEFAULT_PATH: &str = "data/found-block-recovery.jsonl";
 const FOUND_BLOCK_PERSIST_MAX_RETRIES: usize = 3;
@@ -118,6 +120,18 @@ pub trait ShareStore: Send + Sync + 'static {
     ) -> Result<()> {
         Ok(())
     }
+    fn get_vardiff_hint(&self, _address: &str, _worker: &str) -> Result<Option<(u64, SystemTime)>> {
+        Ok(None)
+    }
+    fn upsert_vardiff_hint(
+        &self,
+        _address: &str,
+        _worker: &str,
+        _difficulty: u64,
+        _updated_at: SystemTime,
+    ) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -159,6 +173,7 @@ struct MinerSession {
     capabilities: BTreeSet<String>,
     accepted_share_times: VecDeque<Instant>,
     last_difficulty_adjustment: Option<Instant>,
+    last_difficulty_hint_write: Option<Instant>,
 }
 
 pub struct PoolEngine {
@@ -227,6 +242,19 @@ impl PoolEngine {
         if self.store.is_address_quarantined(address)? {
             return Err(anyhow!("address quarantined"));
         }
+        let min_diff = self.cfg.min_share_difficulty.max(1);
+        let max_diff = self.cfg.max_share_difficulty.max(min_diff);
+        let mut difficulty = self.cfg.initial_share_difficulty.clamp(min_diff, max_diff);
+        if self.cfg.enable_vardiff {
+            if let Some((cached, updated_at)) = self.store.get_vardiff_hint(address, &worker)? {
+                let age = SystemTime::now()
+                    .duration_since(updated_at)
+                    .unwrap_or_default();
+                if age <= VARDIFF_HINT_MAX_AGE {
+                    difficulty = cached.clamp(min_diff, max_diff);
+                }
+            }
+        }
 
         let mut sessions = self.sessions.lock();
         sessions.insert(
@@ -234,14 +262,12 @@ impl PoolEngine {
             MinerSession {
                 address: address.to_string(),
                 worker,
-                difficulty: self
-                    .cfg
-                    .initial_share_difficulty
-                    .clamp(self.cfg.min_share_difficulty, self.cfg.max_share_difficulty),
+                difficulty,
                 protocol_version,
                 capabilities: cap_set,
                 accepted_share_times: VecDeque::new(),
                 last_difficulty_adjustment: None,
+                last_difficulty_hint_write: None,
             },
         );
 
@@ -670,6 +696,16 @@ impl PoolEngine {
     }
 
     fn note_share_and_maybe_adjust_difficulty(&self, conn_id: &str) -> u64 {
+        if !self.cfg.enable_vardiff {
+            return self
+                .sessions
+                .lock()
+                .get(conn_id)
+                .map(|session| session.difficulty)
+                .unwrap_or(self.cfg.initial_share_difficulty);
+        }
+
+        let mut hint_to_write: Option<(String, String, u64)> = None;
         let mut sessions = self.sessions.lock();
         let Some(session) = sessions.get_mut(conn_id) else {
             return self.cfg.initial_share_difficulty;
@@ -678,10 +714,6 @@ impl PoolEngine {
         let min_diff = self.cfg.min_share_difficulty.max(1);
         let max_diff = self.cfg.max_share_difficulty.max(min_diff);
         session.difficulty = session.difficulty.clamp(min_diff, max_diff);
-
-        if !self.cfg.enable_vardiff {
-            return session.difficulty;
-        }
 
         let now = Instant::now();
         let window = self
@@ -705,60 +737,82 @@ impl PoolEngine {
             session.accepted_share_times.pop_front();
         }
 
-        if session.accepted_share_times.len() < VARDIFF_MIN_SAMPLE_COUNT {
-            return session.difficulty;
-        }
-        if session
-            .last_difficulty_adjustment
-            .is_some_and(|last| now.duration_since(last) < retarget_interval)
+        if session.accepted_share_times.len() >= VARDIFF_MIN_SAMPLE_COUNT
+            && !session
+                .last_difficulty_adjustment
+                .is_some_and(|last| now.duration_since(last) < retarget_interval)
         {
-            return session.difficulty;
+            if let Some(oldest) = session.accepted_share_times.front().copied() {
+                let elapsed = now.duration_since(oldest).as_secs_f64();
+                if elapsed >= 1.0 {
+                    let observed_interval =
+                        elapsed / ((session.accepted_share_times.len() - 1) as f64);
+                    let lower = target_interval * (1.0 - tolerance);
+                    let upper = target_interval * (1.0 + tolerance);
+
+                    let mut next_diff = session.difficulty;
+                    if observed_interval < lower {
+                        let raw_ratio = target_interval / observed_interval;
+                        let ratio = raw_ratio
+                            .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
+                            .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
+                        next_diff = ((session.difficulty as f64) * ratio).ceil() as u64;
+                    } else if observed_interval > upper {
+                        let raw_ratio = observed_interval / target_interval;
+                        let ratio = raw_ratio
+                            .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
+                            .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
+                        next_diff = ((session.difficulty as f64) / ratio).floor() as u64;
+                    }
+
+                    next_diff = next_diff.clamp(min_diff, max_diff);
+                    session.last_difficulty_adjustment = Some(now);
+
+                    if next_diff != session.difficulty {
+                        let miner = compact_address(&session.address);
+                        tracing::debug!(
+                            "vardiff {:>4} -> {:>4} (observed {:>5.1}s, target {:>4.0}s, miner {})",
+                            session.difficulty,
+                            next_diff,
+                            observed_interval,
+                            target_interval,
+                            miner
+                        );
+                        session.difficulty = next_diff;
+                    }
+                }
+            }
         }
 
-        let Some(oldest) = session.accepted_share_times.front().copied() else {
-            return session.difficulty;
-        };
-        let elapsed = now.duration_since(oldest).as_secs_f64();
-        if elapsed < 1.0 {
-            return session.difficulty;
-        }
-
-        let observed_interval = elapsed / ((session.accepted_share_times.len() - 1) as f64);
-        let lower = target_interval * (1.0 - tolerance);
-        let upper = target_interval * (1.0 + tolerance);
-
-        let mut next_diff = session.difficulty;
-        if observed_interval < lower {
-            let raw_ratio = target_interval / observed_interval;
-            let ratio = raw_ratio
-                .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
-                .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
-            next_diff = ((session.difficulty as f64) * ratio).ceil() as u64;
-        } else if observed_interval > upper {
-            let raw_ratio = observed_interval / target_interval;
-            let ratio = raw_ratio
-                .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
-                .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
-            next_diff = ((session.difficulty as f64) / ratio).floor() as u64;
-        }
-
-        next_diff = next_diff.clamp(min_diff, max_diff);
-        session.last_difficulty_adjustment = Some(now);
-
-        if next_diff != session.difficulty {
-            let miner = compact_address(&session.address);
-            tracing::debug!(
-                "vardiff {:>4} -> {:>4} (observed {:>5.1}s, target {:>4.0}s, miner {})",
+        let should_write_hint = session
+            .last_difficulty_hint_write
+            .is_none_or(|last| now.duration_since(last) >= VARDIFF_HINT_PERSIST_INTERVAL);
+        if should_write_hint {
+            session.last_difficulty_hint_write = Some(now);
+            hint_to_write = Some((
+                session.address.clone(),
+                session.worker.clone(),
                 session.difficulty,
-                next_diff,
-                observed_interval,
-                target_interval,
-                miner
-            );
-            session.difficulty = next_diff;
+            ));
+        }
+        let difficulty = session.difficulty;
+        drop(sessions);
+
+        if let Some((address, worker, difficulty)) = hint_to_write {
+            if let Err(err) =
+                self.store
+                    .upsert_vardiff_hint(&address, &worker, difficulty, SystemTime::now())
+            {
+                tracing::warn!(
+                    address = %address,
+                    worker = %worker,
+                    error = %err,
+                    "failed to persist vardiff hint"
+                );
+            }
         }
 
-        session.difficulty
+        difficulty
     }
 }
 
@@ -854,6 +908,7 @@ pub struct InMemoryStore {
     seen: Mutex<HashSet<(String, u64)>>,
     shares: Mutex<Vec<ShareRecord>>,
     blocks: Mutex<Vec<FoundBlockRecord>>,
+    vardiff_hints: Mutex<HashMap<(String, String), (u64, SystemTime)>>,
 }
 
 impl InMemoryStore {
@@ -863,6 +918,26 @@ impl InMemoryStore {
 
     pub fn blocks(&self) -> Vec<FoundBlockRecord> {
         self.blocks.lock().clone()
+    }
+
+    pub fn seed_vardiff_hint(
+        &self,
+        address: &str,
+        worker: &str,
+        difficulty: u64,
+        updated_at: SystemTime,
+    ) {
+        self.vardiff_hints.lock().insert(
+            (address.to_string(), worker.to_string()),
+            (difficulty.max(1), updated_at),
+        );
+    }
+
+    pub fn vardiff_hint(&self, address: &str, worker: &str) -> Option<(u64, SystemTime)> {
+        self.vardiff_hints
+            .lock()
+            .get(&(address.to_string(), worker.to_string()))
+            .copied()
     }
 }
 
@@ -898,6 +973,21 @@ impl ShareStore for InMemoryStore {
 
     fn add_found_block(&self, block: FoundBlockRecord) -> Result<()> {
         self.blocks.lock().push(block);
+        Ok(())
+    }
+
+    fn get_vardiff_hint(&self, address: &str, worker: &str) -> Result<Option<(u64, SystemTime)>> {
+        Ok(self.vardiff_hint(address, worker))
+    }
+
+    fn upsert_vardiff_hint(
+        &self,
+        address: &str,
+        worker: &str,
+        difficulty: u64,
+        updated_at: SystemTime,
+    ) -> Result<()> {
+        self.seed_vardiff_hint(address, worker, difficulty, updated_at);
         Ok(())
     }
 }
@@ -1102,6 +1192,86 @@ mod tests {
     }
 
     #[test]
+    fn login_uses_recent_vardiff_hint() {
+        let mut cfg = cfg();
+        cfg.initial_share_difficulty = 10;
+        cfg.min_share_difficulty = 1;
+        cfg.max_share_difficulty = 10_000;
+
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let store = Arc::new(InMemoryStore::default());
+        let address = test_miner_address();
+        store.seed_vardiff_hint(
+            &address,
+            "rig01",
+            222,
+            SystemTime::now()
+                .checked_sub(Duration::from_secs(30))
+                .unwrap_or(SystemTime::UNIX_EPOCH),
+        );
+
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            Arc::new(InMemoryJobs::default()),
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login(
+                "conn1",
+                address,
+                Some("rig01".to_string()),
+                2,
+                submit_hash_cap(),
+            )
+            .expect("login");
+        assert_eq!(engine.session_difficulty("conn1"), Some(222));
+    }
+
+    #[test]
+    fn login_ignores_stale_vardiff_hint() {
+        let mut cfg = cfg();
+        cfg.initial_share_difficulty = 17;
+        cfg.min_share_difficulty = 1;
+        cfg.max_share_difficulty = 10_000;
+
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let store = Arc::new(InMemoryStore::default());
+        let address = test_miner_address();
+        store.seed_vardiff_hint(
+            &address,
+            "rig01",
+            333,
+            SystemTime::now()
+                .checked_sub(VARDIFF_HINT_MAX_AGE + Duration::from_secs(5))
+                .unwrap_or(SystemTime::UNIX_EPOCH),
+        );
+
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            Arc::new(InMemoryJobs::default()),
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login(
+                "conn1",
+                address,
+                Some("rig01".to_string()),
+                2,
+                submit_hash_cap(),
+            )
+            .expect("login");
+        assert_eq!(engine.session_difficulty("conn1"), Some(17));
+    }
+
+    #[test]
     fn login_rejects_old_protocol() {
         let cfg = cfg();
         let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
@@ -1217,6 +1387,49 @@ mod tests {
         let shares = store.shares();
         assert_eq!(shares.len(), 1);
         assert_eq!(shares[0].nonce, 42);
+    }
+
+    #[test]
+    fn submit_persists_vardiff_hint_for_session() {
+        let mut cfg = cfg();
+        cfg.initial_share_difficulty = 1;
+
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let store = Arc::new(InMemoryStore::default());
+        let node = Arc::new(InMemoryNode {
+            accepted: true,
+            ..InMemoryNode::default()
+        });
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            Arc::clone(&jobs) as Arc<dyn JobRepository>,
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::clone(&node) as Arc<dyn NodeApi>,
+        );
+
+        let address = test_miner_address();
+        engine
+            .login(
+                "conn1",
+                address.clone(),
+                Some("rig01".to_string()),
+                2,
+                submit_hash_cap(),
+            )
+            .expect("login");
+
+        let _ack = engine
+            .submit("conn1", "job1".to_string(), 4242, Some("ff".repeat(32)))
+            .expect("share should be accepted");
+
+        let hint = store
+            .vardiff_hint(&address, "rig01")
+            .expect("vardiff hint should be persisted");
+        assert_eq!(hint.0, 1);
     }
 
     #[test]

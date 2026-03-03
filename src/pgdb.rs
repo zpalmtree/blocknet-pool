@@ -108,6 +108,15 @@ CREATE TABLE IF NOT EXISTS address_risk (
     quarantined_until BIGINT,
     force_verify_until BIGINT
 );
+
+CREATE TABLE IF NOT EXISTS vardiff_hints (
+    address TEXT NOT NULL,
+    worker TEXT NOT NULL,
+    difficulty BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    PRIMARY KEY (address, worker)
+);
+CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated_at DESC);
 "#,
         )
         .context("init postgres schema")?;
@@ -889,6 +898,38 @@ CREATE TABLE IF NOT EXISTS address_risk (
             initiated_at: from_unix(row.get::<_, i64>(2)),
         }))
     }
+
+    pub fn get_vardiff_hint(
+        &self,
+        address: &str,
+        worker: &str,
+    ) -> Result<Option<(u64, SystemTime)>> {
+        let row = self.conn().lock().query_opt(
+            "SELECT difficulty, updated_at FROM vardiff_hints WHERE address = $1 AND worker = $2",
+            &[&address, &worker],
+        )?;
+        Ok(row.map(|row| {
+            (
+                row.get::<_, i64>(0).max(1) as u64,
+                from_unix(row.get::<_, i64>(1)),
+            )
+        }))
+    }
+
+    pub fn upsert_vardiff_hint(
+        &self,
+        address: &str,
+        worker: &str,
+        difficulty: u64,
+        updated_at: SystemTime,
+    ) -> Result<()> {
+        self.conn().lock().execute(
+            "INSERT INTO vardiff_hints (address, worker, difficulty, updated_at) VALUES ($1, $2, $3, $4)
+             ON CONFLICT(address, worker) DO UPDATE SET difficulty = EXCLUDED.difficulty, updated_at = EXCLUDED.updated_at",
+            &[&address, &worker, &u64_to_i64(difficulty.max(1))?, &to_unix(updated_at)],
+        )?;
+        Ok(())
+    }
 }
 
 impl Drop for PostgresStore {
@@ -924,6 +965,20 @@ impl ShareStore for PostgresStore {
 
     fn add_share(&self, share: ShareRecord) -> Result<()> {
         PostgresStore::add_share(self, share)
+    }
+
+    fn get_vardiff_hint(&self, address: &str, worker: &str) -> Result<Option<(u64, SystemTime)>> {
+        PostgresStore::get_vardiff_hint(self, address, worker)
+    }
+
+    fn upsert_vardiff_hint(
+        &self,
+        address: &str,
+        worker: &str,
+        difficulty: u64,
+        updated_at: SystemTime,
+    ) -> Result<()> {
+        PostgresStore::upsert_vardiff_hint(self, address, worker, difficulty, updated_at)
     }
 }
 

@@ -193,6 +193,15 @@ CREATE TABLE IF NOT EXISTS address_risk (
     quarantined_until INTEGER,
     force_verify_until INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS vardiff_hints (
+    address TEXT NOT NULL,
+    worker TEXT NOT NULL,
+    difficulty INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (address, worker)
+);
+CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated_at DESC);
 "#;
 
         self.conn.lock().execute_batch(sql).context("init schema")?;
@@ -1000,6 +1009,41 @@ CREATE TABLE IF NOT EXISTS address_risk (
         .optional()
         .map_err(Into::into)
     }
+
+    pub fn get_vardiff_hint(
+        &self,
+        address: &str,
+        worker: &str,
+    ) -> Result<Option<(u64, SystemTime)>> {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT difficulty, updated_at FROM vardiff_hints WHERE address = ?1 AND worker = ?2",
+            params![address, worker],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?.max(1) as u64,
+                    from_unix(row.get::<_, i64>(1)?),
+                ))
+            },
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn upsert_vardiff_hint(
+        &self,
+        address: &str,
+        worker: &str,
+        difficulty: u64,
+        updated_at: SystemTime,
+    ) -> Result<()> {
+        self.conn.lock().execute(
+            "INSERT INTO vardiff_hints (address, worker, difficulty, updated_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(address, worker) DO UPDATE SET difficulty = excluded.difficulty, updated_at = excluded.updated_at",
+            params![address, worker, u64_to_i64(difficulty.max(1))?, to_unix(updated_at)],
+        )?;
+        Ok(())
+    }
 }
 
 fn ensure_sqlite_compatible_path(path: &str) -> Result<()> {
@@ -1052,6 +1096,20 @@ impl ShareStore for SqliteStore {
 
     fn add_share(&self, share: ShareRecord) -> Result<()> {
         SqliteStore::add_share(self, share)
+    }
+
+    fn get_vardiff_hint(&self, address: &str, worker: &str) -> Result<Option<(u64, SystemTime)>> {
+        SqliteStore::get_vardiff_hint(self, address, worker)
+    }
+
+    fn upsert_vardiff_hint(
+        &self,
+        address: &str,
+        worker: &str,
+        difficulty: u64,
+        updated_at: SystemTime,
+    ) -> Result<()> {
+        SqliteStore::upsert_vardiff_hint(self, address, worker, difficulty, updated_at)
     }
 }
 

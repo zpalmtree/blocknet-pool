@@ -316,6 +316,32 @@ impl PoolStore {
         }
     }
 
+    pub fn get_vardiff_hint(
+        &self,
+        address: &str,
+        worker: &str,
+    ) -> Result<Option<(u64, SystemTime)>> {
+        match self {
+            PoolStore::Sqlite(v) => v.get_vardiff_hint(address, worker),
+            PoolStore::Postgres(v) => v.get_vardiff_hint(address, worker),
+        }
+    }
+
+    pub fn upsert_vardiff_hint(
+        &self,
+        address: &str,
+        worker: &str,
+        difficulty: u64,
+        updated_at: SystemTime,
+    ) -> Result<()> {
+        match self {
+            PoolStore::Sqlite(v) => v.upsert_vardiff_hint(address, worker, difficulty, updated_at),
+            PoolStore::Postgres(v) => {
+                v.upsert_vardiff_hint(address, worker, difficulty, updated_at)
+            }
+        }
+    }
+
     pub fn get_shares_since(&self, since: SystemTime) -> Result<Vec<DbShare>> {
         match self {
             PoolStore::Sqlite(v) => v.get_shares_since(since),
@@ -479,6 +505,20 @@ impl ShareStore for PoolStore {
         )?;
         Ok(())
     }
+
+    fn get_vardiff_hint(&self, address: &str, worker: &str) -> Result<Option<(u64, SystemTime)>> {
+        PoolStore::get_vardiff_hint(self, address, worker)
+    }
+
+    fn upsert_vardiff_hint(
+        &self,
+        address: &str,
+        worker: &str,
+        difficulty: u64,
+        updated_at: SystemTime,
+    ) -> Result<()> {
+        PoolStore::upsert_vardiff_hint(self, address, worker, difficulty, updated_at)
+    }
 }
 
 #[cfg(test)]
@@ -555,5 +595,20 @@ mod tests {
         assert_eq!(block.reward, 500);
         assert!(block.confirmed);
         assert!(block.paid_out);
+    }
+
+    #[test]
+    fn vardiff_hint_round_trip() {
+        let store = test_store();
+        let when = SystemTime::now();
+        store
+            .upsert_vardiff_hint("addr1", "rig1", 77, when)
+            .expect("upsert hint");
+
+        let hint = store
+            .get_vardiff_hint("addr1", "rig1")
+            .expect("get hint")
+            .expect("hint exists");
+        assert_eq!(hint.0, 77);
     }
 }

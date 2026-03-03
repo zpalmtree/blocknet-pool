@@ -80,6 +80,7 @@ When `database_url` is set, Postgres is used automatically and `database_path` i
 - `stratum_submit_v2_required=false`: allows legacy submits without `claimed_hash` (full verification path)
 - Queue pressure returns `server busy, retry` (no inline bypass)
 - Per-connection vardiff retargeting is enabled by default to target a small number of shares per window (`vardiff_*` config keys)
+- Vardiff difficulty is cached per `address+worker` and reused on reconnect/restart when the hint is fresh (1h TTL), reducing post-restart ramp-up.
 - Default vardiff profile assumes a weak baseline miner and aims for ~10 shares / 5 minutes (`initial_share_difficulty=60`, `vardiff_target_shares=10`)
 - Template refresh identity uses stable tip fields (`height`, `network_target`, `prev_hash`) to avoid daemon template churn while still refreshing on meaningful tip/template transitions.
 - Assignment submits on a previous template are accepted only inside a short grace window (`stale_submit_grace`, default `5s`) based on when the share was received.
