@@ -2,6 +2,7 @@ use std::env;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use blocknet_pool_rs::api::{run_api, ApiState};
@@ -81,9 +82,18 @@ async fn main() -> Result<()> {
         .context("join store initialization task")??;
     let daemon_api = cfg.daemon_api.clone();
     let daemon_token = cfg.daemon_token.clone();
-    let node = tokio::task::spawn_blocking(move || NodeClient::new(&daemon_api, &daemon_token))
-        .await
-        .context("join node client init task")??;
+    let daemon_data_dir = cfg.daemon_data_dir.clone();
+    let daemon_cookie_path = cfg.daemon_cookie_path.clone();
+    let node = tokio::task::spawn_blocking(move || {
+        NodeClient::new_with_daemon_auth(
+            &daemon_api,
+            &daemon_token,
+            &daemon_data_dir,
+            &daemon_cookie_path,
+        )
+    })
+    .await
+    .context("join node client init task")??;
     let node = Arc::new(node);
 
     let node_for_probe = Arc::clone(&node);
@@ -122,6 +132,7 @@ async fn main() -> Result<()> {
 
     let payout = PayoutProcessor::new(cfg.clone(), Arc::clone(&store), Arc::clone(&node));
     payout.start();
+    start_seen_share_gc(cfg.clone(), Arc::clone(&store));
 
     let api_addr: SocketAddr = format!("{}:{}", cfg.api_host, cfg.api_port)
         .parse()
@@ -138,6 +149,7 @@ async fn main() -> Result<()> {
         jobs: Arc::clone(&jobs),
         validation: Arc::clone(&validation),
         db_totals_cache: Arc::new(Mutex::new(blocknet_pool_rs::api::DbTotalsCache::default())),
+        api_key: cfg.api_key.clone(),
     };
 
     info!(pool = %cfg.pool_name, "pool runtime started");
@@ -159,6 +171,27 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn start_seen_share_gc(cfg: Config, store: Arc<PoolStore>) {
+    tokio::spawn(async move {
+        let interval = cfg
+            .seen_share_gc_interval_duration()
+            .max(Duration::from_secs(30));
+        let mut ticker = tokio::time::interval(interval);
+        loop {
+            ticker.tick().await;
+            let store = Arc::clone(&store);
+            match tokio::task::spawn_blocking(move || store.clean_expired_seen_shares()).await {
+                Ok(Ok(removed)) if removed > 0 => {
+                    tracing::debug!(removed, "cleaned expired seen-share entries");
+                }
+                Ok(Ok(_)) => {}
+                Ok(Err(err)) => tracing::warn!(error = %err, "seen-share cleanup failed"),
+                Err(err) => tracing::warn!(error = %err, "seen-share cleanup task join failed"),
+            }
+        }
+    });
 }
 
 fn load_dotenv(config_path: &Path) {

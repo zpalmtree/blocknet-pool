@@ -237,10 +237,34 @@ impl StratumServer {
                                             "accepted": ack.accepted,
                                             "verified": ack.verified,
                                             "status": ack.status,
+                                            "difficulty": ack.next_difficulty,
                                         })),
                                     };
-                                    if let Some((address, _, difficulty)) = logged_in.as_ref() {
-                                        self.stats.record_accepted_share(address, *difficulty);
+                                    if let Some((address, worker, difficulty)) = logged_in.as_mut() {
+                                        self.stats
+                                            .record_accepted_share(address, ack.share_difficulty);
+                                        if ack.block_accepted {
+                                            self.stats.record_block_found(address);
+                                        }
+                                        if ack.next_difficulty != *difficulty {
+                                            *difficulty = ack.next_difficulty;
+                                            if let Some(miner_job) =
+                                                self.jobs.build_miner_job(ack.next_difficulty)
+                                            {
+                                                let notify = StratumNotify {
+                                                    method: "job".to_string(),
+                                                    params: serde_json::to_value(miner_job)?,
+                                                };
+                                                send_json(&writer, &notify).await?;
+                                            }
+                                            tracing::debug!(
+                                                peer = %peer,
+                                                address = %address,
+                                                worker = %worker,
+                                                difficulty = ack.next_difficulty,
+                                                "stratum difficulty updated"
+                                            );
+                                        }
                                     }
                                     send_json(&writer, &response).await?;
                                 }

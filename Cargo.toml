@@ -25,6 +25,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 humantime = "2.1"
 urlencoding = "2.1"
+sysinfo = "0.31"
 
 [dev-dependencies]
 tempfile = "3.10"

@@ -1,10 +1,14 @@
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fmt;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::{anyhow, Context, Result};
+use parking_lot::Mutex;
 use reqwest::blocking::Client;
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -107,21 +111,25 @@ pub fn is_http_status(err: &anyhow::Error, status: u16) -> bool {
 pub struct NodeClient {
     base_url: String,
     client: Client,
+    auth_token: Mutex<Option<String>>,
+    auth_cookie_path: Option<PathBuf>,
     chain_height: AtomicU64,
     syncing: AtomicBool,
 }
 
 impl NodeClient {
     pub fn new(base_url: &str, token: &str) -> Result<Self> {
+        Self::new_with_daemon_auth(base_url, token, "", "")
+    }
+
+    pub fn new_with_daemon_auth(
+        base_url: &str,
+        token: &str,
+        daemon_data_dir: &str,
+        daemon_cookie_path: &str,
+    ) -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        if !token.trim().is_empty() {
-            let value = format!("Bearer {}", token.trim());
-            headers.insert(
-                AUTHORIZATION,
-                HeaderValue::from_str(&value).context("invalid auth header")?,
-            );
-        }
 
         let client = Client::builder()
             .default_headers(headers)
@@ -129,9 +137,20 @@ impl NodeClient {
             .build()
             .context("build node http client")?;
 
+        let (resolved_token, auth_cookie_path) =
+            resolve_auth_token_and_cookie(token, daemon_data_dir, daemon_cookie_path);
+        if let Some(path) = auth_cookie_path.as_ref() {
+            tracing::info!(path = %path.display(), "daemon auth cookie source configured");
+        }
+        if resolved_token.is_some() {
+            tracing::info!("daemon auth token loaded");
+        }
+
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             client,
+            auth_token: Mutex::new(resolved_token),
+            auth_cookie_path,
             chain_height: AtomicU64::new(0),
             syncing: AtomicBool::new(false),
         })
@@ -204,21 +223,34 @@ impl NodeClient {
 
     fn get_json<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);
-        let resp = self
-            .client
-            .get(&url)
-            .send()
-            .with_context(|| format!("GET {path}"))?;
-        let status = resp.status();
-        let body = resp.text().unwrap_or_default();
-        if !status.is_success() {
-            return Err(anyhow!(HttpError {
-                path: path.to_string(),
-                status_code: status.as_u16(),
-                body,
-            }));
+        let mut attempted_refresh = false;
+        loop {
+            let req = self.apply_auth(self.client.get(&url));
+            let resp = req.send().with_context(|| format!("GET {path}"))?;
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+
+            if status == reqwest::StatusCode::UNAUTHORIZED && !attempted_refresh {
+                attempted_refresh = true;
+                match self.refresh_token_from_cookie() {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(err) => {
+                        tracing::warn!(error = %err, "failed to refresh daemon token from cookie");
+                    }
+                }
+            }
+
+            if !status.is_success() {
+                return Err(anyhow!(HttpError {
+                    path: path.to_string(),
+                    status_code: status.as_u16(),
+                    body,
+                }));
+            }
+            return serde_json::from_str(&body)
+                .with_context(|| format!("decode JSON response for GET {path}"));
         }
-        serde_json::from_str(&body).with_context(|| format!("decode JSON response for GET {path}"))
     }
 
     fn post_json<T: Serialize, R: for<'de> Deserialize<'de>>(
@@ -236,22 +268,199 @@ impl NodeClient {
         headers: &HashMap<String, String>,
     ) -> Result<R> {
         let url = format!("{}{}", self.base_url, path);
-        let mut req = self.client.post(&url).json(payload);
-        for (k, v) in headers {
-            req = req.header(k, v);
+        let mut attempted_refresh = false;
+        loop {
+            let mut req = self.client.post(&url).json(payload);
+            for (k, v) in headers {
+                req = req.header(k, v);
+            }
+            let req = self.apply_auth(req);
+
+            let resp = req.send().with_context(|| format!("POST {path}"))?;
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+
+            if status == reqwest::StatusCode::UNAUTHORIZED && !attempted_refresh {
+                attempted_refresh = true;
+                match self.refresh_token_from_cookie() {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(err) => {
+                        tracing::warn!(error = %err, "failed to refresh daemon token from cookie");
+                    }
+                }
+            }
+
+            if !status.is_success() {
+                return Err(anyhow!(HttpError {
+                    path: path.to_string(),
+                    status_code: status.as_u16(),
+                    body,
+                }));
+            }
+            return serde_json::from_str(&body)
+                .with_context(|| format!("decode JSON response for POST {path}"));
         }
-        let resp = req.send().with_context(|| format!("POST {path}"))?;
-        let status = resp.status();
-        let body = resp.text().unwrap_or_default();
-        if !status.is_success() {
-            return Err(anyhow!(HttpError {
-                path: path.to_string(),
-                status_code: status.as_u16(),
-                body,
-            }));
-        }
-        serde_json::from_str(&body).with_context(|| format!("decode JSON response for POST {path}"))
     }
+
+    fn apply_auth(
+        &self,
+        request: reqwest::blocking::RequestBuilder,
+    ) -> reqwest::blocking::RequestBuilder {
+        if let Some(token) = self.auth_token.lock().clone() {
+            request.bearer_auth(token)
+        } else {
+            request
+        }
+    }
+
+    fn refresh_token_from_cookie(&self) -> Result<bool> {
+        let Some(cookie_path) = self.auth_cookie_path.as_ref() else {
+            return Ok(false);
+        };
+        let token = read_token_from_cookie_file(cookie_path)?;
+
+        let mut guard = self.auth_token.lock();
+        if guard.as_deref() == Some(token.as_str()) {
+            return Ok(false);
+        }
+        *guard = Some(token);
+        tracing::info!(path = %cookie_path.display(), "refreshed daemon API token from cookie");
+        Ok(true)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DaemonContext {
+    data_dir: PathBuf,
+}
+
+fn resolve_auth_token_and_cookie(
+    explicit_token: &str,
+    daemon_data_dir: &str,
+    daemon_cookie_path: &str,
+) -> (Option<String>, Option<PathBuf>) {
+    let explicit_token = explicit_token.trim();
+    let candidates = cookie_candidates(daemon_data_dir, daemon_cookie_path);
+    let cookie_path = candidates.into_iter().find(|candidate| candidate.exists());
+
+    if !explicit_token.is_empty() {
+        return (Some(explicit_token.to_string()), cookie_path);
+    }
+
+    if let Some(path) = cookie_path.as_ref() {
+        if let Ok(token) = read_token_from_cookie_file(path) {
+            return (Some(token), cookie_path);
+        }
+        tracing::warn!(
+            path = %path.display(),
+            "daemon cookie was discovered but token could not be read"
+        );
+    }
+
+    (None, cookie_path)
+}
+
+fn cookie_candidates(daemon_data_dir: &str, daemon_cookie_path: &str) -> Vec<PathBuf> {
+    let mut out = Vec::<PathBuf>::new();
+
+    let explicit_cookie = daemon_cookie_path.trim();
+    if !explicit_cookie.is_empty() {
+        out.push(PathBuf::from(explicit_cookie));
+    }
+
+    let daemon_data_dir = daemon_data_dir.trim();
+    if !daemon_data_dir.is_empty() {
+        out.push(PathBuf::from(daemon_data_dir).join("api.cookie"));
+    }
+
+    if let Some(context) = detect_daemon_context() {
+        let candidate = context.data_dir.join("api.cookie");
+        if !out.contains(&candidate) {
+            out.push(candidate);
+        }
+    }
+
+    if !out.iter().any(|p| p == Path::new("data/api.cookie")) {
+        out.push(PathBuf::from("data/api.cookie"));
+    }
+    if !out
+        .iter()
+        .any(|p| p == Path::new("blocknet-data-mainnet/api.cookie"))
+    {
+        out.push(PathBuf::from("blocknet-data-mainnet/api.cookie"));
+    }
+
+    out
+}
+
+fn detect_daemon_context() -> Option<DaemonContext> {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        ProcessRefreshKind::new()
+            .with_cmd(UpdateKind::Always)
+            .with_cwd(UpdateKind::Always),
+    );
+
+    if let Some(process) = sys.processes_by_name(OsStr::new("blocknet")).next() {
+        let cmd: Vec<String> = process
+            .cmd()
+            .iter()
+            .filter_map(|s| s.to_str().map(String::from))
+            .collect();
+
+        let data_dir = daemon_data_dir_from_cmdline(&cmd)
+            .unwrap_or_else(|| PathBuf::from("blocknet-data-mainnet"));
+
+        if data_dir.is_relative() {
+            if let Some(cwd) = process.cwd() {
+                return Some(DaemonContext {
+                    data_dir: cwd.join(data_dir),
+                });
+            }
+        }
+
+        return Some(DaemonContext { data_dir });
+    }
+
+    None
+}
+
+fn daemon_data_dir_from_cmdline(cmd: &[String]) -> Option<PathBuf> {
+    cmd_arg_value(cmd, &["--data", "--data-dir", "-datadir"]).map(PathBuf::from)
+}
+
+fn cmd_arg_value(cmd: &[String], flags: &[&str]) -> Option<String> {
+    for (idx, arg) in cmd.iter().enumerate() {
+        for flag in flags {
+            if arg == flag {
+                if let Some(value) = cmd.get(idx + 1) {
+                    if !value.trim().is_empty() && !value.starts_with('-') {
+                        return Some(value.clone());
+                    }
+                }
+            }
+            if let Some(value) = arg.strip_prefix(&format!("{flag}=")) {
+                if !value.trim().is_empty() {
+                    return Some(value.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn read_token_from_cookie_file(cookie_path: &Path) -> Result<String> {
+    let token = fs::read_to_string(cookie_path)
+        .with_context(|| format!("failed to read cookie file at {}", cookie_path.display()))?;
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("cookie file is empty: {}", cookie_path.display()));
+    }
+    Ok(trimmed.to_string())
 }
 
 impl NodeApi for NodeClient {

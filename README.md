@@ -26,6 +26,16 @@ Custom config:
 cargo run --release -- --config /path/to/config.json
 ```
 
+## Daemon API Auth
+
+The pool can authenticate to the daemon with either:
+
+- `daemon_token` in `config.json`
+- `daemon_cookie_path` in `config.json`
+- auto-discovery of `api.cookie` via `daemon_data_dir` and running daemon process metadata
+
+When a daemon request returns `401 unauthorized`, the pool will refresh the token from cookie once and retry.
+
 ## Database Backend
 
 Default backend is SQLite (`database_path`).
@@ -63,6 +73,17 @@ When `database_url` is set, Postgres is used automatically and `database_path` i
 - Submit supports legacy and v2 payloads
 - Candidate shares are prioritized in validation
 - Queue pressure behavior preserves legacy inline handling for no-claimed-hash submits
+- Per-connection vardiff retargeting is enabled by default to target a small number of shares per window (`vardiff_*` config keys)
+- Default vardiff profile assumes a weak baseline miner and aims for ~5 shares / 5 minutes (`initial_share_difficulty=60`, `vardiff_target_shares=5`)
+
+## API Auth
+
+Set `api_key` in `config.json` to require authentication for `/api/*` routes.
+
+Accepted headers:
+
+- `x-api-key: <api_key>`
+- `Authorization: Bearer <api_key>`
 
 ## Daemon Requirements
 

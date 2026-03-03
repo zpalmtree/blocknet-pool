@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -53,6 +53,7 @@ pub struct JobManager {
 struct JobState {
     current: Option<Job>,
     jobs: HashMap<String, Job>,
+    order: VecDeque<String>,
 }
 
 impl JobManager {
@@ -155,14 +156,21 @@ impl JobManager {
 
         state.current = Some(parsed.clone());
         state.jobs.insert(parsed.id.clone(), parsed.clone());
+        state.order.retain(|id| id != &parsed.id);
+        state.order.push_back(parsed.id.clone());
         self.nonce_counter.store(0, Ordering::Relaxed);
 
         // Keep recent jobs bounded.
-        if state.jobs.len() > 16 {
-            let mut keys = state.jobs.keys().cloned().collect::<Vec<String>>();
-            keys.sort();
-            for key in keys.into_iter().take(state.jobs.len() - 16) {
-                state.jobs.remove(&key);
+        while state.order.len() > 16 {
+            if let Some(oldest) = state.order.pop_front() {
+                if state
+                    .current
+                    .as_ref()
+                    .is_some_and(|current| current.id == oldest)
+                {
+                    continue;
+                }
+                state.jobs.remove(&oldest);
             }
         }
 
@@ -255,7 +263,7 @@ fn parse_template_into_job(template: &crate::node::BlockTemplate) -> anyhow::Res
         .and_then(|v| v.as_u64())
         .ok_or_else(|| anyhow::anyhow!("template header missing height"))?;
 
-    let _difficulty = header
+    let difficulty = header
         .get("difficulty")
         .or_else(|| header.get("Difficulty"))
         .and_then(|v| v.as_u64())
@@ -270,6 +278,7 @@ fn parse_template_into_job(template: &crate::node::BlockTemplate) -> anyhow::Res
         height,
         header_base,
         network_target,
+        network_difficulty: difficulty.max(1),
         template_id: Some(template.template_id.trim().to_string()).filter(|v| !v.is_empty()),
         full_block: Some(template.block.clone()),
     })
@@ -353,6 +362,7 @@ mod tests {
                 height: 1,
                 header_base: vec![0xAA; 92],
                 network_target: [0xBB; 32],
+                network_difficulty: 1,
                 template_id: Some("tmpl".into()),
                 full_block: None,
             });

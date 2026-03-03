@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::db::{
     AddressRiskState, Balance, DbBlock, DbShare, Payout, PendingPayout, PoolFeeEvent, SqliteStore,
 };
-use crate::engine::{ShareRecord, ShareStore};
+use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::pgdb::PostgresStore;
 
 pub enum PoolStore {
@@ -335,5 +335,51 @@ impl ShareStore for PoolStore {
             PoolStore::Sqlite(v) => v.add_share(share),
             PoolStore::Postgres(v) => v.add_share(share),
         }
+    }
+
+    fn add_found_block(&self, block: FoundBlockRecord) -> Result<()> {
+        self.add_block(&DbBlock {
+            height: block.height,
+            hash: block.hash,
+            difficulty: block.difficulty,
+            finder: block.finder,
+            finder_worker: block.finder_worker,
+            reward: 0,
+            timestamp: block.timestamp,
+            confirmed: false,
+            orphaned: false,
+            paid_out: false,
+        })
+    }
+
+    fn is_address_quarantined(&self, address: &str) -> Result<bool> {
+        let (quarantined, _) = PoolStore::is_address_quarantined(self, address)?;
+        Ok(quarantined)
+    }
+
+    fn should_force_verify_address(&self, address: &str) -> Result<bool> {
+        let (force_verify, _) = PoolStore::should_force_verify_address(self, address)?;
+        Ok(force_verify)
+    }
+
+    fn escalate_address_risk(
+        &self,
+        address: &str,
+        reason: &str,
+        quarantine_base: Duration,
+        quarantine_max: Duration,
+        force_verify_duration: Duration,
+        apply_quarantine: bool,
+    ) -> Result<()> {
+        PoolStore::escalate_address_risk(
+            self,
+            address,
+            reason,
+            quarantine_base,
+            quarantine_max,
+            force_verify_duration,
+            apply_quarantine,
+        )?;
+        Ok(())
     }
 }

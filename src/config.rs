@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Config {
     pub pool_name: String,
     pub pool_url: String,
@@ -18,6 +19,7 @@ pub struct Config {
     pub daemon_data_dir: String,
     pub daemon_api: String,
     pub daemon_token: String,
+    pub daemon_cookie_path: String,
     pub pool_wallet_address: String,
 
     pub initial_share_difficulty: u64,
@@ -37,6 +39,13 @@ pub struct Config {
     pub provisional_share_delay: String,
     pub max_provisional_shares: i32,
     pub stratum_submit_v2_required: bool,
+    pub enable_vardiff: bool,
+    pub vardiff_target_shares: i32,
+    pub vardiff_window: String,
+    pub vardiff_retarget_interval: String,
+    pub vardiff_tolerance: f64,
+    pub min_share_difficulty: u64,
+    pub max_share_difficulty: u64,
 
     pub pool_fee_flat: f64,
     pub pool_fee_pct: f64,
@@ -51,9 +60,9 @@ pub struct Config {
     pub payout_interval: String,
 
     pub database_path: String,
-    #[serde(default)]
     pub database_url: String,
     pub api_key: String,
+    pub seen_share_gc_interval: String,
 
     #[serde(skip)]
     pub log_path: String,
@@ -71,8 +80,9 @@ impl Default for Config {
             daemon_data_dir: "data".to_string(),
             daemon_api: "http://127.0.0.1:8332".to_string(),
             daemon_token: String::new(),
+            daemon_cookie_path: String::new(),
             pool_wallet_address: String::new(),
-            initial_share_difficulty: 1,
+            initial_share_difficulty: 60,
             block_poll_interval: "2s".to_string(),
             job_timeout: "5m".to_string(),
             validation_mode: "probabilistic".to_string(),
@@ -89,6 +99,13 @@ impl Default for Config {
             provisional_share_delay: "15m".to_string(),
             max_provisional_shares: 200,
             stratum_submit_v2_required: false,
+            enable_vardiff: true,
+            vardiff_target_shares: 5,
+            vardiff_window: "5m".to_string(),
+            vardiff_retarget_interval: "15s".to_string(),
+            vardiff_tolerance: 0.25,
+            min_share_difficulty: 1,
+            max_share_difficulty: 1_000_000_000,
             pool_fee_flat: 0.0,
             pool_fee_pct: 0.0,
             payout_scheme: "pplns".to_string(),
@@ -102,6 +119,7 @@ impl Default for Config {
             database_path: "pool.db".to_string(),
             database_url: String::new(),
             api_key: String::new(),
+            seen_share_gc_interval: "10m".to_string(),
             log_path: String::new(),
         }
     }
@@ -154,6 +172,19 @@ impl Config {
         if self.initial_share_difficulty < 1 {
             self.initial_share_difficulty = 1;
         }
+        if self.min_share_difficulty < 1 {
+            self.min_share_difficulty = 1;
+        }
+        if self.max_share_difficulty < self.min_share_difficulty {
+            self.max_share_difficulty = self.min_share_difficulty;
+        }
+        self.initial_share_difficulty = self
+            .initial_share_difficulty
+            .clamp(self.min_share_difficulty, self.max_share_difficulty);
+        if self.vardiff_target_shares < 1 {
+            self.vardiff_target_shares = 1;
+        }
+        self.vardiff_tolerance = self.vardiff_tolerance.clamp(0.01, 0.95);
     }
 
     pub fn block_poll_duration(&self) -> Duration {
@@ -188,6 +219,18 @@ impl Config {
 
     pub fn payout_interval_duration(&self) -> Duration {
         parse_duration_or(&self.payout_interval, Duration::from_secs(60 * 60))
+    }
+
+    pub fn vardiff_window_duration(&self) -> Duration {
+        parse_duration_or(&self.vardiff_window, Duration::from_secs(5 * 60))
+    }
+
+    pub fn vardiff_retarget_interval_duration(&self) -> Duration {
+        parse_duration_or(&self.vardiff_retarget_interval, Duration::from_secs(30))
+    }
+
+    pub fn seen_share_gc_interval_duration(&self) -> Duration {
+        parse_duration_or(&self.seen_share_gc_interval, Duration::from_secs(10 * 60))
     }
 
     pub fn pplns_window_duration_duration(&self) -> Duration {
@@ -251,6 +294,10 @@ mod tests {
             invalid_sample_threshold: 2.0,
             max_provisional_shares: -1,
             initial_share_difficulty: 0,
+            min_share_difficulty: 10,
+            max_share_difficulty: 5,
+            vardiff_target_shares: 0,
+            vardiff_tolerance: 2.0,
             ..Config::default()
         };
         cfg.normalize();
@@ -264,7 +311,11 @@ mod tests {
         assert_eq!(cfg.invalid_sample_min, 1);
         assert_eq!(cfg.invalid_sample_threshold, 0.01);
         assert_eq!(cfg.max_provisional_shares, 0);
-        assert_eq!(cfg.initial_share_difficulty, 1);
+        assert_eq!(cfg.min_share_difficulty, 10);
+        assert_eq!(cfg.max_share_difficulty, 10);
+        assert_eq!(cfg.initial_share_difficulty, 10);
+        assert_eq!(cfg.vardiff_target_shares, 1);
+        assert_eq!(cfg.vardiff_tolerance, 0.95);
     }
 
     #[test]

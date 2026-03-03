@@ -1,9 +1,11 @@
+use axum::body::Body;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{Request, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
@@ -26,6 +28,7 @@ pub struct ApiState {
     pub jobs: Arc<JobManager>,
     pub validation: Arc<ValidationEngine>,
     pub db_totals_cache: Arc<Mutex<DbTotalsCache>>,
+    pub api_key: String,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -42,6 +45,7 @@ pub struct DbTotalsCache {
 }
 
 pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
+    let app_state = state.clone();
     let app = Router::new()
         .route("/api/stats", get(handle_stats))
         .route("/api/miners", get(handle_miners))
@@ -49,7 +53,11 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
         .route("/api/blocks", get(handle_blocks))
         .route("/api/payouts", get(handle_payouts))
         .route("/api/fees", get(handle_fees))
-        .with_state(state);
+        .route_layer(middleware::from_fn_with_state(
+            app_state.clone(),
+            require_api_key,
+        ))
+        .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(addr = %addr, "api listening");
@@ -105,7 +113,10 @@ struct FeesResponse {
 async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
     let snap = state.stats.snapshot();
     let validation = state.validation.snapshot();
-    let totals = state.db_totals().await;
+    let totals = match state.db_totals().await {
+        Ok(v) => v,
+        Err(err) => return internal_error("failed loading pool stats", err).into_response(),
+    };
     let current_job_height = state.jobs.current_job().map(|j| j.height);
 
     let response = StatsResponse {
@@ -135,7 +146,7 @@ async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
         },
     };
 
-    Json(response)
+    Json(response).into_response()
 }
 
 async fn handle_miners(State(state): State<ApiState>) -> impl IntoResponse {
@@ -149,13 +160,21 @@ async fn handle_miner(
     let stats = state.stats.get_miner_stats(&address);
     let store = Arc::clone(&state.store);
     let address_for_query = address.clone();
-    let shares = tokio::task::spawn_blocking(move || {
-        store
-            .get_shares_for_miner(&address_for_query, 100)
-            .unwrap_or_default()
+    let shares = match tokio::task::spawn_blocking(move || {
+        store.get_shares_for_miner(&address_for_query, 100)
     })
     .await
-    .unwrap_or_default();
+    {
+        Ok(Ok(v)) => v,
+        Ok(Err(err)) => return internal_error("failed loading miner shares", err).into_response(),
+        Err(err) => {
+            return internal_error(
+                "failed loading miner shares",
+                anyhow::anyhow!("join error: {err}"),
+            )
+            .into_response()
+        }
+    };
 
     match stats {
         Some(miner_stats) => Json(serde_json::json!({
@@ -174,63 +193,131 @@ async fn handle_miner(
 
 async fn handle_blocks(State(state): State<ApiState>) -> impl IntoResponse {
     let store = Arc::clone(&state.store);
-    let blocks =
-        tokio::task::spawn_blocking(move || store.get_recent_blocks(100).unwrap_or_default())
-            .await
-            .unwrap_or_default();
-    Json(blocks)
+    let blocks = match tokio::task::spawn_blocking(move || store.get_recent_blocks(100)).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(err)) => return internal_error("failed loading blocks", err).into_response(),
+        Err(err) => {
+            return internal_error(
+                "failed loading blocks",
+                anyhow::anyhow!("join error: {err}"),
+            )
+            .into_response()
+        }
+    };
+    Json(blocks).into_response()
 }
 
 async fn handle_payouts(State(state): State<ApiState>) -> impl IntoResponse {
     let store = Arc::clone(&state.store);
-    let payouts =
-        tokio::task::spawn_blocking(move || store.get_recent_payouts(100).unwrap_or_default())
-            .await
-            .unwrap_or_default();
-    Json(payouts)
+    let payouts = match tokio::task::spawn_blocking(move || store.get_recent_payouts(100)).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(err)) => return internal_error("failed loading payouts", err).into_response(),
+        Err(err) => {
+            return internal_error(
+                "failed loading payouts",
+                anyhow::anyhow!("join error: {err}"),
+            )
+            .into_response()
+        }
+    };
+    Json(payouts).into_response()
 }
 
 async fn handle_fees(State(state): State<ApiState>) -> impl IntoResponse {
     let store = Arc::clone(&state.store);
-    let (total_collected, recent) = tokio::task::spawn_blocking(move || {
-        (
-            store.get_total_pool_fees().unwrap_or(0),
-            store.get_recent_pool_fees(100).unwrap_or_default(),
-        )
-    })
-    .await
-    .unwrap_or_else(|_| (0, Vec::new()));
+    let (total_collected, recent) =
+        match tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, Vec<PoolFeeEvent>)> {
+            Ok((
+                store.get_total_pool_fees()?,
+                store.get_recent_pool_fees(100)?,
+            ))
+        })
+        .await
+        {
+            Ok(Ok(v)) => v,
+            Ok(Err(err)) => return internal_error("failed loading fees", err).into_response(),
+            Err(err) => {
+                return internal_error("failed loading fees", anyhow::anyhow!("join error: {err}"))
+                    .into_response()
+            }
+        };
 
     Json(FeesResponse {
         total_collected,
         recent,
     })
+    .into_response()
 }
 
 impl ApiState {
-    async fn db_totals(&self) -> DbTotals {
+    async fn db_totals(&self) -> anyhow::Result<DbTotals> {
         {
             let cache = self.db_totals_cache.lock();
             if cache
                 .updated_at
                 .is_some_and(|updated| updated.elapsed() < DB_TOTALS_CACHE_TTL)
             {
-                return cache.totals;
+                return Ok(cache.totals);
             }
         }
 
         let store = Arc::clone(&self.store);
-        let totals = tokio::task::spawn_blocking(move || DbTotals {
-            total_shares: store.get_total_share_count().unwrap_or(0),
-            total_blocks: store.get_block_count().unwrap_or(0),
-            pool_fees_collected: store.get_total_pool_fees().unwrap_or(0),
+        let totals = tokio::task::spawn_blocking(move || -> anyhow::Result<DbTotals> {
+            Ok(DbTotals {
+                total_shares: store.get_total_share_count()?,
+                total_blocks: store.get_block_count()?,
+                pool_fees_collected: store.get_total_pool_fees()?,
+            })
         })
         .await
-        .unwrap_or_default();
+        .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
 
         let mut cache = self.db_totals_cache.lock();
         cache.totals = totals;
         cache.updated_at = Some(Instant::now());
-        totals
+        Ok(totals)
     }
+}
+
+async fn require_api_key(
+    State(state): State<ApiState>,
+    req: Request<Body>,
+    next: Next,
+) -> impl IntoResponse {
+    let expected = state.api_key.trim();
+    if expected.is_empty() {
+        return next.run(req).await.into_response();
+    }
+
+    let api_key = req
+        .headers()
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    let bearer = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+
+    if api_key == Some(expected) || bearer == Some(expected) {
+        return next.run(req).await.into_response();
+    }
+
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({"error":"unauthorized"})),
+    )
+        .into_response()
+}
+
+fn internal_error(msg: &str, err: anyhow::Error) -> (StatusCode, Json<serde_json::Value>) {
+    tracing::warn!(error = %err, "{msg}");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({"error": msg})),
+    )
 }

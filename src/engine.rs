@@ -1,6 +1,6 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
@@ -23,6 +23,7 @@ pub struct Job {
     pub height: u64,
     pub header_base: Vec<u8>,
     pub network_target: [u8; 32],
+    pub network_difficulty: u64,
     pub template_id: Option<String>,
     pub full_block: Option<serde_json::Value>,
 }
@@ -60,6 +61,36 @@ pub trait ShareStore: Send + Sync + 'static {
     fn is_share_seen(&self, job_id: &str, nonce: u64) -> Result<bool>;
     fn mark_share_seen(&self, job_id: &str, nonce: u64) -> Result<()>;
     fn add_share(&self, share: ShareRecord) -> Result<()>;
+    fn add_found_block(&self, _block: FoundBlockRecord) -> Result<()> {
+        Ok(())
+    }
+    fn is_address_quarantined(&self, _address: &str) -> Result<bool> {
+        Ok(false)
+    }
+    fn should_force_verify_address(&self, _address: &str) -> Result<bool> {
+        Ok(false)
+    }
+    fn escalate_address_risk(
+        &self,
+        _address: &str,
+        _reason: &str,
+        _quarantine_base: Duration,
+        _quarantine_max: Duration,
+        _force_verify_duration: Duration,
+        _apply_quarantine: bool,
+    ) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FoundBlockRecord {
+    pub height: u64,
+    pub hash: String,
+    pub difficulty: u64,
+    pub finder: String,
+    pub finder_worker: String,
+    pub timestamp: SystemTime,
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +99,8 @@ pub struct SubmitAck {
     pub verified: bool,
     pub status: &'static str,
     pub block_accepted: bool,
+    pub share_difficulty: u64,
+    pub next_difficulty: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +110,8 @@ struct MinerSession {
     difficulty: u64,
     protocol_version: u32,
     capabilities: BTreeSet<String>,
+    accepted_share_times: VecDeque<Instant>,
+    last_difficulty_adjustment: Option<Instant>,
 }
 
 pub struct PoolEngine {
@@ -142,6 +177,9 @@ impl PoolEngine {
         {
             return Err(anyhow!("pool requires submit_claimed_hash capability"));
         }
+        if self.store.is_address_quarantined(address)? {
+            return Err(anyhow!("address quarantined"));
+        }
 
         let mut sessions = self.sessions.lock();
         sessions.insert(
@@ -149,9 +187,14 @@ impl PoolEngine {
             MinerSession {
                 address: address.to_string(),
                 worker,
-                difficulty: self.cfg.initial_share_difficulty,
+                difficulty: self
+                    .cfg
+                    .initial_share_difficulty
+                    .clamp(self.cfg.min_share_difficulty, self.cfg.max_share_difficulty),
                 protocol_version,
                 capabilities: cap_set,
+                accepted_share_times: VecDeque::new(),
+                last_difficulty_adjustment: None,
             },
         );
 
@@ -194,6 +237,10 @@ impl PoolEngine {
         }
 
         let result = (|| -> Result<SubmitAck> {
+            if self.store.is_address_quarantined(&session.address)? {
+                return Err(anyhow!("address quarantined"));
+            }
+
             if self.store.is_share_seen(&job_id, nonce)? {
                 return Err(anyhow!("duplicate share"));
             }
@@ -222,12 +269,31 @@ impl PoolEngine {
                 share_target,
                 network_target: job.network_target,
                 claimed_hash,
-                force_full_verify: candidate_hint || claimed_hash.is_none(),
+                force_full_verify: candidate_hint
+                    || claimed_hash.is_none()
+                    || self.store.should_force_verify_address(&session.address)?,
             };
 
             let validation = self.validate_task(task, claimed_hash.is_some(), candidate_hint)?;
 
             if !validation.accepted {
+                if validation.suspected_fraud || validation.escalate_risk {
+                    let reason = validation.reject_reason.unwrap_or("risk escalation");
+                    if let Err(err) = self.store.escalate_address_risk(
+                        &session.address,
+                        reason,
+                        self.cfg.quarantine_duration_duration(),
+                        self.cfg.max_quarantine_duration_duration(),
+                        self.cfg.forced_verify_duration(),
+                        validation.suspected_fraud,
+                    ) {
+                        tracing::warn!(
+                            address = %session.address,
+                            error = %err,
+                            "failed to persist risk escalation"
+                        );
+                    }
+                }
                 return Err(anyhow!(
                     "{}",
                     validation.reject_reason.unwrap_or("invalid share")
@@ -245,15 +311,38 @@ impl PoolEngine {
             let mut block_hash = None;
             let mut block_accepted = false;
             if validation.is_block_candidate {
-                block_hash = Some(hex_string(validation.hash));
+                let computed_hash = hex_string(validation.hash);
+                block_hash = Some(computed_hash.clone());
                 let submit = self.node.submit_block(&job, nonce)?;
                 block_accepted = submit.accepted;
+                if let Some(network_hash) = submit.hash {
+                    block_hash = Some(network_hash);
+                }
+
+                if block_accepted {
+                    let found = FoundBlockRecord {
+                        height: submit.height.unwrap_or(job.height),
+                        hash: block_hash.clone().unwrap_or(computed_hash),
+                        difficulty: job.network_difficulty,
+                        finder: session.address.clone(),
+                        finder_worker: session.worker.clone(),
+                        timestamp: SystemTime::now(),
+                    };
+                    if let Err(err) = self.store.add_found_block(found) {
+                        tracing::error!(
+                            address = %session.address,
+                            height = job.height,
+                            error = %err,
+                            "critical: failed to persist found block"
+                        );
+                    }
+                }
             }
 
             self.store.add_share(ShareRecord {
                 job_id,
-                miner: session.address,
-                worker: session.worker,
+                miner: session.address.clone(),
+                worker: session.worker.clone(),
                 difficulty: session.difficulty,
                 nonce,
                 status,
@@ -262,11 +351,15 @@ impl PoolEngine {
                 created_at: SystemTime::now(),
             })?;
 
+            let next_difficulty = self.note_share_and_maybe_adjust_difficulty(conn_id);
+
             Ok(SubmitAck {
                 accepted: true,
                 verified: validation.verified,
                 status,
                 block_accepted,
+                share_difficulty: session.difficulty,
+                next_difficulty,
             })
         })();
 
@@ -318,6 +411,93 @@ impl PoolEngine {
                 .collect::<Vec<String>>()
         })
     }
+
+    fn note_share_and_maybe_adjust_difficulty(&self, conn_id: &str) -> u64 {
+        let mut sessions = self.sessions.lock();
+        let Some(session) = sessions.get_mut(conn_id) else {
+            return self.cfg.initial_share_difficulty;
+        };
+
+        let min_diff = self.cfg.min_share_difficulty.max(1);
+        let max_diff = self.cfg.max_share_difficulty.max(min_diff);
+        session.difficulty = session.difficulty.clamp(min_diff, max_diff);
+
+        if !self.cfg.enable_vardiff {
+            return session.difficulty;
+        }
+
+        let now = Instant::now();
+        let window = self
+            .cfg
+            .vardiff_window_duration()
+            .max(Duration::from_secs(30));
+        let retarget_interval = self
+            .cfg
+            .vardiff_retarget_interval_duration()
+            .max(Duration::from_secs(5));
+        let target_shares = self.cfg.vardiff_target_shares.max(1) as f64;
+        let target_interval = (window.as_secs_f64() / target_shares).max(1.0);
+        let tolerance = self.cfg.vardiff_tolerance.clamp(0.01, 0.95);
+
+        session.accepted_share_times.push_back(now);
+        let cutoff = now.checked_sub(window).unwrap_or(now);
+        while session
+            .accepted_share_times
+            .front()
+            .is_some_and(|ts| *ts < cutoff)
+        {
+            session.accepted_share_times.pop_front();
+        }
+
+        if session.accepted_share_times.len() < 3 {
+            return session.difficulty;
+        }
+        if session
+            .last_difficulty_adjustment
+            .is_some_and(|last| now.duration_since(last) < retarget_interval)
+        {
+            return session.difficulty;
+        }
+
+        let Some(oldest) = session.accepted_share_times.front().copied() else {
+            return session.difficulty;
+        };
+        let elapsed = now.duration_since(oldest).as_secs_f64();
+        if elapsed < 1.0 {
+            return session.difficulty;
+        }
+
+        let observed_interval = elapsed / ((session.accepted_share_times.len() - 1) as f64);
+        let lower = target_interval * (1.0 - tolerance);
+        let upper = target_interval * (1.0 + tolerance);
+
+        let mut next_diff = session.difficulty;
+        if observed_interval < lower {
+            let ratio = (target_interval / observed_interval).clamp(1.1, 8.0);
+            next_diff = ((session.difficulty as f64) * ratio).ceil() as u64;
+        } else if observed_interval > upper {
+            let ratio = (observed_interval / target_interval).clamp(1.1, 8.0);
+            next_diff = ((session.difficulty as f64) / ratio).floor() as u64;
+        }
+
+        next_diff = next_diff.clamp(min_diff, max_diff);
+        session.last_difficulty_adjustment = Some(now);
+
+        if next_diff != session.difficulty {
+            tracing::info!(
+                conn_id,
+                address = %session.address,
+                old_difficulty = session.difficulty,
+                new_difficulty = next_diff,
+                observed_interval_s = observed_interval,
+                target_interval_s = target_interval,
+                "adjusted share difficulty"
+            );
+            session.difficulty = next_diff;
+        }
+
+        session.difficulty
+    }
 }
 
 fn hex_string(hash: [u8; 32]) -> String {
@@ -333,11 +513,16 @@ fn hex_string(hash: [u8; 32]) -> String {
 pub struct InMemoryStore {
     seen: Mutex<HashSet<(String, u64)>>,
     shares: Mutex<Vec<ShareRecord>>,
+    blocks: Mutex<Vec<FoundBlockRecord>>,
 }
 
 impl InMemoryStore {
     pub fn shares(&self) -> Vec<ShareRecord> {
         self.shares.lock().clone()
+    }
+
+    pub fn blocks(&self) -> Vec<FoundBlockRecord> {
+        self.blocks.lock().clone()
     }
 }
 
@@ -353,6 +538,11 @@ impl ShareStore for InMemoryStore {
 
     fn add_share(&self, share: ShareRecord) -> Result<()> {
         self.shares.lock().push(share);
+        Ok(())
+    }
+
+    fn add_found_block(&self, block: FoundBlockRecord) -> Result<()> {
+        self.blocks.lock().push(block);
         Ok(())
     }
 }
@@ -425,6 +615,7 @@ mod tests {
             height: 100,
             header_base: vec![1, 2, 3],
             network_target: [0x0f; 32],
+            network_difficulty: 1,
             template_id: Some("tmpl1".to_string()),
             full_block: None,
         }
@@ -621,6 +812,46 @@ mod tests {
         let shares = store.shares();
         assert_eq!(shares.len(), 1);
         assert!(shares[0].block_hash.is_some());
+        assert_eq!(store.blocks().len(), 1);
+    }
+
+    #[test]
+    fn vardiff_increases_difficulty_for_fast_submitters() {
+        let mut cfg = cfg();
+        cfg.enable_vardiff = true;
+        cfg.vardiff_target_shares = 1;
+        cfg.vardiff_window = "5m".to_string();
+        cfg.vardiff_retarget_interval = "1s".to_string();
+        cfg.validation_mode = "probabilistic".to_string();
+
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .expect("login");
+        let _ = engine
+            .submit("conn1", "job1".to_string(), 100, Some("ff".repeat(32)))
+            .expect("share 1");
+        std::thread::sleep(Duration::from_millis(600));
+        let _ = engine
+            .submit("conn1", "job1".to_string(), 101, Some("ff".repeat(32)))
+            .expect("share 2");
+        std::thread::sleep(Duration::from_millis(600));
+        let ack = engine
+            .submit("conn1", "job1".to_string(), 102, Some("ff".repeat(32)))
+            .expect("share 3");
+
+        assert!(ack.next_difficulty > ack.share_difficulty);
     }
 
     #[test]
