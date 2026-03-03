@@ -313,6 +313,17 @@ impl PoolStore {
             PoolStore::Postgres(v) => v.get_last_n_shares(n),
         }
     }
+
+    pub fn apply_block_credits_and_mark_paid(
+        &self,
+        block_height: u64,
+        credits: &[(String, u64)],
+    ) -> Result<bool> {
+        match self {
+            PoolStore::Sqlite(v) => v.apply_block_credits_and_mark_paid(block_height, credits),
+            PoolStore::Postgres(v) => v.apply_block_credits_and_mark_paid(block_height, credits),
+        }
+    }
 }
 
 impl ShareStore for PoolStore {

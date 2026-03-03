@@ -75,7 +75,7 @@ impl Default for Config {
             pool_url: "http://localhost:24783".to_string(),
             stratum_port: 3333,
             api_port: 24783,
-            api_host: "0.0.0.0".to_string(),
+            api_host: "127.0.0.1".to_string(),
             daemon_binary: "./blocknet".to_string(),
             daemon_data_dir: "data".to_string(),
             daemon_api: "http://127.0.0.1:8332".to_string(),

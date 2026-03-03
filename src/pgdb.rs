@@ -312,6 +312,78 @@ CREATE TABLE IF NOT EXISTS address_risk (
         self.update_balance(&bal)
     }
 
+    pub fn apply_block_credits_and_mark_paid(
+        &self,
+        block_height: u64,
+        credits: &[(String, u64)],
+    ) -> Result<bool> {
+        let mut conn = self.conn.lock();
+        let mut tx = conn.transaction()?;
+
+        let block_state = tx.query_opt(
+            "SELECT confirmed, orphaned, paid_out FROM blocks WHERE height = $1",
+            &[&(block_height as i64)],
+        )?;
+        let Some(row) = block_state else {
+            return Err(anyhow!("block {block_height} not found"));
+        };
+        let confirmed: bool = row.get(0);
+        let orphaned: bool = row.get(1);
+        let paid_out: bool = row.get(2);
+        if paid_out {
+            return Ok(false);
+        }
+        if !confirmed || orphaned {
+            return Err(anyhow!("block {block_height} is not eligible for payout"));
+        }
+
+        for (address, amount) in credits {
+            let destination = address.trim();
+            if destination.is_empty() || *amount == 0 {
+                continue;
+            }
+
+            let row = tx.query_opt(
+                "SELECT address, pending, paid FROM balances WHERE address = $1",
+                &[&destination],
+            )?;
+            let mut bal = if let Some(row) = row {
+                Balance {
+                    address: row.get::<_, String>(0),
+                    pending: row.get::<_, i64>(1).max(0) as u64,
+                    paid: row.get::<_, i64>(2).max(0) as u64,
+                }
+            } else {
+                Balance {
+                    address: destination.to_string(),
+                    pending: 0,
+                    paid: 0,
+                }
+            };
+            bal.pending = bal
+                .pending
+                .checked_add(*amount)
+                .ok_or_else(|| anyhow!("balance overflow"))?;
+
+            tx.execute(
+                "INSERT INTO balances (address, pending, paid) VALUES ($1, $2, $3)
+                 ON CONFLICT(address) DO UPDATE SET pending = EXCLUDED.pending, paid = EXCLUDED.paid",
+                &[&bal.address, &u64_to_i64(bal.pending)?, &u64_to_i64(bal.paid)?],
+            )?;
+        }
+
+        let updated = tx.execute(
+            "UPDATE blocks SET paid_out = TRUE WHERE height = $1 AND paid_out = FALSE",
+            &[&(block_height as i64)],
+        )?;
+        if updated == 0 {
+            return Ok(false);
+        }
+
+        tx.commit()?;
+        Ok(true)
+    }
+
     pub fn get_all_balances(&self) -> Result<Vec<Balance>> {
         let rows = self.conn.lock().query(
             "SELECT address, pending, paid FROM balances ORDER BY pending DESC",
@@ -619,8 +691,16 @@ CREATE TABLE IF NOT EXISTS address_risk (
             "SELECT amount, initiated_at FROM pending_payouts WHERE address = $1",
             &[&address],
         )?;
-        if pending.is_none() {
+        let Some(pending_row) = pending else {
             return Err(anyhow!("no pending payout for {address}"));
+        };
+        let pending_amount = pending_row.get::<_, i64>(0).max(0) as u64;
+        if pending_amount != amount {
+            return Err(anyhow!(
+                "pending payout amount mismatch: expected={}, requested={}",
+                pending_amount,
+                amount
+            ));
         }
 
         let row = tx.query_opt(
@@ -754,6 +834,10 @@ fn now_unix() -> i64 {
 
 fn to_unix(ts: SystemTime) -> i64 {
     ts.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64
+}
+
+fn u64_to_i64(value: u64) -> Result<i64> {
+    i64::try_from(value).map_err(|_| anyhow!("value does not fit in i64"))
 }
 
 fn from_unix(ts: i64) -> SystemTime {

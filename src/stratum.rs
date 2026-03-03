@@ -3,9 +3,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -20,6 +20,8 @@ use crate::stats::PoolStats;
 const MAX_CONNS_PER_IP: usize = 16;
 const MAX_CONNS_TOTAL: usize = 4096;
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
+const POST_LOGIN_IDLE_TIMEOUT: Duration = Duration::from_secs(180);
+const MAX_STRATUM_REQUEST_BYTES: usize = 8 * 1024;
 
 #[derive(Debug)]
 struct ConnState {
@@ -111,16 +113,22 @@ impl StratumServer {
         let writer = Arc::new(AsyncMutex::new(writer_half));
 
         let mut logged_in: Option<(String, String, u64)> = None; // address, worker, difficulty
-        let mut lines = BufReader::new(reader_half).lines();
+        let mut reader = BufReader::new(reader_half);
         let mut rx_jobs = self.jobs.subscribe();
 
         let login_deadline = tokio::time::sleep(LOGIN_TIMEOUT);
         tokio::pin!(login_deadline);
+        let idle_deadline = tokio::time::sleep(POST_LOGIN_IDLE_TIMEOUT);
+        tokio::pin!(idle_deadline);
 
         loop {
             tokio::select! {
                 _ = &mut login_deadline, if logged_in.is_none() => {
                     tracing::warn!(peer = %peer, "stratum login timeout");
+                    return Ok(());
+                }
+                _ = &mut idle_deadline, if logged_in.is_some() => {
+                    tracing::warn!(peer = %peer, "stratum idle timeout");
                     return Ok(());
                 }
                 maybe_job = rx_jobs.recv(), if logged_in.is_some() => {
@@ -137,10 +145,20 @@ impl StratumServer {
                         let _ = job;
                     }
                 }
-                line = lines.next_line() => {
-                    let Some(line) = line? else {
-                        break;
+                line = read_line_limited(&mut reader, MAX_STRATUM_REQUEST_BYTES) => {
+                    let line = match line {
+                        Ok(Some(v)) => v,
+                        Ok(None) => break,
+                        Err(err) => {
+                            send_error(&writer, 0, &err.to_string()).await?;
+                            return Ok(());
+                        }
                     };
+                    if logged_in.is_some() {
+                        idle_deadline
+                            .as_mut()
+                            .reset(tokio::time::Instant::now() + POST_LOGIN_IDLE_TIMEOUT);
+                    }
                     let trimmed = line.trim();
                     if trimmed.is_empty() {
                         continue;
@@ -339,6 +357,39 @@ async fn send_error(
         result: None,
     };
     send_json(writer, &response).await
+}
+
+async fn read_line_limited(
+    reader: &mut BufReader<tokio::net::tcp::OwnedReadHalf>,
+    max_bytes: usize,
+) -> Result<Option<String>> {
+    let mut data = Vec::<u8>::with_capacity(256);
+    loop {
+        let byte = match reader.read_u8().await {
+            Ok(v) => v,
+            Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                if data.is_empty() {
+                    return Ok(None);
+                }
+                break;
+            }
+            Err(err) => return Err(err.into()),
+        };
+
+        if byte == b'\n' {
+            break;
+        }
+        if data.len() >= max_bytes {
+            return Err(anyhow!("request exceeds {max_bytes} bytes"));
+        }
+        if byte != b'\r' {
+            data.push(byte);
+        }
+    }
+
+    String::from_utf8(data)
+        .map(Some)
+        .map_err(|_| anyhow!("request is not valid UTF-8"))
 }
 
 async fn send_json<T: serde::Serialize>(

@@ -3,7 +3,7 @@
   "pool_url": "http://localhost:24783",
   "stratum_port": 3333,
   "api_port": 24783,
-  "api_host": "0.0.0.0",
+  "api_host": "127.0.0.1",
   "daemon_binary": "./blocknet",
   "daemon_data_dir": "data",
   "daemon_api": "http://127.0.0.1:8332",

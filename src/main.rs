@@ -56,6 +56,13 @@ async fn main() -> Result<()> {
         cfg.vardiff_target_shares,
         cfg.vardiff_retarget_interval
     );
+    if cfg.api_key.trim().is_empty() {
+        warn!(
+            host = %cfg.api_host,
+            port = cfg.api_port,
+            "api_key is empty; /api routes are unauthenticated"
+        );
+    }
 
     let cfg_for_store = cfg.clone();
     let store = tokio::task::spawn_blocking(move || PoolStore::open_from_config(&cfg_for_store))

@@ -5,6 +5,9 @@ use std::time::{Duration, SystemTime};
 use parking_lot::RwLock;
 use serde::Serialize;
 
+const MINER_STATS_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
+const MAX_TRACKED_MINERS: usize = 100_000;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct MinerStats {
     pub address: String,
@@ -75,10 +78,13 @@ impl PoolStats {
                 last_share_at: None,
             });
         entry.workers.insert(worker.to_string());
+        drop(miners);
+        self.prune_miner_stats();
     }
 
     pub fn remove_miner(&self, conn_id: &str) {
         self.connected_miners.write().remove(conn_id);
+        self.prune_miner_stats();
     }
 
     pub fn record_accepted_share(&self, address: &str, difficulty: u64) {
@@ -117,6 +123,8 @@ impl PoolStats {
         {
             recent.pop_front();
         }
+        drop(recent);
+        self.prune_miner_stats();
     }
 
     pub fn record_rejected_share(&self, address: &str) {
@@ -124,12 +132,58 @@ impl PoolStats {
         if let Some(entry) = self.miner_stats.write().get_mut(address) {
             entry.shares_rejected = entry.shares_rejected.saturating_add(1);
         }
+        self.prune_miner_stats();
     }
 
     pub fn record_block_found(&self, address: &str) {
         self.total_blocks_found.fetch_add(1, Ordering::Relaxed);
         if let Some(entry) = self.miner_stats.write().get_mut(address) {
             entry.blocks_found = entry.blocks_found.saturating_add(1);
+        }
+    }
+
+    fn prune_miner_stats(&self) {
+        let active_addresses = self
+            .connected_miners
+            .read()
+            .values()
+            .map(|entry| entry.address.clone())
+            .collect::<HashSet<String>>();
+
+        let now = SystemTime::now();
+        let cutoff = now
+            .checked_sub(MINER_STATS_RETENTION)
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+
+        let mut miners = self.miner_stats.write();
+        miners.retain(|address, stats| {
+            if active_addresses.contains(address) {
+                return true;
+            }
+            stats.last_share_at.is_some_and(|ts| ts > cutoff)
+        });
+
+        if miners.len() <= MAX_TRACKED_MINERS {
+            return;
+        }
+
+        let mut removable = miners
+            .iter()
+            .filter_map(|(address, stats)| {
+                if active_addresses.contains(address) {
+                    return None;
+                }
+                Some((
+                    address.clone(),
+                    stats.last_share_at.unwrap_or(SystemTime::UNIX_EPOCH),
+                ))
+            })
+            .collect::<Vec<(String, SystemTime)>>();
+        removable.sort_by_key(|(_, last_seen)| *last_seen);
+
+        let excess = miners.len().saturating_sub(MAX_TRACKED_MINERS);
+        for (address, _) in removable.into_iter().take(excess) {
+            miners.remove(&address);
         }
     }
 

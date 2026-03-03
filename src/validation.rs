@@ -13,6 +13,8 @@ use crate::pow::{check_target, PowHasher};
 
 pub const SHARE_STATUS_VERIFIED: &str = "verified";
 pub const SHARE_STATUS_PROVISIONAL: &str = "provisional";
+const VALIDATION_STATE_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
+const VALIDATION_STATE_MAX_TRACKED: usize = 100_000;
 
 #[derive(Debug, Clone)]
 pub struct ValidationTask {
@@ -37,13 +39,27 @@ pub struct ValidationResult {
     pub escalate_risk: bool,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct ValidationAddressState {
     total_shares: u64,
     sampled_shares: u64,
     invalid_samples: u64,
     forced_until: Option<Instant>,
     provisional_at: VecDeque<Instant>,
+    last_seen_at: Instant,
+}
+
+impl Default for ValidationAddressState {
+    fn default() -> Self {
+        Self {
+            total_shares: 0,
+            sampled_shares: 0,
+            invalid_samples: 0,
+            forced_until: None,
+            provisional_at: VecDeque::new(),
+            last_seen_at: Instant::now(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -277,6 +293,7 @@ impl ValidationInner {
         let mut state = self.state.lock();
         let st = get_or_insert_state(&mut state, address);
         self.prune_provisional_locked(st, now);
+        st.last_seen_at = now;
 
         if self.config.max_provisional_shares > 0
             && st.provisional_at.len() >= self.config.max_provisional_shares as usize
@@ -323,6 +340,7 @@ impl ValidationInner {
 
         st.total_shares = st.total_shares.saturating_add(1);
         self.prune_provisional_locked(st, now);
+        st.last_seen_at = now;
         if provisional_accepted {
             st.provisional_at.push_back(now);
         }
@@ -351,9 +369,15 @@ impl ValidationInner {
 
         if invalid_ratio > self.config.invalid_sample_threshold {
             st.forced_until = Some(now + self.config.forced_verify_duration());
+            if state.len() > VALIDATION_STATE_MAX_TRACKED {
+                self.prune_stale_state_locked(&mut state, now);
+            }
             return true;
         }
 
+        if state.len() > VALIDATION_STATE_MAX_TRACKED {
+            self.prune_stale_state_locked(&mut state, now);
+        }
         false
     }
 
@@ -389,6 +413,9 @@ impl ValidationInner {
         };
 
         let mut state = self.state.lock();
+        if state.len() > VALIDATION_STATE_MAX_TRACKED {
+            self.prune_stale_state_locked(&mut state, now);
+        }
         snap.tracked_addresses = state.len();
         for st in state.values_mut() {
             self.prune_provisional_locked(st, now);
@@ -404,6 +431,40 @@ impl ValidationInner {
         }
 
         snap
+    }
+
+    fn prune_stale_state_locked(
+        &self,
+        state: &mut HashMap<String, ValidationAddressState>,
+        now: Instant,
+    ) {
+        let cutoff = now.checked_sub(VALIDATION_STATE_RETENTION).unwrap_or(now);
+        state.retain(|_, st| {
+            st.last_seen_at >= cutoff
+                || st.forced_until.is_some_and(|deadline| deadline > now)
+                || !st.provisional_at.is_empty()
+        });
+        if state.len() <= VALIDATION_STATE_MAX_TRACKED {
+            return;
+        }
+
+        let mut removable = state
+            .iter()
+            .filter_map(|(address, st)| {
+                if st.forced_until.is_some_and(|deadline| deadline > now)
+                    || !st.provisional_at.is_empty()
+                {
+                    return None;
+                }
+                Some((address.clone(), st.last_seen_at))
+            })
+            .collect::<Vec<(String, Instant)>>();
+        removable.sort_by_key(|(_, seen_at)| *seen_at);
+
+        let excess = state.len().saturating_sub(VALIDATION_STATE_MAX_TRACKED);
+        for (address, _) in removable.into_iter().take(excess) {
+            state.remove(&address);
+        }
     }
 }
 

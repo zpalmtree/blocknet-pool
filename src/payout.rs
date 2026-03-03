@@ -113,15 +113,58 @@ impl PayoutProcessor {
             }
         };
 
-        for mut block in blocks {
+        for block in blocks {
             if block.reward == 0 {
                 continue;
             }
 
             let fee = self.cfg.pool_fee(block.reward);
             let distributable = block.reward.saturating_sub(fee);
+            let fee_address = if fee > 0 {
+                self.resolve_pool_fee_address(&block)
+            } else {
+                None
+            };
+
+            let credits = if self.cfg.payout_scheme.trim().eq_ignore_ascii_case("pplns") {
+                self.build_pplns_credits(&block, distributable)
+            } else {
+                self.build_proportional_credits(&block, distributable)
+            };
+            let credits = match credits {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::warn!(height = block.height, error = %err, "failed reward distribution");
+                    continue;
+                }
+            };
+            let mut credits_vec = Vec::with_capacity(credits.len());
+            for (address, amount) in credits {
+                if amount > 0 {
+                    credits_vec.push((address, amount));
+                }
+            }
+
+            let applied = match self
+                .store
+                .apply_block_credits_and_mark_paid(block.height, &credits_vec)
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::warn!(
+                        height = block.height,
+                        error = %err,
+                        "failed reward distribution transaction"
+                    );
+                    continue;
+                }
+            };
+            if !applied {
+                continue;
+            }
+
             if fee > 0 {
-                if let Some(fee_address) = self.resolve_pool_fee_address(&block) {
+                if let Some(fee_address) = fee_address {
                     if let Err(err) =
                         self.store
                             .record_pool_fee(block.height, fee, &fee_address, block.timestamp)
@@ -142,26 +185,14 @@ impl PayoutProcessor {
                     );
                 }
             }
-
-            let result = if self.cfg.payout_scheme.trim().eq_ignore_ascii_case("pplns") {
-                self.distribute_pplns(&block, distributable)
-            } else {
-                self.distribute_proportional(&block, distributable)
-            };
-
-            if let Err(err) = result {
-                tracing::warn!(height = block.height, error = %err, "failed reward distribution");
-                continue;
-            }
-
-            block.paid_out = true;
-            if let Err(err) = self.store.update_block(&block) {
-                tracing::warn!(height = block.height, error = %err, "failed marking block paid");
-            }
         }
     }
 
-    fn distribute_pplns(&self, block: &DbBlock, reward: u64) -> anyhow::Result<()> {
+    fn build_pplns_credits(
+        &self,
+        block: &DbBlock,
+        reward: u64,
+    ) -> anyhow::Result<HashMap<String, u64>> {
         let shares = if self.cfg.pplns_window_duration_duration().is_zero() {
             self.store
                 .get_last_n_shares(self.cfg.pplns_window.max(1) as i64)?
@@ -170,70 +201,75 @@ impl PayoutProcessor {
             self.store.get_shares_since(since)?
         };
 
+        let mut credits = HashMap::<String, u64>::new();
         if shares.is_empty() {
-            self.store.credit_balance(&block.finder, reward)?;
-            return Ok(());
+            add_credit(&mut credits, &block.finder, reward)?;
+            return Ok(credits);
         }
 
         let (weights, total_weight) = weight_shares(&shares);
         if total_weight == 0 {
-            self.store.credit_balance(&block.finder, reward)?;
-            return Ok(());
+            add_credit(&mut credits, &block.finder, reward)?;
+            return Ok(credits);
         }
 
         let mut distributable = reward;
         if self.cfg.block_finder_bonus && self.cfg.block_finder_bonus_pct > 0.0 {
             let bonus = (reward as f64 * self.cfg.block_finder_bonus_pct / 100.0) as u64;
-            self.store.credit_balance(&block.finder, bonus)?;
+            add_credit(&mut credits, &block.finder, bonus)?;
             distributable = distributable.saturating_sub(bonus);
         }
 
-        self.credit_miners(weights, total_weight, distributable)?;
-        Ok(())
+        self.allocate_weighted_credits(weights, total_weight, distributable, &mut credits)?;
+        Ok(credits)
     }
 
-    fn distribute_proportional(&self, block: &DbBlock, reward: u64) -> anyhow::Result<()> {
+    fn build_proportional_credits(
+        &self,
+        block: &DbBlock,
+        reward: u64,
+    ) -> anyhow::Result<HashMap<String, u64>> {
         let shares = self
             .store
             .get_shares_since(block.timestamp - Duration::from_secs(60 * 60))?;
+        let mut credits = HashMap::<String, u64>::new();
         if shares.is_empty() {
-            self.store.credit_balance(&block.finder, reward)?;
-            return Ok(());
+            add_credit(&mut credits, &block.finder, reward)?;
+            return Ok(credits);
         }
 
         let (weights, total_weight) = weight_shares(&shares);
         if total_weight == 0 {
-            self.store.credit_balance(&block.finder, reward)?;
-            return Ok(());
+            add_credit(&mut credits, &block.finder, reward)?;
+            return Ok(credits);
         }
 
         let mut distributable = reward;
         if self.cfg.block_finder_bonus && self.cfg.block_finder_bonus_pct > 0.0 {
             let bonus = (reward as f64 * self.cfg.block_finder_bonus_pct / 100.0) as u64;
-            self.store.credit_balance(&block.finder, bonus)?;
+            add_credit(&mut credits, &block.finder, bonus)?;
             distributable = distributable.saturating_sub(bonus);
         }
 
-        self.credit_miners(weights, total_weight, distributable)?;
-        Ok(())
+        self.allocate_weighted_credits(weights, total_weight, distributable, &mut credits)?;
+        Ok(credits)
     }
 
-    fn credit_miners(
+    fn allocate_weighted_credits(
         &self,
         weights: HashMap<String, u64>,
         total_weight: u64,
         amount: u64,
-    ) -> anyhow::Result<u64> {
-        let mut credited = 0u64;
+        credits: &mut HashMap<String, u64>,
+    ) -> anyhow::Result<()> {
         for (address, weight) in weights {
             let share = ((amount as f64) * (weight as f64) / (total_weight as f64)) as u64;
             if share == 0 {
                 continue;
             }
-            self.store.credit_balance(&address, share)?;
-            credited = credited.saturating_add(share);
+            add_credit(credits, &address, share)?;
         }
-        Ok(credited)
+        Ok(())
     }
 
     fn recover_pending_payouts(&self) {
@@ -250,7 +286,12 @@ impl PayoutProcessor {
                 .duration_since(entry.initiated_at)
                 .unwrap_or_default();
             if age > Duration::from_secs(60 * 60) {
-                let _ = self.store.cancel_pending_payout(&entry.address);
+                tracing::warn!(
+                    address = %entry.address,
+                    amount = entry.amount,
+                    age_secs = age.as_secs(),
+                    "stale pending payout retained for idempotent retry"
+                );
             }
         }
     }
@@ -270,21 +311,6 @@ impl PayoutProcessor {
         };
 
         for bal in balances {
-            if bal.pending < min_amount {
-                continue;
-            }
-
-            let wallet_balance = match self.node.get_wallet_balance() {
-                Ok(v) => v,
-                Err(err) => {
-                    tracing::warn!(error = %err, "failed wallet balance check");
-                    return;
-                }
-            };
-            if wallet_balance.spendable < bal.pending {
-                continue;
-            }
-
             let pending = match self.store.get_pending_payout(&bal.address) {
                 Ok(v) => v,
                 Err(err) => {
@@ -296,6 +322,9 @@ impl PayoutProcessor {
             let pending = match pending {
                 Some(v) => v,
                 None => {
+                    if bal.pending < min_amount {
+                        continue;
+                    }
                     if let Err(err) = self.store.create_pending_payout(&bal.address, bal.pending) {
                         tracing::warn!(address = %bal.address, error = %err, "failed create pending payout");
                         continue;
@@ -307,14 +336,34 @@ impl PayoutProcessor {
                 }
             };
 
-            if pending.amount != bal.pending {
+            if pending.amount == 0 {
+                continue;
+            }
+            if bal.pending < pending.amount {
+                tracing::warn!(
+                    address = %bal.address,
+                    pending_amount = pending.amount,
+                    balance_pending = bal.pending,
+                    "pending payout exceeds local pending balance; skipping"
+                );
+                continue;
+            }
+
+            let wallet_balance = match self.node.get_wallet_balance() {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed wallet balance check");
+                    return;
+                }
+            };
+            if wallet_balance.spendable < pending.amount {
                 continue;
             }
 
             let idempotency_key = payout_idempotency_key(&pending);
             let send = self
                 .node
-                .wallet_send(&bal.address, bal.pending, &idempotency_key);
+                .wallet_send(&bal.address, pending.amount, &idempotency_key);
             let sent = match send {
                 Ok(v) => v,
                 Err(err) => {
@@ -325,7 +374,7 @@ impl PayoutProcessor {
 
             if let Err(err) =
                 self.store
-                    .complete_pending_payout(&bal.address, bal.pending, &sent.txid)
+                    .complete_pending_payout(&bal.address, pending.amount, &sent.txid)
             {
                 tracing::error!(address = %bal.address, tx = %sent.txid, error = %err, "critical payout reconciliation failure");
                 continue;
@@ -432,6 +481,25 @@ fn payout_idempotency_key(p: &PendingPayout) -> String {
     let input = format!("blocknet-pool:payout:{}:{}:{}", p.address, p.amount, ts);
     let digest = Sha256::digest(input.as_bytes());
     hex::encode(digest)
+}
+
+fn add_credit(
+    credits: &mut HashMap<String, u64>,
+    address: &str,
+    amount: u64,
+) -> anyhow::Result<()> {
+    if amount == 0 {
+        return Ok(());
+    }
+    let destination = address.trim();
+    if destination.is_empty() {
+        return Ok(());
+    }
+    let entry = credits.entry(destination.to_string()).or_default();
+    *entry = entry
+        .checked_add(amount)
+        .ok_or_else(|| anyhow::anyhow!("credit overflow"))?;
+    Ok(())
 }
 
 #[cfg(test)]

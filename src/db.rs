@@ -410,6 +410,83 @@ CREATE TABLE IF NOT EXISTS address_risk (
         self.update_balance(&bal)
     }
 
+    pub fn apply_block_credits_and_mark_paid(
+        &self,
+        block_height: u64,
+        credits: &[(String, u64)],
+    ) -> Result<bool> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+
+        let block_state: Option<(i64, i64, i64)> = tx
+            .query_row(
+                "SELECT confirmed, orphaned, paid_out FROM blocks WHERE height = ?1",
+                params![block_height as i64],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let Some((confirmed, orphaned, paid_out)) = block_state else {
+            return Err(anyhow!("block {block_height} not found"));
+        };
+        if paid_out != 0 {
+            return Ok(false);
+        }
+        if confirmed == 0 || orphaned != 0 {
+            return Err(anyhow!("block {block_height} is not eligible for payout"));
+        }
+
+        for (address, amount) in credits {
+            let destination = address.trim();
+            if destination.is_empty() || *amount == 0 {
+                continue;
+            }
+
+            let mut bal = tx
+                .query_row(
+                    "SELECT address, pending, paid FROM balances WHERE address = ?1",
+                    params![destination],
+                    |row| {
+                        Ok(Balance {
+                            address: row.get::<_, String>(0)?,
+                            pending: row.get::<_, i64>(1)?.max(0) as u64,
+                            paid: row.get::<_, i64>(2)?.max(0) as u64,
+                        })
+                    },
+                )
+                .optional()?
+                .unwrap_or_else(|| Balance {
+                    address: destination.to_string(),
+                    pending: 0,
+                    paid: 0,
+                });
+            bal.pending = bal
+                .pending
+                .checked_add(*amount)
+                .ok_or_else(|| anyhow!("balance overflow"))?;
+
+            tx.execute(
+                "INSERT INTO balances (address, pending, paid) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(address) DO UPDATE SET pending = excluded.pending, paid = excluded.paid",
+                params![
+                    bal.address,
+                    u64_to_i64(bal.pending)?,
+                    u64_to_i64(bal.paid)?,
+                ],
+            )?;
+        }
+
+        let updated = tx.execute(
+            "UPDATE blocks SET paid_out = 1 WHERE height = ?1 AND paid_out = 0",
+            params![block_height as i64],
+        )?;
+        if updated == 0 {
+            return Ok(false);
+        }
+
+        tx.commit()?;
+        Ok(true)
+    }
+
     pub fn get_all_balances(&self) -> Result<Vec<Balance>> {
         let conn = self.conn.lock();
         let mut stmt =
@@ -724,8 +801,16 @@ CREATE TABLE IF NOT EXISTS address_risk (
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
-        if pending.is_none() {
+        let Some((pending_amount_raw, _initiated_at)) = pending else {
             return Err(anyhow!("no pending payout for {address}"));
+        };
+        let pending_amount = pending_amount_raw.max(0) as u64;
+        if pending_amount != amount {
+            return Err(anyhow!(
+                "pending payout amount mismatch: expected={}, requested={}",
+                pending_amount,
+                amount
+            ));
         }
 
         let mut bal = tx
@@ -918,6 +1003,10 @@ fn to_unix(ts: SystemTime) -> i64 {
     ts.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64
 }
 
+fn u64_to_i64(value: u64) -> Result<i64> {
+    i64::try_from(value).map_err(|_| anyhow!("value does not fit in i64"))
+}
+
 fn from_unix(ts: i64) -> SystemTime {
     if ts <= 0 {
         return UNIX_EPOCH;
@@ -1025,5 +1114,65 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].block_height, 100);
         assert_eq!(events[0].amount, 50);
+    }
+
+    #[test]
+    fn apply_block_credits_marks_paid_atomically_and_once() {
+        let store = test_store();
+        store
+            .add_block(&DbBlock {
+                height: 7,
+                hash: "abc".to_string(),
+                difficulty: 1,
+                finder: "finder".to_string(),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+            })
+            .expect("insert block");
+
+        let credits = vec![("addr1".to_string(), 60), ("addr2".to_string(), 40)];
+        assert!(store
+            .apply_block_credits_and_mark_paid(7, &credits)
+            .expect("apply credits"));
+
+        assert_eq!(store.get_balance("addr1").expect("bal1").pending, 60);
+        assert_eq!(store.get_balance("addr2").expect("bal2").pending, 40);
+        assert!(
+            store
+                .get_block(7)
+                .expect("block")
+                .expect("present")
+                .paid_out
+        );
+
+        assert!(!store
+            .apply_block_credits_and_mark_paid(7, &credits)
+            .expect("second apply should no-op"));
+        assert_eq!(store.get_balance("addr1").expect("bal1-2").pending, 60);
+        assert_eq!(store.get_balance("addr2").expect("bal2-2").pending, 40);
+    }
+
+    #[test]
+    fn complete_pending_payout_rejects_amount_mismatch() {
+        let store = test_store();
+        store
+            .update_balance(&Balance {
+                address: "addr1".to_string(),
+                pending: 100,
+                paid: 0,
+            })
+            .expect("seed balance");
+        store
+            .create_pending_payout("addr1", 100)
+            .expect("create pending");
+
+        let err = store
+            .complete_pending_payout("addr1", 90, "tx-1")
+            .expect_err("must reject mismatch");
+        assert!(err.to_string().contains("amount mismatch"));
     }
 }
