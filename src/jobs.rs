@@ -477,10 +477,7 @@ fn random_nonce_slot() -> u64 {
 }
 
 fn same_template_identity(current: &Job, parsed: &Job) -> bool {
-    current.height == parsed.height
-        && current.network_target == parsed.network_target
-        && current.header_base == parsed.header_base
-        && current.template_id == parsed.template_id
+    current.height == parsed.height && current.network_target == parsed.network_target
 }
 
 fn prune_expired_assignments_locked(state: &mut JobState, max_age: Duration) {
@@ -695,7 +692,7 @@ mod tests {
     }
 
     #[test]
-    fn template_identity_detects_header_and_template_changes() {
+    fn template_identity_ignores_ephemeral_template_fields() {
         let base = Job {
             id: "j1".to_string(),
             height: 100,
@@ -711,10 +708,18 @@ mod tests {
 
         let mut different_template_id = same.clone();
         different_template_id.template_id = Some("t2".to_string());
-        assert!(!same_template_identity(&base, &different_template_id));
+        assert!(same_template_identity(&base, &different_template_id));
 
         let mut different_header = same;
         different_header.header_base[0] = 9;
-        assert!(!same_template_identity(&base, &different_header));
+        assert!(same_template_identity(&base, &different_header));
+
+        let mut different_height = base.clone();
+        different_height.height += 1;
+        assert!(!same_template_identity(&base, &different_height));
+
+        let mut different_target = base.clone();
+        different_target.network_target[0] ^= 0xff;
+        assert!(!same_template_identity(&base, &different_target));
     }
 }

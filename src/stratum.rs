@@ -202,6 +202,16 @@ impl StratumServer {
 
                                 match login {
                                     Ok(Ok(login_result)) => {
+                                        let worker =
+                                            normalize_worker_name(Some(params.worker.as_str()));
+                                        let address = params.address.trim().to_string();
+                                        let difficulty =
+                                            self.engine.session_difficulty(&conn_id).unwrap_or(1);
+
+                                        logged_in =
+                                            Some((address.clone(), worker.clone(), difficulty));
+                                        self.stats.add_miner(&conn_id, &address, &worker);
+
                                         let response = StratumResponse {
                                             id: req.id,
                                             status: Some("ok".to_string()),
@@ -210,20 +220,8 @@ impl StratumServer {
                                         };
                                         send_json(&writer, &response).await?;
 
-                                        let worker = normalize_worker_name(Some(params.worker.as_str()));
-                                        let address = params.address.trim().to_string();
-
-                                        logged_in = Some((
-                                            address.clone(),
-                                            worker.clone(),
-                                            self.engine
-                                                .session_difficulty(&conn_id)
-                                                .unwrap_or(1),
-                                        ));
-                                        self.stats.add_miner(&conn_id, &address, &worker);
-
                                         if let Some(miner_job) = self.jobs.build_miner_job(
-                                            self.engine.session_difficulty(&conn_id).unwrap_or(1),
+                                            difficulty,
                                             &address,
                                         ) {
                                             let notify = StratumNotify {
