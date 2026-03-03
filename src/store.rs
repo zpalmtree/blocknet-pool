@@ -140,10 +140,10 @@ impl PoolStore {
         }
     }
 
-    pub fn add_payout(&self, address: &str, amount: u64, tx_hash: &str) -> Result<()> {
+    pub fn add_payout(&self, address: &str, amount: u64, fee: u64, tx_hash: &str) -> Result<()> {
         match self {
-            PoolStore::Sqlite(v) => v.add_payout(address, amount, tx_hash),
-            PoolStore::Postgres(v) => v.add_payout(address, amount, tx_hash),
+            PoolStore::Sqlite(v) => v.add_payout(address, amount, fee, tx_hash),
+            PoolStore::Postgres(v) => v.add_payout(address, amount, fee, tx_hash),
         }
     }
 
@@ -288,10 +288,16 @@ impl PoolStore {
         }
     }
 
-    pub fn complete_pending_payout(&self, address: &str, amount: u64, tx_hash: &str) -> Result<()> {
+    pub fn complete_pending_payout(
+        &self,
+        address: &str,
+        amount: u64,
+        fee: u64,
+        tx_hash: &str,
+    ) -> Result<()> {
         match self {
-            PoolStore::Sqlite(v) => v.complete_pending_payout(address, amount, tx_hash),
-            PoolStore::Postgres(v) => v.complete_pending_payout(address, amount, tx_hash),
+            PoolStore::Sqlite(v) => v.complete_pending_payout(address, amount, fee, tx_hash),
+            PoolStore::Postgres(v) => v.complete_pending_payout(address, amount, fee, tx_hash),
         }
     }
 

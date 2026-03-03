@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::env;
+use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -70,11 +71,19 @@ pub trait NodeApi: Send + Sync + 'static {
 pub trait JobRepository: Send + Sync + 'static {
     fn get_job(&self, job_id: &str) -> Option<Job>;
     fn current_job(&self) -> Option<Job>;
+    fn resolve_submit_job_with_reason(
+        &self,
+        submitted_job_id: &str,
+        submitted_at: Instant,
+    ) -> std::result::Result<SubmitJobBinding, SubmitJobResolveError>;
     fn resolve_submit_job(
         &self,
         submitted_job_id: &str,
         submitted_at: Instant,
-    ) -> Option<SubmitJobBinding>;
+    ) -> Option<SubmitJobBinding> {
+        self.resolve_submit_job_with_reason(submitted_job_id, submitted_at)
+            .ok()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +93,64 @@ pub struct SubmitJobBinding {
     pub assigned_miner: Option<String>,
     pub nonce_start: Option<u64>,
     pub nonce_end: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubmitJobResolveError {
+    AssignmentNotFound,
+    AssignmentExpired {
+        age: Duration,
+        ttl: Duration,
+    },
+    TemplateStaleBeyondGrace {
+        template_job_id: String,
+        current_job_id: Option<String>,
+        stale_for: Duration,
+        stale_grace: Duration,
+    },
+    TemplateMissing {
+        template_job_id: String,
+    },
+}
+
+impl fmt::Display for SubmitJobResolveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AssignmentNotFound => write!(f, "stale job: assignment not found"),
+            Self::AssignmentExpired { age, ttl } => write!(
+                f,
+                "stale job: assignment expired (age={}, ttl={})",
+                format_duration(*age),
+                format_duration(*ttl)
+            ),
+            Self::TemplateStaleBeyondGrace {
+                template_job_id,
+                current_job_id,
+                stale_for,
+                stale_grace,
+            } => {
+                let current = current_job_id.as_deref().unwrap_or("-");
+                write!(
+                    f,
+                    "stale job: template {template_job_id} exceeded stale grace (current={current}, stale_for={}, stale_grace={})",
+                    format_duration(*stale_for),
+                    format_duration(*stale_grace)
+                )
+            }
+            Self::TemplateMissing { template_job_id } => write!(
+                f,
+                "stale job: template {template_job_id} for assignment is no longer available"
+            ),
+        }
+    }
+}
+
+fn format_duration(duration: Duration) -> String {
+    if duration.as_millis() < 1_000 {
+        format!("{}ms", duration.as_millis())
+    } else {
+        format!("{:.3}s", duration.as_secs_f64())
+    }
 }
 
 pub trait ShareStore: Send + Sync + 'static {
@@ -309,8 +376,8 @@ impl PoolEngine {
 
         let submit_job = self
             .jobs
-            .resolve_submit_job(&job_id, received_at)
-            .ok_or_else(|| anyhow!("stale job"))?;
+            .resolve_submit_job_with_reason(&job_id, received_at)
+            .map_err(|err| anyhow!(err.to_string()))?;
         let share_difficulty = submit_job
             .share_difficulty
             .unwrap_or(session.difficulty)
@@ -1047,14 +1114,21 @@ impl JobRepository for InMemoryJobs {
         self.jobs.lock().get(&current).cloned()
     }
 
-    fn resolve_submit_job(
+    fn resolve_submit_job_with_reason(
         &self,
         submitted_job_id: &str,
         _submitted_at: Instant,
-    ) -> Option<SubmitJobBinding> {
+    ) -> std::result::Result<SubmitJobBinding, SubmitJobResolveError> {
         if let Some(assignment) = self.assignments.lock().get(submitted_job_id).cloned() {
-            let job = self.jobs.lock().get(&assignment.template_job_id).cloned()?;
-            return Some(SubmitJobBinding {
+            let job = self
+                .jobs
+                .lock()
+                .get(&assignment.template_job_id)
+                .cloned()
+                .ok_or_else(|| SubmitJobResolveError::TemplateMissing {
+                    template_job_id: assignment.template_job_id.clone(),
+                })?;
+            return Ok(SubmitJobBinding {
                 job,
                 share_difficulty: Some(assignment.share_difficulty),
                 assigned_miner: assignment.assigned_miner,
@@ -1074,6 +1148,7 @@ impl JobRepository for InMemoryJobs {
                 nonce_start: None,
                 nonce_end: None,
             })
+            .ok_or(SubmitJobResolveError::AssignmentNotFound)
     }
 }
 
@@ -1348,6 +1423,35 @@ mod tests {
             .submit("missing", "job1".to_string(), 1, Some("00".repeat(32)))
             .expect_err("must fail");
         assert!(err.to_string().contains("not logged"));
+    }
+
+    #[test]
+    fn submit_returns_explicit_stale_reason_when_assignment_is_missing() {
+        let cfg = cfg();
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let jobs = Arc::new(InMemoryJobs::default());
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .expect("login");
+
+        let err = engine
+            .submit(
+                "conn1",
+                "nonexistent-assignment".to_string(),
+                11,
+                Some("ff".repeat(32)),
+            )
+            .expect_err("missing assignment must return stale reason");
+        assert!(err.to_string().contains("assignment not found"));
     }
 
     #[test]

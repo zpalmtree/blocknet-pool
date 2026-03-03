@@ -11,7 +11,7 @@ use serde_json::Value;
 use tokio::sync::broadcast;
 
 use crate::config::Config;
-use crate::engine::{Job, JobRepository, SubmitJobBinding};
+use crate::engine::{Job, JobRepository, SubmitJobBinding, SubmitJobResolveError};
 use crate::node::{http_error_body_contains, is_http_status, NodeClient};
 use crate::pow::difficulty_to_target;
 
@@ -602,36 +602,52 @@ impl JobRepository for JobManager {
         self.state.read().current.clone()
     }
 
-    fn resolve_submit_job(
+    fn resolve_submit_job_with_reason(
         &self,
         submitted_job_id: &str,
         submitted_at: Instant,
-    ) -> Option<SubmitJobBinding> {
+    ) -> std::result::Result<SubmitJobBinding, SubmitJobResolveError> {
         let state = self.state.read();
-        let assignment = state.assignments.get(submitted_job_id)?;
+        let assignment = state
+            .assignments
+            .get(submitted_job_id)
+            .ok_or(SubmitJobResolveError::AssignmentNotFound)?;
         let assignment_ttl = self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE);
-        if submitted_at.saturating_duration_since(assignment.created_at) > assignment_ttl {
-            return None;
+        let assignment_age = submitted_at.saturating_duration_since(assignment.created_at);
+        if assignment_age > assignment_ttl {
+            return Err(SubmitJobResolveError::AssignmentExpired {
+                age: assignment_age,
+                ttl: assignment_ttl,
+            });
         }
 
         let current_job_id = state.current.as_ref().map(|job| job.id.as_str());
         if Some(assignment.template_job_id.as_str()) != current_job_id {
-            let grace = self.cfg.stale_submit_grace_duration();
-            if grace.is_zero() {
-                return None;
-            }
             let meta = state.job_meta.get(&assignment.template_job_id).copied();
             let stale_since = meta.and_then(|value| value.stale_since).unwrap_or_else(|| {
                 meta.map(|value| value.created_at)
                     .unwrap_or(assignment.created_at)
             });
-            if submitted_at.saturating_duration_since(stale_since) > grace {
-                return None;
+            let stale_for = submitted_at.saturating_duration_since(stale_since);
+            let grace = self.cfg.stale_submit_grace_duration();
+            if grace.is_zero() || stale_for > grace {
+                return Err(SubmitJobResolveError::TemplateStaleBeyondGrace {
+                    template_job_id: assignment.template_job_id.clone(),
+                    current_job_id: current_job_id.map(str::to_string),
+                    stale_for,
+                    stale_grace: grace,
+                });
             }
         }
 
-        let job = state.jobs.get(&assignment.template_job_id)?.clone();
-        Some(SubmitJobBinding {
+        let job = state
+            .jobs
+            .get(&assignment.template_job_id)
+            .cloned()
+            .ok_or_else(|| SubmitJobResolveError::TemplateMissing {
+                template_job_id: assignment.template_job_id.clone(),
+            })?;
+        Ok(SubmitJobBinding {
             job,
             share_difficulty: Some(assignment.share_difficulty),
             assigned_miner: Some(assignment.assigned_miner.clone()),
@@ -943,6 +959,65 @@ mod tests {
     }
 
     #[test]
+    fn resolve_submit_job_reports_assignment_not_found() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config::default(),
+        );
+
+        let err = manager
+            .resolve_submit_job_with_reason("missing-assignment", Instant::now())
+            .expect_err("missing assignment should return explicit reason");
+        assert_eq!(err, SubmitJobResolveError::AssignmentNotFound);
+    }
+
+    #[test]
+    fn resolve_submit_job_reports_expired_assignment_reason() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config {
+                job_timeout: "1s".to_string(),
+                ..Config::default()
+            },
+        );
+
+        let template = Job {
+            id: "job1".into(),
+            height: 1,
+            header_base: vec![0xAA; 92],
+            network_target: [0xBB; 32],
+            network_difficulty: 1,
+            template_id: Some("tmpl".into()),
+            full_block: None,
+        };
+
+        {
+            let mut state = manager.state.write();
+            state.current = Some(template.clone());
+            state.jobs.insert(template.id.clone(), template);
+            state.assignments.insert(
+                "assign-old".to_string(),
+                MinerAssignment {
+                    template_job_id: "job1".to_string(),
+                    share_difficulty: 1,
+                    assigned_miner: "addr1".to_string(),
+                    nonce_start: 0,
+                    nonce_end: NONCE_RANGE_SIZE - 1,
+                    created_at: Instant::now() - Duration::from_secs(2),
+                },
+            );
+        }
+
+        let err = manager
+            .resolve_submit_job_with_reason("assign-old", Instant::now())
+            .expect_err("expired assignment should return explicit reason");
+        assert!(matches!(
+            err,
+            SubmitJobResolveError::AssignmentExpired { .. }
+        ));
+    }
+
+    #[test]
     fn resolve_submit_job_allows_recent_previous_template_within_grace() {
         let manager = JobManager::new(
             Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
@@ -1058,6 +1133,14 @@ mod tests {
         }
 
         assert!(manager.resolve_submit_job("assign-old", now).is_none());
+
+        let err = manager
+            .resolve_submit_job_with_reason("assign-old", now)
+            .expect_err("stale template should return explicit reason");
+        assert!(matches!(
+            err,
+            SubmitJobResolveError::TemplateStaleBeyondGrace { .. }
+        ));
     }
 
     #[test]

@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS payouts (
     id BIGSERIAL PRIMARY KEY,
     address TEXT NOT NULL,
     amount BIGINT NOT NULL,
+    fee BIGINT NOT NULL DEFAULT 0,
     tx_hash TEXT NOT NULL,
     timestamp BIGINT NOT NULL
 );
@@ -120,6 +121,10 @@ CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated
 "#,
         )
         .context("init postgres schema")?;
+        conn.batch_execute(
+            "ALTER TABLE payouts ADD COLUMN IF NOT EXISTS fee BIGINT NOT NULL DEFAULT 0",
+        )
+        .context("ensure payouts.fee column")?;
 
         Ok(Arc::new(Self {
             conn: Some(Mutex::new(conn)),
@@ -490,17 +495,23 @@ CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated
             .collect())
     }
 
-    pub fn add_payout(&self, address: &str, amount: u64, tx_hash: &str) -> Result<()> {
+    pub fn add_payout(&self, address: &str, amount: u64, fee: u64, tx_hash: &str) -> Result<()> {
         self.conn().lock().execute(
-            "INSERT INTO payouts (address, amount, tx_hash, timestamp) VALUES ($1, $2, $3, $4)",
-            &[&address, &u64_to_i64(amount)?, &tx_hash, &now_unix()],
+            "INSERT INTO payouts (address, amount, fee, tx_hash, timestamp) VALUES ($1, $2, $3, $4, $5)",
+            &[
+                &address,
+                &u64_to_i64(amount)?,
+                &u64_to_i64(fee)?,
+                &tx_hash,
+                &now_unix(),
+            ],
         )?;
         Ok(())
     }
 
     pub fn get_recent_payouts(&self, limit: i64) -> Result<Vec<Payout>> {
         let rows = self.conn().lock().query(
-            "SELECT id, address, amount, tx_hash, timestamp FROM payouts ORDER BY id DESC LIMIT $1",
+            "SELECT id, address, amount, fee, tx_hash, timestamp FROM payouts ORDER BY id DESC LIMIT $1",
             &[&limit],
         )?;
         Ok(rows
@@ -509,8 +520,9 @@ CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated
                 id: row.get::<_, i64>(0),
                 address: row.get::<_, String>(1),
                 amount: row.get::<_, i64>(2).max(0) as u64,
-                tx_hash: row.get::<_, String>(3),
-                timestamp: from_unix(row.get::<_, i64>(4)),
+                fee: row.get::<_, i64>(3).max(0) as u64,
+                tx_hash: row.get::<_, String>(4),
+                timestamp: from_unix(row.get::<_, i64>(5)),
             })
             .collect())
     }
@@ -795,7 +807,13 @@ CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated
         Ok(())
     }
 
-    pub fn complete_pending_payout(&self, address: &str, amount: u64, tx_hash: &str) -> Result<()> {
+    pub fn complete_pending_payout(
+        &self,
+        address: &str,
+        amount: u64,
+        fee: u64,
+        tx_hash: &str,
+    ) -> Result<()> {
         let mut conn = self.conn().lock();
         let mut tx = conn.transaction()?;
 
@@ -852,8 +870,14 @@ CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated
         )?;
 
         tx.execute(
-            "INSERT INTO payouts (address, amount, tx_hash, timestamp) VALUES ($1, $2, $3, $4)",
-            &[&address, &u64_to_i64(amount)?, &tx_hash, &now_unix()],
+            "INSERT INTO payouts (address, amount, fee, tx_hash, timestamp) VALUES ($1, $2, $3, $4, $5)",
+            &[
+                &address,
+                &u64_to_i64(amount)?,
+                &u64_to_i64(fee)?,
+                &tx_hash,
+                &now_unix(),
+            ],
         )?;
 
         tx.execute(

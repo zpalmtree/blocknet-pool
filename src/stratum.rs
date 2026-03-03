@@ -314,18 +314,33 @@ impl StratumServer {
                                         send_json(&writer, &response).await?;
                                     }
                                     Ok(Err(err)) => {
+                                        let err_text = err.to_string();
+                                        let reason_code = share_reject_reason_code(&err_text);
                                         if let Some((address, _, _)) = logged_in.as_ref() {
                                             self.stats.record_rejected_share(address);
-                                            tracing::debug!(
-                                                peer = %peer,
-                                                address = %address,
-                                                job_id = %submit_job_id,
-                                                nonce = submit_nonce,
-                                                error = %err,
-                                                "share rejected"
-                                            );
+                                            if log_rejection_at_info(reason_code) {
+                                                tracing::info!(
+                                                    peer = %peer,
+                                                    address = %address,
+                                                    job_id = %submit_job_id,
+                                                    nonce = submit_nonce,
+                                                    reason_code,
+                                                    error = %err_text,
+                                                    "share rejected"
+                                                );
+                                            } else {
+                                                tracing::debug!(
+                                                    peer = %peer,
+                                                    address = %address,
+                                                    job_id = %submit_job_id,
+                                                    nonce = submit_nonce,
+                                                    reason_code,
+                                                    error = %err_text,
+                                                    "share rejected"
+                                                );
+                                            }
                                         }
-                                        send_error(&writer, req.id, &err.to_string()).await?;
+                                        send_error(&writer, req.id, &err_text).await?;
                                     }
                                     Err(err) => {
                                         if let Some((address, _, _)) = logged_in.as_ref() {
@@ -426,4 +441,60 @@ async fn send_json<T: serde::Serialize>(
     let mut guard = writer.lock().await;
     guard.write_all(&data).await?;
     Ok(())
+}
+
+fn share_reject_reason_code(error: &str) -> &'static str {
+    let trimmed = error.trim();
+    if trimmed.starts_with("stale job:") || trimmed == "stale job" {
+        return "stale_job";
+    }
+    if trimmed.starts_with("duplicate share") {
+        return "duplicate_share";
+    }
+    if trimmed.starts_with("nonce out of assigned range") {
+        return "nonce_out_of_range";
+    }
+    if trimmed.starts_with("job not assigned to this miner") {
+        return "job_not_assigned";
+    }
+    if trimmed.starts_with("claimed hash required") {
+        return "claimed_hash_required";
+    }
+    "other"
+}
+
+fn log_rejection_at_info(reason_code: &str) -> bool {
+    matches!(
+        reason_code,
+        "stale_job" | "duplicate_share" | "nonce_out_of_range" | "job_not_assigned"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{log_rejection_at_info, share_reject_reason_code};
+
+    #[test]
+    fn stale_and_duplicate_share_reasons_are_classified() {
+        assert_eq!(
+            share_reject_reason_code("stale job: assignment not found"),
+            "stale_job"
+        );
+        assert_eq!(
+            share_reject_reason_code("duplicate share"),
+            "duplicate_share"
+        );
+        assert_eq!(
+            share_reject_reason_code("nonce out of assigned range"),
+            "nonce_out_of_range"
+        );
+    }
+
+    #[test]
+    fn only_high_signal_rejections_are_logged_at_info() {
+        assert!(log_rejection_at_info("stale_job"));
+        assert!(log_rejection_at_info("duplicate_share"));
+        assert!(!log_rejection_at_info("claimed_hash_required"));
+        assert!(!log_rejection_at_info("other"));
+    }
 }

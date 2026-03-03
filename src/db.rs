@@ -53,6 +53,7 @@ pub struct Payout {
     pub id: i64,
     pub address: String,
     pub amount: u64,
+    pub fee: u64,
     pub tx_hash: String,
     pub timestamp: SystemTime,
 }
@@ -152,6 +153,7 @@ CREATE TABLE IF NOT EXISTS payouts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     address TEXT NOT NULL,
     amount INTEGER NOT NULL,
+    fee INTEGER NOT NULL DEFAULT 0,
     tx_hash TEXT NOT NULL,
     timestamp INTEGER NOT NULL
 );
@@ -205,6 +207,23 @@ CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated
 "#;
 
         self.conn.lock().execute_batch(sql).context("init schema")?;
+        self.ensure_payout_fee_column()?;
+        Ok(())
+    }
+
+    fn ensure_payout_fee_column(&self) -> Result<()> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare("PRAGMA table_info(payouts)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        for row in rows {
+            if row?.eq_ignore_ascii_case("fee") {
+                return Ok(());
+            }
+        }
+        conn.execute(
+            "ALTER TABLE payouts ADD COLUMN fee INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
         Ok(())
     }
 
@@ -586,10 +605,10 @@ CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated
         collect_rows(rows)
     }
 
-    pub fn add_payout(&self, address: &str, amount: u64, tx_hash: &str) -> Result<()> {
+    pub fn add_payout(&self, address: &str, amount: u64, fee: u64, tx_hash: &str) -> Result<()> {
         self.conn.lock().execute(
-            "INSERT INTO payouts (address, amount, tx_hash, timestamp) VALUES (?1, ?2, ?3, ?4)",
-            params![address, u64_to_i64(amount)?, tx_hash, now_unix()],
+            "INSERT INTO payouts (address, amount, fee, tx_hash, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![address, u64_to_i64(amount)?, u64_to_i64(fee)?, tx_hash, now_unix()],
         )?;
         Ok(())
     }
@@ -597,15 +616,16 @@ CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated
     pub fn get_recent_payouts(&self, limit: i64) -> Result<Vec<Payout>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, address, amount, tx_hash, timestamp FROM payouts ORDER BY id DESC LIMIT ?1",
+            "SELECT id, address, amount, fee, tx_hash, timestamp FROM payouts ORDER BY id DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit], |row| {
             Ok(Payout {
                 id: row.get(0)?,
                 address: row.get(1)?,
                 amount: row.get::<_, i64>(2)?.max(0) as u64,
-                tx_hash: row.get(3)?,
-                timestamp: from_unix(row.get::<_, i64>(4)?),
+                fee: row.get::<_, i64>(3)?.max(0) as u64,
+                tx_hash: row.get(4)?,
+                timestamp: from_unix(row.get::<_, i64>(5)?),
             })
         })?;
         collect_rows(rows)
@@ -901,7 +921,13 @@ CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated
         Ok(())
     }
 
-    pub fn complete_pending_payout(&self, address: &str, amount: u64, tx_hash: &str) -> Result<()> {
+    pub fn complete_pending_payout(
+        &self,
+        address: &str,
+        amount: u64,
+        fee: u64,
+        tx_hash: &str,
+    ) -> Result<()> {
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
 
@@ -958,8 +984,14 @@ CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated
         )?;
 
         tx.execute(
-            "INSERT INTO payouts (address, amount, tx_hash, timestamp) VALUES (?1, ?2, ?3, ?4)",
-            params![address, u64_to_i64(amount)?, tx_hash, now_unix()],
+            "INSERT INTO payouts (address, amount, fee, tx_hash, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                address,
+                u64_to_i64(amount)?,
+                u64_to_i64(fee)?,
+                tx_hash,
+                now_unix()
+            ],
         )?;
 
         tx.execute(
@@ -1509,8 +1541,31 @@ mod tests {
             .expect("create pending");
 
         let err = store
-            .complete_pending_payout("addr1", 90, "tx-1")
+            .complete_pending_payout("addr1", 90, 0, "tx-1")
             .expect_err("must reject mismatch");
         assert!(err.to_string().contains("amount mismatch"));
+    }
+
+    #[test]
+    fn complete_pending_payout_records_network_fee() {
+        let store = test_store();
+        store
+            .update_balance(&Balance {
+                address: "addr1".to_string(),
+                pending: 100,
+                paid: 0,
+            })
+            .expect("seed balance");
+        store
+            .create_pending_payout("addr1", 100)
+            .expect("create pending");
+        store
+            .complete_pending_payout("addr1", 100, 42, "tx-2")
+            .expect("complete payout");
+
+        let payouts = store.get_recent_payouts(1).expect("recent payouts");
+        assert_eq!(payouts.len(), 1);
+        assert_eq!(payouts[0].amount, 100);
+        assert_eq!(payouts[0].fee, 42);
     }
 }

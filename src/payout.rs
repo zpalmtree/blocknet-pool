@@ -464,10 +464,12 @@ impl PayoutProcessor {
                 }
             };
 
-            if let Err(err) =
-                self.store
-                    .complete_pending_payout(&bal.address, pending.amount, &sent.txid)
-            {
+            if let Err(err) = self.store.complete_pending_payout(
+                &bal.address,
+                pending.amount,
+                sent.fee,
+                &sent.txid,
+            ) {
                 tracing::error!(address = %bal.address, tx = %sent.txid, error = %err, "critical payout reconciliation failure");
                 continue;
             }
