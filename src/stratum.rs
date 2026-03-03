@@ -164,14 +164,25 @@ impl StratumServer {
                                 }
                             };
 
-                            match self.engine.login(
-                                &conn_id,
-                                params.address.clone(),
-                                Some(params.worker.clone()),
-                                params.protocol_version,
-                                params.capabilities.clone(),
-                            ) {
-                                Ok(login_result) => {
+                            let login_engine = Arc::clone(&self.engine);
+                            let login_conn_id = conn_id.clone();
+                            let login_address = params.address.clone();
+                            let login_worker = params.worker.clone();
+                            let login_protocol_version = params.protocol_version;
+                            let login_capabilities = params.capabilities.clone();
+                            let login = tokio::task::spawn_blocking(move || {
+                                login_engine.login(
+                                    &login_conn_id,
+                                    login_address,
+                                    Some(login_worker),
+                                    login_protocol_version,
+                                    login_capabilities,
+                                )
+                            })
+                            .await;
+
+                            match login {
+                                Ok(Ok(login_result)) => {
                                     let response = StratumResponse {
                                         id: req.id,
                                         status: Some("ok".to_string()),
@@ -205,8 +216,17 @@ impl StratumServer {
                                         send_json(&writer, &notify).await?;
                                     }
                                 }
-                                Err(err) => {
+                                Ok(Err(err)) => {
                                     send_error(&writer, req.id, &err.to_string()).await?;
+                                    return Ok(());
+                                }
+                                Err(err) => {
+                                    send_error(
+                                        &writer,
+                                        req.id,
+                                        &format!("login worker failure: {err}"),
+                                    )
+                                    .await?;
                                     return Ok(());
                                 }
                             }
