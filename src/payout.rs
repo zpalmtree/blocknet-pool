@@ -207,7 +207,7 @@ impl PayoutProcessor {
             return Ok(credits);
         }
 
-        let (weights, total_weight) = weight_shares(&shares);
+        let (weights, total_weight) = self.weight_shares_for_payout(&shares)?;
         if total_weight == 0 {
             add_credit(&mut credits, &block.finder, reward)?;
             return Ok(credits);
@@ -238,7 +238,7 @@ impl PayoutProcessor {
             return Ok(credits);
         }
 
-        let (weights, total_weight) = weight_shares(&shares);
+        let (weights, total_weight) = self.weight_shares_for_payout(&shares)?;
         if total_weight == 0 {
             add_credit(&mut credits, &block.finder, reward)?;
             return Ok(credits);
@@ -255,6 +255,34 @@ impl PayoutProcessor {
         Ok(credits)
     }
 
+    fn weight_shares_for_payout(
+        &self,
+        shares: &[DbShare],
+    ) -> anyhow::Result<(HashMap<String, u64>, u64)> {
+        let now = SystemTime::now();
+        let provisional_delay = self.cfg.provisional_share_delay_duration();
+        let mut risk_cache = HashMap::<String, bool>::new();
+
+        Ok(weight_shares(shares, now, provisional_delay, |address| {
+            if let Some(risky) = risk_cache.get(address) {
+                return *risky;
+            }
+            let risky = match self.store.should_force_verify_address(address) {
+                Ok((force_verify, _)) => force_verify,
+                Err(err) => {
+                    tracing::warn!(
+                        address = %address,
+                        error = %err,
+                        "failed risk check during payout weighting; treating address as risky"
+                    );
+                    true
+                }
+            };
+            risk_cache.insert(address.to_string(), risky);
+            risky
+        }))
+    }
+
     fn allocate_weighted_credits(
         &self,
         weights: HashMap<String, u64>,
@@ -262,12 +290,24 @@ impl PayoutProcessor {
         amount: u64,
         credits: &mut HashMap<String, u64>,
     ) -> anyhow::Result<()> {
-        for (address, weight) in weights {
-            let share = ((amount as f64) * (weight as f64) / (total_weight as f64)) as u64;
+        let mut weighted = weights.into_iter().collect::<Vec<(String, u64)>>();
+        weighted.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+        let mut distributed = 0u64;
+        for (address, weight) in weighted.iter() {
+            let share = ((amount as u128) * (*weight as u128) / (total_weight as u128)) as u64;
             if share == 0 {
                 continue;
             }
-            add_credit(credits, &address, share)?;
+            add_credit(credits, address, share)?;
+            distributed = distributed.saturating_add(share);
+        }
+
+        let remainder = amount.saturating_sub(distributed);
+        if remainder > 0 {
+            if let Some((address, _)) = weighted.first() {
+                add_credit(credits, address, remainder)?;
+            }
         }
         Ok(())
     }
@@ -439,13 +479,23 @@ impl PayoutProcessor {
     }
 }
 
-pub fn weight_shares(shares: &[DbShare]) -> (HashMap<String, u64>, u64) {
+pub fn weight_shares<F>(
+    shares: &[DbShare],
+    now: SystemTime,
+    provisional_delay: Duration,
+    mut is_risky: F,
+) -> (HashMap<String, u64>, u64)
+where
+    F: FnMut(&str) -> bool,
+{
     let mut weights = HashMap::<String, u64>::new();
     let mut total = 0u64;
 
-    let now = SystemTime::now();
     for share in shares {
-        if !is_share_payout_eligible(share, now) {
+        if !is_share_payout_eligible(share, now, provisional_delay) {
+            continue;
+        }
+        if is_risky(&share.miner) {
             continue;
         }
         let weight = share.difficulty;
@@ -457,14 +507,15 @@ pub fn weight_shares(shares: &[DbShare]) -> (HashMap<String, u64>, u64) {
     (weights, total)
 }
 
-pub fn is_share_payout_eligible(share: &DbShare, now: SystemTime) -> bool {
+pub fn is_share_payout_eligible(
+    share: &DbShare,
+    now: SystemTime,
+    provisional_delay: Duration,
+) -> bool {
     match share.status.as_str() {
         "" | SHARE_STATUS_VERIFIED => true,
         SHARE_STATUS_PROVISIONAL => {
-            // Current DB schema doesn't store eligible_at separately yet; provisional shares
-            // become eligible only if they survived delay and were retained by validation logic.
-            let _ = now;
-            false
+            now.duration_since(share.created_at).unwrap_or_default() >= provisional_delay
         }
         _ => false,
     }
@@ -506,39 +557,141 @@ fn add_credit(
 mod tests {
     use super::*;
     use crate::db::DbShare;
+    use crate::store::PoolStore;
+    use std::sync::Arc;
+
+    fn sample_share(miner: &str, difficulty: u64, status: &str, created_at: SystemTime) -> DbShare {
+        DbShare {
+            id: 1,
+            job_id: "j".into(),
+            miner: miner.into(),
+            worker: "w".into(),
+            difficulty,
+            nonce: 1,
+            status: status.into(),
+            was_sampled: true,
+            block_hash: None,
+            created_at,
+        }
+    }
+
+    fn test_store() -> Arc<PoolStore> {
+        let path = std::env::temp_dir().join(format!(
+            "blocknet-pool-payout-test-{}.sqlite",
+            rand::random::<u64>()
+        ));
+        PoolStore::open_sqlite(path.to_str().expect("path")).expect("open sqlite store")
+    }
 
     #[test]
-    fn payout_weighting_ignores_provisional() {
+    fn provisional_shares_mature_after_delay() {
+        let now = SystemTime::now();
+        let mature = sample_share(
+            "a1",
+            10,
+            SHARE_STATUS_PROVISIONAL,
+            now - Duration::from_secs(20 * 60),
+        );
+        let fresh = sample_share(
+            "a1",
+            10,
+            SHARE_STATUS_PROVISIONAL,
+            now - Duration::from_secs(30),
+        );
+
+        assert!(is_share_payout_eligible(
+            &mature,
+            now,
+            Duration::from_secs(15 * 60)
+        ));
+        assert!(!is_share_payout_eligible(
+            &fresh,
+            now,
+            Duration::from_secs(15 * 60)
+        ));
+    }
+
+    #[test]
+    fn payout_weighting_includes_mature_provisional() {
+        let now = SystemTime::now();
         let shares = vec![
-            DbShare {
-                id: 1,
-                job_id: "j1".into(),
-                miner: "a1".into(),
-                worker: "w1".into(),
-                difficulty: 10,
-                nonce: 1,
-                status: SHARE_STATUS_VERIFIED.into(),
-                was_sampled: true,
-                block_hash: None,
-                created_at: SystemTime::now(),
-            },
-            DbShare {
-                id: 2,
-                job_id: "j2".into(),
-                miner: "a2".into(),
-                worker: "w2".into(),
-                difficulty: 100,
-                nonce: 2,
-                status: SHARE_STATUS_PROVISIONAL.into(),
-                was_sampled: false,
-                block_hash: None,
-                created_at: SystemTime::now(),
-            },
+            sample_share("a1", 10, SHARE_STATUS_VERIFIED, now),
+            sample_share(
+                "a2",
+                100,
+                SHARE_STATUS_PROVISIONAL,
+                now - Duration::from_secs(20 * 60),
+            ),
         ];
 
-        let (weights, total) = weight_shares(&shares);
+        let (weights, total) = weight_shares(&shares, now, Duration::from_secs(15 * 60), |_| false);
+        assert_eq!(total, 110);
+        assert_eq!(weights.get("a1").copied(), Some(10));
+        assert_eq!(weights.get("a2").copied(), Some(100));
+    }
+
+    #[test]
+    fn payout_weighting_excludes_addresses_under_force_verify() {
+        let store = test_store();
+        store
+            .escalate_address_risk(
+                "a2",
+                "fraud",
+                Duration::from_secs(60),
+                Duration::from_secs(60 * 60),
+                Duration::from_secs(60 * 60),
+                false,
+            )
+            .expect("seed risk");
+
+        let processor = PayoutProcessor::new(
+            Config {
+                provisional_share_delay: "0s".to_string(),
+                ..Config::default()
+            },
+            Arc::clone(&store),
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+        );
+
+        let now = SystemTime::now();
+        let shares = vec![
+            sample_share("a1", 10, SHARE_STATUS_VERIFIED, now),
+            sample_share(
+                "a2",
+                100,
+                SHARE_STATUS_PROVISIONAL,
+                now - Duration::from_secs(60 * 60),
+            ),
+        ];
+
+        let (weights, total) = processor
+            .weight_shares_for_payout(&shares)
+            .expect("weight shares");
         assert_eq!(total, 10);
         assert_eq!(weights.get("a1").copied(), Some(10));
         assert!(!weights.contains_key("a2"));
+    }
+
+    #[test]
+    fn weighted_allocation_distributes_full_amount() {
+        let store = test_store();
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+        );
+
+        let mut credits = HashMap::<String, u64>::new();
+        processor
+            .allocate_weighted_credits(
+                HashMap::from([("a1".to_string(), 1), ("a2".to_string(), 1)]),
+                2,
+                3,
+                &mut credits,
+            )
+            .expect("allocate");
+
+        let total = credits.values().copied().sum::<u64>();
+        assert_eq!(total, 3);
     }
 }

@@ -84,6 +84,15 @@ pub fn normalize_capabilities(values: &[String]) -> Vec<String> {
     seen.into_iter().collect()
 }
 
+pub fn normalize_worker_name(worker: Option<&str>) -> String {
+    let trimmed = worker.unwrap_or_default().trim();
+    if trimmed.is_empty() {
+        "default".to_string()
+    } else {
+        trimmed.chars().take(64).collect()
+    }
+}
+
 pub fn build_login_result(protocol_version: u32, submit_v2_required: bool) -> LoginResult {
     let mut capabilities = vec![
         CAP_LOGIN_NEGOTIATION.to_string(),
@@ -176,6 +185,14 @@ mod tests {
                 "submit_claimed_hash".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn worker_name_normalizes() {
+        assert_eq!(normalize_worker_name(None), "default");
+        assert_eq!(normalize_worker_name(Some("   ")), "default");
+        assert_eq!(normalize_worker_name(Some(" rig-1 ")), "rig-1");
+        assert_eq!(normalize_worker_name(Some(&"a".repeat(80))), "a".repeat(64));
     }
 
     #[test]

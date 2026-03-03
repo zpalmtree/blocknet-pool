@@ -9,7 +9,7 @@ use tokio::sync::broadcast;
 
 use crate::config::Config;
 use crate::engine::{Job, JobRepository, SubmitJobBinding};
-use crate::node::{is_http_status, NodeClient};
+use crate::node::{http_error_body_contains, is_http_status, NodeClient};
 use crate::pow::difficulty_to_target;
 
 const NONCE_RANGE_SIZE: u64 = 1_000_000;
@@ -305,7 +305,7 @@ impl JobManager {
     }
 
     fn try_recover_wallet_for_template(&self, err: &anyhow::Error) -> bool {
-        if !(is_http_status(err, 503) || is_http_status(err, 403)) {
+        if !is_wallet_recoverable_template_error(err) {
             return false;
         }
 
@@ -339,11 +339,13 @@ impl JobManager {
 
         if is_http_status(err, 503) {
             if let Err(load_err) = self.node.wallet_load(&password) {
-                tracing::warn!(
-                    error = %load_err,
-                    "wallet recovery failed during load step for template fetch"
-                );
-                return false;
+                if !is_http_status(&load_err, 409) {
+                    tracing::warn!(
+                        error = %load_err,
+                        "wallet recovery failed during load step for template fetch"
+                    );
+                    return false;
+                }
             }
             if let Err(unlock_err) = self.node.wallet_unlock(&password) {
                 tracing::warn!(
@@ -365,6 +367,16 @@ impl JobManager {
         tracing::info!("wallet recovered for template fetch; retrying blocktemplate");
         true
     }
+}
+
+fn is_wallet_recoverable_template_error(err: &anyhow::Error) -> bool {
+    if is_http_status(err, 403) {
+        return true;
+    }
+    if !is_http_status(err, 503) {
+        return false;
+    }
+    http_error_body_contains(err, 503, "wallet")
 }
 
 fn configured_pool_address(value: &str) -> Option<String> {
@@ -486,6 +498,7 @@ fn from_hex(b: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::node::HttpError;
 
     #[test]
     fn configured_pool_address_prefers_non_empty_value() {
@@ -531,5 +544,28 @@ mod tests {
         assert_eq!(bound.assigned_miner.as_deref(), Some("addr1"));
         assert_eq!(bound.nonce_start, Some(job.nonce_start));
         assert_eq!(bound.nonce_end, Some(job.nonce_end));
+    }
+
+    #[test]
+    fn wallet_recovery_filters_syncing_503_errors() {
+        let syncing = anyhow::anyhow!(HttpError {
+            path: "/api/mining/blocktemplate".to_string(),
+            status_code: 503,
+            body: "{\"error\":\"node is syncing\"}".to_string(),
+        });
+        let wallet_missing = anyhow::anyhow!(HttpError {
+            path: "/api/mining/blocktemplate".to_string(),
+            status_code: 503,
+            body: "{\"error\":\"wallet not loaded\"}".to_string(),
+        });
+        let locked = anyhow::anyhow!(HttpError {
+            path: "/api/mining/blocktemplate".to_string(),
+            status_code: 403,
+            body: "{\"error\":\"wallet locked\"}".to_string(),
+        });
+
+        assert!(!is_wallet_recoverable_template_error(&syncing));
+        assert!(is_wallet_recoverable_template_error(&wallet_missing));
+        assert!(is_wallet_recoverable_template_error(&locked));
     }
 }

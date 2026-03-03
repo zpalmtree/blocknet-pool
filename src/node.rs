@@ -110,6 +110,23 @@ pub fn is_http_status(err: &anyhow::Error, status: u16) -> bool {
         .is_some_and(|http_err| http_err.status_code == status)
 }
 
+pub fn http_error_body_contains(err: &anyhow::Error, status: u16, needle: &str) -> bool {
+    let Some(http_err) = err.downcast_ref::<HttpError>() else {
+        return false;
+    };
+    if http_err.status_code != status {
+        return false;
+    }
+    let needle = needle.trim();
+    if needle.is_empty() {
+        return false;
+    }
+    http_err
+        .body
+        .to_ascii_lowercase()
+        .contains(&needle.to_ascii_lowercase())
+}
+
 #[derive(Debug)]
 pub struct NodeClient {
     base_url: String,

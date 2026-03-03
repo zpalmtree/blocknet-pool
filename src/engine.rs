@@ -8,8 +8,8 @@ use parking_lot::Mutex;
 use crate::config::Config;
 use crate::pow::{check_target, difficulty_to_target};
 use crate::protocol::{
-    build_login_result, normalize_capabilities, normalize_protocol_version, parse_hash_hex,
-    should_inline_validation_on_queue_full, CAP_SUBMIT_CLAIMED_HASH,
+    build_login_result, normalize_capabilities, normalize_protocol_version, normalize_worker_name,
+    parse_hash_hex, should_inline_validation_on_queue_full, CAP_SUBMIT_CLAIMED_HASH,
     STRATUM_PROTOCOL_VERSION_CURRENT,
 };
 use crate::validation::{
@@ -172,11 +172,7 @@ impl PoolEngine {
             return Err(anyhow!("invalid address"));
         }
 
-        let worker = worker
-            .unwrap_or_else(|| "default".to_string())
-            .chars()
-            .take(64)
-            .collect::<String>();
+        let worker = normalize_worker_name(worker.as_deref());
         let protocol_version = normalize_protocol_version(protocol_version);
         let caps = normalize_capabilities(&capabilities);
         let cap_set = caps.iter().cloned().collect::<BTreeSet<_>>();

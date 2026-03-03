@@ -12,8 +12,8 @@ use tokio::sync::Mutex as AsyncMutex;
 use crate::engine::PoolEngine;
 use crate::jobs::JobManager;
 use crate::protocol::{
-    LoginParams, StratumNotify, StratumRequest, StratumResponse, SubmitParams, METHOD_LOGIN,
-    METHOD_SUBMIT,
+    normalize_worker_name, LoginParams, StratumNotify, StratumRequest, StratumResponse,
+    SubmitParams, METHOD_LOGIN, METHOD_SUBMIT,
 };
 use crate::stats::PoolStats;
 
@@ -121,227 +121,227 @@ impl StratumServer {
         let idle_deadline = tokio::time::sleep(POST_LOGIN_IDLE_TIMEOUT);
         tokio::pin!(idle_deadline);
 
-        loop {
-            tokio::select! {
-                _ = &mut login_deadline, if logged_in.is_none() => {
-                    tracing::warn!(peer = %peer, "stratum login timeout");
-                    return Ok(());
-                }
-                _ = &mut idle_deadline, if logged_in.is_some() => {
-                    tracing::warn!(peer = %peer, "stratum idle timeout");
-                    return Ok(());
-                }
-                maybe_job = rx_jobs.recv(), if logged_in.is_some() => {
-                    if let Ok(job) = maybe_job {
-                        if let Some((address, _, difficulty)) = logged_in.as_ref() {
-                            if let Some(miner_job) = self.jobs.build_miner_job(*difficulty, address) {
-                                let notify = StratumNotify {
-                                    method: "job".to_string(),
-                                    params: serde_json::to_value(miner_job)?,
-                                };
-                                send_json(&writer, &notify).await?;
+        let run_result: Result<()> = async {
+            loop {
+                tokio::select! {
+                    _ = &mut login_deadline, if logged_in.is_none() => {
+                        tracing::warn!(peer = %peer, "stratum login timeout");
+                        break;
+                    }
+                    _ = &mut idle_deadline, if logged_in.is_some() => {
+                        tracing::warn!(peer = %peer, "stratum idle timeout");
+                        break;
+                    }
+                    maybe_job = rx_jobs.recv(), if logged_in.is_some() => {
+                        if let Ok(job) = maybe_job {
+                            if let Some((address, _, difficulty)) = logged_in.as_ref() {
+                                if let Some(miner_job) = self.jobs.build_miner_job(*difficulty, address) {
+                                    let notify = StratumNotify {
+                                        method: "job".to_string(),
+                                        params: serde_json::to_value(miner_job)?,
+                                    };
+                                    send_json(&writer, &notify).await?;
+                                }
                             }
+                            let _ = job;
                         }
-                        let _ = job;
                     }
-                }
-                line = read_line_limited(&mut reader, MAX_STRATUM_REQUEST_BYTES) => {
-                    let line = match line {
-                        Ok(Some(v)) => v,
-                        Ok(None) => break,
-                        Err(err) => {
-                            send_error(&writer, 0, &err.to_string()).await?;
-                            return Ok(());
+                    line = read_line_limited(&mut reader, MAX_STRATUM_REQUEST_BYTES) => {
+                        let line = match line {
+                            Ok(Some(v)) => v,
+                            Ok(None) => break,
+                            Err(err) => {
+                                send_error(&writer, 0, &err.to_string()).await?;
+                                break;
+                            }
+                        };
+                        if logged_in.is_some() {
+                            idle_deadline
+                                .as_mut()
+                                .reset(tokio::time::Instant::now() + POST_LOGIN_IDLE_TIMEOUT);
                         }
-                    };
-                    if logged_in.is_some() {
-                        idle_deadline
-                            .as_mut()
-                            .reset(tokio::time::Instant::now() + POST_LOGIN_IDLE_TIMEOUT);
-                    }
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() {
-                        continue;
-                    }
-
-                    let req: StratumRequest = match serde_json::from_str(trimmed) {
-                        Ok(v) => v,
-                        Err(_) => {
-                            send_error(&writer, 0, "invalid JSON").await?;
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
                             continue;
                         }
-                    };
 
-                    match req.method.as_str() {
-                        METHOD_LOGIN => {
-                            let params: LoginParams = match serde_json::from_value(req.params.clone()) {
-                                Ok(v) => v,
-                                Err(_) => {
-                                    send_error(&writer, req.id, "invalid login params").await?;
-                                    continue;
-                                }
-                            };
+                        let req: StratumRequest = match serde_json::from_str(trimmed) {
+                            Ok(v) => v,
+                            Err(_) => {
+                                send_error(&writer, 0, "invalid JSON").await?;
+                                continue;
+                            }
+                        };
 
-                            let login_engine = Arc::clone(&self.engine);
-                            let login_conn_id = conn_id.clone();
-                            let login_address = params.address.clone();
-                            let login_worker = params.worker.clone();
-                            let login_protocol_version = params.protocol_version;
-                            let login_capabilities = params.capabilities.clone();
-                            let login = tokio::task::spawn_blocking(move || {
-                                login_engine.login(
-                                    &login_conn_id,
-                                    login_address,
-                                    Some(login_worker),
-                                    login_protocol_version,
-                                    login_capabilities,
-                                )
-                            })
-                            .await;
+                        match req.method.as_str() {
+                            METHOD_LOGIN => {
+                                let params: LoginParams = match serde_json::from_value(req.params.clone()) {
+                                    Ok(v) => v,
+                                    Err(_) => {
+                                        send_error(&writer, req.id, "invalid login params").await?;
+                                        continue;
+                                    }
+                                };
 
-                            match login {
-                                Ok(Ok(login_result)) => {
-                                    let response = StratumResponse {
-                                        id: req.id,
-                                        status: Some("ok".to_string()),
-                                        error: None,
-                                        result: Some(serde_json::to_value(login_result)?),
-                                    };
-                                    send_json(&writer, &response).await?;
+                                let login_engine = Arc::clone(&self.engine);
+                                let login_conn_id = conn_id.clone();
+                                let login_address = params.address.clone();
+                                let login_worker = params.worker.clone();
+                                let login_protocol_version = params.protocol_version;
+                                let login_capabilities = params.capabilities.clone();
+                                let login = tokio::task::spawn_blocking(move || {
+                                    login_engine.login(
+                                        &login_conn_id,
+                                        login_address,
+                                        Some(login_worker),
+                                        login_protocol_version,
+                                        login_capabilities,
+                                    )
+                                })
+                                .await;
 
-                                    let worker = if params.worker.trim().is_empty() {
-                                        "default".to_string()
-                                    } else {
-                                        params.worker.trim().chars().take(64).collect()
-                                    };
-
-                                    logged_in = Some((
-                                        params.address.clone(),
-                                        worker.clone(),
-                                        self.engine
-                                            .session_difficulty(&conn_id)
-                                            .unwrap_or(1),
-                                    ));
-                                    self.stats.add_miner(&conn_id, &params.address, &worker);
-
-                                    if let Some(miner_job) = self.jobs.build_miner_job(
-                                        self.engine.session_difficulty(&conn_id).unwrap_or(1),
-                                        &params.address,
-                                    ) {
-                                        let notify = StratumNotify {
-                                            method: "job".to_string(),
-                                            params: serde_json::to_value(miner_job)?,
+                                match login {
+                                    Ok(Ok(login_result)) => {
+                                        let response = StratumResponse {
+                                            id: req.id,
+                                            status: Some("ok".to_string()),
+                                            error: None,
+                                            result: Some(serde_json::to_value(login_result)?),
                                         };
-                                        send_json(&writer, &notify).await?;
+                                        send_json(&writer, &response).await?;
+
+                                        let worker = normalize_worker_name(Some(params.worker.as_str()));
+
+                                        logged_in = Some((
+                                            params.address.clone(),
+                                            worker.clone(),
+                                            self.engine
+                                                .session_difficulty(&conn_id)
+                                                .unwrap_or(1),
+                                        ));
+                                        self.stats.add_miner(&conn_id, &params.address, &worker);
+
+                                        if let Some(miner_job) = self.jobs.build_miner_job(
+                                            self.engine.session_difficulty(&conn_id).unwrap_or(1),
+                                            &params.address,
+                                        ) {
+                                            let notify = StratumNotify {
+                                                method: "job".to_string(),
+                                                params: serde_json::to_value(miner_job)?,
+                                            };
+                                            send_json(&writer, &notify).await?;
+                                        }
+                                    }
+                                    Ok(Err(err)) => {
+                                        send_error(&writer, req.id, &err.to_string()).await?;
+                                        break;
+                                    }
+                                    Err(err) => {
+                                        send_error(
+                                            &writer,
+                                            req.id,
+                                            &format!("login worker failure: {err}"),
+                                        )
+                                        .await?;
+                                        break;
                                     }
                                 }
-                                Ok(Err(err)) => {
-                                    send_error(&writer, req.id, &err.to_string()).await?;
-                                    return Ok(());
-                                }
-                                Err(err) => {
-                                    send_error(
-                                        &writer,
-                                        req.id,
-                                        &format!("login worker failure: {err}"),
-                                    )
-                                    .await?;
-                                    return Ok(());
-                                }
                             }
-                        }
-                        METHOD_SUBMIT => {
-                            let params: SubmitParams = match serde_json::from_value(req.params.clone()) {
-                                Ok(v) => v,
-                                Err(_) => {
-                                    send_error(&writer, req.id, "invalid submit params").await?;
-                                    continue;
-                                }
-                            };
+                            METHOD_SUBMIT => {
+                                let params: SubmitParams = match serde_json::from_value(req.params.clone()) {
+                                    Ok(v) => v,
+                                    Err(_) => {
+                                        send_error(&writer, req.id, "invalid submit params").await?;
+                                        continue;
+                                    }
+                                };
 
-                            let engine = Arc::clone(&self.engine);
-                            let submit_conn_id = conn_id.clone();
-                            let submit = tokio::task::spawn_blocking(move || {
-                                engine.submit(&submit_conn_id, params.job_id, params.nonce, params.claimed_hash)
-                            })
-                            .await;
+                                let engine = Arc::clone(&self.engine);
+                                let submit_conn_id = conn_id.clone();
+                                let submit = tokio::task::spawn_blocking(move || {
+                                    engine.submit(&submit_conn_id, params.job_id, params.nonce, params.claimed_hash)
+                                })
+                                .await;
 
-                            match submit {
-                                Ok(Ok(ack)) => {
-                                    let response = StratumResponse {
-                                        id: req.id,
-                                        status: Some("ok".to_string()),
-                                        error: None,
-                                        result: Some(serde_json::json!({
-                                            "accepted": ack.accepted,
-                                            "verified": ack.verified,
-                                            "status": ack.status,
-                                            "difficulty": ack.next_difficulty,
-                                        })),
-                                    };
-                                    if let Some((address, worker, difficulty)) = logged_in.as_mut() {
-                                        self.stats
-                                            .record_accepted_share(address, ack.share_difficulty);
-                                        if ack.block_accepted {
-                                            self.stats.record_block_found(address);
-                                        }
-                                        if ack.next_difficulty != *difficulty {
-                                            *difficulty = ack.next_difficulty;
-                                            if let Some(miner_job) =
-                                                self.jobs
-                                                    .build_miner_job(ack.next_difficulty, address)
-                                            {
-                                                let notify = StratumNotify {
-                                                    method: "job".to_string(),
-                                                    params: serde_json::to_value(miner_job)?,
-                                                };
-                                                send_json(&writer, &notify).await?;
+                                match submit {
+                                    Ok(Ok(ack)) => {
+                                        let response = StratumResponse {
+                                            id: req.id,
+                                            status: Some("ok".to_string()),
+                                            error: None,
+                                            result: Some(serde_json::json!({
+                                                "accepted": ack.accepted,
+                                                "verified": ack.verified,
+                                                "status": ack.status,
+                                                "difficulty": ack.next_difficulty,
+                                            })),
+                                        };
+                                        if let Some((address, worker, difficulty)) = logged_in.as_mut() {
+                                            self.stats
+                                                .record_accepted_share(address, ack.share_difficulty);
+                                            if ack.block_accepted {
+                                                self.stats.record_block_found(address);
                                             }
-                                            tracing::debug!(
-                                                peer = %peer,
-                                                address = %address,
-                                                worker = %worker,
-                                                difficulty = ack.next_difficulty,
-                                                "stratum difficulty updated"
-                                            );
+                                            if ack.next_difficulty != *difficulty {
+                                                *difficulty = ack.next_difficulty;
+                                                if let Some(miner_job) =
+                                                    self.jobs
+                                                        .build_miner_job(ack.next_difficulty, address)
+                                                {
+                                                    let notify = StratumNotify {
+                                                        method: "job".to_string(),
+                                                        params: serde_json::to_value(miner_job)?,
+                                                    };
+                                                    send_json(&writer, &notify).await?;
+                                                }
+                                                tracing::debug!(
+                                                    peer = %peer,
+                                                    address = %address,
+                                                    worker = %worker,
+                                                    difficulty = ack.next_difficulty,
+                                                    "stratum difficulty updated"
+                                                );
+                                            }
                                         }
+                                        send_json(&writer, &response).await?;
                                     }
-                                    send_json(&writer, &response).await?;
-                                }
-                                Ok(Err(err)) => {
-                                    if let Some((address, _, _)) = logged_in.as_ref() {
-                                        self.stats.record_rejected_share(address);
+                                    Ok(Err(err)) => {
+                                        if let Some((address, _, _)) = logged_in.as_ref() {
+                                            self.stats.record_rejected_share(address);
+                                        }
+                                        send_error(&writer, req.id, &err.to_string()).await?;
                                     }
-                                    send_error(&writer, req.id, &err.to_string()).await?;
-                                }
-                                Err(err) => {
-                                    if let Some((address, _, _)) = logged_in.as_ref() {
-                                        self.stats.record_rejected_share(address);
+                                    Err(err) => {
+                                        if let Some((address, _, _)) = logged_in.as_ref() {
+                                            self.stats.record_rejected_share(address);
+                                        }
+                                        send_error(
+                                            &writer,
+                                            req.id,
+                                            &format!("submit worker failure: {err}"),
+                                        )
+                                        .await?;
                                     }
-                                    send_error(
-                                        &writer,
-                                        req.id,
-                                        &format!("submit worker failure: {err}"),
-                                    )
-                                    .await?;
                                 }
                             }
-                        }
-                        _ => {
-                            send_error(&writer, req.id, "unknown method").await?;
+                            _ => {
+                                send_error(&writer, req.id, "unknown method").await?;
+                            }
                         }
                     }
                 }
             }
+            Ok(())
         }
+        .await;
 
-        if let Some((address, _, _)) = logged_in {
+        if let Some((address, _, _)) = logged_in.take() {
             self.engine.disconnect(&conn_id);
             self.stats.remove_miner(&conn_id);
             tracing::debug!(peer = %peer, address = %address, "stratum miner disconnected");
         }
 
-        Ok(())
+        run_result
     }
 }
 

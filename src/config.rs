@@ -185,6 +185,11 @@ impl Config {
             self.vardiff_target_shares = 1;
         }
         self.vardiff_tolerance = self.vardiff_tolerance.clamp(0.01, 0.95);
+        if !self.block_finder_bonus_pct.is_finite() {
+            self.block_finder_bonus_pct = 0.0;
+        } else {
+            self.block_finder_bonus_pct = self.block_finder_bonus_pct.clamp(0.0, 100.0);
+        }
     }
 
     pub fn block_poll_duration(&self) -> Duration {
@@ -298,6 +303,7 @@ mod tests {
             max_share_difficulty: 5,
             vardiff_target_shares: 0,
             vardiff_tolerance: 2.0,
+            block_finder_bonus_pct: 250.0,
             ..Config::default()
         };
         cfg.normalize();
@@ -316,6 +322,7 @@ mod tests {
         assert_eq!(cfg.initial_share_difficulty, 10);
         assert_eq!(cfg.vardiff_target_shares, 1);
         assert_eq!(cfg.vardiff_tolerance, 0.95);
+        assert_eq!(cfg.block_finder_bonus_pct, 100.0);
     }
 
     #[test]

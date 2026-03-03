@@ -133,7 +133,7 @@ async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
     };
     let current_job = state.jobs.current_job();
     let current_job_height = current_job.as_ref().map(|j| j.height);
-    let network_hashrate = state.network_hashrate_for_job(current_job.as_ref());
+    let network_hashrate = state.network_hashrate_for_job(current_job.as_ref()).await;
 
     let response = StatsResponse {
         pool: PoolSummary {
@@ -314,7 +314,7 @@ impl ApiState {
         Ok(totals)
     }
 
-    fn network_hashrate_for_job(&self, job: Option<&crate::engine::Job>) -> Option<f64> {
+    async fn network_hashrate_for_job(&self, job: Option<&crate::engine::Job>) -> Option<f64> {
         let job = job?;
         let chain_height = job.height.checked_sub(1)?;
         let difficulty = job.network_difficulty.max(1);
@@ -336,9 +336,14 @@ impl ApiState {
             }
         }
 
-        let sampled = estimate_explorer_network_hashrate_hps(&self.node, chain_height, difficulty)
-            .ok()
-            .filter(|value| value.is_finite() && *value >= 0.0);
+        let node = Arc::clone(&self.node);
+        let sampled = tokio::task::spawn_blocking(move || {
+            estimate_explorer_network_hashrate_hps(node.as_ref(), chain_height, difficulty)
+        })
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .filter(|value| value.is_finite() && *value >= 0.0);
 
         let mut cache = self.network_hashrate_cache.lock();
         cache.updated_at = Some(Instant::now());
