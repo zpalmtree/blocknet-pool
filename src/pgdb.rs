@@ -13,10 +13,16 @@ use crate::engine::{ShareRecord, ShareStore};
 const SEEN_SHARE_EXPIRY_SECS: i64 = 24 * 60 * 60;
 
 pub struct PostgresStore {
-    conn: Mutex<Client>,
+    conn: Option<Mutex<Client>>,
 }
 
 impl PostgresStore {
+    fn conn(&self) -> &Mutex<Client> {
+        self.conn
+            .as_ref()
+            .expect("postgres store connection unavailable")
+    }
+
     pub fn connect(url: &str) -> Result<Arc<Self>> {
         let mut conn =
             Client::connect(url, NoTls).with_context(|| format!("connect postgres {url}"))?;
@@ -107,13 +113,13 @@ CREATE TABLE IF NOT EXISTS address_risk (
         .context("init postgres schema")?;
 
         Ok(Arc::new(Self {
-            conn: Mutex::new(conn),
+            conn: Some(Mutex::new(conn)),
         }))
     }
 
     pub fn add_share(&self, share: ShareRecord) -> Result<()> {
         let created = to_unix(share.created_at);
-        self.conn.lock().execute(
+        self.conn().lock().execute(
             "INSERT INTO shares (job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             &[
@@ -132,7 +138,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn get_recent_shares(&self, limit: i64) -> Result<Vec<DbShare>> {
-        let rows = self.conn.lock().query(
+        let rows = self.conn().lock().query(
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
              FROM shares ORDER BY id DESC LIMIT $1",
             &[&limit],
@@ -141,7 +147,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn get_shares_for_miner(&self, address: &str, limit: i64) -> Result<Vec<DbShare>> {
-        let rows = self.conn.lock().query(
+        let rows = self.conn().lock().query(
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
              FROM shares WHERE miner = $1 ORDER BY id DESC LIMIT $2",
             &[&address, &limit],
@@ -151,7 +157,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
 
     pub fn get_shares_since(&self, since: SystemTime) -> Result<Vec<DbShare>> {
         let ts = to_unix(since);
-        let rows = self.conn.lock().query(
+        let rows = self.conn().lock().query(
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
              FROM shares WHERE created_at >= $1 ORDER BY id DESC",
             &[&ts],
@@ -166,7 +172,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     pub fn get_shares_between(&self, start: SystemTime, end: SystemTime) -> Result<Vec<DbShare>> {
         let start_ts = to_unix(start);
         let end_ts = to_unix(end);
-        let rows = self.conn.lock().query(
+        let rows = self.conn().lock().query(
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
              FROM shares WHERE created_at >= $1 AND created_at <= $2 ORDER BY id DESC",
             &[&start_ts, &end_ts],
@@ -176,7 +182,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
 
     pub fn get_last_n_shares_before(&self, before: SystemTime, n: i64) -> Result<Vec<DbShare>> {
         let before_ts = to_unix(before);
-        let rows = self.conn.lock().query(
+        let rows = self.conn().lock().query(
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
              FROM shares WHERE created_at <= $1 ORDER BY id DESC LIMIT $2",
             &[&before_ts, &n],
@@ -186,7 +192,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
 
     pub fn get_total_share_count(&self) -> Result<u64> {
         let row = self
-            .conn
+            .conn()
             .lock()
             .query_one("SELECT COUNT(*) FROM shares", &[])?;
         let count: i64 = row.get(0);
@@ -194,7 +200,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn add_block(&self, block: &DbBlock) -> Result<()> {
-        self.conn.lock().execute(
+        self.conn().lock().execute(
             "INSERT INTO blocks (height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              ON CONFLICT(height) DO UPDATE SET
@@ -224,7 +230,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn insert_block_if_absent(&self, block: &DbBlock) -> Result<bool> {
-        let inserted = self.conn.lock().execute(
+        let inserted = self.conn().lock().execute(
             "INSERT INTO blocks (height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              ON CONFLICT(height) DO NOTHING",
@@ -245,7 +251,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn get_block(&self, height: u64) -> Result<Option<DbBlock>> {
-        let row = self.conn.lock().query_opt(
+        let row = self.conn().lock().query_opt(
             "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out
              FROM blocks WHERE height = $1",
             &[&u64_to_i64(height)?],
@@ -258,7 +264,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn get_recent_blocks(&self, limit: i64) -> Result<Vec<DbBlock>> {
-        let rows = self.conn.lock().query(
+        let rows = self.conn().lock().query(
             "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out
              FROM blocks ORDER BY height DESC LIMIT $1",
             &[&limit],
@@ -267,7 +273,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn get_unconfirmed_blocks(&self) -> Result<Vec<DbBlock>> {
-        let rows = self.conn.lock().query(
+        let rows = self.conn().lock().query(
             "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out
              FROM blocks WHERE confirmed = FALSE AND orphaned = FALSE ORDER BY height ASC",
             &[],
@@ -276,7 +282,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn get_unpaid_blocks(&self) -> Result<Vec<DbBlock>> {
-        let rows = self.conn.lock().query(
+        let rows = self.conn().lock().query(
             "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out
              FROM blocks WHERE confirmed = TRUE AND orphaned = FALSE AND paid_out = FALSE ORDER BY height ASC",
             &[],
@@ -286,7 +292,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
 
     pub fn get_block_count(&self) -> Result<u64> {
         let row = self
-            .conn
+            .conn()
             .lock()
             .query_one("SELECT COUNT(*) FROM blocks", &[])?;
         let count: i64 = row.get(0);
@@ -294,7 +300,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn get_balance(&self, address: &str) -> Result<Balance> {
-        let row = self.conn.lock().query_opt(
+        let row = self.conn().lock().query_opt(
             "SELECT address, pending, paid FROM balances WHERE address = $1",
             &[&address],
         )?;
@@ -313,7 +319,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn update_balance(&self, bal: &Balance) -> Result<()> {
-        self.conn.lock().execute(
+        self.conn().lock().execute(
             "INSERT INTO balances (address, pending, paid) VALUES ($1, $2, $3)
              ON CONFLICT(address) DO UPDATE SET pending = EXCLUDED.pending, paid = EXCLUDED.paid",
             &[
@@ -373,7 +379,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
         credits: &[(String, u64)],
         fee_record: Option<&PoolFeeRecord>,
     ) -> Result<bool> {
-        let mut conn = self.conn.lock();
+        let mut conn = self.conn().lock();
         let mut tx = conn.transaction()?;
 
         let block_state = tx.query_opt(
@@ -461,7 +467,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn get_all_balances(&self) -> Result<Vec<Balance>> {
-        let rows = self.conn.lock().query(
+        let rows = self.conn().lock().query(
             "SELECT address, pending, paid FROM balances ORDER BY pending DESC",
             &[],
         )?;
@@ -476,7 +482,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn add_payout(&self, address: &str, amount: u64, tx_hash: &str) -> Result<()> {
-        self.conn.lock().execute(
+        self.conn().lock().execute(
             "INSERT INTO payouts (address, amount, tx_hash, timestamp) VALUES ($1, $2, $3, $4)",
             &[&address, &u64_to_i64(amount)?, &tx_hash, &now_unix()],
         )?;
@@ -484,7 +490,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn get_recent_payouts(&self, limit: i64) -> Result<Vec<Payout>> {
-        let rows = self.conn.lock().query(
+        let rows = self.conn().lock().query(
             "SELECT id, address, amount, tx_hash, timestamp FROM payouts ORDER BY id DESC LIMIT $1",
             &[&limit],
         )?;
@@ -516,7 +522,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
             return Err(anyhow!("fee address is required"));
         }
 
-        let inserted = self.conn.lock().execute(
+        let inserted = self.conn().lock().execute(
             "INSERT INTO pool_fee_events (block_height, amount, fee_address, timestamp)
              VALUES ($1, $2, $3, $4)
              ON CONFLICT(block_height) DO NOTHING",
@@ -531,7 +537,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn get_total_pool_fees(&self) -> Result<u64> {
-        let row = self.conn.lock().query_one(
+        let row = self.conn().lock().query_one(
             "SELECT COALESCE(SUM(amount)::BIGINT, 0) FROM pool_fee_events",
             &[],
         )?;
@@ -540,7 +546,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn get_recent_pool_fees(&self, limit: i64) -> Result<Vec<PoolFeeEvent>> {
-        let rows = self.conn.lock().query(
+        let rows = self.conn().lock().query(
             "SELECT id, block_height, amount, fee_address, timestamp
              FROM pool_fee_events ORDER BY id DESC LIMIT $1",
             &[&limit],
@@ -558,7 +564,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn set_meta(&self, key: &str, value: &[u8]) -> Result<()> {
-        self.conn.lock().execute(
+        self.conn().lock().execute(
             "INSERT INTO meta (key, value) VALUES ($1, $2)
              ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value",
             &[&key, &value],
@@ -568,7 +574,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
 
     pub fn get_meta(&self, key: &str) -> Result<Option<Vec<u8>>> {
         let row = self
-            .conn
+            .conn()
             .lock()
             .query_opt("SELECT value FROM meta WHERE key = $1", &[&key])?;
         Ok(row.map(|v| v.get::<_, Vec<u8>>(0)))
@@ -576,7 +582,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
 
     pub fn mark_share_seen(&self, job_id: &str, nonce: u64) -> Result<()> {
         let expires_at = now_unix() + SEEN_SHARE_EXPIRY_SECS;
-        self.conn.lock().execute(
+        self.conn().lock().execute(
             "INSERT INTO seen_shares (job_id, nonce, expires_at) VALUES ($1, $2, $3)
              ON CONFLICT(job_id, nonce) DO UPDATE SET expires_at = EXCLUDED.expires_at",
             &[&job_id, &u64_to_i64(nonce)?, &expires_at],
@@ -587,7 +593,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     pub fn try_claim_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
         let now = now_unix();
         let expires_at = now + SEEN_SHARE_EXPIRY_SECS;
-        let claimed = self.conn.lock().execute(
+        let claimed = self.conn().lock().execute(
             "INSERT INTO seen_shares (job_id, nonce, expires_at) VALUES ($1, $2, $3)
              ON CONFLICT(job_id, nonce) DO UPDATE SET expires_at = EXCLUDED.expires_at
              WHERE seen_shares.expires_at <= $4",
@@ -597,7 +603,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn release_share_claim(&self, job_id: &str, nonce: u64) -> Result<()> {
-        self.conn.lock().execute(
+        self.conn().lock().execute(
             "DELETE FROM seen_shares WHERE job_id = $1 AND nonce = $2",
             &[&job_id, &u64_to_i64(nonce)?],
         )?;
@@ -605,7 +611,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn is_share_seen(&self, job_id: &str, nonce: u64) -> Result<bool> {
-        let row = self.conn.lock().query_opt(
+        let row = self.conn().lock().query_opt(
             "SELECT expires_at FROM seen_shares WHERE job_id = $1 AND nonce = $2",
             &[&job_id, &u64_to_i64(nonce)?],
         )?;
@@ -617,7 +623,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn clean_expired_seen_shares(&self) -> Result<u64> {
-        let affected = self.conn.lock().execute(
+        let affected = self.conn().lock().execute(
             "DELETE FROM seen_shares WHERE expires_at <= $1",
             &[&now_unix()],
         )?;
@@ -625,7 +631,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn get_address_risk(&self, address: &str) -> Result<Option<AddressRiskState>> {
-        let row = self.conn.lock().query_opt(
+        let row = self.conn().lock().query_opt(
             "SELECT address, strikes, last_reason, last_event_at, quarantined_until, force_verify_until
              FROM address_risk WHERE address = $1",
             &[&address],
@@ -727,7 +733,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
             }
         }
 
-        self.conn.lock().execute(
+        self.conn().lock().execute(
             "INSERT INTO address_risk (address, strikes, last_reason, last_event_at, quarantined_until, force_verify_until)
              VALUES ($1, $2, $3, $4, $5, $6)
              ON CONFLICT(address) DO UPDATE SET
@@ -751,7 +757,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
 
     pub fn get_risk_summary(&self) -> Result<(u64, u64)> {
         let now = now_unix();
-        let mut conn = self.conn.lock();
+        let mut conn = self.conn().lock();
 
         let q_row = conn.query_one(
             "SELECT COUNT(*) FROM address_risk WHERE quarantined_until IS NOT NULL AND quarantined_until > $1",
@@ -771,7 +777,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn create_pending_payout(&self, address: &str, amount: u64) -> Result<()> {
-        self.conn.lock().execute(
+        self.conn().lock().execute(
             "INSERT INTO pending_payouts (address, amount, initiated_at) VALUES ($1, $2, $3)
              ON CONFLICT(address) DO UPDATE SET amount = EXCLUDED.amount, initiated_at = EXCLUDED.initiated_at",
             &[&address, &u64_to_i64(amount)?, &now_unix()],
@@ -780,7 +786,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn complete_pending_payout(&self, address: &str, amount: u64, tx_hash: &str) -> Result<()> {
-        let mut conn = self.conn.lock();
+        let mut conn = self.conn().lock();
         let mut tx = conn.transaction()?;
 
         let pending = tx.query_opt(
@@ -849,7 +855,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn cancel_pending_payout(&self, address: &str) -> Result<()> {
-        self.conn.lock().execute(
+        self.conn().lock().execute(
             "DELETE FROM pending_payouts WHERE address = $1",
             &[&address],
         )?;
@@ -857,7 +863,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn get_pending_payouts(&self) -> Result<Vec<PendingPayout>> {
-        let rows = self.conn.lock().query(
+        let rows = self.conn().lock().query(
             "SELECT address, amount, initiated_at FROM pending_payouts ORDER BY initiated_at ASC",
             &[],
         )?;
@@ -872,7 +878,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn get_pending_payout(&self, address: &str) -> Result<Option<PendingPayout>> {
-        let row = self.conn.lock().query_opt(
+        let row = self.conn().lock().query_opt(
             "SELECT address, amount, initiated_at FROM pending_payouts WHERE address = $1",
             &[&address],
         )?;
@@ -881,6 +887,18 @@ CREATE TABLE IF NOT EXISTS address_risk (
             amount: row.get::<_, i64>(1).max(0) as u64,
             initiated_at: from_unix(row.get::<_, i64>(2)),
         }))
+    }
+}
+
+impl Drop for PostgresStore {
+    fn drop(&mut self) {
+        let Some(conn) = self.conn.take() else {
+            return;
+        };
+        let client = conn.into_inner();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            drop(client);
+        }));
     }
 }
 
