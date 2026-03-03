@@ -15,6 +15,8 @@ use crate::pow::difficulty_to_target;
 const NONCE_RANGE_SIZE: u64 = 1_000_000;
 const JOB_REFRESH_MIN_INTERVAL: Duration = Duration::from_secs(1);
 const REWARD_ADDR_CACHE_TTL: Duration = Duration::from_secs(30);
+const TEMPLATE_WALLET_RECOVERY_COOLDOWN: Duration = Duration::from_secs(10);
+const MISSING_WALLET_PASSWORD_LOG_COOLDOWN: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MinerJob {
@@ -45,6 +47,8 @@ pub struct JobManager {
     nonce_counter: AtomicU64,
     last_refresh: Mutex<Option<Instant>>,
     reward_cache: Mutex<RewardAddressCache>,
+    last_template_wallet_recovery: Mutex<Option<Instant>>,
+    last_missing_wallet_password_log: Mutex<Option<Instant>>,
 
     tx: broadcast::Sender<Job>,
 }
@@ -69,6 +73,8 @@ impl JobManager {
                 address: None,
                 checked_at: None,
             }),
+            last_template_wallet_recovery: Mutex::new(None),
+            last_missing_wallet_password_log: Mutex::new(None),
             tx,
         })
     }
@@ -134,8 +140,21 @@ impl JobManager {
         let template = match self.node.get_block_template(reward_address.as_deref()) {
             Ok(t) => t,
             Err(err) => {
-                tracing::warn!(error = %err, "failed to fetch block template");
-                return;
+                if self.try_recover_wallet_for_template(&err) {
+                    match self.node.get_block_template(reward_address.as_deref()) {
+                        Ok(t) => t,
+                        Err(retry_err) => {
+                            tracing::warn!(
+                                error = %retry_err,
+                                "failed to fetch block template after wallet recovery"
+                            );
+                            return;
+                        }
+                    }
+                } else {
+                    tracing::warn!(error = %err, "failed to fetch block template");
+                    return;
+                }
             }
         };
 
@@ -229,6 +248,68 @@ impl JobManager {
                 cache.address.clone()
             }
         }
+    }
+
+    fn try_recover_wallet_for_template(&self, err: &anyhow::Error) -> bool {
+        if !(is_http_status(err, 503) || is_http_status(err, 403)) {
+            return false;
+        }
+
+        let now = Instant::now();
+        {
+            let mut guard = self.last_template_wallet_recovery.lock();
+            if guard
+                .is_some_and(|last| now.duration_since(last) < TEMPLATE_WALLET_RECOVERY_COOLDOWN)
+            {
+                return false;
+            }
+            *guard = Some(now);
+        }
+
+        let password = std::env::var("BLOCKNET_WALLET_PASSWORD")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let Some(password) = password else {
+            let mut guard = self.last_missing_wallet_password_log.lock();
+            if guard
+                .is_none_or(|last| now.duration_since(last) >= MISSING_WALLET_PASSWORD_LOG_COOLDOWN)
+            {
+                *guard = Some(now);
+                tracing::warn!(
+                    "wallet recovery for template fetch skipped: BLOCKNET_WALLET_PASSWORD is not set"
+                );
+            }
+            return false;
+        };
+
+        if is_http_status(err, 503) {
+            if let Err(load_err) = self.node.wallet_load(&password) {
+                tracing::warn!(
+                    error = %load_err,
+                    "wallet recovery failed during load step for template fetch"
+                );
+                return false;
+            }
+            if let Err(unlock_err) = self.node.wallet_unlock(&password) {
+                tracing::warn!(
+                    error = %unlock_err,
+                    "wallet recovery failed during unlock step for template fetch"
+                );
+                return false;
+            }
+        } else if is_http_status(err, 403) {
+            if let Err(unlock_err) = self.node.wallet_unlock(&password) {
+                tracing::warn!(
+                    error = %unlock_err,
+                    "wallet recovery failed during unlock step for template fetch"
+                );
+                return false;
+            }
+        }
+
+        tracing::info!("wallet recovered for template fetch; retrying blocktemplate");
+        true
     }
 }
 
