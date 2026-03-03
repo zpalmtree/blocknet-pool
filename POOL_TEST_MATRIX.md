@@ -280,3 +280,48 @@ Mark green only if all are true:
 - Saturation test shows controlled backpressure, no crash.
 - Compact submit API path validated.
 - Provisional metrics behave as expected over time window.
+
+---
+
+## 8) Review Follow-Up Checks (2026-03-03)
+
+Goal: cover the three active follow-up items from code review.
+
+### A) Concurrent risk escalation is monotonic
+
+Run a targeted integration/unit test that calls `escalate_address_risk` concurrently for the same address.
+
+Pass:
+- Final `strikes` equals attempted escalations (no lost updates).
+- `quarantined_until` and `force_verify_until` are monotonic non-decreasing across races.
+
+Fail:
+- Final `strikes` is lower than call count.
+- Quarantine/force windows regress during concurrent updates.
+
+### B) Hashrate share window has bounded memory
+
+Stress accepted-share recording at production-like rates for at least 10 minutes.
+
+Pass:
+- RSS/memory remains bounded after warmup.
+- Internal accepted-share tracking queue stays under a fixed cap.
+
+Fail:
+- Memory usage grows linearly with share rate/time.
+
+### C) Template identity refresh ignores timestamp-only churn but catches stable field changes
+
+Use controlled template variants at same height:
+- variant 1: timestamp-only delta
+- variant 2: changed `template_id`
+- variant 3: changed `header_base`
+- variant 4: changed `network_target`
+
+Pass:
+- Variant 1 does not trigger refresh.
+- Variants 2/3/4 trigger refresh and broadcast new jobs.
+
+Fail:
+- Timestamp-only changes cause refresh churn.
+- Stable-field changes are ignored.

@@ -81,6 +81,13 @@ When `database_url` is set, Postgres is used automatically and `database_path` i
 - Timestamp-only `new_block` changes do not trigger refreshes; only hash/height changes can trigger staleness.
 - Same-height hash-change refresh is disabled by default (`refresh_on_same_height=false`) to avoid replay churn; enable it only if you want immediate same-height reorg reaction.
 
+## Review Follow-Ups (2026-03-03)
+
+- Address risk escalation (`strikes`, quarantine extension, force-verify extension) should use an atomic update path per address. Current behavior is functionally correct in single-threaded cases but can lose increments under concurrent escalations.
+- Accepted-share hashrate tracking currently keeps a full 1-hour time window in memory. Add a hard count cap so high-throughput pools do not grow this queue without bound.
+- Template refresh matching should remain resistant to timestamp-only churn, but should refresh when stable template fields change. Candidate fields to include in identity comparison are `height`, `network_target`, `template_id`, and `header_base` (or an equivalent stable digest of header/base template material).
+- API key comparison is currently direct string equality by design for this pool deployment model; this is accepted for now and is not treated as a blocker.
+
 ## API Auth
 
 Public endpoints (no API key required):
