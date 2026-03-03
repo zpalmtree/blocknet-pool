@@ -75,6 +75,16 @@ pub struct SubmitJobBinding {
 pub trait ShareStore: Send + Sync + 'static {
     fn is_share_seen(&self, job_id: &str, nonce: u64) -> Result<bool>;
     fn mark_share_seen(&self, job_id: &str, nonce: u64) -> Result<()>;
+    fn try_claim_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
+        if self.is_share_seen(job_id, nonce)? {
+            return Ok(false);
+        }
+        self.mark_share_seen(job_id, nonce)?;
+        Ok(true)
+    }
+    fn release_share_claim(&self, _job_id: &str, _nonce: u64) -> Result<()> {
+        Ok(())
+    }
     fn add_share(&self, share: ShareRecord) -> Result<()>;
     fn add_found_block(&self, _block: FoundBlockRecord) -> Result<()> {
         Ok(())
@@ -262,24 +272,34 @@ impl PoolEngine {
             }
         }
 
+        let claimed_hash = match claimed_hash_hex {
+            Some(ref value) if !value.trim().is_empty() => {
+                Some(parse_hash_hex(value).map_err(|err| anyhow!(err))?)
+            }
+            _ => None,
+        };
+
+        if self.cfg.stratum_submit_v2_required && claimed_hash.is_none() {
+            self.seen_in_memory.lock().remove(&seen_key);
+            return Err(anyhow!("claimed hash required"));
+        }
+
+        let claimed = match self.store.try_claim_share(&job_id, nonce) {
+            Ok(true) => true,
+            Ok(false) => {
+                self.seen_in_memory.lock().remove(&seen_key);
+                return Err(anyhow!("duplicate share"));
+            }
+            Err(err) => {
+                self.seen_in_memory.lock().remove(&seen_key);
+                return Err(err);
+            }
+        };
+        let job_id_for_share = job_id.clone();
+
         let result = (|| -> Result<SubmitAck> {
             if self.store.is_address_quarantined(&session.address)? {
                 return Err(anyhow!("address quarantined"));
-            }
-
-            if self.store.is_share_seen(&job_id, nonce)? {
-                return Err(anyhow!("duplicate share"));
-            }
-
-            let claimed_hash = match claimed_hash_hex {
-                Some(ref value) if !value.trim().is_empty() => {
-                    Some(parse_hash_hex(value).map_err(|err| anyhow!(err))?)
-                }
-                _ => None,
-            };
-
-            if self.cfg.stratum_submit_v2_required && claimed_hash.is_none() {
-                return Err(anyhow!("claimed hash required"));
             }
 
             let share_target = difficulty_to_target(share_difficulty);
@@ -326,8 +346,6 @@ impl PoolEngine {
                 ));
             }
 
-            self.store.mark_share_seen(&job_id, nonce)?;
-
             let status = if validation.verified {
                 SHARE_STATUS_VERIFIED
             } else {
@@ -366,7 +384,7 @@ impl PoolEngine {
             }
 
             self.store.add_share(ShareRecord {
-                job_id,
+                job_id: job_id_for_share.clone(),
                 miner: session.address.clone(),
                 worker: session.worker.clone(),
                 difficulty: share_difficulty,
@@ -388,6 +406,17 @@ impl PoolEngine {
                 next_difficulty,
             })
         })();
+
+        if claimed && result.is_err() {
+            if let Err(err) = self.store.release_share_claim(&job_id, nonce) {
+                tracing::warn!(
+                    job_id = %job_id,
+                    nonce,
+                    error = %err,
+                    "failed to release share claim after submit failure"
+                );
+            }
+        }
 
         self.seen_in_memory.lock().remove(&seen_key);
         result
@@ -578,6 +607,21 @@ impl ShareStore for InMemoryStore {
 
     fn mark_share_seen(&self, job_id: &str, nonce: u64) -> Result<()> {
         self.seen.lock().insert((job_id.to_string(), nonce));
+        Ok(())
+    }
+
+    fn try_claim_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
+        let key = (job_id.to_string(), nonce);
+        let mut seen = self.seen.lock();
+        if seen.contains(&key) {
+            return Ok(false);
+        }
+        seen.insert(key);
+        Ok(true)
+    }
+
+    fn release_share_claim(&self, job_id: &str, nonce: u64) -> Result<()> {
+        self.seen.lock().remove(&(job_id.to_string(), nonce));
         Ok(())
     }
 

@@ -205,8 +205,8 @@ CREATE TABLE IF NOT EXISTS address_risk (
                 share.job_id,
                 share.miner,
                 share.worker,
-                share.difficulty as i64,
-                share.nonce as i64,
+                u64_to_i64(share.difficulty)?,
+                u64_to_i64(share.nonce)?,
                 share.status,
                 if share.was_sampled { 1i64 } else { 0i64 },
                 share.block_hash,
@@ -250,6 +250,26 @@ CREATE TABLE IF NOT EXISTS address_risk (
         self.get_recent_shares(n)
     }
 
+    pub fn get_shares_between(&self, start: SystemTime, end: SystemTime) -> Result<Vec<DbShare>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
+             FROM shares WHERE created_at >= ?1 AND created_at <= ?2 ORDER BY id DESC",
+        )?;
+        let rows = stmt.query_map(params![to_unix(start), to_unix(end)], row_to_share)?;
+        collect_rows(rows)
+    }
+
+    pub fn get_last_n_shares_before(&self, before: SystemTime, n: i64) -> Result<Vec<DbShare>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
+             FROM shares WHERE created_at <= ?1 ORDER BY id DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![to_unix(before), n], row_to_share)?;
+        collect_rows(rows)
+    }
+
     pub fn get_total_share_count(&self) -> Result<u64> {
         let count: i64 = self
             .conn
@@ -273,12 +293,12 @@ CREATE TABLE IF NOT EXISTS address_risk (
                  orphaned=excluded.orphaned,
                  paid_out=excluded.paid_out",
             params![
-                block.height as i64,
+                u64_to_i64(block.height)?,
                 block.hash,
-                block.difficulty as i64,
+                u64_to_i64(block.difficulty)?,
                 block.finder,
                 block.finder_worker,
-                block.reward as i64,
+                u64_to_i64(block.reward)?,
                 to_unix(block.timestamp),
                 if block.confirmed { 1i64 } else { 0i64 },
                 if block.orphaned { 1i64 } else { 0i64 },
@@ -293,7 +313,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
         conn.query_row(
             "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out
              FROM blocks WHERE height = ?1",
-            params![height as i64],
+            params![u64_to_i64(height)?],
             row_to_block,
         )
         .optional()
@@ -371,7 +391,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
         self.conn.lock().execute(
             "INSERT INTO balances (address, pending, paid) VALUES (?1, ?2, ?3)
              ON CONFLICT(address) DO UPDATE SET pending = excluded.pending, paid = excluded.paid",
-            params![bal.address, bal.pending as i64, bal.paid as i64],
+            params![bal.address, u64_to_i64(bal.pending)?, u64_to_i64(bal.paid)?],
         )?;
         Ok(())
     }
@@ -421,7 +441,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
         let block_state: Option<(i64, i64, i64)> = tx
             .query_row(
                 "SELECT confirmed, orphaned, paid_out FROM blocks WHERE height = ?1",
-                params![block_height as i64],
+                params![u64_to_i64(block_height)?],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?;
@@ -477,7 +497,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
 
         let updated = tx.execute(
             "UPDATE blocks SET paid_out = 1 WHERE height = ?1 AND paid_out = 0",
-            params![block_height as i64],
+            params![u64_to_i64(block_height)?],
         )?;
         if updated == 0 {
             return Ok(false);
@@ -504,7 +524,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
     pub fn add_payout(&self, address: &str, amount: u64, tx_hash: &str) -> Result<()> {
         self.conn.lock().execute(
             "INSERT INTO payouts (address, amount, tx_hash, timestamp) VALUES (?1, ?2, ?3, ?4)",
-            params![address, amount as i64, tx_hash, now_unix()],
+            params![address, u64_to_i64(amount)?, tx_hash, now_unix()],
         )?;
         Ok(())
     }
@@ -546,8 +566,8 @@ CREATE TABLE IF NOT EXISTS address_risk (
             "INSERT OR IGNORE INTO pool_fee_events (block_height, amount, fee_address, timestamp)
              VALUES (?1, ?2, ?3, ?4)",
             params![
-                block_height as i64,
-                amount as i64,
+                u64_to_i64(block_height)?,
+                u64_to_i64(amount)?,
                 destination,
                 to_unix(timestamp)
             ],
@@ -601,7 +621,27 @@ CREATE TABLE IF NOT EXISTS address_risk (
         self.conn.lock().execute(
             "INSERT INTO seen_shares (job_id, nonce, expires_at) VALUES (?1, ?2, ?3)
              ON CONFLICT(job_id, nonce) DO UPDATE SET expires_at = excluded.expires_at",
-            params![job_id, nonce as i64, expires_at],
+            params![job_id, u64_to_i64(nonce)?, expires_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn try_claim_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
+        let now = now_unix();
+        let expires_at = now + SEEN_SHARE_EXPIRY_SECS;
+        let claimed = self.conn.lock().execute(
+            "INSERT INTO seen_shares (job_id, nonce, expires_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(job_id, nonce) DO UPDATE SET expires_at = excluded.expires_at
+             WHERE seen_shares.expires_at <= ?4",
+            params![job_id, u64_to_i64(nonce)?, expires_at, now],
+        )?;
+        Ok(claimed > 0)
+    }
+
+    pub fn release_share_claim(&self, job_id: &str, nonce: u64) -> Result<()> {
+        self.conn.lock().execute(
+            "DELETE FROM seen_shares WHERE job_id = ?1 AND nonce = ?2",
+            params![job_id, u64_to_i64(nonce)?],
         )?;
         Ok(())
     }
@@ -613,7 +653,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
             .lock()
             .query_row(
                 "SELECT expires_at FROM seen_shares WHERE job_id = ?1 AND nonce = ?2",
-                params![job_id, nonce as i64],
+                params![job_id, u64_to_i64(nonce)?],
                 |row| row.get(0),
             )
             .optional()?;
@@ -749,7 +789,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
                 force_verify_until = excluded.force_verify_until",
             params![
                 state.address,
-                state.strikes as i64,
+                u64_to_i64(state.strikes)?,
                 state.last_reason,
                 state.last_event_at.map(to_unix),
                 state.quarantined_until.map(to_unix),
@@ -785,7 +825,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
         self.conn.lock().execute(
             "INSERT INTO pending_payouts (address, amount, initiated_at) VALUES (?1, ?2, ?3)
              ON CONFLICT(address) DO UPDATE SET amount = excluded.amount, initiated_at = excluded.initiated_at",
-            params![address, amount as i64, now_unix()],
+            params![address, u64_to_i64(amount)?, now_unix()],
         )?;
         Ok(())
     }
@@ -843,12 +883,12 @@ CREATE TABLE IF NOT EXISTS address_risk (
         tx.execute(
             "INSERT INTO balances (address, pending, paid) VALUES (?1, ?2, ?3)
              ON CONFLICT(address) DO UPDATE SET pending = excluded.pending, paid = excluded.paid",
-            params![bal.address, bal.pending as i64, bal.paid as i64],
+            params![bal.address, u64_to_i64(bal.pending)?, u64_to_i64(bal.paid)?],
         )?;
 
         tx.execute(
             "INSERT INTO payouts (address, amount, tx_hash, timestamp) VALUES (?1, ?2, ?3, ?4)",
-            params![address, amount as i64, tx_hash, now_unix()],
+            params![address, u64_to_i64(amount)?, tx_hash, now_unix()],
         )?;
 
         tx.execute(
@@ -940,6 +980,14 @@ impl ShareStore for SqliteStore {
         SqliteStore::mark_share_seen(self, job_id, nonce)
     }
 
+    fn try_claim_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
+        SqliteStore::try_claim_share(self, job_id, nonce)
+    }
+
+    fn release_share_claim(&self, job_id: &str, nonce: u64) -> Result<()> {
+        SqliteStore::release_share_claim(self, job_id, nonce)
+    }
+
     fn add_share(&self, share: ShareRecord) -> Result<()> {
         SqliteStore::add_share(self, share)
     }
@@ -1000,7 +1048,7 @@ fn now_unix() -> i64 {
 }
 
 fn to_unix(ts: SystemTime) -> i64 {
-    ts.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64
+    i64::try_from(ts.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()).unwrap_or(i64::MAX)
 }
 
 fn u64_to_i64(value: u64) -> Result<i64> {
@@ -1032,6 +1080,21 @@ mod tests {
         assert!(!store.is_share_seen("job", 1).expect("seen"));
         store.mark_share_seen("job", 1).expect("mark");
         assert!(store.is_share_seen("job", 1).expect("seen2"));
+    }
+
+    #[test]
+    fn share_claim_can_be_released_and_reacquired() {
+        let store = test_store();
+
+        assert!(store.try_claim_share("job", 1).expect("first claim"));
+        assert!(!store
+            .try_claim_share("job", 1)
+            .expect("second claim should fail"));
+
+        store
+            .release_share_claim("job", 1)
+            .expect("release claim should succeed");
+        assert!(store.try_claim_share("job", 1).expect("reacquire claim"));
     }
 
     #[test]

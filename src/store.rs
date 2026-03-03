@@ -202,6 +202,20 @@ impl PoolStore {
         }
     }
 
+    pub fn try_claim_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
+        match self {
+            PoolStore::Sqlite(v) => v.try_claim_share(job_id, nonce),
+            PoolStore::Postgres(v) => v.try_claim_share(job_id, nonce),
+        }
+    }
+
+    pub fn release_share_claim(&self, job_id: &str, nonce: u64) -> Result<()> {
+        match self {
+            PoolStore::Sqlite(v) => v.release_share_claim(job_id, nonce),
+            PoolStore::Postgres(v) => v.release_share_claim(job_id, nonce),
+        }
+    }
+
     pub fn get_address_risk(&self, address: &str) -> Result<Option<AddressRiskState>> {
         match self {
             PoolStore::Sqlite(v) => v.get_address_risk(address),
@@ -314,6 +328,20 @@ impl PoolStore {
         }
     }
 
+    pub fn get_shares_between(&self, start: SystemTime, end: SystemTime) -> Result<Vec<DbShare>> {
+        match self {
+            PoolStore::Sqlite(v) => v.get_shares_between(start, end),
+            PoolStore::Postgres(v) => v.get_shares_between(start, end),
+        }
+    }
+
+    pub fn get_last_n_shares_before(&self, before: SystemTime, n: i64) -> Result<Vec<DbShare>> {
+        match self {
+            PoolStore::Sqlite(v) => v.get_last_n_shares_before(before, n),
+            PoolStore::Postgres(v) => v.get_last_n_shares_before(before, n),
+        }
+    }
+
     pub fn apply_block_credits_and_mark_paid(
         &self,
         block_height: u64,
@@ -339,6 +367,14 @@ impl ShareStore for PoolStore {
             PoolStore::Sqlite(v) => v.mark_share_seen(job_id, nonce),
             PoolStore::Postgres(v) => v.mark_share_seen(job_id, nonce),
         }
+    }
+
+    fn try_claim_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
+        PoolStore::try_claim_share(self, job_id, nonce)
+    }
+
+    fn release_share_claim(&self, job_id: &str, nonce: u64) -> Result<()> {
+        PoolStore::release_share_claim(self, job_id, nonce)
     }
 
     fn add_share(&self, share: ShareRecord) -> Result<()> {

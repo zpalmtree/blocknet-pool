@@ -18,6 +18,7 @@ const REWARD_ADDR_CACHE_TTL: Duration = Duration::from_secs(30);
 const TEMPLATE_WALLET_RECOVERY_COOLDOWN: Duration = Duration::from_secs(10);
 const MISSING_WALLET_PASSWORD_LOG_COOLDOWN: Duration = Duration::from_secs(60);
 const MAX_ACTIVE_ASSIGNMENTS: usize = 65_536;
+const MAX_ASSIGNMENT_AGE: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MinerJob {
@@ -71,6 +72,7 @@ struct MinerAssignment {
     assigned_miner: String,
     nonce_start: u64,
     nonce_end: u64,
+    created_at: Instant,
 }
 
 impl JobManager {
@@ -80,7 +82,7 @@ impl JobManager {
             node,
             cfg,
             state: RwLock::new(JobState::default()),
-            nonce_counter: AtomicU64::new(0),
+            nonce_counter: AtomicU64::new(random_nonce_cursor()),
             last_refresh: Mutex::new(None),
             reward_cache: Mutex::new(RewardAddressCache {
                 address: None,
@@ -146,9 +148,14 @@ impl JobManager {
                 assigned_miner,
                 nonce_start: start,
                 nonce_end,
+                created_at: Instant::now(),
             },
         );
         state.assignment_order.push_back(assignment_id.clone());
+        prune_expired_assignments_locked(
+            &mut state,
+            self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE),
+        );
         while state.assignment_order.len() > MAX_ACTIVE_ASSIGNMENTS {
             if let Some(oldest) = state.assignment_order.pop_front() {
                 state.assignments.remove(&oldest);
@@ -220,7 +227,8 @@ impl JobManager {
         state.jobs.insert(parsed.id.clone(), parsed.clone());
         state.order.retain(|id| id != &parsed.id);
         state.order.push_back(parsed.id.clone());
-        self.nonce_counter.store(0, Ordering::Relaxed);
+        self.nonce_counter
+            .store(random_nonce_cursor(), Ordering::Relaxed);
 
         // Keep recent jobs bounded.
         let mut removed_jobs = Vec::new();
@@ -246,6 +254,10 @@ impl JobManager {
                 .assignment_order
                 .retain(|assignment_id| valid_assignment_ids.contains(assignment_id));
         }
+        prune_expired_assignments_locked(
+            &mut state,
+            self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE),
+        );
 
         let _ = self.tx.send(parsed);
     }
@@ -400,6 +412,10 @@ impl JobRepository for JobManager {
     fn resolve_submit_job(&self, submitted_job_id: &str) -> Option<SubmitJobBinding> {
         let state = self.state.read();
         let assignment = state.assignments.get(submitted_job_id)?;
+        let assignment_ttl = self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE);
+        if assignment.created_at.elapsed() > assignment_ttl {
+            return None;
+        }
         let job = state.jobs.get(&assignment.template_job_id)?.clone();
         Some(SubmitJobBinding {
             job,
@@ -447,6 +463,28 @@ fn parse_template_into_job(template: &crate::node::BlockTemplate) -> anyhow::Res
 fn generate_job_id() -> String {
     let bytes: [u8; 8] = rand::random();
     hex_encode(&bytes)
+}
+
+fn random_nonce_cursor() -> u64 {
+    let slot_count = u64::MAX / NONCE_RANGE_SIZE;
+    if slot_count == 0 {
+        return 0;
+    }
+    let slot = rand::random::<u64>() % slot_count;
+    slot.saturating_mul(NONCE_RANGE_SIZE)
+}
+
+fn prune_expired_assignments_locked(state: &mut JobState, max_age: Duration) {
+    if max_age.is_zero() {
+        return;
+    }
+    state
+        .assignments
+        .retain(|_, assignment| assignment.created_at.elapsed() <= max_age);
+    let valid_assignment_ids = state.assignments.keys().cloned().collect::<HashSet<_>>();
+    state
+        .assignment_order
+        .retain(|assignment_id| valid_assignment_ids.contains(assignment_id));
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -544,6 +582,46 @@ mod tests {
         assert_eq!(bound.assigned_miner.as_deref(), Some("addr1"));
         assert_eq!(bound.nonce_start, Some(job.nonce_start));
         assert_eq!(bound.nonce_end, Some(job.nonce_end));
+    }
+
+    #[test]
+    fn resolve_submit_job_rejects_expired_assignment() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config {
+                job_timeout: "1s".to_string(),
+                ..Config::default()
+            },
+        );
+
+        let template = Job {
+            id: "job1".into(),
+            height: 1,
+            header_base: vec![0xAA; 92],
+            network_target: [0xBB; 32],
+            network_difficulty: 1,
+            template_id: Some("tmpl".into()),
+            full_block: None,
+        };
+
+        {
+            let mut state = manager.state.write();
+            state.current = Some(template.clone());
+            state.jobs.insert(template.id.clone(), template);
+            state.assignments.insert(
+                "assign-old".to_string(),
+                MinerAssignment {
+                    template_job_id: "job1".to_string(),
+                    share_difficulty: 1,
+                    assigned_miner: "addr1".to_string(),
+                    nonce_start: 0,
+                    nonce_end: NONCE_RANGE_SIZE - 1,
+                    created_at: Instant::now() - Duration::from_secs(2),
+                },
+            );
+        }
+
+        assert!(manager.resolve_submit_job("assign-old").is_none());
     }
 
     #[test]

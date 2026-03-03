@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::config::Config;
 use crate::db::{DbBlock, DbShare, PendingPayout};
@@ -194,11 +194,16 @@ impl PayoutProcessor {
         reward: u64,
     ) -> anyhow::Result<HashMap<String, u64>> {
         let shares = if self.cfg.pplns_window_duration_duration().is_zero() {
-            self.store
-                .get_last_n_shares(self.cfg.pplns_window.max(1) as i64)?
+            self.store.get_last_n_shares_before(
+                block.timestamp,
+                i64::from(self.cfg.pplns_window.max(1)),
+            )?
         } else {
-            let since = SystemTime::now() - self.cfg.pplns_window_duration_duration();
-            self.store.get_shares_since(since)?
+            let since = block
+                .timestamp
+                .checked_sub(self.cfg.pplns_window_duration_duration())
+                .unwrap_or(UNIX_EPOCH);
+            self.store.get_shares_between(since, block.timestamp)?
         };
 
         let mut credits = HashMap::<String, u64>::new();
@@ -229,9 +234,11 @@ impl PayoutProcessor {
         block: &DbBlock,
         reward: u64,
     ) -> anyhow::Result<HashMap<String, u64>> {
-        let shares = self
-            .store
-            .get_shares_since(block.timestamp - Duration::from_secs(60 * 60))?;
+        let since = block
+            .timestamp
+            .checked_sub(Duration::from_secs(60 * 60))
+            .unwrap_or(UNIX_EPOCH);
+        let shares = self.store.get_shares_between(since, block.timestamp)?;
         let mut credits = HashMap::<String, u64>::new();
         if shares.is_empty() {
             add_credit(&mut credits, &block.finder, reward)?;
