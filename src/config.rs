@@ -53,8 +53,6 @@ pub struct Config {
     pub database_path: String,
     #[serde(default)]
     pub database_url: String,
-    pub template_path: String,
-    pub static_path: String,
     pub api_key: String,
 
     #[serde(skip)]
@@ -103,8 +101,6 @@ impl Default for Config {
             payout_interval: "1h".to_string(),
             database_path: "pool.db".to_string(),
             database_url: String::new(),
-            template_path: "templates".to_string(),
-            static_path: "static".to_string(),
             api_key: String::new(),
             log_path: String::new(),
         }

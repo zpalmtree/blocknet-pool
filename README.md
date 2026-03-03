@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="static/blocknet.png" width="128" height="128" alt="Blocknet">
-</p>
-
 <h1 align="center">Blocknet Pool (Rust)</h1>
 
 <p align="center">
@@ -87,4 +83,3 @@ At minimum:
 ## Notes
 
 - This repository no longer uses Go; runtime is Rust-only.
-- Existing static/templates assets are kept for compatibility and future UI work.
