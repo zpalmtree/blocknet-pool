@@ -718,7 +718,7 @@ impl PoolEngine {
         if next_diff != session.difficulty {
             let miner = compact_address(&session.address);
             tracing::info!(
-                "vardiff {} -> {} (observed {:.1}s, target {:.0}s, miner {})",
+                "vardiff {:>4} -> {:>4} (observed {:>5.1}s, target {:>4.0}s, miner {})",
                 session.difficulty,
                 next_diff,
                 observed_interval,
