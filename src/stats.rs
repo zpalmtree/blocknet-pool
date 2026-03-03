@@ -7,6 +7,7 @@ use serde::Serialize;
 
 const MINER_STATS_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 const MAX_TRACKED_MINERS: usize = 100_000;
+const MAX_RECENT_SHARES: usize = 200_000;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MinerStats {
@@ -121,6 +122,9 @@ impl PoolStats {
             .front()
             .is_some_and(|share| share.timestamp <= cutoff)
         {
+            recent.pop_front();
+        }
+        while recent.len() > MAX_RECENT_SHARES {
             recent.pop_front();
         }
         drop(recent);
@@ -286,7 +290,7 @@ impl PoolStats {
 
 #[cfg(test)]
 mod tests {
-    use super::PoolStats;
+    use super::{PoolStats, MAX_RECENT_SHARES};
 
     #[test]
     fn records_shares_and_estimates_hashrate() {
@@ -321,5 +325,17 @@ mod tests {
         stats.remove_miner("c3");
         assert_eq!(stats.connected_miner_count(), 0);
         assert_eq!(stats.connected_worker_count(), 0);
+    }
+
+    #[test]
+    fn accepted_share_history_is_count_bounded() {
+        let stats = PoolStats::new();
+        stats.add_miner("c1", "addr1", "rig1");
+
+        for _ in 0..(MAX_RECENT_SHARES + 1_000) {
+            stats.record_accepted_share("addr1", 1);
+        }
+
+        assert!(stats.recent_shares.read().len() <= MAX_RECENT_SHARES);
     }
 }

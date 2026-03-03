@@ -360,7 +360,7 @@ impl PoolEngine {
                     || (!require_claimed_hash && claimed_hash.is_none()),
             };
 
-            let validation = self.validate_task(task)?;
+            let validation = self.validate_task(task, candidate_claim)?;
 
             if !validation.accepted {
                 release_claim_on_error = false;
@@ -629,8 +629,8 @@ impl PoolEngine {
         }
     }
 
-    fn validate_task(&self, task: ValidationTask) -> Result<ValidationResult> {
-        if let Some(rx) = self.validation.submit(task, false) {
+    fn validate_task(&self, task: ValidationTask, candidate: bool) -> Result<ValidationResult> {
+        if let Some(rx) = self.validation.submit(task, candidate) {
             let mut timeout = self.cfg.job_timeout_duration();
             timeout = timeout.clamp(Duration::from_secs(5), Duration::from_secs(60));
             return rx
@@ -743,7 +743,7 @@ impl PoolEngine {
 
         if next_diff != session.difficulty {
             let miner = compact_address(&session.address);
-            tracing::info!(
+            tracing::debug!(
                 "vardiff {:>4} -> {:>4} (observed {:>5.1}s, target {:>4.0}s, miner {})",
                 session.difficulty,
                 next_diff,

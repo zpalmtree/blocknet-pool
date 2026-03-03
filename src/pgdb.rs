@@ -685,74 +685,75 @@ CREATE TABLE IF NOT EXISTS address_risk (
             return Err(anyhow!("address is required"));
         }
 
-        let mut state = self
-            .get_address_risk(address)?
-            .unwrap_or_else(|| AddressRiskState {
-                address: address.to_string(),
-                ..AddressRiskState::default()
-            });
-
         let now = SystemTime::now();
-        state.address = address.to_string();
-        state.strikes = state.strikes.saturating_add(1);
-        state.last_reason = Some(reason.to_string());
-        state.last_event_at = Some(now);
-
-        if !force_verify_duration.is_zero() {
-            let force_until = now + force_verify_duration;
-            if state
-                .force_verify_until
-                .is_none_or(|existing| force_until > existing)
-            {
-                state.force_verify_until = Some(force_until);
-            }
-        }
-
-        if apply_quarantine && !quarantine_base.is_zero() {
-            let mut duration = quarantine_base;
-            if !quarantine_max.is_zero() && duration > quarantine_max {
-                duration = quarantine_max;
-            }
-            for _ in 1..state.strikes {
-                if quarantine_max.is_zero() {
-                    duration = duration.saturating_mul(2);
-                    continue;
-                }
-                duration = duration.saturating_mul(2);
-                if duration > quarantine_max {
-                    duration = quarantine_max;
-                    break;
-                }
-            }
-            let until = now + duration;
-            if state
-                .quarantined_until
-                .is_none_or(|existing| until > existing)
-            {
-                state.quarantined_until = Some(until);
-            }
-        }
-
-        self.conn().lock().execute(
+        let mut conn = self.conn().lock();
+        let mut tx = conn.transaction()?;
+        tx.execute(
             "INSERT INTO address_risk (address, strikes, last_reason, last_event_at, quarantined_until, force_verify_until)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT(address) DO UPDATE SET
-                strikes = EXCLUDED.strikes,
-                last_reason = EXCLUDED.last_reason,
-                last_event_at = EXCLUDED.last_event_at,
-                quarantined_until = EXCLUDED.quarantined_until,
-                force_verify_until = EXCLUDED.force_verify_until",
-            &[
-                &state.address,
-                &u64_to_i64(state.strikes)?,
-                &state.last_reason,
-                &state.last_event_at.map(to_unix),
-                &state.quarantined_until.map(to_unix),
-                &state.force_verify_until.map(to_unix),
-            ],
+             VALUES ($1, 0, NULL, NULL, NULL, NULL)
+             ON CONFLICT(address) DO NOTHING",
+            &[&address],
+        )?;
+        tx.execute(
+            "UPDATE address_risk
+             SET strikes = strikes + 1,
+                 last_reason = $2,
+                 last_event_at = $3
+             WHERE address = $1",
+            &[&address, &reason, &to_unix(now)],
         )?;
 
-        Ok(state)
+        let row = tx.query_one(
+            "SELECT strikes, quarantined_until, force_verify_until FROM address_risk WHERE address = $1 FOR UPDATE",
+            &[&address],
+        )?;
+        let strikes = row.get::<_, i64>(0).max(0) as u64;
+        let existing_quarantine = row.get::<_, Option<i64>>(1).map(from_unix);
+        let existing_force = row.get::<_, Option<i64>>(2).map(from_unix);
+
+        let force_verify_until = merge_optional_later(
+            existing_force,
+            if force_verify_duration.is_zero() {
+                None
+            } else {
+                Some(now + force_verify_duration)
+            },
+        );
+        let quarantined_until = merge_optional_later(
+            existing_quarantine,
+            if apply_quarantine && !quarantine_base.is_zero() {
+                Some(quarantine_until_for_strikes(
+                    now,
+                    strikes,
+                    quarantine_base,
+                    quarantine_max,
+                ))
+            } else {
+                None
+            },
+        );
+
+        tx.execute(
+            "UPDATE address_risk
+             SET quarantined_until = $2,
+                 force_verify_until = $3
+             WHERE address = $1",
+            &[
+                &address,
+                &quarantined_until.map(to_unix),
+                &force_verify_until.map(to_unix),
+            ],
+        )?;
+        tx.commit()?;
+
+        Ok(AddressRiskState {
+            address: address.to_string(),
+            strikes,
+            last_reason: Some(reason.to_string()),
+            last_event_at: Some(now),
+            quarantined_until,
+            force_verify_until,
+        })
     }
 
     pub fn get_risk_summary(&self) -> Result<(u64, u64)> {
@@ -973,6 +974,42 @@ fn from_unix(ts: i64) -> SystemTime {
         return UNIX_EPOCH;
     }
     UNIX_EPOCH + Duration::from_secs(ts as u64)
+}
+
+fn quarantine_until_for_strikes(
+    now: SystemTime,
+    strikes: u64,
+    quarantine_base: Duration,
+    quarantine_max: Duration,
+) -> SystemTime {
+    if strikes == 0 || quarantine_base.is_zero() {
+        return now;
+    }
+
+    let mut duration = quarantine_base;
+    if !quarantine_max.is_zero() && duration > quarantine_max {
+        duration = quarantine_max;
+    }
+    for _ in 1..strikes {
+        duration = duration.saturating_mul(2);
+        if !quarantine_max.is_zero() && duration >= quarantine_max {
+            duration = quarantine_max;
+            break;
+        }
+    }
+    now + duration
+}
+
+fn merge_optional_later(
+    existing: Option<SystemTime>,
+    candidate: Option<SystemTime>,
+) -> Option<SystemTime> {
+    match (existing, candidate) {
+        (Some(a), Some(b)) => Some(if b > a { b } else { a }),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
 }
 
 #[cfg(test)]

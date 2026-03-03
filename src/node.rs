@@ -584,22 +584,30 @@ impl NodeApi for NodeClient {
                 "template_id": template_id,
                 "nonce": nonce,
             });
-            if let Ok(resp) =
-                self.post_json::<_, SubmitBlockRawResponse>("/api/mining/submitblock", &payload)
-            {
-                return Ok(BlockSubmitResponse {
-                    accepted: resp.accepted,
-                    hash: if resp.hash.is_empty() {
-                        None
-                    } else {
-                        Some(resp.hash)
-                    },
-                    height: if resp.height == 0 {
-                        None
-                    } else {
-                        Some(resp.height)
-                    },
-                });
+            match self.post_json::<_, SubmitBlockRawResponse>("/api/mining/submitblock", &payload) {
+                Ok(resp) => {
+                    return Ok(BlockSubmitResponse {
+                        accepted: resp.accepted,
+                        hash: if resp.hash.is_empty() {
+                            None
+                        } else {
+                            Some(resp.hash)
+                        },
+                        height: if resp.height == 0 {
+                            None
+                        } else {
+                            Some(resp.height)
+                        },
+                    });
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        template_id = %template_id,
+                        nonce,
+                        error = %err,
+                        "compact submit failed, falling back to full block payload"
+                    );
+                }
             }
         }
 

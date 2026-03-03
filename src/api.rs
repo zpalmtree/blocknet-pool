@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use axum::extract::{Path, State};
 use axum::http::{Request, StatusCode};
 use axum::middleware::{self, Next};
-use axum::response::IntoResponse;
+use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use axum::{Json, Router};
 use parking_lot::Mutex;
@@ -70,6 +70,8 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
         ));
 
     let app = Router::new()
+        .route("/", get(handle_ui))
+        .route("/ui", get(handle_ui))
         .route("/api/stats", get(handle_stats))
         .route("/api/miner/:address", get(handle_miner))
         .merge(protected)
@@ -79,6 +81,213 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
     tracing::info!(addr = %addr, "api listening");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+const UI_INDEX_HTML: &str = r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Blocknet Pool Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-a: #0e1c2f;
+      --bg-b: #113b4f;
+      --panel: rgba(7, 17, 34, 0.78);
+      --ink: #e8f1ff;
+      --muted: #a7bad8;
+      --ok: #4dd68a;
+      --warn: #ffbc5b;
+      --line: rgba(123, 153, 201, 0.33);
+      --accent: #4fb7ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Space Grotesk", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at 20% -10%, #1f6f8f 0%, transparent 50%),
+                  radial-gradient(circle at 85% 120%, #215d77 0%, transparent 40%),
+                  linear-gradient(140deg, var(--bg-a), var(--bg-b));
+      min-height: 100vh;
+    }
+    .wrap {
+      width: min(1100px, 92vw);
+      margin: 26px auto 42px;
+      animation: rise .45s ease-out;
+    }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    h1 {
+      margin: 0;
+      letter-spacing: .02em;
+      font-size: clamp(1.4rem, 2.8vw, 2.2rem);
+    }
+    .hint {
+      color: var(--muted);
+      font-family: "JetBrains Mono", monospace;
+      font-size: .86rem;
+      text-align: right;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    @media (max-width: 900px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 560px) {
+      .hero { flex-direction: column; align-items: flex-start; }
+      .hint { text-align: left; }
+      .grid { grid-template-columns: 1fr; }
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px 16px;
+      backdrop-filter: blur(4px);
+      box-shadow: 0 12px 30px rgba(0,0,0,.23);
+    }
+    .label {
+      color: var(--muted);
+      font-size: .78rem;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      margin-bottom: 6px;
+    }
+    .value {
+      font-size: clamp(1.05rem, 2.5vw, 1.45rem);
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .mono { font-family: "JetBrains Mono", monospace; }
+    .good { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .pulse {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      margin-right: 8px;
+      background: var(--ok);
+      animation: pulse 1.2s infinite;
+      vertical-align: middle;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(77,214,138,.55); }
+      100% { box-shadow: 0 0 0 12px rgba(77,214,138,0); }
+    }
+    .footer {
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: .84rem;
+    }
+    .err {
+      margin-top: 14px;
+      color: #ff8f8f;
+      font-family: "JetBrains Mono", monospace;
+      font-size: .84rem;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <h1><span class="pulse"></span>Blocknet Pool Dashboard</h1>
+      <div class="hint">
+        live source: <span class="mono">/api/stats</span><br>
+        refresh: <span class="mono">2s</span>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="card"><div class="label">Connected Miners</div><div id="miners" class="value mono">-</div></article>
+      <article class="card"><div class="label">Connected Workers</div><div id="workers" class="value mono">-</div></article>
+      <article class="card"><div class="label">Pool Hashrate</div><div id="hashrate" class="value mono">-</div></article>
+      <article class="card"><div class="label">Network Hashrate</div><div id="network" class="value mono">-</div></article>
+      <article class="card"><div class="label">Shares Accepted</div><div id="accepted" class="value mono good">-</div></article>
+      <article class="card"><div class="label">Shares Rejected</div><div id="rejected" class="value mono warn">-</div></article>
+      <article class="card"><div class="label">Blocks Found</div><div id="blocks" class="value mono">-</div></article>
+      <article class="card"><div class="label">Current Job Height</div><div id="height" class="value mono">-</div></article>
+      <article class="card"><div class="label">Validation In Flight</div><div id="inflight" class="value mono">-</div></article>
+      <article class="card"><div class="label">Candidate Queue</div><div id="queuec" class="value mono">-</div></article>
+      <article class="card"><div class="label">Regular Queue</div><div id="queuer" class="value mono">-</div></article>
+      <article class="card"><div class="label">Fraud Detections</div><div id="fraud" class="value mono">-</div></article>
+    </section>
+
+    <section class="footer">
+      Last updated: <span id="updated" class="mono">never</span>
+    </section>
+    <section id="err" class="err"></section>
+  </main>
+
+  <script>
+    const byId = (id) => document.getElementById(id);
+    const fmt = new Intl.NumberFormat("en-US");
+
+    function humanRate(value) {
+      if (value === null || value === undefined || !Number.isFinite(value)) return "-";
+      const units = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s", "PH/s"];
+      let v = value;
+      let i = 0;
+      while (v >= 1000 && i < units.length - 1) {
+        v /= 1000;
+        i += 1;
+      }
+      return `${v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2)} ${units[i]}`;
+    }
+
+    function setValue(id, value) {
+      byId(id).textContent = value;
+    }
+
+    async function refresh() {
+      try {
+        const res = await fetch("/api/stats", { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const stats = await res.json();
+
+        setValue("miners", fmt.format(stats.pool.miners || 0));
+        setValue("workers", fmt.format(stats.pool.workers || 0));
+        setValue("hashrate", humanRate(stats.pool.hashrate));
+        setValue("network", humanRate(stats.chain.network_hashrate));
+        setValue("accepted", fmt.format(stats.pool.shares_accepted || 0));
+        setValue("rejected", fmt.format(stats.pool.shares_rejected || 0));
+        setValue("blocks", fmt.format(stats.pool.blocks_found || 0));
+        setValue("height", stats.chain.current_job_height ?? "-");
+        setValue("inflight", fmt.format(stats.validation.in_flight || 0));
+        setValue("queuec", fmt.format(stats.validation.candidate_queue_depth || 0));
+        setValue("queuer", fmt.format(stats.validation.regular_queue_depth || 0));
+        setValue("fraud", fmt.format(stats.validation.fraud_detections || 0));
+        setValue("updated", new Date().toLocaleTimeString());
+        byId("err").textContent = "";
+      } catch (err) {
+        byId("err").textContent = `fetch failed: ${String(err)}`;
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 2000);
+  </script>
+</body>
+</html>
+"#;
+
+async fn handle_ui() -> Html<&'static str> {
+    Html(UI_INDEX_HTML)
 }
 
 #[derive(Serialize)]

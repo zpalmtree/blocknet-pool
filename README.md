@@ -67,6 +67,11 @@ When `database_url` is set, Postgres is used automatically and `database_path` i
 - `GET /api/payouts`
 - `GET /api/fees`
 
+## Web UI
+
+- `GET /` (dashboard)
+- `GET /ui` (alias)
+
 ## Stratum Notes
 
 - Login supports protocol negotiation (`protocol_version`, `capabilities`)
@@ -75,7 +80,7 @@ When `database_url` is set, Postgres is used automatically and `database_path` i
 - Queue pressure returns `server busy, retry` (no inline bypass)
 - Per-connection vardiff retargeting is enabled by default to target a small number of shares per window (`vardiff_*` config keys)
 - Default vardiff profile assumes a weak baseline miner and aims for ~10 shares / 5 minutes (`initial_share_difficulty=60`, `vardiff_target_shares=10`)
-- Template refresh identity is intentionally conservative (`height` + `network_target`) to avoid spamming miners with new jobs when template responses change only in ephemeral fields. Tradeoff: same-height template updates that keep the same target may not trigger a new job immediately.
+- Template refresh identity uses stable template fields (`height`, `network_target`, `template_id`, `header_base`) to ignore timestamp-only churn while still refreshing on meaningful same-height template changes.
 - Assignment submits on a previous template are accepted only inside a short grace window (`stale_submit_grace`, default `5s`) based on when the share was received.
 - Daemon SSE tip events (`/api/events`) are enabled by default (`sse_enabled=true`) and mark templates stale from `new_block` `hash` + `height`.
 - Timestamp-only `new_block` changes do not trigger refreshes; only hash/height changes can trigger staleness.
@@ -83,9 +88,9 @@ When `database_url` is set, Postgres is used automatically and `database_path` i
 
 ## Review Follow-Ups (2026-03-03)
 
-- Address risk escalation (`strikes`, quarantine extension, force-verify extension) should use an atomic update path per address. Current behavior is functionally correct in single-threaded cases but can lose increments under concurrent escalations.
-- Accepted-share hashrate tracking currently keeps a full 1-hour time window in memory. Add a hard count cap so high-throughput pools do not grow this queue without bound.
-- Template refresh matching should remain resistant to timestamp-only churn, but should refresh when stable template fields change. Candidate fields to include in identity comparison are `height`, `network_target`, `template_id`, and `header_base` (or an equivalent stable digest of header/base template material).
+- Risk escalation persistence now uses an atomic update path per address.
+- Accepted-share hashrate tracking keeps a 1-hour window with a hard in-memory cap.
+- Template refresh matching now uses stable identity fields to catch meaningful same-height updates.
 - API key comparison is currently direct string equality by design for this pool deployment model; this is accepted for now and is not treated as a blocker.
 
 ## API Auth

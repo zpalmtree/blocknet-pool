@@ -254,6 +254,8 @@ impl StratumServer {
                                         continue;
                                     }
                                 };
+                                let submit_job_id = params.job_id.clone();
+                                let submit_nonce = params.nonce;
 
                                 let engine = Arc::clone(&self.engine);
                                 let submit_conn_id = conn_id.clone();
@@ -314,12 +316,28 @@ impl StratumServer {
                                     Ok(Err(err)) => {
                                         if let Some((address, _, _)) = logged_in.as_ref() {
                                             self.stats.record_rejected_share(address);
+                                            tracing::debug!(
+                                                peer = %peer,
+                                                address = %address,
+                                                job_id = %submit_job_id,
+                                                nonce = submit_nonce,
+                                                error = %err,
+                                                "share rejected"
+                                            );
                                         }
                                         send_error(&writer, req.id, &err.to_string()).await?;
                                     }
                                     Err(err) => {
                                         if let Some((address, _, _)) = logged_in.as_ref() {
                                             self.stats.record_rejected_share(address);
+                                            tracing::warn!(
+                                                peer = %peer,
+                                                address = %address,
+                                                job_id = %submit_job_id,
+                                                nonce = submit_nonce,
+                                                error = %err,
+                                                "submit worker failure"
+                                            );
                                         }
                                         send_error(
                                             &writer,

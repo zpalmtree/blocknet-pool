@@ -621,9 +621,10 @@ impl JobRepository for JobManager {
                 return None;
             }
             let meta = state.job_meta.get(&assignment.template_job_id).copied();
-            let stale_since = meta
-                .and_then(|value| value.stale_since)
-                .unwrap_or_else(|| meta.map(|value| value.created_at).unwrap_or(assignment.created_at));
+            let stale_since = meta.and_then(|value| value.stale_since).unwrap_or_else(|| {
+                meta.map(|value| value.created_at)
+                    .unwrap_or(assignment.created_at)
+            });
             if submitted_at.saturating_duration_since(stale_since) > grace {
                 return None;
             }
@@ -692,7 +693,10 @@ fn bounded_block_poll_interval(configured: Duration) -> Duration {
 }
 
 fn same_template_identity(current: &Job, parsed: &Job) -> bool {
-    current.height == parsed.height && current.network_target == parsed.network_target
+    current.height == parsed.height
+        && current.network_target == parsed.network_target
+        && current.template_id == parsed.template_id
+        && current.header_base == parsed.header_base
 }
 
 fn parse_new_block_event_payload(payload: &str) -> Option<NewBlockEvent> {
@@ -1156,7 +1160,7 @@ mod tests {
     }
 
     #[test]
-    fn template_identity_ignores_ephemeral_template_fields() {
+    fn template_identity_matches_stable_template_fields() {
         let base = Job {
             id: "j1".to_string(),
             height: 100,
@@ -1172,11 +1176,11 @@ mod tests {
 
         let mut different_template_id = same.clone();
         different_template_id.template_id = Some("t2".to_string());
-        assert!(same_template_identity(&base, &different_template_id));
+        assert!(!same_template_identity(&base, &different_template_id));
 
         let mut different_header = same;
         different_header.header_base[0] = 9;
-        assert!(same_template_identity(&base, &different_header));
+        assert!(!same_template_identity(&base, &different_header));
 
         let mut different_height = base.clone();
         different_height.height += 1;
