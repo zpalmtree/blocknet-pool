@@ -14,7 +14,8 @@ use crate::config::Config;
 use crate::pow::{check_target, difficulty_to_target};
 use crate::protocol::{
     build_login_result, normalize_capabilities, normalize_protocol_version, normalize_worker_name,
-    parse_hash_hex, CAP_SUBMIT_CLAIMED_HASH, STRATUM_PROTOCOL_VERSION_CURRENT,
+    parse_hash_hex, validate_miner_address, CAP_SUBMIT_CLAIMED_HASH,
+    STRATUM_PROTOCOL_VERSION_CURRENT,
 };
 use crate::validation::{
     ValidationEngine, ValidationResult, ValidationTask, SHARE_STATUS_PROVISIONAL,
@@ -205,6 +206,9 @@ impl PoolEngine {
         let address = address.trim();
         if address.is_empty() || address.len() > 128 {
             return Err(anyhow!("invalid address"));
+        }
+        if let Err(err) = validate_miner_address(address) {
+            return Err(anyhow!("invalid address: {err}"));
         }
 
         let worker = normalize_worker_name(worker.as_deref());
@@ -1035,6 +1039,14 @@ mod tests {
         vec!["submit_claimed_hash".to_string()]
     }
 
+    fn test_miner_address() -> String {
+        bs58::encode([0x11; 64]).into_string()
+    }
+
+    fn other_miner_address() -> String {
+        bs58::encode([0x22; 64]).into_string()
+    }
+
     #[test]
     fn login_negotiates_and_records_session() {
         let cfg = cfg();
@@ -1051,7 +1063,7 @@ mod tests {
         let result = engine
             .login(
                 "conn1",
-                "BTestAddr".to_string(),
+                test_miner_address(),
                 Some("rig01".to_string()),
                 2,
                 vec!["submit_claimed_hash".to_string()],
@@ -1062,6 +1074,31 @@ mod tests {
         assert_eq!(engine.session_protocol_version("conn1"), Some(2));
         let caps = engine.session_capabilities("conn1").expect("caps");
         assert!(caps.iter().any(|v| v == "submit_claimed_hash"));
+    }
+
+    #[test]
+    fn login_rejects_invalid_address_format() {
+        let cfg = cfg();
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            Arc::new(InMemoryJobs::default()),
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
+        let err = engine
+            .login(
+                "conn1",
+                "bench_addr_e2e".to_string(),
+                None,
+                2,
+                submit_hash_cap(),
+            )
+            .expect_err("invalid base58 address should be rejected at login");
+        assert!(err.to_string().contains("invalid address"));
     }
 
     #[test]
@@ -1078,7 +1115,7 @@ mod tests {
         );
 
         let err = engine
-            .login("conn1", "BTestAddr".to_string(), None, 1, submit_hash_cap())
+            .login("conn1", test_miner_address(), None, 1, submit_hash_cap())
             .expect_err("should reject protocol 1");
         assert!(err.to_string().contains("protocol_version"));
     }
@@ -1097,7 +1134,7 @@ mod tests {
         );
 
         let err = engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .login("conn1", test_miner_address(), None, 2, vec![])
             .expect_err("should require submit_claimed_hash capability");
         assert!(err.to_string().contains("submit_claimed_hash"));
     }
@@ -1118,7 +1155,7 @@ mod tests {
         );
 
         let result = engine
-            .login("conn1", "BTestAddr".to_string(), None, 1, vec![])
+            .login("conn1", test_miner_address(), None, 1, vec![])
             .expect("legacy login should be accepted when v2 is optional");
         assert_eq!(result.protocol_version, 1);
         assert!(result.required_capabilities.is_empty());
@@ -1164,7 +1201,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
             .expect("login");
 
         // In probabilistic mode with sample_rate=0 and no forced full verify, claimed hash drives acceptance.
@@ -1199,7 +1236,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
             .expect("login");
 
         engine
@@ -1246,7 +1283,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
             .expect("login");
 
         let ack = engine
@@ -1284,7 +1321,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
             .expect("login");
         let _ = engine
             .submit("conn1", "job1".to_string(), 100, Some("ff".repeat(32)))
@@ -1331,7 +1368,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
             .expect("login");
         let _ = engine
             .submit("conn1", "job1".to_string(), 200, Some("ff".repeat(32)))
@@ -1389,7 +1426,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
             .expect("login");
 
         // Fill queue with one submit so next submit sees queue pressure.
@@ -1418,7 +1455,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
             .expect("login");
 
         let err = engine
@@ -1446,7 +1483,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 1, vec![])
+            .login("conn1", test_miner_address(), None, 1, vec![])
             .expect("legacy login should succeed");
 
         let ack = engine
@@ -1476,7 +1513,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
             .expect("login");
 
         let err = engine
@@ -1507,7 +1544,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
             .expect("login");
         engine
             .submit("conn1", "job1".to_string(), 89, Some("ff".repeat(32)))
@@ -1530,7 +1567,7 @@ mod tests {
             "assign-old-diff",
             "job1",
             1,
-            Some("BTestAddr".to_string()),
+            Some(test_miner_address()),
             0,
             1_000_000,
         );
@@ -1543,7 +1580,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
             .expect("login");
         let ack = engine
             .submit(
@@ -1567,7 +1604,7 @@ mod tests {
             "assign-other-miner",
             "job1",
             1,
-            Some("BOtherAddr".to_string()),
+            Some(other_miner_address()),
             0,
             1_000_000,
         );
@@ -1580,7 +1617,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
             .expect("login");
         let err = engine
             .submit(
@@ -1604,7 +1641,7 @@ mod tests {
             "assign-range",
             "job1",
             1,
-            Some("BTestAddr".to_string()),
+            Some(test_miner_address()),
             100,
             199,
         );
@@ -1617,7 +1654,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
             .expect("login");
         let err = engine
             .submit(

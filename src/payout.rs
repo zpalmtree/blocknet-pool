@@ -4,7 +4,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::config::Config;
 use crate::db::{DbBlock, DbShare, PendingPayout, PoolFeeRecord};
-use crate::node::{is_http_status, NodeClient, NodeStatus};
+use crate::node::{http_error_body_contains, is_http_status, NodeClient, NodeStatus};
+use crate::protocol::validate_miner_address;
 use crate::store::PoolStore;
 use crate::validation::{SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED};
 
@@ -367,7 +368,7 @@ impl PayoutProcessor {
         };
 
         for bal in balances {
-            let pending = match self.store.get_pending_payout(&bal.address) {
+            let existing_pending = match self.store.get_pending_payout(&bal.address) {
                 Ok(v) => v,
                 Err(err) => {
                     tracing::warn!(address = %bal.address, error = %err, "failed pending payout query");
@@ -375,7 +376,26 @@ impl PayoutProcessor {
                 }
             };
 
-            let pending = match pending {
+            if let Err(reason) = validate_miner_address(&bal.address) {
+                if existing_pending.is_some() {
+                    if let Err(err) = self.store.cancel_pending_payout(&bal.address) {
+                        tracing::warn!(
+                            address = %bal.address,
+                            error = %err,
+                            "failed to drop pending payout for invalid address"
+                        );
+                    } else {
+                        tracing::warn!(
+                            address = %bal.address,
+                            reason = %reason,
+                            "dropped pending payout for invalid address; skipping payout retries"
+                        );
+                    }
+                }
+                continue;
+            }
+
+            let pending = match existing_pending {
                 Some(v) => v,
                 None => {
                     if bal.pending < min_amount {
@@ -423,7 +443,23 @@ impl PayoutProcessor {
             let sent = match send {
                 Ok(v) => v,
                 Err(err) => {
-                    tracing::warn!(address = %bal.address, error = %err, "wallet send failed");
+                    if should_drop_pending_payout(&err) {
+                        if let Err(cancel_err) = self.store.cancel_pending_payout(&bal.address) {
+                            tracing::warn!(
+                                address = %bal.address,
+                                error = %cancel_err,
+                                "wallet send failed permanently and pending payout cancel failed"
+                            );
+                        } else {
+                            tracing::warn!(
+                                address = %bal.address,
+                                error = %err,
+                                "wallet send failed permanently; dropped pending payout"
+                            );
+                        }
+                    } else {
+                        tracing::warn!(address = %bal.address, error = %err, "wallet send failed");
+                    }
                     continue;
                 }
             };
@@ -558,6 +594,11 @@ fn daemon_ready_for_payouts(status: &NodeStatus) -> bool {
     !status.syncing
 }
 
+fn should_drop_pending_payout(err: &anyhow::Error) -> bool {
+    http_error_body_contains(err, 400, "invalid address")
+        || http_error_body_contains(err, 400, "self-sends are temporarily disabled")
+}
+
 fn add_credit(
     credits: &mut HashMap<String, u64>,
     address: &str,
@@ -581,6 +622,7 @@ fn add_credit(
 mod tests {
     use super::*;
     use crate::db::DbShare;
+    use crate::node::HttpError;
     use crate::store::PoolStore;
     use std::sync::Arc;
 
@@ -755,5 +797,29 @@ mod tests {
             ..status
         };
         assert!(daemon_ready_for_payouts(&status_ready));
+    }
+
+    #[test]
+    fn permanent_wallet_send_errors_drop_pending_payout() {
+        let invalid = anyhow::anyhow!(HttpError {
+            path: "/api/wallet/send".to_string(),
+            status_code: 400,
+            body: r#"{"error":"invalid address"}"#.to_string(),
+        });
+        assert!(should_drop_pending_payout(&invalid));
+
+        let self_send = anyhow::anyhow!(HttpError {
+            path: "/api/wallet/send".to_string(),
+            status_code: 400,
+            body: r#"{"error":"self-sends are temporarily disabled"}"#.to_string(),
+        });
+        assert!(should_drop_pending_payout(&self_send));
+
+        let transient = anyhow::anyhow!(HttpError {
+            path: "/api/wallet/send".to_string(),
+            status_code: 429,
+            body: r#"{"error":"send rate limit exceeded"}"#.to_string(),
+        });
+        assert!(!should_drop_pending_payout(&transient));
     }
 }

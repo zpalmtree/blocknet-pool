@@ -75,12 +75,13 @@ When `database_url` is set, Postgres is used automatically and `database_path` i
 ## Stratum Notes
 
 - Login supports protocol negotiation (`protocol_version`, `capabilities`)
+- Login rejects malformed payout addresses early (base58 + checksum-compatible Blocknet stealth address validation)
 - `stratum_submit_v2_required=true` (default): requires protocol v2 + `submit_claimed_hash`
 - `stratum_submit_v2_required=false`: allows legacy submits without `claimed_hash` (full verification path)
 - Queue pressure returns `server busy, retry` (no inline bypass)
 - Per-connection vardiff retargeting is enabled by default to target a small number of shares per window (`vardiff_*` config keys)
 - Default vardiff profile assumes a weak baseline miner and aims for ~10 shares / 5 minutes (`initial_share_difficulty=60`, `vardiff_target_shares=10`)
-- Template refresh identity uses stable template fields (`height`, `network_target`, `template_id`, `header_base`) to ignore timestamp-only churn while still refreshing on meaningful same-height template changes.
+- Template refresh identity uses stable tip fields (`height`, `network_target`, `prev_hash`) to avoid daemon template churn while still refreshing on meaningful tip/template transitions.
 - Assignment submits on a previous template are accepted only inside a short grace window (`stale_submit_grace`, default `5s`) based on when the share was received.
 - Daemon SSE tip events (`/api/events`) are enabled by default (`sse_enabled=true`) and mark templates stale from `new_block` `hash` + `height`.
 - Timestamp-only `new_block` changes do not trigger refreshes; only hash/height changes can trigger staleness.

@@ -695,8 +695,36 @@ fn bounded_block_poll_interval(configured: Duration) -> Duration {
 fn same_template_identity(current: &Job, parsed: &Job) -> bool {
     current.height == parsed.height
         && current.network_target == parsed.network_target
-        && current.template_id == parsed.template_id
-        && current.header_base == parsed.header_base
+        && match (job_prev_hash(current), job_prev_hash(parsed)) {
+            (Some(a), Some(b)) => a == b,
+            _ => true,
+        }
+}
+
+fn job_prev_hash(job: &Job) -> Option<[u8; 32]> {
+    let header = job.full_block.as_ref()?.get("header")?;
+    let prev_hash = header
+        .get("PrevHash")
+        .or_else(|| header.get("prevhash"))
+        .or_else(|| header.get("prevHash"))
+        .or_else(|| header.get("prev_hash"))?;
+
+    if let Some(values) = prev_hash.as_array() {
+        if values.len() != 32 {
+            return None;
+        }
+        let mut out = [0u8; 32];
+        for (idx, value) in values.iter().enumerate() {
+            let n = value.as_u64()?;
+            if n > u8::MAX as u64 {
+                return None;
+            }
+            out[idx] = n as u8;
+        }
+        return Some(out);
+    }
+
+    prev_hash.as_str().and_then(|v| hex_decode_32(v).ok())
 }
 
 fn parse_new_block_event_payload(payload: &str) -> Option<NewBlockEvent> {
@@ -1160,7 +1188,24 @@ mod tests {
     }
 
     #[test]
-    fn template_identity_matches_stable_template_fields() {
+    fn template_identity_ignores_template_churn_fields() {
+        fn template_block(
+            prev_hash: [u8; 32],
+            merkle_root: [u8; 32],
+            timestamp: u64,
+        ) -> serde_json::Value {
+            serde_json::json!({
+                "header": {
+                    "Height": 100,
+                    "Difficulty": 1000,
+                    "PrevHash": prev_hash,
+                    "MerkleRoot": merkle_root,
+                    "Timestamp": timestamp,
+                    "Nonce": 0
+                }
+            })
+        }
+
         let base = Job {
             id: "j1".to_string(),
             height: 100,
@@ -1168,7 +1213,7 @@ mod tests {
             network_target: [0x11; 32],
             network_difficulty: 1000,
             template_id: Some("t1".to_string()),
-            full_block: None,
+            full_block: Some(template_block([0xAA; 32], [0x10; 32], 1000)),
         };
         let mut same = base.clone();
         same.id = "j2".to_string();
@@ -1176,11 +1221,23 @@ mod tests {
 
         let mut different_template_id = same.clone();
         different_template_id.template_id = Some("t2".to_string());
-        assert!(!same_template_identity(&base, &different_template_id));
+        assert!(same_template_identity(&base, &different_template_id));
 
         let mut different_header = same;
         different_header.header_base[0] = 9;
-        assert!(!same_template_identity(&base, &different_header));
+        assert!(same_template_identity(&base, &different_header));
+
+        let mut different_merkle = base.clone();
+        different_merkle.full_block = Some(template_block([0xAA; 32], [0x77; 32], 1001));
+        assert!(same_template_identity(&base, &different_merkle));
+
+        let mut different_timestamp = base.clone();
+        different_timestamp.full_block = Some(template_block([0xAA; 32], [0x10; 32], 2000));
+        assert!(same_template_identity(&base, &different_timestamp));
+
+        let mut different_prev_hash = base.clone();
+        different_prev_hash.full_block = Some(template_block([0xBB; 32], [0x10; 32], 1000));
+        assert!(!same_template_identity(&base, &different_prev_hash));
 
         let mut different_height = base.clone();
         different_height.height += 1;

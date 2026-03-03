@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use sha3::{Digest, Sha3_256};
 
 pub const METHOD_LOGIN: &str = "login";
 pub const METHOD_SUBMIT: &str = "submit";
@@ -9,6 +10,9 @@ pub const STRATUM_PROTOCOL_VERSION_CURRENT: u32 = 2;
 pub const CAP_LOGIN_NEGOTIATION: &str = "login_negotiation";
 pub const CAP_SHARE_VALIDATION_STATUS: &str = "share_validation_status";
 pub const CAP_SUBMIT_CLAIMED_HASH: &str = "submit_claimed_hash";
+const STEALTH_ADDRESS_CHECKSUM_TAG: &[u8] = b"blocknet_stealth_address_checksum";
+const NETWORK_ID_MAINNET: &str = "blocknet_mainnet";
+const NETWORK_ID_TESTNET: &str = "blocknet_testnet";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StratumRequest {
@@ -114,6 +118,35 @@ pub fn build_login_result(protocol_version: u32, submit_v2_required: bool) -> Lo
     }
 }
 
+pub fn validate_miner_address(address: &str) -> Result<(), String> {
+    let trimmed = address.trim();
+    if trimmed.is_empty() {
+        return Err("address is required".to_string());
+    }
+
+    let decoded = bs58::decode(trimmed)
+        .into_vec()
+        .map_err(|_| "invalid base58 address".to_string())?;
+
+    match decoded.len() {
+        64 => Ok(()),
+        68 => {
+            let payload = &decoded[..64];
+            let checksum = &decoded[64..];
+            if checksum_matches(payload, checksum, NETWORK_ID_MAINNET)
+                || checksum_matches(payload, checksum, NETWORK_ID_TESTNET)
+            {
+                Ok(())
+            } else {
+                Err("invalid address checksum".to_string())
+            }
+        }
+        len => Err(format!(
+            "invalid address length: expected 64 or 68 bytes, got {len}"
+        )),
+    }
+}
+
 pub fn parse_hash_hex(v: &str) -> Result<[u8; 32], String> {
     let trimmed = v.trim();
     let raw = hex_decode(trimmed)?;
@@ -148,6 +181,22 @@ fn from_hex(b: u8) -> Option<u8> {
         b'A'..=b'F' => Some(10 + (b - b'A')),
         _ => None,
     }
+}
+
+fn checksum_matches(payload: &[u8], checksum: &[u8], network_id: &str) -> bool {
+    if checksum.len() != 4 || payload.len() != 64 {
+        return false;
+    }
+    let sum = address_checksum(payload, network_id);
+    checksum[0] == sum[0] && checksum[1] == sum[1] && checksum[2] == sum[2] && checksum[3] == sum[3]
+}
+
+fn address_checksum(payload: &[u8], network_id: &str) -> [u8; 32] {
+    let mut hasher = Sha3_256::new();
+    hasher.update(STEALTH_ADDRESS_CHECKSUM_TAG);
+    hasher.update(network_id.as_bytes());
+    hasher.update(payload);
+    hasher.finalize().into()
 }
 
 #[cfg(test)]
@@ -206,5 +255,52 @@ mod tests {
         let s = "ab".repeat(32);
         let parsed = parse_hash_hex(&s).expect("parse");
         assert_eq!(parsed, [0xAB; 32]);
+    }
+
+    #[test]
+    fn miner_address_accepts_legacy_payload_format() {
+        let address = bs58::encode([0x11; 64]).into_string();
+        assert!(validate_miner_address(&address).is_ok());
+    }
+
+    #[test]
+    fn miner_address_accepts_current_checksum_format() {
+        let payload = [0x22; 64];
+        let mut current = payload.to_vec();
+        current.extend_from_slice(&address_checksum(&payload, NETWORK_ID_MAINNET)[..4]);
+        let current_addr = bs58::encode(current).into_string();
+        assert!(validate_miner_address(&current_addr).is_ok());
+
+        let mut testnet = payload.to_vec();
+        testnet.extend_from_slice(&address_checksum(&payload, NETWORK_ID_TESTNET)[..4]);
+        let testnet_addr = bs58::encode(testnet).into_string();
+        assert!(validate_miner_address(&testnet_addr).is_ok());
+    }
+
+    #[test]
+    fn miner_address_rejects_invalid_base58() {
+        let err = validate_miner_address("bench_addr_e2e").expect_err("must reject");
+        assert!(err.contains("base58"));
+    }
+
+    #[test]
+    fn miner_address_rejects_invalid_length() {
+        let address = bs58::encode([0x33; 16]).into_string();
+        let err = validate_miner_address(&address).expect_err("must reject");
+        assert!(err.contains("length"));
+    }
+
+    #[test]
+    fn miner_address_rejects_bad_checksum() {
+        let payload = [0x44; 64];
+        let mut encoded = payload.to_vec();
+        encoded.extend_from_slice(&address_checksum(&payload, NETWORK_ID_MAINNET)[..4]);
+        let last = encoded
+            .last_mut()
+            .expect("checksummed payload should have checksum bytes");
+        *last ^= 0x01;
+        let address = bs58::encode(encoded).into_string();
+        let err = validate_miner_address(&address).expect_err("must reject");
+        assert!(err.contains("checksum"));
     }
 }
