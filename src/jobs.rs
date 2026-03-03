@@ -26,6 +26,7 @@ pub struct MinerJob {
     pub template_id: Option<String>,
     pub header_base: String,
     pub target: String,
+    pub difficulty: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub network_target: Option<String>,
     pub height: u64,
@@ -159,6 +160,7 @@ impl JobManager {
             template_id: job.template_id.clone(),
             header_base: hex_encode(&job.header_base),
             target: hex_encode(&share_target),
+            difficulty: share_difficulty,
             network_target: Some(hex_encode(&job.network_target)),
             height: job.height,
             nonce_start: start,
@@ -518,6 +520,7 @@ mod tests {
             .build_miner_job(1, "addr1")
             .expect("build miner job should work");
         assert_ne!(job.job_id, "job1");
+        assert_eq!(job.difficulty, 1);
         assert_eq!(job.nonce_end, job.nonce_start + NONCE_RANGE_SIZE - 1);
         assert!(job.network_target.is_some());
         let bound = manager
