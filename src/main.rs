@@ -10,6 +10,7 @@ use blocknet_pool_rs::api::{run_api, ApiState};
 use blocknet_pool_rs::config::{generate_default_env, Config};
 use blocknet_pool_rs::engine::{JobRepository, NodeApi, PoolEngine, ShareStore};
 use blocknet_pool_rs::jobs::JobManager;
+use blocknet_pool_rs::logging::init_logging;
 use blocknet_pool_rs::node::NodeClient;
 use blocknet_pool_rs::payout::PayoutProcessor;
 use blocknet_pool_rs::pow::Argon2PowHasher;
@@ -22,12 +23,7 @@ use tracing::{info, warn};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".parse().expect("valid filter")),
-        )
-        .init();
+    init_logging();
 
     let mut args = env::args().skip(1);
     let first = args.next();
@@ -53,12 +49,12 @@ async fn main() -> Result<()> {
     load_dotenv(&config_path);
     let cfg = Config::load(&config_path)?;
     info!(
-        initial_share_difficulty = cfg.initial_share_difficulty,
-        min_share_difficulty = cfg.min_share_difficulty,
-        max_share_difficulty = cfg.max_share_difficulty,
-        vardiff_target_shares = cfg.vardiff_target_shares,
-        vardiff_retarget_interval = %cfg.vardiff_retarget_interval,
-        "loaded vardiff profile"
+        "vardiff init={} min={} max={} target_shares={} retarget={}",
+        cfg.initial_share_difficulty,
+        cfg.min_share_difficulty,
+        cfg.max_share_difficulty,
+        cfg.vardiff_target_shares,
+        cfg.vardiff_retarget_interval
     );
 
     let cfg_for_store = cfg.clone();

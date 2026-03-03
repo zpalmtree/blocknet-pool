@@ -519,14 +519,14 @@ impl PoolEngine {
         session.last_difficulty_adjustment = Some(now);
 
         if next_diff != session.difficulty {
+            let miner = compact_address(&session.address);
             tracing::info!(
-                conn_id,
-                address = %session.address,
-                old_difficulty = session.difficulty,
-                new_difficulty = next_diff,
-                observed_interval_s = observed_interval,
-                target_interval_s = target_interval,
-                "adjusted share difficulty"
+                "vardiff {} -> {} (observed {:.1}s, target {:.0}s, miner {})",
+                session.difficulty,
+                next_diff,
+                observed_interval,
+                target_interval,
+                miner
             );
             session.difficulty = next_diff;
         }
@@ -539,6 +539,14 @@ fn vardiff_target_interval_seconds(cfg: &Config) -> f64 {
     let window = cfg.vardiff_window_duration().max(Duration::from_secs(30));
     let target_shares = cfg.vardiff_target_shares.max(1) as f64;
     (window.as_secs_f64() / target_shares).max(1.0)
+}
+
+fn compact_address(address: &str) -> String {
+    let trimmed = address.trim();
+    if trimmed.len() <= 12 {
+        return trimmed.to_string();
+    }
+    format!("{}...{}", &trimmed[..6], &trimmed[trimmed.len() - 6..])
 }
 
 fn hex_string(hash: [u8; 32]) -> String {

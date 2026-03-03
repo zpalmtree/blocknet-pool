@@ -3,6 +3,7 @@ pub mod config;
 pub mod db;
 pub mod engine;
 pub mod jobs;
+pub mod logging;
 pub mod node;
 pub mod payout;
 pub mod pgdb;

@@ -96,7 +96,8 @@ pub struct HttpError {
 
 impl fmt::Display for HttpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {}: {}", self.path, self.status_code, self.body)
+        let path = self.path.split('?').next().unwrap_or(&self.path);
+        write!(f, "{} {}: {}", path, self.status_code, self.body)
     }
 }
 
