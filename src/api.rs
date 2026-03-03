@@ -15,20 +15,24 @@ use serde::Serialize;
 use crate::db::PoolFeeEvent;
 use crate::engine::JobRepository;
 use crate::jobs::JobManager;
+use crate::node::NodeClient;
 use crate::stats::PoolStats;
 use crate::store::PoolStore;
 use crate::validation::ValidationEngine;
 
 const DB_TOTALS_CACHE_TTL: Duration = Duration::from_secs(2);
-const NETWORK_HASHRATE_TARGET_BLOCK_SECS: f64 = 300.0;
+const EXPLORER_HASHRATE_SAMPLE_COUNT: usize = 10;
+const NETWORK_HASHRATE_CACHE_RETRY_TTL: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
 pub struct ApiState {
     pub store: Arc<PoolStore>,
     pub stats: Arc<PoolStats>,
     pub jobs: Arc<JobManager>,
+    pub node: Arc<NodeClient>,
     pub validation: Arc<ValidationEngine>,
     pub db_totals_cache: Arc<Mutex<DbTotalsCache>>,
+    pub network_hashrate_cache: Arc<Mutex<NetworkHashrateCache>>,
     pub api_key: String,
 }
 
@@ -43,6 +47,14 @@ struct DbTotals {
 pub struct DbTotalsCache {
     updated_at: Option<Instant>,
     totals: DbTotals,
+}
+
+#[derive(Debug, Default)]
+pub struct NetworkHashrateCache {
+    updated_at: Option<Instant>,
+    chain_height: Option<u64>,
+    difficulty: Option<u64>,
+    hashrate_hps: Option<f64>,
 }
 
 pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
@@ -121,9 +133,7 @@ async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
     };
     let current_job = state.jobs.current_job();
     let current_job_height = current_job.as_ref().map(|j| j.height);
-    let network_hashrate = current_job
-        .as_ref()
-        .map(|job| job.network_difficulty as f64 / NETWORK_HASHRATE_TARGET_BLOCK_SECS);
+    let network_hashrate = state.network_hashrate_for_job(current_job.as_ref());
 
     let response = StatsResponse {
         pool: PoolSummary {
@@ -303,6 +313,80 @@ impl ApiState {
         cache.updated_at = Some(Instant::now());
         Ok(totals)
     }
+
+    fn network_hashrate_for_job(&self, job: Option<&crate::engine::Job>) -> Option<f64> {
+        let job = job?;
+        let chain_height = job.height.checked_sub(1)?;
+        let difficulty = job.network_difficulty.max(1);
+
+        {
+            let cache = self.network_hashrate_cache.lock();
+            let same_key =
+                cache.chain_height == Some(chain_height) && cache.difficulty == Some(difficulty);
+            if same_key {
+                if let Some(value) = cache.hashrate_hps {
+                    return Some(value);
+                }
+                if cache
+                    .updated_at
+                    .is_some_and(|updated| updated.elapsed() < NETWORK_HASHRATE_CACHE_RETRY_TTL)
+                {
+                    return None;
+                }
+            }
+        }
+
+        let sampled = estimate_explorer_network_hashrate_hps(&self.node, chain_height, difficulty)
+            .ok()
+            .filter(|value| value.is_finite() && *value >= 0.0);
+
+        let mut cache = self.network_hashrate_cache.lock();
+        cache.updated_at = Some(Instant::now());
+        cache.chain_height = Some(chain_height);
+        cache.difficulty = Some(difficulty);
+        cache.hashrate_hps = sampled;
+        sampled
+    }
+}
+
+fn estimate_explorer_network_hashrate_hps(
+    node: &NodeClient,
+    chain_height: u64,
+    difficulty: u64,
+) -> anyhow::Result<f64> {
+    // Match explorer.go: hashrate = NextDifficulty / avg(last 10 positive block-time deltas).
+    if chain_height < 2 {
+        return Ok(0.0);
+    }
+
+    let mut total_time = 0i64;
+    let mut count = 0usize;
+    let mut current_ts = node
+        .get_block_by_height_optional(chain_height)?
+        .map(|block| block.timestamp);
+    let mut height = chain_height;
+
+    while height > 0 && count < EXPLORER_HASHRATE_SAMPLE_COUNT {
+        let prev_ts = node
+            .get_block_by_height_optional(height - 1)?
+            .map(|block| block.timestamp);
+        if let (Some(block_ts), Some(prev_block_ts)) = (current_ts, prev_ts) {
+            let block_time = block_ts - prev_block_ts;
+            if block_time > 0 {
+                total_time += block_time;
+                count += 1;
+            }
+        }
+        current_ts = prev_ts;
+        height -= 1;
+    }
+
+    if count > 0 && total_time > 0 {
+        let avg_block_time = total_time as f64 / count as f64;
+        return Ok(difficulty as f64 / avg_block_time);
+    }
+
+    Ok(0.0)
 }
 
 async fn require_api_key(

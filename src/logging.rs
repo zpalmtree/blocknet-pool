@@ -10,6 +10,7 @@ use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::EnvFilter;
 
 const DEFAULT_LOG_FILTER: &str = "info,postgres=warn,tokio_postgres=warn";
+const COMPONENT_COL_WIDTH: usize = 8;
 
 pub fn init_logging() {
     let filter =
@@ -57,7 +58,7 @@ where
         write_colored(&mut writer, ansi, level_style, level_label)?;
         writer.write_char(' ')?;
 
-        write_colored(&mut writer, ansi, "36", short_target(meta.target()))?;
+        write_colored_padded_component(&mut writer, ansi, short_target(meta.target()))?;
         write!(&mut writer, " | ")?;
 
         ctx.format_fields(writer.by_ref(), event)?;
@@ -93,9 +94,29 @@ fn write_colored(writer: &mut Writer<'_>, ansi: bool, style: &str, text: &str) -
     }
 }
 
+fn write_colored_padded_component(
+    writer: &mut Writer<'_>,
+    ansi: bool,
+    component: &str,
+) -> fmt::Result {
+    let display = pad_or_truncate_ascii(component, COMPONENT_COL_WIDTH);
+    write_colored(writer, ansi, "36", &display)
+}
+
+fn pad_or_truncate_ascii(value: &str, width: usize) -> String {
+    let mut out = String::with_capacity(width);
+    for ch in value.chars().take(width) {
+        out.push(ch);
+    }
+    if out.len() < width {
+        out.push_str(&" ".repeat(width - out.len()));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::short_target;
+    use super::{pad_or_truncate_ascii, short_target};
 
     #[test]
     fn short_target_uses_local_module_suffix() {
@@ -107,5 +128,15 @@ mod tests {
     fn short_target_uses_external_module_prefix() {
         assert_eq!(short_target("postgres::config"), "postgres");
         assert_eq!(short_target("tokio_postgres::client"), "tokio_postgres");
+    }
+
+    #[test]
+    fn pad_or_truncate_ascii_pads_short_values() {
+        assert_eq!(pad_or_truncate_ascii("api", 8), "api     ");
+    }
+
+    #[test]
+    fn pad_or_truncate_ascii_truncates_long_values() {
+        assert_eq!(pad_or_truncate_ascii("tokio_postgres", 8), "tokio_po");
     }
 }

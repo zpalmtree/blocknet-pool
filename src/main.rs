@@ -128,8 +128,12 @@ async fn main() -> Result<()> {
         store: Arc::clone(&store),
         stats: Arc::clone(&stats),
         jobs: Arc::clone(&jobs),
+        node: Arc::clone(&node),
         validation: Arc::clone(&validation),
         db_totals_cache: Arc::new(Mutex::new(blocknet_pool_rs::api::DbTotalsCache::default())),
+        network_hashrate_cache: Arc::new(Mutex::new(
+            blocknet_pool_rs::api::NetworkHashrateCache::default(),
+        )),
         api_key: cfg.api_key.clone(),
     };
 

@@ -44,6 +44,8 @@ pub struct NodeBlock {
     pub hash: String,
     pub reward: u64,
     pub difficulty: u64,
+    #[serde(default)]
+    pub timestamp: i64,
     pub tx_count: i64,
 }
 
@@ -142,6 +144,10 @@ impl NodeClient {
             resolve_auth_token_and_cookie(token, daemon_data_dir, daemon_cookie_path);
         if let Some(path) = auth_cookie_path.as_ref() {
             tracing::info!(path = %path.display(), "daemon auth cookie source configured");
+        } else if resolved_token.is_some() {
+            tracing::warn!(
+                "daemon auth cookie source not found; using static token only (auto-refresh disabled)"
+            );
         }
         if resolved_token.is_some() {
             tracing::info!("daemon auth token loaded");
@@ -176,6 +182,14 @@ impl NodeClient {
 
     pub fn get_block(&self, id: &str) -> Result<NodeBlock> {
         self.get_json(&format!("/api/block/{id}"))
+    }
+
+    pub fn get_block_by_height_optional(&self, height: u64) -> Result<Option<NodeBlock>> {
+        match self.get_block(&height.to_string()) {
+            Ok(block) => Ok(Some(block)),
+            Err(err) if is_http_status(&err, 404) => Ok(None),
+            Err(err) => Err(err),
+        }
     }
 
     pub fn wallet_send(
@@ -316,18 +330,53 @@ impl NodeClient {
     }
 
     fn refresh_token_from_cookie(&self) -> Result<bool> {
-        let Some(cookie_path) = self.auth_cookie_path.as_ref() else {
-            return Ok(false);
-        };
-        let token = read_token_from_cookie_file(cookie_path)?;
-
-        let mut guard = self.auth_token.lock();
-        if guard.as_deref() == Some(token.as_str()) {
-            return Ok(false);
+        let mut candidates = Vec::<PathBuf>::new();
+        if let Some(configured) = self.auth_cookie_path.as_ref() {
+            candidates.push(configured.clone());
         }
-        *guard = Some(token);
-        tracing::info!(path = %cookie_path.display(), "refreshed daemon API token from cookie");
-        Ok(true)
+        for candidate in cookie_candidates("", "") {
+            if !candidates.contains(&candidate) {
+                candidates.push(candidate);
+            }
+        }
+
+        let mut last_read_error = None;
+        for cookie_path in candidates {
+            if !cookie_path.exists() {
+                continue;
+            }
+
+            match read_token_from_cookie_file(&cookie_path) {
+                Ok(token) => {
+                    let mut guard = self.auth_token.lock();
+                    if guard.as_deref() == Some(token.as_str()) {
+                        return Ok(false);
+                    }
+                    *guard = Some(token);
+                    if self.auth_cookie_path.is_some() {
+                        tracing::info!(
+                            path = %cookie_path.display(),
+                            "refreshed daemon API token from cookie"
+                        );
+                    } else {
+                        tracing::info!(
+                            path = %cookie_path.display(),
+                            "discovered daemon API cookie and refreshed token"
+                        );
+                    }
+                    return Ok(true);
+                }
+                Err(err) => {
+                    last_read_error = Some(err);
+                }
+            }
+        }
+
+        if let Some(err) = last_read_error {
+            return Err(err.context("failed to load daemon token from discovered cookie"));
+        }
+
+        Ok(false)
     }
 }
 
@@ -421,6 +470,13 @@ fn detect_daemon_context() -> Option<DaemonContext> {
                 return Some(DaemonContext {
                     data_dir: cwd.join(data_dir),
                 });
+            }
+            if let Some(exe) = process.exe() {
+                if let Some(parent) = exe.parent() {
+                    return Some(DaemonContext {
+                        data_dir: parent.join(data_dir),
+                    });
+                }
             }
         }
 
