@@ -67,7 +67,11 @@ pub trait NodeApi: Send + Sync + 'static {
 pub trait JobRepository: Send + Sync + 'static {
     fn get_job(&self, job_id: &str) -> Option<Job>;
     fn current_job(&self) -> Option<Job>;
-    fn resolve_submit_job(&self, submitted_job_id: &str) -> Option<SubmitJobBinding>;
+    fn resolve_submit_job(
+        &self,
+        submitted_job_id: &str,
+        submitted_at: Instant,
+    ) -> Option<SubmitJobBinding>;
 }
 
 #[derive(Debug, Clone)]
@@ -254,6 +258,17 @@ impl PoolEngine {
         nonce: u64,
         claimed_hash_hex: Option<String>,
     ) -> Result<SubmitAck> {
+        self.submit_with_received_at(conn_id, job_id, nonce, claimed_hash_hex, Instant::now())
+    }
+
+    pub fn submit_with_received_at(
+        &self,
+        conn_id: &str,
+        job_id: String,
+        nonce: u64,
+        claimed_hash_hex: Option<String>,
+        received_at: Instant,
+    ) -> Result<SubmitAck> {
         let session = {
             let sessions = self.sessions.lock();
             sessions
@@ -264,7 +279,7 @@ impl PoolEngine {
 
         let submit_job = self
             .jobs
-            .resolve_submit_job(&job_id)
+            .resolve_submit_job(&job_id, received_at)
             .ok_or_else(|| anyhow!("stale job"))?;
         let share_difficulty = submit_job
             .share_difficulty
@@ -390,9 +405,20 @@ impl PoolEngine {
                 }
 
                 if block_accepted {
+                    let accepted_height = submit.height.unwrap_or(job.height);
+                    let accepted_hash = block_hash.clone().unwrap_or(computed_hash.clone());
+                    tracing::warn!(
+                        height = accepted_height,
+                        hash = %accepted_hash,
+                        finder = %session.address,
+                        worker = %session.worker,
+                        difficulty = job.network_difficulty,
+                        nonce,
+                        "POOL BLOCK FOUND"
+                    );
                     let found = FoundBlockRecord {
-                        height: submit.height.unwrap_or(job.height),
-                        hash: block_hash.clone().unwrap_or(computed_hash),
+                        height: accepted_height,
+                        hash: accepted_hash,
                         difficulty: job.network_difficulty,
                         finder: session.address.clone(),
                         finder_worker: session.worker.clone(),
@@ -927,7 +953,11 @@ impl JobRepository for InMemoryJobs {
         self.jobs.lock().get(&current).cloned()
     }
 
-    fn resolve_submit_job(&self, submitted_job_id: &str) -> Option<SubmitJobBinding> {
+    fn resolve_submit_job(
+        &self,
+        submitted_job_id: &str,
+        _submitted_at: Instant,
+    ) -> Option<SubmitJobBinding> {
         if let Some(assignment) = self.assignments.lock().get(submitted_job_id).cloned() {
             let job = self.jobs.lock().get(&assignment.template_job_id).cloned()?;
             return Some(SubmitJobBinding {

@@ -537,6 +537,22 @@ mod tests {
         }
     }
 
+    fn matching_task(nonce: u64) -> ValidationTask {
+        let header_base = vec![1, 2, 3];
+        let claimed_hash = DeterministicTestHasher
+            .hash(&header_base, nonce)
+            .expect("deterministic hash");
+        ValidationTask {
+            address: "addr1".to_string(),
+            nonce,
+            header_base,
+            share_target: [0xFF; 32],
+            network_target: [0x0F; 32],
+            claimed_hash: Some(claimed_hash),
+            force_full_verify: false,
+        }
+    }
+
     #[test]
     fn invalid_sample_escalates_force_verify() {
         let cfg = test_cfg();
@@ -718,5 +734,49 @@ mod tests {
         let result = engine.process_inline(task);
         assert!(!result.accepted);
         assert_eq!(result.reject_reason, Some("hash computation failed"));
+    }
+
+    #[test]
+    fn warmup_shares_force_full_verification() {
+        let mut cfg = test_cfg();
+        cfg.sample_rate = 0.0;
+        cfg.warmup_shares = 3;
+        cfg.min_sample_every = 0;
+        cfg.max_provisional_shares = 100;
+        let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));
+
+        let r1 = engine.process_inline(matching_task(1));
+        let r2 = engine.process_inline(matching_task(2));
+        let r3 = engine.process_inline(matching_task(3));
+        let r4 = engine.process_inline(matching_task(4));
+
+        assert!(r1.verified);
+        assert!(r2.verified);
+        assert!(r3.verified);
+        assert!(!r4.verified);
+    }
+
+    #[test]
+    fn min_sample_every_forces_periodic_full_verification() {
+        let mut cfg = test_cfg();
+        cfg.sample_rate = 0.0;
+        cfg.warmup_shares = 0;
+        cfg.min_sample_every = 3;
+        cfg.max_provisional_shares = 100;
+        let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));
+
+        let r1 = engine.process_inline(matching_task(1));
+        let r2 = engine.process_inline(matching_task(2));
+        let r3 = engine.process_inline(matching_task(3));
+        let r4 = engine.process_inline(matching_task(4));
+        let r5 = engine.process_inline(matching_task(5));
+        let r6 = engine.process_inline(matching_task(6));
+
+        assert!(!r1.verified);
+        assert!(!r2.verified);
+        assert!(r3.verified);
+        assert!(!r4.verified);
+        assert!(!r5.verified);
+        assert!(r6.verified);
     }
 }

@@ -4,9 +4,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::config::Config;
 use crate::db::{DbBlock, DbShare, PendingPayout, PoolFeeRecord};
-use crate::node::{is_http_status, NodeClient};
+use crate::node::{is_http_status, NodeClient, NodeStatus};
 use crate::store::PoolStore;
 use crate::validation::{SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED};
+
+const MIN_PAYOUT_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
 pub struct PayoutProcessor {
@@ -32,7 +34,8 @@ impl PayoutProcessor {
                 .await;
             }
 
-            let mut ticker = tokio::time::interval(this.cfg.payout_interval_duration());
+            let payout_interval = bounded_payout_interval(this.cfg.payout_interval_duration());
+            let mut ticker = tokio::time::interval(payout_interval);
             loop {
                 ticker.tick().await;
                 let this = Arc::clone(&this);
@@ -45,8 +48,18 @@ impl PayoutProcessor {
     }
 
     fn tick(&self) {
-        if let Err(err) = self.node.get_status() {
-            tracing::warn!(error = %err, "cannot reach node for payouts");
+        let status = match self.node.get_status() {
+            Ok(v) => v,
+            Err(err) => {
+                tracing::warn!(error = %err, "cannot reach node for payouts");
+                return;
+            }
+        };
+        if !daemon_ready_for_payouts(&status) {
+            tracing::warn!(
+                chain_height = status.chain_height,
+                "daemon is syncing; skipping payout tick"
+            );
             return;
         }
 
@@ -537,6 +550,14 @@ fn payout_idempotency_key(p: &PendingPayout) -> String {
     hex::encode(digest)
 }
 
+fn bounded_payout_interval(configured: Duration) -> Duration {
+    configured.max(MIN_PAYOUT_INTERVAL)
+}
+
+fn daemon_ready_for_payouts(status: &NodeStatus) -> bool {
+    !status.syncing
+}
+
 fn add_credit(
     credits: &mut HashMap<String, u64>,
     address: &str,
@@ -696,5 +717,43 @@ mod tests {
 
         let total = credits.values().copied().sum::<u64>();
         assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn payout_interval_is_bounded_to_safe_minimum() {
+        assert_eq!(
+            bounded_payout_interval(Duration::from_secs(0)),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            bounded_payout_interval(Duration::from_millis(10)),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            bounded_payout_interval(Duration::from_secs(30)),
+            Duration::from_secs(30)
+        );
+    }
+
+    #[test]
+    fn payouts_are_skipped_while_syncing() {
+        let status = NodeStatus {
+            peer_id: "peer".to_string(),
+            peers: 1,
+            chain_height: 100,
+            best_hash: "abc".to_string(),
+            total_work: 1,
+            mempool_size: 0,
+            mempool_bytes: 0,
+            syncing: true,
+            identity_age: "1m".to_string(),
+        };
+        assert!(!daemon_ready_for_payouts(&status));
+
+        let status_ready = NodeStatus {
+            syncing: false,
+            ..status
+        };
+        assert!(daemon_ready_for_payouts(&status_ready));
     }
 }

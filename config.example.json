@@ -15,6 +15,7 @@
   "sse_enabled": true,
   "refresh_on_same_height": false,
   "job_timeout": "5m",
+  "stale_submit_grace": "5s",
   "validation_mode": "probabilistic",
   "max_verifiers": 2,
   "max_validation_queue": 2048,

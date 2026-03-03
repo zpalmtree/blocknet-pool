@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
@@ -257,8 +257,15 @@ impl StratumServer {
 
                                 let engine = Arc::clone(&self.engine);
                                 let submit_conn_id = conn_id.clone();
+                                let received_at = Instant::now();
                                 let submit = tokio::task::spawn_blocking(move || {
-                                    engine.submit(&submit_conn_id, params.job_id, params.nonce, params.claimed_hash)
+                                    engine.submit_with_received_at(
+                                        &submit_conn_id,
+                                        params.job_id,
+                                        params.nonce,
+                                        params.claimed_hash,
+                                        received_at,
+                                    )
                                 })
                                 .await;
 

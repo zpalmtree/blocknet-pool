@@ -18,6 +18,7 @@ use crate::pow::difficulty_to_target;
 const NONCE_RANGE_SIZE: u64 = 1_000_000;
 const MAX_DB_NONCE: u64 = i64::MAX as u64;
 const JOB_REFRESH_MIN_INTERVAL: Duration = Duration::from_secs(1);
+const MIN_BLOCK_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const REWARD_ADDR_CACHE_TTL: Duration = Duration::from_secs(30);
 const TEMPLATE_WALLET_RECOVERY_COOLDOWN: Duration = Duration::from_secs(10);
 const MISSING_WALLET_PASSWORD_LOG_COOLDOWN: Duration = Duration::from_secs(60);
@@ -97,9 +98,16 @@ pub struct JobManager {
 struct JobState {
     current: Option<Job>,
     jobs: HashMap<String, Job>,
+    job_meta: HashMap<String, JobTemplateMeta>,
     order: VecDeque<String>,
     assignments: HashMap<String, MinerAssignment>,
     assignment_order: VecDeque<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct JobTemplateMeta {
+    created_at: Instant,
+    stale_since: Option<Instant>,
 }
 
 #[derive(Debug, Clone)]
@@ -153,7 +161,8 @@ impl JobManager {
                 .await;
             }
 
-            let mut ticker = tokio::time::interval(this.cfg.block_poll_duration());
+            let poll_interval = bounded_block_poll_interval(this.cfg.block_poll_duration());
+            let mut ticker = tokio::time::interval(poll_interval);
             loop {
                 ticker.tick().await;
                 let this = Arc::clone(&this);
@@ -287,10 +296,18 @@ impl JobManager {
         }
 
         let mut state = self.state.write();
+        let now = Instant::now();
         state
             .jobs
             .entry(job.id.clone())
             .or_insert_with(|| job.clone());
+        state
+            .job_meta
+            .entry(job.id.clone())
+            .or_insert(JobTemplateMeta {
+                created_at: now,
+                stale_since: None,
+            });
         state.assignments.insert(
             assignment_id.clone(),
             MinerAssignment {
@@ -368,14 +385,38 @@ impl JobManager {
         };
 
         let mut state = self.state.write();
+        let now = Instant::now();
         if let Some(current) = state.current.as_ref() {
             if same_template_identity(current, &parsed) {
                 return;
             }
         }
 
+        if let Some(prev_id) = state.current.as_ref().map(|job| job.id.clone()) {
+            if let Some(meta) = state.job_meta.get_mut(&prev_id) {
+                if meta.stale_since.is_none() {
+                    meta.stale_since = Some(now);
+                }
+            } else {
+                state.job_meta.insert(
+                    prev_id,
+                    JobTemplateMeta {
+                        created_at: now,
+                        stale_since: Some(now),
+                    },
+                );
+            }
+        }
+
         state.current = Some(parsed.clone());
         state.jobs.insert(parsed.id.clone(), parsed.clone());
+        state.job_meta.insert(
+            parsed.id.clone(),
+            JobTemplateMeta {
+                created_at: now,
+                stale_since: None,
+            },
+        );
         state.order.retain(|id| id != &parsed.id);
         state.order.push_back(parsed.id.clone());
         self.nonce_counter
@@ -393,6 +434,7 @@ impl JobManager {
                     continue;
                 }
                 state.jobs.remove(&oldest);
+                state.job_meta.remove(&oldest);
                 removed_jobs.push(oldest);
             }
         }
@@ -560,13 +602,33 @@ impl JobRepository for JobManager {
         self.state.read().current.clone()
     }
 
-    fn resolve_submit_job(&self, submitted_job_id: &str) -> Option<SubmitJobBinding> {
+    fn resolve_submit_job(
+        &self,
+        submitted_job_id: &str,
+        submitted_at: Instant,
+    ) -> Option<SubmitJobBinding> {
         let state = self.state.read();
         let assignment = state.assignments.get(submitted_job_id)?;
         let assignment_ttl = self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE);
-        if assignment.created_at.elapsed() > assignment_ttl {
+        if submitted_at.saturating_duration_since(assignment.created_at) > assignment_ttl {
             return None;
         }
+
+        let current_job_id = state.current.as_ref().map(|job| job.id.as_str());
+        if Some(assignment.template_job_id.as_str()) != current_job_id {
+            let grace = self.cfg.stale_submit_grace_duration();
+            if grace.is_zero() {
+                return None;
+            }
+            let meta = state.job_meta.get(&assignment.template_job_id).copied();
+            let stale_since = meta
+                .and_then(|value| value.stale_since)
+                .unwrap_or_else(|| meta.map(|value| value.created_at).unwrap_or(assignment.created_at));
+            if submitted_at.saturating_duration_since(stale_since) > grace {
+                return None;
+            }
+        }
+
         let job = state.jobs.get(&assignment.template_job_id)?.clone();
         Some(SubmitJobBinding {
             job,
@@ -623,6 +685,10 @@ fn nonce_slot_count() -> u64 {
 
 fn random_nonce_slot() -> u64 {
     rand::random::<u64>() % nonce_slot_count()
+}
+
+fn bounded_block_poll_interval(configured: Duration) -> Duration {
+    configured.max(MIN_BLOCK_POLL_INTERVAL)
 }
 
 fn same_template_identity(current: &Job, parsed: &Job) -> bool {
@@ -793,7 +859,7 @@ mod tests {
         assert!(job.nonce_end <= MAX_DB_NONCE);
         assert!(job.network_target.is_some());
         let bound = manager
-            .resolve_submit_job(&job.job_id)
+            .resolve_submit_job(&job.job_id, Instant::now())
             .expect("assignment should resolve");
         assert_eq!(bound.job.id, "job1");
         assert_eq!(bound.share_difficulty, Some(1));
@@ -839,7 +905,194 @@ mod tests {
             );
         }
 
-        assert!(manager.resolve_submit_job("assign-old").is_none());
+        assert!(manager
+            .resolve_submit_job("assign-old", Instant::now())
+            .is_none());
+    }
+
+    #[test]
+    fn resolve_submit_job_allows_recent_previous_template_within_grace() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config {
+                job_timeout: "5m".to_string(),
+                stale_submit_grace: "5s".to_string(),
+                ..Config::default()
+            },
+        );
+
+        let old_job = Job {
+            id: "job-old".into(),
+            height: 10,
+            header_base: vec![0xAA; 92],
+            network_target: [0xBB; 32],
+            network_difficulty: 1,
+            template_id: Some("tmpl-old".into()),
+            full_block: None,
+        };
+        let new_job = Job {
+            id: "job-new".into(),
+            height: 11,
+            header_base: vec![0xCC; 92],
+            network_target: [0xDD; 32],
+            network_difficulty: 1,
+            template_id: Some("tmpl-new".into()),
+            full_block: None,
+        };
+
+        let now = Instant::now();
+        {
+            let mut state = manager.state.write();
+            state.current = Some(new_job.clone());
+            state.jobs.insert(old_job.id.clone(), old_job.clone());
+            state.jobs.insert(new_job.id.clone(), new_job);
+            state.assignments.insert(
+                "assign-old".to_string(),
+                MinerAssignment {
+                    template_job_id: old_job.id.clone(),
+                    share_difficulty: 1,
+                    assigned_miner: "addr1".to_string(),
+                    nonce_start: 0,
+                    nonce_end: NONCE_RANGE_SIZE - 1,
+                    created_at: now - Duration::from_secs(30),
+                },
+            );
+            state.job_meta.insert(
+                old_job.id.clone(),
+                JobTemplateMeta {
+                    created_at: now - Duration::from_secs(60),
+                    stale_since: Some(now - Duration::from_secs(2)),
+                },
+            );
+        }
+
+        assert!(manager.resolve_submit_job("assign-old", now).is_some());
+    }
+
+    #[test]
+    fn resolve_submit_job_rejects_previous_template_after_grace() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config {
+                job_timeout: "5m".to_string(),
+                stale_submit_grace: "2s".to_string(),
+                ..Config::default()
+            },
+        );
+
+        let old_job = Job {
+            id: "job-old".into(),
+            height: 10,
+            header_base: vec![0xAA; 92],
+            network_target: [0xBB; 32],
+            network_difficulty: 1,
+            template_id: Some("tmpl-old".into()),
+            full_block: None,
+        };
+        let new_job = Job {
+            id: "job-new".into(),
+            height: 11,
+            header_base: vec![0xCC; 92],
+            network_target: [0xDD; 32],
+            network_difficulty: 1,
+            template_id: Some("tmpl-new".into()),
+            full_block: None,
+        };
+
+        let now = Instant::now();
+        {
+            let mut state = manager.state.write();
+            state.current = Some(new_job.clone());
+            state.jobs.insert(old_job.id.clone(), old_job.clone());
+            state.jobs.insert(new_job.id.clone(), new_job);
+            state.assignments.insert(
+                "assign-old".to_string(),
+                MinerAssignment {
+                    template_job_id: old_job.id.clone(),
+                    share_difficulty: 1,
+                    assigned_miner: "addr1".to_string(),
+                    nonce_start: 0,
+                    nonce_end: NONCE_RANGE_SIZE - 1,
+                    created_at: now - Duration::from_secs(30),
+                },
+            );
+            state.job_meta.insert(
+                old_job.id.clone(),
+                JobTemplateMeta {
+                    created_at: now - Duration::from_secs(60),
+                    stale_since: Some(now - Duration::from_secs(10)),
+                },
+            );
+        }
+
+        assert!(manager.resolve_submit_job("assign-old", now).is_none());
+    }
+
+    #[test]
+    fn resolve_submit_job_uses_received_time_for_stale_grace() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config {
+                job_timeout: "5m".to_string(),
+                stale_submit_grace: "5s".to_string(),
+                ..Config::default()
+            },
+        );
+
+        let old_job = Job {
+            id: "job-old".into(),
+            height: 10,
+            header_base: vec![0xAA; 92],
+            network_target: [0xBB; 32],
+            network_difficulty: 1,
+            template_id: Some("tmpl-old".into()),
+            full_block: None,
+        };
+        let new_job = Job {
+            id: "job-new".into(),
+            height: 11,
+            header_base: vec![0xCC; 92],
+            network_target: [0xDD; 32],
+            network_difficulty: 1,
+            template_id: Some("tmpl-new".into()),
+            full_block: None,
+        };
+
+        let now = Instant::now();
+        {
+            let mut state = manager.state.write();
+            state.current = Some(new_job.clone());
+            state.jobs.insert(old_job.id.clone(), old_job.clone());
+            state.jobs.insert(new_job.id.clone(), new_job);
+            state.assignments.insert(
+                "assign-old".to_string(),
+                MinerAssignment {
+                    template_job_id: old_job.id.clone(),
+                    share_difficulty: 1,
+                    assigned_miner: "addr1".to_string(),
+                    nonce_start: 0,
+                    nonce_end: NONCE_RANGE_SIZE - 1,
+                    created_at: now - Duration::from_secs(30),
+                },
+            );
+            state.job_meta.insert(
+                old_job.id.clone(),
+                JobTemplateMeta {
+                    created_at: now - Duration::from_secs(60),
+                    stale_since: Some(now - Duration::from_secs(6)),
+                },
+            );
+        }
+
+        let received_in_grace = now - Duration::from_secs(2);
+        assert!(manager
+            .resolve_submit_job("assign-old", received_in_grace)
+            .is_some());
+
+        let processed_too_late = now;
+        assert!(manager
+            .resolve_submit_job("assign-old", processed_too_late)
+            .is_none());
     }
 
     #[test]
@@ -1040,5 +1293,21 @@ mod tests {
             0,
             false
         ));
+    }
+
+    #[test]
+    fn block_poll_interval_is_bounded_to_safe_minimum() {
+        assert_eq!(
+            bounded_block_poll_interval(Duration::from_secs(0)),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            bounded_block_poll_interval(Duration::from_millis(10)),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            bounded_block_poll_interval(Duration::from_secs(2)),
+            Duration::from_secs(2)
+        );
     }
 }

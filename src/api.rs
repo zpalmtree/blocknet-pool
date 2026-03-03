@@ -207,10 +207,24 @@ async fn handle_miner(
         "pending": balance.pending,
         "paid": balance.paid,
     });
+    let has_activity = miner_has_activity(
+        shares.len(),
+        balance.pending,
+        balance.paid,
+        pending_payout.is_some(),
+    );
 
     match stats {
         Some(miner_stats) => Json(serde_json::json!({
             "stats": miner_stats,
+            "shares": shares,
+            "hashrate": hashrate,
+            "balance": balance_json,
+            "pending_payout": pending_payout,
+        }))
+        .into_response(),
+        None if has_activity => Json(serde_json::json!({
+            "stats": serde_json::Value::Null,
             "shares": shares,
             "hashrate": hashrate,
             "balance": balance_json,
@@ -436,10 +450,37 @@ async fn require_api_key(
         .into_response()
 }
 
+fn miner_has_activity(
+    shares_len: usize,
+    balance_pending: u64,
+    balance_paid: u64,
+    has_pending_payout: bool,
+) -> bool {
+    shares_len > 0 || balance_pending > 0 || balance_paid > 0 || has_pending_payout
+}
+
 fn internal_error(msg: &str, err: anyhow::Error) -> (StatusCode, Json<serde_json::Value>) {
     tracing::warn!(error = %err, "{msg}");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(serde_json::json!({"error": msg})),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::miner_has_activity;
+
+    #[test]
+    fn miner_activity_detects_share_history() {
+        assert!(miner_has_activity(1, 0, 0, false));
+    }
+
+    #[test]
+    fn miner_activity_detects_balance_and_pending() {
+        assert!(miner_has_activity(0, 1, 0, false));
+        assert!(miner_has_activity(0, 0, 1, false));
+        assert!(miner_has_activity(0, 0, 0, true));
+        assert!(!miner_has_activity(0, 0, 0, false));
+    }
 }

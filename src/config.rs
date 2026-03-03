@@ -29,6 +29,7 @@ pub struct Config {
     pub sse_enabled: bool,
     pub refresh_on_same_height: bool,
     pub job_timeout: String,
+    pub stale_submit_grace: String,
     pub validation_mode: String,
     pub max_verifiers: i32,
     pub max_validation_queue: i32,
@@ -91,6 +92,7 @@ impl Default for Config {
             sse_enabled: true,
             refresh_on_same_height: false,
             job_timeout: "5m".to_string(),
+            stale_submit_grace: "5s".to_string(),
             validation_mode: "probabilistic".to_string(),
             max_verifiers: 2,
             max_validation_queue: 2048,
@@ -204,6 +206,10 @@ impl Config {
 
     pub fn job_timeout_duration(&self) -> Duration {
         parse_duration_or(&self.job_timeout, Duration::from_secs(5 * 60))
+    }
+
+    pub fn stale_submit_grace_duration(&self) -> Duration {
+        parse_duration_or(&self.stale_submit_grace, Duration::from_secs(5))
     }
 
     pub fn forced_verify_duration(&self) -> Duration {
