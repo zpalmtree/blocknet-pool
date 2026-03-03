@@ -135,14 +135,12 @@ impl JobManager {
     pub fn start(self: &Arc<Self>) {
         if self.cfg.sse_enabled {
             let this = Arc::clone(self);
-            tokio::spawn(async move {
-                let listener = Arc::clone(&this);
-                if let Err(err) =
-                    tokio::task::spawn_blocking(move || listener.run_tip_listener()).await
-                {
-                    tracing::warn!(error = %err, "tip listener task join failed");
-                }
-            });
+            if let Err(err) = thread::Builder::new()
+                .name("pool-tip-events".to_string())
+                .spawn(move || this.run_tip_listener())
+            {
+                tracing::warn!(error = %err, "failed to start tip listener thread");
+            }
         }
 
         let this = Arc::clone(self);

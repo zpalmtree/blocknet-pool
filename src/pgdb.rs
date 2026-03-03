@@ -896,9 +896,11 @@ impl Drop for PostgresStore {
             return;
         };
         let client = conn.into_inner();
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-            drop(client);
-        }));
+        let _ = std::thread::Builder::new()
+            .name("pool-pg-close".to_string())
+            .spawn(move || {
+                let _ = client.close();
+            });
     }
 }
 
