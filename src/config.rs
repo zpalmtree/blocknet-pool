@@ -26,6 +26,8 @@ pub struct Config {
 
     pub initial_share_difficulty: u64,
     pub block_poll_interval: String,
+    pub sse_enabled: bool,
+    pub refresh_on_same_height: bool,
     pub job_timeout: String,
     pub validation_mode: String,
     pub max_verifiers: i32,
@@ -86,6 +88,8 @@ impl Default for Config {
             pool_wallet_address: String::new(),
             initial_share_difficulty: 60,
             block_poll_interval: "2s".to_string(),
+            sse_enabled: true,
+            refresh_on_same_height: false,
             job_timeout: "5m".to_string(),
             validation_mode: "probabilistic".to_string(),
             max_verifiers: 2,

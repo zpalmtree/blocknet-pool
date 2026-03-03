@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
-use reqwest::blocking::Client;
+use reqwest::blocking::{Client, Response};
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -131,6 +131,7 @@ pub fn http_error_body_contains(err: &anyhow::Error, status: u16, needle: &str) 
 pub struct NodeClient {
     base_url: String,
     client: Client,
+    events_client: Client,
     auth_token: Mutex<Option<String>>,
     auth_cookie_path: Option<PathBuf>,
     chain_height: AtomicU64,
@@ -156,6 +157,10 @@ impl NodeClient {
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .context("build node http client")?;
+        let events_client = Client::builder()
+            .default_headers(HeaderMap::new())
+            .build()
+            .context("build node events http client")?;
 
         let (resolved_token, auth_cookie_path) =
             resolve_auth_token_and_cookie(token, daemon_data_dir, daemon_cookie_path);
@@ -173,6 +178,7 @@ impl NodeClient {
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             client,
+            events_client,
             auth_token: Mutex::new(resolved_token),
             auth_cookie_path,
             chain_height: AtomicU64::new(0),
@@ -243,6 +249,39 @@ impl NodeClient {
 
     pub fn get_wallet_balance(&self) -> Result<WalletBalance> {
         self.get_json("/api/wallet/balance")
+    }
+
+    pub fn open_events_stream(&self) -> Result<Response> {
+        let path = "/api/events";
+        let url = format!("{}{}", self.base_url, path);
+        let mut attempted_refresh = false;
+        loop {
+            let req = self.apply_auth(self.events_client.get(&url));
+            let resp = req.send().with_context(|| format!("GET {path}"))?;
+            let status = resp.status();
+
+            if status == reqwest::StatusCode::UNAUTHORIZED && !attempted_refresh {
+                attempted_refresh = true;
+                match self.refresh_token_from_cookie() {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(err) => {
+                        tracing::warn!(error = %err, "failed to refresh daemon token from cookie");
+                    }
+                }
+            }
+
+            if !status.is_success() {
+                let body = resp.text().unwrap_or_default();
+                return Err(anyhow!(HttpError {
+                    path: path.to_string(),
+                    status_code: status.as_u16(),
+                    body,
+                }));
+            }
+
+            return Ok(resp);
+        }
     }
 
     pub fn chain_height(&self) -> u64 {

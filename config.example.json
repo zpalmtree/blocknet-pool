@@ -12,6 +12,8 @@
   "pool_wallet_address": "",
   "initial_share_difficulty": 60,
   "block_poll_interval": "2s",
+  "sse_enabled": true,
+  "refresh_on_same_height": false,
   "job_timeout": "5m",
   "validation_mode": "probabilistic",
   "max_verifiers": 2,

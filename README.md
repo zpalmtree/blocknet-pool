@@ -76,6 +76,9 @@ When `database_url` is set, Postgres is used automatically and `database_path` i
 - Per-connection vardiff retargeting is enabled by default to target a small number of shares per window (`vardiff_*` config keys)
 - Default vardiff profile assumes a weak baseline miner and aims for ~10 shares / 5 minutes (`initial_share_difficulty=60`, `vardiff_target_shares=10`)
 - Template refresh identity is intentionally conservative (`height` + `network_target`) to avoid spamming miners with new jobs when template responses change only in ephemeral fields. Tradeoff: same-height template updates that keep the same target may not trigger a new job immediately.
+- Daemon SSE tip events (`/api/events`) are enabled by default (`sse_enabled=true`) and mark templates stale from `new_block` `hash` + `height`.
+- Timestamp-only `new_block` changes do not trigger refreshes; only hash/height changes can trigger staleness.
+- Same-height hash-change refresh is disabled by default (`refresh_on_same_height=false`) to avoid replay churn; enable it only if you want immediate same-height reorg reaction.
 
 ## API Auth
 

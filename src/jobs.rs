@@ -1,10 +1,13 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::io::{BufRead, BufReader};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::broadcast;
 
 use crate::config::Config;
@@ -20,6 +23,8 @@ const TEMPLATE_WALLET_RECOVERY_COOLDOWN: Duration = Duration::from_secs(10);
 const MISSING_WALLET_PASSWORD_LOG_COOLDOWN: Duration = Duration::from_secs(60);
 const MAX_ACTIVE_ASSIGNMENTS: usize = 65_536;
 const MAX_ASSIGNMENT_AGE: Duration = Duration::from_secs(10 * 60);
+const SSE_RETRY_DELAY_MIN: Duration = Duration::from_millis(100);
+const SSE_RETRY_DELAY_MAX: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MinerJob {
@@ -42,6 +47,36 @@ struct RewardAddressCache {
     checked_at: Option<Instant>,
 }
 
+#[derive(Debug, Default)]
+struct TipEventState {
+    last_new_block: Option<LastTipEvent>,
+}
+
+#[derive(Debug, Clone)]
+struct LastTipEvent {
+    hash: String,
+    height: Option<u64>,
+}
+
+#[derive(Debug, Default)]
+struct SseFrameState {
+    event_name: String,
+    data_lines: Vec<String>,
+}
+
+impl SseFrameState {
+    fn reset(&mut self) {
+        self.event_name.clear();
+        self.data_lines.clear();
+    }
+}
+
+#[derive(Debug, Clone)]
+struct NewBlockEvent {
+    hash: String,
+    height: Option<u64>,
+}
+
 #[derive(Debug)]
 pub struct JobManager {
     node: Arc<NodeClient>,
@@ -53,6 +88,7 @@ pub struct JobManager {
     reward_cache: Mutex<RewardAddressCache>,
     last_template_wallet_recovery: Mutex<Option<Instant>>,
     last_missing_wallet_password_log: Mutex<Option<Instant>>,
+    tip_events: Mutex<TipEventState>,
 
     tx: broadcast::Sender<Job>,
 }
@@ -91,11 +127,24 @@ impl JobManager {
             }),
             last_template_wallet_recovery: Mutex::new(None),
             last_missing_wallet_password_log: Mutex::new(None),
+            tip_events: Mutex::new(TipEventState::default()),
             tx,
         })
     }
 
     pub fn start(self: &Arc<Self>) {
+        if self.cfg.sse_enabled {
+            let this = Arc::clone(self);
+            tokio::spawn(async move {
+                let listener = Arc::clone(&this);
+                if let Err(err) =
+                    tokio::task::spawn_blocking(move || listener.run_tip_listener()).await
+                {
+                    tracing::warn!(error = %err, "tip listener task join failed");
+                }
+            });
+        }
+
         let this = Arc::clone(self);
         tokio::spawn(async move {
             {
@@ -116,6 +165,108 @@ impl JobManager {
                 .await;
             }
         });
+    }
+
+    fn run_tip_listener(&self) {
+        let mut reconnect_delay = SSE_RETRY_DELAY_MIN;
+        loop {
+            match self.node.open_events_stream() {
+                Ok(resp) => {
+                    reconnect_delay = SSE_RETRY_DELAY_MIN;
+                    if let Err(err) = self.stream_tip_events(resp) {
+                        tracing::warn!(error = %err, "tip events stream ended; reconnecting");
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to open daemon events stream");
+                }
+            }
+
+            thread::sleep(reconnect_delay);
+            reconnect_delay = (reconnect_delay.saturating_mul(2)).min(SSE_RETRY_DELAY_MAX);
+        }
+    }
+
+    fn stream_tip_events(&self, resp: reqwest::blocking::Response) -> anyhow::Result<()> {
+        let mut frame = SseFrameState::default();
+        let reader = BufReader::new(resp);
+        for line_result in reader.lines() {
+            let line = line_result?;
+            self.process_sse_line(&line, &mut frame);
+        }
+        self.process_sse_frame(&frame);
+        anyhow::bail!("SSE stream closed by peer")
+    }
+
+    fn process_sse_line(&self, line: &str, frame: &mut SseFrameState) {
+        if line.is_empty() {
+            self.process_sse_frame(frame);
+            frame.reset();
+            return;
+        }
+
+        if line.starts_with(':') {
+            return;
+        }
+
+        let (field, raw_value) = line
+            .split_once(':')
+            .map_or((line, ""), |(f, rest)| (f, rest));
+        let value = raw_value.strip_prefix(' ').unwrap_or(raw_value);
+
+        match field {
+            "event" => {
+                frame.event_name.clear();
+                frame.event_name.push_str(value);
+            }
+            "data" => frame.data_lines.push(value.to_string()),
+            _ => {}
+        }
+    }
+
+    fn process_sse_frame(&self, frame: &SseFrameState) {
+        if frame.event_name != "new_block" || frame.data_lines.is_empty() {
+            return;
+        }
+
+        let payload = frame.data_lines.join("\n");
+        let Some(event) = parse_new_block_event_payload(&payload) else {
+            tracing::warn!("failed parsing daemon new_block SSE payload");
+            return;
+        };
+
+        self.on_new_block_event(&event.hash, event.height);
+    }
+
+    fn on_new_block_event(&self, hash: &str, event_height: Option<u64>) {
+        let current_template_height = self
+            .state
+            .read()
+            .current
+            .as_ref()
+            .map_or(0, |job| job.height);
+        let should_refresh = {
+            let mut tip_events = self.tip_events.lock();
+            should_refresh_for_new_block_event(
+                &mut tip_events,
+                hash,
+                event_height,
+                current_template_height,
+                self.cfg.refresh_on_same_height,
+            )
+        };
+
+        if !should_refresh {
+            return;
+        }
+
+        tracing::debug!(
+            hash = %hash.trim(),
+            event_height,
+            current_template_height,
+            "daemon tip event marked template stale"
+        );
+        self.refresh_template();
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Job> {
@@ -480,6 +631,68 @@ fn same_template_identity(current: &Job, parsed: &Job) -> bool {
     current.height == parsed.height && current.network_target == parsed.network_target
 }
 
+fn parse_new_block_event_payload(payload: &str) -> Option<NewBlockEvent> {
+    let value: Value = serde_json::from_str(payload).ok()?;
+    let hash = value.get("hash").and_then(Value::as_str)?;
+    let height = value.get("height").and_then(Value::as_u64);
+    Some(NewBlockEvent {
+        hash: hash.to_string(),
+        height,
+    })
+}
+
+fn should_refresh_for_new_block_event(
+    state: &mut TipEventState,
+    hash: &str,
+    event_height: Option<u64>,
+    current_template_height: u64,
+    refresh_on_same_height: bool,
+) -> bool {
+    let Some(normalized_hash) = normalize_tip_hash(hash) else {
+        return false;
+    };
+
+    if let Some(height) = event_height {
+        if current_template_height != 0 && height.saturating_add(1) < current_template_height {
+            return false;
+        }
+    }
+
+    if let Some(last) = state.last_new_block.as_ref() {
+        let same_height = matches!(
+            (last.height, event_height),
+            (Some(last_height), Some(height)) if last_height == height
+        );
+        if same_height {
+            let hash_changed = last.hash != normalized_hash;
+            state.last_new_block = Some(LastTipEvent {
+                hash: normalized_hash,
+                height: event_height,
+            });
+            return refresh_on_same_height && hash_changed;
+        }
+
+        if last.hash == normalized_hash && last.height == event_height {
+            return false;
+        }
+    }
+
+    state.last_new_block = Some(LastTipEvent {
+        hash: normalized_hash,
+        height: event_height,
+    });
+    true
+}
+
+fn normalize_tip_hash(hash: &str) -> Option<String> {
+    let normalized = hash.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
 fn prune_expired_assignments_locked(state: &mut JobState, max_age: Duration) {
     if max_age.is_zero() {
         return;
@@ -721,5 +934,113 @@ mod tests {
         let mut different_target = base.clone();
         different_target.network_target[0] ^= 0xff;
         assert!(!same_template_identity(&base, &different_target));
+    }
+
+    #[test]
+    fn parse_new_block_event_payload_ignores_timestamp_field() {
+        let payload = r#"{"hash":"ABC123","height":42,"timestamp":1730000000}"#;
+        let parsed = parse_new_block_event_payload(payload).expect("event should parse");
+        assert_eq!(parsed.hash, "ABC123");
+        assert_eq!(parsed.height, Some(42));
+    }
+
+    #[test]
+    fn duplicate_new_block_events_are_coalesced() {
+        let mut state = TipEventState::default();
+        assert!(should_refresh_for_new_block_event(
+            &mut state,
+            "abc",
+            Some(100),
+            0,
+            false
+        ));
+        assert!(!should_refresh_for_new_block_event(
+            &mut state,
+            "abc",
+            Some(100),
+            0,
+            false
+        ));
+    }
+
+    #[test]
+    fn same_height_hash_change_respects_refresh_setting() {
+        let mut coalesced = TipEventState::default();
+        assert!(should_refresh_for_new_block_event(
+            &mut coalesced,
+            "aaa",
+            Some(100),
+            0,
+            false
+        ));
+        assert!(!should_refresh_for_new_block_event(
+            &mut coalesced,
+            "bbb",
+            Some(100),
+            0,
+            false
+        ));
+
+        let mut enabled = TipEventState::default();
+        assert!(should_refresh_for_new_block_event(
+            &mut enabled,
+            "aaa",
+            Some(100),
+            0,
+            true
+        ));
+        assert!(should_refresh_for_new_block_event(
+            &mut enabled,
+            "bbb",
+            Some(100),
+            0,
+            true
+        ));
+    }
+
+    #[test]
+    fn historical_new_block_events_are_ignored_when_template_is_ahead() {
+        let mut state = TipEventState::default();
+        assert!(!should_refresh_for_new_block_event(
+            &mut state,
+            "abc",
+            Some(1759),
+            1761,
+            false
+        ));
+        assert!(should_refresh_for_new_block_event(
+            &mut state,
+            "def",
+            Some(1760),
+            1761,
+            false
+        ));
+    }
+
+    #[test]
+    fn timestamp_only_changes_do_not_trigger_refresh() {
+        let mut state = TipEventState::default();
+
+        let event_a =
+            parse_new_block_event_payload(r#"{"hash":"abc","height":500,"timestamp":1000}"#)
+                .expect("event should parse");
+        assert!(should_refresh_for_new_block_event(
+            &mut state,
+            &event_a.hash,
+            event_a.height,
+            0,
+            false
+        ));
+
+        let event_b =
+            parse_new_block_event_payload(r#"{"hash":"abc","height":500,"timestamp":1001}"#)
+                .expect("event should parse");
+        assert!(!should_refresh_for_new_block_event(
+            &mut state,
+            &event_b.hash,
+            event_b.height,
+            0,
+            false
+        ));
     }
 }
