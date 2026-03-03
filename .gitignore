@@ -27,6 +27,11 @@ pool.db
 *.sqlite
 *.sqlite3
 *.log
+data/
+
+# --- Python tooling ---
+scripts/__pycache__/
+*.pyc
 
 # --- Environment files ---
 .env
