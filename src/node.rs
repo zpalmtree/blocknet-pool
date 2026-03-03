@@ -159,6 +159,7 @@ impl NodeClient {
             .context("build node http client")?;
         let events_client = Client::builder()
             .default_headers(HeaderMap::new())
+            .timeout(None::<std::time::Duration>)
             .build()
             .context("build node events http client")?;
 
