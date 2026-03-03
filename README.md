@@ -14,10 +14,9 @@
 
 ```bash
 cargo build --release
-cargo run -- init
-# edit config.json
-# edit .env and set BLOCKNET_WALLET_PASSWORD
 cargo run --release
+# if missing, config.json and .env are created automatically
+# edit .env and set BLOCKNET_WALLET_PASSWORD
 ```
 
 Custom config:

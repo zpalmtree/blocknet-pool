@@ -383,10 +383,10 @@ CREATE TABLE IF NOT EXISTS address_risk (
     }
 
     pub fn get_total_pool_fees(&self) -> Result<u64> {
-        let row = self
-            .conn
-            .lock()
-            .query_one("SELECT COALESCE(SUM(amount), 0) FROM pool_fee_events", &[])?;
+        let row = self.conn.lock().query_one(
+            "SELECT COALESCE(SUM(amount)::BIGINT, 0) FROM pool_fee_events",
+            &[],
+        )?;
         let total: i64 = row.get(0);
         Ok(total.max(0) as u64)
     }

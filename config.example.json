@@ -30,7 +30,7 @@
   "enable_vardiff": true,
   "vardiff_target_shares": 5,
   "vardiff_window": "5m",
-  "vardiff_retarget_interval": "15s",
+  "vardiff_retarget_interval": "5s",
   "vardiff_tolerance": 0.25,
   "min_share_difficulty": 1,
   "max_share_difficulty": 1000000000,

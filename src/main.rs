@@ -1,4 +1,5 @@
 use std::env;
+use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -31,37 +32,12 @@ async fn main() -> Result<()> {
     let mut args = env::args().skip(1);
     let first = args.next();
 
-    match first.as_deref() {
-        Some("init") | Some("--init") => {
-            let config_path = PathBuf::from("config.json");
-            Config::write_default(&config_path)?;
-            let env_path = config_path
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .join(".env");
-            let created = generate_default_env(&env_path)?;
-            println!("wrote {}", config_path.display());
-            if created {
-                println!("wrote {}", env_path.display());
-            } else {
-                println!("kept existing {}", env_path.display());
-            }
-            println!(
-                "IMPORTANT: edit .env and set BLOCKNET_WALLET_PASSWORD before running the pool."
-            );
-            return Ok(());
-        }
-        Some("--help") | Some("-h") => {
-            println!("usage: blocknet-pool-rs [command] [flags]");
-            println!();
-            println!("commands:");
-            println!("  init, --init  generate default config.json and .env");
-            println!();
-            println!("flags:");
-            println!("  -c, --config  path to config file (default: config.json)");
-            return Ok(());
-        }
-        _ => {}
+    if matches!(first.as_deref(), Some("--help") | Some("-h")) {
+        println!("usage: blocknet-pool-rs [flags]");
+        println!();
+        println!("flags:");
+        println!("  -c, --config  path to config file (default: config.json)");
+        return Ok(());
     }
 
     let mut config_path = PathBuf::from("config.json");
@@ -73,8 +49,17 @@ async fn main() -> Result<()> {
         }
     }
 
+    ensure_runtime_files(&config_path)?;
     load_dotenv(&config_path);
     let cfg = Config::load(&config_path)?;
+    info!(
+        initial_share_difficulty = cfg.initial_share_difficulty,
+        min_share_difficulty = cfg.min_share_difficulty,
+        max_share_difficulty = cfg.max_share_difficulty,
+        vardiff_target_shares = cfg.vardiff_target_shares,
+        vardiff_retarget_interval = %cfg.vardiff_retarget_interval,
+        "loaded vardiff profile"
+    );
 
     let cfg_for_store = cfg.clone();
     let store = tokio::task::spawn_blocking(move || PoolStore::open_from_config(&cfg_for_store))
@@ -192,6 +177,31 @@ fn start_seen_share_gc(cfg: Config, store: Arc<PoolStore>) {
             }
         }
     });
+}
+
+fn ensure_runtime_files(config_path: &Path) -> Result<()> {
+    if !config_path.exists() {
+        if let Some(parent) = config_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("create config dir {}", parent.display()))?;
+            }
+        }
+        Config::write_default(config_path)?;
+        info!(path = %config_path.display(), "created default config");
+    }
+
+    let env_path = config_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(".env");
+    if generate_default_env(&env_path)? {
+        warn!(
+            path = %env_path.display(),
+            "created .env template; set BLOCKNET_WALLET_PASSWORD"
+        );
+    }
+    Ok(())
 }
 
 fn load_dotenv(config_path: &Path) {
