@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
         warn!(
             host = %cfg.api_host,
             port = cfg.api_port,
-            "api_key is empty; /api routes are unauthenticated"
+            "api_key is empty; only /api/stats and /api/miner/:address are public (other /api routes disabled)"
         );
     }
 
@@ -107,6 +107,7 @@ async fn main() -> Result<()> {
         Arc::clone(&store) as Arc<dyn ShareStore>,
         Arc::clone(&node) as Arc<dyn NodeApi>,
     ));
+    start_found_block_recovery(Arc::clone(&engine));
 
     let stats = Arc::new(PoolStats::new());
 
@@ -181,6 +182,22 @@ fn start_seen_share_gc(cfg: Config, store: Arc<PoolStore>) {
                 Ok(Ok(_)) => {}
                 Ok(Err(err)) => tracing::warn!(error = %err, "seen-share cleanup failed"),
                 Err(err) => tracing::warn!(error = %err, "seen-share cleanup task join failed"),
+            }
+        }
+    });
+}
+
+fn start_found_block_recovery(engine: Arc<PoolEngine>) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            ticker.tick().await;
+            let engine = Arc::clone(&engine);
+            match tokio::task::spawn_blocking(move || engine.recover_found_block_outbox()).await {
+                Ok(()) => {}
+                Err(err) => {
+                    tracing::warn!(error = %err, "found-block recovery task join failed")
+                }
             }
         }
     });

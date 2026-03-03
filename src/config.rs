@@ -1,4 +1,6 @@
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
@@ -98,7 +100,7 @@ impl Default for Config {
             max_quarantine_duration: "168h".to_string(),
             provisional_share_delay: "15m".to_string(),
             max_provisional_shares: 200,
-            stratum_submit_v2_required: false,
+            stratum_submit_v2_required: true,
             enable_vardiff: true,
             vardiff_target_shares: 10,
             vardiff_window: "5m".to_string(),
@@ -169,6 +171,7 @@ impl Config {
         if self.max_provisional_shares < 0 {
             self.max_provisional_shares = 0;
         }
+        self.stratum_submit_v2_required = true;
         if self.initial_share_difficulty < 1 {
             self.initial_share_difficulty = 1;
         }
@@ -278,7 +281,19 @@ pub fn generate_default_env(path: &Path) -> Result<bool> {
         return Ok(false);
     }
     let template = "# Blocknet pool runtime secrets\n# REQUIRED for wallet unlock/load operations\nBLOCKNET_WALLET_PASSWORD=\n";
-    fs::write(path, template).with_context(|| format!("write {}", path.display()))?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+
+    let mut file = options
+        .open(path)
+        .with_context(|| format!("write {}", path.display()))?;
+    file.write_all(template.as_bytes())
+        .with_context(|| format!("write {}", path.display()))?;
     Ok(true)
 }
 
@@ -298,6 +313,7 @@ mod tests {
             invalid_sample_min: 0,
             invalid_sample_threshold: 2.0,
             max_provisional_shares: -1,
+            stratum_submit_v2_required: false,
             initial_share_difficulty: 0,
             min_share_difficulty: 10,
             max_share_difficulty: 5,
@@ -317,6 +333,7 @@ mod tests {
         assert_eq!(cfg.invalid_sample_min, 1);
         assert_eq!(cfg.invalid_sample_threshold, 0.01);
         assert_eq!(cfg.max_provisional_shares, 0);
+        assert!(cfg.stratum_submit_v2_required);
         assert_eq!(cfg.min_share_difficulty, 10);
         assert_eq!(cfg.max_share_difficulty, 10);
         assert_eq!(cfg.initial_share_difficulty, 10);

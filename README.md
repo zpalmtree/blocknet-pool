@@ -53,7 +53,7 @@ When `database_url` is set, Postgres is used automatically and `database_path` i
 
 - Stratum server
 - Template/job manager
-- Validation engine (bounded queues, candidate priority)
+- Validation engine (bounded queues)
 - Persistent storage (SQLite)
 - Payout processor
 - HTTP API
@@ -61,23 +61,36 @@ When `database_url` is set, Postgres is used automatically and `database_path` i
 ## Core API Endpoints
 
 - `GET /api/stats`
-- `GET /api/miners`
 - `GET /api/miner/{address}`
+- `GET /api/miners`
 - `GET /api/blocks`
 - `GET /api/payouts`
+- `GET /api/fees`
 
 ## Stratum Notes
 
 - Login supports protocol negotiation (`protocol_version`, `capabilities`)
-- Submit supports legacy and v2 payloads
-- Candidate shares are prioritized in validation
-- Queue pressure behavior preserves legacy inline handling for no-claimed-hash submits
+- Pool requires protocol v2 submit capability (`submit_claimed_hash`)
+- Legacy submits without `claimed_hash` are rejected
+- Queue pressure returns `server busy, retry` (no inline bypass)
 - Per-connection vardiff retargeting is enabled by default to target a small number of shares per window (`vardiff_*` config keys)
 - Default vardiff profile assumes a weak baseline miner and aims for ~10 shares / 5 minutes (`initial_share_difficulty=60`, `vardiff_target_shares=10`)
 
 ## API Auth
 
-Set `api_key` in `config.json` to require authentication for `/api/*` routes.
+Public endpoints (no API key required):
+
+- `GET /api/stats`
+- `GET /api/miner/{address}`
+
+Protected endpoints (API key required):
+
+- `GET /api/miners`
+- `GET /api/blocks`
+- `GET /api/payouts`
+- `GET /api/fees`
+
+When `api_key` is unset, protected endpoints return `503 api key not configured`.
 
 Accepted headers:
 

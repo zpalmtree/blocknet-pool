@@ -1,16 +1,20 @@
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::env;
+use std::fs::{self, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::pow::{check_target, difficulty_to_target};
 use crate::protocol::{
     build_login_result, normalize_capabilities, normalize_protocol_version, normalize_worker_name,
-    parse_hash_hex, should_inline_validation_on_queue_full, CAP_SUBMIT_CLAIMED_HASH,
-    STRATUM_PROTOCOL_VERSION_CURRENT,
+    parse_hash_hex, CAP_SUBMIT_CLAIMED_HASH, STRATUM_PROTOCOL_VERSION_CURRENT,
 };
 use crate::validation::{
     ValidationEngine, ValidationResult, ValidationTask, SHARE_STATUS_PROVISIONAL,
@@ -21,6 +25,10 @@ const VARDIFF_MIN_SAMPLE_COUNT: usize = 3;
 const VARDIFF_RATIO_DAMPING_EXPONENT: f64 = 0.45;
 const VARDIFF_MIN_ADJUSTMENT_FACTOR: f64 = 1.02;
 const VARDIFF_MAX_ADJUSTMENT_FACTOR: f64 = 1.5;
+const FOUND_BLOCK_OUTBOX_ENV: &str = "BLOCKNET_POOL_FOUND_BLOCK_OUTBOX";
+const FOUND_BLOCK_OUTBOX_DEFAULT_PATH: &str = "data/found-block-recovery.jsonl";
+const FOUND_BLOCK_OUTBOX_FALLBACK_PATH: &str = "/tmp/blocknet-pool-found-block-recovery.jsonl";
+const FOUND_BLOCK_PERSIST_MAX_RETRIES: usize = 3;
 
 #[derive(Debug, Clone)]
 pub struct Job {
@@ -118,6 +126,16 @@ pub struct FoundBlockRecord {
     pub timestamp: SystemTime,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FoundBlockOutboxRecord {
+    height: u64,
+    hash: String,
+    difficulty: u64,
+    finder: String,
+    finder_worker: String,
+    timestamp_unix: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct SubmitAck {
     pub accepted: bool,
@@ -148,6 +166,7 @@ pub struct PoolEngine {
 
     sessions: Mutex<HashMap<String, MinerSession>>,
     seen_in_memory: Mutex<HashSet<(String, u64)>>,
+    found_block_outbox_lock: Mutex<()>,
 }
 
 impl PoolEngine {
@@ -158,7 +177,7 @@ impl PoolEngine {
         store: Arc<dyn ShareStore>,
         node: Arc<dyn NodeApi>,
     ) -> Self {
-        Self {
+        let engine = Self {
             cfg,
             validation,
             jobs,
@@ -166,7 +185,10 @@ impl PoolEngine {
             node,
             sessions: Mutex::new(HashMap::new()),
             seen_in_memory: Mutex::new(HashSet::new()),
-        }
+            found_block_outbox_lock: Mutex::new(()),
+        };
+        engine.recover_found_block_outbox();
+        engine
     }
 
     pub fn login(
@@ -187,15 +209,10 @@ impl PoolEngine {
         let caps = normalize_capabilities(&capabilities);
         let cap_set = caps.iter().cloned().collect::<BTreeSet<_>>();
 
-        if self.cfg.stratum_submit_v2_required
-            && protocol_version < STRATUM_PROTOCOL_VERSION_CURRENT
-        {
+        if protocol_version < STRATUM_PROTOCOL_VERSION_CURRENT {
             return Err(anyhow!("pool requires protocol_version >= 2"));
         }
-        if self.cfg.stratum_submit_v2_required
-            && !caps.is_empty()
-            && !cap_set.contains(CAP_SUBMIT_CLAIMED_HASH)
-        {
+        if !cap_set.contains(CAP_SUBMIT_CLAIMED_HASH) {
             return Err(anyhow!("pool requires submit_claimed_hash capability"));
         }
         if self.store.is_address_quarantined(address)? {
@@ -219,10 +236,7 @@ impl PoolEngine {
             },
         );
 
-        Ok(build_login_result(
-            protocol_version,
-            self.cfg.stratum_submit_v2_required,
-        ))
+        Ok(build_login_result(protocol_version, true))
     }
 
     pub fn disconnect(&self, conn_id: &str) {
@@ -274,12 +288,18 @@ impl PoolEngine {
 
         let claimed_hash = match claimed_hash_hex {
             Some(ref value) if !value.trim().is_empty() => {
-                Some(parse_hash_hex(value).map_err(|err| anyhow!(err))?)
+                match parse_hash_hex(value) {
+                    Ok(hash) => Some(hash),
+                    Err(err) => {
+                        self.seen_in_memory.lock().remove(&seen_key);
+                        return Err(anyhow!(err));
+                    }
+                }
             }
             _ => None,
         };
 
-        if self.cfg.stratum_submit_v2_required && claimed_hash.is_none() {
+        if claimed_hash.is_none() {
             self.seen_in_memory.lock().remove(&seen_key);
             return Err(anyhow!("claimed hash required"));
         }
@@ -296,15 +316,17 @@ impl PoolEngine {
             }
         };
         let job_id_for_share = job_id.clone();
+        let mut release_claim_on_error = true;
 
         let result = (|| -> Result<SubmitAck> {
             if self.store.is_address_quarantined(&session.address)? {
+                release_claim_on_error = false;
                 return Err(anyhow!("address quarantined"));
             }
 
             let share_target = difficulty_to_target(share_difficulty);
 
-            let candidate_hint = claimed_hash
+            let candidate_claim = claimed_hash
                 .map(|hash| check_target(hash, job.network_target))
                 .unwrap_or(false);
 
@@ -315,14 +337,14 @@ impl PoolEngine {
                 share_target,
                 network_target: job.network_target,
                 claimed_hash,
-                force_full_verify: candidate_hint
-                    || claimed_hash.is_none()
+                force_full_verify: candidate_claim
                     || self.store.should_force_verify_address(&session.address)?,
             };
 
-            let validation = self.validate_task(task, claimed_hash.is_some(), candidate_hint)?;
+            let validation = self.validate_task(task)?;
 
             if !validation.accepted {
+                release_claim_on_error = false;
                 if validation.suspected_fraud || validation.escalate_risk {
                     let reason = validation.reject_reason.unwrap_or("risk escalation");
                     if let Err(err) = self.store.escalate_address_risk(
@@ -372,14 +394,7 @@ impl PoolEngine {
                         finder_worker: session.worker.clone(),
                         timestamp: SystemTime::now(),
                     };
-                    if let Err(err) = self.store.add_found_block(found) {
-                        tracing::error!(
-                            address = %session.address,
-                            height = job.height,
-                            error = %err,
-                            "critical: failed to persist found block"
-                        );
-                    }
+                    self.persist_found_block(found)?;
                 }
             }
 
@@ -407,7 +422,7 @@ impl PoolEngine {
             })
         })();
 
-        if claimed && result.is_err() {
+        if claimed && result.is_err() && release_claim_on_error {
             if let Err(err) = self.store.release_share_claim(&job_id, nonce) {
                 tracing::warn!(
                     job_id = %job_id,
@@ -422,13 +437,193 @@ impl PoolEngine {
         result
     }
 
-    fn validate_task(
-        &self,
-        task: ValidationTask,
-        has_claimed_hash: bool,
-        candidate_hint: bool,
-    ) -> Result<ValidationResult> {
-        if let Some(rx) = self.validation.submit(task.clone(), candidate_hint) {
+    pub fn recover_found_block_outbox(&self) {
+        let path = found_block_outbox_path();
+        let _guard = self.found_block_outbox_lock.lock();
+        self.recover_found_block_outbox_locked(&path);
+    }
+
+    fn persist_found_block(&self, found: FoundBlockRecord) -> Result<()> {
+        let mut last_error = String::new();
+        for attempt in 1..=FOUND_BLOCK_PERSIST_MAX_RETRIES {
+            match self.store.add_found_block(found.clone()) {
+                Ok(()) => return Ok(()),
+                Err(err) => {
+                    last_error = err.to_string();
+                    tracing::warn!(
+                        height = found.height,
+                        hash = %found.hash,
+                        finder = %found.finder,
+                        attempt,
+                        error = %err,
+                        "failed to persist accepted block"
+                    );
+                }
+            }
+            std::thread::sleep(Duration::from_millis(100 * attempt as u64));
+        }
+
+        self.append_found_block_outbox(&found)?;
+        Err(anyhow!(
+            "accepted block not persisted after {} attempts: {}",
+            FOUND_BLOCK_PERSIST_MAX_RETRIES,
+            last_error
+        ))
+    }
+
+    fn append_found_block_outbox(&self, found: &FoundBlockRecord) -> Result<()> {
+        let primary_path = found_block_outbox_path();
+        let fallback_path = PathBuf::from(FOUND_BLOCK_OUTBOX_FALLBACK_PATH);
+        let _guard = self.found_block_outbox_lock.lock();
+
+        match append_found_block_outbox_record(&primary_path, found) {
+            Ok(()) => {
+                tracing::error!(
+                    path = %primary_path.display(),
+                    height = found.height,
+                    hash = %found.hash,
+                    finder = %found.finder,
+                    "recorded accepted block in recovery outbox"
+                );
+                Ok(())
+            }
+            Err(primary_err) => {
+                if fallback_path != primary_path {
+                    match append_found_block_outbox_record(&fallback_path, found) {
+                        Ok(()) => {
+                            tracing::error!(
+                                path = %fallback_path.display(),
+                                primary_path = %primary_path.display(),
+                                height = found.height,
+                                hash = %found.hash,
+                                finder = %found.finder,
+                                error = %primary_err,
+                                "primary outbox write failed; wrote accepted block to fallback outbox"
+                            );
+                            return Ok(());
+                        }
+                        Err(fallback_err) => {
+                            return Err(anyhow!(
+                                "failed to write accepted block outbox (primary: {}; fallback: {})",
+                                primary_err,
+                                fallback_err
+                            ));
+                        }
+                    }
+                }
+                Err(anyhow!("failed to write accepted block outbox: {}", primary_err))
+            }
+        }
+    }
+
+    fn recover_found_block_outbox_locked(&self, path: &PathBuf) {
+        let file = match OpenOptions::new().read(true).open(path) {
+            Ok(v) => v,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
+            Err(err) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %err,
+                    "failed to open found-block recovery outbox"
+                );
+                return;
+            }
+        };
+
+        let reader = BufReader::new(file);
+        let mut retained = Vec::<String>::new();
+        let mut recovered = 0u64;
+
+        for (idx, line) in reader.lines().enumerate() {
+            let line = match line {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        line = idx + 1,
+                        error = %err,
+                        "failed reading found-block recovery outbox line"
+                    );
+                    continue;
+                }
+            };
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let record: FoundBlockOutboxRecord = match serde_json::from_str(trimmed) {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        line = idx + 1,
+                        error = %err,
+                        "invalid found-block recovery outbox record"
+                    );
+                    retained.push(trimmed.to_string());
+                    continue;
+                }
+            };
+
+            let found = FoundBlockRecord {
+                height: record.height,
+                hash: record.hash,
+                difficulty: record.difficulty,
+                finder: record.finder,
+                finder_worker: record.finder_worker,
+                timestamp: unix_to_system_time(record.timestamp_unix),
+            };
+
+            match self.store.add_found_block(found) {
+                Ok(()) => {
+                    recovered = recovered.saturating_add(1);
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        line = idx + 1,
+                        error = %err,
+                        "failed replaying found-block recovery record"
+                    );
+                    retained.push(trimmed.to_string());
+                }
+            }
+        }
+
+        if retained.is_empty() {
+            if let Err(err) = fs::remove_file(path) {
+                if err.kind() != std::io::ErrorKind::NotFound {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %err,
+                        "failed removing drained found-block recovery outbox"
+                    );
+                }
+            }
+        } else {
+            let mut data = retained.join("\n");
+            data.push('\n');
+            if let Err(err) = fs::write(path, data.as_bytes()) {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %err,
+                    "failed rewriting found-block recovery outbox"
+                );
+            }
+        }
+
+        if recovered > 0 {
+            tracing::info!(
+                path = %path.display(),
+                recovered,
+                "recovered accepted blocks from outbox"
+            );
+        }
+    }
+
+    fn validate_task(&self, task: ValidationTask) -> Result<ValidationResult> {
+        if let Some(rx) = self.validation.submit(task, false) {
             let mut timeout = self.cfg.job_timeout_duration();
             timeout = timeout.clamp(Duration::from_secs(5), Duration::from_secs(60));
             return rx
@@ -436,11 +631,7 @@ impl PoolEngine {
                 .map_err(|_| anyhow!("validation timeout"));
         }
 
-        if should_inline_validation_on_queue_full(has_claimed_hash, candidate_hint) {
-            Ok(self.validation.process_inline(task))
-        } else {
-            Err(anyhow!("server busy, retry"))
-        }
+        Err(anyhow!("server busy, retry"))
     }
 
     pub fn session_protocol_version(&self, conn_id: &str) -> Option<u32> {
@@ -581,6 +772,55 @@ fn hex_string(hash: [u8; 32]) -> String {
         let _ = write!(out, "{:02x}", b);
     }
     out
+}
+
+fn found_block_outbox_path() -> PathBuf {
+    let configured = env::var(FOUND_BLOCK_OUTBOX_ENV)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    if let Some(path) = configured {
+        return PathBuf::from(path);
+    }
+    PathBuf::from(FOUND_BLOCK_OUTBOX_DEFAULT_PATH)
+}
+
+fn system_time_to_unix(ts: SystemTime) -> i64 {
+    i64::try_from(
+        ts.duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    )
+    .unwrap_or(i64::MAX)
+}
+
+fn unix_to_system_time(ts: i64) -> SystemTime {
+    if ts <= 0 {
+        return SystemTime::UNIX_EPOCH;
+    }
+    SystemTime::UNIX_EPOCH + Duration::from_secs(ts as u64)
+}
+
+fn append_found_block_outbox_record(path: &PathBuf, found: &FoundBlockRecord) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    let record = FoundBlockOutboxRecord {
+        height: found.height,
+        hash: found.hash.clone(),
+        difficulty: found.difficulty,
+        finder: found.finder.clone(),
+        finder_worker: found.finder_worker.clone(),
+        timestamp_unix: system_time_to_unix(found.timestamp),
+    };
+    serde_json::to_writer(&mut file, &record)?;
+    file.write_all(b"\n")?;
+    file.flush()?;
+    Ok(())
 }
 
 #[derive(Default)]
@@ -738,7 +978,6 @@ impl NodeApi for InMemoryNode {
 mod tests {
     use super::*;
     use crate::pow::{difficulty_to_target, DeterministicTestHasher, PowHasher};
-    use std::sync::atomic::{AtomicBool, Ordering};
 
     fn cfg() -> Config {
         Config {
@@ -764,6 +1003,10 @@ mod tests {
             template_id: Some("tmpl1".to_string()),
             full_block: None,
         }
+    }
+
+    fn submit_hash_cap() -> Vec<String> {
+        vec!["submit_claimed_hash".to_string()]
     }
 
     #[test]
@@ -796,10 +1039,8 @@ mod tests {
     }
 
     #[test]
-    fn login_rejects_old_protocol_when_required() {
-        let mut cfg = cfg();
-        cfg.stratum_submit_v2_required = true;
-
+    fn login_rejects_old_protocol() {
+        let cfg = cfg();
         let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
         let validation = Arc::new(validation);
         let engine = PoolEngine::new(
@@ -816,10 +1057,29 @@ mod tests {
                 "BTestAddr".to_string(),
                 None,
                 1,
-                vec!["submit_claimed_hash".to_string()],
+                submit_hash_cap(),
             )
-            .expect_err("should reject protocol 1 when v2 required");
+            .expect_err("should reject protocol 1");
         assert!(err.to_string().contains("protocol_version"));
+    }
+
+    #[test]
+    fn login_rejects_missing_submit_claimed_hash_capability() {
+        let cfg = cfg();
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            Arc::new(InMemoryJobs::default()),
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
+        let err = engine
+            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .expect_err("should require submit_claimed_hash capability");
+        assert!(err.to_string().contains("submit_claimed_hash"));
     }
 
     #[test]
@@ -862,7 +1122,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
             .expect("login");
 
         // In probabilistic mode with sample_rate=0 and no forced full verify, claimed hash drives acceptance.
@@ -897,7 +1157,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
             .expect("login");
 
         engine
@@ -944,7 +1204,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
             .expect("login");
 
         let ack = engine
@@ -982,7 +1242,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
             .expect("login");
         let _ = engine
             .submit("conn1", "job1".to_string(), 100, Some("ff".repeat(32)))
@@ -1029,7 +1289,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
             .expect("login");
         let _ = engine
             .submit("conn1", "job1".to_string(), 200, Some("ff".repeat(32)))
@@ -1057,13 +1317,10 @@ mod tests {
     }
 
     #[test]
-    fn queue_full_regular_submit_returns_busy_but_legacy_inline_works() {
-        struct SlowHasher {
-            hit: AtomicBool,
-        }
+    fn queue_full_submit_returns_busy_without_inline_bypass() {
+        struct SlowHasher;
         impl PowHasher for SlowHasher {
             fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
-                self.hit.store(true, Ordering::Relaxed);
                 std::thread::sleep(Duration::from_millis(120));
                 Ok([0x01; 32])
             }
@@ -1073,10 +1330,7 @@ mod tests {
         cfg.max_validation_queue = 1;
         cfg.validation_mode = "full".to_string();
 
-        let hasher = Arc::new(SlowHasher {
-            hit: AtomicBool::new(false),
-        });
-        let validation = ValidationEngine::new(cfg.clone(), hasher);
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(SlowHasher));
         let validation = Arc::new(validation);
         let jobs = Arc::new(InMemoryJobs::default());
         jobs.insert(Job {
@@ -1093,10 +1347,10 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
             .expect("login");
 
-        // Fill queue with one candidate so next regular v2 submit sees queue pressure.
+        // Fill queue with one submit so next submit sees queue pressure.
         let _ = engine.submit("conn1", "job1".to_string(), 1, Some("00".repeat(32)));
 
         // v2 regular share should return busy when queue is full.
@@ -1104,11 +1358,31 @@ mod tests {
             .submit("conn1", "job1".to_string(), 2, Some("ff".repeat(32)))
             .expect_err("regular share should be rejected when queue is full");
         assert!(!err.to_string().is_empty());
+    }
 
-        // Legacy path (no claimed hash) should still inline and not return busy.
+    #[test]
+    fn legacy_submit_without_claimed_hash_is_rejected() {
+        let cfg = cfg();
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
         engine
+            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
+            .expect("login");
+
+        let err = engine
             .submit("conn1", "job1".to_string(), 3, None)
-            .expect("legacy share should not be dropped");
+            .expect_err("legacy submit without claimed hash should fail");
+        assert!(err.to_string().contains("claimed hash required"));
     }
 
     #[test]
@@ -1130,7 +1404,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
             .expect("login");
 
         let err = engine
@@ -1138,6 +1412,11 @@ mod tests {
             .expect_err("expected invalid share proof");
         assert!(!err.to_string().is_empty());
         assert!(engine.seen_in_memory.lock().is_empty());
+
+        let second = engine
+            .submit("conn1", "job1".to_string(), 88, Some("ff".repeat(32)))
+            .expect_err("replay should be treated as duplicate");
+        assert!(second.to_string().contains("duplicate"));
     }
 
     #[test]
@@ -1156,7 +1435,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
             .expect("login");
         engine
             .submit("conn1", "job1".to_string(), 89, Some("ff".repeat(32)))
@@ -1192,7 +1471,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
             .expect("login");
         let ack = engine
             .submit(
@@ -1229,7 +1508,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
             .expect("login");
         let err = engine
             .submit(
@@ -1266,7 +1545,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .login("conn1", "BTestAddr".to_string(), None, 2, submit_hash_cap())
             .expect("login");
         let err = engine
             .submit(

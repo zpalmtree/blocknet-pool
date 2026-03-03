@@ -114,13 +114,6 @@ pub fn build_login_result(protocol_version: u32, submit_v2_required: bool) -> Lo
     }
 }
 
-pub fn should_inline_validation_on_queue_full(
-    has_claimed_hash: bool,
-    candidate_hint: bool,
-) -> bool {
-    candidate_hint || !has_claimed_hash
-}
-
 pub fn parse_hash_hex(v: &str) -> Result<[u8; 32], String> {
     let trimmed = v.trim();
     let raw = hex_decode(trimmed)?;
@@ -215,10 +208,4 @@ mod tests {
         assert_eq!(parsed, [0xAB; 32]);
     }
 
-    #[test]
-    fn queue_full_inline_behavior_matches_legacy() {
-        assert!(should_inline_validation_on_queue_full(false, false));
-        assert!(should_inline_validation_on_queue_full(true, true));
-        assert!(!should_inline_validation_on_queue_full(true, false));
-    }
 }

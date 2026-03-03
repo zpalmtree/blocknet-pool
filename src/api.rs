@@ -59,17 +59,20 @@ pub struct NetworkHashrateCache {
 
 pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
     let app_state = state.clone();
-    let app = Router::new()
-        .route("/api/stats", get(handle_stats))
+    let protected = Router::new()
         .route("/api/miners", get(handle_miners))
-        .route("/api/miner/:address", get(handle_miner))
         .route("/api/blocks", get(handle_blocks))
         .route("/api/payouts", get(handle_payouts))
         .route("/api/fees", get(handle_fees))
         .route_layer(middleware::from_fn_with_state(
             app_state.clone(),
             require_api_key,
-        ))
+        ));
+
+    let app = Router::new()
+        .route("/api/stats", get(handle_stats))
+        .route("/api/miner/:address", get(handle_miner))
+        .merge(protected)
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -401,7 +404,11 @@ async fn require_api_key(
 ) -> impl IntoResponse {
     let expected = state.api_key.trim();
     if expected.is_empty() {
-        return next.run(req).await.into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error":"api key not configured"})),
+        )
+            .into_response();
     }
 
     let api_key = req

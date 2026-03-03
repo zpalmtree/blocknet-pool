@@ -26,7 +26,7 @@
   "max_quarantine_duration": "168h",
   "provisional_share_delay": "15m",
   "max_provisional_shares": 200,
-  "stratum_submit_v2_required": false,
+  "stratum_submit_v2_required": true,
   "enable_vardiff": true,
   "vardiff_target_shares": 10,
   "vardiff_window": "5m",
