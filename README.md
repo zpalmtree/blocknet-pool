@@ -70,11 +70,12 @@ When `database_url` is set, Postgres is used automatically and `database_path` i
 ## Stratum Notes
 
 - Login supports protocol negotiation (`protocol_version`, `capabilities`)
-- Pool requires protocol v2 submit capability (`submit_claimed_hash`)
-- Legacy submits without `claimed_hash` are rejected
+- `stratum_submit_v2_required=true` (default): requires protocol v2 + `submit_claimed_hash`
+- `stratum_submit_v2_required=false`: allows legacy submits without `claimed_hash` (full verification path)
 - Queue pressure returns `server busy, retry` (no inline bypass)
 - Per-connection vardiff retargeting is enabled by default to target a small number of shares per window (`vardiff_*` config keys)
 - Default vardiff profile assumes a weak baseline miner and aims for ~10 shares / 5 minutes (`initial_share_difficulty=60`, `vardiff_target_shares=10`)
+- Template refresh identity is intentionally conservative (`height` + `network_target`) to avoid spamming miners with new jobs when template responses change only in ephemeral fields. Tradeoff: same-height template updates that keep the same target may not trigger a new job immediately.
 
 ## API Auth
 

@@ -315,6 +315,27 @@ CREATE TABLE IF NOT EXISTS address_risk (
         Ok(())
     }
 
+    pub fn insert_block_if_absent(&self, block: &DbBlock) -> Result<bool> {
+        let inserted = self.conn.lock().execute(
+            "INSERT INTO blocks (height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(height) DO NOTHING",
+            params![
+                u64_to_i64(block.height)?,
+                block.hash,
+                u64_to_i64(block.difficulty)?,
+                block.finder,
+                block.finder_worker,
+                u64_to_i64(block.reward)?,
+                to_unix(block.timestamp),
+                if block.confirmed { 1i64 } else { 0i64 },
+                if block.orphaned { 1i64 } else { 0i64 },
+                if block.paid_out { 1i64 } else { 0i64 },
+            ],
+        )?;
+        Ok(inserted > 0)
+    }
+
     pub fn get_block(&self, height: u64) -> Result<Option<DbBlock>> {
         let conn = self.conn.lock();
         conn.query_row(

@@ -171,7 +171,6 @@ impl Config {
         if self.max_provisional_shares < 0 {
             self.max_provisional_shares = 0;
         }
-        self.stratum_submit_v2_required = true;
         if self.initial_share_difficulty < 1 {
             self.initial_share_difficulty = 1;
         }
@@ -333,7 +332,7 @@ mod tests {
         assert_eq!(cfg.invalid_sample_min, 1);
         assert_eq!(cfg.invalid_sample_threshold, 0.01);
         assert_eq!(cfg.max_provisional_shares, 0);
-        assert!(cfg.stratum_submit_v2_required);
+        assert!(!cfg.stratum_submit_v2_required);
         assert_eq!(cfg.min_share_difficulty, 10);
         assert_eq!(cfg.max_share_difficulty, 10);
         assert_eq!(cfg.initial_share_difficulty, 10);

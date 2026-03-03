@@ -207,5 +207,4 @@ mod tests {
         let parsed = parse_hash_hex(&s).expect("parse");
         assert_eq!(parsed, [0xAB; 32]);
     }
-
 }

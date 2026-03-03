@@ -1,4 +1,3 @@
-use std::mem::ManuallyDrop;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -14,7 +13,7 @@ use crate::engine::{ShareRecord, ShareStore};
 const SEEN_SHARE_EXPIRY_SECS: i64 = 24 * 60 * 60;
 
 pub struct PostgresStore {
-    conn: Mutex<ManuallyDrop<Client>>,
+    conn: Mutex<Client>,
 }
 
 impl PostgresStore {
@@ -108,7 +107,7 @@ CREATE TABLE IF NOT EXISTS address_risk (
         .context("init postgres schema")?;
 
         Ok(Arc::new(Self {
-            conn: Mutex::new(ManuallyDrop::new(conn)),
+            conn: Mutex::new(conn),
         }))
     }
 
@@ -222,6 +221,27 @@ CREATE TABLE IF NOT EXISTS address_risk (
             ],
         )?;
         Ok(())
+    }
+
+    pub fn insert_block_if_absent(&self, block: &DbBlock) -> Result<bool> {
+        let inserted = self.conn.lock().execute(
+            "INSERT INTO blocks (height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT(height) DO NOTHING",
+            &[
+                &u64_to_i64(block.height)?,
+                &block.hash,
+                &u64_to_i64(block.difficulty)?,
+                &block.finder,
+                &block.finder_worker,
+                &u64_to_i64(block.reward)?,
+                &to_unix(block.timestamp),
+                &block.confirmed,
+                &block.orphaned,
+                &block.paid_out,
+            ],
+        )?;
+        Ok(inserted > 0)
     }
 
     pub fn get_block(&self, height: u64) -> Result<Option<DbBlock>> {

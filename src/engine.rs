@@ -27,7 +27,6 @@ const VARDIFF_MIN_ADJUSTMENT_FACTOR: f64 = 1.02;
 const VARDIFF_MAX_ADJUSTMENT_FACTOR: f64 = 1.5;
 const FOUND_BLOCK_OUTBOX_ENV: &str = "BLOCKNET_POOL_FOUND_BLOCK_OUTBOX";
 const FOUND_BLOCK_OUTBOX_DEFAULT_PATH: &str = "data/found-block-recovery.jsonl";
-const FOUND_BLOCK_OUTBOX_FALLBACK_PATH: &str = "/tmp/blocknet-pool-found-block-recovery.jsonl";
 const FOUND_BLOCK_PERSIST_MAX_RETRIES: usize = 3;
 
 #[derive(Debug, Clone)]
@@ -209,11 +208,13 @@ impl PoolEngine {
         let caps = normalize_capabilities(&capabilities);
         let cap_set = caps.iter().cloned().collect::<BTreeSet<_>>();
 
-        if protocol_version < STRATUM_PROTOCOL_VERSION_CURRENT {
-            return Err(anyhow!("pool requires protocol_version >= 2"));
-        }
-        if !cap_set.contains(CAP_SUBMIT_CLAIMED_HASH) {
-            return Err(anyhow!("pool requires submit_claimed_hash capability"));
+        if self.cfg.stratum_submit_v2_required {
+            if protocol_version < STRATUM_PROTOCOL_VERSION_CURRENT {
+                return Err(anyhow!("pool requires protocol_version >= 2"));
+            }
+            if !cap_set.contains(CAP_SUBMIT_CLAIMED_HASH) {
+                return Err(anyhow!("pool requires submit_claimed_hash capability"));
+            }
         }
         if self.store.is_address_quarantined(address)? {
             return Err(anyhow!("address quarantined"));
@@ -236,7 +237,10 @@ impl PoolEngine {
             },
         );
 
-        Ok(build_login_result(protocol_version, true))
+        Ok(build_login_result(
+            protocol_version,
+            self.cfg.stratum_submit_v2_required,
+        ))
     }
 
     pub fn disconnect(&self, conn_id: &str) {
@@ -287,19 +291,18 @@ impl PoolEngine {
         }
 
         let claimed_hash = match claimed_hash_hex {
-            Some(ref value) if !value.trim().is_empty() => {
-                match parse_hash_hex(value) {
-                    Ok(hash) => Some(hash),
-                    Err(err) => {
-                        self.seen_in_memory.lock().remove(&seen_key);
-                        return Err(anyhow!(err));
-                    }
+            Some(ref value) if !value.trim().is_empty() => match parse_hash_hex(value) {
+                Ok(hash) => Some(hash),
+                Err(err) => {
+                    self.seen_in_memory.lock().remove(&seen_key);
+                    return Err(anyhow!(err));
                 }
-            }
+            },
             _ => None,
         };
 
-        if claimed_hash.is_none() {
+        let require_claimed_hash = self.cfg.stratum_submit_v2_required;
+        if require_claimed_hash && claimed_hash.is_none() {
             self.seen_in_memory.lock().remove(&seen_key);
             return Err(anyhow!("claimed hash required"));
         }
@@ -338,7 +341,8 @@ impl PoolEngine {
                 network_target: job.network_target,
                 claimed_hash,
                 force_full_verify: candidate_claim
-                    || self.store.should_force_verify_address(&session.address)?,
+                    || self.store.should_force_verify_address(&session.address)?
+                    || (!require_claimed_hash && claimed_hash.is_none()),
             };
 
             let validation = self.validate_task(task)?;
@@ -473,7 +477,6 @@ impl PoolEngine {
 
     fn append_found_block_outbox(&self, found: &FoundBlockRecord) -> Result<()> {
         let primary_path = found_block_outbox_path();
-        let fallback_path = PathBuf::from(FOUND_BLOCK_OUTBOX_FALLBACK_PATH);
         let _guard = self.found_block_outbox_lock.lock();
 
         match append_found_block_outbox_record(&primary_path, found) {
@@ -487,32 +490,10 @@ impl PoolEngine {
                 );
                 Ok(())
             }
-            Err(primary_err) => {
-                if fallback_path != primary_path {
-                    match append_found_block_outbox_record(&fallback_path, found) {
-                        Ok(()) => {
-                            tracing::error!(
-                                path = %fallback_path.display(),
-                                primary_path = %primary_path.display(),
-                                height = found.height,
-                                hash = %found.hash,
-                                finder = %found.finder,
-                                error = %primary_err,
-                                "primary outbox write failed; wrote accepted block to fallback outbox"
-                            );
-                            return Ok(());
-                        }
-                        Err(fallback_err) => {
-                            return Err(anyhow!(
-                                "failed to write accepted block outbox (primary: {}; fallback: {})",
-                                primary_err,
-                                fallback_err
-                            ));
-                        }
-                    }
-                }
-                Err(anyhow!("failed to write accepted block outbox: {}", primary_err))
-            }
+            Err(primary_err) => Err(anyhow!(
+                "failed to write accepted block outbox: {}",
+                primary_err
+            )),
         }
     }
 
@@ -807,8 +788,23 @@ fn append_found_block_outbox_record(path: &PathBuf, found: &FoundBlockRecord) ->
             fs::create_dir_all(parent)?;
         }
     }
+    if let Ok(meta) = fs::symlink_metadata(path) {
+        if meta.file_type().is_symlink() {
+            return Err(anyhow!(
+                "refusing to write found-block outbox symlink: {}",
+                path.display()
+            ));
+        }
+    }
 
-    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
     let record = FoundBlockOutboxRecord {
         height: found.height,
         hash: found.hash.clone(),
@@ -1052,13 +1048,7 @@ mod tests {
         );
 
         let err = engine
-            .login(
-                "conn1",
-                "BTestAddr".to_string(),
-                None,
-                1,
-                submit_hash_cap(),
-            )
+            .login("conn1", "BTestAddr".to_string(), None, 1, submit_hash_cap())
             .expect_err("should reject protocol 1");
         assert!(err.to_string().contains("protocol_version"));
     }
@@ -1080,6 +1070,28 @@ mod tests {
             .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
             .expect_err("should require submit_claimed_hash capability");
         assert!(err.to_string().contains("submit_claimed_hash"));
+    }
+
+    #[test]
+    fn login_allows_legacy_protocol_when_v2_not_required() {
+        let mut cfg = cfg();
+        cfg.stratum_submit_v2_required = false;
+
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            Arc::new(InMemoryJobs::default()),
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
+        let result = engine
+            .login("conn1", "BTestAddr".to_string(), None, 1, vec![])
+            .expect("legacy login should be accepted when v2 is optional");
+        assert_eq!(result.protocol_version, 1);
+        assert!(result.required_capabilities.is_empty());
     }
 
     #[test]
@@ -1383,6 +1395,36 @@ mod tests {
             .submit("conn1", "job1".to_string(), 3, None)
             .expect_err("legacy submit without claimed hash should fail");
         assert!(err.to_string().contains("claimed hash required"));
+    }
+
+    #[test]
+    fn legacy_submit_without_claimed_hash_is_accepted_when_v2_not_required() {
+        let mut cfg = cfg();
+        cfg.stratum_submit_v2_required = false;
+        cfg.validation_mode = "probabilistic".to_string();
+
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login("conn1", "BTestAddr".to_string(), None, 1, vec![])
+            .expect("legacy login should succeed");
+
+        let ack = engine
+            .submit("conn1", "job1".to_string(), 3, None)
+            .expect("legacy submit should be accepted when v2 is optional");
+        assert!(ack.accepted);
+        assert!(ack.verified, "legacy submits are force-verified");
+        assert_eq!(ack.status, SHARE_STATUS_VERIFIED);
     }
 
     #[test]

@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
+use tracing::warn;
 
 use crate::config::Config;
 use crate::db::{
@@ -399,7 +400,7 @@ impl ShareStore for PoolStore {
     }
 
     fn add_found_block(&self, block: FoundBlockRecord) -> Result<()> {
-        self.add_block(&DbBlock {
+        let candidate = DbBlock {
             height: block.height,
             hash: block.hash,
             difficulty: block.difficulty,
@@ -410,7 +411,42 @@ impl ShareStore for PoolStore {
             confirmed: false,
             orphaned: false,
             paid_out: false,
-        })
+        };
+
+        match self {
+            PoolStore::Sqlite(v) => {
+                if v.insert_block_if_absent(&candidate)? {
+                    return Ok(());
+                }
+                if let Some(existing) = v.get_block(candidate.height)? {
+                    if existing.hash != candidate.hash {
+                        warn!(
+                            height = candidate.height,
+                            existing_hash = %existing.hash,
+                            found_hash = %candidate.hash,
+                            "ignoring found-block recovery record with conflicting hash"
+                        );
+                    }
+                }
+                Ok(())
+            }
+            PoolStore::Postgres(v) => {
+                if v.insert_block_if_absent(&candidate)? {
+                    return Ok(());
+                }
+                if let Some(existing) = v.get_block(candidate.height)? {
+                    if existing.hash != candidate.hash {
+                        warn!(
+                            height = candidate.height,
+                            existing_hash = %existing.hash,
+                            found_hash = %candidate.hash,
+                            "ignoring found-block recovery record with conflicting hash"
+                        );
+                    }
+                }
+                Ok(())
+            }
+        }
     }
 
     fn is_address_quarantined(&self, address: &str) -> Result<bool> {
@@ -442,5 +478,82 @@ impl ShareStore for PoolStore {
             apply_quarantine,
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::SystemTime;
+
+    fn test_store() -> Arc<PoolStore> {
+        let path = std::env::temp_dir().join(format!(
+            "blocknet-pool-store-test-{}.sqlite",
+            rand::random::<u64>()
+        ));
+        PoolStore::open_sqlite(path.to_str().expect("path")).expect("open sqlite store")
+    }
+
+    #[test]
+    fn found_block_insert_adds_record_when_missing() {
+        let store = test_store();
+        store
+            .add_found_block(FoundBlockRecord {
+                height: 42,
+                hash: "h42".to_string(),
+                difficulty: 123,
+                finder: "addr1".to_string(),
+                finder_worker: "w1".to_string(),
+                timestamp: SystemTime::now(),
+            })
+            .expect("insert found block");
+
+        let block = store
+            .get_block(42)
+            .expect("query block")
+            .expect("block exists");
+        assert_eq!(block.hash, "h42");
+        assert_eq!(block.reward, 0);
+        assert!(!block.confirmed);
+        assert!(!block.paid_out);
+    }
+
+    #[test]
+    fn found_block_insert_does_not_regress_existing_block_state() {
+        let store = test_store();
+        store
+            .add_block(&DbBlock {
+                height: 77,
+                hash: "existing".to_string(),
+                difficulty: 999,
+                finder: "addr-existing".to_string(),
+                finder_worker: "rig-existing".to_string(),
+                reward: 500,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: true,
+            })
+            .expect("seed existing block");
+
+        store
+            .add_found_block(FoundBlockRecord {
+                height: 77,
+                hash: "conflicting".to_string(),
+                difficulty: 1,
+                finder: "addr-new".to_string(),
+                finder_worker: "rig-new".to_string(),
+                timestamp: SystemTime::now(),
+            })
+            .expect("conflicting found block should not overwrite");
+
+        let block = store
+            .get_block(77)
+            .expect("query block")
+            .expect("block exists");
+        assert_eq!(block.hash, "existing");
+        assert_eq!(block.reward, 500);
+        assert!(block.confirmed);
+        assert!(block.paid_out);
     }
 }
