@@ -5,7 +5,8 @@ use anyhow::Result;
 
 use crate::config::Config;
 use crate::db::{
-    AddressRiskState, Balance, DbBlock, DbShare, Payout, PendingPayout, PoolFeeEvent, SqliteStore,
+    AddressRiskState, Balance, DbBlock, DbShare, Payout, PendingPayout, PoolFeeEvent,
+    PoolFeeRecord, SqliteStore,
 };
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::pgdb::PostgresStore;
@@ -347,9 +348,22 @@ impl PoolStore {
         block_height: u64,
         credits: &[(String, u64)],
     ) -> Result<bool> {
+        self.apply_block_credits_and_mark_paid_with_fee(block_height, credits, None)
+    }
+
+    pub fn apply_block_credits_and_mark_paid_with_fee(
+        &self,
+        block_height: u64,
+        credits: &[(String, u64)],
+        fee_record: Option<&PoolFeeRecord>,
+    ) -> Result<bool> {
         match self {
-            PoolStore::Sqlite(v) => v.apply_block_credits_and_mark_paid(block_height, credits),
-            PoolStore::Postgres(v) => v.apply_block_credits_and_mark_paid(block_height, credits),
+            PoolStore::Sqlite(v) => {
+                v.apply_block_credits_and_mark_paid_with_fee(block_height, credits, fee_record)
+            }
+            PoolStore::Postgres(v) => {
+                v.apply_block_credits_and_mark_paid_with_fee(block_height, credits, fee_record)
+            }
         }
     }
 }

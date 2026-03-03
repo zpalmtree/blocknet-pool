@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use argon2::{Algorithm, Argon2, Params, Version};
 
 pub const POW_MEMORY_KIB: u32 = 2 * 1024 * 1024;
@@ -5,7 +6,7 @@ pub const POW_ITERATIONS: u32 = 1;
 pub const POW_PARALLELISM: u32 = 1;
 
 pub trait PowHasher: Send + Sync + 'static {
-    fn hash(&self, header_base: &[u8], nonce: u64) -> [u8; 32];
+    fn hash(&self, header_base: &[u8], nonce: u64) -> Result<[u8; 32]>;
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -26,21 +27,15 @@ impl Default for Argon2PowHasher {
 }
 
 impl PowHasher for Argon2PowHasher {
-    fn hash(&self, header_base: &[u8], nonce: u64) -> [u8; 32] {
-        let params = match Params::new(self.memory_kib, self.iterations, self.parallelism, Some(32))
-        {
-            Ok(params) => params,
-            Err(_) => return [0u8; 32],
-        };
+    fn hash(&self, header_base: &[u8], nonce: u64) -> Result<[u8; 32]> {
+        let params = Params::new(self.memory_kib, self.iterations, self.parallelism, Some(32))
+            .map_err(|err| anyhow!("invalid argon2 params: {err}"))?;
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
         let mut out = [0u8; 32];
-        if argon2
+        argon2
             .hash_password_into(&nonce.to_le_bytes(), header_base, &mut out)
-            .is_err()
-        {
-            return [0u8; 32];
-        }
-        out
+            .map_err(|err| anyhow!("argon2 hash failure: {err}"))?;
+        Ok(out)
     }
 }
 
@@ -48,7 +43,7 @@ impl PowHasher for Argon2PowHasher {
 pub struct DeterministicTestHasher;
 
 impl PowHasher for DeterministicTestHasher {
-    fn hash(&self, header_base: &[u8], nonce: u64) -> [u8; 32] {
+    fn hash(&self, header_base: &[u8], nonce: u64) -> Result<[u8; 32]> {
         // Cheap deterministic hash for tests: nonce-seeded rolling mixer over header bytes.
         let mut s0 = nonce.wrapping_mul(0x9E3779B97F4A7C15);
         let mut s1 = (!nonce).wrapping_mul(0xBF58476D1CE4E5B9);
@@ -67,7 +62,7 @@ impl PowHasher for DeterministicTestHasher {
                 .wrapping_add((i as u64).wrapping_mul(0x9E3779B97F4A7C15));
             out[i * 8..(i + 1) * 8].copy_from_slice(&v.to_be_bytes());
         }
-        out
+        Ok(out)
     }
 }
 
@@ -142,9 +137,9 @@ mod tests {
     #[test]
     fn deterministic_hasher_is_stable() {
         let hasher = DeterministicTestHasher;
-        let h1 = hasher.hash(&[1, 2, 3, 4], 42);
-        let h2 = hasher.hash(&[1, 2, 3, 4], 42);
-        let h3 = hasher.hash(&[1, 2, 3, 4], 43);
+        let h1 = hasher.hash(&[1, 2, 3, 4], 42).expect("hash h1");
+        let h2 = hasher.hash(&[1, 2, 3, 4], 42).expect("hash h2");
+        let h3 = hasher.hash(&[1, 2, 3, 4], 43).expect("hash h3");
         assert_eq!(h1, h2);
         assert_ne!(h1, h3);
     }

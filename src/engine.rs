@@ -914,8 +914,8 @@ mod tests {
     fn candidate_share_triggers_block_submission() {
         struct CandidateHasher;
         impl PowHasher for CandidateHasher {
-            fn hash(&self, _header_base: &[u8], _nonce: u64) -> [u8; 32] {
-                [0x00; 32]
+            fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
+                Ok([0x00; 32])
             }
         }
 
@@ -1062,10 +1062,10 @@ mod tests {
             hit: AtomicBool,
         }
         impl PowHasher for SlowHasher {
-            fn hash(&self, _header_base: &[u8], _nonce: u64) -> [u8; 32] {
+            fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
                 self.hit.store(true, Ordering::Relaxed);
                 std::thread::sleep(Duration::from_millis(120));
-                [0x01; 32]
+                Ok([0x01; 32])
             }
         }
 

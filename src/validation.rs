@@ -232,7 +232,30 @@ impl ValidationInner {
         };
 
         if full_verify {
-            let hash = self.hasher.hash(&task.header_base, task.nonce);
+            let hash = match self.hasher.hash(&task.header_base, task.nonce) {
+                Ok(hash) => hash,
+                Err(err) => {
+                    tracing::warn!(
+                        address = %task.address,
+                        nonce = task.nonce,
+                        error = %err,
+                        "share hash computation failed"
+                    );
+                    result.reject_reason = Some("hash computation failed");
+                    let invalid_sample = true;
+                    let provisional_accepted = false;
+                    if self.update_address_state(
+                        &task.address,
+                        full_verify,
+                        invalid_sample,
+                        result.suspected_fraud,
+                        provisional_accepted,
+                    ) {
+                        result.escalate_risk = true;
+                    }
+                    return result;
+                }
+            };
             result.hash = hash;
 
             if let Some(claimed_hash) = task.claimed_hash {
@@ -590,9 +613,9 @@ mod tests {
 
         struct SlowHasher;
         impl PowHasher for SlowHasher {
-            fn hash(&self, _header_base: &[u8], _nonce: u64) -> [u8; 32] {
+            fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
                 std::thread::sleep(Duration::from_millis(150));
-                [0x01; 32]
+                Ok([0x01; 32])
             }
         }
 
@@ -614,11 +637,11 @@ mod tests {
 
         struct SleepyHasher;
         impl PowHasher for SleepyHasher {
-            fn hash(&self, _header_base: &[u8], nonce: u64) -> [u8; 32] {
+            fn hash(&self, _header_base: &[u8], nonce: u64) -> anyhow::Result<[u8; 32]> {
                 std::thread::sleep(Duration::from_millis(60));
                 let mut out = [0u8; 32];
                 out[31] = nonce as u8;
-                out
+                Ok(out)
             }
         }
 
@@ -672,5 +695,28 @@ mod tests {
         let snapshot = engine.snapshot();
         assert_eq!(snapshot.tracked_addresses, 1);
         assert_eq!(snapshot.total_shares, 1);
+    }
+
+    #[test]
+    fn hash_failure_rejects_share() {
+        struct FailingHasher;
+        impl PowHasher for FailingHasher {
+            fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
+                Err(anyhow::anyhow!("hash failed"))
+            }
+        }
+
+        let mut cfg = test_cfg();
+        cfg.validation_mode = "full".to_string();
+        cfg.invalid_sample_min = 10;
+        let engine = ValidationEngine::new(cfg, Arc::new(FailingHasher));
+
+        let mut task = base_task();
+        task.force_full_verify = true;
+        task.claimed_hash = Some([0x01; 32]);
+
+        let result = engine.process_inline(task);
+        assert!(!result.accepted);
+        assert_eq!(result.reject_reason, Some("hash computation failed"));
     }
 }

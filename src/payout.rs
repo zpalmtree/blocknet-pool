@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::config::Config;
-use crate::db::{DbBlock, DbShare, PendingPayout};
+use crate::db::{DbBlock, DbShare, PendingPayout, PoolFeeRecord};
 use crate::node::{is_http_status, NodeClient};
 use crate::store::PoolStore;
 use crate::validation::{SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED};
@@ -125,6 +125,24 @@ impl PayoutProcessor {
             } else {
                 None
             };
+            let fee_record = if fee > 0 {
+                if let Some(fee_address) = fee_address.as_ref() {
+                    Some(PoolFeeRecord {
+                        amount: fee,
+                        fee_address: fee_address.clone(),
+                        timestamp: block.timestamp,
+                    })
+                } else {
+                    tracing::warn!(
+                        height = block.height,
+                        fee,
+                        "pool fee applied without an explicit fee destination"
+                    );
+                    None
+                }
+            } else {
+                None
+            };
 
             let credits = if self.cfg.payout_scheme.trim().eq_ignore_ascii_case("pplns") {
                 self.build_pplns_credits(&block, distributable)
@@ -145,10 +163,11 @@ impl PayoutProcessor {
                 }
             }
 
-            let applied = match self
-                .store
-                .apply_block_credits_and_mark_paid(block.height, &credits_vec)
-            {
+            let applied = match self.store.apply_block_credits_and_mark_paid_with_fee(
+                block.height,
+                &credits_vec,
+                fee_record.as_ref(),
+            ) {
                 Ok(v) => v,
                 Err(err) => {
                     tracing::warn!(
@@ -161,29 +180,6 @@ impl PayoutProcessor {
             };
             if !applied {
                 continue;
-            }
-
-            if fee > 0 {
-                if let Some(fee_address) = fee_address {
-                    if let Err(err) =
-                        self.store
-                            .record_pool_fee(block.height, fee, &fee_address, block.timestamp)
-                    {
-                        tracing::warn!(
-                            height = block.height,
-                            fee,
-                            fee_address = %fee_address,
-                            error = %err,
-                            "failed to record pool fee"
-                        );
-                    }
-                } else {
-                    tracing::warn!(
-                        height = block.height,
-                        fee,
-                        "pool fee applied without an explicit fee destination"
-                    );
-                }
             }
         }
     }

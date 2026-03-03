@@ -73,6 +73,13 @@ pub struct PoolFeeEvent {
     pub timestamp: SystemTime,
 }
 
+#[derive(Debug, Clone)]
+pub struct PoolFeeRecord {
+    pub amount: u64,
+    pub fee_address: String,
+    pub timestamp: SystemTime,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct AddressRiskState {
     pub address: String,
@@ -435,6 +442,15 @@ CREATE TABLE IF NOT EXISTS address_risk (
         block_height: u64,
         credits: &[(String, u64)],
     ) -> Result<bool> {
+        self.apply_block_credits_and_mark_paid_with_fee(block_height, credits, None)
+    }
+
+    pub fn apply_block_credits_and_mark_paid_with_fee(
+        &self,
+        block_height: u64,
+        credits: &[(String, u64)],
+        fee_record: Option<&PoolFeeRecord>,
+    ) -> Result<bool> {
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
 
@@ -493,6 +509,25 @@ CREATE TABLE IF NOT EXISTS address_risk (
                     u64_to_i64(bal.paid)?,
                 ],
             )?;
+        }
+
+        if let Some(fee) = fee_record {
+            if fee.amount > 0 {
+                let destination = fee.fee_address.trim();
+                if destination.is_empty() {
+                    return Err(anyhow!("fee address is required"));
+                }
+                tx.execute(
+                    "INSERT OR IGNORE INTO pool_fee_events (block_height, amount, fee_address, timestamp)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        u64_to_i64(block_height)?,
+                        u64_to_i64(fee.amount)?,
+                        destination,
+                        to_unix(fee.timestamp)
+                    ],
+                )?;
+            }
         }
 
         let updated = tx.execute(
@@ -1217,6 +1252,82 @@ mod tests {
             .expect("second apply should no-op"));
         assert_eq!(store.get_balance("addr1").expect("bal1-2").pending, 60);
         assert_eq!(store.get_balance("addr2").expect("bal2-2").pending, 40);
+    }
+
+    #[test]
+    fn apply_block_credits_with_fee_records_fee_atomically() {
+        let store = test_store();
+        store
+            .add_block(&DbBlock {
+                height: 9,
+                hash: "fee-block".to_string(),
+                difficulty: 1,
+                finder: "finder".to_string(),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+            })
+            .expect("insert block");
+
+        let credits = vec![("addr1".to_string(), 60), ("addr2".to_string(), 40)];
+        let fee = PoolFeeRecord {
+            amount: 5,
+            fee_address: "pool-address".to_string(),
+            timestamp: SystemTime::now(),
+        };
+        assert!(store
+            .apply_block_credits_and_mark_paid_with_fee(9, &credits, Some(&fee))
+            .expect("apply with fee"));
+        assert_eq!(store.get_total_pool_fees().expect("total fees"), 5);
+        assert_eq!(store.get_balance("addr1").expect("bal1").pending, 60);
+
+        assert!(!store
+            .apply_block_credits_and_mark_paid_with_fee(9, &credits, Some(&fee))
+            .expect("second apply no-op"));
+        assert_eq!(store.get_total_pool_fees().expect("total fees 2"), 5);
+    }
+
+    #[test]
+    fn apply_block_credits_with_invalid_fee_address_rolls_back() {
+        let store = test_store();
+        store
+            .add_block(&DbBlock {
+                height: 11,
+                hash: "rollback-block".to_string(),
+                difficulty: 1,
+                finder: "finder".to_string(),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+            })
+            .expect("insert block");
+
+        let credits = vec![("addr1".to_string(), 100)];
+        let fee = PoolFeeRecord {
+            amount: 10,
+            fee_address: "   ".to_string(),
+            timestamp: SystemTime::now(),
+        };
+
+        let err = store
+            .apply_block_credits_and_mark_paid_with_fee(11, &credits, Some(&fee))
+            .expect_err("empty fee address should fail");
+        assert!(err.to_string().contains("fee address"));
+        assert_eq!(store.get_total_pool_fees().expect("fees"), 0);
+        assert_eq!(store.get_balance("addr1").expect("bal").pending, 0);
+        assert!(
+            !store
+                .get_block(11)
+                .expect("block query")
+                .expect("block exists")
+                .paid_out
+        );
     }
 
     #[test]

@@ -13,6 +13,7 @@ use crate::node::{http_error_body_contains, is_http_status, NodeClient};
 use crate::pow::difficulty_to_target;
 
 const NONCE_RANGE_SIZE: u64 = 1_000_000;
+const MAX_DB_NONCE: u64 = i64::MAX as u64;
 const JOB_REFRESH_MIN_INTERVAL: Duration = Duration::from_secs(1);
 const REWARD_ADDR_CACHE_TTL: Duration = Duration::from_secs(30);
 const TEMPLATE_WALLET_RECOVERY_COOLDOWN: Duration = Duration::from_secs(10);
@@ -82,7 +83,7 @@ impl JobManager {
             node,
             cfg,
             state: RwLock::new(JobState::default()),
-            nonce_counter: AtomicU64::new(random_nonce_cursor()),
+            nonce_counter: AtomicU64::new(random_nonce_slot()),
             last_refresh: Mutex::new(None),
             reward_cache: Mutex::new(RewardAddressCache {
                 address: None,
@@ -123,13 +124,14 @@ impl JobManager {
 
     pub fn build_miner_job(&self, share_difficulty: u64, assigned_miner: &str) -> Option<MinerJob> {
         let job = self.current_job()?;
-        let start = self
-            .nonce_counter
-            .fetch_add(NONCE_RANGE_SIZE, Ordering::Relaxed);
+        let slot_count = nonce_slot_count();
+        let slot = self.nonce_counter.fetch_add(1, Ordering::Relaxed) % slot_count;
+        let start = slot.saturating_mul(NONCE_RANGE_SIZE);
         let assignment_id = generate_job_id();
         let share_difficulty = share_difficulty.max(1);
         let share_target = difficulty_to_target(share_difficulty);
         let nonce_end = start.saturating_add(NONCE_RANGE_SIZE - 1);
+        debug_assert!(nonce_end <= MAX_DB_NONCE);
         let assigned_miner = assigned_miner.trim().to_string();
         if assigned_miner.is_empty() {
             return None;
@@ -218,7 +220,7 @@ impl JobManager {
 
         let mut state = self.state.write();
         if let Some(current) = state.current.as_ref() {
-            if current.height == parsed.height && current.network_target == parsed.network_target {
+            if same_template_identity(current, &parsed) {
                 return;
             }
         }
@@ -228,7 +230,7 @@ impl JobManager {
         state.order.retain(|id| id != &parsed.id);
         state.order.push_back(parsed.id.clone());
         self.nonce_counter
-            .store(random_nonce_cursor(), Ordering::Relaxed);
+            .store(random_nonce_slot(), Ordering::Relaxed);
 
         // Keep recent jobs bounded.
         let mut removed_jobs = Vec::new();
@@ -465,13 +467,20 @@ fn generate_job_id() -> String {
     hex_encode(&bytes)
 }
 
-fn random_nonce_cursor() -> u64 {
-    let slot_count = u64::MAX / NONCE_RANGE_SIZE;
-    if slot_count == 0 {
-        return 0;
-    }
-    let slot = rand::random::<u64>() % slot_count;
-    slot.saturating_mul(NONCE_RANGE_SIZE)
+fn nonce_slot_count() -> u64 {
+    let max_start = MAX_DB_NONCE.saturating_sub(NONCE_RANGE_SIZE - 1);
+    (max_start / NONCE_RANGE_SIZE).saturating_add(1).max(1)
+}
+
+fn random_nonce_slot() -> u64 {
+    rand::random::<u64>() % nonce_slot_count()
+}
+
+fn same_template_identity(current: &Job, parsed: &Job) -> bool {
+    current.height == parsed.height
+        && current.network_target == parsed.network_target
+        && current.header_base == parsed.header_base
+        && current.template_id == parsed.template_id
 }
 
 fn prune_expired_assignments_locked(state: &mut JobState, max_age: Duration) {
@@ -573,6 +582,7 @@ mod tests {
         assert_ne!(job.job_id, "job1");
         assert_eq!(job.difficulty, 1);
         assert_eq!(job.nonce_end, job.nonce_start + NONCE_RANGE_SIZE - 1);
+        assert!(job.nonce_end <= MAX_DB_NONCE);
         assert!(job.network_target.is_some());
         let bound = manager
             .resolve_submit_job(&job.job_id)
@@ -645,5 +655,66 @@ mod tests {
         assert!(!is_wallet_recoverable_template_error(&syncing));
         assert!(is_wallet_recoverable_template_error(&wallet_missing));
         assert!(is_wallet_recoverable_template_error(&locked));
+    }
+
+    #[test]
+    fn nonce_slots_wrap_and_stay_db_compatible() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config::default(),
+        );
+        {
+            let mut state = manager.state.write();
+            state.current = Some(Job {
+                id: "job1".into(),
+                height: 1,
+                header_base: vec![0xAA; 92],
+                network_target: [0xBB; 32],
+                network_difficulty: 1,
+                template_id: Some("tmpl".into()),
+                full_block: None,
+            });
+        }
+
+        let slot_count = nonce_slot_count();
+        manager
+            .nonce_counter
+            .store(slot_count.saturating_sub(1), Ordering::Relaxed);
+
+        let first = manager
+            .build_miner_job(1, "addr1")
+            .expect("first miner job should be built");
+        let second = manager
+            .build_miner_job(1, "addr1")
+            .expect("second miner job should be built");
+
+        assert_eq!(first.nonce_start, (slot_count - 1) * NONCE_RANGE_SIZE);
+        assert_eq!(second.nonce_start, 0);
+        assert!(first.nonce_end <= MAX_DB_NONCE);
+        assert!(second.nonce_end <= MAX_DB_NONCE);
+    }
+
+    #[test]
+    fn template_identity_detects_header_and_template_changes() {
+        let base = Job {
+            id: "j1".to_string(),
+            height: 100,
+            header_base: vec![1, 2, 3],
+            network_target: [0x11; 32],
+            network_difficulty: 1000,
+            template_id: Some("t1".to_string()),
+            full_block: None,
+        };
+        let mut same = base.clone();
+        same.id = "j2".to_string();
+        assert!(same_template_identity(&base, &same));
+
+        let mut different_template_id = same.clone();
+        different_template_id.template_id = Some("t2".to_string());
+        assert!(!same_template_identity(&base, &different_template_id));
+
+        let mut different_header = same;
+        different_header.header_base[0] = 9;
+        assert!(!same_template_identity(&base, &different_header));
     }
 }

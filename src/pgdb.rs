@@ -6,7 +6,9 @@ use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
 use postgres::{Client, NoTls};
 
-use crate::db::{AddressRiskState, Balance, DbBlock, DbShare, Payout, PendingPayout, PoolFeeEvent};
+use crate::db::{
+    AddressRiskState, Balance, DbBlock, DbShare, Payout, PendingPayout, PoolFeeEvent, PoolFeeRecord,
+};
 use crate::engine::{ShareRecord, ShareStore};
 
 const SEEN_SHARE_EXPIRY_SECS: i64 = 24 * 60 * 60;
@@ -342,6 +344,15 @@ CREATE TABLE IF NOT EXISTS address_risk (
         block_height: u64,
         credits: &[(String, u64)],
     ) -> Result<bool> {
+        self.apply_block_credits_and_mark_paid_with_fee(block_height, credits, None)
+    }
+
+    pub fn apply_block_credits_and_mark_paid_with_fee(
+        &self,
+        block_height: u64,
+        credits: &[(String, u64)],
+        fee_record: Option<&PoolFeeRecord>,
+    ) -> Result<bool> {
         let mut conn = self.conn.lock();
         let mut tx = conn.transaction()?;
 
@@ -395,6 +406,26 @@ CREATE TABLE IF NOT EXISTS address_risk (
                  ON CONFLICT(address) DO UPDATE SET pending = EXCLUDED.pending, paid = EXCLUDED.paid",
                 &[&bal.address, &u64_to_i64(bal.pending)?, &u64_to_i64(bal.paid)?],
             )?;
+        }
+
+        if let Some(fee) = fee_record {
+            if fee.amount > 0 {
+                let destination = fee.fee_address.trim();
+                if destination.is_empty() {
+                    return Err(anyhow!("fee address is required"));
+                }
+                tx.execute(
+                    "INSERT INTO pool_fee_events (block_height, amount, fee_address, timestamp)
+                     VALUES ($1, $2, $3, $4)
+                     ON CONFLICT(block_height) DO NOTHING",
+                    &[
+                        &u64_to_i64(block_height)?,
+                        &u64_to_i64(fee.amount)?,
+                        &destination,
+                        &to_unix(fee.timestamp),
+                    ],
+                )?;
+            }
         }
 
         let updated = tx.execute(
@@ -902,4 +933,133 @@ fn from_unix(ts: i64) -> SystemTime {
         return UNIX_EPOCH;
     }
     UNIX_EPOCH + Duration::from_secs(ts as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const POSTGRES_TEST_URL_ENV: &str = "BLOCKNET_POOL_TEST_POSTGRES_URL";
+
+    fn test_store() -> Option<Arc<PostgresStore>> {
+        let url = std::env::var(POSTGRES_TEST_URL_ENV)
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())?;
+        Some(PostgresStore::connect(&url).expect("connect postgres test store"))
+    }
+
+    fn unique_suffix() -> String {
+        format!("{}-{}", std::process::id(), rand::random::<u64>())
+    }
+
+    #[test]
+    fn apply_block_credits_with_fee_records_fee_atomically_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let height = 8_000_000u64 + (rand::random::<u16>() as u64);
+        let addr1 = format!("addr1-{suffix}");
+        let addr2 = format!("addr2-{suffix}");
+        let fee_address = format!("pool-{suffix}");
+        store
+            .add_block(&DbBlock {
+                height,
+                hash: format!("fee-block-{suffix}"),
+                difficulty: 1,
+                finder: format!("finder-{suffix}"),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+            })
+            .expect("insert block");
+
+        let credits = vec![(addr1.clone(), 60), (addr2, 40)];
+        let fee = PoolFeeRecord {
+            amount: 5,
+            fee_address: fee_address.clone(),
+            timestamp: SystemTime::now(),
+        };
+        assert!(store
+            .apply_block_credits_and_mark_paid_with_fee(height, &credits, Some(&fee))
+            .expect("apply with fee"));
+        assert_eq!(store.get_balance(&addr1).expect("bal1").pending, 60);
+
+        let fees = store.get_recent_pool_fees(500).expect("recent fees");
+        let matching = fees
+            .iter()
+            .filter(|event| event.block_height == height)
+            .collect::<Vec<_>>();
+        assert_eq!(matching.len(), 1);
+        assert_eq!(matching[0].amount, 5);
+        assert_eq!(matching[0].fee_address, fee_address);
+
+        assert!(!store
+            .apply_block_credits_and_mark_paid_with_fee(height, &credits, Some(&fee))
+            .expect("second apply no-op"));
+        let fees_after = store.get_recent_pool_fees(500).expect("recent fees again");
+        let matching_after = fees_after
+            .iter()
+            .filter(|event| event.block_height == height)
+            .count();
+        assert_eq!(matching_after, 1);
+    }
+
+    #[test]
+    fn apply_block_credits_with_invalid_fee_address_rolls_back_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let height = 8_100_000u64 + (rand::random::<u16>() as u64);
+        let addr1 = format!("addr1-{suffix}");
+        store
+            .add_block(&DbBlock {
+                height,
+                hash: format!("rollback-block-{suffix}"),
+                difficulty: 1,
+                finder: format!("finder-{suffix}"),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+            })
+            .expect("insert block");
+
+        let credits = vec![(addr1.clone(), 100)];
+        let fee = PoolFeeRecord {
+            amount: 10,
+            fee_address: "   ".to_string(),
+            timestamp: SystemTime::now(),
+        };
+        let err = store
+            .apply_block_credits_and_mark_paid_with_fee(height, &credits, Some(&fee))
+            .expect_err("empty fee address should fail");
+        assert!(err.to_string().contains("fee address"));
+
+        let fees = store.get_recent_pool_fees(500).expect("recent fees");
+        assert!(!fees.iter().any(|event| event.block_height == height));
+        assert_eq!(store.get_balance(&addr1).expect("bal").pending, 0);
+        assert!(
+            !store
+                .get_block(height)
+                .expect("block query")
+                .expect("block exists")
+                .paid_out
+        );
+    }
 }

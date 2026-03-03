@@ -185,7 +185,7 @@ impl StratumServer {
 
                                 let login_engine = Arc::clone(&self.engine);
                                 let login_conn_id = conn_id.clone();
-                                let login_address = params.address.clone();
+                                let login_address = params.address.trim().to_string();
                                 let login_worker = params.worker.clone();
                                 let login_protocol_version = params.protocol_version;
                                 let login_capabilities = params.capabilities.clone();
@@ -211,19 +211,20 @@ impl StratumServer {
                                         send_json(&writer, &response).await?;
 
                                         let worker = normalize_worker_name(Some(params.worker.as_str()));
+                                        let address = params.address.trim().to_string();
 
                                         logged_in = Some((
-                                            params.address.clone(),
+                                            address.clone(),
                                             worker.clone(),
                                             self.engine
                                                 .session_difficulty(&conn_id)
                                                 .unwrap_or(1),
                                         ));
-                                        self.stats.add_miner(&conn_id, &params.address, &worker);
+                                        self.stats.add_miner(&conn_id, &address, &worker);
 
                                         if let Some(miner_job) = self.jobs.build_miner_job(
                                             self.engine.session_difficulty(&conn_id).unwrap_or(1),
-                                            &params.address,
+                                            &address,
                                         ) {
                                             let notify = StratumNotify {
                                                 method: "job".to_string(),
