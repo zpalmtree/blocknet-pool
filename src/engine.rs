@@ -17,10 +17,10 @@ use crate::validation::{
     SHARE_STATUS_VERIFIED,
 };
 
-const VARDIFF_MIN_SAMPLE_COUNT: usize = 5;
-const VARDIFF_RATIO_DAMPING_EXPONENT: f64 = 0.5;
-const VARDIFF_MIN_ADJUSTMENT_FACTOR: f64 = 1.05;
-const VARDIFF_MAX_ADJUSTMENT_FACTOR: f64 = 2.0;
+const VARDIFF_MIN_SAMPLE_COUNT: usize = 3;
+const VARDIFF_RATIO_DAMPING_EXPONENT: f64 = 0.45;
+const VARDIFF_MIN_ADJUSTMENT_FACTOR: f64 = 1.02;
+const VARDIFF_MAX_ADJUSTMENT_FACTOR: f64 = 1.5;
 
 #[derive(Debug, Clone)]
 pub struct Job {
@@ -464,9 +464,8 @@ impl PoolEngine {
         let retarget_interval = self
             .cfg
             .vardiff_retarget_interval_duration()
-            .max(Duration::from_secs(5));
-        let target_shares = self.cfg.vardiff_target_shares.max(1) as f64;
-        let target_interval = (window.as_secs_f64() / target_shares).max(1.0);
+            .clamp(Duration::from_secs(2), Duration::from_secs(8));
+        let target_interval = vardiff_target_interval_seconds(&self.cfg);
         let tolerance = self.cfg.vardiff_tolerance.clamp(0.01, 0.95);
 
         session.accepted_share_times.push_back(now);
@@ -534,6 +533,12 @@ impl PoolEngine {
 
         session.difficulty
     }
+}
+
+fn vardiff_target_interval_seconds(cfg: &Config) -> f64 {
+    let window = cfg.vardiff_window_duration().max(Duration::from_secs(30));
+    let target_shares = cfg.vardiff_target_shares.max(1) as f64;
+    (window.as_secs_f64() / target_shares).max(1.0)
 }
 
 fn hex_string(hash: [u8; 32]) -> String {
@@ -999,7 +1004,8 @@ mod tests {
             .expect("share 5");
 
         assert!(ack.next_difficulty >= ack.share_difficulty);
-        assert!(ack.next_difficulty <= ack.share_difficulty.saturating_mul(2));
+        let capped = ((ack.share_difficulty as f64) * VARDIFF_MAX_ADJUSTMENT_FACTOR).ceil() as u64;
+        assert!(ack.next_difficulty <= capped);
     }
 
     #[test]

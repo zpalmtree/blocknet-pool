@@ -160,8 +160,12 @@ async fn handle_miner(
     let stats = state.stats.get_miner_stats(&address);
     let store = Arc::clone(&state.store);
     let address_for_query = address.clone();
-    let shares = match tokio::task::spawn_blocking(move || {
-        store.get_shares_for_miner(&address_for_query, 100)
+    let (shares, balance, pending_payout) = match tokio::task::spawn_blocking(move || {
+        Ok::<_, anyhow::Error>((
+            store.get_shares_for_miner(&address_for_query, 100)?,
+            store.get_balance(&address_for_query)?,
+            store.get_pending_payout(&address_for_query)?,
+        ))
     })
     .await
     {
@@ -176,16 +180,29 @@ async fn handle_miner(
         }
     };
 
+    let hashrate = state.stats.estimate_miner_hashrate(&address);
+    let balance_json = serde_json::json!({
+        "pending": balance.pending,
+        "paid": balance.paid,
+    });
+
     match stats {
         Some(miner_stats) => Json(serde_json::json!({
             "stats": miner_stats,
             "shares": shares,
-            "hashrate": state.stats.estimate_miner_hashrate(&address),
+            "hashrate": hashrate,
+            "balance": balance_json,
+            "pending_payout": pending_payout,
         }))
         .into_response(),
         None => (
             StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error":"miner not found"})),
+            Json(serde_json::json!({
+                "error":"miner not found",
+                "hashrate": hashrate,
+                "balance": balance_json,
+                "pending_payout": pending_payout,
+            })),
         )
             .into_response(),
     }

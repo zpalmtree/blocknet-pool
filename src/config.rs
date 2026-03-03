@@ -102,7 +102,7 @@ impl Default for Config {
             enable_vardiff: true,
             vardiff_target_shares: 5,
             vardiff_window: "5m".to_string(),
-            vardiff_retarget_interval: "15s".to_string(),
+            vardiff_retarget_interval: "5s".to_string(),
             vardiff_tolerance: 0.25,
             min_share_difficulty: 1,
             max_share_difficulty: 1_000_000_000,
