@@ -17,6 +17,11 @@ use crate::validation::{
     SHARE_STATUS_VERIFIED,
 };
 
+const VARDIFF_MIN_SAMPLE_COUNT: usize = 5;
+const VARDIFF_RATIO_DAMPING_EXPONENT: f64 = 0.5;
+const VARDIFF_MIN_ADJUSTMENT_FACTOR: f64 = 1.05;
+const VARDIFF_MAX_ADJUSTMENT_FACTOR: f64 = 2.0;
+
 #[derive(Debug, Clone)]
 pub struct Job {
     pub id: String,
@@ -55,6 +60,16 @@ pub trait NodeApi: Send + Sync + 'static {
 pub trait JobRepository: Send + Sync + 'static {
     fn get_job(&self, job_id: &str) -> Option<Job>;
     fn current_job(&self) -> Option<Job>;
+    fn resolve_submit_job(&self, submitted_job_id: &str) -> Option<SubmitJobBinding>;
+}
+
+#[derive(Debug, Clone)]
+pub struct SubmitJobBinding {
+    pub job: Job,
+    pub share_difficulty: Option<u64>,
+    pub assigned_miner: Option<String>,
+    pub nonce_start: Option<u64>,
+    pub nonce_end: Option<u64>,
 }
 
 pub trait ShareStore: Send + Sync + 'static {
@@ -223,10 +238,25 @@ impl PoolEngine {
                 .ok_or_else(|| anyhow!("not logged in"))?
         };
 
-        let job = self
+        let submit_job = self
             .jobs
-            .get_job(&job_id)
+            .resolve_submit_job(&job_id)
             .ok_or_else(|| anyhow!("stale job"))?;
+        let share_difficulty = submit_job
+            .share_difficulty
+            .unwrap_or(session.difficulty)
+            .max(1);
+        if let Some(expected_miner) = submit_job.assigned_miner.as_ref() {
+            if expected_miner != &session.address {
+                return Err(anyhow!("job not assigned to this miner"));
+            }
+        }
+        if let (Some(start), Some(end)) = (submit_job.nonce_start, submit_job.nonce_end) {
+            if nonce < start || nonce > end {
+                return Err(anyhow!("nonce out of assigned range"));
+            }
+        }
+        let job = submit_job.job;
 
         let seen_key = (job_id.clone(), nonce);
         {
@@ -256,7 +286,7 @@ impl PoolEngine {
                 return Err(anyhow!("claimed hash required"));
             }
 
-            let share_target = difficulty_to_target(session.difficulty.max(1));
+            let share_target = difficulty_to_target(share_difficulty);
 
             let candidate_hint = claimed_hash
                 .map(|hash| check_target(hash, job.network_target))
@@ -343,7 +373,7 @@ impl PoolEngine {
                 job_id,
                 miner: session.address.clone(),
                 worker: session.worker.clone(),
-                difficulty: session.difficulty,
+                difficulty: share_difficulty,
                 nonce,
                 status,
                 was_sampled: validation.verified,
@@ -358,7 +388,7 @@ impl PoolEngine {
                 verified: validation.verified,
                 status,
                 block_accepted,
-                share_difficulty: session.difficulty,
+                share_difficulty,
                 next_difficulty,
             })
         })();
@@ -449,7 +479,7 @@ impl PoolEngine {
             session.accepted_share_times.pop_front();
         }
 
-        if session.accepted_share_times.len() < 3 {
+        if session.accepted_share_times.len() < VARDIFF_MIN_SAMPLE_COUNT {
             return session.difficulty;
         }
         if session
@@ -473,10 +503,16 @@ impl PoolEngine {
 
         let mut next_diff = session.difficulty;
         if observed_interval < lower {
-            let ratio = (target_interval / observed_interval).clamp(1.1, 8.0);
+            let raw_ratio = target_interval / observed_interval;
+            let ratio = raw_ratio
+                .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
+                .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
             next_diff = ((session.difficulty as f64) * ratio).ceil() as u64;
         } else if observed_interval > upper {
-            let ratio = (observed_interval / target_interval).clamp(1.1, 8.0);
+            let raw_ratio = observed_interval / target_interval;
+            let ratio = raw_ratio
+                .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
+                .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
             next_diff = ((session.difficulty as f64) / ratio).floor() as u64;
         }
 
@@ -551,6 +587,16 @@ impl ShareStore for InMemoryStore {
 pub struct InMemoryJobs {
     current: Mutex<Option<String>>,
     jobs: Mutex<HashMap<String, Job>>,
+    assignments: Mutex<HashMap<String, InMemoryAssignment>>,
+}
+
+#[derive(Debug, Clone)]
+struct InMemoryAssignment {
+    template_job_id: String,
+    share_difficulty: u64,
+    assigned_miner: Option<String>,
+    nonce_start: u64,
+    nonce_end: u64,
 }
 
 impl InMemoryJobs {
@@ -558,6 +604,27 @@ impl InMemoryJobs {
         let id = job.id.clone();
         self.jobs.lock().insert(id.clone(), job);
         *self.current.lock() = Some(id);
+    }
+
+    pub fn insert_assignment(
+        &self,
+        assignment_id: impl Into<String>,
+        template_job_id: impl Into<String>,
+        share_difficulty: u64,
+        assigned_miner: Option<String>,
+        nonce_start: u64,
+        nonce_end: u64,
+    ) {
+        self.assignments.lock().insert(
+            assignment_id.into(),
+            InMemoryAssignment {
+                template_job_id: template_job_id.into(),
+                share_difficulty: share_difficulty.max(1),
+                assigned_miner,
+                nonce_start,
+                nonce_end,
+            },
+        );
     }
 }
 
@@ -569,6 +636,31 @@ impl JobRepository for InMemoryJobs {
     fn current_job(&self) -> Option<Job> {
         let current = self.current.lock().clone()?;
         self.jobs.lock().get(&current).cloned()
+    }
+
+    fn resolve_submit_job(&self, submitted_job_id: &str) -> Option<SubmitJobBinding> {
+        if let Some(assignment) = self.assignments.lock().get(submitted_job_id).cloned() {
+            let job = self.jobs.lock().get(&assignment.template_job_id).cloned()?;
+            return Some(SubmitJobBinding {
+                job,
+                share_difficulty: Some(assignment.share_difficulty),
+                assigned_miner: assignment.assigned_miner,
+                nonce_start: Some(assignment.nonce_start),
+                nonce_end: Some(assignment.nonce_end),
+            });
+        }
+
+        self.jobs
+            .lock()
+            .get(submitted_job_id)
+            .cloned()
+            .map(|job| SubmitJobBinding {
+                job,
+                share_difficulty: None,
+                assigned_miner: None,
+                nonce_start: None,
+                nonce_end: None,
+            })
     }
 }
 
@@ -842,16 +934,72 @@ mod tests {
         let _ = engine
             .submit("conn1", "job1".to_string(), 100, Some("ff".repeat(32)))
             .expect("share 1");
-        std::thread::sleep(Duration::from_millis(600));
+        std::thread::sleep(Duration::from_millis(300));
         let _ = engine
             .submit("conn1", "job1".to_string(), 101, Some("ff".repeat(32)))
             .expect("share 2");
-        std::thread::sleep(Duration::from_millis(600));
-        let ack = engine
+        std::thread::sleep(Duration::from_millis(300));
+        let _ = engine
             .submit("conn1", "job1".to_string(), 102, Some("ff".repeat(32)))
             .expect("share 3");
+        std::thread::sleep(Duration::from_millis(300));
+        let _ = engine
+            .submit("conn1", "job1".to_string(), 103, Some("ff".repeat(32)))
+            .expect("share 4");
+        std::thread::sleep(Duration::from_millis(300));
+        let ack = engine
+            .submit("conn1", "job1".to_string(), 104, Some("ff".repeat(32)))
+            .expect("share 5");
 
         assert!(ack.next_difficulty > ack.share_difficulty);
+    }
+
+    #[test]
+    fn vardiff_step_is_capped_per_retarget() {
+        let mut cfg = cfg();
+        cfg.enable_vardiff = true;
+        cfg.vardiff_target_shares = 1;
+        cfg.vardiff_window = "5m".to_string();
+        cfg.vardiff_retarget_interval = "1s".to_string();
+        cfg.validation_mode = "probabilistic".to_string();
+
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .expect("login");
+        let _ = engine
+            .submit("conn1", "job1".to_string(), 200, Some("ff".repeat(32)))
+            .expect("share 1");
+        std::thread::sleep(Duration::from_millis(300));
+        let _ = engine
+            .submit("conn1", "job1".to_string(), 201, Some("ff".repeat(32)))
+            .expect("share 2");
+        std::thread::sleep(Duration::from_millis(300));
+        let _ = engine
+            .submit("conn1", "job1".to_string(), 202, Some("ff".repeat(32)))
+            .expect("share 3");
+        std::thread::sleep(Duration::from_millis(300));
+        let _ = engine
+            .submit("conn1", "job1".to_string(), 203, Some("ff".repeat(32)))
+            .expect("share 4");
+        std::thread::sleep(Duration::from_millis(300));
+        let ack = engine
+            .submit("conn1", "job1".to_string(), 204, Some("ff".repeat(32)))
+            .expect("share 5");
+
+        assert!(ack.next_difficulty >= ack.share_difficulty);
+        assert!(ack.next_difficulty <= ack.share_difficulty.saturating_mul(2));
     }
 
     #[test]
@@ -961,5 +1109,119 @@ mod tests {
             .expect("share should be accepted");
 
         assert!(engine.seen_in_memory.lock().is_empty());
+    }
+
+    #[test]
+    fn submit_uses_assignment_bound_share_difficulty() {
+        let mut cfg = cfg();
+        cfg.initial_share_difficulty = 64;
+        cfg.validation_mode = "probabilistic".to_string();
+
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        jobs.insert_assignment(
+            "assign-old-diff",
+            "job1",
+            1,
+            Some("BTestAddr".to_string()),
+            0,
+            1_000_000,
+        );
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .expect("login");
+        let ack = engine
+            .submit(
+                "conn1",
+                "assign-old-diff".to_string(),
+                89,
+                Some("ff".repeat(32)),
+            )
+            .expect("share should be accepted using assignment difficulty");
+        assert_eq!(ack.share_difficulty, 1);
+    }
+
+    #[test]
+    fn submit_rejects_assignment_from_different_miner() {
+        let cfg = cfg();
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        jobs.insert_assignment(
+            "assign-other-miner",
+            "job1",
+            1,
+            Some("BOtherAddr".to_string()),
+            0,
+            1_000_000,
+        );
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .expect("login");
+        let err = engine
+            .submit(
+                "conn1",
+                "assign-other-miner".to_string(),
+                42,
+                Some("ff".repeat(32)),
+            )
+            .expect_err("submit should fail for wrong miner assignment");
+        assert!(err.to_string().contains("not assigned"));
+    }
+
+    #[test]
+    fn submit_rejects_nonce_outside_assignment_range() {
+        let cfg = cfg();
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        jobs.insert_assignment(
+            "assign-range",
+            "job1",
+            1,
+            Some("BTestAddr".to_string()),
+            100,
+            199,
+        );
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login("conn1", "BTestAddr".to_string(), None, 2, vec![])
+            .expect("login");
+        let err = engine
+            .submit(
+                "conn1",
+                "assign-range".to_string(),
+                42,
+                Some("ff".repeat(32)),
+            )
+            .expect_err("submit should fail for nonce outside assignment");
+        assert!(err.to_string().contains("out of assigned range"));
     }
 }

@@ -125,8 +125,8 @@ impl StratumServer {
                 }
                 maybe_job = rx_jobs.recv(), if logged_in.is_some() => {
                     if let Ok(job) = maybe_job {
-                        if let Some((_, _, difficulty)) = logged_in.as_ref() {
-                            if let Some(miner_job) = self.jobs.build_miner_job(*difficulty) {
+                        if let Some((address, _, difficulty)) = logged_in.as_ref() {
+                            if let Some(miner_job) = self.jobs.build_miner_job(*difficulty, address) {
                                 let notify = StratumNotify {
                                     method: "job".to_string(),
                                     params: serde_json::to_value(miner_job)?,
@@ -208,6 +208,7 @@ impl StratumServer {
 
                                     if let Some(miner_job) = self.jobs.build_miner_job(
                                         self.engine.session_difficulty(&conn_id).unwrap_or(1),
+                                        &params.address,
                                     ) {
                                         let notify = StratumNotify {
                                             method: "job".to_string(),
@@ -269,7 +270,8 @@ impl StratumServer {
                                         if ack.next_difficulty != *difficulty {
                                             *difficulty = ack.next_difficulty;
                                             if let Some(miner_job) =
-                                                self.jobs.build_miner_job(ack.next_difficulty)
+                                                self.jobs
+                                                    .build_miner_job(ack.next_difficulty, address)
                                             {
                                                 let notify = StratumNotify {
                                                     method: "job".to_string(),

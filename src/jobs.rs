@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
 use crate::config::Config;
-use crate::engine::{Job, JobRepository};
+use crate::engine::{Job, JobRepository, SubmitJobBinding};
 use crate::node::{is_http_status, NodeClient};
 use crate::pow::difficulty_to_target;
 
@@ -17,6 +17,7 @@ const JOB_REFRESH_MIN_INTERVAL: Duration = Duration::from_secs(1);
 const REWARD_ADDR_CACHE_TTL: Duration = Duration::from_secs(30);
 const TEMPLATE_WALLET_RECOVERY_COOLDOWN: Duration = Duration::from_secs(10);
 const MISSING_WALLET_PASSWORD_LOG_COOLDOWN: Duration = Duration::from_secs(60);
+const MAX_ACTIVE_ASSIGNMENTS: usize = 65_536;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MinerJob {
@@ -58,6 +59,17 @@ struct JobState {
     current: Option<Job>,
     jobs: HashMap<String, Job>,
     order: VecDeque<String>,
+    assignments: HashMap<String, MinerAssignment>,
+    assignment_order: VecDeque<String>,
+}
+
+#[derive(Debug, Clone)]
+struct MinerAssignment {
+    template_job_id: String,
+    share_difficulty: u64,
+    assigned_miner: String,
+    nonce_start: u64,
+    nonce_end: u64,
 }
 
 impl JobManager {
@@ -106,22 +118,51 @@ impl JobManager {
         self.tx.subscribe()
     }
 
-    pub fn build_miner_job(&self, share_difficulty: u64) -> Option<MinerJob> {
+    pub fn build_miner_job(&self, share_difficulty: u64, assigned_miner: &str) -> Option<MinerJob> {
         let job = self.current_job()?;
         let start = self
             .nonce_counter
             .fetch_add(NONCE_RANGE_SIZE, Ordering::Relaxed);
+        let assignment_id = generate_job_id();
+        let share_difficulty = share_difficulty.max(1);
+        let share_target = difficulty_to_target(share_difficulty);
+        let nonce_end = start.saturating_add(NONCE_RANGE_SIZE - 1);
+        let assigned_miner = assigned_miner.trim().to_string();
+        if assigned_miner.is_empty() {
+            return None;
+        }
 
-        let share_target = difficulty_to_target(share_difficulty.max(1));
+        let mut state = self.state.write();
+        state
+            .jobs
+            .entry(job.id.clone())
+            .or_insert_with(|| job.clone());
+        state.assignments.insert(
+            assignment_id.clone(),
+            MinerAssignment {
+                template_job_id: job.id.clone(),
+                share_difficulty,
+                assigned_miner,
+                nonce_start: start,
+                nonce_end,
+            },
+        );
+        state.assignment_order.push_back(assignment_id.clone());
+        while state.assignment_order.len() > MAX_ACTIVE_ASSIGNMENTS {
+            if let Some(oldest) = state.assignment_order.pop_front() {
+                state.assignments.remove(&oldest);
+            }
+        }
+
         Some(MinerJob {
-            job_id: job.id.clone(),
+            job_id: assignment_id,
             template_id: job.template_id.clone(),
             header_base: hex_encode(&job.header_base),
             target: hex_encode(&share_target),
             network_target: Some(hex_encode(&job.network_target)),
             height: job.height,
             nonce_start: start,
-            nonce_end: start.saturating_add(NONCE_RANGE_SIZE - 1),
+            nonce_end,
         })
     }
 
@@ -180,6 +221,7 @@ impl JobManager {
         self.nonce_counter.store(0, Ordering::Relaxed);
 
         // Keep recent jobs bounded.
+        let mut removed_jobs = Vec::new();
         while state.order.len() > 16 {
             if let Some(oldest) = state.order.pop_front() {
                 if state
@@ -190,7 +232,17 @@ impl JobManager {
                     continue;
                 }
                 state.jobs.remove(&oldest);
+                removed_jobs.push(oldest);
             }
+        }
+        if !removed_jobs.is_empty() {
+            state
+                .assignments
+                .retain(|_, assignment| !removed_jobs.contains(&assignment.template_job_id));
+            let valid_assignment_ids = state.assignments.keys().cloned().collect::<HashSet<_>>();
+            state
+                .assignment_order
+                .retain(|assignment_id| valid_assignment_ids.contains(assignment_id));
         }
 
         let _ = self.tx.send(parsed);
@@ -330,6 +382,19 @@ impl JobRepository for JobManager {
     fn current_job(&self) -> Option<Job> {
         self.state.read().current.clone()
     }
+
+    fn resolve_submit_job(&self, submitted_job_id: &str) -> Option<SubmitJobBinding> {
+        let state = self.state.read();
+        let assignment = state.assignments.get(submitted_job_id)?;
+        let job = state.jobs.get(&assignment.template_job_id)?.clone();
+        Some(SubmitJobBinding {
+            job,
+            share_difficulty: Some(assignment.share_difficulty),
+            assigned_miner: Some(assignment.assigned_miner.clone()),
+            nonce_start: Some(assignment.nonce_start),
+            nonce_end: Some(assignment.nonce_end),
+        })
+    }
 }
 
 fn parse_template_into_job(template: &crate::node::BlockTemplate) -> anyhow::Result<Job> {
@@ -450,10 +515,18 @@ mod tests {
         }
 
         let job = manager
-            .build_miner_job(1)
+            .build_miner_job(1, "addr1")
             .expect("build miner job should work");
-        assert_eq!(job.job_id, "job1");
+        assert_ne!(job.job_id, "job1");
         assert_eq!(job.nonce_end, job.nonce_start + NONCE_RANGE_SIZE - 1);
         assert!(job.network_target.is_some());
+        let bound = manager
+            .resolve_submit_job(&job.job_id)
+            .expect("assignment should resolve");
+        assert_eq!(bound.job.id, "job1");
+        assert_eq!(bound.share_difficulty, Some(1));
+        assert_eq!(bound.assigned_miner.as_deref(), Some("addr1"));
+        assert_eq!(bound.nonce_start, Some(job.nonce_start));
+        assert_eq!(bound.nonce_end, Some(job.nonce_end));
     }
 }
