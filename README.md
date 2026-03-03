@@ -73,7 +73,7 @@ When `database_url` is set, Postgres is used automatically and `database_path` i
 - Candidate shares are prioritized in validation
 - Queue pressure behavior preserves legacy inline handling for no-claimed-hash submits
 - Per-connection vardiff retargeting is enabled by default to target a small number of shares per window (`vardiff_*` config keys)
-- Default vardiff profile assumes a weak baseline miner and aims for ~5 shares / 5 minutes (`initial_share_difficulty=60`, `vardiff_target_shares=5`)
+- Default vardiff profile assumes a weak baseline miner and aims for ~10 shares / 5 minutes (`initial_share_difficulty=60`, `vardiff_target_shares=10`)
 
 ## API Auth
 

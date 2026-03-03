@@ -20,6 +20,7 @@ use crate::store::PoolStore;
 use crate::validation::ValidationEngine;
 
 const DB_TOTALS_CACHE_TTL: Duration = Duration::from_secs(2);
+const NETWORK_HASHRATE_TARGET_BLOCK_SECS: f64 = 300.0;
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -88,6 +89,7 @@ struct PoolSummary {
 #[derive(Serialize)]
 struct ChainSummary {
     current_job_height: Option<u64>,
+    network_hashrate: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -117,7 +119,11 @@ async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
         Ok(v) => v,
         Err(err) => return internal_error("failed loading pool stats", err).into_response(),
     };
-    let current_job_height = state.jobs.current_job().map(|j| j.height);
+    let current_job = state.jobs.current_job();
+    let current_job_height = current_job.as_ref().map(|j| j.height);
+    let network_hashrate = current_job
+        .as_ref()
+        .map(|job| job.network_difficulty as f64 / NETWORK_HASHRATE_TARGET_BLOCK_SECS);
 
     let response = StatsResponse {
         pool: PoolSummary {
@@ -131,7 +137,10 @@ async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
             total_blocks: totals.total_blocks,
             pool_fees_collected: totals.pool_fees_collected,
         },
-        chain: ChainSummary { current_job_height },
+        chain: ChainSummary {
+            current_job_height,
+            network_hashrate,
+        },
         validation: ValidationSummary {
             in_flight: validation.in_flight,
             candidate_queue_depth: validation.candidate_queue_depth,

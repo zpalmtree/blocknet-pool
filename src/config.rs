@@ -100,7 +100,7 @@ impl Default for Config {
             max_provisional_shares: 200,
             stratum_submit_v2_required: false,
             enable_vardiff: true,
-            vardiff_target_shares: 5,
+            vardiff_target_shares: 10,
             vardiff_window: "5m".to_string(),
             vardiff_retarget_interval: "5s".to_string(),
             vardiff_tolerance: 0.25,
