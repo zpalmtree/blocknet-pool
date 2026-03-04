@@ -473,6 +473,15 @@ impl PayoutProcessor {
                 tracing::error!(address = %bal.address, tx = %sent.txid, error = %err, "critical payout reconciliation failure");
                 continue;
             }
+
+            tracing::info!(
+                address = %bal.address,
+                amount = pending.amount,
+                fee = sent.fee,
+                tx = %sent.txid,
+                idempotency_key = %idempotency_key,
+                "payout sent"
+            );
         }
     }
 
