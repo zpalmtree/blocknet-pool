@@ -612,17 +612,18 @@ impl JobRepository for JobManager {
             .assignments
             .get(submitted_job_id)
             .ok_or(SubmitJobResolveError::AssignmentNotFound)?;
+        let current_job_id = state.current.as_ref().map(|job| job.id.as_str());
+        let is_current_template = Some(assignment.template_job_id.as_str()) == current_job_id;
         let assignment_ttl = self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE);
         let assignment_age = submitted_at.saturating_duration_since(assignment.created_at);
-        if assignment_age > assignment_ttl {
+        if !is_current_template && assignment_age > assignment_ttl {
             return Err(SubmitJobResolveError::AssignmentExpired {
                 age: assignment_age,
                 ttl: assignment_ttl,
             });
         }
 
-        let current_job_id = state.current.as_ref().map(|job| job.id.as_str());
-        if Some(assignment.template_job_id.as_str()) != current_job_id {
+        if !is_current_template {
             let meta = state.job_meta.get(&assignment.template_job_id).copied();
             let stale_since = meta.and_then(|value| value.stale_since).unwrap_or_else(|| {
                 meta.map(|value| value.created_at)
@@ -917,7 +918,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_submit_job_rejects_expired_assignment() {
+    fn resolve_submit_job_allows_assignment_older_than_ttl_while_template_is_current() {
         let manager = JobManager::new(
             Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
             Config {
@@ -955,7 +956,7 @@ mod tests {
 
         assert!(manager
             .resolve_submit_job("assign-old", Instant::now())
-            .is_none());
+            .is_some());
     }
 
     #[test]
@@ -977,39 +978,62 @@ mod tests {
             Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
             Config {
                 job_timeout: "1s".to_string(),
+                stale_submit_grace: "10m".to_string(),
                 ..Config::default()
             },
         );
 
-        let template = Job {
-            id: "job1".into(),
+        let old_template = Job {
+            id: "job-old".into(),
             height: 1,
             header_base: vec![0xAA; 92],
             network_target: [0xBB; 32],
             network_difficulty: 1,
-            template_id: Some("tmpl".into()),
+            template_id: Some("tmpl-old".into()),
+            full_block: None,
+        };
+        let current_template = Job {
+            id: "job-current".into(),
+            height: 2,
+            header_base: vec![0xCC; 92],
+            network_target: [0xDD; 32],
+            network_difficulty: 1,
+            template_id: Some("tmpl-current".into()),
             full_block: None,
         };
 
+        let now = Instant::now();
         {
             let mut state = manager.state.write();
-            state.current = Some(template.clone());
-            state.jobs.insert(template.id.clone(), template);
+            state.current = Some(current_template.clone());
+            state
+                .jobs
+                .insert(old_template.id.clone(), old_template.clone());
+            state
+                .jobs
+                .insert(current_template.id.clone(), current_template);
             state.assignments.insert(
                 "assign-old".to_string(),
                 MinerAssignment {
-                    template_job_id: "job1".to_string(),
+                    template_job_id: old_template.id.clone(),
                     share_difficulty: 1,
                     assigned_miner: "addr1".to_string(),
                     nonce_start: 0,
                     nonce_end: NONCE_RANGE_SIZE - 1,
-                    created_at: Instant::now() - Duration::from_secs(2),
+                    created_at: now - Duration::from_secs(2),
+                },
+            );
+            state.job_meta.insert(
+                old_template.id.clone(),
+                JobTemplateMeta {
+                    created_at: now - Duration::from_secs(3),
+                    stale_since: Some(now - Duration::from_millis(500)),
                 },
             );
         }
 
         let err = manager
-            .resolve_submit_job_with_reason("assign-old", Instant::now())
+            .resolve_submit_job_with_reason("assign-old", now)
             .expect_err("expired assignment should return explicit reason");
         assert!(matches!(
             err,
