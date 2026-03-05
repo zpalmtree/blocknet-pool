@@ -632,7 +632,8 @@ impl JobManager {
         }
 
         if let Err(unlock_err) = self.node.wallet_unlock(password) {
-            if is_http_status(&unlock_err, 503) && self.wait_for_wallet_available(WALLET_LOAD_WAIT_POLL)
+            if is_http_status(&unlock_err, 503)
+                && self.wait_for_wallet_available(WALLET_LOAD_WAIT_POLL)
             {
                 if self.node.wallet_unlock(password).is_ok() {
                     return true;
@@ -649,7 +650,9 @@ impl JobManager {
     }
 
     fn wait_for_wallet_available(&self, timeout: Duration) -> bool {
-        let deadline = Instant::now().checked_add(timeout).unwrap_or_else(Instant::now);
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .unwrap_or_else(Instant::now);
         loop {
             if self.node.get_wallet_address().is_ok() {
                 return true;
@@ -917,17 +920,13 @@ fn prune_expired_assignments_locked(
         return;
     }
     let now = Instant::now();
-    state
-        .assignments
-        .retain(|_, assignment| {
-            let age = now.saturating_duration_since(assignment.created_at);
-            if current_template_job_id
-                .is_some_and(|current| assignment.template_job_id == current)
-            {
-                return true;
-            }
-            age <= max_age
-        });
+    state.assignments.retain(|_, assignment| {
+        let age = now.saturating_duration_since(assignment.created_at);
+        if current_template_job_id.is_some_and(|current| assignment.template_job_id == current) {
+            return true;
+        }
+        age <= max_age
+    });
     let valid_assignment_ids = state.assignments.keys().cloned().collect::<HashSet<_>>();
     state
         .assignment_order
@@ -1109,7 +1108,9 @@ mod tests {
                 created_at: Instant::now() - Duration::from_secs(30),
             },
         );
-        state.assignment_order.push_back("assign-current".to_string());
+        state
+            .assignment_order
+            .push_back("assign-current".to_string());
         state.assignment_order.push_back("assign-old".to_string());
 
         let current = state.current.as_ref().map(|job| job.id.clone());

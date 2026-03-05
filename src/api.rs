@@ -48,11 +48,11 @@ fn db_miner_hashrate(store: &PoolStore, address: &str) -> f64 {
     let since = SystemTime::now()
         .checked_sub(HASHRATE_WINDOW)
         .unwrap_or(UNIX_EPOCH);
-    let Ok((total_diff, count, oldest, newest)) = store.hashrate_stats_for_miner(address, since)
+    let Ok((total_diff, _count, _oldest, _newest)) = store.hashrate_stats_for_miner(address, since)
     else {
         return 0.0;
     };
-    hashrate_from_stats(total_diff, count, oldest, newest)
+    total_diff as f64 / HASHRATE_WINDOW.as_secs_f64().max(1.0)
 }
 
 fn db_pool_hashrate(store: &PoolStore) -> f64 {
@@ -1043,7 +1043,8 @@ async fn handle_miner_hashrate(
         "30d" => (30 * 86400, 14400),
         _ => (86400, 600), // default 24h
     };
-    let since = SystemTime::now()
+    let now = SystemTime::now();
+    let since = now
         .checked_sub(Duration::from_secs(range_secs))
         .unwrap_or(UNIX_EPOCH);
 
@@ -1054,13 +1055,46 @@ async fn handle_miner_hashrate(
     .await
     {
         Ok(Ok(buckets)) => {
-            let points: Vec<serde_json::Value> = buckets
-                .into_iter()
-                .map(|(ts, total_diff, _count)| {
-                    let hr = total_diff as f64 / bucket_secs as f64;
-                    serde_json::json!({"timestamp": ts, "hashrate": hr})
-                })
-                .collect();
+            // Zero-fill missing buckets to avoid visual inflation from sparse submissions,
+            // then smooth with EWMA so the curve is less jumpy.
+            let step = bucket_secs.max(1);
+            let mut by_bucket = HashMap::<i64, f64>::with_capacity(buckets.len());
+            for (ts, total_diff, _count) in buckets {
+                let hr = total_diff as f64 / step as f64;
+                by_bucket.insert(ts, hr);
+            }
+
+            let since_unix = match since.duration_since(UNIX_EPOCH) {
+                Ok(v) => i64::try_from(v.as_secs()).unwrap_or(i64::MAX),
+                Err(_) => 0,
+            };
+            let now_unix = match now.duration_since(UNIX_EPOCH) {
+                Ok(v) => i64::try_from(v.as_secs()).unwrap_or(i64::MAX),
+                Err(_) => 0,
+            };
+            let start_bucket = since_unix.div_euclid(step) * step;
+            let end_bucket = now_unix.div_euclid(step) * step;
+
+            let mut points = Vec::<serde_json::Value>::new();
+            if end_bucket >= start_bucket {
+                let alpha = 0.35_f64;
+                let mut smoothed_prev = 0.0_f64;
+                let mut first = true;
+                let mut ts = start_bucket;
+                while ts <= end_bucket {
+                    let raw = by_bucket.get(&ts).copied().unwrap_or(0.0);
+                    let smoothed = if first {
+                        first = false;
+                        raw
+                    } else {
+                        alpha * raw + (1.0 - alpha) * smoothed_prev
+                    };
+                    smoothed_prev = smoothed;
+                    points.push(serde_json::json!({"timestamp": ts, "hashrate": smoothed}));
+                    ts = ts.saturating_add(step);
+                }
+            }
+
             Json(points).into_response()
         }
         Ok(Err(err)) => {
