@@ -21,6 +21,7 @@ export function App() {
   const [apiKey, setApiKey] = useState(localStorage.getItem(API_KEY_STORAGE_KEY) || '');
   const [apiKeyInput, setApiKeyInput] = useState(localStorage.getItem(API_KEY_STORAGE_KEY) || '');
   const [liveTick, setLiveTick] = useState(0);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const showError = useCallback((msg: string) => {
     if (!msg) return;
@@ -40,6 +41,11 @@ export function App() {
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    setMobileNavOpen(false);
+  }, [route]);
 
   useEffect(() => {
     api
@@ -92,31 +98,86 @@ export function App() {
 
   return (
     <>
-      <nav>
-        <a href="#/" className="nav-brand" id="nav-brand" style={{ textDecoration: 'none' }}>
+      <nav className={mobileNavOpen ? 'is-open' : ''}>
+        <a
+          href="#/"
+          className="nav-brand"
+          id="nav-brand"
+          style={{ textDecoration: 'none' }}
+          onClick={() => setMobileNavOpen(false)}
+        >
           {poolInfo?.pool_name || 'Blocknet Pool'}
         </a>
-        <a href="#/" data-nav="dashboard" className={route === 'dashboard' ? 'active' : ''}>
-          Dashboard
-        </a>
-        <a href="#/start" data-nav="start" className={route === 'start' ? 'active' : ''}>
-          Get Started
-        </a>
-        <a href="#/blocks" data-nav="blocks" className={route === 'blocks' ? 'active' : ''}>
-          Blocks
-        </a>
-        <a href="#/payouts" data-nav="payouts" className={route === 'payouts' ? 'active' : ''}>
-          Payouts
-        </a>
-        <a href="#/stats" data-nav="stats" className={route === 'stats' ? 'active' : ''}>
-          My Stats
-        </a>
-        <a href="#/admin" data-nav="admin" className={route === 'admin' ? 'active' : ''}>
-          Admin
-        </a>
-        <a href="#/status" data-nav="status" className={route === 'status' ? 'active' : ''}>
-          Status
-        </a>
+        <button
+          type="button"
+          className={`nav-toggle${mobileNavOpen ? ' is-open' : ''}`}
+          aria-label="Toggle navigation menu"
+          aria-expanded={mobileNavOpen}
+          aria-controls="site-nav-links"
+          onClick={() => setMobileNavOpen((open) => !open)}
+        >
+          <span />
+          <span />
+          <span />
+        </button>
+        <div id="site-nav-links" className="nav-links">
+          <a
+            href="#/"
+            data-nav="dashboard"
+            className={route === 'dashboard' ? 'active' : ''}
+            onClick={() => setMobileNavOpen(false)}
+          >
+            Dashboard
+          </a>
+          <a
+            href="#/start"
+            data-nav="start"
+            className={route === 'start' ? 'active' : ''}
+            onClick={() => setMobileNavOpen(false)}
+          >
+            Get Started
+          </a>
+          <a
+            href="#/blocks"
+            data-nav="blocks"
+            className={route === 'blocks' ? 'active' : ''}
+            onClick={() => setMobileNavOpen(false)}
+          >
+            Blocks
+          </a>
+          <a
+            href="#/payouts"
+            data-nav="payouts"
+            className={route === 'payouts' ? 'active' : ''}
+            onClick={() => setMobileNavOpen(false)}
+          >
+            Payouts
+          </a>
+          <a
+            href="#/stats"
+            data-nav="stats"
+            className={route === 'stats' ? 'active' : ''}
+            onClick={() => setMobileNavOpen(false)}
+          >
+            My Stats
+          </a>
+          <a
+            href="#/admin"
+            data-nav="admin"
+            className={route === 'admin' ? 'active' : ''}
+            onClick={() => setMobileNavOpen(false)}
+          >
+            Admin
+          </a>
+          <a
+            href="#/status"
+            data-nav="status"
+            className={route === 'status' ? 'active' : ''}
+            onClick={() => setMobileNavOpen(false)}
+          >
+            Status
+          </a>
+        </div>
       </nav>
 
       <div id="error-bar" style={{ display: errorMsg ? 'block' : 'none' }}>
