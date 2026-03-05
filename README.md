@@ -25,6 +25,31 @@ Custom config:
 cargo run --release -- --config /path/to/config.json
 ```
 
+## Frontend
+
+Web UI is now built with React + TypeScript + Vite from `frontend/`.
+
+Local dev:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Build static bundle embedded by the Rust API:
+
+```bash
+cd frontend
+npm run build
+```
+
+Build output is written to `src/ui/dist/` and served at:
+
+- `GET /` / `GET /ui` (index)
+- `GET /ui-assets/app.js`
+- `GET /ui-assets/app.css`
+
 ## Deploy (bntpool)
 
 From the local repo root:
@@ -35,6 +60,7 @@ From the local repo root:
 
 What it does:
 
+- builds frontend bundle locally (unless `--skip-ui-build`)
 - rsyncs pool source to `bntpool:/opt/blocknet/blocknet-pool`
 - builds `--release` on the server
 - restarts `blocknet-pool.service`

@@ -6,7 +6,7 @@ usage() {
 Deploy blocknet-pool to the bntpool server.
 
 Usage:
-  scripts/deploy_bntpool.sh [--skip-build]
+  scripts/deploy_bntpool.sh [--skip-build] [--skip-ui-build]
 
 Environment overrides:
   BNTPOOL_HOST        SSH host alias (default: bntpool)
@@ -16,10 +16,15 @@ EOF
 }
 
 skip_build=0
+skip_ui_build=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-build)
       skip_build=1
+      shift
+      ;;
+    --skip-ui-build)
+      skip_ui_build=1
       shift
       ;;
     -h|--help)
@@ -40,6 +45,16 @@ service="${BNTPOOL_SERVICE:-blocknet-pool.service}"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_dir="$(cd "${script_dir}/.." && pwd)"
+
+if [[ "${skip_ui_build}" -eq 0 ]]; then
+  echo "==> building web ui bundle locally"
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "npm is required to build frontend bundle (or run with --skip-ui-build)" >&2
+    exit 1
+  fi
+  npm --prefix "${repo_dir}/frontend" ci
+  npm --prefix "${repo_dir}/frontend" run build
+fi
 
 echo "==> syncing source to ${host}:${remote_dir}"
 rsync -az --delete \

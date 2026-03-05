@@ -1,0 +1,83 @@
+import { useCallback, useEffect, useState } from 'react';
+
+import type { ApiClient } from '../api/client';
+import { Pager } from '../components/Pager';
+import { PayoutTxLinks } from '../components/PayoutTxLinks';
+import { formatCoins, formatFee, timeAgo, toUnixMs } from '../lib/format';
+import type { PagerState, PayoutItem } from '../types';
+
+interface PayoutsPageProps {
+  active: boolean;
+  api: ApiClient;
+}
+
+export function PayoutsPage({ active, api }: PayoutsPageProps) {
+  const [items, setItems] = useState<PayoutItem[]>([]);
+  const [pager, setPager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
+
+  const loadPage = useCallback(async () => {
+    try {
+      const d = await api.getRecentPayouts({ limit: pager.limit, offset: pager.offset });
+      const nextItems = d.items || [];
+      setItems(nextItems);
+      setPager((prev) => ({ ...prev, total: d.page ? d.page.total : nextItems.length }));
+    } catch {
+      setItems([]);
+    }
+  }, [api, pager.limit, pager.offset]);
+
+  useEffect(() => {
+    if (!active) return;
+    void loadPage();
+  }, [active, loadPage]);
+
+  return (
+    <div className={active ? 'page active' : 'page'} id="page-payouts">
+      <h2>Payouts</h2>
+      <p style={{ fontSize: 14, color: 'var(--muted)', marginBottom: 16 }}>
+        All pool payouts. Transaction hashes link to the block explorer for verification.
+      </p>
+      <div className="card table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Amount</th>
+              <th>Miners Paid</th>
+              <th>Network Fee</th>
+              <th>Transaction</th>
+              <th>Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            {!items.length ? (
+              <tr>
+                <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                  No payouts yet
+                </td>
+              </tr>
+            ) : (
+              items.map((p, idx) => (
+                <tr key={`${toUnixMs(p.timestamp)}-${idx}`}>
+                  <td>{formatCoins(p.total_amount)}</td>
+                  <td>{p.recipient_count}</td>
+                  <td>{formatFee(p.total_fee)}</td>
+                  <td>
+                    <PayoutTxLinks hashes={p.tx_hashes} />
+                  </td>
+                  <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+        <Pager
+          offset={pager.offset}
+          limit={pager.limit}
+          total={pager.total}
+          onPrev={() => setPager((p) => ({ ...p, offset: Math.max(0, p.offset - p.limit) }))}
+          onNext={() => setPager((p) => ({ ...p, offset: p.offset + p.limit }))}
+        />
+      </div>
+    </div>
+  );
+}

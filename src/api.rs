@@ -222,6 +222,8 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/", get(handle_ui))
         .route("/ui", get(handle_ui))
+        .route("/ui-assets/app.js", get(handle_ui_asset_app_js))
+        .route("/ui-assets/app.css", get(handle_ui_asset_app_css))
         .route(
             "/ui-assets/pool-entered.png",
             get(handle_ui_asset_pool_entered),
@@ -244,12 +246,37 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
     Ok(())
 }
 
-const UI_INDEX_HTML: &str = include_str!("ui/index.html");
+const UI_INDEX_HTML: &str = include_str!("ui/dist/index.html");
+const UI_ASSET_APP_JS: &str = include_str!("ui/dist/app.js");
+const UI_ASSET_APP_CSS: &str = include_str!("ui/dist/app.css");
 const UI_ASSET_POOL_ENTERED_PNG: &[u8] = include_bytes!("ui/assets/pool-entered.png");
 const UI_ASSET_MINING_TUI_PNG: &[u8] = include_bytes!("ui/assets/mining-tui.png");
 
 async fn handle_ui() -> Html<&'static str> {
     Html(UI_INDEX_HTML)
+}
+
+async fn handle_ui_asset_app_js() -> impl IntoResponse {
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                "application/javascript; charset=utf-8",
+            ),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        UI_ASSET_APP_JS,
+    )
+}
+
+async fn handle_ui_asset_app_css() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/css; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        UI_ASSET_APP_CSS,
+    )
 }
 
 async fn handle_ui_asset_pool_entered() -> impl IntoResponse {
