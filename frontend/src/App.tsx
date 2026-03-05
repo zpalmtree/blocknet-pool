@@ -61,17 +61,30 @@ export function App() {
 
   useEffect(() => {
     let mounted = true;
+    let lastTickAt = Date.now();
     const source = new EventSource('/api/events');
     const onTick = () => {
       if (!mounted) return;
+      lastTickAt = Date.now();
       setLiveTick((tick) => tick + 1);
     };
     source.addEventListener('tick', onTick);
     source.onerror = () => {
       // EventSource auto-reconnects.
     };
+
+    // Fallback refresh for environments where SSE is delayed or blocked.
+    const fallbackTimer = window.setInterval(() => {
+      if (!mounted) return;
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastTickAt < 15000) return;
+      lastTickAt = Date.now();
+      setLiveTick((tick) => tick + 1);
+    }, 5000);
+
     return () => {
       mounted = false;
+      window.clearInterval(fallbackTimer);
       source.removeEventListener('tick', onTick);
       source.close();
     };
