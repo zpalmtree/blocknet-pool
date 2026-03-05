@@ -19,7 +19,7 @@ use tokio_stream::wrappers::IntervalStream;
 use tokio_stream::StreamExt;
 
 use crate::config::Config;
-use crate::db::{DbBlock, Payout, PoolFeeEvent};
+use crate::db::{DbBlock, Payout, PoolFeeEvent, PublicPayoutBatch};
 use crate::engine::JobRepository;
 use crate::jobs::JobManager;
 use crate::node::NodeClient;
@@ -49,6 +49,7 @@ const STATUS_SAMPLES_RETENTION: Duration = Duration::from_secs(8 * 24 * 60 * 60)
 const STATUS_MAX_INCIDENTS: usize = 256;
 const MINER_PAYOUT_HISTORY_LIMIT: i64 = 50;
 const PROPORTIONAL_WINDOW: Duration = Duration::from_secs(60 * 60);
+const MAX_MINER_HASHRATE_DB_LOOKUPS: usize = 4096;
 
 fn db_miner_hashrate(store: &PoolStore, address: &str) -> f64 {
     let since = SystemTime::now()
@@ -1033,24 +1034,33 @@ async fn handle_miners(
     let all_stats = state.stats.all_miner_stats();
     let fallback_hashrates = state.stats.estimate_all_miner_hashrates();
     let addresses = all_stats.keys().cloned().collect::<Vec<_>>();
-    let store = Arc::clone(&state.store);
-    let hashrates = match tokio::task::spawn_blocking(move || {
-        let mut map = HashMap::with_capacity(addresses.len());
-        for address in addresses {
-            map.insert(address.clone(), db_miner_hashrate(&store, &address));
-        }
-        Ok::<_, anyhow::Error>(map)
-    })
-    .await
-    {
-        Ok(Ok(map)) => map,
-        Ok(Err(err)) => {
-            tracing::warn!(error = %err, "failed loading miner hashrates from db; using in-memory estimates");
-            fallback_hashrates
-        }
-        Err(err) => {
-            tracing::warn!(error = %err, "failed joining miner hashrate db task; using in-memory estimates");
-            fallback_hashrates
+    let hashrates = if addresses.len() > MAX_MINER_HASHRATE_DB_LOOKUPS {
+        tracing::warn!(
+            miner_count = addresses.len(),
+            lookup_cap = MAX_MINER_HASHRATE_DB_LOOKUPS,
+            "miner hashrate DB lookup skipped for large miner set; using in-memory estimates"
+        );
+        fallback_hashrates
+    } else {
+        let store = Arc::clone(&state.store);
+        match tokio::task::spawn_blocking(move || {
+            let mut map = HashMap::with_capacity(addresses.len());
+            for address in addresses {
+                map.insert(address.clone(), db_miner_hashrate(&store, &address));
+            }
+            Ok::<_, anyhow::Error>(map)
+        })
+        .await
+        {
+            Ok(Ok(map)) => map,
+            Ok(Err(err)) => {
+                tracing::warn!(error = %err, "failed loading miner hashrates from db; using in-memory estimates");
+                fallback_hashrates
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "failed joining miner hashrate db task; using in-memory estimates");
+                fallback_hashrates
+            }
         }
     };
     let mut items = all_stats
@@ -1373,8 +1383,36 @@ async fn handle_blocks(
         return Json(blocks).into_response();
     }
 
+    let (limit, offset) = page_bounds(query.limit, query.offset);
+    let sort = match query.sort.as_deref().map(str::trim) {
+        Some("height_asc") => "height_asc",
+        Some("reward_desc") => "reward_desc",
+        Some("reward_asc") => "reward_asc",
+        Some("time_asc") => "time_asc",
+        _ => "height_desc",
+    };
+    let finder = non_empty(&query.finder).map(str::to_string);
+    let status = non_empty(&query.status)
+        .filter(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "confirmed" | "orphaned" | "pending" | "paid" | "unpaid"
+            )
+        })
+        .map(str::to_string);
+
     let store = Arc::clone(&state.store);
-    let mut blocks = match tokio::task::spawn_blocking(move || store.get_all_blocks()).await {
+    let (mut blocks, total) = match tokio::task::spawn_blocking(move || {
+        store.get_blocks_page(
+            finder.as_deref(),
+            status.as_deref(),
+            sort,
+            limit as i64,
+            offset as i64,
+        )
+    })
+    .await
+    {
         Ok(Ok(v)) => v,
         Ok(Err(err)) => return internal_error("failed loading blocks", err).into_response(),
         Err(err) => {
@@ -1388,36 +1426,18 @@ async fn handle_blocks(
     for block in &mut blocks {
         hydrate_provisional_block_reward(block);
     }
+    let returned = blocks.len();
 
-    if let Some(finder) = non_empty(&query.finder) {
-        blocks.retain(|block| contains_ci(&block.finder, finder));
-    }
-
-    if let Some(status) = non_empty(&query.status) {
-        match status.to_ascii_lowercase().as_str() {
-            "confirmed" => blocks.retain(|block| block.confirmed && !block.orphaned),
-            "orphaned" => blocks.retain(|block| block.orphaned),
-            "pending" => blocks.retain(|block| !block.confirmed && !block.orphaned),
-            "paid" => blocks.retain(|block| block.paid_out),
-            "unpaid" => blocks.retain(|block| !block.paid_out),
-            _ => {}
-        }
-    }
-
-    match query
-        .sort
-        .as_deref()
-        .map(str::trim)
-        .unwrap_or("height_desc")
-    {
-        "height_asc" => blocks.sort_by(|a, b| a.height.cmp(&b.height)),
-        "reward_desc" => blocks.sort_by(|a, b| b.reward.cmp(&a.reward)),
-        "reward_asc" => blocks.sort_by(|a, b| a.reward.cmp(&b.reward)),
-        "time_asc" => blocks.sort_by(|a, b| a.timestamp.cmp(&b.timestamp)),
-        _ => blocks.sort_by(|a, b| b.height.cmp(&a.height)),
-    }
-
-    Json(paginate_response(blocks, query.limit, query.offset)).into_response()
+    Json(PagedResponse {
+        items: blocks,
+        page: PageMeta {
+            limit,
+            offset,
+            returned,
+            total: total as usize,
+        },
+    })
+    .into_response()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1782,8 +1802,20 @@ async fn handle_public_payouts(
     Query(query): Query<PayoutsQuery>,
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
+    let (limit, offset) = page_bounds(query.limit, query.offset);
+    let sort = match query.sort.as_deref().map(str::trim) {
+        Some("time_asc") => "time_asc",
+        Some("amount_desc") => "amount_desc",
+        Some("amount_asc") => "amount_asc",
+        _ => "time_desc",
+    };
+
     let store = Arc::clone(&state.store);
-    let mut payouts = match tokio::task::spawn_blocking(move || store.get_all_payouts()).await {
+    let (batches, total) = match tokio::task::spawn_blocking(move || {
+        store.get_public_payout_batches_page(sort, limit as i64, offset as i64)
+    })
+    .await
+    {
         Ok(Ok(v)) => v,
         Ok(Err(err)) => return internal_error("failed loading payouts", err).into_response(),
         Err(err) => {
@@ -1795,18 +1827,28 @@ async fn handle_public_payouts(
         }
     };
 
-    // Always sort by time desc for batching, then re-sort result if needed.
-    payouts.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-    let mut public = batch_payouts(&payouts);
+    let items = batches
+        .into_iter()
+        .map(|batch: PublicPayoutBatch| PublicPayout {
+            total_amount: batch.total_amount,
+            total_fee: batch.total_fee,
+            recipient_count: batch.recipient_count,
+            tx_hashes: batch.tx_hashes,
+            timestamp: batch.timestamp,
+        })
+        .collect::<Vec<_>>();
+    let returned = items.len();
 
-    match query.sort.as_deref().map(str::trim).unwrap_or("time_desc") {
-        "time_asc" => public.sort_by(|a, b| a.timestamp.cmp(&b.timestamp)),
-        "amount_desc" => public.sort_by(|a, b| b.total_amount.cmp(&a.total_amount)),
-        "amount_asc" => public.sort_by(|a, b| a.total_amount.cmp(&b.total_amount)),
-        _ => {} // already time_desc
-    }
-
-    Json(paginate_response(public, query.limit, query.offset)).into_response()
+    Json(PagedResponse {
+        items,
+        page: PageMeta {
+            limit,
+            offset,
+            returned,
+            total: total as usize,
+        },
+    })
+    .into_response()
 }
 
 async fn handle_payouts(
@@ -1831,8 +1873,28 @@ async fn handle_payouts(
         return Json(payouts).into_response();
     }
 
+    let (limit, offset) = page_bounds(query.limit, query.offset);
+    let sort = match query.sort.as_deref().map(str::trim) {
+        Some("time_asc") => "time_asc",
+        Some("amount_desc") => "amount_desc",
+        Some("amount_asc") => "amount_asc",
+        _ => "time_desc",
+    };
+    let address = non_empty(&query.address).map(str::to_string);
+    let tx_hash = non_empty(&query.tx_hash).map(str::to_string);
+
     let store = Arc::clone(&state.store);
-    let mut payouts = match tokio::task::spawn_blocking(move || store.get_all_payouts()).await {
+    let (items, total) = match tokio::task::spawn_blocking(move || {
+        store.get_payouts_page(
+            address.as_deref(),
+            tx_hash.as_deref(),
+            sort,
+            limit as i64,
+            offset as i64,
+        )
+    })
+    .await
+    {
         Ok(Ok(v)) => v,
         Ok(Err(err)) => return internal_error("failed loading payouts", err).into_response(),
         Err(err) => {
@@ -1843,23 +1905,18 @@ async fn handle_payouts(
             .into_response()
         }
     };
+    let returned = items.len();
 
-    if let Some(address) = non_empty(&query.address) {
-        payouts.retain(|payout| contains_ci(&payout.address, address));
-    }
-
-    if let Some(tx_hash) = non_empty(&query.tx_hash) {
-        payouts.retain(|payout| contains_ci(&payout.tx_hash, tx_hash));
-    }
-
-    match query.sort.as_deref().map(str::trim).unwrap_or("time_desc") {
-        "time_asc" => payouts.sort_by(|a, b| a.timestamp.cmp(&b.timestamp)),
-        "amount_desc" => payouts.sort_by(|a, b| b.amount.cmp(&a.amount)),
-        "amount_asc" => payouts.sort_by(|a, b| a.amount.cmp(&b.amount)),
-        _ => payouts.sort_by(|a, b| b.timestamp.cmp(&a.timestamp)),
-    }
-
-    Json(paginate_response(payouts, query.limit, query.offset)).into_response()
+    Json(PagedResponse {
+        items,
+        page: PageMeta {
+            limit,
+            offset,
+            returned,
+            total: total as usize,
+        },
+    })
+    .into_response()
 }
 
 async fn handle_fees(
@@ -1894,37 +1951,52 @@ async fn handle_fees(
         .into_response();
     }
 
+    let (limit, offset) = page_bounds(query.limit, query.offset);
+    let sort = match query.sort.as_deref().map(str::trim) {
+        Some("time_asc") => "time_asc",
+        Some("amount_desc") => "amount_desc",
+        Some("amount_asc") => "amount_asc",
+        Some("height_asc") => "height_asc",
+        Some("height_desc") => "height_desc",
+        _ => "time_desc",
+    };
+    let fee_address = non_empty(&query.fee_address).map(str::to_string);
+
     let store = Arc::clone(&state.store);
-    let (total_collected, mut fees) =
-        match tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, Vec<PoolFeeEvent>)> {
-            Ok((store.get_total_pool_fees()?, store.get_all_pool_fees()?))
-        })
-        .await
-        {
-            Ok(Ok(v)) => v,
-            Ok(Err(err)) => return internal_error("failed loading fees", err).into_response(),
-            Err(err) => {
-                return internal_error("failed loading fees", anyhow::anyhow!("join error: {err}"))
-                    .into_response()
-            }
-        };
-
-    if let Some(fee_address) = non_empty(&query.fee_address) {
-        fees.retain(|event| contains_ci(&event.fee_address, fee_address));
-    }
-
-    match query.sort.as_deref().map(str::trim).unwrap_or("time_desc") {
-        "time_asc" => fees.sort_by(|a, b| a.timestamp.cmp(&b.timestamp)),
-        "amount_desc" => fees.sort_by(|a, b| b.amount.cmp(&a.amount)),
-        "amount_asc" => fees.sort_by(|a, b| a.amount.cmp(&b.amount)),
-        "height_asc" => fees.sort_by(|a, b| a.block_height.cmp(&b.block_height)),
-        "height_desc" => fees.sort_by(|a, b| b.block_height.cmp(&a.block_height)),
-        _ => fees.sort_by(|a, b| b.timestamp.cmp(&a.timestamp)),
-    }
+    let (total_collected, fees, total) = match tokio::task::spawn_blocking(
+        move || -> anyhow::Result<(u64, Vec<PoolFeeEvent>, u64)> {
+            let total_collected = store.get_total_pool_fees()?;
+            let (fees, total) = store.get_pool_fees_page(
+                fee_address.as_deref(),
+                sort,
+                limit as i64,
+                offset as i64,
+            )?;
+            Ok((total_collected, fees, total))
+        },
+    )
+    .await
+    {
+        Ok(Ok(v)) => v,
+        Ok(Err(err)) => return internal_error("failed loading fees", err).into_response(),
+        Err(err) => {
+            return internal_error("failed loading fees", anyhow::anyhow!("join error: {err}"))
+                .into_response()
+        }
+    };
+    let returned = fees.len();
 
     Json(serde_json::json!({
         "total_collected": total_collected,
-        "recent": paginate_response(fees, query.limit, query.offset),
+        "recent": PagedResponse {
+            items: fees,
+            page: PageMeta {
+                limit,
+                offset,
+                returned,
+                total: total as usize,
+            },
+        },
     }))
     .into_response()
 }
@@ -2305,31 +2377,6 @@ fn page_bounds(limit: Option<usize>, offset: Option<usize>) -> (usize, usize) {
 fn share_limit(value: Option<i64>) -> i64 {
     let raw = value.unwrap_or(100);
     raw.clamp(1, 500)
-}
-
-fn paginate_response<T: Serialize + Clone>(
-    all_items: Vec<T>,
-    limit: Option<usize>,
-    offset: Option<usize>,
-) -> PagedResponse<T> {
-    let total = all_items.len();
-    let (limit, offset) = page_bounds(limit, offset);
-    let items = all_items
-        .into_iter()
-        .skip(offset)
-        .take(limit)
-        .collect::<Vec<_>>();
-    let returned = items.len();
-
-    PagedResponse {
-        items,
-        page: PageMeta {
-            limit,
-            offset,
-            returned,
-            total,
-        },
-    }
 }
 
 fn system_time_to_unix_secs(value: SystemTime) -> u64 {

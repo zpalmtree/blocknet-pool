@@ -9,6 +9,8 @@ const MINER_STATS_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 const MAX_TRACKED_MINERS: usize = 100_000;
 const MAX_RECENT_SHARES: usize = 200_000;
 const MAX_RECENT_REJECTIONS: usize = 200_000;
+const HASHRATE_WINDOW: Duration = Duration::from_secs(60 * 60);
+const ACCEPTED_EVENTS_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const SHARE_EVENTS_PER_PRUNE_SWEEP: u64 = 1024;
 const MIN_PRUNE_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 const REJECTION_EVENTS_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -147,7 +149,7 @@ impl PoolStats {
         });
 
         let cutoff = now
-            .checked_sub(Duration::from_secs(60 * 60))
+            .checked_sub(ACCEPTED_EVENTS_RETENTION)
             .unwrap_or(SystemTime::UNIX_EPOCH);
         while recent
             .front()
@@ -285,28 +287,33 @@ impl PoolStats {
 
     pub fn estimate_hashrate(&self) -> f64 {
         let recent = self.recent_shares.read();
-        if recent.len() < 2 {
+        let cutoff = SystemTime::now()
+            .checked_sub(HASHRATE_WINDOW)
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let mut oldest = None;
+        let mut newest = None;
+        let mut total_diff = 0u64;
+        let mut count = 0usize;
+
+        for share in recent.iter().filter(|share| share.timestamp >= cutoff) {
+            oldest.get_or_insert(share.timestamp);
+            newest = Some(share.timestamp);
+            total_diff = total_diff.saturating_add(share.difficulty);
+            count += 1;
+        }
+
+        if count < 2 {
             return 0.0;
         }
 
-        let oldest = recent
-            .front()
-            .map(|r| r.timestamp)
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        let newest = recent
-            .back()
-            .map(|r| r.timestamp)
-            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let oldest = oldest.unwrap_or(SystemTime::UNIX_EPOCH);
+        let newest = newest.unwrap_or(SystemTime::UNIX_EPOCH);
         let Ok(window) = newest.duration_since(oldest) else {
             return 0.0;
         };
         if window.as_secs_f64() < 1.0 {
             return 0.0;
         }
-
-        let total_diff = recent
-            .iter()
-            .fold(0u64, |acc, r| acc.saturating_add(r.difficulty));
         total_diff as f64 / window.as_secs_f64()
     }
 
@@ -321,7 +328,10 @@ impl PoolStats {
 
         let mut aggregates = HashMap::<String, Aggregate>::new();
         let recent = self.recent_shares.read();
-        for share in recent.iter() {
+        let cutoff = SystemTime::now()
+            .checked_sub(HASHRATE_WINDOW)
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        for share in recent.iter().filter(|share| share.timestamp >= cutoff) {
             let entry = aggregates.entry(share.miner.clone()).or_insert(Aggregate {
                 total_diff: 0,
                 first: share.timestamp,
@@ -358,12 +368,18 @@ impl PoolStats {
 
     pub fn estimate_miner_hashrate(&self, address: &str) -> f64 {
         let recent = self.recent_shares.read();
+        let cutoff = SystemTime::now()
+            .checked_sub(HASHRATE_WINDOW)
+            .unwrap_or(SystemTime::UNIX_EPOCH);
         let mut first = None;
         let mut last = None;
         let mut total_diff = 0u64;
         let mut count = 0usize;
 
-        for share in recent.iter().filter(|s| s.miner == address) {
+        for share in recent
+            .iter()
+            .filter(|share| share.miner == address && share.timestamp >= cutoff)
+        {
             if first.is_none() {
                 first = Some(share.timestamp);
             }

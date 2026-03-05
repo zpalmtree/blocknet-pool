@@ -158,6 +158,7 @@ export function StatsPage({ active, api, liveTick }: StatsPageProps) {
   }, [rejectionWindow]);
   const topWindowReason = rejectionWindow?.by_reason?.[0];
   const topTotalReason = rejectionWindow?.totals_by_reason?.[0];
+  const hasRejectionRows = (rejectionWindow?.totals_by_reason?.length ?? 0) > 0;
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-stats">
@@ -208,10 +209,13 @@ export function StatsPage({ active, api, liveTick }: StatsPageProps) {
             <div className="stat-card">
               <div className="label">Pending Balance (Total)</div>
               <div className="value">{formatCoins(pendingTotal)}</div>
-              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>
-                Confirmed {formatCoins(pendingConfirmed)}
-                {' • '}
-                Estimated {formatCoins(pendingEstimated)}
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8, display: 'grid', gap: 2 }}>
+                <div>
+                  Confirmed <span className="mono">{formatCoins(pendingConfirmed)}</span>
+                </div>
+                <div>
+                  Estimated <span className="mono">{formatCoins(pendingEstimated)}</span>
+                </div>
               </div>
             </div>
             <div className="stat-card">
@@ -424,52 +428,54 @@ export function StatsPage({ active, api, liveTick }: StatsPageProps) {
                 ))}
               </div>
             </div>
-            <div className="card table-scroll">
+            <div className={hasRejectionRows ? 'card table-scroll' : 'card'}>
               <div className="rejection-summary mono">
                 Checked {rejectionChecked} shares
                 {' • '}rejected {rejectionWindow?.rejected ?? 0}
                 {' • '}rate {fmtPct(rejectionWindow?.rejection_rate_pct)}
                 {' • '}all-time rejected {rejectionWindow?.total_rejected ?? 0}
               </div>
-              <div className="rejection-summary mono">
-                Top reason ({rejectionRange}) {topWindowReason ? `${topWindowReason.reason} (${topWindowReason.count})` : '-'}
-                {' • '}top reason (all-time) {topTotalReason ? `${topTotalReason.reason} (${topTotalReason.count})` : '-'}
-              </div>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Reason</th>
-                    <th>{rejectionRange}</th>
-                    <th>{rejectionRange} %</th>
-                    <th>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {!rejectionWindow?.totals_by_reason?.length ? (
-                    <tr>
-                      <td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                        No rejection events recorded
-                      </td>
-                    </tr>
-                  ) : (
-                    rejectionWindow.totals_by_reason.map((reason) => {
-                      const windowCount = rejectionByReason.get(reason.reason) || 0;
-                      const windowPct =
-                        (rejectionWindow?.rejected ?? 0) > 0
-                          ? (windowCount / (rejectionWindow?.rejected ?? 0)) * 100
-                          : 0;
-                      return (
-                        <tr key={reason.reason}>
-                          <td>{reason.reason}</td>
-                          <td>{windowCount}</td>
-                          <td>{windowPct > 0 ? fmtPct(windowPct) : '-'}</td>
-                          <td>{reason.count}</td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
+              {!hasRejectionRows ? (
+                <div className="rejection-summary mono" style={{ marginTop: 0 }}>
+                  No rejection events recorded yet. This is expected when shares are being accepted cleanly.
+                </div>
+              ) : (
+                <>
+                  <div className="rejection-summary mono">
+                    Top reason ({rejectionRange}){' '}
+                    {topWindowReason ? `${topWindowReason.reason} (${topWindowReason.count})` : 'none'}
+                    {' • '}top reason (all-time){' '}
+                    {topTotalReason ? `${topTotalReason.reason} (${topTotalReason.count})` : 'none'}
+                  </div>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Reason</th>
+                        <th>{rejectionRange}</th>
+                        <th>{rejectionRange} %</th>
+                        <th>Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rejectionWindow?.totals_by_reason?.map((reason) => {
+                        const windowCount = rejectionByReason.get(reason.reason) || 0;
+                        const windowPct =
+                          (rejectionWindow?.rejected ?? 0) > 0
+                            ? (windowCount / (rejectionWindow?.rejected ?? 0)) * 100
+                            : 0;
+                        return (
+                          <tr key={reason.reason}>
+                            <td>{reason.reason}</td>
+                            <td>{windowCount}</td>
+                            <td>{windowPct > 0 ? fmtPct(windowPct) : '-'}</td>
+                            <td>{reason.count}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </>
+              )}
             </div>
           </div>
 

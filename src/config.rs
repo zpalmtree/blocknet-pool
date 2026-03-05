@@ -224,6 +224,12 @@ impl Config {
         {
             self.payout_provisional_cap_multiplier = 0.0;
         }
+        let max_atomic_amount = (u64::MAX as f64) / 100_000_000.0;
+        if !self.min_payout_amount.is_finite() || self.min_payout_amount < 0.0 {
+            self.min_payout_amount = 0.1;
+        } else {
+            self.min_payout_amount = self.min_payout_amount.clamp(0.0, max_atomic_amount);
+        }
     }
 
     pub fn block_poll_duration(&self) -> Duration {
@@ -364,6 +370,7 @@ mod tests {
             payout_min_verified_shares: -3,
             payout_min_verified_ratio: 2.0,
             payout_provisional_cap_multiplier: f64::NAN,
+            min_payout_amount: -1.0,
             ..Config::default()
         };
         cfg.normalize();
@@ -388,6 +395,7 @@ mod tests {
         assert_eq!(cfg.payout_min_verified_shares, 0);
         assert_eq!(cfg.payout_min_verified_ratio, 1.0);
         assert_eq!(cfg.payout_provisional_cap_multiplier, 0.0);
+        assert_eq!(cfg.min_payout_amount, 0.1);
     }
 
     #[test]

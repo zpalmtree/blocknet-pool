@@ -396,7 +396,7 @@ impl PayoutProcessor {
             return;
         }
 
-        let min_amount = (self.cfg.min_payout_amount * 100_000_000.0) as u64;
+        let min_amount = atomic_amount_from_coins(self.cfg.min_payout_amount);
         let balances = match self.store.get_all_balances() {
             Ok(v) => v,
             Err(err) => {
@@ -708,6 +708,14 @@ fn add_credit(
         .checked_add(amount)
         .ok_or_else(|| anyhow::anyhow!("credit overflow"))?;
     Ok(())
+}
+
+fn atomic_amount_from_coins(coins: f64) -> u64 {
+    if !coins.is_finite() || coins <= 0.0 {
+        return 0;
+    }
+    let max_coins = (u64::MAX as f64) / 100_000_000.0;
+    (coins.clamp(0.0, max_coins) * 100_000_000.0).round() as u64
 }
 
 #[cfg(test)]

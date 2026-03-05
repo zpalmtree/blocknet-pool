@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
         warn!(
             host = %cfg.api_host,
             port = cfg.api_port,
-            "api_key is empty; only /api/stats and /api/miner/:address are public (other /api routes disabled)"
+            "api_key is empty; protected routes (/api/miners, /api/payouts, /api/fees, /api/health) are disabled while public routes remain available (/api/info, /api/stats, /api/stats/history, /api/stats/insights, /api/status, /api/events, /api/blocks, /api/payouts/recent, /api/miner/:address, /api/miner/:address/hashrate)"
         );
     }
 

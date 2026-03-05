@@ -7,7 +7,7 @@ use tracing::warn;
 use crate::config::Config;
 use crate::db::{
     AddressRiskState, Balance, DbBlock, DbShare, Payout, PendingPayout, PoolFeeEvent,
-    PoolFeeRecord, SqliteStore, StatSnapshot,
+    PoolFeeRecord, PublicPayoutBatch, SqliteStore, StatSnapshot,
 };
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::pgdb::PostgresStore;
@@ -120,6 +120,20 @@ impl PoolStore {
         }
     }
 
+    pub fn get_blocks_page(
+        &self,
+        finder: Option<&str>,
+        status: Option<&str>,
+        sort: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<DbBlock>, u64)> {
+        match self {
+            PoolStore::Sqlite(v) => v.get_blocks_page(finder, status, sort, limit, offset),
+            PoolStore::Postgres(v) => v.get_blocks_page(finder, status, sort, limit, offset),
+        }
+    }
+
     pub fn get_unconfirmed_blocks(&self) -> Result<Vec<DbBlock>> {
         match self {
             PoolStore::Sqlite(v) => v.get_unconfirmed_blocks(),
@@ -212,6 +226,32 @@ impl PoolStore {
         }
     }
 
+    pub fn get_payouts_page(
+        &self,
+        address: Option<&str>,
+        tx_hash: Option<&str>,
+        sort: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<Payout>, u64)> {
+        match self {
+            PoolStore::Sqlite(v) => v.get_payouts_page(address, tx_hash, sort, limit, offset),
+            PoolStore::Postgres(v) => v.get_payouts_page(address, tx_hash, sort, limit, offset),
+        }
+    }
+
+    pub fn get_public_payout_batches_page(
+        &self,
+        sort: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<PublicPayoutBatch>, u64)> {
+        match self {
+            PoolStore::Sqlite(v) => v.get_public_payout_batches_page(sort, limit, offset),
+            PoolStore::Postgres(v) => v.get_public_payout_batches_page(sort, limit, offset),
+        }
+    }
+
     pub fn record_pool_fee(
         &self,
         block_height: u64,
@@ -245,6 +285,19 @@ impl PoolStore {
         match self {
             PoolStore::Sqlite(v) => v.get_all_pool_fees(),
             PoolStore::Postgres(v) => v.get_all_pool_fees(),
+        }
+    }
+
+    pub fn get_pool_fees_page(
+        &self,
+        fee_address: Option<&str>,
+        sort: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<PoolFeeEvent>, u64)> {
+        match self {
+            PoolStore::Sqlite(v) => v.get_pool_fees_page(fee_address, sort, limit, offset),
+            PoolStore::Postgres(v) => v.get_pool_fees_page(fee_address, sort, limit, offset),
         }
     }
 

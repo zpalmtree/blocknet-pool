@@ -68,6 +68,15 @@ pub struct Payout {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct PublicPayoutBatch {
+    pub total_amount: u64,
+    pub total_fee: u64,
+    pub recipient_count: usize,
+    pub tx_hashes: Vec<String>,
+    pub timestamp: SystemTime,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct PendingPayout {
     pub address: String,
     pub amount: u64,
@@ -151,6 +160,7 @@ CREATE TABLE IF NOT EXISTS blocks (
     paid_out INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_blocks_timestamp ON blocks(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_blocks_finder ON blocks(finder);
 
 CREATE TABLE IF NOT EXISTS balances (
     address TEXT PRIMARY KEY,
@@ -168,6 +178,7 @@ CREATE TABLE IF NOT EXISTS payouts (
 );
 CREATE INDEX IF NOT EXISTS idx_payouts_timestamp ON payouts(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_payouts_address_timestamp ON payouts(address, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_payouts_tx_hash ON payouts(tx_hash);
 
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
@@ -196,6 +207,7 @@ CREATE TABLE IF NOT EXISTS pool_fee_events (
     timestamp INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_pool_fee_events_timestamp ON pool_fee_events(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_pool_fee_events_fee_address ON pool_fee_events(fee_address);
 
 CREATE TABLE IF NOT EXISTS address_risk (
     address TEXT PRIMARY KEY,
@@ -478,6 +490,75 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         )?;
         let rows = stmt.query_map([], row_to_block)?;
         collect_rows(rows)
+    }
+
+    pub fn get_blocks_page(
+        &self,
+        finder: Option<&str>,
+        status: Option<&str>,
+        sort: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<DbBlock>, u64)> {
+        let finder_pattern = finder
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(|v| format!("%{}%", v.to_ascii_lowercase()));
+        let status_filter = normalize_block_status_filter(status);
+
+        let order_clause = match sort {
+            "height_asc" => "height ASC",
+            "reward_desc" => "reward DESC, height DESC",
+            "reward_asc" => "reward ASC, height DESC",
+            "time_asc" => "timestamp ASC, height ASC",
+            _ => "height DESC",
+        };
+
+        let conn = self.conn.lock();
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*)
+             FROM blocks
+             WHERE (?1 IS NULL OR LOWER(finder) LIKE ?1)
+               AND (
+                   ?2 IS NULL
+                   OR (?2 = 'confirmed' AND confirmed = 1 AND orphaned = 0)
+                   OR (?2 = 'orphaned' AND orphaned = 1)
+                   OR (?2 = 'pending' AND confirmed = 0 AND orphaned = 0)
+                   OR (?2 = 'paid' AND paid_out = 1)
+                   OR (?2 = 'unpaid' AND paid_out = 0)
+               )",
+            params![finder_pattern.as_deref(), status_filter],
+            |row| row.get(0),
+        )?;
+
+        let sql = format!(
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out
+             FROM blocks
+             WHERE (?1 IS NULL OR LOWER(finder) LIKE ?1)
+               AND (
+                   ?2 IS NULL
+                   OR (?2 = 'confirmed' AND confirmed = 1 AND orphaned = 0)
+                   OR (?2 = 'orphaned' AND orphaned = 1)
+                   OR (?2 = 'pending' AND confirmed = 0 AND orphaned = 0)
+                   OR (?2 = 'paid' AND paid_out = 1)
+                   OR (?2 = 'unpaid' AND paid_out = 0)
+               )
+             ORDER BY {order_clause}
+             LIMIT ?3 OFFSET ?4"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(
+            params![
+                finder_pattern.as_deref(),
+                status_filter,
+                limit.max(0),
+                offset.max(0)
+            ],
+            row_to_block,
+        )?;
+        let items = collect_rows(rows)?;
+
+        Ok((items, total.max(0) as u64))
     }
 
     pub fn get_unconfirmed_blocks(&self) -> Result<Vec<DbBlock>> {
@@ -779,6 +860,131 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         collect_rows(rows)
     }
 
+    pub fn get_payouts_page(
+        &self,
+        address: Option<&str>,
+        tx_hash: Option<&str>,
+        sort: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<Payout>, u64)> {
+        let address_pattern = address
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(|v| format!("%{}%", v.to_ascii_lowercase()));
+        let tx_hash_pattern = tx_hash
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(|v| format!("%{}%", v.to_ascii_lowercase()));
+
+        let order_clause = match sort {
+            "time_asc" => "timestamp ASC, id ASC",
+            "amount_desc" => "amount DESC, id DESC",
+            "amount_asc" => "amount ASC, id DESC",
+            _ => "timestamp DESC, id DESC",
+        };
+
+        let conn = self.conn.lock();
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*)
+             FROM payouts
+             WHERE (?1 IS NULL OR LOWER(address) LIKE ?1)
+               AND (?2 IS NULL OR LOWER(tx_hash) LIKE ?2)",
+            params![address_pattern.as_deref(), tx_hash_pattern.as_deref()],
+            |row| row.get(0),
+        )?;
+
+        let sql = format!(
+            "SELECT id, address, amount, fee, tx_hash, timestamp
+             FROM payouts
+             WHERE (?1 IS NULL OR LOWER(address) LIKE ?1)
+               AND (?2 IS NULL OR LOWER(tx_hash) LIKE ?2)
+             ORDER BY {order_clause}
+             LIMIT ?3 OFFSET ?4"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(
+            params![
+                address_pattern.as_deref(),
+                tx_hash_pattern.as_deref(),
+                limit.max(0),
+                offset.max(0)
+            ],
+            |row| {
+                Ok(Payout {
+                    id: row.get(0)?,
+                    address: row.get(1)?,
+                    amount: row.get::<_, i64>(2)?.max(0) as u64,
+                    fee: row.get::<_, i64>(3)?.max(0) as u64,
+                    tx_hash: row.get(4)?,
+                    timestamp: from_unix(row.get::<_, i64>(5)?),
+                })
+            },
+        )?;
+        let items = collect_rows(rows)?;
+
+        Ok((items, total.max(0) as u64))
+    }
+
+    pub fn get_public_payout_batches_page(
+        &self,
+        sort: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<PublicPayoutBatch>, u64)> {
+        let order_clause = match sort {
+            "time_asc" => "bucket ASC",
+            "amount_desc" => "total_amount DESC, bucket DESC",
+            "amount_asc" => "total_amount ASC, bucket DESC",
+            _ => "bucket DESC",
+        };
+
+        let conn = self.conn.lock();
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM (SELECT (timestamp / 300) AS bucket FROM payouts GROUP BY bucket)",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let sql = format!(
+            "WITH grouped AS (
+                SELECT
+                    (timestamp / 300) AS bucket,
+                    SUM(amount) AS total_amount,
+                    SUM(fee) AS total_fee,
+                    COUNT(*) AS recipient_count,
+                    GROUP_CONCAT(tx_hash) AS tx_hashes,
+                    MAX(timestamp) AS batch_ts
+                FROM payouts
+                GROUP BY bucket
+             )
+             SELECT total_amount, total_fee, recipient_count, tx_hashes, batch_ts
+             FROM grouped
+             ORDER BY {order_clause}
+             LIMIT ?1 OFFSET ?2"
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![limit.max(0), offset.max(0)], |row| {
+            let tx_hashes: Option<String> = row.get(3)?;
+            Ok(PublicPayoutBatch {
+                total_amount: row.get::<_, i64>(0)?.max(0) as u64,
+                total_fee: row.get::<_, i64>(1)?.max(0) as u64,
+                recipient_count: row.get::<_, i64>(2)?.max(0) as usize,
+                tx_hashes: tx_hashes
+                    .unwrap_or_default()
+                    .split(',')
+                    .filter(|v| !v.trim().is_empty())
+                    .map(|v| v.to_string())
+                    .collect(),
+                timestamp: from_unix(row.get::<_, i64>(4)?),
+            })
+        })?;
+        let items = collect_rows(rows)?;
+
+        Ok((items, total.max(0) as u64))
+    }
+
     pub fn record_pool_fee(
         &self,
         block_height: u64,
@@ -836,6 +1042,53 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         )?;
         let rows = stmt.query_map([], row_to_pool_fee_event)?;
         collect_rows(rows)
+    }
+
+    pub fn get_pool_fees_page(
+        &self,
+        fee_address: Option<&str>,
+        sort: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<PoolFeeEvent>, u64)> {
+        let fee_address_pattern = fee_address
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(|v| format!("%{}%", v.to_ascii_lowercase()));
+
+        let order_clause = match sort {
+            "time_asc" => "timestamp ASC, id ASC",
+            "amount_desc" => "amount DESC, id DESC",
+            "amount_asc" => "amount ASC, id DESC",
+            "height_asc" => "block_height ASC, id ASC",
+            "height_desc" => "block_height DESC, id DESC",
+            _ => "timestamp DESC, id DESC",
+        };
+
+        let conn = self.conn.lock();
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*)
+             FROM pool_fee_events
+             WHERE (?1 IS NULL OR LOWER(fee_address) LIKE ?1)",
+            params![fee_address_pattern.as_deref()],
+            |row| row.get(0),
+        )?;
+
+        let sql = format!(
+            "SELECT id, block_height, amount, fee_address, timestamp
+             FROM pool_fee_events
+             WHERE (?1 IS NULL OR LOWER(fee_address) LIKE ?1)
+             ORDER BY {order_clause}
+             LIMIT ?2 OFFSET ?3"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(
+            params![fee_address_pattern.as_deref(), limit.max(0), offset.max(0)],
+            row_to_pool_fee_event,
+        )?;
+        let items = collect_rows(rows)?;
+
+        Ok((items, total.max(0) as u64))
     }
 
     pub fn set_meta(&self, key: &str, value: &[u8]) -> Result<()> {
@@ -1513,6 +1766,17 @@ fn collect_rows<T>(
 
 fn now_unix() -> i64 {
     to_unix(SystemTime::now())
+}
+
+fn normalize_block_status_filter(status: Option<&str>) -> Option<&'static str> {
+    match status.map(str::trim) {
+        Some(v) if v.eq_ignore_ascii_case("confirmed") => Some("confirmed"),
+        Some(v) if v.eq_ignore_ascii_case("orphaned") => Some("orphaned"),
+        Some(v) if v.eq_ignore_ascii_case("pending") => Some("pending"),
+        Some(v) if v.eq_ignore_ascii_case("paid") => Some("paid"),
+        Some(v) if v.eq_ignore_ascii_case("unpaid") => Some("unpaid"),
+        _ => None,
+    }
 }
 
 fn to_unix(ts: SystemTime) -> i64 {
