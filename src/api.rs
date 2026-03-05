@@ -157,6 +157,53 @@ fn worker_hashrate_by_name(
         .collect()
 }
 
+fn sort_workers_for_miner(
+    mut workers: Vec<(String, u64, u64, u64, i64)>,
+    hashrate_by_name: &HashMap<String, f64>,
+    now: SystemTime,
+    active_cutoff: Duration,
+) -> Vec<(String, u64, u64, u64, i64)> {
+    let now_unix = i64::try_from(system_time_to_unix_secs(now)).unwrap_or(i64::MAX);
+    let cutoff_secs = i64::try_from(active_cutoff.as_secs()).unwrap_or(i64::MAX);
+    let active_cutoff_unix = now_unix.saturating_sub(cutoff_secs);
+
+    workers.sort_by(|a, b| {
+        let a_active = a.4 >= active_cutoff_unix;
+        let b_active = b.4 >= active_cutoff_unix;
+        if a_active != b_active {
+            return b_active.cmp(&a_active);
+        }
+
+        let a_hashrate = hashrate_by_name.get(&a.0).copied().unwrap_or(0.0);
+        let b_hashrate = hashrate_by_name.get(&b.0).copied().unwrap_or(0.0);
+        let hr_desc = b_hashrate
+            .partial_cmp(&a_hashrate)
+            .unwrap_or(std::cmp::Ordering::Equal);
+
+        if a_active {
+            if hr_desc != std::cmp::Ordering::Equal {
+                return hr_desc;
+            }
+            let last_share_desc = b.4.cmp(&a.4);
+            if last_share_desc != std::cmp::Ordering::Equal {
+                return last_share_desc;
+            }
+        } else {
+            let last_share_desc = b.4.cmp(&a.4);
+            if last_share_desc != std::cmp::Ordering::Equal {
+                return last_share_desc;
+            }
+            if hr_desc != std::cmp::Ordering::Equal {
+                return hr_desc;
+            }
+        }
+
+        a.0.cmp(&b.0)
+    });
+
+    workers
+}
+
 #[derive(Clone)]
 pub struct ApiState {
     pub store: Arc<PoolStore>,
@@ -980,8 +1027,14 @@ async fn handle_miner(
     });
 
     let worker_hashrate_by_name = worker_hashrate_by_name(hashrate, worker_hashrate_raw);
+    let workers_sorted = sort_workers_for_miner(
+        workers_raw,
+        &worker_hashrate_by_name,
+        SystemTime::now(),
+        HASHRATE_WINDOW,
+    );
 
-    let workers_json: Vec<serde_json::Value> = workers_raw
+    let workers_json: Vec<serde_json::Value> = workers_sorted
         .iter()
         .map(|(worker, accepted, rejected, _total_diff, last_share_ts)| {
             let worker_hr = worker_hashrate_by_name.get(worker).copied().unwrap_or(0.0);
@@ -995,8 +1048,8 @@ async fn handle_miner(
         })
         .collect();
 
-    let total_accepted: u64 = workers_raw.iter().map(|(_, a, _, _, _)| a).sum();
-    let total_rejected: u64 = workers_raw.iter().map(|(_, _, r, _, _)| r).sum();
+    let total_accepted: u64 = workers_sorted.iter().map(|(_, a, _, _, _)| a).sum();
+    let total_rejected: u64 = workers_sorted.iter().map(|(_, _, r, _, _)| r).sum();
 
     let has_activity = miner_has_activity(
         shares.len(),
@@ -2120,13 +2173,15 @@ impl StatusHistory {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use crate::db::DbBlock;
 
     use super::{
         contains_ci, estimated_block_reward, hydrate_provisional_block_reward, miner_has_activity,
-        page_bounds, share_limit, worker_hashrate_by_name,
+        page_bounds, share_limit, sort_workers_for_miner, worker_hashrate_by_name,
+        HASHRATE_WINDOW,
     };
 
     #[test]
@@ -2200,6 +2255,49 @@ mod tests {
             worker_hashrate_by_name(0.0, vec![("w1".to_string(), 200, 2, Some(t0), Some(t1))]);
         let w1 = map.get("w1").copied().unwrap_or_default();
         assert!((w1 - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sort_workers_prioritizes_active_then_hashrate_then_recency() {
+        let now = UNIX_EPOCH + Duration::from_secs(10_000);
+        let mut hashrate_by_name = HashMap::new();
+        hashrate_by_name.insert("active-high".to_string(), 9.0);
+        hashrate_by_name.insert("active-low".to_string(), 1.0);
+        hashrate_by_name.insert("stale-recent".to_string(), 100.0);
+        hashrate_by_name.insert("stale-old".to_string(), 200.0);
+
+        let workers = vec![
+            ("stale-old".to_string(), 1, 0, 0, 200),
+            ("active-low".to_string(), 1, 0, 0, 9_990),
+            ("stale-recent".to_string(), 1, 0, 0, 6_350),
+            ("active-high".to_string(), 1, 0, 0, 9_950),
+        ];
+
+        let sorted = sort_workers_for_miner(workers, &hashrate_by_name, now, HASHRATE_WINDOW);
+        let names: Vec<String> = sorted.into_iter().map(|(name, _, _, _, _)| name).collect();
+
+        assert_eq!(
+            names,
+            vec!["active-high", "active-low", "stale-recent", "stale-old"]
+        );
+    }
+
+    #[test]
+    fn sort_workers_uses_last_share_as_tie_breaker_for_active_hashrate() {
+        let now = UNIX_EPOCH + Duration::from_secs(10_000);
+        let mut hashrate_by_name = HashMap::new();
+        hashrate_by_name.insert("active-older".to_string(), 5.0);
+        hashrate_by_name.insert("active-newer".to_string(), 5.0);
+
+        let workers = vec![
+            ("active-older".to_string(), 1, 0, 0, 9_800),
+            ("active-newer".to_string(), 1, 0, 0, 9_990),
+        ];
+
+        let sorted = sort_workers_for_miner(workers, &hashrate_by_name, now, HASHRATE_WINDOW);
+        let names: Vec<String> = sorted.into_iter().map(|(name, _, _, _, _)| name).collect();
+
+        assert_eq!(names, vec!["active-newer", "active-older"]);
     }
 
     #[test]
