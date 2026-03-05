@@ -122,6 +122,7 @@ async fn main() -> Result<()> {
     let payout = PayoutProcessor::new(cfg.clone(), Arc::clone(&store), Arc::clone(&node));
     payout.start();
     start_seen_share_gc(cfg.clone(), Arc::clone(&store));
+    start_stat_snapshots(Arc::clone(&stats), Arc::clone(&store));
 
     let api_addr: SocketAddr = format!("{}:{}", cfg.api_host, cfg.api_port)
         .parse()
@@ -149,6 +150,11 @@ async fn main() -> Result<()> {
         pool_name: cfg.pool_name.clone(),
         pool_url: cfg.pool_url.clone(),
         stratum_port: cfg.stratum_port,
+        pool_fee_pct: cfg.pool_fee_pct,
+        pool_fee_flat: cfg.pool_fee_flat,
+        min_payout_amount: cfg.min_payout_amount,
+        blocks_before_payout: cfg.blocks_before_payout,
+        payout_scheme: cfg.payout_scheme.clone(),
         started_at: std::time::Instant::now(),
         started_at_system: std::time::SystemTime::now(),
     };
@@ -193,6 +199,58 @@ fn start_seen_share_gc(cfg: Config, store: Arc<PoolStore>) {
             }
         }
     });
+}
+
+fn start_stat_snapshots(stats: Arc<PoolStats>, store: Arc<PoolStore>) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(5 * 60));
+        let retain = Duration::from_secs(60 * 24 * 60 * 60); // 60 days
+        let hr_window = Duration::from_secs(60 * 60);
+        loop {
+            ticker.tick().await;
+            let snap = stats.snapshot();
+            let store = Arc::clone(&store);
+            match tokio::task::spawn_blocking(move || {
+                let hashrate = db_pool_hashrate(&store, hr_window);
+                store.add_stat_snapshot(
+                    std::time::SystemTime::now(),
+                    hashrate,
+                    snap.connected_miners as i32,
+                    snap.connected_workers as i32,
+                )?;
+                store.clean_old_snapshots(retain)?;
+                Ok::<_, anyhow::Error>(())
+            })
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => tracing::warn!(error = %err, "stat snapshot failed"),
+                Err(err) => tracing::warn!(error = %err, "stat snapshot task join failed"),
+            }
+        }
+    });
+}
+
+fn db_pool_hashrate(store: &PoolStore, window: Duration) -> f64 {
+    let since = std::time::SystemTime::now()
+        .checked_sub(window)
+        .unwrap_or(std::time::UNIX_EPOCH);
+    let Ok((total_diff, count, oldest, newest)) = store.hashrate_stats_pool(since) else {
+        return 0.0;
+    };
+    if count < 2 {
+        return 0.0;
+    }
+    let (Some(oldest), Some(newest)) = (oldest, newest) else {
+        return 0.0;
+    };
+    let Ok(w) = newest.duration_since(oldest) else {
+        return 0.0;
+    };
+    if w.as_secs_f64() < 1.0 {
+        return 0.0;
+    }
+    total_diff as f64 / w.as_secs_f64()
 }
 
 fn start_found_block_recovery(engine: Arc<PoolEngine>) {

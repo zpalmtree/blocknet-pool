@@ -343,14 +343,27 @@ impl JobManager {
             },
         );
         state.assignment_order.push_back(assignment_id.clone());
+        let current_template_job_id = state.current.as_ref().map(|current| current.id.clone());
         prune_expired_assignments_locked(
             &mut state,
             self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE),
+            current_template_job_id.as_deref(),
         );
+        let mut cap_evicted = 0usize;
         while state.assignment_order.len() > MAX_ACTIVE_ASSIGNMENTS {
             if let Some(oldest) = state.assignment_order.pop_front() {
-                state.assignments.remove(&oldest);
+                if state.assignments.remove(&oldest).is_some() {
+                    cap_evicted = cap_evicted.saturating_add(1);
+                }
             }
+        }
+        if cap_evicted > 0 {
+            tracing::info!(
+                cap_evicted,
+                active_assignments = state.assignments.len(),
+                cap = MAX_ACTIVE_ASSIGNMENTS,
+                "evicted assignments due to active assignment cap"
+            );
         }
 
         Some(MinerJob {
@@ -462,6 +475,7 @@ impl JobManager {
             }
         }
         if !removed_jobs.is_empty() {
+            let assignments_before = state.assignments.len();
             state
                 .assignments
                 .retain(|_, assignment| !removed_jobs.contains(&assignment.template_job_id));
@@ -469,10 +483,21 @@ impl JobManager {
             state
                 .assignment_order
                 .retain(|assignment_id| valid_assignment_ids.contains(assignment_id));
+            let assignments_removed = assignments_before.saturating_sub(state.assignments.len());
+            if assignments_removed > 0 {
+                tracing::info!(
+                    removed_templates = removed_jobs.len(),
+                    assignments_removed,
+                    active_assignments = state.assignments.len(),
+                    "removed assignments tied to retired templates"
+                );
+            }
         }
+        let current_template_job_id = state.current.as_ref().map(|current| current.id.clone());
         prune_expired_assignments_locked(
             &mut state,
             self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE),
+            current_template_job_id.as_deref(),
         );
 
         let _ = self.tx.send(parsed);
@@ -671,10 +696,24 @@ impl JobRepository for JobManager {
         submitted_at: Instant,
     ) -> std::result::Result<SubmitJobBinding, SubmitJobResolveError> {
         let state = self.state.read();
-        let assignment = state
-            .assignments
-            .get(submitted_job_id)
-            .ok_or(SubmitJobResolveError::AssignmentNotFound)?;
+        let assignment = match state.assignments.get(submitted_job_id) {
+            Some(assignment) => assignment,
+            None => {
+                tracing::info!(
+                    submitted_job_id,
+                    active_assignments = state.assignments.len(),
+                    assignment_order_len = state.assignment_order.len(),
+                    tracked_templates = state.jobs.len(),
+                    current_template_job_id = state
+                        .current
+                        .as_ref()
+                        .map(|job| job.id.as_str())
+                        .unwrap_or("-"),
+                    "submit assignment lookup miss"
+                );
+                return Err(SubmitJobResolveError::AssignmentNotFound);
+            }
+        };
         let current_job_id = state.current.as_ref().map(|job| job.id.as_str());
         let is_current_template = Some(assignment.template_job_id.as_str()) == current_job_id;
         let assignment_ttl = self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE);
@@ -869,17 +908,53 @@ fn normalize_tip_hash(hash: &str) -> Option<String> {
     }
 }
 
-fn prune_expired_assignments_locked(state: &mut JobState, max_age: Duration) {
+fn prune_expired_assignments_locked(
+    state: &mut JobState,
+    max_age: Duration,
+    current_template_job_id: Option<&str>,
+) {
     if max_age.is_zero() {
         return;
     }
+    let now = Instant::now();
+    let mut expired_removed = 0usize;
+    let mut kept_current_template = 0usize;
     state
         .assignments
-        .retain(|_, assignment| assignment.created_at.elapsed() <= max_age);
+        .retain(|_, assignment| {
+            let age = now.saturating_duration_since(assignment.created_at);
+            if current_template_job_id
+                .is_some_and(|current| assignment.template_job_id == current)
+            {
+                if age > max_age {
+                    kept_current_template = kept_current_template.saturating_add(1);
+                }
+                return true;
+            }
+            if age <= max_age {
+                true
+            } else {
+                expired_removed = expired_removed.saturating_add(1);
+                false
+            }
+        });
     let valid_assignment_ids = state.assignments.keys().cloned().collect::<HashSet<_>>();
+    let order_before = state.assignment_order.len();
     state
         .assignment_order
         .retain(|assignment_id| valid_assignment_ids.contains(assignment_id));
+    let stale_order_removed = order_before.saturating_sub(state.assignment_order.len());
+    if expired_removed > 0 || kept_current_template > 0 || stale_order_removed > 0 {
+        tracing::info!(
+            expired_removed,
+            kept_current_template,
+            stale_order_removed,
+            active_assignments = state.assignments.len(),
+            max_age = ?max_age,
+            current_template_job_id = current_template_job_id.unwrap_or("-"),
+            "assignment prune sweep"
+        );
+    }
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -1020,6 +1095,56 @@ mod tests {
         assert!(manager
             .resolve_submit_job("assign-old", Instant::now())
             .is_some());
+    }
+
+    #[test]
+    fn prune_expired_assignments_keeps_current_template_assignments() {
+        let mut state = JobState::default();
+        state.current = Some(Job {
+            id: "job-current".to_string(),
+            height: 10,
+            header_base: vec![0xAA; 92],
+            network_target: [0xBB; 32],
+            network_difficulty: 1,
+            template_id: Some("tmpl-current".to_string()),
+            full_block: None,
+        });
+
+        state.assignments.insert(
+            "assign-current".to_string(),
+            MinerAssignment {
+                template_job_id: "job-current".to_string(),
+                share_difficulty: 1,
+                assigned_miner: "addr1".to_string(),
+                nonce_start: 0,
+                nonce_end: NONCE_RANGE_SIZE - 1,
+                created_at: Instant::now() - Duration::from_secs(30),
+            },
+        );
+        state.assignments.insert(
+            "assign-old".to_string(),
+            MinerAssignment {
+                template_job_id: "job-old".to_string(),
+                share_difficulty: 1,
+                assigned_miner: "addr1".to_string(),
+                nonce_start: NONCE_RANGE_SIZE,
+                nonce_end: NONCE_RANGE_SIZE.saturating_mul(2).saturating_sub(1),
+                created_at: Instant::now() - Duration::from_secs(30),
+            },
+        );
+        state.assignment_order.push_back("assign-current".to_string());
+        state.assignment_order.push_back("assign-old".to_string());
+
+        let current = state.current.as_ref().map(|job| job.id.clone());
+        prune_expired_assignments_locked(&mut state, Duration::from_secs(1), current.as_deref());
+
+        assert!(state.assignments.contains_key("assign-current"));
+        assert!(!state.assignments.contains_key("assign-old"));
+        assert_eq!(state.assignment_order.len(), 1);
+        assert_eq!(
+            state.assignment_order.front().map(String::as_str),
+            Some("assign-current")
+        );
     }
 
     #[test]
