@@ -22,6 +22,8 @@ const MIN_BLOCK_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const REWARD_ADDR_CACHE_TTL: Duration = Duration::from_secs(30);
 const TEMPLATE_WALLET_RECOVERY_COOLDOWN: Duration = Duration::from_secs(10);
 const MISSING_WALLET_PASSWORD_LOG_COOLDOWN: Duration = Duration::from_secs(60);
+const WALLET_LOAD_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+const WALLET_LOAD_WAIT_POLL: Duration = Duration::from_millis(250);
 const MAX_ACTIVE_ASSIGNMENTS: usize = 65_536;
 const MAX_ASSIGNMENT_AGE: Duration = Duration::from_secs(10 * 60);
 const SSE_RETRY_DELAY_MIN: Duration = Duration::from_millis(100);
@@ -510,8 +512,7 @@ impl JobManager {
 
                 if let Some(password) = password {
                     if is_http_status(&err, 503) {
-                        let _ = self.node.wallet_load(&password);
-                        let _ = self.node.wallet_unlock(&password);
+                        let _ = self.recover_wallet_loaded_and_unlocked(&password);
                     } else if is_http_status(&err, 403) {
                         let _ = self.node.wallet_unlock(&password);
                     }
@@ -564,20 +565,7 @@ impl JobManager {
         };
 
         if is_http_status(err, 503) {
-            if let Err(load_err) = self.node.wallet_load(&password) {
-                if !is_http_status(&load_err, 409) {
-                    tracing::warn!(
-                        error = %load_err,
-                        "wallet recovery failed during load step for template fetch"
-                    );
-                    return false;
-                }
-            }
-            if let Err(unlock_err) = self.node.wallet_unlock(&password) {
-                tracing::warn!(
-                    error = %unlock_err,
-                    "wallet recovery failed during unlock step for template fetch"
-                );
+            if !self.recover_wallet_loaded_and_unlocked(&password) {
                 return false;
             }
         } else if is_http_status(err, 403) {
@@ -592,6 +580,60 @@ impl JobManager {
 
         tracing::info!("wallet recovered for template fetch; retrying blocktemplate");
         true
+    }
+
+    fn recover_wallet_loaded_and_unlocked(&self, password: &str) -> bool {
+        match self.node.wallet_load(password) {
+            Ok(_) => {}
+            Err(load_err) => {
+                if !is_http_status(&load_err, 409) {
+                    tracing::warn!(
+                        error = %load_err,
+                        "wallet recovery failed during load step for template fetch"
+                    );
+                    return false;
+                }
+            }
+        }
+
+        // 409 from /wallet/load can mean either already loaded or currently loading.
+        // Wait briefly for the wallet to become available before attempting unlock.
+        if !self.wait_for_wallet_available(WALLET_LOAD_WAIT_TIMEOUT) {
+            tracing::warn!(
+                timeout_secs = WALLET_LOAD_WAIT_TIMEOUT.as_secs(),
+                "wallet recovery timed out waiting for wallet load to complete"
+            );
+            return false;
+        }
+
+        if let Err(unlock_err) = self.node.wallet_unlock(password) {
+            if is_http_status(&unlock_err, 503) && self.wait_for_wallet_available(WALLET_LOAD_WAIT_POLL)
+            {
+                if self.node.wallet_unlock(password).is_ok() {
+                    return true;
+                }
+            }
+            tracing::warn!(
+                error = %unlock_err,
+                "wallet recovery failed during unlock step for template fetch"
+            );
+            return false;
+        }
+
+        true
+    }
+
+    fn wait_for_wallet_available(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now().checked_add(timeout).unwrap_or_else(Instant::now);
+        loop {
+            if self.node.get_wallet_address().is_ok() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(WALLET_LOAD_WAIT_POLL);
+        }
     }
 }
 
