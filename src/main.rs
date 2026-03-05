@@ -139,10 +139,18 @@ async fn main() -> Result<()> {
         node: Arc::clone(&node),
         validation: Arc::clone(&validation),
         db_totals_cache: Arc::new(Mutex::new(blocknet_pool_rs::api::DbTotalsCache::default())),
+        daemon_health_cache: Arc::new(Mutex::new(
+            blocknet_pool_rs::api::DaemonHealthCache::default(),
+        )),
         network_hashrate_cache: Arc::new(Mutex::new(
             blocknet_pool_rs::api::NetworkHashrateCache::default(),
         )),
         api_key: cfg.api_key.clone(),
+        pool_name: cfg.pool_name.clone(),
+        pool_url: cfg.pool_url.clone(),
+        stratum_port: cfg.stratum_port,
+        started_at: std::time::Instant::now(),
+        started_at_system: std::time::SystemTime::now(),
     };
 
     info!(pool = %cfg.pool_name, "pool runtime started");

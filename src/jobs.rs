@@ -280,6 +280,27 @@ impl JobManager {
         self.tx.subscribe()
     }
 
+    pub fn last_refresh_elapsed(&self) -> Option<Duration> {
+        (*self.last_refresh.lock()).map(|last| last.elapsed())
+    }
+
+    pub fn tracked_job_count(&self) -> usize {
+        self.state.read().jobs.len()
+    }
+
+    pub fn active_assignment_count(&self) -> usize {
+        self.state.read().assignments.len()
+    }
+
+    pub fn current_job_age(&self) -> Option<Duration> {
+        let state = self.state.read();
+        let current = state.current.as_ref()?;
+        state
+            .job_meta
+            .get(&current.id)
+            .map(|meta| meta.created_at.elapsed())
+    }
+
     pub fn build_miner_job(&self, share_difficulty: u64, assigned_miner: &str) -> Option<MinerJob> {
         let job = self.current_job()?;
         let slot_count = nonce_slot_count();

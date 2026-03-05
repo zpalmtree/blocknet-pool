@@ -61,16 +61,34 @@ When `database_url` is set, Postgres is used automatically and `database_path` i
 ## Core API Endpoints
 
 - `GET /api/stats`
+- `GET /api/info`
 - `GET /api/miner/{address}`
 - `GET /api/miners`
 - `GET /api/blocks`
 - `GET /api/payouts`
 - `GET /api/fees`
+- `GET /api/health`
+
+Paged/filterable list mode (protected endpoints):
+
+- `paged=true` enables paged response shape (`items` + `page`).
+- Shared query params: `limit`, `offset`.
+- `GET /api/miners`: `search`, `sort`.
+- `GET /api/blocks`: `finder`, `status`, `sort`.
+- `GET /api/payouts`: `address`, `tx_hash`, `sort`.
+- `GET /api/fees`: `fee_address`, `sort`.
 
 ## Web UI
 
 - `GET /` (dashboard)
 - `GET /ui` (alias)
+- Multi-tab WebUI includes:
+  - pool + onboarding info (`/api/info`)
+  - API key auth UX for protected routes
+  - miner lookup
+  - miners/blocks/payouts/fees tables with filter + pagination
+  - live trend charts
+  - operator health panel (`/api/health`)
 
 ## Stratum Notes
 
@@ -99,6 +117,7 @@ When `database_url` is set, Postgres is used automatically and `database_path` i
 
 Public endpoints (no API key required):
 
+- `GET /api/info`
 - `GET /api/stats`
 - `GET /api/miner/{address}`
 
@@ -108,6 +127,7 @@ Protected endpoints (API key required):
 - `GET /api/blocks`
 - `GET /api/payouts`
 - `GET /api/fees`
+- `GET /api/health`
 
 When `api_key` is unset, protected endpoints return `503 api key not configured`.
 

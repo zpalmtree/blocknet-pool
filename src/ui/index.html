@@ -1,0 +1,1234 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Blocknet Pool WebUI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Manrope:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-0: #06111b;
+      --bg-1: #0e2535;
+      --panel: rgba(8, 20, 35, 0.82);
+      --line: rgba(121, 164, 201, 0.32);
+      --ink: #ecf4ff;
+      --muted: #9eb6d0;
+      --good: #42d28d;
+      --warn: #f0bc52;
+      --bad: #ff7f7f;
+      --accent: #49b7ff;
+      --tab: #163750;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Manrope", "Segoe UI", sans-serif;
+      min-height: 100vh;
+      background:
+        radial-gradient(1300px 700px at -10% -15%, #1b5f7f 0%, transparent 58%),
+        radial-gradient(1200px 700px at 120% 130%, #16415f 0%, transparent 50%),
+        linear-gradient(130deg, var(--bg-0), var(--bg-1));
+    }
+
+    .app {
+      width: min(1320px, 94vw);
+      margin: 20px auto 40px;
+      animation: rise .35s ease-out;
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+
+    .hero h1 {
+      margin: 0;
+      font-size: clamp(1.5rem, 2.6vw, 2.2rem);
+      letter-spacing: .02em;
+    }
+
+    .mono { font-family: "JetBrains Mono", monospace; }
+
+    .sub {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: .95rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+    }
+
+    .endpoint {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(10, 26, 44, 0.65);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 6px 10px;
+      font-size: .82rem;
+      color: var(--muted);
+    }
+
+    .btn {
+      border: 1px solid var(--line);
+      background: var(--tab);
+      color: var(--ink);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: .82rem;
+      cursor: pointer;
+    }
+
+    .btn:hover { filter: brightness(1.12); }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, .25);
+      backdrop-filter: blur(5px);
+    }
+
+    .auth {
+      display: grid;
+      grid-template-columns: 1fr auto auto auto;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .input,
+    .select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: rgba(10, 27, 44, 0.8);
+      color: var(--ink);
+      font-family: "JetBrains Mono", monospace;
+      font-size: .85rem;
+    }
+
+    .badge {
+      font-size: .77rem;
+      padding: 5px 8px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .badge.good { color: #d9ffea; background: rgba(66, 210, 141, 0.23); border-color: rgba(66, 210, 141, 0.4); }
+    .badge.warn { color: #ffecc8; background: rgba(240, 188, 82, 0.23); border-color: rgba(240, 188, 82, 0.4); }
+    .badge.bad { color: #ffdcdc; background: rgba(255, 127, 127, 0.23); border-color: rgba(255, 127, 127, 0.4); }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .card {
+      background: rgba(7, 18, 31, 0.75);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+    }
+
+    .label {
+      color: var(--muted);
+      font-size: .7rem;
+      text-transform: uppercase;
+      letter-spacing: .11em;
+      margin-bottom: 6px;
+    }
+
+    .value {
+      font-size: 1rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .value.good { color: var(--good); }
+    .value.warn { color: var(--warn); }
+    .value.bad { color: var(--bad); }
+
+    .charts {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .chart-wrap {
+      background: rgba(7, 18, 31, 0.75);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px;
+    }
+
+    .chart-wrap h3 {
+      margin: 0 0 4px;
+      font-size: .8rem;
+      color: var(--muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    canvas {
+      width: 100%;
+      height: 120px;
+      display: block;
+    }
+
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .tab-btn {
+      border: 1px solid var(--line);
+      background: rgba(20, 48, 73, 0.85);
+      color: var(--ink);
+      border-radius: 999px;
+      padding: 7px 12px;
+      font-size: .82rem;
+      cursor: pointer;
+    }
+
+    .tab-btn.active {
+      background: var(--accent);
+      color: #00101b;
+      border-color: transparent;
+      font-weight: 700;
+    }
+
+    .tab {
+      display: none;
+      margin-bottom: 10px;
+    }
+
+    .tab.active { display: block; }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .toolbar .wide { grid-column: span 2; }
+
+    .pager {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: .82rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .82rem;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 8px;
+      border-bottom: 1px solid rgba(121, 164, 201, 0.2);
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: .72rem;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      position: sticky;
+      top: 0;
+      background: rgba(7, 18, 31, 0.95);
+    }
+
+    .table-wrap {
+      overflow: auto;
+      max-height: 420px;
+      border: 1px solid rgba(121, 164, 201, 0.24);
+      border-radius: 10px;
+    }
+
+    .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .pre {
+      background: rgba(7, 18, 31, 0.72);
+      border: 1px solid rgba(121, 164, 201, 0.25);
+      border-radius: 10px;
+      padding: 10px;
+      white-space: pre-wrap;
+      font-family: "JetBrains Mono", monospace;
+      font-size: .8rem;
+      color: #d7e9ff;
+      max-height: 340px;
+      overflow: auto;
+    }
+
+    .error {
+      margin-top: 10px;
+      color: var(--bad);
+      font-family: "JetBrains Mono", monospace;
+      font-size: .82rem;
+      white-space: pre-wrap;
+    }
+
+    @media (max-width: 1120px) {
+      .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .charts { grid-template-columns: 1fr; }
+      .toolbar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 760px) {
+      .hero { flex-direction: column; }
+      .auth { grid-template-columns: 1fr 1fr; }
+      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .mini-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .toolbar { grid-template-columns: 1fr; }
+      .toolbar .wide { grid-column: span 1; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="hero">
+      <div>
+        <h1 id="pool-name">Blocknet Pool WebUI</h1>
+        <div class="sub">
+          <span id="pool-url" class="mono">pool_url: -</span>
+          <span id="build-version" class="mono">version: -</span>
+          <span id="started-at" class="mono">started: -</span>
+          <span id="last-updated" class="mono">updated: never</span>
+        </div>
+      </div>
+      <div class="endpoint">
+        <span>stratum</span>
+        <code id="stratum-endpoint" class="mono">-</code>
+        <button id="copy-stratum" class="btn">Copy</button>
+      </div>
+    </section>
+
+    <section class="panel auth">
+      <input id="api-key" class="input" type="password" autocomplete="off" placeholder="API key for protected endpoints" />
+      <button id="save-key" class="btn">Save Key</button>
+      <button id="clear-key" class="btn">Clear Key</button>
+      <span id="auth-status" class="badge warn">No key loaded</span>
+    </section>
+
+    <section class="stats" id="stats-grid">
+      <article class="card"><div class="label">Connected Miners</div><div id="s-miners" class="value mono">-</div></article>
+      <article class="card"><div class="label">Connected Workers</div><div id="s-workers" class="value mono">-</div></article>
+      <article class="card"><div class="label">Pool Hashrate</div><div id="s-hashrate" class="value mono">-</div></article>
+      <article class="card"><div class="label">Network Hashrate</div><div id="s-network" class="value mono">-</div></article>
+      <article class="card"><div class="label">Accepted Shares</div><div id="s-accepted" class="value mono good">-</div></article>
+      <article class="card"><div class="label">Rejected Shares</div><div id="s-rejected" class="value mono warn">-</div></article>
+      <article class="card"><div class="label">Reject Rate</div><div id="s-reject-rate" class="value mono">-</div></article>
+      <article class="card"><div class="label">Blocks Found</div><div id="s-blocks" class="value mono">-</div></article>
+      <article class="card"><div class="label">Total Shares (DB)</div><div id="s-total-shares" class="value mono">-</div></article>
+      <article class="card"><div class="label">Total Blocks (DB)</div><div id="s-total-blocks" class="value mono">-</div></article>
+      <article class="card"><div class="label">Pool Fees Collected</div><div id="s-fees" class="value mono">-</div></article>
+      <article class="card"><div class="label">Current Job Height</div><div id="s-height" class="value mono">-</div></article>
+      <article class="card"><div class="label">Validation In Flight</div><div id="s-inflight" class="value mono">-</div></article>
+      <article class="card"><div class="label">Candidate Queue</div><div id="s-queue-c" class="value mono">-</div></article>
+      <article class="card"><div class="label">Regular Queue</div><div id="s-queue-r" class="value mono">-</div></article>
+      <article class="card"><div class="label">Fraud Detections</div><div id="s-fraud" class="value mono bad">-</div></article>
+    </section>
+
+    <section class="charts">
+      <article class="chart-wrap">
+        <h3>Pool Hashrate Trend</h3>
+        <canvas id="c-hashrate" width="400" height="120"></canvas>
+      </article>
+      <article class="chart-wrap">
+        <h3>Reject Rate Trend</h3>
+        <canvas id="c-reject-rate" width="400" height="120"></canvas>
+      </article>
+      <article class="chart-wrap">
+        <h3>Validation Queues Trend</h3>
+        <canvas id="c-queue" width="400" height="120"></canvas>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="miner">Miner Lookup</button>
+        <button class="tab-btn" data-tab="miners">Miners</button>
+        <button class="tab-btn" data-tab="blocks">Blocks</button>
+        <button class="tab-btn" data-tab="payouts">Payouts</button>
+        <button class="tab-btn" data-tab="fees">Fees</button>
+        <button class="tab-btn" data-tab="health">Ops Health</button>
+      </div>
+
+      <section id="tab-miner" class="tab active">
+        <div class="toolbar">
+          <input id="miner-address" class="input wide" placeholder="Miner address" />
+          <input id="miner-share-limit" class="input" type="number" min="1" max="500" value="100" />
+          <button id="miner-load" class="btn">Load Miner</button>
+          <button id="miner-clear" class="btn">Clear</button>
+          <span id="miner-state" class="badge warn">No miner selected</span>
+        </div>
+
+        <div class="mini-grid" id="miner-summary">
+          <article class="card"><div class="label">Hashrate</div><div id="m-hashrate" class="value mono">-</div></article>
+          <article class="card"><div class="label">Pending Balance</div><div id="m-pending" class="value mono">-</div></article>
+          <article class="card"><div class="label">Paid Balance</div><div id="m-paid" class="value mono">-</div></article>
+          <article class="card"><div class="label">Pending Payout</div><div id="m-payout" class="value mono">-</div></article>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Share ID</th>
+                <th>Job</th>
+                <th>Status</th>
+                <th>Diff</th>
+                <th>Nonce</th>
+                <th>Sampled</th>
+                <th>Block Hash</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody id="miner-shares-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="tab-miners" class="tab">
+        <div class="toolbar">
+          <input id="miners-search" class="input wide" placeholder="Search miner address" />
+          <select id="miners-sort" class="select">
+            <option value="hashrate_desc">Sort: Hashrate</option>
+            <option value="accepted_desc">Sort: Accepted Shares</option>
+            <option value="rejected_desc">Sort: Rejected Shares</option>
+            <option value="last_share_desc">Sort: Last Share</option>
+            <option value="address_asc">Sort: Address</option>
+          </select>
+          <input id="miners-limit" class="input" type="number" min="1" max="200" value="25" />
+          <button id="miners-apply" class="btn">Apply</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Address</th>
+                <th>Workers</th>
+                <th>Hashrate</th>
+                <th>Accepted</th>
+                <th>Rejected</th>
+                <th>Blocks</th>
+                <th>Last Share</th>
+              </tr>
+            </thead>
+            <tbody id="miners-body"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <span id="miners-page" class="mono">-</span>
+          <div>
+            <button id="miners-prev" class="btn">Prev</button>
+            <button id="miners-next" class="btn">Next</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-blocks" class="tab">
+        <div class="toolbar">
+          <input id="blocks-finder" class="input wide" placeholder="Finder address filter" />
+          <select id="blocks-status" class="select">
+            <option value="">Status: All</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="pending">Pending</option>
+            <option value="orphaned">Orphaned</option>
+            <option value="paid">Paid</option>
+            <option value="unpaid">Unpaid</option>
+          </select>
+          <select id="blocks-sort" class="select">
+            <option value="height_desc">Sort: Height desc</option>
+            <option value="height_asc">Sort: Height asc</option>
+            <option value="time_asc">Sort: Time asc</option>
+            <option value="reward_desc">Sort: Reward desc</option>
+            <option value="reward_asc">Sort: Reward asc</option>
+          </select>
+          <input id="blocks-limit" class="input" type="number" min="1" max="200" value="25" />
+          <button id="blocks-apply" class="btn">Apply</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Height</th>
+                <th>Hash</th>
+                <th>Finder</th>
+                <th>Worker</th>
+                <th>Reward</th>
+                <th>Confirmed</th>
+                <th>Orphaned</th>
+                <th>Paid</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody id="blocks-body"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <span id="blocks-page" class="mono">-</span>
+          <div>
+            <button id="blocks-prev" class="btn">Prev</button>
+            <button id="blocks-next" class="btn">Next</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-payouts" class="tab">
+        <div class="toolbar">
+          <input id="payouts-address" class="input" placeholder="Address filter" />
+          <input id="payouts-tx" class="input wide" placeholder="Tx hash filter" />
+          <select id="payouts-sort" class="select">
+            <option value="time_desc">Sort: Newest</option>
+            <option value="time_asc">Sort: Oldest</option>
+            <option value="amount_desc">Sort: Amount desc</option>
+            <option value="amount_asc">Sort: Amount asc</option>
+          </select>
+          <input id="payouts-limit" class="input" type="number" min="1" max="200" value="25" />
+          <button id="payouts-apply" class="btn">Apply</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Address</th>
+                <th>Amount</th>
+                <th>Fee</th>
+                <th>Tx Hash</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody id="payouts-body"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <span id="payouts-page" class="mono">-</span>
+          <div>
+            <button id="payouts-prev" class="btn">Prev</button>
+            <button id="payouts-next" class="btn">Next</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-fees" class="tab">
+        <div class="toolbar">
+          <input id="fees-address" class="input wide" placeholder="Fee address filter" />
+          <select id="fees-sort" class="select">
+            <option value="time_desc">Sort: Newest</option>
+            <option value="time_asc">Sort: Oldest</option>
+            <option value="amount_desc">Sort: Amount desc</option>
+            <option value="amount_asc">Sort: Amount asc</option>
+            <option value="height_desc">Sort: Height desc</option>
+            <option value="height_asc">Sort: Height asc</option>
+          </select>
+          <input id="fees-limit" class="input" type="number" min="1" max="200" value="25" />
+          <button id="fees-apply" class="btn">Apply</button>
+          <span id="fees-total" class="badge warn">Total: -</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Height</th>
+                <th>Amount</th>
+                <th>Fee Address</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody id="fees-body"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <span id="fees-page" class="mono">-</span>
+          <div>
+            <button id="fees-prev" class="btn">Prev</button>
+            <button id="fees-next" class="btn">Next</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-health" class="tab">
+        <div class="toolbar">
+          <button id="health-refresh" class="btn">Refresh Health</button>
+          <span id="health-state" class="badge warn">Unknown</span>
+        </div>
+        <div class="mini-grid">
+          <article class="card"><div class="label">Uptime</div><div id="h-uptime" class="value mono">-</div></article>
+          <article class="card"><div class="label">Daemon Reachable</div><div id="h-daemon" class="value mono">-</div></article>
+          <article class="card"><div class="label">Template Age</div><div id="h-template-age" class="value mono">-</div></article>
+          <article class="card"><div class="label">Pending Payouts</div><div id="h-pending" class="value mono">-</div></article>
+        </div>
+        <div id="health-json" class="pre">No health data loaded.</div>
+      </section>
+    </section>
+
+    <section id="error" class="error"></section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const fmt = new Intl.NumberFormat("en-US");
+
+    const state = {
+      authKey: localStorage.getItem("blocknet_pool_api_key") || "",
+      info: null,
+      activeTab: "miner",
+      miners: { offset: 0, limit: 25 },
+      blocks: { offset: 0, limit: 25 },
+      payouts: { offset: 0, limit: 25 },
+      fees: { offset: 0, limit: 25 },
+      history: {
+        hashrate: [],
+        rejectRate: [],
+        queueDepth: [],
+      },
+    };
+
+    function setText(id, value) {
+      const el = $(id);
+      if (el) el.textContent = value;
+    }
+
+    function setError(value) {
+      setText("error", value || "");
+    }
+
+    function toDate(value) {
+      if (!value) return null;
+      if (typeof value === "number") return new Date(value < 1e12 ? value * 1000 : value);
+      if (typeof value === "string") {
+        const maybeNum = Number(value);
+        if (Number.isFinite(maybeNum)) return toDate(maybeNum);
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+      }
+      if (typeof value === "object" && value.secs_since_epoch !== undefined) {
+        const secs = Number(value.secs_since_epoch) || 0;
+        const nanos = Number(value.nanos_since_epoch) || 0;
+        return new Date(secs * 1000 + Math.floor(nanos / 1e6));
+      }
+      return null;
+    }
+
+    function formatTime(value) {
+      const date = toDate(value);
+      return date ? date.toLocaleString() : "-";
+    }
+
+    function formatCoins(value) {
+      const n = Number(value || 0);
+      return (n / 1e8).toFixed(8);
+    }
+
+    function humanRate(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0) return "-";
+      const units = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s", "PH/s"];
+      let v = n;
+      let i = 0;
+      while (v >= 1000 && i < units.length - 1) {
+        v /= 1000;
+        i += 1;
+      }
+      const digits = v >= 100 ? 0 : v >= 10 ? 1 : 2;
+      return `${v.toFixed(digits)} ${units[i]}`;
+    }
+
+    function yesNo(value) {
+      return value ? "yes" : "no";
+    }
+
+    function authHeaders(enabled) {
+      if (!enabled || !state.authKey) return {};
+      return {
+        "x-api-key": state.authKey,
+      };
+    }
+
+    async function apiFetch(path, options = {}) {
+      const useAuth = options.auth === true;
+      const res = await fetch(path, {
+        cache: "no-store",
+        headers: {
+          ...authHeaders(useAuth),
+          ...(options.headers || {}),
+        },
+      });
+      if (!res.ok) {
+        let reason = `HTTP ${res.status}`;
+        try {
+          const body = await res.json();
+          if (body && body.error) reason += ` - ${body.error}`;
+        } catch (_err) {
+          // ignore parse failures
+        }
+        throw new Error(reason);
+      }
+      return res.json();
+    }
+
+    function refreshAuthBadge() {
+      const badge = $("auth-status");
+      if (!badge) return;
+
+      const serverRequires = Boolean(state.info && state.info.api_auth_configured);
+      if (!serverRequires) {
+        badge.className = "badge good";
+        badge.textContent = "Server auth disabled";
+        return;
+      }
+
+      if (state.authKey) {
+        badge.className = "badge good";
+        badge.textContent = "API key loaded";
+      } else {
+        badge.className = "badge warn";
+        badge.textContent = "API key required";
+      }
+    }
+
+    function addTrendPoint(series, value) {
+      series.push({ t: Date.now(), v: Number.isFinite(value) ? value : 0 });
+      while (series.length > 120) series.shift();
+    }
+
+    function drawSingleLine(canvas, series, color, labelFormatter) {
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      if (!series.length) {
+        ctx.fillStyle = "rgba(158, 182, 208, .8)";
+        ctx.font = "12px JetBrains Mono";
+        ctx.fillText("No data", 10, 20);
+        return;
+      }
+
+      const values = series.map((p) => p.v);
+      const max = Math.max(...values, 1);
+      const min = Math.min(...values, 0);
+      const range = Math.max(max - min, 1e-9);
+
+      ctx.strokeStyle = "rgba(121, 164, 201, .25)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, h - 1);
+      ctx.lineTo(w, h - 1);
+      ctx.stroke();
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      series.forEach((point, idx) => {
+        const x = (idx / Math.max(series.length - 1, 1)) * (w - 1);
+        const y = h - 1 - ((point.v - min) / range) * (h - 10);
+        if (idx === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(236, 244, 255, .9)";
+      ctx.font = "12px JetBrains Mono";
+      const last = series[series.length - 1];
+      ctx.fillText(labelFormatter(last.v), 8, 14);
+    }
+
+    function drawQueueLines(canvas, candidateSeries, regularSeries) {
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      const merged = [...candidateSeries, ...regularSeries].map((p) => p.v);
+      if (!merged.length) {
+        ctx.fillStyle = "rgba(158, 182, 208, .8)";
+        ctx.font = "12px JetBrains Mono";
+        ctx.fillText("No data", 10, 20);
+        return;
+      }
+
+      const max = Math.max(...merged, 1);
+      const min = 0;
+      const range = Math.max(max - min, 1);
+
+      ctx.strokeStyle = "rgba(121, 164, 201, .25)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, h - 1);
+      ctx.lineTo(w, h - 1);
+      ctx.stroke();
+
+      const draw = (series, color) => {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        series.forEach((point, idx) => {
+          const x = (idx / Math.max(series.length - 1, 1)) * (w - 1);
+          const y = h - 1 - ((point.v - min) / range) * (h - 10);
+          if (idx === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      };
+
+      draw(candidateSeries, "#42d28d");
+      draw(regularSeries, "#f0bc52");
+
+      ctx.fillStyle = "rgba(236, 244, 255, .9)";
+      ctx.font = "11px JetBrains Mono";
+      const lastC = candidateSeries[candidateSeries.length - 1]?.v ?? 0;
+      const lastR = regularSeries[regularSeries.length - 1]?.v ?? 0;
+      ctx.fillText(`candidate=${fmt.format(lastC)} regular=${fmt.format(lastR)}`, 8, 14);
+    }
+
+    function drawCharts() {
+      drawSingleLine($("c-hashrate"), state.history.hashrate, "#49b7ff", humanRate);
+      drawSingleLine($("c-reject-rate"), state.history.rejectRate, "#f0bc52", (v) => `${(v * 100).toFixed(2)}%`);
+      drawQueueLines($("c-queue"), state.history.queueDepth.map((p) => ({ t: p.t, v: p.c })), state.history.queueDepth.map((p) => ({ t: p.t, v: p.r })));
+    }
+
+    function updateStats(stats) {
+      const accepted = Number(stats.pool?.shares_accepted || 0);
+      const rejected = Number(stats.pool?.shares_rejected || 0);
+      const rejectRate = accepted + rejected > 0 ? rejected / (accepted + rejected) : 0;
+
+      setText("s-miners", fmt.format(stats.pool?.miners || 0));
+      setText("s-workers", fmt.format(stats.pool?.workers || 0));
+      setText("s-hashrate", humanRate(stats.pool?.hashrate));
+      setText("s-network", humanRate(stats.chain?.network_hashrate));
+      setText("s-accepted", fmt.format(accepted));
+      setText("s-rejected", fmt.format(rejected));
+      setText("s-reject-rate", `${(rejectRate * 100).toFixed(2)}%`);
+      setText("s-blocks", fmt.format(stats.pool?.blocks_found || 0));
+      setText("s-total-shares", fmt.format(stats.pool?.total_shares || 0));
+      setText("s-total-blocks", fmt.format(stats.pool?.total_blocks || 0));
+      setText("s-fees", formatCoins(stats.pool?.pool_fees_collected || 0));
+      setText("s-height", stats.chain?.current_job_height ?? "-");
+      setText("s-inflight", fmt.format(stats.validation?.in_flight || 0));
+      setText("s-queue-c", fmt.format(stats.validation?.candidate_queue_depth || 0));
+      setText("s-queue-r", fmt.format(stats.validation?.regular_queue_depth || 0));
+      setText("s-fraud", fmt.format(stats.validation?.fraud_detections || 0));
+      setText("last-updated", `updated: ${new Date().toLocaleTimeString()}`);
+
+      addTrendPoint(state.history.hashrate, Number(stats.pool?.hashrate || 0));
+      addTrendPoint(state.history.rejectRate, rejectRate);
+      state.history.queueDepth.push({
+        t: Date.now(),
+        c: Number(stats.validation?.candidate_queue_depth || 0),
+        r: Number(stats.validation?.regular_queue_depth || 0),
+      });
+      while (state.history.queueDepth.length > 120) state.history.queueDepth.shift();
+      drawCharts();
+    }
+
+    async function refreshStats() {
+      try {
+        const stats = await apiFetch("/api/stats");
+        updateStats(stats);
+        setError("");
+      } catch (err) {
+        setError(`stats fetch failed: ${String(err)}`);
+      }
+    }
+
+    function renderPage(idPrefix, page) {
+      const end = Math.min(page.offset + page.returned, page.total);
+      setText(`${idPrefix}-page`, `${fmt.format(page.offset + 1)}-${fmt.format(end)} / ${fmt.format(page.total)}`);
+    }
+
+    function fillRows(tbodyId, rowsHtml) {
+      const tbody = $(tbodyId);
+      if (!tbody) return;
+      tbody.innerHTML = rowsHtml || "<tr><td colspan=\"99\" class=\"mono\">No rows</td></tr>";
+    }
+
+    async function loadMinerLookup() {
+      const address = $("miner-address").value.trim();
+      if (!address) {
+        $("miner-state").className = "badge warn";
+        $("miner-state").textContent = "No miner selected";
+        fillRows("miner-shares-body", "");
+        return;
+      }
+
+      const shareLimit = Math.max(1, Math.min(500, Number($("miner-share-limit").value || 100)));
+
+      try {
+        const data = await apiFetch(`/api/miner/${encodeURIComponent(address)}?share_limit=${shareLimit}`);
+        setText("m-hashrate", humanRate(data.hashrate));
+        setText("m-pending", formatCoins(data.balance?.pending || 0));
+        setText("m-paid", formatCoins(data.balance?.paid || 0));
+        setText("m-payout", data.pending_payout ? formatCoins(data.pending_payout.amount || 0) : "none");
+
+        const shares = Array.isArray(data.shares) ? data.shares : [];
+        fillRows("miner-shares-body", shares.map((share) => `
+          <tr>
+            <td class="mono">${share.id ?? "-"}</td>
+            <td class="mono">${share.job_id ?? "-"}</td>
+            <td class="mono">${share.status ?? "-"}</td>
+            <td class="mono">${fmt.format(share.difficulty || 0)}</td>
+            <td class="mono">${fmt.format(share.nonce || 0)}</td>
+            <td class="mono">${yesNo(share.was_sampled)}</td>
+            <td class="mono">${share.block_hash || "-"}</td>
+            <td class="mono">${formatTime(share.created_at)}</td>
+          </tr>
+        `).join(""));
+
+        $("miner-state").className = "badge good";
+        $("miner-state").textContent = "Loaded";
+      } catch (err) {
+        $("miner-state").className = "badge bad";
+        $("miner-state").textContent = "Lookup failed";
+        setError(`miner lookup failed: ${String(err)}`);
+      }
+    }
+
+    async function loadMiners() {
+      try {
+        const search = $("miners-search").value.trim();
+        state.miners.limit = Math.max(1, Math.min(200, Number($("miners-limit").value || 25)));
+
+        const params = new URLSearchParams({
+          paged: "true",
+          limit: String(state.miners.limit),
+          offset: String(state.miners.offset),
+          sort: $("miners-sort").value,
+        });
+        if (search) params.set("search", search);
+
+        const data = await apiFetch(`/api/miners?${params.toString()}`, { auth: true });
+        renderPage("miners", data.page);
+
+        fillRows("miners-body", data.items.map((item) => `
+          <tr>
+            <td class="mono">${item.address}</td>
+            <td class="mono">${fmt.format(item.worker_count || 0)}</td>
+            <td class="mono">${humanRate(item.hashrate)}</td>
+            <td class="mono">${fmt.format(item.shares_accepted || 0)}</td>
+            <td class="mono">${fmt.format(item.shares_rejected || 0)}</td>
+            <td class="mono">${fmt.format(item.blocks_found || 0)}</td>
+            <td class="mono">${formatTime(item.last_share_at)}</td>
+          </tr>
+        `).join(""));
+
+        setError("");
+      } catch (err) {
+        setError(`miners load failed: ${String(err)}`);
+        fillRows("miners-body", "");
+      }
+    }
+
+    async function loadBlocks() {
+      try {
+        state.blocks.limit = Math.max(1, Math.min(200, Number($("blocks-limit").value || 25)));
+
+        const params = new URLSearchParams({
+          paged: "true",
+          limit: String(state.blocks.limit),
+          offset: String(state.blocks.offset),
+          sort: $("blocks-sort").value,
+        });
+
+        const finder = $("blocks-finder").value.trim();
+        const status = $("blocks-status").value;
+        if (finder) params.set("finder", finder);
+        if (status) params.set("status", status);
+
+        const data = await apiFetch(`/api/blocks?${params.toString()}`, { auth: true });
+        renderPage("blocks", data.page);
+
+        fillRows("blocks-body", data.items.map((block) => `
+          <tr>
+            <td class="mono">${fmt.format(block.height || 0)}</td>
+            <td class="mono">${block.hash || "-"}</td>
+            <td class="mono">${block.finder || "-"}</td>
+            <td class="mono">${block.finder_worker || "-"}</td>
+            <td class="mono">${formatCoins(block.reward || 0)}</td>
+            <td class="mono">${yesNo(block.confirmed)}</td>
+            <td class="mono">${yesNo(block.orphaned)}</td>
+            <td class="mono">${yesNo(block.paid_out)}</td>
+            <td class="mono">${formatTime(block.timestamp)}</td>
+          </tr>
+        `).join(""));
+
+        setError("");
+      } catch (err) {
+        setError(`blocks load failed: ${String(err)}`);
+        fillRows("blocks-body", "");
+      }
+    }
+
+    async function loadPayouts() {
+      try {
+        state.payouts.limit = Math.max(1, Math.min(200, Number($("payouts-limit").value || 25)));
+
+        const params = new URLSearchParams({
+          paged: "true",
+          limit: String(state.payouts.limit),
+          offset: String(state.payouts.offset),
+          sort: $("payouts-sort").value,
+        });
+
+        const address = $("payouts-address").value.trim();
+        const txHash = $("payouts-tx").value.trim();
+        if (address) params.set("address", address);
+        if (txHash) params.set("tx_hash", txHash);
+
+        const data = await apiFetch(`/api/payouts?${params.toString()}`, { auth: true });
+        renderPage("payouts", data.page);
+
+        fillRows("payouts-body", data.items.map((item) => `
+          <tr>
+            <td class="mono">${item.id ?? "-"}</td>
+            <td class="mono">${item.address || "-"}</td>
+            <td class="mono">${formatCoins(item.amount || 0)}</td>
+            <td class="mono">${formatCoins(item.fee || 0)}</td>
+            <td class="mono">${item.tx_hash || "-"}</td>
+            <td class="mono">${formatTime(item.timestamp)}</td>
+          </tr>
+        `).join(""));
+
+        setError("");
+      } catch (err) {
+        setError(`payouts load failed: ${String(err)}`);
+        fillRows("payouts-body", "");
+      }
+    }
+
+    async function loadFees() {
+      try {
+        state.fees.limit = Math.max(1, Math.min(200, Number($("fees-limit").value || 25)));
+
+        const params = new URLSearchParams({
+          paged: "true",
+          limit: String(state.fees.limit),
+          offset: String(state.fees.offset),
+          sort: $("fees-sort").value,
+        });
+
+        const feeAddress = $("fees-address").value.trim();
+        if (feeAddress) params.set("fee_address", feeAddress);
+
+        const payload = await apiFetch(`/api/fees?${params.toString()}`, { auth: true });
+        setText("fees-total", `Total: ${formatCoins(payload.total_collected || 0)}`);
+
+        const data = payload.recent || { items: [], page: { offset: 0, returned: 0, total: 0 } };
+        renderPage("fees", data.page);
+
+        fillRows("fees-body", data.items.map((item) => `
+          <tr>
+            <td class="mono">${item.id ?? "-"}</td>
+            <td class="mono">${fmt.format(item.block_height || 0)}</td>
+            <td class="mono">${formatCoins(item.amount || 0)}</td>
+            <td class="mono">${item.fee_address || "-"}</td>
+            <td class="mono">${formatTime(item.timestamp)}</td>
+          </tr>
+        `).join(""));
+
+        setError("");
+      } catch (err) {
+        setError(`fees load failed: ${String(err)}`);
+        fillRows("fees-body", "");
+      }
+    }
+
+    async function loadHealth() {
+      try {
+        const health = await apiFetch("/api/health", { auth: true });
+
+        const daemonReachable = !!health.daemon?.reachable;
+        const healthBadge = $("health-state");
+        healthBadge.className = daemonReachable ? "badge good" : "badge bad";
+        healthBadge.textContent = daemonReachable ? "Daemon reachable" : "Daemon issue";
+
+        setText("h-uptime", `${fmt.format(Number(health.uptime_seconds || 0))}s`);
+        setText("h-daemon", daemonReachable ? "yes" : "no");
+        setText("h-template-age", health.job?.template_age_seconds !== null && health.job?.template_age_seconds !== undefined
+          ? `${fmt.format(Number(health.job.template_age_seconds))}s`
+          : "-");
+        setText("h-pending", fmt.format(health.payouts?.pending_count || 0));
+
+        $("health-json").textContent = JSON.stringify(health, null, 2);
+        setError("");
+      } catch (err) {
+        const badge = $("health-state");
+        badge.className = "badge bad";
+        badge.textContent = "Health fetch failed";
+        setError(`health load failed: ${String(err)}`);
+      }
+    }
+
+    function attachPager(prefix, key, loadFn) {
+      $(`${prefix}-prev`).addEventListener("click", () => {
+        state[key].offset = Math.max(0, state[key].offset - state[key].limit);
+        loadFn();
+      });
+      $(`${prefix}-next`).addEventListener("click", () => {
+        state[key].offset += state[key].limit;
+        loadFn();
+      });
+    }
+
+    function setTab(name) {
+      state.activeTab = name;
+      document.querySelectorAll(".tab-btn").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.tab === name);
+      });
+      document.querySelectorAll(".tab").forEach((tab) => {
+        tab.classList.toggle("active", tab.id === `tab-${name}`);
+      });
+
+      if (name === "miners") loadMiners();
+      if (name === "blocks") loadBlocks();
+      if (name === "payouts") loadPayouts();
+      if (name === "fees") loadFees();
+      if (name === "health") loadHealth();
+    }
+
+    async function loadInfo() {
+      const info = await apiFetch("/api/info");
+      state.info = info;
+
+      setText("pool-name", info.pool_name || "Blocknet Pool WebUI");
+      setText("pool-url", `pool_url: ${info.pool_url || "-"}`);
+      setText("build-version", `version: ${info.version || "-"}`);
+      setText("started-at", `started: ${formatTime(info.started_at_unix_secs)}`);
+
+      const host = window.location.hostname || "127.0.0.1";
+      const endpoint = `stratum+tcp://${host}:${info.stratum_port}`;
+      setText("stratum-endpoint", endpoint);
+
+      refreshAuthBadge();
+    }
+
+    function bindActions() {
+      $("api-key").value = state.authKey;
+
+      $("save-key").addEventListener("click", () => {
+        state.authKey = $("api-key").value.trim();
+        localStorage.setItem("blocknet_pool_api_key", state.authKey);
+        refreshAuthBadge();
+        if (state.activeTab === "miners") loadMiners();
+        if (state.activeTab === "blocks") loadBlocks();
+        if (state.activeTab === "payouts") loadPayouts();
+        if (state.activeTab === "fees") loadFees();
+        if (state.activeTab === "health") loadHealth();
+      });
+
+      $("clear-key").addEventListener("click", () => {
+        state.authKey = "";
+        $("api-key").value = "";
+        localStorage.removeItem("blocknet_pool_api_key");
+        refreshAuthBadge();
+      });
+
+      $("copy-stratum").addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText($("stratum-endpoint").textContent || "");
+        } catch (_err) {
+          // ignore clipboard errors
+        }
+      });
+
+      document.querySelectorAll(".tab-btn").forEach((btn) => {
+        btn.addEventListener("click", () => setTab(btn.dataset.tab));
+      });
+
+      $("miner-load").addEventListener("click", loadMinerLookup);
+      $("miner-clear").addEventListener("click", () => {
+        $("miner-address").value = "";
+        setText("m-hashrate", "-");
+        setText("m-pending", "-");
+        setText("m-paid", "-");
+        setText("m-payout", "-");
+        fillRows("miner-shares-body", "");
+        $("miner-state").className = "badge warn";
+        $("miner-state").textContent = "No miner selected";
+      });
+
+      $("miners-apply").addEventListener("click", () => {
+        state.miners.offset = 0;
+        loadMiners();
+      });
+
+      $("blocks-apply").addEventListener("click", () => {
+        state.blocks.offset = 0;
+        loadBlocks();
+      });
+
+      $("payouts-apply").addEventListener("click", () => {
+        state.payouts.offset = 0;
+        loadPayouts();
+      });
+
+      $("fees-apply").addEventListener("click", () => {
+        state.fees.offset = 0;
+        loadFees();
+      });
+
+      $("health-refresh").addEventListener("click", loadHealth);
+
+      attachPager("miners", "miners", loadMiners);
+      attachPager("blocks", "blocks", loadBlocks);
+      attachPager("payouts", "payouts", loadPayouts);
+      attachPager("fees", "fees", loadFees);
+    }
+
+    async function boot() {
+      try {
+        bindActions();
+        await loadInfo();
+      } catch (err) {
+        setError(`info load failed: ${String(err)}`);
+      }
+
+      await refreshStats();
+      setInterval(refreshStats, 2000);
+    }
+
+    boot();
+  </script>
+</body>
+</html>
