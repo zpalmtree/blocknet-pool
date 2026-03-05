@@ -25,6 +25,21 @@ Custom config:
 cargo run --release -- --config /path/to/config.json
 ```
 
+## Deploy (bntpool)
+
+From the local repo root:
+
+```bash
+./scripts/deploy_bntpool.sh
+```
+
+What it does:
+
+- rsyncs pool source to `bntpool:/opt/blocknet/blocknet-pool`
+- builds `--release` on the server
+- restarts `blocknet-pool.service`
+- tails recent service logs
+
 ## Daemon API Auth
 
 The pool can authenticate to the daemon with either:
