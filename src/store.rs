@@ -64,6 +64,20 @@ impl PoolStore {
         }
     }
 
+    pub fn share_outcome_counts_since(&self, since: SystemTime) -> Result<(u64, u64)> {
+        match self {
+            PoolStore::Sqlite(v) => v.share_outcome_counts_since(since),
+            PoolStore::Postgres(v) => v.share_outcome_counts_since(since),
+        }
+    }
+
+    pub fn total_rejected_share_count(&self) -> Result<u64> {
+        match self {
+            PoolStore::Sqlite(v) => v.total_rejected_share_count(),
+            PoolStore::Postgres(v) => v.total_rejected_share_count(),
+        }
+    }
+
     pub fn hashrate_stats_for_miner(
         &self,
         address: &str,

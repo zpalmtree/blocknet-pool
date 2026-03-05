@@ -25,7 +25,7 @@ use crate::engine::JobRepository;
 use crate::jobs::JobManager;
 use crate::node::NodeClient;
 use crate::payout::{weight_shares, PayoutTrustPolicy};
-use crate::stats::{PoolStats, RejectionAnalyticsSnapshot};
+use crate::stats::{PoolStats, RejectionAnalyticsSnapshot, RejectionReasonCount};
 use crate::store::PoolStore;
 use crate::validation::ValidationEngine;
 
@@ -900,7 +900,18 @@ async fn handle_stats_insights(
     let rejection_window = rejection_window_duration(query.rejection_window.as_deref());
     match state.stats_insights().await {
         Ok(mut v) => {
-            v.rejections.window = state.stats.rejection_analytics(rejection_window);
+            match state.rejection_analytics_snapshot(rejection_window).await {
+                Ok(snapshot) => {
+                    v.rejections.window = snapshot;
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        "failed to load persisted rejection analytics; using in-memory fallback"
+                    );
+                    v.rejections.window = state.stats.rejection_analytics(rejection_window);
+                }
+            }
             Json(v).into_response()
         }
         Err(err) => internal_error("failed loading stats insights", err).into_response(),
@@ -2131,6 +2142,49 @@ impl ApiState {
         cache.updated_at = Some(Instant::now());
         cache.value = Some(response.clone());
         Ok(response)
+    }
+
+    async fn rejection_analytics_snapshot(
+        &self,
+        window: Duration,
+    ) -> anyhow::Result<RejectionAnalyticsSnapshot> {
+        let mut snapshot = self.stats.rejection_analytics(window);
+        let since = SystemTime::now().checked_sub(window).unwrap_or(UNIX_EPOCH);
+        let store = Arc::clone(&self.store);
+        let (accepted, rejected, total_rejected) = tokio::task::spawn_blocking(move || {
+            let (accepted, rejected) = store.share_outcome_counts_since(since)?;
+            let total_rejected = store.total_rejected_share_count()?;
+            Ok::<_, anyhow::Error>((accepted, rejected, total_rejected))
+        })
+        .await
+        .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+
+        snapshot.accepted = accepted;
+        snapshot.rejected = rejected;
+        snapshot.total_rejected = total_rejected;
+        let denom = accepted.saturating_add(rejected);
+        snapshot.rejection_rate_pct = if denom == 0 {
+            0.0
+        } else {
+            (rejected as f64 / denom as f64) * 100.0
+        };
+
+        // Rejection reasons are currently tracked in-memory. When the process
+        // restarts, keep aggregate counts useful by exposing a generic bucket.
+        if snapshot.by_reason.is_empty() && rejected > 0 {
+            snapshot.by_reason = vec![RejectionReasonCount {
+                reason: "rejected".to_string(),
+                count: rejected,
+            }];
+        }
+        if snapshot.totals_by_reason.is_empty() && total_rejected > 0 {
+            snapshot.totals_by_reason = vec![RejectionReasonCount {
+                reason: "rejected".to_string(),
+                count: total_rejected,
+            }];
+        }
+
+        Ok(snapshot)
     }
 
     fn build_status_response(&self, daemon: DaemonHealth) -> StatusPageResponse {

@@ -405,6 +405,29 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         Ok(count.max(0) as u64)
     }
 
+    pub fn share_outcome_counts_since(&self, since: SystemTime) -> Result<(u64, u64)> {
+        let conn = self.conn.lock();
+        let row = conn.query_row(
+            "SELECT
+                COALESCE(SUM(CASE WHEN status IN ('verified','provisional') THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status NOT IN ('verified','provisional') THEN 1 ELSE 0 END), 0)
+             FROM shares
+             WHERE created_at >= ?1",
+            params![to_unix(since)],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )?;
+        Ok((row.0.max(0) as u64, row.1.max(0) as u64))
+    }
+
+    pub fn total_rejected_share_count(&self) -> Result<u64> {
+        let count: i64 = self.conn.lock().query_row(
+            "SELECT COUNT(*) FROM shares WHERE status NOT IN ('verified','provisional')",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count.max(0) as u64)
+    }
+
     pub fn add_block(&self, block: &DbBlock) -> Result<()> {
         self.conn.lock().execute(
             "INSERT INTO blocks (height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out)
