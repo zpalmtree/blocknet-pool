@@ -917,8 +917,6 @@ fn prune_expired_assignments_locked(
         return;
     }
     let now = Instant::now();
-    let mut expired_removed = 0usize;
-    let mut kept_current_template = 0usize;
     state
         .assignments
         .retain(|_, assignment| {
@@ -926,35 +924,14 @@ fn prune_expired_assignments_locked(
             if current_template_job_id
                 .is_some_and(|current| assignment.template_job_id == current)
             {
-                if age > max_age {
-                    kept_current_template = kept_current_template.saturating_add(1);
-                }
                 return true;
             }
-            if age <= max_age {
-                true
-            } else {
-                expired_removed = expired_removed.saturating_add(1);
-                false
-            }
+            age <= max_age
         });
     let valid_assignment_ids = state.assignments.keys().cloned().collect::<HashSet<_>>();
-    let order_before = state.assignment_order.len();
     state
         .assignment_order
         .retain(|assignment_id| valid_assignment_ids.contains(assignment_id));
-    let stale_order_removed = order_before.saturating_sub(state.assignment_order.len());
-    if expired_removed > 0 || kept_current_template > 0 || stale_order_removed > 0 {
-        tracing::info!(
-            expired_removed,
-            kept_current_template,
-            stale_order_removed,
-            active_assignments = state.assignments.len(),
-            max_age = ?max_age,
-            current_template_job_id = current_template_job_id.unwrap_or("-"),
-            "assignment prune sweep"
-        );
-    }
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
