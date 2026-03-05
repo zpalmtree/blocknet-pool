@@ -13,6 +13,7 @@ use crate::pow::{check_target, PowHasher};
 
 pub const SHARE_STATUS_VERIFIED: &str = "verified";
 pub const SHARE_STATUS_PROVISIONAL: &str = "provisional";
+pub const SHARE_STATUS_REJECTED: &str = "rejected";
 const VALIDATION_STATE_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 const VALIDATION_STATE_MAX_TRACKED: usize = 100_000;
 

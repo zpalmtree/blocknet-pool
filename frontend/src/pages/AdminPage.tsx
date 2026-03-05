@@ -8,6 +8,7 @@ import type { AdminPayoutItem, AdminTab, FeeEvent, HealthResponse, MinerListItem
 interface AdminPageProps {
   active: boolean;
   api: ApiClient;
+  liveTick: number;
   apiKey: string;
   apiKeyInput: string;
   setApiKeyInput: (value: string) => void;
@@ -19,6 +20,7 @@ interface AdminPageProps {
 export function AdminPage({
   active,
   api,
+  liveTick,
   apiKey,
   apiKeyInput,
   setApiKeyInput,
@@ -119,6 +121,25 @@ export function AdminPage({
     if (tab === 'fees') void loadFees();
     if (tab === 'health') void loadHealth();
   }, [active, apiKey, loadFees, loadHealth, loadMiners, loadPayouts, tab]);
+
+  useEffect(() => {
+    if (!active || !apiKey || liveTick <= 0) return;
+    if (liveTick % 2 !== 0) return;
+
+    if (tab === 'miners') void loadMiners();
+    if (tab === 'payouts') void loadPayouts();
+    if (tab === 'fees') void loadFees();
+    if (tab === 'health') void loadHealth();
+  }, [
+    active,
+    apiKey,
+    liveTick,
+    tab,
+    loadFees,
+    loadHealth,
+    loadMiners,
+    loadPayouts,
+  ]);
 
   const apiStatus = apiKey ? 'Key set' : 'No key';
 

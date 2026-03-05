@@ -36,6 +36,16 @@ export function App() {
 
   const api = useMemo(() => createApiClient(() => apiKey, showError), [apiKey, showError]);
 
+  const loadPoolInfo = useCallback(async () => {
+    try {
+      const info = await api.getInfo();
+      setPoolInfo(info);
+      document.title = APP_TITLE;
+    } catch {
+      // handled by api client
+    }
+  }, [api]);
+
   useEffect(() => {
     const onHashChange = () => setRoute(routeFromHash(window.location.hash || '#/'));
     window.addEventListener('hashchange', onHashChange);
@@ -48,16 +58,8 @@ export function App() {
   }, [route]);
 
   useEffect(() => {
-    api
-      .getInfo()
-      .then((info) => {
-        setPoolInfo(info);
-        document.title = APP_TITLE;
-      })
-      .catch(() => {
-        // handled by api client
-      });
-  }, [api]);
+    void loadPoolInfo();
+  }, [loadPoolInfo]);
 
   useEffect(() => {
     let mounted = true;
@@ -89,6 +91,11 @@ export function App() {
       source.close();
     };
   }, []);
+
+  useEffect(() => {
+    if (liveTick <= 0 || liveTick % 12 !== 0) return;
+    void loadPoolInfo();
+  }, [liveTick, loadPoolInfo]);
 
   const onSaveApiKey = useCallback(() => {
     const key = apiKeyInput.trim();
@@ -200,12 +207,13 @@ export function App() {
       <div className="container">
         <DashboardPage active={route === 'dashboard'} api={api} poolInfo={poolInfo} liveTick={liveTick} />
         <StartPage active={route === 'start'} poolInfo={poolInfo} />
-        <BlocksPage active={route === 'blocks'} api={api} />
-        <PayoutsPage active={route === 'payouts'} api={api} />
+        <BlocksPage active={route === 'blocks'} api={api} liveTick={liveTick} />
+        <PayoutsPage active={route === 'payouts'} api={api} liveTick={liveTick} />
         <StatsPage active={route === 'stats'} api={api} liveTick={liveTick} />
         <AdminPage
           active={route === 'admin'}
           api={api}
+          liveTick={liveTick}
           apiKey={apiKey}
           apiKeyInput={apiKeyInput}
           setApiKeyInput={setApiKeyInput}

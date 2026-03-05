@@ -20,7 +20,7 @@ use crate::protocol::{
 };
 use crate::validation::{
     ValidationEngine, ValidationResult, ValidationTask, SHARE_STATUS_PROVISIONAL,
-    SHARE_STATUS_VERIFIED,
+    SHARE_STATUS_REJECTED, SHARE_STATUS_VERIFIED,
 };
 
 // Start retargeting after two accepted shares so reconnects/high starting diff
@@ -429,22 +429,31 @@ impl PoolEngine {
                 .cloned()
                 .ok_or_else(|| anyhow!("not logged in"))?
         };
+        let fallback_difficulty = session.difficulty.max(1);
 
-        let submit_job = self
+        let submit_job = match self
             .jobs
             .resolve_submit_job_with_reason(&job_id, received_at)
-            .map_err(|err| anyhow!(err.to_string()))?;
+        {
+            Ok(v) => v,
+            Err(err) => {
+                self.persist_rejected_share(&session, &job_id, nonce, fallback_difficulty);
+                return Err(anyhow!(err.to_string()));
+            }
+        };
         let share_difficulty = submit_job
             .share_difficulty
             .unwrap_or(session.difficulty)
             .max(1);
         if let Some(expected_miner) = submit_job.assigned_miner.as_ref() {
             if expected_miner != &session.address {
+                self.persist_rejected_share(&session, &job_id, nonce, share_difficulty);
                 return Err(anyhow!("job not assigned to this miner"));
             }
         }
         if let (Some(start), Some(end)) = (submit_job.nonce_start, submit_job.nonce_end) {
             if nonce < start || nonce > end {
+                self.persist_rejected_share(&session, &job_id, nonce, share_difficulty);
                 return Err(anyhow!("nonce out of assigned range"));
             }
         }
@@ -454,6 +463,7 @@ impl PoolEngine {
         {
             let mut seen = self.seen_in_memory.lock();
             if !seen.insert(seen_key.clone()) {
+                self.persist_rejected_share(&session, &job_id, nonce, share_difficulty);
                 return Err(anyhow!("duplicate share"));
             }
         }
@@ -463,6 +473,7 @@ impl PoolEngine {
                 Ok(hash) => Some(hash),
                 Err(err) => {
                     self.seen_in_memory.lock().remove(&seen_key);
+                    self.persist_rejected_share(&session, &job_id, nonce, share_difficulty);
                     return Err(anyhow!(err));
                 }
             },
@@ -472,6 +483,7 @@ impl PoolEngine {
         let require_claimed_hash = self.cfg.stratum_submit_v2_required;
         if require_claimed_hash && claimed_hash.is_none() {
             self.seen_in_memory.lock().remove(&seen_key);
+            self.persist_rejected_share(&session, &job_id, nonce, share_difficulty);
             return Err(anyhow!("claimed hash required"));
         }
 
@@ -479,10 +491,12 @@ impl PoolEngine {
             Ok(true) => true,
             Ok(false) => {
                 self.seen_in_memory.lock().remove(&seen_key);
+                self.persist_rejected_share(&session, &job_id, nonce, share_difficulty);
                 return Err(anyhow!("duplicate share"));
             }
             Err(err) => {
                 self.seen_in_memory.lock().remove(&seen_key);
+                self.persist_rejected_share(&session, &job_id, nonce, share_difficulty);
                 return Err(err);
             }
         };
@@ -492,6 +506,7 @@ impl PoolEngine {
         let result = (|| -> Result<SubmitAck> {
             if self.store.is_address_quarantined(&session.address)? {
                 release_claim_on_error = false;
+                self.persist_rejected_share(&session, &job_id_for_share, nonce, share_difficulty);
                 return Err(anyhow!("address quarantined"));
             }
 
@@ -513,10 +528,22 @@ impl PoolEngine {
                     || (!require_claimed_hash && claimed_hash.is_none()),
             };
 
-            let validation = self.validate_task(task, candidate_claim)?;
+            let validation = match self.validate_task(task, candidate_claim) {
+                Ok(v) => v,
+                Err(err) => {
+                    self.persist_rejected_share(
+                        &session,
+                        &job_id_for_share,
+                        nonce,
+                        share_difficulty,
+                    );
+                    return Err(err);
+                }
+            };
 
             if !validation.accepted {
                 release_claim_on_error = false;
+                self.persist_rejected_share(&session, &job_id_for_share, nonce, share_difficulty);
                 if validation.suspected_fraud || validation.escalate_risk {
                     let reason = validation.reject_reason.unwrap_or("risk escalation");
                     let strikes = if validation.suspected_fraud || !validation.escalate_risk {
@@ -636,6 +663,35 @@ impl PoolEngine {
 
         self.seen_in_memory.lock().remove(&seen_key);
         result
+    }
+
+    fn persist_rejected_share(
+        &self,
+        session: &MinerSession,
+        job_id: &str,
+        nonce: u64,
+        difficulty: u64,
+    ) {
+        if let Err(err) = self.store.add_share(ShareRecord {
+            job_id: job_id.to_string(),
+            miner: session.address.clone(),
+            worker: session.worker.clone(),
+            difficulty: difficulty.max(1),
+            nonce,
+            status: SHARE_STATUS_REJECTED,
+            was_sampled: false,
+            block_hash: None,
+            created_at: SystemTime::now(),
+        }) {
+            tracing::warn!(
+                address = %session.address,
+                worker = %session.worker,
+                job_id = %job_id,
+                nonce,
+                error = %err,
+                "failed to persist rejected share"
+            );
+        }
     }
 
     pub fn recover_found_block_outbox(&self) {
@@ -858,9 +914,7 @@ impl PoolEngine {
                     let ratio = raw_ratio
                         .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
                         .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
-                    let next_diff = ((session.difficulty as f64) / ratio)
-                        .floor()
-                        .max(1.0) as u64;
+                    let next_diff = ((session.difficulty as f64) / ratio).floor().max(1.0) as u64;
                     let next_diff = next_diff.clamp(min_diff, max_diff);
                     session.last_difficulty_adjustment = Some(now);
                     if next_diff != session.difficulty {
@@ -993,9 +1047,7 @@ impl PoolEngine {
                     let ratio = raw_ratio
                         .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
                         .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
-                    let next_diff = ((session.difficulty as f64) / ratio)
-                        .floor()
-                        .max(1.0) as u64;
+                    let next_diff = ((session.difficulty as f64) / ratio).floor().max(1.0) as u64;
                     let next_diff = next_diff.clamp(min_diff, max_diff);
                     session.last_difficulty_adjustment = Some(now);
                     if next_diff != session.difficulty {
@@ -1868,11 +1920,12 @@ mod tests {
         let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
         let validation = Arc::new(validation);
         let jobs = Arc::new(InMemoryJobs::default());
+        let store = Arc::new(InMemoryStore::default());
         let engine = PoolEngine::new(
             cfg,
             validation,
             jobs,
-            Arc::new(InMemoryStore::default()),
+            Arc::clone(&store) as Arc<dyn ShareStore>,
             Arc::new(InMemoryNode::default()),
         );
 
@@ -1889,6 +1942,9 @@ mod tests {
             )
             .expect_err("missing assignment must return stale reason");
         assert!(err.to_string().contains("assignment not found"));
+        let shares = store.shares();
+        assert_eq!(shares.len(), 1);
+        assert_eq!(shares[0].status, SHARE_STATUS_REJECTED);
     }
 
     #[test]
@@ -2001,6 +2057,10 @@ mod tests {
             .submit("conn1", "job1".to_string(), 7, Some("ff".repeat(32)))
             .expect_err("duplicate must fail");
         assert!(err.to_string().contains("duplicate"));
+        let shares = store.shares();
+        assert_eq!(shares.len(), 2);
+        assert_eq!(shares[0].status, SHARE_STATUS_PROVISIONAL);
+        assert_eq!(shares[1].status, SHARE_STATUS_REJECTED);
     }
 
     #[test]

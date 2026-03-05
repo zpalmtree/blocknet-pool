@@ -9,9 +9,10 @@ import type { BlockItem, PagerState } from '../types';
 interface BlocksPageProps {
   active: boolean;
   api: ApiClient;
+  liveTick: number;
 }
 
-export function BlocksPage({ active, api }: BlocksPageProps) {
+export function BlocksPage({ active, api, liveTick }: BlocksPageProps) {
   const [filter, setFilter] = useState('');
   const [items, setItems] = useState<BlockItem[]>([]);
   const [pager, setPager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
@@ -37,6 +38,11 @@ export function BlocksPage({ active, api }: BlocksPageProps) {
     if (!active) return;
     void loadPage();
   }, [active, loadPage]);
+
+  useEffect(() => {
+    if (!active || liveTick <= 0) return;
+    void loadPage();
+  }, [active, liveTick, loadPage]);
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-blocks">
