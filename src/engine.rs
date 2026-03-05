@@ -176,6 +176,9 @@ pub trait ShareStore: Send + Sync + 'static {
     fn should_force_verify_address(&self, _address: &str) -> Result<bool> {
         Ok(false)
     }
+    fn address_risk_strikes(&self, _address: &str) -> Result<u64> {
+        Ok(0)
+    }
     fn escalate_address_risk(
         &self,
         _address: &str,
@@ -463,13 +466,30 @@ impl PoolEngine {
                 release_claim_on_error = false;
                 if validation.suspected_fraud || validation.escalate_risk {
                     let reason = validation.reject_reason.unwrap_or("risk escalation");
+                    let strikes = if validation.suspected_fraud || !validation.escalate_risk {
+                        0
+                    } else {
+                        match self.store.address_risk_strikes(&session.address) {
+                            Ok(v) => v,
+                            Err(err) => {
+                                tracing::warn!(
+                                    address = %session.address,
+                                    error = %err,
+                                    "failed to read address risk strikes before escalation"
+                                );
+                                0
+                            }
+                        }
+                    };
+                    let apply_quarantine =
+                        should_apply_quarantine_for_failed_share(&self.cfg, &validation, strikes);
                     if let Err(err) = self.store.escalate_address_risk(
                         &session.address,
                         reason,
                         self.cfg.quarantine_duration_duration(),
                         self.cfg.max_quarantine_duration_duration(),
                         self.cfg.forced_verify_duration(),
-                        validation.suspected_fraud,
+                        apply_quarantine,
                     ) {
                         tracing::warn!(
                             address = %session.address,
@@ -889,6 +909,22 @@ fn vardiff_target_interval_seconds(cfg: &Config) -> f64 {
     (window.as_secs_f64() / target_shares).max(1.0)
 }
 
+fn should_apply_quarantine_for_failed_share(
+    cfg: &Config,
+    validation: &ValidationResult,
+    current_strikes: u64,
+) -> bool {
+    if validation.suspected_fraud {
+        return true;
+    }
+    if !validation.escalate_risk {
+        return false;
+    }
+
+    let threshold = cfg.invalid_escalation_quarantine_strikes.max(0) as u64;
+    threshold > 0 && current_strikes.saturating_add(1) >= threshold
+}
+
 fn compact_address(address: &str) -> String {
     let trimmed = address.trim();
     if trimmed.len() <= 12 {
@@ -1210,6 +1246,54 @@ mod tests {
 
     fn other_miner_address() -> String {
         bs58::encode([0x22; 64]).into_string()
+    }
+
+    #[test]
+    fn quarantine_decision_for_failed_share_is_thresholded() {
+        let mut cfg = cfg();
+        cfg.invalid_escalation_quarantine_strikes = 3;
+
+        let mut validation = ValidationResult {
+            nonce: 0,
+            accepted: false,
+            reject_reason: Some("low difficulty share"),
+            hash: [0u8; 32],
+            verified: true,
+            is_block_candidate: false,
+            suspected_fraud: false,
+            escalate_risk: true,
+        };
+
+        assert!(!should_apply_quarantine_for_failed_share(
+            &cfg,
+            &validation,
+            1
+        ));
+        assert!(should_apply_quarantine_for_failed_share(
+            &cfg,
+            &validation,
+            2
+        ));
+
+        cfg.invalid_escalation_quarantine_strikes = 0;
+        assert!(
+            !should_apply_quarantine_for_failed_share(&cfg, &validation, 100),
+            "threshold 0 disables non-fraud quarantine escalation"
+        );
+
+        validation.escalate_risk = false;
+        assert!(!should_apply_quarantine_for_failed_share(
+            &cfg,
+            &validation,
+            2
+        ));
+
+        validation.suspected_fraud = true;
+        assert!(should_apply_quarantine_for_failed_share(
+            &cfg,
+            &validation,
+            0
+        ));
     }
 
     #[test]

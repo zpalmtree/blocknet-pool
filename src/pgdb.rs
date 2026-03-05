@@ -991,6 +991,12 @@ impl ShareStore for PostgresStore {
         PostgresStore::add_share(self, share)
     }
 
+    fn address_risk_strikes(&self, address: &str) -> Result<u64> {
+        Ok(PostgresStore::get_address_risk(self, address)?
+            .map(|v| v.strikes)
+            .unwrap_or(0))
+    }
+
     fn get_vardiff_hint(&self, address: &str, worker: &str) -> Result<Option<(u64, SystemTime)>> {
         PostgresStore::get_vardiff_hint(self, address, worker)
     }

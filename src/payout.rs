@@ -11,6 +11,30 @@ use crate::validation::{SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED};
 
 const MIN_PAYOUT_INTERVAL: Duration = Duration::from_secs(1);
 
+#[derive(Debug, Clone, Copy)]
+pub struct PayoutTrustPolicy {
+    pub min_verified_shares: u64,
+    pub min_verified_ratio: f64,
+    pub provisional_cap_multiplier: f64,
+}
+
+impl PayoutTrustPolicy {
+    fn from_config(cfg: &Config) -> Self {
+        Self {
+            min_verified_shares: cfg.payout_min_verified_shares.max(0) as u64,
+            min_verified_ratio: cfg.payout_min_verified_ratio.clamp(0.0, 1.0),
+            provisional_cap_multiplier: cfg.payout_provisional_cap_multiplier.max(0.0),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct AddressShareWeights {
+    verified_shares: u64,
+    verified_difficulty: u64,
+    provisional_difficulty: u64,
+}
+
 #[derive(Debug)]
 pub struct PayoutProcessor {
     cfg: Config,
@@ -278,26 +302,33 @@ impl PayoutProcessor {
     ) -> anyhow::Result<(HashMap<String, u64>, u64)> {
         let now = SystemTime::now();
         let provisional_delay = self.cfg.provisional_share_delay_duration();
+        let trust_policy = PayoutTrustPolicy::from_config(&self.cfg);
         let mut risk_cache = HashMap::<String, bool>::new();
 
-        Ok(weight_shares(shares, now, provisional_delay, |address| {
-            if let Some(risky) = risk_cache.get(address) {
-                return *risky;
-            }
-            let risky = match self.store.should_force_verify_address(address) {
-                Ok((force_verify, _)) => force_verify,
-                Err(err) => {
-                    tracing::warn!(
-                        address = %address,
-                        error = %err,
-                        "failed risk check during payout weighting; treating address as risky"
-                    );
-                    true
+        Ok(weight_shares(
+            shares,
+            now,
+            provisional_delay,
+            trust_policy,
+            |address| {
+                if let Some(risky) = risk_cache.get(address) {
+                    return *risky;
                 }
-            };
-            risk_cache.insert(address.to_string(), risky);
-            risky
-        }))
+                let risky = match self.store.should_force_verify_address(address) {
+                    Ok((force_verify, _)) => force_verify,
+                    Err(err) => {
+                        tracing::warn!(
+                            address = %address,
+                            error = %err,
+                            "failed risk check during payout weighting; treating address as risky"
+                        );
+                        true
+                    }
+                };
+                risk_cache.insert(address.to_string(), risky);
+                risky
+            },
+        ))
     }
 
     fn allocate_weighted_credits(
@@ -546,24 +577,67 @@ pub fn weight_shares<F>(
     shares: &[DbShare],
     now: SystemTime,
     provisional_delay: Duration,
+    trust_policy: PayoutTrustPolicy,
     mut is_risky: F,
 ) -> (HashMap<String, u64>, u64)
 where
     F: FnMut(&str) -> bool,
 {
+    let mut by_address = HashMap::<String, AddressShareWeights>::new();
+    for share in shares {
+        let entry = by_address.entry(share.miner.clone()).or_default();
+        match share.status.as_str() {
+            "" | SHARE_STATUS_VERIFIED => {
+                entry.verified_shares = entry.verified_shares.saturating_add(1);
+                entry.verified_difficulty =
+                    entry.verified_difficulty.saturating_add(share.difficulty);
+            }
+            SHARE_STATUS_PROVISIONAL if is_share_payout_eligible(share, now, provisional_delay) => {
+                entry.provisional_difficulty = entry
+                    .provisional_difficulty
+                    .saturating_add(share.difficulty);
+            }
+            _ => {}
+        }
+    }
+
     let mut weights = HashMap::<String, u64>::new();
     let mut total = 0u64;
 
-    for share in shares {
-        if !is_share_payout_eligible(share, now, provisional_delay) {
+    for (address, stats) in by_address {
+        if is_risky(&address) {
             continue;
         }
-        if is_risky(&share.miner) {
+        if stats.verified_shares < trust_policy.min_verified_shares {
             continue;
         }
-        let weight = share.difficulty;
-        let entry = weights.entry(share.miner.clone()).or_default();
-        *entry = entry.saturating_add(weight);
+        let total_uncapped = stats
+            .verified_difficulty
+            .saturating_add(stats.provisional_difficulty);
+        if total_uncapped == 0 {
+            continue;
+        }
+        if trust_policy.min_verified_ratio > 0.0 {
+            let verified_ratio = stats.verified_difficulty as f64 / total_uncapped as f64;
+            if verified_ratio < trust_policy.min_verified_ratio {
+                continue;
+            }
+        }
+
+        let provisional_cap = if trust_policy.provisional_cap_multiplier <= 0.0 {
+            0
+        } else {
+            ((stats.verified_difficulty as f64) * trust_policy.provisional_cap_multiplier) as u64
+        };
+        let counted_provisional = stats.provisional_difficulty.min(provisional_cap);
+        let weight = stats
+            .verified_difficulty
+            .saturating_add(counted_provisional);
+        if weight == 0 {
+            continue;
+        }
+
+        weights.insert(address, weight);
         total = total.saturating_add(weight);
     }
 
@@ -660,6 +734,18 @@ mod tests {
         PoolStore::open_sqlite(path.to_str().expect("path")).expect("open sqlite store")
     }
 
+    fn trust_policy(
+        min_verified_shares: u64,
+        min_verified_ratio: f64,
+        provisional_cap_multiplier: f64,
+    ) -> PayoutTrustPolicy {
+        PayoutTrustPolicy {
+            min_verified_shares,
+            min_verified_ratio,
+            provisional_cap_multiplier,
+        }
+    }
+
     #[test]
     fn provisional_shares_mature_after_delay() {
         let now = SystemTime::now();
@@ -693,6 +779,7 @@ mod tests {
         let now = SystemTime::now();
         let shares = vec![
             sample_share("a1", 10, SHARE_STATUS_VERIFIED, now),
+            sample_share("a2", 10, SHARE_STATUS_VERIFIED, now),
             sample_share(
                 "a2",
                 100,
@@ -701,10 +788,91 @@ mod tests {
             ),
         ];
 
-        let (weights, total) = weight_shares(&shares, now, Duration::from_secs(15 * 60), |_| false);
-        assert_eq!(total, 110);
+        let (weights, total) = weight_shares(
+            &shares,
+            now,
+            Duration::from_secs(15 * 60),
+            trust_policy(1, 0.05, 3.0),
+            |_| false,
+        );
+        assert_eq!(total, 50);
         assert_eq!(weights.get("a1").copied(), Some(10));
-        assert_eq!(weights.get("a2").copied(), Some(100));
+        assert_eq!(weights.get("a2").copied(), Some(40));
+    }
+
+    #[test]
+    fn payout_weighting_requires_verified_anchor() {
+        let now = SystemTime::now();
+        let shares = vec![
+            sample_share("a1", 10, SHARE_STATUS_VERIFIED, now),
+            sample_share(
+                "a2",
+                100,
+                SHARE_STATUS_PROVISIONAL,
+                now - Duration::from_secs(20 * 60),
+            ),
+        ];
+
+        let (weights, total) = weight_shares(
+            &shares,
+            now,
+            Duration::from_secs(15 * 60),
+            trust_policy(1, 0.0, 3.0),
+            |_| false,
+        );
+        assert_eq!(total, 10);
+        assert_eq!(weights.get("a1").copied(), Some(10));
+        assert!(!weights.contains_key("a2"));
+    }
+
+    #[test]
+    fn payout_weighting_enforces_verified_ratio() {
+        let now = SystemTime::now();
+        let shares = vec![
+            sample_share("a1", 10, SHARE_STATUS_VERIFIED, now),
+            sample_share("a2", 10, SHARE_STATUS_VERIFIED, now),
+            sample_share(
+                "a2",
+                100,
+                SHARE_STATUS_PROVISIONAL,
+                now - Duration::from_secs(20 * 60),
+            ),
+        ];
+
+        let (weights, total) = weight_shares(
+            &shares,
+            now,
+            Duration::from_secs(15 * 60),
+            trust_policy(1, 0.25, 3.0),
+            |_| false,
+        );
+        assert_eq!(total, 10);
+        assert_eq!(weights.get("a1").copied(), Some(10));
+        assert!(!weights.contains_key("a2"));
+    }
+
+    #[test]
+    fn payout_weighting_caps_provisional_share_weight() {
+        let now = SystemTime::now();
+        let shares = vec![
+            sample_share("a2", 20, SHARE_STATUS_VERIFIED, now),
+            sample_share(
+                "a2",
+                100,
+                SHARE_STATUS_PROVISIONAL,
+                now - Duration::from_secs(20 * 60),
+            ),
+        ];
+
+        let (weights, total) = weight_shares(
+            &shares,
+            now,
+            Duration::from_secs(15 * 60),
+            trust_policy(1, 0.0, 1.0),
+            |_| false,
+        );
+        assert_eq!(total, 40);
+        assert_eq!(weights.get("a2").copied(), Some(40));
     }
 
     #[test]
@@ -733,6 +901,7 @@ mod tests {
         let now = SystemTime::now();
         let shares = vec![
             sample_share("a1", 10, SHARE_STATUS_VERIFIED, now),
+            sample_share("a2", 10, SHARE_STATUS_VERIFIED, now),
             sample_share(
                 "a2",
                 100,

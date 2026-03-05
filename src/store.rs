@@ -281,6 +281,13 @@ impl PoolStore {
         }
     }
 
+    pub fn address_risk_strikes(&self, address: &str) -> Result<u64> {
+        Ok(self
+            .get_address_risk(address)?
+            .map(|v| v.strikes)
+            .unwrap_or(0))
+    }
+
     pub fn create_pending_payout(&self, address: &str, amount: u64) -> Result<()> {
         match self {
             PoolStore::Sqlite(v) => v.create_pending_payout(address, amount),
@@ -489,6 +496,10 @@ impl ShareStore for PoolStore {
     fn should_force_verify_address(&self, address: &str) -> Result<bool> {
         let (force_verify, _) = PoolStore::should_force_verify_address(self, address)?;
         Ok(force_verify)
+    }
+
+    fn address_risk_strikes(&self, address: &str) -> Result<u64> {
+        PoolStore::address_risk_strikes(self, address)
     }
 
     fn escalate_address_risk(

@@ -41,6 +41,7 @@ pub struct Config {
     pub forced_verify_duration: String,
     pub quarantine_duration: String,
     pub max_quarantine_duration: String,
+    pub invalid_escalation_quarantine_strikes: i32,
     pub provisional_share_delay: String,
     pub max_provisional_shares: i32,
     pub stratum_submit_v2_required: bool,
@@ -62,6 +63,9 @@ pub struct Config {
     pub min_payout_amount: f64,
     pub block_finder_bonus: bool,
     pub block_finder_bonus_pct: f64,
+    pub payout_min_verified_shares: i32,
+    pub payout_min_verified_ratio: f64,
+    pub payout_provisional_cap_multiplier: f64,
     pub payout_interval: String,
 
     pub database_path: String,
@@ -104,6 +108,7 @@ impl Default for Config {
             forced_verify_duration: "24h".to_string(),
             quarantine_duration: "1h".to_string(),
             max_quarantine_duration: "168h".to_string(),
+            invalid_escalation_quarantine_strikes: 3,
             provisional_share_delay: "15m".to_string(),
             max_provisional_shares: 200,
             stratum_submit_v2_required: true,
@@ -123,6 +128,9 @@ impl Default for Config {
             min_payout_amount: 0.1,
             block_finder_bonus: false,
             block_finder_bonus_pct: 5.0,
+            payout_min_verified_shares: 1,
+            payout_min_verified_ratio: 0.05,
+            payout_provisional_cap_multiplier: 3.0,
             payout_interval: "1h".to_string(),
             database_path: "pool.db".to_string(),
             database_url: String::new(),
@@ -177,6 +185,9 @@ impl Config {
         if self.max_provisional_shares < 0 {
             self.max_provisional_shares = 0;
         }
+        if self.invalid_escalation_quarantine_strikes < 0 {
+            self.invalid_escalation_quarantine_strikes = 0;
+        }
         if self.initial_share_difficulty < 1 {
             self.initial_share_difficulty = 1;
         }
@@ -197,6 +208,19 @@ impl Config {
             self.block_finder_bonus_pct = 0.0;
         } else {
             self.block_finder_bonus_pct = self.block_finder_bonus_pct.clamp(0.0, 100.0);
+        }
+        if self.payout_min_verified_shares < 0 {
+            self.payout_min_verified_shares = 0;
+        }
+        if !self.payout_min_verified_ratio.is_finite() {
+            self.payout_min_verified_ratio = 0.0;
+        } else {
+            self.payout_min_verified_ratio = self.payout_min_verified_ratio.clamp(0.0, 1.0);
+        }
+        if !self.payout_provisional_cap_multiplier.is_finite()
+            || self.payout_provisional_cap_multiplier < 0.0
+        {
+            self.payout_provisional_cap_multiplier = 0.0;
         }
     }
 
@@ -321,6 +345,7 @@ mod tests {
             min_sample_every: -1,
             invalid_sample_min: 0,
             invalid_sample_threshold: 2.0,
+            invalid_escalation_quarantine_strikes: -2,
             max_provisional_shares: -1,
             stratum_submit_v2_required: false,
             initial_share_difficulty: 0,
@@ -329,6 +354,9 @@ mod tests {
             vardiff_target_shares: 0,
             vardiff_tolerance: 2.0,
             block_finder_bonus_pct: 250.0,
+            payout_min_verified_shares: -3,
+            payout_min_verified_ratio: 2.0,
+            payout_provisional_cap_multiplier: f64::NAN,
             ..Config::default()
         };
         cfg.normalize();
@@ -341,6 +369,7 @@ mod tests {
         assert_eq!(cfg.min_sample_every, 0);
         assert_eq!(cfg.invalid_sample_min, 1);
         assert_eq!(cfg.invalid_sample_threshold, 0.01);
+        assert_eq!(cfg.invalid_escalation_quarantine_strikes, 0);
         assert_eq!(cfg.max_provisional_shares, 0);
         assert!(!cfg.stratum_submit_v2_required);
         assert_eq!(cfg.min_share_difficulty, 10);
@@ -349,6 +378,9 @@ mod tests {
         assert_eq!(cfg.vardiff_target_shares, 1);
         assert_eq!(cfg.vardiff_tolerance, 0.95);
         assert_eq!(cfg.block_finder_bonus_pct, 100.0);
+        assert_eq!(cfg.payout_min_verified_shares, 0);
+        assert_eq!(cfg.payout_min_verified_ratio, 1.0);
+        assert_eq!(cfg.payout_provisional_cap_multiplier, 0.0);
     }
 
     #[test]
