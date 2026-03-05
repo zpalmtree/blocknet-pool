@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS payouts (
     timestamp BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_payouts_timestamp ON payouts(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_payouts_address_timestamp ON payouts(address, timestamp DESC);
 
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
@@ -600,6 +601,28 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         let rows = self.conn().lock().query(
             "SELECT id, address, amount, fee, tx_hash, timestamp FROM payouts ORDER BY id DESC LIMIT $1",
             &[&limit],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| Payout {
+                id: row.get::<_, i64>(0),
+                address: row.get::<_, String>(1),
+                amount: row.get::<_, i64>(2).max(0) as u64,
+                fee: row.get::<_, i64>(3).max(0) as u64,
+                tx_hash: row.get::<_, String>(4),
+                timestamp: from_unix(row.get::<_, i64>(5)),
+            })
+            .collect())
+    }
+
+    pub fn get_recent_payouts_for_address(&self, address: &str, limit: i64) -> Result<Vec<Payout>> {
+        let rows = self.conn().lock().query(
+            "SELECT id, address, amount, fee, tx_hash, timestamp
+             FROM payouts
+             WHERE address = $1
+             ORDER BY id DESC
+             LIMIT $2",
+            &[&address, &limit],
         )?;
         Ok(rows
             .into_iter()
@@ -1497,5 +1520,42 @@ mod tests {
                 .expect("block exists")
                 .paid_out
         );
+    }
+
+    #[test]
+    fn get_recent_payouts_for_address_filters_and_orders_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let addr1 = format!("addr1-{suffix}");
+        let addr2 = format!("addr2-{suffix}");
+
+        store
+            .add_payout(&addr1, 10, 1, &format!("tx-a-{suffix}"))
+            .expect("add payout a");
+        store
+            .add_payout(&addr2, 20, 2, &format!("tx-b-{suffix}"))
+            .expect("add payout b");
+        store
+            .add_payout(&addr1, 30, 3, &format!("tx-c-{suffix}"))
+            .expect("add payout c");
+
+        let addr1_payouts = store
+            .get_recent_payouts_for_address(&addr1, 10)
+            .expect("addr1 payouts");
+        assert_eq!(addr1_payouts.len(), 2);
+        assert!(addr1_payouts[0].tx_hash.contains("tx-c-"));
+        assert!(addr1_payouts[1].tx_hash.contains("tx-a-"));
+
+        let addr2_payouts = store
+            .get_recent_payouts_for_address(&addr2, 10)
+            .expect("addr2 payouts");
+        assert_eq!(addr2_payouts.len(), 1);
+        assert!(addr2_payouts[0].tx_hash.contains("tx-b-"));
     }
 }

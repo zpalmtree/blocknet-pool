@@ -144,6 +144,10 @@ export function StatsPage({ active, api, liveTick }: StatsPageProps) {
     return oldest ? new Date(oldest).toLocaleDateString() : '-';
   }, [minerData]);
 
+  const pendingConfirmed = minerData?.balance?.pending_confirmed ?? minerData?.balance?.pending ?? 0;
+  const pendingEstimated = minerData?.balance?.pending_estimated ?? minerData?.pending_estimate?.estimated_pending ?? 0;
+  const pendingTotal = minerData?.balance?.pending_total ?? pendingConfirmed + pendingEstimated;
+
   const rejectionChecked = (rejectionWindow?.accepted ?? 0) + (rejectionWindow?.rejected ?? 0);
   const rejectionByReason = useMemo(() => {
     const map = new Map<string, number>();
@@ -202,8 +206,13 @@ export function StatsPage({ active, api, liveTick }: StatsPageProps) {
               <div className="value">{humanRate(minerData.hashrate || 0)}</div>
             </div>
             <div className="stat-card">
-              <div className="label">Pending Balance</div>
-              <div className="value">{formatCoins(minerData.balance?.pending || 0)}</div>
+              <div className="label">Pending Balance (Total)</div>
+              <div className="value">{formatCoins(pendingTotal)}</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>
+                Confirmed {formatCoins(pendingConfirmed)}
+                {' • '}
+                Estimated {formatCoins(pendingEstimated)}
+              </div>
             </div>
             <div className="stat-card">
               <div className="label">Paid Balance</div>
@@ -214,6 +223,52 @@ export function StatsPage({ active, api, liveTick }: StatsPageProps) {
               <div className="value">{(minerData.blocks_found || []).length}</div>
             </div>
           </div>
+
+          {minerData.pending_note && (
+            <div
+              className="card"
+              style={{ marginBottom: 24, background: 'var(--accent-light)', borderColor: 'var(--accent)' }}
+            >
+              <div style={{ color: 'var(--text)', fontSize: 13 }}>{minerData.pending_note}</div>
+            </div>
+          )}
+
+          {!!minerData.pending_estimate?.blocks?.length && (
+            <div className="section">
+              <h2>Pending From Unconfirmed Blocks</h2>
+              <div className="card table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Height</th>
+                      <th>Estimated Credit</th>
+                      <th>Block Reward</th>
+                      <th>Confirms Left</th>
+                      <th>Time</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {minerData.pending_estimate.blocks.map((b) => (
+                      <tr key={`${b.height}-${b.hash}`}>
+                        <td>
+                          <a href={`https://explorer.blocknetcrypto.com/block/${b.hash || ''}`} target="_blank" rel="noopener">
+                            {b.height}
+                          </a>
+                        </td>
+                        <td>{formatCoins(b.estimated_credit)}</td>
+                        <td>{formatCoins(b.reward)}</td>
+                        <td>{b.confirmations_remaining}</td>
+                        <td title={new Date(toUnixMs(b.timestamp)).toLocaleString()}>{timeAgo(b.timestamp)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)' }}>
+                  Estimates are provisional until blocks are confirmed and can drop if a block is orphaned.
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="stats-grid" style={{ marginBottom: 24 }}>
             <div className="stat-card">
@@ -278,6 +333,44 @@ export function StatsPage({ active, api, liveTick }: StatsPageProps) {
                         <td title={w.last_share_at ? new Date(toUnixMs(w.last_share_at)).toLocaleString() : ''}>
                           {timeAgo(w.last_share_at)}
                         </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="section">
+            <h2>Recent Payouts</h2>
+            <div className="card table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Amount</th>
+                    <th>Fee</th>
+                    <th>Tx</th>
+                    <th>Time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {!minerData.payouts?.length ? (
+                    <tr>
+                      <td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                        No payouts yet
+                      </td>
+                    </tr>
+                  ) : (
+                    minerData.payouts.map((p) => (
+                      <tr key={`${p.id}-${p.tx_hash}`}>
+                        <td>{formatCoins(p.amount)}</td>
+                        <td>{formatCoins(p.fee || 0)}</td>
+                        <td>
+                          <a href={`https://explorer.blocknetcrypto.com/tx/${p.tx_hash || ''}`} target="_blank" rel="noopener">
+                            {p.tx_hash || '-'}
+                          </a>
+                        </td>
+                        <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
                       </tr>
                     ))
                   )}

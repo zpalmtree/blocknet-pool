@@ -198,6 +198,13 @@ impl PoolStore {
         }
     }
 
+    pub fn get_recent_payouts_for_address(&self, address: &str, limit: i64) -> Result<Vec<Payout>> {
+        match self {
+            PoolStore::Sqlite(v) => v.get_recent_payouts_for_address(address, limit),
+            PoolStore::Postgres(v) => v.get_recent_payouts_for_address(address, limit),
+        }
+    }
+
     pub fn get_all_payouts(&self) -> Result<Vec<Payout>> {
         match self {
             PoolStore::Sqlite(v) => v.get_all_payouts(),

@@ -137,6 +137,7 @@ async fn main() -> Result<()> {
         })?;
 
     let api_state = ApiState {
+        config: cfg.clone(),
         store: Arc::clone(&store),
         stats: Arc::clone(&stats),
         jobs: Arc::clone(&jobs),

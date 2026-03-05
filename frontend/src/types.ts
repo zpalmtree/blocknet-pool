@@ -86,12 +86,44 @@ export interface MinerShare {
   created_at: UnixLike;
 }
 
+export interface MinerPendingBlockEstimate {
+  height: number;
+  hash: string;
+  reward: number;
+  estimated_credit: number;
+  confirmations_remaining: number;
+  timestamp: UnixLike;
+}
+
+export interface MinerPendingEstimate {
+  estimated_pending: number;
+  blocks: MinerPendingBlockEstimate[];
+}
+
+export interface MinerPayout {
+  id: number;
+  address: string;
+  amount: number;
+  fee: number;
+  tx_hash: string;
+  timestamp: UnixLike;
+}
+
 export interface MinerResponse {
   hashrate: number;
-  balance?: { pending: number; paid: number };
+  balance?: {
+    pending: number;
+    pending_total?: number;
+    pending_confirmed?: number;
+    pending_estimated?: number;
+    paid: number;
+  };
   workers?: MinerWorker[];
   shares?: MinerShare[];
   blocks_found?: BlockItem[];
+  payouts?: MinerPayout[];
+  pending_estimate?: MinerPendingEstimate;
+  pending_note?: string | null;
   total_accepted?: number;
   total_rejected?: number;
 }
