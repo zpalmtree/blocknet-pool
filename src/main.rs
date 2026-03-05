@@ -3,7 +3,7 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{anyhow, Context, Result};
 use blocknet_pool_rs::api::{run_api, ApiState};
@@ -20,6 +20,8 @@ use blocknet_pool_rs::stratum::StratumServer;
 use blocknet_pool_rs::validation::ValidationEngine;
 use parking_lot::Mutex;
 use tracing::{info, warn};
+
+const HASHRATE_WARMUP_WINDOW: Duration = Duration::from_secs(5 * 60);
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -240,13 +242,51 @@ fn db_pool_hashrate(store: &PoolStore, window: Duration) -> f64 {
     let since = std::time::SystemTime::now()
         .checked_sub(window)
         .unwrap_or(std::time::UNIX_EPOCH);
-    let Ok((total_diff, _count, _oldest, _newest)) = store.hashrate_stats_pool(since) else {
+    let Ok((total_diff, count, oldest, newest)) = store.hashrate_stats_pool(since) else {
         return 0.0;
     };
+    hashrate_from_stats_with_warmup(
+        total_diff,
+        count,
+        oldest,
+        newest,
+        window,
+        HASHRATE_WARMUP_WINDOW,
+    )
+}
+
+fn hashrate_from_stats_with_warmup(
+    total_diff: u64,
+    count: u64,
+    oldest: Option<SystemTime>,
+    newest: Option<SystemTime>,
+    smoothing_window: Duration,
+    warmup_window: Duration,
+) -> f64 {
     if total_diff == 0 {
         return 0.0;
     }
-    total_diff as f64 / window.as_secs_f64().max(1.0)
+
+    let smoothing_secs = smoothing_window.as_secs_f64().max(1.0);
+    let warmup_secs = warmup_window.as_secs_f64().clamp(1.0, smoothing_secs);
+    let observed_secs = if count < 2 {
+        0.0
+    } else {
+        let (Some(oldest), Some(newest)) = (oldest, newest) else {
+            return total_diff as f64 / warmup_secs;
+        };
+        let Ok(window) = newest.duration_since(oldest) else {
+            return total_diff as f64 / warmup_secs;
+        };
+        window.as_secs_f64()
+    };
+
+    let denominator = if observed_secs >= 1.0 {
+        observed_secs.clamp(warmup_secs, smoothing_secs)
+    } else {
+        warmup_secs
+    };
+    total_diff as f64 / denominator
 }
 
 fn start_found_block_recovery(engine: Arc<PoolEngine>) {

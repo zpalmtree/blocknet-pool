@@ -33,6 +33,7 @@ const NETWORK_HASHRATE_CACHE_RETRY_TTL: Duration = Duration::from_secs(5);
 const DEFAULT_PAGE_LIMIT: usize = 25;
 const MAX_PAGE_LIMIT: usize = 200;
 const HASHRATE_WINDOW: Duration = Duration::from_secs(60 * 60);
+const HASHRATE_WARMUP_WINDOW: Duration = Duration::from_secs(5 * 60);
 const INITIAL_REWARD: u64 = 72_325_093_035;
 const TAIL_EMISSION: u64 = 200_000_000;
 const MONTHS_TO_TAIL: u64 = 48;
@@ -48,24 +49,35 @@ fn db_miner_hashrate(store: &PoolStore, address: &str) -> f64 {
     let since = SystemTime::now()
         .checked_sub(HASHRATE_WINDOW)
         .unwrap_or(UNIX_EPOCH);
-    let Ok((total_diff, _count, _oldest, _newest)) = store.hashrate_stats_for_miner(address, since)
+    let Ok((total_diff, count, oldest, newest)) = store.hashrate_stats_for_miner(address, since)
     else {
         return 0.0;
     };
-    total_diff as f64 / HASHRATE_WINDOW.as_secs_f64().max(1.0)
+    hashrate_from_stats_with_warmup(
+        total_diff,
+        count,
+        oldest,
+        newest,
+        HASHRATE_WINDOW,
+        HASHRATE_WARMUP_WINDOW,
+    )
 }
 
 fn db_pool_hashrate(store: &PoolStore) -> f64 {
     let since = SystemTime::now()
         .checked_sub(HASHRATE_WINDOW)
         .unwrap_or(UNIX_EPOCH);
-    let Ok((total_diff, _count, _oldest, _newest)) = store.hashrate_stats_pool(since) else {
+    let Ok((total_diff, count, oldest, newest)) = store.hashrate_stats_pool(since) else {
         return 0.0;
     };
-    if total_diff == 0 {
-        return 0.0;
-    }
-    total_diff as f64 / HASHRATE_WINDOW.as_secs_f64().max(1.0)
+    hashrate_from_stats_with_warmup(
+        total_diff,
+        count,
+        oldest,
+        newest,
+        HASHRATE_WINDOW,
+        HASHRATE_WARMUP_WINDOW,
+    )
 }
 
 fn estimated_block_reward(height: u64) -> u64 {
@@ -127,6 +139,40 @@ fn hashrate_from_stats_or_window_floor(
     }
     let secs = floor_window.as_secs_f64().max(1.0);
     total_diff as f64 / secs
+}
+
+fn hashrate_from_stats_with_warmup(
+    total_diff: u64,
+    count: u64,
+    oldest: Option<SystemTime>,
+    newest: Option<SystemTime>,
+    smoothing_window: Duration,
+    warmup_window: Duration,
+) -> f64 {
+    if total_diff == 0 {
+        return 0.0;
+    }
+
+    let smoothing_secs = smoothing_window.as_secs_f64().max(1.0);
+    let warmup_secs = warmup_window.as_secs_f64().clamp(1.0, smoothing_secs);
+    let observed_secs = if count < 2 {
+        0.0
+    } else {
+        let (Some(oldest), Some(newest)) = (oldest, newest) else {
+            return total_diff as f64 / warmup_secs;
+        };
+        let Ok(window) = newest.duration_since(oldest) else {
+            return total_diff as f64 / warmup_secs;
+        };
+        window.as_secs_f64()
+    };
+
+    let denominator = if observed_secs >= 1.0 {
+        observed_secs.clamp(warmup_secs, smoothing_secs)
+    } else {
+        warmup_secs
+    };
+    total_diff as f64 / denominator
 }
 
 fn worker_hashrate_by_name(
@@ -2179,9 +2225,9 @@ mod tests {
     use crate::db::DbBlock;
 
     use super::{
-        contains_ci, estimated_block_reward, hydrate_provisional_block_reward, miner_has_activity,
-        page_bounds, share_limit, sort_workers_for_miner, worker_hashrate_by_name,
-        HASHRATE_WINDOW,
+        contains_ci, estimated_block_reward, hashrate_from_stats_with_warmup,
+        hydrate_provisional_block_reward, miner_has_activity, page_bounds, share_limit,
+        sort_workers_for_miner, worker_hashrate_by_name, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
     };
 
     #[test]
@@ -2255,6 +2301,49 @@ mod tests {
             worker_hashrate_by_name(0.0, vec![("w1".to_string(), 200, 2, Some(t0), Some(t1))]);
         let w1 = map.get("w1").copied().unwrap_or_default();
         assert!((w1 - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn hashrate_warmup_uses_bootstrap_window_before_two_samples() {
+        let hr = hashrate_from_stats_with_warmup(
+            600,
+            1,
+            None,
+            None,
+            HASHRATE_WINDOW,
+            HASHRATE_WARMUP_WINDOW,
+        );
+        assert!((hr - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn hashrate_warmup_clamps_short_observed_windows() {
+        let t0 = UNIX_EPOCH + Duration::from_secs(10);
+        let t1 = t0 + Duration::from_secs(60);
+        let hr = hashrate_from_stats_with_warmup(
+            600,
+            2,
+            Some(t0),
+            Some(t1),
+            HASHRATE_WINDOW,
+            HASHRATE_WARMUP_WINDOW,
+        );
+        assert!((hr - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn hashrate_warmup_uses_observed_window_after_bootstrap() {
+        let t0 = UNIX_EPOCH + Duration::from_secs(10);
+        let t1 = t0 + Duration::from_secs(900);
+        let hr = hashrate_from_stats_with_warmup(
+            1800,
+            8,
+            Some(t0),
+            Some(t1),
+            HASHRATE_WINDOW,
+            HASHRATE_WARMUP_WINDOW,
+        );
+        assert!((hr - 2.0).abs() < 1e-9);
     }
 
     #[test]
