@@ -156,6 +156,12 @@ export function DashboardPage({ active, api, poolInfo, liveTick }: DashboardPage
           </div>
         </div>
         <div className="stat-card">
+          <div className="label">Current Block</div>
+          <div className="value mono" id="s-current-block">
+            {stats?.chain?.current_job_height ?? '-'}
+          </div>
+        </div>
+        <div className="stat-card">
           <div className="label">Blocks Found</div>
           <div className="value" id="s-blocks">
             {stats?.pool?.blocks_found ?? '-'}

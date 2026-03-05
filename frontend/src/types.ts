@@ -26,6 +26,7 @@ export interface StatsResponse {
     orphan_rate_pct: number;
   };
   chain: {
+    current_job_height?: number | null;
     network_hashrate?: number | null;
   };
 }
