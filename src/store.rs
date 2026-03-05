@@ -105,6 +105,13 @@ impl PoolStore {
         }
     }
 
+    pub fn get_all_blocks(&self) -> Result<Vec<DbBlock>> {
+        match self {
+            PoolStore::Sqlite(v) => v.get_all_blocks(),
+            PoolStore::Postgres(v) => v.get_all_blocks(),
+        }
+    }
+
     pub fn get_unconfirmed_blocks(&self) -> Result<Vec<DbBlock>> {
         match self {
             PoolStore::Sqlite(v) => v.get_unconfirmed_blocks(),
@@ -116,13 +123,6 @@ impl PoolStore {
         match self {
             PoolStore::Sqlite(v) => v.get_unpaid_blocks(),
             PoolStore::Postgres(v) => v.get_unpaid_blocks(),
-        }
-    }
-
-    pub fn delete_block(&self, height: u64) -> Result<bool> {
-        match self {
-            PoolStore::Sqlite(v) => v.delete_block(height),
-            PoolStore::Postgres(v) => v.delete_block(height),
         }
     }
 
@@ -182,6 +182,13 @@ impl PoolStore {
         }
     }
 
+    pub fn get_all_payouts(&self) -> Result<Vec<Payout>> {
+        match self {
+            PoolStore::Sqlite(v) => v.get_all_payouts(),
+            PoolStore::Postgres(v) => v.get_all_payouts(),
+        }
+    }
+
     pub fn record_pool_fee(
         &self,
         block_height: u64,
@@ -208,6 +215,13 @@ impl PoolStore {
         match self {
             PoolStore::Sqlite(v) => v.get_recent_pool_fees(limit),
             PoolStore::Postgres(v) => v.get_recent_pool_fees(limit),
+        }
+    }
+
+    pub fn get_all_pool_fees(&self) -> Result<Vec<PoolFeeEvent>> {
+        match self {
+            PoolStore::Sqlite(v) => v.get_all_pool_fees(),
+            PoolStore::Postgres(v) => v.get_all_pool_fees(),
         }
     }
 
@@ -458,6 +472,17 @@ impl PoolStore {
         match self {
             PoolStore::Sqlite(v) => v.worker_stats_for_miner(address, since),
             PoolStore::Postgres(v) => v.worker_stats_for_miner(address, since),
+        }
+    }
+
+    pub fn worker_hashrate_stats_for_miner(
+        &self,
+        address: &str,
+        since: SystemTime,
+    ) -> Result<Vec<(String, u64, u64, Option<SystemTime>, Option<SystemTime>)>> {
+        match self {
+            PoolStore::Sqlite(v) => v.worker_hashrate_stats_for_miner(address, since),
+            PoolStore::Postgres(v) => v.worker_hashrate_stats_for_miner(address, since),
         }
     }
 

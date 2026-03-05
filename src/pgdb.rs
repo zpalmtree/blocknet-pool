@@ -344,6 +344,15 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         Ok(rows.into_iter().map(|row| row_to_block(&row)).collect())
     }
 
+    pub fn get_all_blocks(&self) -> Result<Vec<DbBlock>> {
+        let rows = self.conn().lock().query(
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out
+             FROM blocks ORDER BY height DESC",
+            &[],
+        )?;
+        Ok(rows.into_iter().map(|row| row_to_block(&row)).collect())
+    }
+
     pub fn get_unconfirmed_blocks(&self) -> Result<Vec<DbBlock>> {
         let rows = self.conn().lock().query(
             "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out
@@ -360,14 +369,6 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
             &[],
         )?;
         Ok(rows.into_iter().map(|row| row_to_block(&row)).collect())
-    }
-
-    pub fn delete_block(&self, height: u64) -> Result<bool> {
-        let deleted = self
-            .conn()
-            .lock()
-            .execute("DELETE FROM blocks WHERE height = $1", &[&(height as i64)])?;
-        Ok(deleted > 0)
     }
 
     pub fn get_block_count(&self) -> Result<u64> {
@@ -593,6 +594,24 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
             .collect())
     }
 
+    pub fn get_all_payouts(&self) -> Result<Vec<Payout>> {
+        let rows = self.conn().lock().query(
+            "SELECT id, address, amount, fee, tx_hash, timestamp FROM payouts ORDER BY id DESC",
+            &[],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| Payout {
+                id: row.get::<_, i64>(0),
+                address: row.get::<_, String>(1),
+                amount: row.get::<_, i64>(2).max(0) as u64,
+                fee: row.get::<_, i64>(3).max(0) as u64,
+                tx_hash: row.get::<_, String>(4),
+                timestamp: from_unix(row.get::<_, i64>(5)),
+            })
+            .collect())
+    }
+
     pub fn record_pool_fee(
         &self,
         block_height: u64,
@@ -637,6 +656,24 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
             "SELECT id, block_height, amount, fee_address, timestamp
              FROM pool_fee_events ORDER BY id DESC LIMIT $1",
             &[&limit],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| PoolFeeEvent {
+                id: row.get::<_, i64>(0),
+                block_height: row.get::<_, i64>(1).max(0) as u64,
+                amount: row.get::<_, i64>(2).max(0) as u64,
+                fee_address: row.get::<_, String>(3),
+                timestamp: from_unix(row.get::<_, i64>(4)),
+            })
+            .collect())
+    }
+
+    pub fn get_all_pool_fees(&self) -> Result<Vec<PoolFeeEvent>> {
+        let rows = self.conn().lock().query(
+            "SELECT id, block_height, amount, fee_address, timestamp
+             FROM pool_fee_events ORDER BY id DESC",
+            &[],
         )?;
         Ok(rows
             .into_iter()
@@ -1121,6 +1158,43 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
                     rejected.max(0) as u64,
                     total_diff.max(0) as u64,
                     last_share,
+                )
+            })
+            .collect())
+    }
+
+    /// Returns per-worker hashrate stats:
+    /// Vec<(worker, total_diff, accepted_count, oldest_accepted_ts, newest_accepted_ts)>
+    pub fn worker_hashrate_stats_for_miner(
+        &self,
+        address: &str,
+        since: SystemTime,
+    ) -> Result<Vec<(String, u64, u64, Option<SystemTime>, Option<SystemTime>)>> {
+        let rows = self.conn().lock().query(
+            "SELECT worker,
+                    SUM(CASE WHEN status IN ('verified','provisional') THEN difficulty ELSE 0 END)::bigint,
+                    SUM(CASE WHEN status IN ('verified','provisional') THEN 1 ELSE 0 END)::bigint,
+                    MIN(CASE WHEN status IN ('verified','provisional') THEN created_at END)::bigint,
+                    MAX(CASE WHEN status IN ('verified','provisional') THEN created_at END)::bigint
+             FROM shares
+             WHERE miner = $1 AND created_at >= $2
+             GROUP BY worker ORDER BY worker",
+            &[&address, &to_unix(since)],
+        )?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                let worker: String = row.get(0);
+                let total_diff: i64 = row.get(1);
+                let accepted: i64 = row.get(2);
+                let oldest: Option<i64> = row.get(3);
+                let newest: Option<i64> = row.get(4);
+                (
+                    worker,
+                    total_diff.max(0) as u64,
+                    accepted.max(0) as u64,
+                    oldest.map(from_unix),
+                    newest.map(from_unix),
                 )
             })
             .collect())

@@ -469,6 +469,16 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         collect_rows(rows)
     }
 
+    pub fn get_all_blocks(&self) -> Result<Vec<DbBlock>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out
+             FROM blocks ORDER BY height DESC",
+        )?;
+        let rows = stmt.query_map([], row_to_block)?;
+        collect_rows(rows)
+    }
+
     pub fn get_unconfirmed_blocks(&self) -> Result<Vec<DbBlock>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
@@ -487,14 +497,6 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         )?;
         let rows = stmt.query_map([], row_to_block)?;
         collect_rows(rows)
-    }
-
-    pub fn delete_block(&self, height: u64) -> Result<bool> {
-        let deleted = self.conn.lock().execute(
-            "DELETE FROM blocks WHERE height = ?1",
-            params![u64_to_i64(height)?],
-        )?;
-        Ok(deleted > 0)
     }
 
     pub fn get_block_count(&self) -> Result<u64> {
@@ -718,6 +720,24 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         collect_rows(rows)
     }
 
+    pub fn get_all_payouts(&self) -> Result<Vec<Payout>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, address, amount, fee, tx_hash, timestamp FROM payouts ORDER BY id DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(Payout {
+                id: row.get(0)?,
+                address: row.get(1)?,
+                amount: row.get::<_, i64>(2)?.max(0) as u64,
+                fee: row.get::<_, i64>(3)?.max(0) as u64,
+                tx_hash: row.get(4)?,
+                timestamp: from_unix(row.get::<_, i64>(5)?),
+            })
+        })?;
+        collect_rows(rows)
+    }
+
     pub fn record_pool_fee(
         &self,
         block_height: u64,
@@ -764,6 +784,16 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
              FROM pool_fee_events ORDER BY id DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit], row_to_pool_fee_event)?;
+        collect_rows(rows)
+    }
+
+    pub fn get_all_pool_fees(&self) -> Result<Vec<PoolFeeEvent>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, block_height, amount, fee_address, timestamp
+             FROM pool_fee_events ORDER BY id DESC",
+        )?;
+        let rows = stmt.query_map([], row_to_pool_fee_event)?;
         collect_rows(rows)
     }
 
@@ -1263,6 +1293,40 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
                 row.get::<_, i64>(2)?.max(0) as u64,
                 row.get::<_, i64>(3)?.max(0) as u64,
                 row.get::<_, i64>(4)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Returns per-worker hashrate stats:
+    /// Vec<(worker, total_diff, accepted_count, oldest_accepted_ts, newest_accepted_ts)>
+    pub fn worker_hashrate_stats_for_miner(
+        &self,
+        address: &str,
+        since: SystemTime,
+    ) -> Result<Vec<(String, u64, u64, Option<SystemTime>, Option<SystemTime>)>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT worker,
+                    SUM(CASE WHEN status IN ('verified','provisional') THEN difficulty ELSE 0 END),
+                    SUM(CASE WHEN status IN ('verified','provisional') THEN 1 ELSE 0 END),
+                    MIN(CASE WHEN status IN ('verified','provisional') THEN created_at END),
+                    MAX(CASE WHEN status IN ('verified','provisional') THEN created_at END)
+             FROM shares
+             WHERE miner = ?1 AND created_at >= ?2
+             GROUP BY worker ORDER BY worker",
+        )?;
+        let rows = stmt.query_map(params![address, to_unix(since)], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?.max(0) as u64,
+                row.get::<_, i64>(2)?.max(0) as u64,
+                row.get::<_, Option<i64>>(3)?.map(from_unix),
+                row.get::<_, Option<i64>>(4)?.map(from_unix),
             ))
         })?;
         let mut out = Vec::new();

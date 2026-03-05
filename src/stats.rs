@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use parking_lot::RwLock;
 use serde::Serialize;
@@ -8,6 +8,8 @@ use serde::Serialize;
 const MINER_STATS_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 const MAX_TRACKED_MINERS: usize = 100_000;
 const MAX_RECENT_SHARES: usize = 200_000;
+const SHARE_EVENTS_PER_PRUNE_SWEEP: u64 = 1024;
+const MIN_PRUNE_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MinerStats {
@@ -51,6 +53,8 @@ pub struct PoolStats {
     miner_stats: RwLock<HashMap<String, MinerStats>>,
     connected_miners: RwLock<HashMap<String, ConnectedWorker>>, // conn_id -> active miner/worker
     recent_shares: RwLock<VecDeque<ShareRecord>>,
+    share_events_since_prune: AtomicU64,
+    last_prune_sweep_at: parking_lot::Mutex<Option<Instant>>,
 }
 
 impl PoolStats {
@@ -128,7 +132,7 @@ impl PoolStats {
             recent.pop_front();
         }
         drop(recent);
-        self.prune_miner_stats();
+        self.maybe_prune_after_share_event();
     }
 
     pub fn record_rejected_share(&self, address: &str) {
@@ -136,7 +140,7 @@ impl PoolStats {
         if let Some(entry) = self.miner_stats.write().get_mut(address) {
             entry.shares_rejected = entry.shares_rejected.saturating_add(1);
         }
-        self.prune_miner_stats();
+        self.maybe_prune_after_share_event();
     }
 
     pub fn record_block_found(&self, address: &str) {
@@ -191,6 +195,28 @@ impl PoolStats {
         }
     }
 
+    fn maybe_prune_after_share_event(&self) {
+        let events = self
+            .share_events_since_prune
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1);
+        if events < SHARE_EVENTS_PER_PRUNE_SWEEP {
+            return;
+        }
+
+        let now = Instant::now();
+        {
+            let mut guard = self.last_prune_sweep_at.lock();
+            if guard.is_some_and(|last| now.duration_since(last) < MIN_PRUNE_SWEEP_INTERVAL) {
+                return;
+            }
+            *guard = Some(now);
+        }
+
+        self.share_events_since_prune.store(0, Ordering::Relaxed);
+        self.prune_miner_stats();
+    }
+
     pub fn estimate_hashrate(&self) -> f64 {
         let recent = self.recent_shares.read();
         if recent.len() < 2 {
@@ -216,6 +242,52 @@ impl PoolStats {
             .iter()
             .fold(0u64, |acc, r| acc.saturating_add(r.difficulty));
         total_diff as f64 / window.as_secs_f64()
+    }
+
+    pub fn estimate_all_miner_hashrates(&self) -> HashMap<String, f64> {
+        #[derive(Clone, Copy)]
+        struct Aggregate {
+            total_diff: u64,
+            first: SystemTime,
+            last: SystemTime,
+            count: u64,
+        }
+
+        let mut aggregates = HashMap::<String, Aggregate>::new();
+        let recent = self.recent_shares.read();
+        for share in recent.iter() {
+            let entry = aggregates.entry(share.miner.clone()).or_insert(Aggregate {
+                total_diff: 0,
+                first: share.timestamp,
+                last: share.timestamp,
+                count: 0,
+            });
+            entry.total_diff = entry.total_diff.saturating_add(share.difficulty);
+            entry.last = share.timestamp;
+            entry.count = entry.count.saturating_add(1);
+        }
+
+        aggregates
+            .into_iter()
+            .map(|(miner, agg)| {
+                let hashrate = if agg.count < 2 {
+                    0.0
+                } else {
+                    agg.last
+                        .duration_since(agg.first)
+                        .ok()
+                        .map(|window| {
+                            if window.as_secs_f64() < 1.0 {
+                                0.0
+                            } else {
+                                agg.total_diff as f64 / window.as_secs_f64()
+                            }
+                        })
+                        .unwrap_or(0.0)
+                };
+                (miner, hashrate)
+            })
+            .collect()
     }
 
     pub fn estimate_miner_hashrate(&self, address: &str) -> f64 {

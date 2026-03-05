@@ -1,13 +1,15 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
+use axum::http::header;
 use axum::http::{Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse};
-use axum::routing::{delete, get};
+use axum::routing::get;
 use axum::{Json, Router};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -24,7 +26,6 @@ const DB_TOTALS_CACHE_TTL: Duration = Duration::from_secs(2);
 const DAEMON_HEALTH_CACHE_TTL: Duration = Duration::from_secs(5);
 const EXPLORER_HASHRATE_SAMPLE_COUNT: usize = 10;
 const NETWORK_HASHRATE_CACHE_RETRY_TTL: Duration = Duration::from_secs(5);
-const LIST_SCAN_LIMIT: i64 = 5_000;
 const DEFAULT_PAGE_LIMIT: usize = 25;
 const MAX_PAGE_LIMIT: usize = 200;
 const HASHRATE_WINDOW: Duration = Duration::from_secs(60 * 60);
@@ -33,8 +34,7 @@ fn db_miner_hashrate(store: &PoolStore, address: &str) -> f64 {
     let since = SystemTime::now()
         .checked_sub(HASHRATE_WINDOW)
         .unwrap_or(UNIX_EPOCH);
-    let Ok((total_diff, count, oldest, newest)) =
-        store.hashrate_stats_for_miner(address, since)
+    let Ok((total_diff, count, oldest, newest)) = store.hashrate_stats_for_miner(address, since)
     else {
         return 0.0;
     };
@@ -70,6 +70,24 @@ fn hashrate_from_stats(
         return 0.0;
     }
     total_diff as f64 / window.as_secs_f64()
+}
+
+fn hashrate_from_stats_or_window_floor(
+    total_diff: u64,
+    count: u64,
+    oldest: Option<SystemTime>,
+    newest: Option<SystemTime>,
+    floor_window: Duration,
+) -> f64 {
+    let from_stats = hashrate_from_stats(total_diff, count, oldest, newest);
+    if from_stats > 0.0 {
+        return from_stats;
+    }
+    if total_diff == 0 {
+        return 0.0;
+    }
+    let secs = floor_window.as_secs_f64().max(1.0);
+    total_diff as f64 / secs
 }
 
 #[derive(Clone)]
@@ -140,7 +158,6 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
         .route("/api/payouts", get(handle_payouts))
         .route("/api/fees", get(handle_fees))
         .route("/api/health", get(handle_health))
-        .route("/api/blocks/:height", delete(handle_delete_block))
         .route_layer(middleware::from_fn_with_state(
             app_state.clone(),
             require_api_key,
@@ -149,6 +166,11 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/", get(handle_ui))
         .route("/ui", get(handle_ui))
+        .route(
+            "/ui-assets/pool-entered.png",
+            get(handle_ui_asset_pool_entered),
+        )
+        .route("/ui-assets/mining-tui.png", get(handle_ui_asset_mining_tui))
         .route("/api/info", get(handle_info))
         .route("/api/stats", get(handle_stats))
         .route("/api/stats/history", get(handle_stats_history))
@@ -167,9 +189,31 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
 }
 
 const UI_INDEX_HTML: &str = include_str!("ui/index.html");
+const UI_ASSET_POOL_ENTERED_PNG: &[u8] = include_bytes!("ui/assets/pool-entered.png");
+const UI_ASSET_MINING_TUI_PNG: &[u8] = include_bytes!("ui/assets/mining-tui.png");
 
 async fn handle_ui() -> Html<&'static str> {
     Html(UI_INDEX_HTML)
+}
+
+async fn handle_ui_asset_pool_entered() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        UI_ASSET_POOL_ENTERED_PNG,
+    )
+}
+
+async fn handle_ui_asset_mining_tui() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        UI_ASSET_MINING_TUI_PNG,
+    )
 }
 
 #[derive(Serialize)]
@@ -202,13 +246,15 @@ async fn handle_info(State(state): State<ApiState>) -> impl IntoResponse {
         min_payout_amount: state.min_payout_amount,
         blocks_before_payout: state.blocks_before_payout,
         payout_scheme: state.payout_scheme.clone(),
-        public_endpoints: vec!["/api/info", "/api/stats", "/api/stats/history", "/api/blocks", "/api/payouts/recent", "/api/miner/{address}"],
-        protected_endpoints: vec![
-            "/api/miners",
-            "/api/payouts",
-            "/api/fees",
-            "/api/health",
+        public_endpoints: vec![
+            "/api/info",
+            "/api/stats",
+            "/api/stats/history",
+            "/api/blocks",
+            "/api/payouts/recent",
+            "/api/miner/{address}",
         ],
+        protected_endpoints: vec!["/api/miners", "/api/payouts", "/api/fees", "/api/health"],
     })
 }
 
@@ -435,10 +481,11 @@ async fn handle_stats_history(
     match tokio::task::spawn_blocking(move || store.get_stat_snapshots(since)).await {
         Ok(Ok(snapshots)) => Json(snapshots).into_response(),
         Ok(Err(err)) => internal_error("failed loading stat history", err).into_response(),
-        Err(err) => {
-            internal_error("failed loading stat history", anyhow::anyhow!("join error: {err}"))
-                .into_response()
-        }
+        Err(err) => internal_error(
+            "failed loading stat history",
+            anyhow::anyhow!("join error: {err}"),
+        )
+        .into_response(),
     }
 }
 
@@ -518,35 +565,25 @@ async fn handle_miners(
     }
 
     let all_stats = state.stats.all_miner_stats();
-    let store = Arc::clone(&state.store);
-    let mut items = match tokio::task::spawn_blocking(move || {
-        all_stats
-            .into_values()
-            .map(|stats| {
-                let mut workers = stats.workers.iter().cloned().collect::<Vec<String>>();
-                workers.sort();
-                let hashrate = db_miner_hashrate(&store, &stats.address);
-                MinerListItem {
-                    address: stats.address.clone(),
-                    worker_count: workers.len(),
-                    workers,
-                    shares_accepted: stats.shares_accepted,
-                    shares_rejected: stats.shares_rejected,
-                    blocks_found: stats.blocks_found,
-                    hashrate,
-                    last_share_at: stats.last_share_at,
-                }
-            })
-            .collect::<Vec<MinerListItem>>()
-    })
-    .await
-    {
-        Ok(v) => v,
-        Err(err) => {
-            return internal_error("failed building miner list", anyhow::anyhow!("join error: {err}"))
-                .into_response()
-        }
-    };
+    let hashrates = state.stats.estimate_all_miner_hashrates();
+    let mut items = all_stats
+        .into_values()
+        .map(|stats| {
+            let mut workers = stats.workers.iter().cloned().collect::<Vec<String>>();
+            workers.sort();
+            let hashrate = hashrates.get(&stats.address).copied().unwrap_or(0.0);
+            MinerListItem {
+                address: stats.address.clone(),
+                worker_count: workers.len(),
+                workers,
+                shares_accepted: stats.shares_accepted,
+                shares_rejected: stats.shares_rejected,
+                blocks_found: stats.blocks_found,
+                hashrate,
+                last_share_at: stats.last_share_at,
+            }
+        })
+        .collect::<Vec<MinerListItem>>();
 
     if let Some(search) = non_empty(&query.search) {
         items.retain(|item| contains_ci(&item.address, search));
@@ -605,19 +642,29 @@ async fn handle_miner(
         let balance = store.get_balance(&addr)?;
         let pending_payout = store.get_pending_payout(&addr)?;
         let hr = db_miner_hashrate(&store, &addr);
+        let since_hr_window = SystemTime::now()
+            .checked_sub(HASHRATE_WINDOW)
+            .unwrap_or(UNIX_EPOCH);
         let since_24h = SystemTime::now()
             .checked_sub(Duration::from_secs(86400))
             .unwrap_or(UNIX_EPOCH);
         let workers_raw = store.worker_stats_for_miner(&addr, since_24h)?;
+        let worker_hashrate_raw = store.worker_hashrate_stats_for_miner(&addr, since_hr_window)?;
         let miner_blocks = store.get_blocks_for_miner(&addr)?;
-        Ok::<_, anyhow::Error>((shares, balance, pending_payout, hr, workers_raw, miner_blocks))
+        Ok::<_, anyhow::Error>((
+            shares,
+            balance,
+            pending_payout,
+            hr,
+            workers_raw,
+            worker_hashrate_raw,
+            miner_blocks,
+        ))
     })
     .await
     {
         Ok(Ok(v)) => v,
-        Ok(Err(err)) => {
-            return internal_error("failed loading miner data", err).into_response()
-        }
+        Ok(Err(err)) => return internal_error("failed loading miner data", err).into_response(),
         Err(err) => {
             return internal_error(
                 "failed loading miner data",
@@ -626,23 +673,32 @@ async fn handle_miner(
             .into_response()
         }
     };
-    let (shares, balance, pending_payout, hashrate, workers_raw, miner_blocks) = db_result;
+    let (shares, balance, pending_payout, hashrate, workers_raw, worker_hashrate_raw, miner_blocks) =
+        db_result;
 
     let balance_json = serde_json::json!({
         "pending": balance.pending,
         "paid": balance.paid,
     });
 
+    let worker_hashrate_by_name: HashMap<String, f64> = worker_hashrate_raw
+        .into_iter()
+        .map(|(worker, total_diff, accepted_count, oldest, newest)| {
+            let hr = hashrate_from_stats_or_window_floor(
+                total_diff,
+                accepted_count,
+                oldest,
+                newest,
+                HASHRATE_WINDOW,
+            );
+            (worker, hr)
+        })
+        .collect();
+
     let workers_json: Vec<serde_json::Value> = workers_raw
         .iter()
-        .map(|(worker, accepted, rejected, total_diff, last_share_ts)| {
-            // Estimate per-worker hashrate from 24h accepted difficulty / time window
-            let window_secs = 86400.0_f64;
-            let worker_hr = if window_secs > 0.0 {
-                *total_diff as f64 / window_secs
-            } else {
-                0.0
-            };
+        .map(|(worker, accepted, rejected, _total_diff, last_share_ts)| {
+            let worker_hr = worker_hashrate_by_name.get(worker).copied().unwrap_or(0.0);
             serde_json::json!({
                 "worker": worker,
                 "hashrate": worker_hr,
@@ -757,18 +813,17 @@ async fn handle_blocks(
     }
 
     let store = Arc::clone(&state.store);
-    let mut blocks =
-        match tokio::task::spawn_blocking(move || store.get_recent_blocks(LIST_SCAN_LIMIT)).await {
-            Ok(Ok(v)) => v,
-            Ok(Err(err)) => return internal_error("failed loading blocks", err).into_response(),
-            Err(err) => {
-                return internal_error(
-                    "failed loading blocks",
-                    anyhow::anyhow!("join error: {err}"),
-                )
-                .into_response()
-            }
-        };
+    let mut blocks = match tokio::task::spawn_blocking(move || store.get_all_blocks()).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(err)) => return internal_error("failed loading blocks", err).into_response(),
+        Err(err) => {
+            return internal_error(
+                "failed loading blocks",
+                anyhow::anyhow!("join error: {err}"),
+            )
+            .into_response()
+        }
+    };
 
     if let Some(finder) = non_empty(&query.finder) {
         blocks.retain(|block| contains_ci(&block.finder, finder));
@@ -859,11 +914,7 @@ async fn handle_public_payouts(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
     let store = Arc::clone(&state.store);
-    let mut payouts = match tokio::task::spawn_blocking(move || {
-        store.get_recent_payouts(LIST_SCAN_LIMIT)
-    })
-    .await
-    {
+    let mut payouts = match tokio::task::spawn_blocking(move || store.get_all_payouts()).await {
         Ok(Ok(v)) => v,
         Ok(Err(err)) => return internal_error("failed loading payouts", err).into_response(),
         Err(err) => {
@@ -889,28 +940,6 @@ async fn handle_public_payouts(
     Json(paginate_response(public, query.limit, query.offset)).into_response()
 }
 
-async fn handle_delete_block(
-    Path(height): Path<u64>,
-    State(state): State<ApiState>,
-) -> impl IntoResponse {
-    let store = Arc::clone(&state.store);
-    match tokio::task::spawn_blocking(move || store.delete_block(height)).await {
-        Ok(Ok(true)) => {
-            Json(serde_json::json!({"deleted": true, "height": height})).into_response()
-        }
-        Ok(Ok(false)) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "block not found"})),
-        )
-            .into_response(),
-        Ok(Err(err)) => internal_error("failed deleting block", err).into_response(),
-        Err(err) => {
-            internal_error("failed deleting block", anyhow::anyhow!("join error: {err}"))
-                .into_response()
-        }
-    }
-}
-
 async fn handle_payouts(
     Query(query): Query<PayoutsQuery>,
     State(state): State<ApiState>,
@@ -934,11 +963,7 @@ async fn handle_payouts(
     }
 
     let store = Arc::clone(&state.store);
-    let mut payouts = match tokio::task::spawn_blocking(move || {
-        store.get_recent_payouts(LIST_SCAN_LIMIT)
-    })
-    .await
-    {
+    let mut payouts = match tokio::task::spawn_blocking(move || store.get_all_payouts()).await {
         Ok(Ok(v)) => v,
         Ok(Err(err)) => return internal_error("failed loading payouts", err).into_response(),
         Err(err) => {
@@ -1003,10 +1028,7 @@ async fn handle_fees(
     let store = Arc::clone(&state.store);
     let (total_collected, mut fees) =
         match tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, Vec<PoolFeeEvent>)> {
-            Ok((
-                store.get_total_pool_fees()?,
-                store.get_recent_pool_fees(LIST_SCAN_LIMIT)?,
-            ))
+            Ok((store.get_total_pool_fees()?, store.get_all_pool_fees()?))
         })
         .await
         {
