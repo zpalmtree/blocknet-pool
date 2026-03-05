@@ -8,6 +8,7 @@ import { BlocksPage } from './pages/BlocksPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { PayoutsPage } from './pages/PayoutsPage';
 import { StartPage } from './pages/StartPage';
+import { StatusPage } from './pages/StatusPage';
 import { StatsPage } from './pages/StatsPage';
 import type { InfoResponse, Route } from './types';
 
@@ -17,6 +18,7 @@ export function App() {
   const [poolInfo, setPoolInfo] = useState<InfoResponse | null>(null);
   const [apiKey, setApiKey] = useState(localStorage.getItem(API_KEY_STORAGE_KEY) || '');
   const [apiKeyInput, setApiKeyInput] = useState(localStorage.getItem(API_KEY_STORAGE_KEY) || '');
+  const [liveTick, setLiveTick] = useState(0);
 
   const showError = useCallback((msg: string) => {
     if (!msg) return;
@@ -48,6 +50,24 @@ export function App() {
         // handled by api client
       });
   }, [api]);
+
+  useEffect(() => {
+    let mounted = true;
+    const source = new EventSource('/api/events');
+    const onTick = () => {
+      if (!mounted) return;
+      setLiveTick((tick) => tick + 1);
+    };
+    source.addEventListener('tick', onTick);
+    source.onerror = () => {
+      // EventSource auto-reconnects.
+    };
+    return () => {
+      mounted = false;
+      source.removeEventListener('tick', onTick);
+      source.close();
+    };
+  }, []);
 
   const onSaveApiKey = useCallback(() => {
     const key = apiKeyInput.trim();
@@ -92,6 +112,9 @@ export function App() {
         <a href="#/admin" data-nav="admin" className={route === 'admin' ? 'active' : ''}>
           Admin
         </a>
+        <a href="#/status" data-nav="status" className={route === 'status' ? 'active' : ''}>
+          Status
+        </a>
       </nav>
 
       <div id="error-bar" style={{ display: errorMsg ? 'block' : 'none' }}>
@@ -99,7 +122,7 @@ export function App() {
       </div>
 
       <div className="container">
-        <DashboardPage active={route === 'dashboard'} api={api} poolInfo={poolInfo} />
+        <DashboardPage active={route === 'dashboard'} api={api} poolInfo={poolInfo} liveTick={liveTick} />
         <StartPage active={route === 'start'} poolInfo={poolInfo} />
         <BlocksPage active={route === 'blocks'} api={api} />
         <PayoutsPage active={route === 'payouts'} api={api} />
@@ -114,6 +137,7 @@ export function App() {
           onClearApiKey={onClearApiKey}
           onJumpToStats={onJumpToStats}
         />
+        <StatusPage active={route === 'status'} api={api} liveTick={liveTick} />
       </div>
     </>
   );

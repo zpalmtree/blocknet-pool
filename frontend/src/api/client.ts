@@ -10,6 +10,8 @@ import type {
   MinerResponse,
   PagedResponse,
   PayoutItem,
+  StatsInsightsResponse,
+  StatusResponse,
   StatsResponse,
 } from '../types';
 
@@ -26,6 +28,8 @@ export interface ApiClient {
   getInfo(): Promise<InfoResponse>;
   getStats(): Promise<StatsResponse>;
   getStatsHistory(range: string): Promise<HashratePoint[]>;
+  getStatsInsights(): Promise<StatsInsightsResponse>;
+  getStatus(): Promise<StatusResponse>;
   getBlocks(params: QueryParams): Promise<PagedResponse<BlockItem>>;
   getRecentPayouts(params: QueryParams): Promise<PagedResponse<PayoutItem>>;
   getMiner(address: string): Promise<MinerResponse>;
@@ -87,6 +91,8 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
     getInfo: () => fetchJson<InfoResponse>('/api/info'),
     getStats: () => fetchJson<StatsResponse>('/api/stats'),
     getStatsHistory: (range) => fetchJson<HashratePoint[]>(`/api/stats/history?range=${encodeURIComponent(range)}`),
+    getStatsInsights: () => fetchJson<StatsInsightsResponse>('/api/stats/insights'),
+    getStatus: () => fetchJson<StatusResponse>('/api/status'),
     getBlocks: (params) => fetchJson<PagedResponse<BlockItem>>(withQuery('/api/blocks', params)),
     getRecentPayouts: (params) => fetchJson<PagedResponse<PayoutItem>>(withQuery('/api/payouts/recent', params)),
     getMiner: (address) => fetchJson<MinerResponse>(`/api/miner/${encodeURIComponent(address)}`),

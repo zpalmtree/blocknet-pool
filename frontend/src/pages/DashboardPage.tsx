@@ -4,17 +4,44 @@ import type { ApiClient } from '../api/client';
 import { BlockStatusBadge } from '../components/BlockStatusBadge';
 import { HashrateChart } from '../components/HashrateChart';
 import { PayoutTxLinks } from '../components/PayoutTxLinks';
-import { formatCoins, humanRate, stratumUrl, timeAgo, toUnixMs } from '../lib/format';
-import type { BlockItem, HashratePoint, InfoResponse, PayoutItem, Range, StatsResponse } from '../types';
+import { formatCoins, fmtSeconds, humanRate, stratumUrl, timeAgo, toUnixMs } from '../lib/format';
+import type {
+  BlockItem,
+  HashratePoint,
+  InfoResponse,
+  PayoutItem,
+  Range,
+  StatsInsightsResponse,
+  StatsResponse,
+} from '../types';
 
 interface DashboardPageProps {
   active: boolean;
   api: ApiClient;
   poolInfo: InfoResponse | null;
+  liveTick: number;
 }
 
-export function DashboardPage({ active, api, poolInfo }: DashboardPageProps) {
+function fmtPct(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '-';
+  return `${value.toFixed(1)}%`;
+}
+
+function barWidth(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value) || value <= 0) return '0%';
+  const clamped = Math.min(value, 250);
+  return `${(clamped / 250) * 100}%`;
+}
+
+function toneClass(tone: string | undefined): string {
+  if (tone === 'critical') return 'is-critical';
+  if (tone === 'warn') return 'is-warn';
+  return 'is-ok';
+}
+
+export function DashboardPage({ active, api, poolInfo, liveTick }: DashboardPageProps) {
   const [stats, setStats] = useState<StatsResponse | null>(null);
+  const [insights, setInsights] = useState<StatsInsightsResponse | null>(null);
   const [blocks, setBlocks] = useState<BlockItem[]>([]);
   const [payouts, setPayouts] = useState<PayoutItem[]>([]);
   const [range, setRange] = useState<Range>('1h');
@@ -26,6 +53,15 @@ export function DashboardPage({ active, api, poolInfo }: DashboardPageProps) {
       setStats(d);
     } catch {
       // handled by api client
+    }
+  }, [api]);
+
+  const loadInsights = useCallback(async () => {
+    try {
+      const d = await api.getStatsInsights();
+      setInsights(d);
+    } catch {
+      setInsights(null);
     }
   }, [api]);
 
@@ -58,18 +94,23 @@ export function DashboardPage({ active, api, poolInfo }: DashboardPageProps) {
 
   useEffect(() => {
     if (!active) return;
-
     void refreshStats();
+    void loadInsights();
     void loadBlocks();
     void loadPayouts();
     void loadHistory();
+  }, [active, loadBlocks, loadHistory, loadInsights, loadPayouts, refreshStats]);
 
-    const timer = window.setInterval(() => {
-      void refreshStats();
-    }, 5000);
-
-    return () => window.clearInterval(timer);
-  }, [active, loadBlocks, loadHistory, loadPayouts, refreshStats]);
+  useEffect(() => {
+    if (!active || liveTick <= 0) return;
+    void refreshStats();
+    void loadInsights();
+    void loadHistory();
+    if (liveTick % 2 === 0) {
+      void loadBlocks();
+      void loadPayouts();
+    }
+  }, [active, liveTick, loadBlocks, loadHistory, loadInsights, loadPayouts, refreshStats]);
 
   useEffect(() => {
     if (!active) return;
@@ -79,6 +120,10 @@ export function DashboardPage({ active, api, poolInfo }: DashboardPageProps) {
   const copyStratum = useCallback(() => {
     void navigator.clipboard.writeText(stratumUrl(poolInfo?.stratum_port));
   }, [poolInfo?.stratum_port]);
+
+  const round = insights?.round;
+  const payoutEta = insights?.payout_eta;
+  const rejectionWindow = insights?.rejections.window;
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-dashboard">
@@ -121,6 +166,67 @@ export function DashboardPage({ active, api, poolInfo }: DashboardPageProps) {
 
       <div className="section">
         <div className="section-header">
+          <h2>Round Progress</h2>
+          <span className={`round-chip ${toneClass(round?.effort_band?.tone)}`}>
+            {round?.effort_band?.label || 'loading'}
+          </span>
+        </div>
+        <div className="card">
+          <div className="round-meta">
+            <div>
+              <span className="label">Round Effort</span>
+              <div className="value mono">{fmtPct(round?.effort_pct)}</div>
+            </div>
+            <div>
+              <span className="label">Elapsed vs ETA</span>
+              <div className="value mono">{fmtPct(round?.timer_effort_pct)}</div>
+            </div>
+            <div>
+              <span className="label">Expected Block Time</span>
+              <div className="value mono">{round?.expected_block_seconds ? fmtSeconds(Math.floor(round.expected_block_seconds)) : '-'}</div>
+            </div>
+            <div>
+              <span className="label">Round Elapsed</span>
+              <div className="value mono">{round ? fmtSeconds(round.elapsed_seconds) : '-'}</div>
+            </div>
+          </div>
+
+          <div className="round-progress-wrap">
+            <div className="round-progress-track">
+              <div className={`round-progress-fill ${toneClass(round?.effort_band?.tone)}`} style={{ width: barWidth(round?.effort_pct) }} />
+              <div className="round-marker marker-50">50%</div>
+              <div className="round-marker marker-100">100%</div>
+              <div className="round-marker marker-200">200%</div>
+            </div>
+          </div>
+
+          <p className="round-note">
+            Luck is probabilistic. Rounds above 100% are normal and do not imply pool issues.
+          </p>
+        </div>
+      </div>
+
+      <div className="stats-grid">
+        <div className="stat-card">
+          <div className="label">Pending Payouts</div>
+          <div className="value mono">{payoutEta?.pending_count ?? '-'}</div>
+        </div>
+        <div className="stat-card">
+          <div className="label">Pending Amount</div>
+          <div className="value mono">{formatCoins(payoutEta?.pending_total_amount ?? 0)}</div>
+        </div>
+        <div className="stat-card">
+          <div className="label">Payout ETA</div>
+          <div className="value mono">{payoutEta?.eta_seconds != null ? fmtSeconds(payoutEta.eta_seconds) : '-'}</div>
+        </div>
+        <div className="stat-card">
+          <div className="label">Typical Payout Interval</div>
+          <div className="value mono">{payoutEta?.typical_interval_seconds ? fmtSeconds(payoutEta.typical_interval_seconds) : '-'}</div>
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-header">
           <h2>Pool Hashrate</h2>
           <div className="range-tabs" id="hashrate-ranges">
             {(['1h', '24h', '7d', '30d'] as Range[]).map((r) => (
@@ -131,6 +237,99 @@ export function DashboardPage({ active, api, poolInfo }: DashboardPageProps) {
           </div>
         </div>
         <HashrateChart data={history} range={range} />
+      </div>
+
+      <div className="section">
+        <div className="section-header">
+          <h2>Pool Luck History</h2>
+        </div>
+        <div className="card table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Block</th>
+                <th>Effort</th>
+                <th>Round Time</th>
+                <th>Status</th>
+                <th>Found</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!insights?.luck_history?.length ? (
+                <tr>
+                  <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                    No round history yet
+                  </td>
+                </tr>
+              ) : (
+                insights.luck_history.map((row) => (
+                  <tr key={`${row.block_height}-${row.block_hash}`}>
+                    <td>
+                      <a href={`https://explorer.blocknetcrypto.com/block/${row.block_hash}`} target="_blank" rel="noopener">
+                        {row.block_height}
+                      </a>
+                    </td>
+                    <td>
+                      <span className={`round-chip ${toneClass(row.effort_band?.tone)}`}>{fmtPct(row.effort_pct)}</span>
+                    </td>
+                    <td>{fmtSeconds(row.duration_seconds)}</td>
+                    <td>
+                      {row.orphaned ? (
+                        <span className="badge badge-orphaned">orphaned</span>
+                      ) : row.confirmed ? (
+                        <span className="badge badge-confirmed">confirmed</span>
+                      ) : (
+                        <span className="badge badge-pending">pending</span>
+                      )}
+                    </td>
+                    <td title={new Date(toUnixMs(row.timestamp)).toLocaleString()}>{timeAgo(row.timestamp)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-header">
+          <h2>Rejection Analytics (1h)</h2>
+        </div>
+        <div className="card table-scroll">
+          <div className="rejection-summary mono">
+            Rejected {rejectionWindow?.rejected ?? 0} / {((rejectionWindow?.accepted ?? 0) + (rejectionWindow?.rejected ?? 0)) || 0} shares
+            {' • '}rate {fmtPct(rejectionWindow?.rejection_rate_pct)}
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Reason</th>
+                <th>Last Hour</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!rejectionWindow?.totals_by_reason?.length ? (
+                <tr>
+                  <td colSpan={3} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                    No rejection events recorded
+                  </td>
+                </tr>
+              ) : (
+                rejectionWindow.totals_by_reason.map((reason) => {
+                  const windowCount = rejectionWindow.by_reason.find((r) => r.reason === reason.reason)?.count || 0;
+                  return (
+                    <tr key={reason.reason}>
+                      <td>{reason.reason}</td>
+                      <td>{windowCount}</td>
+                      <td>{reason.count}</td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="section">

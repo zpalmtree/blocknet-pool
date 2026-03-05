@@ -8,8 +8,10 @@ use serde::Serialize;
 const MINER_STATS_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 const MAX_TRACKED_MINERS: usize = 100_000;
 const MAX_RECENT_SHARES: usize = 200_000;
+const MAX_RECENT_REJECTIONS: usize = 200_000;
 const SHARE_EVENTS_PER_PRUNE_SWEEP: u64 = 1024;
 const MIN_PRUNE_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
+const REJECTION_EVENTS_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MinerStats {
@@ -29,6 +31,12 @@ struct ShareRecord {
 }
 
 #[derive(Debug, Clone)]
+struct RejectionRecord {
+    reason: String,
+    timestamp: SystemTime,
+}
+
+#[derive(Debug, Clone)]
 struct ConnectedWorker {
     address: String,
     worker: String,
@@ -44,6 +52,23 @@ pub struct PoolSnapshot {
     pub estimated_hashrate: f64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RejectionReasonCount {
+    pub reason: String,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RejectionAnalyticsSnapshot {
+    pub window_seconds: u64,
+    pub accepted: u64,
+    pub rejected: u64,
+    pub rejection_rate_pct: f64,
+    pub by_reason: Vec<RejectionReasonCount>,
+    pub totals_by_reason: Vec<RejectionReasonCount>,
+    pub total_rejected: u64,
+}
+
 #[derive(Debug, Default)]
 pub struct PoolStats {
     total_shares_accepted: AtomicU64,
@@ -53,6 +78,8 @@ pub struct PoolStats {
     miner_stats: RwLock<HashMap<String, MinerStats>>,
     connected_miners: RwLock<HashMap<String, ConnectedWorker>>, // conn_id -> active miner/worker
     recent_shares: RwLock<VecDeque<ShareRecord>>,
+    rejection_reason_totals: RwLock<HashMap<String, u64>>,
+    recent_rejections: RwLock<VecDeque<RejectionRecord>>,
     share_events_since_prune: AtomicU64,
     last_prune_sweep_at: parking_lot::Mutex<Option<Instant>>,
 }
@@ -135,11 +162,50 @@ impl PoolStats {
         self.maybe_prune_after_share_event();
     }
 
-    pub fn record_rejected_share(&self, address: &str) {
+    pub fn record_rejected_share(&self, address: &str, reason: &str) {
         self.total_shares_rejected.fetch_add(1, Ordering::Relaxed);
-        if let Some(entry) = self.miner_stats.write().get_mut(address) {
-            entry.shares_rejected = entry.shares_rejected.saturating_add(1);
+        let now = SystemTime::now();
+        let normalized_reason = {
+            let trimmed = reason.trim();
+            if trimmed.is_empty() {
+                "other".to_string()
+            } else {
+                trimmed.to_ascii_lowercase()
+            }
+        };
+
+        {
+            if let Some(entry) = self.miner_stats.write().get_mut(address) {
+                entry.shares_rejected = entry.shares_rejected.saturating_add(1);
+            }
         }
+
+        {
+            let mut totals = self.rejection_reason_totals.write();
+            let entry = totals.entry(normalized_reason.clone()).or_insert(0);
+            *entry = entry.saturating_add(1);
+        }
+
+        {
+            let mut recent = self.recent_rejections.write();
+            recent.push_back(RejectionRecord {
+                reason: normalized_reason,
+                timestamp: now,
+            });
+            let cutoff = now
+                .checked_sub(REJECTION_EVENTS_RETENTION)
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            while recent
+                .front()
+                .is_some_and(|record| record.timestamp <= cutoff)
+            {
+                recent.pop_front();
+            }
+            while recent.len() > MAX_RECENT_REJECTIONS {
+                recent.pop_front();
+            }
+        }
+
         self.maybe_prune_after_share_event();
     }
 
@@ -358,6 +424,63 @@ impl PoolStats {
             estimated_hashrate: self.estimate_hashrate(),
         }
     }
+
+    pub fn rejection_analytics(&self, window: Duration) -> RejectionAnalyticsSnapshot {
+        let cutoff = SystemTime::now()
+            .checked_sub(window)
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+
+        let accepted = {
+            let recent = self.recent_shares.read();
+            recent
+                .iter()
+                .filter(|share| share.timestamp >= cutoff)
+                .count() as u64
+        };
+
+        let (rejected, by_reason) = {
+            let recent = self.recent_rejections.read();
+            let mut counts: HashMap<String, u64> = HashMap::new();
+            let mut total = 0u64;
+            for record in recent.iter().filter(|record| record.timestamp >= cutoff) {
+                total = total.saturating_add(1);
+                let entry = counts.entry(record.reason.clone()).or_insert(0);
+                *entry = entry.saturating_add(1);
+            }
+            (total, sort_reason_counts(counts))
+        };
+
+        let totals_by_reason = {
+            let totals = self.rejection_reason_totals.read();
+            sort_reason_counts(totals.clone())
+        };
+
+        let denom = accepted.saturating_add(rejected);
+        let rejection_rate_pct = if denom == 0 {
+            0.0
+        } else {
+            (rejected as f64 / denom as f64) * 100.0
+        };
+
+        RejectionAnalyticsSnapshot {
+            window_seconds: window.as_secs(),
+            accepted,
+            rejected,
+            rejection_rate_pct,
+            by_reason,
+            totals_by_reason,
+            total_rejected: self.total_shares_rejected.load(Ordering::Relaxed),
+        }
+    }
+}
+
+fn sort_reason_counts(counts: HashMap<String, u64>) -> Vec<RejectionReasonCount> {
+    let mut items = counts
+        .into_iter()
+        .map(|(reason, count)| RejectionReasonCount { reason, count })
+        .collect::<Vec<_>>();
+    items.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.reason.cmp(&b.reason)));
+    items
 }
 
 #[cfg(test)]

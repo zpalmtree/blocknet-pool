@@ -3,6 +3,7 @@ import type { Range, Route, UnixLike } from '../types';
 export const STRATUM_HOST = 'bntpool.com';
 
 export function routeFromHash(hash: string): Route {
+  if (hash.startsWith('#/status')) return 'status';
   if (hash.startsWith('#/admin')) return 'admin';
   if (hash.startsWith('#/stats')) return 'stats';
   if (hash.startsWith('#/start')) return 'start';

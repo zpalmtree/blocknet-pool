@@ -317,7 +317,8 @@ impl StratumServer {
                                         let err_text = err.to_string();
                                         let reason_code = share_reject_reason_code(&err_text);
                                         if let Some((address, _, _)) = logged_in.as_ref() {
-                                            self.stats.record_rejected_share(address);
+                                            self.stats
+                                                .record_rejected_share(address, reason_code);
                                             if log_rejection_at_info(reason_code) {
                                                 tracing::info!(
                                                     peer = %peer,
@@ -344,7 +345,8 @@ impl StratumServer {
                                     }
                                     Err(err) => {
                                         if let Some((address, _, _)) = logged_in.as_ref() {
-                                            self.stats.record_rejected_share(address);
+                                            self.stats
+                                                .record_rejected_share(address, "submit_worker_failure");
                                             tracing::warn!(
                                                 peer = %peer,
                                                 address = %address,

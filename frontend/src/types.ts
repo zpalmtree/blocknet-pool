@@ -1,4 +1,11 @@
-export type Route = 'dashboard' | 'start' | 'blocks' | 'payouts' | 'stats' | 'admin';
+export type Route =
+  | 'dashboard'
+  | 'start'
+  | 'blocks'
+  | 'payouts'
+  | 'stats'
+  | 'admin'
+  | 'status';
 export type AdminTab = 'miners' | 'payouts' | 'fees' | 'health';
 export type Range = '1h' | '24h' | '7d' | '30d';
 
@@ -127,6 +134,105 @@ export interface HealthResponse {
 export interface HashratePoint {
   timestamp: UnixLike;
   hashrate: number;
+}
+
+export interface EffortBand {
+  label: string;
+  tone: 'ok' | 'warn' | 'critical' | string;
+}
+
+export interface RoundProgress {
+  round_start?: UnixLike;
+  elapsed_seconds: number;
+  round_work: number;
+  expected_work?: number | null;
+  effort_pct?: number | null;
+  expected_block_seconds?: number | null;
+  timer_effort_pct?: number | null;
+  effort_band: EffortBand;
+  timer_band: EffortBand;
+  target_block_seconds: number;
+}
+
+export interface PayoutEta {
+  last_payout_at?: UnixLike;
+  estimated_next_payout_at?: UnixLike;
+  eta_seconds?: number | null;
+  typical_interval_seconds?: number | null;
+  pending_count: number;
+  pending_total_amount: number;
+}
+
+export interface LuckRound {
+  block_height: number;
+  block_hash: string;
+  timestamp: UnixLike;
+  difficulty: number;
+  round_work: number;
+  effort_pct: number;
+  duration_seconds: number;
+  timer_effort_pct: number;
+  effort_band: EffortBand;
+  orphaned: boolean;
+  confirmed: boolean;
+}
+
+export interface RejectionReasonCount {
+  reason: string;
+  count: number;
+}
+
+export interface RejectionAnalytics {
+  window_seconds: number;
+  accepted: number;
+  rejected: number;
+  rejection_rate_pct: number;
+  by_reason: RejectionReasonCount[];
+  totals_by_reason: RejectionReasonCount[];
+  total_rejected: number;
+}
+
+export interface StatsInsightsResponse {
+  round: RoundProgress;
+  payout_eta: PayoutEta;
+  luck_history: LuckRound[];
+  rejections: {
+    window: RejectionAnalytics;
+  };
+}
+
+export interface StatusUptimeWindow {
+  label: string;
+  window_seconds: number;
+  sample_count: number;
+  up_pct?: number | null;
+}
+
+export interface StatusIncident {
+  id: number;
+  kind: string;
+  severity: string;
+  started_at: UnixLike;
+  ended_at?: UnixLike;
+  duration_seconds?: number | null;
+  message: string;
+  ongoing: boolean;
+}
+
+export interface StatusResponse {
+  checked_at: UnixLike;
+  pool_uptime_seconds: number;
+  daemon: {
+    reachable: boolean;
+    chain_height?: number | null;
+    peers?: number | null;
+    syncing?: boolean | null;
+    mempool_size?: number | null;
+    best_hash?: string | null;
+    error?: string | null;
+  };
+  uptime: StatusUptimeWindow[];
+  incidents: StatusIncident[];
 }
 
 export interface PagerState {

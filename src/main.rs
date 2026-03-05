@@ -146,6 +146,8 @@ async fn main() -> Result<()> {
         network_hashrate_cache: Arc::new(Mutex::new(
             blocknet_pool_rs::api::NetworkHashrateCache::default(),
         )),
+        insights_cache: Arc::new(Mutex::new(blocknet_pool_rs::api::InsightsCache::default())),
+        status_history: Arc::new(Mutex::new(blocknet_pool_rs::api::StatusHistory::default())),
         api_key: cfg.api_key.clone(),
         pool_name: cfg.pool_name.clone(),
         pool_url: cfg.pool_url.clone(),
@@ -158,6 +160,8 @@ async fn main() -> Result<()> {
         started_at: std::time::Instant::now(),
         started_at_system: std::time::SystemTime::now(),
     };
+
+    start_status_sampler(api_state.clone());
 
     info!(pool = %cfg.pool_name, "pool runtime started");
 
@@ -265,6 +269,16 @@ fn start_found_block_recovery(engine: Arc<PoolEngine>) {
                     tracing::warn!(error = %err, "found-block recovery task join failed")
                 }
             }
+        }
+    });
+}
+
+fn start_status_sampler(api_state: ApiState) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            ticker.tick().await;
+            api_state.sample_status().await;
         }
     });
 }

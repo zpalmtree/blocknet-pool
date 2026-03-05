@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -8,17 +9,20 @@ use axum::extract::{Path, Query, State};
 use axum::http::header;
 use axum::http::{Request, StatusCode};
 use axum::middleware::{self, Next};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use axum::{Json, Router};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use tokio_stream::wrappers::IntervalStream;
+use tokio_stream::StreamExt;
 
 use crate::db::{DbBlock, Payout, PoolFeeEvent};
 use crate::engine::JobRepository;
 use crate::jobs::JobManager;
 use crate::node::NodeClient;
-use crate::stats::PoolStats;
+use crate::stats::{PoolStats, RejectionAnalyticsSnapshot};
 use crate::store::PoolStore;
 use crate::validation::ValidationEngine;
 
@@ -35,6 +39,10 @@ const MONTHS_TO_TAIL: u64 = 48;
 const DECAY_RATE: f64 = 0.75;
 const BLOCK_INTERVAL_SECS: u64 = 5 * 60;
 const BLOCKS_PER_MONTH: u64 = (30 * 24 * 60 * 60) / BLOCK_INTERVAL_SECS;
+const ROUND_TARGET_SECONDS: f64 = 300.0;
+const INSIGHTS_CACHE_TTL: Duration = Duration::from_secs(10);
+const STATUS_SAMPLES_RETENTION: Duration = Duration::from_secs(8 * 24 * 60 * 60);
+const STATUS_MAX_INCIDENTS: usize = 256;
 
 fn db_miner_hashrate(store: &PoolStore, address: &str) -> f64 {
     let since = SystemTime::now()
@@ -156,6 +164,8 @@ pub struct ApiState {
     pub db_totals_cache: Arc<Mutex<DbTotalsCache>>,
     pub daemon_health_cache: Arc<Mutex<DaemonHealthCache>>,
     pub network_hashrate_cache: Arc<Mutex<NetworkHashrateCache>>,
+    pub insights_cache: Arc<Mutex<InsightsCache>>,
+    pub status_history: Arc<Mutex<StatusHistory>>,
     pub api_key: String,
     pub pool_name: String,
     pub pool_url: String,
@@ -207,6 +217,123 @@ pub struct NetworkHashrateCache {
     hashrate_hps: Option<f64>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct InsightsCache {
+    updated_at: Option<Instant>,
+    value: Option<StatsInsightsResponse>,
+}
+
+#[derive(Debug, Clone)]
+struct StatusSample {
+    timestamp: SystemTime,
+    daemon_reachable: bool,
+}
+
+#[derive(Debug, Clone)]
+struct OpenIncident {
+    id: u64,
+    kind: &'static str,
+    severity: &'static str,
+    started_at: SystemTime,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StatusIncident {
+    id: u64,
+    kind: String,
+    severity: String,
+    started_at: SystemTime,
+    ended_at: Option<SystemTime>,
+    duration_seconds: Option<u64>,
+    message: String,
+    ongoing: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct StatusHistory {
+    samples: VecDeque<StatusSample>,
+    incidents: VecDeque<StatusIncident>,
+    open_daemon_down: Option<OpenIncident>,
+    open_daemon_syncing: Option<OpenIncident>,
+    next_incident_id: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct UptimeWindow {
+    label: String,
+    window_seconds: u64,
+    sample_count: usize,
+    up_pct: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct StatusPageResponse {
+    checked_at: SystemTime,
+    pool_uptime_seconds: u64,
+    daemon: DaemonHealth,
+    uptime: Vec<UptimeWindow>,
+    incidents: Vec<StatusIncident>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EffortBand {
+    label: &'static str,
+    tone: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RoundProgressResponse {
+    round_start: Option<SystemTime>,
+    elapsed_seconds: u64,
+    round_work: u64,
+    expected_work: Option<u64>,
+    effort_pct: Option<f64>,
+    expected_block_seconds: Option<f64>,
+    timer_effort_pct: Option<f64>,
+    effort_band: EffortBand,
+    timer_band: EffortBand,
+    target_block_seconds: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PayoutEtaResponse {
+    last_payout_at: Option<SystemTime>,
+    estimated_next_payout_at: Option<SystemTime>,
+    eta_seconds: Option<u64>,
+    typical_interval_seconds: Option<u64>,
+    pending_count: usize,
+    pending_total_amount: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct LuckRoundResponse {
+    block_height: u64,
+    block_hash: String,
+    timestamp: SystemTime,
+    difficulty: u64,
+    round_work: u64,
+    effort_pct: f64,
+    duration_seconds: u64,
+    timer_effort_pct: f64,
+    effort_band: EffortBand,
+    orphaned: bool,
+    confirmed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RejectionAnalyticsResponse {
+    window: RejectionAnalyticsSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct StatsInsightsResponse {
+    round: RoundProgressResponse,
+    payout_eta: PayoutEtaResponse,
+    luck_history: Vec<LuckRoundResponse>,
+    rejections: RejectionAnalyticsResponse,
+}
+
 pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
     let app_state = state.clone();
     let protected = Router::new()
@@ -232,6 +359,9 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
         .route("/api/info", get(handle_info))
         .route("/api/stats", get(handle_stats))
         .route("/api/stats/history", get(handle_stats_history))
+        .route("/api/stats/insights", get(handle_stats_insights))
+        .route("/api/status", get(handle_status))
+        .route("/api/events", get(handle_events))
         .route("/api/blocks", get(handle_blocks))
         .route("/api/payouts/recent", get(handle_public_payouts))
         .route("/api/miner/:address", get(handle_miner))
@@ -333,6 +463,9 @@ async fn handle_info(State(state): State<ApiState>) -> impl IntoResponse {
             "/api/info",
             "/api/stats",
             "/api/stats/history",
+            "/api/stats/insights",
+            "/api/status",
+            "/api/events",
             "/api/blocks",
             "/api/payouts/recent",
             "/api/miner/{address}",
@@ -570,6 +703,54 @@ async fn handle_stats_history(
         )
         .into_response(),
     }
+}
+
+async fn handle_stats_insights(State(state): State<ApiState>) -> impl IntoResponse {
+    match state.stats_insights().await {
+        Ok(v) => Json(v).into_response(),
+        Err(err) => internal_error("failed loading stats insights", err).into_response(),
+    }
+}
+
+async fn handle_status(State(state): State<ApiState>) -> impl IntoResponse {
+    let daemon = state.daemon_health().await;
+    Json(state.build_status_response(daemon)).into_response()
+}
+
+async fn handle_events(
+    State(state): State<ApiState>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+    let stream =
+        IntervalStream::new(tokio::time::interval(Duration::from_secs(5))).then(move |_| {
+            let state = state.clone();
+            async move {
+                let snap = state.stats.snapshot();
+                let daemon = state.daemon_health().await;
+                let payload = serde_json::json!({
+                    "ts": system_time_to_unix_secs(SystemTime::now()),
+                    "pool": {
+                        "miners": snap.connected_miners,
+                        "workers": snap.connected_workers,
+                        "hashrate": snap.estimated_hashrate,
+                        "accepted": snap.total_shares_accepted,
+                        "rejected": snap.total_shares_rejected,
+                        "blocks_found": snap.total_blocks_found,
+                    },
+                    "daemon": {
+                        "reachable": daemon.reachable,
+                        "syncing": daemon.syncing,
+                        "chain_height": daemon.chain_height,
+                    }
+                });
+                Ok::<Event, Infallible>(Event::default().event("tick").data(payload.to_string()))
+            }
+        });
+
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keepalive"),
+    )
 }
 
 async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
@@ -1019,6 +1200,106 @@ fn batch_payouts(payouts: &[Payout]) -> Vec<PublicPayout> {
     batches
 }
 
+fn compute_payout_eta(store: &PoolStore) -> anyhow::Result<PayoutEtaResponse> {
+    let mut payouts = store.get_recent_payouts(300)?;
+    payouts.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    let batches = batch_payouts(&payouts);
+    let last_payout_at = batches.first().map(|b| b.timestamp);
+
+    let mut interval_samples = batches
+        .windows(2)
+        .filter_map(|pair| pair[0].timestamp.duration_since(pair[1].timestamp).ok())
+        .map(|d| d.as_secs())
+        .filter(|secs| *secs > 0)
+        .collect::<Vec<_>>();
+    interval_samples.sort_unstable();
+    let typical_interval_seconds = if interval_samples.is_empty() {
+        None
+    } else {
+        Some(interval_samples[interval_samples.len() / 2])
+    };
+
+    let estimated_next_payout_at = match (last_payout_at, typical_interval_seconds) {
+        (Some(last), Some(interval_secs)) => last.checked_add(Duration::from_secs(interval_secs)),
+        _ => None,
+    };
+    let eta_seconds = estimated_next_payout_at.and_then(|eta| {
+        eta.duration_since(SystemTime::now())
+            .ok()
+            .map(|d| d.as_secs())
+    });
+
+    let pending = store.get_pending_payouts()?;
+    let pending_total_amount = pending
+        .iter()
+        .fold(0u64, |acc, payout| acc.saturating_add(payout.amount));
+
+    Ok(PayoutEtaResponse {
+        last_payout_at,
+        estimated_next_payout_at,
+        eta_seconds,
+        typical_interval_seconds,
+        pending_count: pending.len(),
+        pending_total_amount,
+    })
+}
+
+fn compute_luck_history(
+    store: &PoolStore,
+    mut blocks: Vec<crate::db::DbBlock>,
+) -> anyhow::Result<Vec<LuckRoundResponse>> {
+    if blocks.len() < 2 {
+        return Ok(Vec::new());
+    }
+
+    blocks.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+
+    let mut rounds = Vec::<LuckRoundResponse>::new();
+    for pair in blocks.windows(2) {
+        let prev = &pair[0];
+        let current = &pair[1];
+        let shares = store.get_shares_between(prev.timestamp, current.timestamp)?;
+        let round_work = shares
+            .into_iter()
+            .filter(|share| share.status == "verified" || share.status == "provisional")
+            .fold(0u64, |acc, share| acc.saturating_add(share.difficulty));
+
+        let duration_seconds = current
+            .timestamp
+            .duration_since(prev.timestamp)
+            .unwrap_or_default()
+            .as_secs();
+        let effort_pct = if current.difficulty > 0 {
+            (round_work as f64 / current.difficulty as f64) * 100.0
+        } else {
+            0.0
+        };
+        let timer_effort_pct = if ROUND_TARGET_SECONDS > 0.0 {
+            (duration_seconds as f64 / ROUND_TARGET_SECONDS) * 100.0
+        } else {
+            0.0
+        };
+
+        rounds.push(LuckRoundResponse {
+            block_height: current.height,
+            block_hash: current.hash.clone(),
+            timestamp: current.timestamp,
+            difficulty: current.difficulty,
+            round_work,
+            effort_pct,
+            duration_seconds,
+            timer_effort_pct,
+            effort_band: classify_effort(effort_pct),
+            orphaned: current.orphaned,
+            confirmed: current.confirmed,
+        });
+    }
+
+    rounds.sort_by(|a, b| b.block_height.cmp(&a.block_height));
+    rounds.truncate(16);
+    Ok(rounds)
+}
+
 async fn handle_public_payouts(
     Query(query): Query<PayoutsQuery>,
     State(state): State<ApiState>,
@@ -1171,6 +1452,153 @@ async fn handle_fees(
 }
 
 impl ApiState {
+    pub async fn sample_status(&self) {
+        let _ = self.daemon_health().await;
+    }
+
+    async fn stats_insights(&self) -> anyhow::Result<StatsInsightsResponse> {
+        {
+            let cache = self.insights_cache.lock();
+            if cache
+                .updated_at
+                .is_some_and(|updated| updated.elapsed() < INSIGHTS_CACHE_TTL)
+            {
+                if let Some(value) = cache.value.clone() {
+                    return Ok(value);
+                }
+            }
+        }
+
+        let current_job = self.jobs.current_job();
+        let current_difficulty = current_job
+            .as_ref()
+            .map(|job| job.network_difficulty.max(1));
+        let network_hashrate = self.network_hashrate_for_job(current_job.as_ref()).await;
+
+        let store = Arc::clone(&self.store);
+        let now = SystemTime::now();
+        let (pool_hashrate, round_start, round_work, payout_eta, luck_history) =
+            tokio::task::spawn_blocking(move || {
+                let pool_hashrate = db_pool_hashrate(&store);
+
+                let blocks = store.get_recent_blocks(64)?;
+                let round_start = blocks
+                    .iter()
+                    .max_by(|a, b| a.timestamp.cmp(&b.timestamp))
+                    .map(|b| b.timestamp)
+                    .or_else(|| now.checked_sub(Duration::from_secs(3600)));
+
+                let round_work = if let Some(start) = round_start {
+                    let (total_diff, _count, _oldest, _newest) =
+                        store.hashrate_stats_pool(start)?;
+                    total_diff
+                } else {
+                    0
+                };
+
+                let payout_eta = compute_payout_eta(&store)?;
+                let luck_history = compute_luck_history(&store, blocks)?;
+
+                Ok::<_, anyhow::Error>((
+                    pool_hashrate,
+                    round_start,
+                    round_work,
+                    payout_eta,
+                    luck_history,
+                ))
+            })
+            .await
+            .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+
+        let elapsed_seconds = round_start
+            .and_then(|start| now.duration_since(start).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let effort_pct = current_difficulty.and_then(|expected_work| {
+            if expected_work == 0 {
+                None
+            } else {
+                Some((round_work as f64 / expected_work as f64) * 100.0)
+            }
+        });
+
+        let expected_block_seconds = match (pool_hashrate, network_hashrate) {
+            (pool, Some(network)) if pool > 0.0 && network > 0.0 => {
+                Some(ROUND_TARGET_SECONDS * (network / pool))
+            }
+            _ => None,
+        };
+        let timer_effort_pct = expected_block_seconds.and_then(|expected| {
+            if expected <= 0.0 {
+                None
+            } else {
+                Some((elapsed_seconds as f64 / expected) * 100.0)
+            }
+        });
+
+        let rejection_window = self.stats.rejection_analytics(Duration::from_secs(3600));
+        let response = StatsInsightsResponse {
+            round: RoundProgressResponse {
+                round_start,
+                elapsed_seconds,
+                round_work,
+                expected_work: current_difficulty,
+                effort_pct,
+                expected_block_seconds,
+                timer_effort_pct,
+                effort_band: classify_effort(effort_pct.unwrap_or(0.0)),
+                timer_band: classify_effort(timer_effort_pct.unwrap_or(0.0)),
+                target_block_seconds: ROUND_TARGET_SECONDS,
+            },
+            payout_eta,
+            luck_history,
+            rejections: RejectionAnalyticsResponse {
+                window: rejection_window,
+            },
+        };
+
+        let mut cache = self.insights_cache.lock();
+        cache.updated_at = Some(Instant::now());
+        cache.value = Some(response.clone());
+        Ok(response)
+    }
+
+    fn build_status_response(&self, daemon: DaemonHealth) -> StatusPageResponse {
+        let now = SystemTime::now();
+        let pool_uptime_seconds = self.started_at.elapsed().as_secs();
+        let history = self.status_history.lock();
+
+        let uptime = vec![
+            UptimeWindow {
+                label: "1h".to_string(),
+                window_seconds: 3600,
+                sample_count: history.sample_count_within(Duration::from_secs(3600), now),
+                up_pct: history.uptime_pct(Duration::from_secs(3600), now),
+            },
+            UptimeWindow {
+                label: "24h".to_string(),
+                window_seconds: 24 * 3600,
+                sample_count: history.sample_count_within(Duration::from_secs(24 * 3600), now),
+                up_pct: history.uptime_pct(Duration::from_secs(24 * 3600), now),
+            },
+            UptimeWindow {
+                label: "7d".to_string(),
+                window_seconds: 7 * 24 * 3600,
+                sample_count: history.sample_count_within(Duration::from_secs(7 * 24 * 3600), now),
+                up_pct: history.uptime_pct(Duration::from_secs(7 * 24 * 3600), now),
+            },
+        ];
+
+        StatusPageResponse {
+            checked_at: now,
+            pool_uptime_seconds,
+            daemon,
+            uptime,
+            incidents: history.incidents_for_api(now),
+        }
+    }
+
     async fn db_totals(&self) -> anyhow::Result<DbTotals> {
         {
             let cache = self.db_totals_cache.lock();
@@ -1248,6 +1676,12 @@ impl ApiState {
         let mut cache = self.daemon_health_cache.lock();
         cache.updated_at = Some(Instant::now());
         cache.value = Some(value.clone());
+        self.status_history.lock().record_sample(
+            SystemTime::now(),
+            value.reachable,
+            value.syncing,
+            value.error.as_deref(),
+        );
         value
     }
 
@@ -1470,6 +1904,181 @@ fn internal_error(msg: &str, err: anyhow::Error) -> (StatusCode, Json<serde_json
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(serde_json::json!({"error": msg})),
     )
+}
+
+fn classify_effort(value_pct: f64) -> EffortBand {
+    if value_pct >= 200.0 {
+        EffortBand {
+            label: "very overdue",
+            tone: "critical",
+        }
+    } else if value_pct >= 100.0 {
+        EffortBand {
+            label: "overdue",
+            tone: "warn",
+        }
+    } else {
+        EffortBand {
+            label: "on pace",
+            tone: "ok",
+        }
+    }
+}
+
+impl StatusHistory {
+    fn record_sample(
+        &mut self,
+        now: SystemTime,
+        daemon_reachable: bool,
+        daemon_syncing: Option<bool>,
+        daemon_error: Option<&str>,
+    ) {
+        self.samples.push_back(StatusSample {
+            timestamp: now,
+            daemon_reachable,
+        });
+        let cutoff = now
+            .checked_sub(STATUS_SAMPLES_RETENTION)
+            .unwrap_or(UNIX_EPOCH);
+        while self
+            .samples
+            .front()
+            .is_some_and(|sample| sample.timestamp < cutoff)
+        {
+            self.samples.pop_front();
+        }
+
+        if !daemon_reachable {
+            if self.open_daemon_down.is_none() {
+                let id = self.next_incident_id;
+                self.next_incident_id = self.next_incident_id.saturating_add(1);
+                self.open_daemon_down = Some(OpenIncident {
+                    id,
+                    kind: "daemon_down",
+                    severity: "critical",
+                    started_at: now,
+                    message: daemon_error.unwrap_or("daemon unreachable").to_string(),
+                });
+            }
+        } else if let Some(open) = self.open_daemon_down.take() {
+            self.incidents.push_front(StatusIncident {
+                id: open.id,
+                kind: open.kind.to_string(),
+                severity: open.severity.to_string(),
+                started_at: open.started_at,
+                ended_at: Some(now),
+                duration_seconds: now
+                    .duration_since(open.started_at)
+                    .ok()
+                    .map(|d| d.as_secs()),
+                message: open.message,
+                ongoing: false,
+            });
+        }
+
+        let syncing = daemon_reachable && daemon_syncing.unwrap_or(false);
+        if syncing {
+            if self.open_daemon_syncing.is_none() {
+                let id = self.next_incident_id;
+                self.next_incident_id = self.next_incident_id.saturating_add(1);
+                self.open_daemon_syncing = Some(OpenIncident {
+                    id,
+                    kind: "daemon_syncing",
+                    severity: "warn",
+                    started_at: now,
+                    message: "daemon reported syncing".to_string(),
+                });
+            }
+        } else if let Some(open) = self.open_daemon_syncing.take() {
+            self.incidents.push_front(StatusIncident {
+                id: open.id,
+                kind: open.kind.to_string(),
+                severity: open.severity.to_string(),
+                started_at: open.started_at,
+                ended_at: Some(now),
+                duration_seconds: now
+                    .duration_since(open.started_at)
+                    .ok()
+                    .map(|d| d.as_secs()),
+                message: open.message,
+                ongoing: false,
+            });
+        }
+
+        while self.incidents.len() > STATUS_MAX_INCIDENTS {
+            self.incidents.pop_back();
+        }
+    }
+
+    fn incidents_for_api(&self, now: SystemTime) -> Vec<StatusIncident> {
+        let mut out = self.incidents.iter().cloned().collect::<Vec<_>>();
+        if let Some(open) = self.open_daemon_down.clone() {
+            out.insert(
+                0,
+                StatusIncident {
+                    id: open.id,
+                    kind: open.kind.to_string(),
+                    severity: open.severity.to_string(),
+                    started_at: open.started_at,
+                    ended_at: None,
+                    duration_seconds: now
+                        .duration_since(open.started_at)
+                        .ok()
+                        .map(|d| d.as_secs()),
+                    message: open.message,
+                    ongoing: true,
+                },
+            );
+        }
+        if let Some(open) = self.open_daemon_syncing.clone() {
+            out.insert(
+                0,
+                StatusIncident {
+                    id: open.id,
+                    kind: open.kind.to_string(),
+                    severity: open.severity.to_string(),
+                    started_at: open.started_at,
+                    ended_at: None,
+                    duration_seconds: now
+                        .duration_since(open.started_at)
+                        .ok()
+                        .map(|d| d.as_secs()),
+                    message: open.message,
+                    ongoing: true,
+                },
+            );
+        }
+        out
+    }
+
+    fn uptime_pct(&self, window: Duration, now: SystemTime) -> Option<f64> {
+        let cutoff = now.checked_sub(window).unwrap_or(UNIX_EPOCH);
+        let mut total = 0usize;
+        let mut up = 0usize;
+        for sample in self
+            .samples
+            .iter()
+            .filter(|sample| sample.timestamp >= cutoff)
+        {
+            total += 1;
+            if sample.daemon_reachable {
+                up += 1;
+            }
+        }
+        if total == 0 {
+            None
+        } else {
+            Some((up as f64 / total as f64) * 100.0)
+        }
+    }
+
+    fn sample_count_within(&self, window: Duration, now: SystemTime) -> usize {
+        let cutoff = now.checked_sub(window).unwrap_or(UNIX_EPOCH);
+        self.samples
+            .iter()
+            .filter(|sample| sample.timestamp >= cutoff)
+            .count()
+    }
 }
 
 #[cfg(test)]
