@@ -22,19 +22,20 @@ function feeDisplayFor(poolInfo: InfoResponse | null): string {
 }
 
 export function StartPage({ active, poolInfo }: StartPageProps) {
-  const [copiedValue, setCopiedValue] = useState('');
+  const [copiedKey, setCopiedKey] = useState('');
   const poolUrl = stratumUrl(poolInfo?.stratum_port);
+  const commandExample = `./seine --address YOUR_BLOCKNET_ADDRESS --pool-url ${poolUrl}`;
 
   useEffect(() => {
-    if (!copiedValue) return;
-    const timer = window.setTimeout(() => setCopiedValue(''), 1200);
+    if (!copiedKey) return;
+    const timer = window.setTimeout(() => setCopiedKey(''), 1200);
     return () => window.clearTimeout(timer);
-  }, [copiedValue]);
+  }, [copiedKey]);
 
-  const copyToClipboard = useCallback((value: string) => {
+  const copyToClipboard = useCallback((value: string, key: string) => {
     if (!navigator.clipboard?.writeText) return;
     void navigator.clipboard.writeText(value);
-    setCopiedValue(value);
+    setCopiedKey(key);
   }, []);
 
   return (
@@ -51,12 +52,12 @@ export function StartPage({ active, poolInfo }: StartPageProps) {
                 <button
                   type="button"
                   className="inline-copy-code mono"
-                  onClick={() => copyToClipboard(poolUrl)}
+                  onClick={() => copyToClipboard(poolUrl, 'pool-url')}
                   title="Click to copy"
                 >
                   {poolUrl}
                 </button>
-                {copiedValue === poolUrl && <span className="inline-copy-note">Copied</span>}
+                {copiedKey === 'pool-url' && <span className="inline-copy-note">Copied</span>}
               </td>
             </tr>
             <tr>
@@ -121,14 +122,23 @@ export function StartPage({ active, poolInfo }: StartPageProps) {
                 <button
                   type="button"
                   className="inline-copy-code mono"
-                  onClick={() => copyToClipboard(poolUrl)}
+                  onClick={() => copyToClipboard(poolUrl, 'pool-url')}
                   title="Click to copy"
                 >
                   {poolUrl}
                 </button>
-                {copiedValue === poolUrl && <span className="inline-copy-note">Copied</span>}
+                {copiedKey === 'pool-url' && <span className="inline-copy-note">Copied</span>}
               </li>
             </ul>
+            <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 10 }}>
+              Quick start command (replace only <code className="mono">YOUR_BLOCKNET_ADDRESS</code>):
+            </p>
+            <div className="command-copy">
+              <pre className="config-block">{commandExample}</pre>
+              <button className="copy-btn" type="button" onClick={() => copyToClipboard(commandExample, 'cmd')}>
+                {copiedKey === 'cmd' ? 'Copied' : 'Copy Command'}
+              </button>
+            </div>
             <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 8 }}>
               Your settings are saved to{' '}
               <code className="mono" style={{ background: 'var(--bg)', padding: '1px 6px', borderRadius: 4, fontSize: 13 }}>

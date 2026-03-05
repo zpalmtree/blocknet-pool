@@ -122,6 +122,9 @@ pre.config-block{background:var(--text);color:#e8f5e9;padding:16px 20px;border-r
 .inline-copy-code:hover{border-color:var(--accent);color:var(--accent)}
 .inline-copy-code:focus-visible{outline:2px solid var(--accent-light);outline-offset:1px}
 .inline-copy-note{display:inline-block;margin-left:8px;font-size:12px;font-weight:600;color:var(--accent)}
+.command-copy{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}
+.command-copy pre{margin:0;flex:1 1 520px}
+.command-copy .copy-btn{white-space:nowrap}
 
 .info-table td{font-family:'Manrope',sans-serif;border:none;padding:8px 16px 8px 0;vertical-align:top}
 .info-table td:first-child{color:var(--muted);white-space:nowrap}
