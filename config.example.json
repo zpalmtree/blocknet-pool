@@ -31,6 +31,7 @@
   "provisional_share_delay": "15m",
   "max_provisional_shares": 200,
   "stratum_submit_v2_required": true,
+  "stratum_idle_timeout": "15m",
   "enable_vardiff": true,
   "vardiff_target_shares": 10,
   "vardiff_window": "5m",

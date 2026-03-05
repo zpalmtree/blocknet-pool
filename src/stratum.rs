@@ -20,7 +20,6 @@ use crate::stats::PoolStats;
 const MAX_CONNS_PER_IP: usize = 16;
 const MAX_CONNS_TOTAL: usize = 4096;
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
-const POST_LOGIN_IDLE_TIMEOUT: Duration = Duration::from_secs(180);
 const MAX_STRATUM_REQUEST_BYTES: usize = 8 * 1024;
 
 #[derive(Debug)]
@@ -35,6 +34,7 @@ pub struct StratumServer {
     jobs: Arc<JobManager>,
     stats: Arc<PoolStats>,
     conn_state: Arc<Mutex<ConnState>>,
+    post_login_idle_timeout: Duration,
 }
 
 impl StratumServer {
@@ -43,6 +43,7 @@ impl StratumServer {
         engine: Arc<PoolEngine>,
         jobs: Arc<JobManager>,
         stats: Arc<PoolStats>,
+        post_login_idle_timeout: Duration,
     ) -> Arc<Self> {
         Arc::new(Self {
             listen_addr,
@@ -53,6 +54,7 @@ impl StratumServer {
                 counts: HashMap::new(),
                 total: 0,
             })),
+            post_login_idle_timeout,
         })
     }
 
@@ -115,10 +117,11 @@ impl StratumServer {
         let mut logged_in: Option<(String, String, u64)> = None; // address, worker, difficulty
         let mut reader = BufReader::new(reader_half);
         let mut rx_jobs = self.jobs.subscribe();
+        let post_login_idle_timeout = self.post_login_idle_timeout;
 
         let login_deadline = tokio::time::sleep(LOGIN_TIMEOUT);
         tokio::pin!(login_deadline);
-        let idle_deadline = tokio::time::sleep(POST_LOGIN_IDLE_TIMEOUT);
+        let idle_deadline = tokio::time::sleep(post_login_idle_timeout);
         tokio::pin!(idle_deadline);
 
         let run_result: Result<()> = async {
@@ -158,7 +161,7 @@ impl StratumServer {
                         if logged_in.is_some() {
                             idle_deadline
                                 .as_mut()
-                                .reset(tokio::time::Instant::now() + POST_LOGIN_IDLE_TIMEOUT);
+                                .reset(tokio::time::Instant::now() + post_login_idle_timeout);
                         }
                         let trimmed = line.trim();
                         if trimmed.is_empty() {

@@ -45,6 +45,7 @@ pub struct Config {
     pub provisional_share_delay: String,
     pub max_provisional_shares: i32,
     pub stratum_submit_v2_required: bool,
+    pub stratum_idle_timeout: String,
     pub enable_vardiff: bool,
     pub vardiff_target_shares: i32,
     pub vardiff_window: String,
@@ -112,6 +113,7 @@ impl Default for Config {
             provisional_share_delay: "15m".to_string(),
             max_provisional_shares: 200,
             stratum_submit_v2_required: true,
+            stratum_idle_timeout: "15m".to_string(),
             enable_vardiff: true,
             vardiff_target_shares: 10,
             vardiff_window: "5m".to_string(),
@@ -234,6 +236,11 @@ impl Config {
 
     pub fn stale_submit_grace_duration(&self) -> Duration {
         parse_duration_or(&self.stale_submit_grace, Duration::from_secs(5))
+    }
+
+    pub fn stratum_idle_timeout_duration(&self) -> Duration {
+        parse_duration_or(&self.stratum_idle_timeout, Duration::from_secs(15 * 60))
+            .clamp(Duration::from_secs(30), Duration::from_secs(24 * 60 * 60))
     }
 
     pub fn forced_verify_duration(&self) -> Duration {

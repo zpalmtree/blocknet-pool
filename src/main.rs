@@ -117,6 +117,7 @@ async fn main() -> Result<()> {
         Arc::clone(&engine),
         Arc::clone(&jobs),
         Arc::clone(&stats),
+        cfg.stratum_idle_timeout_duration(),
     );
 
     let payout = PayoutProcessor::new(cfg.clone(), Arc::clone(&store), Arc::clone(&node));

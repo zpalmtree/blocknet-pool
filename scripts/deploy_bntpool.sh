@@ -12,6 +12,7 @@ Environment overrides:
   BNTPOOL_HOST        SSH host alias (default: bntpool)
   BNTPOOL_REMOTE_DIR  Remote pool directory (default: /opt/blocknet/blocknet-pool)
   BNTPOOL_SERVICE     Systemd service name (default: blocknet-pool.service)
+  BNTPOOL_FORCE_RESTART  Set to 1 to force a restart even when binary hash is unchanged
 EOF
 }
 
@@ -42,6 +43,8 @@ done
 host="${BNTPOOL_HOST:-bntpool}"
 remote_dir="${BNTPOOL_REMOTE_DIR:-/opt/blocknet/blocknet-pool}"
 service="${BNTPOOL_SERVICE:-blocknet-pool.service}"
+force_restart="${BNTPOOL_FORCE_RESTART:-0}"
+remote_bin="${remote_dir}/target/release/blocknet-pool-rs"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_dir="$(cd "${script_dir}/.." && pwd)"
@@ -67,13 +70,24 @@ rsync -az --delete \
   --exclude='scripts/__pycache__/' \
   "${repo_dir}/" "${host}:${remote_dir}/"
 
+echo "==> reading current remote binary hash"
+before_hash="$(ssh "${host}" "set -euo pipefail; if [[ -f '${remote_bin}' ]]; then sha256sum '${remote_bin}' | awk '{print \$1}'; else echo '__missing__'; fi")"
+
 if [[ "${skip_build}" -eq 0 ]]; then
   echo "==> building release binary on ${host}"
   ssh "${host}" "set -euo pipefail; export PATH=/home/blocknet/.cargo/bin:\$PATH; cd '${remote_dir}'; cargo build --release"
 fi
 
-echo "==> restarting ${service}"
-ssh "${host}" "set -euo pipefail; sudo systemctl restart '${service}'; sudo systemctl is-active '${service}'"
+echo "==> reading updated remote binary hash"
+after_hash="$(ssh "${host}" "set -euo pipefail; if [[ -f '${remote_bin}' ]]; then sha256sum '${remote_bin}' | awk '{print \$1}'; else echo '__missing__'; fi")"
+
+if [[ "${force_restart}" == "1" || "${before_hash}" != "${after_hash}" ]]; then
+  echo "==> restarting ${service}"
+  ssh "${host}" "set -euo pipefail; sudo systemctl restart '${service}'; sudo systemctl is-active '${service}'"
+else
+  echo "==> binary unchanged; skipping restart (set BNTPOOL_FORCE_RESTART=1 to override)"
+  ssh "${host}" "set -euo pipefail; sudo systemctl is-active '${service}'"
+fi
 
 echo "==> recent service logs"
 ssh "${host}" "set -euo pipefail; sudo journalctl -u '${service}' --no-pager -n 40"
