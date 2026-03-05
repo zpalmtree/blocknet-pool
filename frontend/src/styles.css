@@ -118,6 +118,10 @@ h3{font-size:15px;font-weight:600;margin-bottom:12px}
 .steps li::before{content:counter(step);position:absolute;left:-16px;top:10px;width:30px;height:30px;background:var(--accent);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;line-height:1}
 .steps li:last-child{border-left-color:transparent}
 pre.config-block{background:var(--text);color:#e8f5e9;padding:16px 20px;border-radius:var(--radius);font-family:'JetBrains Mono',monospace;font-size:13px;overflow-x:auto;line-height:1.6}
+.inline-copy-code{font-family:'JetBrains Mono',monospace;font-size:13px;background:var(--bg);padding:1px 6px;border-radius:4px;border:1px solid transparent;color:var(--text);cursor:pointer}
+.inline-copy-code:hover{border-color:var(--accent);color:var(--accent)}
+.inline-copy-code:focus-visible{outline:2px solid var(--accent-light);outline-offset:1px}
+.inline-copy-note{display:inline-block;margin-left:8px;font-size:12px;font-weight:600;color:var(--accent)}
 
 .info-table td{font-family:'Manrope',sans-serif;border:none;padding:8px 16px 8px 0;vertical-align:top}
 .info-table td:first-child{color:var(--muted);white-space:nowrap}

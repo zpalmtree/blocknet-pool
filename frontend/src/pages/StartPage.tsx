@@ -1,3 +1,5 @@
+import { useCallback, useEffect, useState } from 'react';
+
 import { stratumUrl } from '../lib/format';
 import type { InfoResponse } from '../types';
 
@@ -20,6 +22,21 @@ function feeDisplayFor(poolInfo: InfoResponse | null): string {
 }
 
 export function StartPage({ active, poolInfo }: StartPageProps) {
+  const [copiedValue, setCopiedValue] = useState('');
+  const poolUrl = stratumUrl(poolInfo?.stratum_port);
+
+  useEffect(() => {
+    if (!copiedValue) return;
+    const timer = window.setTimeout(() => setCopiedValue(''), 1200);
+    return () => window.clearTimeout(timer);
+  }, [copiedValue]);
+
+  const copyToClipboard = useCallback((value: string) => {
+    if (!navigator.clipboard?.writeText) return;
+    void navigator.clipboard.writeText(value);
+    setCopiedValue(value);
+  }, []);
+
   return (
     <div className={active ? 'page active' : 'page'} id="page-start">
       <h2>Get Started Mining</h2>
@@ -31,9 +48,15 @@ export function StartPage({ active, poolInfo }: StartPageProps) {
             <tr>
               <td>Stratum</td>
               <td>
-                <code className="mono" style={{ background: 'var(--bg)', padding: '1px 6px', borderRadius: 4, fontSize: 13 }}>
-                  {stratumUrl(poolInfo?.stratum_port)}
-                </code>
+                <button
+                  type="button"
+                  className="inline-copy-code mono"
+                  onClick={() => copyToClipboard(poolUrl)}
+                  title="Click to copy"
+                >
+                  {poolUrl}
+                </button>
+                {copiedValue === poolUrl && <span className="inline-copy-note">Copied</span>}
               </td>
             </tr>
             <tr>
@@ -95,9 +118,15 @@ export function StartPage({ active, poolInfo }: StartPageProps) {
               </li>
               <li>
                 <strong style={{ color: 'var(--text)' }}>Pool URL</strong> - enter{' '}
-                <code className="mono" style={{ background: 'var(--bg)', padding: '1px 6px', borderRadius: 4, fontSize: 13 }}>
-                  {stratumUrl(poolInfo?.stratum_port)}
-                </code>
+                <button
+                  type="button"
+                  className="inline-copy-code mono"
+                  onClick={() => copyToClipboard(poolUrl)}
+                  title="Click to copy"
+                >
+                  {poolUrl}
+                </button>
+                {copiedValue === poolUrl && <span className="inline-copy-note">Copied</span>}
               </li>
             </ul>
             <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 8 }}>
