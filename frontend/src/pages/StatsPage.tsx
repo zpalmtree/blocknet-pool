@@ -43,6 +43,16 @@ export function StatsPage({ active, api, liveTick }: StatsPageProps) {
     [api, minerInput]
   );
 
+  const refreshMinerData = useCallback(async () => {
+    if (!minerAddress) return;
+    try {
+      const d = await api.getMiner(minerAddress);
+      setMinerData(d);
+    } catch {
+      // handled by api client
+    }
+  }, [api, minerAddress]);
+
   const loadMinerHashrate = useCallback(async () => {
     if (!minerAddress) return;
     try {
@@ -86,17 +96,23 @@ export function StatsPage({ active, api, liveTick }: StatsPageProps) {
   }, [active, loadMinerHashrate, minerAddress, range]);
 
   useEffect(() => {
+    if (!active || !minerAddress) return;
+    void refreshMinerData();
+  }, [active, minerAddress, refreshMinerData]);
+
+  useEffect(() => {
     if (!active) return;
     void loadRejections();
   }, [active, loadRejections]);
 
   useEffect(() => {
-    if (!active || !minerData || liveTick <= 0) return;
+    if (!active || !minerAddress || liveTick <= 0) return;
+    void refreshMinerData();
     if (liveTick % 2 === 0) {
       void loadMinerHashrate();
       void loadRejections();
     }
-  }, [active, liveTick, minerData, loadMinerHashrate, loadRejections]);
+  }, [active, liveTick, minerAddress, refreshMinerData, loadMinerHashrate, loadRejections]);
 
   const lookupDisabled = useMemo(() => {
     const addr = minerInput.trim();
