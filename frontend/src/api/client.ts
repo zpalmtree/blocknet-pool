@@ -28,7 +28,7 @@ export interface ApiClient {
   getInfo(): Promise<InfoResponse>;
   getStats(): Promise<StatsResponse>;
   getStatsHistory(range: string): Promise<HashratePoint[]>;
-  getStatsInsights(): Promise<StatsInsightsResponse>;
+  getStatsInsights(rejectionWindow?: string): Promise<StatsInsightsResponse>;
   getStatus(): Promise<StatusResponse>;
   getBlocks(params: QueryParams): Promise<PagedResponse<BlockItem>>;
   getRecentPayouts(params: QueryParams): Promise<PagedResponse<PayoutItem>>;
@@ -91,7 +91,12 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
     getInfo: () => fetchJson<InfoResponse>('/api/info'),
     getStats: () => fetchJson<StatsResponse>('/api/stats'),
     getStatsHistory: (range) => fetchJson<HashratePoint[]>(`/api/stats/history?range=${encodeURIComponent(range)}`),
-    getStatsInsights: () => fetchJson<StatsInsightsResponse>('/api/stats/insights'),
+    getStatsInsights: (rejectionWindow) =>
+      fetchJson<StatsInsightsResponse>(
+        rejectionWindow
+          ? `/api/stats/insights?rejection_window=${encodeURIComponent(rejectionWindow)}`
+          : '/api/stats/insights'
+      ),
     getStatus: () => fetchJson<StatusResponse>('/api/status'),
     getBlocks: (params) => fetchJson<PagedResponse<BlockItem>>(withQuery('/api/blocks', params)),
     getRecentPayouts: (params) => fetchJson<PagedResponse<PayoutItem>>(withQuery('/api/payouts/recent', params)),

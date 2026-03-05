@@ -718,6 +718,11 @@ struct StatsHistoryQuery {
 }
 
 #[derive(Debug, Deserialize, Default)]
+struct StatsInsightsQuery {
+    rejection_window: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 struct MinerDetailQuery {
     share_limit: Option<i64>,
 }
@@ -879,10 +884,28 @@ async fn handle_stats_history(
     }
 }
 
-async fn handle_stats_insights(State(state): State<ApiState>) -> impl IntoResponse {
+async fn handle_stats_insights(
+    Query(query): Query<StatsInsightsQuery>,
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let rejection_window = rejection_window_duration(query.rejection_window.as_deref());
     match state.stats_insights().await {
-        Ok(v) => Json(v).into_response(),
+        Ok(mut v) => {
+            v.rejections.window = state.stats.rejection_analytics(rejection_window);
+            Json(v).into_response()
+        }
         Err(err) => internal_error("failed loading stats insights", err).into_response(),
+    }
+}
+
+fn rejection_window_duration(input: Option<&str>) -> Duration {
+    let label = input.map(str::trim).unwrap_or("1h");
+    if label.eq_ignore_ascii_case("24h") {
+        Duration::from_secs(24 * 3600)
+    } else if label.eq_ignore_ascii_case("7d") {
+        Duration::from_secs(7 * 24 * 3600)
+    } else {
+        Duration::from_secs(3600)
     }
 }
 
@@ -2309,7 +2332,8 @@ mod tests {
     use super::{
         contains_ci, estimated_block_reward, hashrate_from_stats_with_miner_ramp,
         hashrate_from_stats_with_warmup, hydrate_provisional_block_reward, miner_has_activity,
-        page_bounds, share_limit, sort_workers_for_miner, worker_hashrate_by_name,
+        page_bounds, rejection_window_duration, share_limit, sort_workers_for_miner,
+        worker_hashrate_by_name,
         HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
     };
 
@@ -2345,6 +2369,19 @@ mod tests {
         assert_eq!(share_limit(None), 100);
         assert_eq!(share_limit(Some(0)), 1);
         assert_eq!(share_limit(Some(9999)), 500);
+    }
+
+    #[test]
+    fn rejection_window_duration_parses_supported_ranges() {
+        assert_eq!(rejection_window_duration(None).as_secs(), 3600);
+        assert_eq!(rejection_window_duration(Some("1h")).as_secs(), 3600);
+        assert_eq!(rejection_window_duration(Some("24h")).as_secs(), 24 * 3600);
+        assert_eq!(
+            rejection_window_duration(Some("7d")).as_secs(),
+            7 * 24 * 3600
+        );
+        assert_eq!(rejection_window_duration(Some(" 24h ")).as_secs(), 24 * 3600);
+        assert_eq!(rejection_window_duration(Some("bad")).as_secs(), 3600);
     }
 
     #[test]

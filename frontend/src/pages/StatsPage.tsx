@@ -18,12 +18,15 @@ function fmtPct(value: number | null | undefined): string {
   return `${value.toFixed(1)}%`;
 }
 
+type RejectionWindowRange = '1h' | '24h' | '7d';
+
 export function StatsPage({ active, api, liveTick }: StatsPageProps) {
   const [minerInput, setMinerInput] = useState(localStorage.getItem(LAST_MINER_LOOKUP_KEY) || '');
   const [minerAddress, setMinerAddress] = useState('');
   const [minerData, setMinerData] = useState<MinerResponse | null>(null);
   const [range, setRange] = useState<Range>('1h');
   const [history, setHistory] = useState<HashratePoint[]>([]);
+  const [rejectionRange, setRejectionRange] = useState<RejectionWindowRange>('1h');
   const [rejectionWindow, setRejectionWindow] = useState<StatsInsightsResponse['rejections']['window'] | null>(null);
 
   const loadMinerLookup = useCallback(
@@ -65,12 +68,12 @@ export function StatsPage({ active, api, liveTick }: StatsPageProps) {
 
   const loadRejections = useCallback(async () => {
     try {
-      const d = await api.getStatsInsights();
+      const d = await api.getStatsInsights(rejectionRange);
       setRejectionWindow(d.rejections?.window || null);
     } catch {
       setRejectionWindow(null);
     }
-  }, [api]);
+  }, [api, rejectionRange]);
 
   useEffect(() => {
     if (!active) return;
@@ -140,6 +143,17 @@ export function StatsPage({ active, api, liveTick }: StatsPageProps) {
     }
     return oldest ? new Date(oldest).toLocaleDateString() : '-';
   }, [minerData]);
+
+  const rejectionChecked = (rejectionWindow?.accepted ?? 0) + (rejectionWindow?.rejected ?? 0);
+  const rejectionByReason = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const reason of rejectionWindow?.by_reason || []) {
+      map.set(reason.reason, reason.count);
+    }
+    return map;
+  }, [rejectionWindow]);
+  const topWindowReason = rejectionWindow?.by_reason?.[0];
+  const topTotalReason = rejectionWindow?.totals_by_reason?.[0];
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-stats">
@@ -307,6 +321,66 @@ export function StatsPage({ active, api, liveTick }: StatsPageProps) {
           )}
 
           <div className="section">
+            <div className="section-header">
+              <h2>Rejection Analytics (Pool)</h2>
+              <div className="range-tabs">
+                {(['1h', '24h', '7d'] as RejectionWindowRange[]).map((r) => (
+                  <button key={r} className={rejectionRange === r ? 'active' : ''} onClick={() => setRejectionRange(r)}>
+                    {r}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="card table-scroll">
+              <div className="rejection-summary mono">
+                Checked {rejectionChecked} shares
+                {' • '}rejected {rejectionWindow?.rejected ?? 0}
+                {' • '}rate {fmtPct(rejectionWindow?.rejection_rate_pct)}
+                {' • '}all-time rejected {rejectionWindow?.total_rejected ?? 0}
+              </div>
+              <div className="rejection-summary mono">
+                Top reason ({rejectionRange}) {topWindowReason ? `${topWindowReason.reason} (${topWindowReason.count})` : '-'}
+                {' • '}top reason (all-time) {topTotalReason ? `${topTotalReason.reason} (${topTotalReason.count})` : '-'}
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Reason</th>
+                    <th>{rejectionRange}</th>
+                    <th>{rejectionRange} %</th>
+                    <th>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {!rejectionWindow?.totals_by_reason?.length ? (
+                    <tr>
+                      <td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                        No rejection events recorded
+                      </td>
+                    </tr>
+                  ) : (
+                    rejectionWindow.totals_by_reason.map((reason) => {
+                      const windowCount = rejectionByReason.get(reason.reason) || 0;
+                      const windowPct =
+                        (rejectionWindow?.rejected ?? 0) > 0
+                          ? (windowCount / (rejectionWindow?.rejected ?? 0)) * 100
+                          : 0;
+                      return (
+                        <tr key={reason.reason}>
+                          <td>{reason.reason}</td>
+                          <td>{windowCount}</td>
+                          <td>{windowPct > 0 ? fmtPct(windowPct) : '-'}</td>
+                          <td>{reason.count}</td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="section">
             <h2>Recent Shares</h2>
             <div className="card table-scroll">
               <table>
@@ -336,46 +410,6 @@ export function StatsPage({ active, api, liveTick }: StatsPageProps) {
                         <td title={new Date(toUnixMs(s.created_at)).toLocaleString()}>{timeAgo(s.created_at)}</td>
                       </tr>
                     ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="section">
-            <h2>Rejection Analytics (Pool, 1h)</h2>
-            <div className="card table-scroll">
-              <div className="rejection-summary mono">
-                Rejected {rejectionWindow?.rejected ?? 0} / {((rejectionWindow?.accepted ?? 0) + (rejectionWindow?.rejected ?? 0)) || 0} shares
-                {' • '}rate {fmtPct(rejectionWindow?.rejection_rate_pct)}
-              </div>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Reason</th>
-                    <th>Last Hour</th>
-                    <th>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {!rejectionWindow?.totals_by_reason?.length ? (
-                    <tr>
-                      <td colSpan={3} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                        No rejection events recorded
-                      </td>
-                    </tr>
-                  ) : (
-                    rejectionWindow.totals_by_reason.map((reason) => {
-                      const windowCount =
-                        rejectionWindow.by_reason.find((r) => r.reason === reason.reason)?.count || 0;
-                      return (
-                        <tr key={reason.reason}>
-                          <td>{reason.reason}</td>
-                          <td>{windowCount}</td>
-                          <td>{reason.count}</td>
-                        </tr>
-                      );
-                    })
                   )}
                 </tbody>
               </table>
