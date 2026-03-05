@@ -161,6 +161,18 @@ export function DashboardPage({ active, api, poolInfo, liveTick }: DashboardPage
             {stats?.pool?.blocks_found ?? '-'}
           </div>
         </div>
+        <div className="stat-card">
+          <div className="label">Orphaned Blocks</div>
+          <div className="value" id="s-orphaned-blocks">
+            {stats?.pool?.orphaned_blocks ?? '-'}
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="label">Orphan Rate</div>
+          <div className="value" id="s-orphan-rate">
+            {fmtPct(stats?.pool?.orphan_rate_pct)}
+          </div>
+        </div>
       </div>
 
       <div className="section">

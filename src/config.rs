@@ -126,7 +126,7 @@ impl Default for Config {
             payout_scheme: "pplns".to_string(),
             pplns_window: 1000,
             pplns_window_duration: "24h".to_string(),
-            blocks_before_payout: 20,
+            blocks_before_payout: 60,
             min_payout_amount: 0.1,
             block_finder_bonus: false,
             block_finder_bonus_pct: 5.0,

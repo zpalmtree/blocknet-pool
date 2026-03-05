@@ -22,6 +22,8 @@ export interface StatsResponse {
     workers: number;
     hashrate: number;
     blocks_found: number;
+    orphaned_blocks: number;
+    orphan_rate_pct: number;
   };
   chain: {
     network_hashrate?: number | null;

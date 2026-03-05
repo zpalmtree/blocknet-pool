@@ -141,6 +141,14 @@ impl PoolStore {
         }
     }
 
+    /// Returns (confirmed_non_orphaned, orphaned, pending_non_orphaned).
+    pub fn get_block_status_counts(&self) -> Result<(u64, u64, u64)> {
+        match self {
+            PoolStore::Sqlite(v) => v.get_block_status_counts(),
+            PoolStore::Postgres(v) => v.get_block_status_counts(),
+        }
+    }
+
     pub fn get_balance(&self, address: &str) -> Result<Balance> {
         match self {
             PoolStore::Sqlite(v) => v.get_balance(address),

@@ -380,6 +380,26 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         Ok(count.max(0) as u64)
     }
 
+    /// Returns (confirmed_non_orphaned, orphaned, pending_non_orphaned).
+    pub fn get_block_status_counts(&self) -> Result<(u64, u64, u64)> {
+        let row = self.conn().lock().query_one(
+            "SELECT
+                 COALESCE(SUM(CASE WHEN confirmed = TRUE AND orphaned = FALSE THEN 1 ELSE 0 END), 0),
+                 COALESCE(SUM(CASE WHEN orphaned = TRUE THEN 1 ELSE 0 END), 0),
+                 COALESCE(SUM(CASE WHEN confirmed = FALSE AND orphaned = FALSE THEN 1 ELSE 0 END), 0)
+             FROM blocks",
+            &[],
+        )?;
+        let confirmed: i64 = row.get(0);
+        let orphaned: i64 = row.get(1);
+        let pending: i64 = row.get(2);
+        Ok((
+            confirmed.max(0) as u64,
+            orphaned.max(0) as u64,
+            pending.max(0) as u64,
+        ))
+    }
+
     pub fn get_balance(&self, address: &str) -> Result<Balance> {
         let row = self.conn().lock().query_opt(
             "SELECT address, pending, paid FROM balances WHERE address = $1",

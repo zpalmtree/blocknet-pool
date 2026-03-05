@@ -342,6 +342,8 @@ pub struct ApiState {
 struct DbTotals {
     total_shares: u64,
     total_blocks: u64,
+    confirmed_blocks: u64,
+    orphaned_blocks: u64,
     pool_fees_collected: u64,
 }
 
@@ -648,6 +650,8 @@ struct PoolSummary {
     shares_accepted: u64,
     shares_rejected: u64,
     blocks_found: u64,
+    orphaned_blocks: u64,
+    orphan_rate_pct: f64,
     total_shares: u64,
     total_blocks: u64,
     pool_fees_collected: u64,
@@ -811,6 +815,17 @@ async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
             shares_accepted: snap.total_shares_accepted,
             shares_rejected: snap.total_shares_rejected,
             blocks_found: totals.total_blocks,
+            orphaned_blocks: totals.orphaned_blocks,
+            orphan_rate_pct: {
+                let resolved = totals
+                    .confirmed_blocks
+                    .saturating_add(totals.orphaned_blocks);
+                if resolved == 0 {
+                    0.0
+                } else {
+                    (totals.orphaned_blocks as f64 / resolved as f64) * 100.0
+                }
+            },
             total_shares: totals.total_shares,
             total_blocks: totals.total_blocks,
             pool_fees_collected: totals.pool_fees_collected,
@@ -1811,9 +1826,13 @@ impl ApiState {
 
         let store = Arc::clone(&self.store);
         let totals = tokio::task::spawn_blocking(move || -> anyhow::Result<DbTotals> {
+            let (confirmed_blocks, orphaned_blocks, _pending_blocks) =
+                store.get_block_status_counts()?;
             Ok(DbTotals {
                 total_shares: store.get_total_share_count()?,
                 total_blocks: store.get_block_count()?,
+                confirmed_blocks,
+                orphaned_blocks,
                 pool_fees_collected: store.get_total_pool_fees()?,
             })
         })
