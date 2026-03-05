@@ -126,7 +126,7 @@ export function App() {
         <StartPage active={route === 'start'} poolInfo={poolInfo} />
         <BlocksPage active={route === 'blocks'} api={api} />
         <PayoutsPage active={route === 'payouts'} api={api} />
-        <StatsPage active={route === 'stats'} api={api} />
+        <StatsPage active={route === 'stats'} api={api} liveTick={liveTick} />
         <AdminPage
           active={route === 'admin'}
           api={api}

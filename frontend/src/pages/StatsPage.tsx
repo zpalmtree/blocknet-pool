@@ -5,19 +5,26 @@ import { BlockStatusBadge } from '../components/BlockStatusBadge';
 import { HashrateChart } from '../components/HashrateChart';
 import { LAST_MINER_LOOKUP_KEY } from '../lib/storage';
 import { formatCoins, humanRate, timeAgo, toUnixMs } from '../lib/format';
-import type { HashratePoint, MinerResponse, Range } from '../types';
+import type { HashratePoint, MinerResponse, Range, StatsInsightsResponse } from '../types';
 
 interface StatsPageProps {
   active: boolean;
   api: ApiClient;
+  liveTick: number;
 }
 
-export function StatsPage({ active, api }: StatsPageProps) {
+function fmtPct(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '-';
+  return `${value.toFixed(1)}%`;
+}
+
+export function StatsPage({ active, api, liveTick }: StatsPageProps) {
   const [minerInput, setMinerInput] = useState(localStorage.getItem(LAST_MINER_LOOKUP_KEY) || '');
   const [minerAddress, setMinerAddress] = useState('');
   const [minerData, setMinerData] = useState<MinerResponse | null>(null);
   const [range, setRange] = useState<Range>('1h');
   const [history, setHistory] = useState<HashratePoint[]>([]);
+  const [rejectionWindow, setRejectionWindow] = useState<StatsInsightsResponse['rejections']['window'] | null>(null);
 
   const loadMinerLookup = useCallback(
     async (input?: string) => {
@@ -46,6 +53,15 @@ export function StatsPage({ active, api }: StatsPageProps) {
     }
   }, [api, minerAddress, range]);
 
+  const loadRejections = useCallback(async () => {
+    try {
+      const d = await api.getStatsInsights();
+      setRejectionWindow(d.rejections?.window || null);
+    } catch {
+      setRejectionWindow(null);
+    }
+  }, [api]);
+
   useEffect(() => {
     if (!active) return;
 
@@ -68,6 +84,19 @@ export function StatsPage({ active, api }: StatsPageProps) {
     if (!active || !minerAddress) return;
     void loadMinerHashrate();
   }, [active, loadMinerHashrate, minerAddress, range]);
+
+  useEffect(() => {
+    if (!active) return;
+    void loadRejections();
+  }, [active, loadRejections]);
+
+  useEffect(() => {
+    if (!active || !minerData || liveTick <= 0) return;
+    if (liveTick % 2 === 0) {
+      void loadMinerHashrate();
+      void loadRejections();
+    }
+  }, [active, liveTick, minerData, loadMinerHashrate, loadRejections]);
 
   const lookupDisabled = useMemo(() => {
     const addr = minerInput.trim();
@@ -291,6 +320,46 @@ export function StatsPage({ active, api }: StatsPageProps) {
                         <td title={new Date(toUnixMs(s.created_at)).toLocaleString()}>{timeAgo(s.created_at)}</td>
                       </tr>
                     ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="section">
+            <h2>Rejection Analytics (Pool, 1h)</h2>
+            <div className="card table-scroll">
+              <div className="rejection-summary mono">
+                Rejected {rejectionWindow?.rejected ?? 0} / {((rejectionWindow?.accepted ?? 0) + (rejectionWindow?.rejected ?? 0)) || 0} shares
+                {' • '}rate {fmtPct(rejectionWindow?.rejection_rate_pct)}
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Reason</th>
+                    <th>Last Hour</th>
+                    <th>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {!rejectionWindow?.totals_by_reason?.length ? (
+                    <tr>
+                      <td colSpan={3} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                        No rejection events recorded
+                      </td>
+                    </tr>
+                  ) : (
+                    rejectionWindow.totals_by_reason.map((reason) => {
+                      const windowCount =
+                        rejectionWindow.by_reason.find((r) => r.reason === reason.reason)?.count || 0;
+                      return (
+                        <tr key={reason.reason}>
+                          <td>{reason.reason}</td>
+                          <td>{windowCount}</td>
+                          <td>{reason.count}</td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>

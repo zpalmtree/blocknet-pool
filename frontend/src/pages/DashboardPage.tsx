@@ -123,7 +123,6 @@ export function DashboardPage({ active, api, poolInfo, liveTick }: DashboardPage
 
   const round = insights?.round;
   const payoutEta = insights?.payout_eta;
-  const rejectionWindow = insights?.rejections.window;
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-dashboard">
@@ -285,47 +284,6 @@ export function DashboardPage({ active, api, poolInfo, liveTick }: DashboardPage
                     <td title={new Date(toUnixMs(row.timestamp)).toLocaleString()}>{timeAgo(row.timestamp)}</td>
                   </tr>
                 ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="section">
-        <div className="section-header">
-          <h2>Rejection Analytics (1h)</h2>
-        </div>
-        <div className="card table-scroll">
-          <div className="rejection-summary mono">
-            Rejected {rejectionWindow?.rejected ?? 0} / {((rejectionWindow?.accepted ?? 0) + (rejectionWindow?.rejected ?? 0)) || 0} shares
-            {' • '}rate {fmtPct(rejectionWindow?.rejection_rate_pct)}
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Reason</th>
-                <th>Last Hour</th>
-                <th>Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {!rejectionWindow?.totals_by_reason?.length ? (
-                <tr>
-                  <td colSpan={3} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                    No rejection events recorded
-                  </td>
-                </tr>
-              ) : (
-                rejectionWindow.totals_by_reason.map((reason) => {
-                  const windowCount = rejectionWindow.by_reason.find((r) => r.reason === reason.reason)?.count || 0;
-                  return (
-                    <tr key={reason.reason}>
-                      <td>{reason.reason}</td>
-                      <td>{windowCount}</td>
-                      <td>{reason.count}</td>
-                    </tr>
-                  );
-                })
               )}
             </tbody>
           </table>
