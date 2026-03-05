@@ -137,7 +137,21 @@ impl StratumServer {
                     }
                     maybe_job = rx_jobs.recv(), if logged_in.is_some() => {
                         if let Ok(job) = maybe_job {
-                            if let Some((address, _, difficulty)) = logged_in.as_ref() {
+                            if let Some((address, worker, difficulty)) = logged_in.as_mut() {
+                                let next_difficulty = self
+                                    .engine
+                                    .retarget_on_job_if_needed(&conn_id)
+                                    .unwrap_or(*difficulty);
+                                if next_difficulty != *difficulty {
+                                    *difficulty = next_difficulty;
+                                    tracing::debug!(
+                                        peer = %peer,
+                                        address = %address,
+                                        worker = %worker,
+                                        difficulty = next_difficulty,
+                                        "stratum difficulty updated on job tick"
+                                    );
+                                }
                                 if let Some(miner_job) = self.jobs.build_miner_job(*difficulty, address) {
                                     let notify = StratumNotify {
                                         method: "job".to_string(),

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{anyhow, Context, Result};
-use blocknet_pool_rs::api::{run_api, ApiState};
+use blocknet_pool_rs::api::{run_api, ApiState, DEFAULT_MAX_SSE_SUBSCRIBERS};
 use blocknet_pool_rs::config::{generate_default_env, Config};
 use blocknet_pool_rs::engine::{JobRepository, NodeApi, PoolEngine, ShareStore};
 use blocknet_pool_rs::jobs::JobManager;
@@ -152,6 +152,9 @@ async fn main() -> Result<()> {
         )),
         insights_cache: Arc::new(Mutex::new(blocknet_pool_rs::api::InsightsCache::default())),
         status_history: Arc::new(Mutex::new(blocknet_pool_rs::api::StatusHistory::default())),
+        sse_subscriber_limiter: Arc::new(tokio::sync::Semaphore::new(
+            DEFAULT_MAX_SSE_SUBSCRIBERS,
+        )),
         api_key: cfg.api_key.clone(),
         pool_name: cfg.pool_name.clone(),
         pool_url: cfg.pool_url.clone(),

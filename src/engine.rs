@@ -23,7 +23,9 @@ use crate::validation::{
     SHARE_STATUS_VERIFIED,
 };
 
-const VARDIFF_MIN_SAMPLE_COUNT: usize = 3;
+// Start retargeting after two accepted shares so reconnects/high starting diff
+// settle faster on weak miners.
+const VARDIFF_MIN_SAMPLE_COUNT: usize = 2;
 const VARDIFF_RATIO_DAMPING_EXPONENT: f64 = 0.45;
 const VARDIFF_MIN_ADJUSTMENT_FACTOR: f64 = 1.02;
 const VARDIFF_MAX_ADJUSTMENT_FACTOR: f64 = 1.5;
@@ -248,6 +250,7 @@ struct MinerSession {
     protocol_version: u32,
     capabilities: BTreeSet<String>,
     accepted_share_times: VecDeque<Instant>,
+    last_accepted_share_at: Option<Instant>,
     last_difficulty_adjustment: Option<Instant>,
     last_difficulty_hint_write: Option<Instant>,
 }
@@ -370,6 +373,7 @@ impl PoolEngine {
                 protocol_version,
                 capabilities: cap_set,
                 accepted_share_times: VecDeque::new(),
+                last_accepted_share_at: None,
                 last_difficulty_adjustment: None,
                 last_difficulty_hint_write: None,
             },
@@ -823,6 +827,61 @@ impl PoolEngine {
             .map(|session| session.difficulty)
     }
 
+    pub fn retarget_on_job_if_needed(&self, conn_id: &str) -> Option<u64> {
+        if !self.cfg.enable_vardiff {
+            return self.session_difficulty(conn_id);
+        }
+
+        let min_diff = self.cfg.min_share_difficulty.max(1);
+        let max_diff = self.cfg.max_share_difficulty.max(min_diff);
+        let retarget_interval = self
+            .cfg
+            .vardiff_retarget_interval_duration()
+            .clamp(Duration::from_secs(2), Duration::from_secs(8));
+        let target_interval = vardiff_target_interval_seconds(&self.cfg);
+        let tolerance = self.cfg.vardiff_tolerance.clamp(0.01, 0.95);
+        let upper = target_interval * (1.0 + tolerance);
+        let now = Instant::now();
+
+        let mut sessions = self.sessions.lock();
+        let session = sessions.get_mut(conn_id)?;
+        session.difficulty = session.difficulty.clamp(min_diff, max_diff);
+
+        let can_retarget = session
+            .last_difficulty_adjustment
+            .is_none_or(|last| now.duration_since(last) >= retarget_interval);
+        if can_retarget {
+            if let Some(last_share_at) = session.last_accepted_share_at {
+                let observed_interval = now.duration_since(last_share_at).as_secs_f64();
+                if observed_interval > upper {
+                    let raw_ratio = observed_interval / target_interval;
+                    let ratio = raw_ratio
+                        .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
+                        .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
+                    let next_diff = ((session.difficulty as f64) / ratio)
+                        .floor()
+                        .max(1.0) as u64;
+                    let next_diff = next_diff.clamp(min_diff, max_diff);
+                    session.last_difficulty_adjustment = Some(now);
+                    if next_diff != session.difficulty {
+                        let miner = compact_address(&session.address);
+                        tracing::debug!(
+                            "vardiff {:>4} -> {:>4} (idle {:>5.1}s on job tick, target {:>4.0}s, miner {})",
+                            session.difficulty,
+                            next_diff,
+                            observed_interval,
+                            target_interval,
+                            miner
+                        );
+                        session.difficulty = next_diff;
+                    }
+                }
+            }
+        }
+
+        Some(session.difficulty)
+    }
+
     pub fn session_capabilities(&self, conn_id: &str) -> Option<Vec<String>> {
         self.sessions.lock().get(conn_id).map(|session| {
             session
@@ -865,6 +924,10 @@ impl PoolEngine {
         let target_interval = vardiff_target_interval_seconds(&self.cfg);
         let tolerance = self.cfg.vardiff_tolerance.clamp(0.01, 0.95);
 
+        let last_share_age = session
+            .last_accepted_share_at
+            .map(|last| now.duration_since(last));
+        session.last_accepted_share_at = Some(now);
         session.accepted_share_times.push_back(now);
         let cutoff = now.checked_sub(window).unwrap_or(now);
         while session
@@ -875,11 +938,10 @@ impl PoolEngine {
             session.accepted_share_times.pop_front();
         }
 
-        if session.accepted_share_times.len() >= VARDIFF_MIN_SAMPLE_COUNT
-            && !session
-                .last_difficulty_adjustment
-                .is_some_and(|last| now.duration_since(last) < retarget_interval)
-        {
+        let can_retarget = session
+            .last_difficulty_adjustment
+            .is_none_or(|last| now.duration_since(last) >= retarget_interval);
+        if session.accepted_share_times.len() >= VARDIFF_MIN_SAMPLE_COUNT && can_retarget {
             if let Some(oldest) = session.accepted_share_times.front().copied() {
                 let elapsed = now.duration_since(oldest).as_secs_f64();
                 if elapsed >= 1.0 {
@@ -910,6 +972,36 @@ impl PoolEngine {
                         let miner = compact_address(&session.address);
                         tracing::debug!(
                             "vardiff {:>4} -> {:>4} (observed {:>5.1}s, target {:>4.0}s, miner {})",
+                            session.difficulty,
+                            next_diff,
+                            observed_interval,
+                            target_interval,
+                            miner
+                        );
+                        session.difficulty = next_diff;
+                    }
+                }
+            }
+        } else if can_retarget {
+            // If the previous accepted share fell out of the vardiff window, we can still
+            // decay difficulty based on idle time before this accepted share.
+            if let Some(age) = last_share_age {
+                let observed_interval = age.as_secs_f64();
+                let upper = target_interval * (1.0 + tolerance);
+                if observed_interval > upper {
+                    let raw_ratio = observed_interval / target_interval;
+                    let ratio = raw_ratio
+                        .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
+                        .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
+                    let next_diff = ((session.difficulty as f64) / ratio)
+                        .floor()
+                        .max(1.0) as u64;
+                    let next_diff = next_diff.clamp(min_diff, max_diff);
+                    session.last_difficulty_adjustment = Some(now);
+                    if next_diff != session.difficulty {
+                        let miner = compact_address(&session.address);
+                        tracing::debug!(
+                            "vardiff {:>4} -> {:>4} (idle {:>5.1}s, target {:>4.0}s, miner {})",
                             session.difficulty,
                             next_diff,
                             observed_interval,
@@ -2055,6 +2147,116 @@ mod tests {
         assert!(ack.next_difficulty >= ack.share_difficulty);
         let capped = ((ack.share_difficulty as f64) * VARDIFF_MAX_ADJUSTMENT_FACTOR).ceil() as u64;
         assert!(ack.next_difficulty <= capped);
+    }
+
+    #[test]
+    fn vardiff_decreases_after_idle_gap_with_sparse_window_samples() {
+        struct ZeroHasher;
+        impl PowHasher for ZeroHasher {
+            fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
+                Ok([0u8; 32])
+            }
+        }
+
+        let mut cfg = cfg();
+        cfg.enable_vardiff = true;
+        cfg.validation_mode = "full".to_string();
+        cfg.initial_share_difficulty = 100;
+        cfg.vardiff_target_shares = 60;
+        cfg.vardiff_window = "1s".to_string();
+        cfg.vardiff_retarget_interval = "1s".to_string();
+
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(ZeroHasher));
+        let validation = Arc::new(validation);
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .expect("login");
+        let first = engine
+            .submit("conn1", "job1".to_string(), 300, Some("00".repeat(32)))
+            .expect("share 1");
+        assert_eq!(first.share_difficulty, 100);
+        assert_eq!(first.next_difficulty, 100);
+
+        {
+            let mut sessions = engine.sessions.lock();
+            let session = sessions
+                .get_mut("conn1")
+                .expect("session should exist after login");
+            // Simulate a sparse current vardiff window while preserving last-share age.
+            session.accepted_share_times.clear();
+        }
+
+        std::thread::sleep(Duration::from_millis(2_200));
+
+        let second = engine
+            .submit("conn1", "job1".to_string(), 301, Some("00".repeat(32)))
+            .expect("share 2");
+        assert!(
+            second.next_difficulty < second.share_difficulty,
+            "difficulty should decay after an idle gap even when prior share aged out of window"
+        );
+    }
+
+    #[test]
+    fn vardiff_job_tick_decreases_difficulty_after_idle_gap() {
+        struct ZeroHasher;
+        impl PowHasher for ZeroHasher {
+            fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
+                Ok([0u8; 32])
+            }
+        }
+
+        let mut cfg = cfg();
+        cfg.enable_vardiff = true;
+        cfg.validation_mode = "full".to_string();
+        cfg.initial_share_difficulty = 100;
+        cfg.vardiff_target_shares = 60;
+        cfg.vardiff_window = "1s".to_string();
+        cfg.vardiff_retarget_interval = "1s".to_string();
+
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(ZeroHasher));
+        let validation = Arc::new(validation);
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .expect("login");
+        let first = engine
+            .submit("conn1", "job1".to_string(), 400, Some("00".repeat(32)))
+            .expect("share 1");
+        assert_eq!(first.next_difficulty, 100);
+
+        std::thread::sleep(Duration::from_millis(2_200));
+
+        let before = engine
+            .session_difficulty("conn1")
+            .expect("session difficulty should exist");
+        let after = engine
+            .retarget_on_job_if_needed("conn1")
+            .expect("session difficulty should still exist");
+
+        assert!(
+            after < before,
+            "job-driven retarget should decay difficulty after idle gap"
+        );
     }
 
     #[test]

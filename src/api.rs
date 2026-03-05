@@ -10,11 +10,12 @@ use axum::http::header;
 use axum::http::{Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::response::{Html, IntoResponse};
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Semaphore;
 use tokio_stream::wrappers::IntervalStream;
 use tokio_stream::StreamExt;
 
@@ -50,6 +51,7 @@ const STATUS_MAX_INCIDENTS: usize = 256;
 const MINER_PAYOUT_HISTORY_LIMIT: i64 = 50;
 const PROPORTIONAL_WINDOW: Duration = Duration::from_secs(60 * 60);
 const MAX_MINER_HASHRATE_DB_LOOKUPS: usize = 4096;
+pub const DEFAULT_MAX_SSE_SUBSCRIBERS: usize = 256;
 
 fn db_miner_hashrate(store: &PoolStore, address: &str) -> f64 {
     let since = SystemTime::now()
@@ -331,6 +333,7 @@ pub struct ApiState {
     pub network_hashrate_cache: Arc<Mutex<NetworkHashrateCache>>,
     pub insights_cache: Arc<Mutex<InsightsCache>>,
     pub status_history: Arc<Mutex<StatusHistory>>,
+    pub sse_subscriber_limiter: Arc<Semaphore>,
     pub api_key: String,
     pub pool_name: String,
     pub pool_url: String,
@@ -920,11 +923,24 @@ async fn handle_status(State(state): State<ApiState>) -> impl IntoResponse {
     Json(state.build_status_response(daemon)).into_response()
 }
 
-async fn handle_events(
-    State(state): State<ApiState>,
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
-    let stream =
-        IntervalStream::new(tokio::time::interval(Duration::from_secs(5))).then(move |_| {
+async fn handle_events(State(state): State<ApiState>) -> Response {
+    let permit = match Arc::clone(&state.sse_subscriber_limiter).try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(header::RETRY_AFTER, "5")],
+                Json(serde_json::json!({"error":"too many active event subscribers"})),
+            )
+                .into_response();
+        }
+    };
+
+    let stream = IntervalStream::new(tokio::time::interval(Duration::from_secs(5))).then({
+        let state = state.clone();
+        move |_| {
+            // Keep the semaphore permit held for the full stream lifetime.
+            let _permit_held = &permit;
             let state = state.clone();
             async move {
                 let snap = state.stats.snapshot();
@@ -947,13 +963,16 @@ async fn handle_events(
                 });
                 Ok::<Event, Infallible>(Event::default().event("tick").data(payload.to_string()))
             }
-        });
+        }
+    });
 
-    Sse::new(stream).keep_alive(
-        KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text("keepalive"),
-    )
+    Sse::new(stream)
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .text("keepalive"),
+        )
+        .into_response()
 }
 
 async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
