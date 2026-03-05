@@ -93,17 +93,21 @@ export function StatsPage({ active, api, liveTick }: StatsPageProps) {
     if (!active) return;
 
     const stored = localStorage.getItem(LAST_MINER_LOOKUP_KEY) || '';
-    if (stored && stored !== minerInput) {
-      setMinerInput(stored);
-    }
+    // Hydrate from storage only when there is no loaded miner yet.
+    // Do not overwrite manual edits while a miner is already loaded.
+    if (!minerAddress) {
+      if (!minerInput.trim() && stored) {
+        setMinerInput(stored);
+      }
 
-    if (!minerAddress && stored) {
-      void loadMinerLookup(stored);
-      return;
-    }
+      if (stored) {
+        void loadMinerLookup(stored);
+        return;
+      }
 
-    if (!minerAddress && minerInput.trim()) {
-      void loadMinerLookup(minerInput);
+      if (minerInput.trim()) {
+        void loadMinerLookup(minerInput);
+      }
     }
   }, [active, loadMinerLookup, minerAddress, minerInput]);
 
