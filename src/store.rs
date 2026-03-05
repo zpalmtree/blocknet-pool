@@ -563,7 +563,11 @@ impl ShareStore for PoolStore {
             difficulty: block.difficulty,
             finder: block.finder,
             finder_worker: block.finder_worker,
-            reward: estimated_block_reward(block.height),
+            reward: if block.reward > 0 {
+                block.reward
+            } else {
+                estimated_block_reward(block.height)
+            },
             timestamp: block.timestamp,
             confirmed: false,
             orphaned: false,
@@ -694,6 +698,7 @@ mod tests {
                 height: 42,
                 hash: "h42".to_string(),
                 difficulty: 123,
+                reward: 456,
                 finder: "addr1".to_string(),
                 finder_worker: "w1".to_string(),
                 timestamp: SystemTime::now(),
@@ -705,7 +710,7 @@ mod tests {
             .expect("query block")
             .expect("block exists");
         assert_eq!(block.hash, "h42");
-        assert_eq!(block.reward, estimated_block_reward(42));
+        assert_eq!(block.reward, 456);
         assert!(!block.confirmed);
         assert!(!block.paid_out);
     }
@@ -733,6 +738,7 @@ mod tests {
                 height: 77,
                 hash: "conflicting".to_string(),
                 difficulty: 1,
+                reward: 1,
                 finder: "addr-new".to_string(),
                 finder_worker: "rig-new".to_string(),
                 timestamp: SystemTime::now(),

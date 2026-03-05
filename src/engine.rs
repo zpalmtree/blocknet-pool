@@ -209,6 +209,7 @@ pub struct FoundBlockRecord {
     pub height: u64,
     pub hash: String,
     pub difficulty: u64,
+    pub reward: u64,
     pub finder: String,
     pub finder_worker: String,
     pub timestamp: SystemTime,
@@ -219,6 +220,8 @@ struct FoundBlockOutboxRecord {
     height: u64,
     hash: String,
     difficulty: u64,
+    #[serde(default)]
+    reward: u64,
     finder: String,
     finder_worker: String,
     timestamp_unix: i64,
@@ -537,6 +540,7 @@ impl PoolEngine {
                         height: accepted_height,
                         hash: accepted_hash,
                         difficulty: job.network_difficulty,
+                        reward: job_template_reward(&job),
                         finder: session.address.clone(),
                         finder_worker: session.worker.clone(),
                         timestamp: SystemTime::now(),
@@ -694,6 +698,7 @@ impl PoolEngine {
                 height: record.height,
                 hash: record.hash,
                 difficulty: record.difficulty,
+                reward: record.reward,
                 finder: record.finder,
                 finder_worker: record.finder_worker,
                 timestamp: unix_to_system_time(record.timestamp_unix),
@@ -942,6 +947,31 @@ fn hex_string(hash: [u8; 32]) -> String {
     out
 }
 
+fn job_template_reward(job: &Job) -> u64 {
+    fn as_u64(value: &serde_json::Value) -> Option<u64> {
+        value
+            .as_u64()
+            .or_else(|| value.as_i64().and_then(|v| u64::try_from(v).ok()))
+            .or_else(|| value.as_str().and_then(|v| v.trim().parse::<u64>().ok()))
+    }
+
+    let Some(block) = job.full_block.as_ref() else {
+        return 0;
+    };
+
+    block
+        .get("reward")
+        .or_else(|| block.get("Reward"))
+        .and_then(as_u64)
+        .or_else(|| {
+            block
+                .get("header")
+                .and_then(|header| header.get("reward").or_else(|| header.get("Reward")))
+                .and_then(as_u64)
+        })
+        .unwrap_or(0)
+}
+
 fn found_block_outbox_path() -> PathBuf {
     let configured = env::var(FOUND_BLOCK_OUTBOX_ENV)
         .ok()
@@ -996,6 +1026,7 @@ fn append_found_block_outbox_record(path: &PathBuf, found: &FoundBlockRecord) ->
         height: found.height,
         hash: found.hash.clone(),
         difficulty: found.difficulty,
+        reward: found.reward,
         finder: found.finder.clone(),
         finder_worker: found.finder_worker.clone(),
         timestamp_unix: system_time_to_unix(found.timestamp),
@@ -1246,6 +1277,20 @@ mod tests {
 
     fn other_miner_address() -> String {
         bs58::encode([0x22; 64]).into_string()
+    }
+
+    #[test]
+    fn job_template_reward_reads_numeric_reward() {
+        let mut j = job();
+        j.full_block = Some(serde_json::json!({"reward": 123456789u64}));
+        assert_eq!(job_template_reward(&j), 123456789);
+    }
+
+    #[test]
+    fn job_template_reward_reads_header_string_reward() {
+        let mut j = job();
+        j.full_block = Some(serde_json::json!({"header": {"Reward": "456"}}));
+        assert_eq!(job_template_reward(&j), 456);
     }
 
     #[test]

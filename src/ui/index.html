@@ -701,9 +701,11 @@ function rangeToDurationMs(range){
 }
 function smoothingWindowForRange(range,count){
   if(count<5)return 1;
-  var window=5;
-  if(range==='24h')window=7;
-  if(range==='1h')window=5;
+  var window=7;
+  if(range==='1h')window=9;
+  if(range==='24h')window=11;
+  if(range==='7d')window=9;
+  if(range==='30d')window=7;
   if(window>=count)window=count-(count%2===0?1:0);
   if(window<3)return 1;
   if(window%2===0)window-=1;

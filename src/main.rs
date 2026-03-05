@@ -240,22 +240,13 @@ fn db_pool_hashrate(store: &PoolStore, window: Duration) -> f64 {
     let since = std::time::SystemTime::now()
         .checked_sub(window)
         .unwrap_or(std::time::UNIX_EPOCH);
-    let Ok((total_diff, count, oldest, newest)) = store.hashrate_stats_pool(since) else {
+    let Ok((total_diff, _count, _oldest, _newest)) = store.hashrate_stats_pool(since) else {
         return 0.0;
     };
-    if count < 2 {
+    if total_diff == 0 {
         return 0.0;
     }
-    let (Some(oldest), Some(newest)) = (oldest, newest) else {
-        return 0.0;
-    };
-    let Ok(w) = newest.duration_since(oldest) else {
-        return 0.0;
-    };
-    if w.as_secs_f64() < 1.0 {
-        return 0.0;
-    }
-    total_diff as f64 / w.as_secs_f64()
+    total_diff as f64 / window.as_secs_f64().max(1.0)
 }
 
 fn start_found_block_recovery(engine: Arc<PoolEngine>) {

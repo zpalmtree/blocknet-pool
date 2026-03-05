@@ -59,10 +59,13 @@ fn db_pool_hashrate(store: &PoolStore) -> f64 {
     let since = SystemTime::now()
         .checked_sub(HASHRATE_WINDOW)
         .unwrap_or(UNIX_EPOCH);
-    let Ok((total_diff, count, oldest, newest)) = store.hashrate_stats_pool(since) else {
+    let Ok((total_diff, _count, _oldest, _newest)) = store.hashrate_stats_pool(since) else {
         return 0.0;
     };
-    hashrate_from_stats(total_diff, count, oldest, newest)
+    if total_diff == 0 {
+        return 0.0;
+    }
+    total_diff as f64 / HASHRATE_WINDOW.as_secs_f64().max(1.0)
 }
 
 fn estimated_block_reward(height: u64) -> u64 {

@@ -103,13 +103,13 @@ impl PayoutProcessor {
         };
 
         let current_height = self.node.chain_height();
+        let required_confirmations = self.cfg.blocks_before_payout.max(0) as u64;
 
         for mut block in blocks {
-            if current_height < block.height
-                || current_height - block.height < self.cfg.blocks_before_payout.max(0) as u64
-            {
+            if current_height < block.height {
                 continue;
             }
+            let depth = current_height.saturating_sub(block.height);
 
             let node_block = match self.node.get_block(&block.height.to_string()) {
                 Ok(v) => v,
@@ -121,9 +121,7 @@ impl PayoutProcessor {
 
             if node_block.hash != block.hash {
                 let grace = 6u64;
-                if current_height - block.height
-                    < self.cfg.blocks_before_payout.max(0) as u64 + grace
-                {
+                if depth < required_confirmations + grace {
                     continue;
                 }
 
@@ -134,10 +132,19 @@ impl PayoutProcessor {
                 continue;
             }
 
-            block.confirmed = true;
-            block.reward = node_block.reward;
-            if let Err(err) = self.store.update_block(&block) {
-                tracing::warn!(height = block.height, error = %err, "failed to update confirmed block");
+            let mut changed = false;
+            if block.reward != node_block.reward {
+                block.reward = node_block.reward;
+                changed = true;
+            }
+            if depth >= required_confirmations && !block.confirmed {
+                block.confirmed = true;
+                changed = true;
+            }
+            if changed {
+                if let Err(err) = self.store.update_block(&block) {
+                    tracing::warn!(height = block.height, error = %err, "failed to update block confirmation state");
+                }
             }
         }
     }
