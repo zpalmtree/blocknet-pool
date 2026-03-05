@@ -12,6 +12,14 @@ use crate::db::{
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::pgdb::PostgresStore;
 
+// Matches daemon emission curve for provisional pending-block display values.
+const INITIAL_REWARD: u64 = 72_325_093_035;
+const TAIL_EMISSION: u64 = 200_000_000;
+const MONTHS_TO_TAIL: u64 = 48;
+const DECAY_RATE: f64 = 0.75;
+const BLOCK_INTERVAL_SECS: u64 = 5 * 60;
+const BLOCKS_PER_MONTH: u64 = (30 * 24 * 60 * 60) / BLOCK_INTERVAL_SECS;
+
 pub enum PoolStore {
     Sqlite(Arc<SqliteStore>),
     Postgres(Arc<PostgresStore>),
@@ -555,7 +563,7 @@ impl ShareStore for PoolStore {
             difficulty: block.difficulty,
             finder: block.finder,
             finder_worker: block.finder_worker,
-            reward: 0,
+            reward: estimated_block_reward(block.height),
             timestamp: block.timestamp,
             confirmed: false,
             orphaned: false,
@@ -648,6 +656,23 @@ impl ShareStore for PoolStore {
     }
 }
 
+fn estimated_block_reward(height: u64) -> u64 {
+    let month = height / BLOCKS_PER_MONTH.max(1);
+    if month >= MONTHS_TO_TAIL {
+        return TAIL_EMISSION;
+    }
+
+    let years = month as f64 / 12.0;
+    let decay = (-DECAY_RATE * years).exp();
+    let reward =
+        (INITIAL_REWARD.saturating_sub(TAIL_EMISSION)) as f64 * decay + TAIL_EMISSION as f64;
+    if reward < TAIL_EMISSION as f64 {
+        TAIL_EMISSION
+    } else {
+        reward as u64
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -680,7 +705,7 @@ mod tests {
             .expect("query block")
             .expect("block exists");
         assert_eq!(block.hash, "h42");
-        assert_eq!(block.reward, 0);
+        assert_eq!(block.reward, estimated_block_reward(42));
         assert!(!block.confirmed);
         assert!(!block.paid_out);
     }
@@ -737,5 +762,11 @@ mod tests {
             .expect("get hint")
             .expect("hint exists");
         assert_eq!(hint.0, 77);
+    }
+
+    #[test]
+    fn estimated_block_reward_has_tail_floor() {
+        let very_high_height = BLOCKS_PER_MONTH.saturating_mul(MONTHS_TO_TAIL + 1);
+        assert_eq!(estimated_block_reward(very_high_height), TAIL_EMISSION);
     }
 }

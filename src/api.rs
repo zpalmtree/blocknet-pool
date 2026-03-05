@@ -14,7 +14,7 @@ use axum::{Json, Router};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
-use crate::db::{Payout, PoolFeeEvent};
+use crate::db::{DbBlock, Payout, PoolFeeEvent};
 use crate::engine::JobRepository;
 use crate::jobs::JobManager;
 use crate::node::NodeClient;
@@ -29,6 +29,12 @@ const NETWORK_HASHRATE_CACHE_RETRY_TTL: Duration = Duration::from_secs(5);
 const DEFAULT_PAGE_LIMIT: usize = 25;
 const MAX_PAGE_LIMIT: usize = 200;
 const HASHRATE_WINDOW: Duration = Duration::from_secs(60 * 60);
+const INITIAL_REWARD: u64 = 72_325_093_035;
+const TAIL_EMISSION: u64 = 200_000_000;
+const MONTHS_TO_TAIL: u64 = 48;
+const DECAY_RATE: f64 = 0.75;
+const BLOCK_INTERVAL_SECS: u64 = 5 * 60;
+const BLOCKS_PER_MONTH: u64 = (30 * 24 * 60 * 60) / BLOCK_INTERVAL_SECS;
 
 fn db_miner_hashrate(store: &PoolStore, address: &str) -> f64 {
     let since = SystemTime::now()
@@ -49,6 +55,28 @@ fn db_pool_hashrate(store: &PoolStore) -> f64 {
         return 0.0;
     };
     hashrate_from_stats(total_diff, count, oldest, newest)
+}
+
+fn estimated_block_reward(height: u64) -> u64 {
+    let month = height / BLOCKS_PER_MONTH.max(1);
+    if month >= MONTHS_TO_TAIL {
+        return TAIL_EMISSION;
+    }
+    let years = month as f64 / 12.0;
+    let decay = (-DECAY_RATE * years).exp();
+    let reward =
+        (INITIAL_REWARD.saturating_sub(TAIL_EMISSION)) as f64 * decay + TAIL_EMISSION as f64;
+    if reward < TAIL_EMISSION as f64 {
+        TAIL_EMISSION
+    } else {
+        reward as u64
+    }
+}
+
+fn hydrate_provisional_block_reward(block: &mut DbBlock) {
+    if !block.confirmed && !block.orphaned && block.reward == 0 {
+        block.reward = estimated_block_reward(block.height);
+    }
 }
 
 fn hashrate_from_stats(
@@ -722,8 +750,18 @@ async fn handle_miner(
             .into_response()
         }
     };
-    let (shares, balance, pending_payout, hashrate, workers_raw, worker_hashrate_raw, miner_blocks) =
-        db_result;
+    let (
+        shares,
+        balance,
+        pending_payout,
+        hashrate,
+        workers_raw,
+        worker_hashrate_raw,
+        mut miner_blocks,
+    ) = db_result;
+    for block in &mut miner_blocks {
+        hydrate_provisional_block_reward(block);
+    }
 
     let balance_json = serde_json::json!({
         "pending": balance.pending,
@@ -835,7 +873,9 @@ async fn handle_blocks(
     let store = Arc::clone(&state.store);
 
     if query.legacy_mode() {
-        let blocks = match tokio::task::spawn_blocking(move || store.get_recent_blocks(100)).await {
+        let mut blocks = match tokio::task::spawn_blocking(move || store.get_recent_blocks(100))
+            .await
+        {
             Ok(Ok(v)) => v,
             Ok(Err(err)) => return internal_error("failed loading blocks", err).into_response(),
             Err(err) => {
@@ -846,6 +886,9 @@ async fn handle_blocks(
                 .into_response()
             }
         };
+        for block in &mut blocks {
+            hydrate_provisional_block_reward(block);
+        }
         return Json(blocks).into_response();
     }
 
@@ -861,6 +904,9 @@ async fn handle_blocks(
             .into_response()
         }
     };
+    for block in &mut blocks {
+        hydrate_provisional_block_reward(block);
+    }
 
     if let Some(finder) = non_empty(&query.finder) {
         blocks.retain(|block| contains_ci(&block.finder, finder));
@@ -1403,8 +1449,11 @@ fn internal_error(msg: &str, err: anyhow::Error) -> (StatusCode, Json<serde_json
 mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+    use crate::db::DbBlock;
+
     use super::{
-        contains_ci, miner_has_activity, page_bounds, share_limit, worker_hashrate_by_name,
+        contains_ci, estimated_block_reward, hydrate_provisional_block_reward, miner_has_activity,
+        page_bounds, share_limit, worker_hashrate_by_name,
     };
 
     #[test]
@@ -1478,5 +1527,41 @@ mod tests {
             worker_hashrate_by_name(0.0, vec![("w1".to_string(), 200, 2, Some(t0), Some(t1))]);
         let w1 = map.get("w1").copied().unwrap_or_default();
         assert!((w1 - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn hydrate_provisional_reward_fills_pending_zero_reward() {
+        let mut block = DbBlock {
+            height: 3707,
+            hash: "abc".to_string(),
+            difficulty: 1,
+            finder: "addr".to_string(),
+            finder_worker: "rig".to_string(),
+            reward: 0,
+            timestamp: SystemTime::now(),
+            confirmed: false,
+            orphaned: false,
+            paid_out: false,
+        };
+        hydrate_provisional_block_reward(&mut block);
+        assert_eq!(block.reward, estimated_block_reward(3707));
+    }
+
+    #[test]
+    fn hydrate_provisional_reward_does_not_change_confirmed_blocks() {
+        let mut block = DbBlock {
+            height: 3707,
+            hash: "abc".to_string(),
+            difficulty: 1,
+            finder: "addr".to_string(),
+            finder_worker: "rig".to_string(),
+            reward: 123,
+            timestamp: SystemTime::now(),
+            confirmed: true,
+            orphaned: false,
+            paid_out: false,
+        };
+        hydrate_provisional_block_reward(&mut block);
+        assert_eq!(block.reward, 123);
     }
 }
