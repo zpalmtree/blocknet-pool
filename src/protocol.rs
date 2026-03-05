@@ -10,6 +10,7 @@ pub const STRATUM_PROTOCOL_VERSION_CURRENT: u32 = 2;
 pub const CAP_LOGIN_NEGOTIATION: &str = "login_negotiation";
 pub const CAP_SHARE_VALIDATION_STATUS: &str = "share_validation_status";
 pub const CAP_SUBMIT_CLAIMED_HASH: &str = "submit_claimed_hash";
+pub const CAP_DIFFICULTY_HINT: &str = "difficulty_hint";
 const STEALTH_ADDRESS_CHECKSUM_TAG: &[u8] = b"blocknet_stealth_address_checksum";
 const NETWORK_ID_MAINNET: &str = "blocknet_mainnet";
 const NETWORK_ID_TESTNET: &str = "blocknet_testnet";
@@ -47,6 +48,8 @@ pub struct LoginParams {
     pub protocol_version: u32,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub difficulty_hint: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -104,6 +107,7 @@ pub fn build_login_result(protocol_version: u32, submit_v2_required: bool) -> Lo
     ];
     if protocol_version >= STRATUM_PROTOCOL_VERSION_CURRENT {
         capabilities.push(CAP_SUBMIT_CLAIMED_HASH.to_string());
+        capabilities.push(CAP_DIFFICULTY_HINT.to_string());
     }
 
     let mut required_capabilities = Vec::new();
@@ -244,10 +248,24 @@ mod tests {
             .capabilities
             .iter()
             .any(|c| c == CAP_SUBMIT_CLAIMED_HASH));
+        assert!(result.capabilities.iter().any(|c| c == CAP_DIFFICULTY_HINT));
         assert_eq!(
             result.required_capabilities,
             vec![CAP_SUBMIT_CLAIMED_HASH.to_string()]
         );
+    }
+
+    #[test]
+    fn login_params_accept_optional_difficulty_hint() {
+        let raw = serde_json::json!({
+            "address": "addr",
+            "worker": "rig01",
+            "protocol_version": 2,
+            "capabilities": ["submit_claimed_hash"],
+            "difficulty_hint": 321
+        });
+        let parsed: LoginParams = serde_json::from_value(raw).expect("parse login params");
+        assert_eq!(parsed.difficulty_hint, Some(321));
     }
 
     #[test]

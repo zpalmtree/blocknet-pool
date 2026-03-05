@@ -192,13 +192,15 @@ impl StratumServer {
                                 let login_worker = params.worker.clone();
                                 let login_protocol_version = params.protocol_version;
                                 let login_capabilities = params.capabilities.clone();
+                                let login_hint = params.difficulty_hint;
                                 let login = tokio::task::spawn_blocking(move || {
-                                    login_engine.login(
+                                    login_engine.login_with_hint(
                                         &login_conn_id,
                                         login_address,
                                         Some(login_worker),
                                         login_protocol_version,
                                         login_capabilities,
+                                        login_hint,
                                     )
                                 })
                                 .await;

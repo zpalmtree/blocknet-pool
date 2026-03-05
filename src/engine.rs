@@ -27,8 +27,11 @@ const VARDIFF_MIN_SAMPLE_COUNT: usize = 3;
 const VARDIFF_RATIO_DAMPING_EXPONENT: f64 = 0.45;
 const VARDIFF_MIN_ADJUSTMENT_FACTOR: f64 = 1.02;
 const VARDIFF_MAX_ADJUSTMENT_FACTOR: f64 = 1.5;
-const VARDIFF_HINT_MAX_AGE: Duration = Duration::from_secs(60 * 60);
+const VARDIFF_HINT_DECAY_START: Duration = Duration::from_secs(60 * 60);
+const VARDIFF_HINT_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const VARDIFF_HINT_PERSIST_INTERVAL: Duration = Duration::from_secs(60);
+const LOGIN_DIFFICULTY_HINT_MIN_FACTOR: f64 = 0.25;
+const LOGIN_DIFFICULTY_HINT_MAX_FACTOR: f64 = 4.0;
 const FOUND_BLOCK_OUTBOX_ENV: &str = "BLOCKNET_POOL_FOUND_BLOCK_OUTBOX";
 const FOUND_BLOCK_OUTBOX_DEFAULT_PATH: &str = "data/found-block-recovery.jsonl";
 const FOUND_BLOCK_PERSIST_MAX_RETRIES: usize = 3;
@@ -291,6 +294,25 @@ impl PoolEngine {
         protocol_version: u32,
         capabilities: Vec<String>,
     ) -> Result<crate::protocol::LoginResult> {
+        self.login_with_hint(
+            conn_id,
+            address,
+            worker,
+            protocol_version,
+            capabilities,
+            None,
+        )
+    }
+
+    pub fn login_with_hint(
+        &self,
+        conn_id: &str,
+        address: String,
+        worker: Option<String>,
+        protocol_version: u32,
+        capabilities: Vec<String>,
+        difficulty_hint: Option<u64>,
+    ) -> Result<crate::protocol::LoginResult> {
         let address = address.trim();
         if address.is_empty() || address.len() > 128 {
             return Err(anyhow!("invalid address"));
@@ -317,16 +339,25 @@ impl PoolEngine {
         }
         let min_diff = self.cfg.min_share_difficulty.max(1);
         let max_diff = self.cfg.max_share_difficulty.max(min_diff);
-        let mut difficulty = self.cfg.initial_share_difficulty.clamp(min_diff, max_diff);
+        let initial_difficulty = self.cfg.initial_share_difficulty.clamp(min_diff, max_diff);
+        let now_wall = SystemTime::now();
+        let mut difficulty = initial_difficulty;
         if self.cfg.enable_vardiff {
             if let Some((cached, updated_at)) = self.store.get_vardiff_hint(address, &worker)? {
-                let age = SystemTime::now()
-                    .duration_since(updated_at)
-                    .unwrap_or_default();
-                if age <= VARDIFF_HINT_MAX_AGE {
-                    difficulty = cached.clamp(min_diff, max_diff);
+                let age = now_wall.duration_since(updated_at).unwrap_or_default();
+                if let Some(derived) = derive_vardiff_login_difficulty(
+                    cached,
+                    age,
+                    initial_difficulty,
+                    min_diff,
+                    max_diff,
+                ) {
+                    difficulty = derived;
                 }
             }
+        }
+        if let Some(hint) = difficulty_hint {
+            difficulty = clamp_login_difficulty_hint(hint, difficulty, min_diff, max_diff);
         }
 
         let mut sessions = self.sessions.lock();
@@ -351,7 +382,22 @@ impl PoolEngine {
     }
 
     pub fn disconnect(&self, conn_id: &str) {
-        self.sessions.lock().remove(conn_id);
+        let session = self.sessions.lock().remove(conn_id);
+        if let Some(session) = session {
+            if let Err(err) = self.store.upsert_vardiff_hint(
+                &session.address,
+                &session.worker,
+                session.difficulty.max(1),
+                SystemTime::now(),
+            ) {
+                tracing::warn!(
+                    address = %session.address,
+                    worker = %session.worker,
+                    error = %err,
+                    "failed to persist vardiff hint on disconnect"
+                );
+            }
+        }
     }
 
     pub fn submit(
@@ -906,6 +952,49 @@ impl PoolEngine {
 
         difficulty
     }
+}
+
+fn derive_vardiff_login_difficulty(
+    cached_difficulty: u64,
+    age: Duration,
+    initial_difficulty: u64,
+    min_diff: u64,
+    max_diff: u64,
+) -> Option<u64> {
+    if age > VARDIFF_HINT_MAX_AGE {
+        return None;
+    }
+
+    let cached = cached_difficulty.clamp(min_diff, max_diff);
+    let initial = initial_difficulty.clamp(min_diff, max_diff);
+    if age <= VARDIFF_HINT_DECAY_START {
+        return Some(cached);
+    }
+
+    let decay_span = VARDIFF_HINT_MAX_AGE.saturating_sub(VARDIFF_HINT_DECAY_START);
+    if decay_span.is_zero() {
+        return Some(cached);
+    }
+    let decay_age = age.saturating_sub(VARDIFF_HINT_DECAY_START).min(decay_span);
+    let ratio = decay_age.as_secs_f64() / decay_span.as_secs_f64();
+    let blended = (cached as f64) * (1.0 - ratio) + (initial as f64) * ratio;
+    Some((blended.round() as u64).clamp(min_diff, max_diff))
+}
+
+fn clamp_login_difficulty_hint(hint: u64, baseline: u64, min_diff: u64, max_diff: u64) -> u64 {
+    let baseline = baseline.max(1).clamp(min_diff, max_diff);
+    let hint = hint.max(1).clamp(min_diff, max_diff);
+
+    let lower = ((baseline as f64) * LOGIN_DIFFICULTY_HINT_MIN_FACTOR)
+        .floor()
+        .max(1.0) as u64;
+    let upper = ((baseline as f64) * LOGIN_DIFFICULTY_HINT_MAX_FACTOR)
+        .ceil()
+        .max(lower as f64) as u64;
+
+    let bounded_lower = lower.max(min_diff);
+    let bounded_upper = upper.min(max_diff).max(bounded_lower);
+    hint.clamp(bounded_lower, bounded_upper)
 }
 
 fn vardiff_target_interval_seconds(cfg: &Config) -> f64 {
@@ -1473,6 +1562,133 @@ mod tests {
             )
             .expect("login");
         assert_eq!(engine.session_difficulty("conn1"), Some(17));
+    }
+
+    #[test]
+    fn login_decays_aged_vardiff_hint_toward_initial() {
+        let mut cfg = cfg();
+        cfg.initial_share_difficulty = 100;
+        cfg.min_share_difficulty = 1;
+        cfg.max_share_difficulty = 10_000;
+
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let store = Arc::new(InMemoryStore::default());
+        let address = test_miner_address();
+        let decay_span = VARDIFF_HINT_MAX_AGE.saturating_sub(VARDIFF_HINT_DECAY_START);
+        let aged_by = VARDIFF_HINT_DECAY_START + decay_span / 2;
+        store.seed_vardiff_hint(
+            &address,
+            "rig01",
+            1_000,
+            SystemTime::now()
+                .checked_sub(aged_by)
+                .unwrap_or(SystemTime::UNIX_EPOCH),
+        );
+
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            Arc::new(InMemoryJobs::default()),
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login(
+                "conn1",
+                address,
+                Some("rig01".to_string()),
+                2,
+                submit_hash_cap(),
+            )
+            .expect("login");
+        let effective = engine
+            .session_difficulty("conn1")
+            .expect("session difficulty should be set");
+        assert!(effective < 1_000, "aged hint should decay downward");
+        assert!(
+            effective > 100,
+            "decayed hint should remain above initial midpoint"
+        );
+    }
+
+    #[test]
+    fn login_applies_client_difficulty_hint_with_safety_bounds() {
+        let mut cfg = cfg();
+        cfg.initial_share_difficulty = 100;
+        cfg.min_share_difficulty = 1;
+        cfg.max_share_difficulty = 10_000;
+
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            Arc::new(InMemoryJobs::default()),
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login_with_hint(
+                "conn1",
+                test_miner_address(),
+                Some("rig01".to_string()),
+                2,
+                submit_hash_cap(),
+                Some(10_000),
+            )
+            .expect("login");
+        // Baseline=100, max factor=4x, so hint should clamp to 400.
+        assert_eq!(engine.session_difficulty("conn1"), Some(400));
+
+        engine
+            .login_with_hint(
+                "conn2",
+                test_miner_address(),
+                Some("rig02".to_string()),
+                2,
+                submit_hash_cap(),
+                Some(1),
+            )
+            .expect("login");
+        // Baseline=100, min factor=0.25x, so hint should clamp to 25.
+        assert_eq!(engine.session_difficulty("conn2"), Some(25));
+    }
+
+    #[test]
+    fn disconnect_persists_vardiff_hint_even_without_shares() {
+        let mut cfg = cfg();
+        cfg.initial_share_difficulty = 77;
+
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let store = Arc::new(InMemoryStore::default());
+        let address = test_miner_address();
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            Arc::new(InMemoryJobs::default()),
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login(
+                "conn1",
+                address.clone(),
+                Some("rig01".to_string()),
+                2,
+                submit_hash_cap(),
+            )
+            .expect("login");
+        engine.disconnect("conn1");
+
+        let hint = store
+            .vardiff_hint(&address, "rig01")
+            .expect("disconnect should persist vardiff hint");
+        assert_eq!(hint.0, 77);
     }
 
     #[test]
