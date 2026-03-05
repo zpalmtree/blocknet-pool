@@ -78,6 +78,8 @@ input:focus{border-color:var(--accent)}
 .btn:hover{opacity:.85}
 .btn-primary{background:var(--accent);color:#fff}
 .btn-secondary{background:var(--border);color:var(--text)}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.is-faded{opacity:.55}
 
 .sub-tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:2px solid var(--border);padding-bottom:0}
 .sub-tabs button{font-family:'Manrope',sans-serif;font-size:13px;font-weight:500;padding:8px 16px;border:none;background:none;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:color .15s,border-color .15s}
@@ -310,7 +312,7 @@ pre.raw-json{background:var(--bg);border:1px solid var(--border);padding:16px;bo
   <div class="card" style="margin-bottom:24px">
     <div style="display:flex;gap:10px;margin-bottom:0;flex-wrap:wrap">
       <input type="text" id="lookup-address" placeholder="Enter your wallet address" style="flex:1;min-width:200px">
-      <button class="btn btn-primary" onclick="loadMinerLookup()">Lookup</button>
+      <button class="btn btn-primary" id="lookup-btn" onclick="loadMinerLookup()">Lookup</button>
       <button class="btn btn-secondary" onclick="clearMinerLookup()">Clear</button>
     </div>
   </div>
@@ -479,6 +481,7 @@ pre.raw-json{background:var(--bg);border:1px solid var(--border);padding:16px;bo
 'use strict';
 
 var STRATUM_HOST = 'bntpool.com';
+var LAST_MINER_LOOKUP_KEY = 'pool_last_miner_lookup_address';
 var poolInfo = {};
 var apiKey = localStorage.getItem('pool_api_key') || '';
 var currentRange = '1h';
@@ -509,6 +512,7 @@ function navigate(){
   var el = document.getElementById('page-'+route);
   if(el)el.classList.add('active');
   if(route==='dashboard'){refreshStats();loadDashBlocks();loadDashPayouts();loadHashrateHistory()}
+  if(route==='stats'){restoreMinerLookupAddress();if(!minerAddress&&document.getElementById('lookup-address').value.trim())loadMinerLookup()}
   if(route==='start')populateGetStarted();
   if(route==='blocks'){pagerState.blocks.offset=0;loadBlocksPage()}
   if(route==='payouts'){pagerState.pubPayouts.offset=0;loadPubPayoutsPage()}
@@ -750,10 +754,29 @@ document.getElementById('hashrate-ranges').addEventListener('click',function(e){
 // ---- My Stats ----
 var minerAddress='';
 var minerHashrateRange='1h';
+function updateMinerLookupButtonState(){
+  var input=document.getElementById('lookup-address');
+  var lookupBtn=document.getElementById('lookup-btn');
+  if(!input||!lookupBtn)return;
+  var addr=input.value.trim();
+  var sameAsLoaded=!!minerAddress&&addr===minerAddress;
+  lookupBtn.disabled=!addr||sameAsLoaded;
+  lookupBtn.classList.toggle('is-faded',sameAsLoaded);
+}
+function restoreMinerLookupAddress(){
+  var input=document.getElementById('lookup-address');
+  if(!input)return;
+  var saved=(localStorage.getItem(LAST_MINER_LOOKUP_KEY)||'').trim();
+  if(saved&&!input.value.trim())input.value=saved;
+  updateMinerLookupButtonState();
+}
 window.loadMinerLookup=function(){
   var addr=document.getElementById('lookup-address').value.trim();if(!addr)return;
-  minerAddress=addr;
   apiFetch('/api/miner/'+encodeURIComponent(addr)).then(function(d){
+    minerAddress=addr;
+    localStorage.setItem(LAST_MINER_LOOKUP_KEY,addr);
+    document.getElementById('lookup-address').value=addr;
+    updateMinerLookupButtonState();
     document.getElementById('lookup-result').style.display='block';
     document.getElementById('lu-hashrate').textContent=humanRate(d.hashrate||0);
     document.getElementById('lu-pending').textContent=formatCoins(d.balance?d.balance.pending:0);
@@ -798,7 +821,7 @@ window.loadMinerLookup=function(){
       }).join('');
     // Load hashrate chart
     loadMinerHashrateChart();
-  }).catch(function(){});
+  }).catch(function(){updateMinerLookupButtonState()});
 };
 function loadMinerHashrateChart(){
   if(!minerAddress)return;
@@ -811,7 +834,13 @@ document.getElementById('miner-hashrate-ranges').addEventListener('click',functi
   this.querySelectorAll('button').forEach(function(b){b.classList.remove('active')});
   e.target.classList.add('active');minerHashrateRange=e.target.dataset.range;loadMinerHashrateChart();
 });
-window.clearMinerLookup=function(){document.getElementById('lookup-address').value='';document.getElementById('lookup-result').style.display='none';minerAddress=''};
+window.clearMinerLookup=function(){
+  document.getElementById('lookup-address').value='';
+  document.getElementById('lookup-result').style.display='none';
+  minerAddress='';
+  localStorage.removeItem(LAST_MINER_LOOKUP_KEY);
+  updateMinerLookupButtonState();
+};
 window.copyStratum=function(){
   var text=document.getElementById('stratum-url').textContent;
   navigator.clipboard.writeText(text).then(function(){var btn=document.querySelector('.stratum-bar .copy-btn');btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy'},1500)});
@@ -876,7 +905,16 @@ window.loadMinersPage=function(){
     updatePager('miners',ps);
   }).catch(function(){});
 };
-window.jumpToStats=function(addr){location.hash='#/stats';setTimeout(function(){document.getElementById('lookup-address').value=addr;loadMinerLookup()},100)};
+window.jumpToStats=function(addr){
+  addr=(addr||'').trim();
+  if(addr)localStorage.setItem(LAST_MINER_LOOKUP_KEY,addr);
+  location.hash='#/stats';
+  setTimeout(function(){
+    document.getElementById('lookup-address').value=addr;
+    updateMinerLookupButtonState();
+    if(addr)loadMinerLookup();
+  },100)
+};
 
 window.loadAdminPayoutsPage=function(){
   if(!apiKey)return;var ps=pagerState.adminPayouts;
@@ -942,7 +980,9 @@ function boot(){
   if(refreshTimer)clearInterval(refreshTimer);
   refreshTimer=setInterval(function(){if(getRoute()==='dashboard')refreshStats()},5000);
   navigate();
-  document.getElementById('lookup-address').addEventListener('keydown',function(e){if(e.key==='Enter')loadMinerLookup()});
+  restoreMinerLookupAddress();
+  document.getElementById('lookup-address').addEventListener('input',updateMinerLookupButtonState);
+  document.getElementById('lookup-address').addEventListener('keydown',function(e){if(e.key==='Enter'&&!document.getElementById('lookup-btn').disabled)loadMinerLookup()});
   document.getElementById('miners-search').addEventListener('keydown',function(e){if(e.key==='Enter')loadMinersPage()});
 }
 boot();
