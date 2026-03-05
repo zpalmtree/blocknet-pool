@@ -34,6 +34,7 @@ const DEFAULT_PAGE_LIMIT: usize = 25;
 const MAX_PAGE_LIMIT: usize = 200;
 const HASHRATE_WINDOW: Duration = Duration::from_secs(60 * 60);
 const HASHRATE_WARMUP_WINDOW: Duration = Duration::from_secs(5 * 60);
+const HASHRATE_BRAND_NEW_MIN_WINDOW: Duration = Duration::from_secs(60);
 const INITIAL_REWARD: u64 = 72_325_093_035;
 const TAIL_EMISSION: u64 = 200_000_000;
 const MONTHS_TO_TAIL: u64 = 48;
@@ -53,13 +54,15 @@ fn db_miner_hashrate(store: &PoolStore, address: &str) -> f64 {
     else {
         return 0.0;
     };
-    hashrate_from_stats_with_warmup(
+    hashrate_from_stats_with_miner_ramp(
         total_diff,
         count,
         oldest,
         newest,
         HASHRATE_WINDOW,
         HASHRATE_WARMUP_WINDOW,
+        HASHRATE_BRAND_NEW_MIN_WINDOW,
+        SystemTime::now(),
     )
 }
 
@@ -171,6 +174,66 @@ fn hashrate_from_stats_with_warmup(
         observed_secs.clamp(warmup_secs, smoothing_secs)
     } else {
         warmup_secs
+    };
+    total_diff as f64 / denominator
+}
+
+fn hashrate_from_stats_with_miner_ramp(
+    total_diff: u64,
+    count: u64,
+    oldest: Option<SystemTime>,
+    newest: Option<SystemTime>,
+    smoothing_window: Duration,
+    warmup_window: Duration,
+    brand_new_min_window: Duration,
+    now: SystemTime,
+) -> f64 {
+    if total_diff == 0 {
+        return 0.0;
+    }
+
+    let smoothing_secs = smoothing_window.as_secs_f64().max(1.0);
+    let warmup_secs = warmup_window.as_secs_f64().clamp(1.0, smoothing_secs);
+    let brand_new_min_secs = brand_new_min_window.as_secs_f64().clamp(1.0, warmup_secs);
+
+    let span_with_idle_secs = match (oldest, newest) {
+        (Some(oldest), Some(newest)) => {
+            let newest_age_secs = now
+                .duration_since(newest)
+                .ok()
+                .map(|age| age.as_secs_f64())
+                .unwrap_or(0.0);
+            let observed_secs = if count < 2 {
+                0.0
+            } else {
+                newest
+                    .duration_since(oldest)
+                    .ok()
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0)
+            };
+            if observed_secs >= 1.0 {
+                observed_secs + newest_age_secs
+            } else {
+                newest_age_secs
+            }
+        }
+        _ => 0.0,
+    };
+
+    let is_brand_new = oldest
+        .and_then(|first| now.duration_since(first).ok())
+        .is_some_and(|age| age.as_secs_f64() <= warmup_secs);
+
+    let min_denominator_secs = if is_brand_new {
+        brand_new_min_secs
+    } else {
+        warmup_secs
+    };
+    let denominator = if span_with_idle_secs >= 1.0 {
+        span_with_idle_secs.clamp(min_denominator_secs, smoothing_secs)
+    } else {
+        min_denominator_secs
     };
     total_diff as f64 / denominator
 }
@@ -2225,9 +2288,10 @@ mod tests {
     use crate::db::DbBlock;
 
     use super::{
-        contains_ci, estimated_block_reward, hashrate_from_stats_with_warmup,
-        hydrate_provisional_block_reward, miner_has_activity, page_bounds, share_limit,
-        sort_workers_for_miner, worker_hashrate_by_name, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
+        contains_ci, estimated_block_reward, hashrate_from_stats_with_miner_ramp,
+        hashrate_from_stats_with_warmup, hydrate_provisional_block_reward, miner_has_activity,
+        page_bounds, share_limit, sort_workers_for_miner, worker_hashrate_by_name,
+        HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
     };
 
     #[test]
@@ -2344,6 +2408,57 @@ mod tests {
             HASHRATE_WARMUP_WINDOW,
         );
         assert!((hr - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn miner_hashrate_brand_new_uses_shorter_floor() {
+        let now = UNIX_EPOCH + Duration::from_secs(1_000);
+        let first = now - Duration::from_secs(10);
+        let hr = hashrate_from_stats_with_miner_ramp(
+            600,
+            1,
+            Some(first),
+            Some(first),
+            HASHRATE_WINDOW,
+            HASHRATE_WARMUP_WINDOW,
+            HASHRATE_BRAND_NEW_MIN_WINDOW,
+            now,
+        );
+        assert!((hr - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn miner_hashrate_stale_single_share_uses_share_age() {
+        let now = UNIX_EPOCH + Duration::from_secs(2_000);
+        let last_share = now - Duration::from_secs(1_200);
+        let hr = hashrate_from_stats_with_miner_ramp(
+            600,
+            1,
+            Some(last_share),
+            Some(last_share),
+            HASHRATE_WINDOW,
+            HASHRATE_WARMUP_WINDOW,
+            HASHRATE_BRAND_NEW_MIN_WINDOW,
+            now,
+        );
+        assert!((hr - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn miner_hashrate_brand_new_uses_observed_window_with_two_shares() {
+        let now = UNIX_EPOCH + Duration::from_secs(2_000);
+        let first = now - Duration::from_secs(60);
+        let hr = hashrate_from_stats_with_miner_ramp(
+            600,
+            2,
+            Some(first),
+            Some(now),
+            HASHRATE_WINDOW,
+            HASHRATE_WARMUP_WINDOW,
+            HASHRATE_BRAND_NEW_MIN_WINDOW,
+            now,
+        );
+        assert!((hr - 10.0).abs() < 1e-9);
     }
 
     #[test]
