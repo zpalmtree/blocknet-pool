@@ -90,6 +90,34 @@ fn hashrate_from_stats_or_window_floor(
     total_diff as f64 / secs
 }
 
+fn worker_hashrate_by_name(
+    miner_hashrate: f64,
+    worker_hashrate_raw: Vec<(String, u64, u64, Option<SystemTime>, Option<SystemTime>)>,
+) -> HashMap<String, f64> {
+    let total_worker_diff_window: u64 = worker_hashrate_raw
+        .iter()
+        .map(|(_, total_diff, _, _, _)| *total_diff)
+        .sum();
+    let can_scale_to_miner_hashrate = miner_hashrate > 0.0 && total_worker_diff_window > 0;
+    worker_hashrate_raw
+        .into_iter()
+        .map(|(worker, total_diff, accepted_count, oldest, newest)| {
+            let hr = if can_scale_to_miner_hashrate {
+                miner_hashrate * (total_diff as f64 / total_worker_diff_window as f64)
+            } else {
+                hashrate_from_stats_or_window_floor(
+                    total_diff,
+                    accepted_count,
+                    oldest,
+                    newest,
+                    HASHRATE_WINDOW,
+                )
+            };
+            (worker, hr)
+        })
+        .collect()
+}
+
 #[derive(Clone)]
 pub struct ApiState {
     pub store: Arc<PoolStore>,
@@ -565,7 +593,28 @@ async fn handle_miners(
     }
 
     let all_stats = state.stats.all_miner_stats();
-    let hashrates = state.stats.estimate_all_miner_hashrates();
+    let fallback_hashrates = state.stats.estimate_all_miner_hashrates();
+    let addresses = all_stats.keys().cloned().collect::<Vec<_>>();
+    let store = Arc::clone(&state.store);
+    let hashrates = match tokio::task::spawn_blocking(move || {
+        let mut map = HashMap::with_capacity(addresses.len());
+        for address in addresses {
+            map.insert(address.clone(), db_miner_hashrate(&store, &address));
+        }
+        Ok::<_, anyhow::Error>(map)
+    })
+    .await
+    {
+        Ok(Ok(map)) => map,
+        Ok(Err(err)) => {
+            tracing::warn!(error = %err, "failed loading miner hashrates from db; using in-memory estimates");
+            fallback_hashrates
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "failed joining miner hashrate db task; using in-memory estimates");
+            fallback_hashrates
+        }
+    };
     let mut items = all_stats
         .into_values()
         .map(|stats| {
@@ -681,19 +730,7 @@ async fn handle_miner(
         "paid": balance.paid,
     });
 
-    let worker_hashrate_by_name: HashMap<String, f64> = worker_hashrate_raw
-        .into_iter()
-        .map(|(worker, total_diff, accepted_count, oldest, newest)| {
-            let hr = hashrate_from_stats_or_window_floor(
-                total_diff,
-                accepted_count,
-                oldest,
-                newest,
-                HASHRATE_WINDOW,
-            );
-            (worker, hr)
-        })
-        .collect();
+    let worker_hashrate_by_name = worker_hashrate_by_name(hashrate, worker_hashrate_raw);
 
     let workers_json: Vec<serde_json::Value> = workers_raw
         .iter()
@@ -1364,7 +1401,11 @@ fn internal_error(msg: &str, err: anyhow::Error) -> (StatusCode, Json<serde_json
 
 #[cfg(test)]
 mod tests {
-    use super::{contains_ci, miner_has_activity, page_bounds, share_limit};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use super::{
+        contains_ci, miner_has_activity, page_bounds, share_limit, worker_hashrate_by_name,
+    };
 
     #[test]
     fn miner_activity_detects_share_history() {
@@ -1398,5 +1439,44 @@ mod tests {
         assert_eq!(share_limit(None), 100);
         assert_eq!(share_limit(Some(0)), 1);
         assert_eq!(share_limit(Some(9999)), 500);
+    }
+
+    #[test]
+    fn worker_hashrate_scales_to_miner_hashrate() {
+        let now = SystemTime::now();
+        let map = worker_hashrate_by_name(
+            2.59,
+            vec![
+                (
+                    "w1".to_string(),
+                    240,
+                    5,
+                    Some(now),
+                    Some(now + Duration::from_secs(30)),
+                ),
+                (
+                    "w2".to_string(),
+                    120,
+                    4,
+                    Some(now),
+                    Some(now + Duration::from_secs(30)),
+                ),
+            ],
+        );
+        let w1 = map.get("w1").copied().unwrap_or_default();
+        let w2 = map.get("w2").copied().unwrap_or_default();
+        let total = w1 + w2;
+        assert!((total - 2.59).abs() < 1e-9);
+        assert!(w1 > w2);
+    }
+
+    #[test]
+    fn worker_hashrate_falls_back_when_miner_hashrate_unavailable() {
+        let t0 = UNIX_EPOCH + Duration::from_secs(10);
+        let t1 = t0 + Duration::from_secs(10);
+        let map =
+            worker_hashrate_by_name(0.0, vec![("w1".to_string(), 200, 2, Some(t0), Some(t1))]);
+        let w1 = map.get("w1").copied().unwrap_or_default();
+        assert!((w1 - 20.0).abs() < 1e-9);
     }
 }
