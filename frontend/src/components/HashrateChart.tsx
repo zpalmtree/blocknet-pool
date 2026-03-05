@@ -51,16 +51,27 @@ function drawChartOn(canvas: HTMLCanvasElement, data: HashratePoint[], range: Ra
 
   points.sort((a, b) => a.t - b.t);
 
-  const compact = W < 640;
-  const pad = { t: 10, r: compact ? 12 : 20, b: compact ? 32 : 30, l: compact ? 54 : 64 };
-  const cW = W - pad.l - pad.r;
-  const cH = H - pad.t - pad.b;
-
   const smoothed = smoothChartPoints(points, range);
   const values = smoothed.map((p) => p.v);
   const timestamps = smoothed.map((p) => p.t);
 
   const maxV = Math.max(...values) * 1.1 || 1;
+  const compact = W < 640;
+  const yAxisFont = `${compact ? 10 : 11}px JetBrains Mono,monospace`;
+  ctx.font = yAxisFont;
+  const yLabelMaxWidth = Math.max(
+    ...Array.from({ length: 5 }, (_, i) => ctx.measureText(humanRate((maxV * i) / 4)).width),
+  );
+  const pad = {
+    t: 10,
+    r: compact ? 12 : 20,
+    b: compact ? 32 : 30,
+    l: Math.max(compact ? 54 : 64, Math.ceil(yLabelMaxWidth + (compact ? 12 : 14))),
+  };
+  const cW = W - pad.l - pad.r;
+  const cH = H - pad.t - pad.b;
+  if (cW <= 0 || cH <= 0) return;
+
   const endT = Math.max(Date.now(), Math.max(...timestamps));
   const startT = endT - rangeToDurationMs(range);
   const rangeT = Math.max(endT - startT, 1);
@@ -82,7 +93,7 @@ function drawChartOn(canvas: HTMLCanvasElement, data: HashratePoint[], range: Ra
     ctx.stroke();
 
     ctx.fillStyle = '#6b7c6b';
-    ctx.font = `${compact ? 10 : 11}px JetBrains Mono,monospace`;
+    ctx.font = yAxisFont;
     ctx.textAlign = 'right';
     ctx.fillText(humanRate((maxV * i) / 4), pad.l - 6, y + 4);
   }

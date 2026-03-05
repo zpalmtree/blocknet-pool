@@ -766,12 +766,17 @@ function drawChartOn(canvas,data,range){
   }).filter(function(p){return isFinite(p.t)&&isFinite(p.v)});
   if(points.length<2){ctx.fillStyle='#6b7c6b';ctx.font='14px Manrope,sans-serif';ctx.textAlign='center';ctx.fillText('No data yet',W/2,H/2);return}
   points.sort(function(a,b){return a.t-b.t});
-  var compact=W<640;
-  var pad={t:10,r:compact?12:20,b:compact?32:30,l:compact?54:64};var cW=W-pad.l-pad.r;var cH=H-pad.t-pad.b;
   var smoothed=smoothChartPoints(points,range);
   var values=smoothed.map(function(p){return p.v});
   var timestamps=smoothed.map(function(p){return p.t});
   var maxV=Math.max.apply(null,values)*1.1||1;
+  var compact=W<640;
+  var yAxisFont=(compact?'10px':'11px')+' JetBrains Mono,monospace';
+  ctx.font=yAxisFont;
+  var yLabelMaxWidth=0;
+  for(var yi=0;yi<=4;yi++){yLabelMaxWidth=Math.max(yLabelMaxWidth,ctx.measureText(humanRate(maxV*yi/4)).width)}
+  var pad={t:10,r:compact?12:20,b:compact?32:30,l:Math.max(compact?54:64,Math.ceil(yLabelMaxWidth+(compact?12:14)))};var cW=W-pad.l-pad.r;var cH=H-pad.t-pad.b;
+  if(cW<=0||cH<=0)return;
   var endT=Math.max(Date.now(),Math.max.apply(null,timestamps));
   var startT=endT-rangeToDurationMs(range);
   var rangeT=Math.max(endT-startT,1);
@@ -781,7 +786,7 @@ function drawChartOn(canvas,data,range){
     return pad.l+n*cW;
   }
   ctx.strokeStyle='#e2e8d8';ctx.lineWidth=1;
-  for(var i=0;i<=4;i++){var y=pad.t+cH-(cH*i/4);ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+cW,y);ctx.stroke();ctx.fillStyle='#6b7c6b';ctx.font=(compact?'10px':'11px')+' JetBrains Mono,monospace';ctx.textAlign='right';ctx.fillText(humanRate(maxV*i/4),pad.l-6,y+4)}
+  for(var i=0;i<=4;i++){var y=pad.t+cH-(cH*i/4);ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+cW,y);ctx.stroke();ctx.fillStyle='#6b7c6b';ctx.font=yAxisFont;ctx.textAlign='right';ctx.fillText(humanRate(maxV*i/4),pad.l-6,y+4)}
   ctx.fillStyle='#6b7c6b';ctx.font=(compact?'10px':'11px')+' JetBrains Mono,monospace';
   var maxTicks=Math.max(3,Math.min(compact?4:6,Math.floor(cW/(compact?120:140))+1));
   var lastRight=-Infinity;
