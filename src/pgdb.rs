@@ -118,6 +118,15 @@ CREATE TABLE IF NOT EXISTS vardiff_hints (
     PRIMARY KEY (address, worker)
 );
 CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS stat_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    timestamp BIGINT NOT NULL,
+    hashrate DOUBLE PRECISION NOT NULL,
+    miners INTEGER NOT NULL,
+    workers INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timestamp DESC);
 "#,
         )
         .context("init postgres schema")?;
@@ -202,6 +211,55 @@ CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated
             &[&before_ts, &n],
         )?;
         Ok(rows.into_iter().map(row_to_share).collect())
+    }
+
+    pub fn hashrate_stats_for_miner(
+        &self,
+        address: &str,
+        since: SystemTime,
+    ) -> Result<(u64, u64, Option<SystemTime>, Option<SystemTime>)> {
+        let since_ts = to_unix(since);
+        let row = self.conn().lock().query_one(
+            "SELECT COALESCE(SUM(difficulty),0)::bigint, COUNT(*)::bigint, MIN(created_at), MAX(created_at)
+             FROM shares
+             WHERE miner = $1 AND created_at >= $2
+               AND status IN ('verified','provisional')",
+            &[&address, &since_ts],
+        )?;
+        let total_diff: i64 = row.get(0);
+        let count: i64 = row.get(1);
+        let oldest: Option<i64> = row.get(2);
+        let newest: Option<i64> = row.get(3);
+        Ok((
+            total_diff.max(0) as u64,
+            count.max(0) as u64,
+            oldest.map(from_unix),
+            newest.map(from_unix),
+        ))
+    }
+
+    pub fn hashrate_stats_pool(
+        &self,
+        since: SystemTime,
+    ) -> Result<(u64, u64, Option<SystemTime>, Option<SystemTime>)> {
+        let since_ts = to_unix(since);
+        let row = self.conn().lock().query_one(
+            "SELECT COALESCE(SUM(difficulty),0)::bigint, COUNT(*)::bigint, MIN(created_at), MAX(created_at)
+             FROM shares
+             WHERE created_at >= $1
+               AND status IN ('verified','provisional')",
+            &[&since_ts],
+        )?;
+        let total_diff: i64 = row.get(0);
+        let count: i64 = row.get(1);
+        let oldest: Option<i64> = row.get(2);
+        let newest: Option<i64> = row.get(3);
+        Ok((
+            total_diff.max(0) as u64,
+            count.max(0) as u64,
+            oldest.map(from_unix),
+            newest.map(from_unix),
+        ))
     }
 
     pub fn get_total_share_count(&self) -> Result<u64> {
@@ -302,6 +360,14 @@ CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated
             &[],
         )?;
         Ok(rows.into_iter().map(|row| row_to_block(&row)).collect())
+    }
+
+    pub fn delete_block(&self, height: u64) -> Result<bool> {
+        let deleted = self
+            .conn()
+            .lock()
+            .execute("DELETE FROM blocks WHERE height = $1", &[&(height as i64)])?;
+        Ok(deleted > 0)
     }
 
     pub fn get_block_count(&self) -> Result<u64> {
@@ -953,6 +1019,120 @@ CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated
             &[&address, &worker, &u64_to_i64(difficulty.max(1))?, &to_unix(updated_at)],
         )?;
         Ok(())
+    }
+
+    pub fn add_stat_snapshot(
+        &self,
+        timestamp: SystemTime,
+        hashrate: f64,
+        miners: i32,
+        workers: i32,
+    ) -> Result<()> {
+        self.conn().lock().execute(
+            "INSERT INTO stat_snapshots (timestamp, hashrate, miners, workers) VALUES ($1, $2, $3, $4)",
+            &[&to_unix(timestamp), &hashrate, &miners, &workers],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_stat_snapshots(&self, since: SystemTime) -> Result<Vec<crate::db::StatSnapshot>> {
+        let mut conn = self.conn().lock();
+        let rows = conn.query(
+            "SELECT id, timestamp, hashrate, miners, workers FROM stat_snapshots WHERE timestamp >= $1 ORDER BY timestamp ASC",
+            &[&to_unix(since)],
+        )?;
+        Ok(rows
+            .iter()
+            .map(|row| crate::db::StatSnapshot {
+                id: row.get::<_, i64>(0),
+                timestamp: from_unix(row.get::<_, i64>(1)),
+                hashrate: row.get::<_, f64>(2),
+                miners: row.get::<_, i32>(3),
+                workers: row.get::<_, i32>(4),
+            })
+            .collect())
+    }
+
+    pub fn clean_old_snapshots(&self, retain_duration: Duration) -> Result<u64> {
+        let cutoff = SystemTime::now()
+            .checked_sub(retain_duration)
+            .unwrap_or(UNIX_EPOCH);
+        let removed = self.conn().lock().execute(
+            "DELETE FROM stat_snapshots WHERE timestamp < $1",
+            &[&to_unix(cutoff)],
+        )?;
+        Ok(removed)
+    }
+
+    /// Returns bucketed hashrate data for a miner: Vec<(bucket_ts, total_diff, count)>
+    pub fn hashrate_history_for_miner(
+        &self,
+        address: &str,
+        since: SystemTime,
+        bucket_secs: i64,
+    ) -> Result<Vec<(i64, u64, u64)>> {
+        let rows = self.conn().lock().query(
+            "SELECT (created_at / $3) * $3 AS bucket, SUM(difficulty)::bigint, COUNT(*)::bigint
+             FROM shares
+             WHERE miner = $1 AND created_at >= $2
+               AND status IN ('verified','provisional')
+             GROUP BY bucket ORDER BY bucket",
+            &[&address, &to_unix(since), &bucket_secs],
+        )?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                let bucket: i64 = row.get(0);
+                let total_diff: i64 = row.get(1);
+                let count: i64 = row.get(2);
+                (bucket, total_diff.max(0) as u64, count.max(0) as u64)
+            })
+            .collect())
+    }
+
+    /// Returns per-worker stats: Vec<(worker, accepted, rejected, total_diff, last_share_at)>
+    pub fn worker_stats_for_miner(
+        &self,
+        address: &str,
+        since: SystemTime,
+    ) -> Result<Vec<(String, u64, u64, u64, i64)>> {
+        let rows = self.conn().lock().query(
+            "SELECT worker,
+                    SUM(CASE WHEN status IN ('verified','provisional') THEN 1 ELSE 0 END)::bigint,
+                    SUM(CASE WHEN status NOT IN ('verified','provisional') THEN 1 ELSE 0 END)::bigint,
+                    SUM(CASE WHEN status IN ('verified','provisional') THEN difficulty ELSE 0 END)::bigint,
+                    MAX(created_at)::bigint
+             FROM shares
+             WHERE miner = $1 AND created_at >= $2
+             GROUP BY worker ORDER BY worker",
+            &[&address, &to_unix(since)],
+        )?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                let worker: String = row.get(0);
+                let accepted: i64 = row.get(1);
+                let rejected: i64 = row.get(2);
+                let total_diff: i64 = row.get(3);
+                let last_share: i64 = row.get(4);
+                (
+                    worker,
+                    accepted.max(0) as u64,
+                    rejected.max(0) as u64,
+                    total_diff.max(0) as u64,
+                    last_share,
+                )
+            })
+            .collect())
+    }
+
+    pub fn get_blocks_for_miner(&self, address: &str) -> Result<Vec<crate::db::DbBlock>> {
+        let rows = self.conn().lock().query(
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out
+             FROM blocks WHERE finder = $1 ORDER BY height DESC",
+            &[&address],
+        )?;
+        Ok(rows.iter().map(|row| row_to_block(row)).collect())
     }
 }
 

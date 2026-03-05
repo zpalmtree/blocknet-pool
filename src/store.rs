@@ -7,7 +7,7 @@ use tracing::warn;
 use crate::config::Config;
 use crate::db::{
     AddressRiskState, Balance, DbBlock, DbShare, Payout, PendingPayout, PoolFeeEvent,
-    PoolFeeRecord, SqliteStore,
+    PoolFeeRecord, SqliteStore, StatSnapshot,
 };
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::pgdb::PostgresStore;
@@ -56,6 +56,27 @@ impl PoolStore {
         }
     }
 
+    pub fn hashrate_stats_for_miner(
+        &self,
+        address: &str,
+        since: SystemTime,
+    ) -> Result<(u64, u64, Option<SystemTime>, Option<SystemTime>)> {
+        match self {
+            PoolStore::Sqlite(v) => v.hashrate_stats_for_miner(address, since),
+            PoolStore::Postgres(v) => v.hashrate_stats_for_miner(address, since),
+        }
+    }
+
+    pub fn hashrate_stats_pool(
+        &self,
+        since: SystemTime,
+    ) -> Result<(u64, u64, Option<SystemTime>, Option<SystemTime>)> {
+        match self {
+            PoolStore::Sqlite(v) => v.hashrate_stats_pool(since),
+            PoolStore::Postgres(v) => v.hashrate_stats_pool(since),
+        }
+    }
+
     pub fn add_block(&self, block: &DbBlock) -> Result<()> {
         match self {
             PoolStore::Sqlite(v) => v.add_block(block),
@@ -95,6 +116,13 @@ impl PoolStore {
         match self {
             PoolStore::Sqlite(v) => v.get_unpaid_blocks(),
             PoolStore::Postgres(v) => v.get_unpaid_blocks(),
+        }
+    }
+
+    pub fn delete_block(&self, height: u64) -> Result<bool> {
+        match self {
+            PoolStore::Sqlite(v) => v.delete_block(height),
+            PoolStore::Postgres(v) => v.delete_block(height),
         }
     }
 
@@ -380,6 +408,63 @@ impl PoolStore {
         match self {
             PoolStore::Sqlite(v) => v.get_last_n_shares_before(before, n),
             PoolStore::Postgres(v) => v.get_last_n_shares_before(before, n),
+        }
+    }
+
+    pub fn add_stat_snapshot(
+        &self,
+        timestamp: SystemTime,
+        hashrate: f64,
+        miners: i32,
+        workers: i32,
+    ) -> Result<()> {
+        match self {
+            PoolStore::Sqlite(v) => v.add_stat_snapshot(timestamp, hashrate, miners, workers),
+            PoolStore::Postgres(v) => v.add_stat_snapshot(timestamp, hashrate, miners, workers),
+        }
+    }
+
+    pub fn get_stat_snapshots(&self, since: SystemTime) -> Result<Vec<StatSnapshot>> {
+        match self {
+            PoolStore::Sqlite(v) => v.get_stat_snapshots(since),
+            PoolStore::Postgres(v) => v.get_stat_snapshots(since),
+        }
+    }
+
+    pub fn clean_old_snapshots(&self, retain_duration: Duration) -> Result<u64> {
+        match self {
+            PoolStore::Sqlite(v) => v.clean_old_snapshots(retain_duration),
+            PoolStore::Postgres(v) => v.clean_old_snapshots(retain_duration),
+        }
+    }
+
+    pub fn hashrate_history_for_miner(
+        &self,
+        address: &str,
+        since: SystemTime,
+        bucket_secs: i64,
+    ) -> Result<Vec<(i64, u64, u64)>> {
+        match self {
+            PoolStore::Sqlite(v) => v.hashrate_history_for_miner(address, since, bucket_secs),
+            PoolStore::Postgres(v) => v.hashrate_history_for_miner(address, since, bucket_secs),
+        }
+    }
+
+    pub fn worker_stats_for_miner(
+        &self,
+        address: &str,
+        since: SystemTime,
+    ) -> Result<Vec<(String, u64, u64, u64, i64)>> {
+        match self {
+            PoolStore::Sqlite(v) => v.worker_stats_for_miner(address, since),
+            PoolStore::Postgres(v) => v.worker_stats_for_miner(address, since),
+        }
+    }
+
+    pub fn get_blocks_for_miner(&self, address: &str) -> Result<Vec<DbBlock>> {
+        match self {
+            PoolStore::Sqlite(v) => v.get_blocks_for_miner(address),
+            PoolStore::Postgres(v) => v.get_blocks_for_miner(address),
         }
     }
 

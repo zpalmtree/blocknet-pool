@@ -7,7 +7,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse};
-use axum::routing::get;
+use axum::routing::{delete, get};
 use axum::{Json, Router};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -27,6 +27,50 @@ const NETWORK_HASHRATE_CACHE_RETRY_TTL: Duration = Duration::from_secs(5);
 const LIST_SCAN_LIMIT: i64 = 5_000;
 const DEFAULT_PAGE_LIMIT: usize = 25;
 const MAX_PAGE_LIMIT: usize = 200;
+const HASHRATE_WINDOW: Duration = Duration::from_secs(60 * 60);
+
+fn db_miner_hashrate(store: &PoolStore, address: &str) -> f64 {
+    let since = SystemTime::now()
+        .checked_sub(HASHRATE_WINDOW)
+        .unwrap_or(UNIX_EPOCH);
+    let Ok((total_diff, count, oldest, newest)) =
+        store.hashrate_stats_for_miner(address, since)
+    else {
+        return 0.0;
+    };
+    hashrate_from_stats(total_diff, count, oldest, newest)
+}
+
+fn db_pool_hashrate(store: &PoolStore) -> f64 {
+    let since = SystemTime::now()
+        .checked_sub(HASHRATE_WINDOW)
+        .unwrap_or(UNIX_EPOCH);
+    let Ok((total_diff, count, oldest, newest)) = store.hashrate_stats_pool(since) else {
+        return 0.0;
+    };
+    hashrate_from_stats(total_diff, count, oldest, newest)
+}
+
+fn hashrate_from_stats(
+    total_diff: u64,
+    count: u64,
+    oldest: Option<SystemTime>,
+    newest: Option<SystemTime>,
+) -> f64 {
+    if count < 2 {
+        return 0.0;
+    }
+    let (Some(oldest), Some(newest)) = (oldest, newest) else {
+        return 0.0;
+    };
+    let Ok(window) = newest.duration_since(oldest) else {
+        return 0.0;
+    };
+    if window.as_secs_f64() < 1.0 {
+        return 0.0;
+    }
+    total_diff as f64 / window.as_secs_f64()
+}
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -42,6 +86,11 @@ pub struct ApiState {
     pub pool_name: String,
     pub pool_url: String,
     pub stratum_port: u16,
+    pub pool_fee_pct: f64,
+    pub pool_fee_flat: f64,
+    pub min_payout_amount: f64,
+    pub blocks_before_payout: i32,
+    pub payout_scheme: String,
     pub started_at: Instant,
     pub started_at_system: SystemTime,
 }
@@ -88,10 +137,10 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
     let app_state = state.clone();
     let protected = Router::new()
         .route("/api/miners", get(handle_miners))
-        .route("/api/blocks", get(handle_blocks))
         .route("/api/payouts", get(handle_payouts))
         .route("/api/fees", get(handle_fees))
         .route("/api/health", get(handle_health))
+        .route("/api/blocks/:height", delete(handle_delete_block))
         .route_layer(middleware::from_fn_with_state(
             app_state.clone(),
             require_api_key,
@@ -102,8 +151,13 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
         .route("/ui", get(handle_ui))
         .route("/api/info", get(handle_info))
         .route("/api/stats", get(handle_stats))
+        .route("/api/stats/history", get(handle_stats_history))
+        .route("/api/blocks", get(handle_blocks))
+        .route("/api/payouts/recent", get(handle_public_payouts))
         .route("/api/miner/:address", get(handle_miner))
+        .route("/api/miner/:address/hashrate", get(handle_miner_hashrate))
         .merge(protected)
+        .fallback(get(handle_ui))
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -126,6 +180,11 @@ struct PoolInfoResponse {
     api_auth_configured: bool,
     started_at_unix_secs: u64,
     version: &'static str,
+    pool_fee_pct: f64,
+    pool_fee_flat: f64,
+    min_payout_amount: f64,
+    blocks_before_payout: i32,
+    payout_scheme: String,
     public_endpoints: Vec<&'static str>,
     protected_endpoints: Vec<&'static str>,
 }
@@ -138,10 +197,14 @@ async fn handle_info(State(state): State<ApiState>) -> impl IntoResponse {
         api_auth_configured: !state.api_key.trim().is_empty(),
         started_at_unix_secs: system_time_to_unix_secs(state.started_at_system),
         version: env!("CARGO_PKG_VERSION"),
-        public_endpoints: vec!["/api/info", "/api/stats", "/api/miner/{address}"],
+        pool_fee_pct: state.pool_fee_pct,
+        pool_fee_flat: state.pool_fee_flat,
+        min_payout_amount: state.min_payout_amount,
+        blocks_before_payout: state.blocks_before_payout,
+        payout_scheme: state.payout_scheme.clone(),
+        public_endpoints: vec!["/api/info", "/api/stats", "/api/stats/history", "/api/blocks", "/api/payouts/recent", "/api/miner/{address}"],
         protected_endpoints: vec![
             "/api/miners",
-            "/api/blocks",
             "/api/payouts",
             "/api/fees",
             "/api/health",
@@ -225,8 +288,18 @@ struct PayoutHealth {
 }
 
 #[derive(Debug, Deserialize, Default)]
+struct StatsHistoryQuery {
+    range: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 struct MinerDetailQuery {
     share_limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct MinerHashrateQuery {
+    range: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -304,14 +377,19 @@ async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
     let current_job_height = current_job.as_ref().map(|j| j.height);
     let network_hashrate = state.network_hashrate_for_job(current_job.as_ref()).await;
 
+    let store = Arc::clone(&state.store);
+    let pool_hashrate = tokio::task::spawn_blocking(move || db_pool_hashrate(&store))
+        .await
+        .unwrap_or(0.0);
+
     let response = StatsResponse {
         pool: PoolSummary {
             miners: snap.connected_miners,
             workers: snap.connected_workers,
-            hashrate: snap.estimated_hashrate,
+            hashrate: pool_hashrate,
             shares_accepted: snap.total_shares_accepted,
             shares_rejected: snap.total_shares_rejected,
-            blocks_found: snap.total_blocks_found,
+            blocks_found: totals.total_blocks,
             total_shares: totals.total_shares,
             total_blocks: totals.total_blocks,
             pool_fees_collected: totals.pool_fees_collected,
@@ -337,6 +415,31 @@ async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
     };
 
     Json(response).into_response()
+}
+
+async fn handle_stats_history(
+    Query(query): Query<StatsHistoryQuery>,
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let range_secs: u64 = match query.range.as_deref().unwrap_or("24h") {
+        "1h" => 3600,
+        "7d" => 7 * 86400,
+        "30d" => 30 * 86400,
+        _ => 86400, // default 24h
+    };
+    let since = SystemTime::now()
+        .checked_sub(Duration::from_secs(range_secs))
+        .unwrap_or(UNIX_EPOCH);
+
+    let store = Arc::clone(&state.store);
+    match tokio::task::spawn_blocking(move || store.get_stat_snapshots(since)).await {
+        Ok(Ok(snapshots)) => Json(snapshots).into_response(),
+        Ok(Err(err)) => internal_error("failed loading stat history", err).into_response(),
+        Err(err) => {
+            internal_error("failed loading stat history", anyhow::anyhow!("join error: {err}"))
+                .into_response()
+        }
+    }
 }
 
 async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
@@ -414,25 +517,36 @@ async fn handle_miners(
         return Json(state.stats.all_miner_stats()).into_response();
     }
 
-    let mut items = state
-        .stats
-        .all_miner_stats()
-        .into_values()
-        .map(|stats| {
-            let mut workers = stats.workers.iter().cloned().collect::<Vec<String>>();
-            workers.sort();
-            MinerListItem {
-                address: stats.address.clone(),
-                worker_count: workers.len(),
-                workers,
-                shares_accepted: stats.shares_accepted,
-                shares_rejected: stats.shares_rejected,
-                blocks_found: stats.blocks_found,
-                hashrate: state.stats.estimate_miner_hashrate(&stats.address),
-                last_share_at: stats.last_share_at,
-            }
-        })
-        .collect::<Vec<MinerListItem>>();
+    let all_stats = state.stats.all_miner_stats();
+    let store = Arc::clone(&state.store);
+    let mut items = match tokio::task::spawn_blocking(move || {
+        all_stats
+            .into_values()
+            .map(|stats| {
+                let mut workers = stats.workers.iter().cloned().collect::<Vec<String>>();
+                workers.sort();
+                let hashrate = db_miner_hashrate(&store, &stats.address);
+                MinerListItem {
+                    address: stats.address.clone(),
+                    worker_count: workers.len(),
+                    workers,
+                    shares_accepted: stats.shares_accepted,
+                    shares_rejected: stats.shares_rejected,
+                    blocks_found: stats.blocks_found,
+                    hashrate,
+                    last_share_at: stats.last_share_at,
+                }
+            })
+            .collect::<Vec<MinerListItem>>()
+    })
+    .await
+    {
+        Ok(v) => v,
+        Err(err) => {
+            return internal_error("failed building miner list", anyhow::anyhow!("join error: {err}"))
+                .into_response()
+        }
+    };
 
     if let Some(search) = non_empty(&query.search) {
         items.retain(|item| contains_ci(&item.address, search));
@@ -483,34 +597,65 @@ async fn handle_miner(
 ) -> impl IntoResponse {
     let stats = state.stats.get_miner_stats(&address);
     let store = Arc::clone(&state.store);
-    let address_for_query = address.clone();
+    let addr = address.clone();
     let share_limit = share_limit(query.share_limit);
 
-    let (shares, balance, pending_payout) = match tokio::task::spawn_blocking(move || {
-        Ok::<_, anyhow::Error>((
-            store.get_shares_for_miner(&address_for_query, share_limit)?,
-            store.get_balance(&address_for_query)?,
-            store.get_pending_payout(&address_for_query)?,
-        ))
+    let db_result = match tokio::task::spawn_blocking(move || {
+        let shares = store.get_shares_for_miner(&addr, share_limit)?;
+        let balance = store.get_balance(&addr)?;
+        let pending_payout = store.get_pending_payout(&addr)?;
+        let hr = db_miner_hashrate(&store, &addr);
+        let since_24h = SystemTime::now()
+            .checked_sub(Duration::from_secs(86400))
+            .unwrap_or(UNIX_EPOCH);
+        let workers_raw = store.worker_stats_for_miner(&addr, since_24h)?;
+        let miner_blocks = store.get_blocks_for_miner(&addr)?;
+        Ok::<_, anyhow::Error>((shares, balance, pending_payout, hr, workers_raw, miner_blocks))
     })
     .await
     {
         Ok(Ok(v)) => v,
-        Ok(Err(err)) => return internal_error("failed loading miner shares", err).into_response(),
+        Ok(Err(err)) => {
+            return internal_error("failed loading miner data", err).into_response()
+        }
         Err(err) => {
             return internal_error(
-                "failed loading miner shares",
+                "failed loading miner data",
                 anyhow::anyhow!("join error: {err}"),
             )
             .into_response()
         }
     };
+    let (shares, balance, pending_payout, hashrate, workers_raw, miner_blocks) = db_result;
 
-    let hashrate = state.stats.estimate_miner_hashrate(&address);
     let balance_json = serde_json::json!({
         "pending": balance.pending,
         "paid": balance.paid,
     });
+
+    let workers_json: Vec<serde_json::Value> = workers_raw
+        .iter()
+        .map(|(worker, accepted, rejected, total_diff, last_share_ts)| {
+            // Estimate per-worker hashrate from 24h accepted difficulty / time window
+            let window_secs = 86400.0_f64;
+            let worker_hr = if window_secs > 0.0 {
+                *total_diff as f64 / window_secs
+            } else {
+                0.0
+            };
+            serde_json::json!({
+                "worker": worker,
+                "hashrate": worker_hr,
+                "accepted": accepted,
+                "rejected": rejected,
+                "last_share_at": last_share_ts,
+            })
+        })
+        .collect();
+
+    let total_accepted: u64 = workers_raw.iter().map(|(_, a, _, _, _)| a).sum();
+    let total_rejected: u64 = workers_raw.iter().map(|(_, _, r, _, _)| r).sum();
+
     let has_activity = miner_has_activity(
         shares.len(),
         balance.pending,
@@ -518,33 +663,75 @@ async fn handle_miner(
         pending_payout.is_some(),
     );
 
+    let base = serde_json::json!({
+        "shares": shares,
+        "hashrate": hashrate,
+        "balance": balance_json,
+        "pending_payout": pending_payout,
+        "workers": workers_json,
+        "blocks_found": miner_blocks,
+        "total_accepted": total_accepted,
+        "total_rejected": total_rejected,
+    });
+
     match stats {
-        Some(miner_stats) => Json(serde_json::json!({
-            "stats": miner_stats,
-            "shares": shares,
-            "hashrate": hashrate,
-            "balance": balance_json,
-            "pending_payout": pending_payout,
-        }))
-        .into_response(),
-        None if has_activity => Json(serde_json::json!({
-            "stats": serde_json::Value::Null,
-            "shares": shares,
-            "hashrate": hashrate,
-            "balance": balance_json,
-            "pending_payout": pending_payout,
-        }))
-        .into_response(),
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error":"miner not found",
-                "hashrate": hashrate,
-                "balance": balance_json,
-                "pending_payout": pending_payout,
-            })),
+        Some(miner_stats) => {
+            let mut obj = base;
+            obj["stats"] = serde_json::to_value(&miner_stats).unwrap_or_default();
+            Json(obj).into_response()
+        }
+        None if has_activity => {
+            let mut obj = base;
+            obj["stats"] = serde_json::Value::Null;
+            Json(obj).into_response()
+        }
+        None => {
+            let mut obj = base;
+            obj["error"] = serde_json::Value::String("miner not found".to_string());
+            (StatusCode::NOT_FOUND, Json(obj)).into_response()
+        }
+    }
+}
+
+async fn handle_miner_hashrate(
+    Path(address): Path<String>,
+    Query(query): Query<MinerHashrateQuery>,
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let (range_secs, bucket_secs): (u64, i64) = match query.range.as_deref().unwrap_or("24h") {
+        "1h" => (3600, 120),
+        "7d" => (7 * 86400, 3600),
+        "30d" => (30 * 86400, 14400),
+        _ => (86400, 600), // default 24h
+    };
+    let since = SystemTime::now()
+        .checked_sub(Duration::from_secs(range_secs))
+        .unwrap_or(UNIX_EPOCH);
+
+    let store = Arc::clone(&state.store);
+    match tokio::task::spawn_blocking(move || {
+        store.hashrate_history_for_miner(&address, since, bucket_secs)
+    })
+    .await
+    {
+        Ok(Ok(buckets)) => {
+            let points: Vec<serde_json::Value> = buckets
+                .into_iter()
+                .map(|(ts, total_diff, _count)| {
+                    let hr = total_diff as f64 / bucket_secs as f64;
+                    serde_json::json!({"timestamp": ts, "hashrate": hr})
+                })
+                .collect();
+            Json(points).into_response()
+        }
+        Ok(Err(err)) => {
+            internal_error("failed loading miner hashrate history", err).into_response()
+        }
+        Err(err) => internal_error(
+            "failed loading miner hashrate history",
+            anyhow::anyhow!("join error: {err}"),
         )
-            .into_response(),
+        .into_response(),
     }
 }
 
@@ -612,6 +799,116 @@ async fn handle_blocks(
     }
 
     Json(paginate_response(blocks, query.limit, query.offset)).into_response()
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PublicPayout {
+    total_amount: u64,
+    total_fee: u64,
+    recipient_count: usize,
+    tx_hashes: Vec<String>,
+    timestamp: SystemTime,
+}
+
+/// Group payouts into batches by timestamp proximity (5 min window).
+fn batch_payouts(payouts: &[Payout]) -> Vec<PublicPayout> {
+    if payouts.is_empty() {
+        return Vec::new();
+    }
+    let batch_window = Duration::from_secs(5 * 60);
+    let mut batches: Vec<PublicPayout> = Vec::new();
+    for p in payouts {
+        let merged = batches.last_mut().and_then(|b| {
+            let diff = b
+                .timestamp
+                .duration_since(p.timestamp)
+                .or_else(|_| p.timestamp.duration_since(b.timestamp))
+                .unwrap_or(Duration::ZERO);
+            if diff <= batch_window {
+                Some(b)
+            } else {
+                None
+            }
+        });
+        if let Some(batch) = merged {
+            batch.total_amount += p.amount;
+            batch.total_fee += p.fee;
+            batch.recipient_count += 1;
+            if !p.tx_hash.is_empty() {
+                batch.tx_hashes.push(p.tx_hash.clone());
+            }
+        } else {
+            batches.push(PublicPayout {
+                total_amount: p.amount,
+                total_fee: p.fee,
+                recipient_count: 1,
+                tx_hashes: if p.tx_hash.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![p.tx_hash.clone()]
+                },
+                timestamp: p.timestamp,
+            });
+        }
+    }
+    batches
+}
+
+async fn handle_public_payouts(
+    Query(query): Query<PayoutsQuery>,
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let store = Arc::clone(&state.store);
+    let mut payouts = match tokio::task::spawn_blocking(move || {
+        store.get_recent_payouts(LIST_SCAN_LIMIT)
+    })
+    .await
+    {
+        Ok(Ok(v)) => v,
+        Ok(Err(err)) => return internal_error("failed loading payouts", err).into_response(),
+        Err(err) => {
+            return internal_error(
+                "failed loading payouts",
+                anyhow::anyhow!("join error: {err}"),
+            )
+            .into_response()
+        }
+    };
+
+    // Always sort by time desc for batching, then re-sort result if needed.
+    payouts.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    let mut public = batch_payouts(&payouts);
+
+    match query.sort.as_deref().map(str::trim).unwrap_or("time_desc") {
+        "time_asc" => public.sort_by(|a, b| a.timestamp.cmp(&b.timestamp)),
+        "amount_desc" => public.sort_by(|a, b| b.total_amount.cmp(&a.total_amount)),
+        "amount_asc" => public.sort_by(|a, b| a.total_amount.cmp(&b.total_amount)),
+        _ => {} // already time_desc
+    }
+
+    Json(paginate_response(public, query.limit, query.offset)).into_response()
+}
+
+async fn handle_delete_block(
+    Path(height): Path<u64>,
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let store = Arc::clone(&state.store);
+    match tokio::task::spawn_blocking(move || store.delete_block(height)).await {
+        Ok(Ok(true)) => {
+            Json(serde_json::json!({"deleted": true, "height": height})).into_response()
+        }
+        Ok(Ok(false)) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "block not found"})),
+        )
+            .into_response(),
+        Ok(Err(err)) => internal_error("failed deleting block", err).into_response(),
+        Err(err) => {
+            internal_error("failed deleting block", anyhow::anyhow!("join error: {err}"))
+                .into_response()
+        }
+    }
 }
 
 async fn handle_payouts(

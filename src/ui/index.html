@@ -1,1234 +1,906 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Blocknet Pool WebUI</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Manrope:wght@400;600;700&display=swap" rel="stylesheet">
-  <style>
-    :root {
-      --bg-0: #06111b;
-      --bg-1: #0e2535;
-      --panel: rgba(8, 20, 35, 0.82);
-      --line: rgba(121, 164, 201, 0.32);
-      --ink: #ecf4ff;
-      --muted: #9eb6d0;
-      --good: #42d28d;
-      --warn: #f0bc52;
-      --bad: #ff7f7f;
-      --accent: #49b7ff;
-      --tab: #163750;
-    }
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blocknet Pool</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='4' y='4' width='24' height='24' rx='4' fill='%2316a34a'/><rect x='9' y='9' width='14' height='14' rx='2' fill='%23fff' opacity='.9'/><rect x='12' y='12' width='8' height='8' rx='1' fill='%2316a34a'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #fafaf5;
+  --surface: #ffffff;
+  --accent: #16a34a;
+  --accent-light: #dcfce7;
+  --secondary: #d97706;
+  --text: #1a2e1a;
+  --muted: #6b7c6b;
+  --border: #e2e8d8;
+  --good: #16a34a;
+  --warn: #d97706;
+  --bad: #dc2626;
+  --radius: 10px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Manrope',sans-serif;background:var(--bg);color:var(--text);line-height:1.5;min-height:100vh}
+.mono{font-family:'JetBrains Mono',monospace}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
 
-    * { box-sizing: border-box; }
+nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;display:flex;align-items:center;height:56px;gap:6px;position:sticky;top:0;z-index:100;overflow-x:auto}
+.nav-brand{font-weight:700;font-size:16px;color:var(--accent);margin-right:12px;white-space:nowrap}
+nav a{color:var(--muted);font-size:14px;font-weight:500;padding:6px 10px;border-radius:6px;transition:color .15s,background .15s;white-space:nowrap}
+nav a:hover{color:var(--text);background:var(--bg);text-decoration:none}
+nav a.active{color:var(--accent);background:var(--accent-light)}
 
-    body {
-      margin: 0;
-      color: var(--ink);
-      font-family: "Manrope", "Segoe UI", sans-serif;
-      min-height: 100vh;
-      background:
-        radial-gradient(1300px 700px at -10% -15%, #1b5f7f 0%, transparent 58%),
-        radial-gradient(1200px 700px at 120% 130%, #16415f 0%, transparent 50%),
-        linear-gradient(130deg, var(--bg-0), var(--bg-1));
-    }
+.container{max-width:1120px;margin:0 auto;padding:24px 20px}
+.page{display:none}
+.page.active{display:block}
 
-    .app {
-      width: min(1320px, 94vw);
-      margin: 20px auto 40px;
-      animation: rise .35s ease-out;
-    }
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px}
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 20px}
+.stat-card .label{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:4px}
+.stat-card .value{font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:600;color:var(--text)}
 
-    @keyframes rise {
-      from { opacity: 0; transform: translateY(8px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
+.stratum-bar{display:flex;align-items:center;gap:12px;margin-bottom:24px;flex-wrap:wrap}
+.stratum-bar .endpoint{font-family:'JetBrains Mono',monospace;font-size:14px;background:var(--accent-light);color:var(--accent);padding:6px 14px;border-radius:6px;user-select:all}
+.copy-btn{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:13px;cursor:pointer;font-family:'Manrope',sans-serif;color:var(--muted);transition:border-color .15s,color .15s}
+.copy-btn:hover{border-color:var(--accent);color:var(--accent)}
 
-    .hero {
-      display: flex;
-      justify-content: space-between;
-      align-items: start;
-      gap: 16px;
-      margin-bottom: 14px;
-    }
+.range-tabs{display:flex;gap:4px}
+.range-tabs button{font-family:'Manrope',sans-serif;font-size:13px;font-weight:500;padding:4px 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--muted);cursor:pointer;transition:all .15s}
+.range-tabs button:hover{border-color:var(--accent);color:var(--accent)}
+.range-tabs button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 
-    .hero h1 {
-      margin: 0;
-      font-size: clamp(1.5rem, 2.6vw, 2.2rem);
-      letter-spacing: .02em;
-    }
+.chart-wrap{position:relative;margin-bottom:24px}
+.chart-wrap canvas{width:100%;height:220px;display:block}
 
-    .mono { font-family: "JetBrains Mono", monospace; }
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);padding:10px 12px;border-bottom:2px solid var(--border)}
+td{padding:10px 12px;border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:13px}
+tr:hover td{background:var(--bg)}
+.badge{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;text-transform:uppercase;letter-spacing:.3px}
+.badge-confirmed{background:var(--accent-light);color:var(--good)}
+.badge-pending{background:#fef3c7;color:var(--warn)}
+.badge-orphaned{background:#fee2e2;color:var(--bad)}
 
-    .sub {
-      margin-top: 4px;
-      color: var(--muted);
-      font-size: .95rem;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px 14px;
-    }
+.pager{display:flex;align-items:center;justify-content:space-between;padding:12px 0;font-size:13px;color:var(--muted)}
+.pager button{font-family:'Manrope',sans-serif;font-size:13px;padding:5px 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--muted);cursor:pointer}
+.pager button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.pager button:disabled{opacity:.4;cursor:default}
 
-    .endpoint {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      background: rgba(10, 26, 44, 0.65);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 6px 10px;
-      font-size: .82rem;
-      color: var(--muted);
-    }
+input[type="text"],input[type="password"]{font-family:'JetBrains Mono',monospace;font-size:14px;padding:8px 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none;transition:border-color .15s}
+input:focus{border-color:var(--accent)}
+.btn{font-family:'Manrope',sans-serif;font-size:14px;font-weight:500;padding:8px 18px;border:none;border-radius:6px;cursor:pointer;transition:opacity .15s}
+.btn:hover{opacity:.85}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-secondary{background:var(--border);color:var(--text)}
 
-    .btn {
-      border: 1px solid var(--line);
-      background: var(--tab);
-      color: var(--ink);
-      border-radius: 8px;
-      padding: 6px 10px;
-      font-size: .82rem;
-      cursor: pointer;
-    }
+.sub-tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:2px solid var(--border);padding-bottom:0}
+.sub-tabs button{font-family:'Manrope',sans-serif;font-size:13px;font-weight:500;padding:8px 16px;border:none;background:none;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:color .15s,border-color .15s}
+.sub-tabs button:hover{color:var(--text)}
+.sub-tabs button.active{color:var(--accent);border-bottom-color:var(--accent)}
 
-    .btn:hover { filter: brightness(1.12); }
+h2{font-size:18px;font-weight:700;margin-bottom:16px}
+h3{font-size:15px;font-weight:600;margin-bottom:12px}
+.section{margin-bottom:32px}
+.section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.auth-gate{text-align:center;padding:48px 20px;color:var(--muted)}
+.auth-gate p{margin-bottom:12px}
+.filter-bar{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+.filter-bar input{width:220px}
+.filter-bar select{font-family:'Manrope',sans-serif;font-size:13px;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer}
 
-    .panel {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 12px;
-      box-shadow: 0 10px 28px rgba(0, 0, 0, .25);
-      backdrop-filter: blur(5px);
-    }
+.steps{counter-reset:step;list-style:none;padding:0;margin:0}
+.steps li{counter-increment:step;padding:12px 0 12px 48px;position:relative;border-left:2px solid var(--border);margin-left:16px}
+.steps li::before{content:counter(step);position:absolute;left:-16px;top:10px;width:30px;height:30px;background:var(--accent);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;line-height:1}
+.steps li:last-child{border-left-color:transparent}
+pre.config-block{background:var(--text);color:#e8f5e9;padding:16px 20px;border-radius:var(--radius);font-family:'JetBrains Mono',monospace;font-size:13px;overflow-x:auto;line-height:1.6}
 
-    .auth {
-      display: grid;
-      grid-template-columns: 1fr auto auto auto;
-      gap: 8px;
-      align-items: center;
-      margin-bottom: 12px;
-    }
+.info-table td{font-family:'Manrope',sans-serif;border:none;padding:8px 16px 8px 0;vertical-align:top}
+.info-table td:first-child{color:var(--muted);white-space:nowrap}
+.info-table td:last-child{font-family:'JetBrains Mono',monospace;font-size:14px}
 
-    .input,
-    .select {
-      width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 8px 10px;
-      background: rgba(10, 27, 44, 0.8);
-      color: var(--ink);
-      font-family: "JetBrains Mono", monospace;
-      font-size: .85rem;
-    }
+.screenshot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin:16px 0}
+.screenshot-grid img{width:100%;border-radius:var(--radius);border:1px solid var(--border)}
+.screenshot-grid .caption{font-size:13px;color:var(--muted);margin-top:6px;text-align:center}
 
-    .badge {
-      font-size: .77rem;
-      padding: 5px 8px;
-      border-radius: 999px;
-      border: 1px solid transparent;
-      white-space: nowrap;
-    }
+#error-bar{display:none;background:#fee2e2;color:var(--bad);padding:10px 20px;font-size:13px;text-align:center}
+.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.dot-green{background:var(--good)}.dot-amber{background:var(--warn)}.dot-red{background:var(--bad)}
+pre.raw-json{background:var(--bg);border:1px solid var(--border);padding:16px;border-radius:var(--radius);font-family:'JetBrains Mono',monospace;font-size:12px;overflow-x:auto;max-height:400px;overflow-y:auto;line-height:1.5}
+.view-all{font-size:13px;font-weight:500;color:var(--accent)}
 
-    .badge.good { color: #d9ffea; background: rgba(66, 210, 141, 0.23); border-color: rgba(66, 210, 141, 0.4); }
-    .badge.warn { color: #ffecc8; background: rgba(240, 188, 82, 0.23); border-color: rgba(240, 188, 82, 0.4); }
-    .badge.bad { color: #ffdcdc; background: rgba(255, 127, 127, 0.23); border-color: rgba(255, 127, 127, 0.4); }
-
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-
-    .card {
-      background: rgba(7, 18, 31, 0.75);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 10px;
-    }
-
-    .label {
-      color: var(--muted);
-      font-size: .7rem;
-      text-transform: uppercase;
-      letter-spacing: .11em;
-      margin-bottom: 6px;
-    }
-
-    .value {
-      font-size: 1rem;
-      font-weight: 700;
-      font-variant-numeric: tabular-nums;
-    }
-
-    .value.good { color: var(--good); }
-    .value.warn { color: var(--warn); }
-    .value.bad { color: var(--bad); }
-
-    .charts {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-
-    .chart-wrap {
-      background: rgba(7, 18, 31, 0.75);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 8px;
-    }
-
-    .chart-wrap h3 {
-      margin: 0 0 4px;
-      font-size: .8rem;
-      color: var(--muted);
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: .08em;
-    }
-
-    canvas {
-      width: 100%;
-      height: 120px;
-      display: block;
-    }
-
-    .tabs {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-bottom: 10px;
-    }
-
-    .tab-btn {
-      border: 1px solid var(--line);
-      background: rgba(20, 48, 73, 0.85);
-      color: var(--ink);
-      border-radius: 999px;
-      padding: 7px 12px;
-      font-size: .82rem;
-      cursor: pointer;
-    }
-
-    .tab-btn.active {
-      background: var(--accent);
-      color: #00101b;
-      border-color: transparent;
-      font-weight: 700;
-    }
-
-    .tab {
-      display: none;
-      margin-bottom: 10px;
-    }
-
-    .tab.active { display: block; }
-
-    .toolbar {
-      display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
-      gap: 8px;
-      margin-bottom: 8px;
-    }
-
-    .toolbar .wide { grid-column: span 2; }
-
-    .pager {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 8px;
-      margin-top: 8px;
-      color: var(--muted);
-      font-size: .82rem;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: .82rem;
-    }
-
-    th,
-    td {
-      text-align: left;
-      padding: 8px;
-      border-bottom: 1px solid rgba(121, 164, 201, 0.2);
-      vertical-align: top;
-    }
-
-    th {
-      color: var(--muted);
-      font-size: .72rem;
-      text-transform: uppercase;
-      letter-spacing: .1em;
-      position: sticky;
-      top: 0;
-      background: rgba(7, 18, 31, 0.95);
-    }
-
-    .table-wrap {
-      overflow: auto;
-      max-height: 420px;
-      border: 1px solid rgba(121, 164, 201, 0.24);
-      border-radius: 10px;
-    }
-
-    .mini-grid {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 8px;
-      margin-bottom: 8px;
-    }
-
-    .pre {
-      background: rgba(7, 18, 31, 0.72);
-      border: 1px solid rgba(121, 164, 201, 0.25);
-      border-radius: 10px;
-      padding: 10px;
-      white-space: pre-wrap;
-      font-family: "JetBrains Mono", monospace;
-      font-size: .8rem;
-      color: #d7e9ff;
-      max-height: 340px;
-      overflow: auto;
-    }
-
-    .error {
-      margin-top: 10px;
-      color: var(--bad);
-      font-family: "JetBrains Mono", monospace;
-      font-size: .82rem;
-      white-space: pre-wrap;
-    }
-
-    @media (max-width: 1120px) {
-      .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-      .charts { grid-template-columns: 1fr; }
-      .toolbar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    }
-
-    @media (max-width: 760px) {
-      .hero { flex-direction: column; }
-      .auth { grid-template-columns: 1fr 1fr; }
-      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .mini-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .toolbar { grid-template-columns: 1fr; }
-      .toolbar .wide { grid-column: span 1; }
-    }
-  </style>
+@media(max-width:900px){.stats-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:600px){.stats-grid{grid-template-columns:1fr}nav{padding:0 12px;gap:4px}nav a{font-size:13px;padding:4px 8px}.container{padding:16px 12px}.filter-bar input{width:100%}}
+</style>
 </head>
 <body>
-  <main class="app">
-    <section class="hero">
+
+<nav>
+  <a href="#/" class="nav-brand" id="nav-brand" style="text-decoration:none">Blocknet Pool</a>
+  <a href="#/" data-nav="dashboard">Dashboard</a>
+  <a href="#/start" data-nav="start">Get Started</a>
+  <a href="#/blocks" data-nav="blocks">Blocks</a>
+  <a href="#/payouts" data-nav="payouts">Payouts</a>
+  <a href="#/stats" data-nav="stats">My Stats</a>
+  <a href="#/admin" data-nav="admin">Admin</a>
+</nav>
+
+<div id="error-bar"></div>
+
+<div class="container">
+
+<!-- ======== DASHBOARD ======== -->
+<div class="page" id="page-dashboard">
+  <div class="stratum-bar">
+    <span style="font-size:14px;font-weight:600;color:var(--muted)">Stratum</span>
+    <span class="endpoint" id="stratum-url"></span>
+    <button class="copy-btn" onclick="copyStratum()">Copy</button>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat-card"><div class="label">Connected Miners</div><div class="value" id="s-miners">-</div></div>
+    <div class="stat-card"><div class="label">Pool Hashrate</div><div class="value" id="s-hashrate">-</div></div>
+    <div class="stat-card"><div class="label">Network Hashrate</div><div class="value" id="s-net-hashrate">-</div></div>
+    <div class="stat-card"><div class="label">Blocks Found</div><div class="value" id="s-blocks">-</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-header">
+      <h2>Pool Hashrate</h2>
+      <div class="range-tabs" id="hashrate-ranges">
+        <button class="active" data-range="1h">1h</button>
+        <button data-range="24h">24h</button>
+        <button data-range="7d">7d</button>
+        <button data-range="30d">30d</button>
+      </div>
+    </div>
+    <div class="chart-wrap"><canvas id="hashrate-chart"></canvas></div>
+  </div>
+
+  <div class="section">
+    <div class="section-header">
+      <h2>Recent Blocks</h2>
+      <a href="#/blocks" class="view-all">View All</a>
+    </div>
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Height</th><th>Reward</th><th>Status</th><th>Time</th></tr></thead>
+        <tbody id="dash-blocks-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header">
+      <h2>Recent Payouts</h2>
+      <a href="#/payouts" class="view-all">View All</a>
+    </div>
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Amount</th><th>Miners Paid</th><th>TX</th><th>Time</th></tr></thead>
+        <tbody id="dash-payouts-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ======== GET STARTED ======== -->
+<div class="page" id="page-start">
+  <h2>Get Started Mining</h2>
+
+  <div class="card section">
+    <h3>Pool Information</h3>
+    <table class="info-table" style="max-width:500px">
+      <tr><td>Stratum</td><td><code class="mono copy-inline" style="background:var(--bg);padding:1px 6px;border-radius:4px;font-size:13px;cursor:pointer" id="start-stratum" onclick="copyText(this)" title="Click to copy"></code></td></tr>
+      <tr><td>Fee</td><td id="start-fee"></td></tr>
+      <tr><td>Payout Scheme</td><td id="start-payout-scheme"></td></tr>
+      <tr><td>Min Payout</td><td id="start-min-payout"></td></tr>
+      <tr><td>Block Confirmations</td><td id="start-confirmations"></td></tr>
+    </table>
+  </div>
+
+  <div class="card section">
+    <h3>Setup Instructions</h3>
+    <ol class="steps">
+      <li>
+        <strong>Download Seine</strong>
+        <p style="color:var(--muted);font-size:14px;margin-top:4px">
+          Seine is the official Blocknet miner with CPU and GPU support.
+          Download the latest release for your platform from
+          <a href="https://github.com/zpalmtree/seine/releases" target="_blank" rel="noopener">github.com/zpalmtree/seine</a>.
+        </p>
+      </li>
+      <li>
+        <strong>Run Seine</strong>
+        <p style="color:var(--muted);font-size:14px;margin-top:4px">
+          Open a terminal and run <code class="mono" style="background:var(--bg);padding:1px 6px;border-radius:4px;font-size:13px">./seine</code>.
+          On first launch, Seine will prompt you for your settings:
+        </p>
+        <ul style="color:var(--muted);font-size:14px;margin-top:8px;list-style:disc;padding-left:20px;line-height:2">
+          <li><strong style="color:var(--text)">Blocknet address</strong> &mdash; your wallet address for receiving payouts</li>
+          <li><strong style="color:var(--text)">Pool URL</strong> &mdash; enter <code class="mono copy-inline" style="background:var(--bg);padding:1px 6px;border-radius:4px;font-size:13px;cursor:pointer" id="start-pool-url" onclick="copyText(this)" title="Click to copy"></code></li>
+        </ul>
+        <p style="color:var(--muted);font-size:14px;margin-top:8px">
+          Your settings are saved to <code class="mono" style="background:var(--bg);padding:1px 6px;border-radius:4px;font-size:13px">seine-data/seine.config.json</code> so you won't be prompted again on subsequent runs.
+        </p>
+      </li>
+      <li>
+        <strong>Start mining</strong>
+        <p style="color:var(--muted);font-size:14px;margin-top:4px">
+          Seine will connect to the pool and start submitting shares. You can monitor your progress in the Seine TUI or check
+          <a href="#/stats">My Stats</a> using your wallet address to see your hashrate and balance.
+        </p>
+      </li>
+    </ol>
+  </div>
+
+  <div class="card section">
+    <h3>Seine in Action</h3>
+    <div class="screenshot-grid">
       <div>
-        <h1 id="pool-name">Blocknet Pool WebUI</h1>
-        <div class="sub">
-          <span id="pool-url" class="mono">pool_url: -</span>
-          <span id="build-version" class="mono">version: -</span>
-          <span id="started-at" class="mono">started: -</span>
-          <span id="last-updated" class="mono">updated: never</span>
+        <div style="background:var(--bg);border:2px dashed var(--border);border-radius:var(--radius);padding:48px 20px;text-align:center">
+          <p style="color:var(--muted);font-size:14px">Screenshot: Seine setup prompts</p>
+        </div>
+        <div class="caption">First-run setup</div>
+      </div>
+      <div>
+        <div style="background:var(--bg);border:2px dashed var(--border);border-radius:var(--radius);padding:48px 20px;text-align:center">
+          <p style="color:var(--muted);font-size:14px">Screenshot: Seine mining in progress</p>
+        </div>
+        <div class="caption">Mining TUI</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======== BLOCKS ======== -->
+<div class="page" id="page-blocks">
+  <h2>Blocks Found</h2>
+  <div class="filter-bar">
+    <select id="blocks-status-filter">
+      <option value="">All Status</option>
+      <option value="confirmed">Confirmed</option>
+      <option value="pending">Pending</option>
+      <option value="orphaned">Orphaned</option>
+    </select>
+    <button class="btn btn-primary" onclick="loadBlocksPage()">Filter</button>
+  </div>
+  <div class="card" style="overflow-x:auto">
+    <table>
+      <thead><tr><th>Height</th><th>Reward</th><th>Status</th><th>Time</th></tr></thead>
+      <tbody id="blocks-body"></tbody>
+    </table>
+    <div class="pager" id="blocks-pager">
+      <span id="blocks-pager-info"></span>
+      <div><button id="blocks-prev">Prev</button> <button id="blocks-next">Next</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ======== PAYOUTS ======== -->
+<div class="page" id="page-payouts">
+  <h2>Payouts</h2>
+  <p style="font-size:14px;color:var(--muted);margin-bottom:16px">All pool payouts. Transaction hashes link to the block explorer for verification.</p>
+  <div class="card" style="overflow-x:auto">
+    <table>
+      <thead><tr><th>Amount</th><th>Miners Paid</th><th>Network Fee</th><th>Transaction</th><th>Time</th></tr></thead>
+      <tbody id="pub-payouts-body"></tbody>
+    </table>
+    <div class="pager" id="pub-payouts-pager">
+      <span id="pub-payouts-pager-info"></span>
+      <div><button id="pub-payouts-prev">Prev</button> <button id="pub-payouts-next">Next</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ======== MY STATS ======== -->
+<div class="page" id="page-stats">
+  <h2>My Stats</h2>
+  <div class="card" style="margin-bottom:24px">
+    <div style="display:flex;gap:10px;margin-bottom:0;flex-wrap:wrap">
+      <input type="text" id="lookup-address" placeholder="Enter your wallet address" style="flex:1;min-width:200px">
+      <button class="btn btn-primary" onclick="loadMinerLookup()">Lookup</button>
+      <button class="btn btn-secondary" onclick="clearMinerLookup()">Clear</button>
+    </div>
+  </div>
+  <div id="lookup-result" style="display:none">
+    <div class="stats-grid" style="margin-bottom:24px">
+      <div class="stat-card"><div class="label">Hashrate</div><div class="value" id="lu-hashrate">-</div></div>
+      <div class="stat-card"><div class="label">Pending Balance</div><div class="value" id="lu-pending">-</div></div>
+      <div class="stat-card"><div class="label">Paid Balance</div><div class="value" id="lu-paid">-</div></div>
+      <div class="stat-card"><div class="label">Blocks Found</div><div class="value" id="lu-blocks-count">-</div></div>
+    </div>
+    <div class="stats-grid" style="margin-bottom:24px">
+      <div class="stat-card"><div class="label">Shares Accepted</div><div class="value" id="lu-accepted">-</div></div>
+      <div class="stat-card"><div class="label">Shares Rejected</div><div class="value" id="lu-rejected">-</div></div>
+      <div class="stat-card"><div class="label">Avg Difficulty</div><div class="value" id="lu-avg-diff">-</div></div>
+      <div class="stat-card"><div class="label">Mining Since</div><div class="value" id="lu-mining-since">-</div></div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <h2>Hashrate History</h2>
+        <div class="range-tabs" id="miner-hashrate-ranges">
+          <button class="active" data-range="1h">1h</button>
+          <button data-range="24h">24h</button>
+          <button data-range="7d">7d</button>
+          <button data-range="30d">30d</button>
         </div>
       </div>
-      <div class="endpoint">
-        <span>stratum</span>
-        <code id="stratum-endpoint" class="mono">-</code>
-        <button id="copy-stratum" class="btn">Copy</button>
+      <div class="chart-wrap"><canvas id="miner-hashrate-chart"></canvas></div>
+    </div>
+
+    <div class="section">
+      <h2>Workers</h2>
+      <div class="card" style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Worker</th><th>Hashrate</th><th>Accepted</th><th>Rejected</th><th>Last Share</th></tr></thead>
+          <tbody id="lu-workers"></tbody>
+        </table>
       </div>
-    </section>
+    </div>
 
-    <section class="panel auth">
-      <input id="api-key" class="input" type="password" autocomplete="off" placeholder="API key for protected endpoints" />
-      <button id="save-key" class="btn">Save Key</button>
-      <button id="clear-key" class="btn">Clear Key</button>
-      <span id="auth-status" class="badge warn">No key loaded</span>
-    </section>
-
-    <section class="stats" id="stats-grid">
-      <article class="card"><div class="label">Connected Miners</div><div id="s-miners" class="value mono">-</div></article>
-      <article class="card"><div class="label">Connected Workers</div><div id="s-workers" class="value mono">-</div></article>
-      <article class="card"><div class="label">Pool Hashrate</div><div id="s-hashrate" class="value mono">-</div></article>
-      <article class="card"><div class="label">Network Hashrate</div><div id="s-network" class="value mono">-</div></article>
-      <article class="card"><div class="label">Accepted Shares</div><div id="s-accepted" class="value mono good">-</div></article>
-      <article class="card"><div class="label">Rejected Shares</div><div id="s-rejected" class="value mono warn">-</div></article>
-      <article class="card"><div class="label">Reject Rate</div><div id="s-reject-rate" class="value mono">-</div></article>
-      <article class="card"><div class="label">Blocks Found</div><div id="s-blocks" class="value mono">-</div></article>
-      <article class="card"><div class="label">Total Shares (DB)</div><div id="s-total-shares" class="value mono">-</div></article>
-      <article class="card"><div class="label">Total Blocks (DB)</div><div id="s-total-blocks" class="value mono">-</div></article>
-      <article class="card"><div class="label">Pool Fees Collected</div><div id="s-fees" class="value mono">-</div></article>
-      <article class="card"><div class="label">Current Job Height</div><div id="s-height" class="value mono">-</div></article>
-      <article class="card"><div class="label">Validation In Flight</div><div id="s-inflight" class="value mono">-</div></article>
-      <article class="card"><div class="label">Candidate Queue</div><div id="s-queue-c" class="value mono">-</div></article>
-      <article class="card"><div class="label">Regular Queue</div><div id="s-queue-r" class="value mono">-</div></article>
-      <article class="card"><div class="label">Fraud Detections</div><div id="s-fraud" class="value mono bad">-</div></article>
-    </section>
-
-    <section class="charts">
-      <article class="chart-wrap">
-        <h3>Pool Hashrate Trend</h3>
-        <canvas id="c-hashrate" width="400" height="120"></canvas>
-      </article>
-      <article class="chart-wrap">
-        <h3>Reject Rate Trend</h3>
-        <canvas id="c-reject-rate" width="400" height="120"></canvas>
-      </article>
-      <article class="chart-wrap">
-        <h3>Validation Queues Trend</h3>
-        <canvas id="c-queue" width="400" height="120"></canvas>
-      </article>
-    </section>
-
-    <section class="panel">
-      <div class="tabs">
-        <button class="tab-btn active" data-tab="miner">Miner Lookup</button>
-        <button class="tab-btn" data-tab="miners">Miners</button>
-        <button class="tab-btn" data-tab="blocks">Blocks</button>
-        <button class="tab-btn" data-tab="payouts">Payouts</button>
-        <button class="tab-btn" data-tab="fees">Fees</button>
-        <button class="tab-btn" data-tab="health">Ops Health</button>
+    <div class="section" id="lu-blocks-section" style="display:none">
+      <h2>Blocks Found</h2>
+      <div class="card" style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Height</th><th>Reward</th><th>Status</th><th>Time</th></tr></thead>
+          <tbody id="lu-blocks"></tbody>
+        </table>
       </div>
+    </div>
 
-      <section id="tab-miner" class="tab active">
-        <div class="toolbar">
-          <input id="miner-address" class="input wide" placeholder="Miner address" />
-          <input id="miner-share-limit" class="input" type="number" min="1" max="500" value="100" />
-          <button id="miner-load" class="btn">Load Miner</button>
-          <button id="miner-clear" class="btn">Clear</button>
-          <span id="miner-state" class="badge warn">No miner selected</span>
+    <div class="section">
+      <h2>Recent Shares</h2>
+      <div class="card" style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Job</th><th>Worker</th><th>Difficulty</th><th>Status</th><th>Time</th></tr></thead>
+          <tbody id="lu-shares"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======== ADMIN ======== -->
+<div class="page" id="page-admin">
+  <h2>Admin</h2>
+
+  <div class="card section">
+    <h3>API Key</h3>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <input type="password" id="api-key-input" placeholder="Enter API key" style="flex:1;min-width:200px">
+      <button class="btn btn-primary" onclick="saveApiKey()">Save</button>
+      <button class="btn btn-secondary" onclick="clearApiKey()">Clear</button>
+      <span id="auth-status" style="font-size:13px;color:var(--muted)"></span>
+    </div>
+  </div>
+
+  <div id="admin-auth-gate" class="auth-gate card section" style="display:none">
+    <p>Enter your API key above to access admin features.</p>
+  </div>
+
+  <div id="admin-content" style="display:none">
+    <div class="sub-tabs" id="admin-tabs">
+      <button class="active" data-tab="miners" onclick="setAdminTab('miners')">Miners</button>
+      <button data-tab="payouts" onclick="setAdminTab('payouts')">Payouts</button>
+      <button data-tab="fees" onclick="setAdminTab('fees')">Fees</button>
+      <button data-tab="health" onclick="setAdminTab('health')">Health</button>
+    </div>
+
+    <div id="admin-miners">
+      <div class="filter-bar">
+        <input type="text" id="miners-search" placeholder="Search address...">
+        <select id="miners-sort">
+          <option value="hashrate_desc">Hashrate (high)</option>
+          <option value="accepted_desc">Accepted (high)</option>
+          <option value="rejected_desc">Rejected (high)</option>
+          <option value="last_share_desc">Last Share (recent)</option>
+          <option value="address_asc">Address (A-Z)</option>
+        </select>
+        <button class="btn btn-primary" onclick="loadMinersPage()">Search</button>
+      </div>
+      <div class="card" style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Address</th><th>Workers</th><th>Hashrate</th><th>Accepted</th><th>Rejected</th><th>Blocks</th><th>Last Share</th></tr></thead>
+          <tbody id="miners-body"></tbody>
+        </table>
+        <div class="pager" id="miners-pager">
+          <span id="miners-pager-info"></span>
+          <div><button id="miners-prev">Prev</button> <button id="miners-next">Next</button></div>
         </div>
+      </div>
+    </div>
 
-        <div class="mini-grid" id="miner-summary">
-          <article class="card"><div class="label">Hashrate</div><div id="m-hashrate" class="value mono">-</div></article>
-          <article class="card"><div class="label">Pending Balance</div><div id="m-pending" class="value mono">-</div></article>
-          <article class="card"><div class="label">Paid Balance</div><div id="m-paid" class="value mono">-</div></article>
-          <article class="card"><div class="label">Pending Payout</div><div id="m-payout" class="value mono">-</div></article>
+    <div id="admin-payouts" style="display:none">
+      <div class="filter-bar">
+        <input type="text" id="payouts-address" placeholder="Filter by address...">
+        <input type="text" id="payouts-txhash" placeholder="Filter by tx hash...">
+        <button class="btn btn-primary" onclick="loadAdminPayoutsPage()">Search</button>
+      </div>
+      <div class="card" style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Address</th><th>Amount</th><th>Fee</th><th>TX Hash</th><th>Time</th></tr></thead>
+          <tbody id="admin-payouts-body"></tbody>
+        </table>
+        <div class="pager" id="admin-payouts-pager">
+          <span id="admin-payouts-pager-info"></span>
+          <div><button id="admin-payouts-prev">Prev</button> <button id="admin-payouts-next">Next</button></div>
         </div>
+      </div>
+    </div>
 
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Share ID</th>
-                <th>Job</th>
-                <th>Status</th>
-                <th>Diff</th>
-                <th>Nonce</th>
-                <th>Sampled</th>
-                <th>Block Hash</th>
-                <th>Time</th>
-              </tr>
-            </thead>
-            <tbody id="miner-shares-body"></tbody>
-          </table>
+    <div id="admin-fees" style="display:none">
+      <div class="filter-bar">
+        <input type="text" id="fees-address" placeholder="Filter by fee address...">
+        <button class="btn btn-primary" onclick="loadFeesPage()">Search</button>
+      </div>
+      <p style="font-size:14px;color:var(--muted);margin-bottom:12px">Total Collected: <span class="mono" id="fees-total">-</span></p>
+      <div class="card" style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Block</th><th>Amount</th><th>Fee Address</th><th>Time</th></tr></thead>
+          <tbody id="fees-body"></tbody>
+        </table>
+        <div class="pager" id="fees-pager">
+          <span id="fees-pager-info"></span>
+          <div><button id="fees-prev">Prev</button> <button id="fees-next">Next</button></div>
         </div>
-      </section>
+      </div>
+    </div>
 
-      <section id="tab-miners" class="tab">
-        <div class="toolbar">
-          <input id="miners-search" class="input wide" placeholder="Search miner address" />
-          <select id="miners-sort" class="select">
-            <option value="hashrate_desc">Sort: Hashrate</option>
-            <option value="accepted_desc">Sort: Accepted Shares</option>
-            <option value="rejected_desc">Sort: Rejected Shares</option>
-            <option value="last_share_desc">Sort: Last Share</option>
-            <option value="address_asc">Sort: Address</option>
-          </select>
-          <input id="miners-limit" class="input" type="number" min="1" max="200" value="25" />
-          <button id="miners-apply" class="btn">Apply</button>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Address</th>
-                <th>Workers</th>
-                <th>Hashrate</th>
-                <th>Accepted</th>
-                <th>Rejected</th>
-                <th>Blocks</th>
-                <th>Last Share</th>
-              </tr>
-            </thead>
-            <tbody id="miners-body"></tbody>
-          </table>
-        </div>
-        <div class="pager">
-          <span id="miners-page" class="mono">-</span>
-          <div>
-            <button id="miners-prev" class="btn">Prev</button>
-            <button id="miners-next" class="btn">Next</button>
-          </div>
-        </div>
-      </section>
+    <div id="admin-health" style="display:none">
+      <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px">
+        <div class="stat-card"><div class="label">Uptime</div><div class="value" id="h-uptime">-</div></div>
+        <div class="stat-card"><div class="label">Daemon</div><div class="value" id="h-daemon">-</div></div>
+        <div class="stat-card"><div class="label">Template Age</div><div class="value" id="h-template">-</div></div>
+        <div class="stat-card"><div class="label">Pending Payouts</div><div class="value" id="h-pending">-</div></div>
+      </div>
+      <h3>Raw Health Data</h3>
+      <pre class="raw-json" id="h-raw">Loading...</pre>
+    </div>
+  </div>
+</div>
 
-      <section id="tab-blocks" class="tab">
-        <div class="toolbar">
-          <input id="blocks-finder" class="input wide" placeholder="Finder address filter" />
-          <select id="blocks-status" class="select">
-            <option value="">Status: All</option>
-            <option value="confirmed">Confirmed</option>
-            <option value="pending">Pending</option>
-            <option value="orphaned">Orphaned</option>
-            <option value="paid">Paid</option>
-            <option value="unpaid">Unpaid</option>
-          </select>
-          <select id="blocks-sort" class="select">
-            <option value="height_desc">Sort: Height desc</option>
-            <option value="height_asc">Sort: Height asc</option>
-            <option value="time_asc">Sort: Time asc</option>
-            <option value="reward_desc">Sort: Reward desc</option>
-            <option value="reward_asc">Sort: Reward asc</option>
-          </select>
-          <input id="blocks-limit" class="input" type="number" min="1" max="200" value="25" />
-          <button id="blocks-apply" class="btn">Apply</button>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Height</th>
-                <th>Hash</th>
-                <th>Finder</th>
-                <th>Worker</th>
-                <th>Reward</th>
-                <th>Confirmed</th>
-                <th>Orphaned</th>
-                <th>Paid</th>
-                <th>Time</th>
-              </tr>
-            </thead>
-            <tbody id="blocks-body"></tbody>
-          </table>
-        </div>
-        <div class="pager">
-          <span id="blocks-page" class="mono">-</span>
-          <div>
-            <button id="blocks-prev" class="btn">Prev</button>
-            <button id="blocks-next" class="btn">Next</button>
-          </div>
-        </div>
-      </section>
+</div>
 
-      <section id="tab-payouts" class="tab">
-        <div class="toolbar">
-          <input id="payouts-address" class="input" placeholder="Address filter" />
-          <input id="payouts-tx" class="input wide" placeholder="Tx hash filter" />
-          <select id="payouts-sort" class="select">
-            <option value="time_desc">Sort: Newest</option>
-            <option value="time_asc">Sort: Oldest</option>
-            <option value="amount_desc">Sort: Amount desc</option>
-            <option value="amount_asc">Sort: Amount asc</option>
-          </select>
-          <input id="payouts-limit" class="input" type="number" min="1" max="200" value="25" />
-          <button id="payouts-apply" class="btn">Apply</button>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Address</th>
-                <th>Amount</th>
-                <th>Fee</th>
-                <th>Tx Hash</th>
-                <th>Time</th>
-              </tr>
-            </thead>
-            <tbody id="payouts-body"></tbody>
-          </table>
-        </div>
-        <div class="pager">
-          <span id="payouts-page" class="mono">-</span>
-          <div>
-            <button id="payouts-prev" class="btn">Prev</button>
-            <button id="payouts-next" class="btn">Next</button>
-          </div>
-        </div>
-      </section>
+<script>
+(function(){
+'use strict';
 
-      <section id="tab-fees" class="tab">
-        <div class="toolbar">
-          <input id="fees-address" class="input wide" placeholder="Fee address filter" />
-          <select id="fees-sort" class="select">
-            <option value="time_desc">Sort: Newest</option>
-            <option value="time_asc">Sort: Oldest</option>
-            <option value="amount_desc">Sort: Amount desc</option>
-            <option value="amount_asc">Sort: Amount asc</option>
-            <option value="height_desc">Sort: Height desc</option>
-            <option value="height_asc">Sort: Height asc</option>
-          </select>
-          <input id="fees-limit" class="input" type="number" min="1" max="200" value="25" />
-          <button id="fees-apply" class="btn">Apply</button>
-          <span id="fees-total" class="badge warn">Total: -</span>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Height</th>
-                <th>Amount</th>
-                <th>Fee Address</th>
-                <th>Time</th>
-              </tr>
-            </thead>
-            <tbody id="fees-body"></tbody>
-          </table>
-        </div>
-        <div class="pager">
-          <span id="fees-page" class="mono">-</span>
-          <div>
-            <button id="fees-prev" class="btn">Prev</button>
-            <button id="fees-next" class="btn">Next</button>
-          </div>
-        </div>
-      </section>
+var STRATUM_HOST = 'bntpool.com';
+var poolInfo = {};
+var apiKey = localStorage.getItem('pool_api_key') || '';
+var currentRange = '1h';
+var chartData = [];
+var refreshTimer = null;
+var pagerState = {
+  blocks: {offset:0,limit:25,total:0},
+  pubPayouts: {offset:0,limit:25,total:0},
+  miners: {offset:0,limit:25,total:0},
+  adminPayouts: {offset:0,limit:25,total:0},
+  fees: {offset:0,limit:25,total:0}
+};
 
-      <section id="tab-health" class="tab">
-        <div class="toolbar">
-          <button id="health-refresh" class="btn">Refresh Health</button>
-          <span id="health-state" class="badge warn">Unknown</span>
-        </div>
-        <div class="mini-grid">
-          <article class="card"><div class="label">Uptime</div><div id="h-uptime" class="value mono">-</div></article>
-          <article class="card"><div class="label">Daemon Reachable</div><div id="h-daemon" class="value mono">-</div></article>
-          <article class="card"><div class="label">Template Age</div><div id="h-template-age" class="value mono">-</div></article>
-          <article class="card"><div class="label">Pending Payouts</div><div id="h-pending" class="value mono">-</div></article>
-        </div>
-        <div id="health-json" class="pre">No health data loaded.</div>
-      </section>
-    </section>
+function getRoute(){
+  var h = location.hash||'#/';
+  if(h.startsWith('#/admin'))return 'admin';
+  if(h.startsWith('#/stats'))return 'stats';
+  if(h.startsWith('#/start'))return 'start';
+  if(h.startsWith('#/blocks'))return 'blocks';
+  if(h.startsWith('#/payouts'))return 'payouts';
+  return 'dashboard';
+}
 
-    <section id="error" class="error"></section>
-  </main>
+function navigate(){
+  var route = getRoute();
+  document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active')});
+  document.querySelectorAll('nav a[data-nav]').forEach(function(a){a.classList.toggle('active',a.dataset.nav===route)});
+  var el = document.getElementById('page-'+route);
+  if(el)el.classList.add('active');
+  if(route==='dashboard'){refreshStats();loadDashBlocks();loadDashPayouts();loadHashrateHistory()}
+  if(route==='start')populateGetStarted();
+  if(route==='blocks'){pagerState.blocks.offset=0;loadBlocksPage()}
+  if(route==='payouts'){pagerState.pubPayouts.offset=0;loadPubPayoutsPage()}
+  if(route==='admin')initAdminPage();
+}
+window.addEventListener('hashchange',navigate);
 
-  <script>
-    const $ = (id) => document.getElementById(id);
-    const fmt = new Intl.NumberFormat("en-US");
+function apiFetch(path,opts){
+  opts=opts||{};var headers={};
+  if(opts.auth&&apiKey)headers['x-api-key']=apiKey;
+  return fetch(path,{headers:headers}).then(function(res){
+    if(!res.ok)return res.json().catch(function(){return{}}).then(function(b){throw new Error(b.error||'HTTP '+res.status)});
+    return res.json();
+  }).catch(function(err){showError(err.message);throw err});
+}
+function showError(msg){var bar=document.getElementById('error-bar');bar.textContent=msg;bar.style.display='block';setTimeout(function(){bar.style.display='none'},5000)}
+function hideError(){document.getElementById('error-bar').style.display='none'}
+window.copyText=function(el){navigator.clipboard.writeText(el.textContent).then(function(){var orig=el.textContent;el.style.color='var(--accent)';setTimeout(function(){el.style.color=''},1000)})}
 
-    const state = {
-      authKey: localStorage.getItem("blocknet_pool_api_key") || "",
-      info: null,
-      activeTab: "miner",
-      miners: { offset: 0, limit: 25 },
-      blocks: { offset: 0, limit: 25 },
-      payouts: { offset: 0, limit: 25 },
-      fees: { offset: 0, limit: 25 },
-      history: {
-        hashrate: [],
-        rejectRate: [],
-        queueDepth: [],
-      },
-    };
+function humanRate(hps){
+  if(!hps||!isFinite(hps))return '0 H/s';
+  var units=['H/s','KH/s','MH/s','GH/s','TH/s','PH/s'];var i=0;
+  while(hps>=1000&&i<units.length-1){hps/=1000;i++}
+  return hps.toFixed(2)+' '+units[i];
+}
+function formatCoins(sats){if(sats==null)return '0 BNT';return(sats/1e8).toFixed(2)+' BNT'}
+function formatFee(sats){if(sats==null||sats===0)return '0 BNT';var v=sats/1e8;if(v<0.01)return v.toPrecision(4)+' BNT';return v.toFixed(4)+' BNT'}
+function toUnixMs(val){
+  if(!val)return 0;
+  if(typeof val==='number')return val<1e12?val*1000:val;
+  if(typeof val==='object'&&val.secs_since_epoch!=null)return val.secs_since_epoch*1000;
+  return new Date(val).getTime();
+}
+function timeAgo(val){
+  var ms=toUnixMs(val);if(!ms)return '-';
+  var diff=Date.now()-ms;if(diff<0)diff=0;
+  var s=Math.floor(diff/1000);
+  if(s<60)return s+'s ago';var m=Math.floor(s/60);
+  if(m<60)return m+'m ago';var h=Math.floor(m/60);
+  if(h<24)return h+'h ago';var d=Math.floor(h/24);
+  if(d<30)return d+'d ago';return Math.floor(d/30)+'mo ago';
+}
+function shortAddr(addr){if(!addr||addr.length<=16)return addr||'';return addr.slice(0,8)+'\u2026'+addr.slice(-6)}
+function escapeHtml(str){var d=document.createElement('div');d.textContent=str;return d.innerHTML}
+function blockStatus(b){
+  if(b.orphaned)return '<span class="badge badge-orphaned">orphaned</span>';
+  if(b.confirmed)return '<span class="badge badge-confirmed">confirmed</span>';
+  return '<span class="badge badge-pending">pending</span>';
+}
+function fmtSeconds(s){
+  if(s<60)return s+'s';if(s<3600)return Math.floor(s/60)+'m';
+  if(s<86400)return Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m';
+  return Math.floor(s/86400)+'d '+Math.floor((s%86400)/3600)+'h';
+}
+function stratumUrl(){return 'stratum+tcp://'+STRATUM_HOST+':'+(poolInfo.stratum_port||3333)}
+function shortTx(tx){if(!tx||tx.length<=20)return tx||'';return tx.slice(0,10)+'\u2026'+tx.slice(-8)}
 
-    function setText(id, value) {
-      const el = $(id);
-      if (el) el.textContent = value;
+// ---- Dashboard ----
+function refreshStats(){
+  apiFetch('/api/stats').then(function(d){
+    document.getElementById('s-miners').textContent=d.pool.miners;
+    document.getElementById('s-hashrate').textContent=humanRate(d.pool.hashrate);
+    document.getElementById('s-net-hashrate').textContent=d.chain.network_hashrate?humanRate(d.chain.network_hashrate):'-';
+    document.getElementById('s-blocks').textContent=d.pool.blocks_found;
+  }).catch(function(){});
+}
+
+function loadDashBlocks(){
+  apiFetch('/api/blocks?paged=true&limit=5&offset=0&sort=height_desc').then(function(d){
+    var items=d.items||[];
+    document.getElementById('dash-blocks-body').innerHTML=items.length===0
+      ?'<tr><td colspan="4" style="text-align:center;color:var(--muted)">No blocks found yet</td></tr>'
+      :items.map(function(b){
+        return '<tr><td><a href="https://explorer.blocknetcrypto.com/block/'+escapeHtml(b.hash)+'" target="_blank" rel="noopener">'+b.height+'</a></td>'+
+          '<td>'+formatCoins(b.reward)+'</td><td>'+blockStatus(b)+'</td>'+
+          '<td title="'+new Date(toUnixMs(b.timestamp)).toLocaleString()+'">'+timeAgo(b.timestamp)+'</td></tr>';
+      }).join('');
+  }).catch(function(){});
+}
+
+function loadDashPayouts(){
+  apiFetch('/api/payouts/recent?limit=5&offset=0').then(function(d){
+    var items=d.items||[];
+    document.getElementById('dash-payouts-body').innerHTML=items.length===0
+      ?'<tr><td colspan="4" style="text-align:center;color:var(--muted)">No payouts yet</td></tr>'
+      :items.map(function(p){
+        var txLinks=payoutTxLinks(p);
+        return '<tr><td>'+formatCoins(p.total_amount)+'</td>'+
+          '<td>'+p.recipient_count+'</td>'+
+          '<td>'+txLinks+'</td>'+
+          '<td title="'+new Date(toUnixMs(p.timestamp)).toLocaleString()+'">'+timeAgo(p.timestamp)+'</td></tr>';
+      }).join('');
+  }).catch(function(){});
+}
+function payoutTxLinks(p){
+  var hashes=p.tx_hashes||[];
+  if(hashes.length===0)return '-';
+  if(hashes.length===1)return '<a href="https://explorer.blocknetcrypto.com/tx/'+escapeHtml(hashes[0])+'" target="_blank" rel="noopener" title="'+escapeHtml(hashes[0])+'">'+escapeHtml(shortTx(hashes[0]))+'</a>';
+  return hashes.slice(0,3).map(function(h){return '<a href="https://explorer.blocknetcrypto.com/tx/'+escapeHtml(h)+'" target="_blank" rel="noopener" title="'+escapeHtml(h)+'">'+escapeHtml(shortTx(h))+'</a>'}).join(', ')+(hashes.length>3?' +'+String(hashes.length-3):'');
+}
+
+// ---- Blocks Page ----
+window.loadBlocksPage = function(){
+  var ps=pagerState.blocks;
+  var status=document.getElementById('blocks-status-filter').value;
+  var url='/api/blocks?paged=true&limit='+ps.limit+'&offset='+ps.offset+'&sort=height_desc';
+  if(status)url+='&status='+status;
+  apiFetch(url).then(function(d){
+    var items=d.items||[];ps.total=d.page?d.page.total:items.length;
+    document.getElementById('blocks-body').innerHTML=items.length===0
+      ?'<tr><td colspan="4" style="text-align:center;color:var(--muted)">No blocks</td></tr>'
+      :items.map(function(b){
+        return '<tr><td><a href="https://explorer.blocknetcrypto.com/block/'+escapeHtml(b.hash)+'" target="_blank" rel="noopener">'+b.height+'</a></td>'+
+          '<td>'+formatCoins(b.reward)+'</td><td>'+blockStatus(b)+'</td>'+
+          '<td title="'+new Date(toUnixMs(b.timestamp)).toLocaleString()+'">'+timeAgo(b.timestamp)+'</td></tr>';
+      }).join('');
+    updatePager('blocks',ps);
+  }).catch(function(){});
+};
+
+// ---- Public Payouts Page ----
+function loadPubPayoutsPage(){
+  var ps=pagerState.pubPayouts;
+  apiFetch('/api/payouts/recent?limit='+ps.limit+'&offset='+ps.offset).then(function(d){
+    var items=d.items||[];ps.total=d.page?d.page.total:items.length;
+    document.getElementById('pub-payouts-body').innerHTML=items.length===0
+      ?'<tr><td colspan="5" style="text-align:center;color:var(--muted)">No payouts yet</td></tr>'
+      :items.map(function(p){
+        var txLinks=payoutTxLinks(p);
+        return '<tr><td>'+formatCoins(p.total_amount)+'</td><td>'+p.recipient_count+'</td><td>'+formatFee(p.total_fee)+'</td>'+
+          '<td>'+txLinks+'</td>'+
+          '<td title="'+new Date(toUnixMs(p.timestamp)).toLocaleString()+'">'+timeAgo(p.timestamp)+'</td></tr>';
+      }).join('');
+    updatePager2('pub-payouts',ps,loadPubPayoutsPage);
+  }).catch(function(){});
+}
+
+function updatePager(name,ps){
+  var info=document.getElementById(name+'-pager-info');
+  var prev=document.getElementById(name+'-prev');
+  var next=document.getElementById(name+'-next');
+  var end=Math.min(ps.offset+ps.limit,ps.total);
+  info.textContent=ps.total>0?(ps.offset+1)+'-'+end+' of '+ps.total:'No results';
+  prev.disabled=ps.offset===0;next.disabled=ps.offset+ps.limit>=ps.total;
+  prev.onclick=function(){ps.offset=Math.max(0,ps.offset-ps.limit);loadPagedData(name)};
+  next.onclick=function(){ps.offset+=ps.limit;loadPagedData(name)};
+}
+function updatePager2(name,ps,loadFn){
+  var info=document.getElementById(name+'-pager-info');
+  var prev=document.getElementById(name+'-prev');
+  var next=document.getElementById(name+'-next');
+  var end=Math.min(ps.offset+ps.limit,ps.total);
+  info.textContent=ps.total>0?(ps.offset+1)+'-'+end+' of '+ps.total:'No results';
+  prev.disabled=ps.offset===0;next.disabled=ps.offset+ps.limit>=ps.total;
+  prev.onclick=function(){ps.offset=Math.max(0,ps.offset-ps.limit);loadFn()};
+  next.onclick=function(){ps.offset+=ps.limit;loadFn()};
+}
+function loadPagedData(name){
+  if(name==='blocks')loadBlocksPage();
+  if(name==='miners')loadMinersPage();
+  if(name==='admin-payouts')loadAdminPayoutsPage();
+  if(name==='fees')loadFeesPage();
+}
+
+// ---- Chart ----
+function drawChartOn(canvas,data,range){
+  var ctx=canvas.getContext('2d');
+  var dpr=window.devicePixelRatio||1;var rect=canvas.getBoundingClientRect();
+  canvas.width=rect.width*dpr;canvas.height=rect.height*dpr;ctx.scale(dpr,dpr);
+  var W=rect.width,H=rect.height;ctx.clearRect(0,0,W,H);
+  if(data.length<2){ctx.fillStyle='#6b7c6b';ctx.font='14px Manrope,sans-serif';ctx.textAlign='center';ctx.fillText('No data yet',W/2,H/2);return}
+  var pad={t:10,r:16,b:30,l:64};var cW=W-pad.l-pad.r;var cH=H-pad.t-pad.b;
+  var values=data.map(function(p){return p.hashrate||0});
+  var timestamps=data.map(function(p){return typeof p.timestamp==='number'&&p.timestamp<1e12?p.timestamp*1000:toUnixMs(p.timestamp)});
+  var maxV=Math.max.apply(null,values)*1.1||1;
+  var minT=Math.min.apply(null,timestamps);var maxT=Math.max.apply(null,timestamps);var rangeT=maxT-minT||1;
+  ctx.strokeStyle='#e2e8d8';ctx.lineWidth=1;
+  for(var i=0;i<=4;i++){var y=pad.t+cH-(cH*i/4);ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+cW,y);ctx.stroke();ctx.fillStyle='#6b7c6b';ctx.font='11px JetBrains Mono,monospace';ctx.textAlign='right';ctx.fillText(humanRate(maxV*i/4),pad.l-6,y+4)}
+  ctx.fillStyle='#6b7c6b';ctx.font='11px JetBrains Mono,monospace';ctx.textAlign='center';
+  var nL=Math.min(6,data.length);
+  for(var j=0;j<nL;j++){var idx=Math.floor(j*(data.length-1)/Math.max(nL-1,1));var x=pad.l+((timestamps[idx]-minT)/rangeT)*cW;var d=new Date(timestamps[idx]);var label=(range==='1h'||range==='24h')?d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):d.toLocaleDateString([],{month:'short',day:'numeric'});ctx.fillText(label,x,H-6)}
+  ctx.save();ctx.beginPath();ctx.rect(pad.l,pad.t,cW,cH);ctx.clip();
+  ctx.beginPath();
+  for(var k=0;k<values.length;k++){var px=pad.l+((timestamps[k]-minT)/rangeT)*cW;var py=pad.t+cH-(values[k]/maxV)*cH;if(k===0)ctx.moveTo(px,py);else ctx.lineTo(px,py)}
+  ctx.strokeStyle='#16a34a';ctx.lineWidth=2;ctx.stroke();
+  ctx.lineTo(pad.l+((timestamps[timestamps.length-1]-minT)/rangeT)*cW,pad.t+cH);ctx.lineTo(pad.l,pad.t+cH);ctx.closePath();
+  var grad=ctx.createLinearGradient(0,pad.t,0,pad.t+cH);grad.addColorStop(0,'rgba(22,163,74,0.15)');grad.addColorStop(1,'rgba(22,163,74,0.01)');ctx.fillStyle=grad;ctx.fill();
+  ctx.restore();
+}
+function loadHashrateHistory(){
+  apiFetch('/api/stats/history?range='+currentRange).then(function(d){chartData=d||[];drawChartOn(document.getElementById('hashrate-chart'),chartData,currentRange)}).catch(function(){chartData=[];drawChartOn(document.getElementById('hashrate-chart'),chartData,currentRange)});
+}
+document.getElementById('hashrate-ranges').addEventListener('click',function(e){
+  if(e.target.tagName!=='BUTTON')return;
+  this.querySelectorAll('button').forEach(function(b){b.classList.remove('active')});
+  e.target.classList.add('active');currentRange=e.target.dataset.range;loadHashrateHistory();
+});
+
+// ---- My Stats ----
+var minerAddress='';
+var minerHashrateRange='1h';
+window.loadMinerLookup=function(){
+  var addr=document.getElementById('lookup-address').value.trim();if(!addr)return;
+  minerAddress=addr;
+  apiFetch('/api/miner/'+encodeURIComponent(addr)).then(function(d){
+    document.getElementById('lookup-result').style.display='block';
+    document.getElementById('lu-hashrate').textContent=humanRate(d.hashrate||0);
+    document.getElementById('lu-pending').textContent=formatCoins(d.balance?d.balance.pending:0);
+    document.getElementById('lu-paid').textContent=formatCoins(d.balance?d.balance.paid:0);
+    var blocksFound=d.blocks_found||[];
+    document.getElementById('lu-blocks-count').textContent=blocksFound.length;
+    document.getElementById('lu-accepted').textContent=d.total_accepted||0;
+    document.getElementById('lu-rejected').textContent=d.total_rejected||0;
+    var totalAcc=d.total_accepted||0;
+    var workers=d.workers||[];
+    var totalDiff=0;workers.forEach(function(w){totalDiff+=(w.accepted||0)*(w.hashrate||0)*86400});
+    var shares=d.shares||[];
+    var avgDiff=totalAcc>0?shares.reduce(function(s,sh){return s+(sh.difficulty||0)},0)/Math.min(shares.length,totalAcc):0;
+    document.getElementById('lu-avg-diff').textContent=avgDiff>0?avgDiff.toFixed(0):'-';
+    var oldest=null;shares.forEach(function(s){var t=toUnixMs(s.created_at);if(t&&(!oldest||t<oldest))oldest=t});
+    document.getElementById('lu-mining-since').textContent=oldest?new Date(oldest).toLocaleDateString():'-';
+    // Workers table
+    document.getElementById('lu-workers').innerHTML=workers.length===0
+      ?'<tr><td colspan="5" style="text-align:center;color:var(--muted)">No workers</td></tr>'
+      :workers.map(function(w){
+        return '<tr><td>'+escapeHtml(w.worker||'default')+'</td><td>'+humanRate(w.hashrate||0)+'</td>'+
+          '<td>'+(w.accepted||0)+'</td><td>'+(w.rejected||0)+'</td>'+
+          '<td title="'+(w.last_share_at?new Date(w.last_share_at*1000).toLocaleString():'')+'">'+timeAgo(w.last_share_at)+'</td></tr>';
+      }).join('');
+    // Blocks found table
+    if(blocksFound.length>0){
+      document.getElementById('lu-blocks-section').style.display='';
+      document.getElementById('lu-blocks').innerHTML=blocksFound.map(function(b){
+        return '<tr><td><a href="https://explorer.blocknetcrypto.com/block/'+escapeHtml(b.hash||'')+'" target="_blank" rel="noopener">'+b.height+'</a></td>'+
+          '<td>'+formatCoins(b.reward)+'</td><td>'+blockStatus(b)+'</td>'+
+          '<td title="'+new Date(toUnixMs(b.timestamp)).toLocaleString()+'">'+timeAgo(b.timestamp)+'</td></tr>';
+      }).join('');
+    }else{
+      document.getElementById('lu-blocks-section').style.display='none';
     }
-
-    function setError(value) {
-      setText("error", value || "");
-    }
-
-    function toDate(value) {
-      if (!value) return null;
-      if (typeof value === "number") return new Date(value < 1e12 ? value * 1000 : value);
-      if (typeof value === "string") {
-        const maybeNum = Number(value);
-        if (Number.isFinite(maybeNum)) return toDate(maybeNum);
-        const parsed = new Date(value);
-        return Number.isNaN(parsed.getTime()) ? null : parsed;
-      }
-      if (typeof value === "object" && value.secs_since_epoch !== undefined) {
-        const secs = Number(value.secs_since_epoch) || 0;
-        const nanos = Number(value.nanos_since_epoch) || 0;
-        return new Date(secs * 1000 + Math.floor(nanos / 1e6));
-      }
-      return null;
-    }
-
-    function formatTime(value) {
-      const date = toDate(value);
-      return date ? date.toLocaleString() : "-";
-    }
-
-    function formatCoins(value) {
-      const n = Number(value || 0);
-      return (n / 1e8).toFixed(8);
-    }
-
-    function humanRate(value) {
-      const n = Number(value);
-      if (!Number.isFinite(n) || n < 0) return "-";
-      const units = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s", "PH/s"];
-      let v = n;
-      let i = 0;
-      while (v >= 1000 && i < units.length - 1) {
-        v /= 1000;
-        i += 1;
-      }
-      const digits = v >= 100 ? 0 : v >= 10 ? 1 : 2;
-      return `${v.toFixed(digits)} ${units[i]}`;
-    }
-
-    function yesNo(value) {
-      return value ? "yes" : "no";
-    }
-
-    function authHeaders(enabled) {
-      if (!enabled || !state.authKey) return {};
-      return {
-        "x-api-key": state.authKey,
-      };
-    }
-
-    async function apiFetch(path, options = {}) {
-      const useAuth = options.auth === true;
-      const res = await fetch(path, {
-        cache: "no-store",
-        headers: {
-          ...authHeaders(useAuth),
-          ...(options.headers || {}),
-        },
-      });
-      if (!res.ok) {
-        let reason = `HTTP ${res.status}`;
-        try {
-          const body = await res.json();
-          if (body && body.error) reason += ` - ${body.error}`;
-        } catch (_err) {
-          // ignore parse failures
-        }
-        throw new Error(reason);
-      }
-      return res.json();
-    }
-
-    function refreshAuthBadge() {
-      const badge = $("auth-status");
-      if (!badge) return;
-
-      const serverRequires = Boolean(state.info && state.info.api_auth_configured);
-      if (!serverRequires) {
-        badge.className = "badge good";
-        badge.textContent = "Server auth disabled";
-        return;
-      }
-
-      if (state.authKey) {
-        badge.className = "badge good";
-        badge.textContent = "API key loaded";
-      } else {
-        badge.className = "badge warn";
-        badge.textContent = "API key required";
-      }
-    }
-
-    function addTrendPoint(series, value) {
-      series.push({ t: Date.now(), v: Number.isFinite(value) ? value : 0 });
-      while (series.length > 120) series.shift();
-    }
-
-    function drawSingleLine(canvas, series, color, labelFormatter) {
-      const ctx = canvas.getContext("2d");
-      const w = canvas.width;
-      const h = canvas.height;
-      ctx.clearRect(0, 0, w, h);
-
-      if (!series.length) {
-        ctx.fillStyle = "rgba(158, 182, 208, .8)";
-        ctx.font = "12px JetBrains Mono";
-        ctx.fillText("No data", 10, 20);
-        return;
-      }
-
-      const values = series.map((p) => p.v);
-      const max = Math.max(...values, 1);
-      const min = Math.min(...values, 0);
-      const range = Math.max(max - min, 1e-9);
-
-      ctx.strokeStyle = "rgba(121, 164, 201, .25)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, h - 1);
-      ctx.lineTo(w, h - 1);
-      ctx.stroke();
-
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      series.forEach((point, idx) => {
-        const x = (idx / Math.max(series.length - 1, 1)) * (w - 1);
-        const y = h - 1 - ((point.v - min) / range) * (h - 10);
-        if (idx === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
-
-      ctx.fillStyle = "rgba(236, 244, 255, .9)";
-      ctx.font = "12px JetBrains Mono";
-      const last = series[series.length - 1];
-      ctx.fillText(labelFormatter(last.v), 8, 14);
-    }
-
-    function drawQueueLines(canvas, candidateSeries, regularSeries) {
-      const ctx = canvas.getContext("2d");
-      const w = canvas.width;
-      const h = canvas.height;
-      ctx.clearRect(0, 0, w, h);
-
-      const merged = [...candidateSeries, ...regularSeries].map((p) => p.v);
-      if (!merged.length) {
-        ctx.fillStyle = "rgba(158, 182, 208, .8)";
-        ctx.font = "12px JetBrains Mono";
-        ctx.fillText("No data", 10, 20);
-        return;
-      }
-
-      const max = Math.max(...merged, 1);
-      const min = 0;
-      const range = Math.max(max - min, 1);
-
-      ctx.strokeStyle = "rgba(121, 164, 201, .25)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, h - 1);
-      ctx.lineTo(w, h - 1);
-      ctx.stroke();
-
-      const draw = (series, color) => {
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        series.forEach((point, idx) => {
-          const x = (idx / Math.max(series.length - 1, 1)) * (w - 1);
-          const y = h - 1 - ((point.v - min) / range) * (h - 10);
-          if (idx === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        });
-        ctx.stroke();
-      };
-
-      draw(candidateSeries, "#42d28d");
-      draw(regularSeries, "#f0bc52");
-
-      ctx.fillStyle = "rgba(236, 244, 255, .9)";
-      ctx.font = "11px JetBrains Mono";
-      const lastC = candidateSeries[candidateSeries.length - 1]?.v ?? 0;
-      const lastR = regularSeries[regularSeries.length - 1]?.v ?? 0;
-      ctx.fillText(`candidate=${fmt.format(lastC)} regular=${fmt.format(lastR)}`, 8, 14);
-    }
-
-    function drawCharts() {
-      drawSingleLine($("c-hashrate"), state.history.hashrate, "#49b7ff", humanRate);
-      drawSingleLine($("c-reject-rate"), state.history.rejectRate, "#f0bc52", (v) => `${(v * 100).toFixed(2)}%`);
-      drawQueueLines($("c-queue"), state.history.queueDepth.map((p) => ({ t: p.t, v: p.c })), state.history.queueDepth.map((p) => ({ t: p.t, v: p.r })));
-    }
-
-    function updateStats(stats) {
-      const accepted = Number(stats.pool?.shares_accepted || 0);
-      const rejected = Number(stats.pool?.shares_rejected || 0);
-      const rejectRate = accepted + rejected > 0 ? rejected / (accepted + rejected) : 0;
-
-      setText("s-miners", fmt.format(stats.pool?.miners || 0));
-      setText("s-workers", fmt.format(stats.pool?.workers || 0));
-      setText("s-hashrate", humanRate(stats.pool?.hashrate));
-      setText("s-network", humanRate(stats.chain?.network_hashrate));
-      setText("s-accepted", fmt.format(accepted));
-      setText("s-rejected", fmt.format(rejected));
-      setText("s-reject-rate", `${(rejectRate * 100).toFixed(2)}%`);
-      setText("s-blocks", fmt.format(stats.pool?.blocks_found || 0));
-      setText("s-total-shares", fmt.format(stats.pool?.total_shares || 0));
-      setText("s-total-blocks", fmt.format(stats.pool?.total_blocks || 0));
-      setText("s-fees", formatCoins(stats.pool?.pool_fees_collected || 0));
-      setText("s-height", stats.chain?.current_job_height ?? "-");
-      setText("s-inflight", fmt.format(stats.validation?.in_flight || 0));
-      setText("s-queue-c", fmt.format(stats.validation?.candidate_queue_depth || 0));
-      setText("s-queue-r", fmt.format(stats.validation?.regular_queue_depth || 0));
-      setText("s-fraud", fmt.format(stats.validation?.fraud_detections || 0));
-      setText("last-updated", `updated: ${new Date().toLocaleTimeString()}`);
-
-      addTrendPoint(state.history.hashrate, Number(stats.pool?.hashrate || 0));
-      addTrendPoint(state.history.rejectRate, rejectRate);
-      state.history.queueDepth.push({
-        t: Date.now(),
-        c: Number(stats.validation?.candidate_queue_depth || 0),
-        r: Number(stats.validation?.regular_queue_depth || 0),
-      });
-      while (state.history.queueDepth.length > 120) state.history.queueDepth.shift();
-      drawCharts();
-    }
-
-    async function refreshStats() {
-      try {
-        const stats = await apiFetch("/api/stats");
-        updateStats(stats);
-        setError("");
-      } catch (err) {
-        setError(`stats fetch failed: ${String(err)}`);
-      }
-    }
-
-    function renderPage(idPrefix, page) {
-      const end = Math.min(page.offset + page.returned, page.total);
-      setText(`${idPrefix}-page`, `${fmt.format(page.offset + 1)}-${fmt.format(end)} / ${fmt.format(page.total)}`);
-    }
-
-    function fillRows(tbodyId, rowsHtml) {
-      const tbody = $(tbodyId);
-      if (!tbody) return;
-      tbody.innerHTML = rowsHtml || "<tr><td colspan=\"99\" class=\"mono\">No rows</td></tr>";
-    }
-
-    async function loadMinerLookup() {
-      const address = $("miner-address").value.trim();
-      if (!address) {
-        $("miner-state").className = "badge warn";
-        $("miner-state").textContent = "No miner selected";
-        fillRows("miner-shares-body", "");
-        return;
-      }
-
-      const shareLimit = Math.max(1, Math.min(500, Number($("miner-share-limit").value || 100)));
-
-      try {
-        const data = await apiFetch(`/api/miner/${encodeURIComponent(address)}?share_limit=${shareLimit}`);
-        setText("m-hashrate", humanRate(data.hashrate));
-        setText("m-pending", formatCoins(data.balance?.pending || 0));
-        setText("m-paid", formatCoins(data.balance?.paid || 0));
-        setText("m-payout", data.pending_payout ? formatCoins(data.pending_payout.amount || 0) : "none");
-
-        const shares = Array.isArray(data.shares) ? data.shares : [];
-        fillRows("miner-shares-body", shares.map((share) => `
-          <tr>
-            <td class="mono">${share.id ?? "-"}</td>
-            <td class="mono">${share.job_id ?? "-"}</td>
-            <td class="mono">${share.status ?? "-"}</td>
-            <td class="mono">${fmt.format(share.difficulty || 0)}</td>
-            <td class="mono">${fmt.format(share.nonce || 0)}</td>
-            <td class="mono">${yesNo(share.was_sampled)}</td>
-            <td class="mono">${share.block_hash || "-"}</td>
-            <td class="mono">${formatTime(share.created_at)}</td>
-          </tr>
-        `).join(""));
-
-        $("miner-state").className = "badge good";
-        $("miner-state").textContent = "Loaded";
-      } catch (err) {
-        $("miner-state").className = "badge bad";
-        $("miner-state").textContent = "Lookup failed";
-        setError(`miner lookup failed: ${String(err)}`);
-      }
-    }
-
-    async function loadMiners() {
-      try {
-        const search = $("miners-search").value.trim();
-        state.miners.limit = Math.max(1, Math.min(200, Number($("miners-limit").value || 25)));
-
-        const params = new URLSearchParams({
-          paged: "true",
-          limit: String(state.miners.limit),
-          offset: String(state.miners.offset),
-          sort: $("miners-sort").value,
-        });
-        if (search) params.set("search", search);
-
-        const data = await apiFetch(`/api/miners?${params.toString()}`, { auth: true });
-        renderPage("miners", data.page);
-
-        fillRows("miners-body", data.items.map((item) => `
-          <tr>
-            <td class="mono">${item.address}</td>
-            <td class="mono">${fmt.format(item.worker_count || 0)}</td>
-            <td class="mono">${humanRate(item.hashrate)}</td>
-            <td class="mono">${fmt.format(item.shares_accepted || 0)}</td>
-            <td class="mono">${fmt.format(item.shares_rejected || 0)}</td>
-            <td class="mono">${fmt.format(item.blocks_found || 0)}</td>
-            <td class="mono">${formatTime(item.last_share_at)}</td>
-          </tr>
-        `).join(""));
-
-        setError("");
-      } catch (err) {
-        setError(`miners load failed: ${String(err)}`);
-        fillRows("miners-body", "");
-      }
-    }
-
-    async function loadBlocks() {
-      try {
-        state.blocks.limit = Math.max(1, Math.min(200, Number($("blocks-limit").value || 25)));
-
-        const params = new URLSearchParams({
-          paged: "true",
-          limit: String(state.blocks.limit),
-          offset: String(state.blocks.offset),
-          sort: $("blocks-sort").value,
-        });
-
-        const finder = $("blocks-finder").value.trim();
-        const status = $("blocks-status").value;
-        if (finder) params.set("finder", finder);
-        if (status) params.set("status", status);
-
-        const data = await apiFetch(`/api/blocks?${params.toString()}`, { auth: true });
-        renderPage("blocks", data.page);
-
-        fillRows("blocks-body", data.items.map((block) => `
-          <tr>
-            <td class="mono">${fmt.format(block.height || 0)}</td>
-            <td class="mono">${block.hash || "-"}</td>
-            <td class="mono">${block.finder || "-"}</td>
-            <td class="mono">${block.finder_worker || "-"}</td>
-            <td class="mono">${formatCoins(block.reward || 0)}</td>
-            <td class="mono">${yesNo(block.confirmed)}</td>
-            <td class="mono">${yesNo(block.orphaned)}</td>
-            <td class="mono">${yesNo(block.paid_out)}</td>
-            <td class="mono">${formatTime(block.timestamp)}</td>
-          </tr>
-        `).join(""));
-
-        setError("");
-      } catch (err) {
-        setError(`blocks load failed: ${String(err)}`);
-        fillRows("blocks-body", "");
-      }
-    }
-
-    async function loadPayouts() {
-      try {
-        state.payouts.limit = Math.max(1, Math.min(200, Number($("payouts-limit").value || 25)));
-
-        const params = new URLSearchParams({
-          paged: "true",
-          limit: String(state.payouts.limit),
-          offset: String(state.payouts.offset),
-          sort: $("payouts-sort").value,
-        });
-
-        const address = $("payouts-address").value.trim();
-        const txHash = $("payouts-tx").value.trim();
-        if (address) params.set("address", address);
-        if (txHash) params.set("tx_hash", txHash);
-
-        const data = await apiFetch(`/api/payouts?${params.toString()}`, { auth: true });
-        renderPage("payouts", data.page);
-
-        fillRows("payouts-body", data.items.map((item) => `
-          <tr>
-            <td class="mono">${item.id ?? "-"}</td>
-            <td class="mono">${item.address || "-"}</td>
-            <td class="mono">${formatCoins(item.amount || 0)}</td>
-            <td class="mono">${formatCoins(item.fee || 0)}</td>
-            <td class="mono">${item.tx_hash || "-"}</td>
-            <td class="mono">${formatTime(item.timestamp)}</td>
-          </tr>
-        `).join(""));
-
-        setError("");
-      } catch (err) {
-        setError(`payouts load failed: ${String(err)}`);
-        fillRows("payouts-body", "");
-      }
-    }
-
-    async function loadFees() {
-      try {
-        state.fees.limit = Math.max(1, Math.min(200, Number($("fees-limit").value || 25)));
-
-        const params = new URLSearchParams({
-          paged: "true",
-          limit: String(state.fees.limit),
-          offset: String(state.fees.offset),
-          sort: $("fees-sort").value,
-        });
-
-        const feeAddress = $("fees-address").value.trim();
-        if (feeAddress) params.set("fee_address", feeAddress);
-
-        const payload = await apiFetch(`/api/fees?${params.toString()}`, { auth: true });
-        setText("fees-total", `Total: ${formatCoins(payload.total_collected || 0)}`);
-
-        const data = payload.recent || { items: [], page: { offset: 0, returned: 0, total: 0 } };
-        renderPage("fees", data.page);
-
-        fillRows("fees-body", data.items.map((item) => `
-          <tr>
-            <td class="mono">${item.id ?? "-"}</td>
-            <td class="mono">${fmt.format(item.block_height || 0)}</td>
-            <td class="mono">${formatCoins(item.amount || 0)}</td>
-            <td class="mono">${item.fee_address || "-"}</td>
-            <td class="mono">${formatTime(item.timestamp)}</td>
-          </tr>
-        `).join(""));
-
-        setError("");
-      } catch (err) {
-        setError(`fees load failed: ${String(err)}`);
-        fillRows("fees-body", "");
-      }
-    }
-
-    async function loadHealth() {
-      try {
-        const health = await apiFetch("/api/health", { auth: true });
-
-        const daemonReachable = !!health.daemon?.reachable;
-        const healthBadge = $("health-state");
-        healthBadge.className = daemonReachable ? "badge good" : "badge bad";
-        healthBadge.textContent = daemonReachable ? "Daemon reachable" : "Daemon issue";
-
-        setText("h-uptime", `${fmt.format(Number(health.uptime_seconds || 0))}s`);
-        setText("h-daemon", daemonReachable ? "yes" : "no");
-        setText("h-template-age", health.job?.template_age_seconds !== null && health.job?.template_age_seconds !== undefined
-          ? `${fmt.format(Number(health.job.template_age_seconds))}s`
-          : "-");
-        setText("h-pending", fmt.format(health.payouts?.pending_count || 0));
-
-        $("health-json").textContent = JSON.stringify(health, null, 2);
-        setError("");
-      } catch (err) {
-        const badge = $("health-state");
-        badge.className = "badge bad";
-        badge.textContent = "Health fetch failed";
-        setError(`health load failed: ${String(err)}`);
-      }
-    }
-
-    function attachPager(prefix, key, loadFn) {
-      $(`${prefix}-prev`).addEventListener("click", () => {
-        state[key].offset = Math.max(0, state[key].offset - state[key].limit);
-        loadFn();
-      });
-      $(`${prefix}-next`).addEventListener("click", () => {
-        state[key].offset += state[key].limit;
-        loadFn();
-      });
-    }
-
-    function setTab(name) {
-      state.activeTab = name;
-      document.querySelectorAll(".tab-btn").forEach((btn) => {
-        btn.classList.toggle("active", btn.dataset.tab === name);
-      });
-      document.querySelectorAll(".tab").forEach((tab) => {
-        tab.classList.toggle("active", tab.id === `tab-${name}`);
-      });
-
-      if (name === "miners") loadMiners();
-      if (name === "blocks") loadBlocks();
-      if (name === "payouts") loadPayouts();
-      if (name === "fees") loadFees();
-      if (name === "health") loadHealth();
-    }
-
-    async function loadInfo() {
-      const info = await apiFetch("/api/info");
-      state.info = info;
-
-      setText("pool-name", info.pool_name || "Blocknet Pool WebUI");
-      setText("pool-url", `pool_url: ${info.pool_url || "-"}`);
-      setText("build-version", `version: ${info.version || "-"}`);
-      setText("started-at", `started: ${formatTime(info.started_at_unix_secs)}`);
-
-      const host = window.location.hostname || "127.0.0.1";
-      const endpoint = `stratum+tcp://${host}:${info.stratum_port}`;
-      setText("stratum-endpoint", endpoint);
-
-      refreshAuthBadge();
-    }
-
-    function bindActions() {
-      $("api-key").value = state.authKey;
-
-      $("save-key").addEventListener("click", () => {
-        state.authKey = $("api-key").value.trim();
-        localStorage.setItem("blocknet_pool_api_key", state.authKey);
-        refreshAuthBadge();
-        if (state.activeTab === "miners") loadMiners();
-        if (state.activeTab === "blocks") loadBlocks();
-        if (state.activeTab === "payouts") loadPayouts();
-        if (state.activeTab === "fees") loadFees();
-        if (state.activeTab === "health") loadHealth();
-      });
-
-      $("clear-key").addEventListener("click", () => {
-        state.authKey = "";
-        $("api-key").value = "";
-        localStorage.removeItem("blocknet_pool_api_key");
-        refreshAuthBadge();
-      });
-
-      $("copy-stratum").addEventListener("click", async () => {
-        try {
-          await navigator.clipboard.writeText($("stratum-endpoint").textContent || "");
-        } catch (_err) {
-          // ignore clipboard errors
-        }
-      });
-
-      document.querySelectorAll(".tab-btn").forEach((btn) => {
-        btn.addEventListener("click", () => setTab(btn.dataset.tab));
-      });
-
-      $("miner-load").addEventListener("click", loadMinerLookup);
-      $("miner-clear").addEventListener("click", () => {
-        $("miner-address").value = "";
-        setText("m-hashrate", "-");
-        setText("m-pending", "-");
-        setText("m-paid", "-");
-        setText("m-payout", "-");
-        fillRows("miner-shares-body", "");
-        $("miner-state").className = "badge warn";
-        $("miner-state").textContent = "No miner selected";
-      });
-
-      $("miners-apply").addEventListener("click", () => {
-        state.miners.offset = 0;
-        loadMiners();
-      });
-
-      $("blocks-apply").addEventListener("click", () => {
-        state.blocks.offset = 0;
-        loadBlocks();
-      });
-
-      $("payouts-apply").addEventListener("click", () => {
-        state.payouts.offset = 0;
-        loadPayouts();
-      });
-
-      $("fees-apply").addEventListener("click", () => {
-        state.fees.offset = 0;
-        loadFees();
-      });
-
-      $("health-refresh").addEventListener("click", loadHealth);
-
-      attachPager("miners", "miners", loadMiners);
-      attachPager("blocks", "blocks", loadBlocks);
-      attachPager("payouts", "payouts", loadPayouts);
-      attachPager("fees", "fees", loadFees);
-    }
-
-    async function boot() {
-      try {
-        bindActions();
-        await loadInfo();
-      } catch (err) {
-        setError(`info load failed: ${String(err)}`);
-      }
-
-      await refreshStats();
-      setInterval(refreshStats, 2000);
-    }
-
-    boot();
-  </script>
+    // Shares table (with worker column)
+    document.getElementById('lu-shares').innerHTML=shares.length===0
+      ?'<tr><td colspan="5" style="text-align:center;color:var(--muted)">No shares</td></tr>'
+      :shares.slice(0,50).map(function(s){
+        return '<tr><td>'+escapeHtml(s.job_id||'')+'</td><td>'+escapeHtml(s.worker||'')+'</td><td>'+s.difficulty+'</td><td>'+escapeHtml(s.status||'')+'</td>'+
+          '<td title="'+new Date(toUnixMs(s.created_at)).toLocaleString()+'">'+timeAgo(s.created_at)+'</td></tr>';
+      }).join('');
+    // Load hashrate chart
+    loadMinerHashrateChart();
+  }).catch(function(){});
+};
+function loadMinerHashrateChart(){
+  if(!minerAddress)return;
+  apiFetch('/api/miner/'+encodeURIComponent(minerAddress)+'/hashrate?range='+minerHashrateRange).then(function(d){
+    drawChartOn(document.getElementById('miner-hashrate-chart'),d||[],minerHashrateRange);
+  }).catch(function(){drawChartOn(document.getElementById('miner-hashrate-chart'),[],minerHashrateRange)});
+}
+document.getElementById('miner-hashrate-ranges').addEventListener('click',function(e){
+  if(e.target.tagName!=='BUTTON')return;
+  this.querySelectorAll('button').forEach(function(b){b.classList.remove('active')});
+  e.target.classList.add('active');minerHashrateRange=e.target.dataset.range;loadMinerHashrateChart();
+});
+window.clearMinerLookup=function(){document.getElementById('lookup-address').value='';document.getElementById('lookup-result').style.display='none';minerAddress=''};
+window.copyStratum=function(){
+  var text=document.getElementById('stratum-url').textContent;
+  navigator.clipboard.writeText(text).then(function(){var btn=document.querySelector('.stratum-bar .copy-btn');btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy'},1500)});
+};
+
+// ---- Get Started ----
+function populateGetStarted(){
+  var su=stratumUrl();document.getElementById('start-stratum').textContent=su;
+  document.getElementById('start-pool-url').textContent=su;
+  var feePct=poolInfo.pool_fee_pct;var feeFlat=poolInfo.pool_fee_flat;var feeStr='';
+  if(feePct!=null&&feePct>0)feeStr+=feePct+'%';
+  if(feeFlat!=null&&feeFlat>0){if(feeStr)feeStr+=' + ';feeStr+=feeFlat+' BNT flat'}
+  if(!feeStr)feeStr='0% (no fee)';
+  document.getElementById('start-fee').textContent=feeStr;
+  document.getElementById('start-payout-scheme').textContent=(poolInfo.payout_scheme||'pplns').toUpperCase();
+  document.getElementById('start-min-payout').textContent=poolInfo.min_payout_amount!=null?poolInfo.min_payout_amount+' BNT':'-';
+  document.getElementById('start-confirmations').textContent=poolInfo.blocks_before_payout!=null?poolInfo.blocks_before_payout+' blocks':'-';
+}
+
+// ---- Admin ----
+function initAdminPage(){
+  document.getElementById('api-key-input').value=apiKey;updateAuthStatus();updateAdminVisibility();
+  if(apiKey)setAdminTab('miners');
+}
+function updateAdminVisibility(){
+  document.getElementById('admin-auth-gate').style.display=apiKey?'none':'block';
+  document.getElementById('admin-content').style.display=apiKey?'block':'none';
+}
+window.saveApiKey=function(){apiKey=document.getElementById('api-key-input').value.trim();localStorage.setItem('pool_api_key',apiKey);updateAuthStatus();updateAdminVisibility();hideError();if(apiKey)setAdminTab('miners')};
+window.clearApiKey=function(){apiKey='';localStorage.removeItem('pool_api_key');document.getElementById('api-key-input').value='';updateAuthStatus();updateAdminVisibility()};
+function updateAuthStatus(){var el=document.getElementById('auth-status');el.innerHTML=apiKey?'<span class="status-dot dot-green"></span>Key set':'<span class="status-dot dot-amber"></span>No key'}
+
+window.setAdminTab=function(tab){
+  document.querySelectorAll('#admin-tabs button').forEach(function(b){b.classList.toggle('active',b.dataset.tab===tab)});
+  document.getElementById('admin-miners').style.display=tab==='miners'?'':'none';
+  document.getElementById('admin-payouts').style.display=tab==='payouts'?'':'none';
+  document.getElementById('admin-fees').style.display=tab==='fees'?'':'none';
+  document.getElementById('admin-health').style.display=tab==='health'?'':'none';
+  if(tab==='miners'){pagerState.miners.offset=0;loadMinersPage()}
+  if(tab==='payouts'){pagerState.adminPayouts.offset=0;loadAdminPayoutsPage()}
+  if(tab==='fees'){pagerState.fees.offset=0;loadFeesPage()}
+  if(tab==='health')loadHealth();
+};
+
+window.loadMinersPage=function(){
+  if(!apiKey)return;var ps=pagerState.miners;
+  var search=document.getElementById('miners-search').value.trim();
+  var sort=document.getElementById('miners-sort').value;
+  var url='/api/miners?paged=true&limit='+ps.limit+'&offset='+ps.offset+'&sort='+sort;
+  if(search)url+='&search='+encodeURIComponent(search);
+  apiFetch(url,{auth:true}).then(function(d){
+    var items=d.items||[];ps.total=d.page?d.page.total:items.length;
+    document.getElementById('miners-body').innerHTML=items.length===0
+      ?'<tr><td colspan="7" style="text-align:center;color:var(--muted)">No miners connected</td></tr>'
+      :items.map(function(m){
+        return '<tr><td><a href="#/stats" onclick="jumpToStats(\''+escapeHtml(m.address)+'\')">'+escapeHtml(shortAddr(m.address))+'</a></td>'+
+          '<td>'+(m.worker_count||0)+'</td><td>'+humanRate(m.hashrate)+'</td>'+
+          '<td>'+(m.shares_accepted||0)+'</td><td>'+(m.shares_rejected||0)+'</td>'+
+          '<td>'+(m.blocks_found||0)+'</td>'+
+          '<td title="'+new Date(toUnixMs(m.last_share_at)).toLocaleString()+'">'+timeAgo(m.last_share_at)+'</td></tr>';
+      }).join('');
+    updatePager('miners',ps);
+  }).catch(function(){});
+};
+window.jumpToStats=function(addr){location.hash='#/stats';setTimeout(function(){document.getElementById('lookup-address').value=addr;loadMinerLookup()},100)};
+
+window.loadAdminPayoutsPage=function(){
+  if(!apiKey)return;var ps=pagerState.adminPayouts;
+  var addr=document.getElementById('payouts-address').value.trim();
+  var txhash=document.getElementById('payouts-txhash').value.trim();
+  var url='/api/payouts?paged=true&limit='+ps.limit+'&offset='+ps.offset+'&sort=time_desc';
+  if(addr)url+='&address='+encodeURIComponent(addr);
+  if(txhash)url+='&tx_hash='+encodeURIComponent(txhash);
+  apiFetch(url,{auth:true}).then(function(d){
+    var items=d.items||[];ps.total=d.page?d.page.total:items.length;
+    document.getElementById('admin-payouts-body').innerHTML=items.length===0
+      ?'<tr><td colspan="5" style="text-align:center;color:var(--muted)">No payouts</td></tr>'
+      :items.map(function(p){
+        return '<tr><td title="'+escapeHtml(p.address)+'">'+escapeHtml(shortAddr(p.address))+'</td>'+
+          '<td>'+formatCoins(p.amount)+'</td><td>'+formatFee(p.fee)+'</td>'+
+          '<td title="'+escapeHtml(p.tx_hash)+'">'+escapeHtml(shortTx(p.tx_hash))+'</td>'+
+          '<td title="'+new Date(toUnixMs(p.timestamp)).toLocaleString()+'">'+timeAgo(p.timestamp)+'</td></tr>';
+      }).join('');
+    updatePager2('admin-payouts',ps,loadAdminPayoutsPage);
+  }).catch(function(){});
+};
+
+window.loadFeesPage=function(){
+  if(!apiKey)return;var ps=pagerState.fees;
+  var addr=document.getElementById('fees-address').value.trim();
+  var url='/api/fees?paged=true&limit='+ps.limit+'&offset='+ps.offset+'&sort=time_desc';
+  if(addr)url+='&fee_address='+encodeURIComponent(addr);
+  apiFetch(url,{auth:true}).then(function(d){
+    document.getElementById('fees-total').textContent=formatCoins(d.total_collected||0);
+    var items=d.recent?(d.recent.items||[]):[];
+    ps.total=d.recent&&d.recent.page?d.recent.page.total:items.length;
+    document.getElementById('fees-body').innerHTML=items.length===0
+      ?'<tr><td colspan="4" style="text-align:center;color:var(--muted)">No fee events</td></tr>'
+      :items.map(function(f){
+        return '<tr><td>'+f.block_height+'</td><td>'+formatCoins(f.amount)+'</td>'+
+          '<td title="'+escapeHtml(f.fee_address)+'">'+escapeHtml(shortAddr(f.fee_address))+'</td>'+
+          '<td title="'+new Date(toUnixMs(f.timestamp)).toLocaleString()+'">'+timeAgo(f.timestamp)+'</td></tr>';
+      }).join('');
+    updatePager('fees',ps);
+  }).catch(function(){});
+};
+
+function loadHealth(){
+  if(!apiKey)return;
+  apiFetch('/api/health',{auth:true}).then(function(d){
+    document.getElementById('h-uptime').textContent=fmtSeconds(d.uptime_seconds||0);
+    document.getElementById('h-daemon').innerHTML=d.daemon&&d.daemon.reachable?'<span class="status-dot dot-green"></span>OK':'<span class="status-dot dot-red"></span>Down';
+    document.getElementById('h-template').textContent=d.job&&d.job.template_age_seconds!=null?fmtSeconds(d.job.template_age_seconds):'-';
+    document.getElementById('h-pending').textContent=d.payouts?d.payouts.pending_count:'-';
+    document.getElementById('h-raw').textContent=JSON.stringify(d,null,2);
+  }).catch(function(){});
+}
+
+function boot(){
+  apiFetch('/api/info').then(function(info){
+    poolInfo=info;
+    document.title=info.pool_name||'Blocknet Pool';
+    document.getElementById('nav-brand').textContent=info.pool_name||'Blocknet Pool';
+    document.getElementById('stratum-url').textContent=stratumUrl();
+    if(getRoute()==='start')populateGetStarted();
+  }).catch(function(){});
+  document.getElementById('stratum-url').textContent=stratumUrl();
+  if(refreshTimer)clearInterval(refreshTimer);
+  refreshTimer=setInterval(function(){if(getRoute()==='dashboard')refreshStats()},5000);
+  navigate();
+  document.getElementById('lookup-address').addEventListener('keydown',function(e){if(e.key==='Enter')loadMinerLookup()});
+  document.getElementById('miners-search').addEventListener('keydown',function(e){if(e.key==='Enter')loadMinersPage()});
+}
+boot();
+})();
+</script>
 </body>
 </html>

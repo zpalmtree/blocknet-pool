@@ -14,6 +14,15 @@ use crate::engine::{ShareRecord, ShareStore};
 const SEEN_SHARE_EXPIRY_SECS: i64 = 24 * 60 * 60;
 
 #[derive(Debug, Clone, Serialize)]
+pub struct StatSnapshot {
+    pub id: i64,
+    pub timestamp: SystemTime,
+    pub hashrate: f64,
+    pub miners: i32,
+    pub workers: i32,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct DbShare {
     pub id: i64,
     pub job_id: String,
@@ -204,6 +213,15 @@ CREATE TABLE IF NOT EXISTS vardiff_hints (
     PRIMARY KEY (address, worker)
 );
 CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS stat_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp INTEGER NOT NULL,
+    hashrate REAL NOT NULL,
+    miners INTEGER NOT NULL,
+    workers INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timestamp DESC);
 "#;
 
         self.conn.lock().execute_batch(sql).context("init schema")?;
@@ -303,6 +321,67 @@ CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated
         )?;
         let rows = stmt.query_map(params![to_unix(before), n], row_to_share)?;
         collect_rows(rows)
+    }
+
+    /// Returns (total_difficulty, share_count, oldest_ts, newest_ts) for accepted
+    /// shares from a specific miner within the given window.
+    pub fn hashrate_stats_for_miner(
+        &self,
+        address: &str,
+        since: SystemTime,
+    ) -> Result<(u64, u64, Option<SystemTime>, Option<SystemTime>)> {
+        let conn = self.conn.lock();
+        let row = conn.query_row(
+            "SELECT COALESCE(SUM(difficulty),0), COUNT(*), MIN(created_at), MAX(created_at)
+             FROM shares
+             WHERE miner = ?1 AND created_at >= ?2
+               AND status IN ('verified','provisional')",
+            params![address, to_unix(since)],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                ))
+            },
+        )?;
+        Ok((
+            row.0.max(0) as u64,
+            row.1.max(0) as u64,
+            row.2.map(from_unix),
+            row.3.map(from_unix),
+        ))
+    }
+
+    /// Returns (total_difficulty, share_count, oldest_ts, newest_ts) for all
+    /// accepted shares within the given window (pool-wide).
+    pub fn hashrate_stats_pool(
+        &self,
+        since: SystemTime,
+    ) -> Result<(u64, u64, Option<SystemTime>, Option<SystemTime>)> {
+        let conn = self.conn.lock();
+        let row = conn.query_row(
+            "SELECT COALESCE(SUM(difficulty),0), COUNT(*), MIN(created_at), MAX(created_at)
+             FROM shares
+             WHERE created_at >= ?1
+               AND status IN ('verified','provisional')",
+            params![to_unix(since)],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                ))
+            },
+        )?;
+        Ok((
+            row.0.max(0) as u64,
+            row.1.max(0) as u64,
+            row.2.map(from_unix),
+            row.3.map(from_unix),
+        ))
     }
 
     pub fn get_total_share_count(&self) -> Result<u64> {
@@ -408,6 +487,14 @@ CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated
         )?;
         let rows = stmt.query_map([], row_to_block)?;
         collect_rows(rows)
+    }
+
+    pub fn delete_block(&self, height: u64) -> Result<bool> {
+        let deleted = self.conn.lock().execute(
+            "DELETE FROM blocks WHERE height = ?1",
+            params![u64_to_i64(height)?],
+        )?;
+        Ok(deleted > 0)
     }
 
     pub fn get_block_count(&self) -> Result<u64> {
@@ -1075,6 +1162,124 @@ CREATE INDEX IF NOT EXISTS idx_vardiff_hints_updated_at ON vardiff_hints(updated
             params![address, worker, u64_to_i64(difficulty.max(1))?, to_unix(updated_at)],
         )?;
         Ok(())
+    }
+
+    pub fn add_stat_snapshot(
+        &self,
+        timestamp: SystemTime,
+        hashrate: f64,
+        miners: i32,
+        workers: i32,
+    ) -> Result<()> {
+        self.conn.lock().execute(
+            "INSERT INTO stat_snapshots (timestamp, hashrate, miners, workers) VALUES (?1, ?2, ?3, ?4)",
+            params![to_unix(timestamp), hashrate, miners, workers],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_stat_snapshots(&self, since: SystemTime) -> Result<Vec<StatSnapshot>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, timestamp, hashrate, miners, workers FROM stat_snapshots WHERE timestamp >= ?1 ORDER BY timestamp ASC",
+        )?;
+        let rows = stmt.query_map(params![to_unix(since)], |row| {
+            Ok(StatSnapshot {
+                id: row.get(0)?,
+                timestamp: from_unix(row.get(1)?),
+                hashrate: row.get(2)?,
+                miners: row.get(3)?,
+                workers: row.get(4)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub fn clean_old_snapshots(&self, retain_duration: Duration) -> Result<u64> {
+        let cutoff = SystemTime::now()
+            .checked_sub(retain_duration)
+            .unwrap_or(UNIX_EPOCH);
+        let removed = self.conn.lock().execute(
+            "DELETE FROM stat_snapshots WHERE timestamp < ?1",
+            params![to_unix(cutoff)],
+        )?;
+        Ok(removed as u64)
+    }
+
+    /// Returns bucketed hashrate data for a miner: Vec<(bucket_ts, total_diff, count)>
+    pub fn hashrate_history_for_miner(
+        &self,
+        address: &str,
+        since: SystemTime,
+        bucket_secs: i64,
+    ) -> Result<Vec<(i64, u64, u64)>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT (created_at / ?3) * ?3 AS bucket, SUM(difficulty), COUNT(*)
+             FROM shares
+             WHERE miner = ?1 AND created_at >= ?2
+               AND status IN ('verified','provisional')
+             GROUP BY bucket ORDER BY bucket",
+        )?;
+        let rows = stmt.query_map(params![address, to_unix(since), bucket_secs], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?.max(0) as u64,
+                row.get::<_, i64>(2)?.max(0) as u64,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Returns per-worker stats: Vec<(worker, accepted, rejected, total_diff, last_share_at)>
+    pub fn worker_stats_for_miner(
+        &self,
+        address: &str,
+        since: SystemTime,
+    ) -> Result<Vec<(String, u64, u64, u64, i64)>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT worker,
+                    SUM(CASE WHEN status IN ('verified','provisional') THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN status NOT IN ('verified','provisional') THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN status IN ('verified','provisional') THEN difficulty ELSE 0 END),
+                    MAX(created_at)
+             FROM shares
+             WHERE miner = ?1 AND created_at >= ?2
+             GROUP BY worker ORDER BY worker",
+        )?;
+        let rows = stmt.query_map(params![address, to_unix(since)], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?.max(0) as u64,
+                row.get::<_, i64>(2)?.max(0) as u64,
+                row.get::<_, i64>(3)?.max(0) as u64,
+                row.get::<_, i64>(4)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub fn get_blocks_for_miner(&self, address: &str) -> Result<Vec<DbBlock>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out
+             FROM blocks WHERE finder = ?1 ORDER BY height DESC",
+        )?;
+        let rows = stmt.query_map(params![address], row_to_block)?;
+        collect_rows(rows)
     }
 }
 
