@@ -12,6 +12,8 @@ import { StatusPage } from './pages/StatusPage';
 import { StatsPage } from './pages/StatsPage';
 import type { InfoResponse, Route } from './types';
 
+const APP_TITLE = 'BNT Pool';
+
 export function App() {
   const [route, setRoute] = useState<Route>(routeFromHash(window.location.hash || '#/'));
   const [errorMsg, setErrorMsg] = useState('');
@@ -44,7 +46,7 @@ export function App() {
       .getInfo()
       .then((info) => {
         setPoolInfo(info);
-        document.title = info.pool_name || 'Blocknet Pool';
+        document.title = APP_TITLE;
       })
       .catch(() => {
         // handled by api client
