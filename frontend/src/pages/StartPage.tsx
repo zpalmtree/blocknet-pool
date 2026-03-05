@@ -24,7 +24,7 @@ function feeDisplayFor(poolInfo: InfoResponse | null): string {
 export function StartPage({ active, poolInfo }: StartPageProps) {
   const [copiedKey, setCopiedKey] = useState('');
   const poolUrl = stratumUrl(poolInfo?.stratum_port);
-  const commandExample = `./seine --address YOUR_BLOCKNET_ADDRESS --pool-url ${poolUrl}`;
+  const commandExample = `./seine --pool-url ${poolUrl} --address YOUR_BLOCKNET_ADDRESS`;
 
   useEffect(() => {
     if (!copiedKey) return;
