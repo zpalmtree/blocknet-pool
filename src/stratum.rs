@@ -7,13 +7,14 @@ use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{broadcast, Mutex as AsyncMutex};
 
 use crate::engine::PoolEngine;
 use crate::jobs::JobManager;
 use crate::protocol::{
     normalize_worker_name, LoginParams, StratumNotify, StratumRequest, StratumResponse,
-    SubmitParams, METHOD_LOGIN, METHOD_SUBMIT,
+    SubmitParams, METHOD_LOGIN, METHOD_NOTIFICATION, METHOD_SUBMIT, NOTIFY_MINER_BLOCK_FOUND,
+    NOTIFY_POOL_BLOCK_SOLVED,
 };
 use crate::stats::PoolStats;
 
@@ -21,6 +22,7 @@ const MAX_CONNS_PER_IP: usize = 16;
 const MAX_CONNS_TOTAL: usize = 4096;
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_STRATUM_REQUEST_BYTES: usize = 8 * 1024;
+const NOTIFICATION_CHANNEL_CAPACITY: usize = 256;
 
 #[derive(Debug)]
 struct ConnState {
@@ -34,6 +36,7 @@ pub struct StratumServer {
     jobs: Arc<JobManager>,
     stats: Arc<PoolStats>,
     conn_state: Arc<Mutex<ConnState>>,
+    notifications: broadcast::Sender<StratumNotify>,
     post_login_idle_timeout: Duration,
 }
 
@@ -45,6 +48,7 @@ impl StratumServer {
         stats: Arc<PoolStats>,
         post_login_idle_timeout: Duration,
     ) -> Arc<Self> {
+        let (notifications, _) = broadcast::channel(NOTIFICATION_CHANNEL_CAPACITY);
         Arc::new(Self {
             listen_addr,
             engine,
@@ -54,6 +58,7 @@ impl StratumServer {
                 counts: HashMap::new(),
                 total: 0,
             })),
+            notifications,
             post_login_idle_timeout,
         })
     }
@@ -117,6 +122,7 @@ impl StratumServer {
         let mut logged_in: Option<(String, String, u64)> = None; // address, worker, difficulty
         let mut reader = BufReader::new(reader_half);
         let mut rx_jobs = self.jobs.subscribe();
+        let mut rx_notifications = self.notifications.subscribe();
         let post_login_idle_timeout = self.post_login_idle_timeout;
 
         let login_deadline = tokio::time::sleep(LOGIN_TIMEOUT);
@@ -161,6 +167,19 @@ impl StratumServer {
                                 }
                             }
                             let _ = job;
+                        }
+                    }
+                    maybe_notification = rx_notifications.recv(), if logged_in.is_some() => {
+                        match maybe_notification {
+                            Ok(notification) => {
+                                send_json(&writer, &notification).await?;
+                            }
+                            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                                tracing::debug!(peer = %peer, skipped, "stratum notification receiver lagged");
+                            }
+                            Err(broadcast::error::RecvError::Closed) => {
+                                break;
+                            }
                         }
                     }
                     line = read_line_limited(&mut reader, MAX_STRATUM_REQUEST_BYTES) => {
@@ -292,6 +311,8 @@ impl StratumServer {
 
                                 match submit {
                                     Ok(Ok(ack)) => {
+                                        let mut finder_address = None::<String>;
+                                        let mut finder_worker = None::<String>;
                                         let response = StratumResponse {
                                             id: req.id,
                                             status: Some("ok".to_string()),
@@ -308,6 +329,8 @@ impl StratumServer {
                                                 .record_accepted_share(address, ack.share_difficulty);
                                             if ack.block_accepted {
                                                 self.stats.record_block_found(address);
+                                                finder_address = Some(address.clone());
+                                                finder_worker = Some(worker.clone());
                                             }
                                             if ack.next_difficulty != *difficulty {
                                                 *difficulty = ack.next_difficulty;
@@ -331,6 +354,25 @@ impl StratumServer {
                                             }
                                         }
                                         send_json(&writer, &response).await?;
+                                        if ack.block_accepted {
+                                            let miner_notification = block_notification(
+                                                NOTIFY_MINER_BLOCK_FOUND,
+                                                "great success: you found a block for the pool",
+                                            );
+                                            send_json(&writer, &miner_notification).await?;
+
+                                            let pool_notification = block_notification(
+                                                NOTIFY_POOL_BLOCK_SOLVED,
+                                                "pool solved a block: share rewards are now pending confirmation",
+                                            );
+                                            let _ = self.notifications.send(pool_notification);
+                                            tracing::info!(
+                                                peer = %peer,
+                                                finder = finder_address.unwrap_or_default(),
+                                                worker = finder_worker.unwrap_or_default(),
+                                                "broadcasted pool block solved notification"
+                                            );
+                                        }
                                     }
                                     Ok(Err(err)) => {
                                         let err_text = err.to_string();
@@ -462,6 +504,16 @@ async fn send_json<T: serde::Serialize>(
     let mut guard = writer.lock().await;
     guard.write_all(&data).await?;
     Ok(())
+}
+
+fn block_notification(kind: &str, message: &str) -> StratumNotify {
+    StratumNotify {
+        method: METHOD_NOTIFICATION.to_string(),
+        params: serde_json::json!({
+            "kind": kind,
+            "message": message,
+        }),
+    }
 }
 
 fn share_reject_reason_code(error: &str) -> &'static str {

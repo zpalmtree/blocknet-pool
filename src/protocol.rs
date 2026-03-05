@@ -3,6 +3,10 @@ use sha3::{Digest, Sha3_256};
 
 pub const METHOD_LOGIN: &str = "login";
 pub const METHOD_SUBMIT: &str = "submit";
+pub const METHOD_NOTIFICATION: &str = "notification";
+
+pub const NOTIFY_POOL_BLOCK_SOLVED: &str = "pool_block_solved";
+pub const NOTIFY_MINER_BLOCK_FOUND: &str = "miner_block_found";
 
 pub const STRATUM_PROTOCOL_VERSION_MIN: u32 = 1;
 pub const STRATUM_PROTOCOL_VERSION_CURRENT: u32 = 2;
