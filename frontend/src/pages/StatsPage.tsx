@@ -96,19 +96,16 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
     if (!active) return;
 
     const stored = localStorage.getItem(LAST_MINER_LOOKUP_KEY) || '';
-    if (!minerAddress) {
-      if (!minerInput.trim() && stored) {
+    if (stored && stored !== minerAddress) {
+      if (stored !== minerInput) {
         setMinerInput(stored);
       }
+      void loadMinerLookup(stored);
+      return;
+    }
 
-      if (stored) {
-        void loadMinerLookup(stored);
-        return;
-      }
-
-      if (minerInput.trim()) {
-        void loadMinerLookup(minerInput);
-      }
+    if (!minerAddress && minerInput.trim()) {
+      void loadMinerLookup(minerInput);
     }
   }, [active, loadMinerLookup, minerAddress, minerInput]);
 
