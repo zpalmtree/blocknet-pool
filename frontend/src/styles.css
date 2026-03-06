@@ -17,6 +17,27 @@
   --bad: #dc2626;
   --warn-bg: #fef3c7;
   --bad-bg: #fee2e2;
+  --tone-ok-bg: rgba(22, 163, 74, 0.1);
+  --tone-ok-border: rgba(22, 163, 74, 0.18);
+  --tone-ok-text: #23834c;
+  --tone-warn-bg: rgba(186, 136, 42, 0.11);
+  --tone-warn-border: rgba(186, 136, 42, 0.18);
+  --tone-warn-text: #ab7720;
+  --tone-bad-bg: rgba(178, 96, 114, 0.1);
+  --tone-bad-border: rgba(178, 96, 114, 0.16);
+  --tone-bad-text: #a75f70;
+  --status-confirmed-bg: rgba(22, 163, 74, 0.1);
+  --status-confirmed-border: rgba(22, 163, 74, 0.18);
+  --status-confirmed-text: #23834c;
+  --status-pending-bg: rgba(170, 132, 51, 0.11);
+  --status-pending-border: rgba(170, 132, 51, 0.17);
+  --status-pending-text: #967128;
+  --status-orphaned-bg: rgba(160, 88, 104, 0.1);
+  --status-orphaned-border: rgba(160, 88, 104, 0.16);
+  --status-orphaned-text: #995667;
+  --rejection-track: rgba(31, 49, 33, 0.06);
+  --rejection-fill-start: rgba(73, 177, 155, 0.8);
+  --rejection-fill-end: rgba(171, 178, 114, 0.78);
   --shadow: 0 22px 48px rgba(33, 49, 34, 0.08);
   --shadow-soft: 0 12px 26px rgba(33, 49, 34, 0.05);
   --nav-bg: rgba(246, 248, 242, 0.92);
@@ -60,6 +81,27 @@
   --bad: #f87171;
   --warn-bg: #362710;
   --bad-bg: #351515;
+  --tone-ok-bg: rgba(87, 215, 140, 0.1);
+  --tone-ok-border: rgba(87, 215, 140, 0.17);
+  --tone-ok-text: #81dfaf;
+  --tone-warn-bg: rgba(215, 183, 113, 0.1);
+  --tone-warn-border: rgba(215, 183, 113, 0.16);
+  --tone-warn-text: #dfc789;
+  --tone-bad-bg: rgba(210, 124, 139, 0.1);
+  --tone-bad-border: rgba(210, 124, 139, 0.16);
+  --tone-bad-text: #e1a6b2;
+  --status-confirmed-bg: rgba(87, 215, 140, 0.1);
+  --status-confirmed-border: rgba(87, 215, 140, 0.16);
+  --status-confirmed-text: #81dfaf;
+  --status-pending-bg: rgba(215, 183, 113, 0.1);
+  --status-pending-border: rgba(215, 183, 113, 0.16);
+  --status-pending-text: #dfc789;
+  --status-orphaned-bg: rgba(210, 124, 139, 0.1);
+  --status-orphaned-border: rgba(210, 124, 139, 0.16);
+  --status-orphaned-text: #e1a6b2;
+  --rejection-track: rgba(255, 255, 255, 0.05);
+  --rejection-fill-start: rgba(108, 196, 176, 0.82);
+  --rejection-fill-end: rgba(194, 191, 136, 0.78);
   --shadow: 0 30px 80px rgba(0, 0, 0, 0.34);
   --shadow-soft: 0 14px 34px rgba(0, 0, 0, 0.22);
   --nav-bg: rgba(7, 17, 20, 0.94);
@@ -199,6 +241,9 @@ nav {
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s, transform 0.15s;
   box-shadow: var(--shadow-soft);
+  overflow: hidden;
+  line-height: 0;
+  flex-shrink: 0;
 }
 
 .theme-toggle:hover {
@@ -208,15 +253,13 @@ nav {
 
 .theme-toggle-track {
   position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   width: 100%;
-  padding: 0 9px;
+  height: 100%;
 }
 
 .theme-toggle-icon {
-  position: relative;
+  position: absolute;
+  top: 50%;
   z-index: 1;
   display: inline-flex;
   align-items: center;
@@ -225,6 +268,15 @@ nav {
   height: 14px;
   color: var(--muted);
   transition: color 0.15s;
+  transform: translateY(-50%);
+}
+
+.theme-toggle-icon-sun {
+  left: 10px;
+}
+
+.theme-toggle-icon-moon {
+  right: 10px;
 }
 
 .theme-toggle-icon svg {
@@ -244,13 +296,13 @@ nav {
 
 .theme-toggle-thumb {
   position: absolute;
-  top: 4px;
-  left: 4px;
-  width: 24px;
-  height: 24px;
+  top: 2px;
+  left: 2px;
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
   background: linear-gradient(180deg, var(--surface-raised), var(--bg-elevated));
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.16);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.14);
   transition: transform 0.2s ease, background 0.2s ease;
 }
 
@@ -258,12 +310,20 @@ nav {
   color: var(--accent-strong);
 }
 
+.theme-toggle[aria-pressed='false'] .theme-toggle-icon-moon {
+  color: color-mix(in srgb, var(--muted) 78%, var(--surface-raised));
+}
+
+.theme-toggle[aria-pressed='true'] .theme-toggle-icon-sun {
+  color: color-mix(in srgb, var(--muted) 82%, var(--surface-raised));
+}
+
 .theme-toggle[aria-pressed='true'] .theme-toggle-icon-moon {
   color: var(--accent-contrast);
 }
 
 .theme-toggle[aria-pressed='true'] .theme-toggle-thumb {
-  transform: translateX(28px);
+  transform: translateX(30px);
   background: linear-gradient(180deg, var(--accent), var(--accent-strong));
 }
 
@@ -494,25 +554,29 @@ tr:hover td {
   display: inline-block;
   font-size: 11px;
   font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
   text-transform: uppercase;
   letter-spacing: 0.3px;
+  border: 1px solid transparent;
 }
 
 .badge-confirmed {
-  background: var(--accent-light);
-  color: var(--good);
+  background: var(--status-confirmed-bg);
+  border-color: var(--status-confirmed-border);
+  color: var(--status-confirmed-text);
 }
 
 .badge-pending {
-  background: var(--warn-bg);
-  color: var(--warn);
+  background: var(--status-pending-bg);
+  border-color: var(--status-pending-border);
+  color: var(--status-pending-text);
 }
 
 .badge-orphaned {
-  background: var(--bad-bg);
-  color: var(--bad);
+  background: var(--status-orphaned-bg);
+  border-color: var(--status-orphaned-border);
+  color: var(--status-orphaned-text);
 }
 
 .pager {
@@ -679,23 +743,27 @@ h3 {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.4px;
-  background: var(--accent-light);
-  color: var(--good);
+  border: 1px solid transparent;
+  background: var(--tone-ok-bg);
+  color: var(--tone-ok-text);
 }
 
 .round-chip.is-ok {
-  background: var(--accent-light);
-  color: var(--good);
+  background: var(--tone-ok-bg);
+  border-color: var(--tone-ok-border);
+  color: var(--tone-ok-text);
 }
 
 .round-chip.is-warn {
-  background: var(--warn-bg);
-  color: var(--warn);
+  background: var(--tone-warn-bg);
+  border-color: var(--tone-warn-border);
+  color: var(--tone-warn-text);
 }
 
 .round-chip.is-critical {
-  background: var(--bad-bg);
-  color: var(--bad);
+  background: var(--tone-bad-bg);
+  border-color: var(--tone-bad-border);
+  color: var(--tone-bad-text);
 }
 
 .round-meta {
@@ -835,7 +903,7 @@ h3 {
 .rejection-row-bar {
   height: 8px;
   border-radius: 999px;
-  background: var(--bg-elevated);
+  background: var(--rejection-track);
   overflow: hidden;
   margin-top: 6px;
 }
@@ -843,7 +911,7 @@ h3 {
 .rejection-row-fill {
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--accent), var(--secondary));
+  background: linear-gradient(90deg, var(--rejection-fill-start), var(--rejection-fill-end));
 }
 
 .rejection-row-count {
