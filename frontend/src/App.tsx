@@ -280,20 +280,20 @@ export function App() {
             My Stats
           </a>
           <a
-            href={pathForRoute('admin')}
-            data-nav="admin"
-            className={route === 'admin' ? 'active' : ''}
-            onClick={(event) => onNavLinkClick(event, 'admin')}
-          >
-            Admin
-          </a>
-          <a
             href={pathForRoute('status')}
             data-nav="status"
             className={route === 'status' ? 'active' : ''}
             onClick={(event) => onNavLinkClick(event, 'status')}
           >
             Status
+          </a>
+          <a
+            href={pathForRoute('admin')}
+            data-nav="admin"
+            className={route === 'admin' ? 'active' : ''}
+            onClick={(event) => onNavLinkClick(event, 'admin')}
+          >
+            Admin
           </a>
         </div>
         <div className="nav-actions">

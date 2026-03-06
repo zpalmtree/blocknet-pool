@@ -14,8 +14,8 @@ export const ROUTES: RouteConfig[] = [
   { route: 'blocks', path: '/blocks', label: 'Blocks', indexable: true },
   { route: 'payouts', path: '/payouts', label: 'Payouts', indexable: true },
   { route: 'stats', path: '/stats', label: 'My Stats', indexable: false },
-  { route: 'admin', path: '/admin', label: 'Admin', indexable: false },
   { route: 'status', path: '/status', label: 'Status', indexable: true },
+  { route: 'admin', path: '/admin', label: 'Admin', indexable: false },
 ];
 
 const ROUTES_BY_PATH = new Map<string, Route>(

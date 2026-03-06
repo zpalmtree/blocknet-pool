@@ -415,7 +415,17 @@ export function AdminPage({
                   ) : (
                     payoutItems.map((p, idx) => (
                       <tr key={`${p.tx_hash}-${idx}`}>
-                        <td title={p.address}>{shortAddr(p.address)}</td>
+                        <td title={p.address}>
+                          <a
+                            href="/stats"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              onJumpToStats(p.address);
+                            }}
+                          >
+                            {shortAddr(p.address)}
+                          </a>
+                        </td>
                         <td>{formatCoins(p.amount)}</td>
                         <td>{formatFee(p.fee)}</td>
                         <td>
