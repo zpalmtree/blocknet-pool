@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
 import { Pager } from '../components/Pager';
 import { fmtSeconds, formatCoins, formatFee, humanRate, shortAddr, shortTx, timeAgo, toUnixMs } from '../lib/format';
 import type { AdminPayoutItem, AdminTab, FeeEvent, HealthResponse, MinerListItem, PagerState } from '../types';
+
+const MAX_DAEMON_LOG_LINES = 1000;
 
 interface AdminPageProps {
   active: boolean;
@@ -45,6 +47,13 @@ export function AdminPage({
   const [feePager, setFeePager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
 
   const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [daemonLogs, setDaemonLogs] = useState<string[]>([]);
+  const [daemonLogsTail, setDaemonLogsTail] = useState(200);
+  const [daemonLogsStatus, setDaemonLogsStatus] = useState<'idle' | 'connecting' | 'live' | 'error'>('idle');
+  const [daemonLogsError, setDaemonLogsError] = useState('');
+  const [daemonLogsAutoScroll, setDaemonLogsAutoScroll] = useState(true);
+  const [daemonLogsConnectSeq, setDaemonLogsConnectSeq] = useState(0);
+  const daemonLogsRef = useRef<HTMLPreElement | null>(null);
 
   const loadMiners = useCallback(async () => {
     if (!apiKey) return;
@@ -139,7 +148,71 @@ export function AdminPage({
     loadPayouts,
   ]);
 
+  useEffect(() => {
+    if (!active || !apiKey || tab !== 'logs') return;
+
+    const controller = new AbortController();
+    let seenLine = false;
+    setDaemonLogsStatus('connecting');
+    setDaemonLogsError('');
+
+    const connect = async () => {
+      try {
+        await api.streamDaemonLogs({
+          tail: daemonLogsTail,
+          signal: controller.signal,
+          onLine: (line) => {
+            seenLine = true;
+            setDaemonLogsStatus('live');
+            setDaemonLogs((prev) => {
+              const next = prev.concat(line);
+              if (next.length <= MAX_DAEMON_LOG_LINES) {
+                return next;
+              }
+              return next.slice(next.length - MAX_DAEMON_LOG_LINES);
+            });
+          },
+        });
+        if (controller.signal.aborted) return;
+        if (!seenLine) {
+          setDaemonLogsStatus('idle');
+        }
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        setDaemonLogsStatus('error');
+        setDaemonLogsError(err instanceof Error ? err.message : 'failed to stream daemon logs');
+      }
+    };
+
+    void connect();
+    return () => {
+      controller.abort();
+    };
+  }, [active, api, apiKey, daemonLogsTail, daemonLogsConnectSeq, tab]);
+
+  useEffect(() => {
+    if (!daemonLogsAutoScroll || tab !== 'logs') return;
+    const viewport = daemonLogsRef.current;
+    if (!viewport) return;
+    viewport.scrollTop = viewport.scrollHeight;
+  }, [daemonLogs, daemonLogsAutoScroll, tab]);
+
   const apiStatus = apiKey ? 'Key set' : 'No key';
+  const daemonLogsStatusText =
+    daemonLogsStatus === 'connecting'
+      ? 'Connecting'
+      : daemonLogsStatus === 'live'
+        ? 'Live'
+        : daemonLogsStatus === 'error'
+          ? 'Error'
+          : 'Idle';
+  const daemonLogsStatusDot =
+    daemonLogsStatus === 'live'
+      ? 'dot-green'
+      : daemonLogsStatus === 'error'
+        ? 'dot-red'
+        : 'dot-amber';
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-admin">
@@ -186,6 +259,9 @@ export function AdminPage({
             </button>
             <button className={tab === 'health' ? 'active' : ''} onClick={() => setTab('health')}>
               Health
+            </button>
+            <button className={tab === 'logs' ? 'active' : ''} onClick={() => setTab('logs')}>
+              Daemon Logs
             </button>
           </div>
 
@@ -339,10 +415,10 @@ export function AdminPage({
             </div>
           </div>
 
-          <div style={{ display: tab === 'fees' ? '' : 'none' }}>
-            <p style={{ fontSize: 14, color: 'var(--muted)', marginBottom: 12 }}>
-              Total Collected: <span className="mono">{formatCoins(feesTotal)}</span>
-            </p>
+        <div style={{ display: tab === 'fees' ? '' : 'none' }}>
+          <p style={{ fontSize: 14, color: 'var(--muted)', marginBottom: 12 }}>
+            Total Collected: <span className="mono">{formatCoins(feesTotal)}</span>
+          </p>
 
             <div className="card table-scroll">
               <table>
@@ -415,6 +491,49 @@ export function AdminPage({
 
             <h3>Raw Health Data</h3>
             <pre className="raw-json">{health ? JSON.stringify(health, null, 2) : 'Loading...'}</pre>
+          </div>
+
+          <div style={{ display: tab === 'logs' ? '' : 'none' }}>
+            <div className="filter-bar">
+              <span style={{ fontSize: 13, color: 'var(--muted)' }}>
+                <span className={`status-dot ${daemonLogsStatusDot}`} />
+                {daemonLogsStatusText}
+              </span>
+
+              <select value={String(daemonLogsTail)} onChange={(e) => setDaemonLogsTail(Number(e.target.value) || 200)}>
+                <option value="100">Tail 100</option>
+                <option value="200">Tail 200</option>
+                <option value="500">Tail 500</option>
+                <option value="1000">Tail 1000</option>
+              </select>
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--muted)' }}>
+                <input
+                  type="checkbox"
+                  checked={daemonLogsAutoScroll}
+                  onChange={(e) => setDaemonLogsAutoScroll(e.target.checked)}
+                />
+                Auto-scroll
+              </label>
+
+              <button
+                className="btn btn-secondary"
+                onClick={() => setDaemonLogsConnectSeq((seq) => seq + 1)}
+              >
+                Reconnect
+              </button>
+              <button className="btn btn-secondary" onClick={() => setDaemonLogs([])}>
+                Clear
+              </button>
+            </div>
+
+            {daemonLogsError ? (
+              <p style={{ fontSize: 13, color: 'var(--bad)', marginBottom: 10 }}>{daemonLogsError}</p>
+            ) : null}
+
+            <pre ref={daemonLogsRef} className="log-stream">
+              {daemonLogs.length ? daemonLogs.join('\n') : 'No daemon log lines yet.'}
+            </pre>
           </div>
         </div>
       )}

@@ -13,9 +13,12 @@ pub struct Config {
     pub pool_name: String,
     pub pool_url: String,
 
+    pub stratum_host: String,
     pub stratum_port: u16,
     pub api_port: u16,
     pub api_host: String,
+    pub api_tls_cert_path: String,
+    pub api_tls_key_path: String,
 
     pub daemon_binary: String,
     pub daemon_data_dir: String,
@@ -46,6 +49,8 @@ pub struct Config {
     pub max_provisional_shares: i32,
     pub stratum_submit_v2_required: bool,
     pub stratum_idle_timeout: String,
+    pub stratum_submit_rate_limit_window: String,
+    pub stratum_submit_rate_limit_max: i32,
     pub enable_vardiff: bool,
     pub vardiff_target_shares: i32,
     pub vardiff_window: String,
@@ -67,10 +72,19 @@ pub struct Config {
     pub payout_min_verified_shares: i32,
     pub payout_min_verified_ratio: f64,
     pub payout_provisional_cap_multiplier: f64,
+    pub payouts_enabled: bool,
+    pub payout_max_recipients_per_tick: i32,
+    pub payout_max_total_per_tick: f64,
+    pub payout_max_per_recipient: f64,
+    pub payout_pause_file: String,
     pub payout_interval: String,
+    pub shares_retention: String,
+    pub payouts_retention: String,
+    pub retention_interval: String,
 
     pub database_path: String,
     pub database_url: String,
+    pub database_pool_size: i32,
     pub api_key: String,
     pub seen_share_gc_interval: String,
 
@@ -83,9 +97,12 @@ impl Default for Config {
         Self {
             pool_name: "blocknet pool".to_string(),
             pool_url: "http://localhost:24783".to_string(),
+            stratum_host: "127.0.0.1".to_string(),
             stratum_port: 3333,
             api_port: 24783,
             api_host: "127.0.0.1".to_string(),
+            api_tls_cert_path: String::new(),
+            api_tls_key_path: String::new(),
             daemon_binary: "./blocknet".to_string(),
             daemon_data_dir: "data".to_string(),
             daemon_api: "http://127.0.0.1:8332".to_string(),
@@ -114,6 +131,8 @@ impl Default for Config {
             max_provisional_shares: 200,
             stratum_submit_v2_required: true,
             stratum_idle_timeout: "15m".to_string(),
+            stratum_submit_rate_limit_window: "10s".to_string(),
+            stratum_submit_rate_limit_max: 120,
             enable_vardiff: true,
             vardiff_target_shares: 10,
             vardiff_window: "5m".to_string(),
@@ -133,9 +152,18 @@ impl Default for Config {
             payout_min_verified_shares: 1,
             payout_min_verified_ratio: 0.05,
             payout_provisional_cap_multiplier: 3.0,
+            payouts_enabled: true,
+            payout_max_recipients_per_tick: 500,
+            payout_max_total_per_tick: 0.0,
+            payout_max_per_recipient: 0.0,
+            payout_pause_file: "payouts.pause".to_string(),
             payout_interval: "1h".to_string(),
+            shares_retention: "90d".to_string(),
+            payouts_retention: "365d".to_string(),
+            retention_interval: "1h".to_string(),
             database_path: "pool.db".to_string(),
             database_url: String::new(),
+            database_pool_size: 4,
             api_key: String::new(),
             seen_share_gc_interval: "10m".to_string(),
             log_path: String::new(),
@@ -187,6 +215,9 @@ impl Config {
         if self.max_provisional_shares < 0 {
             self.max_provisional_shares = 0;
         }
+        if self.stratum_submit_rate_limit_max < 1 {
+            self.stratum_submit_rate_limit_max = 1;
+        }
         if self.invalid_escalation_quarantine_strikes < 0 {
             self.invalid_escalation_quarantine_strikes = 0;
         }
@@ -224,6 +255,18 @@ impl Config {
         {
             self.payout_provisional_cap_multiplier = 0.0;
         }
+        if self.payout_max_recipients_per_tick < 0 {
+            self.payout_max_recipients_per_tick = 0;
+        }
+        if !self.payout_max_total_per_tick.is_finite() || self.payout_max_total_per_tick < 0.0 {
+            self.payout_max_total_per_tick = 0.0;
+        }
+        if !self.payout_max_per_recipient.is_finite() || self.payout_max_per_recipient < 0.0 {
+            self.payout_max_per_recipient = 0.0;
+        }
+        if self.database_pool_size < 1 {
+            self.database_pool_size = 1;
+        }
         let max_atomic_amount = (u64::MAX as f64) / 100_000_000.0;
         if !self.min_payout_amount.is_finite() || self.min_payout_amount < 0.0 {
             self.min_payout_amount = 0.1;
@@ -247,6 +290,14 @@ impl Config {
     pub fn stratum_idle_timeout_duration(&self) -> Duration {
         parse_duration_or(&self.stratum_idle_timeout, Duration::from_secs(15 * 60))
             .clamp(Duration::from_secs(30), Duration::from_secs(24 * 60 * 60))
+    }
+
+    pub fn stratum_submit_rate_limit_window_duration(&self) -> Duration {
+        parse_duration_or(
+            &self.stratum_submit_rate_limit_window,
+            Duration::from_secs(10),
+        )
+        .clamp(Duration::from_secs(1), Duration::from_secs(5 * 60))
     }
 
     pub fn forced_verify_duration(&self) -> Duration {
@@ -273,6 +324,22 @@ impl Config {
 
     pub fn payout_interval_duration(&self) -> Duration {
         parse_duration_or(&self.payout_interval, Duration::from_secs(60 * 60))
+    }
+
+    pub fn shares_retention_duration(&self) -> Option<Duration> {
+        parse_optional_duration(&self.shares_retention)
+    }
+
+    pub fn payouts_retention_duration(&self) -> Option<Duration> {
+        parse_optional_duration(&self.payouts_retention)
+    }
+
+    pub fn retention_interval_duration(&self) -> Duration {
+        parse_duration_or(&self.retention_interval, Duration::from_secs(60 * 60))
+    }
+
+    pub fn has_api_tls(&self) -> bool {
+        !self.api_tls_cert_path.trim().is_empty() && !self.api_tls_key_path.trim().is_empty()
     }
 
     pub fn vardiff_window_duration(&self) -> Duration {
@@ -322,6 +389,14 @@ fn parse_duration_or(value: &str, fallback: Duration) -> Duration {
     humantime::parse_duration(value).unwrap_or(fallback)
 }
 
+fn parse_optional_duration(value: &str) -> Option<Duration> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    humantime::parse_duration(trimmed).ok()
+}
+
 pub fn generate_default_env(path: &Path) -> Result<bool> {
     if path.exists() {
         return Ok(false);
@@ -361,6 +436,7 @@ mod tests {
             invalid_escalation_quarantine_strikes: -2,
             max_provisional_shares: -1,
             stratum_submit_v2_required: false,
+            stratum_submit_rate_limit_max: 0,
             initial_share_difficulty: 0,
             min_share_difficulty: 10,
             max_share_difficulty: 5,
@@ -370,7 +446,11 @@ mod tests {
             payout_min_verified_shares: -3,
             payout_min_verified_ratio: 2.0,
             payout_provisional_cap_multiplier: f64::NAN,
+            payout_max_recipients_per_tick: -2,
+            payout_max_total_per_tick: -10.0,
+            payout_max_per_recipient: f64::NAN,
             min_payout_amount: -1.0,
+            database_pool_size: 0,
             ..Config::default()
         };
         cfg.normalize();
@@ -386,6 +466,7 @@ mod tests {
         assert_eq!(cfg.invalid_escalation_quarantine_strikes, 0);
         assert_eq!(cfg.max_provisional_shares, 0);
         assert!(!cfg.stratum_submit_v2_required);
+        assert_eq!(cfg.stratum_submit_rate_limit_max, 1);
         assert_eq!(cfg.min_share_difficulty, 10);
         assert_eq!(cfg.max_share_difficulty, 10);
         assert_eq!(cfg.initial_share_difficulty, 10);
@@ -395,7 +476,11 @@ mod tests {
         assert_eq!(cfg.payout_min_verified_shares, 0);
         assert_eq!(cfg.payout_min_verified_ratio, 1.0);
         assert_eq!(cfg.payout_provisional_cap_multiplier, 0.0);
+        assert_eq!(cfg.payout_max_recipients_per_tick, 0);
+        assert_eq!(cfg.payout_max_total_per_tick, 0.0);
+        assert_eq!(cfg.payout_max_per_recipient, 0.0);
         assert_eq!(cfg.min_payout_amount, 0.1);
+        assert_eq!(cfg.database_pool_size, 1);
     }
 
     #[test]

@@ -62,7 +62,21 @@ async fn main() -> Result<()> {
         warn!(
             host = %cfg.api_host,
             port = cfg.api_port,
-            "api_key is empty; protected routes (/api/miners, /api/payouts, /api/fees, /api/health) are disabled while public routes remain available (/api/info, /api/stats, /api/stats/history, /api/stats/insights, /api/status, /api/events, /api/blocks, /api/payouts/recent, /api/miner/:address, /api/miner/:address/hashrate)"
+            "api_key is empty; protected routes (/api/miners, /api/payouts, /api/fees, /api/health, /api/daemon/logs/stream) are disabled while public routes remain available (/api/info, /api/stats, /api/stats/history, /api/stats/insights, /api/luck, /api/status, /api/events, /api/blocks, /api/payouts/recent, /api/miner/:address, /api/miner/:address/balance, /api/miner/:address/hashrate)"
+        );
+    }
+    if !cfg.api_tls_cert_path.trim().is_empty() ^ !cfg.api_tls_key_path.trim().is_empty() {
+        warn!(
+            cert_path = %cfg.api_tls_cert_path,
+            key_path = %cfg.api_tls_key_path,
+            "api tls is partially configured; set both api_tls_cert_path and api_tls_key_path to enable tls"
+        );
+    }
+    if !is_local_bind_host(&cfg.stratum_host) {
+        warn!(
+            host = %cfg.stratum_host,
+            port = cfg.stratum_port,
+            "stratum is bound on a non-local host and transport is plaintext; place stratum behind a tls terminator when exposed publicly"
         );
     }
 
@@ -113,19 +127,29 @@ async fn main() -> Result<()> {
 
     let stats = Arc::new(PoolStats::new());
 
-    let stratum_addr = SocketAddr::from(([0, 0, 0, 0], cfg.stratum_port));
+    let stratum_addr: SocketAddr = format!("{}:{}", cfg.stratum_host, cfg.stratum_port)
+        .parse()
+        .with_context(|| {
+            format!(
+                "invalid stratum listen address {}:{}",
+                cfg.stratum_host, cfg.stratum_port
+            )
+        })?;
     let stratum = StratumServer::new(
         stratum_addr,
         Arc::clone(&engine),
         Arc::clone(&jobs),
         Arc::clone(&stats),
         cfg.stratum_idle_timeout_duration(),
+        cfg.stratum_submit_rate_limit_window_duration(),
+        cfg.stratum_submit_rate_limit_max.max(1) as usize,
     );
 
     let payout = PayoutProcessor::new(cfg.clone(), Arc::clone(&store), Arc::clone(&node));
     payout.start();
     start_seen_share_gc(cfg.clone(), Arc::clone(&store));
     start_stat_snapshots(Arc::clone(&stats), Arc::clone(&store));
+    start_retention_maintenance(cfg.clone(), Arc::clone(&store));
 
     let api_addr: SocketAddr = format!("{}:{}", cfg.api_host, cfg.api_port)
         .parse()
@@ -151,10 +175,9 @@ async fn main() -> Result<()> {
             blocknet_pool_rs::api::NetworkHashrateCache::default(),
         )),
         insights_cache: Arc::new(Mutex::new(blocknet_pool_rs::api::InsightsCache::default())),
+        miner_pending_estimate_cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
         status_history: Arc::new(Mutex::new(blocknet_pool_rs::api::StatusHistory::default())),
-        sse_subscriber_limiter: Arc::new(tokio::sync::Semaphore::new(
-            DEFAULT_MAX_SSE_SUBSCRIBERS,
-        )),
+        sse_subscriber_limiter: Arc::new(tokio::sync::Semaphore::new(DEFAULT_MAX_SSE_SUBSCRIBERS)),
         api_key: cfg.api_key.clone(),
         pool_name: cfg.pool_name.clone(),
         pool_url: cfg.pool_url.clone(),
@@ -237,6 +260,47 @@ fn start_stat_snapshots(stats: Arc<PoolStats>, store: Arc<PoolStore>) {
                 Ok(Ok(())) => {}
                 Ok(Err(err)) => tracing::warn!(error = %err, "stat snapshot failed"),
                 Err(err) => tracing::warn!(error = %err, "stat snapshot task join failed"),
+            }
+        }
+    });
+}
+
+fn start_retention_maintenance(cfg: Config, store: Arc<PoolStore>) {
+    tokio::spawn(async move {
+        let interval = cfg
+            .retention_interval_duration()
+            .max(Duration::from_secs(5 * 60));
+        let mut ticker = tokio::time::interval(interval);
+        loop {
+            ticker.tick().await;
+            let now = SystemTime::now();
+            let shares_before = cfg
+                .shares_retention_duration()
+                .and_then(|age| now.checked_sub(age));
+            let payouts_before = cfg
+                .payouts_retention_duration()
+                .and_then(|age| now.checked_sub(age));
+            if shares_before.is_none() && payouts_before.is_none() {
+                continue;
+            }
+
+            let store = Arc::clone(&store);
+            match tokio::task::spawn_blocking(move || {
+                store.rollup_and_prune_retention(shares_before, payouts_before)
+            })
+            .await
+            {
+                Ok(Ok(report)) => {
+                    if report.shares_pruned > 0 || report.payouts_pruned > 0 {
+                        tracing::info!(
+                            shares_pruned = report.shares_pruned,
+                            payouts_pruned = report.payouts_pruned,
+                            "completed retention rollup/prune cycle"
+                        );
+                    }
+                }
+                Ok(Err(err)) => tracing::warn!(error = %err, "retention rollup/prune failed"),
+                Err(err) => tracing::warn!(error = %err, "retention task join failed"),
             }
         }
     });
@@ -359,4 +423,9 @@ fn load_dotenv(config_path: &Path) {
             return;
         }
     }
+}
+
+fn is_local_bind_host(host: &str) -> bool {
+    let trimmed = host.trim().to_ascii_lowercase();
+    matches!(trimmed.as_str(), "127.0.0.1" | "::1" | "localhost")
 }

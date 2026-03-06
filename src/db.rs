@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -10,8 +11,10 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 use crate::engine::{ShareRecord, ShareStore};
+use crate::stats::RejectionReasonCount;
 
 const SEEN_SHARE_EXPIRY_SECS: i64 = 24 * 60 * 60;
+const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StatSnapshot {
@@ -142,10 +145,12 @@ CREATE TABLE IF NOT EXISTS shares (
     status TEXT NOT NULL,
     was_sampled INTEGER NOT NULL,
     block_hash TEXT,
+    reject_reason TEXT,
     created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_shares_created_at ON shares(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shares_miner_created ON shares(miner, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_shares_miner_status_created ON shares(miner, status, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS blocks (
     height INTEGER PRIMARY KEY,
@@ -161,6 +166,8 @@ CREATE TABLE IF NOT EXISTS blocks (
 );
 CREATE INDEX IF NOT EXISTS idx_blocks_timestamp ON blocks(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_blocks_finder ON blocks(finder);
+CREATE INDEX IF NOT EXISTS idx_blocks_finder_height ON blocks(finder, height DESC);
+CREATE INDEX IF NOT EXISTS idx_blocks_unconfirmed ON blocks(confirmed, orphaned, height ASC);
 
 CREATE TABLE IF NOT EXISTS balances (
     address TEXT PRIMARY KEY,
@@ -235,10 +242,41 @@ CREATE TABLE IF NOT EXISTS stat_snapshots (
     workers INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS share_daily_summaries (
+    day_start INTEGER PRIMARY KEY,
+    accepted_count INTEGER NOT NULL,
+    rejected_count INTEGER NOT NULL,
+    accepted_difficulty INTEGER NOT NULL,
+    unique_miners INTEGER NOT NULL,
+    unique_workers INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_share_daily_summaries_day_start
+    ON share_daily_summaries(day_start DESC);
+
+CREATE TABLE IF NOT EXISTS share_rejection_reason_daily_summaries (
+    day_start INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    rejected_count INTEGER NOT NULL,
+    PRIMARY KEY (day_start, reason)
+);
+CREATE INDEX IF NOT EXISTS idx_share_rejection_reason_daily_summaries_day_start
+    ON share_rejection_reason_daily_summaries(day_start DESC);
+
+CREATE TABLE IF NOT EXISTS payout_daily_summaries (
+    day_start INTEGER PRIMARY KEY,
+    payout_count INTEGER NOT NULL,
+    total_amount INTEGER NOT NULL,
+    total_fee INTEGER NOT NULL,
+    unique_recipients INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
+    ON payout_daily_summaries(day_start DESC);
 "#;
 
         self.conn.lock().execute_batch(sql).context("init schema")?;
         self.ensure_payout_fee_column()?;
+        self.ensure_share_reject_reason_column()?;
         Ok(())
     }
 
@@ -258,6 +296,19 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         Ok(())
     }
 
+    fn ensure_share_reject_reason_column(&self) -> Result<()> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare("PRAGMA table_info(shares)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        for row in rows {
+            if row?.eq_ignore_ascii_case("reject_reason") {
+                return Ok(());
+            }
+        }
+        conn.execute("ALTER TABLE shares ADD COLUMN reject_reason TEXT", [])?;
+        Ok(())
+    }
+
     pub fn add_share_immediate(&self, share: ShareRecord) -> Result<()> {
         self.add_share(share)
     }
@@ -265,8 +316,8 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
     pub fn add_share(&self, share: ShareRecord) -> Result<()> {
         let created = to_unix(share.created_at);
         self.conn.lock().execute(
-            "INSERT INTO shares (job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO shares (job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, reject_reason, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 share.job_id,
                 share.miner,
@@ -276,6 +327,7 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
                 share.status,
                 if share.was_sampled { 1i64 } else { 0i64 },
                 share.block_hash,
+                share.reject_reason,
                 created,
             ],
         )?;
@@ -286,7 +338,7 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
-             FROM shares ORDER BY id DESC LIMIT ?1",
+             FROM shares ORDER BY created_at DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit], row_to_share)?;
         collect_rows(rows)
@@ -296,7 +348,7 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
-             FROM shares WHERE miner = ?1 ORDER BY id DESC LIMIT ?2",
+             FROM shares WHERE miner = ?1 ORDER BY created_at DESC LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![address, limit], row_to_share)?;
         collect_rows(rows)
@@ -306,7 +358,7 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
-             FROM shares WHERE created_at >= ?1 ORDER BY id DESC",
+             FROM shares WHERE created_at >= ?1 ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map(params![to_unix(since)], row_to_share)?;
         collect_rows(rows)
@@ -320,7 +372,7 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
-             FROM shares WHERE created_at >= ?1 AND created_at <= ?2 ORDER BY id DESC",
+             FROM shares WHERE created_at >= ?1 AND created_at <= ?2",
         )?;
         let rows = stmt.query_map(params![to_unix(start), to_unix(end)], row_to_share)?;
         collect_rows(rows)
@@ -330,7 +382,7 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
-             FROM shares WHERE created_at <= ?1 ORDER BY id DESC LIMIT ?2",
+             FROM shares WHERE created_at <= ?1 ORDER BY created_at DESC LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![to_unix(before), n], row_to_share)?;
         collect_rows(rows)
@@ -398,11 +450,15 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
     }
 
     pub fn get_total_share_count(&self) -> Result<u64> {
-        let count: i64 = self
-            .conn
-            .lock()
-            .query_row("SELECT COUNT(*) FROM shares", [], |row| row.get(0))?;
-        Ok(count.max(0) as u64)
+        let conn = self.conn.lock();
+        let live_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM shares", [], |row| row.get(0))?;
+        let summarized_count: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(accepted_count + rejected_count), 0) FROM share_daily_summaries",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok((live_count.max(0) as u64).saturating_add(summarized_count.max(0) as u64))
     }
 
     pub fn share_outcome_counts_since(&self, since: SystemTime) -> Result<(u64, u64)> {
@@ -420,12 +476,83 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
     }
 
     pub fn total_rejected_share_count(&self) -> Result<u64> {
-        let count: i64 = self.conn.lock().query_row(
+        let conn = self.conn.lock();
+        let live_count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM shares WHERE status NOT IN ('verified','provisional')",
             [],
             |row| row.get(0),
         )?;
-        Ok(count.max(0) as u64)
+        let summarized_count: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(rejected_count), 0) FROM share_daily_summaries",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok((live_count.max(0) as u64).saturating_add(summarized_count.max(0) as u64))
+    }
+
+    pub fn rejection_reason_counts_since(
+        &self,
+        since: SystemTime,
+    ) -> Result<Vec<RejectionReasonCount>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT
+                COALESCE(NULLIF(TRIM(reject_reason), ''), 'legacy / unknown') AS reason,
+                COUNT(*) AS rejected_count
+             FROM shares
+             WHERE created_at >= ?1
+               AND status NOT IN ('verified','provisional')
+             GROUP BY reason
+             ORDER BY rejected_count DESC, reason ASC",
+        )?;
+        let rows = stmt.query_map(params![to_unix(since)], |row| {
+            Ok(RejectionReasonCount {
+                reason: row.get(0)?,
+                count: row.get::<_, i64>(1)?.max(0) as u64,
+            })
+        })?;
+        collect_rows(rows)
+    }
+
+    pub fn total_rejection_reason_counts(&self) -> Result<Vec<RejectionReasonCount>> {
+        let conn = self.conn.lock();
+        let live = {
+            let mut stmt = conn.prepare(
+                "SELECT
+                    COALESCE(NULLIF(TRIM(reject_reason), ''), 'legacy / unknown') AS reason,
+                    COUNT(*) AS rejected_count
+                 FROM shares
+                 WHERE status NOT IN ('verified','provisional')
+                 GROUP BY reason",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?.max(0) as u64,
+                ))
+            })?;
+            collect_rows(rows)?
+        };
+        let summarized = {
+            let mut stmt = conn.prepare(
+                "SELECT reason, COALESCE(SUM(rejected_count), 0)
+                 FROM share_rejection_reason_daily_summaries
+                 GROUP BY reason",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?.max(0) as u64,
+                ))
+            })?;
+            collect_rows(rows)?
+        };
+
+        Ok(sort_reason_counts(
+            live.into_iter()
+                .chain(summarized)
+                .collect::<Vec<(String, u64)>>(),
+        ))
     }
 
     pub fn add_block(&self, block: &DbBlock) -> Result<()> {
@@ -1557,6 +1684,87 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         Ok(removed as u64)
     }
 
+    pub fn rollup_and_prune_shares_before(&self, before: SystemTime) -> Result<u64> {
+        let cutoff = floor_to_day_start_unix(to_unix(before));
+        if cutoff <= 0 {
+            return Ok(0);
+        }
+
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO share_daily_summaries
+                (day_start, accepted_count, rejected_count, accepted_difficulty, unique_miners, unique_workers)
+             SELECT
+                (created_at / ?2) * ?2 AS day_start,
+                SUM(CASE WHEN status IN ('verified','provisional') THEN 1 ELSE 0 END) AS accepted_count,
+                SUM(CASE WHEN status NOT IN ('verified','provisional') THEN 1 ELSE 0 END) AS rejected_count,
+                SUM(CASE WHEN status IN ('verified','provisional') THEN difficulty ELSE 0 END) AS accepted_difficulty,
+                COUNT(DISTINCT miner) AS unique_miners,
+                COUNT(DISTINCT worker) AS unique_workers
+             FROM shares
+             WHERE created_at < ?1
+             GROUP BY day_start
+             ON CONFLICT(day_start) DO UPDATE SET
+                accepted_count = share_daily_summaries.accepted_count + excluded.accepted_count,
+                rejected_count = share_daily_summaries.rejected_count + excluded.rejected_count,
+                accepted_difficulty = share_daily_summaries.accepted_difficulty + excluded.accepted_difficulty,
+                unique_miners = share_daily_summaries.unique_miners + excluded.unique_miners,
+                unique_workers = share_daily_summaries.unique_workers + excluded.unique_workers",
+            params![cutoff, SECONDS_PER_DAY],
+        )?;
+        tx.execute(
+            "INSERT INTO share_rejection_reason_daily_summaries
+                (day_start, reason, rejected_count)
+             SELECT
+                (created_at / ?2) * ?2 AS day_start,
+                COALESCE(NULLIF(TRIM(reject_reason), ''), 'legacy / unknown') AS reason,
+                COUNT(*) AS rejected_count
+             FROM shares
+             WHERE created_at < ?1
+               AND status NOT IN ('verified','provisional')
+             GROUP BY day_start, reason
+             ON CONFLICT(day_start, reason) DO UPDATE SET
+                rejected_count = share_rejection_reason_daily_summaries.rejected_count + excluded.rejected_count",
+            params![cutoff, SECONDS_PER_DAY],
+        )?;
+        let removed = tx.execute("DELETE FROM shares WHERE created_at < ?1", params![cutoff])?;
+        tx.commit()?;
+        Ok(removed as u64)
+    }
+
+    pub fn rollup_and_prune_payouts_before(&self, before: SystemTime) -> Result<u64> {
+        let cutoff = floor_to_day_start_unix(to_unix(before));
+        if cutoff <= 0 {
+            return Ok(0);
+        }
+
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO payout_daily_summaries
+                (day_start, payout_count, total_amount, total_fee, unique_recipients)
+             SELECT
+                (timestamp / ?2) * ?2 AS day_start,
+                COUNT(*) AS payout_count,
+                COALESCE(SUM(amount), 0) AS total_amount,
+                COALESCE(SUM(fee), 0) AS total_fee,
+                COUNT(DISTINCT address) AS unique_recipients
+             FROM payouts
+             WHERE timestamp < ?1
+             GROUP BY day_start
+             ON CONFLICT(day_start) DO UPDATE SET
+                payout_count = payout_daily_summaries.payout_count + excluded.payout_count,
+                total_amount = payout_daily_summaries.total_amount + excluded.total_amount,
+                total_fee = payout_daily_summaries.total_fee + excluded.total_fee,
+                unique_recipients = payout_daily_summaries.unique_recipients + excluded.unique_recipients",
+            params![cutoff, SECONDS_PER_DAY],
+        )?;
+        let removed = tx.execute("DELETE FROM payouts WHERE timestamp < ?1", params![cutoff])?;
+        tx.commit()?;
+        Ok(removed as u64)
+    }
+
     /// Returns bucketed hashrate data for a miner: Vec<(bucket_ts, total_diff, count)>
     pub fn hashrate_history_for_miner(
         &self,
@@ -1777,6 +1985,21 @@ fn row_to_pool_fee_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<PoolFeeEve
     })
 }
 
+fn sort_reason_counts(entries: Vec<(String, u64)>) -> Vec<RejectionReasonCount> {
+    let mut counts = HashMap::<String, u64>::new();
+    for (reason, count) in entries {
+        let entry = counts.entry(reason).or_insert(0);
+        *entry = entry.saturating_add(count);
+    }
+
+    let mut items = counts
+        .into_iter()
+        .map(|(reason, count)| RejectionReasonCount { reason, count })
+        .collect::<Vec<_>>();
+    items.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.reason.cmp(&b.reason)));
+    items
+}
+
 fn collect_rows<T>(
     rows: rusqlite::MappedRows<'_, impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>>,
 ) -> Result<Vec<T>> {
@@ -1789,6 +2012,13 @@ fn collect_rows<T>(
 
 fn now_unix() -> i64 {
     to_unix(SystemTime::now())
+}
+
+fn floor_to_day_start_unix(ts: i64) -> i64 {
+    if ts <= 0 {
+        return 0;
+    }
+    ts - (ts % SECONDS_PER_DAY)
 }
 
 fn normalize_block_status_filter(status: Option<&str>) -> Option<&'static str> {
@@ -1857,7 +2087,7 @@ fn merge_optional_later(
 mod tests {
     use super::*;
     use crate::engine::ShareRecord;
-    use crate::validation::SHARE_STATUS_VERIFIED;
+    use crate::validation::{SHARE_STATUS_REJECTED, SHARE_STATUS_VERIFIED};
 
     fn test_store() -> Arc<SqliteStore> {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1901,6 +2131,7 @@ mod tests {
                 status: SHARE_STATUS_VERIFIED,
                 was_sampled: true,
                 block_hash: None,
+                reject_reason: None,
                 created_at: SystemTime::now(),
             })
             .expect("add share");
@@ -1908,6 +2139,132 @@ mod tests {
         let shares = store.get_recent_shares(10).expect("recent");
         assert_eq!(shares.len(), 1);
         assert_eq!(shares[0].nonce, 7);
+    }
+
+    #[test]
+    fn share_rollup_prunes_old_rows_and_preserves_totals() {
+        let store = test_store();
+        let old_ts = UNIX_EPOCH + Duration::from_secs((5 * SECONDS_PER_DAY + 120) as u64);
+        let new_ts = UNIX_EPOCH + Duration::from_secs((40 * SECONDS_PER_DAY + 120) as u64);
+
+        for (nonce, status, created_at) in [
+            (1u64, SHARE_STATUS_VERIFIED, old_ts),
+            (2u64, SHARE_STATUS_REJECTED, old_ts),
+            (3u64, SHARE_STATUS_VERIFIED, new_ts),
+        ] {
+            store
+                .add_share(ShareRecord {
+                    job_id: "job-rollup".into(),
+                    miner: "addr-rollup".into(),
+                    worker: "rig-rollup".into(),
+                    difficulty: 10,
+                    nonce,
+                    status,
+                    was_sampled: true,
+                    block_hash: None,
+                    reject_reason: (status == SHARE_STATUS_REJECTED)
+                        .then(|| "low difficulty share".to_string()),
+                    created_at,
+                })
+                .expect("add share");
+        }
+
+        let before = UNIX_EPOCH + Duration::from_secs((30 * SECONDS_PER_DAY) as u64);
+        let pruned = store
+            .rollup_and_prune_shares_before(before)
+            .expect("rollup/prune shares");
+        assert_eq!(pruned, 2);
+        assert_eq!(store.get_recent_shares(10).expect("recent shares").len(), 1);
+        assert_eq!(store.get_total_share_count().expect("total shares"), 3);
+        assert_eq!(
+            store
+                .total_rejected_share_count()
+                .expect("total rejected shares"),
+            1
+        );
+    }
+
+    #[test]
+    fn rejection_reason_rollup_preserves_reason_breakdown() {
+        let store = test_store();
+        let old_ts = UNIX_EPOCH + Duration::from_secs((5 * SECONDS_PER_DAY + 120) as u64);
+        let new_ts = UNIX_EPOCH + Duration::from_secs((40 * SECONDS_PER_DAY + 120) as u64);
+
+        for (nonce, reason, created_at) in [
+            (1u64, "low difficulty share", old_ts),
+            (2u64, "stale job", old_ts),
+            (3u64, "low difficulty share", new_ts),
+        ] {
+            store
+                .add_share(ShareRecord {
+                    job_id: "job-reasons".into(),
+                    miner: "addr-rollup".into(),
+                    worker: "rig-rollup".into(),
+                    difficulty: 10,
+                    nonce,
+                    status: SHARE_STATUS_REJECTED,
+                    was_sampled: false,
+                    block_hash: None,
+                    reject_reason: Some(reason.to_string()),
+                    created_at,
+                })
+                .expect("add rejected share");
+        }
+
+        let before = UNIX_EPOCH + Duration::from_secs((30 * SECONDS_PER_DAY) as u64);
+        store
+            .rollup_and_prune_shares_before(before)
+            .expect("rollup/prune shares");
+
+        let mut totals = store
+            .total_rejection_reason_counts()
+            .expect("total rejection reasons")
+            .into_iter()
+            .map(|item| (item.reason, item.count))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(totals.remove("low difficulty share"), Some(2));
+        assert_eq!(totals.remove("stale job"), Some(1));
+
+        let window = store
+            .rejection_reason_counts_since(new_ts - Duration::from_secs(1))
+            .expect("window rejection reasons");
+        assert_eq!(window.len(), 1);
+        assert_eq!(window[0].reason, "low difficulty share");
+        assert_eq!(window[0].count, 1);
+    }
+
+    #[test]
+    fn payout_rollup_prunes_old_rows() {
+        let store = test_store();
+        let old_ts = 5 * SECONDS_PER_DAY + 120;
+        let new_ts = 40 * SECONDS_PER_DAY + 120;
+
+        store
+            .conn
+            .lock()
+            .execute(
+                "INSERT INTO payouts (address, amount, fee, tx_hash, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params!["addr-old", 10i64, 1i64, "tx-old", old_ts],
+            )
+            .expect("insert old payout");
+        store
+            .conn
+            .lock()
+            .execute(
+                "INSERT INTO payouts (address, amount, fee, tx_hash, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params!["addr-new", 20i64, 2i64, "tx-new", new_ts],
+            )
+            .expect("insert new payout");
+
+        let before = UNIX_EPOCH + Duration::from_secs((30 * SECONDS_PER_DAY) as u64);
+        let pruned = store
+            .rollup_and_prune_payouts_before(before)
+            .expect("rollup/prune payouts");
+        assert_eq!(pruned, 1);
+
+        let payouts = store.get_recent_payouts(10).expect("recent payouts");
+        assert_eq!(payouts.len(), 1);
+        assert_eq!(payouts[0].tx_hash, "tx-new");
     }
 
     #[test]

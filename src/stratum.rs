@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -9,7 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
 
-use crate::engine::PoolEngine;
+use crate::engine::{canonical_share_reject_reason, PoolEngine};
 use crate::jobs::JobManager;
 use crate::protocol::{
     normalize_worker_name, LoginParams, StratumNotify, StratumRequest, StratumResponse,
@@ -38,6 +38,8 @@ pub struct StratumServer {
     conn_state: Arc<Mutex<ConnState>>,
     notifications: broadcast::Sender<StratumNotify>,
     post_login_idle_timeout: Duration,
+    submit_rate_limit_window: Duration,
+    submit_rate_limit_max: usize,
 }
 
 impl StratumServer {
@@ -47,6 +49,8 @@ impl StratumServer {
         jobs: Arc<JobManager>,
         stats: Arc<PoolStats>,
         post_login_idle_timeout: Duration,
+        submit_rate_limit_window: Duration,
+        submit_rate_limit_max: usize,
     ) -> Arc<Self> {
         let (notifications, _) = broadcast::channel(NOTIFICATION_CHANNEL_CAPACITY);
         Arc::new(Self {
@@ -60,6 +64,8 @@ impl StratumServer {
             })),
             notifications,
             post_login_idle_timeout,
+            submit_rate_limit_window,
+            submit_rate_limit_max: submit_rate_limit_max.max(1),
         })
     }
 
@@ -124,6 +130,9 @@ impl StratumServer {
         let mut rx_jobs = self.jobs.subscribe();
         let mut rx_notifications = self.notifications.subscribe();
         let post_login_idle_timeout = self.post_login_idle_timeout;
+        let submit_rate_limit_window = self.submit_rate_limit_window;
+        let submit_rate_limit_max = self.submit_rate_limit_max;
+        let mut submit_timestamps = VecDeque::<Instant>::new();
 
         let login_deadline = tokio::time::sleep(LOGIN_TIMEOUT);
         tokio::pin!(login_deadline);
@@ -292,6 +301,22 @@ impl StratumServer {
                                         continue;
                                     }
                                 };
+                                let now = Instant::now();
+                                let cutoff = now.checked_sub(submit_rate_limit_window).unwrap_or(now);
+                                while submit_timestamps
+                                    .front()
+                                    .is_some_and(|ts| *ts < cutoff)
+                                {
+                                    submit_timestamps.pop_front();
+                                }
+                                if submit_timestamps.len() >= submit_rate_limit_max {
+                                    if let Some((address, _, _)) = logged_in.as_ref() {
+                                        self.stats.record_rejected_share(address, "rate limited");
+                                    }
+                                    send_error(&writer, req.id, "rate limited, retry").await?;
+                                    continue;
+                                }
+                                submit_timestamps.push_back(now);
                                 let submit_job_id = params.job_id.clone();
                                 let submit_nonce = params.nonce;
 
@@ -376,7 +401,7 @@ impl StratumServer {
                                     }
                                     Ok(Err(err)) => {
                                         let err_text = err.to_string();
-                                        let reason_code = share_reject_reason_code(&err_text);
+                                        let reason_code = canonical_share_reject_reason(&err_text);
                                         if let Some((address, _, _)) = logged_in.as_ref() {
                                             self.stats
                                                 .record_rejected_share(address, reason_code);
@@ -407,7 +432,7 @@ impl StratumServer {
                                     Err(err) => {
                                         if let Some((address, _, _)) = logged_in.as_ref() {
                                             self.stats
-                                                .record_rejected_share(address, "submit_worker_failure");
+                                                .record_rejected_share(address, "submit worker failure");
                                             tracing::warn!(
                                                 peer = %peer,
                                                 address = %address,
@@ -516,58 +541,56 @@ fn block_notification(kind: &str, message: &str) -> StratumNotify {
     }
 }
 
-fn share_reject_reason_code(error: &str) -> &'static str {
-    let trimmed = error.trim();
-    if trimmed.starts_with("stale job:") || trimmed == "stale job" {
-        return "stale_job";
-    }
-    if trimmed.starts_with("duplicate share") {
-        return "duplicate_share";
-    }
-    if trimmed.starts_with("nonce out of assigned range") {
-        return "nonce_out_of_range";
-    }
-    if trimmed.starts_with("job not assigned to this miner") {
-        return "job_not_assigned";
-    }
-    if trimmed.starts_with("claimed hash required") {
-        return "claimed_hash_required";
-    }
-    "other"
-}
-
 fn log_rejection_at_info(reason_code: &str) -> bool {
     matches!(
         reason_code,
-        "stale_job" | "duplicate_share" | "nonce_out_of_range" | "job_not_assigned"
+        "stale job"
+            | "duplicate share"
+            | "nonce out of assigned range"
+            | "job not assigned"
+            | "rate limited"
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{log_rejection_at_info, share_reject_reason_code};
+    use super::log_rejection_at_info;
+    use crate::engine::canonical_share_reject_reason;
 
     #[test]
     fn stale_and_duplicate_share_reasons_are_classified() {
         assert_eq!(
-            share_reject_reason_code("stale job: assignment not found"),
-            "stale_job"
+            canonical_share_reject_reason("stale job: assignment not found"),
+            "stale job"
         );
         assert_eq!(
-            share_reject_reason_code("duplicate share"),
-            "duplicate_share"
+            canonical_share_reject_reason("duplicate share"),
+            "duplicate share"
         );
         assert_eq!(
-            share_reject_reason_code("nonce out of assigned range"),
-            "nonce_out_of_range"
+            canonical_share_reject_reason("nonce out of assigned range"),
+            "nonce out of assigned range"
+        );
+        assert_eq!(
+            canonical_share_reject_reason("claimed hash required"),
+            "claimed hash required"
+        );
+        assert_eq!(
+            canonical_share_reject_reason("invalid hex"),
+            "invalid claimed hash"
+        );
+        assert_eq!(
+            canonical_share_reject_reason("rate limited, retry"),
+            "rate limited"
         );
     }
 
     #[test]
     fn only_high_signal_rejections_are_logged_at_info() {
-        assert!(log_rejection_at_info("stale_job"));
-        assert!(log_rejection_at_info("duplicate_share"));
-        assert!(!log_rejection_at_info("claimed_hash_required"));
+        assert!(log_rejection_at_info("stale job"));
+        assert!(log_rejection_at_info("duplicate share"));
+        assert!(log_rejection_at_info("rate limited"));
+        assert!(!log_rejection_at_info("claimed hash required"));
         assert!(!log_rejection_at_info("other"));
     }
 }

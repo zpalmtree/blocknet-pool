@@ -89,13 +89,41 @@ To use Postgres, set `database_url` in `config.json`, for example:
 ```
 
 When `database_url` is set, Postgres is used automatically and `database_path` is ignored.
+`database_pool_size` controls Postgres connection fan-out (default `4`).
+
+### Production SQLite -> Postgres Migration
+
+Use the included migration script to preserve existing pool history:
+
+```bash
+scripts/migrate_sqlite_to_postgres.sh \
+  --sqlite /var/lib/blocknet-pool/pool.db \
+  --postgres 'postgres://blocknet:REPLACE_ME@127.0.0.1:5432/blocknet_pool'
+```
+
+Recommended order:
+
+1. Stop `blocknet-pool.service`.
+2. Run the migration script.
+3. Set `database_url` in `/etc/blocknet/pool/config.json`.
+4. Start `blocknet-pool.service`.
+5. Verify `/api/stats` and admin endpoints.
+
+## Transport Security
+
+- Stratum now defaults to loopback bind (`stratum_host=127.0.0.1`). Set `stratum_host` explicitly to expose it.
+- API TLS is supported via:
+  - `api_tls_cert_path`
+  - `api_tls_key_path`
+- If only one TLS path is set, startup logs a warning and serves HTTP.
+- If Stratum is exposed publicly, place it behind a TLS terminator.
 
 ## Runtime Components
 
 - Stratum server
 - Template/job manager
 - Validation engine (bounded queues)
-- Persistent storage (SQLite)
+- Persistent storage (SQLite/Postgres)
 - Payout processor
 - HTTP API
 
@@ -104,11 +132,13 @@ When `database_url` is set, Postgres is used automatically and `database_path` i
 - `GET /api/stats`
 - `GET /api/info`
 - `GET /api/miner/{address}`
+- `GET /api/miner/{address}/balance`
 - `GET /api/miners`
 - `GET /api/blocks`
 - `GET /api/payouts`
 - `GET /api/fees`
 - `GET /api/health`
+- `GET /api/daemon/logs/stream`
 
 Paged/filterable list mode (protected endpoints):
 
@@ -130,6 +160,7 @@ Paged/filterable list mode (protected endpoints):
   - miners/blocks/payouts/fees tables with filter + pagination
   - live trend charts
   - operator health panel (`/api/health`)
+  - live daemon logs panel (`/api/daemon/logs/stream`)
 
 ## Stratum Notes
 
@@ -137,6 +168,7 @@ Paged/filterable list mode (protected endpoints):
 - Login rejects malformed payout addresses early (base58 + checksum-compatible Blocknet stealth address validation)
 - `stratum_submit_v2_required=true` (default): requires protocol v2 + `submit_claimed_hash`
 - `stratum_submit_v2_required=false`: allows legacy submits without `claimed_hash` (full verification path)
+- Per-connection submit rate limiting is enabled (`stratum_submit_rate_limit_window`, `stratum_submit_rate_limit_max`)
 - Queue pressure returns `server busy, retry` (no inline bypass)
 - Per-connection vardiff retargeting is enabled by default to target a small number of shares per window (`vardiff_*` config keys)
 - Vardiff difficulty is cached per `address+worker` and reused on reconnect/restart when the hint is fresh (1h TTL), reducing post-restart ramp-up.
@@ -176,6 +208,38 @@ Accepted headers:
 
 - `x-api-key: <api_key>`
 - `Authorization: Bearer <api_key>`
+
+## Admin Daemon Logs
+
+- Admin UI includes a live daemon log viewer tab.
+- Backend stream endpoint: `GET /api/daemon/logs/stream?tail=200`.
+- Log source fallback order:
+  - `journalctl -a -u blocknetd.service`
+  - `tail -F <daemon_data_dir>/debug.log`
+
+## Payout Safeguards
+
+- `payouts_enabled` toggles payout sending globally.
+- `payout_pause_file` pauses payouts when the file exists.
+- Optional caps:
+  - `payout_max_recipients_per_tick`
+  - `payout_max_total_per_tick`
+  - `payout_max_per_recipient`
+
+## Retention & Summary Rollups
+
+- Retention worker runs on `retention_interval`.
+- Old rows are rolled up into summary tables before prune:
+  - `share_daily_summaries`
+  - `payout_daily_summaries`
+- Retention controls:
+  - `shares_retention`
+  - `payouts_retention`
+- `get_total_share_count` and total rejected share metrics include rolled-up share summaries.
+
+## CI Coverage
+
+- Added CI smoke harness: `scripts/ci_e2e_smoke.sh` (mock daemon + real pool process + Stratum/API probe).
 
 ## Daemon Requirements
 

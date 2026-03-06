@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -392,11 +393,43 @@ impl PayoutProcessor {
     }
 
     fn send_payouts(&self) {
+        if !self.cfg.payouts_enabled {
+            tracing::warn!("payouts are disabled by config; skipping payout tick");
+            return;
+        }
+        let pause_file = self.cfg.payout_pause_file.trim();
+        if !pause_file.is_empty() && Path::new(pause_file).exists() {
+            tracing::warn!(path = pause_file, "payouts paused by marker file");
+            return;
+        }
         if !self.ensure_wallet_ready() {
             return;
         }
 
         let min_amount = atomic_amount_from_coins(self.cfg.min_payout_amount);
+        let max_recipients_per_tick = if self.cfg.payout_max_recipients_per_tick <= 0 {
+            None
+        } else {
+            Some(self.cfg.payout_max_recipients_per_tick as usize)
+        };
+        let max_total_per_tick = {
+            let value = atomic_amount_from_coins(self.cfg.payout_max_total_per_tick);
+            if value == 0 {
+                None
+            } else {
+                Some(value)
+            }
+        };
+        let max_per_recipient = {
+            let value = atomic_amount_from_coins(self.cfg.payout_max_per_recipient);
+            if value == 0 {
+                None
+            } else {
+                Some(value)
+            }
+        };
+        let mut sent_recipients = 0usize;
+        let mut sent_total = 0u64;
         let balances = match self.store.get_all_balances() {
             Ok(v) => v,
             Err(err) => {
@@ -406,6 +439,25 @@ impl PayoutProcessor {
         };
 
         for bal in balances {
+            if max_recipients_per_tick.is_some_and(|cap| sent_recipients >= cap) {
+                tracing::warn!(
+                    cap = max_recipients_per_tick.unwrap_or(0),
+                    sent_recipients,
+                    sent_total,
+                    "stopping payout tick due to max recipient cap"
+                );
+                break;
+            }
+            if max_total_per_tick.is_some_and(|cap| sent_total >= cap) {
+                tracing::warn!(
+                    cap = max_total_per_tick.unwrap_or(0),
+                    sent_recipients,
+                    sent_total,
+                    "stopping payout tick due to max payout total cap"
+                );
+                break;
+            }
+
             let existing_pending = match self.store.get_pending_payout(&bal.address) {
                 Ok(v) => v,
                 Err(err) => {
@@ -439,7 +491,16 @@ impl PayoutProcessor {
                     if bal.pending < min_amount {
                         continue;
                     }
-                    if let Err(err) = self.store.create_pending_payout(&bal.address, bal.pending) {
+                    let pending_amount = max_per_recipient
+                        .map(|cap| bal.pending.min(cap))
+                        .unwrap_or(bal.pending);
+                    if pending_amount == 0 {
+                        continue;
+                    }
+                    if let Err(err) = self
+                        .store
+                        .create_pending_payout(&bal.address, pending_amount)
+                    {
                         tracing::warn!(address = %bal.address, error = %err, "failed create pending payout");
                         continue;
                     }
@@ -450,17 +511,47 @@ impl PayoutProcessor {
                 }
             };
 
-            if pending.amount == 0 {
+            let mut pending_amount = pending.amount;
+            if let Some(cap) = max_per_recipient {
+                if pending_amount > cap {
+                    pending_amount = cap;
+                    if let Err(err) = self
+                        .store
+                        .create_pending_payout(&bal.address, pending_amount)
+                    {
+                        tracing::warn!(
+                            address = %bal.address,
+                            cap,
+                            error = %err,
+                            "failed to clamp pending payout to per-recipient cap"
+                        );
+                        continue;
+                    }
+                }
+            }
+
+            if pending_amount == 0 {
                 continue;
             }
-            if bal.pending < pending.amount {
+            if bal.pending < pending_amount {
                 tracing::warn!(
                     address = %bal.address,
-                    pending_amount = pending.amount,
+                    pending_amount,
                     balance_pending = bal.pending,
                     "pending payout exceeds local pending balance; skipping"
                 );
                 continue;
+            }
+            if let Some(cap) = max_total_per_tick {
+                if sent_total.saturating_add(pending_amount) > cap {
+                    tracing::warn!(
+                        cap,
+                        sent_total,
+                        next_amount = pending_amount,
+                        "stopping payout tick due to max payout total cap"
+                    );
+                    break;
+                }
             }
 
             let wallet_balance = match self.node.get_wallet_balance() {
@@ -470,14 +561,19 @@ impl PayoutProcessor {
                     return;
                 }
             };
-            if wallet_balance.spendable < pending.amount {
+            if wallet_balance.spendable < pending_amount {
                 continue;
             }
 
-            let idempotency_key = payout_idempotency_key(&pending);
+            let pending_for_send = PendingPayout {
+                address: pending.address.clone(),
+                amount: pending_amount,
+                initiated_at: pending.initiated_at,
+            };
+            let idempotency_key = payout_idempotency_key(&pending_for_send);
             let send = self
                 .node
-                .wallet_send(&bal.address, pending.amount, &idempotency_key);
+                .wallet_send(&bal.address, pending_amount, &idempotency_key);
             let sent = match send {
                 Ok(v) => v,
                 Err(err) => {
@@ -504,17 +600,19 @@ impl PayoutProcessor {
 
             if let Err(err) = self.store.complete_pending_payout(
                 &bal.address,
-                pending.amount,
+                pending_amount,
                 sent.fee,
                 &sent.txid,
             ) {
                 tracing::error!(address = %bal.address, tx = %sent.txid, error = %err, "critical payout reconciliation failure");
                 continue;
             }
+            sent_recipients = sent_recipients.saturating_add(1);
+            sent_total = sent_total.saturating_add(pending_amount);
 
             tracing::info!(
                 address = %bal.address,
-                amount = pending.amount,
+                amount = pending_amount,
                 fee = sent.fee,
                 tx = %sent.txid,
                 idempotency_key = %idempotency_key,

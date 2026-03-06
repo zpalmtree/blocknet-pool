@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -15,8 +17,10 @@ use axum::routing::get;
 use axum::{Json, Router};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Semaphore;
-use tokio_stream::wrappers::IntervalStream;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
+use tokio::sync::{mpsc, Semaphore};
+use tokio_stream::wrappers::{IntervalStream, ReceiverStream};
 use tokio_stream::StreamExt;
 
 use crate::config::Config;
@@ -52,6 +56,11 @@ const MINER_PAYOUT_HISTORY_LIMIT: i64 = 50;
 const PROPORTIONAL_WINDOW: Duration = Duration::from_secs(60 * 60);
 const MAX_MINER_HASHRATE_DB_LOOKUPS: usize = 4096;
 pub const DEFAULT_MAX_SSE_SUBSCRIBERS: usize = 256;
+const DEFAULT_DAEMON_LOG_TAIL: usize = 200;
+const MAX_DAEMON_LOG_TAIL: usize = 2000;
+const DAEMON_LOG_LINE_LIMIT: usize = 8192;
+const MINER_PENDING_ESTIMATE_CACHE_TTL: Duration = Duration::from_secs(10);
+const MINER_PENDING_ESTIMATE_CACHE_MAX_ENTRIES: usize = 4096;
 
 fn db_miner_hashrate(store: &PoolStore, address: &str) -> f64 {
     let since = SystemTime::now()
@@ -332,6 +341,7 @@ pub struct ApiState {
     pub daemon_health_cache: Arc<Mutex<DaemonHealthCache>>,
     pub network_hashrate_cache: Arc<Mutex<NetworkHashrateCache>>,
     pub insights_cache: Arc<Mutex<InsightsCache>>,
+    pub miner_pending_estimate_cache: Arc<Mutex<HashMap<String, MinerPendingEstimateCache>>>,
     pub status_history: Arc<Mutex<StatusHistory>>,
     pub sse_subscriber_limiter: Arc<Semaphore>,
     pub api_key: String,
@@ -391,6 +401,13 @@ pub struct NetworkHashrateCache {
 pub struct InsightsCache {
     updated_at: Option<Instant>,
     value: Option<StatsInsightsResponse>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MinerPendingEstimateCache {
+    updated_at: Instant,
+    chain_height: u64,
+    value: MinerPendingEstimate,
 }
 
 #[derive(Debug, Clone)]
@@ -529,6 +546,7 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
         .route("/api/payouts", get(handle_payouts))
         .route("/api/fees", get(handle_fees))
         .route("/api/health", get(handle_health))
+        .route("/api/daemon/logs/stream", get(handle_daemon_logs_stream))
         .route_layer(middleware::from_fn_with_state(
             app_state.clone(),
             require_api_key,
@@ -553,15 +571,31 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
         .route("/api/events", get(handle_events))
         .route("/api/blocks", get(handle_blocks))
         .route("/api/payouts/recent", get(handle_public_payouts))
+        .route("/api/miner/:address/balance", get(handle_miner_balance))
         .route("/api/miner/:address", get(handle_miner))
         .route("/api/miner/:address/hashrate", get(handle_miner_hashrate))
         .merge(protected)
         .fallback(get(handle_ui))
         .with_state(app_state);
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!(addr = %addr, "api listening");
-    axum::serve(listener, app).await?;
+    if state.config.has_api_tls() {
+        let cert_path = state.config.api_tls_cert_path.trim();
+        let key_path = state.config.api_tls_key_path.trim();
+        let tls = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path).await?;
+        tracing::info!(
+            addr = %addr,
+            cert_path = cert_path,
+            key_path = key_path,
+            "api listening with tls"
+        );
+        axum_server::bind_rustls(addr, tls)
+            .serve(app.into_make_service())
+            .await?;
+    } else {
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        tracing::info!(addr = %addr, "api listening");
+        axum::serve(listener, app).await?;
+    }
     Ok(())
 }
 
@@ -659,8 +693,15 @@ async fn handle_info(State(state): State<ApiState>) -> impl IntoResponse {
             "/api/blocks",
             "/api/payouts/recent",
             "/api/miner/{address}",
+            "/api/miner/{address}/balance",
         ],
-        protected_endpoints: vec!["/api/miners", "/api/payouts", "/api/fees", "/api/health"],
+        protected_endpoints: vec![
+            "/api/miners",
+            "/api/payouts",
+            "/api/fees",
+            "/api/health",
+            "/api/daemon/logs/stream",
+        ],
     })
 }
 
@@ -760,6 +801,7 @@ struct LuckHistoryQuery {
 #[derive(Debug, Deserialize, Default)]
 struct MinerDetailQuery {
     share_limit: Option<i64>,
+    include_pending_estimate: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -803,6 +845,12 @@ struct FeesQuery {
     offset: Option<usize>,
     fee_address: Option<String>,
     sort: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct DaemonLogsQuery {
+    tail: Option<usize>,
+    follow: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1079,6 +1127,218 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
     Json(response).into_response()
 }
 
+#[derive(Debug, Clone)]
+struct DaemonLogCommand {
+    source: &'static str,
+    program: &'static str,
+    args: Vec<String>,
+}
+
+async fn handle_daemon_logs_stream(
+    Query(query): Query<DaemonLogsQuery>,
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let tail = query
+        .tail
+        .unwrap_or(DEFAULT_DAEMON_LOG_TAIL)
+        .clamp(1, MAX_DAEMON_LOG_TAIL);
+    let follow = query.follow.unwrap_or(true);
+    let config = state.config.clone();
+
+    let (tx, rx) = mpsc::channel::<Result<Vec<u8>, Infallible>>(128);
+    tokio::spawn(async move {
+        stream_daemon_logs(config, tail, follow, tx).await;
+    });
+
+    (
+        [
+            (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        Body::from_stream(ReceiverStream::new(rx)),
+    )
+        .into_response()
+}
+
+async fn stream_daemon_logs(
+    config: Config,
+    tail: usize,
+    follow: bool,
+    tx: mpsc::Sender<Result<Vec<u8>, Infallible>>,
+) {
+    let mut errors = Vec::<String>::new();
+    for command in daemon_log_commands(&config, tail, follow) {
+        if !send_log_line(
+            &tx,
+            &format!(
+                "[daemon-logs] source={} command={} {}",
+                command.source,
+                command.program,
+                command.args.join(" ")
+            ),
+        )
+        .await
+        {
+            return;
+        }
+
+        match stream_daemon_logs_with_command(&command, &tx).await {
+            Ok(()) => return,
+            Err(err) => {
+                errors.push(format!("{} failed: {}", command.source, err));
+            }
+        }
+    }
+
+    let reason = if errors.is_empty() {
+        "no daemon log source available".to_string()
+    } else {
+        errors.join("; ")
+    };
+    let _ = send_log_line(&tx, &format!("[daemon-logs] stream ended: {reason}")).await;
+}
+
+fn daemon_log_commands(config: &Config, tail: usize, follow: bool) -> Vec<DaemonLogCommand> {
+    let mut journal_args = vec![
+        "-u".to_string(),
+        "blocknetd.service".to_string(),
+        "-q".to_string(),
+        "-a".to_string(),
+        "-n".to_string(),
+        tail.to_string(),
+        "-o".to_string(),
+        "short-iso".to_string(),
+    ];
+    if follow {
+        journal_args.push("-f".to_string());
+    }
+
+    let mut tail_args = vec!["-n".to_string(), tail.to_string()];
+    if follow {
+        tail_args.push("-F".to_string());
+    }
+    tail_args.push(
+        daemon_debug_log_path(config)
+            .to_string_lossy()
+            .trim()
+            .to_string(),
+    );
+
+    vec![
+        DaemonLogCommand {
+            source: "journald",
+            program: "journalctl",
+            args: journal_args,
+        },
+        DaemonLogCommand {
+            source: "debug-log",
+            program: "tail",
+            args: tail_args,
+        },
+    ]
+}
+
+fn daemon_debug_log_path(config: &Config) -> PathBuf {
+    let data_dir = config.daemon_data_dir.trim();
+    if data_dir.is_empty() {
+        return PathBuf::from("data").join("debug.log");
+    }
+    PathBuf::from(data_dir).join("debug.log")
+}
+
+async fn stream_daemon_logs_with_command(
+    command: &DaemonLogCommand,
+    tx: &mpsc::Sender<Result<Vec<u8>, Infallible>>,
+) -> anyhow::Result<()> {
+    let mut child = Command::new(command.program)
+        .args(&command.args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|err| anyhow::anyhow!("spawn failed: {err}"))?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("missing stdout pipe"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("missing stderr pipe"))?;
+    let mut stdout_lines = BufReader::new(stdout).lines();
+    let mut stderr_lines = BufReader::new(stderr).lines();
+    let mut stdout_open = true;
+    let mut stderr_open = true;
+
+    while stdout_open || stderr_open {
+        tokio::select! {
+            result = stdout_lines.next_line(), if stdout_open => {
+                match result {
+                    Ok(Some(line)) => {
+                        if !send_log_line(tx, &trim_log_line(&line)).await {
+                            return Ok(());
+                        }
+                    }
+                    Ok(None) => {
+                        stdout_open = false;
+                    }
+                    Err(err) => {
+                        if !send_log_line(tx, &format!("[daemon-logs] stdout read error: {err}")).await {
+                            return Ok(());
+                        }
+                        stdout_open = false;
+                    }
+                }
+            }
+            result = stderr_lines.next_line(), if stderr_open => {
+                match result {
+                    Ok(Some(line)) => {
+                        if !send_log_line(tx, &format!("[stderr] {}", trim_log_line(&line))).await {
+                            return Ok(());
+                        }
+                    }
+                    Ok(None) => {
+                        stderr_open = false;
+                    }
+                    Err(err) => {
+                        if !send_log_line(tx, &format!("[daemon-logs] stderr read error: {err}")).await {
+                            return Ok(());
+                        }
+                        stderr_open = false;
+                    }
+                }
+            }
+        }
+    }
+
+    let status = child
+        .wait()
+        .await
+        .map_err(|err| anyhow::anyhow!("wait failed: {err}"))?;
+    if !status.success() {
+        anyhow::bail!("exited with status {status}");
+    }
+    Ok(())
+}
+
+async fn send_log_line(tx: &mpsc::Sender<Result<Vec<u8>, Infallible>>, line: &str) -> bool {
+    let mut payload = line.as_bytes().to_vec();
+    payload.push(b'\n');
+    tx.send(Ok(payload)).await.is_ok()
+}
+
+fn trim_log_line(line: &str) -> String {
+    if line.len() <= DAEMON_LOG_LINE_LIMIT {
+        return line.to_string();
+    }
+    let mut boundary = DAEMON_LOG_LINE_LIMIT;
+    while boundary > 0 && !line.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    format!("{} ...[truncated]", &line[..boundary])
+}
+
 async fn handle_miners(
     Query(query): Query<MinersQuery>,
     State(state): State<ApiState>,
@@ -1180,6 +1440,37 @@ async fn handle_miners(
     .into_response()
 }
 
+async fn handle_miner_balance(
+    Path(address): Path<String>,
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let addr = address.clone();
+    let store = Arc::clone(&state.store);
+    let balance = match tokio::task::spawn_blocking(move || store.get_balance(&addr)).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(err)) => return internal_error("failed loading miner balance", err).into_response(),
+        Err(err) => {
+            return internal_error(
+                "failed loading miner balance",
+                anyhow::anyhow!("join error: {err}"),
+            )
+            .into_response();
+        }
+    };
+
+    Json(serde_json::json!({
+        "address": address,
+        "balance": {
+            "pending": balance.pending,
+            "pending_total": balance.pending,
+            "pending_confirmed": balance.pending,
+            "pending_estimated": 0u64,
+            "paid": balance.paid,
+        }
+    }))
+    .into_response()
+}
+
 async fn handle_miner(
     Path(address): Path<String>,
     Query(query): Query<MinerDetailQuery>,
@@ -1187,10 +1478,10 @@ async fn handle_miner(
 ) -> impl IntoResponse {
     let stats = state.stats.get_miner_stats(&address);
     let store = Arc::clone(&state.store);
-    let config = state.config.clone();
     let chain_height = state.node.chain_height();
     let addr = address.clone();
     let share_limit = share_limit(query.share_limit);
+    let include_pending_estimate = query.include_pending_estimate.unwrap_or(true);
 
     let db_result = match tokio::task::spawn_blocking(move || {
         let shares = store.get_shares_for_miner(&addr, share_limit)?;
@@ -1207,13 +1498,6 @@ async fn handle_miner(
         let workers_raw = store.worker_stats_for_miner(&addr, since_24h)?;
         let worker_hashrate_raw = store.worker_hashrate_stats_for_miner(&addr, since_hr_window)?;
         let miner_blocks = store.get_blocks_for_miner(&addr)?;
-        let pending_estimate = estimate_unconfirmed_pending_for_miner(
-            &store,
-            &addr,
-            &config,
-            SystemTime::now(),
-            chain_height,
-        )?;
         Ok::<_, anyhow::Error>((
             shares,
             balance,
@@ -1223,7 +1507,6 @@ async fn handle_miner(
             workers_raw,
             worker_hashrate_raw,
             miner_blocks,
-            pending_estimate,
         ))
     })
     .await
@@ -1247,11 +1530,29 @@ async fn handle_miner(
         workers_raw,
         worker_hashrate_raw,
         mut miner_blocks,
-        pending_estimate,
     ) = db_result;
     for block in &mut miner_blocks {
         hydrate_provisional_block_reward(block);
     }
+
+    let pending_estimate = if include_pending_estimate {
+        match state
+            .cached_pending_estimate_for_miner(&address, chain_height)
+            .await
+        {
+            Ok(v) => v,
+            Err(err) => {
+                tracing::warn!(
+                    address = %address,
+                    error = %err,
+                    "failed loading pending estimate for miner detail"
+                );
+                MinerPendingEstimate::default()
+            }
+        }
+    } else {
+        MinerPendingEstimate::default()
+    };
 
     let pending_confirmed = balance.pending;
     let pending_estimated = pending_estimate.estimated_pending;
@@ -1289,12 +1590,16 @@ async fn handle_miner(
 
     let total_accepted: u64 = workers_sorted.iter().map(|(_, a, _, _, _)| a).sum();
     let total_rejected: u64 = workers_sorted.iter().map(|(_, _, r, _, _)| r).sum();
-    let pending_note = pending_balance_note(
-        hashrate,
-        total_accepted,
-        pending_total,
-        pending_estimate.blocks.len(),
-    );
+    let pending_note = if include_pending_estimate {
+        pending_balance_note(
+            hashrate,
+            total_accepted,
+            pending_total,
+            pending_estimate.blocks.len(),
+        )
+    } else {
+        None
+    };
 
     let has_activity = miner_has_activity(
         shares.len(),
@@ -1996,9 +2301,7 @@ async fn handle_luck_history(
     .await
     {
         Ok(Ok(v)) => v,
-        Ok(Err(err)) => {
-            return internal_error("failed loading luck history", err).into_response()
-        }
+        Ok(Err(err)) => return internal_error("failed loading luck history", err).into_response(),
         Err(err) => {
             return internal_error(
                 "failed loading luck history",
@@ -2229,6 +2532,51 @@ impl ApiState {
         let _ = self.daemon_health().await;
     }
 
+    async fn cached_pending_estimate_for_miner(
+        &self,
+        address: &str,
+        chain_height: u64,
+    ) -> anyhow::Result<MinerPendingEstimate> {
+        {
+            let cache = self.miner_pending_estimate_cache.lock();
+            if let Some(entry) = cache.get(address) {
+                if entry.chain_height == chain_height
+                    && entry.updated_at.elapsed() < MINER_PENDING_ESTIMATE_CACHE_TTL
+                {
+                    return Ok(entry.value.clone());
+                }
+            }
+        }
+
+        let store = Arc::clone(&self.store);
+        let cfg = self.config.clone();
+        let addr = address.to_string();
+        let now = SystemTime::now();
+        let estimate = tokio::task::spawn_blocking(move || {
+            estimate_unconfirmed_pending_for_miner(&store, &addr, &cfg, now, chain_height)
+        })
+        .await
+        .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+
+        let mut cache = self.miner_pending_estimate_cache.lock();
+        if cache.len() >= MINER_PENDING_ESTIMATE_CACHE_MAX_ENTRIES {
+            cache.retain(|_, entry| entry.updated_at.elapsed() < MINER_PENDING_ESTIMATE_CACHE_TTL);
+            if cache.len() >= MINER_PENDING_ESTIMATE_CACHE_MAX_ENTRIES {
+                cache.clear();
+            }
+        }
+        cache.insert(
+            address.to_string(),
+            MinerPendingEstimateCache {
+                updated_at: Instant::now(),
+                chain_height,
+                value: estimate.clone(),
+            },
+        );
+
+        Ok(estimate)
+    }
+
     async fn stats_insights(&self) -> anyhow::Result<StatsInsightsResponse> {
         {
             let cache = self.insights_cache.lock();
@@ -2344,38 +2692,51 @@ impl ApiState {
         let mut snapshot = self.stats.rejection_analytics(window);
         let since = SystemTime::now().checked_sub(window).unwrap_or(UNIX_EPOCH);
         let store = Arc::clone(&self.store);
-        let (accepted, rejected, total_rejected) = tokio::task::spawn_blocking(move || {
-            let (accepted, rejected) = store.share_outcome_counts_since(since)?;
-            let total_rejected = store.total_rejected_share_count()?;
-            Ok::<_, anyhow::Error>((accepted, rejected, total_rejected))
-        })
-        .await
-        .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+        let (accepted, rejected, total_rejected, by_reason, mut totals_by_reason) =
+            tokio::task::spawn_blocking(move || {
+                let (accepted, rejected) = store.share_outcome_counts_since(since)?;
+                let total_rejected = store.total_rejected_share_count()?;
+                let by_reason = store.rejection_reason_counts_since(since)?;
+                let totals_by_reason = store.total_rejection_reason_counts()?;
+                Ok::<_, anyhow::Error>((
+                    accepted,
+                    rejected,
+                    total_rejected,
+                    by_reason,
+                    totals_by_reason,
+                ))
+            })
+            .await
+            .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
 
         snapshot.accepted = accepted;
         snapshot.rejected = rejected;
         snapshot.total_rejected = total_rejected;
+        snapshot.by_reason = by_reason;
+        let classified_total: u64 = totals_by_reason.iter().map(|item| item.count).sum();
+        if total_rejected > classified_total {
+            let missing = total_rejected - classified_total;
+            if let Some(item) = totals_by_reason
+                .iter_mut()
+                .find(|item| item.reason == "legacy / unknown")
+            {
+                item.count = item.count.saturating_add(missing);
+            } else {
+                totals_by_reason.push(RejectionReasonCount {
+                    reason: "legacy / unknown".to_string(),
+                    count: missing,
+                });
+            }
+            totals_by_reason
+                .sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.reason.cmp(&b.reason)));
+        }
+        snapshot.totals_by_reason = totals_by_reason;
         let denom = accepted.saturating_add(rejected);
         snapshot.rejection_rate_pct = if denom == 0 {
             0.0
         } else {
             (rejected as f64 / denom as f64) * 100.0
         };
-
-        // Rejection reasons are currently tracked in-memory. When the process
-        // restarts, keep aggregate counts useful by exposing a generic bucket.
-        if snapshot.by_reason.is_empty() && rejected > 0 {
-            snapshot.by_reason = vec![RejectionReasonCount {
-                reason: "rejected".to_string(),
-                count: rejected,
-            }];
-        }
-        if snapshot.totals_by_reason.is_empty() && total_rejected > 0 {
-            snapshot.totals_by_reason = vec![RejectionReasonCount {
-                reason: "rejected".to_string(),
-                count: total_rejected,
-            }];
-        }
 
         Ok(snapshot)
     }
@@ -2883,7 +3244,7 @@ impl StatusHistory {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -2893,11 +3254,14 @@ mod tests {
     use crate::store::PoolStore;
 
     use super::{
-        contains_ci, estimate_unconfirmed_pending_for_miner, estimated_block_reward,
+        block_page_item_response, compute_luck_details_for_hashes, compute_luck_history,
+        contains_ci, daemon_debug_log_path, daemon_log_commands,
+        estimate_unconfirmed_pending_for_miner, estimated_block_reward,
         hashrate_from_stats_with_miner_ramp, hashrate_from_stats_with_warmup,
         hydrate_provisional_block_reward, miner_has_activity, page_bounds, pending_balance_note,
-        rejection_window_duration, share_limit, sort_workers_for_miner, worker_hashrate_by_name,
-        HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
+        rejection_window_duration, share_limit, sort_workers_for_miner, trim_log_line,
+        worker_hashrate_by_name, DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW,
+        HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
     };
 
     fn test_store() -> Arc<PoolStore> {
@@ -2956,6 +3320,7 @@ mod tests {
                 status: "verified",
                 was_sampled: true,
                 block_hash: None,
+                reject_reason: None,
                 created_at: base,
             })
             .expect("add share a");
@@ -2969,6 +3334,7 @@ mod tests {
                 status: "verified",
                 was_sampled: true,
                 block_hash: None,
+                reject_reason: None,
                 created_at: base + Duration::from_secs(10),
             })
             .expect("add share b");
@@ -3007,6 +3373,179 @@ mod tests {
         assert_eq!(page_bounds(None, None), (25, 0));
         assert_eq!(page_bounds(Some(0), Some(2)), (1, 2));
         assert_eq!(page_bounds(Some(5_000), Some(2_000_000)), (200, 1_000_000));
+    }
+
+    #[test]
+    fn compute_luck_history_returns_all_rounds_and_can_truncate() {
+        let store = test_store();
+        let base = UNIX_EPOCH + Duration::from_secs(2_000_000);
+
+        for (job_id, created_at, difficulty) in [
+            ("job-1", base + Duration::from_secs(10), 40_u64),
+            ("job-1", base + Duration::from_secs(20), 60_u64),
+            ("job-2", base + Duration::from_secs(70), 100_u64),
+        ] {
+            store
+                .add_share(ShareRecord {
+                    job_id: job_id.to_string(),
+                    miner: "miner-a".to_string(),
+                    worker: "wa".to_string(),
+                    difficulty,
+                    nonce: difficulty,
+                    status: "verified",
+                    was_sampled: true,
+                    block_hash: None,
+                    reject_reason: None,
+                    created_at,
+                })
+                .expect("add share");
+        }
+
+        for (height, hash, timestamp) in [
+            (100_u64, "blk-100", base),
+            (101_u64, "blk-101", base + Duration::from_secs(60)),
+            (102_u64, "blk-102", base + Duration::from_secs(120)),
+        ] {
+            store
+                .add_block(&DbBlock {
+                    height,
+                    hash: hash.to_string(),
+                    difficulty: 100,
+                    finder: "miner-a".to_string(),
+                    finder_worker: "wa".to_string(),
+                    reward: 1_000,
+                    timestamp,
+                    confirmed: true,
+                    orphaned: false,
+                    paid_out: false,
+                })
+                .expect("add block");
+        }
+
+        let blocks = store.get_all_blocks().expect("load blocks");
+        let full = compute_luck_history(&store, blocks.clone(), None).expect("full luck history");
+        assert_eq!(full.len(), 2);
+        assert_eq!(full[0].block_height, 102);
+        assert_eq!(full[0].round_work, 100);
+        assert!((full[0].effort_pct - 100.0).abs() < f64::EPSILON);
+        assert_eq!(full[1].block_height, 101);
+        assert_eq!(full[1].round_work, 100);
+
+        let truncated =
+            compute_luck_history(&store, blocks, Some(1)).expect("truncated luck history");
+        assert_eq!(truncated.len(), 1);
+        assert_eq!(truncated[0].block_height, 102);
+    }
+
+    #[test]
+    fn compute_luck_details_for_hashes_returns_only_requested_rows() {
+        let store = test_store();
+        let base = UNIX_EPOCH + Duration::from_secs(3_000_000);
+
+        for (job_id, created_at, difficulty) in [
+            ("job-1", base + Duration::from_secs(10), 40_u64),
+            ("job-1", base + Duration::from_secs(20), 60_u64),
+            ("job-2", base + Duration::from_secs(70), 100_u64),
+        ] {
+            store
+                .add_share(ShareRecord {
+                    job_id: job_id.to_string(),
+                    miner: "miner-a".to_string(),
+                    worker: "wa".to_string(),
+                    difficulty,
+                    nonce: difficulty,
+                    status: "verified",
+                    was_sampled: true,
+                    block_hash: None,
+                    reject_reason: None,
+                    created_at,
+                })
+                .expect("add share");
+        }
+
+        for (height, hash, timestamp) in [
+            (100_u64, "blk-100", base),
+            (101_u64, "blk-101", base + Duration::from_secs(60)),
+            (102_u64, "blk-102", base + Duration::from_secs(120)),
+        ] {
+            store
+                .add_block(&DbBlock {
+                    height,
+                    hash: hash.to_string(),
+                    difficulty: 100,
+                    finder: "miner-a".to_string(),
+                    finder_worker: "wa".to_string(),
+                    reward: 1_000,
+                    timestamp,
+                    confirmed: true,
+                    orphaned: false,
+                    paid_out: false,
+                })
+                .expect("add block");
+        }
+
+        let details = compute_luck_details_for_hashes(
+            &store,
+            store.get_all_blocks().expect("blocks"),
+            &HashSet::from([String::from("blk-102")]),
+        )
+        .expect("details");
+
+        assert_eq!(details.len(), 1);
+        let row = details.get("blk-102").expect("row");
+        assert_eq!(row.block_height, 102);
+        assert_eq!(row.round_work, 100);
+
+        let response = block_page_item_response(
+            store
+                .get_block(102)
+                .expect("get block")
+                .expect("block exists"),
+            Some(row),
+        );
+        assert_eq!(response.effort_pct, Some(100.0));
+        assert_eq!(response.duration_seconds, Some(60));
+        assert!(response.effort_band.is_some());
+    }
+
+    #[test]
+    fn daemon_debug_log_path_uses_daemon_data_dir() {
+        let cfg = Config {
+            daemon_data_dir: "/var/lib/blocknet/data".to_string(),
+            ..Config::default()
+        };
+        assert_eq!(
+            daemon_debug_log_path(&cfg).to_string_lossy(),
+            "/var/lib/blocknet/data/debug.log"
+        );
+    }
+
+    #[test]
+    fn daemon_log_commands_include_journal_and_tail() {
+        let cfg = Config {
+            daemon_data_dir: "/var/lib/blocknet/data".to_string(),
+            ..Config::default()
+        };
+        let commands = daemon_log_commands(&cfg, 200, true);
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].program, "journalctl");
+        assert!(commands[0].args.iter().any(|a| a == "-q"));
+        assert!(commands[0].args.iter().any(|a| a == "-a"));
+        assert!(commands[0].args.iter().any(|a| a == "-f"));
+        assert_eq!(commands[1].program, "tail");
+        assert!(commands[1].args.iter().any(|a| a == "-F"));
+        assert!(commands[1]
+            .args
+            .iter()
+            .any(|a| a == "/var/lib/blocknet/data/debug.log"));
+    }
+
+    #[test]
+    fn trim_log_line_caps_size() {
+        let input = "x".repeat(DAEMON_LOG_LINE_LIMIT + 100);
+        let trimmed = trim_log_line(&input);
+        assert!(trimmed.len() < input.len());
+        assert!(trimmed.contains("...[truncated]"));
     }
 
     #[test]

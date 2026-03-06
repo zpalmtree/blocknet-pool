@@ -422,7 +422,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
               <div className="rejection-summary mono">
                 Checked {rejectionChecked} shares
                 {' • '}rejected {rejectionWindow?.rejected ?? 0}
-                {' • '}rate {fmtPct(rejectionWindow?.rejection_rate_pct)}
+                {' • '}window reject rate {fmtPct(rejectionWindow?.rejection_rate_pct)}
                 {' • '}all-time rejected {rejectionWindow?.total_rejected ?? 0}
               </div>
               {!hasRejectionRows ? (
@@ -437,12 +437,15 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
                     {' • '}top reason (all-time){' '}
                     {topTotalReason ? `${topTotalReason.reason} (${topTotalReason.count})` : 'none'}
                   </div>
+                  <div className="rejection-summary mono">
+                    Reason % is the share of rejected shares in the selected window.
+                  </div>
                   <table>
                     <thead>
                       <tr>
                         <th>Reason</th>
-                        <th>{rejectionRange}</th>
-                        <th>{rejectionRange} %</th>
+                        <th>{rejectionRange} Rejects</th>
+                        <th>Of Rejects</th>
                         <th>Total</th>
                       </tr>
                     </thead>

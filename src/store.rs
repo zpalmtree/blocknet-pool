@@ -11,6 +11,7 @@ use crate::db::{
 };
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::pgdb::PostgresStore;
+use crate::stats::RejectionReasonCount;
 
 // Matches daemon emission curve for provisional pending-block display values.
 const INITIAL_REWARD: u64 = 72_325_093_035;
@@ -25,6 +26,12 @@ pub enum PoolStore {
     Postgres(Arc<PostgresStore>),
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RetentionPruneReport {
+    pub shares_pruned: u64,
+    pub payouts_pruned: u64,
+}
+
 impl std::fmt::Debug for PoolStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -37,7 +44,7 @@ impl std::fmt::Debug for PoolStore {
 impl PoolStore {
     pub fn open_from_config(cfg: &Config) -> Result<Arc<Self>> {
         if !cfg.database_url.trim().is_empty() {
-            return Self::open_postgres(&cfg.database_url);
+            return Self::open_postgres_with_pool(&cfg.database_url, cfg.database_pool_size);
         }
         Self::open_sqlite(&cfg.database_path)
     }
@@ -47,7 +54,13 @@ impl PoolStore {
     }
 
     pub fn open_postgres(url: &str) -> Result<Arc<Self>> {
-        Ok(Arc::new(Self::Postgres(PostgresStore::connect(url)?)))
+        Self::open_postgres_with_pool(url, 4)
+    }
+
+    pub fn open_postgres_with_pool(url: &str, pool_size: i32) -> Result<Arc<Self>> {
+        Ok(Arc::new(Self::Postgres(PostgresStore::connect(
+            url, pool_size,
+        )?)))
     }
 
     pub fn get_shares_for_miner(&self, address: &str, limit: i64) -> Result<Vec<DbShare>> {
@@ -75,6 +88,23 @@ impl PoolStore {
         match self {
             PoolStore::Sqlite(v) => v.total_rejected_share_count(),
             PoolStore::Postgres(v) => v.total_rejected_share_count(),
+        }
+    }
+
+    pub fn rejection_reason_counts_since(
+        &self,
+        since: SystemTime,
+    ) -> Result<Vec<RejectionReasonCount>> {
+        match self {
+            PoolStore::Sqlite(v) => v.rejection_reason_counts_since(since),
+            PoolStore::Postgres(v) => v.rejection_reason_counts_since(since),
+        }
+    }
+
+    pub fn total_rejection_reason_counts(&self) -> Result<Vec<RejectionReasonCount>> {
+        match self {
+            PoolStore::Sqlite(v) => v.total_rejection_reason_counts(),
+            PoolStore::Postgres(v) => v.total_rejection_reason_counts(),
         }
     }
 
@@ -605,6 +635,33 @@ impl PoolStore {
                 v.apply_block_credits_and_mark_paid_with_fee(block_height, credits, fee_record)
             }
         }
+    }
+
+    pub fn rollup_and_prune_retention(
+        &self,
+        shares_before: Option<SystemTime>,
+        payouts_before: Option<SystemTime>,
+    ) -> Result<RetentionPruneReport> {
+        let mut report = RetentionPruneReport::default();
+        match self {
+            PoolStore::Sqlite(v) => {
+                if let Some(before) = shares_before {
+                    report.shares_pruned = v.rollup_and_prune_shares_before(before)?;
+                }
+                if let Some(before) = payouts_before {
+                    report.payouts_pruned = v.rollup_and_prune_payouts_before(before)?;
+                }
+            }
+            PoolStore::Postgres(v) => {
+                if let Some(before) = shares_before {
+                    report.shares_pruned = v.rollup_and_prune_shares_before(before)?;
+                }
+                if let Some(before) = payouts_before {
+                    report.payouts_pruned = v.rollup_and_prune_payouts_before(before)?;
+                }
+            }
+        }
+        Ok(report)
     }
 }
 

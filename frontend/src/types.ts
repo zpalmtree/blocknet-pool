@@ -7,7 +7,7 @@ export type Route =
   | 'stats'
   | 'admin'
   | 'status';
-export type AdminTab = 'miners' | 'payouts' | 'fees' | 'health';
+export type AdminTab = 'miners' | 'payouts' | 'fees' | 'health' | 'logs';
 export type Range = '1h' | '24h' | '7d' | '30d';
 
 export type UnixLike =

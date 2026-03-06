@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -10,23 +12,29 @@ use crate::db::{
     PoolFeeRecord, PublicPayoutBatch,
 };
 use crate::engine::{ShareRecord, ShareStore};
+use crate::stats::RejectionReasonCount;
 
 const SEEN_SHARE_EXPIRY_SECS: i64 = 24 * 60 * 60;
+const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 
 pub struct PostgresStore {
-    conn: Option<Mutex<Client>>,
+    conns: Vec<Mutex<Client>>,
+    next_conn: AtomicUsize,
 }
 
 impl PostgresStore {
     fn conn(&self) -> &Mutex<Client> {
-        self.conn
-            .as_ref()
+        let pool_len = self.conns.len().max(1);
+        let idx = self.next_conn.fetch_add(1, Ordering::Relaxed) % pool_len;
+        self.conns
+            .get(idx)
             .expect("postgres store connection unavailable")
     }
 
-    pub fn connect(url: &str) -> Result<Arc<Self>> {
-        let mut conn =
-            Client::connect(url, NoTls).with_context(|| format!("connect postgres {url}"))?;
+    pub fn connect(url: &str, pool_size: i32) -> Result<Arc<Self>> {
+        let pool_size = pool_size.max(1) as usize;
+        let mut conn = Client::connect(url, NoTls)
+            .with_context(|| format!("connect postgres {url} (primary)"))?;
         conn.batch_execute(
             r#"
 CREATE TABLE IF NOT EXISTS shares (
@@ -39,10 +47,12 @@ CREATE TABLE IF NOT EXISTS shares (
     status TEXT NOT NULL,
     was_sampled BOOLEAN NOT NULL,
     block_hash TEXT,
+    reject_reason TEXT,
     created_at BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_shares_created_at ON shares(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shares_miner_created ON shares(miner, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_shares_miner_status_created ON shares(miner, status, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS blocks (
     height BIGINT PRIMARY KEY,
@@ -58,6 +68,8 @@ CREATE TABLE IF NOT EXISTS blocks (
 );
 CREATE INDEX IF NOT EXISTS idx_blocks_timestamp ON blocks(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_blocks_finder ON blocks(finder);
+CREATE INDEX IF NOT EXISTS idx_blocks_finder_height ON blocks(finder, height DESC);
+CREATE INDEX IF NOT EXISTS idx_blocks_unconfirmed ON blocks(confirmed, orphaned, height ASC);
 
 CREATE TABLE IF NOT EXISTS balances (
     address TEXT PRIMARY KEY,
@@ -132,6 +144,36 @@ CREATE TABLE IF NOT EXISTS stat_snapshots (
     workers INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS share_daily_summaries (
+    day_start BIGINT PRIMARY KEY,
+    accepted_count BIGINT NOT NULL,
+    rejected_count BIGINT NOT NULL,
+    accepted_difficulty BIGINT NOT NULL,
+    unique_miners BIGINT NOT NULL,
+    unique_workers BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_share_daily_summaries_day_start
+    ON share_daily_summaries(day_start DESC);
+
+CREATE TABLE IF NOT EXISTS share_rejection_reason_daily_summaries (
+    day_start BIGINT NOT NULL,
+    reason TEXT NOT NULL,
+    rejected_count BIGINT NOT NULL,
+    PRIMARY KEY (day_start, reason)
+);
+CREATE INDEX IF NOT EXISTS idx_share_rejection_reason_daily_summaries_day_start
+    ON share_rejection_reason_daily_summaries(day_start DESC);
+
+CREATE TABLE IF NOT EXISTS payout_daily_summaries (
+    day_start BIGINT PRIMARY KEY,
+    payout_count BIGINT NOT NULL,
+    total_amount BIGINT NOT NULL,
+    total_fee BIGINT NOT NULL,
+    unique_recipients BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
+    ON payout_daily_summaries(day_start DESC);
 "#,
         )
         .context("init postgres schema")?;
@@ -139,17 +181,28 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
             "ALTER TABLE payouts ADD COLUMN IF NOT EXISTS fee BIGINT NOT NULL DEFAULT 0",
         )
         .context("ensure payouts.fee column")?;
+        conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS reject_reason TEXT")
+            .context("ensure shares.reject_reason column")?;
+
+        let mut conns = Vec::with_capacity(pool_size);
+        conns.push(Mutex::new(conn));
+        for idx in 1..pool_size {
+            let extra = Client::connect(url, NoTls)
+                .with_context(|| format!("connect postgres {url} (pool conn {idx})"))?;
+            conns.push(Mutex::new(extra));
+        }
 
         Ok(Arc::new(Self {
-            conn: Some(Mutex::new(conn)),
+            conns,
+            next_conn: AtomicUsize::new(0),
         }))
     }
 
     pub fn add_share(&self, share: ShareRecord) -> Result<()> {
         let created = to_unix(share.created_at);
         self.conn().lock().execute(
-            "INSERT INTO shares (job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            "INSERT INTO shares (job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, reject_reason, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
             &[
                 &share.job_id,
                 &share.miner,
@@ -159,6 +212,7 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
                 &share.status,
                 &share.was_sampled,
                 &share.block_hash,
+                &share.reject_reason,
                 &created,
             ],
         )?;
@@ -168,7 +222,7 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
     pub fn get_recent_shares(&self, limit: i64) -> Result<Vec<DbShare>> {
         let rows = self.conn().lock().query(
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
-             FROM shares ORDER BY id DESC LIMIT $1",
+             FROM shares ORDER BY created_at DESC LIMIT $1",
             &[&limit],
         )?;
         Ok(rows.into_iter().map(row_to_share).collect())
@@ -177,7 +231,7 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
     pub fn get_shares_for_miner(&self, address: &str, limit: i64) -> Result<Vec<DbShare>> {
         let rows = self.conn().lock().query(
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
-             FROM shares WHERE miner = $1 ORDER BY id DESC LIMIT $2",
+             FROM shares WHERE miner = $1 ORDER BY created_at DESC LIMIT $2",
             &[&address, &limit],
         )?;
         Ok(rows.into_iter().map(row_to_share).collect())
@@ -187,7 +241,7 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         let ts = to_unix(since);
         let rows = self.conn().lock().query(
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
-             FROM shares WHERE created_at >= $1 ORDER BY id DESC",
+             FROM shares WHERE created_at >= $1 ORDER BY created_at DESC",
             &[&ts],
         )?;
         Ok(rows.into_iter().map(row_to_share).collect())
@@ -202,7 +256,7 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         let end_ts = to_unix(end);
         let rows = self.conn().lock().query(
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
-             FROM shares WHERE created_at >= $1 AND created_at <= $2 ORDER BY id DESC",
+             FROM shares WHERE created_at >= $1 AND created_at <= $2",
             &[&start_ts, &end_ts],
         )?;
         Ok(rows.into_iter().map(row_to_share).collect())
@@ -212,7 +266,7 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         let before_ts = to_unix(before);
         let rows = self.conn().lock().query(
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
-             FROM shares WHERE created_at <= $1 ORDER BY id DESC LIMIT $2",
+             FROM shares WHERE created_at <= $1 ORDER BY created_at DESC LIMIT $2",
             &[&before_ts, &n],
         )?;
         Ok(rows.into_iter().map(row_to_share).collect())
@@ -268,12 +322,15 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
     }
 
     pub fn get_total_share_count(&self) -> Result<u64> {
-        let row = self
-            .conn()
-            .lock()
-            .query_one("SELECT COUNT(*) FROM shares", &[])?;
-        let count: i64 = row.get(0);
-        Ok(count.max(0) as u64)
+        let mut conn = self.conn().lock();
+        let live_row = conn.query_one("SELECT COUNT(*)::bigint FROM shares", &[])?;
+        let live_count: i64 = live_row.get(0);
+        let summarized_row = conn.query_one(
+            "SELECT COALESCE(SUM(accepted_count + rejected_count), 0)::bigint FROM share_daily_summaries",
+            &[],
+        )?;
+        let summarized_count: i64 = summarized_row.get(0);
+        Ok((live_count.max(0) as u64).saturating_add(summarized_count.max(0) as u64))
     }
 
     pub fn share_outcome_counts_since(&self, since: SystemTime) -> Result<(u64, u64)> {
@@ -292,12 +349,71 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
     }
 
     pub fn total_rejected_share_count(&self) -> Result<u64> {
-        let row = self.conn().lock().query_one(
+        let mut conn = self.conn().lock();
+        let live_row = conn.query_one(
             "SELECT COUNT(*)::bigint FROM shares WHERE status NOT IN ('verified','provisional')",
             &[],
         )?;
-        let count: i64 = row.get(0);
-        Ok(count.max(0) as u64)
+        let live_count: i64 = live_row.get(0);
+        let summarized_row = conn.query_one(
+            "SELECT COALESCE(SUM(rejected_count), 0)::bigint FROM share_daily_summaries",
+            &[],
+        )?;
+        let summarized_count: i64 = summarized_row.get(0);
+        Ok((live_count.max(0) as u64).saturating_add(summarized_count.max(0) as u64))
+    }
+
+    pub fn rejection_reason_counts_since(
+        &self,
+        since: SystemTime,
+    ) -> Result<Vec<RejectionReasonCount>> {
+        let since_ts = to_unix(since);
+        let rows = self.conn().lock().query(
+            "SELECT
+                COALESCE(NULLIF(BTRIM(reject_reason), ''), 'legacy / unknown') AS reason,
+                COUNT(*)::bigint AS rejected_count
+             FROM shares
+             WHERE created_at >= $1
+               AND status NOT IN ('verified','provisional')
+             GROUP BY reason
+             ORDER BY rejected_count DESC, reason ASC",
+            &[&since_ts],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| RejectionReasonCount {
+                reason: row.get::<_, String>(0),
+                count: row.get::<_, i64>(1).max(0) as u64,
+            })
+            .collect())
+    }
+
+    pub fn total_rejection_reason_counts(&self) -> Result<Vec<RejectionReasonCount>> {
+        let live_rows = self.conn().lock().query(
+            "SELECT
+                COALESCE(NULLIF(BTRIM(reject_reason), ''), 'legacy / unknown') AS reason,
+                COUNT(*)::bigint AS rejected_count
+             FROM shares
+             WHERE status NOT IN ('verified','provisional')
+             GROUP BY reason",
+            &[],
+        )?;
+        let summary_rows = self.conn().lock().query(
+            "SELECT reason, COALESCE(SUM(rejected_count), 0)::bigint
+             FROM share_rejection_reason_daily_summaries
+             GROUP BY reason",
+            &[],
+        )?;
+
+        let live = live_rows
+            .into_iter()
+            .map(|row| (row.get::<_, String>(0), row.get::<_, i64>(1).max(0) as u64));
+        let summarized = summary_rows
+            .into_iter()
+            .map(|row| (row.get::<_, String>(0), row.get::<_, i64>(1).max(0) as u64));
+        Ok(sort_reason_counts(
+            live.chain(summarized).collect::<Vec<(String, u64)>>(),
+        ))
     }
 
     pub fn add_block(&self, block: &DbBlock) -> Result<()> {
@@ -1421,6 +1537,87 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
         Ok(removed)
     }
 
+    pub fn rollup_and_prune_shares_before(&self, before: SystemTime) -> Result<u64> {
+        let cutoff = floor_to_day_start_unix(to_unix(before));
+        if cutoff <= 0 {
+            return Ok(0);
+        }
+
+        let mut conn = self.conn().lock();
+        let mut tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO share_daily_summaries
+                (day_start, accepted_count, rejected_count, accepted_difficulty, unique_miners, unique_workers)
+             SELECT
+                (created_at / $2) * $2 AS day_start,
+                SUM(CASE WHEN status IN ('verified','provisional') THEN 1 ELSE 0 END)::bigint AS accepted_count,
+                SUM(CASE WHEN status NOT IN ('verified','provisional') THEN 1 ELSE 0 END)::bigint AS rejected_count,
+                SUM(CASE WHEN status IN ('verified','provisional') THEN difficulty ELSE 0 END)::bigint AS accepted_difficulty,
+                COUNT(DISTINCT miner)::bigint AS unique_miners,
+                COUNT(DISTINCT worker)::bigint AS unique_workers
+             FROM shares
+             WHERE created_at < $1
+             GROUP BY day_start
+             ON CONFLICT(day_start) DO UPDATE SET
+                accepted_count = share_daily_summaries.accepted_count + EXCLUDED.accepted_count,
+                rejected_count = share_daily_summaries.rejected_count + EXCLUDED.rejected_count,
+                accepted_difficulty = share_daily_summaries.accepted_difficulty + EXCLUDED.accepted_difficulty,
+                unique_miners = share_daily_summaries.unique_miners + EXCLUDED.unique_miners,
+                unique_workers = share_daily_summaries.unique_workers + EXCLUDED.unique_workers",
+            &[&cutoff, &SECONDS_PER_DAY],
+        )?;
+        tx.execute(
+            "INSERT INTO share_rejection_reason_daily_summaries
+                (day_start, reason, rejected_count)
+             SELECT
+                (created_at / $2) * $2 AS day_start,
+                COALESCE(NULLIF(BTRIM(reject_reason), ''), 'legacy / unknown') AS reason,
+                COUNT(*)::bigint AS rejected_count
+             FROM shares
+             WHERE created_at < $1
+               AND status NOT IN ('verified','provisional')
+             GROUP BY day_start, reason
+             ON CONFLICT(day_start, reason) DO UPDATE SET
+                rejected_count = share_rejection_reason_daily_summaries.rejected_count + EXCLUDED.rejected_count",
+            &[&cutoff, &SECONDS_PER_DAY],
+        )?;
+        let removed = tx.execute("DELETE FROM shares WHERE created_at < $1", &[&cutoff])?;
+        tx.commit()?;
+        Ok(removed)
+    }
+
+    pub fn rollup_and_prune_payouts_before(&self, before: SystemTime) -> Result<u64> {
+        let cutoff = floor_to_day_start_unix(to_unix(before));
+        if cutoff <= 0 {
+            return Ok(0);
+        }
+
+        let mut conn = self.conn().lock();
+        let mut tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO payout_daily_summaries
+                (day_start, payout_count, total_amount, total_fee, unique_recipients)
+             SELECT
+                (timestamp / $2) * $2 AS day_start,
+                COUNT(*)::bigint AS payout_count,
+                COALESCE(SUM(amount), 0)::bigint AS total_amount,
+                COALESCE(SUM(fee), 0)::bigint AS total_fee,
+                COUNT(DISTINCT address)::bigint AS unique_recipients
+             FROM payouts
+             WHERE timestamp < $1
+             GROUP BY day_start
+             ON CONFLICT(day_start) DO UPDATE SET
+                payout_count = payout_daily_summaries.payout_count + EXCLUDED.payout_count,
+                total_amount = payout_daily_summaries.total_amount + EXCLUDED.total_amount,
+                total_fee = payout_daily_summaries.total_fee + EXCLUDED.total_fee,
+                unique_recipients = payout_daily_summaries.unique_recipients + EXCLUDED.unique_recipients",
+            &[&cutoff, &SECONDS_PER_DAY],
+        )?;
+        let removed = tx.execute("DELETE FROM payouts WHERE timestamp < $1", &[&cutoff])?;
+        tx.commit()?;
+        Ok(removed)
+    }
+
     /// Returns bucketed hashrate data for a miner: Vec<(bucket_ts, total_diff, count)>
     pub fn hashrate_history_for_miner(
         &self,
@@ -1530,20 +1727,6 @@ CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timest
     }
 }
 
-impl Drop for PostgresStore {
-    fn drop(&mut self) {
-        let Some(conn) = self.conn.take() else {
-            return;
-        };
-        let client = conn.into_inner();
-        let _ = std::thread::Builder::new()
-            .name("pool-pg-close".to_string())
-            .spawn(move || {
-                let _ = client.close();
-            });
-    }
-}
-
 impl ShareStore for PostgresStore {
     fn is_share_seen(&self, job_id: &str, nonce: u64) -> Result<bool> {
         PostgresStore::is_share_seen(self, job_id, nonce)
@@ -1601,6 +1784,21 @@ fn row_to_share(row: postgres::Row) -> DbShare {
     }
 }
 
+fn sort_reason_counts(entries: Vec<(String, u64)>) -> Vec<RejectionReasonCount> {
+    let mut counts = HashMap::<String, u64>::new();
+    for (reason, count) in entries {
+        let entry = counts.entry(reason).or_insert(0);
+        *entry = entry.saturating_add(count);
+    }
+
+    let mut items = counts
+        .into_iter()
+        .map(|(reason, count)| RejectionReasonCount { reason, count })
+        .collect::<Vec<_>>();
+    items.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.reason.cmp(&b.reason)));
+    items
+}
+
 fn row_to_block(row: &postgres::Row) -> DbBlock {
     DbBlock {
         height: row.get::<_, i64>(0).max(0) as u64,
@@ -1618,6 +1816,13 @@ fn row_to_block(row: &postgres::Row) -> DbBlock {
 
 fn now_unix() -> i64 {
     to_unix(SystemTime::now())
+}
+
+fn floor_to_day_start_unix(ts: i64) -> i64 {
+    if ts <= 0 {
+        return 0;
+    }
+    ts - (ts % SECONDS_PER_DAY)
 }
 
 fn normalize_block_status_filter(status: Option<&str>) -> Option<&'static str> {
@@ -1693,7 +1898,7 @@ mod tests {
             .ok()
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())?;
-        Some(PostgresStore::connect(&url).expect("connect postgres test store"))
+        Some(PostgresStore::connect(&url, 2).expect("connect postgres test store"))
     }
 
     fn unique_suffix() -> String {

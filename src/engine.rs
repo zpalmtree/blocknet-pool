@@ -59,6 +59,7 @@ pub struct ShareRecord {
     pub status: &'static str,
     pub was_sampled: bool,
     pub block_hash: Option<String>,
+    pub reject_reason: Option<String>,
     pub created_at: SystemTime,
 }
 
@@ -156,6 +157,50 @@ fn format_duration(duration: Duration) -> String {
     } else {
         format!("{:.3}s", duration.as_secs_f64())
     }
+}
+
+pub(crate) fn canonical_share_reject_reason(error: &str) -> &'static str {
+    let trimmed = error.trim();
+    if trimmed.starts_with("stale job:") || trimmed == "stale job" {
+        return "stale job";
+    }
+    if trimmed.starts_with("duplicate share") {
+        return "duplicate share";
+    }
+    if trimmed.starts_with("nonce out of assigned range") {
+        return "nonce out of assigned range";
+    }
+    if trimmed.starts_with("job not assigned to this miner") {
+        return "job not assigned";
+    }
+    if trimmed.starts_with("claimed hash required") {
+        return "claimed hash required";
+    }
+    if trimmed.starts_with("rate limited") {
+        return "rate limited";
+    }
+    if trimmed.starts_with("address quarantined") {
+        return "address quarantined";
+    }
+    if trimmed.starts_with("low difficulty share") {
+        return "low difficulty share";
+    }
+    if trimmed.starts_with("invalid share proof") {
+        return "invalid share proof";
+    }
+    if trimmed.starts_with("hash computation failed") {
+        return "hash computation failed";
+    }
+    if trimmed == "not logged in" {
+        return "not logged in";
+    }
+    if trimmed == "invalid hex"
+        || trimmed == "hex length must be even"
+        || trimmed.starts_with("expected 32-byte hash")
+    {
+        return "invalid claimed hash";
+    }
+    "other"
 }
 
 pub trait ShareStore: Send + Sync + 'static {
@@ -437,8 +482,15 @@ impl PoolEngine {
         {
             Ok(v) => v,
             Err(err) => {
-                self.persist_rejected_share(&session, &job_id, nonce, fallback_difficulty);
-                return Err(anyhow!(err.to_string()));
+                let err_text = err.to_string();
+                self.persist_rejected_share_for_error(
+                    &session,
+                    &job_id,
+                    nonce,
+                    fallback_difficulty,
+                    &err_text,
+                );
+                return Err(anyhow!(err_text));
             }
         };
         let share_difficulty = submit_job
@@ -447,13 +499,25 @@ impl PoolEngine {
             .max(1);
         if let Some(expected_miner) = submit_job.assigned_miner.as_ref() {
             if expected_miner != &session.address {
-                self.persist_rejected_share(&session, &job_id, nonce, share_difficulty);
+                self.persist_rejected_share_for_error(
+                    &session,
+                    &job_id,
+                    nonce,
+                    share_difficulty,
+                    "job not assigned to this miner",
+                );
                 return Err(anyhow!("job not assigned to this miner"));
             }
         }
         if let (Some(start), Some(end)) = (submit_job.nonce_start, submit_job.nonce_end) {
             if nonce < start || nonce > end {
-                self.persist_rejected_share(&session, &job_id, nonce, share_difficulty);
+                self.persist_rejected_share_for_error(
+                    &session,
+                    &job_id,
+                    nonce,
+                    share_difficulty,
+                    "nonce out of assigned range",
+                );
                 return Err(anyhow!("nonce out of assigned range"));
             }
         }
@@ -463,7 +527,13 @@ impl PoolEngine {
         {
             let mut seen = self.seen_in_memory.lock();
             if !seen.insert(seen_key.clone()) {
-                self.persist_rejected_share(&session, &job_id, nonce, share_difficulty);
+                self.persist_rejected_share_for_error(
+                    &session,
+                    &job_id,
+                    nonce,
+                    share_difficulty,
+                    "duplicate share",
+                );
                 return Err(anyhow!("duplicate share"));
             }
         }
@@ -473,7 +543,13 @@ impl PoolEngine {
                 Ok(hash) => Some(hash),
                 Err(err) => {
                     self.seen_in_memory.lock().remove(&seen_key);
-                    self.persist_rejected_share(&session, &job_id, nonce, share_difficulty);
+                    self.persist_rejected_share_for_error(
+                        &session,
+                        &job_id,
+                        nonce,
+                        share_difficulty,
+                        &err,
+                    );
                     return Err(anyhow!(err));
                 }
             },
@@ -483,7 +559,13 @@ impl PoolEngine {
         let require_claimed_hash = self.cfg.stratum_submit_v2_required;
         if require_claimed_hash && claimed_hash.is_none() {
             self.seen_in_memory.lock().remove(&seen_key);
-            self.persist_rejected_share(&session, &job_id, nonce, share_difficulty);
+            self.persist_rejected_share_for_error(
+                &session,
+                &job_id,
+                nonce,
+                share_difficulty,
+                "claimed hash required",
+            );
             return Err(anyhow!("claimed hash required"));
         }
 
@@ -491,12 +573,24 @@ impl PoolEngine {
             Ok(true) => true,
             Ok(false) => {
                 self.seen_in_memory.lock().remove(&seen_key);
-                self.persist_rejected_share(&session, &job_id, nonce, share_difficulty);
+                self.persist_rejected_share_for_error(
+                    &session,
+                    &job_id,
+                    nonce,
+                    share_difficulty,
+                    "duplicate share",
+                );
                 return Err(anyhow!("duplicate share"));
             }
             Err(err) => {
                 self.seen_in_memory.lock().remove(&seen_key);
-                self.persist_rejected_share(&session, &job_id, nonce, share_difficulty);
+                self.persist_rejected_share_for_error(
+                    &session,
+                    &job_id,
+                    nonce,
+                    share_difficulty,
+                    &err.to_string(),
+                );
                 return Err(err);
             }
         };
@@ -506,7 +600,13 @@ impl PoolEngine {
         let result = (|| -> Result<SubmitAck> {
             if self.store.is_address_quarantined(&session.address)? {
                 release_claim_on_error = false;
-                self.persist_rejected_share(&session, &job_id_for_share, nonce, share_difficulty);
+                self.persist_rejected_share_for_error(
+                    &session,
+                    &job_id_for_share,
+                    nonce,
+                    share_difficulty,
+                    "address quarantined",
+                );
                 return Err(anyhow!("address quarantined"));
             }
 
@@ -531,11 +631,12 @@ impl PoolEngine {
             let validation = match self.validate_task(task, candidate_claim) {
                 Ok(v) => v,
                 Err(err) => {
-                    self.persist_rejected_share(
+                    self.persist_rejected_share_for_error(
                         &session,
                         &job_id_for_share,
                         nonce,
                         share_difficulty,
+                        &err.to_string(),
                     );
                     return Err(err);
                 }
@@ -543,7 +644,14 @@ impl PoolEngine {
 
             if !validation.accepted {
                 release_claim_on_error = false;
-                self.persist_rejected_share(&session, &job_id_for_share, nonce, share_difficulty);
+                let reason = validation.reject_reason.unwrap_or("invalid share");
+                self.persist_rejected_share(
+                    &session,
+                    &job_id_for_share,
+                    nonce,
+                    share_difficulty,
+                    Some(reason),
+                );
                 if validation.suspected_fraud || validation.escalate_risk {
                     let reason = validation.reject_reason.unwrap_or("risk escalation");
                     let strikes = if validation.suspected_fraud || !validation.escalate_risk {
@@ -635,6 +743,7 @@ impl PoolEngine {
                 status,
                 was_sampled: validation.verified,
                 block_hash,
+                reject_reason: None,
                 created_at: SystemTime::now(),
             })?;
 
@@ -671,6 +780,7 @@ impl PoolEngine {
         job_id: &str,
         nonce: u64,
         difficulty: u64,
+        reject_reason: Option<&str>,
     ) {
         if let Err(err) = self.store.add_share(ShareRecord {
             job_id: job_id.to_string(),
@@ -681,6 +791,8 @@ impl PoolEngine {
             status: SHARE_STATUS_REJECTED,
             was_sampled: false,
             block_hash: None,
+            reject_reason: reject_reason
+                .map(|value| canonical_share_reject_reason(value).to_string()),
             created_at: SystemTime::now(),
         }) {
             tracing::warn!(
@@ -692,6 +804,17 @@ impl PoolEngine {
                 "failed to persist rejected share"
             );
         }
+    }
+
+    fn persist_rejected_share_for_error(
+        &self,
+        session: &MinerSession,
+        job_id: &str,
+        nonce: u64,
+        difficulty: u64,
+        error: &str,
+    ) {
+        self.persist_rejected_share(session, job_id, nonce, difficulty, Some(error));
     }
 
     pub fn recover_found_block_outbox(&self) {
