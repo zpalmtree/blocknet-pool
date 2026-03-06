@@ -1,0 +1,23 @@
+[Unit]
+Description=Blocknet Pool Stratum
+After=network-online.target blocknetd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=blocknet
+Group=blocknet
+WorkingDirectory=/opt/blocknet/blocknet-pool
+EnvironmentFile=/etc/blocknet/pool/.env
+ExecStart=/opt/blocknet/blocknet-pool/target/release/blocknet-pool-stratum --config /etc/blocknet/pool/config.json
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/blocknet-pool /etc/blocknet/pool
+
+[Install]
+WantedBy=multi-user.target

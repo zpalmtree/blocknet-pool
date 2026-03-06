@@ -491,18 +491,26 @@ export function AdminPage({
                 <div className="value">{health?.payouts?.pending_count ?? '-'}</div>
               </div>
               <div className="stat-card">
-                <div className="label">Confirmed Rewards</div>
+                <div className="label">Wallet Spendable</div>
                 <div className="value">
-                  {health?.payouts?.confirmed_rewards != null
-                    ? formatCoins(health.payouts.confirmed_rewards)
+                  {health?.wallet?.spendable != null
+                    ? formatCoins(health.wallet.spendable)
                     : '-'}
                 </div>
               </div>
               <div className="stat-card">
-                <div className="label">Unconfirmed Rewards</div>
+                <div className="label">Wallet Pending</div>
                 <div className="value">
-                  {health?.payouts?.unconfirmed_rewards != null
-                    ? formatCoins(health.payouts.unconfirmed_rewards)
+                  {health?.wallet?.pending != null
+                    ? formatCoins(health.wallet.pending)
+                    : '-'}
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="label">Wallet Total</div>
+                <div className="value">
+                  {health?.wallet?.total != null
+                    ? formatCoins(health.wallet.total)
                     : '-'}
                 </div>
               </div>

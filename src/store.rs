@@ -467,6 +467,26 @@ impl PoolStore {
         }
     }
 
+    pub fn record_pending_payout_broadcast(
+        &self,
+        address: &str,
+        amount: u64,
+        fee: u64,
+        tx_hash: &str,
+    ) -> Result<PendingPayout> {
+        match self {
+            PoolStore::Sqlite(v) => v.record_pending_payout_broadcast(address, amount, fee, tx_hash),
+            PoolStore::Postgres(v) => v.record_pending_payout_broadcast(address, amount, fee, tx_hash),
+        }
+    }
+
+    pub fn reset_pending_payout_send_state(&self, address: &str) -> Result<()> {
+        match self {
+            PoolStore::Sqlite(v) => v.reset_pending_payout_send_state(address),
+            PoolStore::Postgres(v) => v.reset_pending_payout_send_state(address),
+        }
+    }
+
     pub fn complete_pending_payout(
         &self,
         address: &str,
@@ -672,6 +692,16 @@ impl PoolStore {
         match self {
             PoolStore::Sqlite(v) => v.miner_lifetime_counts(),
             PoolStore::Postgres(v) => v.miner_lifetime_counts(),
+        }
+    }
+
+    pub fn miner_worker_counts_since(
+        &self,
+        since: SystemTime,
+    ) -> Result<std::collections::HashMap<String, usize>> {
+        match self {
+            PoolStore::Sqlite(v) => v.miner_worker_counts_since(since),
+            PoolStore::Postgres(v) => v.miner_worker_counts_since(since),
         }
     }
 

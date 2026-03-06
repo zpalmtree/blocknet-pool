@@ -10,13 +10,56 @@
   <img src="https://img.shields.io/badge/license-BSD--3--Clause-aaff00?style=flat-square&labelColor=000" alt="License">
 </p>
 
-## Quick Start
+## Runtime Modes
+
+The repo now ships three binaries:
+
+- `blocknet-pool-rs`: combined API + Stratum runtime (legacy/dev convenience)
+- `blocknet-pool-api`: API/UI process only
+- `blocknet-pool-stratum`: Stratum + payouts + maintenance process only
+
+For production, prefer the split services so API/UI deploys do not drop Stratum connections.
+
+## Deploy (bntpool)
+
+From the local repo root:
+
+```bash
+./scripts/deploy_bntpool.sh
+```
+
+Use split-service migration only when moving from the legacy combined service or when you intentionally need to reinstall the systemd unit files:
+
+```bash
+./scripts/deploy_bntpool.sh --migrate-split
+```
+
+What it does:
+
+- builds frontend bundle locally (unless `--skip-ui-build`)
+- rsyncs pool source to `bntpool:/opt/blocknet/blocknet-pool`
+- builds the split release binaries on the server
+- restarts only the changed service(s):
+  - `blocknet-pool-api.service`
+  - `blocknet-pool-stratum.service`
+- frontend-only changes still restart `blocknet-pool-api.service` because the UI bundle is embedded into that binary
+- tails recent logs for both services
+
+## Local Development
 
 ```bash
 cargo build --release
 cargo run --release
+# runs the combined API + Stratum binary for local/dev use
 # if missing, config.json and .env are created automatically
 # edit .env and set BLOCKNET_WALLET_PASSWORD
+```
+
+Run the split binaries directly when you want production-like local behavior:
+
+```bash
+cargo run --release --bin blocknet-pool-api
+cargo run --release --bin blocknet-pool-stratum
 ```
 
 Custom config:
@@ -27,7 +70,7 @@ cargo run --release -- --config /path/to/config.json
 
 ## Frontend
 
-Web UI is now built with React + TypeScript + Vite from `frontend/`.
+Web UI is built with React + TypeScript + Vite from `frontend/`.
 
 Local dev:
 
@@ -37,7 +80,7 @@ npm install
 npm run dev
 ```
 
-Build static bundle embedded by the Rust API:
+Build the embedded API bundle:
 
 ```bash
 cd frontend
@@ -50,21 +93,7 @@ Build output is written to `src/ui/dist/` and served at:
 - `GET /ui-assets/app.js`
 - `GET /ui-assets/app.css`
 
-## Deploy (bntpool)
-
-From the local repo root:
-
-```bash
-./scripts/deploy_bntpool.sh
-```
-
-What it does:
-
-- builds frontend bundle locally (unless `--skip-ui-build`)
-- rsyncs pool source to `bntpool:/opt/blocknet/blocknet-pool`
-- builds `--release` on the server
-- restarts `blocknet-pool.service`
-- tails recent service logs
+Because the UI bundle is embedded into the API binary, frontend-only changes still require rebuilding and restarting the API service.
 
 ## Daemon API Auth
 
@@ -103,10 +132,10 @@ scripts/migrate_sqlite_to_postgres.sh \
 
 Recommended order:
 
-1. Stop `blocknet-pool.service`.
+1. Stop the running pool service(s).
 2. Run the migration script.
 3. Set `database_url` in `/etc/blocknet/pool/config.json`.
-4. Start `blocknet-pool.service`.
+4. Start the pool service(s).
 5. Verify `/api/stats` and admin endpoints.
 
 ## Transport Security
@@ -120,27 +149,47 @@ Recommended order:
 
 ## Runtime Components
 
+- API/UI server
 - Stratum server
 - Template/job manager
 - Validation engine (bounded queues)
 - Persistent storage (SQLite/Postgres)
 - Payout processor
-- HTTP API
+- DB/meta-backed live snapshot bridge for split-service API fallbacks
 
-## Core API Endpoints
+## API Surface
 
-- `GET /api/stats`
+Public endpoints (no API key required):
+
 - `GET /api/info`
+- `GET /api/stats`
+- `GET /api/stats/history`
+- `GET /api/stats/insights`
+- `GET /api/luck`
+- `GET /api/status`
+- `GET /api/events`
+- `GET /api/blocks`
+- `GET /api/payouts/recent`
 - `GET /api/miner/{address}`
 - `GET /api/miner/{address}/balance`
+- `GET /api/miner/{address}/hashrate`
+
+Protected endpoints (API key required):
+
 - `GET /api/miners`
-- `GET /api/blocks`
 - `GET /api/payouts`
 - `GET /api/fees`
 - `GET /api/health`
 - `GET /api/daemon/logs/stream`
 
-Paged/filterable list mode (protected endpoints):
+When `api_key` is unset, protected endpoints return `503 api key not configured`.
+
+Accepted headers:
+
+- `x-api-key: <api_key>`
+- `Authorization: Bearer <api_key>`
+
+Paged/filterable list mode:
 
 - `paged=true` enables paged response shape (`items` + `page`).
 - Shared query params: `limit`, `offset`.
@@ -148,6 +197,14 @@ Paged/filterable list mode (protected endpoints):
 - `GET /api/blocks`: `finder`, `status`, `sort`.
 - `GET /api/payouts`: `address`, `tx_hash`, `sort`.
 - `GET /api/fees`: `fee_address`, `sort`.
+
+Daemon log stream details:
+
+- Admin UI includes a live daemon log viewer tab.
+- Stream endpoint: `GET /api/daemon/logs/stream?tail=200`.
+- Log source fallback order:
+  - `journalctl -a -u blocknetd.service`
+  - `tail -F <daemon_data_dir>/debug.log`
 
 ## Web UI
 
@@ -185,37 +242,6 @@ Paged/filterable list mode (protected endpoints):
 - Accepted-share hashrate tracking keeps a 1-hour window with a hard in-memory cap.
 - Template refresh matching now uses stable identity fields to catch meaningful same-height updates.
 - API key comparison is currently direct string equality by design for this pool deployment model; this is accepted for now and is not treated as a blocker.
-
-## API Auth
-
-Public endpoints (no API key required):
-
-- `GET /api/info`
-- `GET /api/stats`
-- `GET /api/miner/{address}`
-
-Protected endpoints (API key required):
-
-- `GET /api/miners`
-- `GET /api/blocks`
-- `GET /api/payouts`
-- `GET /api/fees`
-- `GET /api/health`
-
-When `api_key` is unset, protected endpoints return `503 api key not configured`.
-
-Accepted headers:
-
-- `x-api-key: <api_key>`
-- `Authorization: Bearer <api_key>`
-
-## Admin Daemon Logs
-
-- Admin UI includes a live daemon log viewer tab.
-- Backend stream endpoint: `GET /api/daemon/logs/stream?tail=200`.
-- Log source fallback order:
-  - `journalctl -a -u blocknetd.service`
-  - `tail -F <daemon_data_dir>/debug.log`
 
 ## Payout Safeguards
 

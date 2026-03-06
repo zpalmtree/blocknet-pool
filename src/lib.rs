@@ -9,6 +9,8 @@ pub mod payout;
 pub mod pgdb;
 pub mod pow;
 pub mod protocol;
+pub mod runtime;
+pub mod service_state;
 pub mod stats;
 pub mod store;
 pub mod stratum;

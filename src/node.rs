@@ -77,7 +77,17 @@ pub struct WalletAddressResponse {
 pub struct WalletBalance {
     pub spendable: u64,
     pub pending: u64,
+    #[serde(default)]
+    pub pending_unconfirmed: u64,
+    #[serde(default)]
+    pub pending_unconfirmed_eta: u64,
     pub total: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TxStatus {
+    pub confirmations: u64,
+    pub in_mempool: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -211,6 +221,14 @@ impl NodeClient {
     pub fn get_block_by_height_optional(&self, height: u64) -> Result<Option<NodeBlock>> {
         match self.get_block(&height.to_string()) {
             Ok(block) => Ok(Some(block)),
+            Err(err) if is_http_status(&err, 404) => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub fn get_tx_status_optional(&self, txid: &str) -> Result<Option<TxStatus>> {
+        match self.get_json(&format!("/api/tx/{txid}")) {
+            Ok(status) => Ok(Some(status)),
             Err(err) if is_http_status(&err, 404) => Ok(None),
             Err(err) => Err(err),
         }

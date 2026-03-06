@@ -32,9 +32,12 @@ use crate::engine::JobRepository;
 use crate::jobs::JobManager;
 use crate::node::{NodeClient, WalletBalance};
 use crate::payout::{is_share_payout_eligible, weight_shares, PayoutTrustPolicy};
-use crate::stats::{MinerStats, PoolStats, RejectionAnalyticsSnapshot, RejectionReasonCount};
+use crate::service_state::{PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY};
+use crate::stats::{MinerStats, PoolSnapshot, PoolStats, RejectionAnalyticsSnapshot, RejectionReasonCount};
 use crate::store::PoolStore;
-use crate::validation::{ValidationEngine, SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED};
+use crate::validation::{
+    ValidationEngine, ValidationSnapshot, SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED,
+};
 
 const DB_TOTALS_CACHE_TTL: Duration = Duration::from_secs(2);
 const DAEMON_HEALTH_CACHE_TTL: Duration = Duration::from_secs(5);
@@ -346,6 +349,7 @@ pub struct ApiState {
     pub network_hashrate_cache: Arc<Mutex<NetworkHashrateCache>>,
     pub insights_cache: Arc<Mutex<InsightsCache>>,
     pub miner_pending_estimate_cache: Arc<Mutex<HashMap<String, MinerPendingEstimateCache>>>,
+    pub live_runtime_snapshot_cache: Arc<Mutex<LiveRuntimeSnapshotCache>>,
     pub status_history: Arc<Mutex<StatusHistory>>,
     pub sse_subscriber_limiter: Arc<Semaphore>,
     pub api_key: String,
@@ -407,6 +411,12 @@ pub struct NetworkHashrateCache {
 pub struct InsightsCache {
     updated_at: Option<Instant>,
     value: Option<StatsInsightsResponse>,
+}
+
+#[derive(Debug, Default)]
+pub struct LiveRuntimeSnapshotCache {
+    updated_at: Option<Instant>,
+    value: Option<PersistedRuntimeSnapshot>,
 }
 
 #[derive(Debug, Clone)]
@@ -1159,7 +1169,7 @@ fn render_recent_payouts_section(batches: &[PublicPayoutBatch], show_view_all: b
 }
 
 async fn load_ui_seo_context(route: UiRoute, state: &ApiState) -> UiSeoContext {
-    let stats_snapshot = state.stats.snapshot();
+    let stats_snapshot = state.effective_pool_snapshot().await;
     let current_job = state.jobs.current_job();
     let need_blocks = matches!(route, UiRoute::Dashboard | UiRoute::Blocks | UiRoute::Luck);
     let need_payouts = matches!(route, UiRoute::Dashboard | UiRoute::Payouts);
@@ -2070,6 +2080,38 @@ struct ValidationSummary {
     fraud_detections: u64,
 }
 
+fn validation_summary_from_snapshot(snapshot: ValidationSnapshot) -> ValidationSummary {
+    ValidationSummary {
+        in_flight: snapshot.in_flight,
+        candidate_queue_depth: snapshot.candidate_queue_depth,
+        regular_queue_depth: snapshot.regular_queue_depth,
+        tracked_addresses: snapshot.tracked_addresses,
+        forced_verify_addresses: snapshot.forced_verify_addresses,
+        total_shares: snapshot.total_shares,
+        sampled_shares: snapshot.sampled_shares,
+        invalid_samples: snapshot.invalid_samples,
+        pending_provisional: snapshot.pending_provisional,
+        fraud_detections: snapshot.fraud_detections,
+    }
+}
+
+fn validation_summary_is_empty(summary: &ValidationSummary) -> bool {
+    summary.in_flight == 0
+        && summary.candidate_queue_depth == 0
+        && summary.regular_queue_depth == 0
+        && summary.tracked_addresses == 0
+        && summary.forced_verify_addresses == 0
+        && summary.total_shares == 0
+        && summary.sampled_shares == 0
+        && summary.invalid_samples == 0
+        && summary.pending_provisional == 0
+        && summary.fraud_detections == 0
+}
+
+fn pool_snapshot_has_live_data(snapshot: &PoolSnapshot) -> bool {
+    snapshot.connected_miners > 0 || snapshot.connected_workers > 0 || snapshot.estimated_hashrate > 0.0
+}
+
 #[derive(Serialize)]
 struct FeesResponse {
     total_collected: u64,
@@ -2083,6 +2125,7 @@ struct HealthResponse {
     daemon: DaemonHealth,
     job: JobHealth,
     payouts: PayoutHealth,
+    wallet: Option<WalletHealth>,
     validation: ValidationSummary,
 }
 
@@ -2101,9 +2144,14 @@ struct JobHealth {
 struct PayoutHealth {
     pending_count: usize,
     pending_amount: u64,
-    confirmed_rewards: u64,
-    unconfirmed_rewards: u64,
     last_payout: Option<Payout>,
+}
+
+#[derive(Serialize)]
+struct WalletHealth {
+    spendable: u64,
+    pending: u64,
+    total: u64,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -2209,8 +2257,8 @@ struct MinerListItem {
 }
 
 async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
-    let snap = state.stats.snapshot();
-    let validation = state.validation.snapshot();
+    let snap = state.effective_pool_snapshot().await;
+    let validation = state.effective_validation_summary().await;
     let totals = match state.db_totals().await {
         Ok(v) => v,
         Err(err) => return internal_error("failed loading pool stats", err).into_response(),
@@ -2253,18 +2301,7 @@ async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
             daemon_chain_height: state.node.chain_height(),
             daemon_syncing: state.node.syncing(),
         },
-        validation: ValidationSummary {
-            in_flight: validation.in_flight,
-            candidate_queue_depth: validation.candidate_queue_depth,
-            regular_queue_depth: validation.regular_queue_depth,
-            tracked_addresses: validation.tracked_addresses,
-            forced_verify_addresses: validation.forced_verify_addresses,
-            total_shares: validation.total_shares,
-            sampled_shares: validation.sampled_shares,
-            invalid_samples: validation.invalid_samples,
-            pending_provisional: validation.pending_provisional,
-            fraud_detections: validation.fraud_detections,
-        },
+        validation,
     };
 
     Json(response).into_response()
@@ -2357,7 +2394,7 @@ async fn handle_events(State(state): State<ApiState>) -> Response {
             let _permit_held = &permit;
             let state = state.clone();
             async move {
-                let snap = state.stats.snapshot();
+                let snap = state.effective_pool_snapshot().await;
                 let daemon = state.daemon_health().await;
                 let payload = serde_json::json!({
                     "ts": system_time_to_unix_secs(SystemTime::now()),
@@ -2391,7 +2428,7 @@ async fn handle_events(State(state): State<ApiState>) -> Response {
 
 async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
     let daemon = state.daemon_health().await;
-    let validation = state.validation.snapshot();
+    let validation = state.effective_validation_summary().await;
 
     let current_job = state.jobs.current_job();
     let template_age_seconds = state.jobs.current_job_age().map(|age| age.as_secs());
@@ -2401,7 +2438,6 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
         .map(|age| age.as_millis() as u64);
 
     let store = Arc::clone(&state.store);
-    let cfg = state.config.clone();
     let payout_health =
         match tokio::task::spawn_blocking(move || -> anyhow::Result<PayoutHealth> {
             let pending = store.get_pending_payouts()?;
@@ -2410,13 +2446,9 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
                 .iter()
                 .fold(0u64, |acc, payout| acc.saturating_add(payout.amount));
             let last_payout = store.get_recent_payouts(1)?.into_iter().next();
-            let confirmed_rewards = compute_pool_confirmed_rewards(&store)?;
-            let unconfirmed_rewards = compute_pool_unconfirmed_rewards(&store, &cfg)?;
             Ok(PayoutHealth {
                 pending_count,
                 pending_amount,
-                confirmed_rewards,
-                unconfirmed_rewards,
                 last_payout,
             })
         })
@@ -2435,6 +2467,23 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
             }
         };
 
+    let node = Arc::clone(&state.node);
+    let wallet = match tokio::task::spawn_blocking(move || node.get_wallet_balance()).await {
+        Ok(Ok(v)) => Some(WalletHealth {
+            spendable: v.spendable,
+            pending: v.pending,
+            total: v.total,
+        }),
+        Ok(Err(err)) => {
+            tracing::warn!(error = %err, "failed loading wallet balance for health");
+            None
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "failed joining wallet balance task for health");
+            None
+        }
+    };
+
     let response = HealthResponse {
         uptime_seconds: state.started_at.elapsed().as_secs(),
         api_key_configured: !state.api_key.trim().is_empty(),
@@ -2449,18 +2498,8 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
             active_assignments: state.jobs.active_assignment_count(),
         },
         payouts: payout_health,
-        validation: ValidationSummary {
-            in_flight: validation.in_flight,
-            candidate_queue_depth: validation.candidate_queue_depth,
-            regular_queue_depth: validation.regular_queue_depth,
-            tracked_addresses: validation.tracked_addresses,
-            forced_verify_addresses: validation.forced_verify_addresses,
-            total_shares: validation.total_shares,
-            sampled_shares: validation.sampled_shares,
-            invalid_samples: validation.invalid_samples,
-            pending_provisional: validation.pending_provisional,
-            fraud_detections: validation.fraud_detections,
-        },
+        wallet,
+        validation,
     };
 
     Json(response).into_response()
@@ -2685,21 +2724,31 @@ async fn handle_miners(
     let live_stats = state.stats.all_miner_stats();
     let fallback_hashrates = state.stats.estimate_all_miner_hashrates();
     let store = Arc::clone(&state.store);
-    let lifetime_counts =
-        match tokio::task::spawn_blocking(move || store.miner_lifetime_counts()).await {
-            Ok(Ok(v)) => v,
-            Ok(Err(err)) => {
-                tracing::warn!(error = %err, "failed loading miner lifetime counts from db");
-                HashMap::new()
-            }
-            Err(err) => {
-                tracing::warn!(error = %err, "failed joining miner lifetime db task");
-                HashMap::new()
-            }
-        };
+    let worker_window_start = SystemTime::now()
+        .checked_sub(Duration::from_secs(24 * 60 * 60))
+        .unwrap_or(UNIX_EPOCH);
+    let (lifetime_counts, worker_counts) = match tokio::task::spawn_blocking(move || {
+        Ok::<_, anyhow::Error>((
+            store.miner_lifetime_counts()?,
+            store.miner_worker_counts_since(worker_window_start)?,
+        ))
+    })
+    .await
+    {
+        Ok(Ok(v)) => v,
+        Ok(Err(err)) => {
+            tracing::warn!(error = %err, "failed loading miner summary counts from db");
+            (HashMap::new(), HashMap::new())
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "failed joining miner summary db task");
+            (HashMap::new(), HashMap::new())
+        }
+    };
 
     let mut address_set = live_stats.keys().cloned().collect::<HashSet<_>>();
     address_set.extend(lifetime_counts.keys().cloned());
+    address_set.extend(worker_counts.keys().cloned());
     let mut addresses = address_set.into_iter().collect::<Vec<_>>();
     addresses.sort();
 
@@ -2771,6 +2820,11 @@ async fn handle_miners(
                 .map(|stats| stats.workers.iter().cloned().collect::<Vec<String>>())
                 .unwrap_or_default();
             workers.sort();
+            let worker_count = if workers.is_empty() {
+                worker_counts.get(&address).copied().unwrap_or(0)
+            } else {
+                workers.len()
+            };
             let hashrate = hashrates.get(&address).copied().unwrap_or(0.0);
             let (accepted, rejected, blocks, db_last_share) =
                 lifetime_counts.get(&address).copied().unwrap_or((
@@ -2784,7 +2838,7 @@ async fn handle_miners(
                 .or_else(|| live.and_then(|stats| stats.last_share_at));
             MinerListItem {
                 address,
-                worker_count: workers.len(),
+                worker_count,
                 workers,
                 shares_accepted: accepted,
                 shares_rejected: rejected,
@@ -2897,7 +2951,6 @@ async fn handle_miner(
     Query(query): Query<MinerDetailQuery>,
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
-    let stats = state.stats.get_miner_stats(&address);
     let store = Arc::clone(&state.store);
     let chain_height = state.node.chain_height();
     let addr = address.clone();
@@ -3034,22 +3087,14 @@ async fn handle_miner(
         "total_rejected": total_rejected,
     });
 
-    match stats {
-        Some(miner_stats) => {
-            let mut obj = base;
-            obj["stats"] = serde_json::to_value(&miner_stats).unwrap_or_default();
-            Json(obj).into_response()
-        }
-        None if has_activity => {
-            let mut obj = base;
-            obj["stats"] = serde_json::Value::Null;
-            Json(obj).into_response()
-        }
-        None => {
-            let mut obj = base;
-            obj["error"] = serde_json::Value::String("miner not found".to_string());
-            (StatusCode::NOT_FOUND, Json(obj)).into_response()
-        }
+    if has_activity {
+        let mut obj = base;
+        obj["stats"] = serde_json::Value::Null;
+        Json(obj).into_response()
+    } else {
+        let mut obj = base;
+        obj["error"] = serde_json::Value::String("miner not found".to_string());
+        (StatusCode::NOT_FOUND, Json(obj)).into_response()
     }
 }
 
@@ -3860,29 +3905,6 @@ fn compute_payout_eta(store: &PoolStore) -> anyhow::Result<PayoutEtaResponse> {
     })
 }
 
-fn compute_pool_confirmed_rewards(store: &PoolStore) -> anyhow::Result<u64> {
-    Ok(store
-        .get_all_balances()?
-        .into_iter()
-        .fold(0u64, |acc, balance| acc.saturating_add(balance.pending)))
-}
-
-fn compute_pool_unconfirmed_rewards(store: &PoolStore, cfg: &Config) -> anyhow::Result<u64> {
-    let mut total = 0u64;
-    for mut block in store.get_unconfirmed_blocks()? {
-        if block.orphaned {
-            continue;
-        }
-        hydrate_provisional_block_reward(&mut block);
-        if block.reward == 0 {
-            continue;
-        }
-        let distributable = block.reward.saturating_sub(cfg.pool_fee(block.reward));
-        total = total.saturating_add(distributable);
-    }
-    Ok(total)
-}
-
 fn apply_wallet_liquidity_to_payout_eta(
     payout_eta: &mut PayoutEtaResponse,
     wallet_balance: Option<&WalletBalance>,
@@ -4321,6 +4343,80 @@ impl ApiState {
                 tracing::warn!(error = %err, "status history persist task join failed");
             }
         }
+    }
+
+    async fn persisted_runtime_snapshot(&self) -> Option<PersistedRuntimeSnapshot> {
+        {
+            let cache = self.live_runtime_snapshot_cache.lock();
+            if cache
+                .updated_at
+                .is_some_and(|updated| updated.elapsed() < DAEMON_HEALTH_CACHE_TTL)
+            {
+                return cache.value.clone();
+            }
+        }
+
+        let store = Arc::clone(&self.store);
+        let loaded = match tokio::task::spawn_blocking(move || -> anyhow::Result<Option<PersistedRuntimeSnapshot>> {
+            let Some(raw) = store.get_meta(LIVE_RUNTIME_SNAPSHOT_META_KEY)? else {
+                return Ok(None);
+            };
+            Ok(Some(serde_json::from_slice(&raw)?))
+        })
+        .await
+        {
+            Ok(Ok(value)) => value,
+            Ok(Err(err)) => {
+                tracing::warn!(error = %err, "failed loading persisted live runtime snapshot");
+                None
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "live runtime snapshot task join failed");
+                None
+            }
+        };
+
+        let mut cache = self.live_runtime_snapshot_cache.lock();
+        cache.updated_at = Some(Instant::now());
+        cache.value = loaded.clone();
+        loaded
+    }
+
+    async fn effective_pool_snapshot(&self) -> PoolSnapshot {
+        let mut live = self.stats.snapshot();
+        if pool_snapshot_has_live_data(&live) {
+            return live;
+        }
+        if let Some(persisted) = self.persisted_runtime_snapshot().await {
+            live.connected_miners = persisted.connected_miners;
+            live.connected_workers = persisted.connected_workers;
+            if live.estimated_hashrate <= 0.0 {
+                live.estimated_hashrate = persisted.estimated_hashrate;
+            }
+        }
+        live
+    }
+
+    async fn effective_validation_summary(&self) -> ValidationSummary {
+        let live = validation_summary_from_snapshot(self.validation.snapshot());
+        if !validation_summary_is_empty(&live) {
+            return live;
+        }
+        if let Some(persisted) = self.persisted_runtime_snapshot().await {
+            return ValidationSummary {
+                in_flight: persisted.validation.in_flight,
+                candidate_queue_depth: persisted.validation.candidate_queue_depth,
+                regular_queue_depth: persisted.validation.regular_queue_depth,
+                tracked_addresses: persisted.validation.tracked_addresses,
+                forced_verify_addresses: persisted.validation.forced_verify_addresses,
+                total_shares: persisted.validation.total_shares,
+                sampled_shares: persisted.validation.sampled_shares,
+                invalid_samples: persisted.validation.invalid_samples,
+                pending_provisional: persisted.validation.pending_provisional,
+                fraud_detections: persisted.validation.fraud_detections,
+            };
+        }
+        live
     }
 
     async fn cached_pending_estimate_for_miner(
@@ -5073,17 +5169,18 @@ mod tests {
 
     use super::{
         block_page_item_response, compute_luck_details_for_hashes, compute_luck_history,
-        compute_pool_confirmed_rewards, compute_pool_unconfirmed_rewards, contains_ci,
-        daemon_debug_log_path, daemon_log_commands,
+        contains_ci, daemon_debug_log_path, daemon_log_commands,
         estimate_unconfirmed_pending_for_miner, estimated_block_reward, handle_miners,
         handle_stats, hashrate_from_stats_with_miner_ramp, hashrate_from_stats_with_warmup,
-        hydrate_provisional_block_reward, load_persisted_status_history, miner_balance_response,
-        miner_has_activity, page_bounds, payout_status_note, pending_balance_note,
-        rejection_window_duration, share_limit, sort_workers_for_miner, trim_log_line,
-        worker_hashrate_by_name, ApiState, DaemonHealthCache, DbTotalsCache, InsightsCache,
-        MinerPendingBlockEstimate, MinerPendingEstimate, MinersQuery, NetworkHashrateCache,
-        StatusHistory, DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW,
-        HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW, STATUS_HISTORY_META_KEY,
+        hydrate_provisional_block_reward, load_persisted_status_history,
+        miner_balance_response, miner_has_activity, page_bounds, payout_status_note,
+        pending_balance_note, rejection_window_duration, share_limit,
+        sort_workers_for_miner, trim_log_line, worker_hashrate_by_name, ApiState,
+        DaemonHealthCache, DbTotalsCache, InsightsCache, LiveRuntimeSnapshotCache,
+        MinerPendingBlockEstimate, MinerPendingEstimate, MinersQuery,
+        NetworkHashrateCache, StatusHistory, DAEMON_LOG_LINE_LIMIT,
+        HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
+        STATUS_HISTORY_META_KEY,
     };
 
     fn test_store() -> Arc<PoolStore> {
@@ -5118,6 +5215,9 @@ mod tests {
             )),
             insights_cache: Arc::new(parking_lot::Mutex::new(InsightsCache::default())),
             miner_pending_estimate_cache: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            live_runtime_snapshot_cache: Arc::new(parking_lot::Mutex::new(
+                LiveRuntimeSnapshotCache::default(),
+            )),
             status_history: Arc::new(parking_lot::Mutex::new(StatusHistory::default())),
             sse_subscriber_limiter: Arc::new(tokio::sync::Semaphore::new(1)),
             api_key: cfg.api_key.clone(),
@@ -5585,59 +5685,6 @@ mod tests {
             compute_luck_history(&store, blocks, Some(1)).expect("truncated luck history");
         assert_eq!(truncated.len(), 1);
         assert_eq!(truncated[0].block_height, 102);
-    }
-
-    #[test]
-    fn pool_reward_totals_split_confirmed_and_unconfirmed_rewards() {
-        let store = test_store();
-        let mut cfg = Config::default();
-        cfg.pool_fee_pct = 10.0;
-        cfg.pool_fee_flat = 0.0;
-
-        store
-            .credit_balance("miner-a", 250)
-            .expect("credit miner a balance");
-        store
-            .credit_balance("miner-b", 750)
-            .expect("credit miner b balance");
-
-        for block in [
-            DbBlock {
-                height: 100,
-                hash: "blk-live".to_string(),
-                difficulty: 200,
-                finder: "miner-a".to_string(),
-                finder_worker: "wa".to_string(),
-                reward: 1_000,
-                timestamp: UNIX_EPOCH + Duration::from_secs(100),
-                confirmed: false,
-                orphaned: false,
-                paid_out: false,
-            },
-            DbBlock {
-                height: 101,
-                hash: "blk-orphan".to_string(),
-                difficulty: 200,
-                finder: "miner-b".to_string(),
-                finder_worker: "wb".to_string(),
-                reward: 2_000,
-                timestamp: UNIX_EPOCH + Duration::from_secs(200),
-                confirmed: false,
-                orphaned: true,
-                paid_out: false,
-            },
-        ] {
-            store.add_block(&block).expect("add test block");
-        }
-
-        assert_eq!(
-            compute_pool_confirmed_rewards(&store).expect("confirmed rewards"),
-            1_000
-        );
-        assert_eq!(
-            compute_pool_unconfirmed_rewards(&store, &cfg).expect("unconfirmed rewards"),
-            900
-        );
     }
 
     #[test]

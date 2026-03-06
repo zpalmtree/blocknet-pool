@@ -89,6 +89,12 @@ pub struct PendingPayout {
     pub initiated_at: SystemTime,
     #[serde(skip_serializing)]
     pub send_started_at: Option<SystemTime>,
+    #[serde(skip_serializing)]
+    pub tx_hash: Option<String>,
+    #[serde(skip_serializing)]
+    pub fee: Option<u64>,
+    #[serde(skip_serializing)]
+    pub sent_at: Option<SystemTime>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -209,7 +215,10 @@ CREATE TABLE IF NOT EXISTS pending_payouts (
     address TEXT PRIMARY KEY,
     amount INTEGER NOT NULL,
     initiated_at INTEGER NOT NULL,
-    send_started_at INTEGER
+    send_started_at INTEGER,
+    tx_hash TEXT,
+    fee INTEGER,
+    sent_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS pool_fee_events (
@@ -306,7 +315,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         self.conn.lock().execute_batch(sql).context("init schema")?;
         self.ensure_payout_fee_column()?;
         self.ensure_share_reject_reason_column()?;
-        self.ensure_pending_payout_send_started_column()?;
+        self.ensure_pending_payout_columns()?;
         Ok(())
     }
 
@@ -339,19 +348,29 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(())
     }
 
-    fn ensure_pending_payout_send_started_column(&self) -> Result<()> {
+    fn ensure_pending_payout_columns(&self) -> Result<()> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare("PRAGMA table_info(pending_payouts)")?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut present = HashMap::<String, bool>::new();
         for row in rows {
-            if row?.eq_ignore_ascii_case("send_started_at") {
-                return Ok(());
-            }
+            present.insert(row?.to_ascii_lowercase(), true);
         }
-        conn.execute(
-            "ALTER TABLE pending_payouts ADD COLUMN send_started_at INTEGER",
-            [],
-        )?;
+        if !present.contains_key("send_started_at") {
+            conn.execute(
+                "ALTER TABLE pending_payouts ADD COLUMN send_started_at INTEGER",
+                [],
+            )?;
+        }
+        if !present.contains_key("tx_hash") {
+            conn.execute("ALTER TABLE pending_payouts ADD COLUMN tx_hash TEXT", [])?;
+        }
+        if !present.contains_key("fee") {
+            conn.execute("ALTER TABLE pending_payouts ADD COLUMN fee INTEGER", [])?;
+        }
+        if !present.contains_key("sent_at") {
+            conn.execute("ALTER TABLE pending_payouts ADD COLUMN sent_at INTEGER", [])?;
+        }
         Ok(())
     }
 
@@ -1521,8 +1540,9 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn create_pending_payout(&self, address: &str, amount: u64) -> Result<()> {
         self.conn.lock().execute(
-            "INSERT INTO pending_payouts (address, amount, initiated_at, send_started_at) VALUES (?1, ?2, ?3, NULL)
-             ON CONFLICT(address) DO UPDATE SET amount = excluded.amount
+            "INSERT INTO pending_payouts (address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at)
+             VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL)
+             ON CONFLICT(address) DO UPDATE SET amount = excluded.amount, tx_hash = NULL, fee = NULL, sent_at = NULL
              WHERE pending_payouts.send_started_at IS NULL",
             params![address, u64_to_i64(amount)?, now_unix()],
         )?;
@@ -1540,7 +1560,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         )?;
         let pending = tx
             .query_row(
-                "SELECT address, amount, initiated_at, send_started_at
+                "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at
                  FROM pending_payouts
                  WHERE address = ?1",
                 params![address],
@@ -1550,12 +1570,107 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                         amount: row.get::<_, i64>(1)?.max(0) as u64,
                         initiated_at: from_unix(row.get::<_, i64>(2)?),
                         send_started_at: row.get::<_, Option<i64>>(3)?.map(from_unix),
+                        tx_hash: row.get(4)?,
+                        fee: row.get::<_, Option<i64>>(5)?.map(|v| v.max(0) as u64),
+                        sent_at: row.get::<_, Option<i64>>(6)?.map(from_unix),
                     })
                 },
             )
             .optional()?;
         tx.commit()?;
         Ok(pending)
+    }
+
+    pub fn record_pending_payout_broadcast(
+        &self,
+        address: &str,
+        amount: u64,
+        fee: u64,
+        tx_hash: &str,
+    ) -> Result<PendingPayout> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+
+        let pending: Option<(i64, Option<String>, Option<i64>)> = tx
+            .query_row(
+                "SELECT amount, tx_hash, fee FROM pending_payouts WHERE address = ?1",
+                params![address],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let Some((pending_amount_raw, existing_tx_hash, existing_fee_raw)) = pending else {
+            return Err(anyhow!("no pending payout for {address}"));
+        };
+        let pending_amount = pending_amount_raw.max(0) as u64;
+        if pending_amount != amount {
+            return Err(anyhow!(
+                "pending payout amount mismatch: expected={}, requested={}",
+                pending_amount,
+                amount
+            ));
+        }
+        if let Some(existing_tx_hash) = existing_tx_hash.as_deref() {
+            if existing_tx_hash != tx_hash {
+                return Err(anyhow!(
+                    "pending payout tx mismatch: expected={}, requested={}",
+                    existing_tx_hash,
+                    tx_hash
+                ));
+            }
+        }
+        if let Some(existing_fee_raw) = existing_fee_raw {
+            let existing_fee = existing_fee_raw.max(0) as u64;
+            if existing_fee != fee {
+                return Err(anyhow!(
+                    "pending payout fee mismatch: expected={}, requested={}",
+                    existing_fee,
+                    fee
+                ));
+            }
+        }
+
+        tx.execute(
+            "UPDATE pending_payouts
+             SET send_started_at = COALESCE(send_started_at, ?2),
+                 tx_hash = ?3,
+                 fee = ?4,
+                 sent_at = COALESCE(sent_at, ?2)
+             WHERE address = ?1",
+            params![address, now_unix(), tx_hash, u64_to_i64(fee)?],
+        )?;
+
+        let pending = tx.query_row(
+            "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at
+             FROM pending_payouts
+             WHERE address = ?1",
+            params![address],
+            |row| {
+                Ok(PendingPayout {
+                    address: row.get(0)?,
+                    amount: row.get::<_, i64>(1)?.max(0) as u64,
+                    initiated_at: from_unix(row.get::<_, i64>(2)?),
+                    send_started_at: row.get::<_, Option<i64>>(3)?.map(from_unix),
+                    tx_hash: row.get(4)?,
+                    fee: row.get::<_, Option<i64>>(5)?.map(|v| v.max(0) as u64),
+                    sent_at: row.get::<_, Option<i64>>(6)?.map(from_unix),
+                })
+            },
+        )?;
+        tx.commit()?;
+        Ok(pending)
+    }
+
+    pub fn reset_pending_payout_send_state(&self, address: &str) -> Result<()> {
+        self.conn.lock().execute(
+            "UPDATE pending_payouts
+             SET send_started_at = NULL,
+                 tx_hash = NULL,
+                 fee = NULL,
+                 sent_at = NULL
+             WHERE address = ?1",
+            params![address],
+        )?;
+        Ok(())
     }
 
     pub fn complete_pending_payout(
@@ -1568,14 +1683,14 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
 
-        let pending: Option<(i64, i64)> = tx
+        let pending: Option<(i64, i64, Option<String>, Option<i64>)> = tx
             .query_row(
-                "SELECT amount, initiated_at FROM pending_payouts WHERE address = ?1",
+                "SELECT amount, initiated_at, tx_hash, fee FROM pending_payouts WHERE address = ?1",
                 params![address],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()?;
-        let Some((pending_amount_raw, _initiated_at)) = pending else {
+        let Some((pending_amount_raw, _initiated_at, pending_tx_hash, pending_fee_raw)) = pending else {
             return Err(anyhow!("no pending payout for {address}"));
         };
         let pending_amount = pending_amount_raw.max(0) as u64;
@@ -1585,6 +1700,25 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 pending_amount,
                 amount
             ));
+        }
+        if let Some(pending_tx_hash) = pending_tx_hash.as_deref() {
+            if pending_tx_hash != tx_hash {
+                return Err(anyhow!(
+                    "pending payout tx mismatch: expected={}, requested={}",
+                    pending_tx_hash,
+                    tx_hash
+                ));
+            }
+        }
+        if let Some(pending_fee_raw) = pending_fee_raw {
+            let pending_fee = pending_fee_raw.max(0) as u64;
+            if pending_fee != fee {
+                return Err(anyhow!(
+                    "pending payout fee mismatch: expected={}, requested={}",
+                    pending_fee,
+                    fee
+                ));
+            }
         }
 
         let mut bal = tx
@@ -1650,7 +1784,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     pub fn get_pending_payouts(&self) -> Result<Vec<PendingPayout>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT address, amount, initiated_at, send_started_at
+            "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at
              FROM pending_payouts
              ORDER BY initiated_at ASC",
         )?;
@@ -1660,6 +1794,9 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 amount: row.get::<_, i64>(1)?.max(0) as u64,
                 initiated_at: from_unix(row.get::<_, i64>(2)?),
                 send_started_at: row.get::<_, Option<i64>>(3)?.map(from_unix),
+                tx_hash: row.get(4)?,
+                fee: row.get::<_, Option<i64>>(5)?.map(|v| v.max(0) as u64),
+                sent_at: row.get::<_, Option<i64>>(6)?.map(from_unix),
             })
         })?;
         collect_rows(rows)
@@ -1668,7 +1805,9 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     pub fn get_pending_payout(&self, address: &str) -> Result<Option<PendingPayout>> {
         let conn = self.conn.lock();
         conn.query_row(
-            "SELECT address, amount, initiated_at, send_started_at FROM pending_payouts WHERE address = ?1",
+            "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at
+             FROM pending_payouts
+             WHERE address = ?1",
             params![address],
             |row| {
                 Ok(PendingPayout {
@@ -1676,6 +1815,9 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     amount: row.get::<_, i64>(1)?.max(0) as u64,
                     initiated_at: from_unix(row.get::<_, i64>(2)?),
                     send_started_at: row.get::<_, Option<i64>>(3)?.map(from_unix),
+                    tx_hash: row.get(4)?,
+                    fee: row.get::<_, Option<i64>>(5)?.map(|v| v.max(0) as u64),
+                    sent_at: row.get::<_, Option<i64>>(6)?.map(from_unix),
                 })
             },
         )
@@ -2091,6 +2233,31 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             map.entry(finder)
                 .and_modify(|e| e.2 = count)
                 .or_insert((0, 0, count, None));
+        }
+        Ok(map)
+    }
+
+    pub fn miner_worker_counts_since(
+        &self,
+        since: SystemTime,
+    ) -> Result<std::collections::HashMap<String, usize>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT miner, COUNT(DISTINCT worker)
+             FROM shares
+             WHERE created_at >= ?1
+             GROUP BY miner",
+        )?;
+        let rows = stmt.query_map(params![to_unix(since)], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?.max(0) as usize,
+            ))
+        })?;
+        let mut map = std::collections::HashMap::new();
+        for row in rows {
+            let (miner, worker_count) = row?;
+            map.insert(miner, worker_count);
         }
         Ok(map)
     }

@@ -188,8 +188,11 @@ export interface HealthResponse {
   payouts?: {
     pending_count?: number;
     pending_amount?: number;
-    confirmed_rewards?: number;
-    unconfirmed_rewards?: number;
+  };
+  wallet?: {
+    spendable?: number;
+    pending?: number;
+    total?: number;
   };
 }
 
