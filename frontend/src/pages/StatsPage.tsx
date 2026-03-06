@@ -7,7 +7,6 @@ import { formatCoinAmount, formatCoins, formatFee, humanRate, timeAgo, toUnixMs 
 import type { ThemeMode } from '../lib/theme';
 import type {
   HashratePoint,
-  MinerPendingBlockEstimate,
   MinerResponse,
   Range,
   StatsInsightsResponse,
@@ -23,31 +22,6 @@ interface StatsPageProps {
 function fmtPct(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '-';
   return `${value.toFixed(1)}%`;
-}
-
-function toneClass(tone: string | null | undefined): string {
-  if (tone === 'critical') return 'is-critical';
-  if (tone === 'warn') return 'is-warn';
-  return 'is-ok';
-}
-
-function previewStatusCopy(block: MinerPendingBlockEstimate): string | null {
-  switch (block.validation_state) {
-    case 'ready':
-      return block.credit_withheld ? 'Temporarily withheld while validation catches up' : null;
-    case 'finder_fallback':
-      return 'Using finder fallback because no share window was recorded';
-    case 'awaiting_delay':
-      return 'Waiting for recent shares to clear the provisional delay';
-    case 'awaiting_shares':
-      return 'Waiting for enough verified shares';
-    case 'awaiting_ratio':
-      return 'Waiting for enough verified work';
-    case 'extra_verification':
-      return 'Under additional verification';
-    default:
-      return block.credit_withheld ? 'Preview withheld while validation catches up' : 'Validation in progress';
-  }
 }
 
 type RejectionWindowRange = '1h' | '24h' | '7d';
@@ -307,22 +281,36 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
 
       {minerData && (
         <div id="lookup-result">
+          <div className="reward-flow" aria-label="Reward flow">
+            <div className="stat-card reward-flow__card">
+              <div className="label">Estimated Rewards</div>
+              <div className="value">{formatCoins(pendingEstimated)}</div>
+              <div className="stat-meta">Recent blocks still confirming</div>
+            </div>
+            <div className="reward-flow__connector" aria-hidden="true">
+              <span className="reward-flow__line" />
+              <span className="reward-flow__arrow" />
+            </div>
+            <div className="stat-card reward-flow__card">
+              <div className="label">Confirmed Rewards</div>
+              <div className="value">{formatCoins(pendingConfirmed)}</div>
+              <div className="stat-meta">Matured balance awaiting payout</div>
+            </div>
+            <div className="reward-flow__connector" aria-hidden="true">
+              <span className="reward-flow__line" />
+              <span className="reward-flow__arrow" />
+            </div>
+            <div className="stat-card reward-flow__card">
+              <div className="label">Paid Balance</div>
+              <div className="value">{formatCoins(minerData.balance?.paid || 0)}</div>
+              <div className="stat-meta">Already sent to this address</div>
+            </div>
+          </div>
+
           <div className="stats-grid stats-grid-dense" style={{ marginBottom: 24 }}>
             <div className="stat-card">
               <div className="label">Hashrate</div>
               <div className="value">{humanRate(minerData.hashrate || 0)}</div>
-            </div>
-            <div className="stat-card">
-              <div className="label">Confirmed Rewards</div>
-              <div className="value">{formatCoins(pendingConfirmed)}</div>
-            </div>
-            <div className="stat-card">
-              <div className="label">Estimated Rewards</div>
-              <div className="value">{formatCoins(pendingEstimated)}</div>
-            </div>
-            <div className="stat-card">
-              <div className="label">Paid Balance</div>
-              <div className="value">{formatCoins(minerData.balance?.paid || 0)}</div>
             </div>
             <div className="stat-card">
               <div className="label">Blocks Found</div>
@@ -422,14 +410,12 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
                     <tr>
                       <th>Height</th>
                       <th>Estimated Credit</th>
-                      <th>Status</th>
                       <th>Confirms Left</th>
                       <th>Time</th>
                     </tr>
                   </thead>
                   <tbody>
                     {previewBlocks.map((b) => {
-                      const statusText = previewStatusCopy(b);
                       return (
                       <tr key={`${b.height}-${b.hash}`}>
                         <td>
@@ -438,21 +424,6 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
                           </a>
                         </td>
                         <td>{b.credit_withheld ? 'Withheld' : formatCoins(b.estimated_credit)}</td>
-                        <td title={b.validation_detail || undefined}>
-                          <div
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 10,
-                              whiteSpace: 'nowrap',
-                              fontSize: 12,
-                              color: 'var(--muted)',
-                            }}
-                          >
-                            <span className={`round-chip ${toneClass(b.validation_tone)}`}>{b.validation_label || 'Pending'}</span>
-                            {statusText ? <span>{statusText}</span> : null}
-                          </div>
-                        </td>
                         <td>{b.confirmations_remaining}</td>
                         <td title={new Date(toUnixMs(b.timestamp)).toLocaleString()}>{timeAgo(b.timestamp)}</td>
                       </tr>
