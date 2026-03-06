@@ -51,6 +51,11 @@ export function formatCoins(sats: number | null | undefined): string {
   return `${(sats / 1e8).toFixed(2)} BNT`;
 }
 
+export function formatCoinAmount(sats: number | null | undefined): string {
+  if (sats == null) return '0.00';
+  return (sats / 1e8).toFixed(2);
+}
+
 export function formatFee(sats: number | null | undefined): string {
   if (sats == null || sats === 0) return '0 BNT';
   const v = sats / 1e8;
