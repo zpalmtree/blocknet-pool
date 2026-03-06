@@ -2100,6 +2100,9 @@ struct JobHealth {
 #[derive(Serialize)]
 struct PayoutHealth {
     pending_count: usize,
+    pending_amount: u64,
+    confirmed_rewards: u64,
+    unconfirmed_rewards: u64,
     last_payout: Option<Payout>,
 }
 
@@ -2398,12 +2401,22 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
         .map(|age| age.as_millis() as u64);
 
     let store = Arc::clone(&state.store);
+    let cfg = state.config.clone();
     let payout_health =
         match tokio::task::spawn_blocking(move || -> anyhow::Result<PayoutHealth> {
-            let pending_count = store.get_pending_payouts()?.len();
+            let pending = store.get_pending_payouts()?;
+            let pending_count = pending.len();
+            let pending_amount = pending
+                .iter()
+                .fold(0u64, |acc, payout| acc.saturating_add(payout.amount));
             let last_payout = store.get_recent_payouts(1)?.into_iter().next();
+            let confirmed_rewards = compute_pool_confirmed_rewards(&store)?;
+            let unconfirmed_rewards = compute_pool_unconfirmed_rewards(&store, &cfg)?;
             Ok(PayoutHealth {
                 pending_count,
+                pending_amount,
+                confirmed_rewards,
+                unconfirmed_rewards,
                 last_payout,
             })
         })
@@ -3847,6 +3860,29 @@ fn compute_payout_eta(store: &PoolStore) -> anyhow::Result<PayoutEtaResponse> {
     })
 }
 
+fn compute_pool_confirmed_rewards(store: &PoolStore) -> anyhow::Result<u64> {
+    Ok(store
+        .get_all_balances()?
+        .into_iter()
+        .fold(0u64, |acc, balance| acc.saturating_add(balance.pending)))
+}
+
+fn compute_pool_unconfirmed_rewards(store: &PoolStore, cfg: &Config) -> anyhow::Result<u64> {
+    let mut total = 0u64;
+    for mut block in store.get_unconfirmed_blocks()? {
+        if block.orphaned {
+            continue;
+        }
+        hydrate_provisional_block_reward(&mut block);
+        if block.reward == 0 {
+            continue;
+        }
+        let distributable = block.reward.saturating_sub(cfg.pool_fee(block.reward));
+        total = total.saturating_add(distributable);
+    }
+    Ok(total)
+}
+
 fn apply_wallet_liquidity_to_payout_eta(
     payout_eta: &mut PayoutEtaResponse,
     wallet_balance: Option<&WalletBalance>,
@@ -5037,7 +5073,8 @@ mod tests {
 
     use super::{
         block_page_item_response, compute_luck_details_for_hashes, compute_luck_history,
-        contains_ci, daemon_debug_log_path, daemon_log_commands,
+        compute_pool_confirmed_rewards, compute_pool_unconfirmed_rewards, contains_ci,
+        daemon_debug_log_path, daemon_log_commands,
         estimate_unconfirmed_pending_for_miner, estimated_block_reward, handle_miners,
         handle_stats, hashrate_from_stats_with_miner_ramp, hashrate_from_stats_with_warmup,
         hydrate_provisional_block_reward, load_persisted_status_history, miner_balance_response,
@@ -5548,6 +5585,59 @@ mod tests {
             compute_luck_history(&store, blocks, Some(1)).expect("truncated luck history");
         assert_eq!(truncated.len(), 1);
         assert_eq!(truncated[0].block_height, 102);
+    }
+
+    #[test]
+    fn pool_reward_totals_split_confirmed_and_unconfirmed_rewards() {
+        let store = test_store();
+        let mut cfg = Config::default();
+        cfg.pool_fee_pct = 10.0;
+        cfg.pool_fee_flat = 0.0;
+
+        store
+            .credit_balance("miner-a", 250)
+            .expect("credit miner a balance");
+        store
+            .credit_balance("miner-b", 750)
+            .expect("credit miner b balance");
+
+        for block in [
+            DbBlock {
+                height: 100,
+                hash: "blk-live".to_string(),
+                difficulty: 200,
+                finder: "miner-a".to_string(),
+                finder_worker: "wa".to_string(),
+                reward: 1_000,
+                timestamp: UNIX_EPOCH + Duration::from_secs(100),
+                confirmed: false,
+                orphaned: false,
+                paid_out: false,
+            },
+            DbBlock {
+                height: 101,
+                hash: "blk-orphan".to_string(),
+                difficulty: 200,
+                finder: "miner-b".to_string(),
+                finder_worker: "wb".to_string(),
+                reward: 2_000,
+                timestamp: UNIX_EPOCH + Duration::from_secs(200),
+                confirmed: false,
+                orphaned: true,
+                paid_out: false,
+            },
+        ] {
+            store.add_block(&block).expect("add test block");
+        }
+
+        assert_eq!(
+            compute_pool_confirmed_rewards(&store).expect("confirmed rewards"),
+            1_000
+        );
+        assert_eq!(
+            compute_pool_unconfirmed_rewards(&store, &cfg).expect("unconfirmed rewards"),
+            900
+        );
     }
 
     #[test]

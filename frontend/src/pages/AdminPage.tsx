@@ -458,7 +458,10 @@ export function AdminPage({
           </div>
 
           <div style={{ display: tab === 'health' ? '' : 'none' }}>
-            <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(4,1fr)', marginBottom: 20 }}>
+            <div
+              className="stats-grid"
+              style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginBottom: 20 }}
+            >
               <div className="stat-card">
                 <div className="label">Uptime</div>
                 <div className="value">{health ? fmtSeconds(health.uptime_seconds || 0) : '-'}</div>
@@ -486,6 +489,22 @@ export function AdminPage({
               <div className="stat-card">
                 <div className="label">Pending Payouts</div>
                 <div className="value">{health?.payouts?.pending_count ?? '-'}</div>
+              </div>
+              <div className="stat-card">
+                <div className="label">Confirmed Rewards</div>
+                <div className="value">
+                  {health?.payouts?.confirmed_rewards != null
+                    ? formatCoins(health.payouts.confirmed_rewards)
+                    : '-'}
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="label">Unconfirmed Rewards</div>
+                <div className="value">
+                  {health?.payouts?.unconfirmed_rewards != null
+                    ? formatCoins(health.payouts.unconfirmed_rewards)
+                    : '-'}
+                </div>
               </div>
             </div>
 

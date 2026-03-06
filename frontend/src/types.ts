@@ -185,7 +185,12 @@ export interface HealthResponse {
   uptime_seconds: number;
   daemon?: { reachable?: boolean };
   job?: { template_age_seconds?: number | null };
-  payouts?: { pending_count?: number };
+  payouts?: {
+    pending_count?: number;
+    pending_amount?: number;
+    confirmed_rewards?: number;
+    unconfirmed_rewards?: number;
+  };
 }
 
 export interface HashratePoint {
