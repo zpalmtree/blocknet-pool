@@ -268,11 +268,11 @@ nav {
   height: 14px;
   color: var(--muted);
   transition: color 0.15s;
-  transform: translateY(-50%);
 }
 
 .theme-toggle-icon-sun {
   left: 9px;
+  translate(2px, -7px);
 }
 
 .theme-toggle-icon-moon {
@@ -299,7 +299,7 @@ nav {
 }
 
 .theme-toggle-icon-moon svg {
-  transform: translate(2px, -7.5px);
+  transform: translate(1px, -8px);
 }
 
 .theme-toggle-thumb {
