@@ -33,7 +33,9 @@ use crate::jobs::JobManager;
 use crate::node::{NodeClient, WalletBalance};
 use crate::payout::{is_share_payout_eligible, weight_shares, PayoutTrustPolicy};
 use crate::service_state::{PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY};
-use crate::stats::{MinerStats, PoolSnapshot, PoolStats, RejectionAnalyticsSnapshot, RejectionReasonCount};
+use crate::stats::{
+    MinerStats, PoolSnapshot, PoolStats, RejectionAnalyticsSnapshot, RejectionReasonCount,
+};
 use crate::store::PoolStore;
 use crate::validation::{
     ValidationEngine, ValidationSnapshot, SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED,
@@ -66,6 +68,7 @@ pub const DEFAULT_MAX_SSE_SUBSCRIBERS: usize = 256;
 const DEFAULT_DAEMON_LOG_TAIL: usize = 200;
 const MAX_DAEMON_LOG_TAIL: usize = 2000;
 const DAEMON_LOG_LINE_LIMIT: usize = 8192;
+const DAEMON_LOG_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 const MINER_PENDING_ESTIMATE_CACHE_TTL: Duration = Duration::from_secs(10);
 const MINER_PENDING_ESTIMATE_CACHE_MAX_ENTRIES: usize = 4096;
 
@@ -2109,7 +2112,9 @@ fn validation_summary_is_empty(summary: &ValidationSummary) -> bool {
 }
 
 fn pool_snapshot_has_live_data(snapshot: &PoolSnapshot) -> bool {
-    snapshot.connected_miners > 0 || snapshot.connected_workers > 0 || snapshot.estimated_hashrate > 0.0
+    snapshot.connected_miners > 0
+        || snapshot.connected_workers > 0
+        || snapshot.estimated_hashrate > 0.0
 }
 
 #[derive(Serialize)]
@@ -2151,6 +2156,8 @@ struct PayoutHealth {
 struct WalletHealth {
     spendable: u64,
     pending: u64,
+    pending_unconfirmed: u64,
+    pending_unconfirmed_eta: u64,
     total: u64,
 }
 
@@ -2472,6 +2479,8 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
         Ok(Ok(v)) => Some(WalletHealth {
             spendable: v.spendable,
             pending: v.pending,
+            pending_unconfirmed: v.pending_unconfirmed,
+            pending_unconfirmed_eta: v.pending_unconfirmed_eta,
             total: v.total,
         }),
         Ok(Err(err)) => {
@@ -2531,7 +2540,8 @@ async fn handle_daemon_logs_stream(
     (
         [
             (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
-            (header::CACHE_CONTROL, "no-cache"),
+            (header::CACHE_CONTROL, "no-cache, no-transform"),
+            (header::HeaderName::from_static("x-accel-buffering"), "no"),
         ],
         Body::from_stream(ReceiverStream::new(rx)),
     )
@@ -2648,9 +2658,17 @@ async fn stream_daemon_logs_with_command(
     let mut stderr_lines = BufReader::new(stderr).lines();
     let mut stdout_open = true;
     let mut stderr_open = true;
+    let mut heartbeat = tokio::time::interval(DAEMON_LOG_HEARTBEAT_INTERVAL);
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    heartbeat.tick().await;
 
     while stdout_open || stderr_open {
         tokio::select! {
+            _ = heartbeat.tick() => {
+                if !send_log_keepalive(tx).await {
+                    return Ok(());
+                }
+            }
             result = stdout_lines.next_line(), if stdout_open => {
                 match result {
                     Ok(Some(line)) => {
@@ -2704,6 +2722,10 @@ async fn send_log_line(tx: &mpsc::Sender<Result<Vec<u8>, Infallible>>, line: &st
     let mut payload = line.as_bytes().to_vec();
     payload.push(b'\n');
     tx.send(Ok(payload)).await.is_ok()
+}
+
+async fn send_log_keepalive(tx: &mpsc::Sender<Result<Vec<u8>, Infallible>>) -> bool {
+    tx.send(Ok(vec![b'\n'])).await.is_ok()
 }
 
 fn trim_log_line(line: &str) -> String {
@@ -4357,12 +4379,14 @@ impl ApiState {
         }
 
         let store = Arc::clone(&self.store);
-        let loaded = match tokio::task::spawn_blocking(move || -> anyhow::Result<Option<PersistedRuntimeSnapshot>> {
-            let Some(raw) = store.get_meta(LIVE_RUNTIME_SNAPSHOT_META_KEY)? else {
-                return Ok(None);
-            };
-            Ok(Some(serde_json::from_slice(&raw)?))
-        })
+        let loaded = match tokio::task::spawn_blocking(
+            move || -> anyhow::Result<Option<PersistedRuntimeSnapshot>> {
+                let Some(raw) = store.get_meta(LIVE_RUNTIME_SNAPSHOT_META_KEY)? else {
+                    return Ok(None);
+                };
+                Ok(Some(serde_json::from_slice(&raw)?))
+            },
+        )
         .await
         {
             Ok(Ok(value)) => value,
@@ -5172,15 +5196,13 @@ mod tests {
         contains_ci, daemon_debug_log_path, daemon_log_commands,
         estimate_unconfirmed_pending_for_miner, estimated_block_reward, handle_miners,
         handle_stats, hashrate_from_stats_with_miner_ramp, hashrate_from_stats_with_warmup,
-        hydrate_provisional_block_reward, load_persisted_status_history,
-        miner_balance_response, miner_has_activity, page_bounds, payout_status_note,
-        pending_balance_note, rejection_window_duration, share_limit,
-        sort_workers_for_miner, trim_log_line, worker_hashrate_by_name, ApiState,
-        DaemonHealthCache, DbTotalsCache, InsightsCache, LiveRuntimeSnapshotCache,
-        MinerPendingBlockEstimate, MinerPendingEstimate, MinersQuery,
-        NetworkHashrateCache, StatusHistory, DAEMON_LOG_LINE_LIMIT,
-        HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
-        STATUS_HISTORY_META_KEY,
+        hydrate_provisional_block_reward, load_persisted_status_history, miner_balance_response,
+        miner_has_activity, page_bounds, payout_status_note, pending_balance_note,
+        rejection_window_duration, share_limit, sort_workers_for_miner, trim_log_line,
+        worker_hashrate_by_name, ApiState, DaemonHealthCache, DbTotalsCache, InsightsCache,
+        LiveRuntimeSnapshotCache, MinerPendingBlockEstimate, MinerPendingEstimate, MinersQuery,
+        NetworkHashrateCache, StatusHistory, DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW,
+        HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW, STATUS_HISTORY_META_KEY,
     };
 
     fn test_store() -> Arc<PoolStore> {
@@ -5434,6 +5456,9 @@ mod tests {
             amount: 100_000_000,
             initiated_at: UNIX_EPOCH,
             send_started_at: None,
+            tx_hash: None,
+            fee: None,
+            sent_at: None,
         };
         let queued_note =
             payout_status_note(&cfg, 250_000_000, Some(&queued)).expect("queued note");
@@ -5453,6 +5478,9 @@ mod tests {
             amount: 100,
             initiated_at: UNIX_EPOCH,
             send_started_at: None,
+            tx_hash: None,
+            fee: None,
+            sent_at: None,
         };
         let response = miner_balance_response(&balance, Some(&queued));
         assert_eq!(response.pending, 250);

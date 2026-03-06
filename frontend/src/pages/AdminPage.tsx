@@ -6,6 +6,7 @@ import { fmtSeconds, formatCoins, formatFee, humanRate, shortAddr, shortTx, time
 import type { AdminPayoutItem, AdminTab, FeeEvent, HealthResponse, MinerListItem, PagerState } from '../types';
 
 const MAX_DAEMON_LOG_LINES = 1000;
+const DAEMON_LOG_RECONNECT_DELAY_MS = 1500;
 
 interface AdminPageProps {
   active: boolean;
@@ -152,41 +153,63 @@ export function AdminPage({
     if (!active || !apiKey || tab !== 'logs') return;
 
     const controller = new AbortController();
-    let seenLine = false;
-    setDaemonLogsStatus('connecting');
-    setDaemonLogsError('');
+    let stopped = false;
+    let reconnectTimer: number | null = null;
+
+    const waitForReconnect = () =>
+      new Promise<void>((resolve) => {
+        const finish = () => {
+          controller.signal.removeEventListener('abort', finish);
+          if (reconnectTimer != null) {
+            window.clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+          }
+          resolve();
+        };
+
+        reconnectTimer = window.setTimeout(() => {
+          finish();
+        }, DAEMON_LOG_RECONNECT_DELAY_MS);
+        controller.signal.addEventListener('abort', finish, { once: true });
+      });
 
     const connect = async () => {
-      try {
-        await api.streamDaemonLogs({
-          tail: daemonLogsTail,
-          signal: controller.signal,
-          onLine: (line) => {
-            seenLine = true;
-            setDaemonLogsStatus('live');
-            setDaemonLogs((prev) => {
-              const next = prev.concat(line);
-              if (next.length <= MAX_DAEMON_LOG_LINES) {
-                return next;
-              }
-              return next.slice(next.length - MAX_DAEMON_LOG_LINES);
-            });
-          },
-        });
-        if (controller.signal.aborted) return;
-        if (!seenLine) {
-          setDaemonLogsStatus('idle');
+      while (!stopped && !controller.signal.aborted) {
+        setDaemonLogs([]);
+        setDaemonLogsStatus('connecting');
+        setDaemonLogsError('');
+
+        try {
+          await api.streamDaemonLogs({
+            tail: daemonLogsTail,
+            signal: controller.signal,
+            onLine: (line) => {
+              setDaemonLogsStatus('live');
+              setDaemonLogs((prev) => {
+                const next = prev.concat(line);
+                if (next.length <= MAX_DAEMON_LOG_LINES) {
+                  return next;
+                }
+                return next.slice(next.length - MAX_DAEMON_LOG_LINES);
+              });
+            },
+          });
+          if (stopped || controller.signal.aborted) return;
+          setDaemonLogsStatus('connecting');
+          await waitForReconnect();
+        } catch (err) {
+          if (stopped || controller.signal.aborted) return;
+          if (err instanceof DOMException && err.name === 'AbortError') return;
+          setDaemonLogsStatus('error');
+          setDaemonLogsError(err instanceof Error ? err.message : 'failed to stream daemon logs');
+          return;
         }
-      } catch (err) {
-        if (controller.signal.aborted) return;
-        if (err instanceof DOMException && err.name === 'AbortError') return;
-        setDaemonLogsStatus('error');
-        setDaemonLogsError(err instanceof Error ? err.message : 'failed to stream daemon logs');
       }
     };
 
     void connect();
     return () => {
+      stopped = true;
       controller.abort();
     };
   }, [active, api, apiKey, daemonLogsTail, daemonLogsConnectSeq, tab]);
@@ -503,6 +526,22 @@ export function AdminPage({
                 <div className="value">
                   {health?.wallet?.pending != null
                     ? formatCoins(health.wallet.pending)
+                    : '-'}
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="label">Unconfirmed Change</div>
+                <div className="value">
+                  {health?.wallet?.pending_unconfirmed != null
+                    ? formatCoins(health.wallet.pending_unconfirmed)
+                    : '-'}
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="label">Change ETA</div>
+                <div className="value">
+                  {health?.wallet?.pending_unconfirmed_eta != null
+                    ? fmtSeconds(health.wallet.pending_unconfirmed_eta)
                     : '-'}
                 </div>
               </div>

@@ -6,8 +6,8 @@ use anyhow::{anyhow, Result};
 use blocknet_pool_rs::api::run_api;
 use blocknet_pool_rs::logging::init_logging;
 use blocknet_pool_rs::runtime::{
-    api_listen_addr, bootstrap_shared_runtime, build_api_state, build_engine,
-    build_stratum_server, start_api_background_tasks, start_stratum_background_tasks,
+    api_listen_addr, bootstrap_shared_runtime, build_api_state, build_engine, build_stratum_server,
+    start_api_background_tasks, start_stratum_background_tasks,
 };
 use tracing::info;
 

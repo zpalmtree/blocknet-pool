@@ -4,13 +4,16 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::config::Config;
-use crate::db::{DbBlock, DbShare, PendingPayout, PoolFeeRecord};
+use crate::db::{Balance, DbBlock, DbShare, PendingPayout, PoolFeeRecord};
 use crate::node::{http_error_body_contains, is_http_status, NodeClient, NodeStatus};
 use crate::protocol::validate_miner_address;
 use crate::store::PoolStore;
 use crate::validation::{SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED};
 
 const MIN_PAYOUT_INTERVAL: Duration = Duration::from_secs(1);
+const MIN_PAYOUT_FEE_BUFFER: u64 = 1_000;
+const PENDING_PAYOUT_RETRY_GRACE: Duration = Duration::from_secs(15 * 60);
+const PAYOUT_CONFIRMATIONS_REQUIRED: u64 = 1;
 
 #[derive(Debug, Clone, Copy)]
 pub struct PayoutTrustPolicy {
@@ -540,6 +543,18 @@ impl PayoutProcessor {
             if pending_amount == 0 {
                 continue;
             }
+            match self.reconcile_broadcast_payout(&bal, &pending) {
+                Ok(true) => continue,
+                Ok(false) => {}
+                Err(err) => {
+                    tracing::warn!(
+                        address = %bal.address,
+                        error = %err,
+                        "failed to reconcile broadcast payout state"
+                    );
+                    continue;
+                }
+            }
             if bal.pending < pending_amount {
                 tracing::warn!(
                     address = %bal.address,
@@ -568,7 +583,7 @@ impl PayoutProcessor {
                     return;
                 }
             };
-            if wallet_balance.spendable < pending_amount {
+            if wallet_balance.spendable < pending_amount.saturating_add(MIN_PAYOUT_FEE_BUFFER) {
                 continue;
             }
 
@@ -594,6 +609,9 @@ impl PayoutProcessor {
                 amount: pending_amount,
                 initiated_at: pending.initiated_at,
                 send_started_at: pending.send_started_at,
+                tx_hash: None,
+                fee: None,
+                sent_at: None,
             };
             let idempotency_key = payout_idempotency_key(&pending_for_send);
             let send = self
@@ -616,6 +634,13 @@ impl PayoutProcessor {
                                 "wallet send failed permanently; dropped pending payout"
                             );
                         }
+                    } else if is_wallet_liquidity_error(&err) {
+                        tracing::info!(
+                            address = %bal.address,
+                            amount = pending_amount,
+                            error = %err,
+                            "wallet liquidity insufficient to cover payout plus fee; retaining queued payout"
+                        );
                     } else {
                         tracing::warn!(address = %bal.address, error = %err, "wallet send failed");
                     }
@@ -623,13 +648,18 @@ impl PayoutProcessor {
                 }
             };
 
-            if let Err(err) = self.store.complete_pending_payout(
+            if let Err(err) = self.store.record_pending_payout_broadcast(
                 &bal.address,
                 pending_amount,
                 sent.fee,
                 &sent.txid,
             ) {
-                tracing::error!(address = %bal.address, tx = %sent.txid, error = %err, "critical payout reconciliation failure");
+                tracing::error!(
+                    address = %bal.address,
+                    tx = %sent.txid,
+                    error = %err,
+                    "critical payout broadcast persistence failure"
+                );
                 continue;
             }
             sent_recipients = sent_recipients.saturating_add(1);
@@ -641,8 +671,56 @@ impl PayoutProcessor {
                 fee = sent.fee,
                 tx = %sent.txid,
                 idempotency_key = %idempotency_key,
-                "payout sent"
+                "payout broadcast"
             );
+        }
+    }
+
+    fn reconcile_broadcast_payout(
+        &self,
+        bal: &Balance,
+        pending: &PendingPayout,
+    ) -> anyhow::Result<bool> {
+        let Some(tx_hash) = pending.tx_hash.as_deref().filter(|v| !v.trim().is_empty()) else {
+            return Ok(false);
+        };
+
+        let status = self.node.get_tx_status_optional(tx_hash)?;
+        match status {
+            Some(status) if status.in_mempool => Ok(true),
+            Some(status) if status.confirmations >= PAYOUT_CONFIRMATIONS_REQUIRED => {
+                let fee = pending.fee.unwrap_or(0);
+                self.store
+                    .complete_pending_payout(&bal.address, pending.amount, fee, tx_hash)?;
+                tracing::info!(
+                    address = %bal.address,
+                    amount = pending.amount,
+                    fee,
+                    tx = %tx_hash,
+                    confirmations = status.confirmations,
+                    "payout confirmed"
+                );
+                Ok(true)
+            }
+            Some(_) => Ok(true),
+            None => {
+                let sent_at = pending.sent_at.or(pending.send_started_at);
+                let age = sent_at
+                    .and_then(|ts| SystemTime::now().duration_since(ts).ok())
+                    .unwrap_or_default();
+                if age < PENDING_PAYOUT_RETRY_GRACE {
+                    return Ok(true);
+                }
+                self.store.reset_pending_payout_send_state(&bal.address)?;
+                tracing::warn!(
+                    address = %bal.address,
+                    amount = pending.amount,
+                    tx = %tx_hash,
+                    age_secs = age.as_secs(),
+                    "broadcast payout disappeared from mempool/chain; reset for retry"
+                );
+                Ok(true)
+            }
         }
     }
 
@@ -814,6 +892,12 @@ fn daemon_ready_for_payouts(status: &NodeStatus) -> bool {
 fn should_drop_pending_payout(err: &anyhow::Error) -> bool {
     http_error_body_contains(err, 400, "invalid address")
         || http_error_body_contains(err, 400, "self-sends are temporarily disabled")
+}
+
+fn is_wallet_liquidity_error(err: &anyhow::Error) -> bool {
+    http_error_body_contains(err, 400, "insufficient spendable balance")
+        || http_error_body_contains(err, 400, "insufficient funds")
+        || http_error_body_contains(err, 400, "no spendable outputs")
 }
 
 fn add_credit(
@@ -1165,5 +1249,23 @@ mod tests {
             body: r#"{"error":"send rate limit exceeded"}"#.to_string(),
         });
         assert!(!should_drop_pending_payout(&transient));
+    }
+
+    #[test]
+    fn wallet_liquidity_errors_are_treated_as_retryable() {
+        let insufficient = anyhow::anyhow!(HttpError {
+            path: "/api/wallet/send".to_string(),
+            status_code: 400,
+            body: r#"{"error":"insufficient funds after fee adjustment: have 100 need 110"}"#
+                .to_string(),
+        });
+        assert!(is_wallet_liquidity_error(&insufficient));
+
+        let no_outputs = anyhow::anyhow!(HttpError {
+            path: "/api/wallet/send".to_string(),
+            status_code: 400,
+            body: r#"{"error":"insufficient funds: no spendable outputs"}"#.to_string(),
+        });
+        assert!(is_wallet_liquidity_error(&no_outputs));
     }
 }

@@ -475,8 +475,12 @@ impl PoolStore {
         tx_hash: &str,
     ) -> Result<PendingPayout> {
         match self {
-            PoolStore::Sqlite(v) => v.record_pending_payout_broadcast(address, amount, fee, tx_hash),
-            PoolStore::Postgres(v) => v.record_pending_payout_broadcast(address, amount, fee, tx_hash),
+            PoolStore::Sqlite(v) => {
+                v.record_pending_payout_broadcast(address, amount, fee, tx_hash)
+            }
+            PoolStore::Postgres(v) => {
+                v.record_pending_payout_broadcast(address, amount, fee, tx_hash)
+            }
         }
     }
 

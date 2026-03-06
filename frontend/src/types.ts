@@ -192,6 +192,8 @@ export interface HealthResponse {
   wallet?: {
     spendable?: number;
     pending?: number;
+    pending_unconfirmed?: number;
+    pending_unconfirmed_eta?: number;
     total?: number;
   };
 }

@@ -215,18 +215,12 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             "ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS send_started_at BIGINT",
         )
         .context("ensure pending_payouts.send_started_at column")?;
-        conn.batch_execute(
-            "ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS tx_hash TEXT",
-        )
-        .context("ensure pending_payouts.tx_hash column")?;
-        conn.batch_execute(
-            "ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS fee BIGINT",
-        )
-        .context("ensure pending_payouts.fee column")?;
-        conn.batch_execute(
-            "ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS sent_at BIGINT",
-        )
-        .context("ensure pending_payouts.sent_at column")?;
+        conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS tx_hash TEXT")
+            .context("ensure pending_payouts.tx_hash column")?;
+        conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS fee BIGINT")
+            .context("ensure pending_payouts.fee column")?;
+        conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS sent_at BIGINT")
+            .context("ensure pending_payouts.sent_at column")?;
         conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS reject_reason TEXT")
             .context("ensure shares.reject_reason column")?;
 
@@ -2373,6 +2367,44 @@ mod tests {
                 .expect("block exists")
                 .paid_out
         );
+    }
+
+    #[test]
+    fn pending_payout_broadcast_roundtrip_and_reset_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let addr = format!("addr-{suffix}");
+        store
+            .create_pending_payout(&addr, 100)
+            .expect("create pending");
+        store
+            .mark_pending_payout_send_started(&addr)
+            .expect("mark started");
+
+        let broadcast = store
+            .record_pending_payout_broadcast(&addr, 100, 42, "tx-1")
+            .expect("record broadcast");
+        assert_eq!(broadcast.tx_hash.as_deref(), Some("tx-1"));
+        assert_eq!(broadcast.fee, Some(42));
+        assert!(broadcast.sent_at.is_some());
+
+        store
+            .reset_pending_payout_send_state(&addr)
+            .expect("reset send state");
+        let reset = store
+            .get_pending_payout(&addr)
+            .expect("get pending")
+            .expect("pending");
+        assert!(reset.send_started_at.is_none());
+        assert!(reset.tx_hash.is_none());
+        assert!(reset.fee.is_none());
+        assert!(reset.sent_at.is_none());
     }
 
     #[test]

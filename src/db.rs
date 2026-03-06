@@ -1690,7 +1690,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()?;
-        let Some((pending_amount_raw, _initiated_at, pending_tx_hash, pending_fee_raw)) = pending else {
+        let Some((pending_amount_raw, _initiated_at, pending_tx_hash, pending_fee_raw)) = pending
+        else {
             return Err(anyhow!("no pending payout for {address}"));
         };
         let pending_amount = pending_amount_raw.max(0) as u64;
@@ -2795,6 +2796,36 @@ mod tests {
     }
 
     #[test]
+    fn pending_payout_broadcast_roundtrip_and_reset() {
+        let store = test_store();
+        store
+            .create_pending_payout("addr1", 100)
+            .expect("create pending");
+        store
+            .mark_pending_payout_send_started("addr1")
+            .expect("mark started");
+
+        let broadcast = store
+            .record_pending_payout_broadcast("addr1", 100, 42, "tx-1")
+            .expect("record broadcast");
+        assert_eq!(broadcast.tx_hash.as_deref(), Some("tx-1"));
+        assert_eq!(broadcast.fee, Some(42));
+        assert!(broadcast.sent_at.is_some());
+
+        store
+            .reset_pending_payout_send_state("addr1")
+            .expect("reset send state");
+        let reset = store
+            .get_pending_payout("addr1")
+            .expect("get pending")
+            .expect("pending");
+        assert!(reset.send_started_at.is_none());
+        assert!(reset.tx_hash.is_none());
+        assert!(reset.fee.is_none());
+        assert!(reset.sent_at.is_none());
+    }
+
+    #[test]
     fn pool_fee_events_are_idempotent_per_block() {
         let store = test_store();
 
@@ -2946,6 +2977,32 @@ mod tests {
             .complete_pending_payout("addr1", 90, 0, "tx-1")
             .expect_err("must reject mismatch");
         assert!(err.to_string().contains("amount mismatch"));
+    }
+
+    #[test]
+    fn complete_pending_payout_rejects_broadcast_tx_mismatch() {
+        let store = test_store();
+        store
+            .update_balance(&Balance {
+                address: "addr1".to_string(),
+                pending: 100,
+                paid: 0,
+            })
+            .expect("seed balance");
+        store
+            .create_pending_payout("addr1", 100)
+            .expect("create pending");
+        store
+            .mark_pending_payout_send_started("addr1")
+            .expect("mark started");
+        store
+            .record_pending_payout_broadcast("addr1", 100, 42, "tx-expected")
+            .expect("record broadcast");
+
+        let err = store
+            .complete_pending_payout("addr1", 100, 42, "tx-other")
+            .expect_err("must reject tx mismatch");
+        assert!(err.to_string().contains("tx mismatch"));
     }
 
     #[test]

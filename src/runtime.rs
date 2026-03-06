@@ -152,7 +152,9 @@ pub async fn build_api_state(shared: &SharedRuntime) -> Result<ApiState> {
         network_hashrate_cache: Arc::new(Mutex::new(NetworkHashrateCache::default())),
         insights_cache: Arc::new(Mutex::new(InsightsCache::default())),
         miner_pending_estimate_cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
-        live_runtime_snapshot_cache: Arc::new(Mutex::new(crate::api::LiveRuntimeSnapshotCache::default())),
+        live_runtime_snapshot_cache: Arc::new(Mutex::new(
+            crate::api::LiveRuntimeSnapshotCache::default(),
+        )),
         status_history: Arc::new(Mutex::new(persisted_status_history)),
         sse_subscriber_limiter: Arc::new(tokio::sync::Semaphore::new(DEFAULT_MAX_SSE_SUBSCRIBERS)),
         api_key: shared.cfg.api_key.clone(),
@@ -198,16 +200,23 @@ pub fn build_stratum_server(
 pub fn api_listen_addr(cfg: &Config) -> Result<SocketAddr> {
     format!("{}:{}", cfg.api_host, cfg.api_port)
         .parse()
-        .with_context(|| format!("invalid api listen address {}:{}", cfg.api_host, cfg.api_port))
+        .with_context(|| {
+            format!(
+                "invalid api listen address {}:{}",
+                cfg.api_host, cfg.api_port
+            )
+        })
 }
 
 pub fn stratum_listen_addr(cfg: &Config) -> Result<SocketAddr> {
-    format!("{}:{}", cfg.stratum_host, cfg.stratum_port).parse().with_context(|| {
-        format!(
-            "invalid stratum listen address {}:{}",
-            cfg.stratum_host, cfg.stratum_port
-        )
-    })
+    format!("{}:{}", cfg.stratum_host, cfg.stratum_port)
+        .parse()
+        .with_context(|| {
+            format!(
+                "invalid stratum listen address {}:{}",
+                cfg.stratum_host, cfg.stratum_port
+            )
+        })
 }
 
 pub fn start_api_background_tasks(api_state: ApiState) {
@@ -359,7 +368,8 @@ fn start_live_runtime_snapshot_persist(
         let mut ticker = tokio::time::interval(Duration::from_secs(5));
         loop {
             ticker.tick().await;
-            let payload = PersistedRuntimeSnapshot::from_live(stats.snapshot(), validation.snapshot());
+            let payload =
+                PersistedRuntimeSnapshot::from_live(stats.snapshot(), validation.snapshot());
             let store = Arc::clone(&store);
             match tokio::task::spawn_blocking(move || -> Result<()> {
                 let bytes = serde_json::to_vec(&payload)?;

@@ -177,7 +177,9 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
           if (newline < 0) break;
           const line = pending.slice(0, newline).replace(/\r$/, '');
           pending = pending.slice(newline + 1);
-          onLine(line);
+          if (line !== '') {
+            onLine(line);
+          }
         }
       }
 
