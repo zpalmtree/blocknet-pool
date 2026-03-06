@@ -5296,6 +5296,7 @@ mod tests {
             address: "miner-a".to_string(),
             amount: 100_000_000,
             initiated_at: UNIX_EPOCH,
+            send_started_at: None,
         };
         let queued_note =
             payout_status_note(&cfg, 250_000_000, Some(&queued)).expect("queued note");
@@ -5314,6 +5315,7 @@ mod tests {
             address: "miner-a".to_string(),
             amount: 100,
             initiated_at: UNIX_EPOCH,
+            send_started_at: None,
         };
         let response = miner_balance_response(&balance, Some(&queued));
         assert_eq!(response.pending, 250);

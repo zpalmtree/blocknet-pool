@@ -460,6 +460,13 @@ impl PoolStore {
         }
     }
 
+    pub fn mark_pending_payout_send_started(&self, address: &str) -> Result<Option<PendingPayout>> {
+        match self {
+            PoolStore::Sqlite(v) => v.mark_pending_payout_send_started(address),
+            PoolStore::Postgres(v) => v.mark_pending_payout_send_started(address),
+        }
+    }
+
     pub fn complete_pending_payout(
         &self,
         address: &str,

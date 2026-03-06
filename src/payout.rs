@@ -382,12 +382,21 @@ impl PayoutProcessor {
                 .duration_since(entry.initiated_at)
                 .unwrap_or_default();
             if age > Duration::from_secs(60 * 60) {
-                tracing::warn!(
-                    address = %entry.address,
-                    amount = entry.amount,
-                    age_secs = age.as_secs(),
-                    "stale pending payout retained for idempotent retry"
-                );
+                if entry.send_started_at.is_some() {
+                    tracing::warn!(
+                        address = %entry.address,
+                        amount = entry.amount,
+                        age_secs = age.as_secs(),
+                        "stale pending payout retained for idempotent retry"
+                    );
+                } else {
+                    tracing::warn!(
+                        address = %entry.address,
+                        amount = entry.amount,
+                        age_secs = age.as_secs(),
+                        "stale queued payout has not reached its first send attempt yet"
+                    );
+                }
             }
         }
     }
@@ -485,50 +494,48 @@ impl PayoutProcessor {
                 continue;
             }
 
+            let desired_pending_amount = max_per_recipient
+                .map(|cap| bal.pending.min(cap))
+                .unwrap_or(bal.pending);
+
             let pending = match existing_pending {
-                Some(v) => v,
-                None => {
-                    if bal.pending < min_amount {
-                        continue;
-                    }
-                    let pending_amount = max_per_recipient
-                        .map(|cap| bal.pending.min(cap))
-                        .unwrap_or(bal.pending);
-                    if pending_amount == 0 {
+                Some(v) if v.send_started_at.is_some() => v,
+                refreshable_pending => {
+                    if bal.pending < min_amount || desired_pending_amount == 0 {
+                        if refreshable_pending.is_some() {
+                            if let Err(err) = self.store.cancel_pending_payout(&bal.address) {
+                                tracing::warn!(
+                                    address = %bal.address,
+                                    error = %err,
+                                    "failed to drop refreshable pending payout below threshold"
+                                );
+                            }
+                        }
                         continue;
                     }
                     if let Err(err) = self
                         .store
-                        .create_pending_payout(&bal.address, pending_amount)
+                        .create_pending_payout(&bal.address, desired_pending_amount)
                     {
-                        tracing::warn!(address = %bal.address, error = %err, "failed create pending payout");
+                        tracing::warn!(address = %bal.address, error = %err, "failed to queue pending payout");
                         continue;
                     }
                     match self.store.get_pending_payout(&bal.address) {
                         Ok(Some(v)) => v,
-                        _ => continue,
+                        Ok(None) => continue,
+                        Err(err) => {
+                            tracing::warn!(
+                                address = %bal.address,
+                                error = %err,
+                                "failed to reload pending payout after refresh"
+                            );
+                            continue;
+                        }
                     }
                 }
             };
 
-            let mut pending_amount = pending.amount;
-            if let Some(cap) = max_per_recipient {
-                if pending_amount > cap {
-                    pending_amount = cap;
-                    if let Err(err) = self
-                        .store
-                        .create_pending_payout(&bal.address, pending_amount)
-                    {
-                        tracing::warn!(
-                            address = %bal.address,
-                            cap,
-                            error = %err,
-                            "failed to clamp pending payout to per-recipient cap"
-                        );
-                        continue;
-                    }
-                }
-            }
+            let pending_amount = pending.amount;
 
             if pending_amount == 0 {
                 continue;
@@ -565,10 +572,28 @@ impl PayoutProcessor {
                 continue;
             }
 
+            let pending = if pending.send_started_at.is_some() {
+                pending
+            } else {
+                match self.store.mark_pending_payout_send_started(&bal.address) {
+                    Ok(Some(v)) => v,
+                    Ok(None) => continue,
+                    Err(err) => {
+                        tracing::warn!(
+                            address = %bal.address,
+                            error = %err,
+                            "failed to freeze pending payout before send"
+                        );
+                        continue;
+                    }
+                }
+            };
+
             let pending_for_send = PendingPayout {
                 address: pending.address.clone(),
                 amount: pending_amount,
                 initiated_at: pending.initiated_at,
+                send_started_at: pending.send_started_at,
             };
             let idempotency_key = payout_idempotency_key(&pending_for_send);
             let send = self

@@ -87,6 +87,8 @@ pub struct PendingPayout {
     pub address: String,
     pub amount: u64,
     pub initiated_at: SystemTime,
+    #[serde(skip_serializing)]
+    pub send_started_at: Option<SystemTime>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -206,7 +208,8 @@ CREATE INDEX IF NOT EXISTS idx_seen_shares_expiry ON seen_shares(expires_at);
 CREATE TABLE IF NOT EXISTS pending_payouts (
     address TEXT PRIMARY KEY,
     amount INTEGER NOT NULL,
-    initiated_at INTEGER NOT NULL
+    initiated_at INTEGER NOT NULL,
+    send_started_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS pool_fee_events (
@@ -303,6 +306,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         self.conn.lock().execute_batch(sql).context("init schema")?;
         self.ensure_payout_fee_column()?;
         self.ensure_share_reject_reason_column()?;
+        self.ensure_pending_payout_send_started_column()?;
         Ok(())
     }
 
@@ -332,6 +336,22 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             }
         }
         conn.execute("ALTER TABLE shares ADD COLUMN reject_reason TEXT", [])?;
+        Ok(())
+    }
+
+    fn ensure_pending_payout_send_started_column(&self) -> Result<()> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare("PRAGMA table_info(pending_payouts)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        for row in rows {
+            if row?.eq_ignore_ascii_case("send_started_at") {
+                return Ok(());
+            }
+        }
+        conn.execute(
+            "ALTER TABLE pending_payouts ADD COLUMN send_started_at INTEGER",
+            [],
+        )?;
         Ok(())
     }
 
@@ -1501,11 +1521,41 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn create_pending_payout(&self, address: &str, amount: u64) -> Result<()> {
         self.conn.lock().execute(
-            "INSERT INTO pending_payouts (address, amount, initiated_at) VALUES (?1, ?2, ?3)
-             ON CONFLICT(address) DO UPDATE SET amount = excluded.amount, initiated_at = excluded.initiated_at",
+            "INSERT INTO pending_payouts (address, amount, initiated_at, send_started_at) VALUES (?1, ?2, ?3, NULL)
+             ON CONFLICT(address) DO UPDATE SET amount = excluded.amount
+             WHERE pending_payouts.send_started_at IS NULL",
             params![address, u64_to_i64(amount)?, now_unix()],
         )?;
         Ok(())
+    }
+
+    pub fn mark_pending_payout_send_started(&self, address: &str) -> Result<Option<PendingPayout>> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "UPDATE pending_payouts
+             SET send_started_at = COALESCE(send_started_at, ?2)
+             WHERE address = ?1",
+            params![address, now_unix()],
+        )?;
+        let pending = tx
+            .query_row(
+                "SELECT address, amount, initiated_at, send_started_at
+                 FROM pending_payouts
+                 WHERE address = ?1",
+                params![address],
+                |row| {
+                    Ok(PendingPayout {
+                        address: row.get(0)?,
+                        amount: row.get::<_, i64>(1)?.max(0) as u64,
+                        initiated_at: from_unix(row.get::<_, i64>(2)?),
+                        send_started_at: row.get::<_, Option<i64>>(3)?.map(from_unix),
+                    })
+                },
+            )
+            .optional()?;
+        tx.commit()?;
+        Ok(pending)
     }
 
     pub fn complete_pending_payout(
@@ -1600,13 +1650,16 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     pub fn get_pending_payouts(&self) -> Result<Vec<PendingPayout>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT address, amount, initiated_at FROM pending_payouts ORDER BY initiated_at ASC",
+            "SELECT address, amount, initiated_at, send_started_at
+             FROM pending_payouts
+             ORDER BY initiated_at ASC",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(PendingPayout {
                 address: row.get(0)?,
                 amount: row.get::<_, i64>(1)?.max(0) as u64,
                 initiated_at: from_unix(row.get::<_, i64>(2)?),
+                send_started_at: row.get::<_, Option<i64>>(3)?.map(from_unix),
             })
         })?;
         collect_rows(rows)
@@ -1615,13 +1668,14 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     pub fn get_pending_payout(&self, address: &str) -> Result<Option<PendingPayout>> {
         let conn = self.conn.lock();
         conn.query_row(
-            "SELECT address, amount, initiated_at FROM pending_payouts WHERE address = ?1",
+            "SELECT address, amount, initiated_at, send_started_at FROM pending_payouts WHERE address = ?1",
             params![address],
             |row| {
                 Ok(PendingPayout {
                     address: row.get(0)?,
                     amount: row.get::<_, i64>(1)?.max(0) as u64,
                     initiated_at: from_unix(row.get::<_, i64>(2)?),
+                    send_started_at: row.get::<_, Option<i64>>(3)?.map(from_unix),
                 })
             },
         )
@@ -2513,13 +2567,64 @@ mod tests {
             .expect("create pending");
         let pending = store.get_pending_payout("addr1").expect("get pending");
         assert!(pending.is_some());
-        assert_eq!(pending.expect("pending").amount, 100);
+        let pending = pending.expect("pending");
+        assert_eq!(pending.amount, 100);
+        assert!(pending.send_started_at.is_none());
 
         store.cancel_pending_payout("addr1").expect("cancel");
         assert!(store
             .get_pending_payout("addr1")
             .expect("get after cancel")
             .is_none());
+    }
+
+    #[test]
+    fn pending_payout_refreshes_until_send_started() {
+        let store = test_store();
+        store
+            .create_pending_payout("addr1", 100)
+            .expect("create pending");
+        let first = store
+            .get_pending_payout("addr1")
+            .expect("get pending")
+            .expect("pending");
+
+        store
+            .create_pending_payout("addr1", 175)
+            .expect("refresh pending");
+        let refreshed = store
+            .get_pending_payout("addr1")
+            .expect("get refreshed")
+            .expect("pending");
+
+        assert_eq!(refreshed.amount, 175);
+        assert_eq!(refreshed.initiated_at, first.initiated_at);
+        assert!(refreshed.send_started_at.is_none());
+    }
+
+    #[test]
+    fn pending_payout_freezes_after_send_started() {
+        let store = test_store();
+        store
+            .create_pending_payout("addr1", 100)
+            .expect("create pending");
+        let started = store
+            .mark_pending_payout_send_started("addr1")
+            .expect("mark started")
+            .expect("pending");
+        assert!(started.send_started_at.is_some());
+
+        store
+            .create_pending_payout("addr1", 250)
+            .expect("attempt refresh after start");
+        let frozen = store
+            .get_pending_payout("addr1")
+            .expect("get frozen")
+            .expect("pending");
+
+        assert_eq!(frozen.amount, 100);
+        assert_eq!(frozen.initiated_at, started.initiated_at);
+        assert_eq!(frozen.send_started_at, started.send_started_at);
     }
 
     #[test]

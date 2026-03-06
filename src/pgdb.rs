@@ -108,7 +108,8 @@ CREATE INDEX IF NOT EXISTS idx_seen_shares_expiry ON seen_shares(expires_at);
 CREATE TABLE IF NOT EXISTS pending_payouts (
     address TEXT PRIMARY KEY,
     amount BIGINT NOT NULL,
-    initiated_at BIGINT NOT NULL
+    initiated_at BIGINT NOT NULL,
+    send_started_at BIGINT
 );
 
 CREATE TABLE IF NOT EXISTS pool_fee_events (
@@ -207,6 +208,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             "ALTER TABLE payouts ADD COLUMN IF NOT EXISTS fee BIGINT NOT NULL DEFAULT 0",
         )
         .context("ensure payouts.fee column")?;
+        conn.batch_execute(
+            "ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS send_started_at BIGINT",
+        )
+        .context("ensure pending_payouts.send_started_at column")?;
         conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS reject_reason TEXT")
             .context("ensure shares.reject_reason column")?;
 
@@ -1365,11 +1370,36 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn create_pending_payout(&self, address: &str, amount: u64) -> Result<()> {
         self.conn().lock().execute(
-            "INSERT INTO pending_payouts (address, amount, initiated_at) VALUES ($1, $2, $3)
-             ON CONFLICT(address) DO UPDATE SET amount = EXCLUDED.amount, initiated_at = EXCLUDED.initiated_at",
+            "INSERT INTO pending_payouts (address, amount, initiated_at, send_started_at) VALUES ($1, $2, $3, NULL)
+             ON CONFLICT(address) DO UPDATE SET amount = EXCLUDED.amount
+             WHERE pending_payouts.send_started_at IS NULL",
             &[&address, &u64_to_i64(amount)?, &now_unix()],
         )?;
         Ok(())
+    }
+
+    pub fn mark_pending_payout_send_started(&self, address: &str) -> Result<Option<PendingPayout>> {
+        let mut conn = self.conn().lock();
+        let mut tx = conn.transaction()?;
+        tx.execute(
+            "UPDATE pending_payouts
+             SET send_started_at = COALESCE(send_started_at, $2)
+             WHERE address = $1",
+            &[&address, &now_unix()],
+        )?;
+        let row = tx.query_opt(
+            "SELECT address, amount, initiated_at, send_started_at
+             FROM pending_payouts
+             WHERE address = $1",
+            &[&address],
+        )?;
+        tx.commit()?;
+        Ok(row.map(|row| PendingPayout {
+            address: row.get::<_, String>(0),
+            amount: row.get::<_, i64>(1).max(0) as u64,
+            initiated_at: from_unix(row.get::<_, i64>(2)),
+            send_started_at: row.get::<_, Option<i64>>(3).map(from_unix),
+        }))
     }
 
     pub fn complete_pending_payout(
@@ -1463,7 +1493,9 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_pending_payouts(&self) -> Result<Vec<PendingPayout>> {
         let rows = self.conn().lock().query(
-            "SELECT address, amount, initiated_at FROM pending_payouts ORDER BY initiated_at ASC",
+            "SELECT address, amount, initiated_at, send_started_at
+             FROM pending_payouts
+             ORDER BY initiated_at ASC",
             &[],
         )?;
         Ok(rows
@@ -1472,19 +1504,23 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 address: row.get::<_, String>(0),
                 amount: row.get::<_, i64>(1).max(0) as u64,
                 initiated_at: from_unix(row.get::<_, i64>(2)),
+                send_started_at: row.get::<_, Option<i64>>(3).map(from_unix),
             })
             .collect())
     }
 
     pub fn get_pending_payout(&self, address: &str) -> Result<Option<PendingPayout>> {
         let row = self.conn().lock().query_opt(
-            "SELECT address, amount, initiated_at FROM pending_payouts WHERE address = $1",
+            "SELECT address, amount, initiated_at, send_started_at
+             FROM pending_payouts
+             WHERE address = $1",
             &[&address],
         )?;
         Ok(row.map(|row| PendingPayout {
             address: row.get::<_, String>(0),
             amount: row.get::<_, i64>(1).max(0) as u64,
             initiated_at: from_unix(row.get::<_, i64>(2)),
+            send_started_at: row.get::<_, Option<i64>>(3).map(from_unix),
         }))
     }
 
