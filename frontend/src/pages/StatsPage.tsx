@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ApiClient } from '../api/client';
 import { HashrateChart } from '../components/HashrateChart';
 import { LAST_MINER_LOOKUP_KEY } from '../lib/storage';
-import { formatCoins, humanRate, timeAgo, toUnixMs } from '../lib/format';
+import { formatCoins, formatFee, humanRate, timeAgo, toUnixMs } from '../lib/format';
 import type { ThemeMode } from '../lib/theme';
 import type {
   HashratePoint,
@@ -540,7 +540,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
                     minerData.payouts.map((p) => (
                       <tr key={`${p.id}-${p.tx_hash}`}>
                         <td>{formatCoins(p.amount)}</td>
-                        <td>{formatCoins(p.fee || 0)}</td>
+                        <td>{formatFee(p.fee || 0)}</td>
                         <td>
                           <a href={`https://explorer.blocknetcrypto.com/tx/${p.tx_hash || ''}`} target="_blank" rel="noopener">
                             {p.tx_hash || '-'}
