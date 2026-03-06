@@ -235,6 +235,7 @@ pub fn start_stratum_background_tasks(shared: &SharedRuntime, engine: Arc<PoolEn
     start_stat_snapshots(Arc::clone(&shared.stats), Arc::clone(&shared.store));
     start_retention_maintenance(shared.cfg.clone(), Arc::clone(&shared.store));
     start_live_runtime_snapshot_persist(
+        Arc::clone(&shared.jobs),
         Arc::clone(&shared.stats),
         Arc::clone(&shared.validation),
         Arc::clone(&shared.store),
@@ -360,6 +361,7 @@ fn start_status_sampler(api_state: ApiState) {
 }
 
 fn start_live_runtime_snapshot_persist(
+    jobs: Arc<JobManager>,
     stats: Arc<PoolStats>,
     validation: Arc<ValidationEngine>,
     store: Arc<PoolStore>,
@@ -368,8 +370,11 @@ fn start_live_runtime_snapshot_persist(
         let mut ticker = tokio::time::interval(Duration::from_secs(5));
         loop {
             ticker.tick().await;
-            let payload =
-                PersistedRuntimeSnapshot::from_live(stats.snapshot(), validation.snapshot());
+            let payload = PersistedRuntimeSnapshot::from_live(
+                stats.snapshot(),
+                validation.snapshot(),
+                jobs.runtime_snapshot(),
+            );
             let store = Arc::clone(&store);
             match tokio::task::spawn_blocking(move || -> Result<()> {
                 let bytes = serde_json::to_vec(&payload)?;

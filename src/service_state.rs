@@ -2,6 +2,7 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
+use crate::jobs::JobRuntimeSnapshot;
 use crate::stats::PoolSnapshot;
 use crate::validation::ValidationSnapshot;
 
@@ -44,16 +45,23 @@ pub struct PersistedRuntimeSnapshot {
     pub connected_miners: usize,
     pub connected_workers: usize,
     pub estimated_hashrate: f64,
+    #[serde(default)]
+    pub jobs: JobRuntimeSnapshot,
     pub validation: PersistedValidationSummary,
 }
 
 impl PersistedRuntimeSnapshot {
-    pub fn from_live(pool: PoolSnapshot, validation: ValidationSnapshot) -> Self {
+    pub fn from_live(
+        pool: PoolSnapshot,
+        validation: ValidationSnapshot,
+        jobs: JobRuntimeSnapshot,
+    ) -> Self {
         Self {
             sampled_at: SystemTime::now(),
             connected_miners: pool.connected_miners,
             connected_workers: pool.connected_workers,
             estimated_hashrate: pool.estimated_hashrate,
+            jobs,
             validation: validation.into(),
         }
     }

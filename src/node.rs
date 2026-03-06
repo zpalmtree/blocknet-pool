@@ -658,4 +658,14 @@ impl NodeApi for NodeClient {
             },
         })
     }
+
+    fn current_chain_height(&self) -> Result<u64> {
+        Ok(self.get_status()?.chain_height)
+    }
+
+    fn block_hash_at_height(&self, height: u64) -> Result<Option<String>> {
+        Ok(self
+            .get_block_by_height_optional(height)?
+            .map(|block| block.hash))
+    }
 }

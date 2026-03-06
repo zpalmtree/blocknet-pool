@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
@@ -72,6 +72,14 @@ pub struct BlockSubmitResponse {
 
 pub trait NodeApi: Send + Sync + 'static {
     fn submit_block(&self, job: &Job, nonce: u64) -> Result<BlockSubmitResponse>;
+
+    fn current_chain_height(&self) -> Result<u64> {
+        Ok(0)
+    }
+
+    fn block_hash_at_height(&self, _height: u64) -> Result<Option<String>> {
+        Ok(None)
+    }
 }
 
 pub trait JobRepository: Send + Sync + 'static {
@@ -703,17 +711,34 @@ impl PoolEngine {
             if validation.is_block_candidate {
                 let computed_hash = hex_string(validation.hash);
                 block_hash = Some(computed_hash.clone());
+                let staged_found = FoundBlockRecord {
+                    height: job.height,
+                    hash: computed_hash.clone(),
+                    difficulty: job.network_difficulty,
+                    reward: job_template_reward(&job),
+                    finder: session.address.clone(),
+                    finder_worker: session.worker.clone(),
+                    timestamp: SystemTime::now(),
+                };
+                self.stage_found_block_submission(&staged_found)?;
+
                 let submit = self.node.submit_block(&job, nonce)?;
                 block_accepted = submit.accepted;
-                if let Some(network_hash) = submit.hash {
+                if let Some(network_hash) = submit.hash.clone() {
                     block_hash = Some(network_hash);
                 }
 
                 if block_accepted {
-                    let accepted_height = submit.height.unwrap_or(job.height);
-                    let accepted_hash = block_hash.clone().unwrap_or(computed_hash.clone());
+                    let mut persisted_found = staged_found.clone();
+                    persisted_found.height = submit.height.unwrap_or(staged_found.height);
+                    if let Some(network_hash) = submit.hash {
+                        persisted_found.hash = network_hash;
+                    }
+                    let accepted_hash = block_hash
+                        .clone()
+                        .unwrap_or_else(|| persisted_found.hash.clone());
                     tracing::warn!(
-                        height = accepted_height,
+                        height = persisted_found.height,
                         hash = %accepted_hash,
                         finder = %session.address,
                         worker = %session.worker,
@@ -721,16 +746,15 @@ impl PoolEngine {
                         nonce,
                         "POOL BLOCK FOUND"
                     );
-                    let found = FoundBlockRecord {
-                        height: accepted_height,
-                        hash: accepted_hash,
-                        difficulty: job.network_difficulty,
-                        reward: job_template_reward(&job),
-                        finder: session.address.clone(),
-                        finder_worker: session.worker.clone(),
-                        timestamp: SystemTime::now(),
-                    };
-                    self.persist_found_block(found)?;
+                    self.persist_found_block(&staged_found, persisted_found);
+                } else if let Err(err) = self.clear_found_block_submission(&staged_found) {
+                    tracing::warn!(
+                        height = staged_found.height,
+                        hash = %staged_found.hash,
+                        finder = %staged_found.finder,
+                        error = %err,
+                        "failed clearing rejected block submission journal entry"
+                    );
                 }
             }
 
@@ -746,6 +770,14 @@ impl PoolEngine {
                 reject_reason: None,
                 created_at: SystemTime::now(),
             })?;
+            if let Err(err) = self.store.release_share_claim(&job_id_for_share, nonce) {
+                tracing::warn!(
+                    job_id = %job_id_for_share,
+                    nonce,
+                    error = %err,
+                    "failed to release share claim after successful persistence"
+                );
+            }
 
             let next_difficulty = self.note_share_and_maybe_adjust_difficulty(conn_id);
 
@@ -803,6 +835,15 @@ impl PoolEngine {
                 error = %err,
                 "failed to persist rejected share"
             );
+            return;
+        }
+        if let Err(err) = self.store.release_share_claim(job_id, nonce) {
+            tracing::warn!(
+                job_id = %job_id,
+                nonce,
+                error = %err,
+                "failed to release share claim after rejected persistence"
+            );
         }
     }
 
@@ -823,11 +864,33 @@ impl PoolEngine {
         self.recover_found_block_outbox_locked(&path);
     }
 
-    fn persist_found_block(&self, found: FoundBlockRecord) -> Result<()> {
+    fn stage_found_block_submission(&self, found: &FoundBlockRecord) -> Result<()> {
+        let path = found_block_outbox_path();
+        let _guard = self.found_block_outbox_lock.lock();
+        append_found_block_outbox_record(&path, found).with_context(|| {
+            format!(
+                "failed to stage block submission recovery record at {}",
+                path.display()
+            )
+        })
+    }
+
+    fn persist_found_block(&self, staged: &FoundBlockRecord, found: FoundBlockRecord) {
         let mut last_error = String::new();
         for attempt in 1..=FOUND_BLOCK_PERSIST_MAX_RETRIES {
             match self.store.add_found_block(found.clone()) {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    if let Err(err) = self.clear_found_block_submission(staged) {
+                        tracing::warn!(
+                            height = staged.height,
+                            hash = %staged.hash,
+                            finder = %staged.finder,
+                            error = %err,
+                            "failed clearing persisted block recovery journal entry"
+                        );
+                    }
+                    return;
+                }
                 Err(err) => {
                     last_error = err.to_string();
                     tracing::warn!(
@@ -843,34 +906,20 @@ impl PoolEngine {
             std::thread::sleep(Duration::from_millis(100 * attempt as u64));
         }
 
-        self.append_found_block_outbox(&found)?;
-        Err(anyhow!(
-            "accepted block not persisted after {} attempts: {}",
-            FOUND_BLOCK_PERSIST_MAX_RETRIES,
-            last_error
-        ))
+        tracing::error!(
+            height = found.height,
+            hash = %found.hash,
+            finder = %found.finder,
+            attempts = FOUND_BLOCK_PERSIST_MAX_RETRIES,
+            error = %last_error,
+            "accepted block left in recovery journal after failed persistence attempts"
+        );
     }
 
-    fn append_found_block_outbox(&self, found: &FoundBlockRecord) -> Result<()> {
+    fn clear_found_block_submission(&self, found: &FoundBlockRecord) -> Result<()> {
         let primary_path = found_block_outbox_path();
         let _guard = self.found_block_outbox_lock.lock();
-
-        match append_found_block_outbox_record(&primary_path, found) {
-            Ok(()) => {
-                tracing::error!(
-                    path = %primary_path.display(),
-                    height = found.height,
-                    hash = %found.hash,
-                    finder = %found.finder,
-                    "recorded accepted block in recovery outbox"
-                );
-                Ok(())
-            }
-            Err(primary_err) => Err(anyhow!(
-                "failed to write accepted block outbox: {}",
-                primary_err
-            )),
-        }
+        clear_found_block_outbox_record(&primary_path, found)
     }
 
     fn recover_found_block_outbox_locked(&self, path: &PathBuf) {
@@ -881,7 +930,19 @@ impl PoolEngine {
                 tracing::warn!(
                     path = %path.display(),
                     error = %err,
-                    "failed to open found-block recovery outbox"
+                    "failed to open found-block recovery journal"
+                );
+                return;
+            }
+        };
+
+        let chain_height = match self.node.current_chain_height() {
+            Ok(height) => height,
+            Err(err) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %err,
+                    "failed to query daemon before replaying block recovery journal"
                 );
                 return;
             }
@@ -890,6 +951,7 @@ impl PoolEngine {
         let reader = BufReader::new(file);
         let mut retained = Vec::<String>::new();
         let mut recovered = 0u64;
+        let mut dropped = 0u64;
 
         for (idx, line) in reader.lines().enumerate() {
             let line = match line {
@@ -899,7 +961,7 @@ impl PoolEngine {
                         path = %path.display(),
                         line = idx + 1,
                         error = %err,
-                        "failed reading found-block recovery outbox line"
+                        "failed reading found-block recovery journal line"
                     );
                     continue;
                 }
@@ -916,7 +978,7 @@ impl PoolEngine {
                         path = %path.display(),
                         line = idx + 1,
                         error = %err,
-                        "invalid found-block recovery outbox record"
+                        "invalid found-block recovery journal record"
                     );
                     retained.push(trimmed.to_string());
                     continue;
@@ -933,16 +995,55 @@ impl PoolEngine {
                 timestamp: unix_to_system_time(record.timestamp_unix),
             };
 
-            match self.store.add_found_block(found) {
-                Ok(()) => {
-                    recovered = recovered.saturating_add(1);
+            if chain_height < found.height {
+                retained.push(trimmed.to_string());
+                continue;
+            }
+
+            match self.node.block_hash_at_height(found.height) {
+                Ok(Some(hash)) if hash.eq_ignore_ascii_case(&found.hash) => {
+                    match self.store.add_found_block(found) {
+                        Ok(()) => {
+                            recovered = recovered.saturating_add(1);
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                path = %path.display(),
+                                line = idx + 1,
+                                error = %err,
+                                "failed replaying accepted block from recovery journal"
+                            );
+                            retained.push(trimmed.to_string());
+                        }
+                    }
+                }
+                Ok(Some(hash)) => {
+                    dropped = dropped.saturating_add(1);
+                    tracing::info!(
+                        path = %path.display(),
+                        line = idx + 1,
+                        height = found.height,
+                        expected_hash = %found.hash,
+                        chain_hash = %hash,
+                        "dropping stale block recovery journal entry after chain mismatch"
+                    );
+                }
+                Ok(None) => {
+                    dropped = dropped.saturating_add(1);
+                    tracing::info!(
+                        path = %path.display(),
+                        line = idx + 1,
+                        height = found.height,
+                        expected_hash = %found.hash,
+                        "dropping stale block recovery journal entry after chain advanced past height"
+                    );
                 }
                 Err(err) => {
                     tracing::warn!(
                         path = %path.display(),
                         line = idx + 1,
                         error = %err,
-                        "failed replaying found-block recovery record"
+                        "failed checking candidate block in recovery journal against daemon"
                     );
                     retained.push(trimmed.to_string());
                 }
@@ -955,7 +1056,7 @@ impl PoolEngine {
                     tracing::warn!(
                         path = %path.display(),
                         error = %err,
-                        "failed removing drained found-block recovery outbox"
+                        "failed removing drained block recovery journal"
                     );
                 }
             }
@@ -966,16 +1067,17 @@ impl PoolEngine {
                 tracing::warn!(
                     path = %path.display(),
                     error = %err,
-                    "failed rewriting found-block recovery outbox"
+                    "failed rewriting block recovery journal"
                 );
             }
         }
 
-        if recovered > 0 {
+        if recovered > 0 || dropped > 0 {
             tracing::info!(
                 path = %path.display(),
                 recovered,
-                "recovered accepted blocks from outbox"
+                dropped,
+                "replayed block recovery journal"
             );
         }
     }
@@ -1355,6 +1457,30 @@ fn unix_to_system_time(ts: i64) -> SystemTime {
     SystemTime::UNIX_EPOCH + Duration::from_secs(ts as u64)
 }
 
+impl FoundBlockOutboxRecord {
+    fn from_found(found: &FoundBlockRecord) -> Self {
+        Self {
+            height: found.height,
+            hash: found.hash.clone(),
+            difficulty: found.difficulty,
+            reward: found.reward,
+            finder: found.finder.clone(),
+            finder_worker: found.finder_worker.clone(),
+            timestamp_unix: system_time_to_unix(found.timestamp),
+        }
+    }
+
+    fn matches_found(&self, found: &FoundBlockRecord) -> bool {
+        self.height == found.height
+            && self.hash.eq_ignore_ascii_case(&found.hash)
+            && self.difficulty == found.difficulty
+            && self.reward == found.reward
+            && self.finder == found.finder
+            && self.finder_worker == found.finder_worker
+            && self.timestamp_unix == system_time_to_unix(found.timestamp)
+    }
+}
+
 fn append_found_block_outbox_record(path: &PathBuf, found: &FoundBlockRecord) -> Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -1378,19 +1504,48 @@ fn append_found_block_outbox_record(path: &PathBuf, found: &FoundBlockRecord) ->
         options.mode(0o600);
     }
     let mut file = options.open(path)?;
-    let record = FoundBlockOutboxRecord {
-        height: found.height,
-        hash: found.hash.clone(),
-        difficulty: found.difficulty,
-        reward: found.reward,
-        finder: found.finder.clone(),
-        finder_worker: found.finder_worker.clone(),
-        timestamp_unix: system_time_to_unix(found.timestamp),
-    };
+    let record = FoundBlockOutboxRecord::from_found(found);
     serde_json::to_writer(&mut file, &record)?;
     file.write_all(b"\n")?;
     file.flush()?;
     Ok(())
+}
+
+fn clear_found_block_outbox_record(path: &PathBuf, found: &FoundBlockRecord) -> Result<()> {
+    let file = match OpenOptions::new().read(true).open(path) {
+        Ok(v) => v,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err.into()),
+    };
+
+    let reader = BufReader::new(file);
+    let mut retained = Vec::<String>::new();
+    for line in reader.lines() {
+        let line = line?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let should_drop = serde_json::from_str::<FoundBlockOutboxRecord>(trimmed)
+            .map(|record| record.matches_found(found))
+            .unwrap_or(false);
+        if !should_drop {
+            retained.push(trimmed.to_string());
+        }
+    }
+
+    if retained.is_empty() {
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err.into()),
+        }
+    } else {
+        let mut data = retained.join("\n");
+        data.push('\n');
+        fs::write(path, data.as_bytes())?;
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -1429,11 +1584,19 @@ impl InMemoryStore {
             .get(&(address.to_string(), worker.to_string()))
             .copied()
     }
+
+    fn has_persisted_share(&self, job_id: &str, nonce: u64) -> bool {
+        self.shares
+            .lock()
+            .iter()
+            .any(|share| share.job_id == job_id && share.nonce == nonce)
+    }
 }
 
 impl ShareStore for InMemoryStore {
     fn is_share_seen(&self, job_id: &str, nonce: u64) -> Result<bool> {
-        Ok(self.seen.lock().contains(&(job_id.to_string(), nonce)))
+        Ok(self.has_persisted_share(job_id, nonce)
+            || self.seen.lock().contains(&(job_id.to_string(), nonce)))
     }
 
     fn mark_share_seen(&self, job_id: &str, nonce: u64) -> Result<()> {
@@ -1442,6 +1605,9 @@ impl ShareStore for InMemoryStore {
     }
 
     fn try_claim_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
+        if self.has_persisted_share(job_id, nonce) {
+            return Ok(false);
+        }
         let key = (job_id.to_string(), nonce);
         let mut seen = self.seen.lock();
         if seen.contains(&key) {
@@ -1589,6 +1755,14 @@ impl NodeApi for InMemoryNode {
             hash: Some(format!("{:x}", nonce)),
             height: Some(job.height),
         })
+    }
+
+    fn current_chain_height(&self) -> Result<u64> {
+        Ok(0)
+    }
+
+    fn block_hash_at_height(&self, _height: u64) -> Result<Option<String>> {
+        Ok(None)
     }
 }
 

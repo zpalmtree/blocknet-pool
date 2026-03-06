@@ -44,6 +44,17 @@ pub struct MinerJob {
     pub nonce_end: u64,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct JobRuntimeSnapshot {
+    pub current_height: Option<u64>,
+    pub current_difficulty: Option<u64>,
+    pub template_id: Option<String>,
+    pub template_age_seconds: Option<u64>,
+    pub last_refresh_millis: Option<u64>,
+    pub tracked_templates: usize,
+    pub active_assignments: usize,
+}
+
 #[derive(Debug)]
 struct RewardAddressCache {
     address: Option<String>,
@@ -301,6 +312,23 @@ impl JobManager {
             .job_meta
             .get(&current.id)
             .map(|meta| meta.created_at.elapsed())
+    }
+
+    pub fn runtime_snapshot(&self) -> JobRuntimeSnapshot {
+        let state = self.state.read();
+        let current = state.current.as_ref();
+        JobRuntimeSnapshot {
+            current_height: current.map(|job| job.height),
+            current_difficulty: current.map(|job| job.network_difficulty),
+            template_id: current.and_then(|job| job.template_id.clone()),
+            template_age_seconds: current
+                .and_then(|job| state.job_meta.get(&job.id))
+                .map(|meta| meta.created_at.elapsed().as_secs()),
+            last_refresh_millis: (*self.last_refresh.lock())
+                .map(|last| last.elapsed().as_millis() as u64),
+            tracked_templates: state.jobs.len(),
+            active_assignments: state.assignments.len(),
+        }
     }
 
     pub fn build_miner_job(&self, share_difficulty: u64, assigned_miner: &str) -> Option<MinerJob> {
