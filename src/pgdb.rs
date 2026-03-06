@@ -2194,8 +2194,14 @@ fn row_get_boolish(row: &postgres::Row, idx: usize) -> Result<bool> {
     if let Ok(value) = row.try_get::<_, i64>(idx) {
         return Ok(value != 0);
     }
+    if let Ok(value) = row.try_get::<_, i32>(idx) {
+        return Ok(value != 0);
+    }
+    if let Ok(value) = row.try_get::<_, i16>(idx) {
+        return Ok(value != 0);
+    }
     Err(anyhow!(
-        "unsupported boolean column type at index {idx}; expected bool or i64"
+        "unsupported boolean column type at index {idx}; expected bool or integer"
     ))
 }
 
