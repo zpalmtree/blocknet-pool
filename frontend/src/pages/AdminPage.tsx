@@ -40,7 +40,6 @@ export function AdminPage({
   const [payoutItems, setPayoutItems] = useState<AdminPayoutItem[]>([]);
   const [payoutPager, setPayoutPager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
 
-  const [feesAddress, setFeesAddress] = useState('');
   const [feesTotal, setFeesTotal] = useState(0);
   const [feeItems, setFeeItems] = useState<FeeEvent[]>([]);
   const [feePager, setFeePager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
@@ -92,7 +91,6 @@ export function AdminPage({
         limit: feePager.limit,
         offset: feePager.offset,
         sort: 'time_desc',
-        fee_address: feesAddress.trim() || undefined,
       });
       setFeesTotal(d.total_collected || 0);
       const items = d.recent?.items || [];
@@ -101,7 +99,7 @@ export function AdminPage({
     } catch {
       setFeeItems([]);
     }
-  }, [api, apiKey, feePager.limit, feePager.offset, feesAddress]);
+  }, [api, apiKey, feePager.limit, feePager.offset]);
 
   const loadHealth = useCallback(async () => {
     if (!apiKey) return;
@@ -342,17 +340,6 @@ export function AdminPage({
           </div>
 
           <div style={{ display: tab === 'fees' ? '' : 'none' }}>
-            <div className="filter-bar">
-              <input
-                type="text"
-                placeholder="Filter by fee address..."
-                value={feesAddress}
-                onChange={(e) => setFeesAddress(e.target.value)}
-              />
-              <button className="btn btn-primary" onClick={() => setFeePager((p) => ({ ...p, offset: 0 }))}>
-                Search
-              </button>
-            </div>
             <p style={{ fontSize: 14, color: 'var(--muted)', marginBottom: 12 }}>
               Total Collected: <span className="mono">{formatCoins(feesTotal)}</span>
             </p>
@@ -363,14 +350,13 @@ export function AdminPage({
                   <tr>
                     <th>Block</th>
                     <th>Amount</th>
-                    <th>Fee Address</th>
                     <th>Time</th>
                   </tr>
                 </thead>
                 <tbody>
                   {!feeItems.length ? (
                     <tr>
-                      <td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                      <td colSpan={3} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                         No fee events
                       </td>
                     </tr>
@@ -379,7 +365,6 @@ export function AdminPage({
                       <tr key={`${f.block_height}-${idx}`}>
                         <td>{f.block_height}</td>
                         <td>{formatCoins(f.amount)}</td>
-                        <td title={f.fee_address}>{shortAddr(f.fee_address)}</td>
                         <td title={new Date(toUnixMs(f.timestamp)).toLocaleString()}>{timeAgo(f.timestamp)}</td>
                       </tr>
                     ))
