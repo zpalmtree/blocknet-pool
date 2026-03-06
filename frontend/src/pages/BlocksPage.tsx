@@ -129,6 +129,24 @@ export function BlocksPage({ active, api, liveTick }: BlocksPageProps) {
           onNext={() => setPager((p) => ({ ...p, offset: p.offset + p.limit }))}
         />
       </div>
+
+      <div className="seo-copy-grid">
+        <div className="card seo-copy-card">
+          <h3>Confirmed Rounds</h3>
+          <p>Confirmed blocks cleared the pool confirmation window and are eligible for payout processing.</p>
+        </div>
+        <div className="card seo-copy-card">
+          <h3>Pending Rounds</h3>
+          <p>Pending blocks are fresh finds still moving toward payout eligibility while the chain confirmation count rises.</p>
+        </div>
+        <div className="card seo-copy-card">
+          <h3>Orphan Diagnostics</h3>
+          <p>
+            Orphaned rounds are still part of the pool story because they show how often shares landed on losing
+            branches.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

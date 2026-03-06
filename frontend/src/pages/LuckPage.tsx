@@ -110,6 +110,24 @@ export function LuckPage({ active, api, liveTick }: LuckPageProps) {
           onNext={() => setPager((prev) => ({ ...prev, offset: prev.offset + prev.limit }))}
         />
       </div>
+
+      <div className="seo-copy-grid">
+        <div className="card seo-copy-card">
+          <h3>Round Effort Matters</h3>
+          <p>Luck compares the work spent in a round with the work that was statistically expected before a block was found.</p>
+        </div>
+        <div className="card seo-copy-card">
+          <h3>Variance Is Normal</h3>
+          <p>Rounds above 100% effort happen naturally. Compare recent rounds together instead of overreacting to one slow block.</p>
+        </div>
+        <div className="card seo-copy-card">
+          <h3>Use It With Block History</h3>
+          <p>
+            Pair this luck view with <a href="/blocks">recent blocks</a> to see how round variance translates into
+            confirmed and orphaned blocks.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

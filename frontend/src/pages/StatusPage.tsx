@@ -143,6 +143,24 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
           </table>
         </div>
       </div>
+
+      <div className="seo-copy-grid">
+        <div className="card seo-copy-card">
+          <h3>Daemon Reachability</h3>
+          <p>Check whether the Blocknet daemon is online and ready to serve work before connecting miners.</p>
+        </div>
+        <div className="card seo-copy-card">
+          <h3>Historical Uptime</h3>
+          <p>Review uptime windows over time to understand how stable the pool has been under real load.</p>
+        </div>
+        <div className="card seo-copy-card">
+          <h3>Incident Tracking</h3>
+          <p>
+            Compare recent incidents against <a href="/payouts">payout timing</a> or <a href="/luck">round history</a>{' '}
+            when you need to investigate operational issues.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

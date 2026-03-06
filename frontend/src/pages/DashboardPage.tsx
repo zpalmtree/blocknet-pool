@@ -348,6 +348,30 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
           </table>
         </div>
       </div>
+
+      <div className="seo-copy-grid">
+        <div className="card seo-copy-card">
+          <h3>Start Mining</h3>
+          <p>
+            <a href="/start">Follow the Seine setup guide</a> to copy the stratum URL and connect a Blocknet wallet
+            address in minutes.
+          </p>
+        </div>
+        <div className="card seo-copy-card">
+          <h3>Check Recent Blocks</h3>
+          <p>
+            <a href="/blocks">Browse confirmed, pending, and orphaned rounds</a> to understand how the pool is
+            performing block to block.
+          </p>
+        </div>
+        <div className="card seo-copy-card">
+          <h3>Verify Payouts</h3>
+          <p>
+            <a href="/payouts">Review recent payout batches and explorer links</a> before you point any hashpower at
+            the pool.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

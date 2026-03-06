@@ -15,6 +15,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
+use chrono::{DateTime, SecondsFormat, Utc};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -707,7 +708,12 @@ impl UiRoute {
     fn indexable(self) -> bool {
         matches!(
             self,
-            Self::Dashboard | Self::Start | Self::Luck | Self::Blocks | Self::Payouts | Self::Status
+            Self::Dashboard
+                | Self::Start
+                | Self::Luck
+                | Self::Blocks
+                | Self::Payouts
+                | Self::Status
         )
     }
 
@@ -732,6 +738,27 @@ struct UiSeoPage {
     content_html: String,
 }
 
+#[derive(Debug, Clone, Default)]
+struct UiSeoContext {
+    connected_miners: usize,
+    connected_workers: usize,
+    pool_hashrate_hps: f64,
+    network_hashrate_hps: Option<f64>,
+    current_block_height: Option<u64>,
+    totals: Option<DbTotals>,
+    recent_blocks: Vec<DbBlock>,
+    recent_payout_batches: Vec<PublicPayoutBatch>,
+    daemon: Option<DaemonHealth>,
+    latest_incident: Option<StatusIncident>,
+    latest_status_change_at: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone)]
+struct SeoFaqEntry {
+    question: String,
+    answer: String,
+}
+
 fn format_decimal(value: f64) -> String {
     let mut out = format!("{value:.2}");
     while out.ends_with('0') {
@@ -741,6 +768,50 @@ fn format_decimal(value: f64) -> String {
         out.pop();
     }
     out
+}
+
+fn format_bnt(value: f64) -> String {
+    format!("{} BNT", format_decimal(value))
+}
+
+fn format_atomic_bnt(value: u64) -> String {
+    format!("{:.2} BNT", value as f64 / 1e8)
+}
+
+fn format_atomic_fee(value: u64) -> String {
+    if value == 0 {
+        return "0 BNT".to_string();
+    }
+    let coins = value as f64 / 1e8;
+    if coins < 0.01 {
+        format!("{coins:.4} BNT")
+    } else {
+        format!("{coins:.4} BNT")
+    }
+}
+
+fn human_hashrate(value: f64) -> String {
+    if !value.is_finite() || value <= 0.0 {
+        return "0 H/s".to_string();
+    }
+    let units = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s", "PH/s"];
+    let mut scaled = value;
+    let mut idx = 0usize;
+    while scaled >= 1000.0 && idx < units.len() - 1 {
+        scaled /= 1000.0;
+        idx += 1;
+    }
+    format!("{scaled:.2} {}", units[idx])
+}
+
+fn format_system_time_rfc3339(value: SystemTime) -> String {
+    let dt = DateTime::<Utc>::from(value);
+    dt.to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+fn format_system_time_short(value: SystemTime) -> String {
+    let dt = DateTime::<Utc>::from(value);
+    dt.format("%Y-%m-%d %H:%M UTC").to_string()
 }
 
 fn pool_base_url(state: &ApiState) -> String {
@@ -789,49 +860,144 @@ fn json_for_script(value: &serde_json::Value) -> String {
         .replace("</", "<\\/")
 }
 
+fn pool_fee_summary(pool_fee_pct: f64, pool_fee_flat: f64) -> String {
+    let mut parts = Vec::new();
+    if pool_fee_pct > 0.0 {
+        parts.push(format!("{}% fee", format_decimal(pool_fee_pct)));
+    }
+    if pool_fee_flat > 0.0 {
+        parts.push(format!("{} flat fee", format_bnt(pool_fee_flat)));
+    }
+    if parts.is_empty() {
+        "0% fee".to_string()
+    } else {
+        parts.join(" + ")
+    }
+}
+
+fn pool_fee_summary_for_state(state: &ApiState) -> String {
+    pool_fee_summary(state.pool_fee_pct, state.pool_fee_flat)
+}
+
+fn pool_payout_summary(state: &ApiState) -> String {
+    format!(
+        "{} minimum payout after {} confirmations",
+        format_bnt(state.min_payout_amount),
+        state.blocks_before_payout.max(0)
+    )
+}
+
+fn start_page_faq_entries(state: &ApiState) -> Vec<SeoFaqEntry> {
+    let stratum = stratum_endpoint(state);
+    let payout_scheme = state.payout_scheme.trim().to_uppercase();
+    let payout_rules = pool_payout_summary(state);
+    vec![
+        SeoFaqEntry {
+            question: "What miner should I use to mine Blocknet?".to_string(),
+            answer: "Use Seine, the Blocknet miner shown in the pool onboarding guide, then point it at the pool stratum endpoint.".to_string(),
+        },
+        SeoFaqEntry {
+            question: "What pool URL should I enter?".to_string(),
+            answer: format!("Use {stratum} as the pool URL in Seine or any compatible Blocknet mining configuration."),
+        },
+        SeoFaqEntry {
+            question: "How do payouts work on this Blocknet pool?".to_string(),
+            answer: format!(
+                "{} payouts are used here, with {}.",
+                payout_scheme,
+                payout_rules
+            ),
+        },
+        SeoFaqEntry {
+            question: "How can I verify pool activity before mining?".to_string(),
+            answer: "Review the public dashboard, recent blocks, payout batches, and status page before directing any hashpower to the pool.".to_string(),
+        },
+    ]
+}
+
+fn block_status_label(block: &DbBlock) -> &'static str {
+    if block.orphaned {
+        "Orphaned"
+    } else if block.confirmed {
+        "Confirmed"
+    } else {
+        "Pending"
+    }
+}
+
+fn explorer_block_url(hash: &str) -> String {
+    format!(
+        "https://explorer.blocknetcrypto.com/block/{}",
+        urlencoding::encode(hash)
+    )
+}
+
+fn explorer_tx_url(hash: &str) -> String {
+    format!(
+        "https://explorer.blocknetcrypto.com/tx/{}",
+        urlencoding::encode(hash)
+    )
+}
+
+fn latest_time(candidates: impl IntoIterator<Item = Option<SystemTime>>) -> Option<SystemTime> {
+    candidates.into_iter().flatten().max()
+}
+
 fn seo_title(route: UiRoute, state: &ApiState) -> String {
     match route {
-        UiRoute::Dashboard => format!("Blocknet Mining Pool Dashboard | {}", state.pool_name),
-        UiRoute::Start => format!("How To Start Mining Blocknet | {}", state.pool_name),
-        UiRoute::Luck => format!("Pool Luck History | {}", state.pool_name),
-        UiRoute::Blocks => format!("Recent Blocknet Blocks | {}", state.pool_name),
-        UiRoute::Payouts => format!("Recent Pool Payouts | {}", state.pool_name),
-        UiRoute::Stats => format!("Miner Stats Lookup | {}", state.pool_name),
-        UiRoute::Admin => format!("Admin Dashboard | {}", state.pool_name),
-        UiRoute::Status => format!("Pool Status | {}", state.pool_name),
+        UiRoute::Dashboard => format!(
+            "Blocknet Mining Pool | Live Hashrate, Blocks & Payouts | {}",
+            state.pool_name
+        ),
+        UiRoute::Start => format!(
+            "Mine Blocknet With Seine | Setup, Stratum & Payouts | {}",
+            state.pool_name
+        ),
+        UiRoute::Luck => format!(
+            "Blocknet Pool Luck | Round Effort History | {}",
+            state.pool_name
+        ),
+        UiRoute::Blocks => format!(
+            "Recent Blocknet Blocks | Confirmed, Pending & Orphaned | {}",
+            state.pool_name
+        ),
+        UiRoute::Payouts => format!(
+            "Blocknet Pool Payouts | Recent Transactions | {}",
+            state.pool_name
+        ),
+        UiRoute::Stats => format!("Blocknet Miner Stats Lookup | {}", state.pool_name),
+        UiRoute::Admin => format!("Pool Admin Dashboard | {}", state.pool_name),
+        UiRoute::Status => format!(
+            "Blocknet Pool Status | Uptime & Daemon Health | {}",
+            state.pool_name
+        ),
     }
 }
 
 fn seo_description(route: UiRoute, state: &ApiState) -> String {
+    let stratum = stratum_endpoint(state);
+    let fee = pool_fee_summary_for_state(state);
+    let payout_scheme = state.payout_scheme.trim().to_uppercase();
+    let payout_rules = pool_payout_summary(state);
     match route {
         UiRoute::Dashboard => format!(
-            "Mine Blocknet with {}. Track pool hashrate, round luck, recent blocks, payouts, and pool health from one public dashboard.",
-            state.pool_name
+            "Live Blocknet mining pool dashboard for {} with stratum URL {}, public blocks, payout batches, round luck, and real-time pool status.",
+            state.pool_name, stratum
         ),
-        UiRoute::Start => {
-            let fee = if state.pool_fee_pct > 0.0 {
-                format!("{}% fee", format_decimal(state.pool_fee_pct))
-            } else {
-                "transparent fee model".to_string()
-            };
-            format!(
-                "Learn how to mine Blocknet with {}, connect to {}, and understand {} payouts and {}.",
-                state.pool_name,
-                stratum_endpoint(state),
-                state.payout_scheme.to_uppercase(),
-                fee
-            )
-        }
+        UiRoute::Start => format!(
+            "Start mining Blocknet with {}. Copy {}, mine with Seine, and review {} payouts, {}, and {}.",
+            state.pool_name, stratum, payout_scheme, fee, payout_rules
+        ),
         UiRoute::Luck => format!(
-            "Track {} luck history with round effort, round duration, and confirmation status for recent Blocknet blocks.",
+            "Track {} pool luck with round effort, expected block timing, round duration, and recent confirmed or orphaned Blocknet rounds.",
             state.pool_name
         ),
         UiRoute::Blocks => format!(
-            "Browse recently found Blocknet blocks from {}, including confirmed, pending, and orphaned rounds with effort and timing data.",
+            "Browse recent Blocknet blocks found by {}, including confirmed, pending, and orphaned rounds with explorer links, rewards, and timing.",
             state.pool_name
         ),
         UiRoute::Payouts => format!(
-            "Review recent Blocknet mining pool payouts from {}, including payout totals, recipient counts, explorer transaction links, and payout timing.",
+            "Review recent Blocknet pool payouts from {} with recipient counts, payout totals, network fees, and explorer transaction links.",
             state.pool_name
         ),
         UiRoute::Stats => format!(
@@ -843,7 +1009,7 @@ fn seo_description(route: UiRoute, state: &ApiState) -> String {
             state.pool_name
         ),
         UiRoute::Status => format!(
-            "Monitor {} uptime, daemon reachability, sync status, and incident history from the public Blocknet pool status page.",
+            "Monitor {} uptime, daemon reachability, sync state, incident history, and current chain height from the public Blocknet pool status page.",
             state.pool_name
         ),
     }
@@ -860,38 +1026,357 @@ fn fallback_page_markup(route: UiRoute, intro: &str, body: &str) -> String {
     )
 }
 
-fn fallback_content(route: UiRoute, state: &ApiState) -> String {
-    let stratum = escape_html(&stratum_endpoint(state));
+fn render_stat_grid(items: &[(&str, String, Option<String>)]) -> String {
+    let cards = items
+        .iter()
+        .map(|(label, value, meta)| {
+            let meta_html = meta
+                .as_ref()
+                .map(|entry| format!(r#"<div class="stat-meta">{}</div>"#, escape_html(entry)))
+                .unwrap_or_default();
+            format!(
+                r#"<div class="stat-card"><div class="label">{}</div><div class="value">{}</div>{}</div>"#,
+                escape_html(label),
+                escape_html(value),
+                meta_html
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    format!(r#"<div class="stats-grid stats-grid-dense">{cards}</div>"#)
+}
+
+fn render_start_faq_section(entries: &[SeoFaqEntry]) -> String {
+    let cards = entries
+        .iter()
+        .map(|entry| {
+            format!(
+                r#"<div class="card seo-copy-card"><h3>{}</h3><p>{}</p></div>"#,
+                escape_html(&entry.question),
+                escape_html(&entry.answer)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    format!(
+        r#"<div class="section"><div class="section-header"><div><h2>Mining pool FAQ</h2><p class="section-lead">Important setup and payout questions miners usually ask before connecting to the pool.</p></div></div><div class="seo-copy-grid">{cards}</div></div>"#
+    )
+}
+
+fn render_recent_blocks_section(blocks: &[DbBlock], show_view_all: bool) -> String {
+    if blocks.is_empty() {
+        return r#"<div class="card section"><h2>Recent block activity</h2><p class="section-lead">No pool blocks have been recorded yet.</p></div>"#
+            .to_string();
+    }
+
+    let rows = blocks
+        .iter()
+        .take(6)
+        .map(|block| {
+            format!(
+                r#"<tr><td><a href="{}" target="_blank" rel="noopener">{}</a></td><td>{}</td><td>{}</td><td>{}</td></tr>"#,
+                escape_html(&explorer_block_url(&block.hash)),
+                block.height,
+                escape_html(&format_atomic_bnt(block.reward)),
+                escape_html(block_status_label(block)),
+                escape_html(&format_system_time_short(block.timestamp))
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    let view_all = if show_view_all {
+        r#"<a class="view-all" href="/blocks">Open blocks page</a>"#
+    } else {
+        ""
+    };
+    format!(
+        r#"<div class="section"><div class="section-header"><div><h2>Recent block activity</h2><p class="section-lead">Fresh confirmed, pending, and orphaned rounds from the Blocknet pool with direct explorer links.</p></div>{view_all}</div><div class="card table-scroll"><table><thead><tr><th>Height</th><th>Reward</th><th>Status</th><th>Found</th></tr></thead><tbody>{rows}</tbody></table></div></div>"#
+    )
+}
+
+fn render_recent_payouts_section(batches: &[PublicPayoutBatch], show_view_all: bool) -> String {
+    if batches.is_empty() {
+        return r#"<div class="card section"><h2>Recent payout batches</h2><p class="section-lead">No payout batches have been recorded yet.</p></div>"#
+            .to_string();
+    }
+
+    let rows = batches
+        .iter()
+        .take(6)
+        .map(|batch| {
+            let primary_tx = batch.tx_hashes.first().map(|hash| {
+                format!(
+                    r#"<a href="{}" target="_blank" rel="noopener">{}</a>"#,
+                    escape_html(&explorer_tx_url(hash)),
+                    escape_html(hash)
+                )
+            });
+            format!(
+                r#"<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>"#,
+                escape_html(&format_atomic_bnt(batch.total_amount)),
+                batch.recipient_count,
+                escape_html(&format_atomic_fee(batch.total_fee)),
+                primary_tx.unwrap_or_else(|| "-".to_string()),
+                escape_html(&format_system_time_short(batch.timestamp))
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    let view_all = if show_view_all {
+        r#"<a class="view-all" href="/payouts">Open payouts page</a>"#
+    } else {
+        ""
+    };
+    format!(
+        r#"<div class="section"><div class="section-header"><div><h2>Recent payout batches</h2><p class="section-lead">Recent on-chain payout batches with recipient counts, fees, and explorer transaction links.</p></div>{view_all}</div><div class="card table-scroll"><table><thead><tr><th>Total</th><th>Miners Paid</th><th>Network Fee</th><th>Transaction</th><th>Paid</th></tr></thead><tbody>{rows}</tbody></table></div></div>"#
+    )
+}
+
+async fn load_ui_seo_context(route: UiRoute, state: &ApiState) -> UiSeoContext {
+    let stats_snapshot = state.stats.snapshot();
+    let current_job = state.jobs.current_job();
+    let need_blocks = matches!(route, UiRoute::Dashboard | UiRoute::Blocks | UiRoute::Luck);
+    let need_payouts = matches!(route, UiRoute::Dashboard | UiRoute::Payouts);
+    let need_totals = matches!(route, UiRoute::Dashboard | UiRoute::Blocks | UiRoute::Luck);
+    let need_status = matches!(route, UiRoute::Status);
+
+    let totals = if need_totals {
+        match state.db_totals().await {
+            Ok(value) => Some(value),
+            Err(err) => {
+                tracing::warn!(error = %err, route = route.slug(), "failed loading seo totals");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let network_hashrate_hps = if matches!(route, UiRoute::Dashboard) {
+        state.network_hashrate_for_job(current_job.as_ref()).await
+    } else {
+        None
+    };
+
+    let mut context = UiSeoContext {
+        connected_miners: stats_snapshot.connected_miners,
+        connected_workers: stats_snapshot.connected_workers,
+        pool_hashrate_hps: stats_snapshot.estimated_hashrate,
+        network_hashrate_hps,
+        current_block_height: current_job.as_ref().map(|job| job.height),
+        totals,
+        ..Default::default()
+    };
+
+    if need_blocks || need_payouts {
+        let store = Arc::clone(&state.store);
+        match tokio::task::spawn_blocking(
+            move || -> anyhow::Result<(Vec<DbBlock>, Vec<PublicPayoutBatch>)> {
+                let blocks = if need_blocks {
+                    store.get_recent_blocks(6)?
+                } else {
+                    Vec::new()
+                };
+                let payout_batches = if need_payouts {
+                    store.get_public_payout_batches_page("time_desc", 6, 0)?.0
+                } else {
+                    Vec::new()
+                };
+                Ok((blocks, payout_batches))
+            },
+        )
+        .await
+        {
+            Ok(Ok((blocks, payout_batches))) => {
+                context.recent_blocks = blocks;
+                context.recent_payout_batches = payout_batches;
+            }
+            Ok(Err(err)) => {
+                tracing::warn!(error = %err, route = route.slug(), "failed loading seo previews");
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, route = route.slug(), "seo preview join error");
+            }
+        }
+    }
+
+    if need_status {
+        let now = SystemTime::now();
+        let daemon = state.daemon_health().await;
+        let history = state.status_history.lock();
+        let latest_closed_incident = history
+            .incidents
+            .front()
+            .map(|incident| incident.ended_at.unwrap_or(incident.started_at));
+        let latest_open_incident = latest_time([
+            history
+                .open_daemon_down
+                .as_ref()
+                .map(|incident| incident.started_at),
+            history
+                .open_daemon_syncing
+                .as_ref()
+                .map(|incident| incident.started_at),
+        ]);
+        context.daemon = Some(daemon);
+        context.latest_incident = history.incidents_for_api(now).into_iter().next();
+        context.latest_status_change_at = latest_time([
+            history.samples.back().map(|sample| sample.timestamp),
+            latest_closed_incident,
+            latest_open_incident,
+        ]);
+    }
+
+    context
+}
+
+fn ui_seo_last_modified(
+    route: UiRoute,
+    state: &ApiState,
+    context: &UiSeoContext,
+) -> Option<SystemTime> {
+    let latest_block = context.recent_blocks.first().map(|block| block.timestamp);
+    let latest_payout = context
+        .recent_payout_batches
+        .first()
+        .map(|batch| batch.timestamp);
     match route {
-        UiRoute::Dashboard => fallback_page_markup(
-            route,
-            "Track pool hashrate, round luck, recent blocks, payout timing, and current chain conditions from the public dashboard.",
-            &format!(
-                r#"<div class="stratum-bar"><span style="font-size:14px;font-weight:600;color:var(--muted)">Stratum</span><span class="endpoint">{stratum}</span></div><div class="seo-copy-grid"><div class="card seo-copy-card"><h3>Live pool metrics</h3><p>Watch connected miners, pool hashrate, network hashrate, and current job height from one public dashboard.</p></div><div class="card seo-copy-card"><h3>Transparent operations</h3><p>Review recently found blocks, round effort, payout timing, and service status before you mine.</p></div><div class="card seo-copy-card"><h3>Fast onboarding</h3><p>Use the getting started guide to connect Seine, set your Blocknet address, and begin mining.</p></div></div>"#
-            ),
-        ),
+        UiRoute::Dashboard => {
+            latest_time([Some(state.started_at_system), latest_block, latest_payout])
+        }
+        UiRoute::Start | UiRoute::Stats | UiRoute::Admin => Some(state.started_at_system),
+        UiRoute::Luck | UiRoute::Blocks => {
+            latest_time([latest_block, Some(state.started_at_system)])
+        }
+        UiRoute::Payouts => latest_time([latest_payout, Some(state.started_at_system)]),
+        UiRoute::Status => latest_time([
+            context.latest_status_change_at,
+            Some(state.started_at_system),
+        ]),
+    }
+}
+
+fn fallback_content(route: UiRoute, state: &ApiState, context: &UiSeoContext) -> String {
+    let stratum = escape_html(&stratum_endpoint(state));
+    let fee_summary = escape_html(&pool_fee_summary_for_state(state));
+    let payout_summary = escape_html(&pool_payout_summary(state));
+    let faq_section = render_start_faq_section(&start_page_faq_entries(state));
+    match route {
+        UiRoute::Dashboard => {
+            let totals = context.totals.unwrap_or_default();
+            let stats_grid = render_stat_grid(&[
+                ("Connected Miners", context.connected_miners.to_string(), None),
+                ("Active Workers", context.connected_workers.to_string(), None),
+                ("Pool Hashrate", human_hashrate(context.pool_hashrate_hps), None),
+                (
+                    "Network Hashrate",
+                    context
+                        .network_hashrate_hps
+                        .map(human_hashrate)
+                        .unwrap_or_else(|| "-".to_string()),
+                    None,
+                ),
+                (
+                    "Current Block",
+                    context
+                        .current_block_height
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                    None,
+                ),
+                (
+                    "Blocks Found",
+                    totals.total_blocks.to_string(),
+                    Some(format!(
+                        "{} confirmed, {} orphaned",
+                        totals.confirmed_blocks, totals.orphaned_blocks
+                    )),
+                ),
+            ]);
+            fallback_page_markup(
+                route,
+                "Track pool hashrate, round luck, recent blocks, payout timing, and current chain conditions from the public dashboard.",
+                &format!(
+                    r#"<div class="stratum-bar"><span style="font-size:14px;font-weight:600;color:var(--muted)">Stratum</span><span class="endpoint">{stratum}</span></div>{stats_grid}<div class="card section"><div class="section-header"><div><h2>Explore the pool</h2><p class="section-lead">Verify the pool before mining by reviewing the public start guide, block history, payouts, and live status.</p></div></div><div class="seo-copy-grid"><div class="card seo-copy-card"><h3>Start Mining</h3><p><a href="/start">Follow the Seine setup guide</a> to copy the stratum URL and connect a Blocknet wallet address in minutes.</p></div><div class="card seo-copy-card"><h3>Check Recent Blocks</h3><p><a href="/blocks">Browse confirmed, pending, and orphaned rounds</a> to understand how the pool is performing block to block.</p></div><div class="card seo-copy-card"><h3>Verify Payouts</h3><p><a href="/payouts">Review recent payout batches and explorer links</a> before you point any hashpower at the pool.</p></div></div></div>{blocks}{payouts}"#,
+                    blocks = render_recent_blocks_section(&context.recent_blocks, true),
+                    payouts = render_recent_payouts_section(&context.recent_payout_batches, true),
+                ),
+            )
+        }
         UiRoute::Start => fallback_page_markup(
             route,
             "Download Seine, connect to the pool stratum endpoint, and monitor your Blocknet hashrate and payouts from the public dashboard.",
             &format!(
-                r#"<div class="card section"><h3>Quick start</h3><p class="section-lead">Connect your Blocknet wallet address to the pool and start mining with Seine.</p><pre class="config-block">./seine --pool-url {stratum} --address YOUR_BLOCKNET_ADDRESS</pre></div><div class="seo-copy-grid"><div class="card seo-copy-card"><h3>Transparent pool data</h3><p>Review blocks, payout batches, and status pages before you point any hashpower at the pool.</p></div><div class="card seo-copy-card"><h3>Simple setup</h3><p>You only need your Blocknet wallet address and the pool URL to start mining with Seine.</p></div><div class="card seo-copy-card"><h3>Operator visibility</h3><p>Dashboard metrics, historical luck, and uptime tracking make it easier to compare pool performance over time.</p></div></div>"#
+                r#"<div class="card section"><h2>Pool information</h2><table class="info-table" style="max-width:540px"><tbody><tr><td>Stratum</td><td>{stratum}</td></tr><tr><td>Fee</td><td>{fee_summary}</td></tr><tr><td>Payouts</td><td>{scheme}</td></tr><tr><td>Min Payout</td><td>{min_payout}</td></tr><tr><td>Confirmations</td><td>{confirmations}</td></tr></tbody></table></div><div class="card section"><h2>Quick start</h2><p class="section-lead">Connect your Blocknet wallet address to the pool, start Seine, and use the dashboard to verify hashrate and payouts.</p><pre class="config-block">./seine --pool-url {stratum} --address YOUR_BLOCKNET_ADDRESS</pre></div>{faq_section}<div class="section"><div class="section-header"><div><h2>Why miners review this page first</h2><p class="section-lead">The pool guide surfaces the facts that matter before you start mining: endpoint, fees, payout rules, live status, and public payment history.</p></div></div><div class="seo-copy-grid"><div class="card seo-copy-card"><h3>Transparent fees</h3><p>{fee_summary} with public payout batches and explorer transaction links available on the pool site.</p></div><div class="card seo-copy-card"><h3>Payout rules</h3><p>{payout_summary}. Review the <a href="/payouts">recent payouts page</a> for recent on-chain batches.</p></div><div class="card seo-copy-card"><h3>Operational visibility</h3><p>Use the <a href="/status">status page</a> and <a href="/">live dashboard</a> to confirm uptime, daemon health, and current pool activity.</p></div></div></div>"#,
+                scheme = escape_html(&state.payout_scheme.trim().to_uppercase()),
+                min_payout = escape_html(&format_bnt(state.min_payout_amount)),
+                confirmations = state.blocks_before_payout.max(0),
             ),
         ),
-        UiRoute::Luck => fallback_page_markup(
-            route,
-            "Compare round effort and duration over time to understand how actual block discovery compares with expected pool luck.",
-            r#"<div class="seo-copy-grid"><div class="card seo-copy-card"><h3>Round effort</h3><p>Measure how much work each round required compared with statistical expectation.</p></div><div class="card seo-copy-card"><h3>Round duration</h3><p>Inspect how long each round lasted before a block was found or orphaned.</p></div><div class="card seo-copy-card"><h3>Historical transparency</h3><p>Use recent round history to compare pool variance across multiple blocks.</p></div></div>"#,
-        ),
-        UiRoute::Blocks => fallback_page_markup(
-            route,
-            "Browse confirmed, pending, and orphaned pool blocks with reward, round effort, and elapsed round time for each Blocknet block.",
-            r#"<div class="seo-copy-grid"><div class="card seo-copy-card"><h3>Confirmed blocks</h3><p>Review completed rounds with explorer links for direct on-chain verification.</p></div><div class="card seo-copy-card"><h3>Pending rounds</h3><p>Track newly found blocks while they move through the required confirmations window.</p></div><div class="card seo-copy-card"><h3>Round diagnostics</h3><p>Compare effort percentage and round time to understand variance across recent blocks.</p></div></div>"#,
-        ),
-        UiRoute::Payouts => fallback_page_markup(
-            route,
-            "Review payout totals, recipient counts, network fees, and explorer transaction links for recent pool payout batches.",
-            r#"<div class="seo-copy-grid"><div class="card seo-copy-card"><h3>Verified payouts</h3><p>Transaction links point to the public Blocknet explorer so payouts can be checked independently.</p></div><div class="card seo-copy-card"><h3>Batch visibility</h3><p>Inspect how many miners were paid in each payout batch and how much value moved on-chain.</p></div><div class="card seo-copy-card"><h3>Fee transparency</h3><p>Review recent network fees alongside payout timestamps to understand payout cadence.</p></div></div>"#,
-        ),
+        UiRoute::Luck => {
+            let totals = context.totals.unwrap_or_default();
+            let pending_blocks = totals
+                .total_blocks
+                .saturating_sub(totals.confirmed_blocks + totals.orphaned_blocks);
+            let stats_grid = render_stat_grid(&[
+                ("Confirmed Blocks", totals.confirmed_blocks.to_string(), None),
+                ("Pending Blocks", pending_blocks.to_string(), None),
+                ("Orphaned Blocks", totals.orphaned_blocks.to_string(), None),
+                (
+                    "Payout Model",
+                    state.payout_scheme.trim().to_uppercase(),
+                    Some(pool_payout_summary(state)),
+                ),
+            ]);
+            fallback_page_markup(
+                route,
+                "Compare round effort and duration over time to understand how actual block discovery compares with expected pool luck.",
+                &format!(
+                    r#"{stats_grid}<div class="seo-copy-grid"><div class="card seo-copy-card"><h3>Round effort matters</h3><p>Luck compares the work spent in a round with the work that was statistically expected before a block was found.</p></div><div class="card seo-copy-card"><h3>Variance is normal</h3><p>Rounds above 100% effort happen naturally. Compare recent rounds together instead of overreacting to one slow block.</p></div><div class="card seo-copy-card"><h3>Use it with block history</h3><p>Pair the <a href="/luck">luck view</a> with the <a href="/blocks">recent blocks page</a> to see how round variance translates into confirmed and orphaned blocks.</p></div></div>{blocks}"#,
+                    blocks = render_recent_blocks_section(&context.recent_blocks, true),
+                ),
+            )
+        }
+        UiRoute::Blocks => {
+            let totals = context.totals.unwrap_or_default();
+            let pending_blocks = totals
+                .total_blocks
+                .saturating_sub(totals.confirmed_blocks + totals.orphaned_blocks);
+            let stats_grid = render_stat_grid(&[
+                ("Total Blocks", totals.total_blocks.to_string(), None),
+                ("Confirmed", totals.confirmed_blocks.to_string(), None),
+                ("Pending", pending_blocks.to_string(), None),
+                ("Orphaned", totals.orphaned_blocks.to_string(), None),
+            ]);
+            fallback_page_markup(
+                route,
+                "Browse confirmed, pending, and orphaned pool blocks with reward, round effort, and elapsed round time for each Blocknet block.",
+                &format!(
+                    r#"{stats_grid}{blocks}<div class="seo-copy-grid"><div class="card seo-copy-card"><h3>Confirmed rounds</h3><p>Confirmed blocks represent rounds that cleared the pool confirmation window and are eligible for payout processing.</p></div><div class="card seo-copy-card"><h3>Pending rounds</h3><p>Pending blocks are fresh finds still moving toward payout eligibility while the chain confirmation count increases.</p></div><div class="card seo-copy-card"><h3>Orphan diagnostics</h3><p>Orphaned rounds are still part of the pool story because they show how often shares landed on losing branches.</p></div></div>"#,
+                    blocks = render_recent_blocks_section(&context.recent_blocks, false),
+                ),
+            )
+        }
+        UiRoute::Payouts => {
+            let stats_grid = render_stat_grid(&[
+                ("Pool Fee", pool_fee_summary_for_state(state), None),
+                ("Payout Scheme", state.payout_scheme.trim().to_uppercase(), None),
+                ("Min Payout", format_bnt(state.min_payout_amount), None),
+                (
+                    "Confirmations",
+                    state.blocks_before_payout.max(0).to_string(),
+                    Some("Required before payout release".to_string()),
+                ),
+            ]);
+            fallback_page_markup(
+                route,
+                "Review payout totals, recipient counts, network fees, and explorer transaction links for recent pool payout batches.",
+                &format!(
+                    r#"{stats_grid}{payouts}<div class="seo-copy-grid"><div class="card seo-copy-card"><h3>Verified payouts</h3><p>Transaction hashes point to the public Blocknet explorer so payout batches can be checked independently.</p></div><div class="card seo-copy-card"><h3>Batch visibility</h3><p>Each payout batch shows how many miners were paid and how much value moved on-chain in that window.</p></div><div class="card seo-copy-card"><h3>Payout cadence</h3><p>Use the recent payout page together with the <a href="/status">status page</a> and <a href="/">dashboard</a> to understand pool rhythm over time.</p></div></div>"#,
+                    payouts = render_recent_payouts_section(&context.recent_payout_batches, false),
+                ),
+            )
+        }
         UiRoute::Stats => fallback_page_markup(
             route,
             "Look up a Blocknet wallet address to inspect hashrate, balances, workers, shares, and payout history.",
@@ -902,43 +1387,162 @@ fn fallback_content(route: UiRoute, state: &ApiState) -> String {
             "Administrative view for miners, payouts, fees, health checks, and daemon logs.",
             r#"<div class="card section"><h3>Operator tools</h3><p class="section-lead">The admin dashboard requires an API key and is excluded from search indexing.</p></div>"#,
         ),
-        UiRoute::Status => fallback_page_markup(
-            route,
-            "Monitor uptime, daemon reachability, sync state, and recent incident history from the public status page.",
-            r#"<div class="seo-copy-grid"><div class="card seo-copy-card"><h3>Daemon reachability</h3><p>Check whether the Blocknet daemon is online and ready to serve work.</p></div><div class="card seo-copy-card"><h3>Historical uptime</h3><p>Review uptime windows over time to understand how stable the pool has been.</p></div><div class="card seo-copy-card"><h3>Incident tracking</h3><p>Scan recent incidents and severity to catch operational issues quickly.</p></div></div>"#,
-        ),
+        UiRoute::Status => {
+            let daemon = context.daemon.clone().unwrap_or_default();
+            let stats_grid = render_stat_grid(&[
+                (
+                    "Daemon",
+                    if daemon.reachable {
+                        "Online".to_string()
+                    } else {
+                        "Offline".to_string()
+                    },
+                    daemon.error.clone(),
+                ),
+                (
+                    "Sync State",
+                    if daemon.syncing.unwrap_or(false) {
+                        "Syncing".to_string()
+                    } else {
+                        "Ready".to_string()
+                    },
+                    None,
+                ),
+                (
+                    "Chain Height",
+                    daemon
+                        .chain_height
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                    None,
+                ),
+                (
+                    "Latest Incident",
+                    context
+                        .latest_incident
+                        .as_ref()
+                        .map(|incident| incident.severity.clone())
+                        .unwrap_or_else(|| "Clear".to_string()),
+                    context
+                        .latest_incident
+                        .as_ref()
+                        .map(|incident| incident.message.clone()),
+                ),
+            ]);
+            let latest_incident = context
+                .latest_incident
+                .as_ref()
+                .map(|incident| {
+                    format!(
+                        r#"<div class="card section"><h2>Latest incident</h2><p class="section-lead"><strong>{}</strong>: {}. Started {}</p></div>"#,
+                        escape_html(&incident.severity),
+                        escape_html(&incident.message),
+                        escape_html(&format_system_time_short(incident.started_at))
+                    )
+                })
+                .unwrap_or_default();
+            fallback_page_markup(
+                route,
+                "Monitor uptime, daemon reachability, sync state, and recent incident history from the public status page.",
+                &format!(
+                    r#"{stats_grid}{latest_incident}<div class="seo-copy-grid"><div class="card seo-copy-card"><h3>Daemon reachability</h3><p>Check whether the Blocknet daemon is online and ready to serve work before connecting miners.</p></div><div class="card seo-copy-card"><h3>Historical uptime</h3><p>Review uptime windows over time to understand how stable the pool has been under real load.</p></div><div class="card seo-copy-card"><h3>Incident tracking</h3><p>Scan recent incidents and severity to catch operational issues quickly and compare them against payouts or luck history.</p></div></div>"#
+                ),
+            )
+        }
     }
 }
 
-fn structured_data(route: UiRoute, state: &ApiState, canonical_url: &str, title: &str, description: &str) -> serde_json::Value {
+fn structured_data(
+    route: UiRoute,
+    state: &ApiState,
+    context: &UiSeoContext,
+    canonical_url: &str,
+    title: &str,
+    description: &str,
+    last_modified: Option<SystemTime>,
+) -> serde_json::Value {
     let base_url = pool_base_url(state);
+    let og_image_url = format!("{}/og-image.svg", base_url);
+    let logo_url = format!("{}/favicon.svg", base_url);
+    let website_id = format!("{base_url}/#website");
+    let organization_id = format!("{base_url}/#organization");
+    let service_id = format!("{base_url}/#service");
+    let breadcrumb_id = format!("{canonical_url}#breadcrumb");
+    let page_id = format!("{canonical_url}#webpage");
+
+    let mut page = serde_json::json!({
+        "@context": "https://schema.org",
+        "@type": route.schema_type(),
+        "@id": page_id,
+        "name": title,
+        "url": canonical_url,
+        "description": description,
+        "inLanguage": "en-US",
+        "isPartOf": { "@id": website_id },
+        "about": { "@id": service_id },
+        "primaryImageOfPage": {
+            "@type": "ImageObject",
+            "url": og_image_url,
+        },
+    });
+    if !matches!(route, UiRoute::Dashboard) {
+        page["breadcrumb"] = serde_json::json!({ "@id": breadcrumb_id });
+    }
+    if let Some(last_modified) = last_modified {
+        page["dateModified"] = serde_json::json!(format_system_time_rfc3339(last_modified));
+    }
+
     let mut items = vec![
         serde_json::json!({
             "@context": "https://schema.org",
-            "@type": "WebSite",
+            "@type": "Organization",
+            "@id": organization_id,
             "name": state.pool_name,
             "url": base_url,
-            "description": seo_description(UiRoute::Dashboard, state),
+            "logo": {
+                "@type": "ImageObject",
+                "url": logo_url,
+            }
         }),
         serde_json::json!({
             "@context": "https://schema.org",
-            "@type": route.schema_type(),
-            "name": title,
-            "url": canonical_url,
-            "description": description,
-            "isPartOf": {
-                "@type": "WebSite",
-                "name": state.pool_name,
-                "url": base_url,
+            "@type": "WebSite",
+            "@id": website_id,
+            "name": state.pool_name,
+            "url": base_url,
+            "description": seo_description(UiRoute::Dashboard, state),
+            "publisher": { "@id": organization_id },
+            "inLanguage": "en-US",
+        }),
+        serde_json::json!({
+            "@context": "https://schema.org",
+            "@type": "Service",
+            "@id": service_id,
+            "name": format!("{} Blocknet mining pool", state.pool_name),
+            "serviceType": "Cryptocurrency mining pool",
+            "provider": { "@id": organization_id },
+            "url": base_url,
+            "description": seo_description(UiRoute::Dashboard, state),
+            "areaServed": "Worldwide",
+            "offers": {
+                "@type": "Offer",
+                "description": format!(
+                    "{} payouts, {}, {}",
+                    state.payout_scheme.trim().to_uppercase(),
+                    pool_fee_summary_for_state(state),
+                    pool_payout_summary(state)
+                ),
             }
         }),
+        page,
     ];
 
     if matches!(route, UiRoute::Start) {
+        let faq_entries = start_page_faq_entries(state);
         items.push(serde_json::json!({
             "@context": "https://schema.org",
             "@type": "HowTo",
-            "name": "How to start mining Blocknet with Seine",
+            "name": "How to mine Blocknet with Seine",
             "url": canonical_url,
             "description": description,
             "step": [
@@ -960,9 +1564,84 @@ fn structured_data(route: UiRoute, state: &ApiState, canonical_url: &str, title:
                 {
                     "@type": "HowToStep",
                     "name": "Start mining and monitor payouts",
-                    "text": "Run the miner, then use the pool dashboard and stats page to track hashrate and balances.",
+                    "text": "Run the miner, then use the pool dashboard and payout pages to verify hashrate, rounds, and payment history.",
                 }
             ]
+        }));
+        items.push(serde_json::json!({
+            "@context": "https://schema.org",
+            "@type": "FAQPage",
+            "mainEntity": faq_entries
+                .into_iter()
+                .map(|entry| serde_json::json!({
+                    "@type": "Question",
+                    "name": entry.question,
+                    "acceptedAnswer": {
+                        "@type": "Answer",
+                        "text": entry.answer,
+                    }
+                }))
+                .collect::<Vec<_>>(),
+        }));
+    }
+
+    if matches!(route, UiRoute::Blocks) && !context.recent_blocks.is_empty() {
+        items.push(serde_json::json!({
+            "@context": "https://schema.org",
+            "@type": "ItemList",
+            "name": "Recent Blocknet pool blocks",
+            "itemListElement": context
+                .recent_blocks
+                .iter()
+                .take(6)
+                .enumerate()
+                .map(|(idx, block)| serde_json::json!({
+                    "@type": "ListItem",
+                    "position": idx + 1,
+                    "url": explorer_block_url(&block.hash),
+                    "name": format!("Block {} {}", block.height, block_status_label(block)),
+                    "description": format!(
+                        "{} found {} with reward {}",
+                        block_status_label(block),
+                        format_system_time_short(block.timestamp),
+                        format_atomic_bnt(block.reward)
+                    )
+                }))
+                .collect::<Vec<_>>(),
+        }));
+    }
+
+    if matches!(route, UiRoute::Payouts) && !context.recent_payout_batches.is_empty() {
+        items.push(serde_json::json!({
+            "@context": "https://schema.org",
+            "@type": "ItemList",
+            "name": "Recent Blocknet pool payout batches",
+            "itemListElement": context
+                .recent_payout_batches
+                .iter()
+                .take(6)
+                .enumerate()
+                .map(|(idx, batch)| serde_json::json!({
+                    "@type": "ListItem",
+                    "position": idx + 1,
+                    "name": format!(
+                        "Payout batch {} miners paid",
+                        batch.recipient_count
+                    ),
+                    "url": batch
+                        .tx_hashes
+                        .first()
+                        .map(|hash| explorer_tx_url(hash))
+                        .unwrap_or_else(|| canonical_url.to_string()),
+                    "description": format!(
+                        "{} paid to {} miners with {} network fee at {}",
+                        format_atomic_bnt(batch.total_amount),
+                        batch.recipient_count,
+                        format_atomic_fee(batch.total_fee),
+                        format_system_time_short(batch.timestamp)
+                    )
+                }))
+                .collect::<Vec<_>>(),
         }));
     }
 
@@ -970,6 +1649,7 @@ fn structured_data(route: UiRoute, state: &ApiState, canonical_url: &str, title:
         items.push(serde_json::json!({
             "@context": "https://schema.org",
             "@type": "BreadcrumbList",
+            "@id": breadcrumb_id,
             "itemListElement": [
                 {
                     "@type": "ListItem",
@@ -990,21 +1670,28 @@ fn structured_data(route: UiRoute, state: &ApiState, canonical_url: &str, title:
     serde_json::Value::Array(items)
 }
 
-fn build_ui_seo_page(route: UiRoute, state: &ApiState) -> UiSeoPage {
+async fn build_ui_seo_page(route: UiRoute, state: &ApiState) -> UiSeoPage {
     let site_name = state.pool_name.clone();
     let canonical_url = format!("{}{}", pool_base_url(state), route.path());
     let title = seo_title(route, state);
     let description = seo_description(route, state);
     let og_image_url = format!("{}/og-image.svg", pool_base_url(state));
-    let og_image_alt = format!("{} Blocknet mining pool overview", state.pool_name);
+    let og_image_alt = format!(
+        "{} Blocknet mining pool card with stratum, fee, and payout details",
+        state.pool_name
+    );
+    let context = load_ui_seo_context(route, state).await;
+    let last_modified = ui_seo_last_modified(route, state, &context);
     let json_ld = json_for_script(&structured_data(
         route,
         state,
+        &context,
         &canonical_url,
         &title,
         &description,
+        last_modified,
     ));
-    let content_html = fallback_content(route, state);
+    let content_html = fallback_content(route, state, &context);
 
     UiSeoPage {
         title,
@@ -1019,8 +1706,8 @@ fn build_ui_seo_page(route: UiRoute, state: &ApiState) -> UiSeoPage {
     }
 }
 
-fn render_ui_html(route: UiRoute, state: &ApiState) -> String {
-    let page = build_ui_seo_page(route, state);
+async fn render_ui_html(route: UiRoute, state: &ApiState) -> String {
+    let page = build_ui_seo_page(route, state).await;
     UI_INDEX_HTML
         .replace("__SEO_TITLE__", &escape_html(&page.title))
         .replace("__SEO_DESCRIPTION__", &escape_html(&page.description))
@@ -1034,27 +1721,32 @@ fn render_ui_html(route: UiRoute, state: &ApiState) -> String {
 }
 
 fn render_og_image_svg(state: &ApiState) -> String {
+    let payout_scheme = state.payout_scheme.trim().to_uppercase();
+    let fee = pool_fee_summary_for_state(state);
+    let min_payout = format_bnt(state.min_payout_amount);
     format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc"><title id="title">{title}</title><desc id="desc">{desc}</desc><defs><linearGradient id="bg-grad" x1="0" x2="1" y1="0" y2="1"><stop offset="0%" stop-color="#071114"/><stop offset="100%" stop-color="#102a1a"/></linearGradient><linearGradient id="panel-grad" x1="0" x2="1" y1="0" y2="1"><stop offset="0%" stop-color="#57d78c"/><stop offset="100%" stop-color="#16a34a"/></linearGradient></defs><rect width="1200" height="630" fill="url(#bg-grad)"/><circle cx="1080" cy="120" r="180" fill="#57d78c" opacity="0.08"/><circle cx="180" cy="560" r="220" fill="#f7b44b" opacity="0.08"/><rect x="72" y="72" width="1056" height="486" rx="36" fill="#0d181d" stroke="#1f3121" stroke-width="2"/><rect x="96" y="96" width="84" height="84" rx="24" fill="url(#panel-grad)"/><rect x="118" y="118" width="40" height="40" rx="10" fill="#f6f8f2" opacity="0.96"/><rect x="130" y="130" width="16" height="16" rx="4" fill="#071114"/><text x="214" y="128" fill="#57d78c" font-family="Manrope, Arial, sans-serif" font-size="28" font-weight="700">Blocknet Mining Pool</text><text x="96" y="246" fill="#ecf5f0" font-family="Manrope, Arial, sans-serif" font-size="76" font-weight="700">{pool_name}</text><text x="96" y="314" fill="#9cb0a8" font-family="Manrope, Arial, sans-serif" font-size="32">Live hashrate, block, payout, and status monitoring</text><rect x="96" y="380" width="496" height="68" rx="24" fill="#132129" stroke="#1f3121" stroke-width="2"/><text x="128" y="422" fill="#57d78c" font-family="JetBrains Mono, monospace" font-size="26">{stratum}</text><rect x="96" y="476" width="220" height="38" rx="19" fill="#57d78c" opacity="0.12"/><text x="126" y="501" fill="#81dfaf" font-family="Manrope, Arial, sans-serif" font-size="20" font-weight="700">Public blocks and payouts</text><rect x="334" y="476" width="182" height="38" rx="19" fill="#f7b44b" opacity="0.12"/><text x="364" y="501" fill="#f7b44b" font-family="Manrope, Arial, sans-serif" font-size="20" font-weight="700">Live status page</text><rect x="534" y="476" width="194" height="38" rx="19" fill="#57d78c" opacity="0.12"/><text x="564" y="501" fill="#81dfaf" font-family="Manrope, Arial, sans-serif" font-size="20" font-weight="700">Seine onboarding</text></svg>"##,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc"><title id="title">{title}</title><desc id="desc">{desc}</desc><defs><linearGradient id="bg-grad" x1="0" x2="1" y1="0" y2="1"><stop offset="0%" stop-color="#071114"/><stop offset="100%" stop-color="#102a1a"/></linearGradient><linearGradient id="panel-grad" x1="0" x2="1" y1="0" y2="1"><stop offset="0%" stop-color="#57d78c"/><stop offset="100%" stop-color="#16a34a"/></linearGradient></defs><rect width="1200" height="630" fill="url(#bg-grad)"/><circle cx="1080" cy="120" r="180" fill="#57d78c" opacity="0.08"/><circle cx="180" cy="560" r="220" fill="#f7b44b" opacity="0.08"/><rect x="72" y="72" width="1056" height="486" rx="36" fill="#0d181d" stroke="#1f3121" stroke-width="2"/><rect x="96" y="96" width="84" height="84" rx="24" fill="url(#panel-grad)"/><rect x="118" y="118" width="40" height="40" rx="10" fill="#f6f8f2" opacity="0.96"/><rect x="130" y="130" width="16" height="16" rx="4" fill="#071114"/><text x="214" y="128" fill="#57d78c" font-family="Manrope, Arial, sans-serif" font-size="28" font-weight="700">Blocknet Mining Pool</text><text x="96" y="214" fill="#9cb0a8" font-family="Manrope, Arial, sans-serif" font-size="28" font-weight="700">Mine Blocknet with transparent blocks, payouts, and status pages</text><text x="96" y="284" fill="#ecf5f0" font-family="Manrope, Arial, sans-serif" font-size="70" font-weight="700">{pool_name}</text><text x="96" y="344" fill="#9cb0a8" font-family="Manrope, Arial, sans-serif" font-size="30">Live hashrate, explorer-backed payouts, and a public onboarding guide</text><rect x="96" y="386" width="560" height="68" rx="24" fill="#132129" stroke="#1f3121" stroke-width="2"/><text x="128" y="428" fill="#57d78c" font-family="JetBrains Mono, monospace" font-size="26">{stratum}</text><rect x="96" y="486" width="204" height="42" rx="21" fill="#57d78c" opacity="0.12"/><text x="128" y="513" fill="#81dfaf" font-family="Manrope, Arial, sans-serif" font-size="20" font-weight="700">{fee}</text><rect x="322" y="486" width="194" height="42" rx="21" fill="#f7b44b" opacity="0.12"/><text x="352" y="513" fill="#f7b44b" font-family="Manrope, Arial, sans-serif" font-size="20" font-weight="700">{payout_scheme} payouts</text><rect x="538" y="486" width="230" height="42" rx="21" fill="#57d78c" opacity="0.12"/><text x="568" y="513" fill="#81dfaf" font-family="Manrope, Arial, sans-serif" font-size="20" font-weight="700">Min payout {min_payout}</text></svg>"##,
         title = escape_html(&state.pool_name),
-        desc = escape_html("Blocknet mining pool social card"),
+        desc = escape_html("Blocknet mining pool social card with fee and payout details"),
         pool_name = escape_html(&state.pool_name),
         stratum = escape_html(&stratum_endpoint(state)),
+        fee = escape_html(&fee),
+        payout_scheme = escape_html(&payout_scheme),
+        min_payout = escape_html(&min_payout),
     )
 }
 
 async fn handle_ui(uri: Uri, State(state): State<ApiState>) -> Response {
     let route = UiRoute::from_path(uri.path());
-    let html = render_ui_html(route, &state);
+    let html = render_ui_html(route, &state).await;
     let mut response = Html(html).into_response();
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     if let Ok(value) = HeaderValue::from_str(route.robots()) {
-        response.headers_mut().insert(
-            HeaderName::from_static("x-robots-tag"),
-            value,
-        );
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static("x-robots-tag"), value);
     }
     response
 }
@@ -1075,20 +1767,105 @@ async fn handle_robots_txt(State(state): State<ApiState>) -> impl IntoResponse {
 
 async fn handle_sitemap_xml(State(state): State<ApiState>) -> impl IntoResponse {
     let base = pool_base_url(&state);
+    let store = Arc::clone(&state.store);
+    let (latest_block, latest_payout) = match tokio::task::spawn_blocking(
+        move || -> anyhow::Result<(Option<SystemTime>, Option<SystemTime>)> {
+            let latest_block = store
+                .get_recent_blocks(1)?
+                .into_iter()
+                .next()
+                .map(|block| block.timestamp);
+            let latest_payout = store
+                .get_public_payout_batches_page("time_desc", 1, 0)?
+                .0
+                .into_iter()
+                .next()
+                .map(|batch| batch.timestamp);
+            Ok((latest_block, latest_payout))
+        },
+    )
+    .await
+    {
+        Ok(Ok(value)) => value,
+        Ok(Err(err)) => {
+            tracing::warn!(error = %err, "failed loading sitemap seo timestamps");
+            (None, None)
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "sitemap seo timestamp join error");
+            (None, None)
+        }
+    };
+    let status_updated = {
+        let history = state.status_history.lock();
+        let latest_closed_incident = history
+            .incidents
+            .front()
+            .map(|incident| incident.ended_at.unwrap_or(incident.started_at));
+        let latest_open_incident = latest_time([
+            history
+                .open_daemon_down
+                .as_ref()
+                .map(|incident| incident.started_at),
+            history
+                .open_daemon_syncing
+                .as_ref()
+                .map(|incident| incident.started_at),
+        ]);
+        latest_time([
+            history.samples.back().map(|sample| sample.timestamp),
+            latest_closed_incident,
+            latest_open_incident,
+        ])
+    };
     let entries = [
-        ("/", "weekly", "1.0"),
-        ("/start", "monthly", "0.95"),
-        ("/blocks", "hourly", "0.9"),
-        ("/payouts", "hourly", "0.85"),
-        ("/luck", "daily", "0.75"),
-        ("/status", "hourly", "0.8"),
+        (
+            "/",
+            "weekly",
+            "1.0",
+            latest_time([Some(state.started_at_system), latest_block, latest_payout]),
+        ),
+        ("/start", "monthly", "0.95", Some(state.started_at_system)),
+        (
+            "/blocks",
+            "hourly",
+            "0.9",
+            latest_time([latest_block, Some(state.started_at_system)]),
+        ),
+        (
+            "/payouts",
+            "hourly",
+            "0.85",
+            latest_time([latest_payout, Some(state.started_at_system)]),
+        ),
+        (
+            "/luck",
+            "daily",
+            "0.75",
+            latest_time([latest_block, Some(state.started_at_system)]),
+        ),
+        (
+            "/status",
+            "hourly",
+            "0.8",
+            latest_time([status_updated, Some(state.started_at_system)]),
+        ),
     ];
     let urls = entries
         .iter()
-        .map(|(path, changefreq, priority)| {
+        .map(|(path, changefreq, priority, lastmod)| {
+            let lastmod_xml = lastmod
+                .map(|value| {
+                    format!(
+                        "<lastmod>{}</lastmod>",
+                        escape_html(&format_system_time_rfc3339(value))
+                    )
+                })
+                .unwrap_or_default();
             format!(
-                "<url><loc>{}</loc><changefreq>{}</changefreq><priority>{}</priority></url>",
+                "<url><loc>{}</loc>{}<changefreq>{}</changefreq><priority>{}</priority></url>",
                 escape_html(&format!("{base}{path}")),
+                lastmod_xml,
                 changefreq,
                 priority
             )
@@ -1907,10 +2684,13 @@ async fn handle_miners(
             workers.sort();
             let hashrate = hashrates.get(&stats.address).copied().unwrap_or(0.0);
             // Use DB lifetime counts when available, fall back to in-memory.
-            let (accepted, rejected, blocks, db_last_share) = lifetime_counts
-                .get(&stats.address)
-                .copied()
-                .unwrap_or((stats.shares_accepted, stats.shares_rejected, stats.blocks_found, None));
+            let (accepted, rejected, blocks, db_last_share) =
+                lifetime_counts.get(&stats.address).copied().unwrap_or((
+                    stats.shares_accepted,
+                    stats.shares_rejected,
+                    stats.blocks_found,
+                    None,
+                ));
             let last_share_at = db_last_share
                 .map(|ts| std::time::UNIX_EPOCH + std::time::Duration::from_secs(ts.max(0) as u64))
                 .or(stats.last_share_at);

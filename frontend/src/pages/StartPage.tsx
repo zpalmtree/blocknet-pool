@@ -314,6 +314,59 @@ export function StartPage({ active, poolInfo, theme }: StartPageProps) {
           </p>
         </div>
       </div>
+
+      <div className="card section">
+        <div className="section-header">
+          <div>
+            <h2>Mining Pool FAQ</h2>
+            <p className="section-lead">
+              Important setup and payout questions miners usually ask before connecting to the pool.
+            </p>
+          </div>
+        </div>
+        <div className="seo-copy-grid" style={{ marginTop: 0, marginBottom: 0 }}>
+          <div className="card seo-copy-card">
+            <h3>What miner should I use?</h3>
+            <p>Use Seine, then point it at the pool stratum endpoint and connect your Blocknet payout address.</p>
+          </div>
+          <div className="card seo-copy-card">
+            <h3>What pool URL should I enter?</h3>
+            <p>Use {poolUrl} as the pool URL in Seine or any compatible Blocknet mining configuration.</p>
+          </div>
+          <div className="card seo-copy-card">
+            <h3>How do payouts work?</h3>
+            <p>
+              {(poolInfo?.payout_scheme || 'pplns').toUpperCase()} payouts are used here, with{' '}
+              {poolInfo?.min_payout_amount != null ? `${poolInfo.min_payout_amount} BNT` : 'the configured minimum'} after{' '}
+              {poolInfo?.blocks_before_payout ?? 0} confirmations.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="seo-copy-grid">
+        <div className="card seo-copy-card">
+          <h3>Verify Recent Payouts</h3>
+          <p>
+            Check <a href="/payouts">recent payout batches</a> and explorer transaction links before you direct any
+            hashpower at the pool.
+          </p>
+        </div>
+        <div className="card seo-copy-card">
+          <h3>Review Live Status</h3>
+          <p>
+            Use the <a href="/status">status page</a> and <a href="/">dashboard</a> to confirm uptime, daemon health,
+            and current pool activity.
+          </p>
+        </div>
+        <div className="card seo-copy-card">
+          <h3>Compare Round History</h3>
+          <p>
+            Open <a href="/luck">luck history</a> and <a href="/blocks">recent blocks</a> to see how pool variance
+            translates into actual block discovery over time.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

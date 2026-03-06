@@ -15,6 +15,7 @@ interface SeoSnapshot {
   canonicalUrl: string;
   robots: string;
   poolName: string;
+  ogImageAlt: string;
   structuredData: object[];
 }
 
@@ -34,24 +35,70 @@ function canonicalUrlFor(route: Route, poolInfo: InfoResponse | null): string {
   return `${baseUrlFor(poolInfo)}${pathForRoute(route)}`;
 }
 
+function formatDecimal(value: number): string {
+  return value.toFixed(2).replace(/\.?0+$/, '');
+}
+
+function formatBnt(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '0 BNT';
+  return `${formatDecimal(value)} BNT`;
+}
+
+function poolFeeSummary(poolInfo: InfoResponse | null): string {
+  const parts: string[] = [];
+  if (poolInfo?.pool_fee_pct != null && poolInfo.pool_fee_pct > 0) {
+    parts.push(`${formatDecimal(poolInfo.pool_fee_pct)}% fee`);
+  }
+  if (poolInfo?.pool_fee_flat != null && poolInfo.pool_fee_flat > 0) {
+    parts.push(`${formatBnt(poolInfo.pool_fee_flat)} flat fee`);
+  }
+  return parts.length ? parts.join(' + ') : '0% fee';
+}
+
+function payoutRulesSummary(poolInfo: InfoResponse | null): string {
+  const minPayout = formatBnt(poolInfo?.min_payout_amount);
+  const confirmations = poolInfo?.blocks_before_payout ?? 0;
+  return `${minPayout} minimum payout after ${confirmations} confirmations`;
+}
+
+function startFaqEntries(poolInfo: InfoResponse | null): Array<{ question: string; answer: string }> {
+  return [
+    {
+      question: 'What miner should I use to mine Blocknet?',
+      answer: 'Use Seine, then point it at the pool stratum endpoint and connect your Blocknet payout address.',
+    },
+    {
+      question: 'What pool URL should I enter?',
+      answer: `Use ${stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url)} as the pool URL in Seine or any compatible Blocknet mining configuration.`,
+    },
+    {
+      question: 'How do payouts work on this Blocknet pool?',
+      answer: `${(poolInfo?.payout_scheme || 'pplns').toUpperCase()} payouts are used here, with ${payoutRulesSummary(poolInfo)}.`,
+    },
+    {
+      question: 'How can I verify pool activity before mining?',
+      answer: 'Review the public dashboard, recent blocks, payout batches, and status page before directing any hashpower to the pool.',
+    },
+  ];
+}
+
 function descriptionFor(route: Route, poolInfo: InfoResponse | null): string {
   const name = poolNameFor(poolInfo);
+  const stratum = stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url);
   if (route === 'start') {
-    const payoutScheme = (poolInfo?.payout_scheme || 'pplns').toUpperCase();
-    const fee = poolInfo?.pool_fee_pct != null ? `${poolInfo.pool_fee_pct}% fee` : 'transparent fee model';
-    return `Learn how to mine Blocknet with ${name}, connect to ${stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url)}, and understand ${payoutScheme} payouts, fees, and setup steps.`;
+    return `Start mining Blocknet with ${name}. Copy ${stratum}, mine with Seine, and review ${(poolInfo?.payout_scheme || 'pplns').toUpperCase()} payouts, ${poolFeeSummary(poolInfo)}, and ${payoutRulesSummary(poolInfo)}.`;
   }
   if (route === 'blocks') {
-    return `Browse recently found Blocknet blocks from ${name}, including confirmed, pending, and orphaned rounds with effort and timing data.`;
+    return `Browse recent Blocknet blocks found by ${name}, including confirmed, pending, and orphaned rounds with explorer links, rewards, and timing.`;
   }
   if (route === 'payouts') {
-    return `Review recent Blocknet mining pool payouts from ${name}, including payout totals, recipient counts, explorer transaction links, and payout timing.`;
+    return `Review recent Blocknet pool payouts from ${name} with recipient counts, payout totals, network fees, and explorer transaction links.`;
   }
   if (route === 'luck') {
-    return `Track ${name} luck history with round effort, round duration, and confirmation status for recent Blocknet blocks.`;
+    return `Track ${name} pool luck with round effort, expected block timing, round duration, and recent confirmed or orphaned Blocknet rounds.`;
   }
   if (route === 'status') {
-    return `Monitor ${name} uptime, daemon reachability, sync status, and incident history from the public Blocknet pool status page.`;
+    return `Monitor ${name} uptime, daemon reachability, sync state, incident history, and current chain height from the public Blocknet pool status page.`;
   }
   if (route === 'stats') {
     return `Look up a Blocknet wallet address on ${name} to inspect hashrate, balances, worker activity, recent payouts, and share history.`;
@@ -59,23 +106,26 @@ function descriptionFor(route: Route, poolInfo: InfoResponse | null): string {
   if (route === 'admin') {
     return `Administrative dashboard for ${name} with miners, payouts, fees, health checks, and daemon log streaming.`;
   }
-  return `Mine Blocknet with ${name}. Track pool hashrate, round luck, recent blocks, payouts, and pool health from one public dashboard.`;
+  return `Live Blocknet mining pool dashboard for ${name} with stratum URL ${stratum}, public blocks, payout batches, round luck, and real-time pool status.`;
 }
 
 function titleFor(route: Route, poolInfo: InfoResponse | null): string {
   const name = poolNameFor(poolInfo);
-  if (route === 'start') return `How To Start Mining Blocknet | ${name}`;
-  if (route === 'blocks') return `Recent Blocknet Blocks | ${name}`;
-  if (route === 'payouts') return `Recent Pool Payouts | ${name}`;
-  if (route === 'luck') return `Pool Luck History | ${name}`;
-  if (route === 'status') return `Pool Status | ${name}`;
-  if (route === 'stats') return `Miner Stats Lookup | ${name}`;
-  if (route === 'admin') return `Admin Dashboard | ${name}`;
-  return `Blocknet Mining Pool Dashboard | ${name}`;
+  if (route === 'start') return `Mine Blocknet With Seine | Setup, Stratum & Payouts | ${name}`;
+  if (route === 'blocks') return `Recent Blocknet Blocks | Confirmed, Pending & Orphaned | ${name}`;
+  if (route === 'payouts') return `Blocknet Pool Payouts | Recent Transactions | ${name}`;
+  if (route === 'luck') return `Blocknet Pool Luck | Round Effort History | ${name}`;
+  if (route === 'status') return `Blocknet Pool Status | Uptime & Daemon Health | ${name}`;
+  if (route === 'stats') return `Blocknet Miner Stats Lookup | ${name}`;
+  if (route === 'admin') return `Pool Admin Dashboard | ${name}`;
+  return `Blocknet Mining Pool | Live Hashrate, Blocks & Payouts | ${name}`;
+}
+
+function ogImageAltFor(poolInfo: InfoResponse | null): string {
+  return `${poolNameFor(poolInfo)} Blocknet mining pool card with stratum, fee, and payout details`;
 }
 
 function pageSchemaType(route: Route): string {
-  if (route === 'start') return 'HowTo';
   if (route === 'blocks' || route === 'payouts' || route === 'luck') return 'CollectionPage';
   return 'WebPage';
 }
@@ -106,45 +156,103 @@ function buildHowToSchema(poolInfo: InfoResponse | null, canonicalUrl: string): 
       {
         '@type': 'HowToStep',
         name: 'Start mining and monitor payouts',
-        text: 'Run the miner, then use the pool dashboard and stats page to track hashrate and balances.',
+        text: 'Run the miner, then use the pool dashboard and payout pages to verify hashrate, rounds, and payment history.',
       },
     ],
   };
 }
 
+function buildFaqSchema(poolInfo: InfoResponse | null): object {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: startFaqEntries(poolInfo).map((entry) => ({
+      '@type': 'Question',
+      name: entry.question,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: entry.answer,
+      },
+    })),
+  };
+}
+
 function buildStructuredData(route: Route, poolInfo: InfoResponse | null, snapshot: Omit<SeoSnapshot, 'structuredData'>): object[] {
   const baseUrl = baseUrlFor(poolInfo);
+  const websiteId = `${baseUrl}/#website`;
+  const organizationId = `${baseUrl}/#organization`;
+  const serviceId = `${baseUrl}/#service`;
+  const pageId = `${snapshot.canonicalUrl}#webpage`;
+  const breadcrumbId = `${snapshot.canonicalUrl}#breadcrumb`;
   const pageType = pageSchemaType(route);
   const items: object[] = [
     {
       '@context': 'https://schema.org',
+      '@type': 'Organization',
+      '@id': organizationId,
+      name: snapshot.poolName,
+      url: baseUrl,
+      logo: {
+        '@type': 'ImageObject',
+        url: `${baseUrl}/favicon.svg`,
+      },
+    },
+    {
+      '@context': 'https://schema.org',
       '@type': 'WebSite',
+      '@id': websiteId,
       name: snapshot.poolName,
       url: baseUrl,
       description: descriptionFor('dashboard', poolInfo),
+      publisher: { '@id': organizationId },
+      inLanguage: 'en-US',
+    },
+    {
+      '@context': 'https://schema.org',
+      '@type': 'Service',
+      '@id': serviceId,
+      name: `${snapshot.poolName} Blocknet mining pool`,
+      serviceType: 'Cryptocurrency mining pool',
+      provider: { '@id': organizationId },
+      url: baseUrl,
+      description: descriptionFor('dashboard', poolInfo),
+      areaServed: 'Worldwide',
+      offers: {
+        '@type': 'Offer',
+        description: `${(poolInfo?.payout_scheme || 'pplns').toUpperCase()} payouts, ${poolFeeSummary(poolInfo)}, ${payoutRulesSummary(poolInfo)}`,
+      },
     },
     {
       '@context': 'https://schema.org',
       '@type': pageType,
+      '@id': pageId,
       name: snapshot.title,
       url: snapshot.canonicalUrl,
       description: snapshot.description,
+      inLanguage: 'en-US',
       isPartOf: {
-        '@type': 'WebSite',
-        name: snapshot.poolName,
-        url: baseUrl,
+        '@id': websiteId,
+      },
+      about: {
+        '@id': serviceId,
+      },
+      primaryImageOfPage: {
+        '@type': 'ImageObject',
+        url: `${baseUrl}${OG_IMAGE_PATH}`,
       },
     },
   ];
 
   if (route === 'start') {
     items.push(buildHowToSchema(poolInfo, snapshot.canonicalUrl));
+    items.push(buildFaqSchema(poolInfo));
   }
 
   if (route !== 'dashboard') {
     items.push({
       '@context': 'https://schema.org',
       '@type': 'BreadcrumbList',
+      '@id': breadcrumbId,
       itemListElement: [
         {
           '@type': 'ListItem',
@@ -171,6 +279,7 @@ function buildSeoSnapshot(route: Route, poolInfo: InfoResponse | null): SeoSnaps
   const description = descriptionFor(route, poolInfo);
   const canonicalUrl = canonicalUrlFor(route, poolInfo);
   const robots = isIndexableRoute(route) ? INDEXABLE_ROBOTS : PRIVATE_ROBOTS;
+  const ogImageAlt = ogImageAltFor(poolInfo);
 
   const snapshotBase = {
     title,
@@ -178,6 +287,7 @@ function buildSeoSnapshot(route: Route, poolInfo: InfoResponse | null): SeoSnaps
     canonicalUrl,
     robots,
     poolName,
+    ogImageAlt,
   };
 
   return {
@@ -245,13 +355,29 @@ export function applyDocumentSeo(route: Route, poolInfo: InfoResponse | null, th
     property: 'og:url',
     content: snapshot.canonicalUrl,
   });
+  ensureMeta('meta[property="og:locale"]', {
+    property: 'og:locale',
+    content: 'en_US',
+  });
   ensureMeta('meta[property="og:image"]', {
     property: 'og:image',
     content: ogImageUrl,
   });
+  ensureMeta('meta[property="og:image:type"]', {
+    property: 'og:image:type',
+    content: 'image/svg+xml',
+  });
+  ensureMeta('meta[property="og:image:width"]', {
+    property: 'og:image:width',
+    content: '1200',
+  });
+  ensureMeta('meta[property="og:image:height"]', {
+    property: 'og:image:height',
+    content: '630',
+  });
   ensureMeta('meta[property="og:image:alt"]', {
     property: 'og:image:alt',
-    content: `${snapshot.poolName} Blocknet mining pool overview`,
+    content: snapshot.ogImageAlt,
   });
   ensureMeta('meta[name="twitter:card"]', {
     name: 'twitter:card',
@@ -268,6 +394,10 @@ export function applyDocumentSeo(route: Route, poolInfo: InfoResponse | null, th
   ensureMeta('meta[name="twitter:image"]', {
     name: 'twitter:image',
     content: ogImageUrl,
+  });
+  ensureMeta('meta[name="twitter:image:alt"]', {
+    name: 'twitter:image:alt',
+    content: snapshot.ogImageAlt,
   });
 
   ensureLink('link[rel="canonical"]', {

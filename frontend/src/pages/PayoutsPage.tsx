@@ -91,6 +91,24 @@ export function PayoutsPage({ active, api, liveTick }: PayoutsPageProps) {
           onNext={() => setPager((p) => ({ ...p, offset: p.offset + p.limit }))}
         />
       </div>
+
+      <div className="seo-copy-grid">
+        <div className="card seo-copy-card">
+          <h3>Verified Payouts</h3>
+          <p>Transaction hashes point to the public Blocknet explorer so payout batches can be checked independently.</p>
+        </div>
+        <div className="card seo-copy-card">
+          <h3>Batch Visibility</h3>
+          <p>Each payout batch shows how many miners were paid and how much value moved on-chain in that window.</p>
+        </div>
+        <div className="card seo-copy-card">
+          <h3>Payout Cadence</h3>
+          <p>
+            Use the recent payout page together with <a href="/status">status</a> and <a href="/">dashboard</a> data to
+            understand pool rhythm over time.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
