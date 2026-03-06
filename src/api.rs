@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -489,6 +489,24 @@ struct LuckRoundResponse {
     effort_band: EffortBand,
     orphaned: bool,
     confirmed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BlockPageItemResponse {
+    height: u64,
+    hash: String,
+    difficulty: u64,
+    finder: String,
+    finder_worker: String,
+    reward: u64,
+    timestamp: SystemTime,
+    confirmed: bool,
+    orphaned: bool,
+    paid_out: bool,
+    effort_pct: Option<f64>,
+    duration_seconds: Option<u64>,
+    timer_effort_pct: Option<f64>,
+    effort_band: Option<EffortBand>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1465,9 +1483,39 @@ async fn handle_blocks(
         hydrate_provisional_block_reward(block);
     }
     let returned = blocks.len();
+    let target_hashes = blocks
+        .iter()
+        .map(|block| block.hash.clone())
+        .collect::<HashSet<_>>();
+    let store = Arc::clone(&state.store);
+    let luck_by_hash = match tokio::task::spawn_blocking(move || {
+        let all_blocks = store.get_all_blocks()?;
+        compute_luck_details_for_hashes(&store, all_blocks, &target_hashes)
+    })
+    .await
+    {
+        Ok(Ok(v)) => v,
+        Ok(Err(err)) => {
+            return internal_error("failed loading block luck details", err).into_response()
+        }
+        Err(err) => {
+            return internal_error(
+                "failed loading block luck details",
+                anyhow::anyhow!("join error: {err}"),
+            )
+            .into_response()
+        }
+    };
+    let items = blocks
+        .into_iter()
+        .map(|block| {
+            let block_hash = block.hash.clone();
+            block_page_item_response(block, luck_by_hash.get(block_hash.as_str()))
+        })
+        .collect::<Vec<_>>();
 
     Json(PagedResponse {
-        items: blocks,
+        items,
         page: PageMeta {
             limit,
             offset,
@@ -1837,6 +1885,94 @@ fn compute_luck_history(
         rounds.truncate(max_items);
     }
     Ok(rounds)
+}
+
+fn compute_luck_details_for_hashes(
+    store: &PoolStore,
+    mut blocks: Vec<crate::db::DbBlock>,
+    target_hashes: &HashSet<String>,
+) -> anyhow::Result<HashMap<String, LuckRoundResponse>> {
+    if target_hashes.is_empty() || blocks.len() < 2 {
+        return Ok(HashMap::new());
+    }
+
+    blocks.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+
+    let mut rounds = HashMap::<String, LuckRoundResponse>::with_capacity(target_hashes.len());
+    for pair in blocks.windows(2) {
+        let prev = &pair[0];
+        let current = &pair[1];
+        if !target_hashes.contains(current.hash.as_str()) {
+            continue;
+        }
+
+        let shares = store.get_shares_between(prev.timestamp, current.timestamp)?;
+        let round_work = shares
+            .into_iter()
+            .filter(|share| share.status == "verified" || share.status == "provisional")
+            .fold(0u64, |acc, share| acc.saturating_add(share.difficulty));
+
+        let duration_seconds = current
+            .timestamp
+            .duration_since(prev.timestamp)
+            .unwrap_or_default()
+            .as_secs();
+        let effort_pct = if current.difficulty > 0 {
+            (round_work as f64 / current.difficulty as f64) * 100.0
+        } else {
+            0.0
+        };
+        let timer_effort_pct = if ROUND_TARGET_SECONDS > 0.0 {
+            (duration_seconds as f64 / ROUND_TARGET_SECONDS) * 100.0
+        } else {
+            0.0
+        };
+
+        rounds.insert(
+            current.hash.clone(),
+            LuckRoundResponse {
+                block_height: current.height,
+                block_hash: current.hash.clone(),
+                timestamp: current.timestamp,
+                difficulty: current.difficulty,
+                round_work,
+                effort_pct,
+                duration_seconds,
+                timer_effort_pct,
+                effort_band: classify_effort(effort_pct),
+                orphaned: current.orphaned,
+                confirmed: current.confirmed,
+            },
+        );
+
+        if rounds.len() == target_hashes.len() {
+            break;
+        }
+    }
+
+    Ok(rounds)
+}
+
+fn block_page_item_response(
+    block: DbBlock,
+    luck: Option<&LuckRoundResponse>,
+) -> BlockPageItemResponse {
+    BlockPageItemResponse {
+        height: block.height,
+        hash: block.hash,
+        difficulty: block.difficulty,
+        finder: block.finder,
+        finder_worker: block.finder_worker,
+        reward: block.reward,
+        timestamp: block.timestamp,
+        confirmed: block.confirmed,
+        orphaned: block.orphaned,
+        paid_out: block.paid_out,
+        effort_pct: luck.map(|row| row.effort_pct),
+        duration_seconds: luck.map(|row| row.duration_seconds),
+        timer_effort_pct: luck.map(|row| row.timer_effort_pct),
+        effort_band: luck.map(|row| row.effort_band.clone()),
+    }
 }
 
 async fn handle_luck_history(

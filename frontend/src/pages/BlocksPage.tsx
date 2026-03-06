@@ -3,13 +3,24 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ApiClient } from '../api/client';
 import { BlockStatusBadge } from '../components/BlockStatusBadge';
 import { Pager } from '../components/Pager';
-import { formatCoins, timeAgo, toUnixMs } from '../lib/format';
+import { fmtSeconds, formatCoins, timeAgo, toUnixMs } from '../lib/format';
 import type { BlockItem, PagerState } from '../types';
 
 interface BlocksPageProps {
   active: boolean;
   api: ApiClient;
   liveTick: number;
+}
+
+function fmtPct(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '-';
+  return `${value.toFixed(1)}%`;
+}
+
+function toneClass(tone: string | undefined): string {
+  if (tone === 'critical') return 'is-critical';
+  if (tone === 'warn') return 'is-warn';
+  return 'is-ok';
 }
 
 export function BlocksPage({ active, api, liveTick }: BlocksPageProps) {
@@ -64,6 +75,8 @@ export function BlocksPage({ active, api, liveTick }: BlocksPageProps) {
             <tr>
               <th>Height</th>
               <th>Reward</th>
+              <th>Effort</th>
+              <th>Round Time</th>
               <th>Status</th>
               <th>Time</th>
             </tr>
@@ -71,7 +84,7 @@ export function BlocksPage({ active, api, liveTick }: BlocksPageProps) {
           <tbody>
             {!items.length ? (
               <tr>
-                <td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                <td colSpan={6} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                   No blocks
                 </td>
               </tr>
@@ -84,6 +97,14 @@ export function BlocksPage({ active, api, liveTick }: BlocksPageProps) {
                     </a>
                   </td>
                   <td>{formatCoins(b.reward)}</td>
+                  <td>
+                    {b.effort_pct == null ? (
+                      '-'
+                    ) : (
+                      <span className={`round-chip ${toneClass(b.effort_band?.tone)}`}>{fmtPct(b.effort_pct)}</span>
+                    )}
+                  </td>
+                  <td>{b.duration_seconds == null ? '-' : fmtSeconds(b.duration_seconds)}</td>
                   <td>
                     <BlockStatusBadge confirmed={b.confirmed} orphaned={b.orphaned} />
                   </td>

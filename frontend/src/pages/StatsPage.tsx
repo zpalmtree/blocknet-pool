@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
-import { BlockStatusBadge } from '../components/BlockStatusBadge';
 import { HashrateChart } from '../components/HashrateChart';
 import { LAST_MINER_LOOKUP_KEY } from '../lib/storage';
 import { formatCoins, humanRate, timeAgo, toUnixMs } from '../lib/format';
@@ -405,40 +404,6 @@ export function StatsPage({ active, api, liveTick }: StatsPageProps) {
               </table>
             </div>
           </div>
-
-          {!!minerData.blocks_found?.length && (
-            <div className="section">
-              <h2>Blocks Found</h2>
-              <div className="card table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Height</th>
-                      <th>Reward</th>
-                      <th>Status</th>
-                      <th>Time</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {minerData.blocks_found.map((b) => (
-                      <tr key={`${b.height}-${b.hash}`}>
-                        <td>
-                          <a href={`https://explorer.blocknetcrypto.com/block/${b.hash || ''}`} target="_blank" rel="noopener">
-                            {b.height}
-                          </a>
-                        </td>
-                        <td>{formatCoins(b.reward)}</td>
-                        <td>
-                          <BlockStatusBadge confirmed={b.confirmed} orphaned={b.orphaned} />
-                        </td>
-                        <td title={new Date(toUnixMs(b.timestamp)).toLocaleString()}>{timeAgo(b.timestamp)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
 
           <div className="section">
             <div className="section-header">

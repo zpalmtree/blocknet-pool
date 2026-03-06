@@ -46,10 +46,18 @@ export interface InfoResponse {
 export interface BlockItem {
   height: number;
   hash: string;
+  difficulty: number;
+  finder: string;
+  finder_worker: string;
   reward: number;
   confirmed: boolean;
   orphaned: boolean;
+  paid_out: boolean;
   timestamp: UnixLike;
+  effort_pct?: number | null;
+  duration_seconds?: number | null;
+  timer_effort_pct?: number | null;
+  effort_band?: EffortBand | null;
 }
 
 export interface PayoutItem {
