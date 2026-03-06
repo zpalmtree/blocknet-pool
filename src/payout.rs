@@ -729,12 +729,14 @@ where
             }
         }
 
-        let provisional_cap = if trust_policy.provisional_cap_multiplier <= 0.0 {
-            0
+        let counted_provisional = if trust_policy.provisional_cap_multiplier <= 0.0 {
+            stats.provisional_difficulty
         } else {
-            ((stats.verified_difficulty as f64) * trust_policy.provisional_cap_multiplier) as u64
+            let provisional_cap = ((stats.verified_difficulty as f64)
+                * trust_policy.provisional_cap_multiplier)
+                .clamp(0.0, u64::MAX as f64) as u64;
+            stats.provisional_difficulty.min(provisional_cap)
         };
-        let counted_provisional = stats.provisional_difficulty.min(provisional_cap);
         let weight = stats
             .verified_difficulty
             .saturating_add(counted_provisional);
@@ -986,6 +988,30 @@ mod tests {
         );
         assert_eq!(total, 40);
         assert_eq!(weights.get("a2").copied(), Some(40));
+    }
+
+    #[test]
+    fn payout_weighting_zero_multiplier_counts_all_eligible_provisional_weight() {
+        let now = SystemTime::now();
+        let shares = vec![
+            sample_share("a2", 20, SHARE_STATUS_VERIFIED, now),
+            sample_share(
+                "a2",
+                100,
+                SHARE_STATUS_PROVISIONAL,
+                now - Duration::from_secs(20 * 60),
+            ),
+        ];
+
+        let (weights, total) = weight_shares(
+            &shares,
+            now,
+            Duration::from_secs(15 * 60),
+            trust_policy(1, 0.0, 0.0),
+            |_| false,
+        );
+        assert_eq!(total, 120);
+        assert_eq!(weights.get("a2").copied(), Some(120));
     }
 
     #[test]

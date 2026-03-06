@@ -221,6 +221,8 @@ Accepted headers:
 
 - `payouts_enabled` toggles payout sending globally.
 - `payout_pause_file` pauses payouts when the file exists.
+- `pplns_window_duration` controls the time-based PPLNS lookback window (default `6h`).
+- `payout_provisional_cap_multiplier=0` disables the cap on aged provisional share weight; positive values cap provisional difficulty relative to verified difficulty.
 - Optional caps:
   - `payout_max_recipients_per_tick`
   - `payout_max_total_per_tick`

@@ -144,14 +144,14 @@ impl Default for Config {
             pool_fee_pct: 0.0,
             payout_scheme: "pplns".to_string(),
             pplns_window: 1000,
-            pplns_window_duration: "24h".to_string(),
+            pplns_window_duration: "6h".to_string(),
             blocks_before_payout: 60,
             min_payout_amount: 0.1,
             block_finder_bonus: false,
             block_finder_bonus_pct: 5.0,
             payout_min_verified_shares: 1,
             payout_min_verified_ratio: 0.05,
-            payout_provisional_cap_multiplier: 3.0,
+            payout_provisional_cap_multiplier: 0.0,
             payouts_enabled: true,
             payout_max_recipients_per_tick: 500,
             payout_max_total_per_tick: 0.0,
@@ -360,7 +360,7 @@ impl Config {
         }
         parse_duration_or(
             &self.pplns_window_duration,
-            Duration::from_secs(24 * 60 * 60),
+            Duration::from_secs(6 * 60 * 60),
         )
     }
 
