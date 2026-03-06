@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createApiClient } from './api/client';
 import { API_KEY_STORAGE_KEY, LAST_MINER_LOOKUP_KEY } from './lib/storage';
 import { routeFromHash } from './lib/format';
+import { applyTheme, getStoredTheme, setStoredTheme, type ThemeMode } from './lib/theme';
 import { AdminPage } from './pages/AdminPage';
 import { BlocksPage } from './pages/BlocksPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -23,6 +24,7 @@ export function App() {
   const [apiKeyInput, setApiKeyInput] = useState(localStorage.getItem(API_KEY_STORAGE_KEY) || '');
   const [liveTick, setLiveTick] = useState(0);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [theme, setTheme] = useState<ThemeMode>(() => getStoredTheme());
 
   const showError = useCallback((msg: string) => {
     if (!msg) return;
@@ -34,6 +36,11 @@ export function App() {
     const t = window.setTimeout(() => setErrorMsg(''), 5000);
     return () => window.clearTimeout(t);
   }, [errorMsg]);
+
+  useEffect(() => {
+    applyTheme(theme);
+    setStoredTheme(theme);
+  }, [theme]);
 
   const api = useMemo(() => createApiClient(() => apiKey, showError), [apiKey, showError]);
 
@@ -117,6 +124,10 @@ export function App() {
     window.location.hash = '#/stats';
   }, []);
 
+  const onToggleTheme = useCallback(() => {
+    setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
+  }, []);
+
   return (
     <>
       <nav className={mobileNavOpen ? 'is-open' : ''}>
@@ -129,18 +140,6 @@ export function App() {
         >
           {poolInfo?.pool_name || 'Blocknet Pool'}
         </a>
-        <button
-          type="button"
-          className={`nav-toggle${mobileNavOpen ? ' is-open' : ''}`}
-          aria-label="Toggle navigation menu"
-          aria-expanded={mobileNavOpen}
-          aria-controls="site-nav-links"
-          onClick={() => setMobileNavOpen((open) => !open)}
-        >
-          <span />
-          <span />
-          <span />
-        </button>
         <div id="site-nav-links" className="nav-links">
           <a
             href="#/"
@@ -199,6 +198,29 @@ export function App() {
             Status
           </a>
         </div>
+        <div className="nav-actions">
+          <button
+            type="button"
+            className="theme-toggle"
+            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+            aria-pressed={theme === 'dark'}
+            onClick={onToggleTheme}
+          >
+            {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+          </button>
+          <button
+            type="button"
+            className={`nav-toggle${mobileNavOpen ? ' is-open' : ''}`}
+            aria-label="Toggle navigation menu"
+            aria-expanded={mobileNavOpen}
+            aria-controls="site-nav-links"
+            onClick={() => setMobileNavOpen((open) => !open)}
+          >
+            <span />
+            <span />
+            <span />
+          </button>
+        </div>
       </nav>
 
       <div id="error-bar" style={{ display: errorMsg ? 'block' : 'none' }}>
@@ -206,12 +228,18 @@ export function App() {
       </div>
 
       <div className="container">
-        <DashboardPage active={route === 'dashboard'} api={api} poolInfo={poolInfo} liveTick={liveTick} />
+        <DashboardPage
+          active={route === 'dashboard'}
+          api={api}
+          poolInfo={poolInfo}
+          liveTick={liveTick}
+          theme={theme}
+        />
         <StartPage active={route === 'start'} poolInfo={poolInfo} />
         <LuckPage active={route === 'luck'} api={api} liveTick={liveTick} />
         <BlocksPage active={route === 'blocks'} api={api} liveTick={liveTick} />
         <PayoutsPage active={route === 'payouts'} api={api} liveTick={liveTick} />
-        <StatsPage active={route === 'stats'} api={api} liveTick={liveTick} />
+        <StatsPage active={route === 'stats'} api={api} liveTick={liveTick} theme={theme} />
         <AdminPage
           active={route === 'admin'}
           api={api}

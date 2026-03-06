@@ -4,6 +4,7 @@ import type { ApiClient } from '../api/client';
 import { HashrateChart } from '../components/HashrateChart';
 import { PayoutTxLinks } from '../components/PayoutTxLinks';
 import { formatCoins, fmtSeconds, humanRate, stratumUrl, timeAgo, toUnixMs } from '../lib/format';
+import type { ThemeMode } from '../lib/theme';
 import type {
   HashratePoint,
   InfoResponse,
@@ -18,6 +19,7 @@ interface DashboardPageProps {
   api: ApiClient;
   poolInfo: InfoResponse | null;
   liveTick: number;
+  theme: ThemeMode;
 }
 
 function fmtPct(value: number | null | undefined): string {
@@ -37,7 +39,7 @@ function toneClass(tone: string | undefined): string {
   return 'is-ok';
 }
 
-export function DashboardPage({ active, api, poolInfo, liveTick }: DashboardPageProps) {
+export function DashboardPage({ active, api, poolInfo, liveTick, theme }: DashboardPageProps) {
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [insights, setInsights] = useState<StatsInsightsResponse | null>(null);
   const [payouts, setPayouts] = useState<PayoutItem[]>([]);
@@ -239,7 +241,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick }: DashboardPage
             ))}
           </div>
         </div>
-        <HashrateChart data={history} range={range} />
+        <HashrateChart data={history} range={range} theme={theme} />
       </div>
 
       <div className="section">

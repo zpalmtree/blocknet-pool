@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 
 import { formatChartTick, humanRate, rangeToDurationMs, smoothChartPoints, toUnixMs } from '../lib/format';
+import type { ThemeMode } from '../lib/theme';
 import type { HashratePoint, Range } from '../types';
 
 function traceSeriesPath(ctx: CanvasRenderingContext2D, coords: Array<{ x: number; y: number }>) {
@@ -23,6 +24,13 @@ function traceSeriesPath(ctx: CanvasRenderingContext2D, coords: Array<{ x: numbe
 function drawChartOn(canvas: HTMLCanvasElement, data: HashratePoint[], range: Range) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
+  const styles = getComputedStyle(document.documentElement);
+  const themeColor = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
+  const axisColor = themeColor('--chart-axis', '#6b7c6b');
+  const gridColor = themeColor('--chart-grid', '#e2e8d8');
+  const lineColor = themeColor('--chart-line', '#16a34a');
+  const fillStart = themeColor('--chart-fill-start', 'rgba(22,163,74,0.15)');
+  const fillEnd = themeColor('--chart-fill-end', 'rgba(22,163,74,0.01)');
 
   const dpr = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
@@ -42,7 +50,7 @@ function drawChartOn(canvas: HTMLCanvasElement, data: HashratePoint[], range: Ra
     .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.v));
 
   if (points.length < 2) {
-    ctx.fillStyle = '#6b7c6b';
+    ctx.fillStyle = axisColor;
     ctx.font = '14px Manrope,sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('No data yet', W / 2, H / 2);
@@ -83,7 +91,7 @@ function drawChartOn(canvas: HTMLCanvasElement, data: HashratePoint[], range: Ra
     return pad.l + n * cW;
   };
 
-  ctx.strokeStyle = '#e2e8d8';
+  ctx.strokeStyle = gridColor;
   ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i += 1) {
     const y = pad.t + cH - (cH * i) / 4;
@@ -92,13 +100,13 @@ function drawChartOn(canvas: HTMLCanvasElement, data: HashratePoint[], range: Ra
     ctx.lineTo(pad.l + cW, y);
     ctx.stroke();
 
-    ctx.fillStyle = '#6b7c6b';
+    ctx.fillStyle = axisColor;
     ctx.font = yAxisFont;
     ctx.textAlign = 'right';
     ctx.fillText(humanRate((maxV * i) / 4), pad.l - 6, y + 4);
   }
 
-  ctx.fillStyle = '#6b7c6b';
+  ctx.fillStyle = axisColor;
   ctx.font = `${compact ? 10 : 11}px JetBrains Mono,monospace`;
   const maxTicks = Math.max(3, Math.min(compact ? 4 : 6, Math.floor(cW / (compact ? 120 : 140)) + 1));
   let lastRight = -Infinity;
@@ -134,7 +142,7 @@ function drawChartOn(canvas: HTMLCanvasElement, data: HashratePoint[], range: Ra
 
   const coords = values.map((v, idx) => ({ x: xFor(timestamps[idx]), y: pad.t + cH - (v / maxV) * cH }));
   traceSeriesPath(ctx, coords);
-  ctx.strokeStyle = '#16a34a';
+  ctx.strokeStyle = lineColor;
   ctx.lineWidth = 2;
   ctx.stroke();
 
@@ -146,14 +154,14 @@ function drawChartOn(canvas: HTMLCanvasElement, data: HashratePoint[], range: Ra
   ctx.closePath();
 
   const grad = ctx.createLinearGradient(0, pad.t, 0, pad.t + cH);
-  grad.addColorStop(0, 'rgba(22,163,74,0.15)');
-  grad.addColorStop(1, 'rgba(22,163,74,0.01)');
+  grad.addColorStop(0, fillStart);
+  grad.addColorStop(1, fillEnd);
   ctx.fillStyle = grad;
   ctx.fill();
   ctx.restore();
 }
 
-export function HashrateChart({ data, range }: { data: HashratePoint[]; range: Range }) {
+export function HashrateChart({ data, range, theme }: { data: HashratePoint[]; range: Range; theme: ThemeMode }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -164,7 +172,7 @@ export function HashrateChart({ data, range }: { data: HashratePoint[]; range: R
     const onResize = () => run();
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, [data, range]);
+  }, [data, range, theme]);
 
   return (
     <div className="chart-wrap">

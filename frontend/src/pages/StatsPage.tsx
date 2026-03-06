@@ -4,12 +4,14 @@ import type { ApiClient } from '../api/client';
 import { HashrateChart } from '../components/HashrateChart';
 import { LAST_MINER_LOOKUP_KEY } from '../lib/storage';
 import { formatCoins, humanRate, timeAgo, toUnixMs } from '../lib/format';
+import type { ThemeMode } from '../lib/theme';
 import type { HashratePoint, MinerResponse, Range, StatsInsightsResponse } from '../types';
 
 interface StatsPageProps {
   active: boolean;
   api: ApiClient;
   liveTick: number;
+  theme: ThemeMode;
 }
 
 function fmtPct(value: number | null | undefined): string {
@@ -19,7 +21,7 @@ function fmtPct(value: number | null | undefined): string {
 
 type RejectionWindowRange = '1h' | '24h' | '7d';
 
-export function StatsPage({ active, api, liveTick }: StatsPageProps) {
+export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   const [minerInput, setMinerInput] = useState(localStorage.getItem(LAST_MINER_LOOKUP_KEY) || '');
   const [minerAddress, setMinerAddress] = useState('');
   const [minerData, setMinerData] = useState<MinerResponse | null>(null);
@@ -326,7 +328,7 @@ export function StatsPage({ active, api, liveTick }: StatsPageProps) {
                 ))}
               </div>
             </div>
-            <HashrateChart data={history} range={range} />
+            <HashrateChart data={history} range={range} theme={theme} />
           </div>
 
           <div className="section">
