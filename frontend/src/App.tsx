@@ -16,6 +16,23 @@ import type { InfoResponse, Route } from './types';
 
 const APP_TITLE = 'BNT Pool';
 
+function SunIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="4.5" />
+      <path d="M12 2.75v2.5M12 18.75v2.5M4.75 12h-2.5M21.75 12h-2.5M5.96 5.96 4.2 4.2M19.8 19.8l-1.77-1.77M18.03 5.97 19.8 4.2M4.2 19.8l1.77-1.77" />
+    </svg>
+  );
+}
+
+function MoonIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M19 14.79A7.5 7.5 0 0 1 9.21 5a8.5 8.5 0 1 0 9.79 9.79Z" />
+    </svg>
+  );
+}
+
 export function App() {
   const [route, setRoute] = useState<Route>(routeFromHash(window.location.hash || '#/'));
   const [errorMsg, setErrorMsg] = useState('');
@@ -206,7 +223,16 @@ export function App() {
             aria-pressed={theme === 'dark'}
             onClick={onToggleTheme}
           >
-            {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+            <span className="theme-toggle-track" aria-hidden="true">
+              <span className="theme-toggle-icon theme-toggle-icon-sun">
+                <SunIcon />
+              </span>
+              <span className="theme-toggle-icon theme-toggle-icon-moon">
+                <MoonIcon />
+              </span>
+              <span className="theme-toggle-thumb" />
+            </span>
+            <span className="sr-only">{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
           </button>
           <button
             type="button"

@@ -21,6 +21,8 @@ function fmtPct(value: number | null | undefined): string {
 
 type RejectionWindowRange = '1h' | '24h' | '7d';
 
+const RECENT_SHARES_LIMIT = 20;
+
 export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   const [minerInput, setMinerInput] = useState(localStorage.getItem(LAST_MINER_LOOKUP_KEY) || '');
   const [minerAddress, setMinerAddress] = useState('');
@@ -94,8 +96,6 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
     if (!active) return;
 
     const stored = localStorage.getItem(LAST_MINER_LOOKUP_KEY) || '';
-    // Hydrate from storage only when there is no loaded miner yet.
-    // Do not overwrite manual edits while a miner is already loaded.
     if (!minerAddress) {
       if (!minerInput.trim() && stored) {
         setMinerInput(stored);
@@ -170,18 +170,16 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   const pendingConfirmed = minerData?.balance?.pending_confirmed ?? minerData?.balance?.pending ?? 0;
   const pendingEstimated = minerData?.balance?.pending_estimated ?? minerData?.pending_estimate?.estimated_pending ?? 0;
   const pendingTotal = minerData?.balance?.pending_total ?? pendingConfirmed + pendingEstimated;
+  const minerAccepted = minerData?.total_accepted ?? 0;
+  const minerRejected = minerData?.total_rejected ?? 0;
+  const minerChecked = minerAccepted + minerRejected;
+  const minerRejectRate = minerChecked > 0 ? (minerRejected / minerChecked) * 100 : null;
+  const recentShares = minerData?.shares?.slice(0, RECENT_SHARES_LIMIT) || [];
 
   const rejectionChecked = (rejectionWindow?.accepted ?? 0) + (rejectionWindow?.rejected ?? 0);
-  const rejectionByReason = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const reason of rejectionWindow?.by_reason || []) {
-      map.set(reason.reason, reason.count);
-    }
-    return map;
-  }, [rejectionWindow]);
   const topWindowReason = rejectionWindow?.by_reason?.[0];
   const topTotalReason = rejectionWindow?.totals_by_reason?.[0];
-  const hasRejectionRows = (rejectionWindow?.totals_by_reason?.length ?? 0) > 0;
+  const hasWindowRejections = (rejectionWindow?.rejected ?? 0) > 0;
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-stats">
@@ -225,15 +223,15 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
 
       {minerData && (
         <div id="lookup-result">
-          <div className="stats-grid" style={{ marginBottom: 24 }}>
+          <div className="stats-grid stats-grid-dense" style={{ marginBottom: 24 }}>
             <div className="stat-card">
               <div className="label">Hashrate</div>
               <div className="value">{humanRate(minerData.hashrate || 0)}</div>
             </div>
             <div className="stat-card">
-              <div className="label">Pending Balance (Total)</div>
+              <div className="label">Pending Balance</div>
               <div className="value">{formatCoins(pendingTotal)}</div>
-              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8, display: 'grid', gap: 2 }}>
+              <div className="stat-meta">
                 <div>
                   Confirmed <span className="mono">{formatCoins(pendingConfirmed)}</span>
                 </div>
@@ -249,6 +247,26 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
             <div className="stat-card">
               <div className="label">Blocks Found</div>
               <div className="value">{(minerData.blocks_found || []).length}</div>
+            </div>
+            <div className="stat-card">
+              <div className="label">Shares Accepted</div>
+              <div className="value">{minerAccepted}</div>
+            </div>
+            <div className="stat-card">
+              <div className="label">Shares Rejected</div>
+              <div className="value">{minerRejected}</div>
+            </div>
+            <div className="stat-card">
+              <div className="label">Reject Rate</div>
+              <div className="value">{fmtPct(minerRejectRate)}</div>
+            </div>
+            <div className="stat-card">
+              <div className="label">Avg Difficulty</div>
+              <div className="value">{minerAvgDiff}</div>
+            </div>
+            <div className="stat-card">
+              <div className="label">Mining Since</div>
+              <div className="value">{minerOldestShareDate}</div>
             </div>
           </div>
 
@@ -297,25 +315,6 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
               </div>
             </div>
           )}
-
-          <div className="stats-grid" style={{ marginBottom: 24 }}>
-            <div className="stat-card">
-              <div className="label">Shares Accepted</div>
-              <div className="value">{minerData.total_accepted || 0}</div>
-            </div>
-            <div className="stat-card">
-              <div className="label">Shares Rejected</div>
-              <div className="value">{minerData.total_rejected || 0}</div>
-            </div>
-            <div className="stat-card">
-              <div className="label">Avg Difficulty</div>
-              <div className="value">{minerAvgDiff}</div>
-            </div>
-            <div className="stat-card">
-              <div className="label">Mining Since</div>
-              <div className="value">{minerOldestShareDate}</div>
-            </div>
-          </div>
 
           <div className="section">
             <div className="section-header">
@@ -409,7 +408,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
 
           <div className="section">
             <div className="section-header">
-              <h2>Rejection Analytics (Pool)</h2>
+              <h2>Pool Rejects</h2>
               <div className="range-tabs">
                 {(['1h', '24h', '7d'] as RejectionWindowRange[]).map((r) => (
                   <button key={r} className={rejectionRange === r ? 'active' : ''} onClick={() => setRejectionRange(r)}>
@@ -418,62 +417,88 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
                 ))}
               </div>
             </div>
-            <div className={hasRejectionRows ? 'card table-scroll' : 'card'}>
-              <div className="rejection-summary mono">
-                Checked {rejectionChecked} shares
-                {' • '}rejected {rejectionWindow?.rejected ?? 0}
-                {' • '}window reject rate {fmtPct(rejectionWindow?.rejection_rate_pct)}
-                {' • '}all-time rejected {rejectionWindow?.total_rejected ?? 0}
-              </div>
-              {!hasRejectionRows ? (
-                <div className="rejection-summary mono" style={{ marginTop: 0 }}>
-                  No rejection events recorded yet. This is expected when shares are being accepted cleanly.
+            <div className="card rejection-card">
+              <div className="rejection-overview">
+                <div className="rejection-metric">
+                  <div className="label">Checked</div>
+                  <div className="value mono">{rejectionChecked}</div>
                 </div>
+                <div className="rejection-metric">
+                  <div className="label">Rejected</div>
+                  <div className="value mono">{rejectionWindow?.rejected ?? 0}</div>
+                </div>
+                <div className="rejection-metric">
+                  <div className="label">Reject Rate</div>
+                  <div className="value mono">{fmtPct(rejectionWindow?.rejection_rate_pct)}</div>
+                </div>
+                <div className="rejection-metric">
+                  <div className="label">Top Reason</div>
+                  <div className="value mono">{topWindowReason?.reason || 'none'}</div>
+                </div>
+              </div>
+
+              {!hasWindowRejections ? (
+                <p className="rejection-empty">
+                  No rejects recorded in the selected window. All-time rejects:{' '}
+                  <span className="mono">{rejectionWindow?.total_rejected ?? 0}</span>
+                  {topTotalReason ? (
+                    <>
+                      {' '}
+                      • most common reason <span className="mono">{topTotalReason.reason}</span>
+                    </>
+                  ) : null}
+                </p>
               ) : (
-                <>
-                  <div className="rejection-summary mono">
-                    Top reason ({rejectionRange}){' '}
-                    {topWindowReason ? `${topWindowReason.reason} (${topWindowReason.count})` : 'none'}
-                    {' • '}top reason (all-time){' '}
-                    {topTotalReason ? `${topTotalReason.reason} (${topTotalReason.count})` : 'none'}
+                <div className="rejection-breakdown">
+                  <div className="rejection-note">
+                    Selected window: <span className="mono">{rejectionRange}</span>
                   </div>
-                  <div className="rejection-summary mono">
-                    Reason % is the share of rejected shares in the selected window.
+                  <div className="rejection-list">
+                    {(rejectionWindow?.by_reason || []).slice(0, 4).map((reason) => {
+                      const windowPct =
+                        (rejectionWindow?.rejected ?? 0) > 0
+                          ? (reason.count / (rejectionWindow?.rejected ?? 0)) * 100
+                          : 0;
+
+                      return (
+                        <div key={reason.reason} className="rejection-row">
+                          <div>
+                            <div className="rejection-row-head">
+                              <span>{reason.reason}</span>
+                              <span className="mono">{fmtPct(windowPct)}</span>
+                            </div>
+                            <div className="rejection-row-bar">
+                              <div className="rejection-row-fill" style={{ width: `${Math.max(windowPct, 4)}%` }} />
+                            </div>
+                          </div>
+                          <div className="rejection-row-count mono">
+                            {reason.count}
+                            <span>/</span>
+                            {rejectionWindow?.rejected ?? 0}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Reason</th>
-                        <th>{rejectionRange} Rejects</th>
-                        <th>Of Rejects</th>
-                        <th>Total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rejectionWindow?.totals_by_reason?.map((reason) => {
-                        const windowCount = rejectionByReason.get(reason.reason) || 0;
-                        const windowPct =
-                          (rejectionWindow?.rejected ?? 0) > 0
-                            ? (windowCount / (rejectionWindow?.rejected ?? 0)) * 100
-                            : 0;
-                        return (
-                          <tr key={reason.reason}>
-                            <td>{reason.reason}</td>
-                            <td>{windowCount}</td>
-                            <td>{windowPct > 0 ? fmtPct(windowPct) : '-'}</td>
-                            <td>{reason.count}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </>
+                  <div className="rejection-note">
+                    All-time rejects: <span className="mono">{rejectionWindow?.total_rejected ?? 0}</span>
+                    {topTotalReason ? (
+                      <>
+                        {' '}
+                        • all-time top reason <span className="mono">{topTotalReason.reason}</span>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
               )}
             </div>
           </div>
 
           <div className="section">
-            <h2>Recent Shares</h2>
+            <div className="section-header">
+              <h2>Recent Shares</h2>
+              <span className="section-meta">Latest {RECENT_SHARES_LIMIT}</span>
+            </div>
             <div className="card table-scroll">
               <table>
                 <thead>
@@ -486,14 +511,14 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {!minerData.shares?.length ? (
+                  {!recentShares.length ? (
                     <tr>
                       <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                         No shares
                       </td>
                     </tr>
                   ) : (
-                    minerData.shares.slice(0, 50).map((s, idx) => (
+                    recentShares.map((s, idx) => (
                       <tr key={`${s.job_id}-${idx}`}>
                         <td>{s.job_id || ''}</td>
                         <td>{s.worker || ''}</td>
