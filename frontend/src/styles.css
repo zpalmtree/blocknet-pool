@@ -299,7 +299,7 @@ nav {
 }
 
 .theme-toggle-icon-moon svg {
-  transform: none;
+  transform: translate(2px, -7.5px);
 }
 
 .theme-toggle-thumb {
@@ -319,7 +319,7 @@ nav {
 }
 
 .theme-toggle[aria-pressed='false'] .theme-toggle-icon-moon {
-  color: color-mix(in srgb, var(--muted) 78%, var(--surface-raised));
+  color: var(--muted);
 }
 
 .theme-toggle[aria-pressed='true'] .theme-toggle-icon-sun {
