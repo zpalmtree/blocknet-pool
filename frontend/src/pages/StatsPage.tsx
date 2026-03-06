@@ -22,6 +22,22 @@ function fmtPct(value: number | null | undefined): string {
 type RejectionWindowRange = '1h' | '24h' | '7d';
 
 const RECENT_SHARES_LIMIT = 20;
+const HANDLE_RE = /^[$@]?[a-z0-9][a-z0-9_.\-]{0,62}$/i;
+const BLOCKNET_ID_API = 'https://blocknet.id/api/v1/resolve';
+
+function looksLikeHandle(raw: string): boolean {
+  if (raw.startsWith('$') || raw.startsWith('@')) return true;
+  if (raw.length < 25 && HANDLE_RE.test(raw)) return true;
+  return false;
+}
+
+async function resolveHandle(api: ApiClient, raw: string): Promise<{ address: string; handle: string } | null> {
+  const handle = raw.replace(/^[$@]/, '');
+  const data = await api.fetchJson<{ address: string; handle: string }>(
+    `${BLOCKNET_ID_API}/${encodeURIComponent(handle)}`
+  );
+  return { address: data.address, handle: data.handle };
+}
 
 export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   const [minerInput, setMinerInput] = useState(localStorage.getItem(LAST_MINER_LOOKUP_KEY) || '');
@@ -33,6 +49,8 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   const [rejectionWindow, setRejectionWindow] = useState<StatsInsightsResponse['rejections']['window'] | null>(null);
   const minerAddressRef = useRef(minerAddress);
   const lookupRequestSeq = useRef(0);
+  const [resolving, setResolving] = useState(false);
+  const [resolvedHandle, setResolvedHandle] = useState<string | null>(null);
 
   useEffect(() => {
     minerAddressRef.current = minerAddress;
@@ -40,9 +58,34 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
 
   const loadMinerLookup = useCallback(
     async (input?: string) => {
-      const addr = (input ?? minerInput).trim();
+      let addr = (input ?? minerInput).trim();
+      let resolved: { address: string; handle: string } | null = null;
       if (!addr) return;
       const requestId = ++lookupRequestSeq.current;
+
+      if (looksLikeHandle(addr)) {
+        setResolving(true);
+        try {
+          setResolvedHandle(null);
+          resolved = await resolveHandle(api, addr);
+          if (!resolved) {
+            if (requestId !== lookupRequestSeq.current) return;
+            setResolvedHandle(null);
+            return;
+          }
+          addr = resolved.address;
+        } catch {
+          if (requestId !== lookupRequestSeq.current) return;
+          setResolvedHandle(null);
+          return;
+        } finally {
+          if (requestId === lookupRequestSeq.current) {
+            setResolving(false);
+          }
+        }
+      } else {
+        setResolvedHandle(null);
+      }
       try {
         const d = await api.getMiner(addr);
         if (requestId !== lookupRequestSeq.current) return;
@@ -50,7 +93,9 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
         setMinerInput(addr);
         localStorage.setItem(LAST_MINER_LOOKUP_KEY, addr);
         setMinerData(d);
+        setResolvedHandle(resolved?.handle ?? null);
       } catch {
+        setResolvedHandle(null);
         // handled by api client
       }
     },
@@ -138,9 +183,10 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   }, [active, liveTick, minerAddress, refreshMinerData, loadMinerHashrate, loadRejections]);
 
   const lookupDisabled = useMemo(() => {
-    const addr = minerInput.trim();
-    const sameAsLoaded = !!minerAddress && addr === minerAddress;
-    return !addr || sameAsLoaded;
+    const raw = minerInput.trim();
+    if (!raw) return true;
+    if (looksLikeHandle(raw)) return false;
+    return !!minerAddress && raw === minerAddress;
   }, [minerAddress, minerInput]);
 
   const minerAvgDiff = useMemo(() => {
@@ -185,7 +231,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
         <div className="lookup-form" style={{ display: 'flex', gap: 10, marginBottom: 0, flexWrap: 'wrap' }}>
           <input
             type="text"
-            placeholder="Enter your wallet address"
+            placeholder="Wallet address or $name"
             style={{ flex: 1, minWidth: 200 }}
             value={minerInput}
             onChange={(e) => setMinerInput(e.target.value)}
@@ -197,10 +243,10 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
           />
           <button
             className={`btn btn-primary ${minerAddress && minerInput.trim() === minerAddress ? 'is-faded' : ''}`}
-            disabled={lookupDisabled}
+            disabled={lookupDisabled || resolving}
             onClick={() => void loadMinerLookup()}
           >
-            Lookup
+            {resolving ? 'Resolving…' : 'Lookup'}
           </button>
           <button
             className="btn btn-secondary"
@@ -210,11 +256,17 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
               setMinerAddress('');
               setMinerData(null);
               setHistory([]);
+              setResolvedHandle(null);
               localStorage.removeItem(LAST_MINER_LOOKUP_KEY);
             }}
           >
             Clear
           </button>
+          {resolvedHandle && minerAddress && (
+            <span className="resolved-badge" style={{ alignSelf: 'center', fontSize: '0.85em', color: 'var(--success, #4caf50)' }}>
+              ${resolvedHandle} → {minerAddress.slice(0, 8)}…{minerAddress.slice(-6)}
+            </span>
+          )}
         </div>
       </div>
 
