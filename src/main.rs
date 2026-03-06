@@ -114,11 +114,19 @@ async fn main() -> Result<()> {
     let jobs = JobManager::new(Arc::clone(&node), cfg.clone());
     jobs.start();
 
-    let validation = Arc::new(ValidationEngine::new_with_state_store(
-        cfg.clone(),
-        Arc::new(Argon2PowHasher::default()),
-        Arc::clone(&store) as Arc<dyn blocknet_pool_rs::validation::ValidationStateStore>,
-    ));
+    let validation = {
+        let cfg = cfg.clone();
+        let store = Arc::clone(&store) as Arc<dyn blocknet_pool_rs::validation::ValidationStateStore>;
+        tokio::task::spawn_blocking(move || {
+            Arc::new(ValidationEngine::new_with_state_store(
+                cfg,
+                Arc::new(Argon2PowHasher::default()),
+                store,
+            ))
+        })
+        .await
+        .context("join validation engine init task")?
+    };
 
     let engine = Arc::new(PoolEngine::new(
         cfg.clone(),
