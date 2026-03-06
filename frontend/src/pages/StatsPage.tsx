@@ -48,23 +48,25 @@ export function StatsPage({ active, api, liveTick }: StatsPageProps) {
   const loadMinerLookup = useCallback(
     async (input?: string) => {
       let addr = (input ?? minerInput).trim();
+      let resolved: { address: string; handle: string } | null = null;
       if (!addr) return;
 
       if (looksLikeHandle(addr)) {
         setResolving(true);
         try {
-          const resolved = await resolveHandle(addr);
+          setResolvedHandle(null);
+          resolved = await resolveHandle(addr);
           if (!resolved) {
-            setResolving(false);
+            setResolvedHandle(null);
             return;
           }
-          setResolvedHandle(resolved.handle);
           addr = resolved.address;
         } catch {
-          setResolving(false);
+          setResolvedHandle(null);
           return;
+        } finally {
+          setResolving(false);
         }
-        setResolving(false);
       } else {
         setResolvedHandle(null);
       }
@@ -75,7 +77,9 @@ export function StatsPage({ active, api, liveTick }: StatsPageProps) {
         setMinerInput(addr);
         localStorage.setItem(LAST_MINER_LOOKUP_KEY, addr);
         setMinerData(d);
+        setResolvedHandle(resolved?.handle ?? null);
       } catch {
+        setResolvedHandle(null);
         // handled by api client
       }
     },
