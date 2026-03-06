@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
-import { BlockStatusBadge } from '../components/BlockStatusBadge';
 import { HashrateChart } from '../components/HashrateChart';
 import { PayoutTxLinks } from '../components/PayoutTxLinks';
 import { formatCoins, fmtSeconds, humanRate, stratumUrl, timeAgo, toUnixMs } from '../lib/format';
 import type {
-  BlockItem,
   HashratePoint,
   InfoResponse,
   PayoutItem,
@@ -42,7 +40,6 @@ function toneClass(tone: string | undefined): string {
 export function DashboardPage({ active, api, poolInfo, liveTick }: DashboardPageProps) {
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [insights, setInsights] = useState<StatsInsightsResponse | null>(null);
-  const [blocks, setBlocks] = useState<BlockItem[]>([]);
   const [payouts, setPayouts] = useState<PayoutItem[]>([]);
   const [range, setRange] = useState<Range>('1h');
   const [history, setHistory] = useState<HashratePoint[]>([]);
@@ -62,15 +59,6 @@ export function DashboardPage({ active, api, poolInfo, liveTick }: DashboardPage
       setInsights(d);
     } catch {
       setInsights(null);
-    }
-  }, [api]);
-
-  const loadBlocks = useCallback(async () => {
-    try {
-      const d = await api.getBlocks({ paged: 'true', limit: 5, offset: 0, sort: 'height_desc' });
-      setBlocks(d.items || []);
-    } catch {
-      setBlocks([]);
     }
   }, [api]);
 
@@ -96,10 +84,9 @@ export function DashboardPage({ active, api, poolInfo, liveTick }: DashboardPage
     if (!active) return;
     void refreshStats();
     void loadInsights();
-    void loadBlocks();
     void loadPayouts();
     void loadHistory();
-  }, [active, loadBlocks, loadHistory, loadInsights, loadPayouts, refreshStats]);
+  }, [active, loadHistory, loadInsights, loadPayouts, refreshStats]);
 
   useEffect(() => {
     if (!active || liveTick <= 0) return;
@@ -107,10 +94,9 @@ export function DashboardPage({ active, api, poolInfo, liveTick }: DashboardPage
     void loadInsights();
     void loadHistory();
     if (liveTick % 2 === 0) {
-      void loadBlocks();
       void loadPayouts();
     }
-  }, [active, liveTick, loadBlocks, loadHistory, loadInsights, loadPayouts, refreshStats]);
+  }, [active, liveTick, loadHistory, loadInsights, loadPayouts, refreshStats]);
 
   useEffect(() => {
     if (!active) return;
@@ -259,6 +245,9 @@ export function DashboardPage({ active, api, poolInfo, liveTick }: DashboardPage
       <div className="section">
         <div className="section-header">
           <h2>Pool Luck History</h2>
+          <a href="#/luck" className="view-all">
+            View All
+          </a>
         </div>
         <div className="card table-scroll">
           <table>
@@ -300,51 +289,6 @@ export function DashboardPage({ active, api, poolInfo, liveTick }: DashboardPage
                       )}
                     </td>
                     <td title={new Date(toUnixMs(row.timestamp)).toLocaleString()}>{timeAgo(row.timestamp)}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="section">
-        <div className="section-header">
-          <h2>Recent Blocks</h2>
-          <a href="#/blocks" className="view-all">
-            View All
-          </a>
-        </div>
-        <div className="card table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Height</th>
-                <th>Reward</th>
-                <th>Status</th>
-                <th>Time</th>
-              </tr>
-            </thead>
-            <tbody id="dash-blocks-body">
-              {!blocks.length ? (
-                <tr>
-                  <td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                    No blocks found yet
-                  </td>
-                </tr>
-              ) : (
-                blocks.map((b) => (
-                  <tr key={`${b.height}-${b.hash}`}>
-                    <td>
-                      <a href={`https://explorer.blocknetcrypto.com/block/${b.hash}`} target="_blank" rel="noopener">
-                        {b.height}
-                      </a>
-                    </td>
-                    <td>{formatCoins(b.reward)}</td>
-                    <td>
-                      <BlockStatusBadge confirmed={b.confirmed} orphaned={b.orphaned} />
-                    </td>
-                    <td title={new Date(toUnixMs(b.timestamp)).toLocaleString()}>{timeAgo(b.timestamp)}</td>
                   </tr>
                 ))
               )}

@@ -1,6 +1,7 @@
 export type Route =
   | 'dashboard'
   | 'start'
+  | 'luck'
   | 'blocks'
   | 'payouts'
   | 'stats'

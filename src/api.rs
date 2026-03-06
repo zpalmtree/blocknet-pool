@@ -530,6 +530,7 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
         .route("/api/stats", get(handle_stats))
         .route("/api/stats/history", get(handle_stats_history))
         .route("/api/stats/insights", get(handle_stats_insights))
+        .route("/api/luck", get(handle_luck_history))
         .route("/api/status", get(handle_status))
         .route("/api/events", get(handle_events))
         .route("/api/blocks", get(handle_blocks))
@@ -634,6 +635,7 @@ async fn handle_info(State(state): State<ApiState>) -> impl IntoResponse {
             "/api/stats",
             "/api/stats/history",
             "/api/stats/insights",
+            "/api/luck",
             "/api/status",
             "/api/events",
             "/api/blocks",
@@ -729,6 +731,12 @@ struct StatsHistoryQuery {
 #[derive(Debug, Deserialize, Default)]
 struct StatsInsightsQuery {
     rejection_window: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct LuckHistoryQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1775,6 +1783,7 @@ fn compute_payout_eta(store: &PoolStore) -> anyhow::Result<PayoutEtaResponse> {
 fn compute_luck_history(
     store: &PoolStore,
     mut blocks: Vec<crate::db::DbBlock>,
+    max_items: Option<usize>,
 ) -> anyhow::Result<Vec<LuckRoundResponse>> {
     if blocks.len() < 2 {
         return Ok(Vec::new());
@@ -1824,8 +1833,56 @@ fn compute_luck_history(
     }
 
     rounds.sort_by(|a, b| b.block_height.cmp(&a.block_height));
-    rounds.truncate(16);
+    if let Some(max_items) = max_items {
+        rounds.truncate(max_items);
+    }
     Ok(rounds)
+}
+
+async fn handle_luck_history(
+    Query(query): Query<LuckHistoryQuery>,
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let (limit, offset) = page_bounds(query.limit, query.offset);
+    let store = Arc::clone(&state.store);
+
+    let (items, total) = match tokio::task::spawn_blocking(move || {
+        let blocks = store.get_all_blocks()?;
+        let rounds = compute_luck_history(&store, blocks, None)?;
+        let total = rounds.len();
+        let items = rounds
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .collect::<Vec<_>>();
+        Ok::<_, anyhow::Error>((items, total))
+    })
+    .await
+    {
+        Ok(Ok(v)) => v,
+        Ok(Err(err)) => {
+            return internal_error("failed loading luck history", err).into_response()
+        }
+        Err(err) => {
+            return internal_error(
+                "failed loading luck history",
+                anyhow::anyhow!("join error: {err}"),
+            )
+            .into_response()
+        }
+    };
+    let returned = items.len();
+
+    Json(PagedResponse {
+        items,
+        page: PageMeta {
+            limit,
+            offset,
+            returned,
+            total,
+        },
+    })
+    .into_response()
 }
 
 async fn handle_public_payouts(
@@ -2077,7 +2134,7 @@ impl ApiState {
                 };
 
                 let payout_eta = compute_payout_eta(&store)?;
-                let luck_history = compute_luck_history(&store, blocks)?;
+                let luck_history = compute_luck_history(&store, blocks, Some(16))?;
 
                 Ok::<_, anyhow::Error>((
                     pool_hashrate,

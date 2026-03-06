@@ -6,6 +6,7 @@ import type {
   HashratePoint,
   HealthResponse,
   InfoResponse,
+  LuckRound,
   MinerListItem,
   MinerResponse,
   PagedResponse,
@@ -29,6 +30,7 @@ export interface ApiClient {
   getStats(): Promise<StatsResponse>;
   getStatsHistory(range: string): Promise<HashratePoint[]>;
   getStatsInsights(rejectionWindow?: string): Promise<StatsInsightsResponse>;
+  getLuckHistory(params: QueryParams): Promise<PagedResponse<LuckRound>>;
   getStatus(): Promise<StatusResponse>;
   getBlocks(params: QueryParams): Promise<PagedResponse<BlockItem>>;
   getRecentPayouts(params: QueryParams): Promise<PagedResponse<PayoutItem>>;
@@ -97,6 +99,7 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
           ? `/api/stats/insights?rejection_window=${encodeURIComponent(rejectionWindow)}`
           : '/api/stats/insights'
       ),
+    getLuckHistory: (params) => fetchJson<PagedResponse<LuckRound>>(withQuery('/api/luck', params)),
     getStatus: () => fetchJson<StatusResponse>('/api/status'),
     getBlocks: (params) => fetchJson<PagedResponse<BlockItem>>(withQuery('/api/blocks', params)),
     getRecentPayouts: (params) => fetchJson<PagedResponse<PayoutItem>>(withQuery('/api/payouts/recent', params)),

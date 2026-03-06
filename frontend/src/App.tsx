@@ -6,6 +6,7 @@ import { routeFromHash } from './lib/format';
 import { AdminPage } from './pages/AdminPage';
 import { BlocksPage } from './pages/BlocksPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { LuckPage } from './pages/LuckPage';
 import { PayoutsPage } from './pages/PayoutsPage';
 import { StartPage } from './pages/StartPage';
 import { StatusPage } from './pages/StatusPage';
@@ -207,6 +208,7 @@ export function App() {
       <div className="container">
         <DashboardPage active={route === 'dashboard'} api={api} poolInfo={poolInfo} liveTick={liveTick} />
         <StartPage active={route === 'start'} poolInfo={poolInfo} />
+        <LuckPage active={route === 'luck'} api={api} liveTick={liveTick} />
         <BlocksPage active={route === 'blocks'} api={api} liveTick={liveTick} />
         <PayoutsPage active={route === 'payouts'} api={api} liveTick={liveTick} />
         <StatsPage active={route === 'stats'} api={api} liveTick={liveTick} />

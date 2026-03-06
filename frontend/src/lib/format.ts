@@ -7,6 +7,7 @@ export function routeFromHash(hash: string): Route {
   if (hash.startsWith('#/admin')) return 'admin';
   if (hash.startsWith('#/stats')) return 'stats';
   if (hash.startsWith('#/start')) return 'start';
+  if (hash.startsWith('#/luck')) return 'luck';
   if (hash.startsWith('#/blocks')) return 'blocks';
   if (hash.startsWith('#/payouts')) return 'payouts';
   return 'dashboard';
