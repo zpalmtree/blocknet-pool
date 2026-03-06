@@ -76,6 +76,7 @@ pub struct Config {
     pub payout_max_recipients_per_tick: i32,
     pub payout_max_total_per_tick: f64,
     pub payout_max_per_recipient: f64,
+    pub payout_wait_priority_threshold: String,
     pub payout_pause_file: String,
     pub payout_interval: String,
     pub shares_retention: String,
@@ -156,6 +157,7 @@ impl Default for Config {
             payout_max_recipients_per_tick: 500,
             payout_max_total_per_tick: 0.0,
             payout_max_per_recipient: 0.0,
+            payout_wait_priority_threshold: "6h".to_string(),
             payout_pause_file: "payouts.pause".to_string(),
             payout_interval: "1h".to_string(),
             shares_retention: "90d".to_string(),
@@ -326,6 +328,13 @@ impl Config {
         parse_duration_or(&self.payout_interval, Duration::from_secs(60 * 60))
     }
 
+    pub fn payout_wait_priority_threshold_duration(&self) -> Duration {
+        parse_duration_or(
+            &self.payout_wait_priority_threshold,
+            Duration::from_secs(6 * 60 * 60),
+        )
+    }
+
     pub fn shares_retention_duration(&self) -> Option<Duration> {
         parse_optional_duration(&self.shares_retention)
     }
@@ -494,6 +503,15 @@ mod tests {
         let fee = cfg.pool_fee(reward);
         assert!(fee > 100_000_000);
         assert!(fee < reward);
+    }
+
+    #[test]
+    fn payout_wait_priority_threshold_defaults_to_six_hours() {
+        let cfg = Config::default();
+        assert_eq!(
+            cfg.payout_wait_priority_threshold_duration(),
+            Duration::from_secs(6 * 60 * 60)
+        );
     }
 
     #[test]

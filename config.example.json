@@ -60,6 +60,7 @@
   "payout_max_recipients_per_tick": 500,
   "payout_max_total_per_tick": 0.0,
   "payout_max_per_recipient": 0.0,
+  "payout_wait_priority_threshold": "6h",
   "payout_pause_file": "payouts.pause",
   "payout_interval": "1h",
   "shares_retention": "90d",

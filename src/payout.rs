@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -37,6 +38,12 @@ struct AddressShareWeights {
     verified_shares: u64,
     verified_difficulty: u64,
     provisional_difficulty: u64,
+}
+
+#[derive(Debug, Clone)]
+struct PayoutCandidate {
+    balance: Balance,
+    pending: PendingPayout,
 }
 
 #[derive(Debug)]
@@ -440,6 +447,7 @@ impl PayoutProcessor {
                 Some(value)
             }
         };
+        let wait_priority_threshold = self.cfg.payout_wait_priority_threshold_duration();
         let mut sent_recipients = 0usize;
         let mut sent_total = 0u64;
         let balances = match self.store.get_all_balances() {
@@ -449,27 +457,9 @@ impl PayoutProcessor {
                 return;
             }
         };
+        let mut candidates = Vec::with_capacity(balances.len());
 
         for bal in balances {
-            if max_recipients_per_tick.is_some_and(|cap| sent_recipients >= cap) {
-                tracing::warn!(
-                    cap = max_recipients_per_tick.unwrap_or(0),
-                    sent_recipients,
-                    sent_total,
-                    "stopping payout tick due to max recipient cap"
-                );
-                break;
-            }
-            if max_total_per_tick.is_some_and(|cap| sent_total >= cap) {
-                tracing::warn!(
-                    cap = max_total_per_tick.unwrap_or(0),
-                    sent_recipients,
-                    sent_total,
-                    "stopping payout tick due to max payout total cap"
-                );
-                break;
-            }
-
             let existing_pending = match self.store.get_pending_payout(&bal.address) {
                 Ok(v) => v,
                 Err(err) => {
@@ -539,10 +529,42 @@ impl PayoutProcessor {
             };
 
             let pending_amount = pending.amount;
-
             if pending_amount == 0 {
                 continue;
             }
+
+            candidates.push(PayoutCandidate {
+                balance: bal,
+                pending,
+            });
+        }
+
+        sort_payout_candidates(&mut candidates, SystemTime::now(), wait_priority_threshold);
+
+        for candidate in candidates {
+            if max_recipients_per_tick.is_some_and(|cap| sent_recipients >= cap) {
+                tracing::warn!(
+                    cap = max_recipients_per_tick.unwrap_or(0),
+                    sent_recipients,
+                    sent_total,
+                    "stopping payout tick due to max recipient cap"
+                );
+                break;
+            }
+            if max_total_per_tick.is_some_and(|cap| sent_total >= cap) {
+                tracing::warn!(
+                    cap = max_total_per_tick.unwrap_or(0),
+                    sent_recipients,
+                    sent_total,
+                    "stopping payout tick due to max payout total cap"
+                );
+                break;
+            }
+
+            let bal = candidate.balance;
+            let pending = candidate.pending;
+            let pending_amount = pending.amount;
+
             match self.reconcile_broadcast_payout(&bal, &pending) {
                 Ok(true) => continue,
                 Ok(false) => {}
@@ -781,6 +803,45 @@ impl PayoutProcessor {
     }
 }
 
+fn sort_payout_candidates(
+    candidates: &mut [PayoutCandidate],
+    now: SystemTime,
+    wait_priority_threshold: Duration,
+) {
+    candidates.sort_by(|a, b| compare_payout_candidates(a, b, now, wait_priority_threshold));
+}
+
+fn compare_payout_candidates(
+    a: &PayoutCandidate,
+    b: &PayoutCandidate,
+    now: SystemTime,
+    wait_priority_threshold: Duration,
+) -> Ordering {
+    let a_age = payout_wait_age(&a.pending, now);
+    let b_age = payout_wait_age(&b.pending, now);
+    let a_promoted = wait_priority_threshold.is_zero() || a_age >= wait_priority_threshold;
+    let b_promoted = wait_priority_threshold.is_zero() || b_age >= wait_priority_threshold;
+
+    match (a_promoted, b_promoted) {
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        (true, true) => b_age
+            .cmp(&a_age)
+            .then_with(|| b.pending.amount.cmp(&a.pending.amount))
+            .then_with(|| a.balance.address.cmp(&b.balance.address)),
+        (false, false) => b
+            .pending
+            .amount
+            .cmp(&a.pending.amount)
+            .then_with(|| b_age.cmp(&a_age))
+            .then_with(|| a.balance.address.cmp(&b.balance.address)),
+    }
+}
+
+fn payout_wait_age(p: &PendingPayout, now: SystemTime) -> Duration {
+    now.duration_since(p.initiated_at).unwrap_or_default()
+}
+
 pub fn weight_shares<F>(
     shares: &[DbShare],
     now: SystemTime,
@@ -956,6 +1017,26 @@ mod tests {
             rand::random::<u64>()
         ));
         PoolStore::open_sqlite(path.to_str().expect("path")).expect("open sqlite store")
+    }
+
+    fn candidate(address: &str, amount: u64, age: Duration) -> PayoutCandidate {
+        let now = SystemTime::now();
+        PayoutCandidate {
+            balance: Balance {
+                address: address.to_string(),
+                pending: amount,
+                paid: 0,
+            },
+            pending: PendingPayout {
+                address: address.to_string(),
+                amount,
+                initiated_at: now - age,
+                send_started_at: None,
+                tx_hash: None,
+                fee: None,
+                sent_at: None,
+            },
+        }
     }
 
     fn trust_policy(
@@ -1187,6 +1268,41 @@ mod tests {
 
         let total = credits.values().copied().sum::<u64>();
         assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn payout_candidates_promote_longest_waiting_after_threshold() {
+        let now = SystemTime::now();
+        let mut candidates = vec![
+            candidate("a-fast", 500, Duration::from_secs(30 * 60)),
+            candidate("a-old", 100, Duration::from_secs(2 * 60 * 60)),
+            candidate("a-older", 200, Duration::from_secs(90 * 60)),
+        ];
+
+        sort_payout_candidates(&mut candidates, now, Duration::from_secs(60 * 60));
+
+        let ordered = candidates
+            .into_iter()
+            .map(|candidate| candidate.balance.address)
+            .collect::<Vec<_>>();
+        assert_eq!(ordered, vec!["a-old", "a-older", "a-fast"]);
+    }
+
+    #[test]
+    fn payout_candidates_fall_back_to_amount_before_threshold() {
+        let now = SystemTime::now();
+        let mut candidates = vec![
+            candidate("a-big", 500, Duration::from_secs(30 * 60)),
+            candidate("a-small", 100, Duration::from_secs(50 * 60)),
+        ];
+
+        sort_payout_candidates(&mut candidates, now, Duration::from_secs(60 * 60));
+
+        let ordered = candidates
+            .into_iter()
+            .map(|candidate| candidate.balance.address)
+            .collect::<Vec<_>>();
+        assert_eq!(ordered, vec!["a-big", "a-small"]);
     }
 
     #[test]
