@@ -858,18 +858,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              LIMIT $1",
             &[&limit],
         )?;
-        Ok(rows
-            .into_iter()
-            .map(|row| Payout {
-                id: row.get::<_, i64>(0),
-                address: row.get::<_, String>(1),
-                amount: row.get::<_, i64>(2).max(0) as u64,
-                fee: row.get::<_, i64>(3).max(0) as u64,
-                tx_hash: row.get::<_, String>(4),
-                timestamp: from_unix(row.get::<_, i64>(5)),
-                confirmed: row.get::<_, i64>(6) != 0,
-            })
-            .collect())
+        rows.into_iter().map(row_to_payout).collect()
     }
 
     pub fn get_recent_payouts_for_address(&self, address: &str, limit: i64) -> Result<Vec<Payout>> {
@@ -881,18 +870,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              LIMIT $2",
             &[&address, &limit],
         )?;
-        Ok(rows
-            .into_iter()
-            .map(|row| Payout {
-                id: row.get::<_, i64>(0),
-                address: row.get::<_, String>(1),
-                amount: row.get::<_, i64>(2).max(0) as u64,
-                fee: row.get::<_, i64>(3).max(0) as u64,
-                tx_hash: row.get::<_, String>(4),
-                timestamp: from_unix(row.get::<_, i64>(5)),
-                confirmed: row.get::<_, i64>(6) != 0,
-            })
-            .collect())
+        rows.into_iter().map(row_to_payout).collect()
     }
 
     pub fn get_recent_visible_payouts_for_address(
@@ -924,18 +902,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              LIMIT $2",
             &[&address, &limit],
         )?;
-        Ok(rows
-            .into_iter()
-            .map(|row| Payout {
-                id: row.get::<_, i64>(0),
-                address: row.get::<_, String>(1),
-                amount: row.get::<_, i64>(2).max(0) as u64,
-                fee: row.get::<_, i64>(3).max(0) as u64,
-                tx_hash: row.get::<_, String>(4),
-                timestamp: from_unix(row.get::<_, i64>(5)),
-                confirmed: row.get::<_, i64>(6) != 0,
-            })
-            .collect())
+        rows.into_iter().map(row_to_payout).collect()
     }
 
     pub fn get_all_payouts(&self) -> Result<Vec<Payout>> {
@@ -945,18 +912,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              ORDER BY id DESC",
             &[],
         )?;
-        Ok(rows
-            .into_iter()
-            .map(|row| Payout {
-                id: row.get::<_, i64>(0),
-                address: row.get::<_, String>(1),
-                amount: row.get::<_, i64>(2).max(0) as u64,
-                fee: row.get::<_, i64>(3).max(0) as u64,
-                tx_hash: row.get::<_, String>(4),
-                timestamp: from_unix(row.get::<_, i64>(5)),
-                confirmed: row.get::<_, i64>(6) != 0,
-            })
-            .collect())
+        rows.into_iter().map(row_to_payout).collect()
     }
 
     pub fn get_payouts_page(
@@ -1033,18 +989,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 &offset.max(0),
             ],
         )?;
-        let items = rows
-            .into_iter()
-            .map(|row| Payout {
-                id: row.get::<_, i64>(0),
-                address: row.get::<_, String>(1),
-                amount: row.get::<_, i64>(2).max(0) as u64,
-                fee: row.get::<_, i64>(3).max(0) as u64,
-                tx_hash: row.get::<_, String>(4),
-                timestamp: from_unix(row.get::<_, i64>(5)),
-                confirmed: row.get::<_, i64>(6) != 0,
-            })
-            .collect();
+        let items = rows.into_iter().map(row_to_payout).collect::<Result<Vec<_>>>()?;
 
         Ok((items, total.max(0) as u64))
     }
@@ -1115,22 +1060,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let rows = conn.query(&sql, &[&limit.max(0), &offset.max(0)])?;
         let items = rows
             .into_iter()
-            .map(|row| {
-                let tx_hashes = row.get::<_, Option<String>>(3).unwrap_or_default();
-                PublicPayoutBatch {
-                    total_amount: row.get::<_, i64>(0).max(0) as u64,
-                    total_fee: row.get::<_, i64>(1).max(0) as u64,
-                    recipient_count: row.get::<_, i64>(2).max(0) as usize,
-                    tx_hashes: tx_hashes
-                        .split(',')
-                        .filter(|v| !v.trim().is_empty())
-                        .map(|v| v.to_string())
-                        .collect(),
-                    timestamp: from_unix(row.get::<_, i64>(4)),
-                    confirmed: row.get::<_, i64>(5) != 0,
-                }
-            })
-            .collect();
+            .map(row_to_public_payout_batch)
+            .collect::<Result<Vec<_>>>()?;
 
         Ok((items, total.max(0) as u64))
     }
@@ -2254,6 +2185,46 @@ fn row_to_share(row: postgres::Row) -> DbShare {
         block_hash: row.get::<_, Option<String>>(8),
         created_at: from_unix(row.get::<_, i64>(9)),
     }
+}
+
+fn row_get_boolish(row: &postgres::Row, idx: usize) -> Result<bool> {
+    if let Ok(value) = row.try_get::<_, bool>(idx) {
+        return Ok(value);
+    }
+    if let Ok(value) = row.try_get::<_, i64>(idx) {
+        return Ok(value != 0);
+    }
+    Err(anyhow!(
+        "unsupported boolean column type at index {idx}; expected bool or i64"
+    ))
+}
+
+fn row_to_payout(row: postgres::Row) -> Result<Payout> {
+    Ok(Payout {
+        id: row.get::<_, i64>(0),
+        address: row.get::<_, String>(1),
+        amount: row.get::<_, i64>(2).max(0) as u64,
+        fee: row.get::<_, i64>(3).max(0) as u64,
+        tx_hash: row.get::<_, String>(4),
+        timestamp: from_unix(row.get::<_, i64>(5)),
+        confirmed: row_get_boolish(&row, 6)?,
+    })
+}
+
+fn row_to_public_payout_batch(row: postgres::Row) -> Result<PublicPayoutBatch> {
+    let tx_hashes = row.get::<_, Option<String>>(3).unwrap_or_default();
+    Ok(PublicPayoutBatch {
+        total_amount: row.get::<_, i64>(0).max(0) as u64,
+        total_fee: row.get::<_, i64>(1).max(0) as u64,
+        recipient_count: row.get::<_, i64>(2).max(0) as usize,
+        tx_hashes: tx_hashes
+            .split(',')
+            .filter(|v| !v.trim().is_empty())
+            .map(|v| v.to_string())
+            .collect(),
+        timestamp: from_unix(row.get::<_, i64>(4)),
+        confirmed: row_get_boolish(&row, 5)?,
+    })
 }
 
 fn sort_reason_counts(entries: Vec<(String, u64)>) -> Vec<RejectionReasonCount> {

@@ -6,7 +6,7 @@ usage() {
 Deploy blocknet-pool to the bntpool server.
 
 Usage:
-  scripts/deploy_bntpool.sh [--skip-build] [--skip-ui-build] [--migrate-split]
+  scripts/deploy_bntpool.sh [--skip-build] [--skip-ui-build] [--migrate-split] [--local-build]
 
 Environment overrides:
   BNTPOOL_HOST             SSH host alias (default: bntpool)
@@ -15,12 +15,14 @@ Environment overrides:
   BNTPOOL_STRATUM_SERVICE  Systemd Stratum service name (default: blocknet-pool-stratum.service)
   BNTPOOL_LEGACY_SERVICE   Legacy combined service to disable on split migration (default: blocknet-pool.service)
   BNTPOOL_FORCE_RESTART    Set to 1 to force a restart even when binary hashes are unchanged
+  BNTPOOL_LOCAL_BUILD_IMAGE  Optional Docker image used for local builds
 EOF
 }
 
 skip_build=0
 skip_ui_build=0
 migrate_split=0
+local_build=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-build)
@@ -33,6 +35,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --migrate-split)
       migrate_split=1
+      shift
+      ;;
+    --local-build)
+      local_build=1
       shift
       ;;
     -h|--help)
@@ -53,15 +59,38 @@ api_service="${BNTPOOL_API_SERVICE:-blocknet-pool-api.service}"
 stratum_service="${BNTPOOL_STRATUM_SERVICE:-blocknet-pool-stratum.service}"
 legacy_service="${BNTPOOL_LEGACY_SERVICE:-blocknet-pool.service}"
 force_restart="${BNTPOOL_FORCE_RESTART:-0}"
+local_build_image="${BNTPOOL_LOCAL_BUILD_IMAGE:-}"
 remote_api_bin="${remote_dir}/target/release/blocknet-pool-api"
 remote_stratum_bin="${remote_dir}/target/release/blocknet-pool-stratum"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_dir="$(cd "${script_dir}/.." && pwd)"
+host_uid="$(id -u)"
+host_gid="$(id -g)"
+local_api_bin="${repo_dir}/target/release/blocknet-pool-api"
+local_stratum_bin="${repo_dir}/target/release/blocknet-pool-stratum"
 
 remote_hash() {
   local path="$1"
   ssh "${host}" "set -euo pipefail; if [[ -f '${path}' ]]; then sha256sum '${path}' | awk '{print \$1}'; else echo '__missing__'; fi"
+}
+
+build_locally() {
+  if [[ -n "${local_build_image}" ]]; then
+    if ! command -v docker >/dev/null 2>&1; then
+      echo "docker is required when BNTPOOL_LOCAL_BUILD_IMAGE is set" >&2
+      exit 1
+    fi
+    docker run --rm \
+      -v "${repo_dir}:/work" \
+      -w /work \
+      -e HOST_UID="${host_uid}" \
+      -e HOST_GID="${host_gid}" \
+      "${local_build_image}" \
+      bash -lc "set -euo pipefail; export PATH=/usr/local/cargo/bin:\$PATH; cargo build --release --bin blocknet-pool-api --bin blocknet-pool-stratum; chown -R \"${host_uid}:${host_gid}\" /work/target"
+  else
+    cargo build --release --bin blocknet-pool-api --bin blocknet-pool-stratum
+  fi
 }
 
 if [[ "${skip_ui_build}" -eq 0 ]]; then
@@ -89,7 +118,16 @@ echo "==> reading current remote binary hashes"
 before_api_hash="$(remote_hash "${remote_api_bin}")"
 before_stratum_hash="$(remote_hash "${remote_stratum_bin}")"
 
-if [[ "${skip_build}" -eq 0 ]]; then
+if [[ "${skip_build}" -eq 0 && "${local_build}" -eq 1 ]]; then
+  echo "==> building release binaries locally"
+  build_locally
+  echo "==> uploading locally built binaries to ${host}"
+  ssh "${host}" "set -euo pipefail; mkdir -p '${remote_dir}/target/release'"
+  rsync -az \
+    "${local_api_bin}" \
+    "${local_stratum_bin}" \
+    "${host}:${remote_dir}/target/release/"
+elif [[ "${skip_build}" -eq 0 ]]; then
   echo "==> building release binaries on ${host}"
   ssh "${host}" "set -euo pipefail; export PATH=/home/blocknet/.cargo/bin:\$PATH; cd '${remote_dir}'; cargo build --release --bin blocknet-pool-api --bin blocknet-pool-stratum"
 fi
