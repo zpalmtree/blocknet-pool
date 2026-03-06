@@ -54,16 +54,6 @@ export function StartPage({ active, poolInfo, theme }: StartPageProps) {
           </div>
         </div>
 
-        <p className="quickstart-label">
-          Quick start command. Replace only <code className="mono inline-code">YOUR_BLOCKNET_ADDRESS</code>.
-        </p>
-        <div className="command-copy">
-          <pre className="config-block">{commandExample}</pre>
-          <button className="copy-btn" type="button" onClick={() => copyToClipboard(commandExample, 'cmd')}>
-            {copiedKey === 'cmd' ? 'Copied' : 'Copy Command'}
-          </button>
-        </div>
-
         <div className="quickstart-grid">
           <div className="quickstart-card">
             <span className="quickstart-step">1</span>
@@ -106,6 +96,16 @@ export function StartPage({ active, poolInfo, theme }: StartPageProps) {
               follow hashrate and balance.
             </p>
           </div>
+        </div>
+
+        <p className="quickstart-label">
+          Quick start command. Replace only <code className="mono inline-code">YOUR_BLOCKNET_ADDRESS</code>.
+        </p>
+        <div className="command-copy">
+          <pre className="config-block">{commandExample}</pre>
+          <button className="copy-btn" type="button" onClick={() => copyToClipboard(commandExample, 'cmd')}>
+            {copiedKey === 'cmd' ? 'Copied' : 'Copy Command'}
+          </button>
         </div>
 
         <div className="quickstart-notes">
