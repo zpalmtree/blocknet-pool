@@ -16,7 +16,7 @@ use crate::validation::{
     LoadedValidationState, PersistedValidationAddressState, PersistedValidationProvisional,
 };
 
-const SEEN_SHARE_EXPIRY_SECS: i64 = 24 * 60 * 60;
+const SHARE_CLAIM_EXPIRY_SECS: i64 = 2 * 60;
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 
 #[derive(Debug, Clone, Serialize)]
@@ -71,6 +71,7 @@ pub struct Payout {
     pub fee: u64,
     pub tx_hash: String,
     pub timestamp: SystemTime,
+    pub confirmed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -80,6 +81,7 @@ pub struct PublicPayoutBatch {
     pub recipient_count: usize,
     pub tx_hashes: Vec<String>,
     pub timestamp: SystemTime,
+    pub confirmed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -162,6 +164,7 @@ CREATE TABLE IF NOT EXISTS shares (
 CREATE INDEX IF NOT EXISTS idx_shares_created_at ON shares(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shares_miner_created ON shares(miner, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shares_miner_status_created ON shares(miner, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_shares_job_nonce ON shares(job_id, nonce);
 
 CREATE TABLE IF NOT EXISTS blocks (
     height INTEGER PRIMARY KEY,
@@ -1020,7 +1023,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     pub fn get_recent_payouts(&self, limit: i64) -> Result<Vec<Payout>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, address, amount, fee, tx_hash, timestamp FROM payouts ORDER BY id DESC LIMIT ?1",
+            "SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed
+             FROM payouts
+             ORDER BY id DESC
+             LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit], |row| {
             Ok(Payout {
@@ -1030,6 +1036,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 fee: row.get::<_, i64>(3)?.max(0) as u64,
                 tx_hash: row.get(4)?,
                 timestamp: from_unix(row.get::<_, i64>(5)?),
+                confirmed: row.get::<_, i64>(6)? != 0,
             })
         })?;
         collect_rows(rows)
@@ -1038,7 +1045,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     pub fn get_recent_payouts_for_address(&self, address: &str, limit: i64) -> Result<Vec<Payout>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, address, amount, fee, tx_hash, timestamp
+            "SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed
              FROM payouts
              WHERE address = ?1
              ORDER BY id DESC
@@ -1052,6 +1059,50 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 fee: row.get::<_, i64>(3)?.max(0) as u64,
                 tx_hash: row.get(4)?,
                 timestamp: from_unix(row.get::<_, i64>(5)?),
+                confirmed: row.get::<_, i64>(6)? != 0,
+            })
+        })?;
+        collect_rows(rows)
+    }
+
+    pub fn get_recent_visible_payouts_for_address(
+        &self,
+        address: &str,
+        limit: i64,
+    ) -> Result<Vec<Payout>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, address, amount, fee, tx_hash, timestamp, confirmed
+             FROM (
+                 SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed
+                 FROM payouts
+                 WHERE address = ?1
+                 UNION ALL
+                 SELECT
+                     0 AS id,
+                     address,
+                     amount,
+                     COALESCE(fee, 0) AS fee,
+                     tx_hash,
+                     COALESCE(sent_at, send_started_at, initiated_at) AS timestamp,
+                     0 AS confirmed
+                 FROM pending_payouts
+                 WHERE address = ?1
+                   AND tx_hash IS NOT NULL
+                   AND TRIM(tx_hash) <> ''
+             )
+             ORDER BY timestamp DESC, confirmed ASC, id DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![address, limit], |row| {
+            Ok(Payout {
+                id: row.get(0)?,
+                address: row.get(1)?,
+                amount: row.get::<_, i64>(2)?.max(0) as u64,
+                fee: row.get::<_, i64>(3)?.max(0) as u64,
+                tx_hash: row.get(4)?,
+                timestamp: from_unix(row.get::<_, i64>(5)?),
+                confirmed: row.get::<_, i64>(6)? != 0,
             })
         })?;
         collect_rows(rows)
@@ -1060,7 +1111,9 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     pub fn get_all_payouts(&self) -> Result<Vec<Payout>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, address, amount, fee, tx_hash, timestamp FROM payouts ORDER BY id DESC",
+            "SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed
+             FROM payouts
+             ORDER BY id DESC",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(Payout {
@@ -1070,6 +1123,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 fee: row.get::<_, i64>(3)?.max(0) as u64,
                 tx_hash: row.get(4)?,
                 timestamp: from_unix(row.get::<_, i64>(5)?),
+                confirmed: row.get::<_, i64>(6)? != 0,
             })
         })?;
         collect_rows(rows)
@@ -1093,16 +1147,24 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .map(|v| format!("%{}%", v.to_ascii_lowercase()));
 
         let order_clause = match sort {
-            "time_asc" => "timestamp ASC, id ASC",
-            "amount_desc" => "amount DESC, id DESC",
-            "amount_asc" => "amount ASC, id DESC",
-            _ => "timestamp DESC, id DESC",
+            "time_asc" => "timestamp ASC, confirmed ASC, id ASC",
+            "amount_desc" => "amount DESC, confirmed ASC, id DESC",
+            "amount_asc" => "amount ASC, confirmed ASC, id DESC",
+            _ => "timestamp DESC, confirmed ASC, id DESC",
         };
 
         let conn = self.conn.lock();
         let total: i64 = conn.query_row(
             "SELECT COUNT(*)
-             FROM payouts
+             FROM (
+                 SELECT address, tx_hash
+                 FROM payouts
+                 UNION ALL
+                 SELECT address, tx_hash
+                 FROM pending_payouts
+                 WHERE tx_hash IS NOT NULL
+                   AND TRIM(tx_hash) <> ''
+             ) visible
              WHERE (?1 IS NULL OR LOWER(address) LIKE ?1)
                AND (?2 IS NULL OR LOWER(tx_hash) LIKE ?2)",
             params![address_pattern.as_deref(), tx_hash_pattern.as_deref()],
@@ -1110,8 +1172,23 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         )?;
 
         let sql = format!(
-            "SELECT id, address, amount, fee, tx_hash, timestamp
-             FROM payouts
+            "SELECT id, address, amount, fee, tx_hash, timestamp, confirmed
+             FROM (
+                 SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed
+                 FROM payouts
+                 UNION ALL
+                 SELECT
+                     0 AS id,
+                     address,
+                     amount,
+                     COALESCE(fee, 0) AS fee,
+                     tx_hash,
+                     COALESCE(sent_at, send_started_at, initiated_at) AS timestamp,
+                     0 AS confirmed
+                 FROM pending_payouts
+                 WHERE tx_hash IS NOT NULL
+                   AND TRIM(tx_hash) <> ''
+             ) visible
              WHERE (?1 IS NULL OR LOWER(address) LIKE ?1)
                AND (?2 IS NULL OR LOWER(tx_hash) LIKE ?2)
              ORDER BY {order_clause}
@@ -1133,6 +1210,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     fee: row.get::<_, i64>(3)?.max(0) as u64,
                     tx_hash: row.get(4)?,
                     timestamp: from_unix(row.get::<_, i64>(5)?),
+                    confirmed: row.get::<_, i64>(6)? != 0,
                 })
             },
         )?;
@@ -1156,24 +1234,51 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
         let conn = self.conn.lock();
         let total: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM (SELECT (timestamp / 300) AS bucket FROM payouts GROUP BY bucket)",
+            "SELECT COUNT(*)
+             FROM (
+                 SELECT (timestamp / 300) AS bucket
+                 FROM (
+                     SELECT timestamp FROM payouts
+                     UNION ALL
+                     SELECT COALESCE(sent_at, send_started_at, initiated_at) AS timestamp
+                     FROM pending_payouts
+                     WHERE tx_hash IS NOT NULL
+                       AND TRIM(tx_hash) <> ''
+                 ) visible
+                 GROUP BY bucket
+             )",
             [],
             |row| row.get(0),
         )?;
 
         let sql = format!(
-            "WITH grouped AS (
+            "WITH visible AS (
+                SELECT amount, fee, tx_hash, timestamp, 1 AS confirmed
+                FROM payouts
+                UNION ALL
+                SELECT
+                    amount,
+                    COALESCE(fee, 0) AS fee,
+                    tx_hash,
+                    COALESCE(sent_at, send_started_at, initiated_at) AS timestamp,
+                    0 AS confirmed
+                FROM pending_payouts
+                WHERE tx_hash IS NOT NULL
+                  AND TRIM(tx_hash) <> ''
+             ),
+             grouped AS (
                 SELECT
                     (timestamp / 300) AS bucket,
                     SUM(amount) AS total_amount,
                     SUM(fee) AS total_fee,
                     COUNT(*) AS recipient_count,
                     GROUP_CONCAT(tx_hash) AS tx_hashes,
-                    MAX(timestamp) AS batch_ts
-                FROM payouts
+                    MAX(timestamp) AS batch_ts,
+                    MIN(confirmed) AS confirmed
+                FROM visible
                 GROUP BY bucket
              )
-             SELECT total_amount, total_fee, recipient_count, tx_hashes, batch_ts
+             SELECT total_amount, total_fee, recipient_count, tx_hashes, batch_ts, confirmed
              FROM grouped
              ORDER BY {order_clause}
              LIMIT ?1 OFFSET ?2"
@@ -1193,6 +1298,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     .map(|v| v.to_string())
                     .collect(),
                 timestamp: from_unix(row.get::<_, i64>(4)?),
+                confirmed: row.get::<_, i64>(5)? != 0,
             })
         })?;
         let items = collect_rows(rows)?;
@@ -1328,7 +1434,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     }
 
     pub fn mark_share_seen(&self, job_id: &str, nonce: u64) -> Result<()> {
-        let expires_at = now_unix() + SEEN_SHARE_EXPIRY_SECS;
+        let expires_at = now_unix() + SHARE_CLAIM_EXPIRY_SECS;
         self.conn.lock().execute(
             "INSERT INTO seen_shares (job_id, nonce, expires_at) VALUES (?1, ?2, ?3)
              ON CONFLICT(job_id, nonce) DO UPDATE SET expires_at = excluded.expires_at",
@@ -1338,8 +1444,11 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     }
 
     pub fn try_claim_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
+        if self.has_persisted_share(job_id, nonce)? {
+            return Ok(false);
+        }
         let now = now_unix();
-        let expires_at = now + SEEN_SHARE_EXPIRY_SECS;
+        let expires_at = now + SHARE_CLAIM_EXPIRY_SECS;
         let claimed = self.conn.lock().execute(
             "INSERT INTO seen_shares (job_id, nonce, expires_at) VALUES (?1, ?2, ?3)
              ON CONFLICT(job_id, nonce) DO UPDATE SET expires_at = excluded.expires_at
@@ -1358,6 +1467,9 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     }
 
     pub fn is_share_seen(&self, job_id: &str, nonce: u64) -> Result<bool> {
+        if self.has_persisted_share(job_id, nonce)? {
+            return Ok(true);
+        }
         let now = now_unix();
         let expiry: Option<i64> = self
             .conn
@@ -1370,6 +1482,19 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .optional()?;
 
         Ok(expiry.is_some_and(|ts| ts > now))
+    }
+
+    fn has_persisted_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
+        let exists = self
+            .conn
+            .lock()
+            .query_row(
+                "SELECT 1 FROM shares WHERE job_id = ?1 AND nonce = ?2 LIMIT 1",
+                params![job_id, u64_to_i64(nonce)?],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        Ok(exists.is_some())
     }
 
     pub fn clean_expired_seen_shares(&self) -> Result<u64> {
@@ -1683,18 +1808,46 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
 
-        let pending: Option<(i64, i64, Option<String>, Option<i64>)> = tx
+        let pending: Option<(
+            i64,
+            i64,
+            Option<i64>,
+            Option<i64>,
+            Option<String>,
+            Option<i64>,
+        )> = tx
             .query_row(
-                "SELECT amount, initiated_at, tx_hash, fee FROM pending_payouts WHERE address = ?1",
+                "SELECT amount, initiated_at, send_started_at, sent_at, tx_hash, fee
+                 FROM pending_payouts
+                 WHERE address = ?1",
                 params![address],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
             )
             .optional()?;
-        let Some((pending_amount_raw, _initiated_at, pending_tx_hash, pending_fee_raw)) = pending
+        let Some((
+            pending_amount_raw,
+            initiated_at_raw,
+            send_started_at_raw,
+            sent_at_raw,
+            pending_tx_hash,
+            pending_fee_raw,
+        )) = pending
         else {
             return Err(anyhow!("no pending payout for {address}"));
         };
         let pending_amount = pending_amount_raw.max(0) as u64;
+        let initiated_at = from_unix(initiated_at_raw);
+        let send_started_at = send_started_at_raw.map(from_unix);
+        let sent_at = sent_at_raw.map(from_unix);
         if pending_amount != amount {
             return Err(anyhow!(
                 "pending payout amount mismatch: expected={}, requested={}",
@@ -1762,7 +1915,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 u64_to_i64(amount)?,
                 u64_to_i64(fee)?,
                 tx_hash,
-                now_unix()
+                to_unix(sent_at.or(send_started_at).unwrap_or(initiated_at))
             ],
         )?;
 
@@ -2511,6 +2664,32 @@ mod tests {
     }
 
     #[test]
+    fn persisted_share_blocks_future_claims() {
+        let store = test_store();
+        store
+            .add_share(ShareRecord {
+                job_id: "job".into(),
+                miner: "addr1".into(),
+                worker: "rig1".into(),
+                difficulty: 1,
+                nonce: 7,
+                status: "verified",
+                was_sampled: true,
+                block_hash: None,
+                reject_reason: None,
+                created_at: SystemTime::now(),
+            })
+            .expect("persist share");
+
+        assert!(store
+            .is_share_seen("job", 7)
+            .expect("persisted share is seen"));
+        assert!(!store
+            .try_claim_share("job", 7)
+            .expect("persisted share should reject new claims"));
+    }
+
+    #[test]
     fn add_and_query_shares() {
         let store = test_store();
         store
@@ -2826,6 +3005,94 @@ mod tests {
     }
 
     #[test]
+    fn visible_payouts_for_address_include_broadcast_pending() {
+        let store = test_store();
+        store
+            .conn
+            .lock()
+            .execute(
+                "INSERT INTO payouts (address, amount, fee, tx_hash, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params!["addr1", 10i64, 1i64, "tx-confirmed", 100i64],
+            )
+            .expect("insert confirmed payout");
+        store
+            .create_pending_payout("addr1", 25)
+            .expect("create pending");
+        store
+            .mark_pending_payout_send_started("addr1")
+            .expect("mark started");
+        let broadcast = store
+            .record_pending_payout_broadcast("addr1", 25, 2, "tx-pending")
+            .expect("record broadcast");
+
+        let payouts = store
+            .get_recent_visible_payouts_for_address("addr1", 10)
+            .expect("visible payouts");
+        assert_eq!(payouts.len(), 2);
+        assert_eq!(payouts[0].tx_hash, "tx-pending");
+        assert_eq!(payouts[0].fee, 2);
+        assert_eq!(payouts[0].timestamp, broadcast.sent_at.expect("sent at"));
+        assert!(!payouts[0].confirmed);
+        assert_eq!(payouts[1].tx_hash, "tx-confirmed");
+        assert!(payouts[1].confirmed);
+    }
+
+    #[test]
+    fn public_payout_batches_include_broadcast_pending() {
+        let store = test_store();
+        store
+            .create_pending_payout("addr1", 25)
+            .expect("create pending");
+        store
+            .mark_pending_payout_send_started("addr1")
+            .expect("mark started");
+        let broadcast = store
+            .record_pending_payout_broadcast("addr1", 25, 2, "tx-pending")
+            .expect("record broadcast");
+
+        let (batches, total) = store
+            .get_public_payout_batches_page("time_desc", 10, 0)
+            .expect("public payout batches");
+        assert_eq!(total, 1);
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].tx_hashes, vec!["tx-pending".to_string()]);
+        assert_eq!(batches[0].timestamp, broadcast.sent_at.expect("sent at"));
+        assert!(!batches[0].confirmed);
+    }
+
+    #[test]
+    fn payouts_page_includes_broadcast_pending() {
+        let store = test_store();
+        store
+            .conn
+            .lock()
+            .execute(
+                "INSERT INTO payouts (address, amount, fee, tx_hash, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params!["addr-confirmed", 10i64, 1i64, "tx-confirmed", 100i64],
+            )
+            .expect("insert confirmed payout");
+        store
+            .create_pending_payout("addr-pending", 25)
+            .expect("create pending");
+        store
+            .mark_pending_payout_send_started("addr-pending")
+            .expect("mark started");
+        store
+            .record_pending_payout_broadcast("addr-pending", 25, 2, "tx-pending")
+            .expect("record broadcast");
+
+        let (items, total) = store
+            .get_payouts_page(None, None, "time_desc", 10, 0)
+            .expect("payouts page");
+        assert_eq!(total, 2);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].tx_hash, "tx-pending");
+        assert!(!items[0].confirmed);
+        assert_eq!(items[1].tx_hash, "tx-confirmed");
+        assert!(items[1].confirmed);
+    }
+
+    #[test]
     fn pool_fee_events_are_idempotent_per_block() {
         let store = test_store();
 
@@ -3026,6 +3293,37 @@ mod tests {
         assert_eq!(payouts.len(), 1);
         assert_eq!(payouts[0].amount, 100);
         assert_eq!(payouts[0].fee, 42);
+        assert!(payouts[0].confirmed);
+    }
+
+    #[test]
+    fn complete_pending_payout_preserves_broadcast_timestamp() {
+        let store = test_store();
+        store
+            .update_balance(&Balance {
+                address: "addr1".to_string(),
+                pending: 100,
+                paid: 0,
+            })
+            .expect("seed balance");
+        store
+            .create_pending_payout("addr1", 100)
+            .expect("create pending");
+        store
+            .mark_pending_payout_send_started("addr1")
+            .expect("mark started");
+        let broadcast = store
+            .record_pending_payout_broadcast("addr1", 100, 42, "tx-2")
+            .expect("record broadcast");
+
+        store
+            .complete_pending_payout("addr1", 100, 42, "tx-2")
+            .expect("complete payout");
+
+        let payouts = store.get_recent_payouts(1).expect("recent payouts");
+        assert_eq!(payouts.len(), 1);
+        assert_eq!(payouts[0].timestamp, broadcast.sent_at.expect("sent at"));
+        assert!(payouts[0].confirmed);
     }
 
     #[test]

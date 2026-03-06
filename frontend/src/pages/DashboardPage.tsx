@@ -251,10 +251,12 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
         >
           <div style={{ color: 'var(--text)', fontSize: 13 }}>
             Pool payouts are currently liquidity constrained. Spendable wallet balance:{' '}
-            <span className="mono">{formatCoins(payoutEta.wallet_spendable ?? 0)}</span>. Queued:{' '}
+            <span className="mono">{formatCoins(payoutEta.wallet_spendable ?? 0)}</span>. Locked/confirming wallet
+            balance: <span className="mono">{formatCoins(payoutEta.wallet_pending ?? 0)}</span>. Queued:{' '}
             <span className="mono">{formatCoins(payoutEta.pending_total_amount ?? 0)}</span>. Shortfall:{' '}
-            <span className="mono">{formatCoins(payoutEta.queue_shortfall_amount ?? 0)}</span>. The ETA above is based on
-            recent payout cadence and may slip until liquidity is restored.
+            <span className="mono">{formatCoins(payoutEta.queue_shortfall_amount ?? 0)}</span>. Those locked funds are
+            already in the pool wallet and should become spendable as blocks mature. The ETA above is based on recent
+            payout cadence and may slip until liquidity is restored.
           </div>
         </div>
       )}
@@ -342,13 +344,14 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
                 <th>Amount</th>
                 <th>Miners Paid</th>
                 <th>TX</th>
+                <th>Status</th>
                 <th>Time</th>
               </tr>
             </thead>
             <tbody id="dash-payouts-body">
               {!payouts.length ? (
                 <tr>
-                  <td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                  <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                     No payouts yet
                   </td>
                 </tr>
@@ -359,6 +362,11 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
                     <td>{p.recipient_count}</td>
                     <td>
                       <PayoutTxLinks hashes={p.tx_hashes} />
+                    </td>
+                    <td>
+                      <span className={`badge ${p.confirmed === false ? 'badge-pending' : 'badge-confirmed'}`}>
+                        {p.confirmed === false ? 'unconfirmed' : 'confirmed'}
+                      </span>
                     </td>
                     <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
                   </tr>

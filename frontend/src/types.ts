@@ -66,6 +66,7 @@ export interface PayoutItem {
   recipient_count: number;
   tx_hashes?: string[];
   timestamp: UnixLike;
+  confirmed?: boolean;
 }
 
 export interface PagedMeta {
@@ -122,6 +123,7 @@ export interface MinerPayout {
   fee: number;
   tx_hash: string;
   timestamp: UnixLike;
+  confirmed?: boolean;
 }
 
 export interface PendingPayout {
@@ -167,6 +169,7 @@ export interface AdminPayoutItem {
   fee: number;
   tx_hash: string;
   timestamp: UnixLike;
+  confirmed?: boolean;
 }
 
 export interface FeeEvent {
@@ -229,6 +232,7 @@ export interface PayoutEta {
   pending_count: number;
   pending_total_amount: number;
   wallet_spendable?: number | null;
+  wallet_pending?: number | null;
   queue_shortfall_amount?: number;
   liquidity_constrained?: boolean;
 }

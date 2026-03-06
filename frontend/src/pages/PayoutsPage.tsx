@@ -48,7 +48,8 @@ export function PayoutsPage({ active, api, liveTick }: PayoutsPageProps) {
         </p>
       </div>
       <p style={{ fontSize: 14, color: 'var(--muted)', marginBottom: 16 }}>
-        All pool payouts. Transaction hashes link to the block explorer for verification.
+        Broadcast payout batches appear here immediately as unconfirmed and flip to confirmed after the first block
+        confirmation. Transaction hashes link to the block explorer for verification.
       </p>
       <div className="card table-scroll">
         <table>
@@ -58,13 +59,14 @@ export function PayoutsPage({ active, api, liveTick }: PayoutsPageProps) {
               <th>Miners Paid</th>
               <th>Network Fee</th>
               <th>Transaction</th>
+              <th>Status</th>
               <th>Time</th>
             </tr>
           </thead>
           <tbody>
             {!items.length ? (
               <tr>
-                <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                <td colSpan={6} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                   No payouts yet
                 </td>
               </tr>
@@ -76,6 +78,11 @@ export function PayoutsPage({ active, api, liveTick }: PayoutsPageProps) {
                   <td>{formatFee(p.total_fee)}</td>
                   <td>
                     <PayoutTxLinks hashes={p.tx_hashes} />
+                  </td>
+                  <td>
+                    <span className={`badge ${p.confirmed === false ? 'badge-pending' : 'badge-confirmed'}`}>
+                      {p.confirmed === false ? 'unconfirmed' : 'confirmed'}
+                    </span>
                   </td>
                   <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
                 </tr>
@@ -94,8 +101,8 @@ export function PayoutsPage({ active, api, liveTick }: PayoutsPageProps) {
 
       <div className="seo-copy-grid">
         <div className="card seo-copy-card">
-          <h3>Verified Payouts</h3>
-          <p>Transaction hashes point to the public Blocknet explorer so payout batches can be checked independently.</p>
+          <h3>On-Chain Status</h3>
+          <p>Transaction hashes point to the public Blocknet explorer, and fresh sends stay marked unconfirmed until the next block confirms them.</p>
         </div>
         <div className="card seo-copy-card">
           <h3>Batch Visibility</h3>

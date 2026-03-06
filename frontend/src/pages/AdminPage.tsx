@@ -401,13 +401,14 @@ export function AdminPage({
                     <th>Amount</th>
                     <th>Fee</th>
                     <th>TX Hash</th>
+                    <th>Status</th>
                     <th>Time</th>
                   </tr>
                 </thead>
                 <tbody>
                   {!payoutItems.length ? (
                     <tr>
-                      <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                      <td colSpan={6} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                         No payouts
                       </td>
                     </tr>
@@ -421,6 +422,11 @@ export function AdminPage({
                           <a href={`https://explorer.blocknetcrypto.com/tx/${p.tx_hash}`} target="_blank" rel="noopener" title={p.tx_hash}>
                             {shortTx(p.tx_hash)}
                           </a>
+                        </td>
+                        <td>
+                          <span className={`badge ${p.confirmed === false ? 'badge-pending' : 'badge-confirmed'}`}>
+                            {p.confirmed === false ? 'unconfirmed' : 'confirmed'}
+                          </span>
                         </td>
                         <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
                       </tr>

@@ -520,6 +520,7 @@ struct PayoutEtaResponse {
     pending_count: usize,
     pending_total_amount: u64,
     wallet_spendable: Option<u64>,
+    wallet_pending: Option<u64>,
     queue_shortfall_amount: u64,
     liquidity_constrained: bool,
 }
@@ -1150,12 +1151,18 @@ fn render_recent_payouts_section(batches: &[PublicPayoutBatch], show_view_all: b
                     escape_html(hash)
                 )
             });
+            let status = if batch.confirmed {
+                r#"<span class="badge badge-confirmed">confirmed</span>"#
+            } else {
+                r#"<span class="badge badge-pending">unconfirmed</span>"#
+            };
             format!(
-                r#"<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>"#,
+                r#"<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>"#,
                 escape_html(&format_atomic_bnt(batch.total_amount)),
                 batch.recipient_count,
                 escape_html(&format_atomic_fee(batch.total_fee)),
                 primary_tx.unwrap_or_else(|| "-".to_string()),
+                status,
                 escape_html(&format_system_time_short(batch.timestamp))
             )
         })
@@ -1167,7 +1174,7 @@ fn render_recent_payouts_section(batches: &[PublicPayoutBatch], show_view_all: b
         ""
     };
     format!(
-        r#"<div class="section"><div class="section-header"><div><h2>Recent payout batches</h2><p class="section-lead">Recent on-chain payout batches with recipient counts, fees, and explorer transaction links.</p></div>{view_all}</div><div class="card table-scroll"><table><thead><tr><th>Total</th><th>Miners Paid</th><th>Network Fee</th><th>Transaction</th><th>Paid</th></tr></thead><tbody>{rows}</tbody></table></div></div>"#
+        r#"<div class="section"><div class="section-header"><div><h2>Recent payout batches</h2><p class="section-lead">Recent on-chain payout batches with recipient counts, fees, explorer transaction links, and confirmation status.</p></div>{view_all}</div><div class="card table-scroll"><table><thead><tr><th>Total</th><th>Miners Paid</th><th>Network Fee</th><th>Transaction</th><th>Status</th><th>Paid</th></tr></thead><tbody>{rows}</tbody></table></div></div>"#
     )
 }
 
@@ -2436,13 +2443,31 @@ async fn handle_events(State(state): State<ApiState>) -> Response {
 async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
     let daemon = state.daemon_health().await;
     let validation = state.effective_validation_summary().await;
+    let persisted_runtime = state.persisted_runtime_snapshot().await;
 
     let current_job = state.jobs.current_job();
-    let template_age_seconds = state.jobs.current_job_age().map(|age| age.as_secs());
-    let last_refresh_millis = state
+    let mut current_height = current_job.as_ref().map(|job| job.height);
+    let mut current_difficulty = current_job.as_ref().map(|job| job.network_difficulty);
+    let mut template_id = current_job.as_ref().and_then(|job| job.template_id.clone());
+    let mut template_age_seconds = state.jobs.current_job_age().map(|age| age.as_secs());
+    let mut last_refresh_millis = state
         .jobs
         .last_refresh_elapsed()
         .map(|age| age.as_millis() as u64);
+    let mut tracked_templates = state.jobs.tracked_job_count();
+    let mut active_assignments = state.jobs.active_assignment_count();
+
+    if let Some(persisted) = persisted_runtime {
+        current_height = current_height.or(persisted.jobs.current_height);
+        current_difficulty = current_difficulty.or(persisted.jobs.current_difficulty);
+        if template_id.is_none() {
+            template_id = persisted.jobs.template_id.clone();
+        }
+        template_age_seconds = template_age_seconds.or(persisted.jobs.template_age_seconds);
+        last_refresh_millis = last_refresh_millis.or(persisted.jobs.last_refresh_millis);
+        tracked_templates = tracked_templates.max(persisted.jobs.tracked_templates);
+        active_assignments = active_assignments.max(persisted.jobs.active_assignments);
+    }
 
     let store = Arc::clone(&state.store);
     let payout_health =
@@ -2498,13 +2523,13 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
         api_key_configured: !state.api_key.trim().is_empty(),
         daemon,
         job: JobHealth {
-            current_height: current_job.as_ref().map(|job| job.height),
-            current_difficulty: current_job.as_ref().map(|job| job.network_difficulty),
-            template_id: current_job.and_then(|job| job.template_id),
+            current_height,
+            current_difficulty,
+            template_id,
             template_age_seconds,
             last_refresh_millis,
-            tracked_templates: state.jobs.tracked_job_count(),
-            active_assignments: state.jobs.active_assignment_count(),
+            tracked_templates,
+            active_assignments,
         },
         payouts: payout_health,
         wallet,
@@ -2983,7 +3008,8 @@ async fn handle_miner(
         let shares = store.get_shares_for_miner(&addr, share_limit)?;
         let balance = store.get_balance(&addr)?;
         let pending_payout = store.get_pending_payout(&addr)?;
-        let payouts = store.get_recent_payouts_for_address(&addr, MINER_PAYOUT_HISTORY_LIMIT)?;
+        let payouts =
+            store.get_recent_visible_payouts_for_address(&addr, MINER_PAYOUT_HISTORY_LIMIT)?;
         let hr = db_miner_hashrate(&store, &addr);
         let since_hr_window = SystemTime::now()
             .checked_sub(HASHRATE_WINDOW)
@@ -3316,6 +3342,7 @@ struct PublicPayout {
     recipient_count: usize,
     tx_hashes: Vec<String>,
     timestamp: SystemTime,
+    confirmed: bool,
 }
 
 /// Group payouts into batches by timestamp proximity (5 min window).
@@ -3342,6 +3369,7 @@ fn batch_payouts(payouts: &[Payout]) -> Vec<PublicPayout> {
             batch.total_amount += p.amount;
             batch.total_fee += p.fee;
             batch.recipient_count += 1;
+            batch.confirmed &= p.confirmed;
             if !p.tx_hash.is_empty() {
                 batch.tx_hashes.push(p.tx_hash.clone());
             }
@@ -3356,6 +3384,7 @@ fn batch_payouts(payouts: &[Payout]) -> Vec<PublicPayout> {
                     vec![p.tx_hash.clone()]
                 },
                 timestamp: p.timestamp,
+                confirmed: p.confirmed,
             });
         }
     }
@@ -3922,6 +3951,7 @@ fn compute_payout_eta(store: &PoolStore) -> anyhow::Result<PayoutEtaResponse> {
         pending_count: pending.len(),
         pending_total_amount,
         wallet_spendable: None,
+        wallet_pending: None,
         queue_shortfall_amount: 0,
         liquidity_constrained: false,
     })
@@ -3935,6 +3965,7 @@ fn apply_wallet_liquidity_to_payout_eta(
         return;
     };
     payout_eta.wallet_spendable = Some(wallet_balance.spendable);
+    payout_eta.wallet_pending = Some(wallet_balance.pending);
     payout_eta.queue_shortfall_amount = payout_eta
         .pending_total_amount
         .saturating_sub(wallet_balance.spendable);
@@ -4170,6 +4201,7 @@ async fn handle_public_payouts(
             recipient_count: batch.recipient_count,
             tx_hashes: batch.tx_hashes,
             timestamp: batch.timestamp,
+            confirmed: batch.confirmed,
         })
         .collect::<Vec<_>>();
     let returned = items.len();
@@ -5179,11 +5211,12 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use crate::config::Config;
-    use crate::db::{Balance, DbBlock, PendingPayout};
+    use crate::db::{Balance, DbBlock, Payout, PendingPayout};
     use crate::engine::{ShareRecord, ShareStore};
-    use crate::jobs::JobManager;
-    use crate::node::NodeClient;
+    use crate::jobs::{JobManager, JobRuntimeSnapshot};
+    use crate::node::{NodeClient, WalletBalance};
     use crate::pow::Argon2PowHasher;
+    use crate::service_state::{PersistedRuntimeSnapshot, PersistedValidationSummary};
     use crate::stats::PoolStats;
     use crate::store::PoolStore;
     use crate::validation::ValidationEngine;
@@ -5192,17 +5225,19 @@ mod tests {
     use axum::response::IntoResponse;
 
     use super::{
-        block_page_item_response, compute_luck_details_for_hashes, compute_luck_history,
-        contains_ci, daemon_debug_log_path, daemon_log_commands,
-        estimate_unconfirmed_pending_for_miner, estimated_block_reward, handle_miners,
-        handle_stats, hashrate_from_stats_with_miner_ramp, hashrate_from_stats_with_warmup,
-        hydrate_provisional_block_reward, load_persisted_status_history, miner_balance_response,
-        miner_has_activity, page_bounds, payout_status_note, pending_balance_note,
-        rejection_window_duration, share_limit, sort_workers_for_miner, trim_log_line,
-        worker_hashrate_by_name, ApiState, DaemonHealthCache, DbTotalsCache, InsightsCache,
-        LiveRuntimeSnapshotCache, MinerPendingBlockEstimate, MinerPendingEstimate, MinersQuery,
-        NetworkHashrateCache, StatusHistory, DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW,
-        HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW, STATUS_HISTORY_META_KEY,
+        apply_wallet_liquidity_to_payout_eta, batch_payouts, block_page_item_response,
+        compute_luck_details_for_hashes, compute_luck_history, contains_ci, daemon_debug_log_path,
+        daemon_log_commands, estimate_unconfirmed_pending_for_miner, estimated_block_reward,
+        handle_health, handle_miners, handle_stats, hashrate_from_stats_with_miner_ramp,
+        hashrate_from_stats_with_warmup, hydrate_provisional_block_reward,
+        load_persisted_status_history, miner_balance_response, miner_has_activity, page_bounds,
+        payout_status_note, pending_balance_note, rejection_window_duration, share_limit,
+        sort_workers_for_miner, trim_log_line, worker_hashrate_by_name, ApiState,
+        DaemonHealthCache, DbTotalsCache, InsightsCache, LiveRuntimeSnapshotCache,
+        MinerPendingBlockEstimate, MinerPendingEstimate, MinersQuery, NetworkHashrateCache,
+        PayoutEtaResponse, StatusHistory, DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW,
+        HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY,
+        STATUS_HISTORY_META_KEY,
     };
 
     fn test_store() -> Arc<PoolStore> {
@@ -5350,6 +5385,55 @@ mod tests {
     }
 
     #[test]
+    fn health_handler_uses_persisted_job_snapshot_when_live_assignments_are_empty() {
+        let store = test_store();
+        let snapshot = PersistedRuntimeSnapshot {
+            sampled_at: SystemTime::now(),
+            connected_miners: 0,
+            connected_workers: 0,
+            estimated_hashrate: 0.0,
+            jobs: JobRuntimeSnapshot {
+                current_height: Some(777),
+                current_difficulty: Some(55),
+                template_id: Some("tmpl-stratum".to_string()),
+                template_age_seconds: Some(9),
+                last_refresh_millis: Some(321),
+                tracked_templates: 4,
+                active_assignments: 12,
+            },
+            validation: PersistedValidationSummary::default(),
+        };
+        store
+            .set_meta(
+                LIVE_RUNTIME_SNAPSHOT_META_KEY,
+                &serde_json::to_vec(&snapshot).expect("serialize runtime snapshot"),
+            )
+            .expect("persist runtime snapshot");
+
+        let state = test_api_state(store);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let response = runtime
+            .block_on(handle_health(State(state)))
+            .into_response();
+        let bytes = runtime
+            .block_on(to_bytes(response.into_body(), usize::MAX))
+            .expect("body bytes");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("health response json");
+
+        assert_eq!(payload["job"]["current_height"], 777);
+        assert_eq!(payload["job"]["current_difficulty"], 55);
+        assert_eq!(payload["job"]["template_id"], "tmpl-stratum");
+        assert_eq!(payload["job"]["template_age_seconds"], 9);
+        assert_eq!(payload["job"]["last_refresh_millis"], 321);
+        assert_eq!(payload["job"]["tracked_templates"], 4);
+        assert_eq!(payload["job"]["active_assignments"], 12);
+    }
+
+    #[test]
     fn stats_handler_uses_db_backed_share_totals() {
         let store = test_store();
         let now = SystemTime::now();
@@ -5464,6 +5548,36 @@ mod tests {
             payout_status_note(&cfg, 250_000_000, Some(&queued)).expect("queued note");
         assert!(queued_note.contains("already queued for payout"));
         assert!(queued_note.contains("Another 1.50 BNT"));
+    }
+
+    #[test]
+    fn batch_payouts_marks_batch_unconfirmed_when_any_entry_is_pending() {
+        let t0 = UNIX_EPOCH + Duration::from_secs(10_000);
+        let batches = batch_payouts(&[
+            Payout {
+                id: 1,
+                address: "miner-a".to_string(),
+                amount: 100,
+                fee: 1,
+                tx_hash: "tx-confirmed".to_string(),
+                timestamp: t0,
+                confirmed: true,
+            },
+            Payout {
+                id: 0,
+                address: "miner-b".to_string(),
+                amount: 200,
+                fee: 2,
+                tx_hash: "tx-pending".to_string(),
+                timestamp: t0 + Duration::from_secs(30),
+                confirmed: false,
+            },
+        ]);
+
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].recipient_count, 2);
+        assert_eq!(batches[0].total_amount, 300);
+        assert!(!batches[0].confirmed);
     }
 
     #[test]
@@ -6066,5 +6180,35 @@ mod tests {
         };
         hydrate_provisional_block_reward(&mut block);
         assert_eq!(block.reward, 123);
+    }
+
+    #[test]
+    fn payout_eta_includes_locked_wallet_balance() {
+        let mut payout_eta = PayoutEtaResponse {
+            last_payout_at: None,
+            estimated_next_payout_at: None,
+            eta_seconds: None,
+            typical_interval_seconds: None,
+            pending_count: 2,
+            pending_total_amount: 90,
+            wallet_spendable: None,
+            wallet_pending: None,
+            queue_shortfall_amount: 0,
+            liquidity_constrained: false,
+        };
+        let wallet_balance = WalletBalance {
+            spendable: 25,
+            pending: 65,
+            pending_unconfirmed: 0,
+            pending_unconfirmed_eta: 0,
+            total: 90,
+        };
+
+        apply_wallet_liquidity_to_payout_eta(&mut payout_eta, Some(&wallet_balance));
+
+        assert_eq!(payout_eta.wallet_spendable, Some(25));
+        assert_eq!(payout_eta.wallet_pending, Some(65));
+        assert_eq!(payout_eta.queue_shortfall_amount, 65);
+        assert!(payout_eta.liquidity_constrained);
     }
 }

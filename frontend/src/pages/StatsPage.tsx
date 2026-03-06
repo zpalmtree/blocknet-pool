@@ -405,9 +405,10 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
             >
               <div style={{ color: 'var(--text)', fontSize: 13 }}>
                 Your payout is queued, but pool wallet liquidity is currently tight. Spendable balance:{' '}
-                <span className="mono">{formatCoins(payoutEta.wallet_spendable ?? 0)}</span>. Pool queue:{' '}
-                <span className="mono">{formatCoins(payoutEta.pending_total_amount ?? 0)}</span>. Queued sends may wait
-                until wallet funds are restored.
+                <span className="mono">{formatCoins(payoutEta.wallet_spendable ?? 0)}</span>. Locked/confirming balance:{' '}
+                <span className="mono">{formatCoins(payoutEta.wallet_pending ?? 0)}</span>. Pool queue:{' '}
+                <span className="mono">{formatCoins(payoutEta.pending_total_amount ?? 0)}</span>. Those locked funds are
+                already in the pool wallet and should become spendable as blocks mature.
               </div>
             </div>
           )}
@@ -526,25 +527,31 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
                     <th>Amount</th>
                     <th>Fee</th>
                     <th>Tx</th>
+                    <th>Status</th>
                     <th>Time</th>
                   </tr>
                 </thead>
                 <tbody>
                   {!minerData.payouts?.length ? (
                     <tr>
-                      <td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                      <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                         No payouts yet
                       </td>
                     </tr>
                   ) : (
                     minerData.payouts.map((p) => (
-                      <tr key={`${p.id}-${p.tx_hash}`}>
+                      <tr key={`${p.id}-${p.tx_hash}-${toUnixMs(p.timestamp)}`}>
                         <td>{formatCoins(p.amount)}</td>
                         <td>{formatFee(p.fee || 0)}</td>
                         <td>
                           <a href={`https://explorer.blocknetcrypto.com/tx/${p.tx_hash || ''}`} target="_blank" rel="noopener">
                             {p.tx_hash || '-'}
                           </a>
+                        </td>
+                        <td>
+                          <span className={`badge ${p.confirmed === false ? 'badge-pending' : 'badge-confirmed'}`}>
+                            {p.confirmed === false ? 'unconfirmed' : 'confirmed'}
+                          </span>
                         </td>
                         <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
                       </tr>
