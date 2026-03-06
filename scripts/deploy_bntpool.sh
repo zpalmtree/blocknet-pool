@@ -6,7 +6,7 @@ usage() {
 Deploy blocknet-pool to the bntpool server.
 
 Usage:
-  scripts/deploy_bntpool.sh [--skip-build] [--skip-ui-build] [--migrate-split] [--local-build]
+  scripts/deploy_bntpool.sh [--skip-build] [--skip-ui-build] [--migrate-split]
 
 Environment overrides:
   BNTPOOL_HOST             SSH host alias (default: bntpool)
@@ -22,7 +22,6 @@ EOF
 skip_build=0
 skip_ui_build=0
 migrate_split=0
-local_build=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-build)
@@ -35,10 +34,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --migrate-split)
       migrate_split=1
-      shift
-      ;;
-    --local-build)
-      local_build=1
       shift
       ;;
     -h|--help)
@@ -118,7 +113,7 @@ echo "==> reading current remote binary hashes"
 before_api_hash="$(remote_hash "${remote_api_bin}")"
 before_stratum_hash="$(remote_hash "${remote_stratum_bin}")"
 
-if [[ "${skip_build}" -eq 0 && "${local_build}" -eq 1 ]]; then
+if [[ "${skip_build}" -eq 0 ]]; then
   echo "==> building release binaries locally"
   build_locally
   echo "==> uploading locally built binaries to ${host}"
@@ -127,9 +122,6 @@ if [[ "${skip_build}" -eq 0 && "${local_build}" -eq 1 ]]; then
     "${local_api_bin}" \
     "${local_stratum_bin}" \
     "${host}:${remote_dir}/target/release/"
-elif [[ "${skip_build}" -eq 0 ]]; then
-  echo "==> building release binaries on ${host}"
-  ssh "${host}" "set -euo pipefail; export PATH=/home/blocknet/.cargo/bin:\$PATH; cd '${remote_dir}'; cargo build --release --bin blocknet-pool-api --bin blocknet-pool-stratum"
 fi
 
 echo "==> reading updated remote binary hashes"

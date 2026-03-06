@@ -37,8 +37,9 @@ Use split-service migration only when moving from the legacy combined service or
 What it does:
 
 - builds frontend bundle locally (unless `--skip-ui-build`)
+- builds the split release binaries locally
 - rsyncs pool source to `bntpool:/opt/blocknet/blocknet-pool`
-- builds the split release binaries on the server
+- uploads the locally built binaries to the server
 - restarts only the changed service(s):
   - `blocknet-pool-api.service`
   - `blocknet-pool-stratum.service`

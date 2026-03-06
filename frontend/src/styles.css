@@ -474,15 +474,16 @@ nav {
 }
 
 .reward-flow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
-  gap: 14px;
+  display: flex;
   align-items: stretch;
+  justify-content: center;
+  gap: 16px;
   margin-bottom: 24px;
 }
 
 .reward-flow__card {
-  min-width: 0;
+  flex: 0 0 224px;
+  max-width: 224px;
   position: relative;
   overflow: hidden;
 }
@@ -502,11 +503,12 @@ nav {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-width: 72px;
+  flex: 0 0 56px;
+  min-width: 56px;
 }
 
 .reward-flow__line {
-  width: 38px;
+  flex: 1 1 auto;
   height: 1px;
   background: linear-gradient(90deg, var(--border), var(--accent));
 }
@@ -1477,18 +1479,25 @@ pre.raw-json {
   }
 
   .reward-flow {
-    grid-template-columns: 1fr;
+    flex-direction: column;
     gap: 10px;
+  }
+
+  .reward-flow__card {
+    flex-basis: auto;
+    max-width: none;
   }
 
   .reward-flow__connector {
     flex-direction: column;
     justify-content: center;
+    align-self: center;
     min-width: 0;
     min-height: 40px;
   }
 
   .reward-flow__line {
+    flex: 0 0 auto;
     width: 1px;
     height: 20px;
     background: linear-gradient(180deg, var(--border), var(--accent));
