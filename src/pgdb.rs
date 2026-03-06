@@ -13,6 +13,9 @@ use crate::db::{
 };
 use crate::engine::{ShareRecord, ShareStore};
 use crate::stats::RejectionReasonCount;
+use crate::validation::{
+    LoadedValidationState, PersistedValidationAddressState, PersistedValidationProvisional,
+};
 
 const SEEN_SHARE_EXPIRY_SECS: i64 = 24 * 60 * 60;
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
@@ -144,6 +147,29 @@ CREATE TABLE IF NOT EXISTS stat_snapshots (
     workers INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS validation_address_states (
+    address TEXT PRIMARY KEY,
+    total_shares BIGINT NOT NULL,
+    sampled_shares BIGINT NOT NULL,
+    invalid_samples BIGINT NOT NULL,
+    forced_until BIGINT,
+    last_seen_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_validation_address_states_last_seen
+    ON validation_address_states(last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_validation_address_states_forced_until
+    ON validation_address_states(forced_until DESC);
+
+CREATE TABLE IF NOT EXISTS validation_provisionals (
+    id BIGSERIAL PRIMARY KEY,
+    address TEXT NOT NULL,
+    created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_validation_provisionals_created_at
+    ON validation_provisionals(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_validation_provisionals_address_created_at
+    ON validation_provisionals(address, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS share_daily_summaries (
     day_start BIGINT PRIMARY KEY,
@@ -1508,6 +1534,108 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(())
     }
 
+    pub fn load_validation_state(
+        &self,
+        state_cutoff: SystemTime,
+        provisional_cutoff: SystemTime,
+        now: SystemTime,
+    ) -> Result<LoadedValidationState> {
+        let rows = self.conn().lock().query(
+            "SELECT address, total_shares, sampled_shares, invalid_samples, forced_until, last_seen_at
+             FROM validation_address_states
+             WHERE last_seen_at >= $1 OR (forced_until IS NOT NULL AND forced_until > $2)",
+            &[&to_unix(state_cutoff), &to_unix(now)],
+        )?;
+        let states = rows
+            .iter()
+            .map(|row| PersistedValidationAddressState {
+                address: row.get::<_, String>(0),
+                total_shares: row.get::<_, i64>(1).max(0) as u64,
+                sampled_shares: row.get::<_, i64>(2).max(0) as u64,
+                invalid_samples: row.get::<_, i64>(3).max(0) as u64,
+                forced_until: row.get::<_, Option<i64>>(4).map(from_unix),
+                last_seen_at: from_unix(row.get::<_, i64>(5)),
+            })
+            .collect::<Vec<_>>();
+
+        let provisional_rows = self.conn().lock().query(
+            "SELECT address, created_at
+             FROM validation_provisionals
+             WHERE created_at > $1
+             ORDER BY address ASC, created_at ASC",
+            &[&to_unix(provisional_cutoff)],
+        )?;
+        let provisionals = provisional_rows
+            .iter()
+            .map(|row| PersistedValidationProvisional {
+                address: row.get::<_, String>(0),
+                created_at: from_unix(row.get::<_, i64>(1)),
+            })
+            .collect::<Vec<_>>();
+
+        Ok(LoadedValidationState {
+            states,
+            provisionals,
+        })
+    }
+
+    pub fn upsert_validation_state(&self, state: &PersistedValidationAddressState) -> Result<()> {
+        self.conn().lock().execute(
+            "INSERT INTO validation_address_states (
+                address, total_shares, sampled_shares, invalid_samples, forced_until, last_seen_at
+             ) VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT(address) DO UPDATE SET
+                total_shares = EXCLUDED.total_shares,
+                sampled_shares = EXCLUDED.sampled_shares,
+                invalid_samples = EXCLUDED.invalid_samples,
+                forced_until = EXCLUDED.forced_until,
+                last_seen_at = EXCLUDED.last_seen_at",
+            &[
+                &state.address,
+                &u64_to_i64(state.total_shares)?,
+                &u64_to_i64(state.sampled_shares)?,
+                &u64_to_i64(state.invalid_samples)?,
+                &state.forced_until.map(to_unix),
+                &to_unix(state.last_seen_at),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn add_validation_provisional(&self, address: &str, created_at: SystemTime) -> Result<()> {
+        self.conn().lock().execute(
+            "INSERT INTO validation_provisionals (address, created_at) VALUES ($1, $2)",
+            &[&address, &to_unix(created_at)],
+        )?;
+        Ok(())
+    }
+
+    pub fn clean_validation_state(
+        &self,
+        state_cutoff: SystemTime,
+        provisional_cutoff: SystemTime,
+        now: SystemTime,
+    ) -> Result<()> {
+        let mut conn = self.conn().lock();
+        let mut tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM validation_provisionals WHERE created_at <= $1",
+            &[&to_unix(provisional_cutoff)],
+        )?;
+        tx.execute(
+            "DELETE FROM validation_address_states
+             WHERE last_seen_at < $1
+               AND (forced_until IS NULL OR forced_until <= $2)
+               AND NOT EXISTS (
+                   SELECT 1 FROM validation_provisionals vp
+                   WHERE vp.address = validation_address_states.address
+               )",
+            &[&to_unix(state_cutoff), &to_unix(now)],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn get_stat_snapshots(&self, since: SystemTime) -> Result<Vec<crate::db::StatSnapshot>> {
         let mut conn = self.conn().lock();
         let rows = conn.query(
@@ -1747,7 +1875,12 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             let last_share: Option<i64> = row.get(3);
             map.insert(
                 miner,
-                (accepted.max(0) as u64, rejected.max(0) as u64, 0u64, last_share),
+                (
+                    accepted.max(0) as u64,
+                    rejected.max(0) as u64,
+                    0u64,
+                    last_share,
+                ),
             );
         }
         let block_rows = conn.query(

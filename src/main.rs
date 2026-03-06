@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{anyhow, Context, Result};
-use blocknet_pool_rs::api::{run_api, ApiState, DEFAULT_MAX_SSE_SUBSCRIBERS};
+use blocknet_pool_rs::api::{
+    load_persisted_status_history, run_api, ApiState, DEFAULT_MAX_SSE_SUBSCRIBERS,
+};
 use blocknet_pool_rs::config::{generate_default_env, Config};
 use blocknet_pool_rs::engine::{JobRepository, NodeApi, PoolEngine, ShareStore};
 use blocknet_pool_rs::jobs::JobManager;
@@ -79,6 +81,7 @@ async fn main() -> Result<()> {
             "stratum is bound on a non-local host and transport is plaintext; place stratum behind a tls terminator when exposed publicly"
         );
     }
+    warn_on_validation_visibility_config(&cfg);
 
     let cfg_for_store = cfg.clone();
     let store = tokio::task::spawn_blocking(move || PoolStore::open_from_config(&cfg_for_store))
@@ -111,9 +114,10 @@ async fn main() -> Result<()> {
     let jobs = JobManager::new(Arc::clone(&node), cfg.clone());
     jobs.start();
 
-    let validation = Arc::new(ValidationEngine::new(
+    let validation = Arc::new(ValidationEngine::new_with_state_store(
         cfg.clone(),
         Arc::new(Argon2PowHasher::default()),
+        Arc::clone(&store) as Arc<dyn blocknet_pool_rs::validation::ValidationStateStore>,
     ));
 
     let engine = Arc::new(PoolEngine::new(
@@ -160,6 +164,20 @@ async fn main() -> Result<()> {
             )
         })?;
 
+    let persisted_status_history = {
+        let store = Arc::clone(&store);
+        match tokio::task::spawn_blocking(move || load_persisted_status_history(store.as_ref()))
+            .await
+            .context("join status history load task")?
+        {
+            Ok(value) => value,
+            Err(err) => {
+                warn!(error = %err, "failed loading persisted status history; starting fresh");
+                blocknet_pool_rs::api::StatusHistory::default()
+            }
+        }
+    };
+
     let api_state = ApiState {
         config: cfg.clone(),
         store: Arc::clone(&store),
@@ -176,7 +194,7 @@ async fn main() -> Result<()> {
         )),
         insights_cache: Arc::new(Mutex::new(blocknet_pool_rs::api::InsightsCache::default())),
         miner_pending_estimate_cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
-        status_history: Arc::new(Mutex::new(blocknet_pool_rs::api::StatusHistory::default())),
+        status_history: Arc::new(Mutex::new(persisted_status_history)),
         sse_subscriber_limiter: Arc::new(tokio::sync::Semaphore::new(DEFAULT_MAX_SSE_SUBSCRIBERS)),
         api_key: cfg.api_key.clone(),
         pool_name: cfg.pool_name.clone(),
@@ -422,6 +440,30 @@ fn load_dotenv(config_path: &Path) {
             info!(path = %candidate.display(), "loaded environment");
             return;
         }
+    }
+}
+
+fn warn_on_validation_visibility_config(cfg: &Config) {
+    if cfg.validation_mode.trim().eq_ignore_ascii_case("full") {
+        return;
+    }
+
+    let periodic_floor = if cfg.min_sample_every > 0 {
+        1.0 / cfg.min_sample_every as f64
+    } else {
+        0.0
+    };
+    let typical_verified_ratio = cfg.sample_rate.max(periodic_floor).clamp(0.0, 1.0);
+
+    if cfg.payout_min_verified_ratio > typical_verified_ratio + f64::EPSILON {
+        warn!(
+            sample_rate = cfg.sample_rate,
+            min_sample_every = cfg.min_sample_every,
+            warmup_shares = cfg.warmup_shares,
+            payout_min_verified_ratio = cfg.payout_min_verified_ratio,
+            typical_verified_ratio,
+            "payout_min_verified_ratio is above the sampler's typical verified-share coverage; unconfirmed previews and payout eligibility may stay withheld longer than expected"
+        );
     }
 }
 

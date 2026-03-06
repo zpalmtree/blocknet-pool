@@ -239,6 +239,26 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
         </div>
       </div>
 
+      {!!payoutEta?.liquidity_constrained && (
+        <div
+          className="card"
+          style={{
+            marginTop: 18,
+            marginBottom: 24,
+            background: 'rgba(247, 180, 75, 0.12)',
+            borderColor: 'rgba(247, 180, 75, 0.45)',
+          }}
+        >
+          <div style={{ color: 'var(--text)', fontSize: 13 }}>
+            Pool payouts are currently liquidity constrained. Spendable wallet balance:{' '}
+            <span className="mono">{formatCoins(payoutEta.wallet_spendable ?? 0)}</span>. Queued:{' '}
+            <span className="mono">{formatCoins(payoutEta.pending_total_amount ?? 0)}</span>. Shortfall:{' '}
+            <span className="mono">{formatCoins(payoutEta.queue_shortfall_amount ?? 0)}</span>. The ETA above is based on
+            recent payout cadence and may slip until liquidity is restored.
+          </div>
+        </div>
+      )}
+
       <div className="section">
         <div className="section-header">
           <h2>Pool Hashrate</h2>

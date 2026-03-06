@@ -5,7 +5,13 @@ import { HashrateChart } from '../components/HashrateChart';
 import { LAST_MINER_LOOKUP_KEY } from '../lib/storage';
 import { formatCoins, humanRate, timeAgo, toUnixMs } from '../lib/format';
 import type { ThemeMode } from '../lib/theme';
-import type { HashratePoint, MinerResponse, Range, StatsInsightsResponse } from '../types';
+import type {
+  HashratePoint,
+  MinerPendingBlockEstimate,
+  MinerResponse,
+  Range,
+  StatsInsightsResponse,
+} from '../types';
 
 interface StatsPageProps {
   active: boolean;
@@ -17,6 +23,31 @@ interface StatsPageProps {
 function fmtPct(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '-';
   return `${value.toFixed(1)}%`;
+}
+
+function toneClass(tone: string | null | undefined): string {
+  if (tone === 'critical') return 'is-critical';
+  if (tone === 'warn') return 'is-warn';
+  return 'is-ok';
+}
+
+function previewStatusCopy(block: MinerPendingBlockEstimate): string | null {
+  switch (block.validation_state) {
+    case 'ready':
+      return block.credit_withheld ? 'Temporarily withheld while validation catches up' : null;
+    case 'finder_fallback':
+      return 'Using finder fallback because no share window was recorded';
+    case 'awaiting_delay':
+      return 'Waiting for recent shares to clear the provisional delay';
+    case 'awaiting_shares':
+      return 'Waiting for enough verified shares';
+    case 'awaiting_ratio':
+      return 'Waiting for enough verified work';
+    case 'extra_verification':
+      return 'Under additional verification';
+    default:
+      return block.credit_withheld ? 'Preview withheld while validation catches up' : 'Validation in progress';
+  }
 }
 
 type RejectionWindowRange = '1h' | '24h' | '7d';
@@ -46,7 +77,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   const [range, setRange] = useState<Range>('1h');
   const [history, setHistory] = useState<HashratePoint[]>([]);
   const [rejectionRange, setRejectionRange] = useState<RejectionWindowRange>('1h');
-  const [rejectionWindow, setRejectionWindow] = useState<StatsInsightsResponse['rejections']['window'] | null>(null);
+  const [insights, setInsights] = useState<StatsInsightsResponse | null>(null);
   const minerAddressRef = useRef(minerAddress);
   const lookupRequestSeq = useRef(0);
   const [resolving, setResolving] = useState(false);
@@ -131,9 +162,9 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   const loadRejections = useCallback(async () => {
     try {
       const d = await api.getStatsInsights(rejectionRange);
-      setRejectionWindow(d.rejections?.window || null);
+      setInsights(d);
     } catch {
-      setRejectionWindow(null);
+      setInsights(null);
     }
   }, [api, rejectionRange]);
 
@@ -211,13 +242,17 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   }, [minerData]);
 
   const pendingConfirmed = minerData?.balance?.pending_confirmed ?? minerData?.balance?.pending ?? 0;
-  const pendingEstimated = minerData?.balance?.pending_estimated ?? minerData?.pending_estimate?.estimated_pending ?? 0;
-  const pendingTotal = minerData?.balance?.pending_total ?? pendingConfirmed + pendingEstimated;
+  const pendingEstimated = minerData?.pending_estimate?.estimated_pending ?? 0;
+  const pendingQueued = minerData?.balance?.pending_queued ?? minerData?.pending_payout?.amount ?? 0;
+  const pendingUnqueued = minerData?.balance?.pending_unqueued ?? Math.max(0, pendingConfirmed - pendingQueued);
+  const payoutEta = insights?.payout_eta ?? null;
+  const rejectionWindow = insights?.rejections?.window ?? null;
   const minerAccepted = minerData?.total_accepted ?? 0;
   const minerRejected = minerData?.total_rejected ?? 0;
   const minerChecked = minerAccepted + minerRejected;
   const minerRejectRate = minerChecked > 0 ? (minerRejected / minerChecked) * 100 : null;
   const recentShares = minerData?.shares?.slice(0, RECENT_SHARES_LIMIT) || [];
+  const previewBlocks = minerData?.pending_estimate?.blocks ?? [];
 
   const rejectionChecked = (rejectionWindow?.accepted ?? 0) + (rejectionWindow?.rejected ?? 0);
   const topWindowReason = rejectionWindow?.by_reason?.[0];
@@ -278,16 +313,12 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
               <div className="value">{humanRate(minerData.hashrate || 0)}</div>
             </div>
             <div className="stat-card">
-              <div className="label">Pending Balance</div>
-              <div className="value">{formatCoins(pendingTotal)}</div>
-              <div className="stat-meta">
-                <div>
-                  Confirmed <span className="mono">{formatCoins(pendingConfirmed)}</span>
-                </div>
-                <div>
-                  Estimated <span className="mono">{formatCoins(pendingEstimated)}</span>
-                </div>
-              </div>
+              <div className="label">Confirmed Rewards</div>
+              <div className="value">{formatCoins(pendingConfirmed)}</div>
+            </div>
+            <div className="stat-card">
+              <div className="label">Estimated Rewards</div>
+              <div className="value">{formatCoins(pendingEstimated)}</div>
             </div>
             <div className="stat-card">
               <div className="label">Paid Balance</div>
@@ -319,6 +350,36 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
             </div>
           </div>
 
+          <div
+            className="card"
+            style={{
+              marginBottom: 24,
+              padding: '12px 16px',
+              fontSize: 13,
+              color: 'var(--muted)',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '6px 18px',
+            }}
+          >
+            <span>
+              Confirmed rewards: <span className="mono">{formatCoins(pendingQueued)}</span> already queued,{' '}
+              <span className="mono">{formatCoins(pendingUnqueued)}</span> still waiting to be queued.
+            </span>
+            <span>
+              Estimated rewards:{' '}
+              {previewBlocks.length ? (
+                <>
+                  based on <span className="mono">{previewBlocks.length}</span> recent unconfirmed block
+                  {previewBlocks.length === 1 ? '' : 's'}
+                </>
+              ) : (
+                'no unconfirmed block estimate right now'
+              )}
+              ; can still change.
+            </span>
+          </div>
+
           {minerData.pending_note && (
             <div
               className="card"
@@ -328,38 +389,77 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
             </div>
           )}
 
-          {!!minerData.pending_estimate?.blocks?.length && (
+          {minerData.payout_note && (
+            <div
+              className="card"
+              style={{ marginBottom: 24, background: 'rgba(247, 180, 75, 0.12)', borderColor: 'rgba(247, 180, 75, 0.45)' }}
+            >
+              <div style={{ color: 'var(--text)', fontSize: 13 }}>{minerData.payout_note}</div>
+            </div>
+          )}
+
+          {pendingQueued > 0 && !!payoutEta?.liquidity_constrained && (
+            <div
+              className="card"
+              style={{ marginBottom: 24, background: 'rgba(247, 180, 75, 0.12)', borderColor: 'rgba(247, 180, 75, 0.45)' }}
+            >
+              <div style={{ color: 'var(--text)', fontSize: 13 }}>
+                Your payout is queued, but pool wallet liquidity is currently tight. Spendable balance:{' '}
+                <span className="mono">{formatCoins(payoutEta.wallet_spendable ?? 0)}</span>. Pool queue:{' '}
+                <span className="mono">{formatCoins(payoutEta.pending_total_amount ?? 0)}</span>. Queued sends may wait
+                until wallet funds are restored.
+              </div>
+            </div>
+          )}
+
+          {!!previewBlocks.length && (
             <div className="section">
-              <h2>Pending From Unconfirmed Blocks</h2>
+              <h2>Estimated From Recent Blocks</h2>
               <div className="card table-scroll">
                 <table>
                   <thead>
                     <tr>
                       <th>Height</th>
                       <th>Estimated Credit</th>
-                      <th>Block Reward</th>
+                      <th>Status</th>
                       <th>Confirms Left</th>
                       <th>Time</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {minerData.pending_estimate.blocks.map((b) => (
+                    {previewBlocks.map((b) => {
+                      const statusText = previewStatusCopy(b);
+                      return (
                       <tr key={`${b.height}-${b.hash}`}>
                         <td>
                           <a href={`https://explorer.blocknetcrypto.com/block/${b.hash || ''}`} target="_blank" rel="noopener">
                             {b.height}
                           </a>
                         </td>
-                        <td>{formatCoins(b.estimated_credit)}</td>
-                        <td>{formatCoins(b.reward)}</td>
+                        <td>{b.credit_withheld ? 'Withheld' : formatCoins(b.estimated_credit)}</td>
+                        <td title={b.validation_detail || undefined}>
+                          <div
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 10,
+                              whiteSpace: 'nowrap',
+                              fontSize: 12,
+                              color: 'var(--muted)',
+                            }}
+                          >
+                            <span className={`round-chip ${toneClass(b.validation_tone)}`}>{b.validation_label || 'Pending'}</span>
+                            {statusText ? <span>{statusText}</span> : null}
+                          </div>
+                        </td>
                         <td>{b.confirmations_remaining}</td>
                         <td title={new Date(toUnixMs(b.timestamp)).toLocaleString()}>{timeAgo(b.timestamp)}</td>
                       </tr>
-                    ))}
+                    )})}
                   </tbody>
                 </table>
                 <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)' }}>
-                  Estimates are provisional until blocks are confirmed and can drop if a block is orphaned.
+                  Estimate only. These amounts can still move until those blocks confirm or are orphaned.
                 </div>
               </div>
             </div>

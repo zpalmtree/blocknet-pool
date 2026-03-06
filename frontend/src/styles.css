@@ -272,7 +272,7 @@ nav {
 
 .theme-toggle-icon-sun {
   left: 9px;
-  translate(2px, -7px);
+  transform: translate(2px, -7px);
 }
 
 .theme-toggle-icon-moon {

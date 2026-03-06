@@ -101,6 +101,11 @@ export interface MinerPendingBlockEstimate {
   hash: string;
   reward: number;
   estimated_credit: number;
+  credit_withheld?: boolean;
+  validation_state?: string;
+  validation_label?: string;
+  validation_tone?: string;
+  validation_detail?: string;
   confirmations_remaining: number;
   timestamp: UnixLike;
 }
@@ -119,21 +124,29 @@ export interface MinerPayout {
   timestamp: UnixLike;
 }
 
+export interface PendingPayout {
+  address: string;
+  amount: number;
+  initiated_at: UnixLike;
+}
+
 export interface MinerResponse {
   hashrate: number;
   balance?: {
     pending: number;
-    pending_total?: number;
     pending_confirmed?: number;
-    pending_estimated?: number;
+    pending_queued?: number;
+    pending_unqueued?: number;
     paid: number;
   };
   workers?: MinerWorker[];
   shares?: MinerShare[];
   blocks_found?: BlockItem[];
   payouts?: MinerPayout[];
+  pending_payout?: PendingPayout | null;
   pending_estimate?: MinerPendingEstimate;
   pending_note?: string | null;
+  payout_note?: string | null;
   total_accepted?: number;
   total_rejected?: number;
 }
@@ -205,6 +218,9 @@ export interface PayoutEta {
   typical_interval_seconds?: number | null;
   pending_count: number;
   pending_total_amount: number;
+  wallet_spendable?: number | null;
+  queue_shortfall_amount?: number;
+  liquidity_constrained?: boolean;
 }
 
 export interface LuckRound {

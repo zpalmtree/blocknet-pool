@@ -338,7 +338,9 @@ export function StartPage({ active, poolInfo, theme }: StartPageProps) {
             <p>
               {(poolInfo?.payout_scheme || 'pplns').toUpperCase()} payouts are used here, with{' '}
               {poolInfo?.min_payout_amount != null ? `${poolInfo.min_payout_amount} BNT` : 'the configured minimum'} after{' '}
-              {poolInfo?.blocks_before_payout ?? 0} confirmations.
+              {poolInfo?.blocks_before_payout ?? 0} confirmations. Confirmed balances are picked up on the regular payout
+              sweep, while tentative previews from unconfirmed blocks are shown separately and can still move until those
+              blocks fully confirm.
             </p>
           </div>
         </div>

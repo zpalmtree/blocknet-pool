@@ -2,8 +2,9 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use anyhow::Result;
 use parking_lot::Mutex;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -16,6 +17,7 @@ pub const SHARE_STATUS_PROVISIONAL: &str = "provisional";
 pub const SHARE_STATUS_REJECTED: &str = "rejected";
 const VALIDATION_STATE_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 const VALIDATION_STATE_MAX_TRACKED: usize = 100_000;
+const VALIDATION_PERSIST_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub struct ValidationTask {
@@ -41,13 +43,86 @@ pub struct ValidationResult {
 }
 
 #[derive(Debug, Clone)]
+pub struct PersistedValidationAddressState {
+    pub address: String,
+    pub total_shares: u64,
+    pub sampled_shares: u64,
+    pub invalid_samples: u64,
+    pub forced_until: Option<SystemTime>,
+    pub last_seen_at: SystemTime,
+}
+
+#[derive(Debug, Clone)]
+pub struct PersistedValidationProvisional {
+    pub address: String,
+    pub created_at: SystemTime,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct LoadedValidationState {
+    pub states: Vec<PersistedValidationAddressState>,
+    pub provisionals: Vec<PersistedValidationProvisional>,
+}
+
+pub trait ValidationStateStore: Send + Sync + 'static {
+    fn load_validation_state(
+        &self,
+        state_cutoff: SystemTime,
+        provisional_cutoff: SystemTime,
+        now: SystemTime,
+    ) -> Result<LoadedValidationState>;
+
+    fn upsert_validation_state(&self, state: &PersistedValidationAddressState) -> Result<()>;
+
+    fn add_validation_provisional(&self, address: &str, created_at: SystemTime) -> Result<()>;
+
+    fn clean_validation_state(
+        &self,
+        state_cutoff: SystemTime,
+        provisional_cutoff: SystemTime,
+        now: SystemTime,
+    ) -> Result<()>;
+}
+
+#[derive(Debug, Default)]
+struct NullValidationStateStore;
+
+impl ValidationStateStore for NullValidationStateStore {
+    fn load_validation_state(
+        &self,
+        _state_cutoff: SystemTime,
+        _provisional_cutoff: SystemTime,
+        _now: SystemTime,
+    ) -> Result<LoadedValidationState> {
+        Ok(LoadedValidationState::default())
+    }
+
+    fn upsert_validation_state(&self, _state: &PersistedValidationAddressState) -> Result<()> {
+        Ok(())
+    }
+
+    fn add_validation_provisional(&self, _address: &str, _created_at: SystemTime) -> Result<()> {
+        Ok(())
+    }
+
+    fn clean_validation_state(
+        &self,
+        _state_cutoff: SystemTime,
+        _provisional_cutoff: SystemTime,
+        _now: SystemTime,
+    ) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
 struct ValidationAddressState {
     total_shares: u64,
     sampled_shares: u64,
     invalid_samples: u64,
-    forced_until: Option<Instant>,
-    provisional_at: VecDeque<Instant>,
-    last_seen_at: Instant,
+    forced_until: Option<SystemTime>,
+    provisional_at: VecDeque<SystemTime>,
+    last_seen_at: SystemTime,
 }
 
 impl Default for ValidationAddressState {
@@ -58,7 +133,7 @@ impl Default for ValidationAddressState {
             invalid_samples: 0,
             forced_until: None,
             provisional_at: VecDeque::new(),
-            last_seen_at: Instant::now(),
+            last_seen_at: SystemTime::now(),
         }
     }
 }
@@ -89,6 +164,8 @@ struct ValidationInner {
     rng: Mutex<StdRng>,
     in_flight: AtomicI64,
     fraud: AtomicU64,
+    state_store: Arc<dyn ValidationStateStore>,
+    last_cleanup_at: Mutex<Option<Instant>>,
 }
 
 pub struct ValidationEngine {
@@ -101,6 +178,14 @@ pub struct ValidationEngine {
 
 impl ValidationEngine {
     pub fn new(config: Config, hasher: Arc<dyn PowHasher>) -> Self {
+        Self::new_with_state_store(config, hasher, Arc::new(NullValidationStateStore))
+    }
+
+    pub fn new_with_state_store(
+        config: Config,
+        hasher: Arc<dyn PowHasher>,
+        state_store: Arc<dyn ValidationStateStore>,
+    ) -> Self {
         let worker_count = if config.max_verifiers <= 0 {
             std::thread::available_parallelism()
                 .map(|n| n.get().max(1) / 2)
@@ -114,14 +199,17 @@ impl ValidationEngine {
         let (candidate_tx, candidate_rx) = flume::bounded::<QueuedTask>(queue_size);
         let (regular_tx, regular_rx) = flume::bounded::<QueuedTask>(queue_size);
         let shutdown = Arc::new(AtomicBool::new(false));
+        let initial_state = load_initial_validation_state(&config, state_store.as_ref());
 
         let inner = Arc::new(ValidationInner {
             config,
             hasher,
-            state: Mutex::new(HashMap::new()),
+            state: Mutex::new(initial_state),
             rng: Mutex::new(StdRng::from_entropy()),
             in_flight: AtomicI64::new(0),
             fraud: AtomicU64::new(0),
+            state_store,
+            last_cleanup_at: Mutex::new(None),
         });
 
         let mut workers = Vec::with_capacity(worker_count);
@@ -312,7 +400,7 @@ impl ValidationInner {
             return true;
         }
 
-        let now = Instant::now();
+        let now = SystemTime::now();
 
         let mut state = self.state.lock();
         let st = get_or_insert_state(&mut state, address);
@@ -358,7 +446,7 @@ impl ValidationInner {
         suspected_fraud: bool,
         provisional_accepted: bool,
     ) -> bool {
-        let now = Instant::now();
+        let now = SystemTime::now();
         let mut state = self.state.lock();
         let st = get_or_insert_state(&mut state, address);
 
@@ -377,35 +465,37 @@ impl ValidationInner {
 
         if suspected_fraud {
             st.forced_until = Some(now + self.config.forced_verify_duration());
+            let persisted = persisted_validation_state(address, st);
+            drop(state);
+            self.persist_validation_state(&persisted, None, now);
             return true;
         }
 
         let min_samples = self.config.invalid_sample_min.max(1) as u64;
-        if st.sampled_shares < min_samples {
-            return false;
-        }
+        let mut escalate = false;
+        if st.sampled_shares >= min_samples {
+            let invalid_ratio = if st.sampled_shares == 0 {
+                0.0
+            } else {
+                st.invalid_samples as f64 / st.sampled_shares as f64
+            };
 
-        let invalid_ratio = if st.sampled_shares == 0 {
-            0.0
-        } else {
-            st.invalid_samples as f64 / st.sampled_shares as f64
-        };
-
-        if invalid_ratio > self.config.invalid_sample_threshold {
-            st.forced_until = Some(now + self.config.forced_verify_duration());
-            if state.len() > VALIDATION_STATE_MAX_TRACKED {
-                self.prune_stale_state_locked(&mut state, now);
+            if invalid_ratio > self.config.invalid_sample_threshold {
+                st.forced_until = Some(now + self.config.forced_verify_duration());
+                escalate = true;
             }
-            return true;
         }
 
+        let persisted = persisted_validation_state(address, st);
         if state.len() > VALIDATION_STATE_MAX_TRACKED {
             self.prune_stale_state_locked(&mut state, now);
         }
-        false
+        drop(state);
+        self.persist_validation_state(&persisted, provisional_accepted.then_some(now), now);
+        escalate
     }
 
-    fn prune_provisional_locked(&self, st: &mut ValidationAddressState, now: Instant) {
+    fn prune_provisional_locked(&self, st: &mut ValidationAddressState, now: SystemTime) {
         if st.provisional_at.is_empty() {
             return;
         }
@@ -427,7 +517,7 @@ impl ValidationInner {
     }
 
     fn snapshot(&self, candidate_depth: usize, regular_depth: usize) -> ValidationSnapshot {
-        let now = Instant::now();
+        let now = SystemTime::now();
         let mut snap = ValidationSnapshot {
             in_flight: self.in_flight.load(Ordering::Relaxed),
             candidate_queue_depth: candidate_depth,
@@ -460,7 +550,7 @@ impl ValidationInner {
     fn prune_stale_state_locked(
         &self,
         state: &mut HashMap<String, ValidationAddressState>,
-        now: Instant,
+        now: SystemTime,
     ) {
         let cutoff = now.checked_sub(VALIDATION_STATE_RETENTION).unwrap_or(now);
         state.retain(|_, st| {
@@ -482,12 +572,64 @@ impl ValidationInner {
                 }
                 Some((address.clone(), st.last_seen_at))
             })
-            .collect::<Vec<(String, Instant)>>();
+            .collect::<Vec<(String, SystemTime)>>();
         removable.sort_by_key(|(_, seen_at)| *seen_at);
 
         let excess = state.len().saturating_sub(VALIDATION_STATE_MAX_TRACKED);
         for (address, _) in removable.into_iter().take(excess) {
             state.remove(&address);
+        }
+    }
+
+    fn persist_validation_state(
+        &self,
+        state: &PersistedValidationAddressState,
+        provisional_at: Option<SystemTime>,
+        now: SystemTime,
+    ) {
+        if let Some(created_at) = provisional_at {
+            if let Err(err) = self
+                .state_store
+                .add_validation_provisional(&state.address, created_at)
+            {
+                tracing::warn!(
+                    address = %state.address,
+                    error = %err,
+                    "failed to persist provisional validation share"
+                );
+            }
+        }
+
+        if let Err(err) = self.state_store.upsert_validation_state(state) {
+            tracing::warn!(
+                address = %state.address,
+                error = %err,
+                "failed to persist validation state"
+            );
+        }
+
+        self.maybe_clean_persisted_state(now);
+    }
+
+    fn maybe_clean_persisted_state(&self, now: SystemTime) {
+        let mut guard = self.last_cleanup_at.lock();
+        if guard.is_some_and(|last| last.elapsed() < VALIDATION_PERSIST_CLEANUP_INTERVAL) {
+            return;
+        }
+        *guard = Some(Instant::now());
+        drop(guard);
+
+        let state_cutoff = now
+            .checked_sub(VALIDATION_STATE_RETENTION)
+            .unwrap_or(UNIX_EPOCH);
+        let provisional_cutoff = now
+            .checked_sub(self.config.provisional_share_delay_duration())
+            .unwrap_or(UNIX_EPOCH);
+        if let Err(err) =
+            self.state_store
+                .clean_validation_state(state_cutoff, provisional_cutoff, now)
+        {
+            tracing::warn!(error = %err, "failed cleaning persisted validation state");
         }
     }
 }
@@ -504,10 +646,98 @@ fn get_or_insert_state<'a>(
         .expect("address state must be present after insert")
 }
 
+fn persisted_validation_state(
+    address: &str,
+    state: &ValidationAddressState,
+) -> PersistedValidationAddressState {
+    PersistedValidationAddressState {
+        address: address.to_string(),
+        total_shares: state.total_shares,
+        sampled_shares: state.sampled_shares,
+        invalid_samples: state.invalid_samples,
+        forced_until: state.forced_until,
+        last_seen_at: state.last_seen_at,
+    }
+}
+
+fn load_initial_validation_state(
+    config: &Config,
+    state_store: &dyn ValidationStateStore,
+) -> HashMap<String, ValidationAddressState> {
+    let now = SystemTime::now();
+    let state_cutoff = now
+        .checked_sub(VALIDATION_STATE_RETENTION)
+        .unwrap_or(UNIX_EPOCH);
+    let provisional_cutoff = now
+        .checked_sub(config.provisional_share_delay_duration())
+        .unwrap_or(UNIX_EPOCH);
+
+    let loaded = match state_store.load_validation_state(state_cutoff, provisional_cutoff, now) {
+        Ok(value) => value,
+        Err(err) => {
+            tracing::warn!(error = %err, "failed loading persisted validation state");
+            return HashMap::new();
+        }
+    };
+
+    let mut state = HashMap::<String, ValidationAddressState>::new();
+    for entry in loaded.states {
+        state.insert(
+            entry.address.clone(),
+            ValidationAddressState {
+                total_shares: entry.total_shares,
+                sampled_shares: entry.sampled_shares,
+                invalid_samples: entry.invalid_samples,
+                forced_until: entry.forced_until.filter(|deadline| *deadline > now),
+                provisional_at: VecDeque::new(),
+                last_seen_at: entry.last_seen_at,
+            },
+        );
+    }
+
+    for provisional in loaded.provisionals {
+        let entry = state
+            .entry(provisional.address.clone())
+            .or_insert_with(ValidationAddressState::default);
+        entry.provisional_at.push_back(provisional.created_at);
+        if provisional.created_at > entry.last_seen_at {
+            entry.last_seen_at = provisional.created_at;
+        }
+    }
+
+    let delay = config.provisional_share_delay_duration();
+    for entry in state.values_mut() {
+        if delay.is_zero() {
+            entry.provisional_at.clear();
+            continue;
+        }
+        let cutoff = now.checked_sub(delay).unwrap_or(now);
+        while entry
+            .provisional_at
+            .front()
+            .is_some_and(|timestamp| *timestamp <= cutoff)
+        {
+            entry.provisional_at.pop_front();
+        }
+    }
+
+    state
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::pow::{difficulty_to_target, DeterministicTestHasher};
+    use crate::store::PoolStore;
+    use std::sync::Arc;
+
+    fn test_store() -> Arc<PoolStore> {
+        let path = std::env::temp_dir().join(format!(
+            "blocknet-pool-validation-test-{}.sqlite",
+            rand::random::<u64>()
+        ));
+        PoolStore::open_sqlite(path.to_str().expect("path")).expect("open sqlite store")
+    }
 
     fn test_cfg() -> Config {
         Config {
@@ -779,5 +1009,32 @@ mod tests {
         assert!(!r4.verified);
         assert!(!r5.verified);
         assert!(r6.verified);
+    }
+
+    #[test]
+    fn provisional_validation_state_survives_restart() {
+        let cfg = test_cfg();
+        let store = test_store();
+        let engine = ValidationEngine::new_with_state_store(
+            cfg.clone(),
+            Arc::new(DeterministicTestHasher),
+            Arc::clone(&store) as Arc<dyn ValidationStateStore>,
+        );
+
+        let first = engine.process_inline(matching_task(1));
+        let second = engine.process_inline(matching_task(2));
+        assert!(first.accepted && !first.verified);
+        assert!(second.accepted && !second.verified);
+
+        let restarted = ValidationEngine::new_with_state_store(
+            cfg,
+            Arc::new(DeterministicTestHasher),
+            Arc::clone(&store) as Arc<dyn ValidationStateStore>,
+        );
+        let after_restart = restarted.process_inline(matching_task(3));
+        assert!(
+            after_restart.verified,
+            "persisted provisional share pressure should survive restart"
+        );
     }
 }

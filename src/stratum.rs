@@ -463,7 +463,12 @@ impl StratumServer {
         .await;
 
         if let Some((address, _, _)) = logged_in.take() {
-            self.engine.disconnect(&conn_id);
+            let engine = Arc::clone(&self.engine);
+            let disconnect_conn_id = conn_id.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                engine.disconnect(&disconnect_conn_id);
+            })
+            .await;
             self.stats.remove_miner(&conn_id);
             tracing::debug!(peer = %peer, address = %address, "stratum miner disconnected");
         }

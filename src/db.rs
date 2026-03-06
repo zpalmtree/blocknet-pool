@@ -12,6 +12,9 @@ use serde::Serialize;
 
 use crate::engine::{ShareRecord, ShareStore};
 use crate::stats::RejectionReasonCount;
+use crate::validation::{
+    LoadedValidationState, PersistedValidationAddressState, PersistedValidationProvisional,
+};
 
 const SEEN_SHARE_EXPIRY_SECS: i64 = 24 * 60 * 60;
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
@@ -242,6 +245,29 @@ CREATE TABLE IF NOT EXISTS stat_snapshots (
     workers INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS validation_address_states (
+    address TEXT PRIMARY KEY,
+    total_shares INTEGER NOT NULL,
+    sampled_shares INTEGER NOT NULL,
+    invalid_samples INTEGER NOT NULL,
+    forced_until INTEGER,
+    last_seen_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_validation_address_states_last_seen
+    ON validation_address_states(last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_validation_address_states_forced_until
+    ON validation_address_states(forced_until DESC);
+
+CREATE TABLE IF NOT EXISTS validation_provisionals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    address TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_validation_provisionals_created_at
+    ON validation_provisionals(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_validation_provisionals_address_created_at
+    ON validation_provisionals(address, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS share_daily_summaries (
     day_start INTEGER PRIMARY KEY,
@@ -1652,6 +1678,109 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(())
     }
 
+    pub fn load_validation_state(
+        &self,
+        state_cutoff: SystemTime,
+        provisional_cutoff: SystemTime,
+        now: SystemTime,
+    ) -> Result<LoadedValidationState> {
+        let conn = self.conn.lock();
+        let mut states_stmt = conn.prepare(
+            "SELECT address, total_shares, sampled_shares, invalid_samples, forced_until, last_seen_at
+             FROM validation_address_states
+             WHERE last_seen_at >= ?1 OR (forced_until IS NOT NULL AND forced_until > ?2)",
+        )?;
+        let states = states_stmt
+            .query_map(params![to_unix(state_cutoff), to_unix(now)], |row| {
+                Ok(PersistedValidationAddressState {
+                    address: row.get::<_, String>(0)?,
+                    total_shares: row.get::<_, i64>(1)?.max(0) as u64,
+                    sampled_shares: row.get::<_, i64>(2)?.max(0) as u64,
+                    invalid_samples: row.get::<_, i64>(3)?.max(0) as u64,
+                    forced_until: row.get::<_, Option<i64>>(4)?.map(from_unix),
+                    last_seen_at: row.get::<_, i64>(5).map(from_unix)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        let mut provisional_stmt = conn.prepare(
+            "SELECT address, created_at
+             FROM validation_provisionals
+             WHERE created_at > ?1
+             ORDER BY address ASC, created_at ASC",
+        )?;
+        let provisionals = provisional_stmt
+            .query_map(params![to_unix(provisional_cutoff)], |row| {
+                Ok(PersistedValidationProvisional {
+                    address: row.get::<_, String>(0)?,
+                    created_at: row.get::<_, i64>(1).map(from_unix)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(LoadedValidationState {
+            states,
+            provisionals,
+        })
+    }
+
+    pub fn upsert_validation_state(&self, state: &PersistedValidationAddressState) -> Result<()> {
+        self.conn.lock().execute(
+            "INSERT INTO validation_address_states (
+                address, total_shares, sampled_shares, invalid_samples, forced_until, last_seen_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(address) DO UPDATE SET
+                total_shares = excluded.total_shares,
+                sampled_shares = excluded.sampled_shares,
+                invalid_samples = excluded.invalid_samples,
+                forced_until = excluded.forced_until,
+                last_seen_at = excluded.last_seen_at",
+            params![
+                &state.address,
+                u64_to_i64(state.total_shares)?,
+                u64_to_i64(state.sampled_shares)?,
+                u64_to_i64(state.invalid_samples)?,
+                state.forced_until.map(to_unix),
+                to_unix(state.last_seen_at),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn add_validation_provisional(&self, address: &str, created_at: SystemTime) -> Result<()> {
+        self.conn.lock().execute(
+            "INSERT INTO validation_provisionals (address, created_at) VALUES (?1, ?2)",
+            params![address, to_unix(created_at)],
+        )?;
+        Ok(())
+    }
+
+    pub fn clean_validation_state(
+        &self,
+        state_cutoff: SystemTime,
+        provisional_cutoff: SystemTime,
+        now: SystemTime,
+    ) -> Result<()> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM validation_provisionals WHERE created_at <= ?1",
+            params![to_unix(provisional_cutoff)],
+        )?;
+        tx.execute(
+            "DELETE FROM validation_address_states
+             WHERE last_seen_at < ?1
+               AND (forced_until IS NULL OR forced_until <= ?2)
+               AND NOT EXISTS (
+                   SELECT 1 FROM validation_provisionals vp
+                   WHERE vp.address = validation_address_states.address
+               )",
+            params![to_unix(state_cutoff), to_unix(now)],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn get_stat_snapshots(&self, since: SystemTime) -> Result<Vec<StatSnapshot>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
@@ -1896,9 +2025,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             let (miner, accepted, rejected, last_share) = row?;
             map.insert(miner, (accepted, rejected, 0u64, last_share));
         }
-        let mut stmt2 = conn.prepare(
-            "SELECT finder, COUNT(*) FROM blocks GROUP BY finder",
-        )?;
+        let mut stmt2 = conn.prepare("SELECT finder, COUNT(*) FROM blocks GROUP BY finder")?;
         let block_rows = stmt2.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,

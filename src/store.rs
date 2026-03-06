@@ -12,6 +12,9 @@ use crate::db::{
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::pgdb::PostgresStore;
 use crate::stats::RejectionReasonCount;
+use crate::validation::{
+    LoadedValidationState, PersistedValidationAddressState, ValidationStateStore,
+};
 
 // Matches daemon emission curve for provisional pending-block display values.
 const INITIAL_REWARD: u64 = 72_325_093_035;
@@ -572,6 +575,48 @@ impl PoolStore {
         }
     }
 
+    pub fn load_validation_state(
+        &self,
+        state_cutoff: SystemTime,
+        provisional_cutoff: SystemTime,
+        now: SystemTime,
+    ) -> Result<LoadedValidationState> {
+        match self {
+            PoolStore::Sqlite(v) => v.load_validation_state(state_cutoff, provisional_cutoff, now),
+            PoolStore::Postgres(v) => {
+                v.load_validation_state(state_cutoff, provisional_cutoff, now)
+            }
+        }
+    }
+
+    pub fn upsert_validation_state(&self, state: &PersistedValidationAddressState) -> Result<()> {
+        match self {
+            PoolStore::Sqlite(v) => v.upsert_validation_state(state),
+            PoolStore::Postgres(v) => v.upsert_validation_state(state),
+        }
+    }
+
+    pub fn add_validation_provisional(&self, address: &str, created_at: SystemTime) -> Result<()> {
+        match self {
+            PoolStore::Sqlite(v) => v.add_validation_provisional(address, created_at),
+            PoolStore::Postgres(v) => v.add_validation_provisional(address, created_at),
+        }
+    }
+
+    pub fn clean_validation_state(
+        &self,
+        state_cutoff: SystemTime,
+        provisional_cutoff: SystemTime,
+        now: SystemTime,
+    ) -> Result<()> {
+        match self {
+            PoolStore::Sqlite(v) => v.clean_validation_state(state_cutoff, provisional_cutoff, now),
+            PoolStore::Postgres(v) => {
+                v.clean_validation_state(state_cutoff, provisional_cutoff, now)
+            }
+        }
+    }
+
     pub fn hashrate_history_for_miner(
         &self,
         address: &str,
@@ -806,6 +851,34 @@ impl ShareStore for PoolStore {
         updated_at: SystemTime,
     ) -> Result<()> {
         PoolStore::upsert_vardiff_hint(self, address, worker, difficulty, updated_at)
+    }
+}
+
+impl ValidationStateStore for PoolStore {
+    fn load_validation_state(
+        &self,
+        state_cutoff: SystemTime,
+        provisional_cutoff: SystemTime,
+        now: SystemTime,
+    ) -> Result<LoadedValidationState> {
+        PoolStore::load_validation_state(self, state_cutoff, provisional_cutoff, now)
+    }
+
+    fn upsert_validation_state(&self, state: &PersistedValidationAddressState) -> Result<()> {
+        PoolStore::upsert_validation_state(self, state)
+    }
+
+    fn add_validation_provisional(&self, address: &str, created_at: SystemTime) -> Result<()> {
+        PoolStore::add_validation_provisional(self, address, created_at)
+    }
+
+    fn clean_validation_state(
+        &self,
+        state_cutoff: SystemTime,
+        provisional_cutoff: SystemTime,
+        now: SystemTime,
+    ) -> Result<()> {
+        PoolStore::clean_validation_state(self, state_cutoff, provisional_cutoff, now)
     }
 }
 
