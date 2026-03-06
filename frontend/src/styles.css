@@ -20,21 +20,21 @@
   --tone-ok-bg: rgba(22, 163, 74, 0.1);
   --tone-ok-border: rgba(22, 163, 74, 0.18);
   --tone-ok-text: #23834c;
-  --tone-warn-bg: rgba(186, 136, 42, 0.11);
-  --tone-warn-border: rgba(186, 136, 42, 0.18);
-  --tone-warn-text: #ab7720;
-  --tone-bad-bg: rgba(178, 96, 114, 0.1);
-  --tone-bad-border: rgba(178, 96, 114, 0.16);
-  --tone-bad-text: #a75f70;
+  --tone-warn-bg: rgba(245, 158, 11, 0.16);
+  --tone-warn-border: rgba(217, 119, 6, 0.24);
+  --tone-warn-text: #975a05;
+  --tone-bad-bg: rgba(239, 68, 68, 0.12);
+  --tone-bad-border: rgba(220, 38, 38, 0.2);
+  --tone-bad-text: #b91c1c;
   --status-confirmed-bg: rgba(22, 163, 74, 0.1);
   --status-confirmed-border: rgba(22, 163, 74, 0.18);
   --status-confirmed-text: #23834c;
-  --status-pending-bg: rgba(170, 132, 51, 0.11);
-  --status-pending-border: rgba(170, 132, 51, 0.17);
-  --status-pending-text: #967128;
-  --status-orphaned-bg: rgba(160, 88, 104, 0.1);
-  --status-orphaned-border: rgba(160, 88, 104, 0.16);
-  --status-orphaned-text: #995667;
+  --status-pending-bg: rgba(245, 158, 11, 0.14);
+  --status-pending-border: rgba(217, 119, 6, 0.22);
+  --status-pending-text: #9a6008;
+  --status-orphaned-bg: rgba(239, 68, 68, 0.11);
+  --status-orphaned-border: rgba(220, 38, 38, 0.18);
+  --status-orphaned-text: #b42323;
   --rejection-track: rgba(31, 49, 33, 0.06);
   --rejection-fill-start: rgba(73, 177, 155, 0.8);
   --rejection-fill-end: rgba(171, 178, 114, 0.78);
@@ -84,21 +84,21 @@
   --tone-ok-bg: rgba(87, 215, 140, 0.1);
   --tone-ok-border: rgba(87, 215, 140, 0.17);
   --tone-ok-text: #81dfaf;
-  --tone-warn-bg: rgba(215, 183, 113, 0.1);
-  --tone-warn-border: rgba(215, 183, 113, 0.16);
-  --tone-warn-text: #dfc789;
-  --tone-bad-bg: rgba(210, 124, 139, 0.1);
-  --tone-bad-border: rgba(210, 124, 139, 0.16);
-  --tone-bad-text: #e1a6b2;
+  --tone-warn-bg: rgba(247, 180, 75, 0.17);
+  --tone-warn-border: rgba(247, 180, 75, 0.3);
+  --tone-warn-text: #f1c56d;
+  --tone-bad-bg: rgba(248, 113, 113, 0.15);
+  --tone-bad-border: rgba(248, 113, 113, 0.28);
+  --tone-bad-text: #f3b0b0;
   --status-confirmed-bg: rgba(87, 215, 140, 0.1);
   --status-confirmed-border: rgba(87, 215, 140, 0.16);
   --status-confirmed-text: #81dfaf;
-  --status-pending-bg: rgba(215, 183, 113, 0.1);
-  --status-pending-border: rgba(215, 183, 113, 0.16);
-  --status-pending-text: #dfc789;
-  --status-orphaned-bg: rgba(210, 124, 139, 0.1);
-  --status-orphaned-border: rgba(210, 124, 139, 0.16);
-  --status-orphaned-text: #e1a6b2;
+  --status-pending-bg: rgba(247, 180, 75, 0.15);
+  --status-pending-border: rgba(247, 180, 75, 0.26);
+  --status-pending-text: #efc570;
+  --status-orphaned-bg: rgba(248, 113, 113, 0.14);
+  --status-orphaned-border: rgba(248, 113, 113, 0.26);
+  --status-orphaned-text: #f0a3a3;
   --rejection-track: rgba(255, 255, 255, 0.05);
   --rejection-fill-start: rgba(108, 196, 176, 0.82);
   --rejection-fill-end: rgba(194, 191, 136, 0.78);
@@ -272,11 +272,11 @@ nav {
 }
 
 .theme-toggle-icon-sun {
-  left: 10px;
+  left: 9px;
 }
 
 .theme-toggle-icon-moon {
-  right: 10px;
+  right: 9px;
 }
 
 .theme-toggle-icon svg {
@@ -292,6 +292,14 @@ nav {
 .theme-toggle-icon-sun svg circle {
   fill: currentColor;
   stroke: none;
+}
+
+.theme-toggle-icon-sun svg {
+  transform: translateX(0.35px);
+}
+
+.theme-toggle-icon-moon svg {
+  transform: translateX(0.8px);
 }
 
 .theme-toggle-thumb {
@@ -711,6 +719,43 @@ h3 {
   margin-bottom: 32px;
 }
 
+.steps {
+  counter-reset: step;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.steps li {
+  counter-increment: step;
+  position: relative;
+  padding: 12px 0 12px 48px;
+  margin-left: 16px;
+  border-left: 2px solid var(--border);
+}
+
+.steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: -16px;
+  top: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.steps li:last-child {
+  border-left-color: transparent;
+}
+
 .section-header {
   display: flex;
   align-items: center;
@@ -1103,8 +1148,18 @@ pre.config-block {
 }
 
 .info-table td:last-child {
-  font-family: 'JetBrains Mono', monospace;
   font-size: 14px;
+}
+
+.info-value {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 4px 10px;
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-soft);
 }
 
 .screenshot-grid {

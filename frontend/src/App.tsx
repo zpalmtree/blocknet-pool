@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 
 import { createApiClient } from './api/client';
 import { API_KEY_STORAGE_KEY, LAST_MINER_LOOKUP_KEY } from './lib/storage';
@@ -28,7 +28,7 @@ function SunIcon() {
 function MoonIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M19 14.79A7.5 7.5 0 0 1 9.21 5a8.5 8.5 0 1 0 9.79 9.79Z" />
+      <path d="M18.35 14.38A7.85 7.85 0 0 1 9.62 5.65 8.65 8.65 0 1 0 18.35 14.38Z" />
     </svg>
   );
 }
@@ -54,7 +54,7 @@ export function App() {
     return () => window.clearTimeout(t);
   }, [errorMsg]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     applyTheme(theme);
     setStoredTheme(theme);
   }, [theme]);
@@ -261,7 +261,7 @@ export function App() {
           liveTick={liveTick}
           theme={theme}
         />
-        <StartPage active={route === 'start'} poolInfo={poolInfo} />
+        <StartPage active={route === 'start'} poolInfo={poolInfo} theme={theme} />
         <LuckPage active={route === 'luck'} api={api} liveTick={liveTick} />
         <BlocksPage active={route === 'blocks'} api={api} liveTick={liveTick} />
         <PayoutsPage active={route === 'payouts'} api={api} liveTick={liveTick} />

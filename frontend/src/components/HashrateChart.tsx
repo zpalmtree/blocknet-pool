@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 
 import { formatChartTick, humanRate, rangeToDurationMs, smoothChartPoints, toUnixMs } from '../lib/format';
 import type { ThemeMode } from '../lib/theme';
@@ -164,14 +164,23 @@ function drawChartOn(canvas: HTMLCanvasElement, data: HashratePoint[], range: Ra
 export function HashrateChart({ data, range, theme }: { data: HashratePoint[]; range: Range; theme: ThemeMode }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
+    let frameId = 0;
     const run = () => drawChartOn(canvas, data, range);
+    const schedule = () => {
+      if (frameId) window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(run);
+    };
     run();
-    const onResize = () => run();
+    schedule();
+    const onResize = () => schedule();
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    return () => {
+      if (frameId) window.cancelAnimationFrame(frameId);
+      window.removeEventListener('resize', onResize);
+    };
   }, [data, range, theme]);
 
   return (
