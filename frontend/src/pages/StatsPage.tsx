@@ -281,33 +281,22 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
 
       {minerData && (
         <div id="lookup-result">
-          <div className="reward-flow" aria-label="Reward flow">
-            <div className="stat-card reward-flow__card">
+          <div className="stats-grid stats-grid-dense" style={{ marginBottom: 24 }}>
+            <div className="stat-card stat-card--accent stat-card--flow">
               <div className="label">Estimated Rewards</div>
               <div className="value">{formatCoins(pendingEstimated)}</div>
               <div className="stat-meta">Recent blocks still confirming</div>
             </div>
-            <div className="reward-flow__connector" aria-hidden="true">
-              <span className="reward-flow__line" />
-              <span className="reward-flow__arrow" />
-            </div>
-            <div className="stat-card reward-flow__card">
+            <div className="stat-card stat-card--accent stat-card--flow">
               <div className="label">Confirmed Rewards</div>
               <div className="value">{formatCoins(pendingConfirmed)}</div>
               <div className="stat-meta">Matured balance awaiting payout</div>
             </div>
-            <div className="reward-flow__connector" aria-hidden="true">
-              <span className="reward-flow__line" />
-              <span className="reward-flow__arrow" />
-            </div>
-            <div className="stat-card reward-flow__card">
+            <div className="stat-card stat-card--accent">
               <div className="label">Paid Balance</div>
               <div className="value">{formatCoins(minerData.balance?.paid || 0)}</div>
               <div className="stat-meta">Already sent to this address</div>
             </div>
-          </div>
-
-          <div className="stats-grid stats-grid-dense" style={{ marginBottom: 24 }}>
             <div className="stat-card">
               <div className="label">Hashrate</div>
               <div className="value">{humanRate(minerData.hashrate || 0)}</div>

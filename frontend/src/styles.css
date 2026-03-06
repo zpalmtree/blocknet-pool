@@ -473,22 +473,19 @@ nav {
   color: var(--text);
 }
 
-.reward-flow {
-  display: flex;
-  align-items: stretch;
-  justify-content: center;
-  gap: 16px;
-  margin-bottom: 24px;
-}
-
-.reward-flow__card {
-  flex: 0 0 224px;
-  max-width: 224px;
+.stat-card--accent {
   position: relative;
   overflow: hidden;
 }
 
-.reward-flow__card::after {
+.stat-card--flow .label::after {
+  content: '→';
+  margin-left: 6px;
+  font-size: 11px;
+  opacity: 0.45;
+}
+
+.stat-card--accent::after {
   content: '';
   position: absolute;
   left: 20px;
@@ -497,43 +494,6 @@ nav {
   height: 3px;
   border-radius: 999px;
   background: linear-gradient(90deg, var(--accent-light), var(--accent));
-}
-
-.reward-flow__connector {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 0 0 56px;
-  min-width: 56px;
-}
-
-.reward-flow__line {
-  flex: 1 1 auto;
-  height: 1px;
-  background: linear-gradient(90deg, var(--border), var(--accent));
-}
-
-.reward-flow__arrow {
-  width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: linear-gradient(180deg, var(--surface), var(--bg-elevated));
-  box-shadow: var(--shadow-soft);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-}
-
-.reward-flow__arrow::before {
-  content: '';
-  width: 8px;
-  height: 8px;
-  border-top: 1.5px solid var(--accent-strong);
-  border-right: 1.5px solid var(--accent-strong);
-  transform: rotate(45deg);
-  margin-left: -2px;
 }
 
 .stat-meta {
@@ -1476,35 +1436,6 @@ pre.raw-json {
 @media (max-width: 900px) {
   .stats-grid {
     grid-template-columns: repeat(2, 1fr);
-  }
-
-  .reward-flow {
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .reward-flow__card {
-    flex-basis: auto;
-    max-width: none;
-  }
-
-  .reward-flow__connector {
-    flex-direction: column;
-    justify-content: center;
-    align-self: center;
-    min-width: 0;
-    min-height: 40px;
-  }
-
-  .reward-flow__line {
-    flex: 0 0 auto;
-    width: 1px;
-    height: 20px;
-    background: linear-gradient(180deg, var(--border), var(--accent));
-  }
-
-  .reward-flow__arrow {
-    transform: rotate(90deg);
   }
 
   .seo-copy-grid {
