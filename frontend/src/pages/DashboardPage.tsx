@@ -106,18 +106,27 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
   }, [active, loadHistory, range]);
 
   const copyStratum = useCallback(() => {
-    void navigator.clipboard.writeText(stratumUrl(poolInfo?.stratum_port));
-  }, [poolInfo?.stratum_port]);
+    void navigator.clipboard.writeText(stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url));
+  }, [poolInfo?.pool_url, poolInfo?.stratum_port]);
 
   const round = insights?.round;
   const payoutEta = insights?.payout_eta;
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-dashboard">
+      <div className="page-header">
+        <span className="page-kicker">Blocknet Mining Pool</span>
+        <h1>Live Blocknet pool dashboard</h1>
+        <p className="page-intro">
+          Track pool hashrate, round luck, recent blocks, payout timing, and current chain conditions from the public
+          dashboard.
+        </p>
+      </div>
+
       <div className="stratum-bar">
         <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--muted)' }}>Stratum</span>
         <span className="endpoint" id="stratum-url">
-          {stratumUrl(poolInfo?.stratum_port)}
+          {stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url)}
         </span>
         <button className="copy-btn" onClick={copyStratum}>
           Copy
@@ -247,7 +256,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
       <div className="section">
         <div className="section-header">
           <h2>Pool Luck History</h2>
-          <a href="#/luck" className="view-all">
+          <a href="/luck" className="view-all">
             View All
           </a>
         </div>
@@ -302,7 +311,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
       <div className="section">
         <div className="section-header">
           <h2>Recent Payouts</h2>
-          <a href="#/payouts" className="view-all">
+          <a href="/payouts" className="view-all">
             View All
           </a>
         </div>

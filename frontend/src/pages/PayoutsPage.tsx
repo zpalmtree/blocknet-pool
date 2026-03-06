@@ -39,7 +39,14 @@ export function PayoutsPage({ active, api, liveTick }: PayoutsPageProps) {
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-payouts">
-      <h2>Payouts</h2>
+      <div className="page-header">
+        <span className="page-kicker">Payout Transparency</span>
+        <h1>Recent Blocknet pool payouts</h1>
+        <p className="page-intro">
+          Review payout totals, recipient counts, network fees, and explorer transaction links for recent pool payout
+          batches.
+        </p>
+      </div>
       <p style={{ fontSize: 14, color: 'var(--muted)', marginBottom: 16 }}>
         All pool payouts. Transaction hashes link to the block explorer for verification.
       </p>

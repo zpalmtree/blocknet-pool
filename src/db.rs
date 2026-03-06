@@ -1870,6 +1870,49 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let rows = stmt.query_map(params![address], row_to_block)?;
         collect_rows(rows)
     }
+
+    /// Bulk per-miner lifetime counts from the DB: (accepted, rejected, blocks_found, last_share_unix).
+    pub fn miner_lifetime_counts(
+        &self,
+    ) -> Result<std::collections::HashMap<String, (u64, u64, u64, Option<i64>)>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT miner,
+                    SUM(CASE WHEN status IN ('verified','provisional') THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN status NOT IN ('verified','provisional') THEN 1 ELSE 0 END),
+                    MAX(created_at)
+             FROM shares GROUP BY miner",
+        )?;
+        let mut map = std::collections::HashMap::new();
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?.max(0) as u64,
+                row.get::<_, i64>(2)?.max(0) as u64,
+                row.get::<_, Option<i64>>(3)?,
+            ))
+        })?;
+        for row in rows {
+            let (miner, accepted, rejected, last_share) = row?;
+            map.insert(miner, (accepted, rejected, 0u64, last_share));
+        }
+        let mut stmt2 = conn.prepare(
+            "SELECT finder, COUNT(*) FROM blocks GROUP BY finder",
+        )?;
+        let block_rows = stmt2.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?.max(0) as u64,
+            ))
+        })?;
+        for row in block_rows {
+            let (finder, count) = row?;
+            map.entry(finder)
+                .and_modify(|e| e.2 = count)
+                .or_insert((0, 0, count, None));
+        }
+        Ok(map)
+    }
 }
 
 fn ensure_sqlite_compatible_path(path: &str) -> Result<()> {

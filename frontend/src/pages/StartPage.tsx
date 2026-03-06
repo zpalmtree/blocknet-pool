@@ -25,7 +25,7 @@ function feeDisplayFor(poolInfo: InfoResponse | null): string {
 
 export function StartPage({ active, poolInfo, theme }: StartPageProps) {
   const [copiedKey, setCopiedKey] = useState('');
-  const poolUrl = stratumUrl(poolInfo?.stratum_port);
+  const poolUrl = stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url);
   const commandExample = `./seine --pool-url ${poolUrl} --address YOUR_BLOCKNET_ADDRESS`;
 
   useEffect(() => {
@@ -92,7 +92,7 @@ export function StartPage({ active, poolInfo, theme }: StartPageProps) {
             <span className="quickstart-step">3</span>
             <strong>Start mining</strong>
             <p>
-              Seine saves your config automatically. Watch the TUI locally or open <a href="#/stats">My Stats</a> to
+              Seine saves your config automatically. Watch the TUI locally or open <a href="/stats">My Stats</a> to
               follow hashrate and balance.
             </p>
           </div>
@@ -209,7 +209,7 @@ export function StartPage({ active, poolInfo, theme }: StartPageProps) {
             <strong>Start mining</strong>
             <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 4 }}>
               Seine will connect to the pool and start submitting shares. You can monitor your progress in the Seine TUI
-              or check <a href="#/stats">My Stats</a> using your wallet address to see your hashrate and balance.
+              or check <a href="/stats">My Stats</a> using your wallet address to see your hashrate and balance.
             </p>
           </li>
         </ol>
@@ -218,7 +218,14 @@ export function StartPage({ active, poolInfo, theme }: StartPageProps) {
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-start">
-      <h2>Get Started Mining</h2>
+      <div className="page-header">
+        <span className="page-kicker">Blocknet Mining Guide</span>
+        <h1>How to start mining Blocknet</h1>
+        <p className="page-intro">
+          Download Seine, connect to the pool stratum endpoint, and monitor your Blocknet hashrate and payouts from the
+          public dashboard.
+        </p>
+      </div>
 
       <div className="card section">
         <h3>Pool Information</h3>
@@ -281,6 +288,30 @@ export function StartPage({ active, poolInfo, theme }: StartPageProps) {
             <img src="/ui-assets/mining-tui.png" alt="Seine mining TUI" />
             <div className="caption">Mining TUI</div>
           </div>
+        </div>
+      </div>
+
+      <div className="seo-copy-grid">
+        <div className="card seo-copy-card">
+          <h3>Transparent pool data</h3>
+          <p>
+            Review blocks, payout batches, and pool status from public pages before you point any hashpower at the
+            pool.
+          </p>
+        </div>
+        <div className="card seo-copy-card">
+          <h3>Simple Blocknet setup</h3>
+          <p>
+            The setup flow is built around Seine, so you only need your Blocknet wallet address and the pool URL to get
+            started.
+          </p>
+        </div>
+        <div className="card seo-copy-card">
+          <h3>Operator visibility</h3>
+          <p>
+            Live dashboard metrics, historical luck, and uptime tracking make it easier to compare pool performance over
+            time.
+          </p>
         </div>
       </div>
     </div>

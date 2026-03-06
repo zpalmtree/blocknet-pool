@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { type MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 
 import { createApiClient } from './api/client';
 import { API_KEY_STORAGE_KEY, LAST_MINER_LOOKUP_KEY } from './lib/storage';
-import { routeFromHash } from './lib/format';
+import { applyDocumentSeo } from './lib/seo';
 import { applyTheme, getStoredTheme, setStoredTheme, type ThemeMode } from './lib/theme';
+import { pathForRoute, pathFromLegacyHash, routeFromPathname } from './lib/routes';
 import { AdminPage } from './pages/AdminPage';
 import { BlocksPage } from './pages/BlocksPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -14,7 +15,26 @@ import { StatusPage } from './pages/StatusPage';
 import { StatsPage } from './pages/StatsPage';
 import type { InfoResponse, Route } from './types';
 
-const APP_TITLE = 'BNT Pool';
+function routeFromLocation(): Route {
+  const legacyPath = pathFromLegacyHash(window.location.hash || '');
+  if (legacyPath) {
+    const nextUrl = `${legacyPath}${window.location.search}`;
+    window.history.replaceState({}, '', nextUrl);
+    return routeFromPathname(legacyPath);
+  }
+  return routeFromPathname(window.location.pathname);
+}
+
+function shouldHandleNavigation(event: MouseEvent<HTMLAnchorElement>): boolean {
+  return !(
+    event.defaultPrevented ||
+    event.button !== 0 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey
+  );
+}
 
 function SunIcon() {
   return (
@@ -34,7 +54,7 @@ function MoonIcon() {
 }
 
 export function App() {
-  const [route, setRoute] = useState<Route>(routeFromHash(window.location.hash || '#/'));
+  const [route, setRoute] = useState<Route>(() => routeFromLocation());
   const [errorMsg, setErrorMsg] = useState('');
   const [poolInfo, setPoolInfo] = useState<InfoResponse | null>(null);
   const [apiKey, setApiKey] = useState(localStorage.getItem(API_KEY_STORAGE_KEY) || '');
@@ -65,16 +85,15 @@ export function App() {
     try {
       const info = await api.getInfo();
       setPoolInfo(info);
-      document.title = APP_TITLE;
     } catch {
       // handled by api client
     }
   }, [api]);
 
   useEffect(() => {
-    const onHashChange = () => setRoute(routeFromHash(window.location.hash || '#/'));
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
+    const onPopState = () => setRoute(routeFromLocation());
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
   useEffect(() => {
@@ -122,6 +141,10 @@ export function App() {
     void loadPoolInfo();
   }, [liveTick, loadPoolInfo]);
 
+  useEffect(() => {
+    applyDocumentSeo(route, poolInfo, theme);
+  }, [poolInfo, route, theme]);
+
   const onSaveApiKey = useCallback(() => {
     const key = apiKeyInput.trim();
     setApiKey(key);
@@ -138,79 +161,137 @@ export function App() {
     if (address) {
       localStorage.setItem(LAST_MINER_LOOKUP_KEY, address);
     }
-    window.location.hash = '#/stats';
+    const path = pathForRoute('stats');
+    window.history.pushState({}, '', path);
+    setRoute('stats');
   }, []);
 
   const onToggleTheme = useCallback(() => {
     setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
   }, []);
 
+  const navigateToRoute = useCallback((nextRoute: Route) => {
+    const nextPath = pathForRoute(nextRoute);
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, '', nextPath);
+    }
+    setRoute(nextRoute);
+  }, []);
+
+  const onNavLinkClick = useCallback(
+    (event: MouseEvent<HTMLAnchorElement>, nextRoute: Route) => {
+      if (!shouldHandleNavigation(event)) return;
+      event.preventDefault();
+      navigateToRoute(nextRoute);
+    },
+    [navigateToRoute]
+  );
+
+  let currentPage: JSX.Element;
+  if (route === 'start') {
+    currentPage = <StartPage active poolInfo={poolInfo} theme={theme} />;
+  } else if (route === 'luck') {
+    currentPage = <LuckPage active api={api} liveTick={liveTick} />;
+  } else if (route === 'blocks') {
+    currentPage = <BlocksPage active api={api} liveTick={liveTick} />;
+  } else if (route === 'payouts') {
+    currentPage = <PayoutsPage active api={api} liveTick={liveTick} />;
+  } else if (route === 'stats') {
+    currentPage = <StatsPage active api={api} liveTick={liveTick} theme={theme} />;
+  } else if (route === 'admin') {
+    currentPage = (
+      <AdminPage
+        active
+        api={api}
+        liveTick={liveTick}
+        apiKey={apiKey}
+        apiKeyInput={apiKeyInput}
+        setApiKeyInput={setApiKeyInput}
+        onSaveApiKey={onSaveApiKey}
+        onClearApiKey={onClearApiKey}
+        onJumpToStats={onJumpToStats}
+      />
+    );
+  } else if (route === 'status') {
+    currentPage = <StatusPage active api={api} liveTick={liveTick} />;
+  } else {
+    currentPage = (
+      <DashboardPage
+        active
+        api={api}
+        poolInfo={poolInfo}
+        liveTick={liveTick}
+        theme={theme}
+      />
+    );
+  }
+
   return (
     <>
       <nav className={mobileNavOpen ? 'is-open' : ''}>
         <a
-          href="#/"
+          href={pathForRoute('dashboard')}
           className="nav-brand"
           id="nav-brand"
           style={{ textDecoration: 'none' }}
-          onClick={() => setMobileNavOpen(false)}
+          onClick={(event) => onNavLinkClick(event, 'dashboard')}
         >
           {poolInfo?.pool_name || 'Blocknet Pool'}
         </a>
         <div id="site-nav-links" className="nav-links">
           <a
-            href="#/"
+            href={pathForRoute('dashboard')}
             data-nav="dashboard"
             className={route === 'dashboard' ? 'active' : ''}
-            onClick={() => setMobileNavOpen(false)}
+            onClick={(event) => onNavLinkClick(event, 'dashboard')}
           >
             Dashboard
           </a>
           <a
-            href="#/start"
+            href={pathForRoute('start')}
             data-nav="start"
             className={route === 'start' ? 'active' : ''}
-            onClick={() => setMobileNavOpen(false)}
+            onClick={(event) => onNavLinkClick(event, 'start')}
           >
             Get Started
           </a>
           <a
-            href="#/blocks"
+            href={pathForRoute('blocks')}
             data-nav="blocks"
             className={route === 'blocks' ? 'active' : ''}
-            onClick={() => setMobileNavOpen(false)}
+            onClick={(event) => onNavLinkClick(event, 'blocks')}
           >
             Blocks
           </a>
           <a
-            href="#/payouts"
+            href={pathForRoute('payouts')}
             data-nav="payouts"
             className={route === 'payouts' ? 'active' : ''}
-            onClick={() => setMobileNavOpen(false)}
+            onClick={(event) => onNavLinkClick(event, 'payouts')}
           >
             Payouts
           </a>
           <a
-            href="#/stats"
+            href={pathForRoute('stats')}
             data-nav="stats"
             className={route === 'stats' ? 'active' : ''}
-            onClick={() => setMobileNavOpen(false)}
+            onClick={(event) => onNavLinkClick(event, 'stats')}
           >
             My Stats
           </a>
           <a
-            href="#/admin"
+            href={pathForRoute('admin')}
             data-nav="admin"
             className={route === 'admin' ? 'active' : ''}
-            onClick={() => setMobileNavOpen(false)}
+            onClick={(event) => onNavLinkClick(event, 'admin')}
           >
             Admin
           </a>
           <a
-            href="#/status"
+            href={pathForRoute('status')}
             data-nav="status"
             className={route === 'status' ? 'active' : ''}
-            onClick={() => setMobileNavOpen(false)}
+            onClick={(event) => onNavLinkClick(event, 'status')}
           >
             Status
           </a>
@@ -254,30 +335,7 @@ export function App() {
       </div>
 
       <div className="container">
-        <DashboardPage
-          active={route === 'dashboard'}
-          api={api}
-          poolInfo={poolInfo}
-          liveTick={liveTick}
-          theme={theme}
-        />
-        <StartPage active={route === 'start'} poolInfo={poolInfo} theme={theme} />
-        <LuckPage active={route === 'luck'} api={api} liveTick={liveTick} />
-        <BlocksPage active={route === 'blocks'} api={api} liveTick={liveTick} />
-        <PayoutsPage active={route === 'payouts'} api={api} liveTick={liveTick} />
-        <StatsPage active={route === 'stats'} api={api} liveTick={liveTick} theme={theme} />
-        <AdminPage
-          active={route === 'admin'}
-          api={api}
-          liveTick={liveTick}
-          apiKey={apiKey}
-          apiKeyInput={apiKeyInput}
-          setApiKeyInput={setApiKeyInput}
-          onSaveApiKey={onSaveApiKey}
-          onClearApiKey={onClearApiKey}
-          onJumpToStats={onJumpToStats}
-        />
-        <StatusPage active={route === 'status'} api={api} liveTick={liveTick} />
+        {currentPage}
       </div>
     </>
   );

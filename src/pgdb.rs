@@ -1725,6 +1725,44 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         )?;
         Ok(rows.iter().map(|row| row_to_block(row)).collect())
     }
+
+    /// Bulk per-miner lifetime counts from the DB: (accepted, rejected, blocks_found, last_share_unix).
+    pub fn miner_lifetime_counts(
+        &self,
+    ) -> Result<std::collections::HashMap<String, (u64, u64, u64, Option<i64>)>> {
+        let mut conn = self.conn().lock();
+        let share_rows = conn.query(
+            "SELECT miner,
+                    SUM(CASE WHEN status IN ('verified','provisional') THEN 1 ELSE 0 END)::bigint,
+                    SUM(CASE WHEN status NOT IN ('verified','provisional') THEN 1 ELSE 0 END)::bigint,
+                    MAX(created_at)::bigint
+             FROM shares GROUP BY miner",
+            &[],
+        )?;
+        let mut map = std::collections::HashMap::new();
+        for row in &share_rows {
+            let miner: String = row.get(0);
+            let accepted: i64 = row.get(1);
+            let rejected: i64 = row.get(2);
+            let last_share: Option<i64> = row.get(3);
+            map.insert(
+                miner,
+                (accepted.max(0) as u64, rejected.max(0) as u64, 0u64, last_share),
+            );
+        }
+        let block_rows = conn.query(
+            "SELECT finder, COUNT(*)::bigint FROM blocks GROUP BY finder",
+            &[],
+        )?;
+        for row in &block_rows {
+            let finder: String = row.get(0);
+            let count: i64 = row.get(1);
+            map.entry(finder)
+                .and_modify(|e| e.2 = count.max(0) as u64)
+                .or_insert((0, 0, count.max(0) as u64, None));
+        }
+        Ok(map)
+    }
 }
 
 impl ShareStore for PostgresStore {

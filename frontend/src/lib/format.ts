@@ -1,17 +1,6 @@
-import type { Range, Route, UnixLike } from '../types';
+import type { Range, UnixLike } from '../types';
 
 export const STRATUM_HOST = 'bntpool.com';
-
-export function routeFromHash(hash: string): Route {
-  if (hash.startsWith('#/status')) return 'status';
-  if (hash.startsWith('#/admin')) return 'admin';
-  if (hash.startsWith('#/stats')) return 'stats';
-  if (hash.startsWith('#/start')) return 'start';
-  if (hash.startsWith('#/luck')) return 'luck';
-  if (hash.startsWith('#/blocks')) return 'blocks';
-  if (hash.startsWith('#/payouts')) return 'payouts';
-  return 'dashboard';
-}
 
 export function toUnixMs(val: UnixLike): number {
   if (!val) return 0;
@@ -86,8 +75,20 @@ export function shortTx(tx: string): string {
   return `${tx.slice(0, 10)}…${tx.slice(-8)}`;
 }
 
-export function stratumUrl(port: number | null | undefined): string {
-  return `stratum+tcp://${STRATUM_HOST}:${port ?? 3333}`;
+function poolHostFromUrl(poolUrl: string | null | undefined): string {
+  const fallback =
+    (typeof window !== 'undefined' && window.location.hostname) || STRATUM_HOST;
+  if (!poolUrl) return fallback;
+
+  try {
+    return new URL(poolUrl).hostname || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function stratumUrl(port: number | null | undefined, poolUrl?: string | null): string {
+  return `stratum+tcp://${poolHostFromUrl(poolUrl)}:${port ?? 3333}`;
 }
 
 export function rangeToDurationMs(range: Range): number {

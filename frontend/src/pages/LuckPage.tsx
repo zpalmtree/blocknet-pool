@@ -49,7 +49,14 @@ export function LuckPage({ active, api, liveTick }: LuckPageProps) {
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-luck">
-      <h2>Pool Luck History</h2>
+      <div className="page-header">
+        <span className="page-kicker">Round History</span>
+        <h1>Blocknet pool luck history</h1>
+        <p className="page-intro">
+          Compare round effort and duration over time to understand how actual block discovery compares with expected
+          pool luck.
+        </p>
+      </div>
       <div className="card table-scroll">
         <table>
           <thead>

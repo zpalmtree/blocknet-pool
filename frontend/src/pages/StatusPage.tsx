@@ -39,7 +39,13 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-status">
-      <h2>Pool Status</h2>
+      <div className="page-header">
+        <span className="page-kicker">Pool Monitoring</span>
+        <h1>Blocknet pool status</h1>
+        <p className="page-intro">
+          Monitor uptime, daemon reachability, sync state, and recent incident history from the public status page.
+        </p>
+      </div>
 
       <div className="stats-grid">
         <div className="stat-card">

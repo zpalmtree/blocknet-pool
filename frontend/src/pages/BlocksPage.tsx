@@ -57,7 +57,14 @@ export function BlocksPage({ active, api, liveTick }: BlocksPageProps) {
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-blocks">
-      <h2>Blocks Found</h2>
+      <div className="page-header">
+        <span className="page-kicker">Block Discovery</span>
+        <h1>Recently found Blocknet blocks</h1>
+        <p className="page-intro">
+          Browse confirmed, pending, and orphaned pool blocks with reward, round effort, and elapsed round time for
+          each Blocknet block.
+        </p>
+      </div>
       <div className="filter-bar">
         <select value={filter} onChange={(e) => setFilter(e.target.value)}>
           <option value="">All Status</option>

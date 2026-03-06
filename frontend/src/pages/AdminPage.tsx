@@ -321,7 +321,7 @@ export function AdminPage({
                       <tr key={m.address}>
                         <td>
                           <a
-                            href="#/stats"
+                            href="/stats"
                             onClick={(e) => {
                               e.preventDefault();
                               onJumpToStats(m.address);

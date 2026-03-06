@@ -613,6 +613,16 @@ impl PoolStore {
         }
     }
 
+    /// Bulk per-miner lifetime counts: (accepted, rejected, blocks_found, last_share_unix).
+    pub fn miner_lifetime_counts(
+        &self,
+    ) -> Result<std::collections::HashMap<String, (u64, u64, u64, Option<i64>)>> {
+        match self {
+            PoolStore::Sqlite(v) => v.miner_lifetime_counts(),
+            PoolStore::Postgres(v) => v.miner_lifetime_counts(),
+        }
+    }
+
     pub fn apply_block_credits_and_mark_paid(
         &self,
         block_height: u64,
