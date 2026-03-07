@@ -17,6 +17,7 @@ import type {
   AdminPayoutItem,
   AdminTab,
   BlockRewardBreakdownResponse,
+  BlockItem,
   FeeEvent,
   HealthResponse,
   MinerListItem,
@@ -65,6 +66,11 @@ function formatSignedCoins(value: number | null | undefined): string {
   return `${prefix}${formatCoinAmount(Math.abs(value))} BNT`;
 }
 
+function rewardBlockOptionLabel(block: BlockItem): string {
+  const status = block.orphaned ? 'orphaned' : block.confirmed ? 'confirmed' : 'pending';
+  return `#${block.height} • ${status} • ${timeAgo(block.timestamp)}`;
+}
+
 interface AdminPageProps {
   active: boolean;
   api: ApiClient;
@@ -105,6 +111,8 @@ export function AdminPage({
   const [feePager, setFeePager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
 
   const [rewardBlockInput, setRewardBlockInput] = useState('');
+  const [rewardBlockOptions, setRewardBlockOptions] = useState<BlockItem[]>([]);
+  const [rewardBlockOptionsLoading, setRewardBlockOptionsLoading] = useState(false);
   const [rewardAddressFilter, setRewardAddressFilter] = useState('');
   const [rewardBreakdown, setRewardBreakdown] = useState<BlockRewardBreakdownResponse | null>(null);
   const [rewardBreakdownLoading, setRewardBreakdownLoading] = useState(false);
@@ -194,6 +202,29 @@ export function AdminPage({
     [api, apiKey, rewardBlockInput]
   );
 
+  const loadRewardBlocks = useCallback(async () => {
+    if (!apiKey) return;
+    setRewardBlockOptionsLoading(true);
+    try {
+      const d = await api.getBlocks({
+        paged: 'true',
+        limit: 50,
+        offset: 0,
+        sort: 'height_desc',
+      });
+      const items = d.items || [];
+      setRewardBlockOptions(items);
+      setRewardBlockInput((prev) => {
+        if (prev.trim() || !items.length) return prev;
+        return String(items[0].height);
+      });
+    } catch {
+      setRewardBlockOptions([]);
+    } finally {
+      setRewardBlockOptionsLoading(false);
+    }
+  }, [api, apiKey]);
+
   const loadHealth = useCallback(async () => {
     if (!apiKey) return;
     try {
@@ -210,11 +241,25 @@ export function AdminPage({
     if (tab === 'miners') void loadMiners();
     if (tab === 'payouts') void loadPayouts();
     if (tab === 'fees') void loadFees();
-    if (tab === 'rewards' && rewardBreakdown?.block?.height != null) {
-      void loadRewardBreakdown(rewardBreakdown.block.height);
+    if (tab === 'rewards') {
+      void loadRewardBlocks();
+      if (rewardBreakdown?.block?.height != null) {
+        void loadRewardBreakdown(rewardBreakdown.block.height);
+      }
     }
     if (tab === 'health') void loadHealth();
-  }, [active, apiKey, loadFees, loadHealth, loadMiners, loadPayouts, loadRewardBreakdown, rewardBreakdown?.block?.height, tab]);
+  }, [
+    active,
+    apiKey,
+    loadFees,
+    loadHealth,
+    loadMiners,
+    loadPayouts,
+    loadRewardBlocks,
+    loadRewardBreakdown,
+    rewardBreakdown?.block?.height,
+    tab,
+  ]);
 
   useEffect(() => {
     if (!active || !apiKey || liveTick <= 0) return;
@@ -223,8 +268,11 @@ export function AdminPage({
     if (tab === 'miners') void loadMiners();
     if (tab === 'payouts') void loadPayouts();
     if (tab === 'fees') void loadFees();
-    if (tab === 'rewards' && rewardBreakdown?.block?.height != null) {
-      void loadRewardBreakdown(rewardBreakdown.block.height);
+    if (tab === 'rewards') {
+      void loadRewardBlocks();
+      if (rewardBreakdown?.block?.height != null) {
+        void loadRewardBreakdown(rewardBreakdown.block.height);
+      }
     }
     if (tab === 'health') void loadHealth();
   }, [
@@ -236,6 +284,7 @@ export function AdminPage({
     loadHealth,
     loadMiners,
     loadPayouts,
+    loadRewardBlocks,
     loadRewardBreakdown,
     rewardBreakdown?.block?.height,
   ]);
@@ -328,6 +377,11 @@ export function AdminPage({
         ? 'dot-red'
         : 'dot-amber';
   const rewardLoadDisabled = !rewardBlockInput.trim() || !Number.isFinite(Number(rewardBlockInput.trim()));
+  const rewardSelectedBlockValue = useMemo(() => {
+    const selected = rewardBlockInput.trim();
+    if (!selected) return '';
+    return rewardBlockOptions.some((block) => String(block.height) === selected) ? selected : '';
+  }, [rewardBlockInput, rewardBlockOptions]);
   const filteredRewardParticipants = useMemo(() => {
     const items = rewardBreakdown?.participants || [];
     const filter = rewardAddressFilter.trim().toLowerCase();
@@ -599,11 +653,35 @@ export function AdminPage({
 
           <div style={{ display: tab === 'rewards' ? '' : 'none' }}>
             <div className="filter-bar">
+              <select
+                value={rewardSelectedBlockValue}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setRewardBlockInput(value);
+                  if (value && !rewardBreakdownLoading) {
+                    void loadRewardBreakdown(value);
+                  }
+                }}
+                disabled={rewardBlockOptionsLoading}
+              >
+                <option value="">
+                  {rewardBlockOptionsLoading
+                    ? 'Loading mined blocks...'
+                    : rewardBlockOptions.length
+                      ? 'Select a mined block...'
+                      : 'No mined blocks loaded'}
+                </option>
+                {rewardBlockOptions.map((block) => (
+                  <option key={`${block.height}-${block.hash}`} value={block.height}>
+                    {rewardBlockOptionLabel(block)}
+                  </option>
+                ))}
+              </select>
               <input
                 type="number"
                 min="0"
                 step="1"
-                placeholder="Block height..."
+                placeholder="Or enter block height..."
                 value={rewardBlockInput}
                 onChange={(e) => setRewardBlockInput(e.target.value)}
                 onKeyDown={(e) => {
