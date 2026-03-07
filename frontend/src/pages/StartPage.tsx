@@ -281,6 +281,8 @@ export function StartPage({ active, poolInfo, theme }: StartPageProps) {
         </table>
       </div>
 
+      {setupSection}
+
       <div className="card section">
         <h3>How Rewards Are Counted</h3>
         <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 10 }}>
@@ -301,8 +303,6 @@ export function StartPage({ active, poolInfo, theme }: StartPageProps) {
           still move until the block confirms or is orphaned.
         </p>
       </div>
-
-      {setupSection}
 
       <div className="card section">
         <h3>Seine in Action</h3>
