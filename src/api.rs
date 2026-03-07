@@ -578,11 +578,19 @@ struct RejectionAnalyticsResponse {
 struct StatsInsightsResponse {
     round: RoundProgressResponse,
     payout_eta: PayoutEtaResponse,
+    avg_effort_pct: Option<f64>,
     luck_history: Vec<LuckRoundResponse>,
     rejections: RejectionAnalyticsResponse,
 }
 
 pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
+    {
+        let store = Arc::clone(&state.store);
+        tokio::task::spawn_blocking(move || backfill_block_effort(&store))
+            .await
+            .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+    }
+
     let app_state = state.clone();
     let protected = Router::new()
         .route("/api/miners", get(handle_miners))
@@ -4578,6 +4586,32 @@ fn apply_wallet_liquidity_to_payout_eta(
         payout_eta.pending_total_amount > 0 && payout_eta.queue_shortfall_amount > 0;
 }
 
+fn backfill_block_effort(store: &PoolStore) -> anyhow::Result<()> {
+    let blocks = store.get_all_blocks()?;
+    if blocks.len() < 2 {
+        return Ok(());
+    }
+    let needs_backfill = blocks.iter().any(|b| b.effort_pct.is_none());
+    if !needs_backfill {
+        return Ok(());
+    }
+    let rounds = compute_luck_history(store, blocks, None)?;
+    let mut updated = 0u64;
+    for round in &rounds {
+        if let Some(mut block) = store.get_block(round.block_height)? {
+            if block.effort_pct.is_none() {
+                block.effort_pct = Some(round.effort_pct);
+                store.add_block(&block)?;
+                updated += 1;
+            }
+        }
+    }
+    if updated > 0 {
+        tracing::info!(updated, "backfilled block effort_pct");
+    }
+    Ok(())
+}
+
 fn compute_luck_history(
     store: &PoolStore,
     mut blocks: Vec<crate::db::DbBlock>,
@@ -4614,6 +4648,12 @@ fn compute_luck_history(
         } else {
             0.0
         };
+
+        if current.effort_pct.is_none() {
+            let mut updated = current.clone();
+            updated.effort_pct = Some(effort_pct);
+            let _ = store.add_block(&updated);
+        }
 
         rounds.push(LuckRoundResponse {
             block_height: current.height,
@@ -5185,7 +5225,7 @@ impl ApiState {
 
         let store = Arc::clone(&self.store);
         let now = SystemTime::now();
-        let (pool_hashrate, round_start, round_work, mut payout_eta, luck_history) =
+        let (pool_hashrate, round_start, round_work, mut payout_eta, luck_history, avg_effort_pct) =
             tokio::task::spawn_blocking(move || {
                 let pool_hashrate = db_pool_hashrate(&store);
 
@@ -5206,6 +5246,7 @@ impl ApiState {
 
                 let payout_eta = compute_payout_eta(&store)?;
                 let luck_history = compute_luck_history(&store, blocks, Some(16))?;
+                let avg_effort_pct = store.avg_effort_pct().unwrap_or(None);
 
                 Ok::<_, anyhow::Error>((
                     pool_hashrate,
@@ -5213,6 +5254,7 @@ impl ApiState {
                     round_work,
                     payout_eta,
                     luck_history,
+                    avg_effort_pct,
                 ))
             })
             .await
@@ -5267,6 +5309,7 @@ impl ApiState {
                 target_block_seconds: ROUND_TARGET_SECONDS,
             },
             payout_eta,
+            avg_effort_pct,
             luck_history,
             rejections: RejectionAnalyticsResponse {
                 window: rejection_window,
@@ -6110,6 +6153,7 @@ mod tests {
                 confirmed: true,
                 orphaned: false,
                 paid_out: true,
+            effort_pct: None,
             })
             .expect("add collected block");
         store
@@ -6133,6 +6177,7 @@ mod tests {
                 confirmed: false,
                 orphaned: false,
                 paid_out: false,
+            effort_pct: None,
             })
             .expect("add pending block");
         store
@@ -6147,6 +6192,7 @@ mod tests {
                 confirmed: true,
                 orphaned: false,
                 paid_out: false,
+            effort_pct: None,
             })
             .expect("add ready block");
         store
@@ -6161,6 +6207,7 @@ mod tests {
                 confirmed: true,
                 orphaned: false,
                 paid_out: true,
+            effort_pct: None,
             })
             .expect("add missing block");
         store
@@ -6175,6 +6222,7 @@ mod tests {
                 confirmed: false,
                 orphaned: true,
                 paid_out: false,
+            effort_pct: None,
             })
             .expect("add orphaned block");
 
@@ -6248,6 +6296,7 @@ mod tests {
                 confirmed: false,
                 orphaned: false,
                 paid_out: false,
+            effort_pct: None,
             })
             .expect("add pending block");
 
@@ -6624,6 +6673,7 @@ mod tests {
                 confirmed: false,
                 orphaned: false,
                 paid_out: false,
+            effort_pct: None,
             })
             .expect("add unconfirmed block");
 
@@ -6695,6 +6745,7 @@ mod tests {
                 confirmed: true,
                 orphaned: false,
                 paid_out: false,
+            effort_pct: None,
             })
             .expect("add paid block");
         store
@@ -6790,6 +6841,7 @@ mod tests {
                 confirmed: false,
                 orphaned: false,
                 paid_out: false,
+            effort_pct: None,
             })
             .expect("add block");
 
@@ -6874,6 +6926,7 @@ mod tests {
                 confirmed: false,
                 orphaned: false,
                 paid_out: false,
+            effort_pct: None,
             })
             .expect("add unconfirmed block");
 
@@ -6941,6 +6994,7 @@ mod tests {
                     confirmed: true,
                     orphaned: false,
                     paid_out: false,
+                effort_pct: None,
                 })
                 .expect("add block");
         }
@@ -7003,6 +7057,7 @@ mod tests {
                     confirmed: true,
                     orphaned: false,
                     paid_out: false,
+                effort_pct: None,
                 })
                 .expect("add block");
         }
@@ -7290,6 +7345,7 @@ mod tests {
             confirmed: false,
             orphaned: false,
             paid_out: false,
+        effort_pct: None,
         };
         hydrate_provisional_block_reward(&mut block);
         assert_eq!(block.reward, estimated_block_reward(3707));
@@ -7308,6 +7364,7 @@ mod tests {
             confirmed: true,
             orphaned: false,
             paid_out: false,
+        effort_pct: None,
         };
         hydrate_provisional_block_reward(&mut block);
         assert_eq!(block.reward, 123);

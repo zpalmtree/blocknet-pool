@@ -167,6 +167,13 @@ impl PoolStore {
         }
     }
 
+    pub fn avg_effort_pct(&self) -> Result<Option<f64>> {
+        match self {
+            PoolStore::Sqlite(v) => v.avg_effort_pct(),
+            PoolStore::Postgres(v) => v.avg_effort_pct(),
+        }
+    }
+
     pub fn get_blocks_page(
         &self,
         finder: Option<&str>,
@@ -825,6 +832,7 @@ impl ShareStore for PoolStore {
             confirmed: false,
             orphaned: false,
             paid_out: false,
+            effort_pct: None,
         };
 
         match self {
@@ -1011,6 +1019,7 @@ mod tests {
                 confirmed: true,
                 orphaned: false,
                 paid_out: true,
+            effort_pct: None,
             })
             .expect("seed existing block");
 

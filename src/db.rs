@@ -54,6 +54,7 @@ pub struct DbBlock {
     pub confirmed: bool,
     pub orphaned: bool,
     pub paid_out: bool,
+    pub effort_pct: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -339,6 +340,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         self.ensure_payout_fee_column()?;
         self.ensure_share_reject_reason_column()?;
         self.ensure_pending_payout_columns()?;
+        self.ensure_block_effort_pct_column()?;
         Ok(())
     }
 
@@ -395,6 +397,29 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             conn.execute("ALTER TABLE pending_payouts ADD COLUMN sent_at INTEGER", [])?;
         }
         Ok(())
+    }
+
+    fn ensure_block_effort_pct_column(&self) -> Result<()> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare("PRAGMA table_info(blocks)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        for row in rows {
+            if row?.eq_ignore_ascii_case("effort_pct") {
+                return Ok(());
+            }
+        }
+        conn.execute("ALTER TABLE blocks ADD COLUMN effort_pct REAL", [])?;
+        Ok(())
+    }
+
+    pub fn avg_effort_pct(&self) -> Result<Option<f64>> {
+        let conn = self.conn.lock();
+        let avg: Option<f64> = conn.query_row(
+            "SELECT AVG(effort_pct) FROM blocks WHERE orphaned = 0 AND effort_pct IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(avg)
     }
 
     pub fn add_share_immediate(&self, share: ShareRecord) -> Result<()> {
@@ -645,8 +670,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn add_block(&self, block: &DbBlock) -> Result<()> {
         self.conn.lock().execute(
-            "INSERT INTO blocks (height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            "INSERT INTO blocks (height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(height) DO UPDATE SET
                  hash=excluded.hash,
                  difficulty=excluded.difficulty,
@@ -656,7 +681,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                  timestamp=excluded.timestamp,
                  confirmed=excluded.confirmed,
                  orphaned=excluded.orphaned,
-                 paid_out=excluded.paid_out",
+                 paid_out=excluded.paid_out,
+                 effort_pct=excluded.effort_pct",
             params![
                 u64_to_i64(block.height)?,
                 block.hash,
@@ -668,6 +694,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 if block.confirmed { 1i64 } else { 0i64 },
                 if block.orphaned { 1i64 } else { 0i64 },
                 if block.paid_out { 1i64 } else { 0i64 },
+                block.effort_pct,
             ],
         )?;
         Ok(())
@@ -675,8 +702,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn insert_block_if_absent(&self, block: &DbBlock) -> Result<bool> {
         let inserted = self.conn.lock().execute(
-            "INSERT INTO blocks (height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            "INSERT INTO blocks (height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(height) DO NOTHING",
             params![
                 u64_to_i64(block.height)?,
@@ -689,6 +716,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 if block.confirmed { 1i64 } else { 0i64 },
                 if block.orphaned { 1i64 } else { 0i64 },
                 if block.paid_out { 1i64 } else { 0i64 },
+                block.effort_pct,
             ],
         )?;
         Ok(inserted > 0)
@@ -697,7 +725,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     pub fn get_block(&self, height: u64) -> Result<Option<DbBlock>> {
         let conn = self.conn.lock();
         conn.query_row(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
              FROM blocks WHERE height = ?1",
             params![u64_to_i64(height)?],
             row_to_block,
@@ -713,7 +741,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     pub fn get_recent_blocks(&self, limit: i64) -> Result<Vec<DbBlock>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
              FROM blocks ORDER BY height DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit], row_to_block)?;
@@ -723,7 +751,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     pub fn get_all_blocks(&self) -> Result<Vec<DbBlock>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
              FROM blocks ORDER BY height DESC",
         )?;
         let rows = stmt.query_map([], row_to_block)?;
@@ -770,7 +798,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         )?;
 
         let sql = format!(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
              FROM blocks
              WHERE (?1 IS NULL OR LOWER(finder) LIKE ?1)
                AND (
@@ -802,7 +830,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     pub fn get_unconfirmed_blocks(&self) -> Result<Vec<DbBlock>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
              FROM blocks WHERE confirmed = 0 AND orphaned = 0 ORDER BY height ASC",
         )?;
         let rows = stmt.query_map([], row_to_block)?;
@@ -812,7 +840,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     pub fn get_unpaid_blocks(&self) -> Result<Vec<DbBlock>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
              FROM blocks WHERE confirmed = 1 AND orphaned = 0 AND paid_out = 0 ORDER BY height ASC",
         )?;
         let rows = stmt.query_map([], row_to_block)?;
@@ -2384,7 +2412,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     pub fn get_blocks_for_miner(&self, address: &str) -> Result<Vec<DbBlock>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
              FROM blocks WHERE finder = ?1 ORDER BY height DESC",
         )?;
         let rows = stmt.query_map(params![address], row_to_block)?;
@@ -2558,6 +2586,7 @@ fn row_to_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<DbBlock> {
         confirmed: row.get::<_, i64>(7)? != 0,
         orphaned: row.get::<_, i64>(8)? != 0,
         paid_out: row.get::<_, i64>(9)? != 0,
+        effort_pct: row.get::<_, Option<f64>>(10)?,
     })
 }
 
@@ -3175,6 +3204,7 @@ mod tests {
                 confirmed: true,
                 orphaned: false,
                 paid_out: false,
+            effort_pct: None,
             })
             .expect("insert block");
 
@@ -3223,6 +3253,7 @@ mod tests {
                 confirmed: true,
                 orphaned: false,
                 paid_out: false,
+            effort_pct: None,
             })
             .expect("insert block");
 
@@ -3259,6 +3290,7 @@ mod tests {
                 confirmed: true,
                 orphaned: false,
                 paid_out: false,
+            effort_pct: None,
             })
             .expect("insert block");
 

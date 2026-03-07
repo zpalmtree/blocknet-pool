@@ -120,12 +120,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
   const payoutEta = insights?.payout_eta;
   const latestSolvedBlock = insights?.luck_history?.[0];
 
-  const avgLuck = (() => {
-    const hist = insights?.luck_history;
-    if (!hist?.length) return null;
-    const sum = hist.reduce((acc, r) => acc + (r.effort_pct ?? 0), 0);
-    return sum / hist.length;
-  })();
+  const avgLuck = insights?.avg_effort_pct;
   return (
     <div className={active ? 'page active' : 'page'} id="page-dashboard">
       <div className="page-header">

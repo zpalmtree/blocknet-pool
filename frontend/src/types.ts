@@ -324,6 +324,7 @@ export interface RejectionAnalytics {
 export interface StatsInsightsResponse {
   round: RoundProgress;
   payout_eta: PayoutEta;
+  avg_effort_pct?: number | null;
   luck_history: LuckRound[];
   rejections: {
     window: RejectionAnalytics;
