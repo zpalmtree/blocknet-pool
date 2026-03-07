@@ -32,7 +32,9 @@
 ### Typical deploy flow
 
 1. Build frontend: `npm --prefix frontend run build`
-2. Build Rust binaries: `cargo build --release --bin blocknet-pool-api --bin blocknet-pool-stratum`
+2. Build Rust binaries:
+   `cargo build --release --bin blocknet-pool-api --no-default-features --features api`
+   `cargo build --release --bin blocknet-pool-stratum --no-default-features --features stratum`
 3. Deploy: `bash scripts/deploy_bntpool.sh --skip-ui-build`
 
 ## Git

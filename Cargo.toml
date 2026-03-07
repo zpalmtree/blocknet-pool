@@ -3,6 +3,26 @@ name = "blocknet-pool-rs"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["api", "stratum"]
+api = []
+stratum = []
+
+[[bin]]
+name = "blocknet-pool-api"
+path = "src/bin/blocknet-pool-api.rs"
+required-features = ["api"]
+
+[[bin]]
+name = "blocknet-pool-stratum"
+path = "src/bin/blocknet-pool-stratum.rs"
+required-features = ["stratum"]
+
+[[bin]]
+name = "blocknet-pool-rs"
+path = "src/main.rs"
+required-features = ["api", "stratum"]
+
 [dependencies]
 anyhow = "1.0"
 argon2 = "0.5"

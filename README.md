@@ -77,7 +77,8 @@ explicit.
 ```bash
 npm --prefix frontend ci
 npm --prefix frontend run build
-cargo build --release
+cargo build --release --bin blocknet-pool-api --no-default-features --features api
+cargo build --release --bin blocknet-pool-stratum --no-default-features --features stratum
 cargo run --release
 # runs the combined API + Stratum binary for local/dev use
 # if missing, config.json and .env are created automatically
@@ -87,8 +88,8 @@ cargo run --release
 Run the split binaries directly when you want production-like local behavior:
 
 ```bash
-cargo run --release --bin blocknet-pool-api
-cargo run --release --bin blocknet-pool-stratum
+cargo run --release --bin blocknet-pool-api --no-default-features --features api
+cargo run --release --bin blocknet-pool-stratum --no-default-features --features stratum
 ```
 
 Custom config:
@@ -117,7 +118,7 @@ npm ci
 npm run build
 ```
 
-Build output is written to `frontend/dist/` and embedded into the API binary during the Rust build. A fresh clone must build the frontend before `cargo build` or `cargo run`.
+Build output is written to `frontend/dist/` and embedded into the API binary during API builds. A fresh clone must build the frontend before `cargo build` or `cargo run` for `blocknet-pool-api` or the combined binary.
 
 The embedded assets are served at:
 

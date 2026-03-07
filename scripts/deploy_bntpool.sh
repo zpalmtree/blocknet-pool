@@ -82,9 +82,10 @@ build_locally() {
       -e HOST_UID="${host_uid}" \
       -e HOST_GID="${host_gid}" \
       "${local_build_image}" \
-      bash -lc "set -euo pipefail; export PATH=/usr/local/cargo/bin:\$PATH; cargo build --release --bin blocknet-pool-api --bin blocknet-pool-stratum; chown -R \"${host_uid}:${host_gid}\" /work/target"
+      bash -lc "set -euo pipefail; export PATH=/usr/local/cargo/bin:\$PATH; cargo build --release --bin blocknet-pool-api --no-default-features --features api; cargo build --release --bin blocknet-pool-stratum --no-default-features --features stratum; chown -R \"${host_uid}:${host_gid}\" /work/target"
   else
-    cargo build --release --bin blocknet-pool-api --bin blocknet-pool-stratum
+    cargo build --release --bin blocknet-pool-api --no-default-features --features api
+    cargo build --release --bin blocknet-pool-stratum --no-default-features --features stratum
   fi
 }
 

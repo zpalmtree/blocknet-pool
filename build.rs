@@ -6,6 +6,10 @@ use std::time::SystemTime;
 const REQUIRED_UI_ASSETS: &[&str] = &["index.html", "app.js", "app.css"];
 
 fn main() {
+    if env::var_os("CARGO_FEATURE_API").is_none() {
+        return;
+    }
+
     let repo_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("manifest dir"));
     let frontend_dir = repo_dir.join("frontend");
     let frontend_src_dir = frontend_dir.join("src");
