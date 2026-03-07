@@ -27,6 +27,12 @@ export function StartPage({ active, poolInfo, theme }: StartPageProps) {
   const [copiedKey, setCopiedKey] = useState('');
   const poolUrl = stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url);
   const commandExample = `./seine --pool-url ${poolUrl} --address YOUR_BLOCKNET_ADDRESS`;
+  const pplnsWindowLabel =
+    poolInfo?.payout_scheme?.toUpperCase() === 'PPLNS'
+      ? poolInfo?.pplns_window_duration && poolInfo.pplns_window_duration !== '0s'
+        ? poolInfo.pplns_window_duration
+        : `last ${poolInfo?.pplns_window ?? 0} shares`
+      : null;
 
   useEffect(() => {
     if (!copiedKey) return;
@@ -275,6 +281,27 @@ export function StartPage({ active, poolInfo, theme }: StartPageProps) {
         </table>
       </div>
 
+      <div className="card section">
+        <h3>How Rewards Are Counted</h3>
+        <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 10 }}>
+          This pool uses <strong style={{ color: 'var(--text)' }}>{(poolInfo?.payout_scheme || 'pplns').toUpperCase()}</strong>
+          {pplnsWindowLabel ? (
+            <>
+              {' '}
+              with a <strong style={{ color: 'var(--text)' }}>{pplnsWindowLabel}</strong> payout window.
+            </>
+          ) : null}
+        </p>
+        <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 10 }}>
+          Rewards are based on shares submitted before a block is found. If your hashrate increases right after a block,
+          that work helps with later blocks, not the one that was just found.
+        </p>
+        <p style={{ color: 'var(--muted)', fontSize: 14 }}>
+          <a href="/stats">My Stats</a> shows tentative rewards from unconfirmed blocks separately. Those estimates can
+          still move until the block confirms or is orphaned.
+        </p>
+      </div>
+
       {setupSection}
 
       <div className="card section">
@@ -288,30 +315,6 @@ export function StartPage({ active, poolInfo, theme }: StartPageProps) {
             <img src="/ui-assets/mining-tui.png" alt="Seine mining TUI" />
             <div className="caption">Mining TUI</div>
           </div>
-        </div>
-      </div>
-
-      <div className="seo-copy-grid">
-        <div className="card seo-copy-card">
-          <h3>Transparent pool data</h3>
-          <p>
-            Review blocks, payout batches, and pool status from public pages before you point any hashpower at the
-            pool.
-          </p>
-        </div>
-        <div className="card seo-copy-card">
-          <h3>Simple Blocknet setup</h3>
-          <p>
-            The setup flow is built around Seine, so you only need your Blocknet wallet address and the pool URL to get
-            started.
-          </p>
-        </div>
-        <div className="card seo-copy-card">
-          <h3>Operator visibility</h3>
-          <p>
-            Live dashboard metrics, historical luck, and uptime tracking make it easier to compare pool performance over
-            time.
-          </p>
         </div>
       </div>
 

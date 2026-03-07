@@ -8,8 +8,8 @@ use parking_lot::Mutex;
 use postgres::{Client, NoTls};
 
 use crate::db::{
-    AddressRiskState, Balance, DbBlock, DbShare, Payout, PendingPayout, PoolFeeEvent,
-    PoolFeeRecord, PublicPayoutBatch,
+    AddressRiskState, Balance, BlockCreditEvent, DbBlock, DbShare, Payout, PendingPayout,
+    PoolFeeEvent, PoolFeeRecord, PublicPayoutBatch,
 };
 use crate::engine::{ShareRecord, ShareStore};
 use crate::stats::RejectionReasonCount;
@@ -125,6 +125,18 @@ CREATE TABLE IF NOT EXISTS pool_fee_events (
 );
 CREATE INDEX IF NOT EXISTS idx_pool_fee_events_timestamp ON pool_fee_events(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_pool_fee_events_fee_address ON pool_fee_events(fee_address);
+
+CREATE TABLE IF NOT EXISTS block_credit_events (
+    id BIGSERIAL PRIMARY KEY,
+    block_height BIGINT NOT NULL,
+    address TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    UNIQUE (block_height, address)
+);
+CREATE INDEX IF NOT EXISTS idx_block_credit_events_block_height
+    ON block_credit_events(block_height, amount DESC, address ASC);
+CREATE INDEX IF NOT EXISTS idx_block_credit_events_address
+    ON block_credit_events(address, block_height DESC);
 
 CREATE TABLE IF NOT EXISTS address_risk (
     address TEXT PRIMARY KEY,
@@ -787,6 +799,17 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                  ON CONFLICT(address) DO UPDATE SET pending = EXCLUDED.pending, paid = EXCLUDED.paid",
                 &[&bal.address, &u64_to_i64(bal.pending)?, &u64_to_i64(bal.paid)?],
             )?;
+
+            tx.execute(
+                "INSERT INTO block_credit_events (block_height, address, amount)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT(block_height, address) DO NOTHING",
+                &[
+                    &u64_to_i64(block_height)?,
+                    &destination,
+                    &u64_to_i64(*amount)?,
+                ],
+            )?;
         }
 
         if let Some(fee) = fee_record {
@@ -989,7 +1012,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 &offset.max(0),
             ],
         )?;
-        let items = rows.into_iter().map(row_to_payout).collect::<Result<Vec<_>>>()?;
+        let items = rows
+            .into_iter()
+            .map(row_to_payout)
+            .collect::<Result<Vec<_>>>()?;
 
         Ok((items, total.max(0) as u64))
     }
@@ -1137,6 +1163,25 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 amount: row.get::<_, i64>(2).max(0) as u64,
                 fee_address: row.get::<_, String>(3),
                 timestamp: from_unix(row.get::<_, i64>(4)),
+            })
+            .collect())
+    }
+
+    pub fn get_block_credit_events(&self, block_height: u64) -> Result<Vec<BlockCreditEvent>> {
+        let rows = self.conn().lock().query(
+            "SELECT id, block_height, address, amount
+             FROM block_credit_events
+             WHERE block_height = $1
+             ORDER BY amount DESC, address ASC",
+            &[&u64_to_i64(block_height)?],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| BlockCreditEvent {
+                id: row.get::<_, i64>(0),
+                block_height: row.get::<_, i64>(1).max(0) as u64,
+                address: row.get::<_, String>(2),
+                amount: row.get::<_, i64>(3).max(0) as u64,
             })
             .collect())
     }

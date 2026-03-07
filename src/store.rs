@@ -6,8 +6,8 @@ use tracing::warn;
 
 use crate::config::Config;
 use crate::db::{
-    AddressRiskState, Balance, DbBlock, DbShare, Payout, PendingPayout, PoolFeeEvent,
-    PoolFeeRecord, PublicPayoutBatch, SqliteStore, StatSnapshot,
+    AddressRiskState, Balance, BlockCreditEvent, DbBlock, DbShare, Payout, PendingPayout,
+    PoolFeeEvent, PoolFeeRecord, PublicPayoutBatch, SqliteStore, StatSnapshot,
 };
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::pgdb::PostgresStore;
@@ -343,6 +343,13 @@ impl PoolStore {
         match self {
             PoolStore::Sqlite(v) => v.get_all_pool_fees(),
             PoolStore::Postgres(v) => v.get_all_pool_fees(),
+        }
+    }
+
+    pub fn get_block_credit_events(&self, block_height: u64) -> Result<Vec<BlockCreditEvent>> {
+        match self {
+            PoolStore::Sqlite(v) => v.get_block_credit_events(block_height),
+            PoolStore::Postgres(v) => v.get_block_credit_events(block_height),
         }
     }
 

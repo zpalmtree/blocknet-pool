@@ -7,7 +7,7 @@ export type Route =
   | 'stats'
   | 'admin'
   | 'status';
-export type AdminTab = 'miners' | 'payouts' | 'fees' | 'health' | 'logs';
+export type AdminTab = 'miners' | 'payouts' | 'fees' | 'rewards' | 'health' | 'logs';
 export type Range = '1h' | '24h' | '7d' | '30d';
 
 export type UnixLike =
@@ -41,6 +41,9 @@ export interface InfoResponse {
   min_payout_amount?: number;
   blocks_before_payout?: number;
   payout_scheme?: string;
+  pplns_window?: number;
+  pplns_window_duration?: string;
+  provisional_share_delay?: string;
 }
 
 export interface BlockItem {
@@ -177,6 +180,49 @@ export interface FeeEvent {
   amount: number;
   fee_address: string;
   timestamp: UnixLike;
+}
+
+export interface RewardWindowSummary {
+  label: string;
+  start?: UnixLike | null;
+  end: UnixLike;
+  share_count: number;
+  participant_count: number;
+}
+
+export interface BlockRewardParticipant {
+  address: string;
+  finder: boolean;
+  risky: boolean;
+  verified_shares: number;
+  verified_difficulty: number;
+  provisional_shares_eligible: number;
+  provisional_difficulty_eligible: number;
+  provisional_shares_ineligible: number;
+  provisional_difficulty_ineligible: number;
+  preview_weight: number;
+  preview_share_pct: number;
+  preview_credit: number;
+  preview_status: string;
+  payout_weight: number;
+  payout_share_pct: number;
+  payout_credit: number;
+  payout_status: string;
+  actual_credit?: number | null;
+  delta_vs_payout?: number | null;
+}
+
+export interface BlockRewardBreakdownResponse {
+  block: BlockItem;
+  payout_scheme: string;
+  share_window: RewardWindowSummary;
+  fee_amount: number;
+  distributable_reward: number;
+  preview_total_weight: number;
+  payout_total_weight: number;
+  actual_credit_events_available: boolean;
+  actual_credit_total: number;
+  participants: BlockRewardParticipant[];
 }
 
 export interface FeesResponse {

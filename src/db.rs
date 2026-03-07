@@ -108,6 +108,14 @@ pub struct PoolFeeEvent {
     pub timestamp: SystemTime,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct BlockCreditEvent {
+    pub id: i64,
+    pub block_height: u64,
+    pub address: String,
+    pub amount: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct PoolFeeRecord {
     pub amount: u64,
@@ -233,6 +241,18 @@ CREATE TABLE IF NOT EXISTS pool_fee_events (
 );
 CREATE INDEX IF NOT EXISTS idx_pool_fee_events_timestamp ON pool_fee_events(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_pool_fee_events_fee_address ON pool_fee_events(fee_address);
+
+CREATE TABLE IF NOT EXISTS block_credit_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    block_height INTEGER NOT NULL,
+    address TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    UNIQUE (block_height, address)
+);
+CREATE INDEX IF NOT EXISTS idx_block_credit_events_block_height
+    ON block_credit_events(block_height, amount DESC, address ASC);
+CREATE INDEX IF NOT EXISTS idx_block_credit_events_address
+    ON block_credit_events(address, block_height DESC);
 
 CREATE TABLE IF NOT EXISTS address_risk (
     address TEXT PRIMARY KEY,
@@ -965,6 +985,12 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     u64_to_i64(bal.paid)?,
                 ],
             )?;
+
+            tx.execute(
+                "INSERT OR IGNORE INTO block_credit_events (block_height, address, amount)
+                 VALUES (?1, ?2, ?3)",
+                params![u64_to_i64(block_height)?, destination, u64_to_i64(*amount)?],
+            )?;
         }
 
         if let Some(fee) = fee_record {
@@ -1362,6 +1388,21 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              FROM pool_fee_events ORDER BY id DESC",
         )?;
         let rows = stmt.query_map([], row_to_pool_fee_event)?;
+        collect_rows(rows)
+    }
+
+    pub fn get_block_credit_events(&self, block_height: u64) -> Result<Vec<BlockCreditEvent>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, block_height, address, amount
+             FROM block_credit_events
+             WHERE block_height = ?1
+             ORDER BY amount DESC, address ASC",
+        )?;
+        let rows = stmt.query_map(
+            params![u64_to_i64(block_height)?],
+            row_to_block_credit_event,
+        )?;
         collect_rows(rows)
     }
 
@@ -2530,6 +2571,15 @@ fn row_to_pool_fee_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<PoolFeeEve
     })
 }
 
+fn row_to_block_credit_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<BlockCreditEvent> {
+    Ok(BlockCreditEvent {
+        id: row.get(0)?,
+        block_height: row.get::<_, i64>(1)?.max(0) as u64,
+        address: row.get(2)?,
+        amount: row.get::<_, i64>(3)?.max(0) as u64,
+    })
+}
+
 fn sort_reason_counts(entries: Vec<(String, u64)>) -> Vec<RejectionReasonCount> {
     let mut counts = HashMap::<String, u64>::new();
     for (reason, count) in entries {
@@ -3135,6 +3185,14 @@ mod tests {
 
         assert_eq!(store.get_balance("addr1").expect("bal1").pending, 60);
         assert_eq!(store.get_balance("addr2").expect("bal2").pending, 40);
+        let credit_events = store
+            .get_block_credit_events(7)
+            .expect("credit events for paid block");
+        assert_eq!(credit_events.len(), 2);
+        assert_eq!(credit_events[0].address, "addr1");
+        assert_eq!(credit_events[0].amount, 60);
+        assert_eq!(credit_events[1].address, "addr2");
+        assert_eq!(credit_events[1].amount, 40);
         assert!(
             store
                 .get_block(7)

@@ -51,7 +51,7 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
         warn!(
             host = %cfg.api_host,
             port = cfg.api_port,
-            "api_key is empty; protected routes (/api/miners, /api/payouts, /api/fees, /api/health, /api/daemon/logs/stream) are disabled while public routes remain available (/api/info, /api/stats, /api/stats/history, /api/stats/insights, /api/luck, /api/status, /api/events, /api/blocks, /api/payouts/recent, /api/miner/:address, /api/miner/:address/balance, /api/miner/:address/hashrate)"
+            "api_key is empty; protected routes (/api/miners, /api/payouts, /api/fees, /api/admin/blocks/:height/reward-breakdown, /api/health, /api/daemon/logs/stream) are disabled while public routes remain available (/api/info, /api/stats, /api/stats/history, /api/stats/insights, /api/luck, /api/status, /api/events, /api/blocks, /api/payouts/recent, /api/miner/:address, /api/miner/:address/balance, /api/miner/:address/hashrate)"
         );
     }
     if !cfg.api_tls_cert_path.trim().is_empty() ^ !cfg.api_tls_key_path.trim().is_empty() {

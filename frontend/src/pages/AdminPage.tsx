@@ -1,12 +1,69 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
 import { Pager } from '../components/Pager';
-import { fmtSeconds, formatCoins, formatFee, humanRate, shortAddr, shortTx, timeAgo, toUnixMs } from '../lib/format';
-import type { AdminPayoutItem, AdminTab, FeeEvent, HealthResponse, MinerListItem, PagerState } from '../types';
+import {
+  fmtSeconds,
+  formatCoinAmount,
+  formatCoins,
+  formatFee,
+  humanRate,
+  shortAddr,
+  shortTx,
+  timeAgo,
+  toUnixMs,
+} from '../lib/format';
+import type {
+  AdminPayoutItem,
+  AdminTab,
+  BlockRewardBreakdownResponse,
+  FeeEvent,
+  HealthResponse,
+  MinerListItem,
+  PagerState,
+} from '../types';
 
 const MAX_DAEMON_LOG_LINES = 1000;
 const DAEMON_LOG_RECONNECT_DELAY_MS = 1500;
+
+function rewardStatusLabel(status: string): string {
+  switch (status) {
+    case 'included':
+      return 'Included';
+    case 'finder_fallback':
+      return 'Finder fallback';
+    case 'risky':
+      return 'Risky';
+    case 'awaiting_verified_shares':
+      return 'Needs verified shares';
+    case 'awaiting_verified_ratio':
+      return 'Needs verified ratio';
+    case 'recorded_only':
+      return 'Recorded only';
+    default:
+      return 'No eligible shares';
+  }
+}
+
+function rewardStatusTone(status: string): string {
+  switch (status) {
+    case 'included':
+    case 'finder_fallback':
+      return 'var(--good)';
+    case 'risky':
+      return 'var(--bad)';
+    case 'recorded_only':
+      return 'var(--muted)';
+    default:
+      return 'var(--warn)';
+  }
+}
+
+function formatSignedCoins(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '-';
+  const prefix = value > 0 ? '+' : value < 0 ? '-' : '';
+  return `${prefix}${formatCoinAmount(Math.abs(value))} BNT`;
+}
 
 interface AdminPageProps {
   active: boolean;
@@ -46,6 +103,11 @@ export function AdminPage({
   const [feesTotal, setFeesTotal] = useState(0);
   const [feeItems, setFeeItems] = useState<FeeEvent[]>([]);
   const [feePager, setFeePager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
+
+  const [rewardBlockInput, setRewardBlockInput] = useState('');
+  const [rewardAddressFilter, setRewardAddressFilter] = useState('');
+  const [rewardBreakdown, setRewardBreakdown] = useState<BlockRewardBreakdownResponse | null>(null);
+  const [rewardBreakdownLoading, setRewardBreakdownLoading] = useState(false);
 
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [daemonLogs, setDaemonLogs] = useState<string[]>([]);
@@ -111,6 +173,27 @@ export function AdminPage({
     }
   }, [api, apiKey, feePager.limit, feePager.offset]);
 
+  const loadRewardBreakdown = useCallback(
+    async (heightOverride?: number | string) => {
+      if (!apiKey) return;
+      const raw = String(heightOverride ?? rewardBlockInput).trim();
+      const height = Math.floor(Number(raw));
+      if (!raw || !Number.isFinite(height) || height < 0) return;
+
+      setRewardBreakdownLoading(true);
+      try {
+        const d = await api.getAdminBlockRewardBreakdown(height);
+        setRewardBreakdown(d);
+        setRewardBlockInput(String(height));
+      } catch {
+        // handled by api client
+      } finally {
+        setRewardBreakdownLoading(false);
+      }
+    },
+    [api, apiKey, rewardBlockInput]
+  );
+
   const loadHealth = useCallback(async () => {
     if (!apiKey) return;
     try {
@@ -127,8 +210,11 @@ export function AdminPage({
     if (tab === 'miners') void loadMiners();
     if (tab === 'payouts') void loadPayouts();
     if (tab === 'fees') void loadFees();
+    if (tab === 'rewards' && rewardBreakdown?.block?.height != null) {
+      void loadRewardBreakdown(rewardBreakdown.block.height);
+    }
     if (tab === 'health') void loadHealth();
-  }, [active, apiKey, loadFees, loadHealth, loadMiners, loadPayouts, tab]);
+  }, [active, apiKey, loadFees, loadHealth, loadMiners, loadPayouts, loadRewardBreakdown, rewardBreakdown?.block?.height, tab]);
 
   useEffect(() => {
     if (!active || !apiKey || liveTick <= 0) return;
@@ -137,6 +223,9 @@ export function AdminPage({
     if (tab === 'miners') void loadMiners();
     if (tab === 'payouts') void loadPayouts();
     if (tab === 'fees') void loadFees();
+    if (tab === 'rewards' && rewardBreakdown?.block?.height != null) {
+      void loadRewardBreakdown(rewardBreakdown.block.height);
+    }
     if (tab === 'health') void loadHealth();
   }, [
     active,
@@ -147,6 +236,8 @@ export function AdminPage({
     loadHealth,
     loadMiners,
     loadPayouts,
+    loadRewardBreakdown,
+    rewardBreakdown?.block?.height,
   ]);
 
   useEffect(() => {
@@ -236,6 +327,13 @@ export function AdminPage({
       : daemonLogsStatus === 'error'
         ? 'dot-red'
         : 'dot-amber';
+  const rewardLoadDisabled = !rewardBlockInput.trim() || !Number.isFinite(Number(rewardBlockInput.trim()));
+  const filteredRewardParticipants = useMemo(() => {
+    const items = rewardBreakdown?.participants || [];
+    const filter = rewardAddressFilter.trim().toLowerCase();
+    if (!filter) return items;
+    return items.filter((row) => row.address.toLowerCase().includes(filter));
+  }, [rewardAddressFilter, rewardBreakdown?.participants]);
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-admin">
@@ -279,6 +377,9 @@ export function AdminPage({
             </button>
             <button className={tab === 'fees' ? 'active' : ''} onClick={() => setTab('fees')}>
               Fees
+            </button>
+            <button className={tab === 'rewards' ? 'active' : ''} onClick={() => setTab('rewards')}>
+              Rewards
             </button>
             <button className={tab === 'health' ? 'active' : ''} onClick={() => setTab('health')}>
               Health
@@ -454,7 +555,7 @@ export function AdminPage({
             </div>
           </div>
 
-        <div style={{ display: tab === 'fees' ? '' : 'none' }}>
+          <div style={{ display: tab === 'fees' ? '' : 'none' }}>
           <p style={{ fontSize: 14, color: 'var(--muted)', marginBottom: 12 }}>
             Total Collected: <span className="mono">{formatCoins(feesTotal)}</span>
           </p>
@@ -494,6 +595,234 @@ export function AdminPage({
                 onNext={() => setFeePager((p) => ({ ...p, offset: p.offset + p.limit }))}
               />
             </div>
+          </div>
+
+          <div style={{ display: tab === 'rewards' ? '' : 'none' }}>
+            <div className="filter-bar">
+              <input
+                type="number"
+                min="0"
+                step="1"
+                placeholder="Block height..."
+                value={rewardBlockInput}
+                onChange={(e) => setRewardBlockInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !rewardLoadDisabled && !rewardBreakdownLoading) {
+                    void loadRewardBreakdown();
+                  }
+                }}
+              />
+              <input
+                type="text"
+                placeholder="Filter participant address..."
+                value={rewardAddressFilter}
+                onChange={(e) => setRewardAddressFilter(e.target.value)}
+              />
+              <button
+                className="btn btn-primary"
+                disabled={rewardLoadDisabled || rewardBreakdownLoading}
+                onClick={() => void loadRewardBreakdown()}
+              >
+                {rewardBreakdownLoading ? 'Loading…' : 'Load Block'}
+              </button>
+            </div>
+
+            {!rewardBreakdown ? (
+              <div className="card section">
+                <h3>Reward Breakdown</h3>
+                <p style={{ color: 'var(--muted)', fontSize: 14 }}>
+                  Load a block height to inspect the current preview math, the final payout math, and any recorded
+                  credited amounts for that block.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="stats-grid stats-grid-dense" style={{ marginBottom: 20 }}>
+                  <div className="stat-card">
+                    <div className="label">Block</div>
+                    <div className="value">{rewardBreakdown.block.height}</div>
+                    <div className="stat-meta">{timeAgo(rewardBreakdown.block.timestamp)}</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="label">Reward</div>
+                    <div className="value">{formatCoins(rewardBreakdown.block.reward)}</div>
+                    <div className="stat-meta">
+                      Fee {formatCoins(rewardBreakdown.fee_amount)} · Net {formatCoins(rewardBreakdown.distributable_reward)}
+                    </div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="label">Window</div>
+                    <div className="value">{rewardBreakdown.share_window.label}</div>
+                    <div className="stat-meta">
+                      {rewardBreakdown.share_window.share_count} shares · {rewardBreakdown.share_window.participant_count} miners
+                    </div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="label">Preview Weight</div>
+                    <div className="value mono">{rewardBreakdown.preview_total_weight}</div>
+                    <div className="stat-meta">Matches the My Stats estimate path</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="label">Payout Weight</div>
+                    <div className="value mono">{rewardBreakdown.payout_total_weight}</div>
+                    <div className="stat-meta">Final reward split after payout gates</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="label">Recorded Credits</div>
+                    <div className="value">{formatCoins(rewardBreakdown.actual_credit_total)}</div>
+                    <div className="stat-meta">
+                      {rewardBreakdown.actual_credit_events_available ? 'Audit rows available' : 'Not recorded yet'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="card" style={{ marginBottom: 20 }}>
+                  <div style={{ display: 'flex', gap: 12, justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'grid', gap: 6 }}>
+                      <div style={{ fontSize: 14, fontWeight: 700 }}>
+                        {rewardBreakdown.payout_scheme.toUpperCase()} reward audit for block {rewardBreakdown.block.height}
+                      </div>
+                      <div style={{ fontSize: 13, color: 'var(--muted)' }}>
+                        Preview shows the unconfirmed estimator used on My Stats. Payout shows the final weighting rules.
+                        Actual shows what the payout processor recorded for this block, when available.
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gap: 6, justifyItems: 'end' }}>
+                      <span
+                        className={
+                          rewardBreakdown.block.orphaned
+                            ? 'badge badge-pending'
+                            : rewardBreakdown.block.confirmed
+                              ? 'badge badge-confirmed'
+                              : 'badge badge-pending'
+                        }
+                      >
+                        {rewardBreakdown.block.orphaned
+                          ? 'orphaned'
+                          : rewardBreakdown.block.confirmed
+                            ? 'confirmed'
+                            : 'unconfirmed'}
+                      </span>
+                      <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                        Window end {new Date(toUnixMs(rewardBreakdown.share_window.end)).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {!rewardBreakdown.actual_credit_events_available ? (
+                  <div
+                    className="card"
+                    style={{
+                      marginBottom: 20,
+                      background: 'rgba(247, 180, 75, 0.12)',
+                      borderColor: 'rgba(247, 180, 75, 0.45)',
+                    }}
+                  >
+                    <div style={{ color: 'var(--text)', fontSize: 13 }}>
+                      {rewardBreakdown.block.paid_out
+                        ? 'This block was paid before per-block credit audit rows were available, so the Actual column cannot be shown from storage.'
+                        : 'This block has not been paid yet, so the Actual column remains empty until the payout processor records credits.'}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="card table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Address</th>
+                        <th>Preview</th>
+                        <th>Payout</th>
+                        <th>Actual</th>
+                        <th>Delta</th>
+                        <th>Preview Weight</th>
+                        <th>Payout Weight</th>
+                        <th>Verified Diff</th>
+                        <th>Eligible Prov Diff</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {!filteredRewardParticipants.length ? (
+                        <tr>
+                          <td colSpan={10} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                            No participants match the current filter.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredRewardParticipants.map((row) => (
+                          <tr key={row.address}>
+                            <td title={row.address}>
+                              <a
+                                href="/stats"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  onJumpToStats(row.address);
+                                }}
+                              >
+                                {shortAddr(row.address)}
+                              </a>
+                              {row.finder ? (
+                                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>finder</div>
+                              ) : null}
+                            </td>
+                            <td>
+                              <div>{formatCoins(row.preview_credit)}</div>
+                              <div className="mono" style={{ fontSize: 12, color: 'var(--muted)' }}>
+                                {row.preview_weight} · {row.preview_share_pct.toFixed(3)}%
+                              </div>
+                            </td>
+                            <td>
+                              <div>{formatCoins(row.payout_credit)}</div>
+                              <div className="mono" style={{ fontSize: 12, color: 'var(--muted)' }}>
+                                {row.payout_weight} · {row.payout_share_pct.toFixed(3)}%
+                              </div>
+                            </td>
+                            <td>{row.actual_credit != null ? formatCoins(row.actual_credit) : '-'}</td>
+                            <td
+                              style={{
+                                color:
+                                  row.delta_vs_payout == null
+                                    ? 'var(--muted)'
+                                    : row.delta_vs_payout === 0
+                                      ? 'var(--good)'
+                                      : 'var(--warn)',
+                              }}
+                            >
+                              {formatSignedCoins(row.delta_vs_payout)}
+                            </td>
+                            <td className="mono">{row.preview_weight}</td>
+                            <td className="mono">{row.payout_weight}</td>
+                            <td className="mono">
+                              {row.verified_difficulty}
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                                {row.verified_shares} shares
+                              </div>
+                            </td>
+                            <td className="mono">
+                              {row.provisional_difficulty_eligible}
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                                {row.provisional_shares_eligible} eligible
+                              </div>
+                            </td>
+                            <td>
+                              <div style={{ color: rewardStatusTone(row.payout_status), fontWeight: 600 }}>
+                                {rewardStatusLabel(row.payout_status)}
+                              </div>
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                                Preview: {rewardStatusLabel(row.preview_status)}
+                                {row.risky ? ' · risky' : ''}
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </div>
 
           <div style={{ display: tab === 'health' ? '' : 'none' }}>

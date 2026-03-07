@@ -1,5 +1,6 @@
 import type {
   AdminPayoutItem,
+  BlockRewardBreakdownResponse,
   BlockItem,
   FeeEvent,
   FeesResponse,
@@ -45,6 +46,7 @@ export interface ApiClient {
   getMiners(params: QueryParams): Promise<PagedResponse<MinerListItem>>;
   getAdminPayouts(params: QueryParams): Promise<PagedResponse<AdminPayoutItem>>;
   getFees(params: QueryParams): Promise<FeesResponse>;
+  getAdminBlockRewardBreakdown(height: number): Promise<BlockRewardBreakdownResponse>;
   getHealth(): Promise<HealthResponse>;
   streamDaemonLogs(opts: DaemonLogStreamOptions): Promise<void>;
 }
@@ -118,6 +120,10 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
       auth: true,
     }),
     getFees: (params) => fetchJson<FeesResponse>(withQuery('/api/fees', params), { auth: true }),
+    getAdminBlockRewardBreakdown: (height) =>
+      fetchJson<BlockRewardBreakdownResponse>(`/api/admin/blocks/${encodeURIComponent(String(height))}/reward-breakdown`, {
+        auth: true,
+      }),
     getHealth: () => fetchJson<HealthResponse>('/api/health', { auth: true }),
     streamDaemonLogs: async ({ tail, signal, onLine }) => {
       const key = getApiKey().trim();
