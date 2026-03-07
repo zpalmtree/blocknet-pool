@@ -48,8 +48,8 @@ export function PayoutsPage({ active, api, liveTick }: PayoutsPageProps) {
         </p>
       </div>
       <p style={{ fontSize: 14, color: 'var(--muted)', marginBottom: 16 }}>
-        Broadcast payout batches appear here immediately as unconfirmed and flip to confirmed after the first block
-        confirmation. Transaction hashes link to the block explorer for verification.
+        Broadcast payout batches appear here immediately as unconfirmed and flip to confirmed shortly after the first
+        block confirmation is observed by the pool. Transaction hashes link to the block explorer for verification.
       </p>
       <div className="card table-scroll">
         <table>
@@ -102,7 +102,7 @@ export function PayoutsPage({ active, api, liveTick }: PayoutsPageProps) {
       <div className="seo-copy-grid">
         <div className="card seo-copy-card">
           <h3>On-Chain Status</h3>
-          <p>Transaction hashes point to the public Blocknet explorer, and fresh sends stay marked unconfirmed until the next block confirms them.</p>
+          <p>Transaction hashes point to the public Blocknet explorer, and fresh sends stay marked unconfirmed until the first confirming block is observed by the pool.</p>
         </div>
         <div className="card seo-copy-card">
           <h3>Batch Visibility</h3>
