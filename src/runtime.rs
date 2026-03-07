@@ -500,15 +500,42 @@ fn warn_on_validation_visibility_config(cfg: &Config) {
     };
     let typical_verified_ratio = cfg.sample_rate.max(periodic_floor).clamp(0.0, 1.0);
 
-    if cfg.payout_min_verified_ratio > typical_verified_ratio + f64::EPSILON {
+    if cfg.payout_min_verified_ratio >= typical_verified_ratio - f64::EPSILON {
         warn!(
             sample_rate = cfg.sample_rate,
             min_sample_every = cfg.min_sample_every,
             warmup_shares = cfg.warmup_shares,
             payout_min_verified_ratio = cfg.payout_min_verified_ratio,
             typical_verified_ratio,
-            "payout_min_verified_ratio is above the sampler's typical verified-share coverage; unconfirmed previews and payout eligibility may stay withheld longer than expected"
+            "payout_min_verified_ratio is at or above the sampler's typical verified-share coverage; honest miners can miss payout eligibility due to sampling variance and vardiff"
         );
+    } else if cfg.payout_min_verified_ratio > 0.0
+        && typical_verified_ratio - cfg.payout_min_verified_ratio < 0.01
+    {
+        warn!(
+            sample_rate = cfg.sample_rate,
+            min_sample_every = cfg.min_sample_every,
+            warmup_shares = cfg.warmup_shares,
+            payout_min_verified_ratio = cfg.payout_min_verified_ratio,
+            typical_verified_ratio,
+            "payout_min_verified_ratio is very close to the sampler's typical verified-share coverage; honest miners may flap around the cutoff"
+        );
+    }
+
+    if cfg.payout_provisional_cap_multiplier > 0.0 {
+        let full_credit_verified_ratio =
+            1.0 / (1.0 + cfg.payout_provisional_cap_multiplier.max(0.0));
+        if full_credit_verified_ratio > typical_verified_ratio + f64::EPSILON {
+            warn!(
+                sample_rate = cfg.sample_rate,
+                min_sample_every = cfg.min_sample_every,
+                warmup_shares = cfg.warmup_shares,
+                payout_provisional_cap_multiplier = cfg.payout_provisional_cap_multiplier,
+                full_credit_verified_ratio,
+                typical_verified_ratio,
+                "sampler coverage is below the provisional cap's full-credit target; honest miners may see reduced payout weight until more shares are fully verified"
+            );
+        }
     }
 }
 

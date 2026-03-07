@@ -250,7 +250,9 @@ Daemon log stream details:
 - `payout_pause_file` pauses payouts when the file exists.
 - `pplns_window_duration` controls the time-based PPLNS lookback window (default `6h`).
 - `payout_wait_priority_threshold` promotes queued payouts to longest-waiting-first after they have waited at least the configured duration (default `6h`).
-- `payout_provisional_cap_multiplier=0` disables the cap on aged provisional share weight; positive values cap provisional difficulty relative to verified difficulty.
+- `payout_min_verified_ratio` is a hard verified-difficulty gate. Keeping it near the sampler coverage can exclude honest miners due to sampling variance and vardiff.
+- `payout_provisional_cap_multiplier` caps aged provisional difficulty relative to verified difficulty. Prefer a cap over a hard ratio cutoff when you want reduced credit instead of zero credit.
+- Keep `sample_rate` and `min_sample_every` comfortably above the payout policy's effective verified-share target so honest miners do not flap around the cutoff.
 - Optional caps:
   - `payout_max_recipients_per_tick`
   - `payout_max_total_per_tick`
