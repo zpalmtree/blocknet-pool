@@ -448,6 +448,28 @@ export function AdminPage({
     if (!filter) return items;
     return items.filter((row) => row.address.toLowerCase().includes(filter));
   }, [rewardAddressFilter, rewardBreakdown?.participants]);
+  const rewardBreakdownOrphaned = rewardBreakdown?.block.orphaned ?? false;
+  const rewardAuditIntro = rewardBreakdownOrphaned
+    ? 'Preview shows the share window that was eligible before the round was orphaned. Orphaned blocks never settle into payouts or recorded credits.'
+    : 'Preview shows the unconfirmed estimator used on My Stats. Payout shows the final weighting rules, including verified-share anchors and any provisional cap. Actual shows what the payout processor recorded for this block, when available.';
+  const rewardAuditNotice = rewardBreakdown
+    ? rewardBreakdownOrphaned
+      ? 'This block was orphaned, so no payout credits will be recorded. Preview data is shown only as a round audit.'
+      : rewardBreakdown.actual_credit_events_available
+        ? ''
+        : rewardBreakdown.block.paid_out
+          ? 'This block was paid before per-block credit audit rows were available, so the Actual column cannot be shown from storage.'
+          : 'This block has not been paid yet, so the Actual column remains empty until the payout processor records credits.'
+    : '';
+  const rewardAuditNoticeStyles = rewardBreakdownOrphaned
+    ? {
+        background: 'var(--status-orphaned-bg)',
+        borderColor: 'var(--status-orphaned-border)',
+      }
+    : {
+        background: 'rgba(247, 180, 75, 0.12)',
+        borderColor: 'rgba(247, 180, 75, 0.45)',
+      };
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-admin">
@@ -778,10 +800,14 @@ export function AdminPage({
                     <div className="stat-meta">{timeAgo(rewardBreakdown.block.timestamp)}</div>
                   </div>
                   <div className="stat-card">
-                    <div className="label">Reward</div>
+                    <div className="label">{rewardBreakdown.block.orphaned ? 'Nominal Reward' : 'Reward'}</div>
                     <div className="value">{formatCoins(rewardBreakdown.block.reward)}</div>
                     <div className="stat-meta">
-                      Fee {formatCoins(rewardBreakdown.fee_amount)} · Net {formatCoins(rewardBreakdown.distributable_reward)}
+                      {rewardBreakdown.block.orphaned
+                        ? 'Round was orphaned, so no distributable credits were finalized.'
+                        : `Fee ${formatCoins(rewardBreakdown.fee_amount)} · Net ${formatCoins(
+                            rewardBreakdown.distributable_reward
+                          )}`}
                     </div>
                   </div>
                   <div className="stat-card">
@@ -794,18 +820,34 @@ export function AdminPage({
                   <div className="stat-card">
                     <div className="label">Preview Weight</div>
                     <div className="value mono">{rewardBreakdown.preview_total_weight}</div>
-                    <div className="stat-meta">Matches the My Stats estimate path</div>
+                    <div className="stat-meta">
+                      {rewardBreakdown.block.orphaned
+                        ? 'Share split before the round resolved as orphaned'
+                        : 'Matches the My Stats estimate path'}
+                    </div>
                   </div>
                   <div className="stat-card">
-                    <div className="label">Payout Weight</div>
-                    <div className="value mono">{rewardBreakdown.payout_total_weight}</div>
-                    <div className="stat-meta">Final reward split after payout gates</div>
+                    <div className="label">{rewardBreakdown.block.orphaned ? 'Resolution' : 'Payout Weight'}</div>
+                    <div className={rewardBreakdown.block.orphaned ? 'value' : 'value mono'}>
+                      {rewardBreakdown.block.orphaned ? 'Orphaned' : rewardBreakdown.payout_total_weight}
+                    </div>
+                    <div className="stat-meta">
+                      {rewardBreakdown.block.orphaned
+                        ? 'No payout credits can settle from this round'
+                        : 'Final reward split after payout gates'}
+                    </div>
                   </div>
                   <div className="stat-card">
                     <div className="label">Recorded Credits</div>
-                    <div className="value">{formatCoins(rewardBreakdown.actual_credit_total)}</div>
+                    <div className="value">
+                      {rewardBreakdown.block.orphaned ? '-' : formatCoins(rewardBreakdown.actual_credit_total)}
+                    </div>
                     <div className="stat-meta">
-                      {rewardBreakdown.actual_credit_events_available ? 'Audit rows available' : 'Not recorded yet'}
+                      {rewardBreakdown.block.orphaned
+                        ? 'Orphaned blocks never record payout credits'
+                        : rewardBreakdown.actual_credit_events_available
+                          ? 'Audit rows available'
+                          : 'Not recorded yet'}
                     </div>
                   </div>
                 </div>
@@ -817,16 +859,14 @@ export function AdminPage({
                         {rewardBreakdown.payout_scheme.toUpperCase()} reward audit for block {rewardBreakdown.block.height}
                       </div>
                       <div style={{ fontSize: 13, color: 'var(--muted)' }}>
-                        Preview shows the unconfirmed estimator used on My Stats. Payout shows the final weighting
-                        rules, including verified-share anchors and any provisional cap. Actual shows what the payout
-                        processor recorded for this block, when available.
+                        {rewardAuditIntro}
                       </div>
                     </div>
                     <div style={{ display: 'grid', gap: 6, justifyItems: 'start' }}>
                       <span
                         className={
                           rewardBreakdown.block.orphaned
-                            ? 'badge badge-pending'
+                            ? 'badge badge-orphaned'
                             : rewardBreakdown.block.confirmed
                               ? 'badge badge-confirmed'
                               : 'badge badge-pending'
@@ -845,20 +885,15 @@ export function AdminPage({
                   </div>
                 </div>
 
-                {!rewardBreakdown.actual_credit_events_available ? (
+                {rewardAuditNotice ? (
                   <div
                     className="card"
                     style={{
                       marginBottom: 20,
-                      background: 'rgba(247, 180, 75, 0.12)',
-                      borderColor: 'rgba(247, 180, 75, 0.45)',
+                      ...rewardAuditNoticeStyles,
                     }}
                   >
-                    <div style={{ color: 'var(--text)', fontSize: 13 }}>
-                      {rewardBreakdown.block.paid_out
-                        ? 'This block was paid before per-block credit audit rows were available, so the Actual column cannot be shown from storage.'
-                        : 'This block has not been paid yet, so the Actual column remains empty until the payout processor records credits.'}
-                    </div>
+                    <div style={{ color: 'var(--text)', fontSize: 13 }}>{rewardAuditNotice}</div>
                   </div>
                 ) : null}
 
@@ -868,20 +903,20 @@ export function AdminPage({
                       <tr>
                         <th>Address</th>
                         <th>Preview</th>
-                        <th>Payout</th>
-                        <th>Actual</th>
-                        <th>Delta</th>
                         <th>Preview Weight</th>
-                        <th>Payout Weight</th>
+                        {rewardBreakdown.block.orphaned ? null : <th>Payout</th>}
+                        {rewardBreakdown.block.orphaned ? null : <th>Actual</th>}
+                        {rewardBreakdown.block.orphaned ? null : <th>Delta</th>}
+                        {rewardBreakdown.block.orphaned ? null : <th>Payout Weight</th>}
                         <th>Verified Diff</th>
                         <th>Eligible Prov Diff</th>
-                        <th>Status</th>
+                        <th>{rewardBreakdown.block.orphaned ? 'Preview Status' : 'Status'}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {!filteredRewardParticipants.length ? (
                         <tr>
-                          <td colSpan={10} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                          <td colSpan={rewardBreakdown.block.orphaned ? 6 : 10} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                             No participants match the current filter.
                           </td>
                         </tr>
@@ -908,27 +943,33 @@ export function AdminPage({
                                 {row.preview_weight} · {row.preview_share_pct.toFixed(3)}%
                               </div>
                             </td>
-                            <td>
-                              <div>{formatCoins(row.payout_credit)}</div>
-                              <div className="mono" style={{ fontSize: 12, color: 'var(--muted)' }}>
-                                {row.payout_weight} · {row.payout_share_pct.toFixed(3)}%
-                              </div>
-                            </td>
-                            <td>{row.actual_credit != null ? formatCoins(row.actual_credit) : '-'}</td>
-                            <td
-                              style={{
-                                color:
-                                  row.delta_vs_payout == null
-                                    ? 'var(--muted)'
-                                    : row.delta_vs_payout === 0
-                                      ? 'var(--good)'
-                                      : 'var(--warn)',
-                              }}
-                            >
-                              {formatSignedCoins(row.delta_vs_payout)}
-                            </td>
                             <td className="mono">{row.preview_weight}</td>
-                            <td className="mono">{row.payout_weight}</td>
+                            {rewardBreakdown.block.orphaned ? null : (
+                              <td>
+                                <div>{formatCoins(row.payout_credit)}</div>
+                                <div className="mono" style={{ fontSize: 12, color: 'var(--muted)' }}>
+                                  {row.payout_weight} · {row.payout_share_pct.toFixed(3)}%
+                                </div>
+                              </td>
+                            )}
+                            {rewardBreakdown.block.orphaned ? null : (
+                              <td>{row.actual_credit != null ? formatCoins(row.actual_credit) : '-'}</td>
+                            )}
+                            {rewardBreakdown.block.orphaned ? null : (
+                              <td
+                                style={{
+                                  color:
+                                    row.delta_vs_payout == null
+                                      ? 'var(--muted)'
+                                      : row.delta_vs_payout === 0
+                                        ? 'var(--good)'
+                                        : 'var(--warn)',
+                                }}
+                              >
+                                {formatSignedCoins(row.delta_vs_payout)}
+                              </td>
+                            )}
+                            {rewardBreakdown.block.orphaned ? null : <td className="mono">{row.payout_weight}</td>}
                             <td className="mono">
                               {row.verified_difficulty}
                               <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
@@ -942,13 +983,27 @@ export function AdminPage({
                               </div>
                             </td>
                             <td>
-                              <div style={{ color: rewardStatusTone(row.payout_status), fontWeight: 600 }}>
-                                {rewardStatusLabel(row.payout_status)}
-                              </div>
-                              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                                Preview: {rewardStatusLabel(row.preview_status)}
-                                {row.risky ? ' · risky' : ''}
-                              </div>
+                              {rewardBreakdown.block.orphaned ? (
+                                <>
+                                  <div style={{ color: rewardStatusTone(row.preview_status), fontWeight: 600 }}>
+                                    {rewardStatusLabel(row.preview_status)}
+                                  </div>
+                                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                                    Preview only
+                                    {row.risky ? ' · risky' : ''}
+                                  </div>
+                                </>
+                              ) : (
+                                <>
+                                  <div style={{ color: rewardStatusTone(row.payout_status), fontWeight: 600 }}>
+                                    {rewardStatusLabel(row.payout_status)}
+                                  </div>
+                                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                                    Preview: {rewardStatusLabel(row.preview_status)}
+                                    {row.risky ? ' · risky' : ''}
+                                  </div>
+                                </>
+                              )}
                             </td>
                           </tr>
                         ))
