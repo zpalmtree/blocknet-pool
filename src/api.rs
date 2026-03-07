@@ -1349,13 +1349,7 @@ fn fallback_content(route: UiRoute, state: &ApiState, context: &UiSeoContext) ->
                     latest_solved_block
                         .map(|block| block.height.to_string())
                         .unwrap_or_else(|| "-".to_string()),
-                    latest_solved_block.map(|block| {
-                        format!(
-                            "{} • {}",
-                            block_status_label(block),
-                            format_system_time_short(block.timestamp)
-                        )
-                    }),
+                    None,
                 ),
                 (
                     "Blocks Found",
