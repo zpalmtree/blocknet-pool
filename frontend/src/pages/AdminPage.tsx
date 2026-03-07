@@ -125,6 +125,7 @@ export function AdminPage({
   const [daemonLogsAutoScroll, setDaemonLogsAutoScroll] = useState(true);
   const [daemonLogsConnectSeq, setDaemonLogsConnectSeq] = useState(0);
   const daemonLogsRef = useRef<HTMLPreElement | null>(null);
+  const rewardBreakdownRequestSeq = useRef(0);
 
   const loadMiners = useCallback(async () => {
     if (!apiKey) return;
@@ -187,15 +188,19 @@ export function AdminPage({
       const raw = String(heightOverride ?? rewardBlockInput).trim();
       const height = Math.floor(Number(raw));
       if (!raw || !Number.isFinite(height) || height < 0) return;
+      const requestSeq = rewardBreakdownRequestSeq.current + 1;
+      rewardBreakdownRequestSeq.current = requestSeq;
 
+      setRewardBlockInput(String(height));
       setRewardBreakdownLoading(true);
       try {
         const d = await api.getAdminBlockRewardBreakdown(height);
+        if (rewardBreakdownRequestSeq.current !== requestSeq) return;
         setRewardBreakdown(d);
-        setRewardBlockInput(String(height));
       } catch {
         // handled by api client
       } finally {
+        if (rewardBreakdownRequestSeq.current !== requestSeq) return;
         setRewardBreakdownLoading(false);
       }
     },
@@ -243,8 +248,8 @@ export function AdminPage({
     if (tab === 'fees') void loadFees();
     if (tab === 'rewards') {
       void loadRewardBlocks();
-      if (rewardBreakdown?.block?.height != null) {
-        void loadRewardBreakdown(rewardBreakdown.block.height);
+      if (rewardBlockInput.trim()) {
+        void loadRewardBreakdown(rewardBlockInput);
       }
     }
     if (tab === 'health') void loadHealth();
@@ -257,7 +262,7 @@ export function AdminPage({
     loadPayouts,
     loadRewardBlocks,
     loadRewardBreakdown,
-    rewardBreakdown?.block?.height,
+    rewardBlockInput,
     tab,
   ]);
 
@@ -270,8 +275,8 @@ export function AdminPage({
     if (tab === 'fees') void loadFees();
     if (tab === 'rewards') {
       void loadRewardBlocks();
-      if (rewardBreakdown?.block?.height != null) {
-        void loadRewardBreakdown(rewardBreakdown.block.height);
+      if (rewardBlockInput.trim()) {
+        void loadRewardBreakdown(rewardBlockInput);
       }
     }
     if (tab === 'health') void loadHealth();
@@ -286,7 +291,7 @@ export function AdminPage({
     loadPayouts,
     loadRewardBlocks,
     loadRewardBreakdown,
-    rewardBreakdown?.block?.height,
+    rewardBlockInput,
   ]);
 
   useEffect(() => {
@@ -677,19 +682,6 @@ export function AdminPage({
                   </option>
                 ))}
               </select>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                placeholder="Or enter block height..."
-                value={rewardBlockInput}
-                onChange={(e) => setRewardBlockInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !rewardLoadDisabled && !rewardBreakdownLoading) {
-                    void loadRewardBreakdown();
-                  }
-                }}
-              />
               <input
                 type="text"
                 placeholder="Filter participant address..."
