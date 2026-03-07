@@ -465,17 +465,25 @@ nav {
   grid-template-columns: repeat(3, 1fr);
 }
 
-.stats-group {
+.stats-panel {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
   margin-bottom: 24px;
 }
 
-.stats-group-label {
+.stats-panel-label {
+  grid-column: 1 / -1;
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.8px;
   color: var(--muted);
-  margin-bottom: 10px;
+  padding-top: 4px;
+}
+
+.stats-panel-label:first-child {
+  padding-top: 0;
 }
 
 .stats-grid-dense {
@@ -1499,6 +1507,10 @@ pre.raw-json {
     grid-template-columns: repeat(2, 1fr);
   }
 
+  .stats-panel {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
   .seo-copy-grid {
     grid-template-columns: 1fr;
   }
@@ -1568,6 +1580,10 @@ pre.raw-json {
   }
 
   .stats-grid.stats-grid-3 {
+    grid-template-columns: 1fr;
+  }
+
+  .stats-panel {
     grid-template-columns: 1fr;
   }
 
