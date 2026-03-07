@@ -77,7 +77,7 @@ export function shortAddr(addr: string): string {
 
 export function shortTx(tx: string): string {
   if (!tx || tx.length <= 20) return tx || '';
-  return `${tx.slice(0, 10)}…${tx.slice(-8)}`;
+  return `${tx.slice(0, 6)}…${tx.slice(-6)}`;
 }
 
 function poolHostFromUrl(poolUrl: string | null | undefined): string {

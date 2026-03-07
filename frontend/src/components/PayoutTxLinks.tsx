@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 
 import { shortTx } from '../lib/format';
 
-const PREVIEW_COUNT = 3;
+const PREVIEW_COUNT = 2;
 
 export function PayoutTxLinks({ hashes }: { hashes?: string[] }) {
   const txHashes = hashes || [];

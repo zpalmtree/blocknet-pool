@@ -625,8 +625,8 @@ tr:hover td {
 .payout-tx-links {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  white-space: nowrap;
+  gap: 6px;
+  white-space: normal;
 }
 
 .payout-tx-links__list {
