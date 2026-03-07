@@ -1136,56 +1136,12 @@ impl PoolEngine {
     }
 
     pub fn retarget_on_job_if_needed(&self, conn_id: &str) -> Option<u64> {
-        if !self.cfg.enable_vardiff {
-            return self.session_difficulty(conn_id);
-        }
-
-        let min_diff = self.cfg.min_share_difficulty.max(1);
-        let max_diff = self.cfg.max_share_difficulty.max(min_diff);
-        let retarget_interval = self
-            .cfg
-            .vardiff_retarget_interval_duration()
-            .clamp(Duration::from_secs(2), Duration::from_secs(8));
-        let target_interval = vardiff_target_interval_seconds(&self.cfg);
-        let tolerance = self.cfg.vardiff_tolerance.clamp(0.01, 0.95);
-        let upper = target_interval * (1.0 + tolerance);
-        let now = Instant::now();
-
-        let mut sessions = self.sessions.lock();
-        let session = sessions.get_mut(conn_id)?;
-        session.difficulty = session.difficulty.clamp(min_diff, max_diff);
-
-        let can_retarget = session
-            .last_difficulty_adjustment
-            .is_none_or(|last| now.duration_since(last) >= retarget_interval);
-        if can_retarget {
-            if let Some(last_share_at) = session.last_accepted_share_at {
-                let observed_interval = now.duration_since(last_share_at).as_secs_f64();
-                if observed_interval > upper {
-                    let raw_ratio = observed_interval / target_interval;
-                    let ratio = raw_ratio
-                        .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
-                        .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
-                    let next_diff = ((session.difficulty as f64) / ratio).floor().max(1.0) as u64;
-                    let next_diff = next_diff.clamp(min_diff, max_diff);
-                    session.last_difficulty_adjustment = Some(now);
-                    if next_diff != session.difficulty {
-                        let miner = compact_address(&session.address);
-                        tracing::debug!(
-                            "vardiff {:>4} -> {:>4} (idle {:>5.1}s on job tick, target {:>4.0}s, miner {})",
-                            session.difficulty,
-                            next_diff,
-                            observed_interval,
-                            target_interval,
-                            miner
-                        );
-                        session.difficulty = next_diff;
-                    }
-                }
-            }
-        }
-
-        Some(session.difficulty)
+        // Difficulty is only adjusted on share submission (retarget_on_submit),
+        // not on job ticks. Lowering difficulty between shares destroys weight
+        // for intermittent connections (e.g. dev fee sessions that are idle 99%
+        // of the time). The submit-based retarget uses actual share timing data
+        // and handles both fast and slow miners correctly.
+        self.session_difficulty(conn_id)
     }
 
     pub fn session_capabilities(&self, conn_id: &str) -> Option<Vec<String>> {
@@ -1290,11 +1246,14 @@ impl PoolEngine {
             }
         } else if can_retarget {
             // If the previous accepted share fell out of the vardiff window, we can still
-            // decay difficulty based on idle time before this accepted share.
+            // decay difficulty based on idle time before this accepted share — but only
+            // if the gap is within the window. Gaps longer than the window indicate an
+            // intermittent session (e.g. dev fee), not a struggling miner.
             if let Some(age) = last_share_age {
                 let observed_interval = age.as_secs_f64();
+                let window_secs = window.as_secs_f64();
                 let upper = target_interval * (1.0 + tolerance);
-                if observed_interval > upper {
+                if observed_interval <= window_secs && observed_interval > upper {
                     let raw_ratio = observed_interval / target_interval;
                     let ratio = raw_ratio
                         .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
@@ -2547,7 +2506,9 @@ mod tests {
         cfg.validation_mode = "full".to_string();
         cfg.initial_share_difficulty = 100;
         cfg.vardiff_target_shares = 60;
-        cfg.vardiff_window = "1s".to_string();
+        // Window must be longer than the sleep so the idle gap falls within it;
+        // gaps exceeding the window are treated as intermittent and skip decay.
+        cfg.vardiff_window = "5s".to_string();
         cfg.vardiff_retarget_interval = "1s".to_string();
 
         let validation = ValidationEngine::new(cfg.clone(), Arc::new(ZeroHasher));
@@ -2592,7 +2553,7 @@ mod tests {
     }
 
     #[test]
-    fn vardiff_job_tick_decreases_difficulty_after_idle_gap() {
+    fn vardiff_job_tick_does_not_decay_idle_sessions() {
         struct ZeroHasher;
         impl PowHasher for ZeroHasher {
             fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
@@ -2637,9 +2598,9 @@ mod tests {
             .retarget_on_job_if_needed("conn1")
             .expect("session difficulty should still exist");
 
-        assert!(
-            after < before,
-            "job-driven retarget should decay difficulty after idle gap"
+        assert_eq!(
+            after, before,
+            "job-tick retarget should not decay idle sessions (prevents dev fee weight drain)"
         );
     }
 

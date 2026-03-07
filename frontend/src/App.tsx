@@ -334,7 +334,7 @@ export function App() {
         {errorMsg}
       </div>
 
-      <div className="container">
+      <div className={route === 'admin' ? 'container container-wide' : 'container'}>
         {currentPage}
       </div>
     </>

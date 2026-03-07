@@ -393,6 +393,10 @@ nav {
   padding: 24px 20px;
 }
 
+.container.container-wide {
+  max-width: 1500px;
+}
+
 .page {
   display: none;
 }
@@ -675,6 +679,12 @@ tr:hover td {
 
 .table-scroll td {
   white-space: nowrap;
+}
+
+#page-admin .table-scroll th,
+#page-admin .table-scroll td {
+  padding: 8px 6px;
+  font-size: 12px;
 }
 
 .payout-tx-links {
