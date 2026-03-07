@@ -449,17 +449,30 @@ export function AdminPage({
     return items.filter((row) => row.address.toLowerCase().includes(filter));
   }, [rewardAddressFilter, rewardBreakdown?.participants]);
   const rewardBreakdownOrphaned = rewardBreakdown?.block.orphaned ?? false;
+  const rewardBreakdownProjected = !!rewardBreakdown && !rewardBreakdownOrphaned && !rewardBreakdown.block.paid_out;
+  const rewardPreviewColumnLabel = rewardBreakdownOrphaned ? 'Preview Estimate' : 'Preview';
+  const rewardPayoutColumnLabel = rewardBreakdownProjected ? 'Projected Payout' : 'Payout';
+  const rewardPayoutWeightLabel = rewardBreakdownProjected ? 'Projected Weight' : 'Payout Weight';
+  const rewardStatusColumnLabel = rewardBreakdownOrphaned
+    ? 'Resolution'
+    : rewardBreakdownProjected
+      ? 'Projected Status'
+      : 'Status';
   const rewardAuditIntro = rewardBreakdownOrphaned
-    ? 'Preview shows the share window that was eligible before the round was orphaned. Orphaned blocks never settle into payouts or recorded credits.'
-    : 'Preview shows the unconfirmed estimator used on My Stats. Payout shows the final weighting rules, including verified-share anchors and any provisional cap. Actual shows what the payout processor recorded for this block, when available.';
+    ? 'Preview shows the estimate miners would have seen before the round was orphaned. The actual payout outcome from an orphaned block is always zero.'
+    : rewardBreakdownProjected
+      ? 'Preview shows the current estimator used on My Stats. Projected payout shows the final split under the pool payout rules if this block reaches payout processing. Actual shows what the payout processor has recorded so far.'
+      : 'Preview shows the unconfirmed estimator used on My Stats. Payout shows the final weighting rules, including verified-share anchors and any provisional cap. Actual shows what the payout processor recorded for this block, when available.';
   const rewardAuditNotice = rewardBreakdown
     ? rewardBreakdownOrphaned
-      ? 'This block was orphaned, so no payout credits will be recorded. Preview data is shown only as a round audit.'
-      : rewardBreakdown.actual_credit_events_available
+      ? 'This block was orphaned. Preview is shown for reference, but the actual payout outcome from this block was 0.'
+      : rewardBreakdownProjected
+        ? 'This block has not been paid yet. The Projected columns show the current final payout math; Actual remains empty until the payout processor records credits.'
+        : rewardBreakdown.actual_credit_events_available
         ? ''
         : rewardBreakdown.block.paid_out
           ? 'This block was paid before per-block credit audit rows were available, so the Actual column cannot be shown from storage.'
-          : 'This block has not been paid yet, so the Actual column remains empty until the payout processor records credits.'
+          : ''
     : '';
   const rewardAuditNoticeStyles = rewardBreakdownOrphaned
     ? {
@@ -827,24 +840,26 @@ export function AdminPage({
                     </div>
                   </div>
                   <div className="stat-card">
-                    <div className="label">{rewardBreakdown.block.orphaned ? 'Resolution' : 'Payout Weight'}</div>
+                    <div className="label">{rewardBreakdown.block.orphaned ? 'Resolution' : rewardPayoutWeightLabel}</div>
                     <div className={rewardBreakdown.block.orphaned ? 'value' : 'value mono'}>
                       {rewardBreakdown.block.orphaned ? 'Orphaned' : rewardBreakdown.payout_total_weight}
                     </div>
                     <div className="stat-meta">
                       {rewardBreakdown.block.orphaned
-                        ? 'No payout credits can settle from this round'
+                        ? 'Estimated payout collapsed to zero when the block orphaned'
+                        : rewardBreakdownProjected
+                          ? 'Current final split if the block reaches payout processing'
                         : 'Final reward split after payout gates'}
                     </div>
                   </div>
                   <div className="stat-card">
                     <div className="label">Recorded Credits</div>
                     <div className="value">
-                      {rewardBreakdown.block.orphaned ? '-' : formatCoins(rewardBreakdown.actual_credit_total)}
+                      {rewardBreakdown.block.orphaned ? formatCoins(0) : formatCoins(rewardBreakdown.actual_credit_total)}
                     </div>
                     <div className="stat-meta">
                       {rewardBreakdown.block.orphaned
-                        ? 'Orphaned blocks never record payout credits'
+                        ? 'Orphaned blocks resolve to zero credited payout'
                         : rewardBreakdown.actual_credit_events_available
                           ? 'Audit rows available'
                           : 'Not recorded yet'}
@@ -902,21 +917,22 @@ export function AdminPage({
                     <thead>
                       <tr>
                         <th>Address</th>
-                        <th>Preview</th>
-                        <th>Preview Weight</th>
-                        {rewardBreakdown.block.orphaned ? null : <th>Payout</th>}
+                        <th>{rewardPreviewColumnLabel}</th>
+                        {rewardBreakdown.block.orphaned ? <th>Actual</th> : <th>Preview Weight</th>}
+                        {rewardBreakdown.block.orphaned ? <th>Delta</th> : null}
+                        {rewardBreakdown.block.orphaned ? null : <th>{rewardPayoutColumnLabel}</th>}
                         {rewardBreakdown.block.orphaned ? null : <th>Actual</th>}
                         {rewardBreakdown.block.orphaned ? null : <th>Delta</th>}
-                        {rewardBreakdown.block.orphaned ? null : <th>Payout Weight</th>}
+                        {rewardBreakdown.block.orphaned ? null : <th>{rewardPayoutWeightLabel}</th>}
                         <th>Verified Diff</th>
                         <th>Eligible Prov Diff</th>
-                        <th>{rewardBreakdown.block.orphaned ? 'Preview Status' : 'Status'}</th>
+                        <th>{rewardStatusColumnLabel}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {!filteredRewardParticipants.length ? (
                         <tr>
-                          <td colSpan={rewardBreakdown.block.orphaned ? 6 : 10} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                          <td colSpan={rewardBreakdown.block.orphaned ? 7 : 10} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                             No participants match the current filter.
                           </td>
                         </tr>
@@ -943,7 +959,16 @@ export function AdminPage({
                                 {row.preview_weight} · {row.preview_share_pct.toFixed(3)}%
                               </div>
                             </td>
-                            <td className="mono">{row.preview_weight}</td>
+                            {rewardBreakdown.block.orphaned ? <td>{formatCoins(0)}</td> : <td className="mono">{row.preview_weight}</td>}
+                            {rewardBreakdown.block.orphaned ? (
+                              <td
+                                style={{
+                                  color: row.preview_credit === 0 ? 'var(--muted)' : 'var(--bad)',
+                                }}
+                              >
+                                {formatSignedCoins(-row.preview_credit)}
+                              </td>
+                            ) : null}
                             {rewardBreakdown.block.orphaned ? null : (
                               <td>
                                 <div>{formatCoins(row.payout_credit)}</div>
@@ -985,11 +1010,11 @@ export function AdminPage({
                             <td>
                               {rewardBreakdown.block.orphaned ? (
                                 <>
-                                  <div style={{ color: rewardStatusTone(row.preview_status), fontWeight: 600 }}>
-                                    {rewardStatusLabel(row.preview_status)}
+                                  <div style={{ color: 'var(--bad)', fontWeight: 600 }}>
+                                    Orphaned
                                   </div>
                                   <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                                    Preview only
+                                    Preview: {rewardStatusLabel(row.preview_status)}
                                     {row.risky ? ' · risky' : ''}
                                   </div>
                                 </>
