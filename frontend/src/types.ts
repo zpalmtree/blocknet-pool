@@ -143,6 +143,7 @@ export interface PendingPayout {
 
 export interface MinerResponse {
   hashrate: number;
+  mining_since?: UnixLike;
   balance?: {
     pending: number;
     pending_confirmed?: number;

@@ -205,6 +205,9 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   }, [minerData]);
 
   const minerOldestShareDate = useMemo(() => {
+    const miningSince = toUnixMs(minerData?.mining_since);
+    if (miningSince) return new Date(miningSince).toLocaleDateString();
+
     const shares = minerData?.shares || [];
     let oldest = 0;
     for (const s of shares) {
