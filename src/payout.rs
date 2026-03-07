@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::Config;
 use crate::db::{Balance, DbBlock, DbShare, PendingPayout, PoolFeeRecord};
@@ -12,6 +12,7 @@ use crate::store::PoolStore;
 use crate::validation::{SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED};
 
 const MIN_PAYOUT_INTERVAL: Duration = Duration::from_secs(1);
+const MAX_PAYOUT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30);
 const MIN_PAYOUT_FEE_BUFFER: u64 = 1_000;
 const PENDING_PAYOUT_RETRY_GRACE: Duration = Duration::from_secs(15 * 60);
 const PAYOUT_CONFIRMATIONS_REQUIRED: u64 = 1;
@@ -61,34 +62,40 @@ impl PayoutProcessor {
     pub fn start(self: &Arc<Self>) {
         let this = Arc::clone(self);
         tokio::spawn(async move {
+            let payout_interval = bounded_payout_interval(this.cfg.payout_interval_duration());
+            let maintenance_interval = bounded_payout_maintenance_interval(payout_interval);
             {
                 let this = Arc::clone(&this);
                 let _ = tokio::task::spawn_blocking(move || {
                     this.recover_pending_payouts();
-                    this.tick();
+                    this.tick(true);
                 })
                 .await;
             }
 
-            let payout_interval = bounded_payout_interval(this.cfg.payout_interval_duration());
-            let mut ticker = tokio::time::interval(payout_interval);
+            let mut next_send_due = Instant::now() + payout_interval;
+            let mut ticker = tokio::time::interval(maintenance_interval);
+            ticker.tick().await;
             loop {
                 ticker.tick().await;
+                let should_send = Instant::now() >= next_send_due;
                 let this = Arc::clone(&this);
-                let _ = tokio::task::spawn_blocking(move || {
-                    this.tick();
-                })
-                .await;
+                let send_completed = tokio::task::spawn_blocking(move || this.tick(should_send))
+                    .await
+                    .unwrap_or(false);
+                if send_completed {
+                    next_send_due = Instant::now() + payout_interval;
+                }
             }
         });
     }
 
-    fn tick(&self) {
+    fn tick(&self, send_payouts: bool) -> bool {
         let status = match self.node.get_status() {
             Ok(v) => v,
             Err(err) => {
                 tracing::warn!(error = %err, "cannot reach node for payouts");
-                return;
+                return false;
             }
         };
         if !daemon_ready_for_payouts(&status) {
@@ -96,12 +103,16 @@ impl PayoutProcessor {
                 chain_height = status.chain_height,
                 "daemon is syncing; skipping payout tick"
             );
-            return;
+            return false;
         }
 
         self.confirm_blocks();
         self.distribute_rewards();
-        self.send_payouts();
+        self.reconcile_pending_payouts();
+        if send_payouts {
+            self.send_payouts();
+        }
+        send_payouts
     }
 
     fn confirm_blocks(&self) {
@@ -177,7 +188,7 @@ impl PayoutProcessor {
             let fee = self.cfg.pool_fee(block.reward);
             let distributable = block.reward.saturating_sub(fee);
             let fee_address = if fee > 0 {
-                self.resolve_pool_fee_address(&block)
+                resolve_pool_fee_destination(&self.cfg, &block)
             } else {
                 None
             };
@@ -565,7 +576,7 @@ impl PayoutProcessor {
             let pending = candidate.pending;
             let pending_amount = pending.amount;
 
-            match self.reconcile_broadcast_payout(&bal, &pending) {
+            match self.reconcile_broadcast_payout(&bal.address, &pending) {
                 Ok(true) => continue,
                 Ok(false) => {}
                 Err(err) => {
@@ -698,9 +709,29 @@ impl PayoutProcessor {
         }
     }
 
+    fn reconcile_pending_payouts(&self) {
+        let pending = match self.store.get_pending_payouts() {
+            Ok(v) => v,
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to read pending payouts for reconciliation");
+                return;
+            }
+        };
+
+        for entry in pending {
+            if let Err(err) = self.reconcile_broadcast_payout(&entry.address, &entry) {
+                tracing::warn!(
+                    address = %entry.address,
+                    error = %err,
+                    "failed to reconcile pending payout"
+                );
+            }
+        }
+    }
+
     fn reconcile_broadcast_payout(
         &self,
-        bal: &Balance,
+        address: &str,
         pending: &PendingPayout,
     ) -> anyhow::Result<bool> {
         let Some(tx_hash) = pending.tx_hash.as_deref().filter(|v| !v.trim().is_empty()) else {
@@ -713,9 +744,9 @@ impl PayoutProcessor {
             Some(status) if status.confirmations >= PAYOUT_CONFIRMATIONS_REQUIRED => {
                 let fee = pending.fee.unwrap_or(0);
                 self.store
-                    .complete_pending_payout(&bal.address, pending.amount, fee, tx_hash)?;
+                    .complete_pending_payout(address, pending.amount, fee, tx_hash)?;
                 tracing::info!(
-                    address = %bal.address,
+                    address = %address,
                     amount = pending.amount,
                     fee,
                     tx = %tx_hash,
@@ -733,9 +764,9 @@ impl PayoutProcessor {
                 if age < PENDING_PAYOUT_RETRY_GRACE {
                     return Ok(true);
                 }
-                self.store.reset_pending_payout_send_state(&bal.address)?;
+                self.store.reset_pending_payout_send_state(address)?;
                 tracing::warn!(
-                    address = %bal.address,
+                    address = %address,
                     amount = pending.amount,
                     tx = %tx_hash,
                     age_secs = age.as_secs(),
@@ -788,19 +819,19 @@ impl PayoutProcessor {
             Err(_) => false,
         }
     }
+}
 
-    fn resolve_pool_fee_address(&self, block: &DbBlock) -> Option<String> {
-        let configured = self.cfg.pool_wallet_address.trim();
-        if !configured.is_empty() {
-            return Some(configured.to_string());
-        }
-
-        let finder = block.finder.trim();
-        if !finder.is_empty() {
-            return Some(finder.to_string());
-        }
-        None
+pub(crate) fn resolve_pool_fee_destination(cfg: &Config, block: &DbBlock) -> Option<String> {
+    let configured = cfg.pool_wallet_address.trim();
+    if !configured.is_empty() {
+        return Some(configured.to_string());
     }
+
+    let finder = block.finder.trim();
+    if !finder.is_empty() {
+        return Some(finder.to_string());
+    }
+    None
 }
 
 fn sort_payout_candidates(
@@ -946,6 +977,10 @@ fn bounded_payout_interval(configured: Duration) -> Duration {
     configured.max(MIN_PAYOUT_INTERVAL)
 }
 
+fn bounded_payout_maintenance_interval(payout_interval: Duration) -> Duration {
+    bounded_payout_interval(payout_interval).min(MAX_PAYOUT_MAINTENANCE_INTERVAL)
+}
+
 fn daemon_ready_for_payouts(status: &NodeStatus) -> bool {
     !status.syncing
 }
@@ -994,7 +1029,10 @@ mod tests {
     use crate::db::DbShare;
     use crate::node::HttpError;
     use crate::store::PoolStore;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     use std::sync::Arc;
+    use std::thread;
 
     fn sample_share(miner: &str, difficulty: u64, status: &str, created_at: SystemTime) -> DbShare {
         DbShare {
@@ -1049,6 +1087,26 @@ mod tests {
             min_verified_ratio,
             provisional_cap_multiplier,
         }
+    }
+
+    fn spawn_json_server(body: &str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let addr = listener.local_addr().expect("server addr");
+        let response_body = body.to_string();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut buf = [0u8; 2048];
+            let _ = stream.read(&mut buf);
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
+        });
+        format!("http://{}", addr)
     }
 
     #[test]
@@ -1322,6 +1380,22 @@ mod tests {
     }
 
     #[test]
+    fn payout_maintenance_interval_stays_fast_even_with_slow_send_cadence() {
+        assert_eq!(
+            bounded_payout_maintenance_interval(Duration::from_secs(0)),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            bounded_payout_maintenance_interval(Duration::from_secs(10)),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            bounded_payout_maintenance_interval(Duration::from_secs(60 * 60)),
+            Duration::from_secs(30)
+        );
+    }
+
+    #[test]
     fn payouts_are_skipped_while_syncing() {
         let status = NodeStatus {
             peer_id: "peer".to_string(),
@@ -1383,5 +1457,50 @@ mod tests {
             body: r#"{"error":"insufficient funds: no spendable outputs"}"#.to_string(),
         });
         assert!(is_wallet_liquidity_error(&no_outputs));
+    }
+
+    #[test]
+    fn confirmed_broadcast_payouts_reconcile_without_waiting_for_next_send_tick() {
+        let store = test_store();
+        store
+            .update_balance(&Balance {
+                address: "addr1".to_string(),
+                pending: 100,
+                paid: 0,
+            })
+            .expect("seed balance");
+        store
+            .create_pending_payout("addr1", 100)
+            .expect("create pending payout");
+        store
+            .mark_pending_payout_send_started("addr1")
+            .expect("freeze pending payout")
+            .expect("pending payout exists");
+        store
+            .record_pending_payout_broadcast("addr1", 100, 2, "tx-1")
+            .expect("record broadcast");
+
+        let base_url = spawn_json_server(r#"{"confirmations":1,"in_mempool":false}"#);
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+        );
+
+        processor.reconcile_pending_payouts();
+
+        assert!(store
+            .get_pending_payout("addr1")
+            .expect("lookup pending payout")
+            .is_none());
+        let balance = store.get_balance("addr1").expect("updated balance");
+        assert_eq!(balance.pending, 0);
+        assert_eq!(balance.paid, 100);
+
+        let payouts = store
+            .get_recent_payouts_for_address("addr1", 5)
+            .expect("recent payouts");
+        assert_eq!(payouts.len(), 1);
+        assert_eq!(payouts[0].tx_hash, "tx-1");
     }
 }

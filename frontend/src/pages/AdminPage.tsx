@@ -31,6 +31,8 @@ function rewardStatusLabel(status: string): string {
   switch (status) {
     case 'included':
       return 'Included';
+    case 'capped_provisional':
+      return 'Included (capped)';
     case 'finder_fallback':
       return 'Finder fallback';
     case 'risky':
@@ -51,6 +53,8 @@ function rewardStatusTone(status: string): string {
     case 'included':
     case 'finder_fallback':
       return 'var(--good)';
+    case 'capped_provisional':
+      return 'var(--warn)';
     case 'risky':
       return 'var(--bad)';
     case 'recorded_only':
@@ -58,6 +62,44 @@ function rewardStatusTone(status: string): string {
     default:
       return 'var(--warn)';
   }
+}
+
+function feeStatusLabel(status: string | undefined): string {
+  switch (status) {
+    case 'pending':
+      return 'Pending';
+    case 'ready':
+      return 'Ready';
+    case 'missing':
+      return 'Missing';
+    default:
+      return 'Collected';
+  }
+}
+
+function feeStatusBadgeClass(status: string | undefined): string {
+  switch (status) {
+    case 'missing':
+      return 'badge-orphaned';
+    case 'pending':
+    case 'ready':
+      return 'badge-pending';
+    default:
+      return 'badge-confirmed';
+  }
+}
+
+function feeStatusNote(item: FeeEvent): string | null {
+  if (item.status === 'pending' && (item.confirmations_remaining ?? 0) > 0) {
+    return `${item.confirmations_remaining} conf left`;
+  }
+  if (item.status === 'ready') {
+    return 'awaiting distribution';
+  }
+  if (item.status === 'missing') {
+    return 'paid block missing fee row';
+  }
+  return null;
 }
 
 function formatSignedCoins(value: number | null | undefined): string {
@@ -107,6 +149,7 @@ export function AdminPage({
   const [payoutPager, setPayoutPager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
 
   const [feesTotal, setFeesTotal] = useState(0);
+  const [feesPendingTotal, setFeesPendingTotal] = useState(0);
   const [feeItems, setFeeItems] = useState<FeeEvent[]>([]);
   const [feePager, setFeePager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
 
@@ -174,10 +217,12 @@ export function AdminPage({
         sort: 'time_desc',
       });
       setFeesTotal(d.total_collected || 0);
+      setFeesPendingTotal(d.total_pending || 0);
       const items = d.recent?.items || [];
       setFeeItems(items);
       setFeePager((prev) => ({ ...prev, total: d.recent?.page ? d.recent.page.total : items.length }));
     } catch {
+      setFeesPendingTotal(0);
       setFeeItems([]);
     }
   }, [api, apiKey, feePager.limit, feePager.offset]);
@@ -615,9 +660,11 @@ export function AdminPage({
           </div>
 
           <div style={{ display: tab === 'fees' ? '' : 'none' }}>
-          <p style={{ fontSize: 14, color: 'var(--muted)', marginBottom: 12 }}>
-            Total Collected: <span className="mono">{formatCoins(feesTotal)}</span>
-          </p>
+            <p style={{ fontSize: 14, color: 'var(--muted)', marginBottom: 12 }}>
+              Collected: <span className="mono">{formatCoins(feesTotal)}</span>
+              {' · '}
+              Pending estimate: <span className="mono">{formatCoins(feesPendingTotal)}</span>
+            </p>
 
             <div className="card table-scroll">
               <table>
@@ -625,14 +672,15 @@ export function AdminPage({
                   <tr>
                     <th>Block</th>
                     <th>Amount</th>
+                    <th>Status</th>
                     <th>Time</th>
                   </tr>
                 </thead>
                 <tbody>
                   {!feeItems.length ? (
                     <tr>
-                      <td colSpan={3} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                        No fee events
+                      <td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                        No fee rows
                       </td>
                     </tr>
                   ) : (
@@ -640,6 +688,12 @@ export function AdminPage({
                       <tr key={`${f.block_height}-${idx}`}>
                         <td>{f.block_height}</td>
                         <td>{formatCoins(f.amount)}</td>
+                        <td>
+                          <span className={`badge ${feeStatusBadgeClass(f.status)}`}>{feeStatusLabel(f.status)}</span>
+                          {feeStatusNote(f) ? (
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>{feeStatusNote(f)}</div>
+                          ) : null}
+                        </td>
                         <td title={new Date(toUnixMs(f.timestamp)).toLocaleString()}>{timeAgo(f.timestamp)}</td>
                       </tr>
                     ))
@@ -753,8 +807,9 @@ export function AdminPage({
                         {rewardBreakdown.payout_scheme.toUpperCase()} reward audit for block {rewardBreakdown.block.height}
                       </div>
                       <div style={{ fontSize: 13, color: 'var(--muted)' }}>
-                        Preview shows the unconfirmed estimator used on My Stats. Payout shows the final weighting rules.
-                        Actual shows what the payout processor recorded for this block, when available.
+                        Preview shows the unconfirmed estimator used on My Stats. Payout shows the final weighting
+                        rules, including verified-share anchors and any provisional cap. Actual shows what the payout
+                        processor recorded for this block, when available.
                       </div>
                     </div>
                     <div style={{ display: 'grid', gap: 6, justifyItems: 'end' }}>

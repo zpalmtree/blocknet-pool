@@ -44,6 +44,12 @@ export interface InfoResponse {
   pplns_window?: number;
   pplns_window_duration?: string;
   provisional_share_delay?: string;
+  sample_rate?: number;
+  warmup_shares?: number;
+  min_sample_every?: number;
+  payout_min_verified_shares?: number;
+  payout_min_verified_ratio?: number;
+  payout_provisional_cap_multiplier?: number;
 }
 
 export interface BlockItem {
@@ -180,6 +186,8 @@ export interface FeeEvent {
   amount: number;
   fee_address: string;
   timestamp: UnixLike;
+  status?: 'collected' | 'pending' | 'ready' | 'missing';
+  confirmations_remaining?: number | null;
 }
 
 export interface RewardWindowSummary {
@@ -227,6 +235,7 @@ export interface BlockRewardBreakdownResponse {
 
 export interface FeesResponse {
   total_collected: number;
+  total_pending?: number;
   recent?: PagedResponse<FeeEvent>;
 }
 

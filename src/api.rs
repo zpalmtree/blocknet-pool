@@ -31,7 +31,9 @@ use crate::db::{
 use crate::engine::JobRepository;
 use crate::jobs::JobManager;
 use crate::node::{NodeClient, WalletBalance};
-use crate::payout::{is_share_payout_eligible, weight_shares, PayoutTrustPolicy};
+use crate::payout::{
+    is_share_payout_eligible, resolve_pool_fee_destination, weight_shares, PayoutTrustPolicy,
+};
 use crate::service_state::{PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY};
 use crate::stats::{
     MinerStats, PoolSnapshot, PoolStats, RejectionAnalyticsSnapshot, RejectionReasonCount,
@@ -2013,6 +2015,12 @@ struct PoolInfoResponse {
     pplns_window: i32,
     pplns_window_duration: String,
     provisional_share_delay: String,
+    sample_rate: f64,
+    warmup_shares: i32,
+    min_sample_every: i32,
+    payout_min_verified_shares: i32,
+    payout_min_verified_ratio: f64,
+    payout_provisional_cap_multiplier: f64,
     public_endpoints: Vec<&'static str>,
     protected_endpoints: Vec<&'static str>,
 }
@@ -2033,6 +2041,12 @@ async fn handle_info(State(state): State<ApiState>) -> impl IntoResponse {
         pplns_window: state.config.pplns_window,
         pplns_window_duration: state.config.pplns_window_duration.clone(),
         provisional_share_delay: state.config.provisional_share_delay.clone(),
+        sample_rate: state.config.sample_rate,
+        warmup_shares: state.config.warmup_shares,
+        min_sample_every: state.config.min_sample_every,
+        payout_min_verified_shares: state.config.payout_min_verified_shares,
+        payout_min_verified_ratio: state.config.payout_min_verified_ratio,
+        payout_provisional_cap_multiplier: state.config.payout_provisional_cap_multiplier,
         public_endpoints: vec![
             "/api/info",
             "/api/stats",
@@ -2138,7 +2152,19 @@ fn pool_snapshot_has_live_data(snapshot: &PoolSnapshot) -> bool {
 #[derive(Serialize)]
 struct FeesResponse {
     total_collected: u64,
+    total_pending: u64,
     recent: Vec<PoolFeeEvent>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct FeePageItem {
+    block_height: u64,
+    amount: u64,
+    fee_address: String,
+    timestamp: SystemTime,
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    confirmations_remaining: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2250,6 +2276,7 @@ impl RewardWindowAddressStats {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RewardParticipantStatus {
     Included,
+    CappedProvisional,
     Risky,
     AwaitingVerifiedShares,
     AwaitingVerifiedRatio,
@@ -2262,6 +2289,7 @@ impl RewardParticipantStatus {
     fn as_str(self) -> &'static str {
         match self {
             Self::Included => "included",
+            Self::CappedProvisional => "capped_provisional",
             Self::Risky => "risky",
             Self::AwaitingVerifiedShares => "awaiting_verified_shares",
             Self::AwaitingVerifiedRatio => "awaiting_verified_ratio",
@@ -2363,6 +2391,14 @@ struct PageMeta {
 struct PagedResponse<T> {
     items: Vec<T>,
     page: PageMeta,
+}
+
+#[derive(Debug)]
+struct FeePageData {
+    total_collected: u64,
+    total_pending: u64,
+    items: Vec<FeePageItem>,
+    total: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -3945,6 +3981,24 @@ fn collect_reward_window_stats(
     by_address
 }
 
+fn equivalent_verified_ratio_for_provisional_cap(multiplier: f64) -> Option<f64> {
+    if multiplier <= 0.0 {
+        None
+    } else {
+        Some(1.0 / (1.0 + multiplier.max(0.0)))
+    }
+}
+
+fn provisional_difficulty_cap(verified_difficulty: u64, multiplier: f64) -> Option<u64> {
+    if multiplier <= 0.0 || verified_difficulty == 0 {
+        None
+    } else {
+        Some(
+            ((verified_difficulty as f64) * multiplier.max(0.0)).clamp(0.0, u64::MAX as f64) as u64,
+        )
+    }
+}
+
 fn reward_participant_status(
     stats: Option<&RewardWindowAddressStats>,
     trust_policy: PayoutTrustPolicy,
@@ -3967,6 +4021,14 @@ fn reward_participant_status(
         let verified_ratio = stats.verified_difficulty as f64 / eligible as f64;
         if verified_ratio < trust_policy.min_verified_ratio {
             return RewardParticipantStatus::AwaitingVerifiedRatio;
+        }
+    }
+    if let Some(provisional_cap) = provisional_difficulty_cap(
+        stats.verified_difficulty,
+        trust_policy.provisional_cap_multiplier,
+    ) {
+        if stats.provisional_difficulty_eligible > provisional_cap {
+            return RewardParticipantStatus::CappedProvisional;
         }
     }
     RewardParticipantStatus::Included
@@ -4294,6 +4356,46 @@ fn payout_window_description(cfg: &Config) -> String {
     "the 1h round before each found block".to_string()
 }
 
+fn payout_weighting_policy_description(cfg: &Config) -> String {
+    let min_verified_shares = cfg.payout_min_verified_shares.max(0) as u64;
+    let verified_shares = if min_verified_shares == 0 {
+        "no minimum verified shares".to_string()
+    } else {
+        format!(
+            "at least {} verified share{}",
+            min_verified_shares,
+            if min_verified_shares == 1 { "" } else { "s" }
+        )
+    };
+    let min_verified_ratio = cfg.payout_min_verified_ratio.clamp(0.0, 1.0);
+    let provisional_cap_multiplier = cfg.payout_provisional_cap_multiplier.max(0.0);
+
+    match (
+        min_verified_ratio > 0.0,
+        equivalent_verified_ratio_for_provisional_cap(provisional_cap_multiplier),
+    ) {
+        (true, Some(full_credit_ratio)) => format!(
+            "{} and {:.0}% verified difficulty in each payout window, while provisional difficulty is capped at {}x verified difficulty (full weight once about {}% of that window is verified)",
+            verified_shares,
+            min_verified_ratio * 100.0,
+            format_decimal(provisional_cap_multiplier),
+            format_decimal(full_credit_ratio * 100.0)
+        ),
+        (true, None) => format!(
+            "{} and {:.0}% verified difficulty in each payout window",
+            verified_shares,
+            min_verified_ratio * 100.0
+        ),
+        (false, Some(full_credit_ratio)) => format!(
+            "{}, then caps provisional difficulty at {}x verified difficulty (full weight once about {}% of that window is verified)",
+            verified_shares,
+            format_decimal(provisional_cap_multiplier),
+            format_decimal(full_credit_ratio * 100.0)
+        ),
+        (false, None) => verified_shares,
+    }
+}
+
 fn pending_balance_note(
     cfg: &Config,
     hashrate: f64,
@@ -4315,8 +4417,6 @@ fn pending_balance_note(
             );
         }
 
-        let min_verified_shares = cfg.payout_min_verified_shares.max(0) as u64;
-        let min_verified_ratio_pct = cfg.payout_min_verified_ratio.clamp(0.0, 1.0) * 100.0;
         if estimate.blocks.iter().any(|block| {
             matches!(
                 block.validation_state.as_str(),
@@ -4324,11 +4424,9 @@ fn pending_balance_note(
             )
         }) {
             return Some(format!(
-                "Unconfirmed preview is separate from confirmed balance. It starts after shares clear the {} provisional delay, and final payout weighting waits for at least {} verified share{} and {:.0}% verified difficulty in each payout window.",
+                "Unconfirmed preview is separate from confirmed balance. It starts after shares clear the {} provisional delay, and final payout weighting uses {}.",
                 cfg.provisional_share_delay.trim(),
-                min_verified_shares,
-                if min_verified_shares == 1 { "" } else { "s" },
-                min_verified_ratio_pct,
+                payout_weighting_policy_description(cfg),
             ));
         }
         return Some(format!(
@@ -4459,7 +4557,11 @@ fn apply_wallet_liquidity_to_payout_eta(
         return;
     };
     payout_eta.wallet_spendable = Some(wallet_balance.spendable);
-    payout_eta.wallet_pending = Some(wallet_balance.pending.saturating_add(wallet_balance.pending_unconfirmed));
+    payout_eta.wallet_pending = Some(
+        wallet_balance
+            .pending
+            .saturating_add(wallet_balance.pending_unconfirmed),
+    );
     payout_eta.queue_shortfall_amount = payout_eta
         .pending_total_amount
         .saturating_sub(wallet_balance.spendable);
@@ -4807,6 +4909,7 @@ async fn handle_fees(
 
         return Json(FeesResponse {
             total_collected,
+            total_pending: 0,
             recent,
         })
         .into_response();
@@ -4824,18 +4927,24 @@ async fn handle_fees(
     let fee_address = non_empty(&query.fee_address).map(str::to_string);
 
     let store = Arc::clone(&state.store);
-    let (total_collected, fees, total) = match tokio::task::spawn_blocking(
-        move || -> anyhow::Result<(u64, Vec<PoolFeeEvent>, u64)> {
-            let total_collected = store.get_total_pool_fees()?;
-            let (fees, total) = store.get_pool_fees_page(
-                fee_address.as_deref(),
-                sort,
-                limit as i64,
-                offset as i64,
-            )?;
-            Ok((total_collected, fees, total))
-        },
-    )
+    let cfg = state.config.clone();
+    let current_height = state.node.chain_height();
+    let FeePageData {
+        total_collected,
+        total_pending,
+        items: fees,
+        total,
+    } = match tokio::task::spawn_blocking(move || {
+        build_fee_page(
+            store.as_ref(),
+            &cfg,
+            current_height,
+            fee_address.as_deref(),
+            sort,
+            limit,
+            offset,
+        )
+    })
     .await
     {
         Ok(Ok(v)) => v,
@@ -4849,13 +4958,14 @@ async fn handle_fees(
 
     Json(serde_json::json!({
         "total_collected": total_collected,
+        "total_pending": total_pending,
         "recent": PagedResponse {
             items: fees,
             page: PageMeta {
                 limit,
                 offset,
                 returned,
-                total: total as usize,
+                total,
             },
         },
     }))
@@ -5486,6 +5596,139 @@ fn system_time_to_unix_secs(value: SystemTime) -> u64 {
         .unwrap_or(0)
 }
 
+fn fee_status_for_block(block: &DbBlock) -> &'static str {
+    if block.paid_out {
+        "missing"
+    } else if block.confirmed {
+        "ready"
+    } else {
+        "pending"
+    }
+}
+
+fn fee_confirmations_remaining(
+    block: &DbBlock,
+    current_height: u64,
+    required_confirmations: u64,
+) -> Option<u64> {
+    if block.confirmed || required_confirmations == 0 {
+        return Some(0);
+    }
+
+    let depth = current_height.saturating_sub(block.height);
+    Some(required_confirmations.saturating_sub(depth))
+}
+
+fn compare_fee_page_items(a: &FeePageItem, b: &FeePageItem, sort: &str) -> std::cmp::Ordering {
+    let a_time = system_time_to_unix_secs(a.timestamp);
+    let b_time = system_time_to_unix_secs(b.timestamp);
+
+    match sort {
+        "time_asc" => a_time
+            .cmp(&b_time)
+            .then_with(|| a.block_height.cmp(&b.block_height))
+            .then_with(|| a.status.cmp(b.status)),
+        "amount_desc" => b
+            .amount
+            .cmp(&a.amount)
+            .then_with(|| b_time.cmp(&a_time))
+            .then_with(|| b.block_height.cmp(&a.block_height)),
+        "amount_asc" => a
+            .amount
+            .cmp(&b.amount)
+            .then_with(|| a_time.cmp(&b_time))
+            .then_with(|| a.block_height.cmp(&b.block_height)),
+        "height_asc" => a
+            .block_height
+            .cmp(&b.block_height)
+            .then_with(|| a_time.cmp(&b_time))
+            .then_with(|| a.status.cmp(b.status)),
+        "height_desc" => b
+            .block_height
+            .cmp(&a.block_height)
+            .then_with(|| b_time.cmp(&a_time))
+            .then_with(|| a.status.cmp(b.status)),
+        _ => b_time
+            .cmp(&a_time)
+            .then_with(|| b.block_height.cmp(&a.block_height))
+            .then_with(|| a.status.cmp(b.status)),
+    }
+}
+
+fn build_fee_page(
+    store: &PoolStore,
+    cfg: &Config,
+    current_height: u64,
+    fee_address_filter: Option<&str>,
+    sort: &str,
+    limit: usize,
+    offset: usize,
+) -> anyhow::Result<FeePageData> {
+    let fee_events = store.get_all_pool_fees()?;
+    let mut total_collected = 0u64;
+    let mut recorded_heights = HashSet::<u64>::with_capacity(fee_events.len());
+    let mut items = Vec::<FeePageItem>::with_capacity(fee_events.len());
+
+    for fee in fee_events {
+        total_collected = total_collected.saturating_add(fee.amount);
+        recorded_heights.insert(fee.block_height);
+        items.push(FeePageItem {
+            block_height: fee.block_height,
+            amount: fee.amount,
+            fee_address: fee.fee_address,
+            timestamp: fee.timestamp,
+            status: "collected",
+            confirmations_remaining: Some(0),
+        });
+    }
+
+    let required_confirmations = cfg.blocks_before_payout.max(0) as u64;
+    let mut total_pending = 0u64;
+    for block in store.get_all_blocks()? {
+        if block.orphaned || block.reward == 0 || recorded_heights.contains(&block.height) {
+            continue;
+        }
+
+        let amount = cfg.pool_fee(block.reward);
+        if amount == 0 {
+            continue;
+        }
+
+        total_pending = total_pending.saturating_add(amount);
+        items.push(FeePageItem {
+            block_height: block.height,
+            amount,
+            fee_address: resolve_pool_fee_destination(cfg, &block).unwrap_or_default(),
+            timestamp: block.timestamp,
+            status: fee_status_for_block(&block),
+            confirmations_remaining: fee_confirmations_remaining(
+                &block,
+                current_height,
+                required_confirmations,
+            ),
+        });
+    }
+
+    if let Some(filter) = fee_address_filter
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_ascii_lowercase)
+    {
+        items.retain(|item| item.fee_address.to_ascii_lowercase().contains(&filter));
+    }
+
+    items.sort_by(|a, b| compare_fee_page_items(a, b, sort));
+    let total = items.len();
+    let items = items.into_iter().skip(offset).take(limit).collect();
+
+    Ok(FeePageData {
+        total_collected,
+        total_pending,
+        items,
+        total,
+    })
+}
+
 impl BlocksQuery {
     fn legacy_mode(&self) -> bool {
         !self.paged.unwrap_or(false)
@@ -5751,8 +5994,8 @@ mod tests {
 
     use super::{
         apply_wallet_liquidity_to_payout_eta, batch_payouts, block_page_item_response,
-        build_block_reward_breakdown, compute_luck_details_for_hashes, compute_luck_history,
-        contains_ci, daemon_debug_log_path, daemon_log_commands,
+        build_block_reward_breakdown, build_fee_page, compute_luck_details_for_hashes,
+        compute_luck_history, contains_ci, daemon_debug_log_path, daemon_log_commands,
         estimate_unconfirmed_pending_for_miner, estimated_block_reward, handle_health,
         handle_miners, handle_stats, hashrate_from_stats_with_miner_ramp,
         hashrate_from_stats_with_warmup, hydrate_provisional_block_reward,
@@ -5832,6 +6075,145 @@ mod tests {
     }
 
     #[test]
+    fn build_fee_page_includes_collected_and_pending_rows() {
+        let store = test_store();
+        let mut cfg = Config::default();
+        cfg.pool_fee_pct = 10.0;
+        cfg.blocks_before_payout = 60;
+        cfg.pool_wallet_address = "cold-wallet".to_string();
+
+        let base = UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let collected_reward = 100_000_000;
+        let pending_reward = 200_000_000;
+        let ready_reward = 300_000_000;
+        let missing_reward = 400_000_000;
+
+        store
+            .add_block(&DbBlock {
+                height: 100,
+                hash: "collected".to_string(),
+                difficulty: 1,
+                finder: "finder-collected".to_string(),
+                finder_worker: "worker-collected".to_string(),
+                reward: collected_reward,
+                timestamp: base,
+                confirmed: true,
+                orphaned: false,
+                paid_out: true,
+            })
+            .expect("add collected block");
+        store
+            .record_pool_fee(
+                100,
+                cfg.pool_fee(collected_reward),
+                &cfg.pool_wallet_address,
+                base,
+            )
+            .expect("record collected fee");
+
+        store
+            .add_block(&DbBlock {
+                height: 110,
+                hash: "pending".to_string(),
+                difficulty: 1,
+                finder: "finder-pending".to_string(),
+                finder_worker: "worker-pending".to_string(),
+                reward: pending_reward,
+                timestamp: base + Duration::from_secs(60),
+                confirmed: false,
+                orphaned: false,
+                paid_out: false,
+            })
+            .expect("add pending block");
+        store
+            .add_block(&DbBlock {
+                height: 120,
+                hash: "ready".to_string(),
+                difficulty: 1,
+                finder: "finder-ready".to_string(),
+                finder_worker: "worker-ready".to_string(),
+                reward: ready_reward,
+                timestamp: base + Duration::from_secs(120),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+            })
+            .expect("add ready block");
+        store
+            .add_block(&DbBlock {
+                height: 130,
+                hash: "missing".to_string(),
+                difficulty: 1,
+                finder: "finder-missing".to_string(),
+                finder_worker: "worker-missing".to_string(),
+                reward: missing_reward,
+                timestamp: base + Duration::from_secs(180),
+                confirmed: true,
+                orphaned: false,
+                paid_out: true,
+            })
+            .expect("add missing block");
+        store
+            .add_block(&DbBlock {
+                height: 140,
+                hash: "orphaned".to_string(),
+                difficulty: 1,
+                finder: "finder-orphaned".to_string(),
+                finder_worker: "worker-orphaned".to_string(),
+                reward: 500_000_000,
+                timestamp: base + Duration::from_secs(240),
+                confirmed: false,
+                orphaned: true,
+                paid_out: false,
+            })
+            .expect("add orphaned block");
+
+        let page = build_fee_page(store.as_ref(), &cfg, 150, None, "time_desc", 10, 0)
+            .expect("build fee page");
+
+        assert_eq!(page.total, 4);
+        assert_eq!(page.total_collected, cfg.pool_fee(collected_reward));
+        assert_eq!(
+            page.total_pending,
+            cfg.pool_fee(pending_reward)
+                .saturating_add(cfg.pool_fee(ready_reward))
+                .saturating_add(cfg.pool_fee(missing_reward))
+        );
+
+        let pending = page
+            .items
+            .iter()
+            .find(|item| item.block_height == 110)
+            .expect("pending row");
+        assert_eq!(pending.status, "pending");
+        assert_eq!(pending.confirmations_remaining, Some(20));
+        assert_eq!(pending.fee_address, "cold-wallet");
+
+        let ready = page
+            .items
+            .iter()
+            .find(|item| item.block_height == 120)
+            .expect("ready row");
+        assert_eq!(ready.status, "ready");
+        assert_eq!(ready.confirmations_remaining, Some(0));
+
+        let missing = page
+            .items
+            .iter()
+            .find(|item| item.block_height == 130)
+            .expect("missing row");
+        assert_eq!(missing.status, "missing");
+        assert_eq!(missing.confirmations_remaining, Some(0));
+
+        let collected = page
+            .items
+            .iter()
+            .find(|item| item.block_height == 100)
+            .expect("collected row");
+        assert_eq!(collected.status, "collected");
+    }
+
+    #[test]
     fn pending_balance_note_explains_zero_while_hashing() {
         let cfg = Config::default();
         let empty = MinerPendingEstimate::default();
@@ -5861,7 +6243,13 @@ mod tests {
         let threshold_note =
             pending_balance_note(&cfg, 150.0, 20, &waiting).expect("threshold note");
         assert!(threshold_note.contains("separate from confirmed balance"));
-        assert!(threshold_note.contains("verified difficulty"));
+        assert!(threshold_note.contains("caps provisional difficulty"));
+
+        let mut ratio_cfg = Config::default();
+        ratio_cfg.payout_min_verified_ratio = 0.5;
+        ratio_cfg.payout_provisional_cap_multiplier = 0.0;
+        let ratio_note = pending_balance_note(&ratio_cfg, 150.0, 20, &waiting).expect("ratio note");
+        assert!(ratio_note.contains("50% verified difficulty"));
 
         let ready = MinerPendingEstimate {
             estimated_pending: 10,
@@ -6279,6 +6667,90 @@ mod tests {
         assert_eq!(miner_a.payout_credit, 500);
         assert_eq!(miner_a.actual_credit, Some(500));
         assert_eq!(miner_a.delta_vs_payout, Some(0));
+    }
+
+    #[test]
+    fn block_reward_breakdown_marks_capped_provisional_rows() {
+        let store = test_store();
+        let mut cfg = Config::default();
+        cfg.payout_scheme = "pplns".to_string();
+        cfg.pplns_window_duration = "24h".to_string();
+        cfg.pool_fee_pct = 0.0;
+        cfg.pool_fee_flat = 0.0;
+        cfg.block_finder_bonus = false;
+        cfg.provisional_share_delay = "0s".to_string();
+        cfg.payout_min_verified_shares = 1;
+        cfg.payout_min_verified_ratio = 0.0;
+        cfg.payout_provisional_cap_multiplier = 1.0;
+
+        let base = UNIX_EPOCH + Duration::from_secs(4_000_000);
+        let block_ts = base + Duration::from_secs(120);
+        for share in [
+            ShareRecord {
+                job_id: "j-cap-a-verified".to_string(),
+                miner: "miner-a".to_string(),
+                worker: "wa".to_string(),
+                difficulty: 20,
+                nonce: 1,
+                status: "verified",
+                was_sampled: true,
+                block_hash: None,
+                reject_reason: None,
+                created_at: base,
+            },
+            ShareRecord {
+                job_id: "j-cap-a-provisional".to_string(),
+                miner: "miner-a".to_string(),
+                worker: "wa".to_string(),
+                difficulty: 100,
+                nonce: 2,
+                status: "provisional",
+                was_sampled: false,
+                block_hash: None,
+                reject_reason: None,
+                created_at: base + Duration::from_secs(1),
+            },
+            ShareRecord {
+                job_id: "j-cap-b-verified".to_string(),
+                miner: "miner-b".to_string(),
+                worker: "wb".to_string(),
+                difficulty: 20,
+                nonce: 3,
+                status: "verified",
+                was_sampled: true,
+                block_hash: None,
+                reject_reason: None,
+                created_at: base + Duration::from_secs(2),
+            },
+        ] {
+            store.add_share(share).expect("add share");
+        }
+        store
+            .add_block(&DbBlock {
+                height: 298,
+                hash: "blk-cap".to_string(),
+                difficulty: 200,
+                finder: "miner-b".to_string(),
+                finder_worker: "wb".to_string(),
+                reward: 1_200,
+                timestamp: block_ts,
+                confirmed: false,
+                orphaned: false,
+                paid_out: false,
+            })
+            .expect("add block");
+
+        let breakdown =
+            build_block_reward_breakdown(&store, &cfg, 298, block_ts + Duration::from_secs(10))
+                .expect("reward breakdown");
+        let miner_a = breakdown
+            .participants
+            .iter()
+            .find(|row| row.address == "miner-a")
+            .expect("miner-a row");
+        assert_eq!(miner_a.preview_weight, 120);
+        assert_eq!(miner_a.payout_weight, 40);
+        assert_eq!(miner_a.payout_status, "capped_provisional");
     }
 
     #[test]
