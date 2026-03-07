@@ -1404,82 +1404,107 @@ export function AdminPage({
           </div>
 
           <div style={{ display: tab === 'health' ? '' : 'none' }}>
-            <div
-              className="stats-grid"
-              style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginBottom: 20 }}
-            >
-              <div className="stat-card">
-                <div className="label">Uptime</div>
-                <div className="value">{health ? fmtSeconds(health.uptime_seconds || 0) : '-'}</div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Daemon</div>
-                <div className="value">
-                  {health?.daemon?.reachable ? (
-                    <>
-                      <span className="status-dot dot-green" />OK
-                    </>
-                  ) : (
-                    <>
-                      <span className="status-dot dot-red" />Down
-                    </>
-                  )}
+            <div className="stats-card-group">
+              <div className="stats-card-group-title">Runtime</div>
+              <div className="stats-card-group-grid">
+                <div className="stat-card">
+                  <div className="label">Uptime</div>
+                  <div className="value mono">{health ? fmtSeconds(health.uptime_seconds || 0) : '-'}</div>
                 </div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Template Age</div>
-                <div className="value">
-                  {health?.job?.template_age_seconds != null ? fmtSeconds(health.job.template_age_seconds) : '-'}
+                <div className="stat-card">
+                  <div className="label">Daemon</div>
+                  <div className="value">
+                    {health?.daemon?.reachable ? (
+                      <>
+                        <span className="status-dot dot-green" />OK
+                      </>
+                    ) : (
+                      <>
+                        <span className="status-dot dot-red" />Down
+                      </>
+                    )}
+                  </div>
                 </div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Pending Payouts</div>
-                <div className="value">{health?.payouts?.pending_count ?? '-'}</div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Wallet Spendable</div>
-                <div className="value">
-                  {health?.wallet?.spendable != null
-                    ? formatCoins(health.wallet.spendable)
-                    : '-'}
-                </div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Wallet Pending</div>
-                <div className="value">
-                  {health?.wallet?.pending != null
-                    ? formatCoins(health.wallet.pending)
-                    : '-'}
-                </div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Unconfirmed Change</div>
-                <div className="value">
-                  {health?.wallet?.pending_unconfirmed != null
-                    ? formatCoins(health.wallet.pending_unconfirmed)
-                    : '-'}
-                </div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Change ETA</div>
-                <div className="value">
-                  {health?.wallet?.pending_unconfirmed_eta != null
-                    ? fmtSeconds(health.wallet.pending_unconfirmed_eta)
-                    : '-'}
-                </div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Wallet Total</div>
-                <div className="value">
-                  {health?.wallet?.total != null
-                    ? formatCoins(health.wallet.total)
-                    : '-'}
+                <div className="stat-card">
+                  <div className="label">Template Age</div>
+                  <div className="value mono">
+                    {health?.job?.template_age_seconds != null ? fmtSeconds(health.job.template_age_seconds) : '-'}
+                  </div>
                 </div>
               </div>
             </div>
 
-            <h3>Raw Health Data</h3>
-            <pre className="raw-json">{health ? JSON.stringify(health, null, 2) : 'Loading...'}</pre>
+            <div className="stats-card-group">
+              <div className="stats-card-group-title">Payouts</div>
+              <div className="stats-card-group-grid">
+                <div className="stat-card">
+                  <div className="label">Pending Payouts</div>
+                  <div className="value mono">{health?.payouts?.pending_count ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Pending Amount</div>
+                  <div className="value mono">
+                    {health?.payouts?.pending_amount != null
+                      ? formatCoins(health.payouts.pending_amount)
+                      : '-'}
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Wallet Pending</div>
+                  <div className="value mono">
+                    {health?.wallet?.pending != null
+                      ? formatCoins(health.wallet.pending)
+                      : '-'}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="stats-card-group">
+              <div className="stats-card-group-title">Wallet</div>
+              <div className="stats-card-group-grid">
+                <div className="stat-card">
+                  <div className="label">Wallet Spendable</div>
+                  <div className="value mono">
+                    {health?.wallet?.spendable != null
+                      ? formatCoins(health.wallet.spendable)
+                      : '-'}
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Unconfirmed Change</div>
+                  <div className="value mono">
+                    {health?.wallet?.pending_unconfirmed != null
+                      ? formatCoins(health.wallet.pending_unconfirmed)
+                      : '-'}
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Change ETA</div>
+                  <div className="value mono">
+                    {health?.wallet?.pending_unconfirmed_eta != null
+                      ? fmtSeconds(health.wallet.pending_unconfirmed_eta)
+                      : '-'}
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Wallet Total</div>
+                  <div className="value mono">
+                    {health?.wallet?.total != null
+                      ? formatCoins(health.wallet.total)
+                      : '-'}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="card section">
+              <h3>Raw Health Data</h3>
+              <p className="section-lead">
+                Live response from the protected health endpoint for debugging runtime, payout queue, and wallet state.
+              </p>
+              <pre className="raw-json">{health ? JSON.stringify(health, null, 2) : 'Loading...'}</pre>
+            </div>
           </div>
 
           <div style={{ display: tab === 'logs' ? '' : 'none' }}>
