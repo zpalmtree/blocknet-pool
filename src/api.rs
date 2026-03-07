@@ -5691,7 +5691,8 @@ fn build_fee_page(
 
     let required_confirmations = cfg.blocks_before_payout.max(0) as u64;
     let mut total_pending = 0u64;
-    for block in store.get_all_blocks()? {
+    for mut block in store.get_all_blocks()? {
+        hydrate_provisional_block_reward(&mut block);
         if block.orphaned || block.reward == 0 || recorded_heights.contains(&block.height) {
             continue;
         }
@@ -6218,6 +6219,49 @@ mod tests {
             .find(|item| item.block_height == 100)
             .expect("collected row");
         assert_eq!(collected.status, "collected");
+    }
+
+    #[test]
+    fn build_fee_page_hydrates_provisional_rewards_for_pending_blocks() {
+        let store = test_store();
+        let mut cfg = Config::default();
+        cfg.pool_fee_pct = 10.0;
+        cfg.blocks_before_payout = 60;
+        cfg.pool_wallet_address = "cold-wallet".to_string();
+
+        let base = UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let height = 3707;
+        let expected_reward = estimated_block_reward(height);
+        let expected_fee = cfg.pool_fee(expected_reward);
+
+        store
+            .add_block(&DbBlock {
+                height,
+                hash: "pending-zero-reward".to_string(),
+                difficulty: 1,
+                finder: "finder-pending".to_string(),
+                finder_worker: "worker-pending".to_string(),
+                reward: 0,
+                timestamp: base,
+                confirmed: false,
+                orphaned: false,
+                paid_out: false,
+            })
+            .expect("add pending block");
+
+        let page = build_fee_page(store.as_ref(), &cfg, height + 5, None, "time_desc", 10, 0)
+            .expect("build fee page");
+
+        assert_eq!(page.total, 1);
+        assert_eq!(page.total_collected, 0);
+        assert_eq!(page.total_pending, expected_fee);
+
+        let pending = page.items.first().expect("pending row");
+        assert_eq!(pending.block_height, height);
+        assert_eq!(pending.amount, expected_fee);
+        assert_eq!(pending.status, "pending");
+        assert_eq!(pending.confirmations_remaining, Some(55));
+        assert_eq!(pending.fee_address, "cold-wallet");
     }
 
     #[test]
