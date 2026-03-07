@@ -477,19 +477,17 @@ nav {
   position: relative;
 }
 
-.stat-card--flow {
-  overflow: visible;
-}
-
 .stat-card--flow::before {
-  content: '→';
+  content: '';
   position: absolute;
-  right: -12px;
+  right: -11px;
   top: 50%;
-  transform: translate(50%, -50%);
-  font-size: 13px;
-  color: var(--muted);
-  opacity: 0.5;
+  width: 7px;
+  height: 7px;
+  border-top: 1.5px solid var(--muted);
+  border-right: 1.5px solid var(--muted);
+  transform: translate(0, -50%) rotate(45deg);
+  opacity: 0.4;
   z-index: 1;
 }
 
