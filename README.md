@@ -49,6 +49,8 @@ What it does:
 ## Local Development
 
 ```bash
+npm --prefix frontend ci
+npm --prefix frontend run build
 cargo build --release
 cargo run --release
 # runs the combined API + Stratum binary for local/dev use
@@ -85,10 +87,13 @@ Build the embedded API bundle:
 
 ```bash
 cd frontend
+npm ci
 npm run build
 ```
 
-Build output is written to `src/ui/dist/` and served at:
+Build output is written to `frontend/dist/` and embedded into the API binary during the Rust build. A fresh clone must build the frontend before `cargo build` or `cargo run`.
+
+The embedded assets are served at:
 
 - `GET /` / `GET /ui` (index)
 - `GET /ui-assets/app.js`

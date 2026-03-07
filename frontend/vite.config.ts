@@ -3,7 +3,7 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   base: '/ui-assets/',
   build: {
-    outDir: '../src/ui/dist',
+    outDir: 'dist',
     emptyOutDir: true,
     sourcemap: false,
     assetsInlineLimit: 0,

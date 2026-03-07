@@ -4,7 +4,7 @@
 
 - `frontend/` — React/TypeScript SPA (Vite build)
 - `src/` — Rust backend (API + Stratum binary crate)
-- `src/ui/dist/` — Built frontend output (committed, embedded in binary)
+- `frontend/dist/` — Built frontend output (generated locally, embedded in binary at build time)
 - `scripts/deploy_bntpool.sh` — Production deploy script
 
 ## Deployment
@@ -25,14 +25,14 @@ bash scripts/deploy_bntpool.sh --skip-ui-build
 
 ### Deploy checklist
 
-1. Build frontend: `npm --prefix frontend run build` (outputs to `src/ui/dist/`)
+1. Build frontend: `npm --prefix frontend run build` (outputs to `frontend/dist/`)
 2. Build Rust binaries: `cargo build --release --bin blocknet-pool-api --bin blocknet-pool-stratum`
 3. Deploy: `bash scripts/deploy_bntpool.sh --skip-ui-build` (uploads binaries + restarts services)
 
 ### Common mistake
 
 Do NOT use `--skip-build` for UI changes. The UI is baked into the binary at compile time.
-Syncing `src/ui/dist/` to the server does nothing — the running binary serves its embedded copy.
+Syncing `frontend/dist/` to the server does nothing — the running binary serves its embedded copy.
 
 ## Git
 

@@ -11,8 +11,7 @@ bin/
 dist/
 build/
 frontend/node_modules/
-!src/ui/dist/
-!src/ui/dist/**
+frontend/dist/
 *.exe
 *.dll
 *.so

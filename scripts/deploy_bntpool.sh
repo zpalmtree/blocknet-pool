@@ -102,6 +102,8 @@ echo "==> syncing source to ${host}:${remote_dir}"
 rsync -az --delete \
   --exclude='.git' \
   --exclude='target' \
+  --exclude='frontend/node_modules' \
+  --exclude='frontend/dist' \
   --exclude='pool.db' \
   --exclude='data' \
   --exclude='.env' \

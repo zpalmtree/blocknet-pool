@@ -650,9 +650,16 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
     Ok(())
 }
 
-const UI_INDEX_HTML: &str = include_str!("ui/dist/index.html");
-const UI_ASSET_APP_JS: &str = include_str!("ui/dist/app.js");
-const UI_ASSET_APP_CSS: &str = include_str!("ui/dist/app.css");
+const UI_INDEX_HTML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/frontend/dist/index.html"
+));
+const UI_ASSET_APP_JS: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/frontend/dist/app.js"));
+const UI_ASSET_APP_CSS: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/frontend/dist/app.css"
+));
 const UI_ASSET_POOL_ENTERED_PNG: &[u8] = include_bytes!("ui/assets/pool-entered.png");
 const UI_ASSET_MINING_TUI_PNG: &[u8] = include_bytes!("ui/assets/mining-tui.png");
 const UI_FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Blocknet Pool"><rect x="4" y="4" width="24" height="24" rx="4" fill="#16a34a"/><rect x="9" y="9" width="14" height="14" rx="2" fill="#fff" opacity=".9"/><rect x="12" y="12" width="8" height="8" rx="1" fill="#16a34a"/></svg>"##;
