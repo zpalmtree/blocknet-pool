@@ -475,14 +475,22 @@ nav {
 
 .stat-card--accent {
   position: relative;
-  overflow: hidden;
 }
 
-.stat-card--flow .label::after {
+.stat-card--flow {
+  overflow: visible;
+}
+
+.stat-card--flow::before {
   content: '→';
-  margin-left: 6px;
-  font-size: 11px;
-  opacity: 0.45;
+  position: absolute;
+  right: -12px;
+  top: 50%;
+  transform: translate(50%, -50%);
+  font-size: 13px;
+  color: var(--muted);
+  opacity: 0.5;
+  z-index: 1;
 }
 
 .stat-card--accent::after {
