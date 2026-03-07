@@ -54,6 +54,22 @@
   --log-bg: #0f172a;
   --log-border: #1e293b;
   --log-text: #e2e8f0;
+  --log-ansi-black: #334155;
+  --log-ansi-red: #f87171;
+  --log-ansi-green: #4ade80;
+  --log-ansi-yellow: #fbbf24;
+  --log-ansi-blue: #60a5fa;
+  --log-ansi-magenta: #e879f9;
+  --log-ansi-cyan: #67e8f9;
+  --log-ansi-white: #e2e8f0;
+  --log-ansi-bright-black: #94a3b8;
+  --log-ansi-bright-red: #fca5a5;
+  --log-ansi-bright-green: #86efac;
+  --log-ansi-bright-yellow: #fcd34d;
+  --log-ansi-bright-blue: #93c5fd;
+  --log-ansi-bright-magenta: #f0abfc;
+  --log-ansi-bright-cyan: #a5f3fc;
+  --log-ansi-bright-white: #f8fafc;
   --chart-axis: #6b7c6b;
   --chart-grid: #d8e3d2;
   --chart-line: #16a34a;
@@ -771,6 +787,20 @@ tr:hover td {
   color: var(--status-orphaned-text);
 }
 
+.fee-status-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.fee-status-cell__meta {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
 .pager {
   display: flex;
   align-items: center;
@@ -1420,8 +1450,21 @@ pre.raw-json {
   max-height: 480px;
   overflow: auto;
   line-height: 1.4;
+}
+
+.log-line {
+  min-height: 1.4em;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.log-line-placeholder {
+  color: var(--muted);
+}
+
+.log-segment {
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
 .view-all {

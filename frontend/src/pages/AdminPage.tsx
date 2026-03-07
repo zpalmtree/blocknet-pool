@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
 import { Pager } from '../components/Pager';
+import { parseAnsiLine, type ParsedAnsiSegment } from '../lib/ansi';
 import {
   fmtSeconds,
   formatCoinAmount,
@@ -91,13 +92,13 @@ function feeStatusBadgeClass(status: string | undefined): string {
 
 function feeStatusNote(item: FeeEvent): string | null {
   if (item.status === 'pending' && (item.confirmations_remaining ?? 0) > 0) {
-    return `${item.confirmations_remaining} conf left`;
+    return `${item.confirmations_remaining} conf`;
   }
   if (item.status === 'ready') {
-    return 'awaiting distribution';
+    return 'awaiting fee sweep';
   }
   if (item.status === 'missing') {
-    return 'paid block missing fee row';
+    return 'fee row missing';
   }
   return null;
 }
@@ -123,6 +124,11 @@ interface AdminPageProps {
   onSaveApiKey: () => void;
   onClearApiKey: () => void;
   onJumpToStats: (address: string) => void;
+}
+
+interface DaemonLogLine {
+  id: number;
+  segments: ParsedAnsiSegment[];
 }
 
 export function AdminPage({
@@ -161,13 +167,14 @@ export function AdminPage({
   const [rewardBreakdownLoading, setRewardBreakdownLoading] = useState(false);
 
   const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [daemonLogs, setDaemonLogs] = useState<string[]>([]);
+  const [daemonLogs, setDaemonLogs] = useState<DaemonLogLine[]>([]);
   const [daemonLogsTail, setDaemonLogsTail] = useState(200);
   const [daemonLogsStatus, setDaemonLogsStatus] = useState<'idle' | 'connecting' | 'live' | 'error'>('idle');
   const [daemonLogsError, setDaemonLogsError] = useState('');
   const [daemonLogsAutoScroll, setDaemonLogsAutoScroll] = useState(true);
   const [daemonLogsConnectSeq, setDaemonLogsConnectSeq] = useState(0);
-  const daemonLogsRef = useRef<HTMLPreElement | null>(null);
+  const daemonLogsRef = useRef<HTMLDivElement | null>(null);
+  const daemonLogSeq = useRef(0);
   const rewardBreakdownRequestSeq = useRef(0);
 
   const loadMiners = useCallback(async () => {
@@ -376,7 +383,10 @@ export function AdminPage({
             onLine: (line) => {
               setDaemonLogsStatus('live');
               setDaemonLogs((prev) => {
-                const next = prev.concat(line);
+                const next = prev.concat({
+                  id: daemonLogSeq.current++,
+                  segments: parseAnsiLine(line),
+                });
                 if (next.length <= MAX_DAEMON_LOG_LINES) {
                   return next;
                 }
@@ -689,10 +699,10 @@ export function AdminPage({
                         <td>{f.block_height}</td>
                         <td>{formatCoins(f.amount)}</td>
                         <td>
-                          <span className={`badge ${feeStatusBadgeClass(f.status)}`}>{feeStatusLabel(f.status)}</span>
-                          {feeStatusNote(f) ? (
-                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>{feeStatusNote(f)}</div>
-                          ) : null}
+                          <div className="fee-status-cell">
+                            <span className={`badge ${feeStatusBadgeClass(f.status)}`}>{feeStatusLabel(f.status)}</span>
+                            {feeStatusNote(f) ? <span className="fee-status-cell__meta">{feeStatusNote(f)}</span> : null}
+                          </div>
                         </td>
                         <td title={new Date(toUnixMs(f.timestamp)).toLocaleString()}>{timeAgo(f.timestamp)}</td>
                       </tr>
@@ -1067,9 +1077,21 @@ export function AdminPage({
               <p style={{ fontSize: 13, color: 'var(--bad)', marginBottom: 10 }}>{daemonLogsError}</p>
             ) : null}
 
-            <pre ref={daemonLogsRef} className="log-stream">
-              {daemonLogs.length ? daemonLogs.join('\n') : 'No daemon log lines yet.'}
-            </pre>
+            <div ref={daemonLogsRef} className="log-stream">
+              {daemonLogs.length ? (
+                daemonLogs.map((line) => (
+                  <div key={line.id} className="log-line">
+                    {line.segments.map((segment, index) => (
+                      <span key={index} className="log-segment" style={segment.style}>
+                        {segment.text}
+                      </span>
+                    ))}
+                  </div>
+                ))
+              ) : (
+                <div className="log-line log-line-placeholder">No daemon log lines yet.</div>
+              )}
+            </div>
           </div>
         </div>
       )}
