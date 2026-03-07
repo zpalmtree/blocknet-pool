@@ -327,35 +327,6 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
             </div>
           </div>
 
-          <div
-            className="card"
-            style={{
-              marginBottom: 24,
-              padding: '12px 16px',
-              fontSize: 13,
-              color: 'var(--muted)',
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: '6px 18px',
-            }}
-          >
-            <span>
-              Confirmed rewards: <span className="mono">{formatCoinAmount(pendingQueued)}</span> BNT already queued,{' '}
-              <span className="mono">{formatCoinAmount(pendingUnqueued)}</span> BNT still waiting to be queued.
-            </span>
-            <span>
-              Estimated rewards:{' '}
-              {previewBlocks.length ? (
-                <>
-                  based on <span className="mono">{previewBlocks.length}</span> recent unconfirmed block
-                  {previewBlocks.length === 1 ? '' : 's'}
-                </>
-              ) : (
-                'no unconfirmed block estimate right now'
-              )}
-              ; can still change.
-            </span>
-          </div>
 
           {minerData.pending_note && (
             <div
