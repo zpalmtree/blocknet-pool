@@ -1198,6 +1198,22 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .collect())
     }
 
+    pub fn get_block_pool_fee_event(&self, block_height: u64) -> Result<Option<PoolFeeEvent>> {
+        let row = self.conn().lock().query_opt(
+            "SELECT id, block_height, amount, fee_address, timestamp
+             FROM pool_fee_events
+             WHERE block_height = $1",
+            &[&u64_to_i64(block_height)?],
+        )?;
+        Ok(row.map(|row| PoolFeeEvent {
+            id: row.get::<_, i64>(0),
+            block_height: row.get::<_, i64>(1).max(0) as u64,
+            amount: row.get::<_, i64>(2).max(0) as u64,
+            fee_address: row.get::<_, String>(3),
+            timestamp: from_unix(row.get::<_, i64>(4)),
+        }))
+    }
+
     pub fn get_all_pool_fees(&self) -> Result<Vec<PoolFeeEvent>> {
         let rows = self.conn().lock().query(
             "SELECT id, block_height, amount, fee_address, timestamp

@@ -495,8 +495,40 @@ export function AdminPage({
     if (!filter) return items;
     return items.filter((row) => row.address.toLowerCase().includes(filter));
   }, [rewardAddressFilter, rewardBreakdown?.participants]);
+  const rewardBreakdownTotals = useMemo(() => {
+    if (!rewardBreakdown) return null;
+    return rewardBreakdown.participants.reduce(
+      (totals, row) => {
+        totals.previewCredit += row.preview_credit;
+        totals.payoutCredit += row.payout_credit;
+        totals.verifiedDifficulty += row.verified_difficulty;
+        totals.provisionalEligibleDifficulty += row.provisional_difficulty_eligible;
+        return totals;
+      },
+      {
+        previewCredit: 0,
+        payoutCredit: 0,
+        verifiedDifficulty: 0,
+        provisionalEligibleDifficulty: 0,
+      }
+    );
+  }, [rewardBreakdown]);
   const rewardBreakdownOrphaned = rewardBreakdown?.block.orphaned ?? false;
   const rewardBreakdownProjected = !!rewardBreakdown && !rewardBreakdownOrphaned && !rewardBreakdown.block.paid_out;
+  const rewardActualBlockTotal =
+    rewardBreakdown && rewardBreakdown.actual_credit_events_available && rewardBreakdown.actual_fee_amount != null
+      ? rewardBreakdown.actual_credit_total + rewardBreakdown.actual_fee_amount
+      : null;
+  const rewardFeeDelta =
+    rewardBreakdown?.actual_fee_amount != null ? rewardBreakdown.actual_fee_amount - rewardBreakdown.fee_amount : null;
+  const rewardProjectedBlockTotal =
+    rewardBreakdown && rewardBreakdownTotals
+      ? rewardBreakdownTotals.payoutCredit + rewardBreakdown.fee_amount
+      : null;
+  const rewardActualBlockDelta =
+    rewardActualBlockTotal != null && rewardProjectedBlockTotal != null
+      ? rewardActualBlockTotal - rewardProjectedBlockTotal
+      : null;
   const rewardPreviewColumnLabel = rewardBreakdownOrphaned ? 'Preview Estimate' : 'Preview';
   const rewardPayoutColumnLabel = rewardBreakdownProjected ? 'Projected Payout' : 'Payout';
   const rewardPayoutWeightLabel = rewardBreakdownProjected ? 'Projected Weight' : 'Payout Weight';
@@ -1252,7 +1284,120 @@ export function AdminPage({
                         ))
                       )}
                     </tbody>
+                    {!rewardBreakdown.block.orphaned && rewardBreakdownTotals ? (
+                      <tfoot>
+                        <tr style={{ background: 'var(--surface-hover)' }}>
+                          <td style={{ fontWeight: 700, textAlign: 'left' }}>
+                            Pool Fee
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>not share-weighted</div>
+                          </td>
+                          <td>
+                            <div>{formatCoins(rewardBreakdown.fee_amount)}</div>
+                            <div className="mono" style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                              withheld from reward
+                            </div>
+                          </td>
+                          <td className="mono">-</td>
+                          <td>
+                            <div>{formatCoins(rewardBreakdown.fee_amount)}</div>
+                            <div className="mono" style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                              {pct(
+                                rewardBreakdown.block.reward > 0
+                                  ? (rewardBreakdown.fee_amount * 100) / rewardBreakdown.block.reward
+                                  : 0
+                              )}
+                            </div>
+                          </td>
+                          <td>{rewardBreakdown.actual_fee_amount != null ? formatCoins(rewardBreakdown.actual_fee_amount) : '-'}</td>
+                          <td
+                            style={{
+                              color:
+                                rewardFeeDelta == null
+                                  ? 'var(--muted)'
+                                  : rewardFeeDelta === 0
+                                    ? 'var(--good)'
+                                    : 'var(--warn)',
+                            }}
+                          >
+                            {formatSignedCoins(rewardFeeDelta)}
+                          </td>
+                          <td className="mono">-</td>
+                          <td className="mono">-</td>
+                          <td className="mono">-</td>
+                          <td>
+                            <div style={{ color: 'var(--muted)', fontWeight: 600 }}>Pool fee</div>
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                              {rewardBreakdown.actual_fee_amount != null
+                                ? 'tracked separately'
+                                : rewardBreakdown.block.paid_out
+                                  ? 'fee row missing'
+                                  : 'pending'}
+                            </div>
+                          </td>
+                        </tr>
+                        <tr style={{ background: 'var(--surface-hover)' }}>
+                          <td style={{ fontWeight: 700, textAlign: 'left' }}>
+                            Block Total
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                              all participants + fee
+                            </div>
+                          </td>
+                          <td>
+                            <div>{formatCoins(rewardBreakdownTotals.previewCredit + rewardBreakdown.fee_amount)}</div>
+                            <div className="mono" style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                              target {formatCoins(rewardBreakdown.block.reward)}
+                            </div>
+                          </td>
+                          <td className="mono">{rewardBreakdown.preview_total_weight}</td>
+                          <td>
+                            <div>{formatCoins(rewardBreakdownTotals.payoutCredit + rewardBreakdown.fee_amount)}</div>
+                            <div className="mono" style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                              target {formatCoins(rewardBreakdown.block.reward)}
+                            </div>
+                          </td>
+                          <td>{rewardActualBlockTotal != null ? formatCoins(rewardActualBlockTotal) : '-'}</td>
+                          <td
+                            style={{
+                              color:
+                                rewardActualBlockDelta == null
+                                  ? 'var(--muted)'
+                                  : rewardActualBlockDelta === 0
+                                    ? 'var(--good)'
+                                    : 'var(--warn)',
+                            }}
+                          >
+                            {formatSignedCoins(rewardActualBlockDelta)}
+                          </td>
+                          <td className="mono">{rewardBreakdown.payout_total_weight}</td>
+                          <td className="mono">{rewardBreakdownTotals.verifiedDifficulty}</td>
+                          <td className="mono">{rewardBreakdownTotals.provisionalEligibleDifficulty}</td>
+                          <td>
+                            <div
+                              style={{
+                                color:
+                                  rewardActualBlockDelta == null
+                                    ? 'var(--muted)'
+                                    : rewardActualBlockDelta === 0
+                                      ? 'var(--good)'
+                                      : 'var(--warn)',
+                                fontWeight: 600,
+                              }}
+                            >
+                              {rewardActualBlockDelta == null ? 'Pending' : rewardActualBlockDelta === 0 ? 'Balanced' : 'Mismatch'}
+                            </div>
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                              summary across the full block
+                            </div>
+                          </td>
+                        </tr>
+                      </tfoot>
+                    ) : null}
                   </table>
+                  {rewardAddressFilter.trim() && !rewardBreakdown.block.orphaned ? (
+                    <div style={{ marginTop: 12, fontSize: 12, color: 'var(--muted)' }}>
+                      Summary rows include all participants for the block, not just the filtered addresses.
+                    </div>
+                  ) : null}
                 </div>
               </>
             )}

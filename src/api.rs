@@ -2204,6 +2204,7 @@ struct BlockRewardBreakdownResponse {
     payout_total_weight: u64,
     actual_credit_events_available: bool,
     actual_credit_total: u64,
+    actual_fee_amount: Option<u64>,
     participants: Vec<BlockRewardParticipantResponse>,
 }
 
@@ -4309,6 +4310,12 @@ fn build_block_reward_breakdown(
     )?;
 
     let actual_events = store.get_block_credit_events(height)?;
+    let actual_fee_amount = match store.get_block_pool_fee_event(height)? {
+        Some(event) => Some(event.amount),
+        None if block.orphaned => Some(0),
+        None if fee_amount == 0 && (block.paid_out || !actual_events.is_empty()) => Some(0),
+        None => None,
+    };
     let actual_map = actual_events
         .iter()
         .map(|event| (event.address.clone(), event.amount))
@@ -4425,6 +4432,7 @@ fn build_block_reward_breakdown(
         actual_credit_total: actual_events
             .iter()
             .fold(0u64, |sum, event| sum.saturating_add(event.amount)),
+        actual_fee_amount,
         participants: participant_rows,
     })
 }
@@ -6182,7 +6190,7 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use crate::config::Config;
-    use crate::db::{Balance, DbBlock, Payout, PendingPayout};
+    use crate::db::{Balance, DbBlock, Payout, PendingPayout, PoolFeeRecord};
     use crate::engine::{ShareRecord, ShareStore};
     use crate::jobs::{JobManager, JobRuntimeSnapshot};
     use crate::node::{NodeClient, WalletBalance};
@@ -7002,13 +7010,14 @@ mod tests {
     }
 
     #[test]
-    fn block_reward_breakdown_surfaces_recorded_credits() {
+    fn block_reward_breakdown_surfaces_recorded_credits_and_fee() {
         let store = require_test_store!();
         let mut cfg = Config::default();
         cfg.payout_scheme = "pplns".to_string();
         cfg.pplns_window_duration = "24h".to_string();
-        cfg.pool_fee_pct = 0.0;
+        cfg.pool_fee_pct = 10.0;
         cfg.pool_fee_flat = 0.0;
+        cfg.pool_wallet_address = "pool-fee-destination".to_string();
         cfg.block_finder_bonus = false;
         cfg.provisional_share_delay = "0s".to_string();
 
@@ -7058,9 +7067,14 @@ mod tests {
             })
             .expect("add paid block");
         store
-            .apply_block_credits_and_mark_paid(
+            .apply_block_credits_and_mark_paid_with_fee(
                 299,
-                &[("miner-a".to_string(), 500), ("miner-b".to_string(), 500)],
+                &[("miner-a".to_string(), 450), ("miner-b".to_string(), 450)],
+                Some(&PoolFeeRecord {
+                    amount: 100,
+                    fee_address: cfg.pool_wallet_address.clone(),
+                    timestamp: block_ts,
+                }),
             )
             .expect("apply block credits");
 
@@ -7068,7 +7082,9 @@ mod tests {
             build_block_reward_breakdown(&store, &cfg, 299, block_ts + Duration::from_secs(10))
                 .expect("reward breakdown");
         assert!(breakdown.actual_credit_events_available);
-        assert_eq!(breakdown.actual_credit_total, 1_000);
+        assert_eq!(breakdown.fee_amount, 100);
+        assert_eq!(breakdown.actual_credit_total, 900);
+        assert_eq!(breakdown.actual_fee_amount, Some(100));
         assert_eq!(breakdown.share_window.share_count, 2);
 
         let miner_a = breakdown
@@ -7076,9 +7092,9 @@ mod tests {
             .iter()
             .find(|row| row.address == "miner-a")
             .expect("miner-a row");
-        assert_eq!(miner_a.preview_credit, 500);
-        assert_eq!(miner_a.payout_credit, 500);
-        assert_eq!(miner_a.actual_credit, Some(500));
+        assert_eq!(miner_a.preview_credit, 450);
+        assert_eq!(miner_a.payout_credit, 450);
+        assert_eq!(miner_a.actual_credit, Some(450));
         assert_eq!(miner_a.delta_vs_payout, Some(0));
     }
 

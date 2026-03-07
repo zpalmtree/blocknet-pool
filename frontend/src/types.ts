@@ -231,6 +231,7 @@ export interface BlockRewardBreakdownResponse {
   payout_total_weight: number;
   actual_credit_events_available: boolean;
   actual_credit_total: number;
+  actual_fee_amount?: number | null;
   participants: BlockRewardParticipant[];
 }
 
