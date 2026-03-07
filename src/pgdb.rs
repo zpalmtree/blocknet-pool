@@ -21,6 +21,35 @@ use crate::validation::{
 const SHARE_CLAIM_EXPIRY_SECS: i64 = 2 * 60;
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 
+#[derive(Debug, Clone, Default)]
+pub struct MinerShareWindowStats {
+    pub accepted_difficulty: u64,
+    pub rejected_difficulty: u64,
+    pub accepted_count: u64,
+    pub rejected_count: u64,
+    pub stale_rejected_difficulty: u64,
+    pub stale_rejected_count: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct VardiffHintSummary {
+    pub total_workers: u64,
+    pub below_floor_workers: u64,
+    pub at_floor_workers: u64,
+    pub above_floor_workers: u64,
+    pub min_difficulty: Option<u64>,
+    pub median_difficulty: Option<u64>,
+    pub max_difficulty: Option<u64>,
+    pub latest_updated_at: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone)]
+pub struct VardiffHintDiagnostic {
+    pub worker: String,
+    pub difficulty: u64,
+    pub updated_at: SystemTime,
+}
+
 pub struct PostgresStore {
     conns: Vec<Mutex<Client>>,
     next_conn: AtomicUsize,
@@ -320,20 +349,6 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(row.get::<_, Option<i64>>(0).map(from_unix))
     }
 
-    pub fn get_shares_since(&self, since: SystemTime) -> Result<Vec<DbShare>> {
-        let ts = to_unix(since);
-        let rows = self.conn().lock().query(
-            "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
-             FROM shares WHERE created_at >= $1 ORDER BY created_at DESC",
-            &[&ts],
-        )?;
-        Ok(rows.into_iter().map(row_to_share).collect())
-    }
-
-    pub fn get_last_n_shares(&self, n: i64) -> Result<Vec<DbShare>> {
-        self.get_recent_shares(n)
-    }
-
     pub fn get_shares_between(&self, start: SystemTime, end: SystemTime) -> Result<Vec<DbShare>> {
         let start_ts = to_unix(start);
         let end_ts = to_unix(end);
@@ -429,6 +444,43 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let accepted: i64 = row.get(0);
         let rejected: i64 = row.get(1);
         Ok((accepted.max(0) as u64, rejected.max(0) as u64))
+    }
+
+    pub fn miner_share_window_stats_since(
+        &self,
+        miner: &str,
+        since: SystemTime,
+    ) -> Result<MinerShareWindowStats> {
+        let since_ts = to_unix(since);
+        let row = self.conn().lock().query_one(
+            "SELECT
+                COALESCE(SUM(CASE WHEN status IN ('verified','provisional') THEN difficulty ELSE 0 END), 0)::bigint,
+                COALESCE(SUM(CASE WHEN status NOT IN ('verified','provisional') THEN difficulty ELSE 0 END), 0)::bigint,
+                COUNT(*) FILTER (WHERE status IN ('verified','provisional'))::bigint,
+                COUNT(*) FILTER (WHERE status NOT IN ('verified','provisional'))::bigint,
+                COALESCE(SUM(CASE
+                    WHEN status NOT IN ('verified','provisional')
+                     AND COALESCE(NULLIF(BTRIM(reject_reason), ''), 'legacy / unknown') = 'stale job'
+                    THEN difficulty
+                    ELSE 0
+                END), 0)::bigint,
+                COUNT(*) FILTER (
+                    WHERE status NOT IN ('verified','provisional')
+                      AND COALESCE(NULLIF(BTRIM(reject_reason), ''), 'legacy / unknown') = 'stale job'
+                )::bigint
+             FROM shares
+             WHERE miner = $1
+               AND created_at >= $2",
+            &[&miner, &since_ts],
+        )?;
+        Ok(MinerShareWindowStats {
+            accepted_difficulty: row.get::<_, i64>(0).max(0) as u64,
+            rejected_difficulty: row.get::<_, i64>(1).max(0) as u64,
+            accepted_count: row.get::<_, i64>(2).max(0) as u64,
+            rejected_count: row.get::<_, i64>(3).max(0) as u64,
+            stale_rejected_difficulty: row.get::<_, i64>(4).max(0) as u64,
+            stale_rejected_count: row.get::<_, i64>(5).max(0) as u64,
+        })
     }
 
     pub fn total_rejected_share_count(&self) -> Result<u64> {
@@ -739,40 +791,6 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(())
     }
 
-    pub fn credit_balance(&self, address: &str, amount: u64) -> Result<()> {
-        if amount == 0 {
-            return Ok(());
-        }
-
-        let mut bal = self.get_balance(address)?;
-        bal.pending = bal
-            .pending
-            .checked_add(amount)
-            .ok_or_else(|| anyhow!("balance overflow"))?;
-        self.update_balance(&bal)
-    }
-
-    pub fn debit_balance(&self, address: &str, amount: u64) -> Result<()> {
-        if amount == 0 {
-            return Ok(());
-        }
-
-        let mut bal = self.get_balance(address)?;
-        if bal.pending < amount {
-            return Err(anyhow!(
-                "insufficient balance: have={}, need={}",
-                bal.pending,
-                amount
-            ));
-        }
-        bal.pending -= amount;
-        bal.paid = bal
-            .paid
-            .checked_add(amount)
-            .ok_or_else(|| anyhow!("paid balance overflow"))?;
-        self.update_balance(&bal)
-    }
-
     pub fn apply_block_credits_and_mark_paid(
         &self,
         block_height: u64,
@@ -965,16 +983,6 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              ORDER BY timestamp DESC, confirmed ASC, id DESC
              LIMIT $2",
             &[&address, &limit],
-        )?;
-        rows.into_iter().map(row_to_payout).collect()
-    }
-
-    pub fn get_all_payouts(&self) -> Result<Vec<Payout>> {
-        let rows = self.conn().lock().query(
-            "SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed
-             FROM payouts
-             ORDER BY id DESC",
-            &[],
         )?;
         rows.into_iter().map(row_to_payout).collect()
     }
@@ -1227,58 +1235,6 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .collect())
     }
 
-    pub fn get_pool_fees_page(
-        &self,
-        fee_address: Option<&str>,
-        sort: &str,
-        limit: i64,
-        offset: i64,
-    ) -> Result<(Vec<PoolFeeEvent>, u64)> {
-        let fee_address_pattern = fee_address
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(|v| format!("%{}%", v.to_ascii_lowercase()));
-
-        let order_clause = match sort {
-            "time_asc" => "timestamp ASC, id ASC",
-            "amount_desc" => "amount DESC, id DESC",
-            "amount_asc" => "amount ASC, id DESC",
-            "height_asc" => "block_height ASC, id ASC",
-            "height_desc" => "block_height DESC, id DESC",
-            _ => "timestamp DESC, id DESC",
-        };
-
-        let mut conn = self.conn().lock();
-        let total_row = conn.query_one(
-            "SELECT COUNT(*)
-             FROM pool_fee_events
-             WHERE ($1::text IS NULL OR LOWER(fee_address) LIKE $1)",
-            &[&fee_address_pattern],
-        )?;
-        let total: i64 = total_row.get(0);
-
-        let sql = format!(
-            "SELECT id, block_height, amount, fee_address, timestamp
-             FROM pool_fee_events
-             WHERE ($1::text IS NULL OR LOWER(fee_address) LIKE $1)
-             ORDER BY {order_clause}
-             LIMIT $2 OFFSET $3"
-        );
-        let rows = conn.query(&sql, &[&fee_address_pattern, &limit.max(0), &offset.max(0)])?;
-        let items = rows
-            .into_iter()
-            .map(|row| PoolFeeEvent {
-                id: row.get::<_, i64>(0),
-                block_height: row.get::<_, i64>(1).max(0) as u64,
-                amount: row.get::<_, i64>(2).max(0) as u64,
-                fee_address: row.get::<_, String>(3),
-                timestamp: from_unix(row.get::<_, i64>(4)),
-            })
-            .collect();
-
-        Ok((items, total.max(0) as u64))
-    }
-
     pub fn set_meta(&self, key: &str, value: &[u8]) -> Result<()> {
         self.conn().lock().execute(
             "INSERT INTO meta (key, value) VALUES ($1, $2)
@@ -1484,27 +1440,6 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             quarantined_until,
             force_verify_until,
         })
-    }
-
-    pub fn get_risk_summary(&self) -> Result<(u64, u64)> {
-        let now = now_unix();
-        let mut conn = self.conn().lock();
-
-        let q_row = conn.query_one(
-            "SELECT COUNT(*) FROM address_risk WHERE quarantined_until IS NOT NULL AND quarantined_until > $1",
-            &[&now],
-        )?;
-        let quarantined: i64 = q_row.get(0);
-
-        let f_row = conn.query_one(
-            "SELECT COUNT(*) FROM address_risk
-             WHERE (force_verify_until IS NOT NULL AND force_verify_until > $1)
-                OR (quarantined_until IS NOT NULL AND quarantined_until > $1)",
-            &[&now],
-        )?;
-        let forced: i64 = f_row.get(0);
-
-        Ok((quarantined.max(0) as u64, forced.max(0) as u64))
     }
 
     pub fn create_pending_payout(&self, address: &str, amount: u64) -> Result<()> {
@@ -1815,6 +1750,87 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             &[&address, &worker, &u64_to_i64(difficulty.max(1))?, &to_unix(updated_at)],
         )?;
         Ok(())
+    }
+
+    pub fn get_vardiff_hints_for_address(
+        &self,
+        address: &str,
+        limit: usize,
+    ) -> Result<Vec<(u64, SystemTime)>> {
+        let limit = (limit.max(1)).min(i64::MAX as usize) as i64;
+        let rows = self.conn().lock().query(
+            "SELECT difficulty, updated_at
+             FROM vardiff_hints
+             WHERE address = $1
+             ORDER BY updated_at DESC
+             LIMIT $2",
+            &[&address, &limit],
+        )?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                (
+                    row.get::<_, i64>(0).max(1) as u64,
+                    from_unix(row.get::<_, i64>(1)),
+                )
+            })
+            .collect())
+    }
+
+    pub fn vardiff_hint_summary(&self, address: &str, floor: u64) -> Result<VardiffHintSummary> {
+        let row = self.conn().lock().query_one(
+            "SELECT
+                COUNT(*)::bigint,
+                COUNT(*) FILTER (WHERE difficulty < $2)::bigint,
+                COUNT(*) FILTER (WHERE difficulty = $2)::bigint,
+                COUNT(*) FILTER (WHERE difficulty > $2)::bigint,
+                MIN(difficulty),
+                PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY difficulty),
+                MAX(difficulty),
+                MAX(updated_at)
+             FROM vardiff_hints
+             WHERE address = $1",
+            &[&address, &u64_to_i64(floor.max(1))?],
+        )?;
+        Ok(VardiffHintSummary {
+            total_workers: row.get::<_, i64>(0).max(0) as u64,
+            below_floor_workers: row.get::<_, i64>(1).max(0) as u64,
+            at_floor_workers: row.get::<_, i64>(2).max(0) as u64,
+            above_floor_workers: row.get::<_, i64>(3).max(0) as u64,
+            min_difficulty: row
+                .get::<_, Option<i64>>(4)
+                .map(|value| value.max(1) as u64),
+            median_difficulty: row
+                .get::<_, Option<i64>>(5)
+                .map(|value| value.max(1) as u64),
+            max_difficulty: row
+                .get::<_, Option<i64>>(6)
+                .map(|value| value.max(1) as u64),
+            latest_updated_at: row.get::<_, Option<i64>>(7).map(from_unix),
+        })
+    }
+
+    pub fn recent_vardiff_hint_diagnostics(
+        &self,
+        address: &str,
+        limit: i64,
+    ) -> Result<Vec<VardiffHintDiagnostic>> {
+        let rows = self.conn().lock().query(
+            "SELECT worker, difficulty, updated_at
+             FROM vardiff_hints
+             WHERE address = $1
+             ORDER BY updated_at DESC, worker ASC
+             LIMIT $2",
+            &[&address, &limit.max(1)],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| VardiffHintDiagnostic {
+                worker: row.get::<_, String>(0),
+                difficulty: row.get::<_, i64>(1).max(1) as u64,
+                updated_at: from_unix(row.get::<_, i64>(2)),
+            })
+            .collect())
     }
 
     pub fn add_stat_snapshot(
@@ -2255,6 +2271,14 @@ impl ShareStore for PostgresStore {
         updated_at: SystemTime,
     ) -> Result<()> {
         PostgresStore::upsert_vardiff_hint(self, address, worker, difficulty, updated_at)
+    }
+
+    fn get_vardiff_hints_for_address(
+        &self,
+        address: &str,
+        limit: usize,
+    ) -> Result<Vec<(u64, SystemTime)>> {
+        PostgresStore::get_vardiff_hints_for_address(self, address, limit)
     }
 }
 

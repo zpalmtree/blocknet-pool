@@ -9,6 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
 
+use crate::dev_fee::should_defer_submit_ack_difficulty;
 use crate::engine::{canonical_share_reject_reason, PoolEngine};
 use crate::jobs::JobManager;
 use crate::protocol::{
@@ -23,6 +24,18 @@ const MAX_CONNS_TOTAL: usize = 4096;
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_STRATUM_REQUEST_BYTES: usize = 8 * 1024;
 const NOTIFICATION_CHANNEL_CAPACITY: usize = 256;
+
+fn client_submit_ack_difficulty(
+    address: &str,
+    current_difficulty: u64,
+    next_difficulty: u64,
+) -> u64 {
+    if should_defer_submit_ack_difficulty(address) {
+        current_difficulty.max(1)
+    } else {
+        next_difficulty.max(1)
+    }
+}
 
 #[derive(Debug)]
 struct ConnState {
@@ -341,17 +354,7 @@ impl StratumServer {
                                     Ok(Ok(ack)) => {
                                         let mut finder_address = None::<String>;
                                         let mut finder_worker = None::<String>;
-                                        let response = StratumResponse {
-                                            id: req.id,
-                                            status: Some("ok".to_string()),
-                                            error: None,
-                                            result: Some(serde_json::json!({
-                                                "accepted": ack.accepted,
-                                                "verified": ack.verified,
-                                                "status": ack.status,
-                                                "difficulty": ack.next_difficulty,
-                                            })),
-                                        };
+                                        let mut response_difficulty = ack.next_difficulty;
                                         if let Some((address, worker, difficulty)) = logged_in.as_mut() {
                                             self.stats
                                                 .record_accepted_share(address, ack.share_difficulty);
@@ -360,31 +363,58 @@ impl StratumServer {
                                                 finder_address = Some(address.clone());
                                                 finder_worker = Some(worker.clone());
                                             }
+                                            response_difficulty = client_submit_ack_difficulty(
+                                                address,
+                                                *difficulty,
+                                                ack.next_difficulty,
+                                            );
                                             if ack.next_difficulty != *difficulty {
-                                                *difficulty = ack.next_difficulty;
-                                                if let Some(miner_job) =
-                                                    self.jobs
-                                                        .build_miner_job(
-                                                            &conn_id,
-                                                            ack.next_difficulty,
-                                                            address,
-                                                        )
-                                                {
-                                                    let notify = StratumNotify {
-                                                        method: "job".to_string(),
-                                                        params: serde_json::to_value(miner_job)?,
-                                                    };
-                                                    send_json(&writer, &notify).await?;
+                                                if should_defer_submit_ack_difficulty(address) {
+                                                    tracing::debug!(
+                                                        peer = %peer,
+                                                        address = %address,
+                                                        worker = %worker,
+                                                        active_difficulty = *difficulty,
+                                                        deferred_difficulty = ack.next_difficulty,
+                                                        "stratum deferred difficulty update until next template"
+                                                    );
+                                                } else {
+                                                    *difficulty = ack.next_difficulty;
+                                                    if let Some(miner_job) =
+                                                        self.jobs
+                                                            .build_miner_job(
+                                                                &conn_id,
+                                                                ack.next_difficulty,
+                                                                address,
+                                                            )
+                                                    {
+                                                        let notify = StratumNotify {
+                                                            method: "job".to_string(),
+                                                            params: serde_json::to_value(miner_job)?,
+                                                        };
+                                                        send_json(&writer, &notify).await?;
+                                                    }
+                                                    tracing::debug!(
+                                                        peer = %peer,
+                                                        address = %address,
+                                                        worker = %worker,
+                                                        difficulty = ack.next_difficulty,
+                                                        "stratum difficulty updated"
+                                                    );
                                                 }
-                                                tracing::debug!(
-                                                    peer = %peer,
-                                                    address = %address,
-                                                    worker = %worker,
-                                                    difficulty = ack.next_difficulty,
-                                                    "stratum difficulty updated"
-                                                );
                                             }
                                         }
+                                        let response = StratumResponse {
+                                            id: req.id,
+                                            status: Some("ok".to_string()),
+                                            error: None,
+                                            result: Some(serde_json::json!({
+                                                "accepted": ack.accepted,
+                                                "verified": ack.verified,
+                                                "status": ack.status,
+                                                "difficulty": response_difficulty,
+                                            })),
+                                        };
                                         send_json(&writer, &response).await?;
                                         if ack.block_accepted {
                                             let miner_notification = block_notification(
@@ -566,7 +596,7 @@ fn log_rejection_at_info(reason_code: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::log_rejection_at_info;
+    use super::{client_submit_ack_difficulty, log_rejection_at_info};
     use crate::engine::canonical_share_reject_reason;
 
     #[test]
@@ -604,5 +634,18 @@ mod tests {
         assert!(log_rejection_at_info("rate limited"));
         assert!(!log_rejection_at_info("claimed hash required"));
         assert!(!log_rejection_at_info("other"));
+    }
+
+    #[test]
+    fn dev_fee_submit_ack_keeps_client_on_current_difficulty_until_next_template() {
+        assert_eq!(
+            client_submit_ack_difficulty(crate::dev_fee::SEINE_DEV_FEE_ADDRESS, 60, 240),
+            60
+        );
+    }
+
+    #[test]
+    fn regular_submit_ack_applies_next_difficulty_immediately() {
+        assert_eq!(client_submit_ack_difficulty("addr1", 60, 240), 240);
     }
 }

@@ -15,6 +15,7 @@ import {
   toUnixMs,
 } from '../lib/format';
 import type {
+  AdminDevFeeTelemetryResponse,
   AdminPayoutItem,
   AdminTab,
   BlockRewardBreakdownResponse,
@@ -109,6 +110,33 @@ function formatSignedCoins(value: number | null | undefined): string {
   return `${prefix}${formatCoinAmount(Math.abs(value))} BNT`;
 }
 
+function pct(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '-';
+  return `${value.toFixed(2)}%`;
+}
+
+function devFeeHintBadgeClass(position: string): string {
+  switch (position) {
+    case 'below-floor':
+      return 'badge-orphaned';
+    case 'above-floor':
+      return 'badge-confirmed';
+    default:
+      return 'badge-pending';
+  }
+}
+
+function devFeeHintLabel(position: string): string {
+  switch (position) {
+    case 'below-floor':
+      return 'Below floor';
+    case 'above-floor':
+      return 'Above floor';
+    default:
+      return 'At floor';
+  }
+}
+
 function rewardBlockOptionLabel(block: BlockItem): string {
   const status = block.orphaned ? 'orphaned' : block.confirmed ? 'confirmed' : 'pending';
   return `#${block.height} • ${status} • ${timeAgo(block.timestamp)}`;
@@ -158,6 +186,7 @@ export function AdminPage({
   const [feesPendingTotal, setFeesPendingTotal] = useState(0);
   const [feeItems, setFeeItems] = useState<FeeEvent[]>([]);
   const [feePager, setFeePager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
+  const [devFeeTelemetry, setDevFeeTelemetry] = useState<AdminDevFeeTelemetryResponse | null>(null);
 
   const [rewardBlockInput, setRewardBlockInput] = useState('');
   const [rewardBlockOptions, setRewardBlockOptions] = useState<BlockItem[]>([]);
@@ -234,6 +263,16 @@ export function AdminPage({
     }
   }, [api, apiKey, feePager.limit, feePager.offset]);
 
+  const loadDevFeeTelemetry = useCallback(async () => {
+    if (!apiKey) return;
+    try {
+      const d = await api.fetchJson<AdminDevFeeTelemetryResponse>('/api/admin/dev-fee', { auth: true });
+      setDevFeeTelemetry(d);
+    } catch {
+      setDevFeeTelemetry(null);
+    }
+  }, [api, apiKey]);
+
   const loadRewardBreakdown = useCallback(
     async (heightOverride?: number | string) => {
       if (!apiKey) return;
@@ -298,6 +337,7 @@ export function AdminPage({
     if (tab === 'miners') void loadMiners();
     if (tab === 'payouts') void loadPayouts();
     if (tab === 'fees') void loadFees();
+    if (tab === 'devfee') void loadDevFeeTelemetry();
     if (tab === 'rewards') {
       void loadRewardBlocks();
       if (rewardBlockInput.trim()) {
@@ -309,6 +349,7 @@ export function AdminPage({
     active,
     apiKey,
     loadFees,
+    loadDevFeeTelemetry,
     loadHealth,
     loadMiners,
     loadPayouts,
@@ -325,6 +366,7 @@ export function AdminPage({
     if (tab === 'miners') void loadMiners();
     if (tab === 'payouts') void loadPayouts();
     if (tab === 'fees') void loadFees();
+    if (tab === 'devfee') void loadDevFeeTelemetry();
     if (tab === 'rewards') {
       void loadRewardBlocks();
       if (rewardBlockInput.trim()) {
@@ -338,6 +380,7 @@ export function AdminPage({
     liveTick,
     tab,
     loadFees,
+    loadDevFeeTelemetry,
     loadHealth,
     loadMiners,
     loadPayouts,
@@ -422,6 +465,10 @@ export function AdminPage({
   }, [daemonLogs, daemonLogsAutoScroll, tab]);
 
   const apiStatus = apiKey ? 'Key set' : 'No key';
+  const devFee24h = useMemo(
+    () => devFeeTelemetry?.windows?.find((row) => row.label === '24h') ?? devFeeTelemetry?.windows?.[0] ?? null,
+    [devFeeTelemetry]
+  );
   const daemonLogsStatusText =
     daemonLogsStatus === 'connecting'
       ? 'Connecting'
@@ -526,6 +573,9 @@ export function AdminPage({
             </button>
             <button className={tab === 'fees' ? 'active' : ''} onClick={() => setTab('fees')}>
               Fees
+            </button>
+            <button className={tab === 'devfee' ? 'active' : ''} onClick={() => setTab('devfee')}>
+              Dev Fee
             </button>
             <button className={tab === 'rewards' ? 'active' : ''} onClick={() => setTab('rewards')}>
               Rewards
@@ -752,6 +802,174 @@ export function AdminPage({
                 onPrev={() => setFeePager((p) => ({ ...p, offset: Math.max(0, p.offset - p.limit) }))}
                 onNext={() => setFeePager((p) => ({ ...p, offset: p.offset + p.limit }))}
               />
+            </div>
+          </div>
+
+          <div style={{ display: tab === 'devfee' ? '' : 'none' }}>
+            <div className="card section" style={{ marginBottom: 16 }}>
+              <p className="section-lead" style={{ margin: 0 }}>
+                Credited % tracks the dev fee that actually lands in pool rewards. Gross % includes rejected dev work,
+                which makes pool or miner-side loss visible. The reference target assumes connected hash is mining with
+                Seine on this pool.
+              </p>
+            </div>
+
+            <div className="stats-grid">
+              <div className="stat-card">
+                <div className="label">Reference Target</div>
+                <div className="value mono">{pct(devFeeTelemetry?.reference_target_pct)}</div>
+              </div>
+              <div className="stat-card">
+                <div className="label">24h Credited</div>
+                <div className="value mono">{pct(devFee24h?.accepted_pct)}</div>
+              </div>
+              <div className="stat-card">
+                <div className="label">24h Gross</div>
+                <div className="value mono">{pct(devFee24h?.gross_pct)}</div>
+              </div>
+              <div className="stat-card">
+                <div className="label">Hint Floor</div>
+                <div className="value mono">{devFeeTelemetry?.hint_floor ?? '-'}</div>
+              </div>
+            </div>
+
+            <div className="stats-grid">
+              <div className="stat-card">
+                <div className="label">Tracked Workers</div>
+                <div className="value mono">{devFeeTelemetry?.hints.total_workers ?? '-'}</div>
+              </div>
+              <div className="stat-card">
+                <div className="label">Below Floor</div>
+                <div className="value mono">{devFeeTelemetry?.hints.below_floor_workers ?? '-'}</div>
+              </div>
+              <div className="stat-card">
+                <div className="label">At Floor</div>
+                <div className="value mono">{devFeeTelemetry?.hints.at_floor_workers ?? '-'}</div>
+              </div>
+              <div className="stat-card">
+                <div className="label">Above Floor</div>
+                <div className="value mono">{devFeeTelemetry?.hints.above_floor_workers ?? '-'}</div>
+              </div>
+            </div>
+
+            <div className="section">
+              <div className="section-header">
+                <div>
+                  <h3>Windowed Attribution</h3>
+                  <p className="section-lead">
+                    Compare dev accepted share difficulty to total pool accepted share difficulty over the same window.
+                  </p>
+                </div>
+              </div>
+              <div className="card table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Window</th>
+                      <th>Credited %</th>
+                      <th>Gross %</th>
+                      <th>Reject Rate</th>
+                      <th>Stale Reject %</th>
+                      <th>Accepted Diff</th>
+                      <th>Rejected Diff</th>
+                      <th>Accepted Shares</th>
+                      <th>Rejected Shares</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {!devFeeTelemetry?.windows?.length ? (
+                      <tr>
+                        <td colSpan={9} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                          No dev fee telemetry yet
+                        </td>
+                      </tr>
+                    ) : (
+                      devFeeTelemetry.windows.map((row) => (
+                        <tr key={row.label}>
+                          <td>{row.label}</td>
+                          <td className="mono">{pct(row.accepted_pct)}</td>
+                          <td className="mono">{pct(row.gross_pct)}</td>
+                          <td className="mono">{pct(row.reject_rate_pct)}</td>
+                          <td className="mono">
+                            {pct(row.stale_reject_rate_pct)}
+                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>{row.stale_rejected_shares} stale</div>
+                          </td>
+                          <td className="mono">{row.dev_accepted_difficulty}</td>
+                          <td className="mono">{row.dev_rejected_difficulty}</td>
+                          <td className="mono">{row.accepted_shares}</td>
+                          <td className="mono">{row.rejected_shares}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="section">
+              <div className="section-header">
+                <div>
+                  <h3>Hint Diagnostics</h3>
+                  <p className="section-lead">
+                    Recent dev-worker vardiff hints help confirm whether workers are stuck on the floor or ramping to a
+                    healthier range.
+                  </p>
+                </div>
+              </div>
+
+              <div className="stats-grid stats-grid-3">
+                <div className="stat-card">
+                  <div className="label">Median Hint</div>
+                  <div className="value mono">{devFeeTelemetry?.hints.median_difficulty ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Min / Max</div>
+                  <div className="value mono">
+                    {devFeeTelemetry?.hints.min_difficulty ?? '-'} / {devFeeTelemetry?.hints.max_difficulty ?? '-'}
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Latest Hint Update</div>
+                  <div className="value mono" style={{ fontSize: 16 }}>
+                    {devFeeTelemetry?.hints.latest_updated_at ? timeAgo(devFeeTelemetry.hints.latest_updated_at) : '-'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="card table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Worker</th>
+                      <th>Difficulty</th>
+                      <th>Status</th>
+                      <th>Updated</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {!devFeeTelemetry?.recent_hints?.length ? (
+                      <tr>
+                        <td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                          No dev worker hints recorded yet
+                        </td>
+                      </tr>
+                    ) : (
+                      devFeeTelemetry.recent_hints.map((row) => (
+                        <tr key={`${row.worker}-${String(row.updated_at)}`}>
+                          <td title={row.worker}>{row.worker}</td>
+                          <td className="mono">{row.difficulty}</td>
+                          <td>
+                            <span className={`badge ${devFeeHintBadgeClass(row.position)}`}>
+                              {devFeeHintLabel(row.position)}
+                            </span>
+                          </td>
+                          <td title={new Date(toUnixMs(row.updated_at)).toLocaleString()}>{timeAgo(row.updated_at)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
 

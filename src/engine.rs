@@ -12,6 +12,10 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
+use crate::dev_fee::{
+    login_difficulty_floor, should_bootstrap_login_from_address_hints,
+    should_persist_login_hint_immediately, DEV_VARDIFF_BOOTSTRAP_HINT_LIMIT,
+};
 use crate::pow::{check_target, difficulty_to_target};
 use crate::protocol::{
     build_login_result, normalize_capabilities, normalize_protocol_version, normalize_worker_name,
@@ -273,6 +277,13 @@ pub trait ShareStore: Send + Sync + 'static {
     ) -> Result<()> {
         Ok(())
     }
+    fn get_vardiff_hints_for_address(
+        &self,
+        _address: &str,
+        _limit: usize,
+    ) -> Result<Vec<(u64, SystemTime)>> {
+        Ok(Vec::new())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -439,16 +450,36 @@ impl PoolEngine {
                 }
             }
         }
+        let address_bootstrap =
+            if self.cfg.enable_vardiff && should_bootstrap_login_from_address_hints(address) {
+                derive_address_vardiff_login_difficulty(
+                    self.store
+                        .get_vardiff_hints_for_address(address, DEV_VARDIFF_BOOTSTRAP_HINT_LIMIT)?,
+                    now_wall,
+                    initial_difficulty,
+                    min_diff,
+                    max_diff,
+                )
+            } else {
+                None
+            };
+        if let Some(bootstrap) = address_bootstrap {
+            difficulty = difficulty.max(bootstrap);
+        }
         if let Some(hint) = difficulty_hint {
             difficulty = clamp_login_difficulty_hint(hint, difficulty, min_diff, max_diff);
         }
+        if let Some(bootstrap) = address_bootstrap {
+            difficulty = difficulty.max(bootstrap);
+        }
+        difficulty = difficulty.max(login_difficulty_floor(address, initial_difficulty));
 
         let mut sessions = self.sessions.lock();
         sessions.insert(
             conn_id.to_string(),
             MinerSession {
                 address: address.to_string(),
-                worker,
+                worker: worker.clone(),
                 difficulty,
                 protocol_version,
                 capabilities: cap_set,
@@ -458,6 +489,21 @@ impl PoolEngine {
                 last_difficulty_hint_write: None,
             },
         );
+        drop(sessions);
+
+        if self.cfg.enable_vardiff && should_persist_login_hint_immediately(address) {
+            if let Err(err) = self
+                .store
+                .upsert_vardiff_hint(address, &worker, difficulty, now_wall)
+            {
+                tracing::warn!(
+                    address = %address,
+                    worker = %worker,
+                    error = %err,
+                    "failed to persist repaired login vardiff hint"
+                );
+            }
+        }
 
         Ok(build_login_result(
             protocol_version,
@@ -1336,6 +1382,47 @@ fn derive_vardiff_login_difficulty(
     Some((blended.round() as u64).clamp(min_diff, max_diff))
 }
 
+fn derive_address_vardiff_login_difficulty(
+    hints: Vec<(u64, SystemTime)>,
+    now_wall: SystemTime,
+    initial_difficulty: u64,
+    min_diff: u64,
+    max_diff: u64,
+) -> Option<u64> {
+    let initial = initial_difficulty.clamp(min_diff, max_diff);
+    let mut derived = hints
+        .into_iter()
+        .filter_map(|(cached, updated_at)| {
+            let age = now_wall.duration_since(updated_at).unwrap_or_default();
+            derive_vardiff_login_difficulty(cached, age, initial, min_diff, max_diff)
+        })
+        .collect::<Vec<_>>();
+    if derived.is_empty() {
+        return None;
+    }
+
+    let mut informative = derived
+        .iter()
+        .copied()
+        .filter(|difficulty| *difficulty > initial)
+        .collect::<Vec<_>>();
+    if !informative.is_empty() {
+        derived = std::mem::take(&mut informative);
+    }
+
+    Some(median_difficulty(&mut derived))
+}
+
+fn median_difficulty(values: &mut [u64]) -> u64 {
+    values.sort_unstable();
+    let mid = values.len() / 2;
+    if values.len() % 2 == 1 {
+        values[mid]
+    } else {
+        values[mid - 1].saturating_add(values[mid]) / 2
+    }
+}
+
 fn clamp_login_difficulty_hint(hint: u64, baseline: u64, min_diff: u64, max_diff: u64) -> u64 {
     let baseline = baseline.max(1).clamp(min_diff, max_diff);
     let hint = hint.max(1).clamp(min_diff, max_diff);
@@ -1631,6 +1718,28 @@ impl ShareStore for InMemoryStore {
     ) -> Result<()> {
         self.seed_vardiff_hint(address, worker, difficulty, updated_at);
         Ok(())
+    }
+
+    fn get_vardiff_hints_for_address(
+        &self,
+        address: &str,
+        limit: usize,
+    ) -> Result<Vec<(u64, SystemTime)>> {
+        let mut hints = self
+            .vardiff_hints
+            .lock()
+            .iter()
+            .filter_map(|((hint_address, _), value)| (hint_address == address).then_some(*value))
+            .collect::<Vec<_>>();
+        hints.sort_by_key(|(_, updated_at)| {
+            std::cmp::Reverse(
+                updated_at
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default(),
+            )
+        });
+        hints.truncate(limit);
+        Ok(hints)
     }
 }
 
@@ -2082,6 +2191,117 @@ mod tests {
             .expect("login");
         // Baseline=100, min factor=0.25x, so hint should clamp to 25.
         assert_eq!(engine.session_difficulty("conn2"), Some(25));
+    }
+
+    #[test]
+    fn dev_fee_login_ignores_poisoned_low_cached_and_client_hints() {
+        let mut cfg = cfg();
+        cfg.initial_share_difficulty = 60;
+        cfg.min_share_difficulty = 1;
+        cfg.max_share_difficulty = 10_000;
+
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let store = Arc::new(InMemoryStore::default());
+        store.seed_vardiff_hint(
+            crate::dev_fee::SEINE_DEV_FEE_ADDRESS,
+            "seine-devfee-1",
+            1,
+            SystemTime::now(),
+        );
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            Arc::new(InMemoryJobs::default()),
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login_with_hint(
+                "conn-dev",
+                crate::dev_fee::SEINE_DEV_FEE_ADDRESS.to_string(),
+                Some("seine-devfee-1".to_string()),
+                2,
+                submit_hash_cap(),
+                Some(1),
+            )
+            .expect("dev fee login");
+
+        assert_eq!(
+            engine.session_difficulty("conn-dev"),
+            Some(60),
+            "dev fee sessions should restart at least at the configured initial difficulty"
+        );
+        let persisted = store
+            .vardiff_hint(crate::dev_fee::SEINE_DEV_FEE_ADDRESS, "seine-devfee-1")
+            .expect("repaired dev hint should persist immediately");
+        assert_eq!(persisted.0, 60);
+    }
+
+    #[test]
+    fn dev_fee_login_bootstraps_from_recent_address_hints() {
+        let mut cfg = cfg();
+        cfg.initial_share_difficulty = 60;
+        cfg.min_share_difficulty = 1;
+        cfg.max_share_difficulty = 10_000;
+
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let store = Arc::new(InMemoryStore::default());
+        let now = SystemTime::now();
+        store.seed_vardiff_hint(
+            crate::dev_fee::SEINE_DEV_FEE_ADDRESS,
+            "seine-devfee-poisoned",
+            1,
+            now,
+        );
+        store.seed_vardiff_hint(
+            crate::dev_fee::SEINE_DEV_FEE_ADDRESS,
+            "seine-devfee-healthy-1",
+            180,
+            now,
+        );
+        store.seed_vardiff_hint(
+            crate::dev_fee::SEINE_DEV_FEE_ADDRESS,
+            "seine-devfee-healthy-2",
+            300,
+            now,
+        );
+        store.seed_vardiff_hint(
+            crate::dev_fee::SEINE_DEV_FEE_ADDRESS,
+            "seine-devfee-healthy-3",
+            420,
+            now,
+        );
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            Arc::new(InMemoryJobs::default()),
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login_with_hint(
+                "conn-dev-boostrapped",
+                crate::dev_fee::SEINE_DEV_FEE_ADDRESS.to_string(),
+                Some("seine-devfee-new".to_string()),
+                2,
+                submit_hash_cap(),
+                Some(1),
+            )
+            .expect("dev fee login");
+
+        assert_eq!(
+            engine.session_difficulty("conn-dev-boostrapped"),
+            Some(300),
+            "dev fee sessions should reuse recent address-level difficulty instead of warming from poisoned hints"
+        );
+        let persisted = store
+            .vardiff_hint(crate::dev_fee::SEINE_DEV_FEE_ADDRESS, "seine-devfee-new")
+            .expect("bootstrapped dev hint should persist immediately");
+        assert_eq!(persisted.0, 300);
     }
 
     #[test]

@@ -10,7 +10,9 @@ use tracing::warn;
 use crate::config::Config;
 use crate::db::DbBlock;
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
-use crate::pgdb::PostgresStore;
+use crate::pgdb::{
+    MinerShareWindowStats, PostgresStore, VardiffHintDiagnostic, VardiffHintSummary,
+};
 use crate::validation::{
     LoadedValidationState, PersistedValidationAddressState, ValidationStateStore,
 };
@@ -61,10 +63,6 @@ impl PoolStore {
         Self::open_postgres_with_pool(database_url, cfg.database_pool_size)
     }
 
-    pub fn open_postgres(url: &str) -> Result<Arc<Self>> {
-        Self::open_postgres_with_pool(url, 4)
-    }
-
     pub fn open_postgres_with_pool(url: &str, pool_size: i32) -> Result<Arc<Self>> {
         Ok(Arc::new(Self {
             inner: PostgresStore::connect(url, pool_size)?,
@@ -77,6 +75,26 @@ impl PoolStore {
             .get_address_risk(address)?
             .map(|state| state.strikes)
             .unwrap_or_default())
+    }
+
+    pub fn miner_share_window_stats_since(
+        &self,
+        miner: &str,
+        since: SystemTime,
+    ) -> Result<MinerShareWindowStats> {
+        self.inner.miner_share_window_stats_since(miner, since)
+    }
+
+    pub fn vardiff_hint_summary(&self, address: &str, floor: u64) -> Result<VardiffHintSummary> {
+        self.inner.vardiff_hint_summary(address, floor)
+    }
+
+    pub fn recent_vardiff_hint_diagnostics(
+        &self,
+        address: &str,
+        limit: i64,
+    ) -> Result<Vec<VardiffHintDiagnostic>> {
+        self.inner.recent_vardiff_hint_diagnostics(address, limit)
     }
 
     pub fn rollup_and_prune_retention(
@@ -221,6 +239,14 @@ impl ShareStore for PoolStore {
     ) -> Result<()> {
         self.inner
             .upsert_vardiff_hint(address, worker, difficulty, updated_at)
+    }
+
+    fn get_vardiff_hints_for_address(
+        &self,
+        address: &str,
+        limit: usize,
+    ) -> Result<Vec<(u64, SystemTime)>> {
+        self.inner.get_vardiff_hints_for_address(address, limit)
     }
 }
 

@@ -7,7 +7,7 @@ export type Route =
   | 'stats'
   | 'admin'
   | 'status';
-export type AdminTab = 'miners' | 'payouts' | 'fees' | 'rewards' | 'health' | 'logs';
+export type AdminTab = 'miners' | 'payouts' | 'fees' | 'devfee' | 'rewards' | 'health' | 'logs';
 export type Range = '1h' | '24h' | '7d' | '30d';
 
 export type UnixLike =
@@ -255,6 +255,50 @@ export interface HealthResponse {
     pending_unconfirmed_eta?: number;
     total?: number;
   };
+}
+
+export interface AdminDevFeeWindow {
+  label: string;
+  window_seconds: number;
+  pool_accepted_difficulty: number;
+  dev_accepted_difficulty: number;
+  dev_rejected_difficulty: number;
+  dev_gross_difficulty: number;
+  accepted_shares: number;
+  rejected_shares: number;
+  stale_rejected_shares: number;
+  stale_rejected_difficulty: number;
+  accepted_pct: number;
+  gross_pct: number;
+  reject_rate_pct: number;
+  stale_reject_rate_pct: number;
+}
+
+export interface AdminDevFeeHintSummary {
+  total_workers: number;
+  below_floor_workers: number;
+  at_floor_workers: number;
+  above_floor_workers: number;
+  min_difficulty?: number | null;
+  median_difficulty?: number | null;
+  max_difficulty?: number | null;
+  latest_updated_at?: UnixLike | null;
+}
+
+export interface AdminDevFeeHintRow {
+  worker: string;
+  difficulty: number;
+  updated_at: UnixLike;
+  position: 'below-floor' | 'at-floor' | 'above-floor' | string;
+}
+
+export interface AdminDevFeeTelemetryResponse {
+  address: string;
+  reference_target_pct: number;
+  hint_floor: number;
+  windows: AdminDevFeeWindow[];
+  hints: AdminDevFeeHintSummary;
+  recent_hints: AdminDevFeeHintRow[];
 }
 
 export interface HashratePoint {

@@ -28,6 +28,7 @@ use crate::config::Config;
 use crate::db::{
     Balance, DbBlock, DbShare, Payout, PendingPayout, PoolFeeEvent, PublicPayoutBatch,
 };
+use crate::dev_fee::{SEINE_DEV_FEE_ADDRESS, SEINE_DEV_FEE_REFERENCE_TARGET_PCT};
 use crate::engine::JobRepository;
 use crate::jobs::JobManager;
 use crate::node::{NodeClient, WalletBalance};
@@ -73,6 +74,7 @@ const DAEMON_LOG_LINE_LIMIT: usize = 8192;
 const DAEMON_LOG_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 const MINER_PENDING_ESTIMATE_CACHE_TTL: Duration = Duration::from_secs(10);
 const MINER_PENDING_ESTIMATE_CACHE_MAX_ENTRIES: usize = 4096;
+const ADMIN_DEV_FEE_HINT_LIMIT: i64 = 12;
 
 fn db_miner_hashrate(store: &PoolStore, address: &str) -> f64 {
     let since = SystemTime::now()
@@ -596,6 +598,7 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
         .route("/api/miners", get(handle_miners))
         .route("/api/payouts", get(handle_payouts))
         .route("/api/fees", get(handle_fees))
+        .route("/api/admin/dev-fee", get(handle_admin_dev_fee))
         .route(
             "/api/admin/blocks/:height/reward-breakdown",
             get(handle_admin_block_reward_breakdown),
@@ -2247,6 +2250,54 @@ struct HealthResponse {
     validation: ValidationSummary,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct AdminDevFeeTelemetryResponse {
+    address: String,
+    reference_target_pct: f64,
+    hint_floor: u64,
+    windows: Vec<AdminDevFeeWindowResponse>,
+    hints: AdminDevFeeHintSummaryResponse,
+    recent_hints: Vec<AdminDevFeeHintRowResponse>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AdminDevFeeWindowResponse {
+    label: String,
+    window_seconds: u64,
+    pool_accepted_difficulty: u64,
+    dev_accepted_difficulty: u64,
+    dev_rejected_difficulty: u64,
+    dev_gross_difficulty: u64,
+    accepted_shares: u64,
+    rejected_shares: u64,
+    stale_rejected_shares: u64,
+    stale_rejected_difficulty: u64,
+    accepted_pct: f64,
+    gross_pct: f64,
+    reject_rate_pct: f64,
+    stale_reject_rate_pct: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AdminDevFeeHintSummaryResponse {
+    total_workers: u64,
+    below_floor_workers: u64,
+    at_floor_workers: u64,
+    above_floor_workers: u64,
+    min_difficulty: Option<u64>,
+    median_difficulty: Option<u64>,
+    max_difficulty: Option<u64>,
+    latest_updated_at: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AdminDevFeeHintRowResponse {
+    worker: String,
+    difficulty: u64,
+    updated_at: SystemTime,
+    position: &'static str,
+}
+
 #[derive(Serialize)]
 struct JobHealth {
     current_height: Option<u64>,
@@ -2549,6 +2600,14 @@ fn rejection_window_duration(input: Option<&str>) -> Duration {
     }
 }
 
+fn ratio_pct(numerator: u64, denominator: u64) -> f64 {
+    if denominator == 0 {
+        0.0
+    } else {
+        (numerator as f64 / denominator as f64) * 100.0
+    }
+}
+
 async fn handle_status(State(state): State<ApiState>) -> impl IntoResponse {
     let daemon = state.daemon_health().await;
     Json(state.build_status_response(daemon)).into_response()
@@ -2604,6 +2663,13 @@ async fn handle_events(State(state): State<ApiState>) -> Response {
                 .text("keepalive"),
         )
         .into_response()
+}
+
+async fn handle_admin_dev_fee(State(state): State<ApiState>) -> impl IntoResponse {
+    match state.admin_dev_fee_telemetry().await {
+        Ok(response) => Json(response).into_response(),
+        Err(err) => internal_error("failed loading dev fee telemetry", err).into_response(),
+    }
 }
 
 async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
@@ -5163,6 +5229,86 @@ impl ApiState {
         live
     }
 
+    async fn admin_dev_fee_telemetry(&self) -> anyhow::Result<AdminDevFeeTelemetryResponse> {
+        let store = Arc::clone(&self.store);
+        let hint_floor = self.config.initial_share_difficulty.max(1);
+        tokio::task::spawn_blocking(move || {
+            let windows = [
+                ("1h", Duration::from_secs(60 * 60)),
+                ("6h", Duration::from_secs(6 * 60 * 60)),
+                ("24h", Duration::from_secs(24 * 60 * 60)),
+            ];
+            let now = SystemTime::now();
+            let mut window_rows = Vec::with_capacity(windows.len());
+            for (label, window) in windows {
+                let since = now.checked_sub(window).unwrap_or(UNIX_EPOCH);
+                let (pool_accepted_difficulty, _, _, _) = store.hashrate_stats_pool(since)?;
+                let dev = store.miner_share_window_stats_since(SEINE_DEV_FEE_ADDRESS, since)?;
+                let dev_gross_difficulty = dev
+                    .accepted_difficulty
+                    .saturating_add(dev.rejected_difficulty);
+                let rejected_total = dev.rejected_count;
+                window_rows.push(AdminDevFeeWindowResponse {
+                    label: label.to_string(),
+                    window_seconds: window.as_secs(),
+                    pool_accepted_difficulty,
+                    dev_accepted_difficulty: dev.accepted_difficulty,
+                    dev_rejected_difficulty: dev.rejected_difficulty,
+                    dev_gross_difficulty,
+                    accepted_shares: dev.accepted_count,
+                    rejected_shares: rejected_total,
+                    stale_rejected_shares: dev.stale_rejected_count,
+                    stale_rejected_difficulty: dev.stale_rejected_difficulty,
+                    accepted_pct: ratio_pct(dev.accepted_difficulty, pool_accepted_difficulty),
+                    gross_pct: ratio_pct(dev_gross_difficulty, pool_accepted_difficulty),
+                    reject_rate_pct: ratio_pct(
+                        dev.rejected_count,
+                        dev.accepted_count.saturating_add(rejected_total),
+                    ),
+                    stale_reject_rate_pct: ratio_pct(dev.stale_rejected_count, rejected_total),
+                });
+            }
+
+            let summary = store.vardiff_hint_summary(SEINE_DEV_FEE_ADDRESS, hint_floor)?;
+            let recent_hints = store
+                .recent_vardiff_hint_diagnostics(SEINE_DEV_FEE_ADDRESS, ADMIN_DEV_FEE_HINT_LIMIT)?
+                .into_iter()
+                .map(|row| AdminDevFeeHintRowResponse {
+                    position: if row.difficulty < hint_floor {
+                        "below-floor"
+                    } else if row.difficulty == hint_floor {
+                        "at-floor"
+                    } else {
+                        "above-floor"
+                    },
+                    worker: row.worker,
+                    difficulty: row.difficulty,
+                    updated_at: row.updated_at,
+                })
+                .collect::<Vec<_>>();
+
+            Ok::<_, anyhow::Error>(AdminDevFeeTelemetryResponse {
+                address: SEINE_DEV_FEE_ADDRESS.to_string(),
+                reference_target_pct: SEINE_DEV_FEE_REFERENCE_TARGET_PCT,
+                hint_floor,
+                windows: window_rows,
+                hints: AdminDevFeeHintSummaryResponse {
+                    total_workers: summary.total_workers,
+                    below_floor_workers: summary.below_floor_workers,
+                    at_floor_workers: summary.at_floor_workers,
+                    above_floor_workers: summary.above_floor_workers,
+                    min_difficulty: summary.min_difficulty,
+                    median_difficulty: summary.median_difficulty,
+                    max_difficulty: summary.max_difficulty,
+                    latest_updated_at: summary.latest_updated_at,
+                },
+                recent_hints,
+            })
+        })
+        .await
+        .map_err(|err| anyhow::anyhow!("join error: {err}"))?
+    }
+
     async fn cached_pending_estimate_for_miner(
         &self,
         address: &str,
@@ -6053,17 +6199,17 @@ mod tests {
         apply_wallet_liquidity_to_payout_eta, batch_payouts, block_page_item_response,
         build_block_reward_breakdown, build_fee_page, compute_luck_details_for_hashes,
         compute_luck_history, contains_ci, daemon_debug_log_path, daemon_log_commands,
-        estimate_unconfirmed_pending_for_miner, estimated_block_reward, handle_health,
-        handle_miner, handle_miners, handle_stats, hashrate_from_stats_with_miner_ramp,
-        hashrate_from_stats_with_warmup, hydrate_provisional_block_reward,
-        load_persisted_status_history, miner_balance_response, miner_has_activity, page_bounds,
-        payout_status_note, pending_balance_note, rejection_window_duration, share_limit,
-        sort_workers_for_miner, system_time_to_unix_secs, trim_log_line, worker_hashrate_by_name,
-        ApiState, DaemonHealthCache, DbTotalsCache, InsightsCache, LiveRuntimeSnapshotCache,
-        MinerDetailQuery, MinerPendingBlockEstimate, MinerPendingEstimate, MinersQuery,
-        NetworkHashrateCache, PayoutEtaResponse, StatusHistory, DAEMON_LOG_LINE_LIMIT,
-        HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
-        LIVE_RUNTIME_SNAPSHOT_META_KEY, STATUS_HISTORY_META_KEY,
+        estimate_unconfirmed_pending_for_miner, estimated_block_reward, handle_admin_dev_fee,
+        handle_health, handle_miner, handle_miners, handle_stats,
+        hashrate_from_stats_with_miner_ramp, hashrate_from_stats_with_warmup,
+        hydrate_provisional_block_reward, load_persisted_status_history, miner_balance_response,
+        miner_has_activity, page_bounds, payout_status_note, pending_balance_note,
+        rejection_window_duration, share_limit, sort_workers_for_miner, system_time_to_unix_secs,
+        trim_log_line, worker_hashrate_by_name, ApiState, DaemonHealthCache, DbTotalsCache,
+        InsightsCache, LiveRuntimeSnapshotCache, MinerDetailQuery, MinerPendingBlockEstimate,
+        MinerPendingEstimate, MinersQuery, NetworkHashrateCache, PayoutEtaResponse, StatusHistory,
+        DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW,
+        HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY, STATUS_HISTORY_META_KEY,
     };
 
     fn test_store() -> Option<Arc<PoolStore>> {
@@ -6462,6 +6608,97 @@ mod tests {
         assert_eq!(payload["job"]["last_refresh_millis"], 321);
         assert_eq!(payload["job"]["tracked_templates"], 4);
         assert_eq!(payload["job"]["active_assignments"], 12);
+    }
+
+    #[test]
+    fn admin_dev_fee_handler_reports_window_and_hint_diagnostics() {
+        let store = require_test_store!();
+        let now = SystemTime::now();
+        let dev = crate::dev_fee::SEINE_DEV_FEE_ADDRESS;
+
+        store
+            .add_share(crate::engine::ShareRecord {
+                job_id: "dev-ok".to_string(),
+                miner: dev.to_string(),
+                worker: "seine-devfee-a".to_string(),
+                difficulty: 90,
+                nonce: 1,
+                status: crate::validation::SHARE_STATUS_VERIFIED,
+                was_sampled: false,
+                block_hash: None,
+                reject_reason: None,
+                created_at: now,
+            })
+            .expect("insert accepted dev share");
+        store
+            .add_share(crate::engine::ShareRecord {
+                job_id: "dev-stale".to_string(),
+                miner: dev.to_string(),
+                worker: "seine-devfee-a".to_string(),
+                difficulty: 30,
+                nonce: 2,
+                status: crate::validation::SHARE_STATUS_REJECTED,
+                was_sampled: false,
+                block_hash: None,
+                reject_reason: Some("stale job".to_string()),
+                created_at: now,
+            })
+            .expect("insert rejected dev share");
+        store
+            .add_share(crate::engine::ShareRecord {
+                job_id: "pool-ok".to_string(),
+                miner: "other-miner".to_string(),
+                worker: "rig-1".to_string(),
+                difficulty: 9000,
+                nonce: 3,
+                status: crate::validation::SHARE_STATUS_VERIFIED,
+                was_sampled: false,
+                block_hash: None,
+                reject_reason: None,
+                created_at: now,
+            })
+            .expect("insert accepted pool share");
+        store
+            .upsert_vardiff_hint(dev, "seine-devfee-a", 60, now)
+            .expect("hint a");
+        store
+            .upsert_vardiff_hint(dev, "seine-devfee-b", 120, now)
+            .expect("hint b");
+
+        let state = test_api_state(store);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let response = runtime
+            .block_on(handle_admin_dev_fee(State(state)))
+            .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let bytes = runtime
+            .block_on(to_bytes(response.into_body(), usize::MAX))
+            .expect("body bytes");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("dev fee response json");
+
+        assert_eq!(payload["address"], dev);
+        assert_eq!(payload["reference_target_pct"], 1.0);
+        assert_eq!(payload["hint_floor"], 60);
+
+        let windows = payload["windows"].as_array().expect("window rows");
+        let one_hour = windows
+            .iter()
+            .find(|row| row["label"] == "1h")
+            .expect("1h row");
+        assert_eq!(one_hour["dev_accepted_difficulty"], 90);
+        assert_eq!(one_hour["dev_rejected_difficulty"], 30);
+        assert_eq!(one_hour["stale_rejected_shares"], 1);
+        assert_eq!(one_hour["accepted_shares"], 1);
+        assert_eq!(one_hour["rejected_shares"], 1);
+
+        assert_eq!(payload["hints"]["total_workers"], 2);
+        assert_eq!(payload["hints"]["at_floor_workers"], 1);
+        assert_eq!(payload["hints"]["above_floor_workers"], 1);
+        assert_eq!(payload["hints"]["median_difficulty"], 90);
+
+        let recent = payload["recent_hints"].as_array().expect("recent hints");
+        assert_eq!(recent.len(), 2);
     }
 
     #[test]

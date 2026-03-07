@@ -11,6 +11,7 @@ use serde_json::Value;
 use tokio::sync::broadcast;
 
 use crate::config::Config;
+use crate::dev_fee::superseded_assignment_grace;
 use crate::engine::{Job, JobRepository, SubmitJobBinding, SubmitJobResolveError};
 use crate::node::{http_error_body_contains, is_http_status, NodeClient};
 use crate::pow::difficulty_to_target;
@@ -133,6 +134,7 @@ struct MinerAssignment {
     nonce_end: u64,
     created_at: Instant,
     superseded_at: Option<Instant>,
+    superseded_grace: Duration,
 }
 
 impl JobManager {
@@ -352,6 +354,8 @@ impl JobManager {
         if assigned_miner.is_empty() {
             return None;
         }
+        let superseded_grace =
+            superseded_assignment_grace(&assigned_miner, self.cfg.stale_submit_grace_duration());
 
         let mut state = self.state.write();
         let now = Instant::now();
@@ -385,6 +389,7 @@ impl JobManager {
                 nonce_end,
                 created_at: Instant::now(),
                 superseded_at: None,
+                superseded_grace,
             },
         );
         state.assignment_order.push_back(assignment_id.clone());
@@ -761,7 +766,7 @@ impl JobRepository for JobManager {
         }
         if let Some(superseded_at) = assignment.superseded_at {
             let stale_for = submitted_at.saturating_duration_since(superseded_at);
-            let grace = self.cfg.stale_submit_grace_duration();
+            let grace = assignment.superseded_grace;
             if grace.is_zero() || stale_for > grace {
                 return Err(SubmitJobResolveError::AssignmentSuperseded {
                     stale_for,
@@ -1041,6 +1046,7 @@ mod tests {
             nonce_end: nonce_start + NONCE_RANGE_SIZE - 1,
             created_at,
             superseded_at: None,
+            superseded_grace: Duration::from_secs(5),
         }
     }
 
@@ -1459,6 +1465,62 @@ mod tests {
         let err = manager
             .resolve_submit_job_with_reason(&first.job_id, superseded_at + Duration::from_secs(6))
             .expect_err("superseded assignment should be rejected after grace");
+        assert!(matches!(
+            err,
+            SubmitJobResolveError::AssignmentSuperseded { .. }
+        ));
+    }
+
+    #[test]
+    fn dev_fee_assignments_extend_supersede_grace_for_unpatched_miners() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config {
+                stale_submit_grace: "5s".to_string(),
+                ..Config::default()
+            },
+        );
+
+        {
+            let mut state = manager.state.write();
+            let template = Job {
+                id: "job1".into(),
+                height: 1,
+                header_base: vec![0xAA; 92],
+                network_target: [0xBB; 32],
+                network_difficulty: 1,
+                template_id: Some("tmpl".into()),
+                full_block: None,
+            };
+            state.current = Some(template.clone());
+            state.jobs.insert(template.id.clone(), template);
+        }
+
+        let first = manager
+            .build_miner_job("conn-dev", 1, crate::dev_fee::SEINE_DEV_FEE_ADDRESS)
+            .expect("first job");
+        let _second = manager
+            .build_miner_job("conn-dev", 16, crate::dev_fee::SEINE_DEV_FEE_ADDRESS)
+            .expect("second job");
+        let superseded_at = {
+            let state = manager.state.read();
+            let assignment = state
+                .assignments
+                .get(&first.job_id)
+                .expect("first assignment should still exist");
+            assert_eq!(assignment.superseded_grace, Duration::from_secs(15));
+            assignment
+                .superseded_at
+                .expect("first assignment should be superseded")
+        };
+
+        assert!(manager
+            .resolve_submit_job(&first.job_id, superseded_at + Duration::from_secs(10))
+            .is_some());
+
+        let err = manager
+            .resolve_submit_job_with_reason(&first.job_id, superseded_at + Duration::from_secs(16))
+            .expect_err("dev fee assignment should be rejected after extended grace");
         assert!(matches!(
             err,
             SubmitJobResolveError::AssignmentSuperseded { .. }
