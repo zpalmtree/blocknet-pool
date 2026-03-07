@@ -39,6 +39,13 @@ function toneClass(tone: string | undefined): string {
   return 'is-ok';
 }
 
+function blockStatusLabel(block: StatsInsightsResponse['luck_history'][number] | null | undefined): string {
+  if (!block) return '';
+  if (block.orphaned) return 'orphaned';
+  if (block.confirmed) return 'confirmed';
+  return 'pending';
+}
+
 export function DashboardPage({ active, api, poolInfo, liveTick, theme }: DashboardPageProps) {
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [insights, setInsights] = useState<StatsInsightsResponse | null>(null);
@@ -111,6 +118,10 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
 
   const round = insights?.round;
   const payoutEta = insights?.payout_eta;
+  const latestSolvedBlock = insights?.luck_history?.[0];
+  const latestSolvedMeta = latestSolvedBlock
+    ? `${blockStatusLabel(latestSolvedBlock)} • ${timeAgo(latestSolvedBlock.timestamp)}`
+    : null;
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-dashboard">
@@ -157,6 +168,13 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
           <div className="value mono" id="s-current-block">
             {stats?.chain?.current_job_height ?? '-'}
           </div>
+        </div>
+        <div className="stat-card" title={latestSolvedBlock ? new Date(toUnixMs(latestSolvedBlock.timestamp)).toLocaleString() : undefined}>
+          <div className="label">Last Solved Block</div>
+          <div className="value mono" id="s-last-solved-block">
+            {latestSolvedBlock?.block_height ?? '-'}
+          </div>
+          {latestSolvedMeta ? <div className="stat-meta">{latestSolvedMeta}</div> : null}
         </div>
         <div className="stat-card">
           <div className="label">Blocks Found</div>

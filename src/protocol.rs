@@ -19,6 +19,17 @@ const STEALTH_ADDRESS_CHECKSUM_TAG: &[u8] = b"blocknet_stealth_address_checksum"
 const NETWORK_ID_MAINNET: &str = "blocknet_mainnet";
 const NETWORK_ID_TESTNET: &str = "blocknet_testnet";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddressNetwork {
+    Mainnet,
+    Testnet,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AddressProfile {
+    network: Option<AddressNetwork>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StratumRequest {
     pub id: u64,
@@ -127,6 +138,27 @@ pub fn build_login_result(protocol_version: u32, submit_v2_required: bool) -> Lo
 }
 
 pub fn validate_miner_address(address: &str) -> Result<(), String> {
+    parse_address_profile(address).map(|_| ())
+}
+
+pub fn address_network(address: &str) -> Result<Option<AddressNetwork>, String> {
+    Ok(parse_address_profile(address)?.network)
+}
+
+pub fn validate_miner_address_for_network(
+    address: &str,
+    expected_network: Option<AddressNetwork>,
+) -> Result<(), String> {
+    let profile = parse_address_profile(address)?;
+    if let (Some(expected), Some(actual)) = (expected_network, profile.network) {
+        if expected != actual {
+            return Err("invalid address checksum".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn parse_address_profile(address: &str) -> Result<AddressProfile, String> {
     let trimmed = address.trim();
     if trimmed.is_empty() {
         return Err("address is required".to_string());
@@ -137,14 +169,21 @@ pub fn validate_miner_address(address: &str) -> Result<(), String> {
         .map_err(|_| "invalid base58 address".to_string())?;
 
     match decoded.len() {
-        64 => Ok(()),
+        64 => Ok(AddressProfile { network: None }),
         68 => {
             let payload = &decoded[..64];
             let checksum = &decoded[64..];
-            if checksum_matches(payload, checksum, NETWORK_ID_MAINNET)
-                || checksum_matches(payload, checksum, NETWORK_ID_TESTNET)
-            {
-                Ok(())
+            let network = if checksum_matches(payload, checksum, NETWORK_ID_MAINNET) {
+                Some(AddressNetwork::Mainnet)
+            } else if checksum_matches(payload, checksum, NETWORK_ID_TESTNET) {
+                Some(AddressNetwork::Testnet)
+            } else {
+                None
+            };
+            if let Some(network) = network {
+                Ok(AddressProfile {
+                    network: Some(network),
+                })
             } else {
                 Err("invalid address checksum".to_string())
             }
@@ -292,11 +331,39 @@ mod tests {
         current.extend_from_slice(&address_checksum(&payload, NETWORK_ID_MAINNET)[..4]);
         let current_addr = bs58::encode(current).into_string();
         assert!(validate_miner_address(&current_addr).is_ok());
+        assert_eq!(
+            address_network(&current_addr).expect("mainnet network should parse"),
+            Some(AddressNetwork::Mainnet)
+        );
 
         let mut testnet = payload.to_vec();
         testnet.extend_from_slice(&address_checksum(&payload, NETWORK_ID_TESTNET)[..4]);
         let testnet_addr = bs58::encode(testnet).into_string();
         assert!(validate_miner_address(&testnet_addr).is_ok());
+        assert_eq!(
+            address_network(&testnet_addr).expect("testnet network should parse"),
+            Some(AddressNetwork::Testnet)
+        );
+    }
+
+    #[test]
+    fn network_specific_validation_rejects_cross_network_checksum() {
+        let payload = [0x55; 64];
+        let mut encoded = payload.to_vec();
+        encoded.extend_from_slice(&address_checksum(&payload, NETWORK_ID_TESTNET)[..4]);
+        let address = bs58::encode(encoded).into_string();
+
+        let err = validate_miner_address_for_network(&address, Some(AddressNetwork::Mainnet))
+            .expect_err("cross-network address must fail");
+        assert!(err.contains("checksum"));
+    }
+
+    #[test]
+    fn network_specific_validation_allows_legacy_addresses() {
+        let address = bs58::encode([0x66; 64]).into_string();
+        assert!(
+            validate_miner_address_for_network(&address, Some(AddressNetwork::Mainnet)).is_ok()
+        );
     }
 
     #[test]

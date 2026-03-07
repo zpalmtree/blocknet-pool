@@ -168,7 +168,7 @@ fi
 
 (
   cd "${ROOT_DIR}"
-  cargo run --quiet -- --config "${CONFIG_PATH}"
+  cargo run --quiet --bin blocknet-pool-rs -- --config "${CONFIG_PATH}"
 ) >"${POOL_LOG}" 2>&1 &
 POOL_PID="$!"
 

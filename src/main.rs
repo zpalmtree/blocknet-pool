@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
 
     let config_path = parse_config_path(env::args().skip(1))?;
     let shared = bootstrap_shared_runtime(&config_path).await?;
-    let engine = build_engine(&shared);
+    let engine = build_engine(&shared).await?;
     let stratum = build_stratum_server(&shared, Arc::clone(&engine))?;
     start_stratum_background_tasks(&shared, engine);
 

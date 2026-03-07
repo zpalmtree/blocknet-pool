@@ -15,7 +15,7 @@ use crate::config::Config;
 use crate::pow::{check_target, difficulty_to_target};
 use crate::protocol::{
     build_login_result, normalize_capabilities, normalize_protocol_version, normalize_worker_name,
-    parse_hash_hex, validate_miner_address, CAP_SUBMIT_CLAIMED_HASH,
+    parse_hash_hex, validate_miner_address_for_network, AddressNetwork, CAP_SUBMIT_CLAIMED_HASH,
     STRATUM_PROTOCOL_VERSION_CURRENT,
 };
 use crate::validation::{
@@ -116,6 +116,10 @@ pub enum SubmitJobResolveError {
         age: Duration,
         ttl: Duration,
     },
+    AssignmentSuperseded {
+        stale_for: Duration,
+        stale_grace: Duration,
+    },
     TemplateStaleBeyondGrace {
         template_job_id: String,
         current_job_id: Option<String>,
@@ -136,6 +140,15 @@ impl fmt::Display for SubmitJobResolveError {
                 "stale job: assignment expired (age={}, ttl={})",
                 format_duration(*age),
                 format_duration(*ttl)
+            ),
+            Self::AssignmentSuperseded {
+                stale_for,
+                stale_grace,
+            } => write!(
+                f,
+                "stale job: assignment superseded by newer difficulty (stale_for={}, stale_grace={})",
+                format_duration(*stale_for),
+                format_duration(*stale_grace)
             ),
             Self::TemplateStaleBeyondGrace {
                 template_job_id,
@@ -310,6 +323,7 @@ struct MinerSession {
 
 pub struct PoolEngine {
     cfg: Config,
+    expected_address_network: Option<AddressNetwork>,
     validation: Arc<ValidationEngine>,
     jobs: Arc<dyn JobRepository>,
     store: Arc<dyn ShareStore>,
@@ -328,8 +342,20 @@ impl PoolEngine {
         store: Arc<dyn ShareStore>,
         node: Arc<dyn NodeApi>,
     ) -> Self {
+        Self::new_with_expected_address_network(cfg, None, validation, jobs, store, node)
+    }
+
+    pub fn new_with_expected_address_network(
+        cfg: Config,
+        expected_address_network: Option<AddressNetwork>,
+        validation: Arc<ValidationEngine>,
+        jobs: Arc<dyn JobRepository>,
+        store: Arc<dyn ShareStore>,
+        node: Arc<dyn NodeApi>,
+    ) -> Self {
         let engine = Self {
             cfg,
+            expected_address_network,
             validation,
             jobs,
             store,
@@ -373,7 +399,8 @@ impl PoolEngine {
         if address.is_empty() || address.len() > 128 {
             return Err(anyhow!("invalid address"));
         }
-        if let Err(err) = validate_miner_address(address) {
+        if let Err(err) = validate_miner_address_for_network(address, self.expected_address_network)
+        {
             return Err(anyhow!("invalid address: {err}"));
         }
 

@@ -125,12 +125,14 @@ struct JobTemplateMeta {
 
 #[derive(Debug, Clone)]
 struct MinerAssignment {
+    owner_conn_id: String,
     template_job_id: String,
     share_difficulty: u64,
     assigned_miner: String,
     nonce_start: u64,
     nonce_end: u64,
     created_at: Instant,
+    superseded_at: Option<Instant>,
 }
 
 impl JobManager {
@@ -331,7 +333,12 @@ impl JobManager {
         }
     }
 
-    pub fn build_miner_job(&self, share_difficulty: u64, assigned_miner: &str) -> Option<MinerJob> {
+    pub fn build_miner_job(
+        &self,
+        conn_id: &str,
+        share_difficulty: u64,
+        assigned_miner: &str,
+    ) -> Option<MinerJob> {
         let job = self.current_job()?;
         let slot_count = nonce_slot_count();
         let slot = self.nonce_counter.fetch_add(1, Ordering::Relaxed) % slot_count;
@@ -359,15 +366,25 @@ impl JobManager {
                 created_at: now,
                 stale_since: None,
             });
+        for assignment in state.assignments.values_mut() {
+            if assignment.owner_conn_id == conn_id
+                && assignment.template_job_id == job.id
+                && assignment.superseded_at.is_none()
+            {
+                assignment.superseded_at = Some(now);
+            }
+        }
         state.assignments.insert(
             assignment_id.clone(),
             MinerAssignment {
+                owner_conn_id: conn_id.to_string(),
                 template_job_id: job.id.clone(),
                 share_difficulty,
                 assigned_miner,
                 nonce_start: start,
                 nonce_end,
                 created_at: Instant::now(),
+                superseded_at: None,
             },
         );
         state.assignment_order.push_back(assignment_id.clone());
@@ -742,6 +759,16 @@ impl JobRepository for JobManager {
                 ttl: assignment_ttl,
             });
         }
+        if let Some(superseded_at) = assignment.superseded_at {
+            let stale_for = submitted_at.saturating_duration_since(superseded_at);
+            let grace = self.cfg.stale_submit_grace_duration();
+            if grace.is_zero() || stale_for > grace {
+                return Err(SubmitJobResolveError::AssignmentSuperseded {
+                    stale_for,
+                    stale_grace: grace,
+                });
+            }
+        }
 
         if !is_current_template {
             let meta = state.job_meta.get(&assignment.template_job_id).copied();
@@ -999,6 +1026,24 @@ mod tests {
     use super::*;
     use crate::node::HttpError;
 
+    fn test_assignment(
+        owner_conn_id: &str,
+        template_job_id: &str,
+        created_at: Instant,
+        nonce_start: u64,
+    ) -> MinerAssignment {
+        MinerAssignment {
+            owner_conn_id: owner_conn_id.to_string(),
+            template_job_id: template_job_id.to_string(),
+            share_difficulty: 1,
+            assigned_miner: "addr1".to_string(),
+            nonce_start,
+            nonce_end: nonce_start + NONCE_RANGE_SIZE - 1,
+            created_at,
+            superseded_at: None,
+        }
+    }
+
     #[test]
     fn miner_job_carries_targets_and_nonce_window() {
         let manager = JobManager::new(
@@ -1020,7 +1065,7 @@ mod tests {
         }
 
         let job = manager
-            .build_miner_job(1, "addr1")
+            .build_miner_job("conn1", 1, "addr1")
             .expect("build miner job should work");
         assert_ne!(job.job_id, "job1");
         assert_eq!(job.difficulty, 1);
@@ -1063,14 +1108,7 @@ mod tests {
             state.jobs.insert(template.id.clone(), template);
             state.assignments.insert(
                 "assign-old".to_string(),
-                MinerAssignment {
-                    template_job_id: "job1".to_string(),
-                    share_difficulty: 1,
-                    assigned_miner: "addr1".to_string(),
-                    nonce_start: 0,
-                    nonce_end: NONCE_RANGE_SIZE - 1,
-                    created_at: Instant::now() - Duration::from_secs(2),
-                },
+                test_assignment("conn1", "job1", Instant::now() - Duration::from_secs(2), 0),
             );
         }
 
@@ -1094,25 +1132,21 @@ mod tests {
 
         state.assignments.insert(
             "assign-current".to_string(),
-            MinerAssignment {
-                template_job_id: "job-current".to_string(),
-                share_difficulty: 1,
-                assigned_miner: "addr1".to_string(),
-                nonce_start: 0,
-                nonce_end: NONCE_RANGE_SIZE - 1,
-                created_at: Instant::now() - Duration::from_secs(30),
-            },
+            test_assignment(
+                "conn1",
+                "job-current",
+                Instant::now() - Duration::from_secs(30),
+                0,
+            ),
         );
         state.assignments.insert(
             "assign-old".to_string(),
-            MinerAssignment {
-                template_job_id: "job-old".to_string(),
-                share_difficulty: 1,
-                assigned_miner: "addr1".to_string(),
-                nonce_start: NONCE_RANGE_SIZE,
-                nonce_end: NONCE_RANGE_SIZE.saturating_mul(2).saturating_sub(1),
-                created_at: Instant::now() - Duration::from_secs(30),
-            },
+            test_assignment(
+                "conn1",
+                "job-old",
+                Instant::now() - Duration::from_secs(30),
+                NONCE_RANGE_SIZE,
+            ),
         );
         state
             .assignment_order
@@ -1186,14 +1220,7 @@ mod tests {
                 .insert(current_template.id.clone(), current_template);
             state.assignments.insert(
                 "assign-old".to_string(),
-                MinerAssignment {
-                    template_job_id: old_template.id.clone(),
-                    share_difficulty: 1,
-                    assigned_miner: "addr1".to_string(),
-                    nonce_start: 0,
-                    nonce_end: NONCE_RANGE_SIZE - 1,
-                    created_at: now - Duration::from_secs(2),
-                },
+                test_assignment("conn1", &old_template.id, now - Duration::from_secs(2), 0),
             );
             state.job_meta.insert(
                 old_template.id.clone(),
@@ -1251,14 +1278,7 @@ mod tests {
             state.jobs.insert(new_job.id.clone(), new_job);
             state.assignments.insert(
                 "assign-old".to_string(),
-                MinerAssignment {
-                    template_job_id: old_job.id.clone(),
-                    share_difficulty: 1,
-                    assigned_miner: "addr1".to_string(),
-                    nonce_start: 0,
-                    nonce_end: NONCE_RANGE_SIZE - 1,
-                    created_at: now - Duration::from_secs(30),
-                },
+                test_assignment("conn1", &old_job.id, now - Duration::from_secs(30), 0),
             );
             state.job_meta.insert(
                 old_job.id.clone(),
@@ -1310,14 +1330,7 @@ mod tests {
             state.jobs.insert(new_job.id.clone(), new_job);
             state.assignments.insert(
                 "assign-old".to_string(),
-                MinerAssignment {
-                    template_job_id: old_job.id.clone(),
-                    share_difficulty: 1,
-                    assigned_miner: "addr1".to_string(),
-                    nonce_start: 0,
-                    nonce_end: NONCE_RANGE_SIZE - 1,
-                    created_at: now - Duration::from_secs(30),
-                },
+                test_assignment("conn1", &old_job.id, now - Duration::from_secs(30), 0),
             );
             state.job_meta.insert(
                 old_job.id.clone(),
@@ -1377,14 +1390,7 @@ mod tests {
             state.jobs.insert(new_job.id.clone(), new_job);
             state.assignments.insert(
                 "assign-old".to_string(),
-                MinerAssignment {
-                    template_job_id: old_job.id.clone(),
-                    share_difficulty: 1,
-                    assigned_miner: "addr1".to_string(),
-                    nonce_start: 0,
-                    nonce_end: NONCE_RANGE_SIZE - 1,
-                    created_at: now - Duration::from_secs(30),
-                },
+                test_assignment("conn1", &old_job.id, now - Duration::from_secs(30), 0),
             );
             state.job_meta.insert(
                 old_job.id.clone(),
@@ -1404,6 +1410,59 @@ mod tests {
         assert!(manager
             .resolve_submit_job("assign-old", processed_too_late)
             .is_none());
+    }
+
+    #[test]
+    fn superseded_assignments_allow_stale_grace_then_reject() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config {
+                stale_submit_grace: "5s".to_string(),
+                ..Config::default()
+            },
+        );
+
+        {
+            let mut state = manager.state.write();
+            let template = Job {
+                id: "job1".into(),
+                height: 1,
+                header_base: vec![0xAA; 92],
+                network_target: [0xBB; 32],
+                network_difficulty: 1,
+                template_id: Some("tmpl".into()),
+                full_block: None,
+            };
+            state.current = Some(template.clone());
+            state.jobs.insert(template.id.clone(), template);
+        }
+
+        let first = manager
+            .build_miner_job("conn1", 1, "addr1")
+            .expect("first job");
+        let _second = manager
+            .build_miner_job("conn1", 16, "addr1")
+            .expect("second job");
+        let superseded_at = {
+            let state = manager.state.read();
+            state
+                .assignments
+                .get(&first.job_id)
+                .and_then(|assignment| assignment.superseded_at)
+                .expect("first assignment should be superseded")
+        };
+
+        assert!(manager
+            .resolve_submit_job(&first.job_id, superseded_at + Duration::from_secs(1))
+            .is_some());
+
+        let err = manager
+            .resolve_submit_job_with_reason(&first.job_id, superseded_at + Duration::from_secs(6))
+            .expect_err("superseded assignment should be rejected after grace");
+        assert!(matches!(
+            err,
+            SubmitJobResolveError::AssignmentSuperseded { .. }
+        ));
     }
 
     #[test]
@@ -1454,10 +1513,10 @@ mod tests {
             .store(slot_count.saturating_sub(1), Ordering::Relaxed);
 
         let first = manager
-            .build_miner_job(1, "addr1")
+            .build_miner_job("conn1", 1, "addr1")
             .expect("first miner job should be built");
         let second = manager
-            .build_miner_job(1, "addr1")
+            .build_miner_job("conn1", 1, "addr1")
             .expect("second miner job should be built");
 
         assert_eq!(first.nonce_start, (slot_count - 1) * NONCE_RANGE_SIZE);

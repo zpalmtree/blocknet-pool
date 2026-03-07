@@ -167,7 +167,9 @@ impl StratumServer {
                                         "stratum difficulty updated on job tick"
                                     );
                                 }
-                                if let Some(miner_job) = self.jobs.build_miner_job(*difficulty, address) {
+                                if let Some(miner_job) =
+                                    self.jobs.build_miner_job(&conn_id, *difficulty, address)
+                                {
                                     let notify = StratumNotify {
                                         method: "job".to_string(),
                                         params: serde_json::to_value(miner_job)?,
@@ -268,6 +270,7 @@ impl StratumServer {
                                         send_json(&writer, &response).await?;
 
                                         if let Some(miner_job) = self.jobs.build_miner_job(
+                                            &conn_id,
                                             difficulty,
                                             &address,
                                         ) {
@@ -361,7 +364,11 @@ impl StratumServer {
                                                 *difficulty = ack.next_difficulty;
                                                 if let Some(miner_job) =
                                                     self.jobs
-                                                        .build_miner_job(ack.next_difficulty, address)
+                                                        .build_miner_job(
+                                                            &conn_id,
+                                                            ack.next_difficulty,
+                                                            address,
+                                                        )
                                                 {
                                                     let notify = StratumNotify {
                                                         method: "job".to_string(),

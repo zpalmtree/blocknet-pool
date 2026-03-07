@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::config::Config;
 use crate::db::{Balance, DbBlock, DbShare, PendingPayout, PoolFeeRecord};
 use crate::node::{http_error_body_contains, is_http_status, NodeClient, NodeStatus};
-use crate::protocol::validate_miner_address;
+use crate::protocol::{address_network, validate_miner_address_for_network, AddressNetwork};
 use crate::store::PoolStore;
 use crate::validation::{SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED};
 
@@ -50,13 +50,20 @@ struct PayoutCandidate {
 #[derive(Debug)]
 pub struct PayoutProcessor {
     cfg: Config,
+    configured_address_network: Option<AddressNetwork>,
     store: Arc<PoolStore>,
     node: Arc<NodeClient>,
 }
 
 impl PayoutProcessor {
     pub fn new(cfg: Config, store: Arc<PoolStore>, node: Arc<NodeClient>) -> Arc<Self> {
-        Arc::new(Self { cfg, store, node })
+        let configured_address_network = configured_payout_address_network(&cfg);
+        Arc::new(Self {
+            cfg,
+            configured_address_network,
+            store,
+            node,
+        })
     }
 
     pub fn start(self: &Arc<Self>) {
@@ -334,30 +341,22 @@ impl PayoutProcessor {
         let trust_policy = PayoutTrustPolicy::from_config(&self.cfg);
         let mut risk_cache = HashMap::<String, bool>::new();
 
-        Ok(weight_shares(
-            shares,
-            now,
-            provisional_delay,
-            trust_policy,
-            |address| {
-                if let Some(risky) = risk_cache.get(address) {
-                    return *risky;
-                }
-                let risky = match self.store.should_force_verify_address(address) {
-                    Ok((force_verify, _)) => force_verify,
-                    Err(err) => {
-                        tracing::warn!(
-                            address = %address,
-                            error = %err,
-                            "failed risk check during payout weighting; treating address as risky"
-                        );
-                        true
-                    }
-                };
-                risk_cache.insert(address.to_string(), risky);
-                risky
-            },
-        ))
+        weight_shares(shares, now, provisional_delay, trust_policy, |address| {
+            if let Some(risky) = risk_cache.get(address) {
+                return Ok(*risky);
+            }
+            let risky = self
+                .store
+                .should_force_verify_address(address)
+                .map(|(force_verify, _)| force_verify)
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "risk check failed during payout weighting for {address}: {err}"
+                    )
+                })?;
+            risk_cache.insert(address.to_string(), risky);
+            Ok(risky)
+        })
     }
 
     fn allocate_weighted_credits(
@@ -461,6 +460,7 @@ impl PayoutProcessor {
         let wait_priority_threshold = self.cfg.payout_wait_priority_threshold_duration();
         let mut sent_recipients = 0usize;
         let mut sent_total = 0u64;
+        let expected_address_network = self.expected_payout_address_network();
         let balances = match self.store.get_all_balances() {
             Ok(v) => v,
             Err(err) => {
@@ -479,7 +479,9 @@ impl PayoutProcessor {
                 }
             };
 
-            if let Err(reason) = validate_miner_address(&bal.address) {
+            if let Err(reason) =
+                validate_miner_address_for_network(&bal.address, expected_address_network)
+            {
                 if existing_pending.is_some() {
                     if let Err(err) = self.store.cancel_pending_payout(&bal.address) {
                         tracing::warn!(
@@ -603,9 +605,10 @@ impl PayoutProcessor {
                         cap,
                         sent_total,
                         next_amount = pending_amount,
-                        "stopping payout tick due to max payout total cap"
+                        address = %bal.address,
+                        "skipping payout due to max payout total cap"
                     );
-                    break;
+                    continue;
                 }
             }
 
@@ -819,6 +822,52 @@ impl PayoutProcessor {
             Err(_) => false,
         }
     }
+
+    fn expected_payout_address_network(&self) -> Option<AddressNetwork> {
+        if let Some(network) = self.configured_address_network {
+            return Some(network);
+        }
+
+        let wallet = match self.node.get_wallet_address() {
+            Ok(wallet) => wallet,
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "failed to resolve daemon wallet address for payout validation"
+                );
+                return None;
+            }
+        };
+
+        match address_network(wallet.address.trim()) {
+            Ok(network) => network,
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "daemon wallet address is not a valid payout network anchor; falling back to generic validation"
+                );
+                None
+            }
+        }
+    }
+}
+
+fn configured_payout_address_network(cfg: &Config) -> Option<AddressNetwork> {
+    let configured = cfg.pool_wallet_address.trim();
+    if configured.is_empty() {
+        return None;
+    }
+
+    match address_network(configured) {
+        Ok(network) => network,
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "configured pool_wallet_address is not a valid payout network anchor; falling back to daemon wallet validation"
+            );
+            None
+        }
+    }
 }
 
 pub(crate) fn resolve_pool_fee_destination(cfg: &Config, block: &DbBlock) -> Option<String> {
@@ -879,9 +928,9 @@ pub fn weight_shares<F>(
     provisional_delay: Duration,
     trust_policy: PayoutTrustPolicy,
     mut is_risky: F,
-) -> (HashMap<String, u64>, u64)
+) -> anyhow::Result<(HashMap<String, u64>, u64)>
 where
-    F: FnMut(&str) -> bool,
+    F: FnMut(&str) -> anyhow::Result<bool>,
 {
     let mut by_address = HashMap::<String, AddressShareWeights>::new();
     for share in shares {
@@ -905,7 +954,7 @@ where
     let mut total = 0u64;
 
     for (address, stats) in by_address {
-        if is_risky(&address) {
+        if is_risky(&address)? {
             continue;
         }
         if stats.verified_shares < trust_policy.min_verified_shares {
@@ -943,7 +992,7 @@ where
         total = total.saturating_add(weight);
     }
 
-    (weights, total)
+    Ok((weights, total))
 }
 
 pub fn is_share_payout_eligible(
@@ -1156,8 +1205,9 @@ mod tests {
             now,
             Duration::from_secs(15 * 60),
             trust_policy(1, 0.05, 3.0),
-            |_| false,
-        );
+            |_| Ok(false),
+        )
+        .expect("weight shares");
         assert_eq!(total, 50);
         assert_eq!(weights.get("a1").copied(), Some(10));
         assert_eq!(weights.get("a2").copied(), Some(40));
@@ -1181,8 +1231,9 @@ mod tests {
             now,
             Duration::from_secs(15 * 60),
             trust_policy(1, 0.0, 3.0),
-            |_| false,
-        );
+            |_| Ok(false),
+        )
+        .expect("weight shares");
         assert_eq!(total, 10);
         assert_eq!(weights.get("a1").copied(), Some(10));
         assert!(!weights.contains_key("a2"));
@@ -1207,8 +1258,9 @@ mod tests {
             now,
             Duration::from_secs(15 * 60),
             trust_policy(1, 0.25, 3.0),
-            |_| false,
-        );
+            |_| Ok(false),
+        )
+        .expect("weight shares");
         assert_eq!(total, 10);
         assert_eq!(weights.get("a1").copied(), Some(10));
         assert!(!weights.contains_key("a2"));
@@ -1232,8 +1284,9 @@ mod tests {
             now,
             Duration::from_secs(15 * 60),
             trust_policy(1, 0.0, 1.0),
-            |_| false,
-        );
+            |_| Ok(false),
+        )
+        .expect("weight shares");
         assert_eq!(total, 40);
         assert_eq!(weights.get("a2").copied(), Some(40));
     }
@@ -1256,10 +1309,27 @@ mod tests {
             now,
             Duration::from_secs(15 * 60),
             trust_policy(1, 0.0, 0.0),
-            |_| false,
-        );
+            |_| Ok(false),
+        )
+        .expect("weight shares");
         assert_eq!(total, 120);
         assert_eq!(weights.get("a2").copied(), Some(120));
+    }
+
+    #[test]
+    fn payout_weighting_propagates_risk_lookup_failures() {
+        let now = SystemTime::now();
+        let shares = vec![sample_share("a1", 10, SHARE_STATUS_VERIFIED, now)];
+
+        let err = weight_shares(
+            &shares,
+            now,
+            Duration::from_secs(0),
+            trust_policy(1, 0.0, 0.0),
+            |_| Err(anyhow::anyhow!("boom")),
+        )
+        .expect_err("risk lookup failure should abort weighting");
+        assert!(err.to_string().contains("boom"));
     }
 
     #[test]

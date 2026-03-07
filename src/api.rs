@@ -1323,6 +1323,7 @@ fn fallback_content(route: UiRoute, state: &ApiState, context: &UiSeoContext) ->
     match route {
         UiRoute::Dashboard => {
             let totals = context.totals.unwrap_or_default();
+            let latest_solved_block = context.recent_blocks.first();
             let stats_grid = render_stat_grid(&[
                 ("Connected Miners", context.connected_miners.to_string(), None),
                 ("Active Workers", context.connected_workers.to_string(), None),
@@ -1342,6 +1343,19 @@ fn fallback_content(route: UiRoute, state: &ApiState, context: &UiSeoContext) ->
                         .map(|value| value.to_string())
                         .unwrap_or_else(|| "-".to_string()),
                     None,
+                ),
+                (
+                    "Last Solved Block",
+                    latest_solved_block
+                        .map(|block| block.height.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                    latest_solved_block.map(|block| {
+                        format!(
+                            "{} • {}",
+                            block_status_label(block),
+                            format_system_time_short(block.timestamp)
+                        )
+                    }),
                 ),
                 (
                     "Blocks Found",
@@ -3789,17 +3803,14 @@ fn estimate_unconfirmed_pending_for_miner(
         let address_risky = if let Some(risky) = risk_cache.get(address) {
             *risky
         } else {
-            let risky = match store.should_force_verify_address(address) {
-                Ok((force_verify, _)) => force_verify,
-                Err(err) => {
-                    tracing::warn!(
-                        address = %address,
-                        error = %err,
-                        "failed risk check during pending estimate; treating address as risky"
-                    );
-                    true
-                }
-            };
+            let risky = store
+                .should_force_verify_address(address)
+                .map(|(force_verify, _)| force_verify)
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "risk check failed during pending estimate for {address}: {err}"
+                    )
+                })?;
             risk_cache.insert(address.to_string(), risky);
             risky
         };
@@ -3821,23 +3832,20 @@ fn estimate_unconfirmed_pending_for_miner(
                 },
                 |candidate| {
                     if let Some(risky) = risk_cache.get(candidate) {
-                        return *risky;
+                        return Ok(*risky);
                     }
-                    let risky = match store.should_force_verify_address(candidate) {
-                        Ok((force_verify, _)) => force_verify,
-                        Err(err) => {
-                            tracing::warn!(
-                                address = %candidate,
-                                error = %err,
-                                "failed risk check during pending estimate; treating address as risky"
-                            );
-                            true
-                        }
-                    };
+                    let risky = store
+                        .should_force_verify_address(candidate)
+                        .map(|(force_verify, _)| force_verify)
+                        .map_err(|err| {
+                            anyhow::anyhow!(
+                                "risk check failed during pending estimate for {candidate}: {err}"
+                            )
+                        })?;
                     risk_cache.insert(candidate.to_string(), risky);
-                    risky
+                    Ok(risky)
                 },
-            );
+            )?;
 
             if total_weight == 0 {
                 credit_address(&mut credits, &block.finder, distributable)?;
@@ -4055,8 +4063,8 @@ fn compute_reward_mode(
 ) -> anyhow::Result<RewardModeComputation> {
     let (weights, total_weight) =
         weight_shares(shares, now, provisional_delay, trust_policy, |address| {
-            risky_by_address.get(address).copied().unwrap_or(false)
-        });
+            Ok(risky_by_address.get(address).copied().unwrap_or(false))
+        })?;
 
     let mut statuses = HashMap::<String, RewardParticipantStatus>::new();
     for (address, stats) in stats_by_address {

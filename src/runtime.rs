@@ -18,6 +18,7 @@ use crate::jobs::JobManager;
 use crate::node::NodeClient;
 use crate::payout::PayoutProcessor;
 use crate::pow::Argon2PowHasher;
+use crate::protocol::{address_network, AddressNetwork};
 use crate::service_state::{PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY};
 use crate::stats::PoolStats;
 use crate::store::PoolStore;
@@ -30,6 +31,7 @@ pub struct SharedRuntime {
     pub cfg: Config,
     pub store: Arc<PoolStore>,
     pub node: Arc<NodeClient>,
+    pub expected_address_network: Option<AddressNetwork>,
     pub jobs: Arc<JobManager>,
     pub validation: Arc<ValidationEngine>,
     pub stats: Arc<PoolStats>,
@@ -97,6 +99,7 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
     {
         warn!(error = %err, "cannot reach daemon on startup; continuing");
     }
+    let expected_address_network = resolve_expected_address_network(&cfg, Arc::clone(&node)).await;
 
     let jobs = JobManager::new(Arc::clone(&node), cfg.clone());
     jobs.start();
@@ -119,6 +122,7 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
         cfg,
         store,
         node,
+        expected_address_network,
         jobs,
         validation,
         stats: Arc::new(PoolStats::new()),
@@ -152,7 +156,9 @@ pub async fn build_api_state(shared: &SharedRuntime) -> Result<ApiState> {
         daemon_health_cache: Arc::new(parking_lot::Mutex::new(DaemonHealthCache::default())),
         network_hashrate_cache: Arc::new(parking_lot::Mutex::new(NetworkHashrateCache::default())),
         insights_cache: Arc::new(parking_lot::Mutex::new(InsightsCache::default())),
-        miner_pending_estimate_cache: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
+        miner_pending_estimate_cache: Arc::new(parking_lot::Mutex::new(
+            std::collections::HashMap::new(),
+        )),
         live_runtime_snapshot_cache: Arc::new(parking_lot::Mutex::new(
             crate::api::LiveRuntimeSnapshotCache::default(),
         )),
@@ -172,14 +178,26 @@ pub async fn build_api_state(shared: &SharedRuntime) -> Result<ApiState> {
     })
 }
 
-pub fn build_engine(shared: &SharedRuntime) -> Arc<PoolEngine> {
-    Arc::new(PoolEngine::new(
-        shared.cfg.clone(),
-        Arc::clone(&shared.validation),
-        Arc::clone(&shared.jobs) as Arc<dyn JobRepository>,
-        Arc::clone(&shared.store) as Arc<dyn ShareStore>,
-        Arc::clone(&shared.node) as Arc<dyn NodeApi>,
-    ))
+pub async fn build_engine(shared: &SharedRuntime) -> Result<Arc<PoolEngine>> {
+    let cfg = shared.cfg.clone();
+    let expected_address_network = shared.expected_address_network;
+    let validation = Arc::clone(&shared.validation);
+    let jobs = Arc::clone(&shared.jobs) as Arc<dyn JobRepository>;
+    let store = Arc::clone(&shared.store) as Arc<dyn ShareStore>;
+    let node = Arc::clone(&shared.node) as Arc<dyn NodeApi>;
+
+    tokio::task::spawn_blocking(move || {
+        Arc::new(PoolEngine::new_with_expected_address_network(
+            cfg,
+            expected_address_network,
+            validation,
+            jobs,
+            store,
+            node,
+        ))
+    })
+    .await
+    .context("join engine init task")
 }
 
 pub fn build_stratum_server(
@@ -545,4 +563,59 @@ fn warn_on_validation_visibility_config(cfg: &Config) {
 fn is_local_bind_host(host: &str) -> bool {
     let trimmed = host.trim().to_ascii_lowercase();
     matches!(trimmed.as_str(), "127.0.0.1" | "::1" | "localhost")
+}
+
+async fn resolve_expected_address_network(
+    cfg: &Config,
+    node: Arc<NodeClient>,
+) -> Option<AddressNetwork> {
+    if let Some(network) = configured_expected_address_network(cfg) {
+        return Some(network);
+    }
+
+    let node_for_wallet = Arc::clone(&node);
+    let wallet_address = match tokio::task::spawn_blocking(move || {
+        node_for_wallet.get_wallet_address()
+    })
+    .await
+    {
+        Ok(Ok(wallet)) => wallet.address,
+        Ok(Err(err)) => {
+            tracing::debug!(error = %err, "wallet address unavailable for pool network detection");
+            return None;
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "wallet address network detection task join failed");
+            return None;
+        }
+    };
+
+    match address_network(wallet_address.trim()) {
+        Ok(network) => network,
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "daemon wallet address could not be parsed for pool network detection"
+            );
+            None
+        }
+    }
+}
+
+fn configured_expected_address_network(cfg: &Config) -> Option<AddressNetwork> {
+    let configured = cfg.pool_wallet_address.trim();
+    if configured.is_empty() {
+        return None;
+    }
+
+    match address_network(configured) {
+        Ok(network) => network,
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "pool_wallet_address could not be parsed for pool network detection"
+            );
+            None
+        }
+    }
 }

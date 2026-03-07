@@ -2,6 +2,7 @@
 name = "blocknet-pool-rs"
 version = "0.1.0"
 edition = "2021"
+default-run = "blocknet-pool-rs"
 
 [features]
 default = ["api", "stratum"]
