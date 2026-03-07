@@ -653,7 +653,7 @@ const UI_ASSET_APP_JS: &str = include_str!("ui/dist/app.js");
 const UI_ASSET_APP_CSS: &str = include_str!("ui/dist/app.css");
 const UI_ASSET_POOL_ENTERED_PNG: &[u8] = include_bytes!("ui/assets/pool-entered.png");
 const UI_ASSET_MINING_TUI_PNG: &[u8] = include_bytes!("ui/assets/mining-tui.png");
-const UI_FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Blocknet Pool"><defs><linearGradient id="pool-grad" x1="0" x2="1" y1="0" y2="1"><stop offset="0%" stop-color="#57d78c"/><stop offset="100%" stop-color="#16a34a"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="#071114"/><rect x="10" y="10" width="44" height="44" rx="12" fill="url(#pool-grad)"/><rect x="20" y="20" width="24" height="24" rx="6" fill="#f6f8f2" opacity="0.96"/><rect x="27" y="27" width="10" height="10" rx="3" fill="#071114"/></svg>"##;
+const UI_FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Blocknet Pool"><rect x="4" y="4" width="24" height="24" rx="4" fill="#16a34a"/><rect x="9" y="9" width="14" height="14" rx="2" fill="#fff" opacity=".9"/><rect x="12" y="12" width="8" height="8" rx="1" fill="#16a34a"/></svg>"##;
 const INDEXABLE_ROBOTS_TAG: &str = "index, follow, max-image-preview:large";
 const PRIVATE_ROBOTS_TAG: &str = "noindex, nofollow, noarchive";
 
