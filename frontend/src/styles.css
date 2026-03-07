@@ -586,7 +586,7 @@ table {
 }
 
 th {
-  text-align: left;
+  text-align: center;
   font-weight: 600;
   font-size: 12px;
   text-transform: uppercase;
@@ -598,6 +598,7 @@ th {
 }
 
 td {
+  text-align: center;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   font-family: 'JetBrains Mono', monospace;
