@@ -41,3 +41,7 @@ scripts/__pycache__/
 docs
 api_*.json
 blocknet-pool
+
+# --- Agent instruction variants ---
+agent.md
+agents.md

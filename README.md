@@ -46,6 +46,32 @@ What it does:
 - frontend-only changes still restart `blocknet-pool-api.service` because the UI bundle is embedded into that binary
 - tails recent logs for both services
 
+## Build Blocknet Daemon For bntpool
+
+When you need a fresh `blocknet` daemon binary for the pool host, build it
+locally from this repo using the sibling daemon checkout instead of compiling on
+`bntpool`.
+
+From `blocknet-pool/`:
+
+```bash
+./scripts/build_blocknet_daemon.sh
+```
+
+That writes the daemon artifact to `build/blocknet-linux-amd64`.
+
+To stage it on the server in one step:
+
+```bash
+./scripts/build_blocknet_daemon.sh --upload bntpool
+```
+
+By default the script reads source from `../blocknet`, derives the required Go
+version from that repo's `go.mod`, builds through the daemon repo's Dockerfile,
+and uploads to `/opt/blocknet/blocknet/blocknet.new`. Swapping the live daemon
+binary and restarting the daemon remain manual steps so restart timing stays
+explicit.
+
 ## Local Development
 
 ```bash
