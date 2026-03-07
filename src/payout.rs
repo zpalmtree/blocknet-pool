@@ -24,7 +24,7 @@ pub struct PayoutTrustPolicy {
 }
 
 impl PayoutTrustPolicy {
-    fn from_config(cfg: &Config) -> Self {
+    pub fn from_config(cfg: &Config) -> Self {
         Self {
             min_verified_shares: cfg.payout_min_verified_shares.max(0) as u64,
             min_verified_ratio: cfg.payout_min_verified_ratio.clamp(0.0, 1.0),

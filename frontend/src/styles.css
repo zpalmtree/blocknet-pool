@@ -1321,6 +1321,7 @@ pre.config-block {
 
 .info-table td {
   font-family: 'Manrope', sans-serif;
+  text-align: left;
   border: none;
   padding: 8px 16px 8px 0;
   vertical-align: top;
