@@ -465,25 +465,39 @@ nav {
   grid-template-columns: repeat(3, 1fr);
 }
 
-.stats-panel {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  margin-bottom: 24px;
+.stats-card-group {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: var(--shadow-soft);
+  margin-bottom: 16px;
 }
 
-.stats-panel-label {
-  grid-column: 1 / -1;
+.stats-card-group-title {
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.8px;
   color: var(--muted);
-  padding-top: 4px;
+  margin-bottom: 12px;
 }
 
-.stats-panel-label:first-child {
-  padding-top: 0;
+.stats-card-group-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.stats-card-group-grid .stat-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  box-shadow: none;
+  padding: 14px 16px;
+}
+
+.stats-card-group-grid .stat-card .value {
+  font-size: 20px;
 }
 
 .stats-grid-dense {
@@ -1507,7 +1521,7 @@ pre.raw-json {
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .stats-panel {
+  .stats-card-group-grid {
     grid-template-columns: repeat(2, 1fr);
   }
 
@@ -1583,7 +1597,7 @@ pre.raw-json {
     grid-template-columns: 1fr;
   }
 
-  .stats-panel {
+  .stats-card-group-grid {
     grid-template-columns: 1fr;
   }
 

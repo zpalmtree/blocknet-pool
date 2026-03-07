@@ -147,64 +147,56 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
         </button>
       </div>
 
-      <div className="stats-panel">
-        <div className="stats-panel-label">Pool</div>
-        <div className="stat-card">
-          <div className="label">Connected Miners</div>
-          <div className="value" id="s-miners">
-            {stats?.pool?.miners ?? '-'}
+      <div className="stats-card-group">
+        <div className="stats-card-group-title">Pool</div>
+        <div className="stats-card-group-grid">
+          <div className="stat-card">
+            <div className="label">Connected Miners</div>
+            <div className="value" id="s-miners">{stats?.pool?.miners ?? '-'}</div>
+          </div>
+          <div className="stat-card">
+            <div className="label">Pool Hashrate</div>
+            <div className="value" id="s-hashrate">{humanRate(stats?.pool?.hashrate ?? 0)}</div>
+          </div>
+          <div className="stat-card">
+            <div className="label">Network Hashrate</div>
+            <div className="value" id="s-net-hashrate">{stats?.chain?.network_hashrate ? humanRate(stats.chain.network_hashrate) : '-'}</div>
           </div>
         </div>
-        <div className="stat-card">
-          <div className="label">Pool Hashrate</div>
-          <div className="value" id="s-hashrate">
-            {humanRate(stats?.pool?.hashrate ?? 0)}
-          </div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Network Hashrate</div>
-          <div className="value" id="s-net-hashrate">
-            {stats?.chain?.network_hashrate ? humanRate(stats.chain.network_hashrate) : '-'}
-          </div>
-        </div>
+      </div>
 
-        <div className="stats-panel-label">Blocks</div>
-        <div className="stat-card">
-          <div className="label">Current Block</div>
-          <div className="value mono" id="s-current-block">
-            {stats?.chain?.current_job_height ?? '-'}
+      <div className="stats-card-group">
+        <div className="stats-card-group-title">Blocks</div>
+        <div className="stats-card-group-grid">
+          <div className="stat-card">
+            <div className="label">Current Block</div>
+            <div className="value mono" id="s-current-block">{stats?.chain?.current_job_height ?? '-'}</div>
+          </div>
+          <div className="stat-card" title={latestSolvedBlock ? new Date(toUnixMs(latestSolvedBlock.timestamp)).toLocaleString() : undefined}>
+            <div className="label">Last Solved Block</div>
+            <div className="value mono" id="s-last-solved-block">{latestSolvedBlock?.block_height ?? '-'}</div>
+          </div>
+          <div className="stat-card">
+            <div className="label">Blocks Found</div>
+            <div className="value" id="s-blocks">{stats?.pool?.blocks_found ?? '-'}</div>
           </div>
         </div>
-        <div className="stat-card" title={latestSolvedBlock ? new Date(toUnixMs(latestSolvedBlock.timestamp)).toLocaleString() : undefined}>
-          <div className="label">Last Solved Block</div>
-          <div className="value mono" id="s-last-solved-block">
-            {latestSolvedBlock?.block_height ?? '-'}
-          </div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Blocks Found</div>
-          <div className="value" id="s-blocks">
-            {stats?.pool?.blocks_found ?? '-'}
-          </div>
-        </div>
+      </div>
 
-        <div className="stats-panel-label">Luck & Health</div>
-        <div className="stat-card">
-          <div className="label">Average Luck</div>
-          <div className="value" id="s-avg-luck">
-            {fmtPct(avgLuck)}
+      <div className="stats-card-group">
+        <div className="stats-card-group-title">Luck & Health</div>
+        <div className="stats-card-group-grid">
+          <div className="stat-card">
+            <div className="label">Average Luck</div>
+            <div className="value" id="s-avg-luck">{fmtPct(avgLuck)}</div>
           </div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Orphaned Blocks</div>
-          <div className="value" id="s-orphaned-blocks">
-            {stats?.pool?.orphaned_blocks ?? '-'}
+          <div className="stat-card">
+            <div className="label">Orphaned Blocks</div>
+            <div className="value" id="s-orphaned-blocks">{stats?.pool?.orphaned_blocks ?? '-'}</div>
           </div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Orphan Rate</div>
-          <div className="value" id="s-orphan-rate">
-            {fmtPct(stats?.pool?.orphan_rate_pct)}
+          <div className="stat-card">
+            <div className="label">Orphan Rate</div>
+            <div className="value" id="s-orphan-rate">{fmtPct(stats?.pool?.orphan_rate_pct)}</div>
           </div>
         </div>
       </div>
