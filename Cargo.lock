@@ -229,7 +229,6 @@ dependencies = [
  "sha3",
  "sysinfo",
  "tempfile",
- "thiserror",
  "tokio",
  "tokio-stream",
  "tracing",

@@ -2,7 +2,6 @@
 name = "blocknet-pool-rs"
 version = "0.1.0"
 edition = "2021"
-default-run = "blocknet-pool-rs"
 
 [features]
 default = ["api", "stratum"]
@@ -18,11 +17,6 @@ required-features = ["api"]
 name = "blocknet-pool-stratum"
 path = "src/bin/blocknet-pool-stratum.rs"
 required-features = ["stratum"]
-
-[[bin]]
-name = "blocknet-pool-rs"
-path = "src/main.rs"
-required-features = ["api", "stratum"]
 
 [dependencies]
 anyhow = "1.0"
@@ -42,7 +36,6 @@ sha2 = "0.10"
 sha3 = "0.10"
 bs58 = "0.5"
 hex = "0.4"
-thiserror = "2.0"
 tokio = { version = "1.44", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "signal", "process"] }
 tokio-stream = "0.1"
 tracing = "0.1"

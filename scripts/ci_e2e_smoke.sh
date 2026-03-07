@@ -6,21 +6,28 @@ TMP_DIR="$(mktemp -d)"
 TEST_POSTGRES_URL_ENV="BLOCKNET_POOL_TEST_POSTGRES_URL"
 
 DAEMON_PID=""
-POOL_PID=""
+API_PID=""
+STRATUM_PID=""
 POSTGRES_SCHEMA=""
 BASE_POSTGRES_URL="${BLOCKNET_POOL_TEST_POSTGRES_URL:-}"
 
 cleanup() {
   local status=$?
   if [[ ${status} -ne 0 ]]; then
-    echo "--- pool log ---" >&2
-    cat "${POOL_LOG}" >&2 || true
+    echo "--- api log ---" >&2
+    cat "${API_LOG}" >&2 || true
+    echo "--- stratum log ---" >&2
+    cat "${STRATUM_LOG}" >&2 || true
     echo "--- mock daemon log ---" >&2
     cat "${DAEMON_LOG}" >&2 || true
   fi
-  if [[ -n "${POOL_PID}" ]] && kill -0 "${POOL_PID}" 2>/dev/null; then
-    kill "${POOL_PID}" 2>/dev/null || true
-    wait "${POOL_PID}" 2>/dev/null || true
+  if [[ -n "${API_PID}" ]] && kill -0 "${API_PID}" 2>/dev/null; then
+    kill "${API_PID}" 2>/dev/null || true
+    wait "${API_PID}" 2>/dev/null || true
+  fi
+  if [[ -n "${STRATUM_PID}" ]] && kill -0 "${STRATUM_PID}" 2>/dev/null; then
+    kill "${STRATUM_PID}" 2>/dev/null || true
+    wait "${STRATUM_PID}" 2>/dev/null || true
   fi
   if [[ -n "${DAEMON_PID}" ]] && kill -0 "${DAEMON_PID}" 2>/dev/null; then
     kill "${DAEMON_PID}" 2>/dev/null || true
@@ -66,7 +73,8 @@ PY
 
 CONFIG_PATH="${TMP_DIR}/config.json"
 DAEMON_LOG="${TMP_DIR}/mock-daemon.log"
-POOL_LOG="${TMP_DIR}/pool.log"
+API_LOG="${TMP_DIR}/api.log"
+STRATUM_LOG="${TMP_DIR}/stratum.log"
 
 cat >"${CONFIG_PATH}" <<JSON
 {
@@ -200,20 +208,30 @@ fi
 
 (
   cd "${ROOT_DIR}"
-  cargo run --quiet --bin blocknet-pool-rs -- --config "${CONFIG_PATH}"
-) >"${POOL_LOG}" 2>&1 &
-POOL_PID="$!"
+  cargo run --quiet --bin blocknet-pool-stratum --no-default-features --features stratum -- --config "${CONFIG_PATH}"
+) >"${STRATUM_LOG}" 2>&1 &
+STRATUM_PID="$!"
+
+(
+  cd "${ROOT_DIR}"
+  cargo run --quiet --bin blocknet-pool-api --no-default-features --features api -- --config "${CONFIG_PATH}"
+) >"${API_LOG}" 2>&1 &
+API_PID="$!"
 
 if ! wait_for_port "${STRATUM_PORT}" "stratum"; then
-  echo "--- pool log ---" >&2
-  cat "${POOL_LOG}" >&2 || true
+  echo "--- stratum log ---" >&2
+  cat "${STRATUM_LOG}" >&2 || true
+  echo "--- api log ---" >&2
+  cat "${API_LOG}" >&2 || true
   echo "--- mock daemon log ---" >&2
   cat "${DAEMON_LOG}" >&2 || true
   exit 1
 fi
 if ! wait_for_port "${API_PORT}" "api"; then
-  echo "--- pool log ---" >&2
-  cat "${POOL_LOG}" >&2 || true
+  echo "--- api log ---" >&2
+  cat "${API_LOG}" >&2 || true
+  echo "--- stratum log ---" >&2
+  cat "${STRATUM_LOG}" >&2 || true
   echo "--- mock daemon log ---" >&2
   cat "${DAEMON_LOG}" >&2 || true
   exit 1

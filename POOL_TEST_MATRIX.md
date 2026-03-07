@@ -53,11 +53,15 @@ Use baseline values:
 cd /media/Code/blocknet/blocknet
 ./blocknet --daemon --api 127.0.0.1:8332 --data ./data
 
-# terminal 2: pool
+# terminal 2: pool API
 cd /media/Code/blocknet/blocknet-pool
-cargo run --release -- --config config.json
+cargo run --release --bin blocknet-pool-api --no-default-features --features api -- --config config.json
 
-# terminal 3: miner (pool mode)
+# terminal 3: pool stratum
+cd /media/Code/blocknet/blocknet-pool
+cargo run --release --bin blocknet-pool-stratum --no-default-features --features stratum -- --config config.json
+
+# terminal 4: miner (pool mode)
 cd /media/Code/blocknet/seine
 cargo run --release -- \
   --mode pool \

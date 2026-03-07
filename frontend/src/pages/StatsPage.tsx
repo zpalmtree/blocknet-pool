@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ApiClient } from '../api/client';
 import { HashrateChart } from '../components/HashrateChart';
 import { LAST_MINER_LOOKUP_KEY } from '../lib/storage';
-import { formatCoinAmount, formatCoins, formatFee, humanRate, timeAgo, toUnixMs } from '../lib/format';
+import { formatCoins, formatFee, humanRate, timeAgo, toUnixMs } from '../lib/format';
 import type { ThemeMode } from '../lib/theme';
 import type {
   HashratePoint,
@@ -221,7 +221,6 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   const pendingConfirmed = minerData?.balance?.pending_confirmed ?? minerData?.balance?.pending ?? 0;
   const pendingEstimated = minerData?.pending_estimate?.estimated_pending ?? 0;
   const pendingQueued = minerData?.balance?.pending_queued ?? minerData?.pending_payout?.amount ?? 0;
-  const pendingUnqueued = minerData?.balance?.pending_unqueued ?? Math.max(0, pendingConfirmed - pendingQueued);
   const payoutEta = insights?.payout_eta ?? null;
   const rejectionWindow = insights?.rejections?.window ?? null;
   const minerAccepted = minerData?.total_accepted ?? 0;

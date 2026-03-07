@@ -279,10 +279,6 @@ impl ValidationEngine {
         rx.recv().expect("inline validation should return result")
     }
 
-    pub fn queue_depths(&self) -> (usize, usize) {
-        (self.candidate_tx.len(), self.regular_tx.len())
-    }
-
     pub fn snapshot(&self) -> ValidationSnapshot {
         self.inner
             .snapshot(self.candidate_tx.len(), self.regular_tx.len())

@@ -39,13 +39,6 @@ function toneClass(tone: string | undefined): string {
   return 'is-ok';
 }
 
-function blockStatusLabel(block: StatsInsightsResponse['luck_history'][number] | null | undefined): string {
-  if (!block) return '';
-  if (block.orphaned) return 'orphaned';
-  if (block.confirmed) return 'confirmed';
-  return 'pending';
-}
-
 export function DashboardPage({ active, api, poolInfo, liveTick, theme }: DashboardPageProps) {
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [insights, setInsights] = useState<StatsInsightsResponse | null>(null);

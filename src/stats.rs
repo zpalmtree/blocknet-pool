@@ -366,44 +366,6 @@ impl PoolStats {
             .collect()
     }
 
-    pub fn estimate_miner_hashrate(&self, address: &str) -> f64 {
-        let recent = self.recent_shares.read();
-        let cutoff = SystemTime::now()
-            .checked_sub(HASHRATE_WINDOW)
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        let mut first = None;
-        let mut last = None;
-        let mut total_diff = 0u64;
-        let mut count = 0usize;
-
-        for share in recent
-            .iter()
-            .filter(|share| share.miner == address && share.timestamp >= cutoff)
-        {
-            if first.is_none() {
-                first = Some(share.timestamp);
-            }
-            last = Some(share.timestamp);
-            total_diff = total_diff.saturating_add(share.difficulty);
-            count += 1;
-        }
-
-        if count < 2 {
-            return 0.0;
-        }
-
-        let oldest = first.unwrap_or(SystemTime::UNIX_EPOCH);
-        let newest = last.unwrap_or(SystemTime::UNIX_EPOCH);
-        let Ok(window) = newest.duration_since(oldest) else {
-            return 0.0;
-        };
-        if window.as_secs_f64() < 1.0 {
-            return 0.0;
-        }
-
-        total_diff as f64 / window.as_secs_f64()
-    }
-
     pub fn connected_miner_count(&self) -> usize {
         self.connected_miners
             .read()
@@ -420,10 +382,6 @@ impl PoolStats {
             .map(|entry| (entry.address.as_str(), entry.worker.as_str()))
             .collect::<HashSet<_>>()
             .len()
-    }
-
-    pub fn get_miner_stats(&self, address: &str) -> Option<MinerStats> {
-        self.miner_stats.read().get(address).cloned()
     }
 
     pub fn all_miner_stats(&self) -> HashMap<String, MinerStats> {

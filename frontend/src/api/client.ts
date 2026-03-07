@@ -2,7 +2,6 @@ import type {
   AdminPayoutItem,
   BlockRewardBreakdownResponse,
   BlockItem,
-  FeeEvent,
   FeesResponse,
   HashratePoint,
   HealthResponse,

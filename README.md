@@ -12,9 +12,8 @@
 
 ## Runtime Modes
 
-The repo now ships three binaries:
+The repo ships two runtime binaries:
 
-- `blocknet-pool-rs`: combined API + Stratum runtime (legacy/dev convenience)
 - `blocknet-pool-api`: API/UI process only
 - `blocknet-pool-stratum`: Stratum + payouts + maintenance process only
 
@@ -79,23 +78,18 @@ npm --prefix frontend ci
 npm --prefix frontend run build
 cargo build --release --bin blocknet-pool-api --no-default-features --features api
 cargo build --release --bin blocknet-pool-stratum --no-default-features --features stratum
-cargo run --release
-# runs the combined API + Stratum binary for local/dev use
-# if missing, config.json and .env are created automatically
-# edit .env and set BLOCKNET_WALLET_PASSWORD
-```
-
-Run the split binaries directly when you want production-like local behavior:
-
-```bash
 cargo run --release --bin blocknet-pool-api --no-default-features --features api
 cargo run --release --bin blocknet-pool-stratum --no-default-features --features stratum
+# run the API and Stratum binaries in separate terminals
+# if missing, config.json and .env are created automatically
+# edit .env and set BLOCKNET_WALLET_PASSWORD
 ```
 
 Custom config:
 
 ```bash
-cargo run --release -- --config /path/to/config.json
+cargo run --release --bin blocknet-pool-api --no-default-features --features api -- --config /path/to/config.json
+cargo run --release --bin blocknet-pool-stratum --no-default-features --features stratum -- --config /path/to/config.json
 ```
 
 ## Frontend
@@ -118,7 +112,7 @@ npm ci
 npm run build
 ```
 
-Build output is written to `frontend/dist/` and embedded into the API binary during API builds. A fresh clone must build the frontend before `cargo build` or `cargo run` for `blocknet-pool-api` or the combined binary.
+Build output is written to `frontend/dist/` and embedded into the API binary during API builds. A fresh clone must build the frontend before `cargo build` or `cargo run` for `blocknet-pool-api`.
 
 The embedded assets are served at:
 

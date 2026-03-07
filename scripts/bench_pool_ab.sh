@@ -259,13 +259,46 @@ build_pool() {
     local repo_dir="$1"
     (
         cd "$repo_dir"
-        cargo build --profile "$profile" >/dev/null
+        cargo build --profile "$profile" --bin blocknet-pool-api --no-default-features --features api >/dev/null
+        cargo build --profile "$profile" --bin blocknet-pool-stratum --no-default-features --features stratum >/dev/null
     )
 }
 
-binary_path() {
+api_binary_path() {
     local repo_dir="$1"
-    echo "$repo_dir/target/$profile/blocknet-pool-rs"
+    echo "$repo_dir/target/$profile/blocknet-pool-api"
+}
+
+stratum_binary_path() {
+    local repo_dir="$1"
+    echo "$repo_dir/target/$profile/blocknet-pool-stratum"
+}
+
+wait_for_tcp_port() {
+    local port="$1"
+    local timeout_secs="$2"
+    python3 - "$port" "$timeout_secs" <<'PY'
+import socket
+import sys
+import time
+
+port = int(sys.argv[1])
+timeout_secs = float(sys.argv[2])
+deadline = time.time() + timeout_secs
+
+while time.time() < deadline:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(0.5)
+    try:
+        sock.connect(("127.0.0.1", port))
+        sys.exit(0)
+    except OSError:
+        time.sleep(0.2)
+    finally:
+        sock.close()
+
+sys.exit(1)
+PY
 }
 
 wait_for_pool_ready() {
@@ -456,9 +489,10 @@ run_leg() {
     local pair="$1"
     local leg="$2"
     local repo_dir="$3"
-    local binary="$4"
-    local stratum_port="$5"
-    local api_port="$6"
+    local api_bin="$4"
+    local stratum_bin="$5"
+    local stratum_port="$6"
+    local api_port="$7"
 
     local run_dir="$output_dir/pair_${pair}_${leg}"
     mkdir -p "$run_dir"
@@ -477,20 +511,33 @@ run_leg() {
     database_url="$(create_schema_url "$schema")"
     write_leg_config "$cfg_source" "$cfg_path" "$stratum_port" "$api_port" "$database_url"
 
-    local log_path="$run_dir/pool.log"
-    local pool_pid=""
+    local api_log_path="$run_dir/api.log"
+    local stratum_log_path="$run_dir/stratum.log"
+    local api_pid=""
+    local stratum_pid=""
     cleanup_pool() {
-        stop_pool "$pool_pid"
+        stop_pool "$api_pid"
+        stop_pool "$stratum_pid"
         drop_schema "$schema"
     }
     trap cleanup_pool RETURN
 
-    RUST_LOG=warn "$binary" --config "$cfg_path" >"$log_path" 2>&1 &
-    pool_pid="$!"
+    RUST_LOG=warn "$stratum_bin" --config "$cfg_path" >"$stratum_log_path" 2>&1 &
+    stratum_pid="$!"
+    RUST_LOG=warn "$api_bin" --config "$cfg_path" >"$api_log_path" 2>&1 &
+    api_pid="$!"
+
+    if ! wait_for_tcp_port "$stratum_port" "$ready_timeout_secs"; then
+        echo "error: stratum failed readiness check for pair=$pair leg=$leg (see $stratum_log_path)" >&2
+        stop_pool "$api_pid"
+        stop_pool "$stratum_pid"
+        exit 1
+    fi
 
     if ! wait_for_pool_ready "$api_port" "$ready_timeout_secs"; then
-        echo "error: pool failed readiness check for pair=$pair leg=$leg (see $log_path)" >&2
-        stop_pool "$pool_pid"
+        echo "error: api failed readiness check for pair=$pair leg=$leg (see $api_log_path)" >&2
+        stop_pool "$api_pid"
+        stop_pool "$stratum_pid"
         exit 1
     fi
 
@@ -507,8 +554,10 @@ run_leg() {
         --output "$load_json" \
         >"$load_log" 2>&1
 
-    stop_pool "$pool_pid"
-    pool_pid=""
+    stop_pool "$api_pid"
+    stop_pool "$stratum_pid"
+    api_pid=""
+    stratum_pid=""
     trap - RETURN
     append_result_row "$pair" "$leg" "$load_json"
 }
@@ -518,14 +567,24 @@ build_pool "$baseline_dir"
 echo "[bench] building candidate: $candidate_dir"
 build_pool "$candidate_dir"
 
-baseline_bin="$(binary_path "$baseline_dir")"
-candidate_bin="$(binary_path "$candidate_dir")"
-if [[ ! -x "$baseline_bin" ]]; then
-    echo "error: baseline binary missing: $baseline_bin" >&2
+baseline_api_bin="$(api_binary_path "$baseline_dir")"
+baseline_stratum_bin="$(stratum_binary_path "$baseline_dir")"
+candidate_api_bin="$(api_binary_path "$candidate_dir")"
+candidate_stratum_bin="$(stratum_binary_path "$candidate_dir")"
+if [[ ! -x "$baseline_api_bin" ]]; then
+    echo "error: baseline API binary missing: $baseline_api_bin" >&2
     exit 1
 fi
-if [[ ! -x "$candidate_bin" ]]; then
-    echo "error: candidate binary missing: $candidate_bin" >&2
+if [[ ! -x "$baseline_stratum_bin" ]]; then
+    echo "error: baseline Stratum binary missing: $baseline_stratum_bin" >&2
+    exit 1
+fi
+if [[ ! -x "$candidate_api_bin" ]]; then
+    echo "error: candidate API binary missing: $candidate_api_bin" >&2
+    exit 1
+fi
+if [[ ! -x "$candidate_stratum_bin" ]]; then
+    echo "error: candidate Stratum binary missing: $candidate_stratum_bin" >&2
     exit 1
 fi
 
@@ -545,26 +604,30 @@ for ((pair=1; pair<=pairs; pair++)); do
 
     if [[ "$first_leg" == "baseline" ]]; then
         first_dir="$baseline_dir"
-        first_bin="$baseline_bin"
+        first_api_bin="$baseline_api_bin"
+        first_stratum_bin="$baseline_stratum_bin"
         first_stratum_port="$baseline_stratum_port"
         first_api_port="$baseline_api_port"
         second_dir="$candidate_dir"
-        second_bin="$candidate_bin"
+        second_api_bin="$candidate_api_bin"
+        second_stratum_bin="$candidate_stratum_bin"
         second_stratum_port="$candidate_stratum_port"
         second_api_port="$candidate_api_port"
     else
         first_dir="$candidate_dir"
-        first_bin="$candidate_bin"
+        first_api_bin="$candidate_api_bin"
+        first_stratum_bin="$candidate_stratum_bin"
         first_stratum_port="$candidate_stratum_port"
         first_api_port="$candidate_api_port"
         second_dir="$baseline_dir"
-        second_bin="$baseline_bin"
+        second_api_bin="$baseline_api_bin"
+        second_stratum_bin="$baseline_stratum_bin"
         second_stratum_port="$baseline_stratum_port"
         second_api_port="$baseline_api_port"
     fi
 
     echo "[bench] pair $pair/$pairs $first_leg: ports $first_stratum_port/$first_api_port"
-    run_leg "$pair" "$first_leg" "$first_dir" "$first_bin" "$first_stratum_port" "$first_api_port"
+    run_leg "$pair" "$first_leg" "$first_dir" "$first_api_bin" "$first_stratum_bin" "$first_stratum_port" "$first_api_port"
 
     if ((cooldown_secs > 0)); then
         echo "[bench] cooldown ${cooldown_secs}s"
@@ -572,7 +635,7 @@ for ((pair=1; pair<=pairs; pair++)); do
     fi
 
     echo "[bench] pair $pair/$pairs $second_leg: ports $second_stratum_port/$second_api_port"
-    run_leg "$pair" "$second_leg" "$second_dir" "$second_bin" "$second_stratum_port" "$second_api_port"
+    run_leg "$pair" "$second_leg" "$second_dir" "$second_api_bin" "$second_stratum_bin" "$second_stratum_port" "$second_api_port"
 
     if ((pair < pairs && cooldown_secs > 0)); then
         echo "[bench] cooldown ${cooldown_secs}s"
