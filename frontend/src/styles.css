@@ -473,7 +473,7 @@ nav {
   color: var(--text);
 }
 
-.stat-card--accent {
+.stat-card--flow {
   position: relative;
 }
 
@@ -489,17 +489,6 @@ nav {
   transform: translate(0, -50%) rotate(45deg);
   opacity: 0.4;
   z-index: 1;
-}
-
-.stat-card--accent::after {
-  content: '';
-  position: absolute;
-  left: 20px;
-  right: 20px;
-  bottom: 0;
-  height: 3px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--accent-light), var(--accent));
 }
 
 .stat-meta {

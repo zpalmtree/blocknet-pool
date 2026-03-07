@@ -282,17 +282,17 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
       {minerData && (
         <div id="lookup-result">
           <div className="stats-grid stats-grid-dense" style={{ marginBottom: 24 }}>
-            <div className="stat-card stat-card--accent stat-card--flow">
+            <div className="stat-card stat-card--flow">
               <div className="label">Estimated Rewards</div>
               <div className="value">{formatCoins(pendingEstimated)}</div>
               <div className="stat-meta">Recent blocks still confirming</div>
             </div>
-            <div className="stat-card stat-card--accent stat-card--flow">
+            <div className="stat-card stat-card--flow">
               <div className="label">Confirmed Rewards</div>
               <div className="value">{formatCoins(pendingConfirmed)}</div>
               <div className="stat-meta">Matured balance awaiting payout</div>
             </div>
-            <div className="stat-card stat-card--accent">
+            <div className="stat-card">
               <div className="label">Paid Balance</div>
               <div className="value">{formatCoins(minerData.balance?.paid || 0)}</div>
               <div className="stat-meta">Already sent to this address</div>
