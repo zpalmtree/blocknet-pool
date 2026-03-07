@@ -66,7 +66,6 @@
   "shares_retention": "90d",
   "payouts_retention": "365d",
   "retention_interval": "1h",
-  "database_path": "pool.db",
   "database_url": "",
   "database_pool_size": 4,
   "api_key": "",

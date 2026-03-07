@@ -69,6 +69,7 @@ max_conns_per_ip=16
 run_order="alternate"
 ready_timeout_secs=45
 output_dir=""
+bench_postgres_url="${BLOCKNET_POOL_BENCH_POSTGRES_URL:-${BLOCKNET_POOL_TEST_POSTGRES_URL:-}}"
 
 while (($#)); do
     case "$1" in
@@ -183,6 +184,11 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 
+if ! command -v psql >/dev/null 2>&1; then
+    echo "error: psql is required for Postgres-backed benchmarks" >&2
+    exit 1
+fi
+
 if [[ ! -x "$SCRIPT_DIR/pool_load.py" ]]; then
     echo "error: missing executable $SCRIPT_DIR/pool_load.py" >&2
     exit 1
@@ -206,6 +212,11 @@ fi
 if ((workers > max_conns_per_ip)); then
     echo "error: workers=$workers exceeds max-conns-per-ip=$max_conns_per_ip" >&2
     echo "hint: lower --workers or pass --max-conns-per-ip to match your pool limit" >&2
+    exit 1
+fi
+
+if [[ -z "$bench_postgres_url" ]]; then
+    echo "error: set BLOCKNET_POOL_BENCH_POSTGRES_URL (or BLOCKNET_POOL_TEST_POSTGRES_URL) to a Postgres connection URL" >&2
     exit 1
 fi
 
@@ -241,6 +252,7 @@ max_conns_per_ip=$max_conns_per_ip
 run_order=$run_order
 baseline_dir=$baseline_dir
 candidate_dir=$candidate_dir
+bench_postgres_url=$bench_postgres_url
 EOF
 
 build_pool() {
@@ -311,12 +323,13 @@ write_leg_config() {
     local out_config="$2"
     local stratum_port="$3"
     local api_port="$4"
+    local database_url="$5"
 
     python3 - "$source_config" "$out_config" \
         "$daemon_api" "$daemon_token" \
         "$stratum_port" "$api_port" \
         "$validation_mode" "$sample_rate" "$max_verifiers" "$max_validation_queue" \
-        "$stratum_submit_v2_required" <<'PY'
+        "$stratum_submit_v2_required" "$database_url" <<'PY'
 import json
 import sys
 
@@ -331,6 +344,7 @@ sample_rate = float(sys.argv[8])
 max_verifiers = int(sys.argv[9])
 max_validation_queue = int(sys.argv[10])
 stratum_submit_v2_required = sys.argv[11].strip().lower() in ("1", "true", "yes", "on")
+database_url = sys.argv[12]
 
 with open(src, "r", encoding="utf-8") as f:
     cfg = json.load(f)
@@ -352,11 +366,36 @@ cfg["min_payout_amount"] = 1000000.0
 cfg["blocks_before_payout"] = 1000000
 cfg["block_poll_interval"] = "2s"
 cfg["job_timeout"] = "30s"
+cfg["database_url"] = database_url
+cfg.pop("database_path", None)
 
 with open(dst, "w", encoding="utf-8") as f:
     json.dump(cfg, f, indent=2, sort_keys=False)
     f.write("\n")
 PY
+}
+
+create_schema_url() {
+    local schema="$1"
+    psql "$bench_postgres_url" -v ON_ERROR_STOP=1 \
+        -c "CREATE SCHEMA IF NOT EXISTS ${schema}" >/dev/null
+    python3 - "$bench_postgres_url" "$schema" <<'PY'
+import sys
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+base = sys.argv[1]
+schema = sys.argv[2]
+parts = urlsplit(base)
+query = parse_qsl(parts.query, keep_blank_values=True)
+query.append(("options", f"-c search_path={schema}"))
+print(urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)))
+PY
+}
+
+drop_schema() {
+    local schema="$1"
+    psql "$bench_postgres_url" -v ON_ERROR_STOP=1 \
+        -c "DROP SCHEMA IF EXISTS ${schema} CASCADE" >/dev/null 2>&1 || true
 }
 
 append_result_row() {
@@ -433,27 +472,16 @@ run_leg() {
     fi
 
     local cfg_path="$run_dir/config.json"
-    local db_path="$run_dir/pool.sqlite"
-    write_leg_config "$cfg_source" "$cfg_path" "$stratum_port" "$api_port"
-
-    python3 - "$cfg_path" "$db_path" <<'PY'
-import json
-import sys
-
-cfg_path = sys.argv[1]
-db_path = sys.argv[2]
-with open(cfg_path, "r", encoding="utf-8") as f:
-    cfg = json.load(f)
-cfg["database_path"] = db_path
-with open(cfg_path, "w", encoding="utf-8") as f:
-    json.dump(cfg, f, indent=2, sort_keys=False)
-    f.write("\n")
-PY
+    local schema="blocknet_pool_bench_${pair}_${leg}_$$_$RANDOM$RANDOM"
+    local database_url
+    database_url="$(create_schema_url "$schema")"
+    write_leg_config "$cfg_source" "$cfg_path" "$stratum_port" "$api_port" "$database_url"
 
     local log_path="$run_dir/pool.log"
     local pool_pid=""
     cleanup_pool() {
         stop_pool "$pool_pid"
+        drop_schema "$schema"
     }
     trap cleanup_pool RETURN
 

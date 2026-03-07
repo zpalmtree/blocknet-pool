@@ -1,11 +1,12 @@
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
-use postgres::{Client, NoTls};
+use postgres::{Client, Config as PostgresConfig, NoTls};
 
 use crate::db::{
     AddressRiskState, Balance, BlockCreditEvent, DbBlock, DbShare, Payout, PendingPayout,
@@ -34,10 +35,28 @@ impl PostgresStore {
             .expect("postgres store connection unavailable")
     }
 
+    fn connect_client(url: &str, schema: Option<&str>, label: &str) -> Result<Client> {
+        let mut cfg =
+            PostgresConfig::from_str(url).with_context(|| format!("parse postgres {url}"))?;
+        if let Some(schema) = schema {
+            let options = format!("-c search_path={schema}");
+            cfg.options(&options);
+        }
+        cfg.connect(NoTls)
+            .with_context(|| format!("connect postgres {url} ({label})"))
+    }
+
     pub fn connect(url: &str, pool_size: i32) -> Result<Arc<Self>> {
+        Self::connect_with_schema(url, pool_size, None)
+    }
+
+    pub(crate) fn connect_with_schema(
+        url: &str,
+        pool_size: i32,
+        schema: Option<&str>,
+    ) -> Result<Arc<Self>> {
         let pool_size = pool_size.max(1) as usize;
-        let mut conn = Client::connect(url, NoTls)
-            .with_context(|| format!("connect postgres {url} (primary)"))?;
+        let mut conn = Self::connect_client(url, schema, "primary")?;
         conn.batch_execute(
             r#"
 CREATE TABLE IF NOT EXISTS shares (
@@ -244,8 +263,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let mut conns = Vec::with_capacity(pool_size);
         conns.push(Mutex::new(conn));
         for idx in 1..pool_size {
-            let extra = Client::connect(url, NoTls)
-                .with_context(|| format!("connect postgres {url} (pool conn {idx})"))?;
+            let extra = Self::connect_client(url, schema, &format!("pool conn {idx}"))?;
             conns.push(Mutex::new(extra));
         }
 
@@ -292,6 +310,14 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             &[&address, &limit],
         )?;
         Ok(rows.into_iter().map(row_to_share).collect())
+    }
+
+    pub fn first_share_at_for_miner(&self, address: &str) -> Result<Option<SystemTime>> {
+        let row = self.conn().lock().query_one(
+            "SELECT MIN(created_at) FROM shares WHERE miner = $1",
+            &[&address],
+        )?;
+        Ok(row.get::<_, Option<i64>>(0).map(from_unix))
     }
 
     pub fn get_shares_since(&self, since: SystemTime) -> Result<Vec<DbShare>> {
@@ -2441,7 +2467,7 @@ mod tests {
                 confirmed: true,
                 orphaned: false,
                 paid_out: false,
-            effort_pct: None,
+                effort_pct: None,
             })
             .expect("insert block");
 
@@ -2500,7 +2526,7 @@ mod tests {
                 confirmed: true,
                 orphaned: false,
                 paid_out: false,
-            effort_pct: None,
+                effort_pct: None,
             })
             .expect("insert block");
 

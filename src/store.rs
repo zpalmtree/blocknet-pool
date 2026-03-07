@@ -1,17 +1,16 @@
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use anyhow::Result;
+#[cfg(test)]
+use anyhow::Context;
+use anyhow::{anyhow, Result};
 use tracing::warn;
 
 use crate::config::Config;
-use crate::db::{
-    AddressRiskState, Balance, BlockCreditEvent, DbBlock, DbShare, Payout, PendingPayout,
-    PoolFeeEvent, PoolFeeRecord, PublicPayoutBatch, SqliteStore, StatSnapshot,
-};
+use crate::db::DbBlock;
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::pgdb::PostgresStore;
-use crate::stats::RejectionReasonCount;
 use crate::validation::{
     LoadedValidationState, PersistedValidationAddressState, ValidationStateStore,
 };
@@ -24,9 +23,8 @@ const DECAY_RATE: f64 = 0.75;
 const BLOCK_INTERVAL_SECS: u64 = 5 * 60;
 const BLOCKS_PER_MONTH: u64 = (30 * 24 * 60 * 60) / BLOCK_INTERVAL_SECS;
 
-pub enum PoolStore {
-    Sqlite(Arc<SqliteStore>),
-    Postgres(Arc<PostgresStore>),
+pub struct PoolStore {
+    inner: Arc<PostgresStore>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -37,23 +35,30 @@ pub struct RetentionPruneReport {
 
 impl std::fmt::Debug for PoolStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PoolStore::Sqlite(_) => f.write_str("PoolStore::Sqlite"),
-            PoolStore::Postgres(_) => f.write_str("PoolStore::Postgres"),
-        }
+        f.write_str("PoolStore::Postgres")
+    }
+}
+
+impl Deref for PoolStore {
+    type Target = PostgresStore;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner.as_ref()
     }
 }
 
 impl PoolStore {
-    pub fn open_from_config(cfg: &Config) -> Result<Arc<Self>> {
-        if !cfg.database_url.trim().is_empty() {
-            return Self::open_postgres_with_pool(&cfg.database_url, cfg.database_pool_size);
-        }
-        Self::open_sqlite(&cfg.database_path)
-    }
+    #[cfg(test)]
+    pub(crate) const TEST_POSTGRES_URL_ENV: &'static str = "BLOCKNET_POOL_TEST_POSTGRES_URL";
 
-    pub fn open_sqlite(path: &str) -> Result<Arc<Self>> {
-        Ok(Arc::new(Self::Sqlite(SqliteStore::open(path)?)))
+    pub fn open_from_config(cfg: &Config) -> Result<Arc<Self>> {
+        let database_url = cfg.database_url.trim();
+        if database_url.is_empty() {
+            return Err(anyhow!(
+                "config.database_url must be set; SQLite support has been removed"
+            ));
+        }
+        Self::open_postgres_with_pool(database_url, cfg.database_pool_size)
     }
 
     pub fn open_postgres(url: &str) -> Result<Arc<Self>> {
@@ -61,701 +66,17 @@ impl PoolStore {
     }
 
     pub fn open_postgres_with_pool(url: &str, pool_size: i32) -> Result<Arc<Self>> {
-        Ok(Arc::new(Self::Postgres(PostgresStore::connect(
-            url, pool_size,
-        )?)))
-    }
-
-    pub fn get_shares_for_miner(&self, address: &str, limit: i64) -> Result<Vec<DbShare>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_shares_for_miner(address, limit),
-            PoolStore::Postgres(v) => v.get_shares_for_miner(address, limit),
-        }
-    }
-
-    pub fn get_total_share_count(&self) -> Result<u64> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_total_share_count(),
-            PoolStore::Postgres(v) => v.get_total_share_count(),
-        }
-    }
-
-    pub fn share_outcome_counts_since(&self, since: SystemTime) -> Result<(u64, u64)> {
-        match self {
-            PoolStore::Sqlite(v) => v.share_outcome_counts_since(since),
-            PoolStore::Postgres(v) => v.share_outcome_counts_since(since),
-        }
-    }
-
-    pub fn total_rejected_share_count(&self) -> Result<u64> {
-        match self {
-            PoolStore::Sqlite(v) => v.total_rejected_share_count(),
-            PoolStore::Postgres(v) => v.total_rejected_share_count(),
-        }
-    }
-
-    pub fn rejection_reason_counts_since(
-        &self,
-        since: SystemTime,
-    ) -> Result<Vec<RejectionReasonCount>> {
-        match self {
-            PoolStore::Sqlite(v) => v.rejection_reason_counts_since(since),
-            PoolStore::Postgres(v) => v.rejection_reason_counts_since(since),
-        }
-    }
-
-    pub fn total_rejection_reason_counts(&self) -> Result<Vec<RejectionReasonCount>> {
-        match self {
-            PoolStore::Sqlite(v) => v.total_rejection_reason_counts(),
-            PoolStore::Postgres(v) => v.total_rejection_reason_counts(),
-        }
-    }
-
-    pub fn hashrate_stats_for_miner(
-        &self,
-        address: &str,
-        since: SystemTime,
-    ) -> Result<(u64, u64, Option<SystemTime>, Option<SystemTime>)> {
-        match self {
-            PoolStore::Sqlite(v) => v.hashrate_stats_for_miner(address, since),
-            PoolStore::Postgres(v) => v.hashrate_stats_for_miner(address, since),
-        }
-    }
-
-    pub fn hashrate_stats_pool(
-        &self,
-        since: SystemTime,
-    ) -> Result<(u64, u64, Option<SystemTime>, Option<SystemTime>)> {
-        match self {
-            PoolStore::Sqlite(v) => v.hashrate_stats_pool(since),
-            PoolStore::Postgres(v) => v.hashrate_stats_pool(since),
-        }
-    }
-
-    pub fn add_block(&self, block: &DbBlock) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.add_block(block),
-            PoolStore::Postgres(v) => v.add_block(block),
-        }
-    }
-
-    pub fn get_block(&self, height: u64) -> Result<Option<DbBlock>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_block(height),
-            PoolStore::Postgres(v) => v.get_block(height),
-        }
-    }
-
-    pub fn update_block(&self, block: &DbBlock) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.update_block(block),
-            PoolStore::Postgres(v) => v.update_block(block),
-        }
-    }
-
-    pub fn get_recent_blocks(&self, limit: i64) -> Result<Vec<DbBlock>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_recent_blocks(limit),
-            PoolStore::Postgres(v) => v.get_recent_blocks(limit),
-        }
-    }
-
-    pub fn get_all_blocks(&self) -> Result<Vec<DbBlock>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_all_blocks(),
-            PoolStore::Postgres(v) => v.get_all_blocks(),
-        }
-    }
-
-    pub fn avg_effort_pct(&self) -> Result<Option<f64>> {
-        match self {
-            PoolStore::Sqlite(v) => v.avg_effort_pct(),
-            PoolStore::Postgres(v) => v.avg_effort_pct(),
-        }
-    }
-
-    pub fn get_blocks_page(
-        &self,
-        finder: Option<&str>,
-        status: Option<&str>,
-        sort: &str,
-        limit: i64,
-        offset: i64,
-    ) -> Result<(Vec<DbBlock>, u64)> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_blocks_page(finder, status, sort, limit, offset),
-            PoolStore::Postgres(v) => v.get_blocks_page(finder, status, sort, limit, offset),
-        }
-    }
-
-    pub fn get_unconfirmed_blocks(&self) -> Result<Vec<DbBlock>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_unconfirmed_blocks(),
-            PoolStore::Postgres(v) => v.get_unconfirmed_blocks(),
-        }
-    }
-
-    pub fn get_unpaid_blocks(&self) -> Result<Vec<DbBlock>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_unpaid_blocks(),
-            PoolStore::Postgres(v) => v.get_unpaid_blocks(),
-        }
-    }
-
-    pub fn get_block_count(&self) -> Result<u64> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_block_count(),
-            PoolStore::Postgres(v) => v.get_block_count(),
-        }
-    }
-
-    /// Returns (confirmed_non_orphaned, orphaned, pending_non_orphaned).
-    pub fn get_block_status_counts(&self) -> Result<(u64, u64, u64)> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_block_status_counts(),
-            PoolStore::Postgres(v) => v.get_block_status_counts(),
-        }
-    }
-
-    pub fn get_balance(&self, address: &str) -> Result<Balance> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_balance(address),
-            PoolStore::Postgres(v) => v.get_balance(address),
-        }
-    }
-
-    pub fn update_balance(&self, bal: &Balance) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.update_balance(bal),
-            PoolStore::Postgres(v) => v.update_balance(bal),
-        }
-    }
-
-    pub fn credit_balance(&self, address: &str, amount: u64) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.credit_balance(address, amount),
-            PoolStore::Postgres(v) => v.credit_balance(address, amount),
-        }
-    }
-
-    pub fn debit_balance(&self, address: &str, amount: u64) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.debit_balance(address, amount),
-            PoolStore::Postgres(v) => v.debit_balance(address, amount),
-        }
-    }
-
-    pub fn get_all_balances(&self) -> Result<Vec<Balance>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_all_balances(),
-            PoolStore::Postgres(v) => v.get_all_balances(),
-        }
-    }
-
-    pub fn add_payout(&self, address: &str, amount: u64, fee: u64, tx_hash: &str) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.add_payout(address, amount, fee, tx_hash),
-            PoolStore::Postgres(v) => v.add_payout(address, amount, fee, tx_hash),
-        }
-    }
-
-    pub fn get_recent_payouts(&self, limit: i64) -> Result<Vec<Payout>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_recent_payouts(limit),
-            PoolStore::Postgres(v) => v.get_recent_payouts(limit),
-        }
-    }
-
-    pub fn get_recent_payouts_for_address(&self, address: &str, limit: i64) -> Result<Vec<Payout>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_recent_payouts_for_address(address, limit),
-            PoolStore::Postgres(v) => v.get_recent_payouts_for_address(address, limit),
-        }
-    }
-
-    pub fn get_recent_visible_payouts_for_address(
-        &self,
-        address: &str,
-        limit: i64,
-    ) -> Result<Vec<Payout>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_recent_visible_payouts_for_address(address, limit),
-            PoolStore::Postgres(v) => v.get_recent_visible_payouts_for_address(address, limit),
-        }
-    }
-
-    pub fn get_all_payouts(&self) -> Result<Vec<Payout>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_all_payouts(),
-            PoolStore::Postgres(v) => v.get_all_payouts(),
-        }
-    }
-
-    pub fn get_payouts_page(
-        &self,
-        address: Option<&str>,
-        tx_hash: Option<&str>,
-        sort: &str,
-        limit: i64,
-        offset: i64,
-    ) -> Result<(Vec<Payout>, u64)> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_payouts_page(address, tx_hash, sort, limit, offset),
-            PoolStore::Postgres(v) => v.get_payouts_page(address, tx_hash, sort, limit, offset),
-        }
-    }
-
-    pub fn get_public_payout_batches_page(
-        &self,
-        sort: &str,
-        limit: i64,
-        offset: i64,
-    ) -> Result<(Vec<PublicPayoutBatch>, u64)> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_public_payout_batches_page(sort, limit, offset),
-            PoolStore::Postgres(v) => v.get_public_payout_batches_page(sort, limit, offset),
-        }
-    }
-
-    pub fn record_pool_fee(
-        &self,
-        block_height: u64,
-        amount: u64,
-        fee_address: &str,
-        timestamp: SystemTime,
-    ) -> Result<bool> {
-        match self {
-            PoolStore::Sqlite(v) => v.record_pool_fee(block_height, amount, fee_address, timestamp),
-            PoolStore::Postgres(v) => {
-                v.record_pool_fee(block_height, amount, fee_address, timestamp)
-            }
-        }
-    }
-
-    pub fn get_total_pool_fees(&self) -> Result<u64> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_total_pool_fees(),
-            PoolStore::Postgres(v) => v.get_total_pool_fees(),
-        }
-    }
-
-    pub fn get_recent_pool_fees(&self, limit: i64) -> Result<Vec<PoolFeeEvent>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_recent_pool_fees(limit),
-            PoolStore::Postgres(v) => v.get_recent_pool_fees(limit),
-        }
-    }
-
-    pub fn get_all_pool_fees(&self) -> Result<Vec<PoolFeeEvent>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_all_pool_fees(),
-            PoolStore::Postgres(v) => v.get_all_pool_fees(),
-        }
-    }
-
-    pub fn get_block_credit_events(&self, block_height: u64) -> Result<Vec<BlockCreditEvent>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_block_credit_events(block_height),
-            PoolStore::Postgres(v) => v.get_block_credit_events(block_height),
-        }
-    }
-
-    pub fn get_pool_fees_page(
-        &self,
-        fee_address: Option<&str>,
-        sort: &str,
-        limit: i64,
-        offset: i64,
-    ) -> Result<(Vec<PoolFeeEvent>, u64)> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_pool_fees_page(fee_address, sort, limit, offset),
-            PoolStore::Postgres(v) => v.get_pool_fees_page(fee_address, sort, limit, offset),
-        }
-    }
-
-    pub fn set_meta(&self, key: &str, value: &[u8]) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.set_meta(key, value),
-            PoolStore::Postgres(v) => v.set_meta(key, value),
-        }
-    }
-
-    pub fn get_meta(&self, key: &str) -> Result<Option<Vec<u8>>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_meta(key),
-            PoolStore::Postgres(v) => v.get_meta(key),
-        }
-    }
-
-    pub fn clean_expired_seen_shares(&self) -> Result<u64> {
-        match self {
-            PoolStore::Sqlite(v) => v.clean_expired_seen_shares(),
-            PoolStore::Postgres(v) => v.clean_expired_seen_shares(),
-        }
-    }
-
-    pub fn try_claim_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
-        match self {
-            PoolStore::Sqlite(v) => v.try_claim_share(job_id, nonce),
-            PoolStore::Postgres(v) => v.try_claim_share(job_id, nonce),
-        }
-    }
-
-    pub fn release_share_claim(&self, job_id: &str, nonce: u64) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.release_share_claim(job_id, nonce),
-            PoolStore::Postgres(v) => v.release_share_claim(job_id, nonce),
-        }
-    }
-
-    pub fn get_address_risk(&self, address: &str) -> Result<Option<AddressRiskState>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_address_risk(address),
-            PoolStore::Postgres(v) => v.get_address_risk(address),
-        }
-    }
-
-    pub fn is_address_quarantined(
-        &self,
-        address: &str,
-    ) -> Result<(bool, Option<AddressRiskState>)> {
-        match self {
-            PoolStore::Sqlite(v) => v.is_address_quarantined(address),
-            PoolStore::Postgres(v) => v.is_address_quarantined(address),
-        }
-    }
-
-    pub fn should_force_verify_address(
-        &self,
-        address: &str,
-    ) -> Result<(bool, Option<AddressRiskState>)> {
-        match self {
-            PoolStore::Sqlite(v) => v.should_force_verify_address(address),
-            PoolStore::Postgres(v) => v.should_force_verify_address(address),
-        }
-    }
-
-    pub fn escalate_address_risk(
-        &self,
-        address: &str,
-        reason: &str,
-        quarantine_base: Duration,
-        quarantine_max: Duration,
-        force_verify_duration: Duration,
-        apply_quarantine: bool,
-    ) -> Result<AddressRiskState> {
-        match self {
-            PoolStore::Sqlite(v) => v.escalate_address_risk(
-                address,
-                reason,
-                quarantine_base,
-                quarantine_max,
-                force_verify_duration,
-                apply_quarantine,
-            ),
-            PoolStore::Postgres(v) => v.escalate_address_risk(
-                address,
-                reason,
-                quarantine_base,
-                quarantine_max,
-                force_verify_duration,
-                apply_quarantine,
-            ),
-        }
-    }
-
-    pub fn get_risk_summary(&self) -> Result<(u64, u64)> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_risk_summary(),
-            PoolStore::Postgres(v) => v.get_risk_summary(),
-        }
+        Ok(Arc::new(Self {
+            inner: PostgresStore::connect(url, pool_size)?,
+        }))
     }
 
     pub fn address_risk_strikes(&self, address: &str) -> Result<u64> {
         Ok(self
+            .inner
             .get_address_risk(address)?
-            .map(|v| v.strikes)
-            .unwrap_or(0))
-    }
-
-    pub fn create_pending_payout(&self, address: &str, amount: u64) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.create_pending_payout(address, amount),
-            PoolStore::Postgres(v) => v.create_pending_payout(address, amount),
-        }
-    }
-
-    pub fn mark_pending_payout_send_started(&self, address: &str) -> Result<Option<PendingPayout>> {
-        match self {
-            PoolStore::Sqlite(v) => v.mark_pending_payout_send_started(address),
-            PoolStore::Postgres(v) => v.mark_pending_payout_send_started(address),
-        }
-    }
-
-    pub fn record_pending_payout_broadcast(
-        &self,
-        address: &str,
-        amount: u64,
-        fee: u64,
-        tx_hash: &str,
-    ) -> Result<PendingPayout> {
-        match self {
-            PoolStore::Sqlite(v) => {
-                v.record_pending_payout_broadcast(address, amount, fee, tx_hash)
-            }
-            PoolStore::Postgres(v) => {
-                v.record_pending_payout_broadcast(address, amount, fee, tx_hash)
-            }
-        }
-    }
-
-    pub fn reset_pending_payout_send_state(&self, address: &str) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.reset_pending_payout_send_state(address),
-            PoolStore::Postgres(v) => v.reset_pending_payout_send_state(address),
-        }
-    }
-
-    pub fn complete_pending_payout(
-        &self,
-        address: &str,
-        amount: u64,
-        fee: u64,
-        tx_hash: &str,
-    ) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.complete_pending_payout(address, amount, fee, tx_hash),
-            PoolStore::Postgres(v) => v.complete_pending_payout(address, amount, fee, tx_hash),
-        }
-    }
-
-    pub fn cancel_pending_payout(&self, address: &str) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.cancel_pending_payout(address),
-            PoolStore::Postgres(v) => v.cancel_pending_payout(address),
-        }
-    }
-
-    pub fn get_pending_payouts(&self) -> Result<Vec<PendingPayout>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_pending_payouts(),
-            PoolStore::Postgres(v) => v.get_pending_payouts(),
-        }
-    }
-
-    pub fn get_pending_payout(&self, address: &str) -> Result<Option<PendingPayout>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_pending_payout(address),
-            PoolStore::Postgres(v) => v.get_pending_payout(address),
-        }
-    }
-
-    pub fn get_vardiff_hint(
-        &self,
-        address: &str,
-        worker: &str,
-    ) -> Result<Option<(u64, SystemTime)>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_vardiff_hint(address, worker),
-            PoolStore::Postgres(v) => v.get_vardiff_hint(address, worker),
-        }
-    }
-
-    pub fn upsert_vardiff_hint(
-        &self,
-        address: &str,
-        worker: &str,
-        difficulty: u64,
-        updated_at: SystemTime,
-    ) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.upsert_vardiff_hint(address, worker, difficulty, updated_at),
-            PoolStore::Postgres(v) => {
-                v.upsert_vardiff_hint(address, worker, difficulty, updated_at)
-            }
-        }
-    }
-
-    pub fn get_shares_since(&self, since: SystemTime) -> Result<Vec<DbShare>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_shares_since(since),
-            PoolStore::Postgres(v) => v.get_shares_since(since),
-        }
-    }
-
-    pub fn get_last_n_shares(&self, n: i64) -> Result<Vec<DbShare>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_last_n_shares(n),
-            PoolStore::Postgres(v) => v.get_last_n_shares(n),
-        }
-    }
-
-    pub fn get_shares_between(&self, start: SystemTime, end: SystemTime) -> Result<Vec<DbShare>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_shares_between(start, end),
-            PoolStore::Postgres(v) => v.get_shares_between(start, end),
-        }
-    }
-
-    pub fn get_last_n_shares_before(&self, before: SystemTime, n: i64) -> Result<Vec<DbShare>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_last_n_shares_before(before, n),
-            PoolStore::Postgres(v) => v.get_last_n_shares_before(before, n),
-        }
-    }
-
-    pub fn add_stat_snapshot(
-        &self,
-        timestamp: SystemTime,
-        hashrate: f64,
-        miners: i32,
-        workers: i32,
-    ) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.add_stat_snapshot(timestamp, hashrate, miners, workers),
-            PoolStore::Postgres(v) => v.add_stat_snapshot(timestamp, hashrate, miners, workers),
-        }
-    }
-
-    pub fn get_stat_snapshots(&self, since: SystemTime) -> Result<Vec<StatSnapshot>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_stat_snapshots(since),
-            PoolStore::Postgres(v) => v.get_stat_snapshots(since),
-        }
-    }
-
-    pub fn clean_old_snapshots(&self, retain_duration: Duration) -> Result<u64> {
-        match self {
-            PoolStore::Sqlite(v) => v.clean_old_snapshots(retain_duration),
-            PoolStore::Postgres(v) => v.clean_old_snapshots(retain_duration),
-        }
-    }
-
-    pub fn load_validation_state(
-        &self,
-        state_cutoff: SystemTime,
-        provisional_cutoff: SystemTime,
-        now: SystemTime,
-    ) -> Result<LoadedValidationState> {
-        match self {
-            PoolStore::Sqlite(v) => v.load_validation_state(state_cutoff, provisional_cutoff, now),
-            PoolStore::Postgres(v) => {
-                v.load_validation_state(state_cutoff, provisional_cutoff, now)
-            }
-        }
-    }
-
-    pub fn upsert_validation_state(&self, state: &PersistedValidationAddressState) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.upsert_validation_state(state),
-            PoolStore::Postgres(v) => v.upsert_validation_state(state),
-        }
-    }
-
-    pub fn add_validation_provisional(&self, address: &str, created_at: SystemTime) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.add_validation_provisional(address, created_at),
-            PoolStore::Postgres(v) => v.add_validation_provisional(address, created_at),
-        }
-    }
-
-    pub fn clean_validation_state(
-        &self,
-        state_cutoff: SystemTime,
-        provisional_cutoff: SystemTime,
-        now: SystemTime,
-    ) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.clean_validation_state(state_cutoff, provisional_cutoff, now),
-            PoolStore::Postgres(v) => {
-                v.clean_validation_state(state_cutoff, provisional_cutoff, now)
-            }
-        }
-    }
-
-    pub fn hashrate_history_for_miner(
-        &self,
-        address: &str,
-        since: SystemTime,
-        bucket_secs: i64,
-    ) -> Result<Vec<(i64, u64, u64)>> {
-        match self {
-            PoolStore::Sqlite(v) => v.hashrate_history_for_miner(address, since, bucket_secs),
-            PoolStore::Postgres(v) => v.hashrate_history_for_miner(address, since, bucket_secs),
-        }
-    }
-
-    pub fn worker_stats_for_miner(
-        &self,
-        address: &str,
-        since: SystemTime,
-    ) -> Result<Vec<(String, u64, u64, u64, i64)>> {
-        match self {
-            PoolStore::Sqlite(v) => v.worker_stats_for_miner(address, since),
-            PoolStore::Postgres(v) => v.worker_stats_for_miner(address, since),
-        }
-    }
-
-    pub fn worker_hashrate_stats_for_miner(
-        &self,
-        address: &str,
-        since: SystemTime,
-    ) -> Result<Vec<(String, u64, u64, Option<SystemTime>, Option<SystemTime>)>> {
-        match self {
-            PoolStore::Sqlite(v) => v.worker_hashrate_stats_for_miner(address, since),
-            PoolStore::Postgres(v) => v.worker_hashrate_stats_for_miner(address, since),
-        }
-    }
-
-    pub fn get_blocks_for_miner(&self, address: &str) -> Result<Vec<DbBlock>> {
-        match self {
-            PoolStore::Sqlite(v) => v.get_blocks_for_miner(address),
-            PoolStore::Postgres(v) => v.get_blocks_for_miner(address),
-        }
-    }
-
-    /// Bulk per-miner lifetime counts: (accepted, rejected, blocks_found, last_share_unix).
-    pub fn miner_lifetime_counts(
-        &self,
-    ) -> Result<std::collections::HashMap<String, (u64, u64, u64, Option<i64>)>> {
-        match self {
-            PoolStore::Sqlite(v) => v.miner_lifetime_counts(),
-            PoolStore::Postgres(v) => v.miner_lifetime_counts(),
-        }
-    }
-
-    pub fn miner_worker_counts_since(
-        &self,
-        since: SystemTime,
-    ) -> Result<std::collections::HashMap<String, usize>> {
-        match self {
-            PoolStore::Sqlite(v) => v.miner_worker_counts_since(since),
-            PoolStore::Postgres(v) => v.miner_worker_counts_since(since),
-        }
-    }
-
-    pub fn apply_block_credits_and_mark_paid(
-        &self,
-        block_height: u64,
-        credits: &[(String, u64)],
-    ) -> Result<bool> {
-        self.apply_block_credits_and_mark_paid_with_fee(block_height, credits, None)
-    }
-
-    pub fn apply_block_credits_and_mark_paid_with_fee(
-        &self,
-        block_height: u64,
-        credits: &[(String, u64)],
-        fee_record: Option<&PoolFeeRecord>,
-    ) -> Result<bool> {
-        match self {
-            PoolStore::Sqlite(v) => {
-                v.apply_block_credits_and_mark_paid_with_fee(block_height, credits, fee_record)
-            }
-            PoolStore::Postgres(v) => {
-                v.apply_block_credits_and_mark_paid_with_fee(block_height, credits, fee_record)
-            }
-        }
+            .map(|state| state.strikes)
+            .unwrap_or_default())
     }
 
     pub fn rollup_and_prune_retention(
@@ -764,56 +85,58 @@ impl PoolStore {
         payouts_before: Option<SystemTime>,
     ) -> Result<RetentionPruneReport> {
         let mut report = RetentionPruneReport::default();
-        match self {
-            PoolStore::Sqlite(v) => {
-                if let Some(before) = shares_before {
-                    report.shares_pruned = v.rollup_and_prune_shares_before(before)?;
-                }
-                if let Some(before) = payouts_before {
-                    report.payouts_pruned = v.rollup_and_prune_payouts_before(before)?;
-                }
-            }
-            PoolStore::Postgres(v) => {
-                if let Some(before) = shares_before {
-                    report.shares_pruned = v.rollup_and_prune_shares_before(before)?;
-                }
-                if let Some(before) = payouts_before {
-                    report.payouts_pruned = v.rollup_and_prune_payouts_before(before)?;
-                }
-            }
+        if let Some(before) = shares_before {
+            report.shares_pruned = self.inner.rollup_and_prune_shares_before(before)?;
+        }
+        if let Some(before) = payouts_before {
+            report.payouts_pruned = self.inner.rollup_and_prune_payouts_before(before)?;
         }
         Ok(report)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_store() -> Option<Arc<Self>> {
+        let url = std::env::var(Self::TEST_POSTGRES_URL_ENV)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())?;
+        let schema = format!(
+            "blocknet_pool_test_{}_{}",
+            std::process::id(),
+            rand::random::<u64>()
+        );
+        let mut conn = postgres::Client::connect(&url, postgres::NoTls)
+            .with_context(|| format!("connect postgres {url} (create test schema)"))
+            .expect("connect postgres test admin client");
+        conn.batch_execute(&format!("CREATE SCHEMA IF NOT EXISTS {schema}"))
+            .with_context(|| format!("create postgres test schema {schema}"))
+            .expect("create postgres test schema");
+        Some(Arc::new(Self {
+            inner: PostgresStore::connect_with_schema(&url, 2, Some(&schema))
+                .expect("connect postgres test store"),
+        }))
     }
 }
 
 impl ShareStore for PoolStore {
     fn is_share_seen(&self, job_id: &str, nonce: u64) -> Result<bool> {
-        match self {
-            PoolStore::Sqlite(v) => v.is_share_seen(job_id, nonce),
-            PoolStore::Postgres(v) => v.is_share_seen(job_id, nonce),
-        }
+        self.inner.is_share_seen(job_id, nonce)
     }
 
     fn mark_share_seen(&self, job_id: &str, nonce: u64) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.mark_share_seen(job_id, nonce),
-            PoolStore::Postgres(v) => v.mark_share_seen(job_id, nonce),
-        }
+        self.inner.mark_share_seen(job_id, nonce)
     }
 
     fn try_claim_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
-        PoolStore::try_claim_share(self, job_id, nonce)
+        self.inner.try_claim_share(job_id, nonce)
     }
 
     fn release_share_claim(&self, job_id: &str, nonce: u64) -> Result<()> {
-        PoolStore::release_share_claim(self, job_id, nonce)
+        self.inner.release_share_claim(job_id, nonce)
     }
 
     fn add_share(&self, share: ShareRecord) -> Result<()> {
-        match self {
-            PoolStore::Sqlite(v) => v.add_share(share),
-            PoolStore::Postgres(v) => v.add_share(share),
-        }
+        self.inner.add_share(share)
     }
 
     fn add_found_block(&self, block: FoundBlockRecord) -> Result<()> {
@@ -835,49 +158,29 @@ impl ShareStore for PoolStore {
             effort_pct: None,
         };
 
-        match self {
-            PoolStore::Sqlite(v) => {
-                if v.insert_block_if_absent(&candidate)? {
-                    return Ok(());
-                }
-                if let Some(existing) = v.get_block(candidate.height)? {
-                    if existing.hash != candidate.hash {
-                        warn!(
-                            height = candidate.height,
-                            existing_hash = %existing.hash,
-                            found_hash = %candidate.hash,
-                            "ignoring found-block recovery record with conflicting hash"
-                        );
-                    }
-                }
-                Ok(())
-            }
-            PoolStore::Postgres(v) => {
-                if v.insert_block_if_absent(&candidate)? {
-                    return Ok(());
-                }
-                if let Some(existing) = v.get_block(candidate.height)? {
-                    if existing.hash != candidate.hash {
-                        warn!(
-                            height = candidate.height,
-                            existing_hash = %existing.hash,
-                            found_hash = %candidate.hash,
-                            "ignoring found-block recovery record with conflicting hash"
-                        );
-                    }
-                }
-                Ok(())
+        if self.inner.insert_block_if_absent(&candidate)? {
+            return Ok(());
+        }
+        if let Some(existing) = self.inner.get_block(candidate.height)? {
+            if existing.hash != candidate.hash {
+                warn!(
+                    height = candidate.height,
+                    existing_hash = %existing.hash,
+                    found_hash = %candidate.hash,
+                    "ignoring found-block recovery record with conflicting hash"
+                );
             }
         }
+        Ok(())
     }
 
     fn is_address_quarantined(&self, address: &str) -> Result<bool> {
-        let (quarantined, _) = PoolStore::is_address_quarantined(self, address)?;
+        let (quarantined, _) = self.inner.is_address_quarantined(address)?;
         Ok(quarantined)
     }
 
     fn should_force_verify_address(&self, address: &str) -> Result<bool> {
-        let (force_verify, _) = PoolStore::should_force_verify_address(self, address)?;
+        let (force_verify, _) = self.inner.should_force_verify_address(address)?;
         Ok(force_verify)
     }
 
@@ -894,8 +197,7 @@ impl ShareStore for PoolStore {
         force_verify_duration: Duration,
         apply_quarantine: bool,
     ) -> Result<()> {
-        PoolStore::escalate_address_risk(
-            self,
+        self.inner.escalate_address_risk(
             address,
             reason,
             quarantine_base,
@@ -907,7 +209,7 @@ impl ShareStore for PoolStore {
     }
 
     fn get_vardiff_hint(&self, address: &str, worker: &str) -> Result<Option<(u64, SystemTime)>> {
-        PoolStore::get_vardiff_hint(self, address, worker)
+        self.inner.get_vardiff_hint(address, worker)
     }
 
     fn upsert_vardiff_hint(
@@ -917,7 +219,8 @@ impl ShareStore for PoolStore {
         difficulty: u64,
         updated_at: SystemTime,
     ) -> Result<()> {
-        PoolStore::upsert_vardiff_hint(self, address, worker, difficulty, updated_at)
+        self.inner
+            .upsert_vardiff_hint(address, worker, difficulty, updated_at)
     }
 }
 
@@ -928,15 +231,16 @@ impl ValidationStateStore for PoolStore {
         provisional_cutoff: SystemTime,
         now: SystemTime,
     ) -> Result<LoadedValidationState> {
-        PoolStore::load_validation_state(self, state_cutoff, provisional_cutoff, now)
+        self.inner
+            .load_validation_state(state_cutoff, provisional_cutoff, now)
     }
 
     fn upsert_validation_state(&self, state: &PersistedValidationAddressState) -> Result<()> {
-        PoolStore::upsert_validation_state(self, state)
+        self.inner.upsert_validation_state(state)
     }
 
     fn add_validation_provisional(&self, address: &str, created_at: SystemTime) -> Result<()> {
-        PoolStore::add_validation_provisional(self, address, created_at)
+        self.inner.add_validation_provisional(address, created_at)
     }
 
     fn clean_validation_state(
@@ -945,18 +249,14 @@ impl ValidationStateStore for PoolStore {
         provisional_cutoff: SystemTime,
         now: SystemTime,
     ) -> Result<()> {
-        PoolStore::clean_validation_state(self, state_cutoff, provisional_cutoff, now)
+        self.inner
+            .clean_validation_state(state_cutoff, provisional_cutoff, now)
     }
 }
 
 fn estimated_block_reward(height: u64) -> u64 {
-    let month = height / BLOCKS_PER_MONTH.max(1);
-    if month >= MONTHS_TO_TAIL {
-        return TAIL_EMISSION;
-    }
-
-    let years = month as f64 / 12.0;
-    let decay = (-DECAY_RATE * years).exp();
+    let months = (height / BLOCKS_PER_MONTH) as f64;
+    let decay = DECAY_RATE.powf(months / MONTHS_TO_TAIL as f64);
     let reward =
         (INITIAL_REWARD.saturating_sub(TAIL_EMISSION)) as f64 * decay + TAIL_EMISSION as f64;
     if reward < TAIL_EMISSION as f64 {
@@ -969,19 +269,21 @@ fn estimated_block_reward(height: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::SystemTime;
 
-    fn test_store() -> Arc<PoolStore> {
-        let path = std::env::temp_dir().join(format!(
-            "blocknet-pool-store-test-{}.sqlite",
-            rand::random::<u64>()
-        ));
-        PoolStore::open_sqlite(path.to_str().expect("path")).expect("open sqlite store")
+    fn test_store() -> Option<Arc<PoolStore>> {
+        PoolStore::test_store()
     }
 
     #[test]
     fn found_block_insert_adds_record_when_missing() {
-        let store = test_store();
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {} to run postgres integration checks",
+                PoolStore::TEST_POSTGRES_URL_ENV
+            );
+            return;
+        };
+
         store
             .add_found_block(FoundBlockRecord {
                 height: 42,
@@ -1006,7 +308,14 @@ mod tests {
 
     #[test]
     fn found_block_insert_does_not_regress_existing_block_state() {
-        let store = test_store();
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {} to run postgres integration checks",
+                PoolStore::TEST_POSTGRES_URL_ENV
+            );
+            return;
+        };
+
         store
             .add_block(&DbBlock {
                 height: 77,
@@ -1019,7 +328,7 @@ mod tests {
                 confirmed: true,
                 orphaned: false,
                 paid_out: true,
-            effort_pct: None,
+                effort_pct: None,
             })
             .expect("seed existing block");
 
@@ -1047,7 +356,14 @@ mod tests {
 
     #[test]
     fn vardiff_hint_round_trip() {
-        let store = test_store();
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {} to run postgres integration checks",
+                PoolStore::TEST_POSTGRES_URL_ENV
+            );
+            return;
+        };
+
         let when = SystemTime::now();
         store
             .upsert_vardiff_hint("addr1", "rig1", 77, when)
@@ -1062,7 +378,7 @@ mod tests {
 
     #[test]
     fn estimated_block_reward_has_tail_floor() {
-        let very_high_height = BLOCKS_PER_MONTH.saturating_mul(MONTHS_TO_TAIL + 1);
+        let very_high_height = BLOCKS_PER_MONTH.saturating_mul(5_000);
         assert_eq!(estimated_block_reward(very_high_height), TAIL_EMISSION);
     }
 }

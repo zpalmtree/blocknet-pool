@@ -1098,12 +1098,23 @@ mod tests {
         }
     }
 
-    fn test_store() -> Arc<PoolStore> {
-        let path = std::env::temp_dir().join(format!(
-            "blocknet-pool-payout-test-{}.sqlite",
-            rand::random::<u64>()
-        ));
-        PoolStore::open_sqlite(path.to_str().expect("path")).expect("open sqlite store")
+    fn test_store() -> Option<Arc<PoolStore>> {
+        PoolStore::test_store()
+    }
+
+    macro_rules! require_test_store {
+        () => {
+            match test_store() {
+                Some(store) => store,
+                None => {
+                    eprintln!(
+                        "skipping postgres test: set {} to run postgres integration checks",
+                        PoolStore::TEST_POSTGRES_URL_ENV
+                    );
+                    return;
+                }
+            }
+        };
     }
 
     fn candidate(address: &str, amount: u64, age: Duration) -> PayoutCandidate {
@@ -1334,7 +1345,7 @@ mod tests {
 
     #[test]
     fn payout_weighting_excludes_addresses_under_force_verify() {
-        let store = test_store();
+        let store = require_test_store!();
         store
             .escalate_address_risk(
                 "a2",
@@ -1377,7 +1388,7 @@ mod tests {
 
     #[test]
     fn weighted_allocation_distributes_full_amount() {
-        let store = test_store();
+        let store = require_test_store!();
         let processor = PayoutProcessor::new(
             Config::default(),
             Arc::clone(&store),
@@ -1531,7 +1542,7 @@ mod tests {
 
     #[test]
     fn confirmed_broadcast_payouts_reconcile_without_waiting_for_next_send_tick() {
-        let store = test_store();
+        let store = require_test_store!();
         store
             .update_balance(&Balance {
                 address: "addr1".to_string(),

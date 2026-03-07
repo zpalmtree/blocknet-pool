@@ -140,9 +140,7 @@ When a daemon request returns `401 unauthorized`, the pool will refresh the toke
 
 ## Database Backend
 
-Default backend is SQLite (`database_path`).
-
-To use Postgres, set `database_url` in `config.json`, for example:
+The pool uses Postgres. Set `database_url` in `config.json`, for example:
 
 ```json
 {
@@ -150,8 +148,8 @@ To use Postgres, set `database_url` in `config.json`, for example:
 }
 ```
 
-When `database_url` is set, Postgres is used automatically and `database_path` is ignored.
-`database_pool_size` controls Postgres connection fan-out (default `4`).
+`database_url` is required. `database_pool_size` controls Postgres connection fan-out
+(default `4`).
 
 ### Production SQLite -> Postgres Migration
 
@@ -186,7 +184,7 @@ Recommended order:
 - Stratum server
 - Template/job manager
 - Validation engine (bounded queues)
-- Persistent storage (SQLite/Postgres)
+- Persistent storage (Postgres)
 - Payout processor
 - DB/meta-backed live snapshot bridge for split-service API fallbacks
 

@@ -731,12 +731,23 @@ mod tests {
     use crate::store::PoolStore;
     use std::sync::Arc;
 
-    fn test_store() -> Arc<PoolStore> {
-        let path = std::env::temp_dir().join(format!(
-            "blocknet-pool-validation-test-{}.sqlite",
-            rand::random::<u64>()
-        ));
-        PoolStore::open_sqlite(path.to_str().expect("path")).expect("open sqlite store")
+    fn test_store() -> Option<Arc<PoolStore>> {
+        PoolStore::test_store()
+    }
+
+    macro_rules! require_test_store {
+        () => {
+            match test_store() {
+                Some(store) => store,
+                None => {
+                    eprintln!(
+                        "skipping postgres test: set {} to run postgres integration checks",
+                        PoolStore::TEST_POSTGRES_URL_ENV
+                    );
+                    return;
+                }
+            }
+        };
     }
 
     fn test_cfg() -> Config {
@@ -1014,7 +1025,7 @@ mod tests {
     #[test]
     fn provisional_validation_state_survives_restart() {
         let cfg = test_cfg();
-        let store = test_store();
+        let store = require_test_store!();
         let engine = ValidationEngine::new_with_state_store(
             cfg.clone(),
             Arc::new(DeterministicTestHasher),

@@ -83,7 +83,6 @@ pub struct Config {
     pub payouts_retention: String,
     pub retention_interval: String,
 
-    pub database_path: String,
     pub database_url: String,
     pub database_pool_size: i32,
     pub api_key: String,
@@ -163,7 +162,6 @@ impl Default for Config {
             shares_retention: "90d".to_string(),
             payouts_retention: "365d".to_string(),
             retention_interval: "1h".to_string(),
-            database_path: "pool.db".to_string(),
             database_url: String::new(),
             database_pool_size: 4,
             api_key: String::new(),

@@ -3,9 +3,12 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
+TEST_POSTGRES_URL_ENV="BLOCKNET_POOL_TEST_POSTGRES_URL"
 
 DAEMON_PID=""
 POOL_PID=""
+POSTGRES_SCHEMA=""
+BASE_POSTGRES_URL="${BLOCKNET_POOL_TEST_POSTGRES_URL:-}"
 
 cleanup() {
   local status=$?
@@ -23,6 +26,10 @@ cleanup() {
     kill "${DAEMON_PID}" 2>/dev/null || true
     wait "${DAEMON_PID}" 2>/dev/null || true
   fi
+  if [[ -n "${POSTGRES_SCHEMA}" && -n "${BASE_POSTGRES_URL}" ]]; then
+    psql "${BASE_POSTGRES_URL}" -v ON_ERROR_STOP=1 \
+      -c "DROP SCHEMA IF EXISTS ${POSTGRES_SCHEMA} CASCADE" >/dev/null 2>&1 || true
+  fi
   rm -rf "${TMP_DIR}"
 }
 trap cleanup EXIT
@@ -31,6 +38,31 @@ BASE_PORT="$((20000 + (RANDOM % 10000)))"
 DAEMON_PORT="${BASE_PORT}"
 API_PORT="$((BASE_PORT + 1))"
 STRATUM_PORT="$((BASE_PORT + 2))"
+
+if [[ -z "${BASE_POSTGRES_URL}" ]]; then
+  echo "[smoke] set ${TEST_POSTGRES_URL_ENV} to a Postgres connection URL" >&2
+  exit 1
+fi
+if ! command -v psql >/dev/null 2>&1; then
+  echo "[smoke] psql is required for Postgres-backed smoke tests" >&2
+  exit 1
+fi
+
+POSTGRES_SCHEMA="blocknet_pool_ci_${$}_$RANDOM$RANDOM"
+psql "${BASE_POSTGRES_URL}" -v ON_ERROR_STOP=1 \
+  -c "CREATE SCHEMA IF NOT EXISTS ${POSTGRES_SCHEMA}" >/dev/null
+DATABASE_URL="$(python3 - "${BASE_POSTGRES_URL}" "${POSTGRES_SCHEMA}" <<'PY'
+import sys
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+base = sys.argv[1]
+schema = sys.argv[2]
+parts = urlsplit(base)
+query = parse_qsl(parts.query, keep_blank_values=True)
+query.append(("options", f"-c search_path={schema}"))
+print(urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)))
+PY
+)"
 
 CONFIG_PATH="${TMP_DIR}/config.json"
 DAEMON_LOG="${TMP_DIR}/mock-daemon.log"
@@ -45,7 +77,7 @@ cat >"${CONFIG_PATH}" <<JSON
   "api_host": "127.0.0.1",
   "api_port": ${API_PORT},
   "daemon_api": "http://127.0.0.1:${DAEMON_PORT}",
-  "database_path": "${TMP_DIR}/pool.sqlite",
+  "database_url": "${DATABASE_URL}",
   "pool_wallet_address": "ci-pool-wallet",
   "sse_enabled": false,
   "enable_vardiff": false,

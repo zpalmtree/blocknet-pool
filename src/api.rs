@@ -3172,6 +3172,7 @@ async fn handle_miner(
 
     let db_result = match tokio::task::spawn_blocking(move || {
         let shares = store.get_shares_for_miner(&addr, share_limit)?;
+        let mining_since = store.first_share_at_for_miner(&addr)?;
         let balance = store.get_balance(&addr)?;
         let pending_payout = store.get_pending_payout(&addr)?;
         let payouts =
@@ -3188,6 +3189,7 @@ async fn handle_miner(
         let miner_blocks = store.get_blocks_for_miner(&addr)?;
         Ok::<_, anyhow::Error>((
             shares,
+            mining_since,
             balance,
             pending_payout,
             payouts,
@@ -3211,6 +3213,7 @@ async fn handle_miner(
     };
     let (
         shares,
+        mining_since,
         balance,
         pending_payout,
         payouts,
@@ -3288,6 +3291,7 @@ async fn handle_miner(
 
     let base = serde_json::json!({
         "shares": shares,
+        "mining_since": mining_since,
         "hashrate": hashrate,
         "balance": balance_json,
         "pending_estimate": pending_estimate,
@@ -6042,7 +6046,7 @@ mod tests {
     use crate::store::PoolStore;
     use crate::validation::ValidationEngine;
     use axum::body::to_bytes;
-    use axum::extract::{Query, State};
+    use axum::extract::{Path, Query, State};
     use axum::response::IntoResponse;
 
     use super::{
@@ -6050,24 +6054,35 @@ mod tests {
         build_block_reward_breakdown, build_fee_page, compute_luck_details_for_hashes,
         compute_luck_history, contains_ci, daemon_debug_log_path, daemon_log_commands,
         estimate_unconfirmed_pending_for_miner, estimated_block_reward, handle_health,
-        handle_miners, handle_stats, hashrate_from_stats_with_miner_ramp,
+        handle_miner, handle_miners, handle_stats, hashrate_from_stats_with_miner_ramp,
         hashrate_from_stats_with_warmup, hydrate_provisional_block_reward,
         load_persisted_status_history, miner_balance_response, miner_has_activity, page_bounds,
         payout_status_note, pending_balance_note, rejection_window_duration, share_limit,
-        sort_workers_for_miner, trim_log_line, worker_hashrate_by_name, ApiState,
-        DaemonHealthCache, DbTotalsCache, InsightsCache, LiveRuntimeSnapshotCache,
-        MinerPendingBlockEstimate, MinerPendingEstimate, MinersQuery, NetworkHashrateCache,
-        PayoutEtaResponse, StatusHistory, DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW,
-        HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY,
-        STATUS_HISTORY_META_KEY,
+        sort_workers_for_miner, system_time_to_unix_secs, trim_log_line, worker_hashrate_by_name,
+        ApiState, DaemonHealthCache, DbTotalsCache, InsightsCache, LiveRuntimeSnapshotCache,
+        MinerDetailQuery, MinerPendingBlockEstimate, MinerPendingEstimate, MinersQuery,
+        NetworkHashrateCache, PayoutEtaResponse, StatusHistory, DAEMON_LOG_LINE_LIMIT,
+        HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
+        LIVE_RUNTIME_SNAPSHOT_META_KEY, STATUS_HISTORY_META_KEY,
     };
 
-    fn test_store() -> Arc<PoolStore> {
-        let path = std::env::temp_dir().join(format!(
-            "blocknet-pool-api-test-{}.sqlite",
-            rand::random::<u64>()
-        ));
-        PoolStore::open_sqlite(path.to_str().expect("path")).expect("open sqlite store")
+    fn test_store() -> Option<Arc<PoolStore>> {
+        PoolStore::test_store()
+    }
+
+    macro_rules! require_test_store {
+        () => {
+            match test_store() {
+                Some(store) => store,
+                None => {
+                    eprintln!(
+                        "skipping postgres test: set {} to run postgres integration checks",
+                        PoolStore::TEST_POSTGRES_URL_ENV
+                    );
+                    return;
+                }
+            }
+        };
     }
 
     fn test_api_state(store: Arc<PoolStore>) -> ApiState {
@@ -6129,7 +6144,7 @@ mod tests {
 
     #[test]
     fn build_fee_page_includes_collected_and_pending_rows() {
-        let store = test_store();
+        let store = require_test_store!();
         let mut cfg = Config::default();
         cfg.pool_fee_pct = 10.0;
         cfg.blocks_before_payout = 60;
@@ -6153,7 +6168,7 @@ mod tests {
                 confirmed: true,
                 orphaned: false,
                 paid_out: true,
-            effort_pct: None,
+                effort_pct: None,
             })
             .expect("add collected block");
         store
@@ -6177,7 +6192,7 @@ mod tests {
                 confirmed: false,
                 orphaned: false,
                 paid_out: false,
-            effort_pct: None,
+                effort_pct: None,
             })
             .expect("add pending block");
         store
@@ -6192,7 +6207,7 @@ mod tests {
                 confirmed: true,
                 orphaned: false,
                 paid_out: false,
-            effort_pct: None,
+                effort_pct: None,
             })
             .expect("add ready block");
         store
@@ -6207,7 +6222,7 @@ mod tests {
                 confirmed: true,
                 orphaned: false,
                 paid_out: true,
-            effort_pct: None,
+                effort_pct: None,
             })
             .expect("add missing block");
         store
@@ -6222,7 +6237,7 @@ mod tests {
                 confirmed: false,
                 orphaned: true,
                 paid_out: false,
-            effort_pct: None,
+                effort_pct: None,
             })
             .expect("add orphaned block");
 
@@ -6273,7 +6288,7 @@ mod tests {
 
     #[test]
     fn build_fee_page_hydrates_provisional_rewards_for_pending_blocks() {
-        let store = test_store();
+        let store = require_test_store!();
         let mut cfg = Config::default();
         cfg.pool_fee_pct = 10.0;
         cfg.blocks_before_payout = 60;
@@ -6296,7 +6311,7 @@ mod tests {
                 confirmed: false,
                 orphaned: false,
                 paid_out: false,
-            effort_pct: None,
+                effort_pct: None,
             })
             .expect("add pending block");
 
@@ -6375,7 +6390,7 @@ mod tests {
 
     #[test]
     fn status_history_persists_via_meta_store() {
-        let store = test_store();
+        let store = require_test_store!();
         let base = SystemTime::now()
             .checked_sub(Duration::from_secs(60))
             .expect("recent base time");
@@ -6402,7 +6417,7 @@ mod tests {
 
     #[test]
     fn health_handler_uses_persisted_job_snapshot_when_live_assignments_are_empty() {
-        let store = test_store();
+        let store = require_test_store!();
         let snapshot = PersistedRuntimeSnapshot {
             sampled_at: SystemTime::now(),
             connected_miners: 0,
@@ -6451,7 +6466,7 @@ mod tests {
 
     #[test]
     fn stats_handler_uses_db_backed_share_totals() {
-        let store = test_store();
+        let store = require_test_store!();
         let now = SystemTime::now();
         store
             .add_share(ShareRecord {
@@ -6498,7 +6513,7 @@ mod tests {
 
     #[test]
     fn miners_handler_includes_db_only_miners_after_restart() {
-        let store = test_store();
+        let store = require_test_store!();
         let now = SystemTime::now();
         store
             .add_share(ShareRecord {
@@ -6543,6 +6558,63 @@ mod tests {
         assert_eq!(payload["miner-db-only"]["shares_accepted"], 1);
         assert_eq!(payload["miner-db-only"]["shares_rejected"], 1);
         assert_eq!(payload["miner-db-only"]["blocks_found"], 0);
+    }
+
+    #[test]
+    fn miner_handler_reports_lifetime_mining_since() {
+        let store = require_test_store!();
+        let first_share_at = UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let recent_share_at = first_share_at + Duration::from_secs(3 * 24 * 60 * 60);
+
+        for (job_id, nonce, created_at) in [
+            ("job-oldest", 1u64, first_share_at),
+            ("job-newest", 2u64, recent_share_at),
+        ] {
+            store
+                .add_share(ShareRecord {
+                    job_id: job_id.to_string(),
+                    miner: "miner-since".to_string(),
+                    worker: "worker-1".to_string(),
+                    difficulty: 250,
+                    nonce,
+                    status: "verified",
+                    was_sampled: true,
+                    block_hash: None,
+                    reject_reason: None,
+                    created_at,
+                })
+                .expect("add share");
+        }
+
+        let state = test_api_state(store);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let response = runtime
+            .block_on(handle_miner(
+                Path("miner-since".to_string()),
+                Query(MinerDetailQuery {
+                    share_limit: Some(1),
+                    include_pending_estimate: Some(false),
+                }),
+                State(state),
+            ))
+            .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = runtime
+            .block_on(to_bytes(response.into_body(), usize::MAX))
+            .expect("read body");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("decode miner json");
+
+        assert_eq!(
+            payload["shares"]
+                .as_array()
+                .map(|items| items.len())
+                .unwrap_or_default(),
+            1
+        );
+        assert_eq!(
+            payload["mining_since"]["secs_since_epoch"].as_u64(),
+            Some(system_time_to_unix_secs(first_share_at))
+        );
     }
 
     #[test]
@@ -6622,7 +6694,7 @@ mod tests {
 
     #[test]
     fn estimate_unconfirmed_pending_for_miner_matches_weighted_split() {
-        let store = test_store();
+        let store = require_test_store!();
         let mut cfg = Config::default();
         cfg.payout_scheme = "pplns".to_string();
         cfg.pplns_window_duration = "24h".to_string();
@@ -6673,7 +6745,7 @@ mod tests {
                 confirmed: false,
                 orphaned: false,
                 paid_out: false,
-            effort_pct: None,
+                effort_pct: None,
             })
             .expect("add unconfirmed block");
 
@@ -6694,7 +6766,7 @@ mod tests {
 
     #[test]
     fn block_reward_breakdown_surfaces_recorded_credits() {
-        let store = test_store();
+        let store = require_test_store!();
         let mut cfg = Config::default();
         cfg.payout_scheme = "pplns".to_string();
         cfg.pplns_window_duration = "24h".to_string();
@@ -6745,7 +6817,7 @@ mod tests {
                 confirmed: true,
                 orphaned: false,
                 paid_out: false,
-            effort_pct: None,
+                effort_pct: None,
             })
             .expect("add paid block");
         store
@@ -6775,7 +6847,7 @@ mod tests {
 
     #[test]
     fn block_reward_breakdown_marks_capped_provisional_rows() {
-        let store = test_store();
+        let store = require_test_store!();
         let mut cfg = Config::default();
         cfg.payout_scheme = "pplns".to_string();
         cfg.pplns_window_duration = "24h".to_string();
@@ -6841,7 +6913,7 @@ mod tests {
                 confirmed: false,
                 orphaned: false,
                 paid_out: false,
-            effort_pct: None,
+                effort_pct: None,
             })
             .expect("add block");
 
@@ -6860,7 +6932,7 @@ mod tests {
 
     #[test]
     fn estimate_unconfirmed_pending_for_miner_uses_tentative_preview_not_payout_gate() {
-        let store = test_store();
+        let store = require_test_store!();
         let mut cfg = Config::default();
         cfg.payout_scheme = "pplns".to_string();
         cfg.pplns_window_duration = "24h".to_string();
@@ -6926,7 +6998,7 @@ mod tests {
                 confirmed: false,
                 orphaned: false,
                 paid_out: false,
-            effort_pct: None,
+                effort_pct: None,
             })
             .expect("add unconfirmed block");
 
@@ -6953,7 +7025,7 @@ mod tests {
 
     #[test]
     fn compute_luck_history_returns_all_rounds_and_can_truncate() {
-        let store = test_store();
+        let store = require_test_store!();
         let base = UNIX_EPOCH + Duration::from_secs(2_000_000);
 
         for (job_id, created_at, difficulty) in [
@@ -6994,7 +7066,7 @@ mod tests {
                     confirmed: true,
                     orphaned: false,
                     paid_out: false,
-                effort_pct: None,
+                    effort_pct: None,
                 })
                 .expect("add block");
         }
@@ -7016,7 +7088,7 @@ mod tests {
 
     #[test]
     fn compute_luck_details_for_hashes_returns_only_requested_rows() {
-        let store = test_store();
+        let store = require_test_store!();
         let base = UNIX_EPOCH + Duration::from_secs(3_000_000);
 
         for (job_id, created_at, difficulty) in [
@@ -7057,7 +7129,7 @@ mod tests {
                     confirmed: true,
                     orphaned: false,
                     paid_out: false,
-                effort_pct: None,
+                    effort_pct: None,
                 })
                 .expect("add block");
         }
@@ -7345,7 +7417,7 @@ mod tests {
             confirmed: false,
             orphaned: false,
             paid_out: false,
-        effort_pct: None,
+            effort_pct: None,
         };
         hydrate_provisional_block_reward(&mut block);
         assert_eq!(block.reward, estimated_block_reward(3707));
@@ -7364,7 +7436,7 @@ mod tests {
             confirmed: true,
             orphaned: false,
             paid_out: false,
-        effort_pct: None,
+            effort_pct: None,
         };
         hydrate_provisional_block_reward(&mut block);
         assert_eq!(block.reward, 123);
