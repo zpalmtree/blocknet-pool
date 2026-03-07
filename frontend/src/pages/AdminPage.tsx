@@ -822,7 +822,7 @@ export function AdminPage({
                         processor recorded for this block, when available.
                       </div>
                     </div>
-                    <div style={{ display: 'grid', gap: 6, justifyItems: 'end' }}>
+                    <div style={{ display: 'grid', gap: 6, justifyItems: 'start' }}>
                       <span
                         className={
                           rewardBreakdown.block.orphaned

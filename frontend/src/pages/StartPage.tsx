@@ -23,53 +23,6 @@ function feeDisplayFor(poolInfo: InfoResponse | null): string {
   return out;
 }
 
-function formatNumber(value: number): string {
-  return value.toFixed(2).replace(/\.?0+$/, '');
-}
-
-function payoutTrustSummary(poolInfo: InfoResponse | null): string | null {
-  if (!poolInfo) return null;
-  const minVerifiedShares = Math.max(0, poolInfo.payout_min_verified_shares ?? 0);
-  const minVerifiedRatio = Math.max(0, poolInfo.payout_min_verified_ratio ?? 0);
-  const provisionalCapMultiplier = Math.max(0, poolInfo.payout_provisional_cap_multiplier ?? 0);
-  const shareLabel =
-    minVerifiedShares === 0
-      ? 'no minimum verified shares'
-      : `${minVerifiedShares} verified share${minVerifiedShares === 1 ? '' : 's'}`;
-
-  if (minVerifiedRatio > 0 && provisionalCapMultiplier > 0) {
-    return `Final payout weighting starts after ${shareLabel} and ${formatNumber(minVerifiedRatio * 100)}% verified difficulty, with provisional difficulty capped at ${formatNumber(provisionalCapMultiplier)}x verified difficulty.`;
-  }
-  if (minVerifiedRatio > 0) {
-    return `Final payout weighting starts after ${shareLabel} and ${formatNumber(minVerifiedRatio * 100)}% verified difficulty in the payout window.`;
-  }
-  if (provisionalCapMultiplier > 0) {
-    return `Final payout weighting starts after ${shareLabel}. Provisional difficulty is capped at ${formatNumber(provisionalCapMultiplier)}x verified difficulty, so low-verification windows are reduced instead of dropped to zero.`;
-  }
-  return `Final payout weighting starts after ${shareLabel}.`;
-}
-
-function validationCoverageSummary(poolInfo: InfoResponse | null): string | null {
-  if (!poolInfo) return null;
-  const parts: string[] = [];
-  const warmupShares = Math.max(0, poolInfo.warmup_shares ?? 0);
-  const minSampleEvery = Math.max(0, poolInfo.min_sample_every ?? 0);
-  const sampleRate = Math.max(0, poolInfo.sample_rate ?? 0);
-
-  if (warmupShares > 0) {
-    parts.push(`the first ${warmupShares} share${warmupShares === 1 ? '' : 's'} from an address are fully verified`);
-  }
-  if (minSampleEvery > 0) {
-    parts.push(`at least every ${minSampleEvery}th share is fully verified`);
-  }
-  if (sampleRate > 0) {
-    parts.push(`the remaining shares are sampled at about ${formatNumber(sampleRate * 100)}%`);
-  }
-
-  if (!parts.length) return null;
-  return `Validation coverage: ${parts.join(', ')}.`;
-}
-
 export function StartPage({ active, poolInfo, theme }: StartPageProps) {
   const [copiedKey, setCopiedKey] = useState('');
   const poolUrl = stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url);
@@ -80,8 +33,6 @@ export function StartPage({ active, poolInfo, theme }: StartPageProps) {
         ? poolInfo.pplns_window_duration
         : `last ${poolInfo?.pplns_window ?? 0} shares`
       : null;
-  const trustSummary = payoutTrustSummary(poolInfo);
-  const coverageSummary = validationCoverageSummary(poolInfo);
 
   useEffect(() => {
     if (!copiedKey) return;
@@ -347,10 +298,6 @@ export function StartPage({ active, poolInfo, theme }: StartPageProps) {
           Rewards are based on shares submitted before a block is found. If your hashrate increases right after a block,
           that work helps with later blocks, not the one that was just found.
         </p>
-        {trustSummary ? (
-          <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 10 }}>{trustSummary}</p>
-        ) : null}
-        {coverageSummary ? <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 10 }}>{coverageSummary}</p> : null}
         <p style={{ color: 'var(--muted)', fontSize: 14 }}>
           <a href="/stats">My Stats</a> shows tentative rewards from unconfirmed blocks separately. Those estimates can
           still move until the block confirms or is orphaned.
