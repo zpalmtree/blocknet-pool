@@ -4459,7 +4459,7 @@ fn apply_wallet_liquidity_to_payout_eta(
         return;
     };
     payout_eta.wallet_spendable = Some(wallet_balance.spendable);
-    payout_eta.wallet_pending = Some(wallet_balance.pending);
+    payout_eta.wallet_pending = Some(wallet_balance.pending.saturating_add(wallet_balance.pending_unconfirmed));
     payout_eta.queue_shortfall_amount = payout_eta
         .pending_total_amount
         .saturating_sub(wallet_balance.spendable);
