@@ -249,8 +249,7 @@ impl MonitorRuntime {
         let store = Arc::clone(&self.store);
         tokio::task::spawn_blocking(move || op(store))
             .await
-            .with_context(|| format!("join {label}"))
-            ?
+            .with_context(|| format!("join {label}"))?
     }
 
     async fn monitor_loop(self: Arc<Self>) -> Result<()> {
@@ -298,16 +297,14 @@ impl MonitorRuntime {
             runtime_snapshot.as_ref(),
             self.cfg.max_validation_queue.max(1) as u64,
         );
-        let payout_queue_stalled = payout_queue_state(&self.cfg, sampled_at, payout_summary.as_ref());
+        let payout_queue_stalled =
+            payout_queue_state(&self.cfg, sampled_at, payout_summary.as_ref());
         let share_ingest_stalled = share_progress_state(sampled_at, runtime_snapshot.as_ref());
         let summary_state = summarize_state(
             api.error.is_none(),
             stratum.error.is_none() && stratum_snapshot_fresh,
             db.error.is_none(),
-            daemon
-                .value
-                .as_ref()
-                .is_some_and(|status| !status.syncing),
+            daemon.value.as_ref().is_some_and(|status| !status.syncing),
             template_refresh_millis,
             validation_backlog.as_ref().map(|(severity, _)| *severity),
             payout_queue_stalled.as_ref().map(|(severity, _)| *severity),
@@ -368,7 +365,8 @@ impl MonitorRuntime {
             sample.runtime_snapshot.as_ref(),
             self.cfg.max_validation_queue.max(1) as u64,
         );
-        let payout_queue_stalled = payout_queue_state(&self.cfg, now, sample.payout_summary.as_ref());
+        let payout_queue_stalled =
+            payout_queue_state(&self.cfg, now, sample.payout_summary.as_ref());
         let share_ingest_stalled = share_progress_state(now, sample.runtime_snapshot.as_ref());
 
         self.sync_condition(
@@ -401,8 +399,7 @@ impl MonitorRuntime {
             "stratum_down",
             "critical",
             "public",
-            sample.stratum_probe.error.is_some()
-                || snapshot_stale,
+            sample.stratum_probe.error.is_some() || snapshot_stale,
             STRATUM_SNAPSHOT_STALE_AFTER,
             now,
             sample
@@ -440,17 +437,16 @@ impl MonitorRuntime {
             &mut incidents.template_stale,
             "local_template_stale",
             "template_stale",
-            if template_refresh_millis.is_some_and(|lag| {
-                lag >= TEMPLATE_REFRESH_CRITICAL_AFTER.as_millis() as u64
-            }) {
+            if template_refresh_millis
+                .is_some_and(|lag| lag >= TEMPLATE_REFRESH_CRITICAL_AFTER.as_millis() as u64)
+            {
                 "critical"
             } else {
                 "warn"
             },
             "public",
-            template_refresh_millis.is_some_and(|lag| {
-                lag >= TEMPLATE_REFRESH_WARN_AFTER.as_millis() as u64
-            }),
+            template_refresh_millis
+                .is_some_and(|lag| lag >= TEMPLATE_REFRESH_WARN_AFTER.as_millis() as u64),
             Duration::from_secs(0),
             now,
             template_refresh_millis
@@ -523,7 +519,10 @@ impl MonitorRuntime {
                         IncidentStoreAction::Upsert(incident) => {
                             store.upsert_monitor_incident(&incident)?;
                         }
-                        IncidentStoreAction::Resolve { dedupe_key, ended_at } => {
+                        IncidentStoreAction::Resolve {
+                            dedupe_key,
+                            ended_at,
+                        } => {
                             store.resolve_monitor_incident(&dedupe_key, ended_at)?;
                         }
                     }
@@ -603,9 +602,9 @@ impl MonitorRuntime {
             self.run_store_task("load open public monitor incidents", move |store| {
                 store.get_open_monitor_incidents(Some("public"))
             })
-                .await
-                .map(|items| items.len() as u64)
-                .unwrap_or(0)
+            .await
+            .map(|items| items.len() as u64)
+            .unwrap_or(0)
         } else {
             0
         };
@@ -613,9 +612,9 @@ impl MonitorRuntime {
             self.run_store_task("load open private monitor incidents", move |store| {
                 store.get_open_monitor_incidents(Some("private"))
             })
-                .await
-                .map(|items| items.len() as u64)
-                .unwrap_or(0)
+            .await
+            .map(|items| items.len() as u64)
+            .unwrap_or(0)
         } else {
             0
         };
@@ -630,8 +629,10 @@ impl MonitorRuntime {
         metrics.daemon_up = Some(sample.daemon_status.error.is_none());
         metrics.daemon_syncing = daemon.map(|status| status.syncing);
         metrics.chain_height = daemon.map(|status| status.chain_height);
-        metrics.template_age_seconds = runtime.and_then(|snapshot| snapshot.jobs.template_age_seconds);
-        metrics.last_refresh_millis = runtime.and_then(|snapshot| snapshot.jobs.last_refresh_millis);
+        metrics.template_age_seconds =
+            runtime.and_then(|snapshot| snapshot.jobs.template_age_seconds);
+        metrics.last_refresh_millis =
+            runtime.and_then(|snapshot| snapshot.jobs.last_refresh_millis);
         metrics.stratum_snapshot_age_seconds = runtime.and_then(|snapshot| {
             sample
                 .sampled_at
@@ -651,29 +652,32 @@ impl MonitorRuntime {
                 .map(|age| age.as_secs())
         });
         metrics.payout_pending_count = sample.payout_summary.as_ref().map(|summary| summary.count);
-        metrics.payout_pending_amount = sample.payout_summary.as_ref().map(|summary| summary.amount);
+        metrics.payout_pending_amount =
+            sample.payout_summary.as_ref().map(|summary| summary.amount);
         metrics.oldest_pending_payout_at = sample
             .payout_summary
             .as_ref()
             .and_then(|summary| summary.oldest_pending_at);
-        metrics.oldest_pending_payout_age_seconds = sample.payout_summary.as_ref().and_then(|summary| {
-            summary
-                .oldest_pending_at
-                .and_then(|ts| sample.sampled_at.duration_since(ts).ok())
-                .map(|age| age.as_secs())
-        });
+        metrics.oldest_pending_payout_age_seconds =
+            sample.payout_summary.as_ref().and_then(|summary| {
+                summary
+                    .oldest_pending_at
+                    .and_then(|ts| sample.sampled_at.duration_since(ts).ok())
+                    .map(|age| age.as_secs())
+            });
         metrics.oldest_pending_send_started_at = sample
             .payout_summary
             .as_ref()
             .and_then(|summary| summary.oldest_send_started_at);
-        metrics.oldest_pending_send_age_seconds = sample.payout_summary.as_ref().and_then(|summary| {
-            summary
-                .oldest_send_started_at
-                .and_then(|ts| sample.sampled_at.duration_since(ts).ok())
-                .map(|age| age.as_secs())
-        });
-        metrics.validation_candidate_queue_depth = runtime
-            .map(|snapshot| snapshot.validation.candidate_queue_depth as u64);
+        metrics.oldest_pending_send_age_seconds =
+            sample.payout_summary.as_ref().and_then(|summary| {
+                summary
+                    .oldest_send_started_at
+                    .and_then(|ts| sample.sampled_at.duration_since(ts).ok())
+                    .map(|age| age.as_secs())
+            });
+        metrics.validation_candidate_queue_depth =
+            runtime.map(|snapshot| snapshot.validation.candidate_queue_depth as u64);
         metrics.validation_regular_queue_depth =
             runtime.map(|snapshot| snapshot.validation.regular_queue_depth as u64);
         metrics.open_public_incidents = open_public;
@@ -866,10 +870,9 @@ impl MonitorRuntime {
     async fn prune_old_heartbeats(&self, now: SystemTime) -> Result<()> {
         {
             let mut last = self.last_housekeeping_at.lock();
-            if last
-                .as_ref()
-                .is_some_and(|prev| now.duration_since(*prev).unwrap_or_default() < HOUSEKEEPING_INTERVAL)
-            {
+            if last.as_ref().is_some_and(|prev| {
+                now.duration_since(*prev).unwrap_or_default() < HOUSEKEEPING_INTERVAL
+            }) {
                 return Ok(());
             }
             *last = Some(now);
@@ -903,7 +906,10 @@ impl MonitorRuntime {
         );
         let client = self.api_client.clone();
         match tokio::task::spawn_blocking(move || -> Result<()> {
-            let response = client.get(&url).send().with_context(|| format!("GET {url}"))?;
+            let response = client
+                .get(&url)
+                .send()
+                .with_context(|| format!("GET {url}"))?;
             if !response.status().is_success() {
                 return Err(anyhow!("GET {url} returned HTTP {}", response.status()));
             }
@@ -919,7 +925,12 @@ impl MonitorRuntime {
 
     async fn probe_stratum(&self) -> ProbeOutcome<()> {
         let target = format!("{}:{}", self.cfg.stratum_host, self.cfg.stratum_port);
-        match tokio::time::timeout(LOCAL_STRATUM_PROBE_TIMEOUT, tokio::net::TcpStream::connect(&target)).await {
+        match tokio::time::timeout(
+            LOCAL_STRATUM_PROBE_TIMEOUT,
+            tokio::net::TcpStream::connect(&target),
+        )
+        .await
+        {
             Ok(Ok(_)) => ProbeOutcome::ok(()),
             Ok(Err(err)) => ProbeOutcome::err(format!("{target}: {err}")),
             Err(_) => ProbeOutcome::err(format!("{target}: timed out")),
@@ -928,7 +939,9 @@ impl MonitorRuntime {
 
     async fn probe_database(&self) -> ProbeOutcome<()> {
         let store = Arc::clone(&self.store);
-        match tokio::task::spawn_blocking(move || store.get_meta(LIVE_RUNTIME_SNAPSHOT_META_KEY)).await {
+        match tokio::task::spawn_blocking(move || store.get_meta(LIVE_RUNTIME_SNAPSHOT_META_KEY))
+            .await
+        {
             Ok(Ok(_)) => ProbeOutcome::ok(()),
             Ok(Err(err)) => ProbeOutcome::err(err.to_string()),
             Err(err) => ProbeOutcome::err(format!("join error: {err}")),
@@ -1024,7 +1037,10 @@ async fn handle_metrics(State(state): State<MonitorHttpState>) -> impl IntoRespo
     let snapshot = state.snapshot.read().clone();
     let body = render_metrics(&snapshot);
     (
-        [(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
         body,
     )
 }
@@ -1081,7 +1097,8 @@ fn summarize_state(
     if !wallet_ready {
         return "degraded".to_string();
     }
-    if template_refresh_millis.is_some_and(|lag| lag >= TEMPLATE_REFRESH_WARN_AFTER.as_millis() as u64)
+    if template_refresh_millis
+        .is_some_and(|lag| lag >= TEMPLATE_REFRESH_WARN_AFTER.as_millis() as u64)
         || validation_backlog_severity.is_some()
         || payout_queue_severity.is_some()
         || share_ingest_severity.is_some()
@@ -1372,11 +1389,7 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
         "down" => 2,
         _ => 3,
     };
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_summary_state",
-        state_value,
-    );
+    metric_line(&mut out, "blocknet_pool_monitor_summary_state", state_value);
     out
 }
 

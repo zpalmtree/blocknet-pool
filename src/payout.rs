@@ -83,6 +83,7 @@ impl PayoutProcessor {
             {
                 let this = Arc::clone(&this);
                 let _ = tokio::task::spawn_blocking(move || {
+                    this.backfill_legacy_pool_fee_credits();
                     this.recover_pending_payouts();
                     this.tick(true);
                 })
@@ -202,30 +203,28 @@ impl PayoutProcessor {
             }
 
             let fee = self.cfg.pool_fee(block.reward);
-            let distributable = block.reward.saturating_sub(fee);
-            let fee_address = if fee > 0 {
-                resolve_pool_fee_destination(&self.cfg, &block)
-            } else {
-                None
-            };
             let fee_record = if fee > 0 {
-                if let Some(fee_address) = fee_address.as_ref() {
-                    Some(PoolFeeRecord {
+                match resolve_pool_fee_destination(&self.cfg, &block) {
+                    Some(fee_address) => Some(PoolFeeRecord {
                         amount: fee,
-                        fee_address: fee_address.clone(),
+                        fee_address,
                         timestamp: block.timestamp,
-                    })
-                } else {
-                    tracing::warn!(
-                        height = block.height,
-                        fee,
-                        "pool fee applied without an explicit fee destination"
-                    );
-                    None
+                    }),
+                    None => {
+                        tracing::error!(
+                            height = block.height,
+                            fee,
+                            "pool fee is configured without a payout destination; refusing to mark block paid"
+                        );
+                        continue;
+                    }
                 }
             } else {
                 None
             };
+            let distributable = block
+                .reward
+                .saturating_sub(fee_record.as_ref().map(|record| record.amount).unwrap_or(0));
 
             let credits = if self.cfg.payout_scheme.trim().eq_ignore_ascii_case("pplns") {
                 self.build_pplns_credits(&block, distributable)
@@ -492,6 +491,47 @@ impl PayoutProcessor {
                         "stale queued payout has not reached its first send attempt yet"
                     );
                 }
+            }
+        }
+    }
+
+    fn backfill_legacy_pool_fee_credits(&self) {
+        let expected_fee_address = self.cfg.pool_wallet_address.trim().to_string();
+        if expected_fee_address.is_empty() {
+            return;
+        }
+
+        match self
+            .store
+            .backfill_uncredited_pool_fee_balance_credits(Some(&expected_fee_address))
+        {
+            Ok(report) => {
+                if report.credited_events > 0 {
+                    tracing::info!(
+                        fee_address = %expected_fee_address,
+                        credited_events = report.credited_events,
+                        credited_amount = report.credited_amount,
+                        "backfilled historical pool fee credits into pending balances"
+                    );
+                }
+                if report.reconciled_finder_fallback_events > 0 {
+                    tracing::warn!(
+                        fee_address = %expected_fee_address,
+                        reconciled_events = report.reconciled_finder_fallback_events,
+                        reconciled_amount = report.reconciled_finder_fallback_amount,
+                        "corrected historical pool fee rows that were recorded to block finder addresses"
+                    );
+                }
+                if report.skipped_mismatched_destination > 0 {
+                    tracing::warn!(
+                        fee_address = %expected_fee_address,
+                        skipped = report.skipped_mismatched_destination,
+                        "skipped historical pool fee rows whose recorded destination does not match the configured pool wallet"
+                    );
+                }
+            }
+            Err(err) => {
+                tracing::error!(error = %err, "failed backfilling historical pool fee credits");
             }
         }
     }
@@ -970,11 +1010,7 @@ pub(crate) fn resolve_pool_fee_destination(cfg: &Config, block: &DbBlock) -> Opt
     if !configured.is_empty() {
         return Some(configured.to_string());
     }
-
-    let finder = block.finder.trim();
-    if !finder.is_empty() {
-        return Some(finder.to_string());
-    }
+    let _ = block;
     None
 }
 
@@ -1148,7 +1184,10 @@ fn should_reset_stale_prebroadcast_pending_payout(
     pending: &PendingPayout,
     now: SystemTime,
 ) -> bool {
-    pending.tx_hash.as_deref().is_none_or(|tx| tx.trim().is_empty())
+    pending
+        .tx_hash
+        .as_deref()
+        .is_none_or(|tx| tx.trim().is_empty())
         && pending.send_started_at.is_some()
         && pending_send_age(pending, now) >= PENDING_PAYOUT_RETRY_GRACE
 }
@@ -1957,7 +1996,9 @@ mod tests {
             tx_hash: Some("tx-1".to_string()),
             ..stale
         };
-        assert!(!should_reset_stale_prebroadcast_pending_payout(&broadcast, now));
+        assert!(!should_reset_stale_prebroadcast_pending_payout(
+            &broadcast, now
+        ));
     }
 
     #[test]
@@ -1977,8 +2018,45 @@ mod tests {
             ..first.clone()
         };
 
-        assert_ne!(payout_idempotency_key(&first), payout_idempotency_key(&second));
-        assert_eq!(payout_idempotency_key(&first), payout_idempotency_key(&first.clone()));
+        assert_ne!(
+            payout_idempotency_key(&first),
+            payout_idempotency_key(&second)
+        );
+        assert_eq!(
+            payout_idempotency_key(&first),
+            payout_idempotency_key(&first.clone())
+        );
+    }
+
+    #[test]
+    fn pool_fee_destination_requires_explicit_wallet() {
+        let block = DbBlock {
+            height: 1,
+            hash: "block-1".to_string(),
+            difficulty: 1,
+            finder: "miner-a".to_string(),
+            finder_worker: "rig-a".to_string(),
+            reward: 100,
+            timestamp: SystemTime::UNIX_EPOCH,
+            confirmed: true,
+            orphaned: false,
+            paid_out: false,
+            effort_pct: None,
+        };
+
+        assert_eq!(
+            resolve_pool_fee_destination(&Config::default(), &block),
+            None
+        );
+
+        let cfg = Config {
+            pool_wallet_address: "pool-wallet".to_string(),
+            ..Config::default()
+        };
+        assert_eq!(
+            resolve_pool_fee_destination(&cfg, &block),
+            Some("pool-wallet".to_string())
+        );
     }
 
     #[test]

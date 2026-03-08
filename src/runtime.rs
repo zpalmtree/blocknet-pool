@@ -18,7 +18,7 @@ use crate::jobs::JobManager;
 use crate::node::NodeClient;
 use crate::payout::PayoutProcessor;
 use crate::pow::Argon2PowHasher;
-use crate::protocol::{address_network, AddressNetwork};
+use crate::protocol::{address_network, validate_miner_address, AddressNetwork};
 use crate::service_state::{PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY};
 use crate::stats::PoolStats;
 use crate::store::PoolStore;
@@ -41,6 +41,7 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
     ensure_runtime_files(config_path)?;
     load_dotenv(config_path);
     let cfg = Config::load(config_path)?;
+    validate_pool_fee_destination_config(&cfg)?;
     info!(
         "vardiff init={} min={} max={} target_shares={} retarget={}",
         cfg.initial_share_difficulty,
@@ -240,7 +241,19 @@ pub fn stratum_listen_addr(cfg: &Config) -> Result<SocketAddr> {
 }
 
 #[cfg(feature = "api")]
-pub fn start_api_background_tasks(_api_state: ApiState) {
+pub fn start_api_background_tasks(api_state: ApiState) {
+    tokio::spawn(async move {
+        api_state.sample_status().await;
+
+        let mut ticker = tokio::time::interval(api_state.config.monitor_interval_duration());
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ticker.tick().await;
+
+        loop {
+            ticker.tick().await;
+            api_state.sample_status().await;
+        }
+    });
 }
 
 pub fn start_stratum_background_tasks(shared: &SharedRuntime, engine: Arc<PoolEngine>) {
@@ -554,6 +567,23 @@ fn is_local_bind_host(host: &str) -> bool {
     matches!(trimmed.as_str(), "127.0.0.1" | "::1" | "localhost")
 }
 
+fn validate_pool_fee_destination_config(cfg: &Config) -> Result<()> {
+    if cfg.pool_fee_pct <= 0.0 && cfg.pool_fee_flat <= 0.0 {
+        return Ok(());
+    }
+
+    let destination = cfg.pool_wallet_address.trim();
+    if destination.is_empty() {
+        anyhow::bail!(
+            "pool_wallet_address must be set when pool_fee_pct or pool_fee_flat is non-zero"
+        );
+    }
+
+    validate_miner_address(destination)
+        .map_err(|err| anyhow::anyhow!("pool_wallet_address is invalid: {err}"))?;
+    Ok(())
+}
+
 async fn resolve_expected_address_network(
     cfg: &Config,
     node: Arc<NodeClient>,
@@ -606,5 +636,48 @@ fn configured_expected_address_network(cfg: &Config) -> Option<AddressNetwork> {
             );
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_pool_fee_destination_config;
+    use crate::config::Config;
+
+    #[test]
+    fn pool_fee_destination_is_optional_when_fee_is_disabled() {
+        let cfg = Config::default();
+        assert!(validate_pool_fee_destination_config(&cfg).is_ok());
+    }
+
+    #[test]
+    fn pool_fee_destination_is_required_when_fee_is_enabled() {
+        let cfg = Config {
+            pool_fee_pct: 1.0,
+            ..Config::default()
+        };
+        let err = validate_pool_fee_destination_config(&cfg).expect_err("missing destination");
+        assert!(err.to_string().contains("pool_wallet_address must be set"));
+    }
+
+    #[test]
+    fn pool_fee_destination_must_be_a_valid_address() {
+        let cfg = Config {
+            pool_fee_pct: 1.0,
+            pool_wallet_address: "not-an-address".to_string(),
+            ..Config::default()
+        };
+        let err = validate_pool_fee_destination_config(&cfg).expect_err("invalid destination");
+        assert!(err.to_string().contains("pool_wallet_address is invalid"));
+    }
+
+    #[test]
+    fn valid_pool_fee_destination_is_accepted() {
+        let cfg = Config {
+            pool_fee_pct: 1.0,
+            pool_wallet_address: bs58::encode([0x11; 64]).into_string(),
+            ..Config::default()
+        };
+        assert!(validate_pool_fee_destination_config(&cfg).is_ok());
     }
 }

@@ -52,6 +52,15 @@ pub struct VardiffHintDiagnostic {
     pub updated_at: SystemTime,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PoolFeeCreditBackfillReport {
+    pub credited_events: u64,
+    pub credited_amount: u64,
+    pub reconciled_finder_fallback_events: u64,
+    pub reconciled_finder_fallback_amount: u64,
+    pub skipped_mismatched_destination: u64,
+}
+
 struct ManagedClient {
     client: Client,
     url: String,
@@ -264,6 +273,16 @@ CREATE TABLE IF NOT EXISTS pool_fee_events (
 );
 CREATE INDEX IF NOT EXISTS idx_pool_fee_events_timestamp ON pool_fee_events(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_pool_fee_events_fee_address ON pool_fee_events(fee_address);
+
+CREATE TABLE IF NOT EXISTS pool_fee_balance_credits (
+    block_height BIGINT PRIMARY KEY,
+    fee_address TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    timestamp BIGINT NOT NULL,
+    credited_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pool_fee_balance_credits_fee_address
+    ON pool_fee_balance_credits(fee_address);
 
 CREATE TABLE IF NOT EXISTS block_credit_events (
     id BIGSERIAL PRIMARY KEY,
@@ -1066,6 +1085,85 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(())
     }
 
+    fn credit_pending_balance(
+        tx: &mut Transaction<'_>,
+        destination: &str,
+        amount: u64,
+    ) -> Result<()> {
+        if destination.is_empty() || amount == 0 {
+            return Ok(());
+        }
+
+        let row = tx.query_opt(
+            "SELECT address, pending, paid FROM balances WHERE address = $1",
+            &[&destination],
+        )?;
+        let mut bal = if let Some(row) = row {
+            Balance {
+                address: row.get::<_, String>(0),
+                pending: row.get::<_, i64>(1).max(0) as u64,
+                paid: row.get::<_, i64>(2).max(0) as u64,
+            }
+        } else {
+            Balance {
+                address: destination.to_string(),
+                pending: 0,
+                paid: 0,
+            }
+        };
+        bal.pending = bal
+            .pending
+            .checked_add(amount)
+            .ok_or_else(|| anyhow!("balance overflow"))?;
+
+        tx.execute(
+            "INSERT INTO balances (address, pending, paid) VALUES ($1, $2, $3)
+             ON CONFLICT(address) DO UPDATE SET pending = EXCLUDED.pending, paid = EXCLUDED.paid",
+            &[
+                &bal.address,
+                &u64_to_i64(bal.pending)?,
+                &u64_to_i64(bal.paid)?,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn apply_pool_fee_balance_credit(
+        tx: &mut Transaction<'_>,
+        block_height: u64,
+        destination: &str,
+        amount: u64,
+        timestamp: SystemTime,
+    ) -> Result<bool> {
+        if amount == 0 {
+            return Ok(false);
+        }
+
+        let destination = destination.trim();
+        if destination.is_empty() {
+            return Err(anyhow!("fee address is required"));
+        }
+
+        let inserted = tx.execute(
+            "INSERT INTO pool_fee_balance_credits (block_height, fee_address, amount, timestamp, credited_at)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT(block_height) DO NOTHING",
+            &[
+                &u64_to_i64(block_height)?,
+                &destination,
+                &u64_to_i64(amount)?,
+                &to_unix(timestamp),
+                &now_unix(),
+            ],
+        )?;
+        if inserted == 0 {
+            return Ok(false);
+        }
+
+        Self::credit_pending_balance(tx, destination, amount)?;
+        Ok(true)
+    }
+
     pub fn apply_block_credits_and_mark_paid(
         &self,
         block_height: u64,
@@ -1106,33 +1204,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 continue;
             }
 
-            let row = tx.query_opt(
-                "SELECT address, pending, paid FROM balances WHERE address = $1",
-                &[&destination],
-            )?;
-            let mut bal = if let Some(row) = row {
-                Balance {
-                    address: row.get::<_, String>(0),
-                    pending: row.get::<_, i64>(1).max(0) as u64,
-                    paid: row.get::<_, i64>(2).max(0) as u64,
-                }
-            } else {
-                Balance {
-                    address: destination.to_string(),
-                    pending: 0,
-                    paid: 0,
-                }
-            };
-            bal.pending = bal
-                .pending
-                .checked_add(*amount)
-                .ok_or_else(|| anyhow!("balance overflow"))?;
-
-            tx.execute(
-                "INSERT INTO balances (address, pending, paid) VALUES ($1, $2, $3)
-                 ON CONFLICT(address) DO UPDATE SET pending = EXCLUDED.pending, paid = EXCLUDED.paid",
-                &[&bal.address, &u64_to_i64(bal.pending)?, &u64_to_i64(bal.paid)?],
-            )?;
+            Self::credit_pending_balance(&mut tx, destination, *amount)?;
 
             tx.execute(
                 "INSERT INTO block_credit_events (block_height, address, amount)
@@ -1152,6 +1224,15 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 if destination.is_empty() {
                     return Err(anyhow!("fee address is required"));
                 }
+
+                let _ = Self::apply_pool_fee_balance_credit(
+                    &mut tx,
+                    block_height,
+                    destination,
+                    fee.amount,
+                    fee.timestamp,
+                )?;
+
                 tx.execute(
                     "INSERT INTO pool_fee_events (block_height, amount, fee_address, timestamp)
                      VALUES ($1, $2, $3, $4)
@@ -1176,6 +1257,90 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
         tx.commit()?;
         Ok(true)
+    }
+
+    pub fn backfill_uncredited_pool_fee_balance_credits(
+        &self,
+        expected_fee_address: Option<&str>,
+    ) -> Result<PoolFeeCreditBackfillReport> {
+        let expected_fee_address = expected_fee_address
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let rows = self.conn().lock().query(
+            "SELECT e.block_height, e.amount, e.fee_address, e.timestamp, COALESCE(b.finder, '')
+             FROM pool_fee_events e
+             LEFT JOIN pool_fee_balance_credits c ON c.block_height = e.block_height
+             LEFT JOIN blocks b ON b.height = e.block_height
+             WHERE c.block_height IS NULL
+             ORDER BY e.block_height ASC",
+            &[],
+        )?;
+
+        let mut report = PoolFeeCreditBackfillReport::default();
+        for row in rows {
+            let block_height = row.get::<_, i64>(0).max(0) as u64;
+            let amount = row.get::<_, i64>(1).max(0) as u64;
+            let fee_address = row.get::<_, String>(2);
+            let timestamp = from_unix(row.get::<_, i64>(3));
+            let finder = row.get::<_, String>(4);
+            let recorded_fee_address = fee_address.trim();
+            let finder = finder.trim();
+            let mut credit_destination = recorded_fee_address.to_string();
+            let mut reconciled_legacy_finder_fallback = false;
+
+            if expected_fee_address
+                .as_deref()
+                .is_some_and(|expected| recorded_fee_address != expected)
+            {
+                if !finder.is_empty() && recorded_fee_address == finder {
+                    credit_destination = expected_fee_address
+                        .as_deref()
+                        .expect("checked Some above")
+                        .to_string();
+                    reconciled_legacy_finder_fallback = true;
+                } else {
+                    report.skipped_mismatched_destination =
+                        report.skipped_mismatched_destination.saturating_add(1);
+                    continue;
+                }
+            }
+
+            let mut conn = self.conn().lock();
+            let mut tx = conn.transaction()?;
+            if reconciled_legacy_finder_fallback {
+                tx.execute(
+                    "UPDATE pool_fee_events
+                     SET fee_address = $2
+                     WHERE block_height = $1 AND fee_address = $3",
+                    &[
+                        &u64_to_i64(block_height)?,
+                        &credit_destination,
+                        &recorded_fee_address,
+                    ],
+                )?;
+            }
+            if Self::apply_pool_fee_balance_credit(
+                &mut tx,
+                block_height,
+                &credit_destination,
+                amount,
+                timestamp,
+            )? {
+                report.credited_events = report.credited_events.saturating_add(1);
+                report.credited_amount = report.credited_amount.saturating_add(amount);
+                if reconciled_legacy_finder_fallback {
+                    report.reconciled_finder_fallback_events =
+                        report.reconciled_finder_fallback_events.saturating_add(1);
+                    report.reconciled_finder_fallback_amount = report
+                        .reconciled_finder_fallback_amount
+                        .saturating_add(amount);
+                }
+            }
+            tx.commit()?;
+        }
+
+        Ok(report)
     }
 
     pub fn get_all_balances(&self) -> Result<Vec<Balance>> {
@@ -3109,6 +3274,7 @@ mod tests {
             .apply_block_credits_and_mark_paid_with_fee(height, &credits, Some(&fee))
             .expect("apply with fee"));
         assert_eq!(store.get_balance(&addr1).expect("bal1").pending, 60);
+        assert_eq!(store.get_balance(&fee_address).expect("fee bal").pending, 5);
 
         let fees = store.get_recent_pool_fees(500).expect("recent fees");
         let matching = fees
@@ -3178,6 +3344,165 @@ mod tests {
                 .expect("block query")
                 .expect("block exists")
                 .paid_out
+        );
+    }
+
+    #[test]
+    fn backfill_uncredited_pool_fee_balance_credits_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let height = 8_200_000u64 + (rand::random::<u16>() as u64);
+        let fee_address = format!("pool-{suffix}");
+        store
+            .record_pool_fee(height, 25, &fee_address, SystemTime::now())
+            .expect("record legacy fee");
+
+        let report = store
+            .backfill_uncredited_pool_fee_balance_credits(Some(&fee_address))
+            .expect("backfill");
+        assert_eq!(report.credited_events, 1);
+        assert_eq!(report.credited_amount, 25);
+        assert_eq!(report.reconciled_finder_fallback_events, 0);
+        assert_eq!(report.reconciled_finder_fallback_amount, 0);
+        assert_eq!(report.skipped_mismatched_destination, 0);
+        assert_eq!(
+            store
+                .get_balance(&fee_address)
+                .expect("fee balance")
+                .pending,
+            25
+        );
+
+        let second = store
+            .backfill_uncredited_pool_fee_balance_credits(Some(&fee_address))
+            .expect("second backfill");
+        assert_eq!(second.credited_events, 0);
+        assert_eq!(second.credited_amount, 0);
+    }
+
+    #[test]
+    fn backfill_uncredited_pool_fee_balance_credits_reconciles_finder_fallback_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let height = 8_300_000u64 + (rand::random::<u16>() as u64);
+        let recorded = format!("finder-{suffix}");
+        let expected = format!("expected-{suffix}");
+        store
+            .add_block(&DbBlock {
+                height,
+                hash: format!("legacy-fee-block-{suffix}"),
+                difficulty: 1,
+                finder: recorded.clone(),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert block");
+        store
+            .record_pool_fee(height, 30, &recorded, SystemTime::now())
+            .expect("record legacy fee");
+
+        let report = store
+            .backfill_uncredited_pool_fee_balance_credits(Some(&expected))
+            .expect("backfill");
+        assert_eq!(report.credited_events, 1);
+        assert_eq!(report.credited_amount, 30);
+        assert_eq!(report.reconciled_finder_fallback_events, 1);
+        assert_eq!(report.reconciled_finder_fallback_amount, 30);
+        assert_eq!(report.skipped_mismatched_destination, 0);
+        assert_eq!(
+            store
+                .get_balance(&recorded)
+                .expect("recorded balance")
+                .pending,
+            0
+        );
+        assert_eq!(
+            store
+                .get_balance(&expected)
+                .expect("expected balance")
+                .pending,
+            30
+        );
+        assert_eq!(
+            store
+                .get_block_pool_fee_event(height)
+                .expect("fee event query")
+                .expect("fee event")
+                .fee_address,
+            expected
+        );
+    }
+
+    #[test]
+    fn backfill_uncredited_pool_fee_balance_credits_skips_mismatched_destination_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let height = 8_400_000u64 + (rand::random::<u16>() as u64);
+        let recorded = format!("recorded-{suffix}");
+        let expected = format!("expected-{suffix}");
+        store
+            .add_block(&DbBlock {
+                height,
+                hash: format!("mismatched-fee-block-{suffix}"),
+                difficulty: 1,
+                finder: format!("finder-{suffix}"),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert block");
+        store
+            .record_pool_fee(height, 30, &recorded, SystemTime::now())
+            .expect("record legacy fee");
+
+        let report = store
+            .backfill_uncredited_pool_fee_balance_credits(Some(&expected))
+            .expect("backfill");
+        assert_eq!(report.credited_events, 0);
+        assert_eq!(report.credited_amount, 0);
+        assert_eq!(report.reconciled_finder_fallback_events, 0);
+        assert_eq!(report.reconciled_finder_fallback_amount, 0);
+        assert_eq!(report.skipped_mismatched_destination, 1);
+        assert_eq!(
+            store
+                .get_balance(&recorded)
+                .expect("recorded balance")
+                .pending,
+            0
+        );
+        assert_eq!(
+            store
+                .get_balance(&expected)
+                .expect("expected balance")
+                .pending,
+            0
         );
     }
 

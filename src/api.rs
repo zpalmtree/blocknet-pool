@@ -3081,9 +3081,7 @@ async fn handle_monitor_ingest_cloudflare(
                     true,
                     detail.clone(),
                 ))?;
-                ts = ts
-                    .checked_add(Duration::from_secs(60))
-                    .unwrap_or(ended_at);
+                ts = ts.checked_add(Duration::from_secs(60)).unwrap_or(ended_at);
             }
             store.upsert_monitor_incident(&crate::db::MonitorIncidentUpsert {
                 dedupe_key: "cloudflare_public_http_down".to_string(),
@@ -3101,19 +3099,16 @@ async fn handle_monitor_ingest_cloudflare(
             store.resolve_monitor_incident("cloudflare_public_http_down", ended_at)?;
         }
 
-        store.upsert_monitor_heartbeat(&cloudflare_heartbeat(
-            ended_at,
-            true,
-            false,
-            detail,
-        ))?;
+        store.upsert_monitor_heartbeat(&cloudflare_heartbeat(ended_at, true, false, detail))?;
         Ok(())
     })
     .await;
 
     match action {
         Ok(Ok(())) => StatusCode::ACCEPTED.into_response(),
-        Ok(Err(err)) => internal_error("failed storing cloudflare monitor event", err).into_response(),
+        Ok(Err(err)) => {
+            internal_error("failed storing cloudflare monitor event", err).into_response()
+        }
         Err(err) => internal_error(
             "failed storing cloudflare monitor event",
             anyhow::anyhow!("join error: {err}"),
@@ -3187,7 +3182,10 @@ async fn handle_admin_balances(
 ) -> impl IntoResponse {
     let store = Arc::clone(&state.store);
     let search = query.search.clone().unwrap_or_default();
-    let sort = query.sort.clone().unwrap_or_else(|| "pending_desc".to_string());
+    let sort = query
+        .sort
+        .clone()
+        .unwrap_or_else(|| "pending_desc".to_string());
     let (limit, offset) = page_bounds(query.limit, query.offset);
 
     match tokio::task::spawn_blocking(move || -> anyhow::Result<PagedResponse<AdminBalanceItem>> {
@@ -3237,10 +3235,11 @@ async fn handle_admin_balances(
     {
         Ok(Ok(resp)) => Json(resp).into_response(),
         Ok(Err(err)) => internal_error("failed loading balances", err).into_response(),
-        Err(err) => {
-            internal_error("failed loading balances", anyhow::anyhow!("join error: {err}"))
-                .into_response()
-        }
+        Err(err) => internal_error(
+            "failed loading balances",
+            anyhow::anyhow!("join error: {err}"),
+        )
+        .into_response(),
     }
 }
 
@@ -6196,10 +6195,26 @@ impl ApiState {
         let template_refresh_millis = latest_local.and_then(|row| row.last_refresh_millis);
         let services = StatusServices {
             public_http: service_health_from_public(latest_external),
-            api: service_health_from_local(latest_local, |row| row.api_up, "no recent API heartbeat"),
-            stratum: service_health_from_local(latest_local, |row| row.stratum_up, "no recent Stratum heartbeat"),
-            database: service_health_from_local(latest_local, |row| Some(row.db_up), "no recent database heartbeat"),
-            daemon: service_health_from_local(latest_local, |row| row.daemon_up, "no recent daemon heartbeat"),
+            api: service_health_from_local(
+                latest_local,
+                |row| row.api_up,
+                "no recent API heartbeat",
+            ),
+            stratum: service_health_from_local(
+                latest_local,
+                |row| row.stratum_up,
+                "no recent Stratum heartbeat",
+            ),
+            database: service_health_from_local(
+                latest_local,
+                |row| Some(row.db_up),
+                "no recent database heartbeat",
+            ),
+            daemon: service_health_from_local(
+                latest_local,
+                |row| row.daemon_up,
+                "no recent daemon heartbeat",
+            ),
         };
         let pool_healthy = services.api.healthy
             && services.stratum.healthy
@@ -6229,7 +6244,13 @@ impl ApiState {
             last_refresh_millis: template_refresh_millis,
         };
         let uptime = vec![
-            build_monitor_uptime_window("1h", Duration::from_secs(3600), &local_rows, &external_rows, now),
+            build_monitor_uptime_window(
+                "1h",
+                Duration::from_secs(3600),
+                &local_rows,
+                &external_rows,
+                now,
+            ),
             build_monitor_uptime_window(
                 "24h",
                 Duration::from_secs(24 * 3600),
@@ -7022,8 +7043,8 @@ mod tests {
         rejection_window_duration, share_limit, sort_workers_for_miner, system_time_to_unix_secs,
         trim_log_line, worker_hashrate_by_name, ApiState, DaemonHealthCache, DbTotalsCache,
         InsightsCache, LiveRuntimeSnapshotCache, MinerDetailQuery, MinerPendingBlockEstimate,
-        MinerPendingEstimate, MinersQuery, NetworkHashrateCache, PayoutEtaResponse,
-        OpenIncident, PoolHealthCache, StatusHistory, StatusIncident, DAEMON_LOG_LINE_LIMIT,
+        MinerPendingEstimate, MinersQuery, NetworkHashrateCache, OpenIncident, PayoutEtaResponse,
+        PoolHealthCache, StatusHistory, StatusIncident, DAEMON_LOG_LINE_LIMIT,
         HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
         LIVE_RUNTIME_SNAPSHOT_META_KEY, STATUS_HISTORY_META_KEY,
     };

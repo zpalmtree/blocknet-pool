@@ -14,7 +14,8 @@ use crate::db::{
 };
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::pgdb::{
-    MinerShareWindowStats, PostgresStore, VardiffHintDiagnostic, VardiffHintSummary,
+    MinerShareWindowStats, PoolFeeCreditBackfillReport, PostgresStore, VardiffHintDiagnostic,
+    VardiffHintSummary,
 };
 use crate::validation::{
     LoadedValidationState, PersistedValidationAddressState, ValidationStateStore,
@@ -98,6 +99,14 @@ impl PoolStore {
         limit: i64,
     ) -> Result<Vec<VardiffHintDiagnostic>> {
         self.inner.recent_vardiff_hint_diagnostics(address, limit)
+    }
+
+    pub fn backfill_uncredited_pool_fee_balance_credits(
+        &self,
+        expected_fee_address: Option<&str>,
+    ) -> Result<PoolFeeCreditBackfillReport> {
+        self.inner
+            .backfill_uncredited_pool_fee_balance_credits(expected_fee_address)
     }
 
     pub fn upsert_monitor_heartbeat(&self, heartbeat: &MonitorHeartbeatUpsert) -> Result<()> {

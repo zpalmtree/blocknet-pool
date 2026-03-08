@@ -573,14 +573,21 @@ fn cookie_candidates_with_context(
         push_cookie_candidate(&mut out, context.data_dir.join("api.cookie"));
     }
 
-    let managed_dir = managed_config.map(|config| config.config_dir.as_path()).or(fallback_bnt_dir);
+    let managed_dir = managed_config
+        .map(|config| config.config_dir.as_path())
+        .or(fallback_bnt_dir);
     if let Some(config_dir) = managed_dir {
         for network in [DaemonNetwork::Mainnet, DaemonNetwork::Testnet] {
             let pidfile = config_dir.join(format!("core.{}.pid", network.as_str()));
             if pidfile.exists() {
                 let managed_cookie = managed_config
                     .map(|config| config.data_dir_for(network).join("api.cookie"))
-                    .unwrap_or_else(|| config_dir.join("data").join(network.as_str()).join("api.cookie"));
+                    .unwrap_or_else(|| {
+                        config_dir
+                            .join("data")
+                            .join(network.as_str())
+                            .join("api.cookie")
+                    });
                 push_cookie_candidate(&mut out, managed_cookie);
             }
         }
@@ -597,7 +604,10 @@ fn cookie_candidates_with_context(
         for network in [DaemonNetwork::Mainnet, DaemonNetwork::Testnet] {
             push_cookie_candidate(
                 &mut out,
-                config_dir.join("data").join(network.as_str()).join("api.cookie"),
+                config_dir
+                    .join("data")
+                    .join(network.as_str())
+                    .join("api.cookie"),
             );
         }
     }
@@ -694,7 +704,9 @@ fn detect_daemon_context() -> Option<DaemonContext> {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
     let managed_config = load_bnt_config_context();
-    let managed_dir = managed_config.as_ref().map(|config| config.config_dir.as_path());
+    let managed_dir = managed_config
+        .as_ref()
+        .map(|config| config.config_dir.as_path());
     let mut sys = System::new();
     sys.refresh_processes_specifics(
         ProcessesToUpdate::All,
@@ -721,7 +733,11 @@ fn detect_daemon_context() -> Option<DaemonContext> {
             .unwrap_or(DaemonNetwork::Mainnet);
 
         let data_dir = daemon_data_dir_from_cmdline(&cmd)
-            .or_else(|| managed_config.as_ref().map(|config| config.data_dir_for(network)))
+            .or_else(|| {
+                managed_config
+                    .as_ref()
+                    .map(|config| config.data_dir_for(network))
+            })
             .unwrap_or_else(|| network.legacy_data_dir());
         let data_dir = if data_dir.is_relative() {
             process
@@ -927,7 +943,10 @@ mod tests {
         );
 
         assert_eq!(candidates[0], PathBuf::from("/explicit/api.cookie"));
-        assert_eq!(candidates[1], PathBuf::from("/var/lib/blocknet/data/api.cookie"));
+        assert_eq!(
+            candidates[1],
+            PathBuf::from("/var/lib/blocknet/data/api.cookie")
+        );
         assert_eq!(candidates[2], PathBuf::from("/detected/mainnet/api.cookie"));
         assert!(candidates.contains(&PathBuf::from("/managed/mainnet/api.cookie")));
     }
@@ -953,7 +972,13 @@ mod tests {
 
         assert_eq!(candidates[0], PathBuf::from("/managed/testnet/api.cookie"));
         assert!(candidates.contains(&PathBuf::from("/managed/testnet/api.cookie")));
-        assert!(candidates.contains(&config_dir.path().join("data").join("mainnet").join("api.cookie")));
+        assert!(candidates.contains(
+            &config_dir
+                .path()
+                .join("data")
+                .join("mainnet")
+                .join("api.cookie")
+        ));
     }
 
     #[test]
