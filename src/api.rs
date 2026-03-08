@@ -528,6 +528,8 @@ struct TemplateHealth {
     last_refresh_millis: Option<u64>,
 }
 
+const TEMPLATE_REFRESH_WARN_AFTER_MILLIS: u64 = 45_000;
+
 #[derive(Debug, Clone, Serialize)]
 struct UptimeWindow {
     label: String,
@@ -6112,6 +6114,7 @@ impl ApiState {
         let latest_local = local_rows.last();
         let latest_external = external_rows.last();
         let template_age = latest_local.and_then(|row| row.template_age_seconds);
+        let template_refresh_millis = latest_local.and_then(|row| row.last_refresh_millis);
         let services = StatusServices {
             public_http: service_health_from_public(latest_external),
             api: service_health_from_local(latest_local, |row| row.api_up, "no recent API heartbeat"),
@@ -6126,7 +6129,8 @@ impl ApiState {
             && !latest_local
                 .and_then(|row| row.daemon_syncing)
                 .unwrap_or(false)
-            && !template_age.is_some_and(|age| age >= 45)
+            && !template_refresh_millis
+                .is_some_and(|lag| lag >= TEMPLATE_REFRESH_WARN_AFTER_MILLIS)
             && latest_external
                 .and_then(|row| row.public_http_up)
                 .unwrap_or(true);
@@ -6139,10 +6143,11 @@ impl ApiState {
         };
         let daemon = daemon_health_from_heartbeat(latest_local);
         let template = TemplateHealth {
-            observed: latest_local.is_some(),
-            fresh: template_age.is_some_and(|age| age < 45),
+            observed: template_refresh_millis.is_some() || template_age.is_some(),
+            fresh: template_refresh_millis
+                .is_some_and(|lag| lag < TEMPLATE_REFRESH_WARN_AFTER_MILLIS),
             age_seconds: template_age,
-            last_refresh_millis: latest_local.and_then(|row| row.last_refresh_millis),
+            last_refresh_millis: template_refresh_millis,
         };
         let uptime = vec![
             build_monitor_uptime_window("1h", Duration::from_secs(3600), &local_rows, &external_rows, now),

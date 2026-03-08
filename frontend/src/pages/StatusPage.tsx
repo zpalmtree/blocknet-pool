@@ -41,6 +41,12 @@ function templateState(status: StatusResponse | null): string {
   return status.template.fresh ? 'Fresh' : 'Stale';
 }
 
+function fmtRefreshLag(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return '-';
+  if (ms < 1000) return '<1s';
+  return fmtSeconds(Math.max(1, Math.floor(ms / 1000)));
+}
+
 export function StatusPage({ active, api, liveTick }: StatusPageProps) {
   const [status, setStatus] = useState<StatusResponse | null>(null);
 
@@ -74,63 +80,84 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
         </p>
       </div>
 
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div className="label">Pool</div>
-          <div className="value">{poolState(status)}</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Public HTTP</div>
-          <div className="value">{serviceState(status, 'public_http')}</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">API</div>
-          <div className="value">{serviceState(status, 'api')}</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Stratum</div>
-          <div className="value">{serviceState(status, 'stratum')}</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Database</div>
-          <div className="value" title={!status?.pool?.database_reachable ? status?.pool?.error ?? undefined : undefined}>
-            {serviceState(status, 'database')}
+      <div className="stats-card-group">
+        <div className="stats-card-group-title">Pool Reachability</div>
+        <div className="stats-card-group-grid stats-grid-dense">
+          <div className="stat-card">
+            <div className="label">Pool</div>
+            <div className="value">{poolState(status)}</div>
           </div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Daemon</div>
-          <div className="value">{serviceState(status, 'daemon')}</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Template</div>
-          <div className="value">{templateState(status)}</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Chain Height</div>
-          <div className="value mono">{status?.daemon?.chain_height ?? '-'}</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Template Age</div>
-          <div className="value mono">{status?.template?.age_seconds != null ? fmtSeconds(status.template.age_seconds) : '-'}</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">API Uptime</div>
-          <div className="value mono">{status ? fmtSeconds(status.pool_uptime_seconds || 0) : '-'}</div>
+          <div className="stat-card">
+            <div className="label">Public HTTP</div>
+            <div className="value">{serviceState(status, 'public_http')}</div>
+          </div>
+          <div className="stat-card">
+            <div className="label">API</div>
+            <div className="value">{serviceState(status, 'api')}</div>
+          </div>
+          <div className="stat-card">
+            <div className="label">Stratum</div>
+            <div className="value">{serviceState(status, 'stratum')}</div>
+          </div>
+          <div className="stat-card">
+            <div className="label">Database</div>
+            <div
+              className="value"
+              title={!status?.pool?.database_reachable ? status?.pool?.error ?? undefined : undefined}
+            >
+              {serviceState(status, 'database')}
+            </div>
+          </div>
+          <div className="stat-card">
+            <div className="label">Daemon</div>
+            <div className="value">{serviceState(status, 'daemon')}</div>
+          </div>
         </div>
       </div>
 
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div className="label">Sync State</div>
-          <div className="value">{syncState(status)}</div>
+      <div className="stats-card-group">
+        <div className="stats-card-group-title">Job Template</div>
+        <div className="stats-card-group-grid stats-grid-dense">
+          <div className="stat-card">
+            <div className="label">Template Refresh</div>
+            <div className="value">{templateState(status)}</div>
+          </div>
+          <div className="stat-card">
+            <div className="label">Refresh Lag</div>
+            <div className="value mono">{fmtRefreshLag(status?.template?.last_refresh_millis)}</div>
+          </div>
+          <div className="stat-card">
+            <div className="label">Current Template Age</div>
+            <div className="value mono">
+              {status?.template?.age_seconds != null ? fmtSeconds(status.template.age_seconds) : '-'}
+            </div>
+          </div>
+          <div className="stat-card">
+            <div className="label">Sync State</div>
+            <div className="value">{syncState(status)}</div>
+          </div>
+          <div className="stat-card">
+            <div className="label">Chain Height</div>
+            <div className="value mono">{status?.daemon?.chain_height ?? '-'}</div>
+          </div>
         </div>
-        <div className="stat-card">
-          <div className="label">Local Samples</div>
-          <div className="value mono">{status?.uptime?.[0]?.sample_count ?? '-'}</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">External Samples</div>
-          <div className="value mono">{status?.uptime?.[0]?.external_sample_count ?? '-'}</div>
+      </div>
+
+      <div className="stats-card-group">
+        <div className="stats-card-group-title">Sampling</div>
+        <div className="stats-card-group-grid stats-grid-dense">
+          <div className="stat-card">
+            <div className="label">API Uptime</div>
+            <div className="value mono">{status ? fmtSeconds(status.pool_uptime_seconds || 0) : '-'}</div>
+          </div>
+          <div className="stat-card">
+            <div className="label">Local Samples</div>
+            <div className="value mono">{status?.uptime?.[0]?.sample_count ?? '-'}</div>
+          </div>
+          <div className="stat-card">
+            <div className="label">External Samples</div>
+            <div className="value mono">{status?.uptime?.[0]?.external_sample_count ?? '-'}</div>
+          </div>
         </div>
       </div>
 

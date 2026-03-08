@@ -32,8 +32,8 @@ const DEFAULT_HEARTBEAT_RETENTION: Duration = Duration::from_secs(30 * 24 * 60 *
 const DEFAULT_INCIDENT_RETENTION: Duration = Duration::from_secs(180 * 24 * 60 * 60);
 const HOUSEKEEPING_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const STRATUM_SNAPSHOT_STALE_AFTER: Duration = Duration::from_secs(30);
-const TEMPLATE_STALE_WARN_AFTER: Duration = Duration::from_secs(45);
-const TEMPLATE_STALE_CRITICAL_AFTER: u64 = 120;
+const TEMPLATE_REFRESH_WARN_AFTER: Duration = Duration::from_secs(45);
+const TEMPLATE_REFRESH_CRITICAL_AFTER: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct MonitorSnapshot {
@@ -289,9 +289,9 @@ impl MonitorRuntime {
             payout_summary = self.load_pending_payouts().await;
         }
 
-        let template_age = runtime_snapshot
+        let template_refresh_millis = runtime_snapshot
             .as_ref()
-            .and_then(|snapshot| snapshot.jobs.template_age_seconds);
+            .and_then(|snapshot| snapshot.jobs.last_refresh_millis);
         let stratum_snapshot_fresh = runtime_snapshot_age(sampled_at, runtime_snapshot.as_ref())
             .is_some_and(|age| age <= STRATUM_SNAPSHOT_STALE_AFTER);
         let validation_backlog = validation_backlog_state(
@@ -308,7 +308,7 @@ impl MonitorRuntime {
                 .value
                 .as_ref()
                 .is_some_and(|status| !status.syncing),
-            template_age,
+            template_refresh_millis,
             validation_backlog,
             share_ingest_stalled,
         );
@@ -356,11 +356,10 @@ impl MonitorRuntime {
             .value
             .as_ref()
             .is_some_and(|status| status.syncing);
-        let template_age = sample
+        let template_refresh_millis = sample
             .runtime_snapshot
             .as_ref()
-            .and_then(|snapshot| snapshot.jobs.template_age_seconds)
-            .unwrap_or_default();
+            .and_then(|snapshot| snapshot.jobs.last_refresh_millis);
         let snapshot_stale = runtime_snapshot_age(now, sample.runtime_snapshot.as_ref())
             .is_some_and(|age| age > STRATUM_SNAPSHOT_STALE_AFTER);
         let validation_backlog = validation_backlog_state(
@@ -439,16 +438,21 @@ impl MonitorRuntime {
             &mut incidents.template_stale,
             "local_template_stale",
             "template_stale",
-            if template_age >= TEMPLATE_STALE_CRITICAL_AFTER {
+            if template_refresh_millis.is_some_and(|lag| {
+                lag >= TEMPLATE_REFRESH_CRITICAL_AFTER.as_millis() as u64
+            }) {
                 "critical"
             } else {
                 "warn"
             },
             "public",
-            template_age >= TEMPLATE_STALE_WARN_AFTER.as_secs(),
+            template_refresh_millis.is_some_and(|lag| {
+                lag >= TEMPLATE_REFRESH_WARN_AFTER.as_millis() as u64
+            }),
             Duration::from_secs(0),
             now,
-            Some(format!("latest job template age is {}s", template_age)),
+            template_refresh_millis
+                .map(|lag| format!("latest template refresh lag is {}s", lag / 1000)),
             &mut actions,
         )?;
         self.sync_condition(
@@ -561,8 +565,8 @@ impl MonitorRuntime {
             return Ok(());
         }
 
+        let dedupe_key_owned = dedupe_key.to_string();
         if let Some(started_at) = state.failing_since.take() {
-            let dedupe_key_owned = dedupe_key.to_string();
             if now.duration_since(started_at).unwrap_or_default() >= threshold {
                 actions.push(IncidentStoreAction::Upsert(MonitorIncidentUpsert {
                     dedupe_key: dedupe_key_owned.clone(),
@@ -581,12 +585,12 @@ impl MonitorRuntime {
                     dedupe_key: dedupe_key_owned,
                     ended_at: now,
                 });
-            } else {
-                actions.push(IncidentStoreAction::Resolve {
-                    dedupe_key: dedupe_key_owned,
-                    ended_at: now,
-                });
             }
+        } else {
+            actions.push(IncidentStoreAction::Resolve {
+                dedupe_key: dedupe_key_owned,
+                ended_at: now,
+            });
         }
 
         Ok(())
@@ -1063,14 +1067,14 @@ fn summarize_state(
     stratum_up: bool,
     db_up: bool,
     daemon_ready: bool,
-    template_age_seconds: Option<u64>,
+    template_refresh_millis: Option<u64>,
     validation_backlog: bool,
     share_ingest_stalled: bool,
 ) -> String {
     if !api_up || !stratum_up || !db_up || !daemon_ready {
         return "down".to_string();
     }
-    if template_age_seconds.is_some_and(|age| age >= TEMPLATE_STALE_WARN_AFTER.as_secs())
+    if template_refresh_millis.is_some_and(|lag| lag >= TEMPLATE_REFRESH_WARN_AFTER.as_millis() as u64)
         || validation_backlog
         || share_ingest_stalled
     {
