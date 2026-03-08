@@ -8,7 +8,10 @@ use anyhow::{anyhow, Result};
 use tracing::warn;
 
 use crate::config::Config;
-use crate::db::{DbBlock, ShareReplayData};
+use crate::db::{
+    DbBlock, MonitorHeartbeat, MonitorHeartbeatUpsert, MonitorIncident, MonitorIncidentUpsert,
+    ShareReplayData,
+};
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::pgdb::{
     MinerShareWindowStats, PostgresStore, VardiffHintDiagnostic, VardiffHintSummary,
@@ -95,6 +98,56 @@ impl PoolStore {
         limit: i64,
     ) -> Result<Vec<VardiffHintDiagnostic>> {
         self.inner.recent_vardiff_hint_diagnostics(address, limit)
+    }
+
+    pub fn upsert_monitor_heartbeat(&self, heartbeat: &MonitorHeartbeatUpsert) -> Result<()> {
+        self.inner.upsert_monitor_heartbeat(heartbeat)
+    }
+
+    pub fn get_monitor_heartbeats_since(
+        &self,
+        since: SystemTime,
+        source: Option<&str>,
+    ) -> Result<Vec<MonitorHeartbeat>> {
+        self.inner.get_monitor_heartbeats_since(since, source)
+    }
+
+    pub fn get_latest_monitor_heartbeat(
+        &self,
+        source: Option<&str>,
+    ) -> Result<Option<MonitorHeartbeat>> {
+        self.inner.get_latest_monitor_heartbeat(source)
+    }
+
+    pub fn upsert_monitor_incident(&self, incident: &MonitorIncidentUpsert) -> Result<()> {
+        self.inner.upsert_monitor_incident(incident)
+    }
+
+    pub fn resolve_monitor_incident(&self, dedupe_key: &str, ended_at: SystemTime) -> Result<u64> {
+        self.inner.resolve_monitor_incident(dedupe_key, ended_at)
+    }
+
+    pub fn get_open_monitor_incidents(
+        &self,
+        visibility: Option<&str>,
+    ) -> Result<Vec<MonitorIncident>> {
+        self.inner.get_open_monitor_incidents(visibility)
+    }
+
+    pub fn get_recent_monitor_incidents(
+        &self,
+        limit: i64,
+        visibility: Option<&str>,
+    ) -> Result<Vec<MonitorIncident>> {
+        self.inner.get_recent_monitor_incidents(limit, visibility)
+    }
+
+    pub fn delete_monitor_heartbeats_before(&self, before: SystemTime) -> Result<u64> {
+        self.inner.delete_monitor_heartbeats_before(before)
+    }
+
+    pub fn delete_resolved_monitor_incidents_before(&self, before: SystemTime) -> Result<u64> {
+        self.inner.delete_resolved_monitor_incidents_before(before)
     }
 
     pub fn rollup_and_prune_retention(

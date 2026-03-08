@@ -87,6 +87,11 @@ pub struct Config {
     pub database_pool_size: i32,
     pub api_key: String,
     pub seen_share_gc_interval: String,
+    pub monitor_host: String,
+    pub monitor_port: u16,
+    pub monitor_interval: String,
+    pub monitor_spool_path: String,
+    pub monitor_ingest_secret: String,
 
     #[serde(skip)]
     pub log_path: String,
@@ -166,6 +171,11 @@ impl Default for Config {
             database_pool_size: 4,
             api_key: String::new(),
             seen_share_gc_interval: "10m".to_string(),
+            monitor_host: "127.0.0.1".to_string(),
+            monitor_port: 24784,
+            monitor_interval: "10s".to_string(),
+            monitor_spool_path: "/var/lib/blocknet-pool/monitor-spool.jsonl".to_string(),
+            monitor_ingest_secret: String::new(),
             log_path: String::new(),
         }
     }
@@ -267,6 +277,12 @@ impl Config {
         if self.database_pool_size < 1 {
             self.database_pool_size = 1;
         }
+        if self.monitor_host.trim().is_empty() {
+            self.monitor_host = "127.0.0.1".to_string();
+        }
+        if self.monitor_port == 0 {
+            self.monitor_port = 24784;
+        }
         let max_atomic_amount = (u64::MAX as f64) / 100_000_000.0;
         if !self.min_payout_amount.is_finite() || self.min_payout_amount < 0.0 {
             self.min_payout_amount = 0.1;
@@ -331,6 +347,11 @@ impl Config {
             &self.payout_wait_priority_threshold,
             Duration::from_secs(6 * 60 * 60),
         )
+    }
+
+    pub fn monitor_interval_duration(&self) -> Duration {
+        parse_duration_or(&self.monitor_interval, Duration::from_secs(10))
+            .clamp(Duration::from_secs(5), Duration::from_secs(5 * 60))
     }
 
     pub fn shares_retention_duration(&self) -> Option<Duration> {

@@ -1,0 +1,182 @@
+groups:
+  - name: blocknet-pool
+    rules:
+      - alert: BlocknetPoolMonitorStale
+        expr: time() - blocknet_pool_monitor_last_sample_timestamp_seconds > 30
+        for: 1m
+        labels:
+          severity: critical
+          visibility: private
+        annotations:
+          summary: Pool monitor stopped updating
+          description: The on-host monitor has not produced a fresh sample for more than 30 seconds.
+
+      - alert: BlocknetPoolApiDown
+        expr: blocknet_pool_monitor_api_up == 0
+        for: 30s
+        labels:
+          severity: critical
+          visibility: public
+        annotations:
+          summary: Pool API is down
+          description: The on-host monitor cannot reach the API process.
+
+      - alert: BlocknetPoolStratumDown
+        expr: blocknet_pool_monitor_stratum_up == 0
+        for: 30s
+        labels:
+          severity: critical
+          visibility: public
+        annotations:
+          summary: Pool stratum is down
+          description: The on-host monitor cannot reach the Stratum listener.
+
+      - alert: BlocknetPoolDatabaseDown
+        expr: blocknet_pool_monitor_db_up == 0
+        for: 20s
+        labels:
+          severity: critical
+          visibility: public
+        annotations:
+          summary: Pool database is down
+          description: The pool cannot complete its Postgres probe.
+
+      - alert: BlocknetPoolDaemonDown
+        expr: blocknet_pool_monitor_daemon_up == 0
+        for: 30s
+        labels:
+          severity: critical
+          visibility: public
+        annotations:
+          summary: Blocknet daemon is down
+          description: The pool cannot reach the upstream Blocknet daemon.
+
+      - alert: BlocknetPoolDaemonSyncing
+        expr: blocknet_pool_monitor_daemon_syncing == 1
+        for: 2m
+        labels:
+          severity: warning
+          visibility: public
+        annotations:
+          summary: Blocknet daemon is syncing
+          description: The daemon is reachable but still reports syncing.
+
+      - alert: BlocknetPoolTemplateStale
+        expr: blocknet_pool_monitor_template_age_seconds > 45
+        for: 2m
+        labels:
+          severity: warning
+          visibility: public
+        annotations:
+          summary: Pool job template is stale
+          description: The latest job template is older than 45 seconds.
+
+      - alert: BlocknetPoolTemplateCriticallyStale
+        expr: blocknet_pool_monitor_template_age_seconds > 120
+        for: 2m
+        labels:
+          severity: critical
+          visibility: public
+        annotations:
+          summary: Pool job template is critically stale
+          description: The latest job template is older than 120 seconds.
+
+      - alert: BlocknetPoolWalletUnavailable
+        expr: blocknet_pool_monitor_wallet_up == 0
+        for: 10m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Pool wallet is unavailable
+          description: The pool cannot read wallet balance state from the daemon.
+
+      - alert: BlocknetPoolValidationBacklog
+        expr: blocknet_pool_monitor_validation_candidate_queue_depth > 1536 or blocknet_pool_monitor_validation_regular_queue_depth > 1536
+        for: 2m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Validation backlog is growing
+          description: One of the validation queues has exceeded 75% of the default capacity.
+
+      - alert: BlocknetPoolValidationBacklogCritical
+        expr: blocknet_pool_monitor_validation_candidate_queue_depth > 1843 or blocknet_pool_monitor_validation_regular_queue_depth > 1843
+        for: 2m
+        labels:
+          severity: critical
+          visibility: private
+        annotations:
+          summary: Validation backlog is critical
+          description: One of the validation queues has exceeded 90% of the default capacity.
+
+      - alert: BlocknetPoolShareIngressStalled
+        expr: blocknet_pool_monitor_connected_miners > 0 and blocknet_pool_monitor_estimated_hashrate > 0 and blocknet_pool_monitor_last_accepted_share_age_seconds > 900
+        for: 5m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Accepted share progress has stalled
+          description: Miners remain connected but the pool has not accepted a share for more than 15 minutes.
+
+      - alert: BlocknetPoolShareIngressCriticallyStalled
+        expr: blocknet_pool_monitor_connected_miners > 0 and blocknet_pool_monitor_estimated_hashrate > 0 and blocknet_pool_monitor_last_accepted_share_age_seconds > 1800
+        for: 5m
+        labels:
+          severity: critical
+          visibility: private
+        annotations:
+          summary: Accepted share progress is critically stalled
+          description: Miners remain connected but the pool has not accepted a share for more than 30 minutes.
+
+      - alert: BlocknetPoolPayoutQueueStalled
+        expr: blocknet_pool_monitor_payout_pending_count > 0 and (blocknet_pool_monitor_oldest_pending_payout_age_seconds > 7200 or blocknet_pool_monitor_oldest_pending_send_age_seconds > 1800)
+        for: 5m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Payout queue is stalled
+          description: Pending payouts have been queued or mid-send longer than the normal payout cadence.
+
+      - alert: BlocknetPoolPayoutQueueCriticallyStalled
+        expr: blocknet_pool_monitor_payout_pending_count > 0 and (blocknet_pool_monitor_oldest_pending_payout_age_seconds > 21600 or blocknet_pool_monitor_oldest_pending_send_age_seconds > 7200)
+        for: 5m
+        labels:
+          severity: critical
+          visibility: private
+        annotations:
+          summary: Payout queue is critically stalled
+          description: Pending payouts have been queued or mid-send for several hours.
+
+      - alert: BlocknetPoolRootDiskLow
+        expr: 100 * node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay|squashfs"} < 15
+        for: 10m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Root filesystem is low on space
+          description: The root filesystem has less than 15% free space remaining.
+
+      - alert: BlocknetPoolMemoryPressure
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.1
+        for: 10m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Host memory pressure is high
+          description: Available system memory has been under 10% for at least 10 minutes.
+
+      - alert: BlocknetPoolPublicProbeFailedFromHost
+        expr: probe_success{job="blackbox_http_public"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Public monitor endpoint failed from the host
+          description: The host-local blackbox probe could not fetch the public monitor endpoint.

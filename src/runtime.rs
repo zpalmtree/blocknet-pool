@@ -10,7 +10,7 @@ use tracing::{info, warn};
 #[cfg(feature = "api")]
 use crate::api::{
     load_persisted_status_history, ApiState, DaemonHealthCache, DbTotalsCache, InsightsCache,
-    NetworkHashrateCache, StatusHistory, DEFAULT_MAX_SSE_SUBSCRIBERS,
+    NetworkHashrateCache, PoolHealthCache, StatusHistory, DEFAULT_MAX_SSE_SUBSCRIBERS,
 };
 use crate::config::{generate_default_env, Config};
 use crate::engine::{JobRepository, NodeApi, PoolEngine, ShareStore};
@@ -154,6 +154,7 @@ pub async fn build_api_state(shared: &SharedRuntime) -> Result<ApiState> {
         validation: Arc::clone(&shared.validation),
         db_totals_cache: Arc::new(parking_lot::Mutex::new(DbTotalsCache::default())),
         daemon_health_cache: Arc::new(parking_lot::Mutex::new(DaemonHealthCache::default())),
+        pool_health_cache: Arc::new(parking_lot::Mutex::new(PoolHealthCache::default())),
         network_hashrate_cache: Arc::new(parking_lot::Mutex::new(NetworkHashrateCache::default())),
         insights_cache: Arc::new(parking_lot::Mutex::new(InsightsCache::default())),
         miner_pending_estimate_cache: Arc::new(parking_lot::Mutex::new(
@@ -239,8 +240,7 @@ pub fn stratum_listen_addr(cfg: &Config) -> Result<SocketAddr> {
 }
 
 #[cfg(feature = "api")]
-pub fn start_api_background_tasks(api_state: ApiState) {
-    start_status_sampler(api_state);
+pub fn start_api_background_tasks(_api_state: ApiState) {
 }
 
 pub fn start_stratum_background_tasks(shared: &SharedRuntime, engine: Arc<PoolEngine>) {
@@ -366,17 +366,6 @@ fn start_found_block_recovery(engine: Arc<PoolEngine>) {
                     tracing::warn!(error = %err, "found-block recovery task join failed")
                 }
             }
-        }
-    });
-}
-
-#[cfg(feature = "api")]
-fn start_status_sampler(api_state: ApiState) {
-    tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(Duration::from_secs(30));
-        loop {
-            ticker.tick().await;
-            api_state.sample_status().await;
         }
     });
 }

@@ -1,6 +1,6 @@
 use std::time::SystemTime;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StatSnapshot {
@@ -131,4 +131,99 @@ pub struct AddressRiskState {
     pub last_event_at: Option<SystemTime>,
     pub quarantined_until: Option<SystemTime>,
     pub force_verify_until: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorHeartbeat {
+    pub id: i64,
+    pub sampled_at: SystemTime,
+    pub source: String,
+    pub synthetic: bool,
+    pub api_up: Option<bool>,
+    pub stratum_up: Option<bool>,
+    pub db_up: bool,
+    pub daemon_up: Option<bool>,
+    pub public_http_up: Option<bool>,
+    pub daemon_syncing: Option<bool>,
+    pub chain_height: Option<u64>,
+    pub template_age_seconds: Option<u64>,
+    pub last_refresh_millis: Option<u64>,
+    pub stratum_snapshot_age_seconds: Option<u64>,
+    pub connected_miners: Option<u64>,
+    pub connected_workers: Option<u64>,
+    pub estimated_hashrate: Option<f64>,
+    pub wallet_up: Option<bool>,
+    pub last_accepted_share_at: Option<SystemTime>,
+    pub last_accepted_share_age_seconds: Option<u64>,
+    pub payout_pending_count: Option<u64>,
+    pub payout_pending_amount: Option<u64>,
+    pub oldest_pending_payout_at: Option<SystemTime>,
+    pub oldest_pending_payout_age_seconds: Option<u64>,
+    pub oldest_pending_send_started_at: Option<SystemTime>,
+    pub oldest_pending_send_age_seconds: Option<u64>,
+    pub validation_candidate_queue_depth: Option<u64>,
+    pub validation_regular_queue_depth: Option<u64>,
+    pub summary_state: String,
+    pub details_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorHeartbeatUpsert {
+    pub sampled_at: SystemTime,
+    pub source: String,
+    pub synthetic: bool,
+    pub api_up: Option<bool>,
+    pub stratum_up: Option<bool>,
+    pub db_up: bool,
+    pub daemon_up: Option<bool>,
+    pub public_http_up: Option<bool>,
+    pub daemon_syncing: Option<bool>,
+    pub chain_height: Option<u64>,
+    pub template_age_seconds: Option<u64>,
+    pub last_refresh_millis: Option<u64>,
+    pub stratum_snapshot_age_seconds: Option<u64>,
+    pub connected_miners: Option<u64>,
+    pub connected_workers: Option<u64>,
+    pub estimated_hashrate: Option<f64>,
+    pub wallet_up: Option<bool>,
+    pub last_accepted_share_at: Option<SystemTime>,
+    pub last_accepted_share_age_seconds: Option<u64>,
+    pub payout_pending_count: Option<u64>,
+    pub payout_pending_amount: Option<u64>,
+    pub oldest_pending_payout_at: Option<SystemTime>,
+    pub oldest_pending_payout_age_seconds: Option<u64>,
+    pub oldest_pending_send_started_at: Option<SystemTime>,
+    pub oldest_pending_send_age_seconds: Option<u64>,
+    pub validation_candidate_queue_depth: Option<u64>,
+    pub validation_regular_queue_depth: Option<u64>,
+    pub summary_state: String,
+    pub details_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorIncident {
+    pub id: i64,
+    pub dedupe_key: String,
+    pub kind: String,
+    pub severity: String,
+    pub visibility: String,
+    pub source: String,
+    pub summary: String,
+    pub detail: Option<String>,
+    pub started_at: SystemTime,
+    pub updated_at: SystemTime,
+    pub ended_at: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorIncidentUpsert {
+    pub dedupe_key: String,
+    pub kind: String,
+    pub severity: String,
+    pub visibility: String,
+    pub source: String,
+    pub summary: String,
+    pub detail: Option<String>,
+    pub started_at: SystemTime,
+    pub updated_at: SystemTime,
 }

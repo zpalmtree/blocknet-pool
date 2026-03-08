@@ -10,7 +10,8 @@ use postgres::{types::ToSql, Client, Config as PostgresConfig, NoTls, Row, Trans
 use tracing::warn;
 
 use crate::db::{
-    AddressRiskState, Balance, BlockCreditEvent, DbBlock, DbShare, Payout, PendingPayout,
+    AddressRiskState, Balance, BlockCreditEvent, DbBlock, DbShare, MonitorHeartbeat,
+    MonitorHeartbeatUpsert, MonitorIncident, MonitorIncidentUpsert, Payout, PendingPayout,
     PoolFeeEvent, PoolFeeRecord, PublicPayoutBatch, ShareReplayData, ShareReplayUpdate,
 };
 use crate::engine::{ShareRecord, ShareStore};
@@ -303,6 +304,65 @@ CREATE TABLE IF NOT EXISTS stat_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_stat_snapshots_timestamp ON stat_snapshots(timestamp DESC);
 
+CREATE TABLE IF NOT EXISTS monitor_heartbeats (
+    id BIGSERIAL PRIMARY KEY,
+    sampled_at BIGINT NOT NULL,
+    source TEXT NOT NULL,
+    synthetic BOOLEAN NOT NULL DEFAULT FALSE,
+    api_up BOOLEAN,
+    stratum_up BOOLEAN,
+    db_up BOOLEAN NOT NULL,
+    daemon_up BOOLEAN,
+    public_http_up BOOLEAN,
+    daemon_syncing BOOLEAN,
+    chain_height BIGINT,
+    template_age_seconds BIGINT,
+    last_refresh_millis BIGINT,
+    stratum_snapshot_age_seconds BIGINT,
+    connected_miners BIGINT,
+    connected_workers BIGINT,
+    estimated_hashrate DOUBLE PRECISION,
+    wallet_up BOOLEAN,
+    last_accepted_share_at BIGINT,
+    last_accepted_share_age_seconds BIGINT,
+    payout_pending_count BIGINT,
+    payout_pending_amount BIGINT,
+    oldest_pending_payout_at BIGINT,
+    oldest_pending_payout_age_seconds BIGINT,
+    oldest_pending_send_started_at BIGINT,
+    oldest_pending_send_age_seconds BIGINT,
+    validation_candidate_queue_depth BIGINT,
+    validation_regular_queue_depth BIGINT,
+    summary_state TEXT NOT NULL,
+    details_json TEXT,
+    UNIQUE (source, sampled_at)
+);
+CREATE INDEX IF NOT EXISTS idx_monitor_heartbeats_sampled_at
+    ON monitor_heartbeats(sampled_at DESC);
+CREATE INDEX IF NOT EXISTS idx_monitor_heartbeats_source_sampled_at
+    ON monitor_heartbeats(source, sampled_at DESC);
+
+CREATE TABLE IF NOT EXISTS monitor_incidents (
+    id BIGSERIAL PRIMARY KEY,
+    dedupe_key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    visibility TEXT NOT NULL,
+    source TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    detail TEXT,
+    started_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    ended_at BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_monitor_incidents_started_at
+    ON monitor_incidents(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_monitor_incidents_visibility_started_at
+    ON monitor_incidents(visibility, started_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_monitor_incidents_open_dedupe
+    ON monitor_incidents(dedupe_key)
+    WHERE ended_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS validation_address_states (
     address TEXT PRIMARY KEY,
     total_shares BIGINT NOT NULL,
@@ -378,6 +438,34 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS effort_pct DOUBLE PRECISION",
         )
         .context("ensure blocks.effort_pct column")?;
+        conn.batch_execute(
+            "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS wallet_up BOOLEAN",
+        )
+        .context("ensure monitor_heartbeats.wallet_up column")?;
+        conn.batch_execute(
+            "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS last_accepted_share_at BIGINT",
+        )
+        .context("ensure monitor_heartbeats.last_accepted_share_at column")?;
+        conn.batch_execute(
+            "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS last_accepted_share_age_seconds BIGINT",
+        )
+        .context("ensure monitor_heartbeats.last_accepted_share_age_seconds column")?;
+        conn.batch_execute(
+            "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS oldest_pending_payout_at BIGINT",
+        )
+        .context("ensure monitor_heartbeats.oldest_pending_payout_at column")?;
+        conn.batch_execute(
+            "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS oldest_pending_payout_age_seconds BIGINT",
+        )
+        .context("ensure monitor_heartbeats.oldest_pending_payout_age_seconds column")?;
+        conn.batch_execute(
+            "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS oldest_pending_send_started_at BIGINT",
+        )
+        .context("ensure monitor_heartbeats.oldest_pending_send_started_at column")?;
+        conn.batch_execute(
+            "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS oldest_pending_send_age_seconds BIGINT",
+        )
+        .context("ensure monitor_heartbeats.oldest_pending_send_age_seconds column")?;
 
         let mut conns = Vec::with_capacity(pool_size);
         conns.push(Mutex::new(ManagedClient::new(conn, url, schema, "primary")));
@@ -1453,6 +1541,233 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .lock()
             .query_opt("SELECT value FROM meta WHERE key = $1", &[&key])?;
         Ok(row.map(|v| v.get::<_, Vec<u8>>(0)))
+    }
+
+    pub fn upsert_monitor_heartbeat(&self, heartbeat: &MonitorHeartbeatUpsert) -> Result<()> {
+        let mut conn = self.conn().lock();
+        conn.execute(
+            "INSERT INTO monitor_heartbeats (
+                sampled_at, source, synthetic, api_up, stratum_up, db_up, daemon_up, public_http_up,
+                daemon_syncing, chain_height, template_age_seconds, last_refresh_millis,
+                stratum_snapshot_age_seconds, connected_miners, connected_workers,
+                estimated_hashrate, wallet_up, last_accepted_share_at, last_accepted_share_age_seconds,
+                payout_pending_count, payout_pending_amount,
+                oldest_pending_payout_at, oldest_pending_payout_age_seconds,
+                oldest_pending_send_started_at, oldest_pending_send_age_seconds,
+                validation_candidate_queue_depth, validation_regular_queue_depth,
+                summary_state, details_json
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8,
+                $9, $10, $11, $12,
+                $13, $14, $15,
+                $16, $17, $18, $19,
+                $20, $21,
+                $22, $23,
+                $24, $25,
+                $26, $27,
+                $28, $29
+            )
+            ON CONFLICT (source, sampled_at) DO UPDATE SET
+                synthetic = EXCLUDED.synthetic,
+                api_up = EXCLUDED.api_up,
+                stratum_up = EXCLUDED.stratum_up,
+                db_up = EXCLUDED.db_up,
+                daemon_up = EXCLUDED.daemon_up,
+                public_http_up = EXCLUDED.public_http_up,
+                daemon_syncing = EXCLUDED.daemon_syncing,
+                chain_height = EXCLUDED.chain_height,
+                template_age_seconds = EXCLUDED.template_age_seconds,
+                last_refresh_millis = EXCLUDED.last_refresh_millis,
+                stratum_snapshot_age_seconds = EXCLUDED.stratum_snapshot_age_seconds,
+                connected_miners = EXCLUDED.connected_miners,
+                connected_workers = EXCLUDED.connected_workers,
+                estimated_hashrate = EXCLUDED.estimated_hashrate,
+                wallet_up = EXCLUDED.wallet_up,
+                last_accepted_share_at = EXCLUDED.last_accepted_share_at,
+                last_accepted_share_age_seconds = EXCLUDED.last_accepted_share_age_seconds,
+                payout_pending_count = EXCLUDED.payout_pending_count,
+                payout_pending_amount = EXCLUDED.payout_pending_amount,
+                oldest_pending_payout_at = EXCLUDED.oldest_pending_payout_at,
+                oldest_pending_payout_age_seconds = EXCLUDED.oldest_pending_payout_age_seconds,
+                oldest_pending_send_started_at = EXCLUDED.oldest_pending_send_started_at,
+                oldest_pending_send_age_seconds = EXCLUDED.oldest_pending_send_age_seconds,
+                validation_candidate_queue_depth = EXCLUDED.validation_candidate_queue_depth,
+                validation_regular_queue_depth = EXCLUDED.validation_regular_queue_depth,
+                summary_state = EXCLUDED.summary_state,
+                details_json = EXCLUDED.details_json",
+            &[
+                &to_unix(heartbeat.sampled_at),
+                &heartbeat.source,
+                &heartbeat.synthetic,
+                &heartbeat.api_up,
+                &heartbeat.stratum_up,
+                &heartbeat.db_up,
+                &heartbeat.daemon_up,
+                &heartbeat.public_http_up,
+                &heartbeat.daemon_syncing,
+                &opt_u64_to_i64(heartbeat.chain_height)?,
+                &opt_u64_to_i64(heartbeat.template_age_seconds)?,
+                &opt_u64_to_i64(heartbeat.last_refresh_millis)?,
+                &opt_u64_to_i64(heartbeat.stratum_snapshot_age_seconds)?,
+                &opt_u64_to_i64(heartbeat.connected_miners)?,
+                &opt_u64_to_i64(heartbeat.connected_workers)?,
+                &heartbeat.estimated_hashrate,
+                &heartbeat.wallet_up,
+                &heartbeat.last_accepted_share_at.map(to_unix),
+                &opt_u64_to_i64(heartbeat.last_accepted_share_age_seconds)?,
+                &opt_u64_to_i64(heartbeat.payout_pending_count)?,
+                &opt_u64_to_i64(heartbeat.payout_pending_amount)?,
+                &heartbeat.oldest_pending_payout_at.map(to_unix),
+                &opt_u64_to_i64(heartbeat.oldest_pending_payout_age_seconds)?,
+                &heartbeat.oldest_pending_send_started_at.map(to_unix),
+                &opt_u64_to_i64(heartbeat.oldest_pending_send_age_seconds)?,
+                &opt_u64_to_i64(heartbeat.validation_candidate_queue_depth)?,
+                &opt_u64_to_i64(heartbeat.validation_regular_queue_depth)?,
+                &heartbeat.summary_state,
+                &heartbeat.details_json,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_monitor_heartbeats_since(
+        &self,
+        since: SystemTime,
+        source: Option<&str>,
+    ) -> Result<Vec<MonitorHeartbeat>> {
+        let rows = self.conn().lock().query(
+            "SELECT id, sampled_at, source, synthetic, api_up, stratum_up, db_up, daemon_up,
+                    public_http_up, daemon_syncing, chain_height, template_age_seconds,
+                    last_refresh_millis, stratum_snapshot_age_seconds, connected_miners,
+                    connected_workers, estimated_hashrate, wallet_up,
+                    last_accepted_share_at, last_accepted_share_age_seconds,
+                    payout_pending_count, payout_pending_amount,
+                    oldest_pending_payout_at, oldest_pending_payout_age_seconds,
+                    oldest_pending_send_started_at, oldest_pending_send_age_seconds,
+                    validation_candidate_queue_depth, validation_regular_queue_depth,
+                    summary_state, details_json
+             FROM monitor_heartbeats
+             WHERE sampled_at >= $1
+               AND ($2::text IS NULL OR source = $2)
+             ORDER BY sampled_at ASC, id ASC",
+            &[&to_unix(since), &source],
+        )?;
+        rows.into_iter().map(row_to_monitor_heartbeat).collect()
+    }
+
+    pub fn get_latest_monitor_heartbeat(
+        &self,
+        source: Option<&str>,
+    ) -> Result<Option<MonitorHeartbeat>> {
+        let row = self.conn().lock().query_opt(
+            "SELECT id, sampled_at, source, synthetic, api_up, stratum_up, db_up, daemon_up,
+                    public_http_up, daemon_syncing, chain_height, template_age_seconds,
+                    last_refresh_millis, stratum_snapshot_age_seconds, connected_miners,
+                    connected_workers, estimated_hashrate, wallet_up,
+                    last_accepted_share_at, last_accepted_share_age_seconds,
+                    payout_pending_count, payout_pending_amount,
+                    oldest_pending_payout_at, oldest_pending_payout_age_seconds,
+                    oldest_pending_send_started_at, oldest_pending_send_age_seconds,
+                    validation_candidate_queue_depth, validation_regular_queue_depth,
+                    summary_state, details_json
+             FROM monitor_heartbeats
+             WHERE ($1::text IS NULL OR source = $1)
+             ORDER BY sampled_at DESC, id DESC
+             LIMIT 1",
+            &[&source],
+        )?;
+        row.map(row_to_monitor_heartbeat).transpose()
+    }
+
+    pub fn upsert_monitor_incident(&self, incident: &MonitorIncidentUpsert) -> Result<()> {
+        self.conn().lock().execute(
+            "INSERT INTO monitor_incidents (
+                dedupe_key, kind, severity, visibility, source, summary, detail, started_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (dedupe_key) WHERE ended_at IS NULL DO UPDATE SET
+                kind = EXCLUDED.kind,
+                severity = EXCLUDED.severity,
+                visibility = EXCLUDED.visibility,
+                source = EXCLUDED.source,
+                summary = EXCLUDED.summary,
+                detail = EXCLUDED.detail,
+                updated_at = EXCLUDED.updated_at",
+            &[
+                &incident.dedupe_key,
+                &incident.kind,
+                &incident.severity,
+                &incident.visibility,
+                &incident.source,
+                &incident.summary,
+                &incident.detail,
+                &to_unix(incident.started_at),
+                &to_unix(incident.updated_at),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn resolve_monitor_incident(&self, dedupe_key: &str, ended_at: SystemTime) -> Result<u64> {
+        let updated = self.conn().lock().execute(
+            "UPDATE monitor_incidents
+             SET ended_at = $2, updated_at = GREATEST(updated_at, $2)
+             WHERE dedupe_key = $1
+               AND ended_at IS NULL",
+            &[&dedupe_key, &to_unix(ended_at)],
+        )?;
+        Ok(updated)
+    }
+
+    pub fn get_open_monitor_incidents(
+        &self,
+        visibility: Option<&str>,
+    ) -> Result<Vec<MonitorIncident>> {
+        let rows = self.conn().lock().query(
+            "SELECT id, dedupe_key, kind, severity, visibility, source, summary, detail,
+                    started_at, updated_at, ended_at
+             FROM monitor_incidents
+             WHERE ended_at IS NULL
+               AND ($1::text IS NULL OR visibility = $1)
+             ORDER BY started_at DESC, id DESC",
+            &[&visibility],
+        )?;
+        rows.into_iter().map(row_to_monitor_incident).collect()
+    }
+
+    pub fn get_recent_monitor_incidents(
+        &self,
+        limit: i64,
+        visibility: Option<&str>,
+    ) -> Result<Vec<MonitorIncident>> {
+        let rows = self.conn().lock().query(
+            "SELECT id, dedupe_key, kind, severity, visibility, source, summary, detail,
+                    started_at, updated_at, ended_at
+             FROM monitor_incidents
+             WHERE ($1::text IS NULL OR visibility = $1)
+             ORDER BY COALESCE(ended_at, updated_at) DESC, id DESC
+             LIMIT $2",
+            &[&visibility, &limit.max(0)],
+        )?;
+        rows.into_iter().map(row_to_monitor_incident).collect()
+    }
+
+    pub fn delete_monitor_heartbeats_before(&self, before: SystemTime) -> Result<u64> {
+        let deleted = self.conn().lock().execute(
+            "DELETE FROM monitor_heartbeats
+             WHERE sampled_at < $1",
+            &[&to_unix(before)],
+        )?;
+        Ok(deleted)
+    }
+
+    pub fn delete_resolved_monitor_incidents_before(&self, before: SystemTime) -> Result<u64> {
+        let deleted = self.conn().lock().execute(
+            "DELETE FROM monitor_incidents
+             WHERE ended_at IS NOT NULL
+               AND ended_at < $1",
+            &[&to_unix(before)],
+        )?;
+        Ok(deleted)
     }
 
     pub fn mark_share_seen(&self, job_id: &str, nonce: u64) -> Result<()> {
@@ -2588,6 +2903,57 @@ fn sort_reason_counts(entries: Vec<(String, u64)>) -> Vec<RejectionReasonCount> 
     items
 }
 
+fn row_to_monitor_heartbeat(row: postgres::Row) -> Result<MonitorHeartbeat> {
+    Ok(MonitorHeartbeat {
+        id: row.get::<_, i64>(0),
+        sampled_at: from_unix(row.get::<_, i64>(1)),
+        source: row.get::<_, String>(2),
+        synthetic: row.get::<_, bool>(3),
+        api_up: row.get::<_, Option<bool>>(4),
+        stratum_up: row.get::<_, Option<bool>>(5),
+        db_up: row.get::<_, bool>(6),
+        daemon_up: row.get::<_, Option<bool>>(7),
+        public_http_up: row.get::<_, Option<bool>>(8),
+        daemon_syncing: row.get::<_, Option<bool>>(9),
+        chain_height: opt_i64_to_u64(row.get::<_, Option<i64>>(10)),
+        template_age_seconds: opt_i64_to_u64(row.get::<_, Option<i64>>(11)),
+        last_refresh_millis: opt_i64_to_u64(row.get::<_, Option<i64>>(12)),
+        stratum_snapshot_age_seconds: opt_i64_to_u64(row.get::<_, Option<i64>>(13)),
+        connected_miners: opt_i64_to_u64(row.get::<_, Option<i64>>(14)),
+        connected_workers: opt_i64_to_u64(row.get::<_, Option<i64>>(15)),
+        estimated_hashrate: row.get::<_, Option<f64>>(16),
+        wallet_up: row.get::<_, Option<bool>>(17),
+        last_accepted_share_at: row.get::<_, Option<i64>>(18).map(from_unix),
+        last_accepted_share_age_seconds: opt_i64_to_u64(row.get::<_, Option<i64>>(19)),
+        payout_pending_count: opt_i64_to_u64(row.get::<_, Option<i64>>(20)),
+        payout_pending_amount: opt_i64_to_u64(row.get::<_, Option<i64>>(21)),
+        oldest_pending_payout_at: row.get::<_, Option<i64>>(22).map(from_unix),
+        oldest_pending_payout_age_seconds: opt_i64_to_u64(row.get::<_, Option<i64>>(23)),
+        oldest_pending_send_started_at: row.get::<_, Option<i64>>(24).map(from_unix),
+        oldest_pending_send_age_seconds: opt_i64_to_u64(row.get::<_, Option<i64>>(25)),
+        validation_candidate_queue_depth: opt_i64_to_u64(row.get::<_, Option<i64>>(26)),
+        validation_regular_queue_depth: opt_i64_to_u64(row.get::<_, Option<i64>>(27)),
+        summary_state: row.get::<_, String>(28),
+        details_json: row.get::<_, Option<String>>(29),
+    })
+}
+
+fn row_to_monitor_incident(row: postgres::Row) -> Result<MonitorIncident> {
+    Ok(MonitorIncident {
+        id: row.get::<_, i64>(0),
+        dedupe_key: row.get::<_, String>(1),
+        kind: row.get::<_, String>(2),
+        severity: row.get::<_, String>(3),
+        visibility: row.get::<_, String>(4),
+        source: row.get::<_, String>(5),
+        summary: row.get::<_, String>(6),
+        detail: row.get::<_, Option<String>>(7),
+        started_at: from_unix(row.get::<_, i64>(8)),
+        updated_at: from_unix(row.get::<_, i64>(9)),
+        ended_at: row.get::<_, Option<i64>>(10).map(from_unix),
+    })
+}
+
 fn row_to_block(row: &postgres::Row) -> DbBlock {
     DbBlock {
         height: row.get::<_, i64>(0).max(0) as u64,
@@ -2628,6 +2994,14 @@ fn normalize_block_status_filter(status: Option<&str>) -> Option<&'static str> {
 
 fn to_unix(ts: SystemTime) -> i64 {
     i64::try_from(ts.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()).unwrap_or(i64::MAX)
+}
+
+fn opt_u64_to_i64(value: Option<u64>) -> Result<Option<i64>> {
+    value.map(u64_to_i64).transpose()
+}
+
+fn opt_i64_to_u64(value: Option<i64>) -> Option<u64> {
+    value.map(|inner| inner.max(0) as u64)
 }
 
 fn u64_to_i64(value: u64) -> Result<i64> {

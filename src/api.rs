@@ -6,18 +6,20 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query, State};
 use axum::http::header;
-use axum::http::{HeaderName, HeaderValue, Request, StatusCode, Uri};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, SecondsFormat, Utc};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{mpsc, Semaphore};
@@ -26,7 +28,8 @@ use tokio_stream::StreamExt;
 
 use crate::config::Config;
 use crate::db::{
-    Balance, DbBlock, DbShare, Payout, PendingPayout, PoolFeeEvent, PublicPayoutBatch,
+    Balance, DbBlock, DbShare, MonitorHeartbeat, MonitorIncident, Payout, PendingPayout,
+    PoolFeeEvent, PublicPayoutBatch,
 };
 use crate::dev_fee::{SEINE_DEV_FEE_ADDRESS, SEINE_DEV_FEE_REFERENCE_TARGET_PCT};
 use crate::engine::JobRepository;
@@ -47,6 +50,7 @@ use crate::validation::{
 
 const DB_TOTALS_CACHE_TTL: Duration = Duration::from_secs(2);
 const DAEMON_HEALTH_CACHE_TTL: Duration = Duration::from_secs(5);
+const POOL_HEALTH_CACHE_TTL: Duration = Duration::from_secs(5);
 const EXPLORER_HASHRATE_SAMPLE_COUNT: usize = 10;
 const NETWORK_HASHRATE_CACHE_RETRY_TTL: Duration = Duration::from_secs(5);
 const DEFAULT_PAGE_LIMIT: usize = 25;
@@ -76,6 +80,8 @@ const DAEMON_LOG_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 const MINER_PENDING_ESTIMATE_CACHE_TTL: Duration = Duration::from_secs(10);
 const MINER_PENDING_ESTIMATE_CACHE_MAX_ENTRIES: usize = 4096;
 const ADMIN_DEV_FEE_HINT_LIMIT: i64 = 12;
+const LOCAL_MONITOR_SOURCE: &str = "local";
+const CLOUDFLARE_MONITOR_SOURCE: &str = "cloudflare";
 
 fn db_miner_hashrate(store: &PoolStore, address: &str) -> f64 {
     let since = SystemTime::now()
@@ -354,6 +360,7 @@ pub struct ApiState {
     pub validation: Arc<ValidationEngine>,
     pub db_totals_cache: Arc<Mutex<DbTotalsCache>>,
     pub daemon_health_cache: Arc<Mutex<DaemonHealthCache>>,
+    pub pool_health_cache: Arc<Mutex<PoolHealthCache>>,
     pub network_hashrate_cache: Arc<Mutex<NetworkHashrateCache>>,
     pub insights_cache: Arc<Mutex<InsightsCache>>,
     pub miner_pending_estimate_cache: Arc<Mutex<HashMap<String, MinerPendingEstimateCache>>>,
@@ -401,10 +408,23 @@ pub struct DaemonHealth {
     error: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PoolHealth {
+    healthy: bool,
+    database_reachable: bool,
+    error: Option<String>,
+}
+
 #[derive(Debug, Default)]
 pub struct DaemonHealthCache {
     updated_at: Option<Instant>,
     value: Option<DaemonHealth>,
+}
+
+#[derive(Debug, Default)]
+pub struct PoolHealthCache {
+    updated_at: Option<Instant>,
+    value: Option<PoolHealth>,
 }
 
 #[derive(Debug, Default)]
@@ -438,6 +458,8 @@ pub struct MinerPendingEstimateCache {
 struct StatusSample {
     timestamp: SystemTime,
     daemon_reachable: bool,
+    #[serde(default)]
+    database_reachable: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -462,11 +484,13 @@ pub struct StatusIncident {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct StatusHistory {
     samples: VecDeque<StatusSample>,
     incidents: VecDeque<StatusIncident>,
     open_daemon_down: Option<OpenIncident>,
     open_daemon_syncing: Option<OpenIncident>,
+    open_pool_database_down: Option<OpenIncident>,
     next_incident_id: u64,
 }
 
@@ -480,18 +504,52 @@ pub fn load_persisted_status_history(store: &PoolStore) -> anyhow::Result<Status
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct ServiceHealth {
+    observed: bool,
+    healthy: bool,
+    last_sample_at: Option<SystemTime>,
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct StatusServices {
+    public_http: ServiceHealth,
+    api: ServiceHealth,
+    stratum: ServiceHealth,
+    database: ServiceHealth,
+    daemon: ServiceHealth,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TemplateHealth {
+    observed: bool,
+    fresh: bool,
+    age_seconds: Option<u64>,
+    last_refresh_millis: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct UptimeWindow {
     label: String,
     window_seconds: u64,
     sample_count: usize,
-    up_pct: Option<f64>,
+    external_sample_count: usize,
+    api_up_pct: Option<f64>,
+    stratum_up_pct: Option<f64>,
+    pool_up_pct: Option<f64>,
+    daemon_up_pct: Option<f64>,
+    database_up_pct: Option<f64>,
+    public_http_up_pct: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct StatusPageResponse {
     checked_at: SystemTime,
     pool_uptime_seconds: u64,
+    pool: PoolHealth,
+    services: StatusServices,
     daemon: DaemonHealth,
+    template: TemplateHealth,
     uptime: Vec<UptimeWindow>,
     incidents: Vec<StatusIncident>,
 }
@@ -631,6 +689,11 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
         .route("/api/stats/insights", get(handle_stats_insights))
         .route("/api/luck", get(handle_luck_history))
         .route("/api/status", get(handle_status))
+        .route("/api/monitor/public", get(handle_monitor_public))
+        .route(
+            "/api/monitor/ingest/cloudflare",
+            post(handle_monitor_ingest_cloudflare),
+        )
         .route("/api/events", get(handle_events))
         .route("/api/blocks", get(handle_blocks))
         .route("/api/payouts/recent", get(handle_public_payouts))
@@ -2610,9 +2673,435 @@ fn ratio_pct(numerator: u64, denominator: u64) -> f64 {
     }
 }
 
+fn unix_secs_to_system_time(value: u64) -> SystemTime {
+    UNIX_EPOCH + Duration::from_secs(value)
+}
+
+fn service_health_from_local(
+    latest: Option<&MonitorHeartbeat>,
+    healthy_fn: impl Fn(&MonitorHeartbeat) -> Option<bool>,
+    missing_message: &str,
+) -> ServiceHealth {
+    let Some(row) = latest else {
+        return ServiceHealth {
+            observed: false,
+            healthy: false,
+            last_sample_at: None,
+            message: Some(missing_message.to_string()),
+        };
+    };
+    let fresh = SystemTime::now()
+        .duration_since(row.sampled_at)
+        .unwrap_or_default()
+        <= Duration::from_secs(30);
+    let healthy = healthy_fn(row).unwrap_or(false) && fresh;
+    ServiceHealth {
+        observed: fresh,
+        healthy,
+        last_sample_at: Some(row.sampled_at),
+        message: if fresh {
+            None
+        } else {
+            Some(missing_message.to_string())
+        },
+    }
+}
+
+fn service_health_from_public(latest: Option<&MonitorHeartbeat>) -> ServiceHealth {
+    let Some(row) = latest else {
+        return ServiceHealth {
+            observed: false,
+            healthy: false,
+            last_sample_at: None,
+            message: Some("no recent public HTTP probe".to_string()),
+        };
+    };
+    let fresh = SystemTime::now()
+        .duration_since(row.sampled_at)
+        .unwrap_or_default()
+        <= Duration::from_secs(10 * 60);
+    ServiceHealth {
+        observed: fresh,
+        healthy: row.public_http_up.unwrap_or(false) && fresh,
+        last_sample_at: Some(row.sampled_at),
+        message: if fresh {
+            None
+        } else {
+            Some("public HTTP probe is stale".to_string())
+        },
+    }
+}
+
+fn daemon_health_from_heartbeat(latest: Option<&MonitorHeartbeat>) -> DaemonHealth {
+    DaemonHealth {
+        reachable: latest.and_then(|row| row.daemon_up).unwrap_or(false),
+        chain_height: latest.and_then(|row| row.chain_height),
+        peers: None,
+        syncing: latest.and_then(|row| row.daemon_syncing),
+        mempool_size: None,
+        best_hash: None,
+        error: latest
+            .filter(|row| row.daemon_up == Some(false))
+            .and_then(|row| row.details_json.clone()),
+    }
+}
+
+fn build_monitor_uptime_window(
+    label: &str,
+    window: Duration,
+    local_rows: &[MonitorHeartbeat],
+    external_rows: &[MonitorHeartbeat],
+    now: SystemTime,
+) -> UptimeWindow {
+    let cutoff = now.checked_sub(window).unwrap_or(UNIX_EPOCH);
+    let local_window = local_rows
+        .iter()
+        .filter(|row| row.sampled_at >= cutoff)
+        .collect::<Vec<_>>();
+    let external_window = external_rows
+        .iter()
+        .filter(|row| row.sampled_at >= cutoff)
+        .collect::<Vec<_>>();
+    UptimeWindow {
+        label: label.to_string(),
+        window_seconds: window.as_secs(),
+        sample_count: local_window.len(),
+        external_sample_count: external_window.len(),
+        api_up_pct: heartbeat_pct(&local_window, |row| row.api_up),
+        stratum_up_pct: heartbeat_pct(&local_window, |row| row.stratum_up),
+        pool_up_pct: heartbeat_pct(&local_window, |row| {
+            Some(
+                row.api_up.unwrap_or(false)
+                    && row.stratum_up.unwrap_or(false)
+                    && row.db_up
+                    && row.daemon_up.unwrap_or(false),
+            )
+        }),
+        daemon_up_pct: heartbeat_pct(&local_window, |row| row.daemon_up),
+        database_up_pct: heartbeat_pct(&local_window, |row| Some(row.db_up)),
+        public_http_up_pct: heartbeat_pct(&external_window, |row| row.public_http_up),
+    }
+}
+
+fn heartbeat_pct(
+    rows: &[&MonitorHeartbeat],
+    flag: impl Fn(&MonitorHeartbeat) -> Option<bool>,
+) -> Option<f64> {
+    let mut total = 0usize;
+    let mut up = 0usize;
+    for row in rows {
+        let Some(value) = flag(row) else {
+            continue;
+        };
+        total += 1;
+        if value {
+            up += 1;
+        }
+    }
+    if total == 0 {
+        None
+    } else {
+        Some((up as f64 / total as f64) * 100.0)
+    }
+}
+
+fn status_incident_from_monitor(incident: MonitorIncident, now: SystemTime) -> StatusIncident {
+    StatusIncident {
+        id: incident.id as u64,
+        kind: incident.kind,
+        severity: incident.severity,
+        started_at: incident.started_at,
+        ended_at: incident.ended_at,
+        duration_seconds: incident
+            .ended_at
+            .unwrap_or(now)
+            .duration_since(incident.started_at)
+            .ok()
+            .map(|elapsed| elapsed.as_secs()),
+        message: incident.summary,
+        ongoing: incident.ended_at.is_none(),
+    }
+}
+
+fn cloudflare_heartbeat(
+    sampled_at: SystemTime,
+    public_http_up: bool,
+    synthetic: bool,
+    detail: Option<String>,
+) -> crate::db::MonitorHeartbeatUpsert {
+    crate::db::MonitorHeartbeatUpsert {
+        sampled_at,
+        source: CLOUDFLARE_MONITOR_SOURCE.to_string(),
+        synthetic,
+        api_up: None,
+        stratum_up: None,
+        db_up: true,
+        daemon_up: None,
+        public_http_up: Some(public_http_up),
+        daemon_syncing: None,
+        chain_height: None,
+        template_age_seconds: None,
+        last_refresh_millis: None,
+        stratum_snapshot_age_seconds: None,
+        connected_miners: None,
+        connected_workers: None,
+        estimated_hashrate: None,
+        wallet_up: None,
+        last_accepted_share_at: None,
+        last_accepted_share_age_seconds: None,
+        payout_pending_count: None,
+        payout_pending_amount: None,
+        oldest_pending_payout_at: None,
+        oldest_pending_payout_age_seconds: None,
+        oldest_pending_send_started_at: None,
+        oldest_pending_send_age_seconds: None,
+        validation_candidate_queue_depth: None,
+        validation_regular_queue_depth: None,
+        summary_state: if public_http_up {
+            "healthy".to_string()
+        } else {
+            "down".to_string()
+        },
+        details_json: detail.map(|detail| json!({ "detail": detail }).to_string()),
+    }
+}
+
+fn verify_monitor_signature(secret: &str, provided: &str, body: &[u8]) -> bool {
+    let Some(signature) = provided.strip_prefix("sha256=") else {
+        return false;
+    };
+    let expected = hmac_sha256_hex(secret.as_bytes(), body);
+    constant_time_eq(signature.as_bytes(), expected.as_bytes())
+}
+
+fn hmac_sha256_hex(secret: &[u8], body: &[u8]) -> String {
+    const BLOCK_SIZE: usize = 64;
+    let mut key_block = [0u8; BLOCK_SIZE];
+    if secret.len() > BLOCK_SIZE {
+        let digest = Sha256::digest(secret);
+        key_block[..digest.len()].copy_from_slice(&digest);
+    } else {
+        key_block[..secret.len()].copy_from_slice(secret);
+    }
+
+    let mut inner = [0u8; BLOCK_SIZE];
+    let mut outer = [0u8; BLOCK_SIZE];
+    for (idx, value) in key_block.iter().enumerate() {
+        inner[idx] = value ^ 0x36;
+        outer[idx] = value ^ 0x5c;
+    }
+
+    let mut inner_hasher = Sha256::new();
+    inner_hasher.update(inner);
+    inner_hasher.update(body);
+    let inner_digest = inner_hasher.finalize();
+
+    let mut outer_hasher = Sha256::new();
+    outer_hasher.update(outer);
+    outer_hasher.update(inner_digest);
+    let digest = outer_hasher.finalize();
+
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (lhs, rhs) in a.iter().zip(b.iter()) {
+        diff |= lhs ^ rhs;
+    }
+    diff == 0
+}
+
 async fn handle_status(State(state): State<ApiState>) -> impl IntoResponse {
-    let daemon = state.daemon_health().await;
-    Json(state.build_status_response(daemon)).into_response()
+    match state.build_status_response().await {
+        Ok(response) => Json(response).into_response(),
+        Err(err) => internal_error("failed loading status page", err).into_response(),
+    }
+}
+
+async fn handle_monitor_public(State(state): State<ApiState>) -> impl IntoResponse {
+    let checked_at = SystemTime::now();
+    let latest = {
+        let store = Arc::clone(&state.store);
+        tokio::task::spawn_blocking(move || {
+            let local = store.get_latest_monitor_heartbeat(Some(LOCAL_MONITOR_SOURCE))?;
+            let external = store.get_latest_monitor_heartbeat(Some(CLOUDFLARE_MONITOR_SOURCE))?;
+            Ok::<_, anyhow::Error>((local, external))
+        })
+        .await
+    };
+
+    let (local, external) = match latest {
+        Ok(Ok(value)) => value,
+        Ok(Err(err)) => {
+            tracing::warn!(error = %err, "failed loading public monitor heartbeat");
+            (None, None)
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "public monitor heartbeat join failed");
+            (None, None)
+        }
+    };
+
+    Json(serde_json::json!({
+        "ok": true,
+        "checked_at": checked_at,
+        "pool_name": state.pool_name,
+        "summary_state": local.as_ref().map(|row| row.summary_state.clone()).unwrap_or_else(|| "unknown".to_string()),
+        "latest_local_sample_at": local.as_ref().map(|row| row.sampled_at),
+        "latest_public_http_sample_at": external.as_ref().map(|row| row.sampled_at),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct CloudflareIngestEvent {
+    service: String,
+    status: String,
+    started_at: Option<u64>,
+    ended_at: Option<u64>,
+    checked_at: Option<u64>,
+    summary: Option<String>,
+    detail: Option<String>,
+}
+
+async fn handle_monitor_ingest_cloudflare(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    let secret = state.config.monitor_ingest_secret.trim();
+    if secret.is_empty() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error":"monitor ingest secret not configured"})),
+        )
+            .into_response();
+    }
+
+    let provided = headers
+        .get("x-monitor-signature")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if !verify_monitor_signature(secret, provided, &body) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error":"invalid monitor signature"})),
+        )
+            .into_response();
+    }
+
+    let event: CloudflareIngestEvent = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": format!("invalid JSON payload: {err}")})),
+            )
+                .into_response()
+        }
+    };
+
+    if !event.service.trim().eq_ignore_ascii_case("public_http") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"unsupported monitor service"})),
+        )
+            .into_response();
+    }
+
+    let store = Arc::clone(&state.store);
+    let action = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let ended_at = unix_secs_to_system_time(
+            event
+                .ended_at
+                .or(event.checked_at)
+                .unwrap_or_else(|| system_time_to_unix_secs(SystemTime::now())),
+        );
+        let started_at = event.started_at.map(unix_secs_to_system_time);
+        let status = event.status.trim().to_ascii_lowercase();
+        let summary = event
+            .summary
+            .clone()
+            .unwrap_or_else(|| "public HTTP probe changed state".to_string());
+        let detail = event.detail.clone();
+
+        if status == "down" {
+            store.upsert_monitor_heartbeat(&cloudflare_heartbeat(
+                ended_at,
+                false,
+                false,
+                detail.clone(),
+            ))?;
+            store.upsert_monitor_incident(&crate::db::MonitorIncidentUpsert {
+                dedupe_key: "cloudflare_public_http_down".to_string(),
+                kind: "public_http_down".to_string(),
+                severity: "critical".to_string(),
+                visibility: "public".to_string(),
+                source: CLOUDFLARE_MONITOR_SOURCE.to_string(),
+                summary,
+                detail,
+                started_at: started_at.unwrap_or(ended_at),
+                updated_at: ended_at,
+            })?;
+            return Ok(());
+        }
+
+        if let Some(started) = started_at {
+            let mut ts = started;
+            while ts < ended_at {
+                store.upsert_monitor_heartbeat(&cloudflare_heartbeat(
+                    ts,
+                    false,
+                    true,
+                    detail.clone(),
+                ))?;
+                ts = ts
+                    .checked_add(Duration::from_secs(60))
+                    .unwrap_or(ended_at);
+            }
+            store.upsert_monitor_incident(&crate::db::MonitorIncidentUpsert {
+                dedupe_key: "cloudflare_public_http_down".to_string(),
+                kind: "public_http_down".to_string(),
+                severity: "critical".to_string(),
+                visibility: "public".to_string(),
+                source: CLOUDFLARE_MONITOR_SOURCE.to_string(),
+                summary,
+                detail: detail.clone(),
+                started_at: started,
+                updated_at: ended_at,
+            })?;
+            store.resolve_monitor_incident("cloudflare_public_http_down", ended_at)?;
+        } else {
+            store.resolve_monitor_incident("cloudflare_public_http_down", ended_at)?;
+        }
+
+        store.upsert_monitor_heartbeat(&cloudflare_heartbeat(
+            ended_at,
+            true,
+            false,
+            detail,
+        ))?;
+        Ok(())
+    })
+    .await;
+
+    match action {
+        Ok(Ok(())) => StatusCode::ACCEPTED.into_response(),
+        Ok(Err(err)) => internal_error("failed storing cloudflare monitor event", err).into_response(),
+        Err(err) => internal_error(
+            "failed storing cloudflare monitor event",
+            anyhow::anyhow!("join error: {err}"),
+        )
+        .into_response(),
+    }
 }
 
 async fn handle_events(State(state): State<ApiState>) -> Response {
@@ -5189,14 +5678,16 @@ async fn handle_admin_block_reward_breakdown(
 
 impl ApiState {
     pub async fn sample_status(&self) {
-        let daemon = self.daemon_health().await;
+        let (daemon, pool) = tokio::join!(self.daemon_health(), self.pool_health());
         let snapshot = {
             let mut history = self.status_history.lock();
             history.record_sample(
                 SystemTime::now(),
                 daemon.reachable,
+                pool.database_reachable,
                 daemon.syncing,
                 daemon.error.as_deref(),
+                pool.error.as_deref(),
             );
             history.clone()
         };
@@ -5263,10 +5754,16 @@ impl ApiState {
             return live;
         }
         if let Some(persisted) = self.persisted_runtime_snapshot().await {
+            live.total_shares_accepted = live
+                .total_shares_accepted
+                .max(persisted.total_shares_accepted);
             live.connected_miners = persisted.connected_miners;
             live.connected_workers = persisted.connected_workers;
             if live.estimated_hashrate <= 0.0 {
                 live.estimated_hashrate = persisted.estimated_hashrate;
+            }
+            if live.last_share_at.is_none() {
+                live.last_share_at = persisted.last_share_at;
             }
         }
         live
@@ -5593,39 +6090,91 @@ impl ApiState {
         Ok(snapshot)
     }
 
-    fn build_status_response(&self, daemon: DaemonHealth) -> StatusPageResponse {
+    async fn build_status_response(&self) -> anyhow::Result<StatusPageResponse> {
         let now = SystemTime::now();
         let pool_uptime_seconds = self.started_at.elapsed().as_secs();
-        let history = self.status_history.lock();
+        let since = now
+            .checked_sub(Duration::from_secs(7 * 24 * 3600))
+            .unwrap_or(UNIX_EPOCH);
+        let store = Arc::clone(&self.store);
+        let (local_rows, external_rows, incidents) = tokio::task::spawn_blocking(
+            move || -> anyhow::Result<(Vec<MonitorHeartbeat>, Vec<MonitorHeartbeat>, Vec<MonitorIncident>)> {
+                Ok((
+                    store.get_monitor_heartbeats_since(since, Some(LOCAL_MONITOR_SOURCE))?,
+                    store.get_monitor_heartbeats_since(since, Some(CLOUDFLARE_MONITOR_SOURCE))?,
+                    store.get_recent_monitor_incidents(32, Some("public"))?,
+                ))
+            },
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
 
+        let latest_local = local_rows.last();
+        let latest_external = external_rows.last();
+        let template_age = latest_local.and_then(|row| row.template_age_seconds);
+        let services = StatusServices {
+            public_http: service_health_from_public(latest_external),
+            api: service_health_from_local(latest_local, |row| row.api_up, "no recent API heartbeat"),
+            stratum: service_health_from_local(latest_local, |row| row.stratum_up, "no recent Stratum heartbeat"),
+            database: service_health_from_local(latest_local, |row| Some(row.db_up), "no recent database heartbeat"),
+            daemon: service_health_from_local(latest_local, |row| row.daemon_up, "no recent daemon heartbeat"),
+        };
+        let pool_healthy = services.api.healthy
+            && services.stratum.healthy
+            && services.database.healthy
+            && services.daemon.healthy
+            && !latest_local
+                .and_then(|row| row.daemon_syncing)
+                .unwrap_or(false)
+            && !template_age.is_some_and(|age| age >= 45)
+            && latest_external
+                .and_then(|row| row.public_http_up)
+                .unwrap_or(true);
+        let pool = PoolHealth {
+            healthy: pool_healthy,
+            database_reachable: latest_local.map(|row| row.db_up).unwrap_or(false),
+            error: latest_local
+                .filter(|row| !row.db_up)
+                .and_then(|row| row.details_json.clone()),
+        };
+        let daemon = daemon_health_from_heartbeat(latest_local);
+        let template = TemplateHealth {
+            observed: latest_local.is_some(),
+            fresh: template_age.is_some_and(|age| age < 45),
+            age_seconds: template_age,
+            last_refresh_millis: latest_local.and_then(|row| row.last_refresh_millis),
+        };
         let uptime = vec![
-            UptimeWindow {
-                label: "1h".to_string(),
-                window_seconds: 3600,
-                sample_count: history.sample_count_within(Duration::from_secs(3600), now),
-                up_pct: history.uptime_pct(Duration::from_secs(3600), now),
-            },
-            UptimeWindow {
-                label: "24h".to_string(),
-                window_seconds: 24 * 3600,
-                sample_count: history.sample_count_within(Duration::from_secs(24 * 3600), now),
-                up_pct: history.uptime_pct(Duration::from_secs(24 * 3600), now),
-            },
-            UptimeWindow {
-                label: "7d".to_string(),
-                window_seconds: 7 * 24 * 3600,
-                sample_count: history.sample_count_within(Duration::from_secs(7 * 24 * 3600), now),
-                up_pct: history.uptime_pct(Duration::from_secs(7 * 24 * 3600), now),
-            },
+            build_monitor_uptime_window("1h", Duration::from_secs(3600), &local_rows, &external_rows, now),
+            build_monitor_uptime_window(
+                "24h",
+                Duration::from_secs(24 * 3600),
+                &local_rows,
+                &external_rows,
+                now,
+            ),
+            build_monitor_uptime_window(
+                "7d",
+                Duration::from_secs(7 * 24 * 3600),
+                &local_rows,
+                &external_rows,
+                now,
+            ),
         ];
 
-        StatusPageResponse {
+        Ok(StatusPageResponse {
             checked_at: now,
             pool_uptime_seconds,
+            pool,
+            services,
             daemon,
+            template,
             uptime,
-            incidents: history.incidents_for_api(now),
-        }
+            incidents: incidents
+                .into_iter()
+                .map(|incident| status_incident_from_monitor(incident, now))
+                .collect(),
+        })
     }
 
     async fn db_totals(&self) -> anyhow::Result<DbTotals> {
@@ -5711,6 +6260,47 @@ impl ApiState {
         };
 
         let mut cache = self.daemon_health_cache.lock();
+        cache.updated_at = Some(Instant::now());
+        cache.value = Some(value.clone());
+        value
+    }
+
+    async fn pool_health(&self) -> PoolHealth {
+        {
+            let cache = self.pool_health_cache.lock();
+            if cache
+                .updated_at
+                .is_some_and(|updated| updated.elapsed() < POOL_HEALTH_CACHE_TTL)
+            {
+                if let Some(cached) = cache.value.clone() {
+                    return cached;
+                }
+            }
+        }
+
+        let store = Arc::clone(&self.store);
+        let sampled =
+            tokio::task::spawn_blocking(move || store.get_meta(STATUS_HISTORY_META_KEY)).await;
+
+        let value = match sampled {
+            Ok(Ok(_)) => PoolHealth {
+                healthy: true,
+                database_reachable: true,
+                error: None,
+            },
+            Ok(Err(err)) => PoolHealth {
+                healthy: false,
+                database_reachable: false,
+                error: Some(err.to_string()),
+            },
+            Err(err) => PoolHealth {
+                healthy: false,
+                database_reachable: false,
+                error: Some(format!("join error: {err}")),
+            },
+        };
+
+        let mut cache = self.pool_health_cache.lock();
         cache.updated_at = Some(Instant::now());
         cache.value = Some(value.clone());
         value
@@ -6075,12 +6665,15 @@ impl StatusHistory {
         &mut self,
         now: SystemTime,
         daemon_reachable: bool,
+        database_reachable: bool,
         daemon_syncing: Option<bool>,
         daemon_error: Option<&str>,
+        pool_error: Option<&str>,
     ) {
         self.samples.push_back(StatusSample {
             timestamp: now,
             daemon_reachable,
+            database_reachable: Some(database_reachable),
         });
         let cutoff = now
             .checked_sub(STATUS_SAMPLES_RETENTION)
@@ -6106,6 +6699,36 @@ impl StatusHistory {
                 });
             }
         } else if let Some(open) = self.open_daemon_down.take() {
+            self.incidents.push_front(StatusIncident {
+                id: open.id,
+                kind: open.kind.to_string(),
+                severity: open.severity.to_string(),
+                started_at: open.started_at,
+                ended_at: Some(now),
+                duration_seconds: now
+                    .duration_since(open.started_at)
+                    .ok()
+                    .map(|d| d.as_secs()),
+                message: open.message,
+                ongoing: false,
+            });
+        }
+
+        if !database_reachable {
+            if self.open_pool_database_down.is_none() {
+                let id = self.next_incident_id;
+                self.next_incident_id = self.next_incident_id.saturating_add(1);
+                self.open_pool_database_down = Some(OpenIncident {
+                    id,
+                    kind: "pool_database_down".to_string(),
+                    severity: "critical".to_string(),
+                    started_at: now,
+                    message: pool_error
+                        .unwrap_or("pool database unreachable")
+                        .to_string(),
+                });
+            }
+        } else if let Some(open) = self.open_pool_database_down.take() {
             self.incidents.push_front(StatusIncident {
                 id: open.id,
                 kind: open.kind.to_string(),
@@ -6155,6 +6778,24 @@ impl StatusHistory {
 
     fn incidents_for_api(&self, now: SystemTime) -> Vec<StatusIncident> {
         let mut out = self.incidents.iter().cloned().collect::<Vec<_>>();
+        if let Some(open) = self.open_pool_database_down.clone() {
+            out.insert(
+                0,
+                StatusIncident {
+                    id: open.id,
+                    kind: open.kind.to_string(),
+                    severity: open.severity.to_string(),
+                    started_at: open.started_at,
+                    ended_at: None,
+                    duration_seconds: now
+                        .duration_since(open.started_at)
+                        .ok()
+                        .map(|d| d.as_secs()),
+                    message: open.message,
+                    ongoing: true,
+                },
+            );
+        }
         if let Some(open) = self.open_daemon_down.clone() {
             out.insert(
                 0,
@@ -6194,7 +6835,30 @@ impl StatusHistory {
         out
     }
 
-    fn uptime_pct(&self, window: Duration, now: SystemTime) -> Option<f64> {
+    #[cfg(test)]
+    fn pool_uptime_pct(&self, window: Duration, now: SystemTime) -> Option<f64> {
+        self.uptime_pct_by(window, now, |sample| {
+            sample.daemon_reachable && sample.database_reachable.unwrap_or(true)
+        })
+    }
+
+    #[cfg(test)]
+    fn daemon_uptime_pct(&self, window: Duration, now: SystemTime) -> Option<f64> {
+        self.uptime_pct_by(window, now, |sample| sample.daemon_reachable)
+    }
+
+    #[cfg(test)]
+    fn database_uptime_pct(&self, window: Duration, now: SystemTime) -> Option<f64> {
+        self.uptime_pct_by(window, now, |sample| {
+            sample.database_reachable.unwrap_or(true)
+        })
+    }
+
+    #[cfg(test)]
+    fn uptime_pct_by<F>(&self, window: Duration, now: SystemTime, is_up: F) -> Option<f64>
+    where
+        F: Fn(&StatusSample) -> bool,
+    {
         let cutoff = now.checked_sub(window).unwrap_or(UNIX_EPOCH);
         let mut total = 0usize;
         let mut up = 0usize;
@@ -6204,7 +6868,7 @@ impl StatusHistory {
             .filter(|sample| sample.timestamp >= cutoff)
         {
             total += 1;
-            if sample.daemon_reachable {
+            if is_up(sample) {
                 up += 1;
             }
         }
@@ -6215,6 +6879,7 @@ impl StatusHistory {
         }
     }
 
+    #[cfg(test)]
     fn sample_count_within(&self, window: Duration, now: SystemTime) -> usize {
         let cutoff = now.checked_sub(window).unwrap_or(UNIX_EPOCH);
         self.samples
@@ -6242,7 +6907,7 @@ impl StatusHistory {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::{HashMap, HashSet, VecDeque};
     use std::sync::Arc;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -6259,6 +6924,7 @@ mod tests {
     use axum::body::to_bytes;
     use axum::extract::{Path, Query, State};
     use axum::response::IntoResponse;
+    use serde::Serialize;
 
     use super::{
         apply_wallet_liquidity_to_payout_eta, batch_payouts, block_page_item_response,
@@ -6272,9 +6938,10 @@ mod tests {
         rejection_window_duration, share_limit, sort_workers_for_miner, system_time_to_unix_secs,
         trim_log_line, worker_hashrate_by_name, ApiState, DaemonHealthCache, DbTotalsCache,
         InsightsCache, LiveRuntimeSnapshotCache, MinerDetailQuery, MinerPendingBlockEstimate,
-        MinerPendingEstimate, MinersQuery, NetworkHashrateCache, PayoutEtaResponse, StatusHistory,
-        DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW,
-        HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY, STATUS_HISTORY_META_KEY,
+        MinerPendingEstimate, MinersQuery, NetworkHashrateCache, PayoutEtaResponse,
+        OpenIncident, PoolHealthCache, StatusHistory, StatusIncident, DAEMON_LOG_LINE_LIMIT,
+        HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
+        LIVE_RUNTIME_SNAPSHOT_META_KEY, STATUS_HISTORY_META_KEY,
     };
 
     fn test_store() -> Option<Arc<PoolStore>> {
@@ -6315,6 +6982,7 @@ mod tests {
             validation,
             db_totals_cache: Arc::new(parking_lot::Mutex::new(DbTotalsCache::default())),
             daemon_health_cache: Arc::new(parking_lot::Mutex::new(DaemonHealthCache::default())),
+            pool_health_cache: Arc::new(parking_lot::Mutex::new(PoolHealthCache::default())),
             network_hashrate_cache: Arc::new(parking_lot::Mutex::new(
                 NetworkHashrateCache::default(),
             )),
@@ -6606,8 +7274,22 @@ mod tests {
             .checked_sub(Duration::from_secs(60))
             .expect("recent base time");
         let mut history = StatusHistory::default();
-        history.record_sample(base, false, Some(false), Some("daemon unreachable"));
-        history.record_sample(base + Duration::from_secs(30), true, Some(false), None);
+        history.record_sample(
+            base,
+            false,
+            true,
+            Some(false),
+            Some("daemon unreachable"),
+            None,
+        );
+        history.record_sample(
+            base + Duration::from_secs(30),
+            true,
+            true,
+            Some(false),
+            None,
+            None,
+        );
 
         let payload = serde_json::to_vec(&history).expect("serialize status history");
         store
@@ -6624,6 +7306,100 @@ mod tests {
         assert_eq!(incidents.len(), 1);
         assert_eq!(incidents[0].kind, "daemon_down");
         assert!(!incidents[0].ongoing);
+        assert_eq!(
+            loaded.pool_uptime_pct(Duration::from_secs(3600), now),
+            Some(50.0)
+        );
+    }
+
+    #[test]
+    fn status_history_loads_legacy_samples_without_database_health() {
+        #[derive(Serialize)]
+        struct LegacyStatusSample {
+            timestamp: SystemTime,
+            daemon_reachable: bool,
+        }
+
+        #[derive(Serialize)]
+        struct LegacyStatusHistory {
+            samples: VecDeque<LegacyStatusSample>,
+            incidents: VecDeque<StatusIncident>,
+            open_daemon_down: Option<OpenIncident>,
+            open_daemon_syncing: Option<OpenIncident>,
+            next_incident_id: u64,
+        }
+
+        let base = UNIX_EPOCH + Duration::from_secs(1_000);
+        let legacy = LegacyStatusHistory {
+            samples: VecDeque::from([
+                LegacyStatusSample {
+                    timestamp: base,
+                    daemon_reachable: true,
+                },
+                LegacyStatusSample {
+                    timestamp: base + Duration::from_secs(30),
+                    daemon_reachable: true,
+                },
+            ]),
+            incidents: VecDeque::new(),
+            open_daemon_down: None,
+            open_daemon_syncing: None,
+            next_incident_id: 7,
+        };
+
+        let loaded: StatusHistory =
+            serde_json::from_slice(&serde_json::to_vec(&legacy).expect("serialize legacy history"))
+                .expect("deserialize upgraded history");
+
+        let now = base + Duration::from_secs(30);
+        assert_eq!(
+            loaded.database_uptime_pct(Duration::from_secs(3600), now),
+            Some(100.0)
+        );
+        assert_eq!(
+            loaded.pool_uptime_pct(Duration::from_secs(3600), now),
+            Some(100.0)
+        );
+    }
+
+    #[test]
+    fn status_history_records_database_outages_as_incidents() {
+        let base = UNIX_EPOCH + Duration::from_secs(2_000);
+        let mut history = StatusHistory::default();
+        history.record_sample(
+            base,
+            true,
+            false,
+            Some(false),
+            None,
+            Some("connection closed"),
+        );
+        history.record_sample(
+            base + Duration::from_secs(30),
+            true,
+            true,
+            Some(false),
+            None,
+            None,
+        );
+
+        let now = base + Duration::from_secs(30);
+        let incidents = history.incidents_for_api(now);
+        assert_eq!(incidents.len(), 1);
+        assert_eq!(incidents[0].kind, "pool_database_down");
+        assert_eq!(incidents[0].message, "connection closed");
+        assert_eq!(
+            history.daemon_uptime_pct(Duration::from_secs(3600), now),
+            Some(100.0)
+        );
+        assert_eq!(
+            history.database_uptime_pct(Duration::from_secs(3600), now),
+            Some(50.0)
+        );
+        assert_eq!(
+            history.pool_uptime_pct(Duration::from_secs(3600), now),
+            Some(50.0)
+        );
     }
 
     #[test]
@@ -6631,9 +7407,11 @@ mod tests {
         let store = require_test_store!();
         let snapshot = PersistedRuntimeSnapshot {
             sampled_at: SystemTime::now(),
+            total_shares_accepted: 0,
             connected_miners: 0,
             connected_workers: 0,
             estimated_hashrate: 0.0,
+            last_share_at: None,
             jobs: JobRuntimeSnapshot {
                 current_height: Some(777),
                 current_difficulty: Some(55),

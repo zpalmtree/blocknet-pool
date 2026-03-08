@@ -381,7 +381,13 @@ export interface StatusUptimeWindow {
   label: string;
   window_seconds: number;
   sample_count: number;
-  up_pct?: number | null;
+  external_sample_count?: number | null;
+  api_up_pct?: number | null;
+  stratum_up_pct?: number | null;
+  pool_up_pct?: number | null;
+  daemon_up_pct?: number | null;
+  database_up_pct?: number | null;
+  public_http_up_pct?: number | null;
 }
 
 export interface StatusIncident {
@@ -398,6 +404,43 @@ export interface StatusIncident {
 export interface StatusResponse {
   checked_at: UnixLike;
   pool_uptime_seconds: number;
+  pool: {
+    healthy: boolean;
+    database_reachable: boolean;
+    error?: string | null;
+  };
+  services: {
+    public_http: {
+      observed: boolean;
+      healthy: boolean;
+      last_sample_at?: UnixLike;
+      message?: string | null;
+    };
+    api: {
+      observed: boolean;
+      healthy: boolean;
+      last_sample_at?: UnixLike;
+      message?: string | null;
+    };
+    stratum: {
+      observed: boolean;
+      healthy: boolean;
+      last_sample_at?: UnixLike;
+      message?: string | null;
+    };
+    database: {
+      observed: boolean;
+      healthy: boolean;
+      last_sample_at?: UnixLike;
+      message?: string | null;
+    };
+    daemon: {
+      observed: boolean;
+      healthy: boolean;
+      last_sample_at?: UnixLike;
+      message?: string | null;
+    };
+  };
   daemon: {
     reachable: boolean;
     chain_height?: number | null;
@@ -406,6 +449,12 @@ export interface StatusResponse {
     mempool_size?: number | null;
     best_hash?: string | null;
     error?: string | null;
+  };
+  template: {
+    observed: boolean;
+    fresh: boolean;
+    age_seconds?: number | null;
+    last_refresh_millis?: number | null;
   };
   uptime: StatusUptimeWindow[];
   incidents: StatusIncident[];

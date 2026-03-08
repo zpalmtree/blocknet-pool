@@ -1,0 +1,23 @@
+[Unit]
+Description=Blocknet Pool Monitor
+After=network-online.target blocknetd.service postgresql.service blocknet-pool-api.service blocknet-pool-stratum.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=blocknet
+Group=blocknet
+WorkingDirectory=/opt/blocknet/blocknet-pool
+EnvironmentFile=/etc/blocknet/pool/.env
+ExecStart=/opt/blocknet/blocknet-pool/target/release/blocknet-pool-monitor --config /etc/blocknet/pool/config.json
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/blocknet-pool /etc/blocknet/pool
+
+[Install]
+WantedBy=multi-user.target

@@ -52,6 +52,7 @@ pub struct PoolSnapshot {
     pub connected_miners: usize,
     pub connected_workers: usize,
     pub estimated_hashrate: f64,
+    pub last_share_at: Option<SystemTime>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -396,6 +397,11 @@ impl PoolStats {
             connected_miners: self.connected_miner_count(),
             connected_workers: self.connected_worker_count(),
             estimated_hashrate: self.estimate_hashrate(),
+            last_share_at: self
+                .recent_shares
+                .read()
+                .back()
+                .map(|share| share.timestamp),
         }
     }
 

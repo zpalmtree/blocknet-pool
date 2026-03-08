@@ -6,6 +6,7 @@ pub mod dev_fee;
 pub mod engine;
 pub mod jobs;
 pub mod logging;
+pub mod monitor;
 pub mod node;
 pub mod payout;
 pub mod pgdb;

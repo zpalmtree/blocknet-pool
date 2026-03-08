@@ -42,9 +42,13 @@ impl From<ValidationSnapshot> for PersistedValidationSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedRuntimeSnapshot {
     pub sampled_at: SystemTime,
+    #[serde(default)]
+    pub total_shares_accepted: u64,
     pub connected_miners: usize,
     pub connected_workers: usize,
     pub estimated_hashrate: f64,
+    #[serde(default)]
+    pub last_share_at: Option<SystemTime>,
     #[serde(default)]
     pub jobs: JobRuntimeSnapshot,
     pub validation: PersistedValidationSummary,
@@ -58,9 +62,11 @@ impl PersistedRuntimeSnapshot {
     ) -> Self {
         Self {
             sampled_at: SystemTime::now(),
+            total_shares_accepted: pool.total_shares_accepted,
             connected_miners: pool.connected_miners,
             connected_workers: pool.connected_workers,
             estimated_hashrate: pool.estimated_hashrate,
+            last_share_at: pool.last_share_at,
             jobs,
             validation: validation.into(),
         }

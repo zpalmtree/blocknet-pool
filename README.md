@@ -16,6 +16,7 @@ The repo ships two runtime binaries:
 
 - `blocknet-pool-api`: API/UI process only
 - `blocknet-pool-stratum`: Stratum + payouts + maintenance process only
+- `blocknet-pool-monitor`: on-host monitoring sampler + Prometheus endpoint
 
 For production, prefer the split services so API/UI deploys do not drop Stratum connections.
 
@@ -42,8 +43,26 @@ What it does:
 - restarts only the changed service(s):
   - `blocknet-pool-api.service`
   - `blocknet-pool-stratum.service`
+  - `blocknet-pool-monitor.service`
 - frontend-only changes still restart `blocknet-pool-api.service` because the UI bundle is embedded into that binary
 - tails recent logs for both services
+
+## Monitoring Stack
+
+The pool now ships a dedicated on-host monitor and repo-managed monitoring assets:
+
+- `blocknet-pool-monitor.service`: probes API, Stratum, Postgres, daemon, wallet, share freshness, and payout queue state every `10s`
+- DB-backed heartbeats and incidents drive `/api/status`
+- Prometheus + Alertmanager + node exporter + blackbox exporter configs live under `deploy/monitoring/`
+- Cloudflare Worker assets for outside-in public HTTP probes live under `deploy/cloudflare/monitor-worker/`
+
+Provision the on-host monitoring packages and configs on `bntpool` with:
+
+```bash
+./scripts/provision_bntpool_monitoring.sh
+```
+
+That script installs Prometheus, Alertmanager, node exporter, blackbox exporter, and the local Discord relay. Grafana provisioning files are included in-repo and can be installed separately if Grafana is present on the host.
 
 ## Build Blocknet Daemon For bntpool
 
@@ -78,9 +97,12 @@ npm --prefix frontend ci
 npm --prefix frontend run build
 cargo build --release --bin blocknet-pool-api --no-default-features --features api
 cargo build --release --bin blocknet-pool-stratum --no-default-features --features stratum
+cargo build --release --bin blocknet-pool-monitor --no-default-features --features monitor
 cargo run --release --bin blocknet-pool-api --no-default-features --features api
 cargo run --release --bin blocknet-pool-stratum --no-default-features --features stratum
+cargo run --release --bin blocknet-pool-monitor --no-default-features --features monitor
 # run the API and Stratum binaries in separate terminals
+# run the monitor binary in a third terminal if you want the DB-backed status page/metrics loop
 # if missing, config.json and .env are created automatically
 # edit .env and set BLOCKNET_WALLET_PASSWORD
 ```
@@ -90,6 +112,7 @@ Custom config:
 ```bash
 cargo run --release --bin blocknet-pool-api --no-default-features --features api -- --config /path/to/config.json
 cargo run --release --bin blocknet-pool-stratum --no-default-features --features stratum -- --config /path/to/config.json
+cargo run --release --bin blocknet-pool-monitor --no-default-features --features monitor -- --config /path/to/config.json
 ```
 
 ## Frontend

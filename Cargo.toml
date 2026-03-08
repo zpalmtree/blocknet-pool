@@ -7,6 +7,7 @@ edition = "2021"
 default = ["api", "stratum"]
 api = []
 stratum = []
+monitor = []
 
 [[bin]]
 name = "blocknet-pool-api"
@@ -17,6 +18,11 @@ required-features = ["api"]
 name = "blocknet-pool-stratum"
 path = "src/bin/blocknet-pool-stratum.rs"
 required-features = ["stratum"]
+
+[[bin]]
+name = "blocknet-pool-monitor"
+path = "src/bin/blocknet-pool-monitor.rs"
+required-features = ["monitor"]
 
 [dependencies]
 anyhow = "1.0"

@@ -15,6 +15,32 @@ function pct(value: number | null | undefined): string {
   return `${value.toFixed(2)}%`;
 }
 
+function poolState(status: StatusResponse | null): string {
+  if (!status) return '-';
+  return status.pool?.healthy ? 'Healthy' : 'Degraded';
+}
+
+function serviceState(
+  status: StatusResponse | null,
+  key: 'public_http' | 'api' | 'stratum' | 'database' | 'daemon'
+): string {
+  if (!status) return '-';
+  const service = status.services?.[key];
+  if (!service?.observed) return 'Unknown';
+  return service.healthy ? 'Online' : 'Down';
+}
+
+function syncState(status: StatusResponse | null): string {
+  if (!status) return '-';
+  if (!status.daemon?.reachable) return 'Offline';
+  return status.daemon?.syncing ? 'Syncing' : 'Ready';
+}
+
+function templateState(status: StatusResponse | null): string {
+  if (!status?.template?.observed) return 'Unknown';
+  return status.template.fresh ? 'Fresh' : 'Stale';
+}
+
 export function StatusPage({ active, api, liveTick }: StatusPageProps) {
   const [status, setStatus] = useState<StatusResponse | null>(null);
 
@@ -43,26 +69,68 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
         <span className="page-kicker">Pool Monitoring</span>
         <h1>Blocknet pool status</h1>
         <p className="page-intro">
-          Monitor uptime, daemon reachability, sync state, and recent incident history from the public status page.
+          Monitor public reachability, API health, Stratum freshness, database reachability, daemon state, and recent
+          incident history from the public status page.
         </p>
       </div>
 
       <div className="stats-grid">
         <div className="stat-card">
-          <div className="label">Daemon</div>
-          <div className="value">{status?.daemon?.reachable ? 'Online' : 'Offline'}</div>
+          <div className="label">Pool</div>
+          <div className="value">{poolState(status)}</div>
         </div>
         <div className="stat-card">
-          <div className="label">Sync State</div>
-          <div className="value">{status?.daemon?.syncing ? 'Syncing' : 'Ready'}</div>
+          <div className="label">Public HTTP</div>
+          <div className="value">{serviceState(status, 'public_http')}</div>
+        </div>
+        <div className="stat-card">
+          <div className="label">API</div>
+          <div className="value">{serviceState(status, 'api')}</div>
+        </div>
+        <div className="stat-card">
+          <div className="label">Stratum</div>
+          <div className="value">{serviceState(status, 'stratum')}</div>
+        </div>
+        <div className="stat-card">
+          <div className="label">Database</div>
+          <div className="value" title={!status?.pool?.database_reachable ? status?.pool?.error ?? undefined : undefined}>
+            {serviceState(status, 'database')}
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="label">Daemon</div>
+          <div className="value">{serviceState(status, 'daemon')}</div>
+        </div>
+        <div className="stat-card">
+          <div className="label">Template</div>
+          <div className="value">{templateState(status)}</div>
         </div>
         <div className="stat-card">
           <div className="label">Chain Height</div>
           <div className="value mono">{status?.daemon?.chain_height ?? '-'}</div>
         </div>
         <div className="stat-card">
-          <div className="label">Pool Uptime</div>
+          <div className="label">Template Age</div>
+          <div className="value mono">{status?.template?.age_seconds != null ? fmtSeconds(status.template.age_seconds) : '-'}</div>
+        </div>
+        <div className="stat-card">
+          <div className="label">API Uptime</div>
           <div className="value mono">{status ? fmtSeconds(status.pool_uptime_seconds || 0) : '-'}</div>
+        </div>
+      </div>
+
+      <div className="stats-grid">
+        <div className="stat-card">
+          <div className="label">Sync State</div>
+          <div className="value">{syncState(status)}</div>
+        </div>
+        <div className="stat-card">
+          <div className="label">Local Samples</div>
+          <div className="value mono">{status?.uptime?.[0]?.sample_count ?? '-'}</div>
+        </div>
+        <div className="stat-card">
+          <div className="label">External Samples</div>
+          <div className="value mono">{status?.uptime?.[0]?.external_sample_count ?? '-'}</div>
         </div>
       </div>
 
@@ -75,14 +143,19 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
             <thead>
               <tr>
                 <th>Window</th>
-                <th>Uptime</th>
+                <th>Public HTTP</th>
+                <th>API</th>
+                <th>Stratum</th>
+                <th>Pool</th>
+                <th>Database</th>
+                <th>Daemon</th>
                 <th>Samples</th>
               </tr>
             </thead>
             <tbody>
               {!status?.uptime?.length ? (
                 <tr>
-                  <td colSpan={3} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                  <td colSpan={8} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                     No status samples yet
                   </td>
                 </tr>
@@ -90,8 +163,13 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
                 status.uptime.map((row) => (
                   <tr key={row.label}>
                     <td>{row.label}</td>
-                    <td>{pct(row.up_pct)}</td>
-                    <td>{row.sample_count}</td>
+                    <td>{pct(row.public_http_up_pct)}</td>
+                    <td>{pct(row.api_up_pct)}</td>
+                    <td>{pct(row.stratum_up_pct)}</td>
+                    <td>{pct(row.pool_up_pct)}</td>
+                    <td>{pct(row.database_up_pct)}</td>
+                    <td>{pct(row.daemon_up_pct)}</td>
+                    <td>{`${row.sample_count}/${row.external_sample_count ?? 0}`}</td>
                   </tr>
                 ))
               )}
@@ -146,12 +224,12 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
 
       <div className="seo-copy-grid">
         <div className="card seo-copy-card">
-          <h3>Daemon Reachability</h3>
-          <p>Check whether the Blocknet daemon is online and ready to serve work before connecting miners.</p>
+          <h3>Outside-In Reachability</h3>
+          <p>Track whether the public API is reachable from outside the box, not just whether local processes are up.</p>
         </div>
         <div className="card seo-copy-card">
-          <h3>Historical Uptime</h3>
-          <p>Review uptime windows over time to understand how stable the pool has been under real load.</p>
+          <h3>Stratum Freshness</h3>
+          <p>Catch cases where miners stop getting fresh work even though the pool site and daemon still respond.</p>
         </div>
         <div className="card seo-copy-card">
           <h3>Incident Tracking</h3>
