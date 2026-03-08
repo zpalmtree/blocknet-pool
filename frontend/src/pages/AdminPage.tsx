@@ -1732,12 +1732,17 @@ export function AdminPage({
             </div>
 
             <div className="card table-scroll">
-              <table>
+              <table className="admin-balance-table">
+                <colgroup>
+                  <col className="admin-balance-table__address-col" />
+                  <col className="admin-balance-table__amount-col" />
+                  <col className="admin-balance-table__amount-col" />
+                </colgroup>
                 <thead>
                   <tr>
                     <th>Address</th>
-                    <th style={{ textAlign: 'right' }}>Owed</th>
-                    <th style={{ textAlign: 'right' }}>Total Paid</th>
+                    <th>Owed</th>
+                    <th>Total Paid</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1761,14 +1766,14 @@ export function AdminPage({
                             {shortAddr(b.address)}
                           </a>
                         </td>
-                        <td style={{ textAlign: 'right' }} className="mono">
+                        <td className="mono">
                           {b.pending > 0 ? (
                             <span style={{ color: 'var(--warn)' }}>{formatCoins(b.pending)}</span>
                           ) : (
                             formatCoins(b.pending)
                           )}
                         </td>
-                        <td style={{ textAlign: 'right' }} className="mono">{formatCoins(b.paid)}</td>
+                        <td className="mono">{formatCoins(b.paid)}</td>
                       </tr>
                     ))
                   )}
