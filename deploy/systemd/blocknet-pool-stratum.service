@@ -1,7 +1,7 @@
 [Unit]
 Description=Blocknet Pool Stratum
-After=network-online.target blocknetd.service
-Wants=network-online.target
+After=network-online.target blocknetd.service postgresql.service
+Wants=network-online.target postgresql.service
 
 [Service]
 Type=simple
@@ -9,6 +9,7 @@ User=blocknet
 Group=blocknet
 WorkingDirectory=/opt/blocknet/blocknet-pool
 EnvironmentFile=/etc/blocknet/pool/.env
+ExecStartPre=/usr/bin/pg_isready -h 127.0.0.1 -p 5432 -t 5
 ExecStart=/opt/blocknet/blocknet-pool/target/release/blocknet-pool-stratum --config /etc/blocknet/pool/config.json
 Restart=always
 RestartSec=5

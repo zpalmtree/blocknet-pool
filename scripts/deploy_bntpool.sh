@@ -57,6 +57,8 @@ force_restart="${BNTPOOL_FORCE_RESTART:-0}"
 local_build_image="${BNTPOOL_LOCAL_BUILD_IMAGE:-}"
 remote_api_bin="${remote_dir}/target/release/blocknet-pool-api"
 remote_stratum_bin="${remote_dir}/target/release/blocknet-pool-stratum"
+remote_postgres_dropin_dir="/etc/systemd/system/postgresql@.service.d"
+remote_postgres_dropin="${remote_postgres_dropin_dir}/restart-blocknet-pool.conf"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_dir="$(cd "${script_dir}/.." && pwd)"
@@ -131,12 +133,17 @@ echo "==> reading updated remote binary hashes"
 after_api_hash="$(remote_hash "${remote_api_bin}")"
 after_stratum_hash="$(remote_hash "${remote_stratum_bin}")"
 
+echo "==> installing managed systemd assets"
+ssh "${host}" "set -euo pipefail; \
+  sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-api.service' '/etc/systemd/system/${api_service}'; \
+  sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-stratum.service' '/etc/systemd/system/${stratum_service}'; \
+  sudo install -d -m 0755 '${remote_postgres_dropin_dir}'; \
+  sudo install -m 0644 '${remote_dir}/deploy/systemd/postgresql@.service.d/restart-blocknet-pool.conf' '${remote_postgres_dropin}'; \
+  sudo systemctl daemon-reload"
+
 if [[ "${migrate_split}" == "1" ]]; then
-  echo "==> installing split systemd units"
+  echo "==> enabling split systemd units"
   ssh "${host}" "set -euo pipefail; \
-    sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-api.service' '/etc/systemd/system/${api_service}'; \
-    sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-stratum.service' '/etc/systemd/system/${stratum_service}'; \
-    sudo systemctl daemon-reload; \
     sudo systemctl disable --now '${legacy_service}' >/dev/null 2>&1 || true; \
     sudo systemctl enable '${api_service}' '${stratum_service}'"
 fi

@@ -6,7 +6,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
-use postgres::{Client, Config as PostgresConfig, NoTls};
+use postgres::{types::ToSql, Client, Config as PostgresConfig, NoTls, Row, Transaction};
+use tracing::warn;
 
 use crate::db::{
     AddressRiskState, Balance, BlockCreditEvent, DbBlock, DbShare, Payout, PendingPayout,
@@ -50,13 +51,92 @@ pub struct VardiffHintDiagnostic {
     pub updated_at: SystemTime,
 }
 
+struct ManagedClient {
+    client: Client,
+    url: String,
+    schema: Option<String>,
+    label: String,
+}
+
+impl ManagedClient {
+    fn new(client: Client, url: &str, schema: Option<&str>, label: &str) -> Self {
+        Self {
+            client,
+            url: url.to_string(),
+            schema: schema.map(str::to_string),
+            label: label.to_string(),
+        }
+    }
+
+    fn reconnect(&mut self) -> Result<()> {
+        self.client =
+            PostgresStore::connect_client(&self.url, self.schema.as_deref(), &self.label)?;
+        Ok(())
+    }
+
+    fn ensure_connected(&mut self) -> Result<()> {
+        if self.client.is_closed() {
+            warn!(label = %self.label, "postgres client closed; reconnecting");
+            self.reconnect()?;
+        }
+        Ok(())
+    }
+
+    fn should_retry(err: &anyhow::Error, client: &Client) -> bool {
+        client.is_closed() || err.to_string().contains("connection closed")
+    }
+
+    fn with_retry<T>(
+        &mut self,
+        operation: &'static str,
+        mut op: impl FnMut(&mut Client) -> Result<T>,
+    ) -> Result<T> {
+        self.ensure_connected()?;
+        match op(&mut self.client) {
+            Ok(value) => Ok(value),
+            Err(err) if Self::should_retry(&err, &self.client) => {
+                warn!(
+                    label = %self.label,
+                    operation,
+                    error = %err,
+                    "postgres operation failed on a closed client; reconnecting and retrying"
+                );
+                self.reconnect()?;
+                op(&mut self.client)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn execute(&mut self, query: &str, params: &[&(dyn ToSql + Sync)]) -> Result<u64> {
+        self.with_retry("execute", |client| Ok(client.execute(query, params)?))
+    }
+
+    fn query(&mut self, query: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Vec<Row>> {
+        self.with_retry("query", |client| Ok(client.query(query, params)?))
+    }
+
+    fn query_one(&mut self, query: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Row> {
+        self.with_retry("query_one", |client| Ok(client.query_one(query, params)?))
+    }
+
+    fn query_opt(&mut self, query: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Option<Row>> {
+        self.with_retry("query_opt", |client| Ok(client.query_opt(query, params)?))
+    }
+
+    fn transaction(&mut self) -> Result<Transaction<'_>> {
+        self.ensure_connected()?;
+        Ok(self.client.transaction()?)
+    }
+}
+
 pub struct PostgresStore {
-    conns: Vec<Mutex<Client>>,
+    conns: Vec<Mutex<ManagedClient>>,
     next_conn: AtomicUsize,
 }
 
 impl PostgresStore {
-    fn conn(&self) -> &Mutex<Client> {
+    fn conn(&self) -> &Mutex<ManagedClient> {
         let pool_len = self.conns.len().max(1);
         let idx = self.next_conn.fetch_add(1, Ordering::Relaxed) % pool_len;
         self.conns
@@ -290,10 +370,11 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         .context("ensure blocks.effort_pct column")?;
 
         let mut conns = Vec::with_capacity(pool_size);
-        conns.push(Mutex::new(conn));
+        conns.push(Mutex::new(ManagedClient::new(conn, url, schema, "primary")));
         for idx in 1..pool_size {
-            let extra = Self::connect_client(url, schema, &format!("pool conn {idx}"))?;
-            conns.push(Mutex::new(extra));
+            let label = format!("pool conn {idx}");
+            let extra = Self::connect_client(url, schema, &label)?;
+            conns.push(Mutex::new(ManagedClient::new(extra, url, schema, &label)));
         }
 
         Ok(Arc::new(Self {
