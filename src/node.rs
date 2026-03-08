@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::ffi::OsStr;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -455,9 +454,62 @@ impl NodeClient {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum DaemonNetwork {
+    Mainnet,
+    Testnet,
+}
+
+impl DaemonNetwork {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Mainnet => "mainnet",
+            Self::Testnet => "testnet",
+        }
+    }
+
+    fn legacy_data_dir(self) -> PathBuf {
+        match self {
+            Self::Mainnet => PathBuf::from("blocknet-data-mainnet"),
+            Self::Testnet => PathBuf::from("blocknet-data-testnet"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct DaemonContext {
     data_dir: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct BntConfigContext {
+    config_dir: PathBuf,
+    config: BntConfigFile,
+}
+
+impl BntConfigContext {
+    fn data_dir_for(&self, network: DaemonNetwork) -> PathBuf {
+        self.config
+            .cores
+            .get(network.as_str())
+            .and_then(|core| {
+                let data_dir = core.data_dir.trim();
+                (!data_dir.is_empty()).then(|| PathBuf::from(data_dir))
+            })
+            .unwrap_or_else(|| self.config_dir.join("data").join(network.as_str()))
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct BntConfigFile {
+    #[serde(default)]
+    cores: HashMap<String, BntCoreConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct BntCoreConfig {
+    #[serde(default)]
+    data_dir: String,
 }
 
 fn resolve_auth_token_and_cookie(
@@ -487,41 +539,162 @@ fn resolve_auth_token_and_cookie(
 }
 
 fn cookie_candidates(daemon_data_dir: &str, daemon_cookie_path: &str) -> Vec<PathBuf> {
+    let managed_config = load_bnt_config_context();
+    let detected_context = detect_daemon_context();
+    cookie_candidates_with_context(
+        daemon_data_dir,
+        daemon_cookie_path,
+        managed_config.as_ref(),
+        detected_context.as_ref(),
+        bnt_config_dir().as_deref(),
+    )
+}
+
+fn cookie_candidates_with_context(
+    daemon_data_dir: &str,
+    daemon_cookie_path: &str,
+    managed_config: Option<&BntConfigContext>,
+    detected_context: Option<&DaemonContext>,
+    fallback_bnt_dir: Option<&Path>,
+) -> Vec<PathBuf> {
     let mut out = Vec::<PathBuf>::new();
 
     let explicit_cookie = daemon_cookie_path.trim();
     if !explicit_cookie.is_empty() {
-        out.push(PathBuf::from(explicit_cookie));
+        push_cookie_candidate(&mut out, PathBuf::from(explicit_cookie));
     }
 
     let daemon_data_dir = daemon_data_dir.trim();
     if !daemon_data_dir.is_empty() {
-        out.push(PathBuf::from(daemon_data_dir).join("api.cookie"));
+        push_cookie_candidate(&mut out, PathBuf::from(daemon_data_dir).join("api.cookie"));
     }
 
-    if let Some(context) = detect_daemon_context() {
-        let candidate = context.data_dir.join("api.cookie");
-        if !out.contains(&candidate) {
-            out.push(candidate);
+    if let Some(context) = detected_context {
+        push_cookie_candidate(&mut out, context.data_dir.join("api.cookie"));
+    }
+
+    let managed_dir = managed_config.map(|config| config.config_dir.as_path()).or(fallback_bnt_dir);
+    if let Some(config_dir) = managed_dir {
+        for network in [DaemonNetwork::Mainnet, DaemonNetwork::Testnet] {
+            let pidfile = config_dir.join(format!("core.{}.pid", network.as_str()));
+            if pidfile.exists() {
+                let managed_cookie = managed_config
+                    .map(|config| config.data_dir_for(network).join("api.cookie"))
+                    .unwrap_or_else(|| config_dir.join("data").join(network.as_str()).join("api.cookie"));
+                push_cookie_candidate(&mut out, managed_cookie);
+            }
         }
     }
 
-    if !out.iter().any(|p| p == Path::new("data/api.cookie")) {
-        out.push(PathBuf::from("data/api.cookie"));
-    }
-    if !out
-        .iter()
-        .any(|p| p == Path::new("blocknet-data-mainnet/api.cookie"))
-    {
-        out.push(PathBuf::from("blocknet-data-mainnet/api.cookie"));
+    if let Some(config) = managed_config {
+        for network in [DaemonNetwork::Mainnet, DaemonNetwork::Testnet] {
+            let managed_cookie = config.data_dir_for(network).join("api.cookie");
+            push_cookie_candidate(&mut out, managed_cookie);
+        }
     }
 
+    if let Some(config_dir) = fallback_bnt_dir {
+        for network in [DaemonNetwork::Mainnet, DaemonNetwork::Testnet] {
+            push_cookie_candidate(
+                &mut out,
+                config_dir.join("data").join(network.as_str()).join("api.cookie"),
+            );
+        }
+    }
+
+    push_cookie_candidate(&mut out, PathBuf::from("data/api.cookie"));
+    push_cookie_candidate(
+        &mut out,
+        DaemonNetwork::Mainnet.legacy_data_dir().join("api.cookie"),
+    );
+    push_cookie_candidate(
+        &mut out,
+        DaemonNetwork::Testnet.legacy_data_dir().join("api.cookie"),
+    );
+
+    out
+}
+
+fn push_cookie_candidate(out: &mut Vec<PathBuf>, candidate: PathBuf) {
+    if !out.contains(&candidate) {
+        out.push(candidate);
+    }
+}
+
+fn bnt_config_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("BNT_CONFIG_DIR").filter(|value| !value.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
+
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join(".config").join("bnt"))
+}
+
+fn load_bnt_config_context() -> Option<BntConfigContext> {
+    let config_dir = bnt_config_dir()?;
+    let config_path = config_dir.join("config.json");
+    let data = fs::read(&config_path).ok()?;
+    let stripped = strip_json_comments(&data);
+    let config = serde_json::from_slice::<BntConfigFile>(&stripped)
+        .inspect_err(|err| {
+            tracing::warn!(
+                path = %config_path.display(),
+                error = %err,
+                "failed to parse Blocknet wrapper config; falling back to defaults"
+            );
+        })
+        .ok()?;
+    Some(BntConfigContext { config_dir, config })
+}
+
+fn strip_json_comments(src: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(src.len());
+    let mut idx = 0;
+    while idx < src.len() {
+        let ch = src[idx];
+
+        if ch == b'"' {
+            out.push(ch);
+            idx += 1;
+            while idx < src.len() {
+                let next = src[idx];
+                out.push(next);
+                idx += 1;
+                if next == b'\\' && idx < src.len() {
+                    out.push(src[idx]);
+                    idx += 1;
+                } else if next == b'"' {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        if ch == b'/' && idx + 1 < src.len() && src[idx + 1] == b'/' {
+            while idx < src.len() && src[idx] != b'\n' {
+                idx += 1;
+            }
+            continue;
+        }
+
+        if ch == b'#' {
+            while idx < src.len() && src[idx] != b'\n' {
+                idx += 1;
+            }
+            continue;
+        }
+
+        out.push(ch);
+        idx += 1;
+    }
     out
 }
 
 fn detect_daemon_context() -> Option<DaemonContext> {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
+    let managed_config = load_bnt_config_context();
+    let managed_dir = managed_config.as_ref().map(|config| config.config_dir.as_path());
     let mut sys = System::new();
     sys.refresh_processes_specifics(
         ProcessesToUpdate::All,
@@ -530,35 +703,72 @@ fn detect_daemon_context() -> Option<DaemonContext> {
             .with_cwd(UpdateKind::Always),
     );
 
-    if let Some(process) = sys.processes_by_name(OsStr::new("blocknet")).next() {
+    for process in sys.processes().values() {
+        let name = process.name().to_str();
         let cmd: Vec<String> = process
             .cmd()
             .iter()
             .filter_map(|s| s.to_str().map(String::from))
             .collect();
+        if !looks_like_blocknet_daemon_process(name, &cmd) {
+            continue;
+        }
+
+        let pid = process.pid().as_u32();
+        let network = managed_dir
+            .and_then(|config_dir| daemon_network_from_pidfiles(config_dir, pid))
+            .or_else(|| daemon_network_from_cmdline(&cmd))
+            .unwrap_or(DaemonNetwork::Mainnet);
 
         let data_dir = daemon_data_dir_from_cmdline(&cmd)
-            .unwrap_or_else(|| PathBuf::from("blocknet-data-mainnet"));
-
-        if data_dir.is_relative() {
-            if let Some(cwd) = process.cwd() {
-                return Some(DaemonContext {
-                    data_dir: cwd.join(data_dir),
-                });
-            }
-            if let Some(exe) = process.exe() {
-                if let Some(parent) = exe.parent() {
-                    return Some(DaemonContext {
-                        data_dir: parent.join(data_dir),
-                    });
-                }
-            }
-        }
+            .or_else(|| managed_config.as_ref().map(|config| config.data_dir_for(network)))
+            .unwrap_or_else(|| network.legacy_data_dir());
+        let data_dir = if data_dir.is_relative() {
+            process
+                .cwd()
+                .map(|cwd| cwd.join(&data_dir))
+                .unwrap_or(data_dir)
+        } else {
+            data_dir
+        };
 
         return Some(DaemonContext { data_dir });
     }
 
     None
+}
+
+fn looks_like_blocknet_daemon_process(name: Option<&str>, cmd: &[String]) -> bool {
+    name.is_some_and(binary_name_matches_blocknet)
+        || cmd
+            .first()
+            .and_then(|arg0| Path::new(arg0).file_name())
+            .and_then(|basename| basename.to_str())
+            .is_some_and(binary_name_matches_blocknet)
+}
+
+fn binary_name_matches_blocknet(name: &str) -> bool {
+    name == "blocknet" || name.starts_with("blocknet-core-")
+}
+
+fn daemon_network_from_pidfiles(config_dir: &Path, pid: u32) -> Option<DaemonNetwork> {
+    for network in [DaemonNetwork::Mainnet, DaemonNetwork::Testnet] {
+        let pidfile = config_dir.join(format!("core.{}.pid", network.as_str()));
+        let Ok(raw) = fs::read_to_string(&pidfile) else {
+            continue;
+        };
+        let Ok(found_pid) = raw.trim().parse::<u32>() else {
+            continue;
+        };
+        if found_pid == pid {
+            return Some(network);
+        }
+    }
+    None
+}
+
+fn daemon_network_from_cmdline(cmd: &[String]) -> Option<DaemonNetwork> {
+    cmd_bool_flag_is_truthy(cmd, &["--testnet", "-testnet"]).then_some(DaemonNetwork::Testnet)
 }
 
 fn daemon_data_dir_from_cmdline(cmd: &[String]) -> Option<PathBuf> {
@@ -583,6 +793,23 @@ fn cmd_arg_value(cmd: &[String], flags: &[&str]) -> Option<String> {
         }
     }
     None
+}
+
+fn cmd_bool_flag_is_truthy(cmd: &[String], flags: &[&str]) -> bool {
+    for arg in cmd {
+        for flag in flags {
+            if arg == flag {
+                return true;
+            }
+            if let Some(value) = arg.strip_prefix(&format!("{flag}=")) {
+                let normalized = value.trim().to_ascii_lowercase();
+                if matches!(normalized.as_str(), "1" | "true" | "t" | "yes" | "y" | "on") {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn read_token_from_cookie_file(cookie_path: &Path) -> Result<String> {
@@ -667,5 +894,72 @@ impl NodeApi for NodeClient {
         Ok(self
             .get_block_by_height_optional(height)?
             .map(|block| block.hash))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cookie_candidates_prefer_explicit_over_managed_paths() {
+        let config_dir = tempfile::tempdir().expect("tempdir");
+        let managed = BntConfigContext {
+            config_dir: config_dir.path().to_path_buf(),
+            config: BntConfigFile {
+                cores: HashMap::from([(
+                    "mainnet".to_string(),
+                    BntCoreConfig {
+                        data_dir: "/managed/mainnet".to_string(),
+                    },
+                )]),
+            },
+        };
+
+        let candidates = cookie_candidates_with_context(
+            "/var/lib/blocknet/data",
+            "/explicit/api.cookie",
+            Some(&managed),
+            Some(&DaemonContext {
+                data_dir: PathBuf::from("/detected/mainnet"),
+            }),
+            Some(config_dir.path()),
+        );
+
+        assert_eq!(candidates[0], PathBuf::from("/explicit/api.cookie"));
+        assert_eq!(candidates[1], PathBuf::from("/var/lib/blocknet/data/api.cookie"));
+        assert_eq!(candidates[2], PathBuf::from("/detected/mainnet/api.cookie"));
+        assert!(candidates.contains(&PathBuf::from("/managed/mainnet/api.cookie")));
+    }
+
+    #[test]
+    fn cookie_candidates_include_wrapper_pidfile_network_first() {
+        let config_dir = tempfile::tempdir().expect("tempdir");
+        fs::write(config_dir.path().join("core.testnet.pid"), "1234\n").expect("pidfile");
+        let managed = BntConfigContext {
+            config_dir: config_dir.path().to_path_buf(),
+            config: BntConfigFile {
+                cores: HashMap::from([(
+                    "testnet".to_string(),
+                    BntCoreConfig {
+                        data_dir: "/managed/testnet".to_string(),
+                    },
+                )]),
+            },
+        };
+
+        let candidates =
+            cookie_candidates_with_context("", "", Some(&managed), None, Some(config_dir.path()));
+
+        assert_eq!(candidates[0], PathBuf::from("/managed/testnet/api.cookie"));
+        assert!(candidates.contains(&PathBuf::from("/managed/testnet/api.cookie")));
+        assert!(candidates.contains(&config_dir.path().join("data").join("mainnet").join("api.cookie")));
+    }
+
+    #[test]
+    fn binary_name_match_includes_wrapper_managed_core_names() {
+        assert!(binary_name_matches_blocknet("blocknet"));
+        assert!(binary_name_matches_blocknet("blocknet-core-amd64-linux"));
+        assert!(!binary_name_matches_blocknet("blocknet-wrapper"));
     }
 }

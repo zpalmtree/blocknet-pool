@@ -4,20 +4,20 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_dir="$(cd "${script_dir}/.." && pwd)"
 workspace_dir="$(cd "${repo_dir}/.." && pwd)"
-daemon_repo="${BLOCKNET_DAEMON_REPO:-${workspace_dir}/blocknet}"
+daemon_repo="${BLOCKNET_DAEMON_REPO:-${workspace_dir}/blocknet-core}"
 dockerfile="${daemon_repo}/docker/Dockerfile"
 image_tag="blocknet-daemon-builder-local"
 platform="linux/amd64"
-output_path="${repo_dir}/build/blocknet-linux-amd64"
+output_path="${repo_dir}/build/blocknet-core-linux-amd64"
 upload_host=""
-remote_path="/opt/blocknet/blocknet/blocknet.new"
+remote_path="/opt/blocknet/blocknet-core/blocknet.new"
 go_version=""
 
 usage() {
   cat <<'EOF'
 Usage: scripts/build_blocknet_daemon.sh [options]
 
-Build a server-compatible Blocknet daemon binary from the sibling `blocknet`
+Build a server-compatible Blocknet daemon binary from the sibling `blocknet-core`
 repo using Docker, then optionally upload it to a remote host.
 
 Options:
@@ -33,7 +33,7 @@ Options:
 Examples:
   scripts/build_blocknet_daemon.sh
   scripts/build_blocknet_daemon.sh --upload bntpool
-  scripts/build_blocknet_daemon.sh --daemon-repo /path/to/blocknet --upload bntpool
+  scripts/build_blocknet_daemon.sh --daemon-repo /path/to/blocknet-core --upload bntpool
 EOF
 }
 
@@ -102,7 +102,7 @@ if [[ -n "$upload_host" ]]; then
 fi
 
 if [[ ! -f "${daemon_repo}/go.mod" ]]; then
-  echo "Blocknet daemon repo not found at ${daemon_repo}" >&2
+  echo "Blocknet core repo not found at ${daemon_repo}" >&2
   exit 1
 fi
 

@@ -8,7 +8,8 @@
 - `scripts/deploy_bntpool.sh` - Normal production deploy path for `bntpool`
 - `scripts/provision_bntpool_monitoring.sh` - Idempotent provisioning/update path for Prometheus/Alertmanager/exporters and monitoring configs on `bntpool`
 - `scripts/deploy_cloudflare_monitor_worker.sh` - Deploy the outside-in Cloudflare Worker probe using the local TRMNL Cloudflare credentials
-- `scripts/build_blocknet_daemon.sh` - Local helper for building a server-compatible `blocknet` daemon binary from the sibling `../blocknet` repo
+- `scripts/build_blocknet_daemon.sh` - Local helper for building a server-compatible `blocknet-core` daemon binary from the sibling `../blocknet-core` repo
+- `scripts/deploy_blocknet_daemon_bntpool.sh` - Repeatable host-built daemon deploy path for `bntpool` that updates `blocknetd.service` and switches the active core release
 
 ## Deployment
 
@@ -16,6 +17,7 @@
 - Use `./scripts/provision_bntpool_monitoring.sh` when monitoring stack assets or on-host monitoring package config changes need to be installed on `bntpool`.
 - Use `./scripts/deploy_cloudflare_monitor_worker.sh` for the external Cloudflare public probe. Do not hand-run `wrangler` with copied secrets when the script can do it repeatably.
 - Use `./scripts/build_blocknet_daemon.sh` when you need a fresh daemon binary for `bntpool` without compiling on the live server.
+- Use `./scripts/deploy_blocknet_daemon_bntpool.sh` when you need to install or roll forward the daemon itself on `bntpool`. Keep daemon deploys separate from pool API/Stratum deploys.
 - Do not manually `scp` individual files or restart pool services for routine deploys unless the user explicitly asks for an emergency hotfix path.
 - Production runs split services: `blocknet-pool-api.service`, `blocknet-pool-stratum.service`, and `blocknet-pool-monitor.service`.
 - Service responsibilities:

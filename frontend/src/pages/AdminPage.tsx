@@ -15,6 +15,7 @@ import {
   toUnixMs,
 } from '../lib/format';
 import type {
+  AdminBalanceItem,
   AdminDevFeeTelemetryResponse,
   AdminPayoutItem,
   AdminTab,
@@ -208,6 +209,12 @@ export function AdminPage({
   const [rewardBreakdownLoading, setRewardBreakdownLoading] = useState(false);
 
   const [health, setHealth] = useState<HealthResponse | null>(null);
+
+  const [balancesSearch, setBalancesSearch] = useState('');
+  const [balancesSort, setBalancesSort] = useState('pending_desc');
+  const [balancesItems, setBalancesItems] = useState<AdminBalanceItem[]>([]);
+  const [balancesPager, setBalancesPager] = useState<PagerState>({ offset: 0, limit: 50, total: 0 });
+
   const [daemonLogs, setDaemonLogs] = useState<DaemonLogLine[]>([]);
   const [daemonLogsTail, setDaemonLogsTail] = useState(200);
   const [daemonLogsStatus, setDaemonLogsStatus] = useState<'idle' | 'connecting' | 'live' | 'error'>('idle');
@@ -343,6 +350,24 @@ export function AdminPage({
     }
   }, [api, apiKey]);
 
+  const loadBalances = useCallback(async () => {
+    if (!apiKey) return;
+    try {
+      const d = await api.getAdminBalances({
+        paged: 'true',
+        limit: balancesPager.limit,
+        offset: balancesPager.offset,
+        sort: balancesSort,
+        search: balancesSearch.trim() || undefined,
+      });
+      const items = d.items || [];
+      setBalancesItems(items);
+      setBalancesPager((prev) => ({ ...prev, total: d.page ? d.page.total : items.length }));
+    } catch {
+      setBalancesItems([]);
+    }
+  }, [api, apiKey, balancesPager.limit, balancesPager.offset, balancesSearch, balancesSort]);
+
   useEffect(() => {
     if (!active || !apiKey) return;
 
@@ -357,9 +382,11 @@ export function AdminPage({
       }
     }
     if (tab === 'health') void loadHealth();
+    if (tab === 'balances') void loadBalances();
   }, [
     active,
     apiKey,
+    loadBalances,
     loadFees,
     loadDevFeeTelemetry,
     loadHealth,
@@ -386,11 +413,13 @@ export function AdminPage({
       }
     }
     if (tab === 'health') void loadHealth();
+    if (tab === 'balances') void loadBalances();
   }, [
     active,
     apiKey,
     liveTick,
     tab,
+    loadBalances,
     loadFees,
     loadDevFeeTelemetry,
     loadHealth,
@@ -631,6 +660,9 @@ export function AdminPage({
             </button>
             <button className={tab === 'health' ? 'active' : ''} onClick={() => setTab('health')}>
               Health
+            </button>
+            <button className={tab === 'balances' ? 'active' : ''} onClick={() => setTab('balances')}>
+              Balances
             </button>
             <button className={tab === 'logs' ? 'active' : ''} onClick={() => setTab('logs')}>
               Daemon Logs
@@ -1484,11 +1516,12 @@ export function AdminPage({
                   <div className="label">Mempool Size</div>
                   <div className="value mono">{health?.daemon?.mempool_size ?? '-'}</div>
                 </div>
-                <div className="stat-card" title={health?.daemon?.best_hash ?? undefined}>
-                  <div className="label">Best Hash</div>
-                  <div className="value mono">{compactHash(health?.daemon?.best_hash)}</div>
-                  {health?.daemon?.error ? <div className="stat-meta">{health.daemon.error}</div> : null}
-                </div>
+                {health?.daemon?.error ? (
+                  <div className="stat-card">
+                    <div className="label">Error</div>
+                    <div className="value" style={{ fontSize: 14 }}>{health.daemon.error}</div>
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -1529,7 +1562,18 @@ export function AdminPage({
             </div>
 
             <div className="stats-card-group">
-              <div className="stats-card-group-title">Payouts</div>
+              <div className="stats-card-group-title">
+                Payouts
+                {health?.payouts?.last_payout ? (
+                  <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, marginLeft: 8, fontSize: 11, color: 'var(--muted)' }}>
+                    Last: {timeAgo(health.payouts.last_payout.timestamp)}
+                    {' \u2022 '}
+                    <span className="mono">{shortTx(health.payouts.last_payout.tx_hash)}</span>
+                    {' \u2022 '}
+                    {formatCoins(health.payouts.last_payout.amount)}
+                  </span>
+                ) : null}
+              </div>
               <div className="stats-card-group-grid stats-grid-dense">
                 <div className="stat-card">
                   <div className="label">Pending Payouts</div>
@@ -1548,13 +1592,6 @@ export function AdminPage({
                   <div className="value mono">
                     {health?.payouts?.last_payout?.timestamp ? timeAgo(health.payouts.last_payout.timestamp) : '-'}
                   </div>
-                  {health?.payouts?.last_payout ? (
-                    <div className="stat-meta">
-                      <span className="mono">{shortTx(health.payouts.last_payout.tx_hash)}</span>
-                      {' • '}
-                      {formatCoins(health.payouts.last_payout.amount)}
-                    </div>
-                  ) : null}
                 </div>
                 <div className="stat-card">
                   <div className="label">Wallet Pending</div>
@@ -1665,6 +1702,85 @@ export function AdminPage({
                 <summary>Show raw JSON</summary>
                 <pre className="raw-json">{rawHealthJson || 'Loading...'}</pre>
               </details>
+            </div>
+          </div>
+
+          <div style={{ display: tab === 'balances' ? '' : 'none' }}>
+            <div className="filter-bar">
+              <input
+                type="text"
+                placeholder="Search address..."
+                value={balancesSearch}
+                onChange={(e) => setBalancesSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    setBalancesPager((p) => ({ ...p, offset: 0 }));
+                  }
+                }}
+              />
+              <select value={balancesSort} onChange={(e) => { setBalancesSort(e.target.value); setBalancesPager((p) => ({ ...p, offset: 0 })); }}>
+                <option value="pending_desc">Owed (high first)</option>
+                <option value="pending_asc">Owed (low first)</option>
+                <option value="paid_desc">Paid (high first)</option>
+                <option value="paid_asc">Paid (low first)</option>
+                <option value="address_asc">Address A-Z</option>
+                <option value="address_desc">Address Z-A</option>
+              </select>
+              <button className="btn btn-primary" onClick={() => setBalancesPager((p) => ({ ...p, offset: 0 }))}>
+                Search
+              </button>
+            </div>
+
+            <div className="card table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Address</th>
+                    <th style={{ textAlign: 'right' }}>Owed</th>
+                    <th style={{ textAlign: 'right' }}>Total Paid</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {!balancesItems.length ? (
+                    <tr>
+                      <td colSpan={3} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                        No balances
+                      </td>
+                    </tr>
+                  ) : (
+                    balancesItems.map((b) => (
+                      <tr key={b.address}>
+                        <td title={b.address}>
+                          <a
+                            href="/stats"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              onJumpToStats(b.address);
+                            }}
+                          >
+                            {shortAddr(b.address)}
+                          </a>
+                        </td>
+                        <td style={{ textAlign: 'right' }} className="mono">
+                          {b.pending > 0 ? (
+                            <span style={{ color: 'var(--warn)' }}>{formatCoins(b.pending)}</span>
+                          ) : (
+                            formatCoins(b.pending)
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right' }} className="mono">{formatCoins(b.paid)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+              <Pager
+                offset={balancesPager.offset}
+                limit={balancesPager.limit}
+                total={balancesPager.total}
+                onPrev={() => setBalancesPager((p) => ({ ...p, offset: Math.max(0, p.offset - p.limit) }))}
+                onNext={() => setBalancesPager((p) => ({ ...p, offset: p.offset + p.limit }))}
+              />
             </div>
           </div>
 

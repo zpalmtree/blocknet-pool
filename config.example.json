@@ -7,7 +7,6 @@
   "api_host": "127.0.0.1",
   "api_tls_cert_path": "",
   "api_tls_key_path": "",
-  "daemon_binary": "./blocknet",
   "daemon_data_dir": "data",
   "daemon_api": "http://127.0.0.1:8332",
   "daemon_token": "",

@@ -1,4 +1,5 @@
 import type {
+  AdminBalanceItem,
   AdminPayoutItem,
   BlockRewardBreakdownResponse,
   BlockItem,
@@ -47,6 +48,7 @@ export interface ApiClient {
   getFees(params: QueryParams): Promise<FeesResponse>;
   getAdminBlockRewardBreakdown(height: number): Promise<BlockRewardBreakdownResponse>;
   getHealth(): Promise<HealthResponse>;
+  getAdminBalances(params: QueryParams): Promise<PagedResponse<AdminBalanceItem>>;
   streamDaemonLogs(opts: DaemonLogStreamOptions): Promise<void>;
 }
 
@@ -124,6 +126,8 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
         auth: true,
       }),
     getHealth: () => fetchJson<HealthResponse>('/api/health', { auth: true }),
+    getAdminBalances: (params: QueryParams) =>
+      fetchJson<PagedResponse<AdminBalanceItem>>(withQuery('/api/admin/balances', params), { auth: true }),
     streamDaemonLogs: async ({ tail, signal, onLine }) => {
       const key = getApiKey().trim();
       if (!key) {

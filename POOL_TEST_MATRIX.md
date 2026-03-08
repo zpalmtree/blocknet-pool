@@ -50,7 +50,7 @@ Use baseline values:
 
 ```bash
 # terminal 1: daemon (API on)
-cd /media/Code/blocknet/blocknet
+cd /media/Code/blocknet/blocknet-core
 ./blocknet --daemon --api 127.0.0.1:8332 --data ./data
 
 # terminal 2: pool API
@@ -215,7 +215,7 @@ Goal: verify compact API path and pool fallback behavior.
 ### Direct daemon compact API check
 
 ```bash
-TOKEN=$(cat /media/Code/blocknet/blocknet/data/api.cookie 2>/dev/null || true)
+TOKEN=$(cat /media/Code/blocknet/blocknet-core/data/api.cookie 2>/dev/null || true)
 AUTH=()
 [ -n "$TOKEN" ] && AUTH=(-H "Authorization: Bearer $TOKEN")
 

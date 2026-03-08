@@ -66,7 +66,7 @@ That script installs Prometheus, Alertmanager, node exporter, blackbox exporter,
 
 ## Build Blocknet Daemon For bntpool
 
-When you need a fresh `blocknet` daemon binary for the pool host, build it
+When you need a fresh `blocknet-core` daemon binary for the pool host, build it
 locally from this repo using the sibling daemon checkout instead of compiling on
 `bntpool`.
 
@@ -76,19 +76,25 @@ From `blocknet-pool/`:
 ./scripts/build_blocknet_daemon.sh
 ```
 
-That writes the daemon artifact to `build/blocknet-linux-amd64`.
+That writes the daemon artifact to `build/blocknet-core-linux-amd64`.
 
-To stage it on the server in one step:
+To stage it on the server without restarting the daemon yet:
 
 ```bash
 ./scripts/build_blocknet_daemon.sh --upload bntpool
 ```
 
-By default the script reads source from `../blocknet`, derives the required Go
+For the full repeatable deploy path, including the managed `blocknetd.service`
+unit, release directory rotation, symlink switch, restart, and `/api/status`
+verification:
+
+```bash
+./scripts/deploy_blocknet_daemon_bntpool.sh
+```
+
+By default the build script reads source from `../blocknet-core`, derives the required Go
 version from that repo's `go.mod`, builds through the daemon repo's Dockerfile,
-and uploads to `/opt/blocknet/blocknet/blocknet.new`. Swapping the live daemon
-binary and restarting the daemon remain manual steps so restart timing stays
-explicit.
+and uploads to `/opt/blocknet/blocknet-core/blocknet.new`.
 
 ## Local Development
 
@@ -151,7 +157,7 @@ The pool can authenticate to the daemon with either:
 
 - `daemon_token` in `config.json`
 - `daemon_cookie_path` in `config.json`
-- auto-discovery of `api.cookie` via `daemon_data_dir` and running daemon process metadata
+- auto-discovery of `api.cookie` via `daemon_data_dir`, Blocknet wrapper config under `~/.config/bnt`, wrapper pidfiles, and running `blocknet` / `blocknet-core-*` process metadata
 
 When a daemon request returns `401 unauthorized`, the pool will refresh the token from cookie once and retry.
 

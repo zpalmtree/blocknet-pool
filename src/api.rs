@@ -660,6 +660,7 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
         .route("/api/payouts", get(handle_payouts))
         .route("/api/fees", get(handle_fees))
         .route("/api/admin/dev-fee", get(handle_admin_dev_fee))
+        .route("/api/admin/balances", get(handle_admin_balances))
         .route(
             "/api/admin/blocks/:height/reward-breakdown",
             get(handle_admin_block_reward_breakdown),
@@ -2486,6 +2487,14 @@ struct MinersQuery {
 }
 
 #[derive(Debug, Deserialize, Default)]
+struct AdminBalancesQuery {
+    search: Option<String>,
+    sort: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 struct BlocksQuery {
     paged: Option<bool>,
     limit: Option<usize>,
@@ -2532,6 +2541,13 @@ struct PageMeta {
 struct PagedResponse<T> {
     items: Vec<T>,
     page: PageMeta,
+}
+
+#[derive(Debug, Serialize)]
+struct AdminBalanceItem {
+    address: String,
+    pending: u64,
+    paid: u64,
 }
 
 #[derive(Debug)]
@@ -3162,6 +3178,69 @@ async fn handle_admin_dev_fee(State(state): State<ApiState>) -> impl IntoRespons
     match state.admin_dev_fee_telemetry().await {
         Ok(response) => Json(response).into_response(),
         Err(err) => internal_error("failed loading dev fee telemetry", err).into_response(),
+    }
+}
+
+async fn handle_admin_balances(
+    Query(query): Query<AdminBalancesQuery>,
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let store = Arc::clone(&state.store);
+    let search = query.search.clone().unwrap_or_default();
+    let sort = query.sort.clone().unwrap_or_else(|| "pending_desc".to_string());
+    let (limit, offset) = page_bounds(query.limit, query.offset);
+
+    match tokio::task::spawn_blocking(move || -> anyhow::Result<PagedResponse<AdminBalanceItem>> {
+        let all = store.get_all_balances()?;
+        let mut filtered: Vec<_> = if search.is_empty() {
+            all
+        } else {
+            let needle = search.to_lowercase();
+            all.into_iter()
+                .filter(|b| b.address.to_lowercase().contains(&needle))
+                .collect()
+        };
+
+        match sort.as_str() {
+            "pending_asc" => filtered.sort_by(|a, b| a.pending.cmp(&b.pending)),
+            "paid_desc" => filtered.sort_by(|a, b| b.paid.cmp(&a.paid)),
+            "paid_asc" => filtered.sort_by(|a, b| a.paid.cmp(&b.paid)),
+            "address_asc" => filtered.sort_by(|a, b| a.address.cmp(&b.address)),
+            "address_desc" => filtered.sort_by(|a, b| b.address.cmp(&a.address)),
+            _ => filtered.sort_by(|a, b| b.pending.cmp(&a.pending)), // pending_desc default
+        }
+
+        let total = filtered.len();
+        let items: Vec<AdminBalanceItem> = filtered
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|b| AdminBalanceItem {
+                address: b.address,
+                pending: b.pending,
+                paid: b.paid,
+            })
+            .collect();
+        let returned = items.len();
+
+        Ok(PagedResponse {
+            items,
+            page: PageMeta {
+                limit,
+                offset,
+                returned,
+                total,
+            },
+        })
+    })
+    .await
+    {
+        Ok(Ok(resp)) => Json(resp).into_response(),
+        Ok(Err(err)) => internal_error("failed loading balances", err).into_response(),
+        Err(err) => {
+            internal_error("failed loading balances", anyhow::anyhow!("join error: {err}"))
+                .into_response()
+        }
     }
 }
 

@@ -20,7 +20,6 @@ pub struct Config {
     pub api_tls_cert_path: String,
     pub api_tls_key_path: String,
 
-    pub daemon_binary: String,
     pub daemon_data_dir: String,
     pub daemon_api: String,
     pub daemon_token: String,
@@ -108,7 +107,6 @@ impl Default for Config {
             api_host: "127.0.0.1".to_string(),
             api_tls_cert_path: String::new(),
             api_tls_key_path: String::new(),
-            daemon_binary: "./blocknet".to_string(),
             daemon_data_dir: "data".to_string(),
             daemon_api: "http://127.0.0.1:8332".to_string(),
             daemon_token: String::new(),

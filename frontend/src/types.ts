@@ -7,7 +7,7 @@ export type Route =
   | 'stats'
   | 'admin'
   | 'status';
-export type AdminTab = 'miners' | 'payouts' | 'fees' | 'devfee' | 'rewards' | 'health' | 'logs';
+export type AdminTab = 'miners' | 'payouts' | 'fees' | 'devfee' | 'rewards' | 'health' | 'balances' | 'logs';
 export type Range = '1h' | '24h' | '7d' | '30d';
 
 export type UnixLike =
@@ -180,6 +180,12 @@ export interface AdminPayoutItem {
   tx_hash: string;
   timestamp: UnixLike;
   confirmed?: boolean;
+}
+
+export interface AdminBalanceItem {
+  address: string;
+  pending: number;
+  paid: number;
 }
 
 export interface FeeEvent {
