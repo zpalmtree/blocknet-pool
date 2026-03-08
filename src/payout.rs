@@ -17,6 +17,7 @@ const MAX_PAYOUT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30);
 const MIN_PAYOUT_FEE_BUFFER: u64 = 1_000;
 const PENDING_PAYOUT_RETRY_GRACE: Duration = Duration::from_secs(15 * 60);
 const PAYOUT_CONFIRMATIONS_REQUIRED: u64 = 1;
+const MIN_WALLET_SEND_SPACING: Duration = Duration::from_millis(2_100);
 
 #[derive(Debug, Clone, Copy)]
 pub struct PayoutTrustPolicy {
@@ -451,23 +452,43 @@ impl PayoutProcessor {
             }
         };
 
+        let now = SystemTime::now();
         for entry in pending {
-            let age = SystemTime::now()
-                .duration_since(entry.initiated_at)
-                .unwrap_or_default();
-            if age > Duration::from_secs(60 * 60) {
+            let queued_age = now.duration_since(entry.initiated_at).unwrap_or_default();
+            if should_reset_stale_prebroadcast_pending_payout(&entry, now) {
+                let send_age = pending_send_age(&entry, now);
+                if let Err(err) = self.store.reset_pending_payout_send_state(&entry.address) {
+                    tracing::warn!(
+                        address = %entry.address,
+                        amount = entry.amount,
+                        error = %err,
+                        "failed to reset stale pre-broadcast pending payout on startup"
+                    );
+                } else {
+                    tracing::warn!(
+                        address = %entry.address,
+                        amount = entry.amount,
+                        queued_age_secs = queued_age.as_secs(),
+                        send_age_secs = send_age.as_secs(),
+                        "reset stale pre-broadcast pending payout on startup"
+                    );
+                }
+                continue;
+            }
+
+            if queued_age > Duration::from_secs(60 * 60) {
                 if entry.send_started_at.is_some() {
                     tracing::warn!(
                         address = %entry.address,
                         amount = entry.amount,
-                        age_secs = age.as_secs(),
+                        age_secs = queued_age.as_secs(),
                         "stale pending payout retained for idempotent retry"
                     );
                 } else {
                     tracing::warn!(
                         address = %entry.address,
                         amount = entry.amount,
-                        age_secs = age.as_secs(),
+                        age_secs = queued_age.as_secs(),
                         "stale queued payout has not reached its first send attempt yet"
                     );
                 }
@@ -514,6 +535,7 @@ impl PayoutProcessor {
         let wait_priority_threshold = self.cfg.payout_wait_priority_threshold_duration();
         let mut sent_recipients = 0usize;
         let mut sent_total = 0u64;
+        let mut last_wallet_send_attempt = None::<Instant>;
         let expected_address_network = self.expected_payout_address_network();
         let balances = match self.store.get_all_balances() {
             Ok(v) => v,
@@ -704,6 +726,13 @@ impl PayoutProcessor {
                 sent_at: None,
             };
             let idempotency_key = payout_idempotency_key(&pending_for_send);
+            if let Some(last_attempt) = last_wallet_send_attempt {
+                let elapsed = last_attempt.elapsed();
+                if elapsed < MIN_WALLET_SEND_SPACING {
+                    std::thread::sleep(MIN_WALLET_SEND_SPACING - elapsed);
+                }
+            }
+            last_wallet_send_attempt = Some(Instant::now());
             let send = self
                 .node
                 .wallet_send(&bal.address, pending_amount, &idempotency_key);
@@ -792,6 +821,18 @@ impl PayoutProcessor {
         pending: &PendingPayout,
     ) -> anyhow::Result<bool> {
         let Some(tx_hash) = pending.tx_hash.as_deref().filter(|v| !v.trim().is_empty()) else {
+            let now = SystemTime::now();
+            if should_reset_stale_prebroadcast_pending_payout(pending, now) {
+                let send_age = pending_send_age(pending, now);
+                self.store.reset_pending_payout_send_state(address)?;
+                tracing::warn!(
+                    address = %address,
+                    amount = pending.amount,
+                    send_age_secs = send_age.as_secs(),
+                    "reset stale pre-broadcast pending payout for retry"
+                );
+                return Ok(true);
+            }
             return Ok(false);
         };
 
@@ -1097,6 +1138,21 @@ fn payout_wait_age(p: &PendingPayout, now: SystemTime) -> Duration {
     now.duration_since(p.initiated_at).unwrap_or_default()
 }
 
+fn pending_send_age(p: &PendingPayout, now: SystemTime) -> Duration {
+    p.send_started_at
+        .and_then(|ts| now.duration_since(ts).ok())
+        .unwrap_or_default()
+}
+
+fn should_reset_stale_prebroadcast_pending_payout(
+    pending: &PendingPayout,
+    now: SystemTime,
+) -> bool {
+    pending.tx_hash.as_deref().is_none_or(|tx| tx.trim().is_empty())
+        && pending.send_started_at.is_some()
+        && pending_send_age(pending, now) >= PENDING_PAYOUT_RETRY_GRACE
+}
+
 pub fn weight_shares<F>(
     shares: &[DbShare],
     now: SystemTime,
@@ -1187,8 +1243,8 @@ pub fn is_share_payout_eligible(
 fn payout_idempotency_key(p: &PendingPayout) -> String {
     use sha2::{Digest, Sha256};
 
-    let ts = p
-        .initiated_at
+    let attempt_started_at = p.send_started_at.or(p.sent_at).unwrap_or(p.initiated_at);
+    let ts = attempt_started_at
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
@@ -1875,6 +1931,54 @@ mod tests {
             body: r#"{"error":"insufficient funds: no spendable outputs"}"#.to_string(),
         });
         assert!(is_wallet_liquidity_error(&no_outputs));
+    }
+
+    #[test]
+    fn stale_prebroadcast_pending_payouts_reset_after_retry_grace() {
+        let now = SystemTime::now();
+        let stale = PendingPayout {
+            address: "addr1".to_string(),
+            amount: 100,
+            initiated_at: now - Duration::from_secs(2 * 60 * 60),
+            send_started_at: Some(now - Duration::from_secs(16 * 60)),
+            tx_hash: None,
+            fee: None,
+            sent_at: None,
+        };
+        assert!(should_reset_stale_prebroadcast_pending_payout(&stale, now));
+
+        let fresh = PendingPayout {
+            send_started_at: Some(now - Duration::from_secs(5 * 60)),
+            ..stale.clone()
+        };
+        assert!(!should_reset_stale_prebroadcast_pending_payout(&fresh, now));
+
+        let broadcast = PendingPayout {
+            tx_hash: Some("tx-1".to_string()),
+            ..stale
+        };
+        assert!(!should_reset_stale_prebroadcast_pending_payout(&broadcast, now));
+    }
+
+    #[test]
+    fn payout_idempotency_key_uses_send_attempt_timestamp() {
+        let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let first = PendingPayout {
+            address: "addr1".to_string(),
+            amount: 100,
+            initiated_at: base,
+            send_started_at: Some(base + Duration::from_secs(5)),
+            tx_hash: None,
+            fee: None,
+            sent_at: None,
+        };
+        let second = PendingPayout {
+            send_started_at: Some(base + Duration::from_secs(15)),
+            ..first.clone()
+        };
+
+        assert_ne!(payout_idempotency_key(&first), payout_idempotency_key(&second));
+        assert_eq!(payout_idempotency_key(&first), payout_idempotency_key(&first.clone()));
     }
 
     #[test]

@@ -297,9 +297,9 @@ impl MonitorRuntime {
         let validation_backlog = validation_backlog_state(
             runtime_snapshot.as_ref(),
             self.cfg.max_validation_queue.max(1) as u64,
-        )
-        .is_some();
-        let share_ingest_stalled = share_progress_state(sampled_at, runtime_snapshot.as_ref()).is_some();
+        );
+        let payout_queue_stalled = payout_queue_state(&self.cfg, sampled_at, payout_summary.as_ref());
+        let share_ingest_stalled = share_progress_state(sampled_at, runtime_snapshot.as_ref());
         let summary_state = summarize_state(
             api.error.is_none(),
             stratum.error.is_none() && stratum_snapshot_fresh,
@@ -309,8 +309,10 @@ impl MonitorRuntime {
                 .as_ref()
                 .is_some_and(|status| !status.syncing),
             template_refresh_millis,
-            validation_backlog,
-            share_ingest_stalled,
+            validation_backlog.as_ref().map(|(severity, _)| *severity),
+            payout_queue_stalled.as_ref().map(|(severity, _)| *severity),
+            share_ingest_stalled.as_ref().map(|(severity, _)| *severity),
+            wallet.error.is_none(),
         );
 
         MonitorSample {
@@ -1068,15 +1070,21 @@ fn summarize_state(
     db_up: bool,
     daemon_ready: bool,
     template_refresh_millis: Option<u64>,
-    validation_backlog: bool,
-    share_ingest_stalled: bool,
+    validation_backlog_severity: Option<&'static str>,
+    payout_queue_severity: Option<&'static str>,
+    share_ingest_severity: Option<&'static str>,
+    wallet_ready: bool,
 ) -> String {
     if !api_up || !stratum_up || !db_up || !daemon_ready {
         return "down".to_string();
     }
+    if !wallet_ready {
+        return "degraded".to_string();
+    }
     if template_refresh_millis.is_some_and(|lag| lag >= TEMPLATE_REFRESH_WARN_AFTER.as_millis() as u64)
-        || validation_backlog
-        || share_ingest_stalled
+        || validation_backlog_severity.is_some()
+        || payout_queue_severity.is_some()
+        || share_ingest_severity.is_some()
     {
         return "degraded".to_string();
     }
@@ -1389,8 +1397,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        bool_gauge, render_metrics, share_progress_state, validation_backlog_state, MonitorSnapshot,
+        bool_gauge, payout_queue_state, render_metrics, share_progress_state, summarize_state,
+        validation_backlog_state, MonitorSnapshot, PendingPayoutSummary,
     };
+    use crate::config::Config;
     use crate::jobs::JobRuntimeSnapshot;
     use crate::service_state::{PersistedRuntimeSnapshot, PersistedValidationSummary};
     use std::time::{Duration, SystemTime};
@@ -1446,6 +1456,36 @@ mod tests {
         let mut snapshot = sample_runtime_snapshot();
         snapshot.last_share_at = Some(SystemTime::now() - Duration::from_secs(20 * 60));
         let state = share_progress_state(SystemTime::now(), Some(&snapshot)).expect("share stall");
+        assert_eq!(state.0, "warn");
+    }
+
+    #[test]
+    fn payout_queue_stall_degrades_summary_state() {
+        let state = summarize_state(
+            true,
+            true,
+            true,
+            true,
+            None,
+            None,
+            Some("critical"),
+            None,
+            true,
+        );
+        assert_eq!(state, "degraded");
+    }
+
+    #[test]
+    fn payout_queue_state_activates_after_cadence_threshold() {
+        let cfg = Config::default();
+        let now = SystemTime::now();
+        let summary = PendingPayoutSummary {
+            count: 2,
+            amount: 123,
+            oldest_pending_at: Some(now - Duration::from_secs(3 * 60 * 60)),
+            oldest_send_started_at: None,
+        };
+        let state = payout_queue_state(&cfg, now, Some(&summary)).expect("queue stall");
         assert_eq!(state.0, "warn");
     }
 }
