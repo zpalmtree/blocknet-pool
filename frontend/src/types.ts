@@ -243,11 +243,29 @@ export interface FeesResponse {
 
 export interface HealthResponse {
   uptime_seconds: number;
-  daemon?: { reachable?: boolean };
-  job?: { template_age_seconds?: number | null };
+  api_key_configured?: boolean;
+  daemon?: {
+    reachable?: boolean;
+    chain_height?: number | null;
+    peers?: number | null;
+    syncing?: boolean | null;
+    mempool_size?: number | null;
+    best_hash?: string | null;
+    error?: string | null;
+  };
+  job?: {
+    current_height?: number | null;
+    current_difficulty?: number | null;
+    template_id?: string | null;
+    template_age_seconds?: number | null;
+    last_refresh_millis?: number | null;
+    tracked_templates?: number;
+    active_assignments?: number;
+  };
   payouts?: {
     pending_count?: number;
     pending_amount?: number;
+    last_payout?: AdminPayoutItem | null;
   };
   wallet?: {
     spendable?: number;
@@ -255,6 +273,18 @@ export interface HealthResponse {
     pending_unconfirmed?: number;
     pending_unconfirmed_eta?: number;
     total?: number;
+  };
+  validation?: {
+    in_flight?: number;
+    candidate_queue_depth?: number;
+    regular_queue_depth?: number;
+    tracked_addresses?: number;
+    forced_verify_addresses?: number;
+    total_shares?: number;
+    sampled_shares?: number;
+    invalid_samples?: number;
+    pending_provisional?: number;
+    fraud_detections?: number;
   };
 }
 

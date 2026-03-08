@@ -163,7 +163,10 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
 
       <div className="section">
         <div className="section-header">
-          <h2>Historical Uptime</h2>
+          <div>
+            <h2>Historical Uptime</h2>
+            <p className="section-lead">Local samples come from the on-box monitor. External samples come from the Cloudflare public probe.</p>
+          </div>
         </div>
         <div className="card table-scroll">
           <table>
@@ -176,13 +179,14 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
                 <th>Pool</th>
                 <th>Database</th>
                 <th>Daemon</th>
-                <th>Samples</th>
+                <th>Local Samples</th>
+                <th>External Samples</th>
               </tr>
             </thead>
             <tbody>
               {!status?.uptime?.length ? (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                  <td colSpan={9} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                     No status samples yet
                   </td>
                 </tr>
@@ -196,7 +200,8 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
                     <td>{pct(row.pool_up_pct)}</td>
                     <td>{pct(row.database_up_pct)}</td>
                     <td>{pct(row.daemon_up_pct)}</td>
-                    <td>{`${row.sample_count}/${row.external_sample_count ?? 0}`}</td>
+                    <td>{row.sample_count}</td>
+                    <td>{row.external_sample_count ?? 0}</td>
                   </tr>
                 ))
               )}

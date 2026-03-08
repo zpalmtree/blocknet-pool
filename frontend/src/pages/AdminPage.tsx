@@ -115,6 +115,18 @@ function pct(value: number | null | undefined): string {
   return `${value.toFixed(2)}%`;
 }
 
+function formatRefreshLag(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return '-';
+  if (ms < 1000) return '<1s';
+  return fmtSeconds(Math.max(1, Math.floor(ms / 1000)));
+}
+
+function compactHash(value: string | null | undefined): string {
+  if (!value) return '-';
+  if (value.length <= 18) return value;
+  return `${value.slice(0, 8)}...${value.slice(-8)}`;
+}
+
 function devFeeHintBadgeClass(position: string): string {
   switch (position) {
     case 'below-floor':
@@ -515,6 +527,11 @@ export function AdminPage({
   }, [rewardBreakdown]);
   const rewardBreakdownOrphaned = rewardBreakdown?.block.orphaned ?? false;
   const rewardBreakdownProjected = !!rewardBreakdown && !rewardBreakdownOrphaned && !rewardBreakdown.block.paid_out;
+  const rawHealthJson = useMemo(() => (health ? JSON.stringify(health, null, 2) : ''), [health]);
+  const copyHealthJson = useCallback(() => {
+    if (!rawHealthJson || !navigator.clipboard) return;
+    void navigator.clipboard.writeText(rawHealthJson);
+  }, [rawHealthJson]);
   const rewardActualBlockTotal =
     rewardBreakdown && rewardBreakdown.actual_credit_events_available && rewardBreakdown.actual_fee_amount != null
       ? rewardBreakdown.actual_credit_total + rewardBreakdown.actual_fee_amount
@@ -1406,15 +1423,33 @@ export function AdminPage({
           <div style={{ display: tab === 'health' ? '' : 'none' }}>
             <div className="stats-card-group">
               <div className="stats-card-group-title">Runtime</div>
-              <div className="stats-card-group-grid">
+              <div className="stats-card-group-grid stats-grid-dense">
                 <div className="stat-card">
                   <div className="label">Uptime</div>
                   <div className="value mono">{health ? fmtSeconds(health.uptime_seconds || 0) : '-'}</div>
                 </div>
                 <div className="stat-card">
-                  <div className="label">Daemon</div>
+                  <div className="label">API Key</div>
                   <div className="value">
-                    {health?.daemon?.reachable ? (
+                    {health == null ? (
+                      '-'
+                    ) : health.api_key_configured ? (
+                      <>
+                        <span className="status-dot dot-green" />Configured
+                      </>
+                    ) : (
+                      <>
+                        <span className="status-dot dot-amber" />Missing
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Daemon Reachability</div>
+                  <div className="value">
+                    {health == null ? (
+                      '-'
+                    ) : health.daemon?.reachable ? (
                       <>
                         <span className="status-dot dot-green" />OK
                       </>
@@ -1426,17 +1461,76 @@ export function AdminPage({
                   </div>
                 </div>
                 <div className="stat-card">
-                  <div className="label">Template Age</div>
-                  <div className="value mono">
-                    {health?.job?.template_age_seconds != null ? fmtSeconds(health.job.template_age_seconds) : '-'}
+                  <div className="label">Sync State</div>
+                  <div className="value">
+                    {health?.daemon?.syncing == null ? '-' : health.daemon.syncing ? 'Syncing' : 'Ready'}
                   </div>
                 </div>
               </div>
             </div>
 
             <div className="stats-card-group">
+              <div className="stats-card-group-title">Daemon</div>
+              <div className="stats-card-group-grid stats-grid-dense">
+                <div className="stat-card">
+                  <div className="label">Chain Height</div>
+                  <div className="value mono">{health?.daemon?.chain_height ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Peers</div>
+                  <div className="value mono">{health?.daemon?.peers ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Mempool Size</div>
+                  <div className="value mono">{health?.daemon?.mempool_size ?? '-'}</div>
+                </div>
+                <div className="stat-card" title={health?.daemon?.best_hash ?? undefined}>
+                  <div className="label">Best Hash</div>
+                  <div className="value mono">{compactHash(health?.daemon?.best_hash)}</div>
+                  {health?.daemon?.error ? <div className="stat-meta">{health.daemon.error}</div> : null}
+                </div>
+              </div>
+            </div>
+
+            <div className="stats-card-group">
+              <div className="stats-card-group-title">Job Template</div>
+              <div className="stats-card-group-grid stats-grid-dense">
+                <div className="stat-card">
+                  <div className="label">Current Height</div>
+                  <div className="value mono">{health?.job?.current_height ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Current Difficulty</div>
+                  <div className="value mono">{health?.job?.current_difficulty ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Refresh Lag</div>
+                  <div className="value mono">{formatRefreshLag(health?.job?.last_refresh_millis)}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Template Age</div>
+                  <div className="value mono">
+                    {health?.job?.template_age_seconds != null ? fmtSeconds(health.job.template_age_seconds) : '-'}
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Tracked Templates</div>
+                  <div className="value mono">{health?.job?.tracked_templates ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Active Assignments</div>
+                  <div className="value mono">{health?.job?.active_assignments ?? '-'}</div>
+                </div>
+                <div className="stat-card" title={health?.job?.template_id ?? undefined}>
+                  <div className="label">Template ID</div>
+                  <div className="value mono">{compactHash(health?.job?.template_id)}</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="stats-card-group">
               <div className="stats-card-group-title">Payouts</div>
-              <div className="stats-card-group-grid">
+              <div className="stats-card-group-grid stats-grid-dense">
                 <div className="stat-card">
                   <div className="label">Pending Payouts</div>
                   <div className="value mono">{health?.payouts?.pending_count ?? '-'}</div>
@@ -1448,6 +1542,19 @@ export function AdminPage({
                       ? formatCoins(health.payouts.pending_amount)
                       : '-'}
                   </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Last Payout</div>
+                  <div className="value mono">
+                    {health?.payouts?.last_payout?.timestamp ? timeAgo(health.payouts.last_payout.timestamp) : '-'}
+                  </div>
+                  {health?.payouts?.last_payout ? (
+                    <div className="stat-meta">
+                      <span className="mono">{shortTx(health.payouts.last_payout.tx_hash)}</span>
+                      {' • '}
+                      {formatCoins(health.payouts.last_payout.amount)}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="stat-card">
                   <div className="label">Wallet Pending</div>
@@ -1462,7 +1569,7 @@ export function AdminPage({
 
             <div className="stats-card-group">
               <div className="stats-card-group-title">Wallet</div>
-              <div className="stats-card-group-grid">
+              <div className="stats-card-group-grid stats-grid-dense">
                 <div className="stat-card">
                   <div className="label">Wallet Spendable</div>
                   <div className="value mono">
@@ -1498,12 +1605,66 @@ export function AdminPage({
               </div>
             </div>
 
+            <div className="stats-card-group">
+              <div className="stats-card-group-title">Validation</div>
+              <div className="stats-card-group-grid stats-grid-dense">
+                <div className="stat-card">
+                  <div className="label">In Flight</div>
+                  <div className="value mono">{health?.validation?.in_flight ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Candidate Queue</div>
+                  <div className="value mono">{health?.validation?.candidate_queue_depth ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Regular Queue</div>
+                  <div className="value mono">{health?.validation?.regular_queue_depth ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Tracked Addresses</div>
+                  <div className="value mono">{health?.validation?.tracked_addresses ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Forced Verify</div>
+                  <div className="value mono">{health?.validation?.forced_verify_addresses ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Pending Provisional</div>
+                  <div className="value mono">{health?.validation?.pending_provisional ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Sampled Shares</div>
+                  <div className="value mono">{health?.validation?.sampled_shares ?? '-'}</div>
+                  <div className="stat-meta">of {health?.validation?.total_shares ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Invalid Samples</div>
+                  <div className="value mono">{health?.validation?.invalid_samples ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Fraud Detections</div>
+                  <div className="value mono">{health?.validation?.fraud_detections ?? '-'}</div>
+                </div>
+              </div>
+            </div>
+
             <div className="card section">
-              <h3>Raw Health Data</h3>
-              <p className="section-lead">
-                Live response from the protected health endpoint for debugging runtime, payout queue, and wallet state.
-              </p>
-              <pre className="raw-json">{health ? JSON.stringify(health, null, 2) : 'Loading...'}</pre>
+              <div className="section-header">
+                <div>
+                  <h3>Raw Health Data</h3>
+                  <p className="section-lead">
+                    Keep the full protected health payload available for copy and low-level debugging without making it
+                    the primary UI.
+                  </p>
+                </div>
+                <button className="btn btn-secondary" onClick={copyHealthJson} disabled={!rawHealthJson}>
+                  Copy JSON
+                </button>
+              </div>
+              <details className="health-raw-toggle">
+                <summary>Show raw JSON</summary>
+                <pre className="raw-json">{rawHealthJson || 'Loading...'}</pre>
+              </details>
             </div>
           </div>
 

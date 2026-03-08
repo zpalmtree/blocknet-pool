@@ -1488,6 +1488,22 @@ pre.raw-json {
   line-height: 1.5;
 }
 
+.health-raw-toggle {
+  margin-top: 12px;
+}
+
+.health-raw-toggle summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  user-select: none;
+}
+
+.health-raw-toggle[open] summary {
+  margin-bottom: 12px;
+}
+
 .log-stream {
   background: var(--log-bg);
   color: var(--log-text);
