@@ -25,6 +25,22 @@ pub struct DbShare {
     pub created_at: SystemTime,
 }
 
+#[derive(Debug, Clone)]
+pub struct ShareReplayData {
+    pub job_id: String,
+    pub header_base: Vec<u8>,
+    pub network_target: [u8; 32],
+    pub created_at: SystemTime,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShareReplayUpdate {
+    pub share_id: i64,
+    pub status: String,
+    pub was_sampled: bool,
+    pub reject_reason: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DbBlock {
     pub height: u64,

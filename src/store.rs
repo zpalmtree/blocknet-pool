@@ -8,7 +8,7 @@ use anyhow::{anyhow, Result};
 use tracing::warn;
 
 use crate::config::Config;
-use crate::db::DbBlock;
+use crate::db::{DbBlock, ShareReplayData};
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::pgdb::{
     MinerShareWindowStats, PostgresStore, VardiffHintDiagnostic, VardiffHintSummary,
@@ -155,6 +155,14 @@ impl ShareStore for PoolStore {
 
     fn add_share(&self, share: ShareRecord) -> Result<()> {
         self.inner.add_share(share)
+    }
+
+    fn add_share_with_replay(
+        &self,
+        share: ShareRecord,
+        replay: Option<ShareReplayData>,
+    ) -> Result<()> {
+        self.inner.add_share_with_replay(share, replay)
     }
 
     fn add_found_block(&self, block: FoundBlockRecord) -> Result<()> {

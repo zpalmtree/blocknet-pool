@@ -11,7 +11,7 @@ use tracing::warn;
 
 use crate::db::{
     AddressRiskState, Balance, BlockCreditEvent, DbBlock, DbShare, Payout, PendingPayout,
-    PoolFeeEvent, PoolFeeRecord, PublicPayoutBatch,
+    PoolFeeEvent, PoolFeeRecord, PublicPayoutBatch, ShareReplayData, ShareReplayUpdate,
 };
 use crate::engine::{ShareRecord, ShareStore};
 use crate::stats::RejectionReasonCount;
@@ -185,6 +185,16 @@ CREATE INDEX IF NOT EXISTS idx_shares_created_at ON shares(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shares_miner_created ON shares(miner, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shares_miner_status_created ON shares(miner, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shares_job_nonce ON shares(job_id, nonce);
+CREATE INDEX IF NOT EXISTS idx_shares_block_hash_created_at ON shares(block_hash, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS share_job_replays (
+    job_id TEXT PRIMARY KEY,
+    header_base BYTEA NOT NULL,
+    network_target BYTEA NOT NULL,
+    created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_share_job_replays_created_at
+    ON share_job_replays(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS blocks (
     height BIGINT PRIMARY KEY,
@@ -384,8 +394,37 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     }
 
     pub fn add_share(&self, share: ShareRecord) -> Result<()> {
+        self.add_share_with_replay(share, None)
+    }
+
+    pub fn add_share_with_replay(
+        &self,
+        share: ShareRecord,
+        replay: Option<ShareReplayData>,
+    ) -> Result<()> {
         let created = to_unix(share.created_at);
-        self.conn().lock().execute(
+        let mut conn = self.conn().lock();
+        let mut tx = conn.transaction()?;
+
+        if let Some(replay) = replay {
+            let network_target = replay.network_target.to_vec();
+            tx.execute(
+                "INSERT INTO share_job_replays (job_id, header_base, network_target, created_at)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT(job_id) DO UPDATE SET
+                     header_base = EXCLUDED.header_base,
+                     network_target = EXCLUDED.network_target,
+                     created_at = LEAST(share_job_replays.created_at, EXCLUDED.created_at)",
+                &[
+                    &replay.job_id,
+                    &replay.header_base,
+                    &network_target,
+                    &to_unix(replay.created_at),
+                ],
+            )?;
+        }
+
+        tx.execute(
             "INSERT INTO shares (job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, reject_reason, created_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
             &[
@@ -401,6 +440,65 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 &created,
             ],
         )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn get_share_replay(&self, job_id: &str) -> Result<Option<ShareReplayData>> {
+        let row = self.conn().lock().query_opt(
+            "SELECT job_id, header_base, network_target, created_at
+             FROM share_job_replays
+             WHERE job_id = $1",
+            &[&job_id],
+        )?;
+        row.map(row_to_share_replay).transpose()
+    }
+
+    pub fn get_share_replays_for_job_ids(
+        &self,
+        job_ids: &[String],
+    ) -> Result<HashMap<String, ShareReplayData>> {
+        if job_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let rows = self.conn().lock().query(
+            "SELECT job_id, header_base, network_target, created_at
+             FROM share_job_replays
+             WHERE job_id = ANY($1)",
+            &[&job_ids],
+        )?;
+        let mut out = HashMap::with_capacity(rows.len());
+        for row in rows {
+            let replay = row_to_share_replay(row)?;
+            out.insert(replay.job_id.clone(), replay);
+        }
+        Ok(out)
+    }
+
+    pub fn apply_share_replay_updates(&self, updates: &[ShareReplayUpdate]) -> Result<()> {
+        if updates.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.conn().lock();
+        let mut tx = conn.transaction()?;
+        for update in updates {
+            tx.execute(
+                "UPDATE shares
+                 SET status = $2,
+                     was_sampled = $3,
+                     reject_reason = $4
+                 WHERE id = $1",
+                &[
+                    &update.share_id,
+                    &update.status,
+                    &update.was_sampled,
+                    &update.reject_reason,
+                ],
+            )?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -449,6 +547,14 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             &[&before_ts, &n],
         )?;
         Ok(rows.into_iter().map(row_to_share).collect())
+    }
+
+    pub fn latest_share_timestamp_for_block_hash(&self, hash: &str) -> Result<Option<SystemTime>> {
+        let row = self.conn().lock().query_one(
+            "SELECT MAX(created_at) FROM shares WHERE block_hash = $1",
+            &[&hash],
+        )?;
+        Ok(row.get::<_, Option<i64>>(0).map(from_unix))
     }
 
     pub fn hashrate_stats_for_miner(
@@ -2120,6 +2226,14 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             &[&cutoff, &SECONDS_PER_DAY],
         )?;
         let removed = tx.execute("DELETE FROM shares WHERE created_at < $1", &[&cutoff])?;
+        tx.execute(
+            "DELETE FROM share_job_replays replay
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM shares share
+                 WHERE share.job_id = replay.job_id
+             )",
+            &[],
+        )?;
         tx.commit()?;
         Ok(removed)
     }
@@ -2392,6 +2506,25 @@ fn row_to_share(row: postgres::Row) -> DbShare {
         block_hash: row.get::<_, Option<String>>(8),
         created_at: from_unix(row.get::<_, i64>(9)),
     }
+}
+
+fn row_to_share_replay(row: postgres::Row) -> Result<ShareReplayData> {
+    let network_target = row.get::<_, Vec<u8>>(2);
+    if network_target.len() != 32 {
+        return Err(anyhow!(
+            "invalid replay network target length for {}: expected 32 bytes, got {}",
+            row.get::<_, String>(0),
+            network_target.len()
+        ));
+    }
+    let mut network_target_array = [0u8; 32];
+    network_target_array.copy_from_slice(&network_target);
+    Ok(ShareReplayData {
+        job_id: row.get::<_, String>(0),
+        header_base: row.get::<_, Vec<u8>>(1),
+        network_target: network_target_array,
+        created_at: from_unix(row.get::<_, i64>(3)),
+    })
 }
 
 fn row_get_boolish(row: &postgres::Row, idx: usize) -> Result<bool> {

@@ -33,7 +33,8 @@ use crate::engine::JobRepository;
 use crate::jobs::JobManager;
 use crate::node::{NodeClient, WalletBalance};
 use crate::payout::{
-    is_share_payout_eligible, resolve_pool_fee_destination, weight_shares, PayoutTrustPolicy,
+    is_share_payout_eligible, recover_share_window_by_replay, resolve_pool_fee_destination,
+    reward_window_end, weight_shares, PayoutTrustPolicy,
 };
 use crate::service_state::{PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY};
 use crate::stats::{
@@ -3855,22 +3856,19 @@ fn estimate_unconfirmed_pending_for_miner(
         }
 
         let mut distributable = block.reward.saturating_sub(config.pool_fee(block.reward));
+        let window_end = reward_window_end(store, &block)?;
         let shares = if scheme_is_pplns {
             if pplns_duration.is_zero() {
-                store.get_last_n_shares_before(block.timestamp, pplns_window)?
+                store.get_last_n_shares_before(window_end, pplns_window)?
             } else {
-                let since = block
-                    .timestamp
-                    .checked_sub(pplns_duration)
-                    .unwrap_or(UNIX_EPOCH);
-                store.get_shares_between(since, block.timestamp)?
+                let since = window_end.checked_sub(pplns_duration).unwrap_or(UNIX_EPOCH);
+                store.get_shares_between(since, window_end)?
             }
         } else {
-            let since = block
-                .timestamp
+            let since = window_end
                 .checked_sub(PROPORTIONAL_WINDOW)
                 .unwrap_or(UNIX_EPOCH);
-            store.get_shares_between(since, block.timestamp)?
+            store.get_shares_between(since, window_end)?
         };
 
         let address_risky = if let Some(risky) = risk_cache.get(address) {
@@ -3920,9 +3918,7 @@ fn estimate_unconfirmed_pending_for_miner(
                 },
             )?;
 
-            if total_weight == 0 {
-                credit_address(&mut credits, &block.finder, distributable)?;
-            } else {
+            if total_weight > 0 {
                 if config.block_finder_bonus && config.block_finder_bonus_pct > 0.0 {
                     let bonus =
                         (distributable as f64 * config.block_finder_bonus_pct / 100.0) as u64;
@@ -4152,12 +4148,20 @@ fn compute_reward_mode(
     }
 
     let mut credits = HashMap::<String, u64>::new();
-    if shares.is_empty() || total_weight == 0 {
+    if shares.is_empty() {
         credit_address(&mut credits, &block.finder, distributable_reward)?;
         statuses.insert(
             block.finder.clone(),
             RewardParticipantStatus::FinderFallback,
         );
+        return Ok(RewardModeComputation {
+            weights,
+            credits,
+            statuses,
+            total_weight,
+        });
+    }
+    if total_weight == 0 {
         return Ok(RewardModeComputation {
             weights,
             credits,
@@ -4187,49 +4191,47 @@ fn load_block_reward_window(
     config: &Config,
     block: &DbBlock,
 ) -> anyhow::Result<(Vec<DbShare>, RewardWindowSummary)> {
+    let end = reward_window_end(store, block)?;
     if config.payout_scheme.trim().eq_ignore_ascii_case("pplns") {
         let duration = config.pplns_window_duration_duration();
         if duration.is_zero() {
-            let shares = store
-                .get_last_n_shares_before(block.timestamp, i64::from(config.pplns_window.max(1)))?;
+            let shares =
+                store.get_last_n_shares_before(end, i64::from(config.pplns_window.max(1)))?;
             let start = shares.iter().map(|share| share.created_at).min();
             return Ok((
                 shares.clone(),
                 RewardWindowSummary {
                     label: format!("PPLNS · last {} shares", config.pplns_window.max(1)),
                     start,
-                    end: block.timestamp,
+                    end,
                     share_count: shares.len(),
                     participant_count: 0,
                 },
             ));
         }
 
-        let start = block.timestamp.checked_sub(duration).unwrap_or(UNIX_EPOCH);
-        let shares = store.get_shares_between(start, block.timestamp)?;
+        let start = end.checked_sub(duration).unwrap_or(UNIX_EPOCH);
+        let shares = store.get_shares_between(start, end)?;
         return Ok((
             shares.clone(),
             RewardWindowSummary {
                 label: format!("PPLNS · {}", config.pplns_window_duration.trim()),
                 start: Some(start),
-                end: block.timestamp,
+                end,
                 share_count: shares.len(),
                 participant_count: 0,
             },
         ));
     }
 
-    let start = block
-        .timestamp
-        .checked_sub(PROPORTIONAL_WINDOW)
-        .unwrap_or(UNIX_EPOCH);
-    let shares = store.get_shares_between(start, block.timestamp)?;
+    let start = end.checked_sub(PROPORTIONAL_WINDOW).unwrap_or(UNIX_EPOCH);
+    let shares = store.get_shares_between(start, end)?;
     Ok((
         shares.clone(),
         RewardWindowSummary {
             label: "Proportional · 1h".to_string(),
             start: Some(start),
-            end: block.timestamp,
+            end,
             share_count: shares.len(),
             participant_count: 0,
         },
@@ -4252,11 +4254,14 @@ fn build_block_reward_breakdown(
     let provisional_delay = config.provisional_share_delay_duration();
 
     let (shares, mut share_window) = load_block_reward_window(store, config, &block)?;
-    let stats_by_address = collect_reward_window_stats(&shares, now, provisional_delay);
-    share_window.participant_count = stats_by_address.len();
+    let recorded_stats_by_address = collect_reward_window_stats(&shares, now, provisional_delay);
+    share_window.participant_count = recorded_stats_by_address.len();
 
     let mut risky_by_address = HashMap::<String, bool>::new();
-    let mut addresses_for_risk = stats_by_address.keys().cloned().collect::<Vec<_>>();
+    let mut addresses_for_risk = recorded_stats_by_address
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
     if !addresses_for_risk
         .iter()
         .any(|address| address == &block.finder)
@@ -4279,35 +4284,86 @@ fn build_block_reward_breakdown(
         risky_by_address.insert(address, risky);
     }
 
-    let preview_mode = compute_reward_mode(
-        &shares,
+    let preview_trust_policy = PayoutTrustPolicy {
+        min_verified_shares: 0,
+        min_verified_ratio: 0.0,
+        provisional_cap_multiplier: 0.0,
+    };
+    let payout_trust_policy = PayoutTrustPolicy::from_config(config);
+    let mut display_shares = shares.clone();
+    let mut display_stats_by_address = recorded_stats_by_address.clone();
+
+    let mut preview_mode = compute_reward_mode(
+        &display_shares,
         &block,
         distributable_reward,
-        PayoutTrustPolicy {
-            min_verified_shares: 0,
-            min_verified_ratio: 0.0,
-            provisional_cap_multiplier: 0.0,
-        },
+        preview_trust_policy,
         &risky_by_address,
         now,
         provisional_delay,
         config.block_finder_bonus,
         config.block_finder_bonus_pct,
-        &stats_by_address,
+        &display_stats_by_address,
     )?;
 
-    let payout_mode = compute_reward_mode(
-        &shares,
+    let mut payout_mode = compute_reward_mode(
+        &display_shares,
         &block,
         distributable_reward,
-        PayoutTrustPolicy::from_config(config),
+        payout_trust_policy,
         &risky_by_address,
         now,
         provisional_delay,
         config.block_finder_bonus,
         config.block_finder_bonus_pct,
-        &stats_by_address,
+        &display_stats_by_address,
     )?;
+    if !display_shares.is_empty() && payout_mode.total_weight == 0 {
+        match recover_share_window_by_replay(
+            store,
+            &mut display_shares,
+            now,
+            provisional_delay,
+            false,
+        ) {
+            Ok(recovery) if recovery.attempted => {
+                display_stats_by_address =
+                    collect_reward_window_stats(&display_shares, now, provisional_delay);
+                preview_mode = compute_reward_mode(
+                    &display_shares,
+                    &block,
+                    distributable_reward,
+                    preview_trust_policy,
+                    &risky_by_address,
+                    now,
+                    provisional_delay,
+                    config.block_finder_bonus,
+                    config.block_finder_bonus_pct,
+                    &display_stats_by_address,
+                )?;
+                payout_mode = compute_reward_mode(
+                    &display_shares,
+                    &block,
+                    distributable_reward,
+                    payout_trust_policy,
+                    &risky_by_address,
+                    now,
+                    provisional_delay,
+                    config.block_finder_bonus,
+                    config.block_finder_bonus_pct,
+                    &display_stats_by_address,
+                )?;
+            }
+            Ok(_) => {}
+            Err(err) => {
+                tracing::warn!(
+                    height,
+                    error = %err,
+                    "failed dry-run replay recovery for block reward breakdown"
+                );
+            }
+        }
+    }
 
     let actual_events = store.get_block_credit_events(height)?;
     let actual_fee_amount = match store.get_block_pool_fee_event(height)? {
@@ -4322,7 +4378,8 @@ fn build_block_reward_breakdown(
         .collect::<HashMap<String, u64>>();
 
     let mut all_addresses = HashSet::<String>::new();
-    all_addresses.extend(stats_by_address.keys().cloned());
+    all_addresses.extend(recorded_stats_by_address.keys().cloned());
+    all_addresses.extend(display_stats_by_address.keys().cloned());
     all_addresses.extend(preview_mode.credits.keys().cloned());
     all_addresses.extend(payout_mode.credits.keys().cloned());
     all_addresses.extend(actual_map.keys().cloned());
@@ -4351,7 +4408,7 @@ fn build_block_reward_breakdown(
     let participant_rows = participants
         .into_iter()
         .map(|address| {
-            let stats = stats_by_address.get(&address);
+            let stats = display_stats_by_address.get(&address);
             let actual_credit = actual_map.get(&address).copied();
             let preview_status =
                 preview_mode
@@ -6190,7 +6247,7 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use crate::config::Config;
-    use crate::db::{Balance, DbBlock, Payout, PendingPayout, PoolFeeRecord};
+    use crate::db::{Balance, DbBlock, Payout, PendingPayout, PoolFeeRecord, ShareReplayData};
     use crate::engine::{ShareRecord, ShareStore};
     use crate::jobs::{JobManager, JobRuntimeSnapshot};
     use crate::node::{NodeClient, WalletBalance};
@@ -7184,6 +7241,75 @@ mod tests {
     }
 
     #[test]
+    fn block_reward_breakdown_replays_zero_weight_window_for_payout_view() {
+        let store = require_test_store!();
+        let mut cfg = Config::default();
+        cfg.payout_scheme = "pplns".to_string();
+        cfg.pplns_window_duration = "24h".to_string();
+        cfg.pool_fee_pct = 0.0;
+        cfg.pool_fee_flat = 0.0;
+        cfg.block_finder_bonus = false;
+        cfg.provisional_share_delay = "0s".to_string();
+        cfg.payout_min_verified_shares = 1;
+        cfg.payout_min_verified_ratio = 0.0;
+
+        let base = UNIX_EPOCH + Duration::from_secs(4_100_000);
+        let block_ts = base + Duration::from_secs(120);
+        store
+            .add_share_with_replay(
+                ShareRecord {
+                    job_id: "j-replay-a".to_string(),
+                    miner: "miner-a".to_string(),
+                    worker: "wa".to_string(),
+                    difficulty: 1,
+                    nonce: 1,
+                    status: "provisional",
+                    was_sampled: false,
+                    block_hash: None,
+                    reject_reason: None,
+                    created_at: base,
+                },
+                Some(ShareReplayData {
+                    job_id: "j-replay-a".to_string(),
+                    header_base: vec![1, 2, 3, 4],
+                    network_target: [0xff; 32],
+                    created_at: base,
+                }),
+            )
+            .expect("add replay share");
+        store
+            .add_block(&DbBlock {
+                height: 297,
+                hash: "blk-replay-view".to_string(),
+                difficulty: 200,
+                finder: "miner-a".to_string(),
+                finder_worker: "wa".to_string(),
+                reward: 1_000,
+                timestamp: block_ts,
+                confirmed: false,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("add block");
+
+        let breakdown =
+            build_block_reward_breakdown(&store, &cfg, 297, block_ts + Duration::from_secs(10))
+                .expect("reward breakdown");
+        let miner_a = breakdown
+            .participants
+            .iter()
+            .find(|row| row.address == "miner-a")
+            .expect("miner-a row");
+        assert_eq!(miner_a.verified_shares, 1);
+        assert_eq!(miner_a.verified_difficulty, 1);
+        assert_eq!(miner_a.provisional_shares_eligible, 0);
+        assert_eq!(miner_a.preview_credit, 1_000);
+        assert_eq!(miner_a.payout_credit, 1_000);
+        assert_eq!(miner_a.payout_status, "included");
+    }
+
+    #[test]
     fn estimate_unconfirmed_pending_for_miner_uses_tentative_preview_not_payout_gate() {
         let store = require_test_store!();
         let mut cfg = Config::default();
@@ -7267,6 +7393,135 @@ mod tests {
         assert_eq!(estimate.blocks.len(), 1);
         assert_eq!(estimate.blocks[0].validation_state, "awaiting_shares");
         assert_eq!(estimate.blocks[0].validation_label, "Waiting for shares");
+    }
+
+    #[test]
+    fn estimate_unconfirmed_pending_for_miner_uses_winning_share_timestamp_for_window_end() {
+        let store = require_test_store!();
+        let mut cfg = Config::default();
+        cfg.payout_scheme = "pplns".to_string();
+        cfg.pplns_window_duration = "24h".to_string();
+        cfg.pool_fee_pct = 0.0;
+        cfg.pool_fee_flat = 0.0;
+        cfg.block_finder_bonus = false;
+        cfg.blocks_before_payout = 60;
+
+        let base = UNIX_EPOCH + Duration::from_secs(2_100_000);
+        let block_ts = base;
+        store
+            .add_share(ShareRecord {
+                job_id: "j-anchor-a".to_string(),
+                miner: "miner-a".to_string(),
+                worker: "wa".to_string(),
+                difficulty: 100,
+                nonce: 1,
+                status: "verified",
+                was_sampled: true,
+                block_hash: None,
+                reject_reason: None,
+                created_at: base - Duration::from_secs(10),
+            })
+            .expect("add anchor share a");
+        store
+            .add_share(ShareRecord {
+                job_id: "j-anchor-b".to_string(),
+                miner: "miner-b".to_string(),
+                worker: "wb".to_string(),
+                difficulty: 100,
+                nonce: 2,
+                status: "verified",
+                was_sampled: true,
+                block_hash: Some("blk-anchor".to_string()),
+                reject_reason: None,
+                created_at: base + Duration::from_secs(10),
+            })
+            .expect("add winning share");
+        store
+            .add_block(&DbBlock {
+                height: 109,
+                hash: "blk-anchor".to_string(),
+                difficulty: 200,
+                finder: "miner-b".to_string(),
+                finder_worker: "wb".to_string(),
+                reward: 1_000,
+                timestamp: block_ts,
+                confirmed: false,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("add anchor block");
+
+        let estimate = estimate_unconfirmed_pending_for_miner(
+            &store,
+            "miner-a",
+            &cfg,
+            base + Duration::from_secs(20),
+            110,
+        )
+        .expect("estimate");
+        assert_eq!(estimate.estimated_pending, 500);
+        assert_eq!(estimate.blocks.len(), 1);
+        assert_eq!(estimate.blocks[0].estimated_credit, 500);
+        assert_eq!(estimate.blocks[0].validation_state, "ready");
+    }
+
+    #[test]
+    fn estimate_unconfirmed_pending_for_miner_does_not_finder_fallback_on_delayed_window() {
+        let store = require_test_store!();
+        let mut cfg = Config::default();
+        cfg.payout_scheme = "pplns".to_string();
+        cfg.pplns_window_duration = "24h".to_string();
+        cfg.pool_fee_pct = 0.0;
+        cfg.pool_fee_flat = 0.0;
+        cfg.block_finder_bonus = false;
+        cfg.blocks_before_payout = 60;
+        cfg.provisional_share_delay = "1h".to_string();
+
+        let base = UNIX_EPOCH + Duration::from_secs(2_200_000);
+        let block_ts = base + Duration::from_secs(120);
+        store
+            .add_share(ShareRecord {
+                job_id: "j-delay-a".to_string(),
+                miner: "miner-a".to_string(),
+                worker: "wa".to_string(),
+                difficulty: 100,
+                nonce: 1,
+                status: "provisional",
+                was_sampled: false,
+                block_hash: None,
+                reject_reason: None,
+                created_at: base,
+            })
+            .expect("add delayed share");
+        store
+            .add_block(&DbBlock {
+                height: 119,
+                hash: "blk-delay".to_string(),
+                difficulty: 200,
+                finder: "miner-a".to_string(),
+                finder_worker: "wa".to_string(),
+                reward: 1_000,
+                timestamp: block_ts,
+                confirmed: false,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("add delayed block");
+
+        let estimate = estimate_unconfirmed_pending_for_miner(
+            &store,
+            "miner-a",
+            &cfg,
+            block_ts + Duration::from_secs(1),
+            120,
+        )
+        .expect("estimate");
+        assert_eq!(estimate.estimated_pending, 0);
+        assert_eq!(estimate.blocks.len(), 1);
+        assert_eq!(estimate.blocks[0].estimated_credit, 0);
+        assert_eq!(estimate.blocks[0].validation_state, "awaiting_delay");
     }
 
     #[test]

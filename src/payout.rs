@@ -1,15 +1,16 @@
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::Config;
-use crate::db::{Balance, DbBlock, DbShare, PendingPayout, PoolFeeRecord};
+use crate::db::{Balance, DbBlock, DbShare, PendingPayout, PoolFeeRecord, ShareReplayUpdate};
 use crate::node::{http_error_body_contains, is_http_status, NodeClient, NodeStatus};
+use crate::pow::{check_target, difficulty_to_target, Argon2PowHasher, PowHasher};
 use crate::protocol::{address_network, validate_miner_address_for_network, AddressNetwork};
 use crate::store::PoolStore;
-use crate::validation::{SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED};
+use crate::validation::{SHARE_STATUS_PROVISIONAL, SHARE_STATUS_REJECTED, SHARE_STATUS_VERIFIED};
 
 const MIN_PAYOUT_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_PAYOUT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30);
@@ -45,6 +46,13 @@ struct AddressShareWeights {
 struct PayoutCandidate {
     balance: Balance,
     pending: PendingPayout,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ShareReplayRecovery {
+    pub attempted: bool,
+    pub verified: u64,
+    pub rejected: u64,
 }
 
 #[derive(Debug)]
@@ -263,17 +271,17 @@ impl PayoutProcessor {
         block: &DbBlock,
         reward: u64,
     ) -> anyhow::Result<HashMap<String, u64>> {
+        let now = SystemTime::now();
+        let provisional_delay = self.cfg.provisional_share_delay_duration();
+        let window_end = reward_window_end(self.store.as_ref(), block)?;
         let shares = if self.cfg.pplns_window_duration_duration().is_zero() {
-            self.store.get_last_n_shares_before(
-                block.timestamp,
-                i64::from(self.cfg.pplns_window.max(1)),
-            )?
+            self.store
+                .get_last_n_shares_before(window_end, i64::from(self.cfg.pplns_window.max(1)))?
         } else {
-            let since = block
-                .timestamp
+            let since = window_end
                 .checked_sub(self.cfg.pplns_window_duration_duration())
                 .unwrap_or(UNIX_EPOCH);
-            self.store.get_shares_between(since, block.timestamp)?
+            self.store.get_shares_between(since, window_end)?
         };
 
         let mut credits = HashMap::<String, u64>::new();
@@ -282,11 +290,33 @@ impl PayoutProcessor {
             return Ok(credits);
         }
 
-        let (weights, total_weight) = self.weight_shares_for_payout(&shares)?;
-        if total_weight == 0 {
-            add_credit(&mut credits, &block.finder, reward)?;
-            return Ok(credits);
+        let mut shares = shares;
+        let mut weight_result = self.weight_shares_for_payout(&shares)?;
+        if weight_result.1 == 0 {
+            let recovery = recover_share_window_by_replay(
+                self.store.as_ref(),
+                &mut shares,
+                now,
+                provisional_delay,
+                true,
+            )?;
+            if recovery.attempted {
+                tracing::info!(
+                    height = block.height,
+                    replay_verified = recovery.verified,
+                    replay_rejected = recovery.rejected,
+                    "replayed payout window shares before PPLNS allocation"
+                );
+                weight_result = self.weight_shares_for_payout(&shares)?;
+            }
         }
+        if weight_result.1 == 0 {
+            anyhow::bail!(
+                "block {} payout window has shares but no payout-eligible verified weight after replay",
+                block.height
+            );
+        }
+        let (weights, total_weight) = weight_result;
 
         let mut distributable = reward;
         if self.cfg.block_finder_bonus && self.cfg.block_finder_bonus_pct > 0.0 {
@@ -304,22 +334,46 @@ impl PayoutProcessor {
         block: &DbBlock,
         reward: u64,
     ) -> anyhow::Result<HashMap<String, u64>> {
-        let since = block
-            .timestamp
+        let now = SystemTime::now();
+        let provisional_delay = self.cfg.provisional_share_delay_duration();
+        let window_end = reward_window_end(self.store.as_ref(), block)?;
+        let since = window_end
             .checked_sub(Duration::from_secs(60 * 60))
             .unwrap_or(UNIX_EPOCH);
-        let shares = self.store.get_shares_between(since, block.timestamp)?;
+        let shares = self.store.get_shares_between(since, window_end)?;
         let mut credits = HashMap::<String, u64>::new();
         if shares.is_empty() {
             add_credit(&mut credits, &block.finder, reward)?;
             return Ok(credits);
         }
 
-        let (weights, total_weight) = self.weight_shares_for_payout(&shares)?;
-        if total_weight == 0 {
-            add_credit(&mut credits, &block.finder, reward)?;
-            return Ok(credits);
+        let mut shares = shares;
+        let mut weight_result = self.weight_shares_for_payout(&shares)?;
+        if weight_result.1 == 0 {
+            let recovery = recover_share_window_by_replay(
+                self.store.as_ref(),
+                &mut shares,
+                now,
+                provisional_delay,
+                true,
+            )?;
+            if recovery.attempted {
+                tracing::info!(
+                    height = block.height,
+                    replay_verified = recovery.verified,
+                    replay_rejected = recovery.rejected,
+                    "replayed payout window shares before proportional allocation"
+                );
+                weight_result = self.weight_shares_for_payout(&shares)?;
+            }
         }
+        if weight_result.1 == 0 {
+            anyhow::bail!(
+                "block {} payout window has shares but no payout-eligible verified weight after replay",
+                block.height
+            );
+        }
+        let (weights, total_weight) = weight_result;
 
         let mut distributable = reward;
         if self.cfg.block_finder_bonus && self.cfg.block_finder_bonus_pct > 0.0 {
@@ -883,6 +937,127 @@ pub(crate) fn resolve_pool_fee_destination(cfg: &Config, block: &DbBlock) -> Opt
     None
 }
 
+pub(crate) fn reward_window_end(store: &PoolStore, block: &DbBlock) -> anyhow::Result<SystemTime> {
+    Ok(store
+        .latest_share_timestamp_for_block_hash(&block.hash)?
+        .map(|share_time| share_time.max(block.timestamp))
+        .unwrap_or(block.timestamp))
+}
+
+fn should_replay_share(share: &DbShare, now: SystemTime, provisional_delay: Duration) -> bool {
+    share.status != SHARE_STATUS_REJECTED
+        && !share.was_sampled
+        && is_share_payout_eligible(share, now, provisional_delay)
+}
+
+pub(crate) fn recover_share_window_by_replay(
+    store: &PoolStore,
+    shares: &mut [DbShare],
+    now: SystemTime,
+    provisional_delay: Duration,
+    persist: bool,
+) -> anyhow::Result<ShareReplayRecovery> {
+    let replay_share_indexes = shares
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, share)| {
+            should_replay_share(share, now, provisional_delay).then_some(idx)
+        })
+        .collect::<Vec<_>>();
+    if replay_share_indexes.is_empty() {
+        return Ok(ShareReplayRecovery::default());
+    }
+
+    let job_ids = replay_share_indexes
+        .iter()
+        .map(|idx| shares[*idx].job_id.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let replays = store.get_share_replays_for_job_ids(&job_ids)?;
+    let missing = job_ids
+        .iter()
+        .filter(|job_id| !replays.contains_key(*job_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        anyhow::bail!(
+            "missing replay data for {} assignment(s): {}",
+            missing.len(),
+            missing.join(", ")
+        );
+    }
+
+    let hasher = Argon2PowHasher::default();
+    let mut recovery = ShareReplayRecovery {
+        attempted: true,
+        ..ShareReplayRecovery::default()
+    };
+    let mut updates = Vec::<ShareReplayUpdate>::with_capacity(replay_share_indexes.len());
+    for idx in replay_share_indexes {
+        let share = &shares[idx];
+        let replay = replays.get(&share.job_id).ok_or_else(|| {
+            anyhow::anyhow!("missing replay data for assignment {}", share.job_id)
+        })?;
+        let hash = hasher
+            .hash(&replay.header_base, share.nonce)
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "replay hash failed for share {} (assignment {}): {err}",
+                    share.id,
+                    share.job_id
+                )
+            })?;
+        let accepted = check_target(hash, difficulty_to_target(share.difficulty));
+        let candidate_valid = check_target(hash, replay.network_target);
+        if share.block_hash.is_some() && !candidate_valid {
+            anyhow::bail!(
+                "candidate share {} failed replay verification for assignment {}",
+                share.id,
+                share.job_id
+            );
+        }
+        if let Some(expected_hash) = share.block_hash.as_deref() {
+            let computed_hash = hex::encode(hash);
+            if !expected_hash.eq_ignore_ascii_case(&computed_hash) {
+                anyhow::bail!(
+                    "candidate share {} replay hash mismatch for assignment {}",
+                    share.id,
+                    share.job_id
+                );
+            }
+        }
+
+        if accepted {
+            updates.push(ShareReplayUpdate {
+                share_id: share.id,
+                status: SHARE_STATUS_VERIFIED.to_string(),
+                was_sampled: true,
+                reject_reason: None,
+            });
+            shares[idx].status = SHARE_STATUS_VERIFIED.to_string();
+            shares[idx].was_sampled = true;
+            recovery.verified = recovery.verified.saturating_add(1);
+        } else {
+            updates.push(ShareReplayUpdate {
+                share_id: share.id,
+                status: SHARE_STATUS_REJECTED.to_string(),
+                was_sampled: true,
+                reject_reason: Some("low difficulty share".to_string()),
+            });
+            shares[idx].status = SHARE_STATUS_REJECTED.to_string();
+            shares[idx].was_sampled = true;
+            recovery.rejected = recovery.rejected.saturating_add(1);
+        }
+    }
+
+    if persist {
+        store.apply_share_replay_updates(&updates)?;
+    }
+
+    Ok(recovery)
+}
+
 fn sort_payout_candidates(
     candidates: &mut [PayoutCandidate],
     now: SystemTime,
@@ -1075,7 +1250,7 @@ fn atomic_amount_from_coins(coins: f64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::DbShare;
+    use crate::db::{DbShare, ShareReplayData};
     use crate::node::HttpError;
     use crate::store::PoolStore;
     use std::io::{Read, Write};
@@ -1407,6 +1582,168 @@ mod tests {
 
         let total = credits.values().copied().sum::<u64>();
         assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn build_pplns_credits_replays_zero_weight_window_and_persists_verification() {
+        let store = require_test_store!();
+        let mut cfg = Config::default();
+        cfg.payout_scheme = "pplns".to_string();
+        cfg.pplns_window_duration = "24h".to_string();
+        cfg.provisional_share_delay = "0s".to_string();
+        cfg.payout_min_verified_shares = 1;
+        cfg.block_finder_bonus = false;
+
+        let processor = PayoutProcessor::new(
+            cfg,
+            Arc::clone(&store),
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+        );
+
+        let share_time = UNIX_EPOCH + Duration::from_secs(5_000_000);
+        store
+            .add_share_with_replay(
+                crate::engine::ShareRecord {
+                    job_id: "replay-job".to_string(),
+                    miner: "miner-a".to_string(),
+                    worker: "wa".to_string(),
+                    difficulty: 1,
+                    nonce: 7,
+                    status: SHARE_STATUS_PROVISIONAL,
+                    was_sampled: false,
+                    block_hash: None,
+                    reject_reason: None,
+                    created_at: share_time,
+                },
+                Some(ShareReplayData {
+                    job_id: "replay-job".to_string(),
+                    header_base: vec![1, 2, 3, 4],
+                    network_target: [0xff; 32],
+                    created_at: share_time,
+                }),
+            )
+            .expect("add replayable share");
+
+        let credits = processor
+            .build_pplns_credits(
+                &DbBlock {
+                    height: 500,
+                    hash: "blk-replay".to_string(),
+                    difficulty: 1,
+                    finder: "miner-a".to_string(),
+                    finder_worker: "wa".to_string(),
+                    reward: 1_000,
+                    timestamp: share_time + Duration::from_secs(30),
+                    confirmed: true,
+                    orphaned: false,
+                    paid_out: false,
+                    effort_pct: None,
+                },
+                1_000,
+            )
+            .expect("build credits");
+        assert_eq!(credits.get("miner-a").copied(), Some(1_000));
+
+        let persisted = store
+            .get_recent_shares(10)
+            .expect("recent shares")
+            .into_iter()
+            .find(|share| share.job_id == "replay-job")
+            .expect("persisted replay share");
+        assert_eq!(persisted.status, SHARE_STATUS_VERIFIED);
+        assert!(persisted.was_sampled);
+    }
+
+    #[test]
+    fn build_pplns_credits_errors_when_zero_weight_window_has_no_replay_data() {
+        let store = require_test_store!();
+        let mut cfg = Config::default();
+        cfg.payout_scheme = "pplns".to_string();
+        cfg.pplns_window_duration = "24h".to_string();
+        cfg.provisional_share_delay = "0s".to_string();
+        cfg.payout_min_verified_shares = 1;
+        cfg.block_finder_bonus = false;
+
+        let processor = PayoutProcessor::new(
+            cfg,
+            Arc::clone(&store),
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+        );
+
+        let share_time = UNIX_EPOCH + Duration::from_secs(5_100_000);
+        store
+            .add_share(crate::engine::ShareRecord {
+                job_id: "missing-replay-job".to_string(),
+                miner: "miner-a".to_string(),
+                worker: "wa".to_string(),
+                difficulty: 1,
+                nonce: 8,
+                status: SHARE_STATUS_PROVISIONAL,
+                was_sampled: false,
+                block_hash: None,
+                reject_reason: None,
+                created_at: share_time,
+            })
+            .expect("add provisional share");
+
+        let err = processor
+            .build_pplns_credits(
+                &DbBlock {
+                    height: 501,
+                    hash: "blk-missing-replay".to_string(),
+                    difficulty: 1,
+                    finder: "miner-a".to_string(),
+                    finder_worker: "wa".to_string(),
+                    reward: 1_000,
+                    timestamp: share_time + Duration::from_secs(30),
+                    confirmed: true,
+                    orphaned: false,
+                    paid_out: false,
+                    effort_pct: None,
+                },
+                1_000,
+            )
+            .expect_err("missing replay data should block payout");
+        assert!(err.to_string().contains("missing replay data"));
+    }
+
+    #[test]
+    fn replay_rejects_candidate_share_that_fails_network_target() {
+        let store = require_test_store!();
+        let share_time = UNIX_EPOCH + Duration::from_secs(5_200_000);
+        store
+            .add_share_with_replay(
+                crate::engine::ShareRecord {
+                    job_id: "candidate-replay-job".to_string(),
+                    miner: "miner-a".to_string(),
+                    worker: "wa".to_string(),
+                    difficulty: 1,
+                    nonce: 9,
+                    status: SHARE_STATUS_PROVISIONAL,
+                    was_sampled: false,
+                    block_hash: Some("candidate-hash".to_string()),
+                    reject_reason: None,
+                    created_at: share_time,
+                },
+                Some(ShareReplayData {
+                    job_id: "candidate-replay-job".to_string(),
+                    header_base: vec![9, 8, 7, 6],
+                    network_target: [0u8; 32],
+                    created_at: share_time,
+                }),
+            )
+            .expect("add candidate share");
+
+        let mut shares = store.get_recent_shares(10).expect("recent shares");
+        let err = recover_share_window_by_replay(
+            &store,
+            &mut shares,
+            share_time + Duration::from_secs(30),
+            Duration::ZERO,
+            false,
+        )
+        .expect_err("candidate replay mismatch should abort");
+        assert!(err.to_string().contains("candidate share"));
     }
 
     #[test]

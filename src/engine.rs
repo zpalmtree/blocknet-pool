@@ -12,6 +12,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
+use crate::db::ShareReplayData;
 use crate::dev_fee::{
     login_difficulty_floor, should_bootstrap_login_from_address_hints,
     should_persist_login_hint_immediately, DEV_VARDIFF_BOOTSTRAP_HINT_LIMIT,
@@ -242,6 +243,13 @@ pub trait ShareStore: Send + Sync + 'static {
         Ok(())
     }
     fn add_share(&self, share: ShareRecord) -> Result<()>;
+    fn add_share_with_replay(
+        &self,
+        share: ShareRecord,
+        _replay: Option<ShareReplayData>,
+    ) -> Result<()> {
+        self.add_share(share)
+    }
     fn add_found_block(&self, _block: FoundBlockRecord) -> Result<()> {
         Ok(())
     }
@@ -831,18 +839,27 @@ impl PoolEngine {
                 }
             }
 
-            self.store.add_share(ShareRecord {
-                job_id: job_id_for_share.clone(),
-                miner: session.address.clone(),
-                worker: session.worker.clone(),
-                difficulty: share_difficulty,
-                nonce,
-                status,
-                was_sampled: validation.verified,
-                block_hash,
-                reject_reason: None,
-                created_at: SystemTime::now(),
-            })?;
+            let created_at = SystemTime::now();
+            self.store.add_share_with_replay(
+                ShareRecord {
+                    job_id: job_id_for_share.clone(),
+                    miner: session.address.clone(),
+                    worker: session.worker.clone(),
+                    difficulty: share_difficulty,
+                    nonce,
+                    status,
+                    was_sampled: validation.verified,
+                    block_hash,
+                    reject_reason: None,
+                    created_at,
+                },
+                Some(ShareReplayData {
+                    job_id: job_id_for_share.clone(),
+                    header_base: job.header_base.clone(),
+                    network_target: job.network_target,
+                    created_at,
+                }),
+            )?;
             if let Err(err) = self.store.release_share_claim(&job_id_for_share, nonce) {
                 tracing::warn!(
                     job_id = %job_id_for_share,
@@ -1627,6 +1644,7 @@ pub struct InMemoryStore {
     shares: Mutex<Vec<ShareRecord>>,
     blocks: Mutex<Vec<FoundBlockRecord>>,
     vardiff_hints: Mutex<HashMap<(String, String), (u64, SystemTime)>>,
+    replays: Mutex<HashMap<String, ShareReplayData>>,
 }
 
 impl InMemoryStore {
@@ -1656,6 +1674,10 @@ impl InMemoryStore {
             .lock()
             .get(&(address.to_string(), worker.to_string()))
             .copied()
+    }
+
+    pub fn replay(&self, job_id: &str) -> Option<ShareReplayData> {
+        self.replays.lock().get(job_id).cloned()
     }
 
     fn has_persisted_share(&self, job_id: &str, nonce: u64) -> bool {
@@ -1698,6 +1720,17 @@ impl ShareStore for InMemoryStore {
     fn add_share(&self, share: ShareRecord) -> Result<()> {
         self.shares.lock().push(share);
         Ok(())
+    }
+
+    fn add_share_with_replay(
+        &self,
+        share: ShareRecord,
+        replay: Option<ShareReplayData>,
+    ) -> Result<()> {
+        if let Some(replay) = replay {
+            self.replays.lock().insert(replay.job_id.clone(), replay);
+        }
+        self.add_share(share)
     }
 
     fn add_found_block(&self, block: FoundBlockRecord) -> Result<()> {
