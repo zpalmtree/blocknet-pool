@@ -6501,15 +6501,15 @@ impl ApiState {
         };
         let uptime = vec![
             build_monitor_uptime_window(
-                "1h",
-                Duration::from_secs(3600),
+                "10m",
+                Duration::from_secs(10 * 60),
                 &local_rows,
                 &external_rows,
                 now,
             ),
             build_monitor_uptime_window(
-                "24h",
-                Duration::from_secs(24 * 3600),
+                "6h",
+                Duration::from_secs(6 * 3600),
                 &local_rows,
                 &external_rows,
                 now,

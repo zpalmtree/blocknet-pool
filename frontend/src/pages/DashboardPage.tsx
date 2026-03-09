@@ -43,7 +43,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [insights, setInsights] = useState<StatsInsightsResponse | null>(null);
   const [payouts, setPayouts] = useState<PayoutItem[]>([]);
-  const [range, setRange] = useState<Range>('1h');
+  const [range, setRange] = useState<Range>('7d');
   const [history, setHistory] = useState<HashratePoint[]>([]);
 
   const refreshStats = useCallback(async () => {

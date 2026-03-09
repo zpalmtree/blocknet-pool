@@ -69,6 +69,8 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
     void loadStatus();
   }, [active, liveTick, loadStatus]);
 
+  const primaryUptimeLabel = status?.uptime?.[0]?.label;
+
   return (
     <div className={active ? 'page active' : 'page'} id="page-status">
       <div className="page-header">
@@ -151,11 +153,13 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
             <div className="value mono">{status ? fmtSeconds(status.pool_uptime_seconds || 0) : '-'}</div>
           </div>
           <div className="stat-card">
-            <div className="label">Local Samples</div>
+            <div className="label">{primaryUptimeLabel ? `Local Samples (${primaryUptimeLabel})` : 'Local Samples'}</div>
             <div className="value mono">{status?.uptime?.[0]?.sample_count ?? '-'}</div>
           </div>
           <div className="stat-card">
-            <div className="label">External Samples</div>
+            <div className="label">
+              {primaryUptimeLabel ? `External Samples (${primaryUptimeLabel})` : 'External Samples'}
+            </div>
             <div className="value mono">{status?.uptime?.[0]?.external_sample_count ?? '-'}</div>
           </div>
         </div>
