@@ -308,6 +308,11 @@ export type RecoveryOperationKind =
 export interface RecoveryWalletStatus {
   loaded: boolean;
   address?: string | null;
+  synced_height?: number | null;
+  chain_height?: number | null;
+  outputs_total?: number | null;
+  outputs_unspent?: number | null;
+  outputs_pending?: number | null;
   spendable?: number | null;
   pending?: number | null;
   total?: number | null;

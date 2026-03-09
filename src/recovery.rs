@@ -18,7 +18,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 
 use crate::config::Config;
-use crate::node::{NodeStatus, WalletAddressResponse, WalletBalance};
+use crate::node::{NodeStatus, WalletAddressResponse, WalletBalance, WalletOutputsSummary};
 
 const MAX_OPERATIONS: usize = 32;
 const SYSTEMD_SOCKET_FD: i32 = 3;
@@ -199,6 +199,11 @@ pub enum RecoveryOperationKind {
 pub struct RecoveryWalletStatus {
     pub loaded: bool,
     pub address: Option<String>,
+    pub synced_height: Option<u64>,
+    pub chain_height: Option<u64>,
+    pub outputs_total: Option<u64>,
+    pub outputs_unspent: Option<u64>,
+    pub outputs_pending: Option<u64>,
     pub spendable: Option<u64>,
     pub pending: Option<u64>,
     pub total: Option<u64>,
@@ -780,6 +785,11 @@ impl RecoveryAgent {
         let mut wallet = RecoveryWalletStatus {
             loaded: false,
             address: None,
+            synced_height: None,
+            chain_height: None,
+            outputs_total: None,
+            outputs_unspent: None,
+            outputs_pending: None,
             spendable: None,
             pending: None,
             total: None,
@@ -811,6 +821,27 @@ impl RecoveryAgent {
                                     error = Some(format!(
                                         "wallet loaded but balance probe failed: {err}"
                                     ));
+                                }
+                            }
+                            match self.daemon_get_wallet_outputs_summary(cfg).await {
+                                Ok(outputs) => {
+                                    wallet.synced_height = Some(outputs.synced_height);
+                                    wallet.chain_height = Some(outputs.chain_height);
+                                    wallet.outputs_total = Some(outputs.total);
+                                    wallet.outputs_unspent = Some(outputs.unspent);
+                                    wallet.outputs_pending = Some(outputs.pending);
+                                }
+                                Err(err) => {
+                                    let detail = format!(
+                                        "wallet loaded but outputs probe failed: {err}"
+                                    );
+                                    match error.as_mut() {
+                                        Some(existing) => {
+                                            existing.push_str(" | ");
+                                            existing.push_str(&detail);
+                                        }
+                                        None => error = Some(detail),
+                                    }
                                 }
                             }
                         }
@@ -962,7 +993,6 @@ impl RecoveryAgent {
     }
 
     async fn purge_inactive_daemon(&self) -> Result<String> {
-        self.require_payouts_paused()?;
         let active = self
             .effective_active_instance()
             .context("cannot purge the inactive daemon before daemon routing is provisioned")?;
@@ -1104,6 +1134,13 @@ impl RecoveryAgent {
         cfg: &RecoveryDaemonInstanceConfig,
     ) -> Result<WalletBalance> {
         self.daemon_get_json(cfg, "/api/wallet/balance").await
+    }
+
+    async fn daemon_get_wallet_outputs_summary(
+        &self,
+        cfg: &RecoveryDaemonInstanceConfig,
+    ) -> Result<WalletOutputsSummary> {
+        self.daemon_get_json(cfg, "/api/wallet/outputs").await
     }
 
     async fn daemon_import_wallet(

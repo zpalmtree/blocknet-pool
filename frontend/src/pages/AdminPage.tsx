@@ -247,6 +247,24 @@ function recoveryOperationStateLabel(state: string | null | undefined): string {
   }
 }
 
+function formatRecoveryWalletSync(item: RecoveryInstanceStatus | null): string {
+  const syncedHeight = item?.wallet.synced_height;
+  const chainHeight = item?.chain_height ?? item?.wallet.chain_height;
+  if (syncedHeight == null && chainHeight == null) return '-';
+  if (syncedHeight == null) return `- / ${chainHeight}`;
+  if (chainHeight == null) return `${syncedHeight}`;
+  return `${syncedHeight} / ${chainHeight}`;
+}
+
+function recoveryWalletLagLabel(item: RecoveryInstanceStatus | null): string | null {
+  const syncedHeight = item?.wallet.synced_height;
+  const chainHeight = item?.chain_height ?? item?.wallet.chain_height;
+  if (syncedHeight == null || chainHeight == null) return null;
+  if (syncedHeight >= chainHeight) return 'caught up';
+  const lag = chainHeight - syncedHeight;
+  return `${lag} blocks behind`;
+}
+
 interface AdminPageProps {
   active: boolean;
   api: ApiClient;
@@ -794,11 +812,9 @@ export function AdminPage({
       recoveryBusyReason ??
       (recoveryStatus == null
         ? statusMissing
-        : !payoutsPaused
-          ? 'Pause payouts before purging the inactive daemon'
-          : recoveryActiveInstance == null
-            ? routingMissing
-            : null);
+        : recoveryActiveInstance == null
+          ? routingMissing
+          : null);
 
     return {
       pause: buttonState(pauseReason),
@@ -2119,8 +2135,8 @@ export function AdminPage({
                 <div>
                   <h3>Actions</h3>
                   <p className="section-lead">
-                    Inactive sync and wallet rebuild can run while payouts stay live. Cutover and purge still require
-                    payouts to be paused first.
+                    Inactive sync, wallet rebuild, and inactive purge can run while payouts stay live. Cutover still
+                    requires payouts to be paused first.
                   </p>
                 </div>
                 <button className="btn btn-secondary" onClick={() => void loadRecovery()}>
@@ -2235,10 +2251,29 @@ export function AdminPage({
                       </div>
                     </div>
                     <div className="stat-card">
+                      <div className="label">Wallet Sync</div>
+                      <div className="value mono">{formatRecoveryWalletSync(item ?? null)}</div>
+                      {recoveryWalletLagLabel(item ?? null) ? (
+                        <div className="label" style={{ marginTop: 6 }}>
+                          {recoveryWalletLagLabel(item ?? null)}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="stat-card">
                       <div className="label">Spendable</div>
                       <div className="value mono">
                         {item?.wallet.spendable != null ? formatCoins(item.wallet.spendable) : '-'}
                       </div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Wallet Outputs</div>
+                      <div className="value mono">{item?.wallet.outputs_total ?? '-'}</div>
+                      {item?.wallet.outputs_unspent != null ? (
+                        <div className="label" style={{ marginTop: 6 }}>
+                          {item.wallet.outputs_unspent} unspent
+                          {item.wallet.outputs_pending != null ? ` · ${item.wallet.outputs_pending} pending` : ''}
+                        </div>
+                      ) : null}
                     </div>
                     <div className="stat-card">
                       <div className="label">Cookie</div>

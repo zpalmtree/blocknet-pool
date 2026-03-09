@@ -84,6 +84,16 @@ pub struct WalletBalance {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct WalletOutputsSummary {
+    pub chain_height: u64,
+    pub synced_height: u64,
+    pub total: u64,
+    pub spent: u64,
+    pub unspent: u64,
+    pub pending: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct TxStatus {
     pub confirmations: u64,
     pub in_mempool: bool,
@@ -273,6 +283,10 @@ impl NodeClient {
 
     pub fn get_wallet_balance(&self) -> Result<WalletBalance> {
         self.get_json("/api/wallet/balance")
+    }
+
+    pub fn get_wallet_outputs_summary(&self) -> Result<WalletOutputsSummary> {
+        self.get_json("/api/wallet/outputs")
     }
 
     pub fn open_events_stream(&self) -> Result<Response> {
