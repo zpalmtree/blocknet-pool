@@ -108,7 +108,7 @@ impl Default for Config {
             sse_enabled: true,
             refresh_on_same_height: false,
             job_timeout: "5m".to_string(),
-            stale_submit_grace: "5s".to_string(),
+            stale_submit_grace: "8s".to_string(),
             validation_mode: "probabilistic".to_string(),
             max_verifiers: 2,
             max_validation_queue: 2048,
@@ -296,7 +296,7 @@ impl Config {
     }
 
     pub fn stale_submit_grace_duration(&self) -> Duration {
-        parse_duration_or(&self.stale_submit_grace, Duration::from_secs(5))
+        parse_duration_or(&self.stale_submit_grace, Duration::from_secs(8))
     }
 
     pub fn stratum_idle_timeout_duration(&self) -> Duration {
