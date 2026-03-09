@@ -30,6 +30,7 @@
   - `blocknet-pool-monitor.service` samples API/Stratum/DB/daemon health, persists monitor heartbeats/incidents, and exposes Prometheus metrics.
 - The frontend UI is embedded in the Rust API binary. UI-only changes still require rebuilding and redeploying `blocknet-pool-api`.
 - The deploy script builds `blocknet-pool-api`, `blocknet-pool-stratum`, and `blocknet-pool-monitor` locally, uploads the binaries, and only restarts the service whose binary changed, unless forced or running `--migrate-split`.
+- `./scripts/deploy_bntpool.sh --api-only` is the repeatable path for API/UI-only fixes when you need to update `blocknet-pool-api.service` without rebuilding or restarting Stratum, monitor, or recovery.
 - `./scripts/deploy_bntpool.sh --monitor-only` is the repeatable path for monitor-only fixes when you need to update `blocknet-pool-monitor.service` without forcing an unnecessary API or Stratum restart.
 - `./scripts/deploy_bntpool.sh --provision-monitoring` is the repeatable path when a release includes monitoring stack/unit/config changes that must be applied on-host.
 - `./scripts/deploy_bntpool.sh --deploy-cloudflare` is the repeatable path when the Cloudflare Worker assets need to be deployed after the pool-side ingest secret is in place.
@@ -49,7 +50,9 @@
    `cargo build --release -p blocknet-pool-stratum-app --bin blocknet-pool-stratum`
    `cargo build --release -p blocknet-pool-monitor-app --bin blocknet-pool-monitor`
 3. Provision monitoring when needed: `bash scripts/provision_bntpool_monitoring.sh`
-4. Deploy app services: `bash scripts/deploy_bntpool.sh --skip-ui-build`
+4. Deploy app services:
+   API/UI-only: `bash scripts/deploy_bntpool.sh --api-only --skip-ui-build`
+   Full pool release: `bash scripts/deploy_bntpool.sh --skip-ui-build`
 5. Deploy the Cloudflare public probe when needed: `bash scripts/deploy_cloudflare_monitor_worker.sh`
 
 ## Git
