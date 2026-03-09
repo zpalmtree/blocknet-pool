@@ -1,14 +1,23 @@
 export type Route =
-  | 'dashboard'
-  | 'start'
-  | 'luck'
-  | 'blocks'
-  | 'payouts'
-  | 'stats'
-  | 'admin'
-  | 'status';
-export type AdminTab = 'miners' | 'payouts' | 'fees' | 'devfee' | 'rewards' | 'health' | 'balances' | 'recovery' | 'logs';
-export type Range = '1h' | '24h' | '7d' | '30d';
+  | "dashboard"
+  | "start"
+  | "luck"
+  | "blocks"
+  | "payouts"
+  | "stats"
+  | "admin"
+  | "status";
+export type AdminTab =
+  | "miners"
+  | "payouts"
+  | "fees"
+  | "devfee"
+  | "rewards"
+  | "health"
+  | "balances"
+  | "recovery"
+  | "logs";
+export type Range = "1h" | "24h" | "7d" | "30d";
 
 export type UnixLike =
   | number
@@ -141,6 +150,16 @@ export interface PendingPayout {
   initiated_at: UnixLike;
 }
 
+export interface MinerVerificationHold {
+  mode: 'verified_only' | 'quarantined';
+  reason?: string | null;
+  started_at?: UnixLike;
+  verified_only_until?: UnixLike;
+  quarantined_until?: UnixLike;
+  active_risk_strikes?: number;
+  active_fraud_strikes?: number;
+}
+
 export interface MinerResponse {
   hashrate: number;
   mining_since?: UnixLike;
@@ -159,6 +178,7 @@ export interface MinerResponse {
   pending_estimate?: MinerPendingEstimate;
   pending_note?: string | null;
   payout_note?: string | null;
+  verification_hold?: MinerVerificationHold | null;
   total_accepted?: number;
   total_rejected?: number;
 }
@@ -193,7 +213,7 @@ export interface FeeEvent {
   amount: number;
   fee_address: string;
   timestamp: UnixLike;
-  status?: 'collected' | 'pending' | 'ready' | 'missing';
+  status?: "collected" | "pending" | "ready" | "missing";
   confirmations_remaining?: number | null;
 }
 
@@ -294,16 +314,27 @@ export interface HealthResponse {
   };
 }
 
-export type RecoveryInstanceId = 'primary' | 'standby';
-export type RecoveryInstanceState = 'stopped' | 'starting' | 'syncing' | 'ready' | 'degraded' | 'failed';
-export type RecoveryOperationState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type RecoveryInstanceId = "primary" | "standby";
+export type RecoveryInstanceState =
+  | "stopped"
+  | "starting"
+  | "syncing"
+  | "ready"
+  | "degraded"
+  | "failed";
+export type RecoveryOperationState =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
 export type RecoveryOperationKind =
-  | 'pause_payouts'
-  | 'resume_payouts'
-  | 'start_standby_sync'
-  | 'rebuild_standby_wallet'
-  | 'cutover'
-  | 'purge_inactive_daemon';
+  | "pause_payouts"
+  | "resume_payouts"
+  | "start_standby_sync"
+  | "rebuild_standby_wallet"
+  | "cutover"
+  | "purge_inactive_daemon";
 
 export interface RecoveryWalletStatus {
   loaded: boolean;
@@ -395,7 +426,7 @@ export interface AdminDevFeeHintRow {
   worker: string;
   difficulty: number;
   updated_at: UnixLike;
-  position: 'below-floor' | 'at-floor' | 'above-floor' | string;
+  position: "below-floor" | "at-floor" | "above-floor" | string;
 }
 
 export interface AdminDevFeeTelemetryResponse {
@@ -414,7 +445,7 @@ export interface HashratePoint {
 
 export interface EffortBand {
   label: string;
-  tone: 'ok' | 'warn' | 'critical' | string;
+  tone: "ok" | "warn" | "critical" | string;
 }
 
 export interface RoundProgress {

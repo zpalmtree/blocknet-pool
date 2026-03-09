@@ -214,6 +214,12 @@ fn quarantine_error_message(state: Option<&AddressRiskState>, now: SystemTime) -
         if active_fraud_strikes > 0 {
             details.push(format!("fraud strikes={active_fraud_strikes}"));
         }
+    } else {
+        let active_risk_strikes =
+            active_window_strikes(state.strikes, state.strike_window_until, now);
+        if active_risk_strikes > 0 {
+            details.push(format!("risk strikes={active_risk_strikes}"));
+        }
     }
     if let Some(until) = state.quarantined_until.filter(|until| *until > now) {
         let remaining = until.duration_since(now).unwrap_or_default();
@@ -321,10 +327,11 @@ pub trait ShareStore: Send + Sync + 'static {
         &self,
         _address: &str,
         _reason: &str,
+        _strike_window_duration: Duration,
+        _quarantine_threshold: u64,
         _quarantine_base: Duration,
         _quarantine_max: Duration,
         _force_verify_duration: Duration,
-        _apply_quarantine: bool,
     ) -> Result<()> {
         Ok(())
     }
@@ -333,6 +340,7 @@ pub trait ShareStore: Send + Sync + 'static {
         _address: &str,
         _reason: &str,
         _quarantine_threshold: u64,
+        _strike_window_duration: Duration,
         _quarantine_base: Duration,
         _quarantine_max: Duration,
         _force_verify_duration: Duration,
@@ -816,9 +824,10 @@ impl PoolEngine {
                         &session.address,
                         reason,
                         self.cfg.suspected_fraud_quarantine_strikes.max(0) as u64,
-                        self.cfg.quarantine_duration_duration(),
-                        self.cfg.max_quarantine_duration_duration(),
-                        self.cfg.forced_verify_duration(),
+                        self.cfg.suspected_fraud_window_duration(),
+                        self.cfg.suspected_fraud_quarantine_duration_duration(),
+                        self.cfg.suspected_fraud_max_quarantine_duration_duration(),
+                        self.cfg.suspected_fraud_force_verify_duration(),
                     ) {
                         tracing::warn!(
                             address = %session.address,
@@ -828,26 +837,14 @@ impl PoolEngine {
                     }
                 } else if validation.escalate_risk {
                     let reason = validation.reject_reason.unwrap_or("risk escalation");
-                    let strikes = match self.store.address_risk_strikes(&session.address) {
-                        Ok(v) => v,
-                        Err(err) => {
-                            tracing::warn!(
-                                address = %session.address,
-                                error = %err,
-                                "failed to read address risk strikes before escalation"
-                            );
-                            0
-                        }
-                    };
-                    let apply_quarantine =
-                        should_apply_quarantine_for_failed_share(&self.cfg, &validation, strikes);
                     if let Err(err) = self.store.escalate_address_risk(
                         &session.address,
                         reason,
+                        self.cfg.invalid_escalation_window_duration(),
+                        self.cfg.invalid_escalation_quarantine_strikes.max(0) as u64,
                         self.cfg.quarantine_duration_duration(),
                         self.cfg.max_quarantine_duration_duration(),
-                        self.cfg.forced_verify_duration(),
-                        apply_quarantine,
+                        self.cfg.invalid_sample_force_verify_duration(),
                     ) {
                         tracing::warn!(
                             address = %session.address,
@@ -1543,19 +1540,6 @@ fn vardiff_target_interval_seconds(cfg: &Config) -> f64 {
     (window.as_secs_f64() / target_shares).max(1.0)
 }
 
-fn should_apply_quarantine_for_failed_share(
-    cfg: &Config,
-    validation: &ValidationResult,
-    current_strikes: u64,
-) -> bool {
-    if validation.suspected_fraud || !validation.escalate_risk {
-        return false;
-    }
-
-    let threshold = cfg.invalid_escalation_quarantine_strikes.max(0) as u64;
-    threshold > 0 && current_strikes.saturating_add(1) >= threshold
-}
-
 fn compact_address(address: &str) -> String {
     let trimmed = address.trim();
     if trimmed.len() <= 12 {
@@ -1647,6 +1631,13 @@ fn quarantine_until_for_strikes(
         }
     }
     now + duration
+}
+
+fn active_window_strikes(strikes: u64, window_until: Option<SystemTime>, now: SystemTime) -> u64 {
+    window_until
+        .filter(|until| *until > now)
+        .map(|_| strikes)
+        .unwrap_or_default()
 }
 
 impl FoundBlockOutboxRecord {
@@ -1864,11 +1855,12 @@ impl ShareStore for InMemoryStore {
     }
 
     fn address_risk_strikes(&self, address: &str) -> Result<u64> {
+        let now = SystemTime::now();
         Ok(self
             .address_risk
             .lock()
             .get(address)
-            .map(|state| state.strikes)
+            .map(|state| active_window_strikes(state.strikes, state.strike_window_until, now))
             .unwrap_or_default())
     }
 
@@ -1876,10 +1868,11 @@ impl ShareStore for InMemoryStore {
         &self,
         address: &str,
         reason: &str,
+        strike_window_duration: Duration,
+        quarantine_threshold: u64,
         quarantine_base: Duration,
         quarantine_max: Duration,
         force_verify_duration: Duration,
-        apply_quarantine: bool,
     ) -> Result<()> {
         let now = SystemTime::now();
         let mut risk = self.address_risk.lock();
@@ -1889,9 +1882,19 @@ impl ShareStore for InMemoryStore {
                 address: address.to_string(),
                 ..AddressRiskState::default()
             });
-        state.strikes = state.strikes.saturating_add(1);
+        let active_strikes = active_window_strikes(state.strikes, state.strike_window_until, now);
+        state.strikes = active_strikes.saturating_add(1);
         state.last_reason = Some(reason.to_string());
         state.last_event_at = Some(now);
+        state.strike_window_until = if strike_window_duration.is_zero() {
+            None
+        } else {
+            let candidate = now + strike_window_duration;
+            Some(match state.strike_window_until {
+                Some(existing) if existing > candidate => existing,
+                _ => candidate,
+            })
+        };
         if !force_verify_duration.is_zero() {
             let candidate = now + force_verify_duration;
             state.force_verify_until = Some(match state.force_verify_until {
@@ -1899,9 +1902,20 @@ impl ShareStore for InMemoryStore {
                 _ => candidate,
             });
         }
-        if apply_quarantine && !quarantine_base.is_zero() {
-            let candidate =
-                quarantine_until_for_strikes(now, state.strikes, quarantine_base, quarantine_max);
+        if quarantine_threshold > 0
+            && state.strikes >= quarantine_threshold
+            && !quarantine_base.is_zero()
+        {
+            let quarantine_strikes = state
+                .strikes
+                .saturating_sub(quarantine_threshold)
+                .saturating_add(1);
+            let candidate = quarantine_until_for_strikes(
+                now,
+                quarantine_strikes,
+                quarantine_base,
+                quarantine_max,
+            );
             state.quarantined_until = Some(match state.quarantined_until {
                 Some(existing) if existing > candidate => existing,
                 _ => candidate,
@@ -1915,6 +1929,7 @@ impl ShareStore for InMemoryStore {
         address: &str,
         reason: &str,
         quarantine_threshold: u64,
+        strike_window_duration: Duration,
         quarantine_base: Duration,
         quarantine_max: Duration,
         force_verify_duration: Duration,
@@ -1938,11 +1953,16 @@ impl ShareStore for InMemoryStore {
                 Some(existing) if existing > candidate => existing,
                 _ => candidate,
             });
-            state.suspected_fraud_window_until = Some(match state.suspected_fraud_window_until {
+        }
+        state.suspected_fraud_window_until = if strike_window_duration.is_zero() {
+            None
+        } else {
+            let candidate = now + strike_window_duration;
+            Some(match state.suspected_fraud_window_until {
                 Some(existing) if existing > candidate => existing,
                 _ => candidate,
-            });
-        }
+            })
+        };
         state.suspected_fraud_strikes = if active_window {
             state.suspected_fraud_strikes.saturating_add(1)
         } else {
@@ -2184,36 +2204,74 @@ mod tests {
     }
 
     #[test]
-    fn quarantine_decision_for_failed_share_is_thresholded() {
-        let mut cfg = cfg();
-        cfg.invalid_escalation_quarantine_strikes = 3;
+    fn non_fraud_strikes_reset_after_window_expires() {
+        let store = InMemoryStore::default();
+        store
+            .escalate_address_risk(
+                "addr1",
+                "low difficulty share",
+                Duration::from_secs(60),
+                3,
+                Duration::from_secs(15 * 60),
+                Duration::from_secs(2 * 60 * 60),
+                Duration::from_secs(2 * 60 * 60),
+            )
+            .expect("first non-fraud event should persist");
+        {
+            let mut risk = store.address_risk.lock();
+            let state = risk.get_mut("addr1").expect("risk state should exist");
+            state.strikes = 2;
+            state.strike_window_until = Some(SystemTime::now() - Duration::from_secs(1));
+        }
 
-        let validation = ValidationResult {
-            nonce: 0,
-            accepted: false,
-            reject_reason: Some("low difficulty share"),
-            hash: [0u8; 32],
-            verified: true,
-            is_block_candidate: false,
-            suspected_fraud: false,
-            escalate_risk: true,
-        };
+        store
+            .escalate_address_risk(
+                "addr1",
+                "low difficulty share",
+                Duration::from_secs(60),
+                3,
+                Duration::from_secs(15 * 60),
+                Duration::from_secs(2 * 60 * 60),
+                Duration::from_secs(2 * 60 * 60),
+            )
+            .expect("expired risk window should reset strike count");
 
-        assert!(!should_apply_quarantine_for_failed_share(
-            &cfg,
-            &validation,
-            1
-        ));
-        assert!(should_apply_quarantine_for_failed_share(
-            &cfg,
-            &validation,
-            2
-        ));
+        let state = store
+            .address_risk_state("addr1")
+            .expect("read risk state")
+            .expect("risk state should exist");
+        assert_eq!(state.strikes, 1);
+        assert!(state.quarantined_until.is_none());
+    }
 
-        cfg.invalid_escalation_quarantine_strikes = 0;
-        assert!(
-            !should_apply_quarantine_for_failed_share(&cfg, &validation, 100),
-            "threshold 0 disables non-fraud quarantine escalation"
+    #[test]
+    fn first_non_fraud_quarantine_uses_base_duration_at_threshold() {
+        let store = InMemoryStore::default();
+        for _ in 0..3 {
+            store
+                .escalate_address_risk(
+                    "addr1",
+                    "low difficulty share",
+                    Duration::from_secs(6 * 60 * 60),
+                    3,
+                    Duration::from_secs(15 * 60),
+                    Duration::from_secs(2 * 60 * 60),
+                    Duration::from_secs(2 * 60 * 60),
+                )
+                .expect("non-fraud event should persist");
+        }
+
+        let state = store
+            .address_risk_state("addr1")
+            .expect("read risk state")
+            .expect("risk state should exist");
+        let last_event = state.last_event_at.expect("last event timestamp");
+        let quarantined_until = state.quarantined_until.expect("quarantine should start");
+        assert_eq!(
+            quarantined_until
+                .duration_since(last_event)
+                .unwrap_or_default(),
+            Duration::from_secs(15 * 60)
         );
     }
 
@@ -3216,6 +3274,7 @@ mod tests {
                 "addr1",
                 "invalid share proof",
                 3,
+                Duration::from_secs(24 * 60 * 60),
                 Duration::from_secs(60 * 60),
                 Duration::from_secs(24 * 60 * 60),
                 Duration::from_secs(60),
@@ -3233,6 +3292,7 @@ mod tests {
                 "addr1",
                 "invalid share proof",
                 3,
+                Duration::from_secs(24 * 60 * 60),
                 Duration::from_secs(60 * 60),
                 Duration::from_secs(24 * 60 * 60),
                 Duration::from_secs(60),

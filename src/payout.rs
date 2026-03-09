@@ -1267,7 +1267,7 @@ pub fn weight_shares<F>(
     now: SystemTime,
     provisional_delay: Duration,
     trust_policy: PayoutTrustPolicy,
-    mut is_risky: F,
+    mut force_verify_active: F,
 ) -> anyhow::Result<(HashMap<String, u64>, u64)>
 where
     F: FnMut(&str) -> anyhow::Result<bool>,
@@ -1294,15 +1294,17 @@ where
     let mut total = 0u64;
 
     for (address, stats) in by_address {
-        if is_risky(&address)? {
-            continue;
-        }
+        let provisional_difficulty = if force_verify_active(&address)? {
+            0
+        } else {
+            stats.provisional_difficulty
+        };
         if stats.verified_shares < trust_policy.min_verified_shares {
             continue;
         }
         let total_uncapped = stats
             .verified_difficulty
-            .saturating_add(stats.provisional_difficulty);
+            .saturating_add(provisional_difficulty);
         if total_uncapped == 0 {
             continue;
         }
@@ -1314,12 +1316,12 @@ where
         }
 
         let counted_provisional = if trust_policy.provisional_cap_multiplier <= 0.0 {
-            stats.provisional_difficulty
+            provisional_difficulty
         } else {
             let provisional_cap = ((stats.verified_difficulty as f64)
                 * trust_policy.provisional_cap_multiplier)
                 .clamp(0.0, u64::MAX as f64) as u64;
-            stats.provisional_difficulty.min(provisional_cap)
+            provisional_difficulty.min(provisional_cap)
         };
         let weight = stats
             .verified_difficulty
@@ -1684,28 +1686,7 @@ mod tests {
     }
 
     #[test]
-    fn payout_weighting_excludes_addresses_under_force_verify() {
-        let store = require_test_store!();
-        store
-            .escalate_address_risk(
-                "a2",
-                "fraud",
-                Duration::from_secs(60),
-                Duration::from_secs(60 * 60),
-                Duration::from_secs(60 * 60),
-                false,
-            )
-            .expect("seed risk");
-
-        let processor = PayoutProcessor::new(
-            Config {
-                provisional_share_delay: "0s".to_string(),
-                ..Config::default()
-            },
-            Arc::clone(&store),
-            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
-        );
-
+    fn payout_weighting_counts_verified_shares_but_ignores_provisional_for_force_verify() {
         let now = SystemTime::now();
         let shares = vec![
             sample_share("a1", 10, SHARE_STATUS_VERIFIED, now),
@@ -1718,12 +1699,17 @@ mod tests {
             ),
         ];
 
-        let (weights, total) = processor
-            .weight_shares_for_payout(&shares)
-            .expect("weight shares");
-        assert_eq!(total, 10);
+        let (weights, total) = weight_shares(
+            &shares,
+            now,
+            Duration::from_secs(0),
+            trust_policy(1, 0.0, 19.0),
+            |address| Ok(address == "a2"),
+        )
+        .expect("weight shares");
+        assert_eq!(total, 20);
         assert_eq!(weights.get("a1").copied(), Some(10));
-        assert!(!weights.contains_key("a2"));
+        assert_eq!(weights.get("a2").copied(), Some(10));
     }
 
     #[test]

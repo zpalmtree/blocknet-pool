@@ -39,9 +39,15 @@ pub struct Config {
     pub min_sample_every: i32,
     pub invalid_sample_threshold: f64,
     pub invalid_sample_min: i32,
+    pub invalid_sample_count_threshold: i32,
+    pub invalid_escalation_window_duration: String,
     pub forced_verify_duration: String,
     pub quarantine_duration: String,
     pub max_quarantine_duration: String,
+    pub suspected_fraud_force_verify_duration: String,
+    pub suspected_fraud_window_duration: String,
+    pub suspected_fraud_quarantine_duration: String,
+    pub suspected_fraud_max_quarantine_duration: String,
     pub suspected_fraud_quarantine_strikes: i32,
     pub invalid_escalation_quarantine_strikes: i32,
     pub provisional_share_delay: String,
@@ -125,9 +131,16 @@ impl Default for Config {
             min_sample_every: runtime.min_sample_every,
             invalid_sample_threshold: runtime.invalid_sample_threshold,
             invalid_sample_min: runtime.invalid_sample_min,
+            invalid_sample_count_threshold: runtime.invalid_sample_count_threshold,
+            invalid_escalation_window_duration: runtime.invalid_escalation_window_duration,
             forced_verify_duration: runtime.forced_verify_duration,
             quarantine_duration: runtime.quarantine_duration,
             max_quarantine_duration: runtime.max_quarantine_duration,
+            suspected_fraud_force_verify_duration: runtime.suspected_fraud_force_verify_duration,
+            suspected_fraud_window_duration: runtime.suspected_fraud_window_duration,
+            suspected_fraud_quarantine_duration: runtime.suspected_fraud_quarantine_duration,
+            suspected_fraud_max_quarantine_duration: runtime
+                .suspected_fraud_max_quarantine_duration,
             suspected_fraud_quarantine_strikes: runtime.suspected_fraud_quarantine_strikes,
             invalid_escalation_quarantine_strikes: runtime.invalid_escalation_quarantine_strikes,
             provisional_share_delay: runtime.provisional_share_delay,
@@ -228,9 +241,19 @@ impl Config {
             min_sample_every: self.min_sample_every,
             invalid_sample_threshold: self.invalid_sample_threshold,
             invalid_sample_min: self.invalid_sample_min,
+            invalid_sample_count_threshold: self.invalid_sample_count_threshold,
+            invalid_escalation_window_duration: self.invalid_escalation_window_duration.clone(),
             forced_verify_duration: self.forced_verify_duration.clone(),
             quarantine_duration: self.quarantine_duration.clone(),
             max_quarantine_duration: self.max_quarantine_duration.clone(),
+            suspected_fraud_force_verify_duration: self
+                .suspected_fraud_force_verify_duration
+                .clone(),
+            suspected_fraud_window_duration: self.suspected_fraud_window_duration.clone(),
+            suspected_fraud_quarantine_duration: self.suspected_fraud_quarantine_duration.clone(),
+            suspected_fraud_max_quarantine_duration: self
+                .suspected_fraud_max_quarantine_duration
+                .clone(),
             suspected_fraud_quarantine_strikes: self.suspected_fraud_quarantine_strikes,
             invalid_escalation_quarantine_strikes: self.invalid_escalation_quarantine_strikes,
             provisional_share_delay: self.provisional_share_delay.clone(),
@@ -304,9 +327,16 @@ impl Config {
         self.min_sample_every = runtime.min_sample_every;
         self.invalid_sample_threshold = runtime.invalid_sample_threshold;
         self.invalid_sample_min = runtime.invalid_sample_min;
+        self.invalid_sample_count_threshold = runtime.invalid_sample_count_threshold;
+        self.invalid_escalation_window_duration = runtime.invalid_escalation_window_duration;
         self.forced_verify_duration = runtime.forced_verify_duration;
         self.quarantine_duration = runtime.quarantine_duration;
         self.max_quarantine_duration = runtime.max_quarantine_duration;
+        self.suspected_fraud_force_verify_duration = runtime.suspected_fraud_force_verify_duration;
+        self.suspected_fraud_window_duration = runtime.suspected_fraud_window_duration;
+        self.suspected_fraud_quarantine_duration = runtime.suspected_fraud_quarantine_duration;
+        self.suspected_fraud_max_quarantine_duration =
+            runtime.suspected_fraud_max_quarantine_duration;
         self.suspected_fraud_quarantine_strikes = runtime.suspected_fraud_quarantine_strikes;
         self.invalid_escalation_quarantine_strikes = runtime.invalid_escalation_quarantine_strikes;
         self.provisional_share_delay = runtime.provisional_share_delay;

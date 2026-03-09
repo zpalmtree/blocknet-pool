@@ -73,11 +73,7 @@ impl PoolStore {
     }
 
     pub fn address_risk_strikes(&self, address: &str) -> Result<u64> {
-        Ok(self
-            .inner
-            .get_address_risk(address)?
-            .map(|state| state.strikes)
-            .unwrap_or_default())
+        self.inner.address_risk_strikes(address)
     }
 
     pub fn get_address_risk(&self, address: &str) -> Result<Option<AddressRiskState>> {
@@ -287,18 +283,20 @@ impl ShareStore for PoolStore {
         &self,
         address: &str,
         reason: &str,
+        strike_window_duration: Duration,
+        quarantine_threshold: u64,
         quarantine_base: Duration,
         quarantine_max: Duration,
         force_verify_duration: Duration,
-        apply_quarantine: bool,
     ) -> Result<()> {
         self.inner.escalate_address_risk(
             address,
             reason,
+            strike_window_duration,
+            quarantine_threshold,
             quarantine_base,
             quarantine_max,
             force_verify_duration,
-            apply_quarantine,
         )?;
         Ok(())
     }
@@ -308,6 +306,7 @@ impl ShareStore for PoolStore {
         address: &str,
         reason: &str,
         quarantine_threshold: u64,
+        strike_window_duration: Duration,
         quarantine_base: Duration,
         quarantine_max: Duration,
         force_verify_duration: Duration,
@@ -316,6 +315,7 @@ impl ShareStore for PoolStore {
             address,
             reason,
             quarantine_threshold,
+            strike_window_duration,
             quarantine_base,
             quarantine_max,
             force_verify_duration,

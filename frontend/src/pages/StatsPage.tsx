@@ -229,6 +229,11 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   const minerRejectRate = minerChecked > 0 ? (minerRejected / minerChecked) * 100 : null;
   const recentShares = minerData?.shares?.slice(0, RECENT_SHARES_LIMIT) || [];
   const previewBlocks = minerData?.pending_estimate?.blocks ?? [];
+  const verificationHold = minerData?.verification_hold ?? null;
+  const verificationReason = verificationHold?.reason?.trim() || 'share validation issue';
+  const verificationStartedAt = toUnixMs(verificationHold?.started_at);
+  const verificationOnlyUntil = toUnixMs(verificationHold?.verified_only_until);
+  const verificationQuarantineUntil = toUnixMs(verificationHold?.quarantined_until);
 
   const rejectionChecked = (rejectionWindow?.accepted ?? 0) + (rejectionWindow?.rejected ?? 0);
   const topWindowReason = rejectionWindow?.by_reason?.[0];
@@ -330,6 +335,31 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
           </div>
 
 
+          {verificationHold && (
+            <div
+              className="card"
+              style={{ marginBottom: 24, background: 'rgba(247, 180, 75, 0.12)', borderColor: 'rgba(247, 180, 75, 0.45)' }}
+            >
+              <div style={{ color: 'var(--text)', fontSize: 13 }}>
+                {verificationHold.mode === 'quarantined'
+                  ? `Verification hold active. This address is quarantined until ${
+                      verificationQuarantineUntil ? new Date(verificationQuarantineUntil).toLocaleString() : 'the current hold expires'
+                    }, so new submissions from this address are temporarily blocked.`
+                  : `Verification hold active until ${
+                      verificationOnlyUntil ? new Date(verificationOnlyUntil).toLocaleString() : 'the current hold expires'
+                    }. Only fully verified shares count toward unconfirmed estimates and payout while this hold is active.`}
+                {verificationHold.mode === 'quarantined' &&
+                  verificationOnlyUntil &&
+                  verificationOnlyUntil !== verificationQuarantineUntil && (
+                    <> {`Verified-only credit continues until ${new Date(verificationOnlyUntil).toLocaleString()} after quarantine ends.`}</>
+                  )}
+                {` Reason: ${verificationReason}.`}
+                {verificationStartedAt && <> {`Started ${new Date(verificationStartedAt).toLocaleString()}.`}</>}
+                {' Confirmed balance and completed payouts are unaffected.'}
+              </div>
+            </div>
+          )}
+
           {minerData.pending_note && (
             <div
               className="card"
@@ -385,7 +415,13 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
                             {b.height}
                           </a>
                         </td>
-                        <td>{b.credit_withheld ? 'Withheld' : formatCoins(b.estimated_credit)}</td>
+                        <td title={b.validation_detail || undefined}>
+                          {b.credit_withheld
+                            ? 'Withheld'
+                            : b.validation_state === 'extra_verification'
+                              ? `${formatCoins(b.estimated_credit)} (verified only)`
+                              : formatCoins(b.estimated_credit)}
+                        </td>
                         <td>{b.confirmations_remaining}</td>
                         <td title={new Date(toUnixMs(b.timestamp)).toLocaleString()}>{timeAgo(b.timestamp)}</td>
                       </tr>

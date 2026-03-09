@@ -299,6 +299,7 @@ CREATE INDEX IF NOT EXISTS idx_block_credit_events_address
 CREATE TABLE IF NOT EXISTS address_risk (
     address TEXT PRIMARY KEY,
     strikes BIGINT NOT NULL,
+    strike_window_until BIGINT,
     last_reason TEXT,
     last_event_at BIGINT,
     quarantined_until BIGINT,
@@ -459,6 +460,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS effort_pct DOUBLE PRECISION",
         )
         .context("ensure blocks.effort_pct column")?;
+        conn.batch_execute(
+            "ALTER TABLE address_risk ADD COLUMN IF NOT EXISTS strike_window_until BIGINT",
+        )
+        .context("ensure address_risk.strike_window_until column")?;
         conn.batch_execute(
             "ALTER TABLE address_risk ADD COLUMN IF NOT EXISTS suspected_fraud_strikes BIGINT NOT NULL DEFAULT 0",
         )
@@ -2011,20 +2016,22 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_address_risk(&self, address: &str) -> Result<Option<AddressRiskState>> {
         let row = self.conn().lock().query_opt(
-            "SELECT address, strikes, last_reason, last_event_at, quarantined_until, force_verify_until,
-                    suspected_fraud_strikes, suspected_fraud_window_until
+            "SELECT address, strikes, strike_window_until, last_reason, last_event_at,
+                    quarantined_until, force_verify_until, suspected_fraud_strikes,
+                    suspected_fraud_window_until
              FROM address_risk WHERE address = $1",
             &[&address],
         )?;
         Ok(row.map(|row| AddressRiskState {
             address: row.get::<_, String>(0),
             strikes: row.get::<_, i64>(1).max(0) as u64,
-            last_reason: row.get::<_, Option<String>>(2),
-            last_event_at: row.get::<_, Option<i64>>(3).map(from_unix),
-            quarantined_until: row.get::<_, Option<i64>>(4).map(from_unix),
-            force_verify_until: row.get::<_, Option<i64>>(5).map(from_unix),
-            suspected_fraud_strikes: row.get::<_, i64>(6).max(0) as u64,
-            suspected_fraud_window_until: row.get::<_, Option<i64>>(7).map(from_unix),
+            strike_window_until: row.get::<_, Option<i64>>(2).map(from_unix),
+            last_reason: row.get::<_, Option<String>>(3),
+            last_event_at: row.get::<_, Option<i64>>(4).map(from_unix),
+            quarantined_until: row.get::<_, Option<i64>>(5).map(from_unix),
+            force_verify_until: row.get::<_, Option<i64>>(6).map(from_unix),
+            suspected_fraud_strikes: row.get::<_, i64>(7).max(0) as u64,
+            suspected_fraud_window_until: row.get::<_, Option<i64>>(8).map(from_unix),
         }))
     }
 
@@ -2058,10 +2065,11 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         &self,
         address: &str,
         reason: &str,
+        strike_window_duration: Duration,
+        quarantine_threshold: u64,
         quarantine_base: Duration,
         quarantine_max: Duration,
         force_verify_duration: Duration,
-        apply_quarantine: bool,
     ) -> Result<AddressRiskState> {
         if address.trim().is_empty() {
             return Err(anyhow!("address is required"));
@@ -2071,27 +2079,31 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let mut conn = self.conn().lock();
         let mut tx = conn.transaction()?;
         tx.execute(
-            "INSERT INTO address_risk (address, strikes, last_reason, last_event_at, quarantined_until, force_verify_until)
-             VALUES ($1, 0, NULL, NULL, NULL, NULL)
+            "INSERT INTO address_risk (address, strikes, strike_window_until, last_reason, last_event_at, quarantined_until, force_verify_until)
+             VALUES ($1, 0, NULL, NULL, NULL, NULL, NULL)
              ON CONFLICT(address) DO NOTHING",
             &[&address],
         )?;
-        tx.execute(
-            "UPDATE address_risk
-             SET strikes = strikes + 1,
-                 last_reason = $2,
-                 last_event_at = $3
-             WHERE address = $1",
-            &[&address, &reason, &to_unix(now)],
-        )?;
-
         let row = tx.query_one(
-            "SELECT strikes, quarantined_until, force_verify_until FROM address_risk WHERE address = $1 FOR UPDATE",
+            "SELECT strikes, strike_window_until, quarantined_until, force_verify_until
+             FROM address_risk WHERE address = $1 FOR UPDATE",
             &[&address],
         )?;
-        let strikes = row.get::<_, i64>(0).max(0) as u64;
-        let existing_quarantine = row.get::<_, Option<i64>>(1).map(from_unix);
-        let existing_force = row.get::<_, Option<i64>>(2).map(from_unix);
+        let existing_strikes = row.get::<_, i64>(0).max(0) as u64;
+        let existing_window = row.get::<_, Option<i64>>(1).map(from_unix);
+        let existing_quarantine = row.get::<_, Option<i64>>(2).map(from_unix);
+        let existing_force = row.get::<_, Option<i64>>(3).map(from_unix);
+
+        let active_strikes = active_window_strikes(existing_strikes, existing_window, now);
+        let strikes = active_strikes.saturating_add(1);
+        let strike_window_until = merge_optional_later(
+            existing_window.filter(|until| *until > now),
+            if strike_window_duration.is_zero() {
+                None
+            } else {
+                Some(now + strike_window_duration)
+            },
+        );
 
         let force_verify_until = merge_optional_later(
             existing_force,
@@ -2101,27 +2113,41 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 Some(now + force_verify_duration)
             },
         );
-        let quarantined_until = merge_optional_later(
-            existing_quarantine,
-            if apply_quarantine && !quarantine_base.is_zero() {
+        let quarantined_until = if quarantine_threshold > 0
+            && strikes >= quarantine_threshold
+            && !quarantine_base.is_zero()
+        {
+            let quarantine_strikes = strikes
+                .saturating_sub(quarantine_threshold)
+                .saturating_add(1);
+            merge_optional_later(
+                existing_quarantine,
                 Some(quarantine_until_for_strikes(
                     now,
-                    strikes,
+                    quarantine_strikes,
                     quarantine_base,
                     quarantine_max,
-                ))
-            } else {
-                None
-            },
-        );
+                )),
+            )
+        } else {
+            existing_quarantine
+        };
 
         tx.execute(
             "UPDATE address_risk
-             SET quarantined_until = $2,
-                 force_verify_until = $3
+             SET strikes = $2,
+                 strike_window_until = $3,
+                 last_reason = $4,
+                 last_event_at = $5,
+                 quarantined_until = $6,
+                 force_verify_until = $7
              WHERE address = $1",
             &[
                 &address,
+                &u64_to_i64(strikes)?,
+                &strike_window_until.map(to_unix),
+                &reason,
+                &to_unix(now),
                 &quarantined_until.map(to_unix),
                 &force_verify_until.map(to_unix),
             ],
@@ -2131,6 +2157,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(AddressRiskState {
             address: address.to_string(),
             strikes,
+            strike_window_until,
             last_reason: Some(reason.to_string()),
             last_event_at: Some(now),
             quarantined_until,
@@ -2150,6 +2177,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         address: &str,
         reason: &str,
         quarantine_threshold: u64,
+        strike_window_duration: Duration,
         quarantine_base: Duration,
         quarantine_max: Duration,
         force_verify_duration: Duration,
@@ -2163,10 +2191,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let mut tx = conn.transaction()?;
         tx.execute(
             "INSERT INTO address_risk (
-                 address, strikes, last_reason, last_event_at, quarantined_until, force_verify_until,
+                 address, strikes, strike_window_until, last_reason, last_event_at, quarantined_until, force_verify_until,
                  suspected_fraud_strikes, suspected_fraud_window_until
              )
-             VALUES ($1, 0, NULL, NULL, NULL, NULL, 0, NULL)
+             VALUES ($1, 0, NULL, NULL, NULL, NULL, NULL, 0, NULL)
              ON CONFLICT(address) DO NOTHING",
             &[&address],
         )?;
@@ -2198,10 +2226,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         );
         let suspected_fraud_window_until = merge_optional_later(
             existing_fraud_window.filter(|until| *until > now),
-            if force_verify_duration.is_zero() {
+            if strike_window_duration.is_zero() {
                 None
             } else {
-                Some(now + force_verify_duration)
+                Some(now + strike_window_duration)
             },
         );
         let quarantined_until = if quarantine_threshold > 0
@@ -2248,6 +2276,9 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(AddressRiskState {
             address: address.to_string(),
             strikes,
+            strike_window_until: self
+                .get_address_risk(address)?
+                .and_then(|state| state.strike_window_until),
             last_reason: Some(reason.to_string()),
             last_event_at: Some(now),
             quarantined_until,
@@ -3077,8 +3108,9 @@ impl ShareStore for PostgresStore {
     }
 
     fn address_risk_strikes(&self, address: &str) -> Result<u64> {
+        let now = SystemTime::now();
         Ok(PostgresStore::get_address_risk(self, address)?
-            .map(|v| v.strikes)
+            .map(|v| active_window_strikes(v.strikes, v.strike_window_until, now))
             .unwrap_or(0))
     }
 
@@ -3334,6 +3366,14 @@ fn quarantine_until_for_strikes(
         }
     }
     now + duration
+}
+
+fn active_window_strikes(strikes: u64, window_until: Option<SystemTime>, now: SystemTime) -> u64 {
+    if window_until.is_some_and(|until| until > now) {
+        strikes
+    } else {
+        0
+    }
 }
 
 fn merge_optional_later(

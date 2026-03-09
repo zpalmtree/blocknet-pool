@@ -23,33 +23,33 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{Semaphore, mpsc};
-use tokio_stream::StreamExt;
+use tokio::sync::{mpsc, Semaphore};
 use tokio_stream::wrappers::{IntervalStream, ReceiverStream};
+use tokio_stream::StreamExt;
 
 use crate::config::Config;
 use crate::db::{
-    Balance, DbBlock, DbShare, MonitorHeartbeat, MonitorIncident, Payout, PendingPayout,
-    PoolFeeEvent, PublicPayoutBatch,
+    AddressRiskState, Balance, DbBlock, DbShare, MonitorHeartbeat, MonitorIncident, Payout,
+    PendingPayout, PoolFeeEvent, PublicPayoutBatch,
 };
 use crate::dev_fee::{SEINE_DEV_FEE_ADDRESS, SEINE_DEV_FEE_REFERENCE_TARGET_PCT};
 use crate::engine::JobRepository;
 use crate::jobs::JobManager;
 use crate::node::{NodeClient, WalletBalance};
 use crate::payout::{
-    PayoutTrustPolicy, is_share_payout_eligible, recover_share_window_by_replay,
-    resolve_pool_fee_destination_from_address, reward_window_end, weight_shares,
+    is_share_payout_eligible, recover_share_window_by_replay,
+    resolve_pool_fee_destination_from_address, reward_window_end, weight_shares, PayoutTrustPolicy,
 };
 use crate::recovery::{RecoveryAgentClient, RecoveryInstanceId, RecoveryOperation, RecoveryStatus};
 use crate::service_state::{
-    LIVE_RUNTIME_SNAPSHOT_META_KEY, PersistedPayoutRuntime, PersistedRuntimeSnapshot,
+    PersistedPayoutRuntime, PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY,
 };
 use crate::stats::{
     MinerStats, PoolSnapshot, PoolStats, RejectionAnalyticsSnapshot, RejectionReasonCount,
 };
 use crate::store::PoolStore;
 use crate::validation::{
-    SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED, ValidationEngine, ValidationSnapshot,
+    ValidationEngine, ValidationSnapshot, SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED,
 };
 
 const DB_TOTALS_CACHE_TTL: Duration = Duration::from_secs(2);
@@ -2464,18 +2464,10 @@ struct RewardWindowAddressStats {
     provisional_difficulty_ineligible: u64,
 }
 
-impl RewardWindowAddressStats {
-    fn total_eligible_difficulty(&self) -> u64 {
-        self.verified_difficulty
-            .saturating_add(self.provisional_difficulty_eligible)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RewardParticipantStatus {
     Included,
     CappedProvisional,
-    Risky,
     AwaitingVerifiedShares,
     AwaitingVerifiedRatio,
     NoEligibleShares,
@@ -2488,7 +2480,6 @@ impl RewardParticipantStatus {
         match self {
             Self::Included => "included",
             Self::CappedProvisional => "capped_provisional",
-            Self::Risky => "risky",
             Self::AwaitingVerifiedShares => "awaiting_verified_shares",
             Self::AwaitingVerifiedRatio => "awaiting_verified_ratio",
             Self::NoEligibleShares => "no_eligible_shares",
@@ -4124,6 +4115,18 @@ async fn handle_miner(
     } else {
         MinerPendingEstimate::default()
     };
+    let risk_state = match state.store.get_address_risk(&address) {
+        Ok(v) => v,
+        Err(err) => {
+            tracing::warn!(
+                address = %address,
+                error = %err,
+                "failed loading address risk state for miner detail"
+            );
+            None
+        }
+    };
+    let verification_hold = miner_verification_hold(risk_state.as_ref(), SystemTime::now());
 
     let pending_confirmed = balance.pending;
     let pending_estimated = pending_estimate.estimated_pending;
@@ -4177,6 +4180,7 @@ async fn handle_miner(
         "pending_estimate": pending_estimate,
         "pending_note": pending_note,
         "payout_note": payout_note,
+        "verification_hold": verification_hold,
         "pending_payout": pending_payout,
         "payouts": payouts,
         "workers": workers_json,
@@ -4409,7 +4413,11 @@ fn batch_payouts(payouts: &[Payout]) -> Vec<PublicPayout> {
                 .duration_since(p.timestamp)
                 .or_else(|_| p.timestamp.duration_since(b.timestamp))
                 .unwrap_or(Duration::ZERO);
-            if diff <= batch_window { Some(b) } else { None }
+            if diff <= batch_window {
+                Some(b)
+            } else {
+                None
+            }
         });
         if let Some(batch) = merged {
             batch.total_amount += p.amount;
@@ -4456,6 +4464,17 @@ struct MinerPendingBlockEstimate {
 struct MinerPendingEstimate {
     estimated_pending: u64,
     blocks: Vec<MinerPendingBlockEstimate>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct MinerVerificationHold {
+    mode: String,
+    reason: Option<String>,
+    started_at: Option<SystemTime>,
+    verified_only_until: Option<SystemTime>,
+    quarantined_until: Option<SystemTime>,
+    active_risk_strikes: u64,
+    active_fraud_strikes: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -4575,7 +4594,7 @@ fn pending_preview_validation_label(state: PendingPreviewValidation) -> &'static
         PendingPreviewValidation::AwaitingDelay => "Waiting for delay",
         PendingPreviewValidation::AwaitingVerifiedShares => "Waiting for shares",
         PendingPreviewValidation::AwaitingVerifiedRatio => "Waiting for ratio",
-        PendingPreviewValidation::ExtraVerification => "Extra verification",
+        PendingPreviewValidation::ExtraVerification => "Verified only",
     }
 }
 
@@ -4585,7 +4604,7 @@ fn pending_preview_validation_tone(state: PendingPreviewValidation) -> &'static 
         PendingPreviewValidation::AwaitingDelay
         | PendingPreviewValidation::AwaitingVerifiedShares
         | PendingPreviewValidation::AwaitingVerifiedRatio => "warn",
-        PendingPreviewValidation::ExtraVerification => "critical",
+        PendingPreviewValidation::ExtraVerification => "warn",
     }
 }
 
@@ -4626,10 +4645,52 @@ fn pending_preview_validation_detail(
             trust_policy.min_verified_ratio * 100.0,
         ),
         PendingPreviewValidation::ExtraVerification => {
-            "This address is under additional verification, so the unconfirmed preview is withheld for this block."
+            "This address is under a verification hold, so only fully verified shares count toward this estimate and payout right now."
                 .to_string()
         }
     }
+}
+
+fn active_window_strikes(strikes: u64, window_until: Option<SystemTime>, now: SystemTime) -> u64 {
+    window_until
+        .filter(|until| *until > now)
+        .map(|_| strikes)
+        .unwrap_or_default()
+}
+
+fn miner_verification_hold(
+    state: Option<&AddressRiskState>,
+    now: SystemTime,
+) -> Option<MinerVerificationHold> {
+    let state = state?;
+    let quarantined_until = state.quarantined_until.filter(|until| *until > now);
+    let verified_only_until = state.force_verify_until.filter(|until| *until > now);
+    if quarantined_until.is_none() && verified_only_until.is_none() {
+        return None;
+    }
+
+    Some(MinerVerificationHold {
+        mode: if quarantined_until.is_some() {
+            "quarantined".to_string()
+        } else {
+            "verified_only".to_string()
+        },
+        reason: state
+            .last_reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+            .map(ToOwned::to_owned),
+        started_at: state.last_event_at,
+        verified_only_until,
+        quarantined_until,
+        active_risk_strikes: active_window_strikes(state.strikes, state.strike_window_until, now),
+        active_fraud_strikes: active_window_strikes(
+            state.suspected_fraud_strikes,
+            state.suspected_fraud_window_until,
+            now,
+        ),
+    })
 }
 
 fn estimate_unconfirmed_pending_for_miner(
@@ -4741,12 +4802,12 @@ fn estimate_unconfirmed_pending_for_miner(
         let finder_fallback = shares.is_empty() && block.finder == address && estimated_credit > 0;
         let validation_state =
             pending_preview_validation_state(&target_stats, trust_policy, finder_fallback);
-        let credit_withheld = matches!(
-            validation_state,
-            PendingPreviewValidation::ExtraVerification
-        );
+        let credit_withheld = false;
         let show_row = estimated_credit > 0
-            || credit_withheld
+            || matches!(
+                validation_state,
+                PendingPreviewValidation::ExtraVerification
+            )
             || (target_stats.has_window_activity() && !target_stats.has_eligible_work());
         if !show_row {
             continue;
@@ -4899,13 +4960,17 @@ fn reward_participant_status(
     let Some(stats) = stats else {
         return RewardParticipantStatus::RecordedOnly;
     };
-    if risky {
-        return RewardParticipantStatus::Risky;
-    }
+    let provisional_difficulty_eligible = if risky {
+        0
+    } else {
+        stats.provisional_difficulty_eligible
+    };
     if stats.verified_shares < trust_policy.min_verified_shares {
         return RewardParticipantStatus::AwaitingVerifiedShares;
     }
-    let eligible = stats.total_eligible_difficulty();
+    let eligible = stats
+        .verified_difficulty
+        .saturating_add(provisional_difficulty_eligible);
     if eligible == 0 {
         return RewardParticipantStatus::NoEligibleShares;
     }
@@ -4919,7 +4984,7 @@ fn reward_participant_status(
         stats.verified_difficulty,
         trust_policy.provisional_cap_multiplier,
     ) {
-        if stats.provisional_difficulty_eligible > provisional_cap {
+        if provisional_difficulty_eligible > provisional_cap {
             return RewardParticipantStatus::CappedProvisional;
         }
     }
@@ -5376,7 +5441,7 @@ fn pending_balance_note(
             .any(|block| block.validation_state == "extra_verification")
         {
             return Some(
-                "Unconfirmed preview is withheld for some recent blocks while this address is under additional verification. Confirmed balance and completed payouts are unaffected."
+                "This address is under a verification hold, so only fully verified shares count toward unconfirmed estimates and payout right now. Confirmed balance and completed payouts are unaffected."
                     .to_string(),
             );
         }
@@ -7314,21 +7379,21 @@ mod tests {
     use serde::Serialize;
 
     use super::{
-        ApiState, DAEMON_LOG_LINE_LIMIT, DaemonHealthCache, DbTotalsCache,
-        HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW, InsightsCache,
-        LIVE_RUNTIME_SNAPSHOT_META_KEY, LiveRuntimeSnapshotCache, MinerDetailQuery,
-        MinerPendingBlockEstimate, MinerPendingEstimate, MinersQuery, NetworkHashrateCache,
-        OpenIncident, PayoutEtaResponse, PoolHealthCache, STATUS_HISTORY_META_KEY, StatusHistory,
-        StatusIncident, apply_wallet_liquidity_to_payout_eta, batch_payouts,
-        block_page_item_response, build_block_reward_breakdown, build_fee_page,
-        compute_luck_details_for_hashes, compute_luck_history, contains_ci, daemon_debug_log_path,
-        daemon_log_commands, estimate_unconfirmed_pending_for_miner, estimated_block_reward,
-        handle_admin_dev_fee, handle_health, handle_miner, handle_miners, handle_stats,
+        apply_wallet_liquidity_to_payout_eta, batch_payouts, block_page_item_response,
+        build_block_reward_breakdown, build_fee_page, compute_luck_details_for_hashes,
+        compute_luck_history, contains_ci, daemon_debug_log_path, daemon_log_commands,
+        estimate_unconfirmed_pending_for_miner, estimated_block_reward, handle_admin_dev_fee,
+        handle_health, handle_miner, handle_miners, handle_stats,
         hashrate_from_stats_with_miner_ramp, hashrate_from_stats_with_warmup,
         hydrate_provisional_block_reward, load_persisted_status_history, miner_balance_response,
         miner_has_activity, page_bounds, payout_status_note, pending_balance_note,
         rejection_window_duration, share_limit, sort_workers_for_miner, system_time_to_unix_secs,
-        trim_log_line, worker_hashrate_by_name,
+        trim_log_line, worker_hashrate_by_name, ApiState, DaemonHealthCache, DbTotalsCache,
+        InsightsCache, LiveRuntimeSnapshotCache, MinerDetailQuery, MinerPendingBlockEstimate,
+        MinerPendingEstimate, MinersQuery, NetworkHashrateCache, OpenIncident, PayoutEtaResponse,
+        PoolHealthCache, StatusHistory, StatusIncident, DAEMON_LOG_LINE_LIMIT,
+        HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
+        LIVE_RUNTIME_SNAPSHOT_META_KEY, STATUS_HISTORY_META_KEY,
     };
 
     const TEST_POSTGRES_URL_ENV: &str = "BLOCKNET_POOL_TEST_POSTGRES_URL";
@@ -7613,10 +7678,9 @@ mod tests {
         let empty = MinerPendingEstimate::default();
         let note = pending_balance_note(&cfg, 150.0, 20, &empty);
         assert!(note.is_some());
-        assert!(
-            note.expect("note")
-                .contains("Pending stays at 0 until the pool finds and credits blocks")
-        );
+        assert!(note
+            .expect("note")
+            .contains("Pending stays at 0 until the pool finds and credits blocks"));
         assert!(pending_balance_note(&cfg, 0.0, 0, &empty).is_none());
 
         let waiting = MinerPendingEstimate {
@@ -7664,6 +7728,31 @@ mod tests {
         };
         let estimate_note = pending_balance_note(&cfg, 150.0, 20, &ready).expect("estimate note");
         assert!(estimate_note.contains("can still move until each block reaches"));
+    }
+
+    #[test]
+    fn pending_balance_note_explains_verified_only_during_extra_verification() {
+        let cfg = Config::default();
+        let extra_verification = MinerPendingEstimate {
+            estimated_pending: 10,
+            blocks: vec![MinerPendingBlockEstimate {
+                height: 3,
+                hash: "blk-verify".to_string(),
+                reward: 1_000,
+                estimated_credit: 10,
+                credit_withheld: false,
+                validation_state: "extra_verification".to_string(),
+                validation_label: "Verified only".to_string(),
+                validation_tone: "warn".to_string(),
+                validation_detail: "detail".to_string(),
+                confirmations_remaining: 59,
+                timestamp: UNIX_EPOCH,
+            }],
+        };
+
+        let note = pending_balance_note(&cfg, 150.0, 20, &extra_verification).expect("note");
+        assert!(note.contains("only fully verified shares count"));
+        assert!(note.contains("completed payouts are unaffected"));
     }
 
     #[test]
@@ -8095,6 +8184,65 @@ mod tests {
             payload["mining_since"]["secs_since_epoch"].as_u64(),
             Some(system_time_to_unix_secs(first_share_at))
         );
+    }
+
+    #[test]
+    fn miner_handler_includes_active_verification_hold_details() {
+        let store = require_test_store!();
+        let created_at = UNIX_EPOCH + Duration::from_secs(5_000);
+        store
+            .add_share(ShareRecord {
+                job_id: "job-hold".to_string(),
+                miner: "miner-hold".to_string(),
+                worker: "worker-1".to_string(),
+                difficulty: 250,
+                nonce: 1,
+                status: "verified",
+                was_sampled: true,
+                block_hash: None,
+                reject_reason: None,
+                created_at,
+            })
+            .expect("add share");
+        store
+            .escalate_address_risk(
+                "miner-hold",
+                "low difficulty share",
+                Duration::from_secs(6 * 60 * 60),
+                0,
+                Duration::from_secs(15 * 60),
+                Duration::from_secs(2 * 60 * 60),
+                Duration::from_secs(2 * 60 * 60),
+            )
+            .expect("seed hold");
+
+        let state = test_api_state(store);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let response = runtime
+            .block_on(handle_miner(
+                Path("miner-hold".to_string()),
+                Query(MinerDetailQuery {
+                    share_limit: Some(1),
+                    include_pending_estimate: Some(false),
+                }),
+                State(state),
+            ))
+            .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = runtime
+            .block_on(to_bytes(response.into_body(), usize::MAX))
+            .expect("read body");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("decode miner json");
+
+        assert_eq!(
+            payload["verification_hold"]["mode"].as_str(),
+            Some("verified_only")
+        );
+        assert_eq!(
+            payload["verification_hold"]["reason"].as_str(),
+            Some("low difficulty share")
+        );
+        assert!(payload["verification_hold"]["verified_only_until"].is_object());
     }
 
     #[test]
@@ -8574,6 +8722,110 @@ mod tests {
     }
 
     #[test]
+    fn estimate_unconfirmed_pending_for_miner_counts_verified_shares_during_extra_verification() {
+        let store = require_test_store!();
+        let mut cfg = Config::default();
+        cfg.payout_scheme = "pplns".to_string();
+        cfg.pplns_window_duration = "24h".to_string();
+        cfg.pool_fee_pct = 0.0;
+        cfg.pool_fee_flat = 0.0;
+        cfg.block_finder_bonus = false;
+        cfg.blocks_before_payout = 60;
+        cfg.provisional_share_delay = "0s".to_string();
+        cfg.payout_min_verified_shares = 1;
+        cfg.payout_min_verified_ratio = 0.0;
+        cfg.payout_provisional_cap_multiplier = 19.0;
+
+        store
+            .escalate_address_risk(
+                "miner-a",
+                "invalid share proof",
+                Duration::from_secs(60 * 60),
+                0,
+                Duration::from_secs(60),
+                Duration::from_secs(60 * 60),
+                Duration::from_secs(60 * 60),
+            )
+            .expect("seed risk");
+
+        let base = UNIX_EPOCH + Duration::from_secs(2_050_000);
+        let block_ts = base + Duration::from_secs(120);
+        for share in [
+            ShareRecord {
+                job_id: "j-risk-a-verified".to_string(),
+                miner: "miner-a".to_string(),
+                worker: "wa".to_string(),
+                difficulty: 10,
+                nonce: 1,
+                status: "verified",
+                was_sampled: true,
+                block_hash: None,
+                reject_reason: None,
+                created_at: base,
+            },
+            ShareRecord {
+                job_id: "j-risk-a-provisional".to_string(),
+                miner: "miner-a".to_string(),
+                worker: "wa".to_string(),
+                difficulty: 90,
+                nonce: 2,
+                status: "provisional",
+                was_sampled: true,
+                block_hash: None,
+                reject_reason: None,
+                created_at: base + Duration::from_secs(1),
+            },
+            ShareRecord {
+                job_id: "j-risk-b".to_string(),
+                miner: "miner-b".to_string(),
+                worker: "wb".to_string(),
+                difficulty: 10,
+                nonce: 3,
+                status: "verified",
+                was_sampled: true,
+                block_hash: None,
+                reject_reason: None,
+                created_at: base + Duration::from_secs(2),
+            },
+        ] {
+            store.add_share(share).expect("add risk preview share");
+        }
+        store
+            .add_block(&DbBlock {
+                height: 249,
+                hash: "blk-risk-preview".to_string(),
+                difficulty: 200,
+                finder: "miner-a".to_string(),
+                finder_worker: "wa".to_string(),
+                reward: 1_000,
+                timestamp: block_ts,
+                confirmed: false,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("add unconfirmed block");
+
+        let estimate = estimate_unconfirmed_pending_for_miner(
+            &store,
+            "miner-a",
+            &cfg,
+            block_ts + Duration::from_secs(1),
+            250,
+        )
+        .expect("estimate");
+        assert_eq!(estimate.estimated_pending, 500);
+        assert_eq!(estimate.blocks.len(), 1);
+        assert_eq!(estimate.blocks[0].estimated_credit, 500);
+        assert!(!estimate.blocks[0].credit_withheld);
+        assert_eq!(estimate.blocks[0].validation_state, "extra_verification");
+        assert_eq!(estimate.blocks[0].validation_label, "Verified only");
+        assert!(estimate.blocks[0]
+            .validation_detail
+            .contains("only fully verified shares count"));
+    }
+
+    #[test]
     fn estimate_unconfirmed_pending_for_miner_uses_winning_share_timestamp_for_window_end() {
         let store = require_test_store!();
         let mut cfg = Config::default();
@@ -8865,32 +9117,26 @@ mod tests {
         let commands = daemon_log_commands(&cfg, 200, true);
         assert_eq!(commands.len(), 4);
         assert_eq!(commands[0].program, "journalctl");
-        assert!(
-            commands[0]
-                .args
-                .iter()
-                .any(|a| a == "blocknetd@primary.service")
-        );
+        assert!(commands[0]
+            .args
+            .iter()
+            .any(|a| a == "blocknetd@primary.service"));
         assert!(commands[0].args.iter().any(|a| a == "-q"));
         assert!(commands[0].args.iter().any(|a| a == "-a"));
         assert!(commands[0].args.iter().any(|a| a == "-f"));
         assert_eq!(commands[1].program, "journalctl");
-        assert!(
-            commands[1]
-                .args
-                .iter()
-                .any(|a| a == "blocknetd@standby.service")
-        );
+        assert!(commands[1]
+            .args
+            .iter()
+            .any(|a| a == "blocknetd@standby.service"));
         assert_eq!(commands[2].program, "journalctl");
         assert!(commands[2].args.iter().any(|a| a == "blocknetd.service"));
         assert_eq!(commands[3].program, "tail");
         assert!(commands[3].args.iter().any(|a| a == "-F"));
-        assert!(
-            commands[3]
-                .args
-                .iter()
-                .any(|a| a == "/var/lib/blocknet/data/debug.log")
-        );
+        assert!(commands[3]
+            .args
+            .iter()
+            .any(|a| a == "/var/lib/blocknet/data/debug.log"));
     }
 
     #[test]
@@ -8905,12 +9151,10 @@ mod tests {
 
         let commands = daemon_log_commands(&cfg, 50, false);
         assert_eq!(commands[0].program, "journalctl");
-        assert!(
-            commands[0]
-                .args
-                .iter()
-                .any(|a| a == "blocknetd@standby.service")
-        );
+        assert!(commands[0]
+            .args
+            .iter()
+            .any(|a| a == "blocknetd@standby.service"));
     }
 
     #[test]

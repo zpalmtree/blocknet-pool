@@ -460,7 +460,7 @@ impl ValidationInner {
         }
 
         if suspected_fraud {
-            st.forced_until = Some(now + self.config.forced_verify_duration());
+            st.forced_until = Some(now + self.config.suspected_fraud_force_verify_duration());
             let persisted = persisted_validation_state(address, st);
             drop(state);
             self.persist_validation_state(&persisted, None, now);
@@ -468,6 +468,7 @@ impl ValidationInner {
         }
 
         let min_samples = self.config.invalid_sample_min.max(1) as u64;
+        let min_invalids = self.config.invalid_sample_count_threshold.max(1) as u64;
         let mut escalate = false;
         if st.sampled_shares >= min_samples {
             let invalid_ratio = if st.sampled_shares == 0 {
@@ -476,8 +477,10 @@ impl ValidationInner {
                 st.invalid_samples as f64 / st.sampled_shares as f64
             };
 
-            if invalid_ratio > self.config.invalid_sample_threshold {
-                st.forced_until = Some(now + self.config.forced_verify_duration());
+            if st.invalid_samples >= min_invalids
+                && invalid_ratio > self.config.invalid_sample_threshold
+            {
+                st.forced_until = Some(now + self.config.invalid_sample_force_verify_duration());
                 escalate = true;
             }
         }
@@ -753,6 +756,7 @@ mod tests {
             warmup_shares: 0,
             min_sample_every: 0,
             invalid_sample_min: 1,
+            invalid_sample_count_threshold: 1,
             invalid_sample_threshold: 0.01,
             max_verifiers: 1,
             max_validation_queue: 16,
@@ -810,6 +814,43 @@ mod tests {
         assert!(
             result2.verified,
             "subsequent shares should be force-verified"
+        );
+    }
+
+    #[test]
+    fn invalid_sample_requires_count_threshold_before_force_verify() {
+        let mut cfg = test_cfg();
+        cfg.invalid_sample_min = 1;
+        cfg.invalid_sample_count_threshold = 3;
+        cfg.invalid_sample_threshold = 0.05;
+        let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));
+
+        for nonce in [11u64, 12] {
+            let mut bad = matching_task(nonce);
+            bad.force_full_verify = true;
+            bad.share_target = [0x00; 32];
+            let result = engine.process_inline(bad);
+            assert_eq!(result.reject_reason, Some("low difficulty share"));
+            assert!(!result.suspected_fraud);
+        }
+
+        let before_threshold = engine.process_inline(matching_task(13));
+        assert!(
+            !before_threshold.verified,
+            "single config issues should not force verified-only mode immediately"
+        );
+
+        let mut third_bad = matching_task(14);
+        third_bad.force_full_verify = true;
+        third_bad.share_target = [0x00; 32];
+        let third_result = engine.process_inline(third_bad);
+        assert_eq!(third_result.reject_reason, Some("low difficulty share"));
+        assert!(third_result.escalate_risk);
+
+        let after_threshold = engine.process_inline(matching_task(15));
+        assert!(
+            after_threshold.verified,
+            "repeated invalid samples should eventually switch the address into verified-only mode"
         );
     }
 

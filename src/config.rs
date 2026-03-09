@@ -35,9 +35,15 @@ pub struct Config {
     pub min_sample_every: i32,
     pub invalid_sample_threshold: f64,
     pub invalid_sample_min: i32,
+    pub invalid_sample_count_threshold: i32,
+    pub invalid_escalation_window_duration: String,
     pub forced_verify_duration: String,
     pub quarantine_duration: String,
     pub max_quarantine_duration: String,
+    pub suspected_fraud_force_verify_duration: String,
+    pub suspected_fraud_window_duration: String,
+    pub suspected_fraud_quarantine_duration: String,
+    pub suspected_fraud_max_quarantine_duration: String,
     pub suspected_fraud_quarantine_strikes: i32,
     pub invalid_escalation_quarantine_strikes: i32,
     pub provisional_share_delay: String,
@@ -109,13 +115,19 @@ impl Default for Config {
             sample_rate: 0.10,
             warmup_shares: 20,
             min_sample_every: 10,
-            invalid_sample_threshold: 0.01,
-            invalid_sample_min: 50,
-            forced_verify_duration: "24h".to_string(),
-            quarantine_duration: "1h".to_string(),
-            max_quarantine_duration: "168h".to_string(),
+            invalid_sample_threshold: 0.05,
+            invalid_sample_min: 100,
+            invalid_sample_count_threshold: 3,
+            invalid_escalation_window_duration: "6h".to_string(),
+            forced_verify_duration: "2h".to_string(),
+            quarantine_duration: "15m".to_string(),
+            max_quarantine_duration: "2h".to_string(),
+            suspected_fraud_force_verify_duration: "24h".to_string(),
+            suspected_fraud_window_duration: "24h".to_string(),
+            suspected_fraud_quarantine_duration: "1h".to_string(),
+            suspected_fraud_max_quarantine_duration: "168h".to_string(),
             suspected_fraud_quarantine_strikes: 3,
-            invalid_escalation_quarantine_strikes: 3,
+            invalid_escalation_quarantine_strikes: 0,
             provisional_share_delay: "15m".to_string(),
             max_provisional_shares: 200,
             stratum_submit_v2_required: true,
@@ -197,8 +209,11 @@ impl Config {
         if self.invalid_sample_min < 1 {
             self.invalid_sample_min = 1;
         }
+        if self.invalid_sample_count_threshold < 1 {
+            self.invalid_sample_count_threshold = 1;
+        }
         if !(0.0 < self.invalid_sample_threshold && self.invalid_sample_threshold <= 1.0) {
-            self.invalid_sample_threshold = 0.01;
+            self.invalid_sample_threshold = 0.05;
         }
         if self.max_provisional_shares < 0 {
             self.max_provisional_shares = 0;
@@ -300,7 +315,18 @@ impl Config {
     pub fn forced_verify_duration(&self) -> Duration {
         parse_duration_or(
             &self.forced_verify_duration,
-            Duration::from_secs(24 * 60 * 60),
+            Duration::from_secs(2 * 60 * 60),
+        )
+    }
+
+    pub fn invalid_sample_force_verify_duration(&self) -> Duration {
+        self.forced_verify_duration()
+    }
+
+    pub fn invalid_escalation_window_duration(&self) -> Duration {
+        parse_duration_or(
+            &self.invalid_escalation_window_duration,
+            Duration::from_secs(6 * 60 * 60),
         )
     }
 
@@ -309,11 +335,43 @@ impl Config {
     }
 
     pub fn quarantine_duration_duration(&self) -> Duration {
-        parse_duration_or(&self.quarantine_duration, Duration::from_secs(60 * 60))
+        parse_duration_or(&self.quarantine_duration, Duration::from_secs(15 * 60))
     }
 
     pub fn max_quarantine_duration_duration(&self) -> Duration {
         parse_duration_or(
+            &self.max_quarantine_duration,
+            Duration::from_secs(2 * 60 * 60),
+        )
+    }
+
+    pub fn suspected_fraud_force_verify_duration(&self) -> Duration {
+        parse_duration_with_fallback(
+            &self.suspected_fraud_force_verify_duration,
+            &self.forced_verify_duration,
+            Duration::from_secs(24 * 60 * 60),
+        )
+    }
+
+    pub fn suspected_fraud_window_duration(&self) -> Duration {
+        parse_duration_with_fallback(
+            &self.suspected_fraud_window_duration,
+            &self.suspected_fraud_force_verify_duration,
+            Duration::from_secs(24 * 60 * 60),
+        )
+    }
+
+    pub fn suspected_fraud_quarantine_duration_duration(&self) -> Duration {
+        parse_duration_with_fallback(
+            &self.suspected_fraud_quarantine_duration,
+            &self.quarantine_duration,
+            Duration::from_secs(60 * 60),
+        )
+    }
+
+    pub fn suspected_fraud_max_quarantine_duration_duration(&self) -> Duration {
+        parse_duration_with_fallback(
+            &self.suspected_fraud_max_quarantine_duration,
             &self.max_quarantine_duration,
             Duration::from_secs(168 * 60 * 60),
         )
@@ -389,6 +447,18 @@ fn parse_duration_or(value: &str, fallback: Duration) -> Duration {
     humantime::parse_duration(value).unwrap_or(fallback)
 }
 
+fn parse_duration_with_fallback(value: &str, fallback_value: &str, default: Duration) -> Duration {
+    let trimmed = value.trim();
+    if !trimmed.is_empty() {
+        return humantime::parse_duration(trimmed).unwrap_or(default);
+    }
+    let fallback_trimmed = fallback_value.trim();
+    if !fallback_trimmed.is_empty() {
+        return humantime::parse_duration(fallback_trimmed).unwrap_or(default);
+    }
+    default
+}
+
 fn parse_optional_duration(value: &str) -> Option<Duration> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -432,6 +502,7 @@ mod tests {
             warmup_shares: -5,
             min_sample_every: -1,
             invalid_sample_min: 0,
+            invalid_sample_count_threshold: 0,
             invalid_sample_threshold: 2.0,
             suspected_fraud_quarantine_strikes: -3,
             invalid_escalation_quarantine_strikes: -2,
@@ -463,7 +534,8 @@ mod tests {
         assert_eq!(cfg.warmup_shares, 0);
         assert_eq!(cfg.min_sample_every, 0);
         assert_eq!(cfg.invalid_sample_min, 1);
-        assert_eq!(cfg.invalid_sample_threshold, 0.01);
+        assert_eq!(cfg.invalid_sample_count_threshold, 1);
+        assert_eq!(cfg.invalid_sample_threshold, 0.05);
         assert_eq!(cfg.suspected_fraud_quarantine_strikes, 0);
         assert_eq!(cfg.invalid_escalation_quarantine_strikes, 0);
         assert_eq!(cfg.max_provisional_shares, 0);

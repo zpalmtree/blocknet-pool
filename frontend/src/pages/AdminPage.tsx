@@ -43,7 +43,7 @@ function rewardStatusLabel(status: string): string {
     case 'finder_fallback':
       return 'Finder fallback';
     case 'risky':
-      return 'Risky';
+      return 'Verified only';
     case 'awaiting_verified_shares':
       return 'Needs verified shares';
     case 'awaiting_verified_ratio':
@@ -63,7 +63,7 @@ function rewardStatusTone(status: string): string {
     case 'capped_provisional':
       return 'var(--warn)';
     case 'risky':
-      return 'var(--bad)';
+      return 'var(--warn)';
     case 'recorded_only':
       return 'var(--muted)';
     default:
@@ -1604,7 +1604,7 @@ export function AdminPage({
                                   </div>
                                   <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
                                     Preview: {rewardStatusLabel(row.preview_status)}
-                                    {row.risky ? ' · risky' : ''}
+                                    {row.risky ? ' · verification hold' : ''}
                                   </div>
                                 </>
                               ) : (
@@ -1614,7 +1614,7 @@ export function AdminPage({
                                   </div>
                                   <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
                                     Preview: {rewardStatusLabel(row.preview_status)}
-                                    {row.risky ? ' · risky' : ''}
+                                    {row.risky ? ' · verification hold' : ''}
                                   </div>
                                 </>
                               )}

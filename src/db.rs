@@ -127,6 +127,7 @@ pub struct PoolFeeRecord {
 pub struct AddressRiskState {
     pub address: String,
     pub strikes: u64,
+    pub strike_window_until: Option<SystemTime>,
     pub last_reason: Option<String>,
     pub last_event_at: Option<SystemTime>,
     pub quarantined_until: Option<SystemTime>,
