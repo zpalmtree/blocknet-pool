@@ -42,6 +42,7 @@ pub struct Config {
     pub forced_verify_duration: String,
     pub quarantine_duration: String,
     pub max_quarantine_duration: String,
+    pub suspected_fraud_quarantine_strikes: i32,
     pub invalid_escalation_quarantine_strikes: i32,
     pub provisional_share_delay: String,
     pub max_provisional_shares: i32,
@@ -127,6 +128,7 @@ impl Default for Config {
             forced_verify_duration: runtime.forced_verify_duration,
             quarantine_duration: runtime.quarantine_duration,
             max_quarantine_duration: runtime.max_quarantine_duration,
+            suspected_fraud_quarantine_strikes: runtime.suspected_fraud_quarantine_strikes,
             invalid_escalation_quarantine_strikes: runtime.invalid_escalation_quarantine_strikes,
             provisional_share_delay: runtime.provisional_share_delay,
             max_provisional_shares: runtime.max_provisional_shares,
@@ -229,6 +231,7 @@ impl Config {
             forced_verify_duration: self.forced_verify_duration.clone(),
             quarantine_duration: self.quarantine_duration.clone(),
             max_quarantine_duration: self.max_quarantine_duration.clone(),
+            suspected_fraud_quarantine_strikes: self.suspected_fraud_quarantine_strikes,
             invalid_escalation_quarantine_strikes: self.invalid_escalation_quarantine_strikes,
             provisional_share_delay: self.provisional_share_delay.clone(),
             max_provisional_shares: self.max_provisional_shares,
@@ -304,6 +307,7 @@ impl Config {
         self.forced_verify_duration = runtime.forced_verify_duration;
         self.quarantine_duration = runtime.quarantine_duration;
         self.max_quarantine_duration = runtime.max_quarantine_duration;
+        self.suspected_fraud_quarantine_strikes = runtime.suspected_fraud_quarantine_strikes;
         self.invalid_escalation_quarantine_strikes = runtime.invalid_escalation_quarantine_strikes;
         self.provisional_share_delay = runtime.provisional_share_delay;
         self.max_provisional_shares = runtime.max_provisional_shares;

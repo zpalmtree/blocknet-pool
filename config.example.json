@@ -29,6 +29,7 @@
   "forced_verify_duration": "24h",
   "quarantine_duration": "1h",
   "max_quarantine_duration": "168h",
+  "suspected_fraud_quarantine_strikes": 2,
   "invalid_escalation_quarantine_strikes": 3,
   "provisional_share_delay": "15m",
   "max_provisional_shares": 200,

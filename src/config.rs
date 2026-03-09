@@ -38,6 +38,7 @@ pub struct Config {
     pub forced_verify_duration: String,
     pub quarantine_duration: String,
     pub max_quarantine_duration: String,
+    pub suspected_fraud_quarantine_strikes: i32,
     pub invalid_escalation_quarantine_strikes: i32,
     pub provisional_share_delay: String,
     pub max_provisional_shares: i32,
@@ -113,6 +114,7 @@ impl Default for Config {
             forced_verify_duration: "24h".to_string(),
             quarantine_duration: "1h".to_string(),
             max_quarantine_duration: "168h".to_string(),
+            suspected_fraud_quarantine_strikes: 2,
             invalid_escalation_quarantine_strikes: 3,
             provisional_share_delay: "15m".to_string(),
             max_provisional_shares: 200,
@@ -203,6 +205,9 @@ impl Config {
         }
         if self.stratum_submit_rate_limit_max < 1 {
             self.stratum_submit_rate_limit_max = 1;
+        }
+        if self.suspected_fraud_quarantine_strikes < 0 {
+            self.suspected_fraud_quarantine_strikes = 0;
         }
         if self.invalid_escalation_quarantine_strikes < 0 {
             self.invalid_escalation_quarantine_strikes = 0;
@@ -428,6 +433,7 @@ mod tests {
             min_sample_every: -1,
             invalid_sample_min: 0,
             invalid_sample_threshold: 2.0,
+            suspected_fraud_quarantine_strikes: -3,
             invalid_escalation_quarantine_strikes: -2,
             max_provisional_shares: -1,
             stratum_submit_v2_required: false,
@@ -458,6 +464,7 @@ mod tests {
         assert_eq!(cfg.min_sample_every, 0);
         assert_eq!(cfg.invalid_sample_min, 1);
         assert_eq!(cfg.invalid_sample_threshold, 0.01);
+        assert_eq!(cfg.suspected_fraud_quarantine_strikes, 0);
         assert_eq!(cfg.invalid_escalation_quarantine_strikes, 0);
         assert_eq!(cfg.max_provisional_shares, 0);
         assert!(!cfg.stratum_submit_v2_required);

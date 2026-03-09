@@ -1468,7 +1468,8 @@ fn should_apply_quarantine_for_failed_share(
     current_strikes: u64,
 ) -> bool {
     if validation.suspected_fraud {
-        return true;
+        let threshold = cfg.suspected_fraud_quarantine_strikes.max(0) as u64;
+        return threshold > 0 && current_strikes.saturating_add(1) >= threshold;
     }
     if !validation.escalate_risk {
         return false;
@@ -1954,6 +1955,7 @@ mod tests {
     #[test]
     fn quarantine_decision_for_failed_share_is_thresholded() {
         let mut cfg = cfg();
+        cfg.suspected_fraud_quarantine_strikes = 2;
         cfg.invalid_escalation_quarantine_strikes = 3;
 
         let mut validation = ValidationResult {
@@ -1992,11 +1994,22 @@ mod tests {
         ));
 
         validation.suspected_fraud = true;
-        assert!(should_apply_quarantine_for_failed_share(
+        assert!(!should_apply_quarantine_for_failed_share(
             &cfg,
             &validation,
             0
         ));
+        assert!(should_apply_quarantine_for_failed_share(
+            &cfg,
+            &validation,
+            1
+        ));
+
+        cfg.suspected_fraud_quarantine_strikes = 0;
+        assert!(
+            !should_apply_quarantine_for_failed_share(&cfg, &validation, 100),
+            "threshold 0 disables suspected-fraud quarantine escalation"
+        );
     }
 
     #[test]

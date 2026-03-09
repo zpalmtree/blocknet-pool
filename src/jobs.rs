@@ -397,6 +397,7 @@ impl JobManager {
         prune_expired_assignments_locked(
             &mut state,
             self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE),
+            self.cfg.stale_submit_grace_duration(),
             current_template_job_id.as_deref(),
         );
         let mut cap_evicted = 0usize;
@@ -547,6 +548,7 @@ impl JobManager {
         prune_expired_assignments_locked(
             &mut state,
             self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE),
+            self.cfg.stale_submit_grace_duration(),
             current_template_job_id.as_deref(),
         );
 
@@ -758,12 +760,7 @@ impl JobRepository for JobManager {
         let is_current_template = Some(assignment.template_job_id.as_str()) == current_job_id;
         let assignment_ttl = self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE);
         let assignment_age = submitted_at.saturating_duration_since(assignment.created_at);
-        if !is_current_template && assignment_age > assignment_ttl {
-            return Err(SubmitJobResolveError::AssignmentExpired {
-                age: assignment_age,
-                ttl: assignment_ttl,
-            });
-        }
+        let mut within_superseded_grace = false;
         if let Some(superseded_at) = assignment.superseded_at {
             let stale_for = submitted_at.saturating_duration_since(superseded_at);
             let grace = assignment.superseded_grace;
@@ -773,8 +770,10 @@ impl JobRepository for JobManager {
                     stale_grace: grace,
                 });
             }
+            within_superseded_grace = true;
         }
 
+        let mut stale_template = None;
         if !is_current_template {
             let meta = state.job_meta.get(&assignment.template_job_id).copied();
             let stale_since = meta.and_then(|value| value.stale_since).unwrap_or_else(|| {
@@ -783,14 +782,25 @@ impl JobRepository for JobManager {
             });
             let stale_for = submitted_at.saturating_duration_since(stale_since);
             let grace = self.cfg.stale_submit_grace_duration();
-            if grace.is_zero() || stale_for > grace {
-                return Err(SubmitJobResolveError::TemplateStaleBeyondGrace {
-                    template_job_id: assignment.template_job_id.clone(),
-                    current_job_id: current_job_id.map(str::to_string),
-                    stale_for,
-                    stale_grace: grace,
+            let within_template_grace = !grace.is_zero() && stale_for <= grace;
+            if assignment_age > assignment_ttl && !within_superseded_grace && !within_template_grace
+            {
+                return Err(SubmitJobResolveError::AssignmentExpired {
+                    age: assignment_age,
+                    ttl: assignment_ttl,
                 });
             }
+            if !within_template_grace {
+                stale_template = Some((stale_for, grace));
+            }
+        }
+        if let Some((stale_for, grace)) = stale_template {
+            return Err(SubmitJobResolveError::TemplateStaleBeyondGrace {
+                template_job_id: assignment.template_job_id.clone(),
+                current_job_id: current_job_id.map(str::to_string),
+                stale_for,
+                stale_grace: grace,
+            });
         }
 
         let job = state
@@ -961,6 +971,7 @@ fn normalize_tip_hash(hash: &str) -> Option<String> {
 fn prune_expired_assignments_locked(
     state: &mut JobState,
     max_age: Duration,
+    stale_grace: Duration,
     current_template_job_id: Option<&str>,
 ) {
     if max_age.is_zero() {
@@ -968,11 +979,27 @@ fn prune_expired_assignments_locked(
     }
     let now = Instant::now();
     state.assignments.retain(|_, assignment| {
-        let age = now.saturating_duration_since(assignment.created_at);
         if current_template_job_id.is_some_and(|current| assignment.template_job_id == current) {
             return true;
         }
-        age <= max_age
+        let age = now.saturating_duration_since(assignment.created_at);
+        if age <= max_age {
+            return true;
+        }
+        if assignment.superseded_at.is_some_and(|superseded_at| {
+            let grace = assignment.superseded_grace;
+            !grace.is_zero() && now.saturating_duration_since(superseded_at) <= grace
+        }) {
+            return true;
+        }
+        if stale_grace.is_zero() {
+            return false;
+        }
+        state
+            .job_meta
+            .get(&assignment.template_job_id)
+            .and_then(|meta| meta.stale_since)
+            .is_some_and(|stale_since| now.saturating_duration_since(stale_since) <= stale_grace)
     });
     let valid_assignment_ids = state.assignments.keys().cloned().collect::<HashSet<_>>();
     state
@@ -1160,7 +1187,12 @@ mod tests {
         state.assignment_order.push_back("assign-old".to_string());
 
         let current = state.current.as_ref().map(|job| job.id.clone());
-        prune_expired_assignments_locked(&mut state, Duration::from_secs(1), current.as_deref());
+        prune_expired_assignments_locked(
+            &mut state,
+            Duration::from_secs(1),
+            Duration::ZERO,
+            current.as_deref(),
+        );
 
         assert!(state.assignments.contains_key("assign-current"));
         assert!(!state.assignments.contains_key("assign-old"));
@@ -1169,6 +1201,121 @@ mod tests {
             state.assignment_order.front().map(String::as_str),
             Some("assign-current")
         );
+    }
+
+    #[test]
+    fn prune_expired_assignments_keeps_recently_stale_previous_template_assignments() {
+        let mut state = JobState::default();
+        let now = Instant::now();
+        let current = Job {
+            id: "job-current".to_string(),
+            height: 11,
+            header_base: vec![0xCC; 92],
+            network_target: [0xDD; 32],
+            network_difficulty: 1,
+            template_id: Some("tmpl-current".to_string()),
+            full_block: None,
+        };
+        state.current = Some(current);
+        state.jobs.insert(
+            "job-old".to_string(),
+            Job {
+                id: "job-old".to_string(),
+                height: 10,
+                header_base: vec![0xAA; 92],
+                network_target: [0xBB; 32],
+                network_difficulty: 1,
+                template_id: Some("tmpl-old".to_string()),
+                full_block: None,
+            },
+        );
+        state.job_meta.insert(
+            "job-old".to_string(),
+            JobTemplateMeta {
+                created_at: now - Duration::from_secs(60),
+                stale_since: Some(now - Duration::from_secs(2)),
+            },
+        );
+        state.assignments.insert(
+            "assign-old".to_string(),
+            test_assignment("conn1", "job-old", now - Duration::from_secs(30), 0),
+        );
+        state.assignment_order.push_back("assign-old".to_string());
+
+        let current = state.current.as_ref().map(|job| job.id.clone());
+        prune_expired_assignments_locked(
+            &mut state,
+            Duration::from_secs(1),
+            Duration::from_secs(5),
+            current.as_deref(),
+        );
+
+        assert!(state.assignments.contains_key("assign-old"));
+        assert_eq!(
+            state.assignment_order.front().map(String::as_str),
+            Some("assign-old")
+        );
+    }
+
+    #[test]
+    fn resolve_submit_job_survives_prune_with_recent_stale_template_grace() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config {
+                job_timeout: "1s".to_string(),
+                stale_submit_grace: "5s".to_string(),
+                ..Config::default()
+            },
+        );
+
+        let old_job = Job {
+            id: "job-old".into(),
+            height: 10,
+            header_base: vec![0xAA; 92],
+            network_target: [0xBB; 32],
+            network_difficulty: 1,
+            template_id: Some("tmpl-old".into()),
+            full_block: None,
+        };
+        let current_job = Job {
+            id: "job-current".into(),
+            height: 11,
+            header_base: vec![0xCC; 92],
+            network_target: [0xDD; 32],
+            network_difficulty: 1,
+            template_id: Some("tmpl-current".into()),
+            full_block: None,
+        };
+
+        let now = Instant::now();
+        {
+            let mut state = manager.state.write();
+            state.current = Some(current_job.clone());
+            state.jobs.insert(old_job.id.clone(), old_job.clone());
+            state.jobs.insert(current_job.id.clone(), current_job);
+            state.job_meta.insert(
+                old_job.id.clone(),
+                JobTemplateMeta {
+                    created_at: now - Duration::from_secs(60),
+                    stale_since: Some(now - Duration::from_secs(2)),
+                },
+            );
+            state.assignments.insert(
+                "assign-old".to_string(),
+                test_assignment("conn1", &old_job.id, now - Duration::from_secs(30), 0),
+            );
+            state.assignment_order.push_back("assign-old".to_string());
+
+            let current = state.current.as_ref().map(|job| job.id.clone());
+            prune_expired_assignments_locked(
+                &mut state,
+                Duration::from_secs(1),
+                Duration::from_secs(5),
+                current.as_deref(),
+            );
+        }
+
+        assert!(manager.resolve_submit_job("assign-old", now).is_some());
     }
 
     #[test]
@@ -1190,7 +1337,7 @@ mod tests {
             Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
             Config {
                 job_timeout: "1s".to_string(),
-                stale_submit_grace: "10m".to_string(),
+                stale_submit_grace: "400ms".to_string(),
                 ..Config::default()
             },
         );
@@ -1232,7 +1379,7 @@ mod tests {
                 old_template.id.clone(),
                 JobTemplateMeta {
                     created_at: now - Duration::from_secs(3),
-                    stale_since: Some(now - Duration::from_millis(500)),
+                    stale_since: Some(now - Duration::from_secs(2)),
                 },
             );
         }
