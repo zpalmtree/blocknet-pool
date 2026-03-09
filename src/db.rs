@@ -131,6 +131,8 @@ pub struct AddressRiskState {
     pub last_event_at: Option<SystemTime>,
     pub quarantined_until: Option<SystemTime>,
     pub force_verify_until: Option<SystemTime>,
+    pub suspected_fraud_strikes: u64,
+    pub suspected_fraud_window_until: Option<SystemTime>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

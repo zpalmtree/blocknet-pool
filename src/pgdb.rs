@@ -302,7 +302,9 @@ CREATE TABLE IF NOT EXISTS address_risk (
     last_reason TEXT,
     last_event_at BIGINT,
     quarantined_until BIGINT,
-    force_verify_until BIGINT
+    force_verify_until BIGINT,
+    suspected_fraud_strikes BIGINT NOT NULL DEFAULT 0,
+    suspected_fraud_window_until BIGINT
 );
 
 CREATE TABLE IF NOT EXISTS vardiff_hints (
@@ -457,6 +459,14 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS effort_pct DOUBLE PRECISION",
         )
         .context("ensure blocks.effort_pct column")?;
+        conn.batch_execute(
+            "ALTER TABLE address_risk ADD COLUMN IF NOT EXISTS suspected_fraud_strikes BIGINT NOT NULL DEFAULT 0",
+        )
+        .context("ensure address_risk.suspected_fraud_strikes column")?;
+        conn.batch_execute(
+            "ALTER TABLE address_risk ADD COLUMN IF NOT EXISTS suspected_fraud_window_until BIGINT",
+        )
+        .context("ensure address_risk.suspected_fraud_window_until column")?;
         conn.batch_execute(
             "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS wallet_up BOOLEAN",
         )
@@ -2001,7 +2011,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_address_risk(&self, address: &str) -> Result<Option<AddressRiskState>> {
         let row = self.conn().lock().query_opt(
-            "SELECT address, strikes, last_reason, last_event_at, quarantined_until, force_verify_until
+            "SELECT address, strikes, last_reason, last_event_at, quarantined_until, force_verify_until,
+                    suspected_fraud_strikes, suspected_fraud_window_until
              FROM address_risk WHERE address = $1",
             &[&address],
         )?;
@@ -2012,6 +2023,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             last_event_at: row.get::<_, Option<i64>>(3).map(from_unix),
             quarantined_until: row.get::<_, Option<i64>>(4).map(from_unix),
             force_verify_until: row.get::<_, Option<i64>>(5).map(from_unix),
+            suspected_fraud_strikes: row.get::<_, i64>(6).max(0) as u64,
+            suspected_fraud_window_until: row.get::<_, Option<i64>>(7).map(from_unix),
         }))
     }
 
@@ -2122,6 +2135,125 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             last_event_at: Some(now),
             quarantined_until,
             force_verify_until,
+            suspected_fraud_strikes: self
+                .get_address_risk(address)?
+                .map(|state| state.suspected_fraud_strikes)
+                .unwrap_or_default(),
+            suspected_fraud_window_until: self
+                .get_address_risk(address)?
+                .and_then(|state| state.suspected_fraud_window_until),
+        })
+    }
+
+    pub fn record_suspected_fraud(
+        &self,
+        address: &str,
+        reason: &str,
+        quarantine_threshold: u64,
+        quarantine_base: Duration,
+        quarantine_max: Duration,
+        force_verify_duration: Duration,
+    ) -> Result<AddressRiskState> {
+        if address.trim().is_empty() {
+            return Err(anyhow!("address is required"));
+        }
+
+        let now = SystemTime::now();
+        let mut conn = self.conn().lock();
+        let mut tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO address_risk (
+                 address, strikes, last_reason, last_event_at, quarantined_until, force_verify_until,
+                 suspected_fraud_strikes, suspected_fraud_window_until
+             )
+             VALUES ($1, 0, NULL, NULL, NULL, NULL, 0, NULL)
+             ON CONFLICT(address) DO NOTHING",
+            &[&address],
+        )?;
+
+        let row = tx.query_one(
+            "SELECT strikes, quarantined_until, force_verify_until,
+                    suspected_fraud_strikes, suspected_fraud_window_until
+             FROM address_risk WHERE address = $1 FOR UPDATE",
+            &[&address],
+        )?;
+        let strikes = row.get::<_, i64>(0).max(0) as u64;
+        let existing_quarantine = row.get::<_, Option<i64>>(1).map(from_unix);
+        let existing_force = row.get::<_, Option<i64>>(2).map(from_unix);
+        let existing_fraud_strikes = row.get::<_, i64>(3).max(0) as u64;
+        let existing_fraud_window = row.get::<_, Option<i64>>(4).map(from_unix);
+
+        let active_fraud_strikes = existing_fraud_window
+            .filter(|until| *until > now)
+            .map(|_| existing_fraud_strikes)
+            .unwrap_or_default();
+        let suspected_fraud_strikes = active_fraud_strikes.saturating_add(1);
+        let force_verify_until = merge_optional_later(
+            existing_force,
+            if force_verify_duration.is_zero() {
+                None
+            } else {
+                Some(now + force_verify_duration)
+            },
+        );
+        let suspected_fraud_window_until = merge_optional_later(
+            existing_fraud_window.filter(|until| *until > now),
+            if force_verify_duration.is_zero() {
+                None
+            } else {
+                Some(now + force_verify_duration)
+            },
+        );
+        let quarantined_until = if quarantine_threshold > 0
+            && suspected_fraud_strikes >= quarantine_threshold
+            && !quarantine_base.is_zero()
+        {
+            let quarantine_strikes = suspected_fraud_strikes
+                .saturating_sub(quarantine_threshold)
+                .saturating_add(1);
+            merge_optional_later(
+                existing_quarantine,
+                Some(quarantine_until_for_strikes(
+                    now,
+                    quarantine_strikes,
+                    quarantine_base,
+                    quarantine_max,
+                )),
+            )
+        } else {
+            existing_quarantine
+        };
+
+        tx.execute(
+            "UPDATE address_risk
+             SET last_reason = $2,
+                 last_event_at = $3,
+                 quarantined_until = $4,
+                 force_verify_until = $5,
+                 suspected_fraud_strikes = $6,
+                 suspected_fraud_window_until = $7
+             WHERE address = $1",
+            &[
+                &address,
+                &reason,
+                &to_unix(now),
+                &quarantined_until.map(to_unix),
+                &force_verify_until.map(to_unix),
+                &u64_to_i64(suspected_fraud_strikes)?,
+                &suspected_fraud_window_until.map(to_unix),
+            ],
+        )?;
+        tx.commit()?;
+
+        Ok(AddressRiskState {
+            address: address.to_string(),
+            strikes,
+            last_reason: Some(reason.to_string()),
+            last_event_at: Some(now),
+            quarantined_until,
+            force_verify_until,
+            suspected_fraud_strikes,
+            suspected_fraud_window_until,
         })
     }
 

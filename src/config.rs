@@ -114,7 +114,7 @@ impl Default for Config {
             forced_verify_duration: "24h".to_string(),
             quarantine_duration: "1h".to_string(),
             max_quarantine_duration: "168h".to_string(),
-            suspected_fraud_quarantine_strikes: 2,
+            suspected_fraud_quarantine_strikes: 3,
             invalid_escalation_quarantine_strikes: 3,
             provisional_share_delay: "15m".to_string(),
             max_provisional_shares: 200,

@@ -8,8 +8,8 @@ use anyhow::{anyhow, Result};
 use tracing::warn;
 
 use crate::db::{
-    DbBlock, MonitorHeartbeat, MonitorHeartbeatUpsert, MonitorIncident, MonitorIncidentUpsert,
-    ShareReplayData,
+    AddressRiskState, DbBlock, MonitorHeartbeat, MonitorHeartbeatUpsert, MonitorIncident,
+    MonitorIncidentUpsert, ShareReplayData,
 };
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::pgdb::{
@@ -78,6 +78,10 @@ impl PoolStore {
             .get_address_risk(address)?
             .map(|state| state.strikes)
             .unwrap_or_default())
+    }
+
+    pub fn get_address_risk(&self, address: &str) -> Result<Option<AddressRiskState>> {
+        self.inner.get_address_risk(address)
     }
 
     pub fn miner_share_window_stats_since(
@@ -266,6 +270,10 @@ impl ShareStore for PoolStore {
         Ok(quarantined)
     }
 
+    fn address_risk_state(&self, address: &str) -> Result<Option<AddressRiskState>> {
+        PoolStore::get_address_risk(self, address)
+    }
+
     fn should_force_verify_address(&self, address: &str) -> Result<bool> {
         let (force_verify, _) = self.inner.should_force_verify_address(address)?;
         Ok(force_verify)
@@ -291,6 +299,26 @@ impl ShareStore for PoolStore {
             quarantine_max,
             force_verify_duration,
             apply_quarantine,
+        )?;
+        Ok(())
+    }
+
+    fn record_suspected_fraud(
+        &self,
+        address: &str,
+        reason: &str,
+        quarantine_threshold: u64,
+        quarantine_base: Duration,
+        quarantine_max: Duration,
+        force_verify_duration: Duration,
+    ) -> Result<()> {
+        self.inner.record_suspected_fraud(
+            address,
+            reason,
+            quarantine_threshold,
+            quarantine_base,
+            quarantine_max,
+            force_verify_duration,
         )?;
         Ok(())
     }
