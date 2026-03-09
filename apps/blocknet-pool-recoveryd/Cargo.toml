@@ -1,0 +1,15 @@
+[package]
+name = "blocknet-pool-recoveryd-app"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "blocknet-pool-recoveryd"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+
+pool-common = { path = "../../crates/pool-common" }
+pool-recovery = { path = "../../crates/pool-recovery" }

@@ -157,9 +157,11 @@ pub async fn run_monitor(config_path: &Path) -> Result<()> {
     load_dotenv(config_path);
     let cfg = Config::load(config_path)?;
     let cfg_for_store = cfg.clone();
-    let store = tokio::task::spawn_blocking(move || PoolStore::open_from_config(&cfg_for_store))
-        .await
-        .context("join monitor store initialization task")??;
+    let store = tokio::task::spawn_blocking(move || {
+        PoolStore::open(&cfg_for_store.database_url, cfg_for_store.database_pool_size)
+    })
+    .await
+    .context("join monitor store initialization task")??;
     let daemon_api = cfg.daemon_api.clone();
     let daemon_token = cfg.daemon_token.clone();
     let daemon_data_dir = cfg.daemon_data_dir.clone();
@@ -1414,8 +1416,8 @@ mod tests {
         validation_backlog_state, MonitorSnapshot, PendingPayoutSummary,
     };
     use crate::config::Config;
-    use crate::jobs::JobRuntimeSnapshot;
     use crate::service_state::{PersistedRuntimeSnapshot, PersistedValidationSummary};
+    use pool_runtime::jobs::JobRuntimeSnapshot;
     use std::time::{Duration, SystemTime};
 
     fn sample_runtime_snapshot() -> PersistedRuntimeSnapshot {

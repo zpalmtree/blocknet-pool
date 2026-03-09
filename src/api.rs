@@ -37,8 +37,9 @@ use crate::engine::JobRepository;
 use crate::jobs::JobManager;
 use crate::node::{NodeClient, WalletBalance};
 use crate::payout::{
-    is_share_payout_eligible, recover_share_window_by_replay, resolve_pool_fee_destination,
-    reward_window_end, weight_shares, PayoutTrustPolicy,
+    is_share_payout_eligible, recover_share_window_by_replay,
+    resolve_pool_fee_destination_from_address, reward_window_end, weight_shares,
+    PayoutTrustPolicy,
 };
 use crate::recovery::{RecoveryAgentClient, RecoveryInstanceId, RecoveryOperation, RecoveryStatus};
 use crate::service_state::{
@@ -767,14 +768,14 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
 }
 
 const UI_INDEX_HTML: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/frontend/dist/index.html"
+    env!("BLOCKNET_POOL_FRONTEND_DIST_DIR"),
+    "/index.html"
 ));
 const UI_ASSET_APP_JS: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/frontend/dist/app.js"));
+    include_str!(concat!(env!("BLOCKNET_POOL_FRONTEND_DIST_DIR"), "/app.js"));
 const UI_ASSET_APP_CSS: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/frontend/dist/app.css"
+    env!("BLOCKNET_POOL_FRONTEND_DIST_DIR"),
+    "/app.css"
 ));
 const UI_ASSET_POOL_ENTERED_PNG: &[u8] = include_bytes!("ui/assets/pool-entered.png");
 const UI_ASSET_MINING_TUI_PNG: &[u8] = include_bytes!("ui/assets/mining-tui.png");
@@ -3387,7 +3388,7 @@ struct RecoveryCutoverRequest {
 
 async fn handle_recovery_status(State(state): State<ApiState>) -> impl IntoResponse {
     if !state.config.recovery.enabled {
-        return Json(RecoveryStatus::disabled(&state.config)).into_response();
+        return Json(RecoveryStatus::disabled(&state.config.payout_pause_file)).into_response();
     }
     match state.recovery.status().await {
         Ok(status) => Json(status).into_response(),
@@ -5083,7 +5084,11 @@ fn build_block_reward_breakdown(
         min_verified_ratio: 0.0,
         provisional_cap_multiplier: 0.0,
     };
-    let payout_trust_policy = PayoutTrustPolicy::from_config(config);
+    let payout_trust_policy = PayoutTrustPolicy::from_values(
+        config.payout_min_verified_shares,
+        config.payout_min_verified_ratio,
+        config.payout_provisional_cap_multiplier,
+    );
     let mut display_shares = shares.clone();
     let mut display_stats_by_address = recorded_stats_by_address.clone();
 
@@ -6912,7 +6917,11 @@ fn build_fee_page(
         items.push(FeePageItem {
             block_height: block.height,
             amount,
-            fee_address: resolve_pool_fee_destination(cfg, &block).unwrap_or_default(),
+            fee_address: resolve_pool_fee_destination_from_address(
+                &cfg.pool_wallet_address,
+                &block,
+            )
+            .unwrap_or_default(),
             timestamp: block.timestamp,
             status: fee_status_for_block(&block),
             confirmations_remaining: fee_confirmations_remaining(
@@ -7264,6 +7273,7 @@ impl StatusHistory {
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet, VecDeque};
+    use std::env;
     use std::sync::Arc;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -7272,7 +7282,6 @@ mod tests {
     use crate::engine::{ShareRecord, ShareStore};
     use crate::jobs::{JobManager, JobRuntimeSnapshot};
     use crate::node::{NodeClient, WalletBalance};
-    use crate::pow::Argon2PowHasher;
     use crate::recovery::RecoveryAgentClient;
     use crate::service_state::{
         PersistedPayoutRuntime, PersistedRuntimeSnapshot, PersistedValidationSummary,
@@ -7283,6 +7292,7 @@ mod tests {
     use axum::body::to_bytes;
     use axum::extract::{Path, Query, State};
     use axum::response::IntoResponse;
+    use pool_common::pow::Argon2PowHasher;
     use serde::Serialize;
 
     use super::{
@@ -7303,8 +7313,17 @@ mod tests {
         LIVE_RUNTIME_SNAPSHOT_META_KEY, STATUS_HISTORY_META_KEY,
     };
 
+    const TEST_POSTGRES_URL_ENV: &str = "BLOCKNET_POOL_TEST_POSTGRES_URL";
+
     fn test_store() -> Option<Arc<PoolStore>> {
-        PoolStore::test_store()
+        let url = env::var(TEST_POSTGRES_URL_ENV).ok()?;
+        match PoolStore::open_postgres_with_pool(&url, 2) {
+            Ok(store) => Some(store),
+            Err(err) => {
+                eprintln!("skipping postgres test: failed to connect to test database: {err}");
+                None
+            }
+        }
     }
 
     macro_rules! require_test_store {
@@ -7314,7 +7333,7 @@ mod tests {
                 None => {
                     eprintln!(
                         "skipping postgres test: set {} to run postgres integration checks",
-                        PoolStore::TEST_POSTGRES_URL_ENV
+                        TEST_POSTGRES_URL_ENV
                     );
                     return;
                 }
@@ -7325,11 +7344,12 @@ mod tests {
     fn test_api_state(store: Arc<PoolStore>) -> ApiState {
         let mut cfg = Config::default();
         cfg.max_verifiers = 1;
+        let runtime_cfg = cfg.to_runtime_config();
         let node =
             Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("build test node client"));
-        let jobs = JobManager::new(Arc::clone(&node), cfg.clone());
+        let jobs = JobManager::new(Arc::clone(&node), runtime_cfg.clone());
         let validation = Arc::new(ValidationEngine::new(
-            cfg.clone(),
+            runtime_cfg,
             Arc::new(Argon2PowHasher::default()),
         ));
         ApiState {

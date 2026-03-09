@@ -41,10 +41,22 @@ pub struct PayoutTrustPolicy {
 
 impl PayoutTrustPolicy {
     pub fn from_config(cfg: &Config) -> Self {
+        Self::from_values(
+            cfg.payout_min_verified_shares,
+            cfg.payout_min_verified_ratio,
+            cfg.payout_provisional_cap_multiplier,
+        )
+    }
+
+    pub fn from_values(
+        payout_min_verified_shares: i32,
+        payout_min_verified_ratio: f64,
+        payout_provisional_cap_multiplier: f64,
+    ) -> Self {
         Self {
-            min_verified_shares: cfg.payout_min_verified_shares.max(0) as u64,
-            min_verified_ratio: cfg.payout_min_verified_ratio.clamp(0.0, 1.0),
-            provisional_cap_multiplier: cfg.payout_provisional_cap_multiplier.max(0.0),
+            min_verified_shares: payout_min_verified_shares.max(0) as u64,
+            min_verified_ratio: payout_min_verified_ratio.clamp(0.0, 1.0),
+            provisional_cap_multiplier: payout_provisional_cap_multiplier.max(0.0),
         }
     }
 }
@@ -1056,8 +1068,15 @@ fn configured_payout_address_network(cfg: &Config) -> Option<AddressNetwork> {
     }
 }
 
-pub(crate) fn resolve_pool_fee_destination(cfg: &Config, block: &DbBlock) -> Option<String> {
-    let configured = cfg.pool_wallet_address.trim();
+pub fn resolve_pool_fee_destination(cfg: &Config, block: &DbBlock) -> Option<String> {
+    resolve_pool_fee_destination_from_address(&cfg.pool_wallet_address, block)
+}
+
+pub fn resolve_pool_fee_destination_from_address(
+    pool_wallet_address: &str,
+    block: &DbBlock,
+) -> Option<String> {
+    let configured = pool_wallet_address.trim();
     if !configured.is_empty() {
         return Some(configured.to_string());
     }
@@ -1065,7 +1084,7 @@ pub(crate) fn resolve_pool_fee_destination(cfg: &Config, block: &DbBlock) -> Opt
     None
 }
 
-pub(crate) fn reward_window_end(store: &PoolStore, block: &DbBlock) -> anyhow::Result<SystemTime> {
+pub fn reward_window_end(store: &PoolStore, block: &DbBlock) -> anyhow::Result<SystemTime> {
     Ok(store
         .latest_share_timestamp_for_block_hash(&block.hash)?
         .map(|share_time| share_time.max(block.timestamp))
@@ -1078,7 +1097,7 @@ fn should_replay_share(share: &DbShare, now: SystemTime, provisional_delay: Dura
         && is_share_payout_eligible(share, now, provisional_delay)
 }
 
-pub(crate) fn recover_share_window_by_replay(
+pub fn recover_share_window_by_replay(
     store: &PoolStore,
     shares: &mut [DbShare],
     now: SystemTime,

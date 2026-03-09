@@ -116,9 +116,9 @@ build_locally() {
     fi
     local build_cmd
     if [[ "${monitor_only}" == "1" ]]; then
-      build_cmd="cargo build --release --bin blocknet-pool-monitor --no-default-features --features monitor"
+      build_cmd="cargo build --release -p blocknet-pool-monitor-app --bin blocknet-pool-monitor"
     else
-      build_cmd="cargo build --release --bin blocknet-pool-api --no-default-features --features api; cargo build --release --bin blocknet-pool-stratum --no-default-features --features stratum; cargo build --release --bin blocknet-pool-monitor --no-default-features --features monitor; cargo build --release --bin blocknet-pool-recoveryd"
+      build_cmd="cargo build --release -p blocknet-pool-api-app --bin blocknet-pool-api; cargo build --release -p blocknet-pool-stratum-app --bin blocknet-pool-stratum; cargo build --release -p blocknet-pool-monitor-app --bin blocknet-pool-monitor; cargo build --release -p blocknet-pool-recoveryd-app --bin blocknet-pool-recoveryd"
     fi
     docker run --rm \
       -v "${repo_dir}:/work" \
@@ -129,11 +129,11 @@ build_locally() {
       bash -lc "set -euo pipefail; export PATH=/usr/local/cargo/bin:\$PATH; ${build_cmd}; chown -R \"${host_uid}:${host_gid}\" /work/target"
   else
     if [[ "${monitor_only}" != "1" ]]; then
-      cargo build --release --bin blocknet-pool-api --no-default-features --features api
-      cargo build --release --bin blocknet-pool-stratum --no-default-features --features stratum
-      cargo build --release --bin blocknet-pool-recoveryd
+      cargo build --release -p blocknet-pool-api-app --bin blocknet-pool-api
+      cargo build --release -p blocknet-pool-stratum-app --bin blocknet-pool-stratum
+      cargo build --release -p blocknet-pool-recoveryd-app --bin blocknet-pool-recoveryd
     fi
-    cargo build --release --bin blocknet-pool-monitor --no-default-features --features monitor
+    cargo build --release -p blocknet-pool-monitor-app --bin blocknet-pool-monitor
   fi
 }
 

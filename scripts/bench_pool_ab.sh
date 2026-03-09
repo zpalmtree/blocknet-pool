@@ -259,8 +259,8 @@ build_pool() {
     local repo_dir="$1"
     (
         cd "$repo_dir"
-        cargo build --profile "$profile" --bin blocknet-pool-api --no-default-features --features api >/dev/null
-        cargo build --profile "$profile" --bin blocknet-pool-stratum --no-default-features --features stratum >/dev/null
+        cargo build --profile "$profile" -p blocknet-pool-api-app --bin blocknet-pool-api >/dev/null
+        cargo build --profile "$profile" -p blocknet-pool-stratum-app --bin blocknet-pool-stratum >/dev/null
     )
 }
 

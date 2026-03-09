@@ -7,20 +7,13 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::recovery::RecoveryConfig;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub pool_name: String,
-    pub pool_url: String,
 
     pub stratum_host: String,
     pub stratum_port: u16,
-    pub api_port: u16,
-    pub api_host: String,
-    pub api_tls_cert_path: String,
-    pub api_tls_key_path: String,
 
     pub daemon_data_dir: String,
     pub daemon_api: String,
@@ -86,14 +79,7 @@ pub struct Config {
 
     pub database_url: String,
     pub database_pool_size: i32,
-    pub api_key: String,
     pub seen_share_gc_interval: String,
-    pub monitor_host: String,
-    pub monitor_port: u16,
-    pub monitor_interval: String,
-    pub monitor_spool_path: String,
-    pub monitor_ingest_secret: String,
-    pub recovery: RecoveryConfig,
 
     #[serde(skip)]
     pub log_path: String,
@@ -103,13 +89,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             pool_name: "blocknet pool".to_string(),
-            pool_url: "http://localhost:24783".to_string(),
             stratum_host: "127.0.0.1".to_string(),
             stratum_port: 3333,
-            api_port: 24783,
-            api_host: "127.0.0.1".to_string(),
-            api_tls_cert_path: String::new(),
-            api_tls_key_path: String::new(),
             daemon_data_dir: "data".to_string(),
             daemon_api: "http://127.0.0.1:8332".to_string(),
             daemon_token: String::new(),
@@ -170,14 +151,7 @@ impl Default for Config {
             retention_interval: "1h".to_string(),
             database_url: String::new(),
             database_pool_size: 4,
-            api_key: String::new(),
             seen_share_gc_interval: "10m".to_string(),
-            monitor_host: "127.0.0.1".to_string(),
-            monitor_port: 24784,
-            monitor_interval: "10s".to_string(),
-            monitor_spool_path: "/var/lib/blocknet-pool/monitor-spool.jsonl".to_string(),
-            monitor_ingest_secret: String::new(),
-            recovery: RecoveryConfig::default(),
             log_path: String::new(),
         }
     }
@@ -279,21 +253,11 @@ impl Config {
         if self.database_pool_size < 1 {
             self.database_pool_size = 1;
         }
-        if self.monitor_host.trim().is_empty() {
-            self.monitor_host = "127.0.0.1".to_string();
-        }
-        if self.monitor_port == 0 {
-            self.monitor_port = 24784;
-        }
-        self.recovery.normalize();
         if self.daemon_cookie_path.trim().is_empty() {
-            self.daemon_cookie_path = self.recovery.active_cookie_path.clone();
+            self.daemon_cookie_path = "/etc/blocknet/pool/daemon-active.api.cookie".to_string();
         }
         if self.payout_pause_file.trim().is_empty() {
             self.payout_pause_file = "/etc/blocknet/pool/payouts.pause".to_string();
-        }
-        if self.recovery.proxy_include_path.trim().is_empty() {
-            self.recovery.proxy_include_path = "/etc/nginx/blocknet-daemon-active-upstream.inc".to_string();
         }
         let max_atomic_amount = (u64::MAX as f64) / 100_000_000.0;
         if !self.min_payout_amount.is_finite() || self.min_payout_amount < 0.0 {
@@ -361,11 +325,6 @@ impl Config {
         )
     }
 
-    pub fn monitor_interval_duration(&self) -> Duration {
-        parse_duration_or(&self.monitor_interval, Duration::from_secs(10))
-            .clamp(Duration::from_secs(5), Duration::from_secs(5 * 60))
-    }
-
     pub fn shares_retention_duration(&self) -> Option<Duration> {
         parse_optional_duration(&self.shares_retention)
     }
@@ -376,10 +335,6 @@ impl Config {
 
     pub fn retention_interval_duration(&self) -> Duration {
         parse_duration_or(&self.retention_interval, Duration::from_secs(60 * 60))
-    }
-
-    pub fn has_api_tls(&self) -> bool {
-        !self.api_tls_cert_path.trim().is_empty() && !self.api_tls_key_path.trim().is_empty()
     }
 
     pub fn vardiff_window_duration(&self) -> Duration {

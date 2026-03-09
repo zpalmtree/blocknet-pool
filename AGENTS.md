@@ -2,8 +2,10 @@
 
 ## Project structure
 
+- `apps/` - Cargo app packages for API, Stratum, monitor, and recoveryd
+- `crates/` - Shared Cargo library packages split by service boundary
 - `frontend/` - React/TypeScript SPA built with Vite
-- `src/` - Rust backend for both the API and Stratum binaries
+- `src/` - Shared implementation modules included by the app/library packages
 - `frontend/dist/` - Generated frontend bundle, embedded into the API binary at build time
 - `scripts/deploy_bntpool.sh` - Normal production deploy path for `bntpool`
 - `scripts/provision_bntpool_monitoring.sh` - Idempotent provisioning/update path for Prometheus/Alertmanager/exporters and monitoring configs on `bntpool`
@@ -43,9 +45,9 @@
 
 1. Build frontend: `npm --prefix frontend run build`
 2. Build Rust binaries:
-   `cargo build --release --bin blocknet-pool-api --no-default-features --features api`
-   `cargo build --release --bin blocknet-pool-stratum --no-default-features --features stratum`
-   `cargo build --release --bin blocknet-pool-monitor --no-default-features --features monitor`
+   `cargo build --release -p blocknet-pool-api-app --bin blocknet-pool-api`
+   `cargo build --release -p blocknet-pool-stratum-app --bin blocknet-pool-stratum`
+   `cargo build --release -p blocknet-pool-monitor-app --bin blocknet-pool-monitor`
 3. Provision monitoring when needed: `bash scripts/provision_bntpool_monitoring.sh`
 4. Deploy app services: `bash scripts/deploy_bntpool.sh --skip-ui-build`
 5. Deploy the Cloudflare public probe when needed: `bash scripts/deploy_cloudflare_monitor_worker.sh`

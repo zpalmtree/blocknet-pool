@@ -1,58 +1,42 @@
-[package]
-name = "blocknet-pool-rs"
+[workspace]
+resolver = "2"
+members = [
+    "crates/pool-common",
+    "crates/pool-runtime",
+    "crates/pool-recovery",
+    "apps/blocknet-pool-api",
+    "apps/blocknet-pool-stratum",
+    "apps/blocknet-pool-monitor",
+    "apps/blocknet-pool-recoveryd",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
 
-[features]
-default = ["api", "stratum"]
-api = []
-stratum = []
-monitor = []
-
-[[bin]]
-name = "blocknet-pool-api"
-path = "src/bin/blocknet-pool-api.rs"
-required-features = ["api"]
-
-[[bin]]
-name = "blocknet-pool-stratum"
-path = "src/bin/blocknet-pool-stratum.rs"
-required-features = ["stratum"]
-
-[[bin]]
-name = "blocknet-pool-monitor"
-path = "src/bin/blocknet-pool-monitor.rs"
-required-features = ["monitor"]
-
-[[bin]]
-name = "blocknet-pool-recoveryd"
-path = "src/bin/blocknet-pool-recoveryd.rs"
-
-[dependencies]
+[workspace.dependencies]
 anyhow = "1.0"
 argon2 = "0.5"
-dotenvy = "0.15"
-flume = "0.11"
 axum = "0.7"
 axum-server = { version = "0.7", features = ["tls-rustls"] }
+bs58 = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
-postgres = "0.19"
+dotenvy = "0.15"
+flume = "0.11"
+hex = "0.4"
+humantime = "2.1"
 parking_lot = "0.12"
+postgres = "0.19"
 rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
 sha3 = "0.10"
-bs58 = "0.5"
-hex = "0.4"
+sysinfo = "0.31"
+tempfile = "3.10"
 tokio = { version = "1.44", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "signal", "process"] }
 tokio-stream = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-humantime = "2.1"
 urlencoding = "2.1"
-sysinfo = "0.31"
-
-[dev-dependencies]
-tempfile = "3.10"

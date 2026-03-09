@@ -208,13 +208,13 @@ fi
 
 (
   cd "${ROOT_DIR}"
-  cargo run --quiet --bin blocknet-pool-stratum --no-default-features --features stratum -- --config "${CONFIG_PATH}"
+  cargo run --quiet -p blocknet-pool-stratum-app --bin blocknet-pool-stratum -- --config "${CONFIG_PATH}"
 ) >"${STRATUM_LOG}" 2>&1 &
 STRATUM_PID="$!"
 
 (
   cd "${ROOT_DIR}"
-  cargo run --quiet --bin blocknet-pool-api --no-default-features --features api -- --config "${CONFIG_PATH}"
+  cargo run --quiet -p blocknet-pool-api-app --bin blocknet-pool-api -- --config "${CONFIG_PATH}"
 ) >"${API_LOG}" 2>&1 &
 API_PID="$!"
 

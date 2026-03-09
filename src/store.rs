@@ -7,7 +7,6 @@ use anyhow::Context;
 use anyhow::{anyhow, Result};
 use tracing::warn;
 
-use crate::config::Config;
 use crate::db::{
     DbBlock, MonitorHeartbeat, MonitorHeartbeatUpsert, MonitorIncident, MonitorIncidentUpsert,
     ShareReplayData,
@@ -57,14 +56,14 @@ impl PoolStore {
     #[cfg(test)]
     pub(crate) const TEST_POSTGRES_URL_ENV: &'static str = "BLOCKNET_POOL_TEST_POSTGRES_URL";
 
-    pub fn open_from_config(cfg: &Config) -> Result<Arc<Self>> {
-        let database_url = cfg.database_url.trim();
+    pub fn open(database_url: &str, pool_size: i32) -> Result<Arc<Self>> {
+        let database_url = database_url.trim();
         if database_url.is_empty() {
             return Err(anyhow!(
                 "config.database_url must be set; SQLite support has been removed"
             ));
         }
-        Self::open_postgres_with_pool(database_url, cfg.database_pool_size)
+        Self::open_postgres_with_pool(database_url, pool_size)
     }
 
     pub fn open_postgres_with_pool(url: &str, pool_size: i32) -> Result<Arc<Self>> {

@@ -206,34 +206,65 @@ dependencies = [
 ]
 
 [[package]]
-name = "blocknet-pool-rs"
+name = "blocknet-pool-api-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "argon2",
  "axum",
  "axum-server",
- "bs58",
  "chrono",
- "dotenvy",
- "flume",
- "hex",
  "humantime",
  "parking_lot",
- "postgres",
- "rand 0.8.5",
- "reqwest",
+ "pool-common",
+ "pool-recovery",
+ "pool-runtime",
  "serde",
  "serde_json",
  "sha2",
- "sha3",
- "sysinfo",
  "tempfile",
  "tokio",
  "tokio-stream",
  "tracing",
- "tracing-subscriber",
  "urlencoding",
+]
+
+[[package]]
+name = "blocknet-pool-monitor-app"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "dotenvy",
+ "humantime",
+ "parking_lot",
+ "pool-common",
+ "pool-runtime",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "blocknet-pool-recoveryd-app"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pool-common",
+ "pool-recovery",
+ "tokio",
+]
+
+[[package]]
+name = "blocknet-pool-stratum-app"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pool-common",
+ "pool-runtime",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1184,6 +1215,64 @@ name = "pin-utils"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
+
+[[package]]
+name = "pool-common"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "bs58",
+ "chrono",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha3",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "pool-recovery"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "parking_lot",
+ "pool-runtime",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "pool-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "bs58",
+ "dotenvy",
+ "flume",
+ "hex",
+ "humantime",
+ "parking_lot",
+ "pool-common",
+ "postgres",
+ "rand 0.8.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sysinfo",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "urlencoding",
+]
 
 [[package]]
 name = "postgres"

@@ -12,13 +12,20 @@
 
 ## Runtime Modes
 
-The repo ships two runtime binaries:
+The repo ships four runtime binaries from a Cargo workspace:
 
 - `blocknet-pool-api`: API/UI process only
 - `blocknet-pool-stratum`: Stratum + payouts + maintenance process only
 - `blocknet-pool-monitor`: on-host monitoring sampler + Prometheus endpoint
+- `blocknet-pool-recoveryd`: privileged local recovery agent for daemon cutover/sync/rebuild workflows
 
 For production, prefer the split services so API/UI deploys do not drop Stratum connections.
+
+Workspace layout:
+
+- `apps/`: service-specific app packages
+- `crates/`: shared library packages with explicit dependency boundaries
+- `frontend/`: embedded React/Vite UI for the API binary
 
 ## Deploy (bntpool)
 
@@ -101,12 +108,13 @@ and uploads to `/opt/blocknet/blocknet-core/blocknet.new`.
 ```bash
 npm --prefix frontend ci
 npm --prefix frontend run build
-cargo build --release --bin blocknet-pool-api --no-default-features --features api
-cargo build --release --bin blocknet-pool-stratum --no-default-features --features stratum
-cargo build --release --bin blocknet-pool-monitor --no-default-features --features monitor
-cargo run --release --bin blocknet-pool-api --no-default-features --features api
-cargo run --release --bin blocknet-pool-stratum --no-default-features --features stratum
-cargo run --release --bin blocknet-pool-monitor --no-default-features --features monitor
+cargo build --release -p blocknet-pool-api-app --bin blocknet-pool-api
+cargo build --release -p blocknet-pool-stratum-app --bin blocknet-pool-stratum
+cargo build --release -p blocknet-pool-monitor-app --bin blocknet-pool-monitor
+cargo build --release -p blocknet-pool-recoveryd-app --bin blocknet-pool-recoveryd
+cargo run --release -p blocknet-pool-api-app --bin blocknet-pool-api
+cargo run --release -p blocknet-pool-stratum-app --bin blocknet-pool-stratum
+cargo run --release -p blocknet-pool-monitor-app --bin blocknet-pool-monitor
 # run the API and Stratum binaries in separate terminals
 # run the monitor binary in a third terminal if you want the DB-backed status page/metrics loop
 # if missing, config.json and .env are created automatically
@@ -116,9 +124,10 @@ cargo run --release --bin blocknet-pool-monitor --no-default-features --features
 Custom config:
 
 ```bash
-cargo run --release --bin blocknet-pool-api --no-default-features --features api -- --config /path/to/config.json
-cargo run --release --bin blocknet-pool-stratum --no-default-features --features stratum -- --config /path/to/config.json
-cargo run --release --bin blocknet-pool-monitor --no-default-features --features monitor -- --config /path/to/config.json
+cargo run --release -p blocknet-pool-api-app --bin blocknet-pool-api -- --config /path/to/config.json
+cargo run --release -p blocknet-pool-stratum-app --bin blocknet-pool-stratum -- --config /path/to/config.json
+cargo run --release -p blocknet-pool-monitor-app --bin blocknet-pool-monitor -- --config /path/to/config.json
+cargo run --release -p blocknet-pool-recoveryd-app --bin blocknet-pool-recoveryd -- --config /path/to/config.json
 ```
 
 ## Frontend

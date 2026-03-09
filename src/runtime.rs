@@ -7,11 +7,6 @@ use std::time::{Duration, SystemTime};
 use anyhow::{Context, Result};
 use tracing::{info, warn};
 
-#[cfg(feature = "api")]
-use crate::api::{
-    load_persisted_status_history, ApiState, DaemonHealthCache, DbTotalsCache, InsightsCache,
-    NetworkHashrateCache, PoolHealthCache, StatusHistory, DEFAULT_MAX_SSE_SUBSCRIBERS,
-};
 use crate::config::{generate_default_env, Config};
 use crate::engine::{JobRepository, NodeApi, PoolEngine, ShareStore};
 use crate::jobs::JobManager;
@@ -19,8 +14,6 @@ use crate::node::NodeClient;
 use crate::payout::PayoutProcessor;
 use crate::pow::Argon2PowHasher;
 use crate::protocol::{address_network, validate_miner_address, AddressNetwork};
-#[cfg(feature = "api")]
-use crate::recovery::RecoveryAgentClient;
 use crate::service_state::{PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY};
 use crate::stats::PoolStats;
 use crate::store::PoolStore;
@@ -43,6 +36,10 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
     ensure_runtime_files(config_path)?;
     load_dotenv(config_path);
     let cfg = Config::load(config_path)?;
+    bootstrap_shared_runtime_from_config(cfg).await
+}
+
+pub async fn bootstrap_shared_runtime_from_config(cfg: Config) -> Result<SharedRuntime> {
     validate_pool_fee_destination_config(&cfg)?;
     info!(
         "vardiff init={} min={} max={} target_shares={} retarget={}",
@@ -52,20 +49,6 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
         cfg.vardiff_target_shares,
         cfg.vardiff_retarget_interval
     );
-    if cfg.api_key.trim().is_empty() {
-        warn!(
-            host = %cfg.api_host,
-            port = cfg.api_port,
-            "api_key is empty; protected routes (/api/miners, /api/payouts, /api/fees, /api/admin/blocks/:height/reward-breakdown, /api/health, /api/admin/recovery/*, /api/daemon/logs/stream) are disabled while public routes remain available (/api/info, /api/stats, /api/stats/history, /api/stats/insights, /api/luck, /api/status, /api/events, /api/blocks, /api/payouts/recent, /api/miner/:address, /api/miner/:address/balance, /api/miner/:address/hashrate)"
-        );
-    }
-    if !cfg.api_tls_cert_path.trim().is_empty() ^ !cfg.api_tls_key_path.trim().is_empty() {
-        warn!(
-            cert_path = %cfg.api_tls_cert_path,
-            key_path = %cfg.api_tls_key_path,
-            "api tls is partially configured; set both api_tls_cert_path and api_tls_key_path to enable tls"
-        );
-    }
     if !is_local_bind_host(&cfg.stratum_host) {
         warn!(
             host = %cfg.stratum_host,
@@ -76,9 +59,11 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
     warn_on_validation_visibility_config(&cfg);
 
     let cfg_for_store = cfg.clone();
-    let store = tokio::task::spawn_blocking(move || PoolStore::open_from_config(&cfg_for_store))
-        .await
-        .context("join store initialization task")??;
+    let store = tokio::task::spawn_blocking(move || {
+        PoolStore::open(&cfg_for_store.database_url, cfg_for_store.database_pool_size)
+    })
+    .await
+    .context("join store initialization task")??;
     let daemon_api = cfg.daemon_api.clone();
     let daemon_token = cfg.daemon_token.clone();
     let daemon_data_dir = cfg.daemon_data_dir.clone();
@@ -132,59 +117,6 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
     })
 }
 
-#[cfg(feature = "api")]
-pub async fn build_api_state(shared: &SharedRuntime) -> Result<ApiState> {
-    let persisted_status_history = {
-        let store = Arc::clone(&shared.store);
-        match tokio::task::spawn_blocking(move || load_persisted_status_history(store.as_ref()))
-            .await
-            .context("join status history load task")?
-        {
-            Ok(value) => value,
-            Err(err) => {
-                warn!(error = %err, "failed loading persisted status history; starting fresh");
-                StatusHistory::default()
-            }
-        }
-    };
-
-    Ok(ApiState {
-        config: shared.cfg.clone(),
-        store: Arc::clone(&shared.store),
-        stats: Arc::clone(&shared.stats),
-        jobs: Arc::clone(&shared.jobs),
-        node: Arc::clone(&shared.node),
-        validation: Arc::clone(&shared.validation),
-        db_totals_cache: Arc::new(parking_lot::Mutex::new(DbTotalsCache::default())),
-        daemon_health_cache: Arc::new(parking_lot::Mutex::new(DaemonHealthCache::default())),
-        pool_health_cache: Arc::new(parking_lot::Mutex::new(PoolHealthCache::default())),
-        network_hashrate_cache: Arc::new(parking_lot::Mutex::new(NetworkHashrateCache::default())),
-        insights_cache: Arc::new(parking_lot::Mutex::new(InsightsCache::default())),
-        miner_pending_estimate_cache: Arc::new(parking_lot::Mutex::new(
-            std::collections::HashMap::new(),
-        )),
-        recovery: Arc::new(RecoveryAgentClient::new(
-            shared.cfg.recovery.socket_path.clone(),
-        )),
-        live_runtime_snapshot_cache: Arc::new(parking_lot::Mutex::new(
-            crate::api::LiveRuntimeSnapshotCache::default(),
-        )),
-        status_history: Arc::new(parking_lot::Mutex::new(persisted_status_history)),
-        sse_subscriber_limiter: Arc::new(tokio::sync::Semaphore::new(DEFAULT_MAX_SSE_SUBSCRIBERS)),
-        api_key: shared.cfg.api_key.clone(),
-        pool_name: shared.cfg.pool_name.clone(),
-        pool_url: shared.cfg.pool_url.clone(),
-        stratum_port: shared.cfg.stratum_port,
-        pool_fee_pct: shared.cfg.pool_fee_pct,
-        pool_fee_flat: shared.cfg.pool_fee_flat,
-        min_payout_amount: shared.cfg.min_payout_amount,
-        blocks_before_payout: shared.cfg.blocks_before_payout,
-        payout_scheme: shared.cfg.payout_scheme.clone(),
-        started_at: std::time::Instant::now(),
-        started_at_system: SystemTime::now(),
-    })
-}
-
 pub async fn build_engine(shared: &SharedRuntime) -> Result<Arc<PoolEngine>> {
     let cfg = shared.cfg.clone();
     let expected_address_network = shared.expected_address_network;
@@ -223,17 +155,6 @@ pub fn build_stratum_server(
     ))
 }
 
-pub fn api_listen_addr(cfg: &Config) -> Result<SocketAddr> {
-    format!("{}:{}", cfg.api_host, cfg.api_port)
-        .parse()
-        .with_context(|| {
-            format!(
-                "invalid api listen address {}:{}",
-                cfg.api_host, cfg.api_port
-            )
-        })
-}
-
 pub fn stratum_listen_addr(cfg: &Config) -> Result<SocketAddr> {
     format!("{}:{}", cfg.stratum_host, cfg.stratum_port)
         .parse()
@@ -243,22 +164,6 @@ pub fn stratum_listen_addr(cfg: &Config) -> Result<SocketAddr> {
                 cfg.stratum_host, cfg.stratum_port
             )
         })
-}
-
-#[cfg(feature = "api")]
-pub fn start_api_background_tasks(api_state: ApiState) {
-    tokio::spawn(async move {
-        api_state.sample_status().await;
-
-        let mut ticker = tokio::time::interval(api_state.config.monitor_interval_duration());
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        ticker.tick().await;
-
-        loop {
-            ticker.tick().await;
-            api_state.sample_status().await;
-        }
-    });
 }
 
 pub fn start_stratum_background_tasks(shared: &SharedRuntime, engine: Arc<PoolEngine>) {
@@ -477,7 +382,7 @@ fn hashrate_from_stats_with_warmup(
     total_diff as f64 / denominator
 }
 
-fn ensure_runtime_files(config_path: &Path) -> Result<()> {
+pub fn ensure_runtime_files(config_path: &Path) -> Result<()> {
     if !config_path.exists() {
         if let Some(parent) = config_path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -502,7 +407,7 @@ fn ensure_runtime_files(config_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn load_dotenv(config_path: &Path) {
+pub fn load_dotenv(config_path: &Path) {
     let candidates = [
         config_path
             .parent()
