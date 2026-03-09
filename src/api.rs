@@ -4058,6 +4058,7 @@ async fn handle_miner(
         let workers_raw = store.worker_stats_for_miner(&addr, since_24h)?;
         let worker_hashrate_raw = store.worker_hashrate_stats_for_miner(&addr, since_hr_window)?;
         let miner_blocks = store.get_blocks_for_miner(&addr)?;
+        let risk_state = store.get_address_risk(&addr)?;
         Ok::<_, anyhow::Error>((
             shares,
             mining_since,
@@ -4068,6 +4069,7 @@ async fn handle_miner(
             workers_raw,
             worker_hashrate_raw,
             miner_blocks,
+            risk_state,
         ))
     })
     .await
@@ -4092,6 +4094,7 @@ async fn handle_miner(
         workers_raw,
         worker_hashrate_raw,
         mut miner_blocks,
+        risk_state,
     ) = db_result;
     for block in &mut miner_blocks {
         hydrate_provisional_block_reward(block);
@@ -4114,17 +4117,6 @@ async fn handle_miner(
         }
     } else {
         MinerPendingEstimate::default()
-    };
-    let risk_state = match state.store.get_address_risk(&address) {
-        Ok(v) => v,
-        Err(err) => {
-            tracing::warn!(
-                address = %address,
-                error = %err,
-                "failed loading address risk state for miner detail"
-            );
-            None
-        }
     };
     let verification_hold = miner_verification_hold(risk_state.as_ref(), SystemTime::now());
 
