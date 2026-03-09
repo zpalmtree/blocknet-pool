@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, Notify};
 
 use crate::dev_fee::should_defer_submit_ack_difficulty;
 use crate::engine::{canonical_share_reject_reason, PoolEngine};
@@ -43,6 +43,27 @@ fn client_submit_ack_difficulty(
 struct ConnState {
     counts: HashMap<String, usize>,
     total: usize,
+}
+
+#[derive(Clone)]
+struct OutboundHandle {
+    normal_tx: mpsc::Sender<Vec<u8>>,
+    latest_job: Arc<Mutex<Option<Vec<u8>>>>,
+    latest_job_notify: Arc<Notify>,
+}
+
+impl OutboundHandle {
+    fn new(capacity: usize) -> (Self, mpsc::Receiver<Vec<u8>>) {
+        let (normal_tx, normal_rx) = mpsc::channel(capacity);
+        (
+            Self {
+                normal_tx,
+                latest_job: Arc::new(Mutex::new(None)),
+                latest_job_notify: Arc::new(Notify::new()),
+            },
+            normal_rx,
+        )
+    }
 }
 
 pub struct StratumServer {
@@ -138,9 +159,12 @@ impl StratumServer {
     async fn handle_conn(&self, stream: TcpStream, peer: SocketAddr) -> Result<()> {
         let conn_id = peer.to_string();
         let (reader_half, writer_half) = stream.into_split();
-        let (outbound_tx, outbound_rx) = mpsc::channel::<Vec<u8>>(OUTBOUND_QUEUE_CAPACITY);
-        let mut writer_task =
-            tokio::spawn(async move { run_outbound_writer(writer_half, outbound_rx).await });
+        let (outbound, outbound_rx) = OutboundHandle::new(OUTBOUND_QUEUE_CAPACITY);
+        let latest_job = Arc::clone(&outbound.latest_job);
+        let latest_job_notify = Arc::clone(&outbound.latest_job_notify);
+        let mut writer_task = tokio::spawn(async move {
+            run_outbound_writer(writer_half, outbound_rx, latest_job, latest_job_notify).await
+        });
         let mut writer_task_finished = false;
 
         let mut logged_in: Option<(String, String, u64)> = None; // address, worker, difficulty
@@ -201,7 +225,7 @@ impl StratumServer {
                                     method: "job".to_string(),
                                     params: serde_json::to_value(miner_job)?,
                                 };
-                                if let Err(err) = queue_json(&outbound_tx, &notify) {
+                                if let Err(err) = queue_job_json(&outbound, &notify) {
                                     run_result = Err(err);
                                     break;
                                 }
@@ -213,7 +237,7 @@ impl StratumServer {
                 maybe_notification = rx_notifications.recv(), if logged_in.is_some() => {
                     match maybe_notification {
                         Ok(notification) => {
-                            if let Err(err) = queue_json(&outbound_tx, &notification) {
+                            if let Err(err) = queue_json(&outbound, &notification) {
                                 run_result = Err(err);
                                 break;
                             }
@@ -231,7 +255,7 @@ impl StratumServer {
                         Ok(Some(v)) => v,
                         Ok(None) => break,
                         Err(err) => {
-                            let _ = queue_error(&outbound_tx, 0, &err.to_string());
+                            let _ = queue_error(&outbound, 0, &err.to_string());
                             break;
                         }
                     };
@@ -248,7 +272,7 @@ impl StratumServer {
                     let req: StratumRequest = match serde_json::from_str(trimmed) {
                         Ok(v) => v,
                         Err(_) => {
-                            if let Err(err) = queue_error(&outbound_tx, 0, "invalid JSON") {
+                            if let Err(err) = queue_error(&outbound, 0, "invalid JSON") {
                                 run_result = Err(err);
                                 break;
                             }
@@ -262,7 +286,7 @@ impl StratumServer {
                                 Ok(v) => v,
                                 Err(_) => {
                                     if let Err(err) =
-                                        queue_error(&outbound_tx, req.id, "invalid login params")
+                                        queue_error(&outbound, req.id, "invalid login params")
                                     {
                                         run_result = Err(err);
                                         break;
@@ -308,7 +332,7 @@ impl StratumServer {
                                         error: None,
                                         result: Some(serde_json::to_value(login_result)?),
                                     };
-                                    if let Err(err) = queue_json(&outbound_tx, &response) {
+                                    if let Err(err) = queue_json(&outbound, &response) {
                                         run_result = Err(err);
                                         break;
                                     }
@@ -322,19 +346,19 @@ impl StratumServer {
                                             method: "job".to_string(),
                                             params: serde_json::to_value(miner_job)?,
                                         };
-                                        if let Err(err) = queue_json(&outbound_tx, &notify) {
+                                        if let Err(err) = queue_json(&outbound, &notify) {
                                             run_result = Err(err);
                                             break;
                                         }
                                     }
                                 }
                                 Ok(Err(err)) => {
-                                    let _ = queue_error(&outbound_tx, req.id, &err.to_string());
+                                    let _ = queue_error(&outbound, req.id, &err.to_string());
                                     break;
                                 }
                                 Err(err) => {
                                     let _ = queue_error(
-                                        &outbound_tx,
+                                        &outbound,
                                         req.id,
                                         &format!("login worker failure: {err}"),
                                     );
@@ -347,7 +371,7 @@ impl StratumServer {
                                 Ok(v) => v,
                                 Err(_) => {
                                     if let Err(err) =
-                                        queue_error(&outbound_tx, req.id, "invalid submit params")
+                                        queue_error(&outbound, req.id, "invalid submit params")
                                     {
                                         run_result = Err(err);
                                         break;
@@ -368,7 +392,7 @@ impl StratumServer {
                                     self.stats.record_rejected_share(address, "rate limited");
                                 }
                                 if let Err(err) =
-                                    queue_error(&outbound_tx, req.id, "rate limited, retry")
+                                    queue_error(&outbound, req.id, "rate limited, retry")
                                 {
                                     run_result = Err(err);
                                     break;
@@ -435,7 +459,7 @@ impl StratumServer {
                                                         method: "job".to_string(),
                                                         params: serde_json::to_value(miner_job)?,
                                                     };
-                                                    if let Err(err) = queue_json(&outbound_tx, &notify) {
+                                                    if let Err(err) = queue_job_json(&outbound, &notify) {
                                                         run_result = Err(err);
                                                         break;
                                                     }
@@ -461,7 +485,7 @@ impl StratumServer {
                                             "difficulty": response_difficulty,
                                         })),
                                     };
-                                    if let Err(err) = queue_json(&outbound_tx, &response) {
+                                    if let Err(err) = queue_json(&outbound, &response) {
                                         run_result = Err(err);
                                         break;
                                     }
@@ -470,7 +494,7 @@ impl StratumServer {
                                             NOTIFY_MINER_BLOCK_FOUND,
                                             "great success: you found a block for the pool",
                                         );
-                                        if let Err(err) = queue_json(&outbound_tx, &miner_notification) {
+                                        if let Err(err) = queue_json(&outbound, &miner_notification) {
                                             run_result = Err(err);
                                             break;
                                         }
@@ -516,7 +540,7 @@ impl StratumServer {
                                             );
                                         }
                                     }
-                                    if let Err(err) = queue_error(&outbound_tx, req.id, &err_text) {
+                                    if let Err(err) = queue_error(&outbound, req.id, &err_text) {
                                         run_result = Err(err);
                                         break;
                                     }
@@ -535,7 +559,7 @@ impl StratumServer {
                                         );
                                     }
                                     if let Err(err) = queue_error(
-                                        &outbound_tx,
+                                        &outbound,
                                         req.id,
                                         &format!("submit worker failure: {err}"),
                                     ) {
@@ -546,7 +570,7 @@ impl StratumServer {
                             }
                         }
                         _ => {
-                            if let Err(err) = queue_error(&outbound_tx, req.id, "unknown method") {
+                            if let Err(err) = queue_error(&outbound, req.id, "unknown method") {
                                 run_result = Err(err);
                                 break;
                             }
@@ -556,7 +580,7 @@ impl StratumServer {
             }
         }
 
-        drop(outbound_tx);
+        drop(outbound);
         if !writer_task_finished {
             let writer_result = writer_task.await;
             if run_result.is_ok() {
@@ -583,14 +607,14 @@ impl StratumServer {
     }
 }
 
-fn queue_error(tx: &mpsc::Sender<Vec<u8>>, id: u64, msg: &str) -> Result<()> {
+fn queue_error(outbound: &OutboundHandle, id: u64, msg: &str) -> Result<()> {
     let response = StratumResponse {
         id,
         status: None,
         error: Some(msg.to_string()),
         result: None,
     };
-    queue_json(tx, &response)
+    queue_json(outbound, &response)
 }
 
 async fn read_line_limited(
@@ -626,10 +650,19 @@ async fn read_line_limited(
         .map_err(|_| anyhow!("request is not valid UTF-8"))
 }
 
-fn queue_json<T: serde::Serialize>(tx: &mpsc::Sender<Vec<u8>>, value: &T) -> Result<()> {
+fn queue_json<T: serde::Serialize>(outbound: &OutboundHandle, value: &T) -> Result<()> {
     let payload = serialize_json_line(value)?;
-    tx.try_send(payload)
+    outbound
+        .normal_tx
+        .try_send(payload)
         .map_err(|err| anyhow!("stratum outbound queue saturated: {err}"))
+}
+
+fn queue_job_json<T: serde::Serialize>(outbound: &OutboundHandle, value: &T) -> Result<()> {
+    let payload = serialize_json_line(value)?;
+    *outbound.latest_job.lock() = Some(payload);
+    outbound.latest_job_notify.notify_one();
+    Ok(())
 }
 
 fn serialize_json_line<T: serde::Serialize>(value: &T) -> Result<Vec<u8>> {
@@ -638,23 +671,57 @@ fn serialize_json_line<T: serde::Serialize>(value: &T) -> Result<Vec<u8>> {
     Ok(data)
 }
 
-async fn run_outbound_writer<W>(mut writer: W, mut rx: mpsc::Receiver<Vec<u8>>) -> Result<()>
+async fn run_outbound_writer<W>(
+    mut writer: W,
+    mut rx: mpsc::Receiver<Vec<u8>>,
+    latest_job: Arc<Mutex<Option<Vec<u8>>>>,
+    latest_job_notify: Arc<Notify>,
+) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    while let Some(data) = rx.recv().await {
-        match tokio::time::timeout(OUTBOUND_WRITE_TIMEOUT, writer.write_all(&data)).await {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => return Err(err.into()),
-            Err(_) => {
-                return Err(anyhow!(
-                    "stratum outbound write timed out after {}ms",
-                    OUTBOUND_WRITE_TIMEOUT.as_millis()
-                ));
+    loop {
+        if let Some(data) = take_priority_job(&latest_job) {
+            write_outbound_payload(&mut writer, &data).await?;
+            continue;
+        }
+
+        tokio::select! {
+            biased;
+            _ = latest_job_notify.notified() => {
+                continue;
+            }
+            maybe = rx.recv() => {
+                let Some(data) = maybe else {
+                    if let Some(data) = take_priority_job(&latest_job) {
+                        write_outbound_payload(&mut writer, &data).await?;
+                        continue;
+                    }
+                    break;
+                };
+                write_outbound_payload(&mut writer, &data).await?;
             }
         }
     }
     Ok(())
+}
+
+fn take_priority_job(latest_job: &Mutex<Option<Vec<u8>>>) -> Option<Vec<u8>> {
+    latest_job.lock().take()
+}
+
+async fn write_outbound_payload<W>(writer: &mut W, data: &[u8]) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    match tokio::time::timeout(OUTBOUND_WRITE_TIMEOUT, writer.write_all(data)).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(err)) => Err(err.into()),
+        Err(_) => Err(anyhow!(
+            "stratum outbound write timed out after {}ms",
+            OUTBOUND_WRITE_TIMEOUT.as_millis()
+        )),
+    }
 }
 
 fn block_notification(kind: &str, message: &str) -> StratumNotify {
@@ -681,12 +748,14 @@ fn log_rejection_at_info(reason_code: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        client_submit_ack_difficulty, log_rejection_at_info, queue_json, run_outbound_writer,
-        StratumResponse,
+        client_submit_ack_difficulty, log_rejection_at_info, queue_job_json, queue_json,
+        run_outbound_writer, OutboundHandle, StratumResponse,
     };
     use crate::engine::canonical_share_reject_reason;
-    use tokio::io::duplex;
-    use tokio::sync::mpsc;
+    use crate::protocol::StratumNotify;
+    use serde_json::Value;
+    use std::sync::Arc;
+    use tokio::io::{duplex, AsyncReadExt};
 
     #[test]
     fn stale_and_duplicate_share_reasons_are_classified() {
@@ -740,12 +809,14 @@ mod tests {
 
     #[test]
     fn queue_json_rejects_when_outbound_queue_is_full() {
-        let (tx, _rx) = mpsc::channel(1);
-        tx.try_send(b"occupied\n".to_vec())
+        let (outbound, _rx) = OutboundHandle::new(1);
+        outbound
+            .normal_tx
+            .try_send(b"occupied\n".to_vec())
             .expect("seeded payload should fit");
 
         let err = queue_json(
-            &tx,
+            &outbound,
             &StratumResponse {
                 id: 1,
                 status: Some("ok".to_string()),
@@ -761,16 +832,76 @@ mod tests {
     #[tokio::test]
     async fn outbound_writer_times_out_when_peer_stops_reading() {
         let (writer, _reader) = duplex(1);
-        let (tx, rx) = mpsc::channel(1);
-        tx.send(vec![b'a'; 64])
+        let (outbound, rx) = OutboundHandle::new(1);
+        let latest_job = Arc::clone(&outbound.latest_job);
+        let latest_job_notify = Arc::clone(&outbound.latest_job_notify);
+        outbound
+            .normal_tx
+            .send(vec![b'a'; 64])
             .await
             .expect("seed payload should enqueue");
-        drop(tx);
+        drop(outbound);
 
-        let err = run_outbound_writer(writer, rx)
+        let err = run_outbound_writer(writer, rx, latest_job, latest_job_notify)
             .await
             .expect_err("writer should time out when peer stops reading");
 
         assert!(err.to_string().contains("timed out"));
+    }
+
+    #[tokio::test]
+    async fn outbound_writer_prioritizes_latest_job_and_coalesces_stale_jobs() {
+        let (writer, mut reader) = duplex(4096);
+        let (outbound, rx) = OutboundHandle::new(8);
+        let latest_job = Arc::clone(&outbound.latest_job);
+        let latest_job_notify = Arc::clone(&outbound.latest_job_notify);
+
+        queue_json(
+            &outbound,
+            &StratumResponse {
+                id: 7,
+                status: Some("ok".to_string()),
+                error: None,
+                result: Some(serde_json::json!({"accepted": true})),
+            },
+        )
+        .expect("response should enqueue");
+        queue_job_json(
+            &outbound,
+            &StratumNotify {
+                method: "job".to_string(),
+                params: serde_json::json!({"job_id": "old"}),
+            },
+        )
+        .expect("old job should enqueue");
+        queue_job_json(
+            &outbound,
+            &StratumNotify {
+                method: "job".to_string(),
+                params: serde_json::json!({"job_id": "new"}),
+            },
+        )
+        .expect("new job should replace the stale one");
+        drop(outbound);
+
+        run_outbound_writer(writer, rx, latest_job, latest_job_notify)
+            .await
+            .expect("writer should flush queued payloads");
+
+        let mut out = Vec::new();
+        reader
+            .read_to_end(&mut out)
+            .await
+            .expect("reader should collect writer output");
+        let lines = String::from_utf8(out).expect("output should be utf8");
+        let messages = lines
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("line should decode as json"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(messages.len(), 2, "stale job should be coalesced away");
+        assert_eq!(messages[0]["method"], "job");
+        assert_eq!(messages[0]["params"]["job_id"], "new");
+        assert_eq!(messages[1]["id"], 7);
     }
 }
