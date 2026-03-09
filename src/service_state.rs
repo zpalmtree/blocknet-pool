@@ -3,6 +3,7 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 
 use crate::jobs::JobRuntimeSnapshot;
+use crate::payout::PayoutRuntimeSnapshot;
 use crate::stats::PoolSnapshot;
 use crate::validation::ValidationSnapshot;
 
@@ -39,6 +40,29 @@ impl From<ValidationSnapshot> for PersistedValidationSummary {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PersistedPayoutRuntime {
+    #[serde(default)]
+    pub payout_interval_seconds: u64,
+    #[serde(default)]
+    pub maintenance_interval_seconds: u64,
+    #[serde(default)]
+    pub next_sweep_at: Option<SystemTime>,
+    #[serde(default)]
+    pub last_tick_at: Option<SystemTime>,
+}
+
+impl From<PayoutRuntimeSnapshot> for PersistedPayoutRuntime {
+    fn from(value: PayoutRuntimeSnapshot) -> Self {
+        Self {
+            payout_interval_seconds: value.payout_interval_seconds,
+            maintenance_interval_seconds: value.maintenance_interval_seconds,
+            next_sweep_at: value.next_sweep_at,
+            last_tick_at: value.last_tick_at,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedRuntimeSnapshot {
     pub sampled_at: SystemTime,
@@ -51,6 +75,8 @@ pub struct PersistedRuntimeSnapshot {
     pub last_share_at: Option<SystemTime>,
     #[serde(default)]
     pub jobs: JobRuntimeSnapshot,
+    #[serde(default)]
+    pub payouts: PersistedPayoutRuntime,
     pub validation: PersistedValidationSummary,
 }
 
@@ -59,6 +85,7 @@ impl PersistedRuntimeSnapshot {
         pool: PoolSnapshot,
         validation: ValidationSnapshot,
         jobs: JobRuntimeSnapshot,
+        payouts: PayoutRuntimeSnapshot,
     ) -> Self {
         Self {
             sampled_at: SystemTime::now(),
@@ -68,6 +95,7 @@ impl PersistedRuntimeSnapshot {
             estimated_hashrate: pool.estimated_hashrate,
             last_share_at: pool.last_share_at,
             jobs,
+            payouts: payouts.into(),
             validation: validation.into(),
         }
     }

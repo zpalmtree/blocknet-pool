@@ -1,7 +1,7 @@
 [Unit]
 Description=Blocknet Pool Monitor
-After=network-online.target blocknetd.service postgresql.service blocknet-pool-api.service blocknet-pool-stratum.service
-Wants=network-online.target postgresql.service
+After=network-online.target nginx.service postgresql.service blocknet-pool-api.service blocknet-pool-stratum.service blocknet-pool-recoveryd.socket
+Wants=network-online.target nginx.service postgresql.service blocknet-pool-recoveryd.socket
 
 [Service]
 Type=simple

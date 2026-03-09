@@ -112,6 +112,15 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
   const round = insights?.round;
   const payoutEta = insights?.payout_eta;
   const latestSolvedBlock = insights?.luck_history?.[0];
+  const nextSweepAt = toUnixMs(payoutEta?.next_sweep_at);
+  const nextSweepLabel =
+    payoutEta?.next_sweep_in_seconds != null
+      ? fmtSeconds(payoutEta.next_sweep_in_seconds)
+      : nextSweepAt
+        ? new Date(nextSweepAt).toLocaleTimeString()
+        : '-';
+  const configuredSweepLabel =
+    payoutEta?.configured_interval_seconds != null ? fmtSeconds(payoutEta.configured_interval_seconds) : '-';
 
   const avgLuck = insights?.avg_effort_pct;
   return (
@@ -245,8 +254,17 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
           <div className="value mono">{payoutEta?.eta_seconds != null ? fmtSeconds(payoutEta.eta_seconds) : '-'}</div>
         </div>
         <div className="stat-card">
-          <div className="label">Typical Payout Interval</div>
-          <div className="value mono">{payoutEta?.typical_interval_seconds ? fmtSeconds(payoutEta.typical_interval_seconds) : '-'}</div>
+          <div className="label">Next Sweep</div>
+          <div className="value mono" title={nextSweepAt ? new Date(nextSweepAt).toLocaleString() : undefined}>
+            {nextSweepLabel}
+          </div>
+          <div className="stat-meta">Every {configuredSweepLabel}</div>
+        </div>
+        <div className="stat-card">
+          <div className="label">Observed Batch Cadence</div>
+          <div className="value mono">
+            {payoutEta?.typical_interval_seconds ? fmtSeconds(payoutEta.typical_interval_seconds) : '-'}
+          </div>
         </div>
       </div>
 

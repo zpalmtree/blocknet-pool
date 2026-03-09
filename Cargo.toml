@@ -24,6 +24,10 @@ name = "blocknet-pool-monitor"
 path = "src/bin/blocknet-pool-monitor.rs"
 required-features = ["monitor"]
 
+[[bin]]
+name = "blocknet-pool-recoveryd"
+path = "src/bin/blocknet-pool-recoveryd.rs"
+
 [dependencies]
 anyhow = "1.0"
 argon2 = "0.5"

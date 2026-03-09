@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
+use std::fs;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path as StdPath, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -39,7 +40,10 @@ use crate::payout::{
     is_share_payout_eligible, recover_share_window_by_replay, resolve_pool_fee_destination,
     reward_window_end, weight_shares, PayoutTrustPolicy,
 };
-use crate::service_state::{PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY};
+use crate::recovery::{RecoveryAgentClient, RecoveryInstanceId, RecoveryOperation, RecoveryStatus};
+use crate::service_state::{
+    PersistedPayoutRuntime, PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY,
+};
 use crate::stats::{
     MinerStats, PoolSnapshot, PoolStats, RejectionAnalyticsSnapshot, RejectionReasonCount,
 };
@@ -364,6 +368,7 @@ pub struct ApiState {
     pub network_hashrate_cache: Arc<Mutex<NetworkHashrateCache>>,
     pub insights_cache: Arc<Mutex<InsightsCache>>,
     pub miner_pending_estimate_cache: Arc<Mutex<HashMap<String, MinerPendingEstimateCache>>>,
+    pub recovery: Arc<RecoveryAgentClient>,
     pub live_runtime_snapshot_cache: Arc<Mutex<LiveRuntimeSnapshotCache>>,
     pub status_history: Arc<Mutex<StatusHistory>>,
     pub sse_subscriber_limiter: Arc<Semaphore>,
@@ -582,6 +587,9 @@ struct PayoutEtaResponse {
     estimated_next_payout_at: Option<SystemTime>,
     eta_seconds: Option<u64>,
     typical_interval_seconds: Option<u64>,
+    configured_interval_seconds: Option<u64>,
+    next_sweep_at: Option<SystemTime>,
+    next_sweep_in_seconds: Option<u64>,
     pending_count: usize,
     pending_total_amount: u64,
     wallet_spendable: Option<u64>,
@@ -666,6 +674,36 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
             get(handle_admin_block_reward_breakdown),
         )
         .route("/api/health", get(handle_health))
+        .route("/api/admin/recovery/status", get(handle_recovery_status))
+        .route(
+            "/api/admin/recovery/payouts/pause",
+            post(handle_recovery_pause_payouts),
+        )
+        .route(
+            "/api/admin/recovery/payouts/resume",
+            post(handle_recovery_resume_payouts),
+        )
+        .route(
+            "/api/admin/recovery/inactive/start-sync",
+            post(handle_recovery_start_inactive_sync),
+        )
+        .route(
+            "/api/admin/recovery/standby/start-sync",
+            post(handle_recovery_start_inactive_sync),
+        )
+        .route(
+            "/api/admin/recovery/inactive/rebuild-wallet",
+            post(handle_recovery_rebuild_inactive_wallet),
+        )
+        .route(
+            "/api/admin/recovery/standby/rebuild-wallet",
+            post(handle_recovery_rebuild_inactive_wallet),
+        )
+        .route("/api/admin/recovery/cutover", post(handle_recovery_cutover))
+        .route(
+            "/api/admin/recovery/inactive/purge-resync",
+            post(handle_recovery_purge_inactive_daemon),
+        )
         .route("/api/daemon/logs/stream", get(handle_daemon_logs_stream))
         .route_layer(middleware::from_fn_with_state(
             app_state.clone(),
@@ -3342,6 +3380,106 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
     Json(response).into_response()
 }
 
+#[derive(Debug, Deserialize)]
+struct RecoveryCutoverRequest {
+    target: RecoveryInstanceId,
+}
+
+async fn handle_recovery_status(State(state): State<ApiState>) -> impl IntoResponse {
+    if !state.config.recovery.enabled {
+        return Json(RecoveryStatus::disabled(&state.config)).into_response();
+    }
+    match state.recovery.status().await {
+        Ok(status) => Json(status).into_response(),
+        Err(err) => internal_error("failed loading recovery status", err).into_response(),
+    }
+}
+
+async fn handle_recovery_pause_payouts(State(state): State<ApiState>) -> impl IntoResponse {
+    match recovery_operation_response(&state, state.recovery.pause_payouts().await).await {
+        Ok(response) => response,
+        Err(response) => response,
+    }
+}
+
+async fn handle_recovery_resume_payouts(State(state): State<ApiState>) -> impl IntoResponse {
+    match recovery_operation_response(&state, state.recovery.resume_payouts().await).await {
+        Ok(response) => response,
+        Err(response) => response,
+    }
+}
+
+async fn handle_recovery_start_inactive_sync(State(state): State<ApiState>) -> impl IntoResponse {
+    match recovery_operation_response(&state, state.recovery.start_inactive_sync().await).await {
+        Ok(response) => response,
+        Err(response) => response,
+    }
+}
+
+async fn handle_recovery_rebuild_inactive_wallet(
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    match recovery_operation_response(&state, state.recovery.rebuild_inactive_wallet().await).await
+    {
+        Ok(response) => response,
+        Err(response) => response,
+    }
+}
+
+async fn handle_recovery_cutover(
+    State(state): State<ApiState>,
+    Json(request): Json<RecoveryCutoverRequest>,
+) -> impl IntoResponse {
+    match recovery_operation_response(&state, state.recovery.cutover(request.target).await).await {
+        Ok(response) => response,
+        Err(response) => response,
+    }
+}
+
+async fn handle_recovery_purge_inactive_daemon(State(state): State<ApiState>) -> impl IntoResponse {
+    match recovery_operation_response(&state, state.recovery.purge_inactive_daemon().await).await {
+        Ok(response) => response,
+        Err(response) => response,
+    }
+}
+
+async fn recovery_operation_response(
+    state: &ApiState,
+    result: anyhow::Result<RecoveryOperation>,
+) -> std::result::Result<Response, Response> {
+    if !state.config.recovery.enabled {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error":"recovery controls are disabled"})),
+        )
+            .into_response());
+    }
+    match result {
+        Ok(operation) => Ok(Json(operation).into_response()),
+        Err(err) => {
+            let message = err.to_string();
+            let status = if message.contains("already running")
+                || message.contains("pause payouts before")
+                || message.contains("still syncing")
+                || message.contains("not loaded")
+                || message.contains("not reachable")
+                || message.contains("already active")
+            {
+                StatusCode::CONFLICT
+            } else if message.contains("disabled") {
+                StatusCode::SERVICE_UNAVAILABLE
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            if status == StatusCode::INTERNAL_SERVER_ERROR {
+                Err(internal_error("failed starting recovery operation", err).into_response())
+            } else {
+                Err((status, Json(serde_json::json!({"error": message}))).into_response())
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct DaemonLogCommand {
     source: &'static str,
@@ -3415,20 +3553,6 @@ async fn stream_daemon_logs(
 }
 
 fn daemon_log_commands(config: &Config, tail: usize, follow: bool) -> Vec<DaemonLogCommand> {
-    let mut journal_args = vec![
-        "-u".to_string(),
-        "blocknetd.service".to_string(),
-        "-q".to_string(),
-        "-a".to_string(),
-        "-n".to_string(),
-        tail.to_string(),
-        "-o".to_string(),
-        "short-iso".to_string(),
-    ];
-    if follow {
-        journal_args.push("-f".to_string());
-    }
-
     let mut tail_args = vec!["-n".to_string(), tail.to_string()];
     if follow {
         tail_args.push("-F".to_string());
@@ -3440,26 +3564,127 @@ fn daemon_log_commands(config: &Config, tail: usize, follow: bool) -> Vec<Daemon
             .to_string(),
     );
 
-    vec![
-        DaemonLogCommand {
+    let mut commands = Vec::new();
+    for unit in daemon_log_units(config) {
+        let mut journal_args = vec![
+            "-u".to_string(),
+            unit,
+            "-q".to_string(),
+            "-a".to_string(),
+            "-n".to_string(),
+            tail.to_string(),
+            "-o".to_string(),
+            "short-iso".to_string(),
+        ];
+        if follow {
+            journal_args.push("-f".to_string());
+        }
+        commands.push(DaemonLogCommand {
             source: "journald",
             program: "journalctl",
             args: journal_args,
-        },
-        DaemonLogCommand {
-            source: "debug-log",
-            program: "tail",
-            args: tail_args,
-        },
-    ]
+        });
+    }
+    commands.push(DaemonLogCommand {
+        source: "debug-log",
+        program: "tail",
+        args: tail_args,
+    });
+    commands
 }
 
 fn daemon_debug_log_path(config: &Config) -> PathBuf {
+    if let Some(instance) = active_recovery_instance(config) {
+        let data_dir = config.recovery.instance(instance).data_dir.trim();
+        if !data_dir.is_empty() {
+            return PathBuf::from(data_dir).join("debug.log");
+        }
+    }
     let data_dir = config.daemon_data_dir.trim();
     if data_dir.is_empty() {
         return PathBuf::from("data").join("debug.log");
     }
     PathBuf::from(data_dir).join("debug.log")
+}
+
+fn daemon_log_units(config: &Config) -> Vec<String> {
+    let mut units = Vec::new();
+    if let Some(active) = active_recovery_instance(config) {
+        let service = config.recovery.instance(active).service.trim();
+        if !service.is_empty() {
+            units.push(service.to_string());
+        }
+    }
+    if config.recovery.enabled {
+        for instance in [RecoveryInstanceId::Primary, RecoveryInstanceId::Standby] {
+            let service = config.recovery.instance(instance).service.trim();
+            if !service.is_empty() && !units.iter().any(|existing| existing == service) {
+                units.push(service.to_string());
+            }
+        }
+    }
+    if !units.iter().any(|existing| existing == "blocknetd.service") {
+        units.push("blocknetd.service".to_string());
+    }
+    units
+}
+
+fn active_recovery_instance(config: &Config) -> Option<RecoveryInstanceId> {
+    let proxy_target = detect_recovery_proxy_target(config);
+    let cookie_target = detect_recovery_active_cookie_target(config);
+    match (proxy_target, cookie_target) {
+        (Some(proxy), Some(cookie)) if proxy == cookie => Some(proxy),
+        (Some(proxy), None) => Some(proxy),
+        (None, Some(cookie)) => Some(cookie),
+        _ => None,
+    }
+}
+
+fn detect_recovery_proxy_target(config: &Config) -> Option<RecoveryInstanceId> {
+    if !config.recovery.enabled {
+        return None;
+    }
+    let raw = fs::read_to_string(config.recovery.proxy_include_path.trim()).ok()?;
+    let primary_api = config.recovery.primary.api.trim();
+    let standby_api = config.recovery.standby.api.trim();
+    if !primary_api.is_empty() && raw.contains(primary_api) {
+        Some(RecoveryInstanceId::Primary)
+    } else if !standby_api.is_empty() && raw.contains(standby_api) {
+        Some(RecoveryInstanceId::Standby)
+    } else {
+        None
+    }
+}
+
+fn detect_recovery_active_cookie_target(config: &Config) -> Option<RecoveryInstanceId> {
+    if !config.recovery.enabled {
+        return None;
+    }
+    let link = StdPath::new(config.recovery.active_cookie_path.trim());
+    let target = fs::read_link(link).ok()?;
+    if path_matches(
+        &target,
+        StdPath::new(config.recovery.primary.cookie_path.trim()),
+    ) {
+        Some(RecoveryInstanceId::Primary)
+    } else if path_matches(
+        &target,
+        StdPath::new(config.recovery.standby.cookie_path.trim()),
+    ) {
+        Some(RecoveryInstanceId::Standby)
+    } else {
+        None
+    }
+}
+
+fn path_matches(actual: &StdPath, expected: &StdPath) -> bool {
+    if actual == expected {
+        return true;
+    }
+    match (fs::canonicalize(actual), fs::canonicalize(expected)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }
 
 async fn stream_daemon_logs_with_command(
@@ -5261,6 +5486,9 @@ fn compute_payout_eta(store: &PoolStore) -> anyhow::Result<PayoutEtaResponse> {
         estimated_next_payout_at,
         eta_seconds,
         typical_interval_seconds,
+        configured_interval_seconds: None,
+        next_sweep_at: None,
+        next_sweep_in_seconds: None,
         pending_count: pending.len(),
         pending_total_amount,
         wallet_spendable: None,
@@ -5268,6 +5496,24 @@ fn compute_payout_eta(store: &PoolStore) -> anyhow::Result<PayoutEtaResponse> {
         queue_shortfall_amount: 0,
         liquidity_constrained: false,
     })
+}
+
+fn apply_runtime_schedule_to_payout_eta(
+    payout_eta: &mut PayoutEtaResponse,
+    payout_runtime: Option<&PersistedPayoutRuntime>,
+) {
+    let Some(runtime) = payout_runtime else {
+        return;
+    };
+    if runtime.payout_interval_seconds > 0 {
+        payout_eta.configured_interval_seconds = Some(runtime.payout_interval_seconds);
+    }
+    payout_eta.next_sweep_at = runtime.next_sweep_at;
+    payout_eta.next_sweep_in_seconds = runtime.next_sweep_at.and_then(|next| {
+        next.duration_since(SystemTime::now())
+            .ok()
+            .map(|duration| duration.as_secs())
+    });
 }
 
 fn apply_wallet_liquidity_to_payout_eta(
@@ -6057,6 +6303,11 @@ impl ApiState {
             .await
             .ok()
             .and_then(Result::ok);
+        let persisted_runtime = self.persisted_runtime_snapshot().await;
+        apply_runtime_schedule_to_payout_eta(
+            &mut payout_eta,
+            persisted_runtime.as_ref().map(|snapshot| &snapshot.payouts),
+        );
         apply_wallet_liquidity_to_payout_eta(&mut payout_eta, wallet_balance.as_ref());
 
         let elapsed_seconds = round_start
@@ -7022,7 +7273,10 @@ mod tests {
     use crate::jobs::{JobManager, JobRuntimeSnapshot};
     use crate::node::{NodeClient, WalletBalance};
     use crate::pow::Argon2PowHasher;
-    use crate::service_state::{PersistedRuntimeSnapshot, PersistedValidationSummary};
+    use crate::recovery::RecoveryAgentClient;
+    use crate::service_state::{
+        PersistedPayoutRuntime, PersistedRuntimeSnapshot, PersistedValidationSummary,
+    };
     use crate::stats::PoolStats;
     use crate::store::PoolStore;
     use crate::validation::ValidationEngine;
@@ -7093,6 +7347,7 @@ mod tests {
             )),
             insights_cache: Arc::new(parking_lot::Mutex::new(InsightsCache::default())),
             miner_pending_estimate_cache: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            recovery: Arc::new(RecoveryAgentClient::new(cfg.recovery.socket_path.clone())),
             live_runtime_snapshot_cache: Arc::new(parking_lot::Mutex::new(
                 LiveRuntimeSnapshotCache::default(),
             )),
@@ -7526,6 +7781,7 @@ mod tests {
                 tracked_templates: 4,
                 active_assignments: 12,
             },
+            payouts: PersistedPayoutRuntime::default(),
             validation: PersistedValidationSummary::default(),
         };
         store
@@ -8568,17 +8824,64 @@ mod tests {
             ..Config::default()
         };
         let commands = daemon_log_commands(&cfg, 200, true);
-        assert_eq!(commands.len(), 2);
+        assert_eq!(commands.len(), 4);
         assert_eq!(commands[0].program, "journalctl");
+        assert!(commands[0]
+            .args
+            .iter()
+            .any(|a| a == "blocknetd@primary.service"));
         assert!(commands[0].args.iter().any(|a| a == "-q"));
         assert!(commands[0].args.iter().any(|a| a == "-a"));
         assert!(commands[0].args.iter().any(|a| a == "-f"));
-        assert_eq!(commands[1].program, "tail");
-        assert!(commands[1].args.iter().any(|a| a == "-F"));
+        assert_eq!(commands[1].program, "journalctl");
         assert!(commands[1]
             .args
             .iter()
+            .any(|a| a == "blocknetd@standby.service"));
+        assert_eq!(commands[2].program, "journalctl");
+        assert!(commands[2].args.iter().any(|a| a == "blocknetd.service"));
+        assert_eq!(commands[3].program, "tail");
+        assert!(commands[3].args.iter().any(|a| a == "-F"));
+        assert!(commands[3]
+            .args
+            .iter()
             .any(|a| a == "/var/lib/blocknet/data/debug.log"));
+    }
+
+    #[test]
+    fn daemon_log_commands_prefer_active_recovery_unit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let proxy_include = dir.path().join("blocknet-daemon-active-upstream.inc");
+        std::fs::write(&proxy_include, "proxy_pass http://127.0.0.1:18332;\n")
+            .expect("write proxy include");
+
+        let mut cfg = Config::default();
+        cfg.recovery.proxy_include_path = proxy_include.display().to_string();
+
+        let commands = daemon_log_commands(&cfg, 50, false);
+        assert_eq!(commands[0].program, "journalctl");
+        assert!(commands[0]
+            .args
+            .iter()
+            .any(|a| a == "blocknetd@standby.service"));
+    }
+
+    #[test]
+    fn daemon_debug_log_path_uses_active_recovery_data_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let proxy_include = dir.path().join("blocknet-daemon-active-upstream.inc");
+        std::fs::write(&proxy_include, "proxy_pass http://127.0.0.1:18332;\n")
+            .expect("write proxy include");
+
+        let mut cfg = Config::default();
+        cfg.daemon_data_dir = "/var/lib/blocknet/data".to_string();
+        cfg.recovery.proxy_include_path = proxy_include.display().to_string();
+        cfg.recovery.standby.data_dir = "/var/lib/blocknet-standby/data".to_string();
+
+        assert_eq!(
+            daemon_debug_log_path(&cfg).to_string_lossy(),
+            "/var/lib/blocknet-standby/data/debug.log"
+        );
     }
 
     #[test]
@@ -8840,6 +9143,9 @@ mod tests {
             estimated_next_payout_at: None,
             eta_seconds: None,
             typical_interval_seconds: None,
+            configured_interval_seconds: None,
+            next_sweep_at: None,
+            next_sweep_in_seconds: None,
             pending_count: 2,
             pending_total_amount: 90,
             wallet_spendable: None,

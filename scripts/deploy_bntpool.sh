@@ -6,7 +6,7 @@ usage() {
 Deploy blocknet-pool to the bntpool server.
 
 Usage:
-  scripts/deploy_bntpool.sh [--skip-build] [--skip-ui-build] [--migrate-split] [--provision-monitoring] [--deploy-cloudflare] [--monitor-only]
+  scripts/deploy_bntpool.sh [--skip-build] [--skip-ui-build] [--migrate-split] [--provision-monitoring] [--provision-recovery] [--deploy-cloudflare] [--monitor-only]
 
 Environment overrides:
   BNTPOOL_HOST             SSH host alias (default: bntpool)
@@ -14,6 +14,8 @@ Environment overrides:
   BNTPOOL_API_SERVICE      Systemd API service name (default: blocknet-pool-api.service)
   BNTPOOL_STRATUM_SERVICE  Systemd Stratum service name (default: blocknet-pool-stratum.service)
   BNTPOOL_MONITOR_SERVICE  Systemd monitor service name (default: blocknet-pool-monitor.service)
+  BNTPOOL_RECOVERY_SERVICE Systemd recovery service name (default: blocknet-pool-recoveryd.service)
+  BNTPOOL_RECOVERY_SOCKET  Systemd recovery socket name (default: blocknet-pool-recoveryd.socket)
   BNTPOOL_LEGACY_SERVICE   Legacy combined service to disable on split migration (default: blocknet-pool.service)
   BNTPOOL_FORCE_RESTART    Set to 1 to force a restart even when binary hashes are unchanged
   BNTPOOL_LOCAL_BUILD_IMAGE  Optional Docker image used for local builds
@@ -24,6 +26,7 @@ skip_build=0
 skip_ui_build=0
 migrate_split=0
 provision_monitoring=0
+provision_recovery=0
 deploy_cloudflare=0
 monitor_only=0
 while [[ $# -gt 0 ]]; do
@@ -42,6 +45,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --provision-monitoring)
       provision_monitoring=1
+      shift
+      ;;
+    --provision-recovery)
+      provision_recovery=1
       shift
       ;;
     --deploy-cloudflare)
@@ -69,12 +76,15 @@ remote_dir="${BNTPOOL_REMOTE_DIR:-/opt/blocknet/blocknet-pool}"
 api_service="${BNTPOOL_API_SERVICE:-blocknet-pool-api.service}"
 stratum_service="${BNTPOOL_STRATUM_SERVICE:-blocknet-pool-stratum.service}"
 monitor_service="${BNTPOOL_MONITOR_SERVICE:-blocknet-pool-monitor.service}"
+recovery_service="${BNTPOOL_RECOVERY_SERVICE:-blocknet-pool-recoveryd.service}"
+recovery_socket="${BNTPOOL_RECOVERY_SOCKET:-blocknet-pool-recoveryd.socket}"
 legacy_service="${BNTPOOL_LEGACY_SERVICE:-blocknet-pool.service}"
 force_restart="${BNTPOOL_FORCE_RESTART:-0}"
 local_build_image="${BNTPOOL_LOCAL_BUILD_IMAGE:-}"
 remote_api_bin="${remote_dir}/target/release/blocknet-pool-api"
 remote_stratum_bin="${remote_dir}/target/release/blocknet-pool-stratum"
 remote_monitor_bin="${remote_dir}/target/release/blocknet-pool-monitor"
+remote_recovery_bin="${remote_dir}/target/release/blocknet-pool-recoveryd"
 remote_postgres_dropin_dir="/etc/systemd/system/postgresql@.service.d"
 remote_postgres_dropin="${remote_postgres_dropin_dir}/restart-blocknet-pool.conf"
 
@@ -85,6 +95,7 @@ host_gid="$(id -g)"
 local_api_bin="${repo_dir}/target/release/blocknet-pool-api"
 local_stratum_bin="${repo_dir}/target/release/blocknet-pool-stratum"
 local_monitor_bin="${repo_dir}/target/release/blocknet-pool-monitor"
+local_recovery_bin="${repo_dir}/target/release/blocknet-pool-recoveryd"
 
 if [[ "${provision_monitoring}" == "1" ]]; then
   echo "==> provisioning monitoring stack on ${host}"
@@ -107,7 +118,7 @@ build_locally() {
     if [[ "${monitor_only}" == "1" ]]; then
       build_cmd="cargo build --release --bin blocknet-pool-monitor --no-default-features --features monitor"
     else
-      build_cmd="cargo build --release --bin blocknet-pool-api --no-default-features --features api; cargo build --release --bin blocknet-pool-stratum --no-default-features --features stratum; cargo build --release --bin blocknet-pool-monitor --no-default-features --features monitor"
+      build_cmd="cargo build --release --bin blocknet-pool-api --no-default-features --features api; cargo build --release --bin blocknet-pool-stratum --no-default-features --features stratum; cargo build --release --bin blocknet-pool-monitor --no-default-features --features monitor; cargo build --release --bin blocknet-pool-recoveryd"
     fi
     docker run --rm \
       -v "${repo_dir}:/work" \
@@ -120,6 +131,7 @@ build_locally() {
     if [[ "${monitor_only}" != "1" ]]; then
       cargo build --release --bin blocknet-pool-api --no-default-features --features api
       cargo build --release --bin blocknet-pool-stratum --no-default-features --features stratum
+      cargo build --release --bin blocknet-pool-recoveryd
     fi
     cargo build --release --bin blocknet-pool-monitor --no-default-features --features monitor
   fi
@@ -152,9 +164,11 @@ echo "==> reading current remote binary hashes"
 before_api_hash="__skipped__"
 before_stratum_hash="__skipped__"
 before_monitor_hash="$(remote_hash "${remote_monitor_bin}")"
+before_recovery_hash="__skipped__"
 if [[ "${monitor_only}" != "1" ]]; then
   before_api_hash="$(remote_hash "${remote_api_bin}")"
   before_stratum_hash="$(remote_hash "${remote_stratum_bin}")"
+  before_recovery_hash="$(remote_hash "${remote_recovery_bin}")"
 fi
 
 if [[ "${skip_build}" -eq 0 ]]; then
@@ -171,6 +185,7 @@ if [[ "${skip_build}" -eq 0 ]]; then
       "${local_api_bin}" \
       "${local_stratum_bin}" \
       "${local_monitor_bin}" \
+      "${local_recovery_bin}" \
       "${host}:${remote_dir}/target/release/"
   fi
 fi
@@ -179,9 +194,11 @@ echo "==> reading updated remote binary hashes"
 after_api_hash="__skipped__"
 after_stratum_hash="__skipped__"
 after_monitor_hash="$(remote_hash "${remote_monitor_bin}")"
+after_recovery_hash="__skipped__"
 if [[ "${monitor_only}" != "1" ]]; then
   after_api_hash="$(remote_hash "${remote_api_bin}")"
   after_stratum_hash="$(remote_hash "${remote_stratum_bin}")"
+  after_recovery_hash="$(remote_hash "${remote_recovery_bin}")"
 fi
 
 echo "==> installing managed systemd assets"
@@ -189,10 +206,19 @@ ssh "${host}" "set -euo pipefail; \
   sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-api.service' '/etc/systemd/system/${api_service}'; \
   sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-stratum.service' '/etc/systemd/system/${stratum_service}'; \
   sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-monitor.service' '/etc/systemd/system/${monitor_service}'; \
+  sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-recoveryd.service' '/etc/systemd/system/${recovery_service}'; \
+  sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-recoveryd.socket' '/etc/systemd/system/${recovery_socket}'; \
+  sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknetd@.service' '/etc/systemd/system/blocknetd@.service'; \
   sudo install -d -m 0755 '${remote_postgres_dropin_dir}'; \
   sudo install -m 0644 '${remote_dir}/deploy/systemd/postgresql@.service.d/restart-blocknet-pool.conf' '${remote_postgres_dropin}'; \
   sudo systemctl daemon-reload; \
-  sudo systemctl enable '${monitor_service}'"
+  sudo systemctl enable '${monitor_service}' '${recovery_socket}'"
+
+if [[ "${provision_recovery}" == "1" ]]; then
+  echo "==> provisioning recovery topology on ${host}"
+  BNTPOOL_HOST="${host}" BNTPOOL_REMOTE_DIR="${remote_dir}" \
+    bash "${repo_dir}/scripts/provision_bntpool_recovery.sh"
+fi
 
 if [[ "${migrate_split}" == "1" ]]; then
   echo "==> enabling split systemd units"
@@ -204,6 +230,7 @@ fi
 restart_api=0
 restart_stratum=0
 restart_monitor=0
+restart_recovery=0
 if [[ "${monitor_only}" != "1" && ("${migrate_split}" == "1" || "${force_restart}" == "1" || "${before_api_hash}" != "${after_api_hash}") ]]; then
   restart_api=1
 fi
@@ -212,6 +239,9 @@ if [[ "${monitor_only}" != "1" && ("${migrate_split}" == "1" || "${force_restart
 fi
 if [[ "${migrate_split}" == "1" || "${force_restart}" == "1" || "${before_monitor_hash}" != "${after_monitor_hash}" ]]; then
   restart_monitor=1
+fi
+if [[ "${monitor_only}" != "1" && ("${force_restart}" == "1" || "${before_recovery_hash}" != "${after_recovery_hash}" || "${provision_recovery}" == "1") ]]; then
+  restart_recovery=1
 fi
 
 if [[ "${restart_api}" == "1" ]]; then
@@ -238,6 +268,14 @@ else
   ssh "${host}" "set -euo pipefail; sudo systemctl is-active '${monitor_service}'"
 fi
 
+if [[ "${restart_recovery}" == "1" ]]; then
+  echo "==> restarting ${recovery_service}"
+  ssh "${host}" "set -euo pipefail; sudo systemctl restart '${recovery_service}' || sudo systemctl start '${recovery_service}'; sudo systemctl is-active '${recovery_service}'"
+else
+  echo "==> ${recovery_service} unchanged; leaving it running"
+  ssh "${host}" "set -euo pipefail; sudo systemctl is-active '${recovery_service}' >/dev/null 2>&1 || sudo systemctl is-active '${recovery_socket}'"
+fi
+
 echo "==> recent API service logs"
 if [[ "${monitor_only}" == "1" ]]; then
   ssh "${host}" "set -euo pipefail; sudo systemctl is-active '${api_service}'"
@@ -254,6 +292,9 @@ fi
 
 echo "==> recent Monitor service logs"
 ssh "${host}" "set -euo pipefail; sudo journalctl -u '${monitor_service}' --no-pager -n 30"
+
+echo "==> recent Recovery service logs"
+ssh "${host}" "set -euo pipefail; sudo journalctl -u '${recovery_service}' --no-pager -n 30 || true"
 
 if [[ "${deploy_cloudflare}" == "1" ]]; then
   echo "==> deploying Cloudflare monitor worker"

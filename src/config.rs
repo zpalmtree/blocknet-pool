@@ -7,6 +7,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::recovery::RecoveryConfig;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -91,6 +93,7 @@ pub struct Config {
     pub monitor_interval: String,
     pub monitor_spool_path: String,
     pub monitor_ingest_secret: String,
+    pub recovery: RecoveryConfig,
 
     #[serde(skip)]
     pub log_path: String,
@@ -110,7 +113,7 @@ impl Default for Config {
             daemon_data_dir: "data".to_string(),
             daemon_api: "http://127.0.0.1:8332".to_string(),
             daemon_token: String::new(),
-            daemon_cookie_path: String::new(),
+            daemon_cookie_path: "/etc/blocknet/pool/daemon-active.api.cookie".to_string(),
             pool_wallet_address: String::new(),
             initial_share_difficulty: 60,
             block_poll_interval: "2s".to_string(),
@@ -160,7 +163,7 @@ impl Default for Config {
             payout_max_total_per_tick: 0.0,
             payout_max_per_recipient: 0.0,
             payout_wait_priority_threshold: "6h".to_string(),
-            payout_pause_file: "payouts.pause".to_string(),
+            payout_pause_file: "/etc/blocknet/pool/payouts.pause".to_string(),
             payout_interval: "1h".to_string(),
             shares_retention: "90d".to_string(),
             payouts_retention: "365d".to_string(),
@@ -174,6 +177,7 @@ impl Default for Config {
             monitor_interval: "10s".to_string(),
             monitor_spool_path: "/var/lib/blocknet-pool/monitor-spool.jsonl".to_string(),
             monitor_ingest_secret: String::new(),
+            recovery: RecoveryConfig::default(),
             log_path: String::new(),
         }
     }
@@ -280,6 +284,16 @@ impl Config {
         }
         if self.monitor_port == 0 {
             self.monitor_port = 24784;
+        }
+        self.recovery.normalize();
+        if self.daemon_cookie_path.trim().is_empty() {
+            self.daemon_cookie_path = self.recovery.active_cookie_path.clone();
+        }
+        if self.payout_pause_file.trim().is_empty() {
+            self.payout_pause_file = "/etc/blocknet/pool/payouts.pause".to_string();
+        }
+        if self.recovery.proxy_include_path.trim().is_empty() {
+            self.recovery.proxy_include_path = "/etc/nginx/blocknet-daemon-active-upstream.inc".to_string();
         }
         let max_atomic_amount = (u64::MAX as f64) / 100_000_000.0;
         if !self.min_payout_amount.is_finite() || self.min_payout_amount < 0.0 {

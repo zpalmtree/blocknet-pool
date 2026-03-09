@@ -10,7 +10,7 @@
   "daemon_data_dir": "data",
   "daemon_api": "http://127.0.0.1:8332",
   "daemon_token": "",
-  "daemon_cookie_path": "",
+  "daemon_cookie_path": "/etc/blocknet/pool/daemon-active.api.cookie",
   "pool_wallet_address": "",
   "initial_share_difficulty": 60,
   "block_poll_interval": "2s",
@@ -60,7 +60,7 @@
   "payout_max_total_per_tick": 0.0,
   "payout_max_per_recipient": 0.0,
   "payout_wait_priority_threshold": "6h",
-  "payout_pause_file": "payouts.pause",
+  "payout_pause_file": "/etc/blocknet/pool/payouts.pause",
   "payout_interval": "1h",
   "shares_retention": "90d",
   "payouts_retention": "365d",
@@ -68,5 +68,27 @@
   "database_url": "",
   "database_pool_size": 4,
   "api_key": "",
-  "seen_share_gc_interval": "10m"
+  "seen_share_gc_interval": "10m",
+  "recovery": {
+    "enabled": true,
+    "socket_path": "/run/blocknet-recoveryd.sock",
+    "state_path": "/var/lib/blocknet-recovery/state.json",
+    "secret_path": "/etc/blocknet/recovery/pool-wallet.json",
+    "proxy_include_path": "/etc/nginx/blocknet-daemon-active-upstream.inc",
+    "active_cookie_path": "/etc/blocknet/pool/daemon-active.api.cookie",
+    "primary": {
+      "service": "blocknetd@primary.service",
+      "api": "http://127.0.0.1:18331",
+      "wallet_path": "/var/lib/blocknet/wallet.dat",
+      "data_dir": "/var/lib/blocknet/data",
+      "cookie_path": "/var/lib/blocknet/data/api.cookie"
+    },
+    "standby": {
+      "service": "blocknetd@standby.service",
+      "api": "http://127.0.0.1:18332",
+      "wallet_path": "/var/lib/blocknet-standby/wallet.dat",
+      "data_dir": "/var/lib/blocknet-standby/data",
+      "cookie_path": "/var/lib/blocknet-standby/data/api.cookie"
+    }
+  }
 }

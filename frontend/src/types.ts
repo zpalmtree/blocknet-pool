@@ -7,7 +7,7 @@ export type Route =
   | 'stats'
   | 'admin'
   | 'status';
-export type AdminTab = 'miners' | 'payouts' | 'fees' | 'devfee' | 'rewards' | 'health' | 'balances' | 'logs';
+export type AdminTab = 'miners' | 'payouts' | 'fees' | 'devfee' | 'rewards' | 'health' | 'balances' | 'recovery' | 'logs';
 export type Range = '1h' | '24h' | '7d' | '30d';
 
 export type UnixLike =
@@ -294,6 +294,68 @@ export interface HealthResponse {
   };
 }
 
+export type RecoveryInstanceId = 'primary' | 'standby';
+export type RecoveryInstanceState = 'stopped' | 'starting' | 'syncing' | 'ready' | 'degraded' | 'failed';
+export type RecoveryOperationState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type RecoveryOperationKind =
+  | 'pause_payouts'
+  | 'resume_payouts'
+  | 'start_standby_sync'
+  | 'rebuild_standby_wallet'
+  | 'cutover'
+  | 'purge_inactive_daemon';
+
+export interface RecoveryWalletStatus {
+  loaded: boolean;
+  address?: string | null;
+  spendable?: number | null;
+  pending?: number | null;
+  total?: number | null;
+}
+
+export interface RecoveryInstanceStatus {
+  instance: RecoveryInstanceId;
+  service: string;
+  api: string;
+  wallet_path: string;
+  data_dir: string;
+  cookie_path: string;
+  service_state: string;
+  state: RecoveryInstanceState;
+  reachable: boolean;
+  cookie_present: boolean;
+  chain_height?: number | null;
+  peers?: number | null;
+  syncing?: boolean | null;
+  best_hash?: string | null;
+  wallet: RecoveryWalletStatus;
+  error?: string | null;
+}
+
+export interface RecoveryOperation {
+  id: number;
+  kind: RecoveryOperationKind;
+  target?: RecoveryInstanceId | null;
+  state: RecoveryOperationState;
+  created_at: UnixLike;
+  started_at?: UnixLike;
+  finished_at?: UnixLike;
+  message?: string | null;
+}
+
+export interface RecoveryStatusResponse {
+  enabled: boolean;
+  payouts_paused: boolean;
+  payout_pause_file: string;
+  secret_configured: boolean;
+  proxy_target?: RecoveryInstanceId | null;
+  active_cookie_target?: RecoveryInstanceId | null;
+  active_instance?: RecoveryInstanceId | null;
+  warning?: string | null;
+  instances: RecoveryInstanceStatus[];
+  operations: RecoveryOperation[];
+}
+
 export interface AdminDevFeeWindow {
   label: string;
   window_seconds: number;
@@ -366,6 +428,9 @@ export interface PayoutEta {
   estimated_next_payout_at?: UnixLike;
   eta_seconds?: number | null;
   typical_interval_seconds?: number | null;
+  configured_interval_seconds?: number | null;
+  next_sweep_at?: UnixLike;
+  next_sweep_in_seconds?: number | null;
   pending_count: number;
   pending_total_amount: number;
   wallet_spendable?: number | null;

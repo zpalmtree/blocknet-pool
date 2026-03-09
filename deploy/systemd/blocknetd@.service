@@ -1,0 +1,23 @@
+[Unit]
+Description=Blocknet Core Daemon (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=blocknet
+Group=blocknet
+EnvironmentFile=/etc/blocknet/recovery/%i.env
+WorkingDirectory=/opt/blocknet/blocknet-core/current
+ExecStart=/opt/blocknet/blocknet-core/current/blocknet --daemon --api ${BLOCKNET_INSTANCE_API} --wallet ${BLOCKNET_INSTANCE_WALLET} --data ${BLOCKNET_INSTANCE_DATA} --listen ${BLOCKNET_INSTANCE_LISTEN}
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/blocknet/blocknet-core /var/lib/blocknet /var/lib/blocknet-primary /var/lib/blocknet-standby /etc/blocknet/recovery
+
+[Install]
+WantedBy=multi-user.target

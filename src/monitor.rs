@@ -1427,6 +1427,7 @@ mod tests {
             estimated_hashrate: 12.5,
             last_share_at: Some(SystemTime::now()),
             jobs: JobRuntimeSnapshot::default(),
+            payouts: Default::default(),
             validation: PersistedValidationSummary::default(),
         }
     }

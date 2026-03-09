@@ -247,6 +247,12 @@ impl NodeClient {
         let payload = serde_json::json!({
             "address": address,
             "amount": amount,
+            "recipients": [
+                {
+                    "address": address,
+                    "amount": amount,
+                }
+            ],
         });
         self.post_json_with_headers("/api/wallet/send", &payload, &extra)
     }

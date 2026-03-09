@@ -12,6 +12,7 @@ pub mod payout;
 pub mod pgdb;
 pub mod pow;
 pub mod protocol;
+pub mod recovery;
 pub mod runtime;
 pub mod service_state;
 pub mod stats;

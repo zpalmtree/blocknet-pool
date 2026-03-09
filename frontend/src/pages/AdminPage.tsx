@@ -25,6 +25,10 @@ import type {
   HealthResponse,
   MinerListItem,
   PagerState,
+  RecoveryInstanceId,
+  RecoveryInstanceStatus,
+  RecoveryOperationKind,
+  RecoveryStatusResponse,
 } from '../types';
 
 const MAX_DAEMON_LOG_LINES = 1000;
@@ -155,6 +159,94 @@ function rewardBlockOptionLabel(block: BlockItem): string {
   return `#${block.height} • ${status} • ${timeAgo(block.timestamp)}`;
 }
 
+function recoveryStateLabel(state: RecoveryInstanceStatus['state'] | undefined): string {
+  switch (state) {
+    case 'ready':
+      return 'Ready';
+    case 'syncing':
+      return 'Syncing';
+    case 'starting':
+      return 'Starting';
+    case 'failed':
+      return 'Failed';
+    case 'degraded':
+      return 'Degraded';
+    default:
+      return 'Stopped';
+  }
+}
+
+function recoveryStateBadgeClass(state: RecoveryInstanceStatus['state'] | undefined): string {
+  switch (state) {
+    case 'ready':
+      return 'badge-confirmed';
+    case 'syncing':
+    case 'starting':
+      return 'badge-pending';
+    case 'failed':
+    case 'degraded':
+      return 'badge-orphaned';
+    default:
+      return 'badge-pending';
+  }
+}
+
+function recoveryInstanceLabel(instance: RecoveryInstanceId | null | undefined): string {
+  switch (instance) {
+    case 'primary':
+      return 'Primary';
+    case 'standby':
+      return 'Standby';
+    default:
+      return 'Unknown';
+  }
+}
+
+function otherRecoveryInstance(instance: RecoveryInstanceId | null | undefined): RecoveryInstanceId | null {
+  switch (instance) {
+    case 'primary':
+      return 'standby';
+    case 'standby':
+      return 'primary';
+    default:
+      return null;
+  }
+}
+
+function recoveryOperationLabel(kind: RecoveryOperationKind | null | undefined): string {
+  switch (kind) {
+    case 'pause_payouts':
+      return 'Pause payouts';
+    case 'resume_payouts':
+      return 'Resume payouts';
+    case 'start_standby_sync':
+      return 'Start inactive sync';
+    case 'rebuild_standby_wallet':
+      return 'Rebuild inactive wallet';
+    case 'cutover':
+      return 'Cut over';
+    case 'purge_inactive_daemon':
+      return 'Purge inactive daemon';
+    default:
+      return 'Unknown operation';
+  }
+}
+
+function recoveryOperationStateLabel(state: string | null | undefined): string {
+  switch (state) {
+    case 'running':
+      return 'Running';
+    case 'succeeded':
+      return 'Succeeded';
+    case 'failed':
+      return 'Failed';
+    case 'cancelled':
+      return 'Cancelled';
+    default:
+      return 'Queued';
+  }
+}
+
 interface AdminPageProps {
   active: boolean;
   api: ApiClient;
@@ -214,6 +306,10 @@ export function AdminPage({
   const [balancesSort, setBalancesSort] = useState('pending_desc');
   const [balancesItems, setBalancesItems] = useState<AdminBalanceItem[]>([]);
   const [balancesPager, setBalancesPager] = useState<PagerState>({ offset: 0, limit: 50, total: 0 });
+
+  const [recoveryStatus, setRecoveryStatus] = useState<RecoveryStatusResponse | null>(null);
+  const [recoveryActionError, setRecoveryActionError] = useState('');
+  const [recoveryBusy, setRecoveryBusy] = useState<RecoveryOperationKind | null>(null);
 
   const [daemonLogs, setDaemonLogs] = useState<DaemonLogLine[]>([]);
   const [daemonLogsTail, setDaemonLogsTail] = useState(200);
@@ -368,6 +464,32 @@ export function AdminPage({
     }
   }, [api, apiKey, balancesPager.limit, balancesPager.offset, balancesSearch, balancesSort]);
 
+  const loadRecovery = useCallback(async () => {
+    if (!apiKey) return;
+    try {
+      const d = await api.getRecoveryStatus();
+      setRecoveryStatus(d);
+    } catch {
+      setRecoveryStatus(null);
+    }
+  }, [api, apiKey]);
+
+  const runRecoveryAction = useCallback(
+    async (kind: RecoveryOperationKind, fn: () => Promise<unknown>) => {
+      setRecoveryActionError('');
+      setRecoveryBusy(kind);
+      try {
+        await fn();
+        await loadRecovery();
+      } catch (err) {
+        setRecoveryActionError(err instanceof Error ? err.message : 'recovery action failed');
+      } finally {
+        setRecoveryBusy(null);
+      }
+    },
+    [loadRecovery]
+  );
+
   useEffect(() => {
     if (!active || !apiKey) return;
 
@@ -383,6 +505,7 @@ export function AdminPage({
     }
     if (tab === 'health') void loadHealth();
     if (tab === 'balances') void loadBalances();
+    if (tab === 'recovery') void loadRecovery();
   }, [
     active,
     apiKey,
@@ -392,6 +515,7 @@ export function AdminPage({
     loadHealth,
     loadMiners,
     loadPayouts,
+    loadRecovery,
     loadRewardBlocks,
     loadRewardBreakdown,
     rewardBlockInput,
@@ -414,6 +538,7 @@ export function AdminPage({
     }
     if (tab === 'health') void loadHealth();
     if (tab === 'balances') void loadBalances();
+    if (tab === 'recovery') void loadRecovery();
   }, [
     active,
     apiKey,
@@ -425,6 +550,7 @@ export function AdminPage({
     loadHealth,
     loadMiners,
     loadPayouts,
+    loadRecovery,
     loadRewardBlocks,
     loadRewardBreakdown,
     rewardBlockInput,
@@ -561,6 +687,138 @@ export function AdminPage({
     if (!rawHealthJson || !navigator.clipboard) return;
     void navigator.clipboard.writeText(rawHealthJson);
   }, [rawHealthJson]);
+  const recoveryPrimary = useMemo(
+    () => recoveryStatus?.instances.find((item) => item.instance === 'primary') ?? null,
+    [recoveryStatus]
+  );
+  const recoveryStandby = useMemo(
+    () => recoveryStatus?.instances.find((item) => item.instance === 'standby') ?? null,
+    [recoveryStatus]
+  );
+  const recoveryActiveInstance = recoveryStatus?.active_instance ?? null;
+  const recoveryInactiveInstance = otherRecoveryInstance(recoveryActiveInstance);
+  const recoveryInactiveStatus =
+    recoveryInactiveInstance === 'primary'
+      ? recoveryPrimary
+      : recoveryInactiveInstance === 'standby'
+        ? recoveryStandby
+        : null;
+  const recoveryInactiveLabel =
+    recoveryInactiveInstance == null ? 'Inactive' : recoveryInstanceLabel(recoveryInactiveInstance);
+  const recoveryLatestOperation = recoveryStatus?.operations?.[0] ?? null;
+  const recoveryRunningOperation = useMemo(
+    () => recoveryStatus?.operations.find((item) => item.state === 'queued' || item.state === 'running') ?? null,
+    [recoveryStatus]
+  );
+  const recoveryBusyReason = useMemo(() => {
+    if (recoveryBusy) return `${recoveryOperationLabel(recoveryBusy)} is already running`;
+    if (recoveryRunningOperation) {
+      return `${recoveryOperationLabel(recoveryRunningOperation.kind)} is already running`;
+    }
+    return null;
+  }, [recoveryBusy, recoveryRunningOperation]);
+  const recoveryActionState = useMemo(() => {
+    const statusMissing = 'Recovery status is still loading';
+    const routingMissing = 'Active daemon routing is not provisioned yet';
+    const standbyLabel = recoveryInstanceLabel('standby');
+    const primaryLabel = recoveryInstanceLabel('primary');
+    const payoutsPaused = recoveryStatus?.payouts_paused ?? false;
+
+    const buttonState = (reason: string | null) => ({
+      disabled: reason != null,
+      title: reason ?? undefined,
+    });
+
+    const pauseReason =
+      recoveryBusyReason ??
+      (recoveryStatus == null ? statusMissing : recoveryStatus.payouts_paused ? 'Payouts are already paused' : null);
+    const resumeReason =
+      recoveryBusyReason ??
+      (recoveryStatus == null ? statusMissing : !recoveryStatus.payouts_paused ? 'Payouts are already live' : null);
+
+    let startInactiveSyncReason = recoveryBusyReason;
+    if (startInactiveSyncReason == null) {
+      if (recoveryStatus == null) {
+        startInactiveSyncReason = statusMissing;
+      } else if (recoveryInactiveInstance == null) {
+        startInactiveSyncReason = routingMissing;
+      } else if (recoveryInactiveStatus == null) {
+        startInactiveSyncReason = `${recoveryInactiveLabel} status is unavailable`;
+      } else if (recoveryInactiveStatus.state === 'starting') {
+        startInactiveSyncReason = `${recoveryInactiveLabel} is already starting`;
+      } else if (recoveryInactiveStatus.syncing) {
+        startInactiveSyncReason = `${recoveryInactiveLabel} is already syncing`;
+      } else if (recoveryInactiveStatus.reachable) {
+        startInactiveSyncReason = `${recoveryInactiveLabel} daemon is already running`;
+      }
+    }
+
+    let rebuildInactiveReason = recoveryBusyReason;
+    if (rebuildInactiveReason == null) {
+      if (recoveryStatus == null) {
+        rebuildInactiveReason = statusMissing;
+      } else if (recoveryInactiveInstance == null) {
+        rebuildInactiveReason = routingMissing;
+      } else if (!recoveryStatus.secret_configured) {
+        rebuildInactiveReason = 'Configure the wallet secret before rebuilding the inactive wallet';
+      } else if (recoveryInactiveStatus == null) {
+        rebuildInactiveReason = `${recoveryInactiveLabel} status is unavailable`;
+      } else if (recoveryInactiveStatus.state === 'starting') {
+        rebuildInactiveReason = `${recoveryInactiveLabel} daemon is still starting`;
+      } else if (!recoveryInactiveStatus.reachable) {
+        rebuildInactiveReason = `${recoveryInactiveLabel} daemon is not reachable`;
+      } else if (recoveryInactiveStatus.syncing) {
+        rebuildInactiveReason = `${recoveryInactiveLabel} daemon is still syncing`;
+      }
+    }
+
+    const cutoverReason = (
+      target: RecoveryInstanceId,
+      targetStatus: RecoveryInstanceStatus | null,
+      targetLabel: string
+    ): string | null => {
+      if (recoveryBusyReason) return recoveryBusyReason;
+      if (recoveryStatus == null) return statusMissing;
+      if (!payoutsPaused) return 'Pause payouts before cutting over daemons';
+      if (recoveryActiveInstance == null) return routingMissing;
+      if (recoveryActiveInstance === target) return `${targetLabel} is already active`;
+      if (targetStatus == null) return `${targetLabel} status is unavailable`;
+      if (!targetStatus.reachable) return `${targetLabel} daemon is not reachable`;
+      if (targetStatus.syncing) return `${targetLabel} daemon is still syncing`;
+      if (!targetStatus.wallet.loaded) return `${targetLabel} wallet is not loaded`;
+      if (!targetStatus.cookie_present) return `${targetLabel} cookie is missing`;
+      return null;
+    };
+
+    const purgeReason =
+      recoveryBusyReason ??
+      (recoveryStatus == null
+        ? statusMissing
+        : !payoutsPaused
+          ? 'Pause payouts before purging the inactive daemon'
+          : recoveryActiveInstance == null
+            ? routingMissing
+            : null);
+
+    return {
+      pause: buttonState(pauseReason),
+      resume: buttonState(resumeReason),
+      startInactiveSync: buttonState(startInactiveSyncReason),
+      rebuildInactiveWallet: buttonState(rebuildInactiveReason),
+      cutoverStandby: buttonState(cutoverReason('standby', recoveryStandby, standbyLabel)),
+      cutoverPrimary: buttonState(cutoverReason('primary', recoveryPrimary, primaryLabel)),
+      purgeInactiveDaemon: buttonState(purgeReason),
+    };
+  }, [
+    recoveryActiveInstance,
+    recoveryBusyReason,
+    recoveryInactiveInstance,
+    recoveryInactiveLabel,
+    recoveryInactiveStatus,
+    recoveryPrimary,
+    recoveryStandby,
+    recoveryStatus,
+  ]);
   const rewardActualBlockTotal =
     rewardBreakdown && rewardBreakdown.actual_credit_events_available && rewardBreakdown.actual_fee_amount != null
       ? rewardBreakdown.actual_credit_total + rewardBreakdown.actual_fee_amount
@@ -663,6 +921,9 @@ export function AdminPage({
             </button>
             <button className={tab === 'balances' ? 'active' : ''} onClick={() => setTab('balances')}>
               Balances
+            </button>
+            <button className={tab === 'recovery' ? 'active' : ''} onClick={() => setTab('recovery')}>
+              Recovery
             </button>
             <button className={tab === 'logs' ? 'active' : ''} onClick={() => setTab('logs')}>
               Daemon Logs
@@ -1787,6 +2048,273 @@ export function AdminPage({
                 onNext={() => setBalancesPager((p) => ({ ...p, offset: p.offset + p.limit }))}
               />
             </div>
+          </div>
+
+          <div style={{ display: tab === 'recovery' ? '' : 'none' }}>
+            {recoveryStatus?.warning ? (
+              <div className="card section" style={{ marginBottom: 16, borderColor: 'rgba(247, 180, 75, 0.45)' }}>
+                <p className="section-lead" style={{ margin: 0 }}>
+                  {recoveryStatus.warning}
+                </p>
+              </div>
+            ) : null}
+
+            {recoveryActionError ? (
+              <div className="card section" style={{ marginBottom: 16, borderColor: 'rgba(214, 88, 88, 0.45)' }}>
+                <p className="section-lead" style={{ margin: 0, color: 'var(--bad)' }}>
+                  {recoveryActionError}
+                </p>
+              </div>
+            ) : null}
+
+            <div className="stats-grid" style={{ marginBottom: 16 }}>
+              <div className="stat-card">
+                <div className="label">Active Daemon</div>
+                <div className="value">
+                  {recoveryStatus ? recoveryInstanceLabel(recoveryStatus.active_instance) : '-'}
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="label">Proxy Target</div>
+                <div className="value">
+                  {recoveryStatus ? recoveryInstanceLabel(recoveryStatus.proxy_target) : '-'}
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="label">Payouts</div>
+                <div className="value">
+                  {recoveryStatus == null ? (
+                    '-'
+                  ) : recoveryStatus.payouts_paused ? (
+                    <>
+                      <span className="status-dot dot-amber" />Paused
+                    </>
+                  ) : (
+                    <>
+                      <span className="status-dot dot-green" />Live
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="label">Wallet Secret</div>
+                <div className="value">
+                  {recoveryStatus == null ? (
+                    '-'
+                  ) : recoveryStatus.secret_configured ? (
+                    <>
+                      <span className="status-dot dot-green" />Configured
+                    </>
+                  ) : (
+                    <>
+                      <span className="status-dot dot-red" />Missing
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="card section" style={{ marginBottom: 16 }}>
+              <div className="section-header">
+                <div>
+                  <h3>Actions</h3>
+                  <p className="section-lead">
+                    Inactive sync and wallet rebuild can run while payouts stay live. Cutover and purge still require
+                    payouts to be paused first.
+                  </p>
+                </div>
+                <button className="btn btn-secondary" onClick={() => void loadRecovery()}>
+                  Refresh
+                </button>
+              </div>
+              <div className="filter-bar" style={{ gap: 8 }}>
+                <button
+                  className="btn btn-secondary"
+                  disabled={recoveryActionState.pause.disabled}
+                  title={recoveryActionState.pause.title}
+                  onClick={() => void runRecoveryAction('pause_payouts', () => api.pauseRecoveryPayouts())}
+                >
+                  {recoveryBusy === 'pause_payouts' ? 'Pausing…' : 'Pause Payouts'}
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  disabled={recoveryActionState.resume.disabled}
+                  title={recoveryActionState.resume.title}
+                  onClick={() => void runRecoveryAction('resume_payouts', () => api.resumeRecoveryPayouts())}
+                >
+                  {recoveryBusy === 'resume_payouts' ? 'Resuming…' : 'Resume Payouts'}
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  disabled={recoveryActionState.startInactiveSync.disabled}
+                  title={recoveryActionState.startInactiveSync.title}
+                  onClick={() => void runRecoveryAction('start_standby_sync', () => api.startInactiveSync())}
+                >
+                  {recoveryBusy === 'start_standby_sync'
+                    ? 'Starting…'
+                    : recoveryInactiveInstance == null
+                      ? 'Start Inactive Sync'
+                      : `Start Sync On ${recoveryInactiveLabel}`}
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  disabled={recoveryActionState.rebuildInactiveWallet.disabled}
+                  title={recoveryActionState.rebuildInactiveWallet.title}
+                  onClick={() => void runRecoveryAction('rebuild_standby_wallet', () => api.rebuildInactiveWallet())}
+                >
+                  {recoveryBusy === 'rebuild_standby_wallet'
+                    ? 'Rebuilding…'
+                    : recoveryInactiveInstance == null
+                      ? 'Rebuild Inactive Wallet'
+                      : `Rebuild ${recoveryInactiveLabel} Wallet`}
+                </button>
+                <button
+                  className="btn btn-primary"
+                  disabled={recoveryActionState.cutoverStandby.disabled}
+                  title={recoveryActionState.cutoverStandby.title}
+                  onClick={() => void runRecoveryAction('cutover', () => api.cutoverDaemon('standby'))}
+                >
+                  {recoveryBusy === 'cutover' ? 'Cutting Over…' : 'Cut Over To Standby'}
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  disabled={recoveryActionState.cutoverPrimary.disabled}
+                  title={recoveryActionState.cutoverPrimary.title}
+                  onClick={() => void runRecoveryAction('cutover', () => api.cutoverDaemon('primary'))}
+                >
+                  {recoveryBusy === 'cutover' ? 'Cutting Over…' : 'Cut Over To Primary'}
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  disabled={recoveryActionState.purgeInactiveDaemon.disabled}
+                  title={recoveryActionState.purgeInactiveDaemon.title}
+                  onClick={() => void runRecoveryAction('purge_inactive_daemon', () => api.purgeInactiveDaemon())}
+                >
+                  {recoveryBusy === 'purge_inactive_daemon' ? 'Purging…' : 'Purge Inactive Daemon'}
+                </button>
+              </div>
+            </div>
+
+            <div className="stats-grid" style={{ marginBottom: 16 }}>
+              {[
+                { key: 'primary', item: recoveryPrimary },
+                { key: 'standby', item: recoveryStandby },
+              ].map(({ key, item }) => (
+                <div key={key} className="card section" style={{ minWidth: 0 }}>
+                  <div className="section-header" style={{ marginBottom: 10 }}>
+                    <div>
+                      <h3>{item?.instance ? recoveryInstanceLabel(item.instance) : key === 'primary' ? 'Primary' : 'Standby'}</h3>
+                      <p className="section-lead">{item?.service ?? 'No status yet'}</p>
+                    </div>
+                    <span className={`badge ${recoveryStateBadgeClass(item?.state)}`}>
+                      {recoveryStateLabel(item?.state)}
+                    </span>
+                  </div>
+
+                  <div className="stats-grid stats-grid-dense">
+                    <div className="stat-card">
+                      <div className="label">Service</div>
+                      <div className="value mono">{item?.service_state ?? '-'}</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Chain Height</div>
+                      <div className="value mono">{item?.chain_height ?? '-'}</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Peers</div>
+                      <div className="value mono">{item?.peers ?? '-'}</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Wallet</div>
+                      <div className="value">
+                        {item?.wallet.loaded
+                          ? item.wallet.address
+                            ? shortAddr(item.wallet.address)
+                            : 'Loaded'
+                          : 'Not loaded'}
+                      </div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Spendable</div>
+                      <div className="value mono">
+                        {item?.wallet.spendable != null ? formatCoins(item.wallet.spendable) : '-'}
+                      </div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Cookie</div>
+                      <div className="value">{item?.cookie_present ? 'Present' : 'Missing'}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 12, fontSize: 12, color: 'var(--muted)' }}>
+                    <div>API: <span className="mono">{item?.api ?? '-'}</span></div>
+                    <div>Wallet: <span className="mono">{item?.wallet_path ?? '-'}</span></div>
+                    <div>Data: <span className="mono">{item?.data_dir ?? '-'}</span></div>
+                    {item?.error ? <div style={{ color: 'var(--bad)', marginTop: 8 }}>{item.error}</div> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="card table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Operation</th>
+                    <th>Target</th>
+                    <th>Status</th>
+                    <th>Started</th>
+                    <th>Finished</th>
+                    <th>Message</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {!recoveryStatus?.operations?.length ? (
+                    <tr>
+                      <td colSpan={6} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                        No recovery operations yet
+                      </td>
+                    </tr>
+                  ) : (
+                    recoveryStatus.operations.map((operation) => (
+                      <tr key={operation.id}>
+                        <td>{recoveryOperationLabel(operation.kind)}</td>
+                        <td>{operation.target ? recoveryInstanceLabel(operation.target) : '-'}</td>
+                        <td>
+                          <span
+                            className={`badge ${
+                              operation.state === 'succeeded'
+                                ? 'badge-confirmed'
+                                : operation.state === 'failed'
+                                  ? 'badge-orphaned'
+                                  : 'badge-pending'
+                            }`}
+                          >
+                            {recoveryOperationStateLabel(operation.state)}
+                          </span>
+                        </td>
+                        <td title={operation.started_at ? new Date(toUnixMs(operation.started_at)).toLocaleString() : undefined}>
+                          {operation.started_at ? timeAgo(operation.started_at) : '-'}
+                        </td>
+                        <td title={operation.finished_at ? new Date(toUnixMs(operation.finished_at)).toLocaleString() : undefined}>
+                          {operation.finished_at ? timeAgo(operation.finished_at) : '-'}
+                        </td>
+                        <td style={{ maxWidth: 360 }}>{operation.message || '-'}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {recoveryLatestOperation ? (
+              <p style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)' }}>
+                Latest: {recoveryOperationLabel(recoveryLatestOperation.kind)}
+                {' · '}
+                {recoveryOperationStateLabel(recoveryLatestOperation.state)}
+                {recoveryLatestOperation.message ? ` · ${recoveryLatestOperation.message}` : ''}
+              </p>
+            ) : null}
           </div>
 
           <div style={{ display: tab === 'logs' ? '' : 'none' }}>

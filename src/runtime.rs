@@ -19,6 +19,8 @@ use crate::node::NodeClient;
 use crate::payout::PayoutProcessor;
 use crate::pow::Argon2PowHasher;
 use crate::protocol::{address_network, validate_miner_address, AddressNetwork};
+#[cfg(feature = "api")]
+use crate::recovery::RecoveryAgentClient;
 use crate::service_state::{PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY};
 use crate::stats::PoolStats;
 use crate::store::PoolStore;
@@ -54,7 +56,7 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
         warn!(
             host = %cfg.api_host,
             port = cfg.api_port,
-            "api_key is empty; protected routes (/api/miners, /api/payouts, /api/fees, /api/admin/blocks/:height/reward-breakdown, /api/health, /api/daemon/logs/stream) are disabled while public routes remain available (/api/info, /api/stats, /api/stats/history, /api/stats/insights, /api/luck, /api/status, /api/events, /api/blocks, /api/payouts/recent, /api/miner/:address, /api/miner/:address/balance, /api/miner/:address/hashrate)"
+            "api_key is empty; protected routes (/api/miners, /api/payouts, /api/fees, /api/admin/blocks/:height/reward-breakdown, /api/health, /api/admin/recovery/*, /api/daemon/logs/stream) are disabled while public routes remain available (/api/info, /api/stats, /api/stats/history, /api/stats/insights, /api/luck, /api/status, /api/events, /api/blocks, /api/payouts/recent, /api/miner/:address, /api/miner/:address/balance, /api/miner/:address/hashrate)"
         );
     }
     if !cfg.api_tls_cert_path.trim().is_empty() ^ !cfg.api_tls_key_path.trim().is_empty() {
@@ -160,6 +162,9 @@ pub async fn build_api_state(shared: &SharedRuntime) -> Result<ApiState> {
         insights_cache: Arc::new(parking_lot::Mutex::new(InsightsCache::default())),
         miner_pending_estimate_cache: Arc::new(parking_lot::Mutex::new(
             std::collections::HashMap::new(),
+        )),
+        recovery: Arc::new(RecoveryAgentClient::new(
+            shared.cfg.recovery.socket_path.clone(),
         )),
         live_runtime_snapshot_cache: Arc::new(parking_lot::Mutex::new(
             crate::api::LiveRuntimeSnapshotCache::default(),
@@ -269,6 +274,7 @@ pub fn start_stratum_background_tasks(shared: &SharedRuntime, engine: Arc<PoolEn
     start_retention_maintenance(shared.cfg.clone(), Arc::clone(&shared.store));
     start_live_runtime_snapshot_persist(
         Arc::clone(&shared.jobs),
+        Arc::clone(&payout),
         Arc::clone(&shared.stats),
         Arc::clone(&shared.validation),
         Arc::clone(&shared.store),
@@ -385,6 +391,7 @@ fn start_found_block_recovery(engine: Arc<PoolEngine>) {
 
 fn start_live_runtime_snapshot_persist(
     jobs: Arc<JobManager>,
+    payouts: Arc<PayoutProcessor>,
     stats: Arc<PoolStats>,
     validation: Arc<ValidationEngine>,
     store: Arc<PoolStore>,
@@ -397,6 +404,7 @@ fn start_live_runtime_snapshot_persist(
                 stats.snapshot(),
                 validation.snapshot(),
                 jobs.runtime_snapshot(),
+                payouts.runtime_snapshot(),
             );
             let store = Arc::clone(&store);
             match tokio::task::spawn_blocking(move || -> Result<()> {

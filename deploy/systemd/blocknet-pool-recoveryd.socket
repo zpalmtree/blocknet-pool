@@ -1,0 +1,12 @@
+[Unit]
+Description=Blocknet Pool Recovery Agent Socket
+
+[Socket]
+ListenStream=/run/blocknet-recoveryd.sock
+SocketMode=0660
+SocketUser=root
+SocketGroup=blocknet
+RemoveOnStop=true
+
+[Install]
+WantedBy=sockets.target

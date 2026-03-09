@@ -1,0 +1,22 @@
+[Unit]
+Description=Blocknet Pool Recovery Agent
+Requires=blocknet-pool-recoveryd.socket
+After=network-online.target nginx.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/blocknet/blocknet-pool
+EnvironmentFile=/etc/blocknet/pool/.env
+ExecStart=/opt/blocknet/blocknet-pool/target/release/blocknet-pool-recoveryd --config /etc/blocknet/pool/config.json
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/etc/blocknet /var/lib/blocknet /var/lib/blocknet-primary /var/lib/blocknet-standby /var/lib/blocknet-recovery /run /etc/nginx /opt/blocknet/blocknet-core
+
+[Install]
+WantedBy=multi-user.target

@@ -12,6 +12,9 @@ import type {
   MinerResponse,
   PagedResponse,
   PayoutItem,
+  RecoveryInstanceId,
+  RecoveryOperation,
+  RecoveryStatusResponse,
   StatsInsightsResponse,
   StatusResponse,
   StatsResponse,
@@ -23,6 +26,9 @@ interface QueryParams {
 
 interface FetchOptions {
   auth?: boolean;
+  method?: string;
+  body?: BodyInit | null;
+  headers?: Record<string, string>;
 }
 
 interface DaemonLogStreamOptions {
@@ -49,6 +55,13 @@ export interface ApiClient {
   getAdminBlockRewardBreakdown(height: number): Promise<BlockRewardBreakdownResponse>;
   getHealth(): Promise<HealthResponse>;
   getAdminBalances(params: QueryParams): Promise<PagedResponse<AdminBalanceItem>>;
+  getRecoveryStatus(): Promise<RecoveryStatusResponse>;
+  pauseRecoveryPayouts(): Promise<RecoveryOperation>;
+  resumeRecoveryPayouts(): Promise<RecoveryOperation>;
+  startInactiveSync(): Promise<RecoveryOperation>;
+  rebuildInactiveWallet(): Promise<RecoveryOperation>;
+  cutoverDaemon(target: RecoveryInstanceId): Promise<RecoveryOperation>;
+  purgeInactiveDaemon(): Promise<RecoveryOperation>;
   streamDaemonLogs(opts: DaemonLogStreamOptions): Promise<void>;
 }
 
@@ -64,7 +77,7 @@ function withQuery(path: string, params: QueryParams): string {
 
 export function createApiClient(getApiKey: () => string, showError: (message: string) => void): ApiClient {
   const fetchJson = async <T,>(path: string, opts?: FetchOptions): Promise<T> => {
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { ...(opts?.headers ?? {}) };
     if (opts?.auth) {
       const key = getApiKey();
       if (key) headers['x-api-key'] = key;
@@ -72,7 +85,11 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
 
     let res: Response;
     try {
-      res = await fetch(path, { headers });
+      res = await fetch(path, {
+        method: opts?.method ?? 'GET',
+        headers,
+        body: opts?.body ?? null,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'network error';
       showError(message);
@@ -128,6 +145,29 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
     getHealth: () => fetchJson<HealthResponse>('/api/health', { auth: true }),
     getAdminBalances: (params: QueryParams) =>
       fetchJson<PagedResponse<AdminBalanceItem>>(withQuery('/api/admin/balances', params), { auth: true }),
+    getRecoveryStatus: () => fetchJson<RecoveryStatusResponse>('/api/admin/recovery/status', { auth: true }),
+    pauseRecoveryPayouts: () =>
+      fetchJson<RecoveryOperation>('/api/admin/recovery/payouts/pause', { auth: true, method: 'POST' }),
+    resumeRecoveryPayouts: () =>
+      fetchJson<RecoveryOperation>('/api/admin/recovery/payouts/resume', { auth: true, method: 'POST' }),
+    startInactiveSync: () =>
+      fetchJson<RecoveryOperation>('/api/admin/recovery/inactive/start-sync', { auth: true, method: 'POST' }),
+    rebuildInactiveWallet: () =>
+      fetchJson<RecoveryOperation>('/api/admin/recovery/inactive/rebuild-wallet', { auth: true, method: 'POST' }),
+    cutoverDaemon: (target: RecoveryInstanceId) =>
+      fetchJson<RecoveryOperation>('/api/admin/recovery/cutover', {
+        auth: true,
+        method: 'POST',
+        body: JSON.stringify({ target }),
+        headers: {
+          'content-type': 'application/json',
+        },
+      }),
+    purgeInactiveDaemon: () =>
+      fetchJson<RecoveryOperation>('/api/admin/recovery/inactive/purge-resync', {
+        auth: true,
+        method: 'POST',
+      }),
     streamDaemonLogs: async ({ tail, signal, onLine }) => {
       const key = getApiKey().trim();
       if (!key) {

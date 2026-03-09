@@ -4,6 +4,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
+
 use crate::config::Config;
 use crate::db::{Balance, DbBlock, DbShare, PendingPayout, PoolFeeRecord, ShareReplayUpdate};
 use crate::node::{http_error_body_contains, is_http_status, NodeClient, NodeStatus};
@@ -18,6 +21,16 @@ const MIN_PAYOUT_FEE_BUFFER: u64 = 1_000;
 const PENDING_PAYOUT_RETRY_GRACE: Duration = Duration::from_secs(15 * 60);
 const PAYOUT_CONFIRMATIONS_REQUIRED: u64 = 1;
 const MIN_WALLET_SEND_SPACING: Duration = Duration::from_millis(2_100);
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PayoutRuntimeSnapshot {
+    #[serde(default)]
+    pub payout_interval_seconds: u64,
+    #[serde(default)]
+    pub maintenance_interval_seconds: u64,
+    pub next_sweep_at: Option<SystemTime>,
+    pub last_tick_at: Option<SystemTime>,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct PayoutTrustPolicy {
@@ -62,6 +75,7 @@ pub struct PayoutProcessor {
     configured_address_network: Option<AddressNetwork>,
     store: Arc<PoolStore>,
     node: Arc<NodeClient>,
+    runtime: RwLock<PayoutRuntimeSnapshot>,
 }
 
 impl PayoutProcessor {
@@ -72,7 +86,12 @@ impl PayoutProcessor {
             configured_address_network,
             store,
             node,
+            runtime: RwLock::new(PayoutRuntimeSnapshot::default()),
         })
+    }
+
+    pub fn runtime_snapshot(&self) -> PayoutRuntimeSnapshot {
+        self.runtime.read().clone()
     }
 
     pub fn start(self: &Arc<Self>) {
@@ -86,25 +105,57 @@ impl PayoutProcessor {
                     this.backfill_legacy_pool_fee_credits();
                     this.recover_pending_payouts();
                     this.tick(true);
+                    let now = SystemTime::now();
+                    this.update_runtime_snapshot(
+                        payout_interval,
+                        maintenance_interval,
+                        now.checked_add(payout_interval),
+                        Some(now),
+                    );
                 })
                 .await;
             }
 
             let mut next_send_due = Instant::now() + payout_interval;
+            let mut next_send_due_at = SystemTime::now().checked_add(payout_interval);
             let mut ticker = tokio::time::interval(maintenance_interval);
             ticker.tick().await;
             loop {
                 ticker.tick().await;
                 let should_send = Instant::now() >= next_send_due;
-                let this = Arc::clone(&this);
-                let send_completed = tokio::task::spawn_blocking(move || this.tick(should_send))
+                let worker = Arc::clone(&this);
+                let send_completed = tokio::task::spawn_blocking(move || worker.tick(should_send))
                     .await
                     .unwrap_or(false);
+                let now = SystemTime::now();
                 if send_completed {
                     next_send_due = Instant::now() + payout_interval;
+                    next_send_due_at = now.checked_add(payout_interval);
+                } else if should_send {
+                    next_send_due_at = now.checked_add(maintenance_interval);
                 }
+                this.update_runtime_snapshot(
+                    payout_interval,
+                    maintenance_interval,
+                    next_send_due_at,
+                    Some(now),
+                );
             }
         });
+    }
+
+    fn update_runtime_snapshot(
+        &self,
+        payout_interval: Duration,
+        maintenance_interval: Duration,
+        next_sweep_at: Option<SystemTime>,
+        last_tick_at: Option<SystemTime>,
+    ) {
+        let mut runtime = self.runtime.write();
+        runtime.payout_interval_seconds = payout_interval.as_secs();
+        runtime.maintenance_interval_seconds = maintenance_interval.as_secs();
+        runtime.next_sweep_at = next_sweep_at;
+        runtime.last_tick_at = last_tick_at;
     }
 
     fn tick(&self, send_payouts: bool) -> bool {

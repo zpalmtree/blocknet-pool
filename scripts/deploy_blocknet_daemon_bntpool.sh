@@ -53,6 +53,7 @@ remote_releases_dir="${remote_root}/releases"
 remote_current="${remote_root}/current"
 local_binary="${BNTPOOL_DAEMON_LOCAL_BINARY:-${repo_dir}/build/blocknet-core-linux-amd64}"
 unit_file="${repo_dir}/deploy/systemd/blocknetd.service"
+template_unit_file="${repo_dir}/deploy/systemd/blocknetd@.service"
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -83,6 +84,11 @@ if [[ ! -f "${unit_file}" ]]; then
   exit 1
 fi
 
+if [[ ! -f "${template_unit_file}" ]]; then
+  echo "managed daemon template systemd unit not found at ${template_unit_file}" >&2
+  exit 1
+fi
+
 if [[ "${skip_build}" != "1" ]]; then
   echo "==> building blocknet-core daemon locally"
   "${repo_dir}/scripts/build_blocknet_daemon.sh" \
@@ -107,6 +113,7 @@ remote_release_dir="${remote_releases_dir}/${release_id}"
 remote_tmp_binary="${remote_release_dir}/blocknet.new"
 remote_binary="${remote_release_dir}/blocknet"
 remote_tmp_unit="/tmp/blocknetd.service.$$"
+remote_tmp_template_unit="/tmp/blocknetd@.service.$$"
 
 echo "==> daemon artifact"
 echo "release_id=${release_id}"
@@ -120,6 +127,7 @@ scp "${local_binary}" "${host}:${remote_tmp_binary}"
 
 echo "==> uploading managed systemd unit"
 scp "${unit_file}" "${host}:${remote_tmp_unit}"
+scp "${template_unit_file}" "${host}:${remote_tmp_template_unit}"
 
 echo "==> installing release and restarting ${service}"
 ssh "${host}" "set -euo pipefail; \
@@ -128,7 +136,9 @@ ssh "${host}" "set -euo pipefail; \
   ln -sfn '${remote_release_dir}' '${remote_root}/.current.new'; \
   mv -Tf '${remote_root}/.current.new' '${remote_current}'; \
   sudo install -m 0644 '${remote_tmp_unit}' '/etc/systemd/system/${service}'; \
+  sudo install -m 0644 '${remote_tmp_template_unit}' '/etc/systemd/system/blocknetd@.service'; \
   rm -f '${remote_tmp_unit}'; \
+  rm -f '${remote_tmp_template_unit}'; \
   sudo systemctl daemon-reload; \
   sudo systemctl enable '${service}' >/dev/null; \
   sudo systemctl restart '${service}'; \
