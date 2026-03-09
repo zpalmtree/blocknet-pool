@@ -23,9 +23,9 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{mpsc, Semaphore};
-use tokio_stream::wrappers::{IntervalStream, ReceiverStream};
+use tokio::sync::{Semaphore, mpsc};
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::{IntervalStream, ReceiverStream};
 
 use crate::config::Config;
 use crate::db::{
@@ -37,20 +37,19 @@ use crate::engine::JobRepository;
 use crate::jobs::JobManager;
 use crate::node::{NodeClient, WalletBalance};
 use crate::payout::{
-    is_share_payout_eligible, recover_share_window_by_replay,
+    PayoutTrustPolicy, is_share_payout_eligible, recover_share_window_by_replay,
     resolve_pool_fee_destination_from_address, reward_window_end, weight_shares,
-    PayoutTrustPolicy,
 };
 use crate::recovery::{RecoveryAgentClient, RecoveryInstanceId, RecoveryOperation, RecoveryStatus};
 use crate::service_state::{
-    PersistedPayoutRuntime, PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY,
+    LIVE_RUNTIME_SNAPSHOT_META_KEY, PersistedPayoutRuntime, PersistedRuntimeSnapshot,
 };
 use crate::stats::{
     MinerStats, PoolSnapshot, PoolStats, RejectionAnalyticsSnapshot, RejectionReasonCount,
 };
 use crate::store::PoolStore;
 use crate::validation::{
-    ValidationEngine, ValidationSnapshot, SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED,
+    SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED, ValidationEngine, ValidationSnapshot,
 };
 
 const DB_TOTALS_CACHE_TTL: Duration = Duration::from_secs(2);
@@ -773,10 +772,8 @@ const UI_INDEX_HTML: &str = include_str!(concat!(
 ));
 const UI_ASSET_APP_JS: &str =
     include_str!(concat!(env!("BLOCKNET_POOL_FRONTEND_DIST_DIR"), "/app.js"));
-const UI_ASSET_APP_CSS: &str = include_str!(concat!(
-    env!("BLOCKNET_POOL_FRONTEND_DIST_DIR"),
-    "/app.css"
-));
+const UI_ASSET_APP_CSS: &str =
+    include_str!(concat!(env!("BLOCKNET_POOL_FRONTEND_DIST_DIR"), "/app.css"));
 const UI_ASSET_POOL_ENTERED_PNG: &[u8] = include_bytes!("ui/assets/pool-entered.png");
 const UI_ASSET_MINING_TUI_PNG: &[u8] = include_bytes!("ui/assets/mining-tui.png");
 const UI_FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Blocknet Pool"><rect x="4" y="4" width="24" height="24" rx="4" fill="#16a34a"/><rect x="9" y="9" width="14" height="14" rx="2" fill="#fff" opacity=".9"/><rect x="12" y="12" width="8" height="8" rx="1" fill="#16a34a"/></svg>"##;
@@ -1442,9 +1439,21 @@ fn fallback_content(route: UiRoute, state: &ApiState, context: &UiSeoContext) ->
             let totals = context.totals.unwrap_or_default();
             let latest_solved_block = context.recent_blocks.first();
             let stats_grid = render_stat_grid(&[
-                ("Connected Miners", context.connected_miners.to_string(), None),
-                ("Active Workers", context.connected_workers.to_string(), None),
-                ("Pool Hashrate", human_hashrate(context.pool_hashrate_hps), None),
+                (
+                    "Connected Miners",
+                    context.connected_miners.to_string(),
+                    None,
+                ),
+                (
+                    "Active Workers",
+                    context.connected_workers.to_string(),
+                    None,
+                ),
+                (
+                    "Pool Hashrate",
+                    human_hashrate(context.pool_hashrate_hps),
+                    None,
+                ),
                 (
                     "Network Hashrate",
                     context
@@ -1503,7 +1512,11 @@ fn fallback_content(route: UiRoute, state: &ApiState, context: &UiSeoContext) ->
                 .total_blocks
                 .saturating_sub(totals.confirmed_blocks + totals.orphaned_blocks);
             let stats_grid = render_stat_grid(&[
-                ("Confirmed Blocks", totals.confirmed_blocks.to_string(), None),
+                (
+                    "Confirmed Blocks",
+                    totals.confirmed_blocks.to_string(),
+                    None,
+                ),
                 ("Pending Blocks", pending_blocks.to_string(), None),
                 ("Orphaned Blocks", totals.orphaned_blocks.to_string(), None),
                 (
@@ -1544,7 +1557,11 @@ fn fallback_content(route: UiRoute, state: &ApiState, context: &UiSeoContext) ->
         UiRoute::Payouts => {
             let stats_grid = render_stat_grid(&[
                 ("Pool Fee", pool_fee_summary_for_state(state), None),
-                ("Payout Scheme", state.payout_scheme.trim().to_uppercase(), None),
+                (
+                    "Payout Scheme",
+                    state.payout_scheme.trim().to_uppercase(),
+                    None,
+                ),
                 ("Min Payout", format_bnt(state.min_payout_amount), None),
                 (
                     "Confirmations",
@@ -3062,7 +3079,7 @@ async fn handle_monitor_ingest_cloudflare(
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({"error": format!("invalid JSON payload: {err}")})),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -3330,14 +3347,14 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
         {
             Ok(Ok(v)) => v,
             Ok(Err(err)) => {
-                return internal_error("failed loading payout health", err).into_response()
+                return internal_error("failed loading payout health", err).into_response();
             }
             Err(err) => {
                 return internal_error(
                     "failed loading payout health",
                     anyhow::anyhow!("join error: {err}"),
                 )
-                .into_response()
+                .into_response();
             }
         };
 
@@ -4071,7 +4088,7 @@ async fn handle_miner(
                 "failed loading miner data",
                 anyhow::anyhow!("join error: {err}"),
             )
-            .into_response()
+            .into_response();
         }
     };
     let (
@@ -4272,7 +4289,7 @@ async fn handle_blocks(
                     "failed loading blocks",
                     anyhow::anyhow!("join error: {err}"),
                 )
-                .into_response()
+                .into_response();
             }
         };
         for block in &mut blocks {
@@ -4318,7 +4335,7 @@ async fn handle_blocks(
                 "failed loading blocks",
                 anyhow::anyhow!("join error: {err}"),
             )
-            .into_response()
+            .into_response();
         }
     };
     for block in &mut blocks {
@@ -4338,14 +4355,14 @@ async fn handle_blocks(
     {
         Ok(Ok(v)) => v,
         Ok(Err(err)) => {
-            return internal_error("failed loading block luck details", err).into_response()
+            return internal_error("failed loading block luck details", err).into_response();
         }
         Err(err) => {
             return internal_error(
                 "failed loading block luck details",
                 anyhow::anyhow!("join error: {err}"),
             )
-            .into_response()
+            .into_response();
         }
     };
     let items = blocks
@@ -4392,11 +4409,7 @@ fn batch_payouts(payouts: &[Payout]) -> Vec<PublicPayout> {
                 .duration_since(p.timestamp)
                 .or_else(|_| p.timestamp.duration_since(b.timestamp))
                 .unwrap_or(Duration::ZERO);
-            if diff <= batch_window {
-                Some(b)
-            } else {
-                None
-            }
+            if diff <= batch_window { Some(b) } else { None }
         });
         if let Some(batch) = merged {
             batch.total_amount += p.amount;
@@ -5386,12 +5399,10 @@ fn pending_balance_note(
             cfg.blocks_before_payout.max(0),
         ));
     }
-    Some(
-        format!(
-            "Pending stays at 0 until the pool finds and credits blocks. Your accepted shares still count toward future block rewards while they remain in {}.",
-            payout_window_description(cfg),
-        ),
-    )
+    Some(format!(
+        "Pending stays at 0 until the pool finds and credits blocks. Your accepted shares still count toward future block rewards while they remain in {}.",
+        payout_window_description(cfg),
+    ))
 }
 
 fn payout_status_note(
@@ -5747,7 +5758,7 @@ async fn handle_luck_history(
                 "failed loading luck history",
                 anyhow::anyhow!("join error: {err}"),
             )
-            .into_response()
+            .into_response();
         }
     };
     let returned = items.len();
@@ -5789,7 +5800,7 @@ async fn handle_public_payouts(
                 "failed loading payouts",
                 anyhow::anyhow!("join error: {err}"),
             )
-            .into_response()
+            .into_response();
         }
     };
 
@@ -5834,7 +5845,7 @@ async fn handle_payouts(
                     "failed loading payouts",
                     anyhow::anyhow!("join error: {err}"),
                 )
-                .into_response()
+                .into_response();
             }
         };
         return Json(payouts).into_response();
@@ -5869,7 +5880,7 @@ async fn handle_payouts(
                 "failed loading payouts",
                 anyhow::anyhow!("join error: {err}"),
             )
-            .into_response()
+            .into_response();
         }
     };
     let returned = items.len();
@@ -5907,7 +5918,7 @@ async fn handle_fees(
             Ok(Err(err)) => return internal_error("failed loading fees", err).into_response(),
             Err(err) => {
                 return internal_error("failed loading fees", anyhow::anyhow!("join error: {err}"))
-                    .into_response()
+                    .into_response();
             }
         };
 
@@ -5955,7 +5966,7 @@ async fn handle_fees(
         Ok(Err(err)) => return internal_error("failed loading fees", err).into_response(),
         Err(err) => {
             return internal_error("failed loading fees", anyhow::anyhow!("join error: {err}"))
-                .into_response()
+                .into_response();
         }
     };
     let returned = fees.len();
@@ -6510,6 +6521,13 @@ impl ApiState {
             build_monitor_uptime_window(
                 "6h",
                 Duration::from_secs(6 * 3600),
+                &local_rows,
+                &external_rows,
+                now,
+            ),
+            build_monitor_uptime_window(
+                "24h",
+                Duration::from_secs(24 * 3600),
                 &local_rows,
                 &external_rows,
                 now,
@@ -7296,21 +7314,21 @@ mod tests {
     use serde::Serialize;
 
     use super::{
-        apply_wallet_liquidity_to_payout_eta, batch_payouts, block_page_item_response,
-        build_block_reward_breakdown, build_fee_page, compute_luck_details_for_hashes,
-        compute_luck_history, contains_ci, daemon_debug_log_path, daemon_log_commands,
-        estimate_unconfirmed_pending_for_miner, estimated_block_reward, handle_admin_dev_fee,
-        handle_health, handle_miner, handle_miners, handle_stats,
+        ApiState, DAEMON_LOG_LINE_LIMIT, DaemonHealthCache, DbTotalsCache,
+        HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW, InsightsCache,
+        LIVE_RUNTIME_SNAPSHOT_META_KEY, LiveRuntimeSnapshotCache, MinerDetailQuery,
+        MinerPendingBlockEstimate, MinerPendingEstimate, MinersQuery, NetworkHashrateCache,
+        OpenIncident, PayoutEtaResponse, PoolHealthCache, STATUS_HISTORY_META_KEY, StatusHistory,
+        StatusIncident, apply_wallet_liquidity_to_payout_eta, batch_payouts,
+        block_page_item_response, build_block_reward_breakdown, build_fee_page,
+        compute_luck_details_for_hashes, compute_luck_history, contains_ci, daemon_debug_log_path,
+        daemon_log_commands, estimate_unconfirmed_pending_for_miner, estimated_block_reward,
+        handle_admin_dev_fee, handle_health, handle_miner, handle_miners, handle_stats,
         hashrate_from_stats_with_miner_ramp, hashrate_from_stats_with_warmup,
         hydrate_provisional_block_reward, load_persisted_status_history, miner_balance_response,
         miner_has_activity, page_bounds, payout_status_note, pending_balance_note,
         rejection_window_duration, share_limit, sort_workers_for_miner, system_time_to_unix_secs,
-        trim_log_line, worker_hashrate_by_name, ApiState, DaemonHealthCache, DbTotalsCache,
-        InsightsCache, LiveRuntimeSnapshotCache, MinerDetailQuery, MinerPendingBlockEstimate,
-        MinerPendingEstimate, MinersQuery, NetworkHashrateCache, OpenIncident, PayoutEtaResponse,
-        PoolHealthCache, StatusHistory, StatusIncident, DAEMON_LOG_LINE_LIMIT,
-        HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
-        LIVE_RUNTIME_SNAPSHOT_META_KEY, STATUS_HISTORY_META_KEY,
+        trim_log_line, worker_hashrate_by_name,
     };
 
     const TEST_POSTGRES_URL_ENV: &str = "BLOCKNET_POOL_TEST_POSTGRES_URL";
@@ -7595,9 +7613,10 @@ mod tests {
         let empty = MinerPendingEstimate::default();
         let note = pending_balance_note(&cfg, 150.0, 20, &empty);
         assert!(note.is_some());
-        assert!(note
-            .expect("note")
-            .contains("Pending stays at 0 until the pool finds and credits blocks"));
+        assert!(
+            note.expect("note")
+                .contains("Pending stays at 0 until the pool finds and credits blocks")
+        );
         assert!(pending_balance_note(&cfg, 0.0, 0, &empty).is_none());
 
         let waiting = MinerPendingEstimate {
@@ -8846,26 +8865,32 @@ mod tests {
         let commands = daemon_log_commands(&cfg, 200, true);
         assert_eq!(commands.len(), 4);
         assert_eq!(commands[0].program, "journalctl");
-        assert!(commands[0]
-            .args
-            .iter()
-            .any(|a| a == "blocknetd@primary.service"));
+        assert!(
+            commands[0]
+                .args
+                .iter()
+                .any(|a| a == "blocknetd@primary.service")
+        );
         assert!(commands[0].args.iter().any(|a| a == "-q"));
         assert!(commands[0].args.iter().any(|a| a == "-a"));
         assert!(commands[0].args.iter().any(|a| a == "-f"));
         assert_eq!(commands[1].program, "journalctl");
-        assert!(commands[1]
-            .args
-            .iter()
-            .any(|a| a == "blocknetd@standby.service"));
+        assert!(
+            commands[1]
+                .args
+                .iter()
+                .any(|a| a == "blocknetd@standby.service")
+        );
         assert_eq!(commands[2].program, "journalctl");
         assert!(commands[2].args.iter().any(|a| a == "blocknetd.service"));
         assert_eq!(commands[3].program, "tail");
         assert!(commands[3].args.iter().any(|a| a == "-F"));
-        assert!(commands[3]
-            .args
-            .iter()
-            .any(|a| a == "/var/lib/blocknet/data/debug.log"));
+        assert!(
+            commands[3]
+                .args
+                .iter()
+                .any(|a| a == "/var/lib/blocknet/data/debug.log")
+        );
     }
 
     #[test]
@@ -8880,10 +8905,12 @@ mod tests {
 
         let commands = daemon_log_commands(&cfg, 50, false);
         assert_eq!(commands[0].program, "journalctl");
-        assert!(commands[0]
-            .args
-            .iter()
-            .any(|a| a == "blocknetd@standby.service"));
+        assert!(
+            commands[0]
+                .args
+                .iter()
+                .any(|a| a == "blocknetd@standby.service")
+        );
     }
 
     #[test]
