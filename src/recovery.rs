@@ -26,6 +26,7 @@ const STATUS_WAIT_RETRY: Duration = Duration::from_secs(2);
 const STATUS_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const STATUS_CACHE_TTL: Duration = Duration::from_secs(5);
 const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+const WALLET_AUTOLOAD_RETRY_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -165,6 +166,12 @@ impl RecoveryStatus {
 struct RecoverySecret {
     mnemonic: String,
     password: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DaemonWalletLoadResponse {
+    loaded: bool,
+    address: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -314,6 +321,7 @@ pub struct RecoveryAgent {
     http: reqwest::Client,
     state: Mutex<PersistedRecoveryState>,
     status_cache: Mutex<Option<CachedRecoveryStatus>>,
+    wallet_autoload_retry_after: Mutex<[Option<Instant>; 2]>,
 }
 
 #[derive(Debug, Clone)]
@@ -345,6 +353,7 @@ impl RecoveryAgent {
                 .context("build recovery daemon http client")?,
             state: Mutex::new(persisted),
             status_cache: Mutex::new(None),
+            wallet_autoload_retry_after: Mutex::new([None, None]),
         }))
     }
 
@@ -604,15 +613,94 @@ impl RecoveryAgent {
     async fn status_refresh_loop(self: Arc<Self>) {
         if let Err(err) = self.refresh_status_cache().await {
             tracing::warn!(error = %err, "failed warming recovery status cache");
+        } else if let Some(status) = self.cached_status().await {
+            self.maybe_autoload_wallets(&status).await;
         }
         let mut interval = tokio::time::interval(STATUS_REFRESH_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
-            if let Err(err) = self.refresh_status_cache().await {
-                tracing::warn!(error = %err, "failed refreshing recovery status cache");
+            match self.refresh_status_cache().await {
+                Ok(status) => self.maybe_autoload_wallets(&status).await,
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed refreshing recovery status cache");
+                }
             }
         }
+    }
+
+    async fn maybe_autoload_wallets(&self, status: &RecoveryStatus) {
+        for instance in &status.instances {
+            let should_attempt = should_attempt_wallet_autoload(
+                &instance.service_state,
+                instance.reachable,
+                instance.wallet.loaded,
+                status.secret_configured,
+                Path::new(instance.wallet_path.trim()).exists(),
+            );
+
+            if !should_attempt {
+                self.clear_wallet_autoload_retry(instance.instance).await;
+                continue;
+            }
+            if !self.wallet_autoload_retry_elapsed(instance.instance).await {
+                continue;
+            }
+
+            match self.autoload_instance_wallet(instance).await {
+                Ok(true) => {
+                    self.clear_wallet_autoload_retry(instance.instance).await;
+                    self.invalidate_status_cache().await;
+                }
+                Ok(false) => {
+                    self.clear_wallet_autoload_retry(instance.instance).await;
+                }
+                Err(err) => {
+                    self.defer_wallet_autoload_retry(instance.instance).await;
+                    tracing::warn!(
+                        instance = instance.instance.as_str(),
+                        error = %err,
+                        "failed auto-loading daemon wallet"
+                    );
+                }
+            }
+        }
+    }
+
+    async fn autoload_instance_wallet(&self, instance: &RecoveryInstanceStatus) -> Result<bool> {
+        let secret = self.load_secret()?;
+        let cfg = self.cfg.recovery.instance(instance.instance);
+        match self.daemon_load_wallet(cfg, &secret.password).await {
+            Ok(response) => {
+                tracing::info!(
+                    instance = instance.instance.as_str(),
+                    address = %response.address,
+                    "auto-loaded daemon wallet"
+                );
+                Ok(response.loaded)
+            }
+            Err(err) if is_conflict_wallet_loaded_error(&err) => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn wallet_autoload_retry_elapsed(&self, instance: RecoveryInstanceId) -> bool {
+        let retry_after = self.wallet_autoload_retry_after.lock().await;
+        match retry_after[instance_index(instance)] {
+            Some(next) => next <= Instant::now(),
+            None => true,
+        }
+    }
+
+    async fn defer_wallet_autoload_retry(&self, instance: RecoveryInstanceId) {
+        let mut retry_after = self.wallet_autoload_retry_after.lock().await;
+        retry_after[instance_index(instance)] =
+            Some(Instant::now() + WALLET_AUTOLOAD_RETRY_INTERVAL);
+    }
+
+    async fn clear_wallet_autoload_retry(&self, instance: RecoveryInstanceId) {
+        let mut retry_after = self.wallet_autoload_retry_after.lock().await;
+        retry_after[instance_index(instance)] = None;
     }
 
     async fn build_status_snapshot(&self) -> Result<RecoveryStatus> {
@@ -1036,6 +1124,19 @@ impl RecoveryAgent {
         self.daemon_get_json(cfg, "/api/wallet/outputs").await
     }
 
+    async fn daemon_load_wallet(
+        &self,
+        cfg: &RecoveryDaemonInstanceConfig,
+        password: &str,
+    ) -> Result<DaemonWalletLoadResponse> {
+        self.daemon_post_json(
+            cfg,
+            "/api/wallet/load",
+            &serde_json::json!({ "password": password }),
+        )
+        .await
+    }
+
     async fn daemon_import_wallet(
         &self,
         cfg: &RecoveryDaemonInstanceConfig,
@@ -1410,6 +1511,36 @@ fn is_service_unavailable_wallet_error(err: &anyhow::Error) -> bool {
         .contains("no wallet loaded")
 }
 
+fn is_conflict_wallet_loaded_error(err: &anyhow::Error) -> bool {
+    err.to_string()
+        .contains(&format!("HTTP {}", StatusCode::CONFLICT.as_u16()))
+        && err
+            .to_string()
+            .to_ascii_lowercase()
+            .contains("wallet already loaded")
+}
+
+fn should_attempt_wallet_autoload(
+    service_state: &str,
+    reachable: bool,
+    wallet_loaded: bool,
+    secret_configured: bool,
+    wallet_path_exists: bool,
+) -> bool {
+    matches!(service_state, "active" | "activating" | "reloading")
+        && reachable
+        && !wallet_loaded
+        && secret_configured
+        && wallet_path_exists
+}
+
+fn instance_index(instance: RecoveryInstanceId) -> usize {
+    match instance {
+        RecoveryInstanceId::Primary => 0,
+        RecoveryInstanceId::Standby => 1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1422,6 +1553,35 @@ mod tests {
         assert_eq!(cfg.socket_path, "/run/blocknet-recoveryd.sock");
         assert_eq!(cfg.primary.api, "http://127.0.0.1:18331");
         assert_eq!(cfg.standby.api, "http://127.0.0.1:18332");
+    }
+
+    #[test]
+    fn wallet_autoload_only_runs_for_live_unloaded_instances_with_wallets() {
+        assert!(should_attempt_wallet_autoload(
+            "active", true, false, true, true
+        ));
+        assert!(!should_attempt_wallet_autoload(
+            "active", true, true, true, true
+        ));
+        assert!(!should_attempt_wallet_autoload(
+            "active", false, false, true, true
+        ));
+        assert!(!should_attempt_wallet_autoload(
+            "failed", true, false, true, true
+        ));
+        assert!(!should_attempt_wallet_autoload(
+            "active", true, false, false, true
+        ));
+        assert!(!should_attempt_wallet_autoload(
+            "active", true, false, true, false
+        ));
+    }
+
+    #[test]
+    fn conflict_wallet_loaded_error_is_detected() {
+        let err = anyhow!("POST /api/wallet/load failed with HTTP 409: wallet already loaded");
+        assert!(is_conflict_wallet_loaded_error(&err));
+        assert!(!is_service_unavailable_wallet_error(&err));
     }
 
     #[test]
@@ -1450,6 +1610,7 @@ mod tests {
             http: reqwest::Client::new(),
             state: Mutex::new(PersistedRecoveryState::default()),
             status_cache: Mutex::new(None),
+            wallet_autoload_retry_after: Mutex::new([None, None]),
         };
         assert!(!agent.secret_is_configured());
     }
@@ -1472,6 +1633,7 @@ mod tests {
             http: reqwest::Client::new(),
             state: Mutex::new(PersistedRecoveryState::default()),
             status_cache: Mutex::new(None),
+            wallet_autoload_retry_after: Mutex::new([None, None]),
         };
         assert!(agent.secret_is_configured());
     }
