@@ -113,6 +113,8 @@ sudo chown root:root '${pool_config}'"
 echo "==> validating nginx and enabling recovery socket"
 ssh "${host}" "set -euo pipefail; \
   sudo systemctl daemon-reload; \
+  sudo systemctl disable --now blocknetd.service >/dev/null 2>&1 || true; \
+  sudo systemctl enable blocknetd@primary.service blocknetd@standby.service >/dev/null; \
   sudo nginx -t; \
   sudo systemctl enable --now blocknet-pool-recoveryd.socket >/dev/null; \
   sudo systemctl reload nginx; \

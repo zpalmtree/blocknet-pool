@@ -8,6 +8,10 @@ Deploy a host-built blocknet-core daemon binary to bntpool.
 Usage:
   scripts/deploy_blocknet_daemon_bntpool.sh [--skip-build] [--release-id VALUE]
 
+If the managed recovery topology is provisioned on the host, this script
+restarts `blocknetd@primary.service` and `blocknetd@standby.service` and keeps
+the legacy singleton `blocknetd.service` disabled.
+
 Environment overrides:
   BNTPOOL_HOST                  SSH host alias (default: bntpool)
   BNTPOOL_DAEMON_SERVICE        Systemd service name (default: blocknetd.service)
@@ -54,6 +58,7 @@ remote_current="${remote_root}/current"
 local_binary="${BNTPOOL_DAEMON_LOCAL_BINARY:-${repo_dir}/build/blocknet-core-linux-amd64}"
 unit_file="${repo_dir}/deploy/systemd/blocknetd.service"
 template_unit_file="${repo_dir}/deploy/systemd/blocknetd@.service"
+legacy_service="blocknetd.service"
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -140,12 +145,30 @@ ssh "${host}" "set -euo pipefail; \
   rm -f '${remote_tmp_unit}'; \
   rm -f '${remote_tmp_template_unit}'; \
   sudo systemctl daemon-reload; \
-  sudo systemctl enable '${service}' >/dev/null; \
-  sudo systemctl restart '${service}'; \
-  sudo systemctl is-active '${service}'"
+  if [[ '${service}' == '${legacy_service}' ]] && [[ -f /etc/blocknet/recovery/primary.env ]] && [[ -f /etc/blocknet/recovery/standby.env ]]; then \
+    echo 'recovery topology detected; restarting blocknetd@primary.service and blocknetd@standby.service'; \
+    sudo systemctl disable --now '${legacy_service}' >/dev/null 2>&1 || true; \
+    sudo systemctl enable 'blocknetd@primary.service' 'blocknetd@standby.service' >/dev/null; \
+    sudo systemctl restart 'blocknetd@primary.service' 'blocknetd@standby.service'; \
+    sudo systemctl is-active 'blocknetd@primary.service'; \
+    sudo systemctl is-active 'blocknetd@standby.service'; \
+  else \
+    sudo systemctl enable '${service}' >/dev/null; \
+    sudo systemctl restart '${service}'; \
+    sudo systemctl is-active '${service}'; \
+  fi"
 
 echo "==> verifying daemon API"
 ssh "${host}" "set -euo pipefail; \
-  token=\$(cat /var/lib/blocknet/data/api.cookie); \
-  curl -fsS -H \"Authorization: Bearer \${token}\" http://127.0.0.1:8332/api/status >/dev/null; \
-  sudo journalctl -u '${service}' --no-pager -n 30"
+  if [[ '${service}' == '${legacy_service}' ]] && [[ -f /etc/blocknet/recovery/primary.env ]] && [[ -f /etc/blocknet/recovery/standby.env ]]; then \
+    token_primary=\$(cat /var/lib/blocknet/data/api.cookie); \
+    token_standby=\$(cat /var/lib/blocknet-standby/data/api.cookie); \
+    curl -fsS -H \"Authorization: Bearer \${token_primary}\" http://127.0.0.1:18331/api/status >/dev/null; \
+    curl -fsS -H \"Authorization: Bearer \${token_standby}\" http://127.0.0.1:18332/api/status >/dev/null; \
+    sudo journalctl -u 'blocknetd@primary.service' --no-pager -n 20; \
+    sudo journalctl -u 'blocknetd@standby.service' --no-pager -n 20; \
+  else \
+    token=\$(cat /var/lib/blocknet/data/api.cookie); \
+    curl -fsS -H \"Authorization: Bearer \${token}\" http://127.0.0.1:8332/api/status >/dev/null; \
+    sudo journalctl -u '${service}' --no-pager -n 30; \
+  fi"

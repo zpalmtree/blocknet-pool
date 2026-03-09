@@ -315,6 +315,8 @@ export interface RecoveryWalletStatus {
   outputs_pending?: number | null;
   spendable?: number | null;
   pending?: number | null;
+  pending_unconfirmed?: number | null;
+  pending_unconfirmed_eta?: number | null;
   total?: number | null;
 }
 

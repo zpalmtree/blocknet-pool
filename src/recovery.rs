@@ -93,6 +93,8 @@ pub struct RecoveryWalletStatus {
     pub outputs_pending: Option<u64>,
     pub spendable: Option<u64>,
     pub pending: Option<u64>,
+    pub pending_unconfirmed: Option<u64>,
+    pub pending_unconfirmed_eta: Option<u64>,
     pub total: Option<u64>,
 }
 
@@ -623,21 +625,21 @@ impl RecoveryAgent {
             _ => None,
         };
 
-        let warning = match (proxy_target, active_cookie_target) {
-            (Some(a), Some(b)) if a != b => Some(format!(
-                "proxy points to {} while active cookie points to {}",
-                a.as_str(),
-                b.as_str()
-            )),
-            (None, None) => Some("active daemon routing is not provisioned yet".to_string()),
-            _ => None,
-        };
-
         let (primary, standby) = tokio::join!(
             self.inspect_instance(RecoveryInstanceId::Primary),
             self.inspect_instance(RecoveryInstanceId::Standby)
         );
         let instances = vec![primary, standby];
+        let legacy_service_state = systemctl_state("blocknetd.service")
+            .await
+            .unwrap_or_else(|_| "unknown".to_string());
+        let warning = build_recovery_warning(
+            proxy_target,
+            active_cookie_target,
+            active_instance,
+            &instances,
+            &legacy_service_state,
+        );
 
         let state = self.state.lock().await;
         let operations = state.operations.iter().cloned().collect();
@@ -679,6 +681,8 @@ impl RecoveryAgent {
             outputs_pending: None,
             spendable: None,
             pending: None,
+            pending_unconfirmed: None,
+            pending_unconfirmed_eta: None,
             total: None,
         };
         let mut error = None;
@@ -702,6 +706,9 @@ impl RecoveryAgent {
                                 Ok(balance) => {
                                     wallet.spendable = Some(balance.spendable);
                                     wallet.pending = Some(balance.pending);
+                                    wallet.pending_unconfirmed = Some(balance.pending_unconfirmed);
+                                    wallet.pending_unconfirmed_eta =
+                                        Some(balance.pending_unconfirmed_eta);
                                     wallet.total = Some(balance.total);
                                 }
                                 Err(err) => {
@@ -719,9 +726,8 @@ impl RecoveryAgent {
                                     wallet.outputs_pending = Some(outputs.pending);
                                 }
                                 Err(err) => {
-                                    let detail = format!(
-                                        "wallet loaded but outputs probe failed: {err}"
-                                    );
+                                    let detail =
+                                        format!("wallet loaded but outputs probe failed: {err}");
                                     match error.as_mut() {
                                         Some(existing) => {
                                             existing.push_str(" | ");
@@ -1092,6 +1098,72 @@ impl RecoveryAgent {
             .with_context(|| format!("POST {url}"))?;
         decode_daemon_response(response, &format!("POST {path}")).await
     }
+}
+
+fn build_recovery_warning(
+    proxy_target: Option<RecoveryInstanceId>,
+    active_cookie_target: Option<RecoveryInstanceId>,
+    active_instance: Option<RecoveryInstanceId>,
+    instances: &[RecoveryInstanceStatus],
+    legacy_service_state: &str,
+) -> Option<String> {
+    let mut warnings = Vec::new();
+
+    match (proxy_target, active_cookie_target) {
+        (Some(a), Some(b)) if a != b => warnings.push(format!(
+            "proxy points to {} while active cookie points to {}",
+            a.as_str(),
+            b.as_str()
+        )),
+        (None, None) => warnings.push("active daemon routing is not provisioned yet".to_string()),
+        _ => {}
+    }
+
+    if matches!(legacy_service_state, "active" | "activating" | "reloading") {
+        warnings.push(
+            "legacy blocknetd.service is still running alongside the managed recovery instances"
+                .to_string(),
+        );
+    }
+
+    if let Some(note) = unconfirmed_wallet_delta_note(active_instance, instances) {
+        warnings.push(note);
+    }
+
+    if warnings.is_empty() {
+        None
+    } else {
+        Some(warnings.join(" | "))
+    }
+}
+
+fn unconfirmed_wallet_delta_note(
+    active_instance: Option<RecoveryInstanceId>,
+    instances: &[RecoveryInstanceStatus],
+) -> Option<String> {
+    let active_instance = active_instance?;
+    let active = instances
+        .iter()
+        .find(|item| item.instance == active_instance)?;
+    let inactive = instances
+        .iter()
+        .find(|item| item.instance == active_instance.other())?;
+
+    let active_address = active.wallet.address.as_deref()?;
+    let inactive_address = inactive.wallet.address.as_deref()?;
+    if active_address != inactive_address {
+        return None;
+    }
+
+    if active.wallet.pending_unconfirmed.unwrap_or(0) == 0 {
+        return None;
+    }
+
+    Some(format!(
+        "{} and {} share the same wallet seed, but unconfirmed sends only exist on the active daemon until they confirm; temporary spendable deltas are expected",
+        active_instance.as_str(),
+        active_instance.other().as_str()
+    ))
 }
 
 fn load_persisted_state(path: &Path) -> Result<PersistedRecoveryState> {

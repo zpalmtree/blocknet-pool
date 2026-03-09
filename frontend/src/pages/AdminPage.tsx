@@ -265,6 +265,18 @@ function recoveryWalletLagLabel(item: RecoveryInstanceStatus | null): string | n
   return `${lag} blocks behind`;
 }
 
+function recoveryPendingDeltaNote(status: RecoveryStatusResponse | null): string | null {
+  const activeInstance = status?.active_instance;
+  if (activeInstance == null) return null;
+  const active = status.instances.find((item) => item.instance === activeInstance) ?? null;
+  const inactive = status.instances.find((item) => item.instance !== activeInstance) ?? null;
+  if (!active?.wallet.loaded || !inactive?.wallet.loaded) return null;
+  if (!active.wallet.address || !inactive.wallet.address) return null;
+  if (active.wallet.address !== inactive.wallet.address) return null;
+  if ((active.wallet.pending_unconfirmed ?? 0) <= 0) return null;
+  return 'Primary and standby share the same wallet seed but keep separate wallet files. Unconfirmed sends only live on the active daemon until they confirm, so temporary spendable deltas are expected.';
+}
+
 interface AdminPageProps {
   active: boolean;
   api: ApiClient;
@@ -721,6 +733,7 @@ export function AdminPage({
       : recoveryInactiveInstance === 'standby'
         ? recoveryStandby
         : null;
+  const recoveryPendingNote = useMemo(() => recoveryPendingDeltaNote(recoveryStatus), [recoveryStatus]);
   const recoveryInactiveLabel =
     recoveryInactiveInstance == null ? 'Inactive' : recoveryInstanceLabel(recoveryInactiveInstance);
   const recoveryLatestOperation = recoveryStatus?.operations?.[0] ?? null;
@@ -2083,6 +2096,14 @@ export function AdminPage({
               </div>
             ) : null}
 
+            {recoveryPendingNote ? (
+              <div className="card section" style={{ marginBottom: 16 }}>
+                <p className="section-lead" style={{ margin: 0 }}>
+                  {recoveryPendingNote}
+                </p>
+              </div>
+            ) : null}
+
             <div className="stats-grid" style={{ marginBottom: 16 }}>
               <div className="stat-card">
                 <div className="label">Active Daemon</div>
@@ -2264,6 +2285,14 @@ export function AdminPage({
                       <div className="value mono">
                         {item?.wallet.spendable != null ? formatCoins(item.wallet.spendable) : '-'}
                       </div>
+                      {item?.wallet.pending_unconfirmed != null && item.wallet.pending_unconfirmed > 0 ? (
+                        <div className="label" style={{ marginTop: 6 }}>
+                          {formatCoins(item.wallet.pending_unconfirmed)} unconfirmed
+                          {item.wallet.pending_unconfirmed_eta != null && item.wallet.pending_unconfirmed_eta > 0
+                            ? ` · ~${fmtSeconds(item.wallet.pending_unconfirmed_eta)}`
+                            : ''}
+                        </div>
+                      ) : null}
                     </div>
                     <div className="stat-card">
                       <div className="label">Wallet Outputs</div>
