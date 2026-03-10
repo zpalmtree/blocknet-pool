@@ -344,12 +344,21 @@ impl StratumServer {
                     }
                 }
                 maybe_job = rx_jobs.recv(), if logged_in.is_some() => {
-                    if let Ok(job) = maybe_job {
+                    if maybe_job.is_ok() {
                         if let Some((address, worker, difficulty)) = logged_in.as_mut() {
-                            let next_difficulty = self
-                                .engine
-                                .retarget_on_job_if_needed(&conn_id)
-                                .unwrap_or(*difficulty);
+                            let next_difficulty = match retarget_on_job_tick(
+                                Arc::clone(&self.engine),
+                                conn_id.clone(),
+                                *difficulty,
+                            )
+                            .await
+                            {
+                                Ok(next_difficulty) => next_difficulty,
+                                Err(err) => {
+                                    run_result = Err(err);
+                                    break;
+                                }
+                            };
                             if next_difficulty != *difficulty {
                                 *difficulty = next_difficulty;
                                 tracing::debug!(
@@ -373,7 +382,6 @@ impl StratumServer {
                                 }
                             }
                         }
-                        let _ = job;
                     }
                 }
                 maybe_notification = rx_notifications.recv(), if logged_in.is_some() => {
@@ -847,6 +855,20 @@ async fn run_submit_worker(
     }
 }
 
+async fn retarget_on_job_tick(
+    engine: Arc<PoolEngine>,
+    conn_id: String,
+    fallback_difficulty: u64,
+) -> Result<u64> {
+    tokio::task::spawn_blocking(move || {
+        engine
+            .retarget_on_job_if_needed(&conn_id)
+            .unwrap_or(fallback_difficulty)
+    })
+    .await
+    .map_err(|err| anyhow!("stratum job retarget task failed: {err}"))
+}
+
 fn queue_error(outbound: &OutboundHandle, id: u64, msg: &str) -> Result<()> {
     let response = StratumResponse {
         id,
@@ -1090,12 +1112,14 @@ fn log_rejection_at_info(reason_code: &str) -> bool {
 mod tests {
     use super::{
         client_submit_ack_difficulty, log_rejection_at_info, queue_job_json, queue_json,
-        run_submit_worker, run_tcp_outbound_writer, OutboundHandle, QueuedSubmit, StratumResponse,
-        SubmitCompletionOutcome,
+        retarget_on_job_tick, run_submit_worker, run_tcp_outbound_writer, OutboundHandle,
+        QueuedSubmit, StratumResponse, SubmitCompletionOutcome,
     };
     use crate::config::Config;
     use crate::engine::canonical_share_reject_reason;
-    use crate::engine::{InMemoryJobs, InMemoryNode, InMemoryStore, Job, PoolEngine};
+    use crate::engine::{
+        InMemoryJobs, InMemoryNode, InMemoryStore, Job, PoolEngine, ShareRecord, ShareStore,
+    };
     use crate::pow::PowHasher;
     use crate::protocol::StratumNotify;
     use crate::validation::ValidationEngine;
@@ -1347,5 +1371,78 @@ mod tests {
             second.outcome,
             SubmitCompletionOutcome::Finished(Ok(_))
         ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn job_tick_retarget_runs_on_blocking_pool() {
+        struct RuntimeStartingStore;
+
+        impl ShareStore for RuntimeStartingStore {
+            fn is_share_seen(&self, _job_id: &str, _nonce: u64) -> anyhow::Result<bool> {
+                Ok(false)
+            }
+
+            fn mark_share_seen(&self, _job_id: &str, _nonce: u64) -> anyhow::Result<()> {
+                Ok(())
+            }
+
+            fn add_share(&self, _share: ShareRecord) -> anyhow::Result<()> {
+                Ok(())
+            }
+
+            fn upsert_vardiff_hint(
+                &self,
+                _address: &str,
+                _worker: &str,
+                _difficulty: u64,
+                _updated_at: std::time::SystemTime,
+            ) -> anyhow::Result<()> {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("runtime");
+                runtime.block_on(async {});
+                Ok(())
+            }
+        }
+
+        struct StaticHasher;
+
+        impl PowHasher for StaticHasher {
+            fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
+                Ok([0x01; 32])
+            }
+        }
+
+        let cfg = Config::default();
+        let validation = Arc::new(ValidationEngine::new(cfg.clone(), Arc::new(StaticHasher)));
+        let jobs = Arc::new(InMemoryJobs::default());
+        let engine = Arc::new(PoolEngine::new(
+            cfg.clone(),
+            validation,
+            jobs,
+            Arc::new(RuntimeStartingStore),
+            Arc::new(InMemoryNode::default()),
+        ));
+        let address = bs58::encode([0x44; 64]).into_string();
+        engine
+            .login(
+                "conn1",
+                address,
+                None,
+                2,
+                vec!["submit_claimed_hash".to_string()],
+            )
+            .expect("login should succeed");
+
+        let difficulty = retarget_on_job_tick(
+            Arc::clone(&engine),
+            "conn1".to_string(),
+            cfg.initial_share_difficulty,
+        )
+        .await
+        .expect("job tick should not panic on runtime-backed store");
+
+        assert_eq!(difficulty, cfg.initial_share_difficulty);
     }
 }
