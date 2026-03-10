@@ -686,6 +686,26 @@ tr:hover td {
   white-space: nowrap;
 }
 
+#page-status .status-incident-message-cell {
+  text-align: left;
+}
+
+#page-status .status-incident-message {
+  display: block;
+  max-width: min(44vw, 34rem);
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 3px;
+  white-space: nowrap;
+  scrollbar-width: thin;
+}
+
+@media (max-width: 900px) {
+  #page-status .status-incident-message {
+    max-width: min(68vw, 24rem);
+  }
+}
+
 #page-admin .table-scroll th,
 #page-admin .table-scroll td {
   padding: 8px 6px;

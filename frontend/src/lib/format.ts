@@ -34,6 +34,29 @@ export function timeAgo(val: UnixLike): string {
   return `${Math.floor(d / 30)}mo ago`;
 }
 
+export function timeUntil(val: UnixLike): string {
+  const ms = toUnixMs(val);
+  if (!ms) return '-';
+
+  const diff = ms - Date.now();
+  if (Math.abs(diff) < 1000) return 'now';
+  if (diff < 0) return 'expired';
+
+  const s = Math.ceil(diff / 1000);
+  if (s < 60) return `in ${s}s`;
+
+  const m = Math.floor(s / 60);
+  if (m < 60) return `in ${m}m`;
+
+  const h = Math.floor(m / 60);
+  if (h < 24) return `in ${h}h`;
+
+  const d = Math.floor(h / 24);
+  if (d < 30) return `in ${d}d`;
+
+  return `in ${Math.floor(d / 30)}mo`;
+}
+
 export function humanRate(hps: number | null | undefined): string {
   if (!hps || !Number.isFinite(hps)) return '0 H/s';
   const units = ['H/s', 'KH/s', 'MH/s', 'GH/s', 'TH/s', 'PH/s'];

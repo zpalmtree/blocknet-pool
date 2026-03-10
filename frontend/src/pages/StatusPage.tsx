@@ -295,7 +295,14 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
                         : "-"}
                     </td>
                     <td>{incident.ongoing ? "Open" : "Resolved"}</td>
-                    <td>{incident.message}</td>
+                    <td className="status-incident-message-cell">
+                      <div
+                        className="status-incident-message"
+                        title={incident.message}
+                      >
+                        {incident.message}
+                      </div>
+                    </td>
                   </tr>
                 ))
               )}
