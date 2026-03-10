@@ -2062,7 +2062,21 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok((force, state))
     }
 
+    pub fn clear_address_risk_history(&self, address: &str) -> Result<()> {
+        let mut conn = self.conn().lock();
+        let mut tx = conn.transaction()?;
+        tx.execute("DELETE FROM address_risk WHERE address = $1", &[&address])?;
+        tx.execute(
+            "DELETE FROM validation_address_states WHERE address = $1",
+            &[&address],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn list_active_verification_holds(&self) -> Result<Vec<ActiveVerificationHold>> {
+        let now = SystemTime::now();
+        let now_ts = now_unix();
         let rows = self.conn().lock().query(
             "SELECT COALESCE(r.address, v.address) AS address,
                     r.strikes,
@@ -2086,7 +2100,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              ) v
              ON r.address = v.address
              ORDER BY address ASC",
-            &[&now_unix()],
+            &[&now_ts],
         )?;
         Ok(rows
             .iter()
@@ -2097,9 +2111,18 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     as u64,
                 last_reason: row.get::<_, Option<String>>(3),
                 last_event_at: row.get::<_, Option<i64>>(4).map(from_unix),
-                quarantined_until: row.get::<_, Option<i64>>(5).map(from_unix),
-                force_verify_until: row.get::<_, Option<i64>>(6).map(from_unix),
-                validation_forced_until: row.get::<_, Option<i64>>(7).map(from_unix),
+                quarantined_until: row
+                    .get::<_, Option<i64>>(5)
+                    .map(from_unix)
+                    .filter(|until| *until > now),
+                force_verify_until: row
+                    .get::<_, Option<i64>>(6)
+                    .map(from_unix)
+                    .filter(|until| *until > now),
+                validation_forced_until: row
+                    .get::<_, Option<i64>>(7)
+                    .map(from_unix)
+                    .filter(|until| *until > now),
             })
             .collect())
     }
@@ -3157,6 +3180,10 @@ impl ShareStore for PostgresStore {
             .unwrap_or(0))
     }
 
+    fn clear_address_risk_history(&self, address: &str) -> Result<()> {
+        PostgresStore::clear_address_risk_history(self, address)
+    }
+
     fn get_vardiff_hint(&self, address: &str, worker: &str) -> Result<Option<(u64, SystemTime)>> {
         PostgresStore::get_vardiff_hint(self, address, worker)
     }
@@ -3663,6 +3690,110 @@ mod tests {
                 .fee_address,
             expected
         );
+    }
+
+    #[test]
+    fn list_active_verification_holds_omits_expired_quarantine_timestamp_when_force_verify_remains()
+    {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let address = format!("risk-{}", unique_suffix());
+        store
+            .escalate_address_risk(
+                &address,
+                "low difficulty share",
+                Duration::from_secs(60),
+                1,
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+                Duration::from_secs(24 * 60 * 60),
+            )
+            .expect("escalate address risk");
+
+        let expired = SystemTime::now()
+            .checked_sub(Duration::from_secs(60))
+            .expect("expired timestamp");
+        store
+            .conn()
+            .lock()
+            .with_retry("expire quarantined_until", |conn| {
+                conn.execute(
+                    "UPDATE address_risk SET quarantined_until = $2 WHERE address = $1",
+                    &[&address, &to_unix(expired)],
+                )?;
+                Ok(())
+            })
+            .expect("expire quarantine");
+
+        let holds = store
+            .list_active_verification_holds()
+            .expect("list active verification holds");
+        let hold = holds
+            .iter()
+            .find(|hold| hold.address == address)
+            .expect("hold row");
+        assert!(hold.force_verify_until.is_some());
+        assert!(hold.quarantined_until.is_none());
+    }
+
+    #[test]
+    fn clear_address_risk_history_removes_risk_and_validation_rows() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let address = format!("risk-clear-{}", unique_suffix());
+        store
+            .record_suspected_fraud(
+                &address,
+                "invalid share proof",
+                1,
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+            )
+            .expect("seed suspected fraud");
+        store
+            .upsert_validation_state(&PersistedValidationAddressState {
+                address: address.clone(),
+                total_shares: 10,
+                sampled_shares: 2,
+                invalid_samples: 1,
+                forced_until: Some(SystemTime::now() + Duration::from_secs(60)),
+                last_seen_at: SystemTime::now(),
+            })
+            .expect("seed validation state");
+
+        store
+            .clear_address_risk_history(&address)
+            .expect("clear risk history");
+
+        assert!(store
+            .get_address_risk(&address)
+            .expect("read cleared risk")
+            .is_none());
+
+        let loaded = store
+            .load_validation_state(
+                SystemTime::now()
+                    .checked_sub(Duration::from_secs(60))
+                    .expect("state cutoff"),
+                SystemTime::now()
+                    .checked_sub(Duration::from_secs(60))
+                    .expect("provisional cutoff"),
+                SystemTime::now(),
+            )
+            .expect("load validation state");
+        assert!(!loaded.states.iter().any(|state| state.address == address));
     }
 
     #[test]

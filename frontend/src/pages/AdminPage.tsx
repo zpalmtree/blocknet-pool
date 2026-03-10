@@ -12,6 +12,7 @@ import {
   shortAddr,
   shortTx,
   timeAgo,
+  timeUntil,
   toUnixMs,
 } from '../lib/format';
 import type {
@@ -139,16 +140,43 @@ function formatAdminTimestamp(value: UnixLike): string {
   return ms ? new Date(ms).toLocaleString() : '-';
 }
 
+function hasActiveUntil(value: UnixLike | null | undefined): boolean {
+  const ms = value ? toUnixMs(value) : 0;
+  return !!ms && ms > Date.now();
+}
+
+function holdUntilLabel(value: UnixLike | null | undefined): string {
+  return hasActiveUntil(value) ? timeUntil(value as UnixLike) : '-';
+}
+
+function holdUntilTitle(value: UnixLike | null | undefined): string | undefined {
+  return hasActiveUntil(value) ? formatAdminTimestamp(value as UnixLike) : undefined;
+}
+
 function verificationHoldBadgeClass(active: boolean, tone: 'warn' | 'good' = 'warn'): string {
   if (!active) return 'badge-pending';
   return tone === 'good' ? 'badge-confirmed' : 'badge-orphaned';
 }
 
+function verificationHoldActive(hold: ActiveVerificationHold): boolean {
+  return (
+    hasActiveUntil(hold.quarantined_until) ||
+    hasActiveUntil(hold.force_verify_until) ||
+    hasActiveUntil(hold.validation_forced_until)
+  );
+}
+
+function verificationHoldTone(hold: ActiveVerificationHold): 'warn' | 'good' {
+  return hasActiveUntil(hold.quarantined_until) ? 'warn' : 'good';
+}
+
 function verificationHoldLabel(hold: ActiveVerificationHold): string {
-  if (hold.quarantined_until) return 'Quarantined';
-  if (hold.force_verify_until && hold.validation_forced_until) return 'Risk + validation';
-  if (hold.force_verify_until) return 'Risk forced';
-  if (hold.validation_forced_until) return 'Validation forced';
+  if (hasActiveUntil(hold.quarantined_until)) return 'Quarantined';
+  if (hasActiveUntil(hold.force_verify_until) && hasActiveUntil(hold.validation_forced_until)) {
+    return 'Risk + validation';
+  }
+  if (hasActiveUntil(hold.force_verify_until)) return 'Risk forced';
+  if (hasActiveUntil(hold.validation_forced_until)) return 'Validation forced';
   return 'Active';
 }
 
@@ -360,6 +388,8 @@ export function AdminPage({
   const [recoveryStatus, setRecoveryStatus] = useState<RecoveryStatusResponse | null>(null);
   const [recoveryActionError, setRecoveryActionError] = useState('');
   const [recoveryBusy, setRecoveryBusy] = useState<RecoveryOperationKind | null>(null);
+  const [holdActionError, setHoldActionError] = useState('');
+  const [holdBusyAddress, setHoldBusyAddress] = useState<string | null>(null);
 
   const [daemonLogs, setDaemonLogs] = useState<DaemonLogLine[]>([]);
   const [daemonLogsTail, setDaemonLogsTail] = useState(200);
@@ -538,6 +568,32 @@ export function AdminPage({
       }
     },
     [loadRecovery]
+  );
+
+  const clearAddressRiskHistory = useCallback(
+    async (address: string) => {
+      const trimmed = address.trim();
+      if (!trimmed) return;
+      if (
+        !window.confirm(
+          `Clear all quarantine, force-verify, fraud, and validation hold history for ${trimmed}?`
+        )
+      ) {
+        return;
+      }
+
+      setHoldActionError('');
+      setHoldBusyAddress(trimmed);
+      try {
+        await api.clearAddressRiskHistory(trimmed);
+        await loadHealth();
+      } catch (err) {
+        setHoldActionError(err instanceof Error ? err.message : 'failed clearing address risk history');
+      } finally {
+        setHoldBusyAddress(null);
+      }
+    },
+    [api, loadHealth]
   );
 
   useEffect(() => {
@@ -2008,6 +2064,20 @@ export function AdminPage({
                   </p>
                 </div>
               </div>
+              {holdActionError ? (
+                <div
+                  style={{
+                    marginTop: 12,
+                    padding: '10px 12px',
+                    borderRadius: 12,
+                    background: 'var(--error-bg)',
+                    color: 'var(--error-text)',
+                    fontSize: 13,
+                  }}
+                >
+                  {holdActionError}
+                </div>
+              ) : null}
               <div className="table-scroll" style={{ marginTop: 12 }}>
                 <table>
                   <thead>
@@ -2020,12 +2090,13 @@ export function AdminPage({
                       <th>Strikes</th>
                       <th>Reason</th>
                       <th>Last Event</th>
+                      <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {!activeVerificationHolds.length ? (
                       <tr>
-                        <td colSpan={8} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                        <td colSpan={9} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                           No active verification holds
                         </td>
                       </tr>
@@ -2046,34 +2117,21 @@ export function AdminPage({
                           <td>
                             <span
                               className={verificationHoldBadgeClass(
-                                !!hold.quarantined_until,
-                                hold.quarantined_until ? 'warn' : 'good'
+                                verificationHoldActive(hold),
+                                verificationHoldTone(hold)
                               )}
                             >
                               {verificationHoldLabel(hold)}
                             </span>
                           </td>
-                          <td
-                            className="mono"
-                            title={hold.quarantined_until ? formatAdminTimestamp(hold.quarantined_until) : undefined}
-                          >
-                            {hold.quarantined_until ? timeAgo(hold.quarantined_until) : '-'}
+                          <td className="mono" title={holdUntilTitle(hold.quarantined_until)}>
+                            {holdUntilLabel(hold.quarantined_until)}
                           </td>
-                          <td
-                            className="mono"
-                            title={hold.force_verify_until ? formatAdminTimestamp(hold.force_verify_until) : undefined}
-                          >
-                            {hold.force_verify_until ? timeAgo(hold.force_verify_until) : '-'}
+                          <td className="mono" title={holdUntilTitle(hold.force_verify_until)}>
+                            {holdUntilLabel(hold.force_verify_until)}
                           </td>
-                          <td
-                            className="mono"
-                            title={
-                              hold.validation_forced_until
-                                ? formatAdminTimestamp(hold.validation_forced_until)
-                                : undefined
-                            }
-                          >
-                            {hold.validation_forced_until ? timeAgo(hold.validation_forced_until) : '-'}
+                          <td className="mono" title={holdUntilTitle(hold.validation_forced_until)}>
+                            {holdUntilLabel(hold.validation_forced_until)}
                           </td>
                           <td className="mono">
                             {hold.strikes}
@@ -2082,6 +2140,16 @@ export function AdminPage({
                           <td title={hold.last_reason ?? undefined}>{hold.last_reason ?? '-'}</td>
                           <td className="mono" title={hold.last_event_at ? formatAdminTimestamp(hold.last_event_at) : undefined}>
                             {hold.last_event_at ? timeAgo(hold.last_event_at) : '-'}
+                          </td>
+                          <td>
+                            <button
+                              className="btn btn-secondary"
+                              disabled={holdBusyAddress !== null}
+                              onClick={() => void clearAddressRiskHistory(hold.address)}
+                              title="Delete all admin risk and validation hold history for this address"
+                            >
+                              {holdBusyAddress === hold.address ? 'Clearing…' : 'Clear History'}
+                            </button>
                           </td>
                         </tr>
                       ))
@@ -2147,6 +2215,20 @@ export function AdminPage({
                 <span className="mono">Validation forced</span> comes from the share validation engine after repeated
                 invalid samples, suspected fraud, or too many provisional shares waiting for full verification.
               </div>
+              {holdActionError ? (
+                <div
+                  style={{
+                    marginTop: 12,
+                    padding: '10px 12px',
+                    borderRadius: 12,
+                    background: 'var(--error-bg)',
+                    color: 'var(--error-text)',
+                    fontSize: 13,
+                  }}
+                >
+                  {holdActionError}
+                </div>
+              ) : null}
               <div className="table-scroll" style={{ marginTop: 12 }}>
                 <table>
                   <thead>
@@ -2159,12 +2241,13 @@ export function AdminPage({
                       <th>Strikes</th>
                       <th>Reason</th>
                       <th>Last Event</th>
+                      <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {!activeVerificationHolds.length ? (
                       <tr>
-                        <td colSpan={8} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                        <td colSpan={9} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                           No active verification holds
                         </td>
                       </tr>
@@ -2185,34 +2268,21 @@ export function AdminPage({
                           <td>
                             <span
                               className={verificationHoldBadgeClass(
-                                !!hold.quarantined_until,
-                                hold.quarantined_until ? 'warn' : 'good'
+                                verificationHoldActive(hold),
+                                verificationHoldTone(hold)
                               )}
                             >
                               {verificationHoldLabel(hold)}
                             </span>
                           </td>
-                          <td
-                            className="mono"
-                            title={hold.quarantined_until ? formatAdminTimestamp(hold.quarantined_until) : undefined}
-                          >
-                            {hold.quarantined_until ? timeAgo(hold.quarantined_until) : '-'}
+                          <td className="mono" title={holdUntilTitle(hold.quarantined_until)}>
+                            {holdUntilLabel(hold.quarantined_until)}
                           </td>
-                          <td
-                            className="mono"
-                            title={hold.force_verify_until ? formatAdminTimestamp(hold.force_verify_until) : undefined}
-                          >
-                            {hold.force_verify_until ? timeAgo(hold.force_verify_until) : '-'}
+                          <td className="mono" title={holdUntilTitle(hold.force_verify_until)}>
+                            {holdUntilLabel(hold.force_verify_until)}
                           </td>
-                          <td
-                            className="mono"
-                            title={
-                              hold.validation_forced_until
-                                ? formatAdminTimestamp(hold.validation_forced_until)
-                                : undefined
-                            }
-                          >
-                            {hold.validation_forced_until ? timeAgo(hold.validation_forced_until) : '-'}
+                          <td className="mono" title={holdUntilTitle(hold.validation_forced_until)}>
+                            {holdUntilLabel(hold.validation_forced_until)}
                           </td>
                           <td className="mono">
                             {hold.strikes}
@@ -2221,6 +2291,16 @@ export function AdminPage({
                           <td title={hold.last_reason ?? undefined}>{hold.last_reason ?? '-'}</td>
                           <td className="mono" title={hold.last_event_at ? formatAdminTimestamp(hold.last_event_at) : undefined}>
                             {hold.last_event_at ? timeAgo(hold.last_event_at) : '-'}
+                          </td>
+                          <td>
+                            <button
+                              className="btn btn-secondary"
+                              disabled={holdBusyAddress !== null}
+                              onClick={() => void clearAddressRiskHistory(hold.address)}
+                              title="Delete all admin risk and validation hold history for this address"
+                            >
+                              {holdBusyAddress === hold.address ? 'Clearing…' : 'Clear History'}
+                            </button>
                           </td>
                         </tr>
                       ))

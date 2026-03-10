@@ -172,6 +172,11 @@ export interface ActiveVerificationHold {
   validation_forced_until?: UnixLike;
 }
 
+export interface ClearAddressRiskHistoryResponse {
+  ok: boolean;
+  address: string;
+}
+
 export interface MinerResponse {
   hashrate: number;
   mining_since?: UnixLike;

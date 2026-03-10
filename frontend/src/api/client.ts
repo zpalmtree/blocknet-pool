@@ -3,6 +3,7 @@ import type {
   AdminPayoutItem,
   BlockRewardBreakdownResponse,
   BlockItem,
+  ClearAddressRiskHistoryResponse,
   FeesResponse,
   HashratePoint,
   HealthResponse,
@@ -55,6 +56,7 @@ export interface ApiClient {
   getAdminBlockRewardBreakdown(height: number): Promise<BlockRewardBreakdownResponse>;
   getHealth(): Promise<HealthResponse>;
   getAdminBalances(params: QueryParams): Promise<PagedResponse<AdminBalanceItem>>;
+  clearAddressRiskHistory(address: string): Promise<ClearAddressRiskHistoryResponse>;
   getRecoveryStatus(): Promise<RecoveryStatusResponse>;
   pauseRecoveryPayouts(): Promise<RecoveryOperation>;
   resumeRecoveryPayouts(): Promise<RecoveryOperation>;
@@ -145,6 +147,15 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
     getHealth: () => fetchJson<HealthResponse>('/api/health', { auth: true }),
     getAdminBalances: (params: QueryParams) =>
       fetchJson<PagedResponse<AdminBalanceItem>>(withQuery('/api/admin/balances', params), { auth: true }),
+    clearAddressRiskHistory: (address: string) =>
+      fetchJson<ClearAddressRiskHistoryResponse>('/api/admin/addresses/clear-risk-history', {
+        auth: true,
+        method: 'POST',
+        body: JSON.stringify({ address }),
+        headers: {
+          'content-type': 'application/json',
+        },
+      }),
     getRecoveryStatus: () => fetchJson<RecoveryStatusResponse>('/api/admin/recovery/status', { auth: true }),
     pauseRecoveryPayouts: () =>
       fetchJson<RecoveryOperation>('/api/admin/recovery/payouts/pause', { auth: true, method: 'POST' }),

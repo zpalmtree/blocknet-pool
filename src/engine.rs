@@ -348,6 +348,9 @@ pub trait ShareStore: Send + Sync + 'static {
     ) -> Result<()> {
         Ok(())
     }
+    fn clear_address_risk_history(&self, _address: &str) -> Result<()> {
+        Ok(())
+    }
     fn get_vardiff_hint(&self, _address: &str, _worker: &str) -> Result<Option<(u64, SystemTime)>> {
         Ok(None)
     }
@@ -2089,6 +2092,11 @@ impl ShareStore for InMemoryStore {
         Ok(self.vardiff_hint(address, worker))
     }
 
+    fn clear_address_risk_history(&self, address: &str) -> Result<()> {
+        self.address_risk.lock().remove(address);
+        Ok(())
+    }
+
     fn upsert_vardiff_hint(
         &self,
         address: &str,
@@ -3315,6 +3323,37 @@ mod tests {
             after, before,
             "job-tick retarget should not decay idle dev-fee sessions"
         );
+    }
+
+    #[test]
+    fn clear_address_risk_history_removes_in_memory_risk_state() {
+        let store = InMemoryStore::default();
+        let address = test_miner_address();
+
+        store
+            .escalate_address_risk(
+                &address,
+                "bad share",
+                Duration::from_secs(60),
+                1,
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+            )
+            .expect("seed risk state");
+        assert!(store
+            .address_risk_state(&address)
+            .expect("read risk state")
+            .is_some());
+
+        store
+            .clear_address_risk_history(&address)
+            .expect("clear risk history");
+
+        assert!(store
+            .address_risk_state(&address)
+            .expect("read cleared risk state")
+            .is_none());
     }
 
     #[test]
