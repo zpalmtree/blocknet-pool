@@ -4157,6 +4157,7 @@ async fn handle_miner(
         let worker_hashrate_raw = store.worker_hashrate_stats_for_miner(&addr, since_hr_window)?;
         let miner_blocks = store.get_blocks_for_miner(&addr)?;
         let risk_state = store.get_address_risk(&addr)?;
+        let validation_forced_until = store.validation_forced_until(&addr)?;
         Ok::<_, anyhow::Error>((
             shares,
             mining_since,
@@ -4168,6 +4169,7 @@ async fn handle_miner(
             worker_hashrate_raw,
             miner_blocks,
             risk_state,
+            validation_forced_until,
         ))
     })
     .await
@@ -4193,6 +4195,7 @@ async fn handle_miner(
         worker_hashrate_raw,
         mut miner_blocks,
         risk_state,
+        validation_forced_until,
     ) = db_result;
     for block in &mut miner_blocks {
         hydrate_provisional_block_reward(block);
@@ -4216,7 +4219,11 @@ async fn handle_miner(
     } else {
         MinerPendingEstimate::default()
     };
-    let verification_hold = miner_verification_hold(risk_state.as_ref(), SystemTime::now());
+    let verification_hold = miner_verification_hold(
+        risk_state.as_ref(),
+        validation_forced_until,
+        SystemTime::now(),
+    );
 
     let pending_confirmed = balance.pending;
     let pending_estimated = pending_estimate.estimated_pending;
@@ -4750,11 +4757,16 @@ fn active_window_strikes(strikes: u64, window_until: Option<SystemTime>, now: Sy
 
 fn miner_verification_hold(
     state: Option<&AddressRiskState>,
+    validation_forced_until: Option<SystemTime>,
     now: SystemTime,
 ) -> Option<MinerVerificationHold> {
-    let state = state?;
-    let quarantined_until = state.quarantined_until.filter(|until| *until > now);
-    let verified_only_until = state.force_verify_until.filter(|until| *until > now);
+    let quarantined_until = state.and_then(|s| s.quarantined_until).filter(|until| *until > now);
+    let verified_only_until = state
+        .and_then(|s| s.force_verify_until)
+        .into_iter()
+        .chain(validation_forced_until)
+        .filter(|until| *until > now)
+        .max();
     if quarantined_until.is_none() && verified_only_until.is_none() {
         return None;
     }
@@ -4766,20 +4778,25 @@ fn miner_verification_hold(
             "verified_only".to_string()
         },
         reason: state
-            .last_reason
-            .as_deref()
+            .and_then(|s| s.last_reason.as_deref())
             .map(str::trim)
             .filter(|reason| !reason.is_empty())
             .map(ToOwned::to_owned),
-        started_at: state.last_event_at,
+        started_at: state.and_then(|s| s.last_event_at),
         verified_only_until,
         quarantined_until,
-        active_risk_strikes: active_window_strikes(state.strikes, state.strike_window_until, now),
-        active_fraud_strikes: active_window_strikes(
-            state.suspected_fraud_strikes,
-            state.suspected_fraud_window_until,
-            now,
-        ),
+        active_risk_strikes: state
+            .map(|s| active_window_strikes(s.strikes, s.strike_window_until, now))
+            .unwrap_or_default(),
+        active_fraud_strikes: state
+            .map(|s| {
+                active_window_strikes(
+                    s.suspected_fraud_strikes,
+                    s.suspected_fraud_window_until,
+                    now,
+                )
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -8158,7 +8175,13 @@ mod tests {
                 total_shares: 42,
                 sampled_shares: 7,
                 invalid_samples: 1,
+                risk_sampled_shares: 7,
+                risk_invalid_samples: 1,
+                forced_started_at: Some(now),
                 forced_until: Some(now + Duration::from_secs(180)),
+                forced_sampled_shares: 7,
+                forced_invalid_samples: 1,
+                resume_forced_at: None,
                 last_seen_at: now,
             })
             .expect("persist validation state");

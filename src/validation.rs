@@ -39,7 +39,14 @@ pub struct ValidationResult {
     pub verified: bool,
     pub is_block_candidate: bool,
     pub suspected_fraud: bool,
-    pub escalate_risk: bool,
+    pub followup_action: ValidationFollowupAction,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ValidationFollowupAction {
+    #[default]
+    None,
+    Quarantine,
 }
 
 #[derive(Debug, Clone)]
@@ -48,7 +55,13 @@ pub struct PersistedValidationAddressState {
     pub total_shares: u64,
     pub sampled_shares: u64,
     pub invalid_samples: u64,
+    pub risk_sampled_shares: u64,
+    pub risk_invalid_samples: u64,
+    pub forced_started_at: Option<SystemTime>,
     pub forced_until: Option<SystemTime>,
+    pub forced_sampled_shares: u64,
+    pub forced_invalid_samples: u64,
+    pub resume_forced_at: Option<SystemTime>,
     pub last_seen_at: SystemTime,
 }
 
@@ -120,7 +133,13 @@ struct ValidationAddressState {
     total_shares: u64,
     sampled_shares: u64,
     invalid_samples: u64,
+    risk_sampled_shares: u64,
+    risk_invalid_samples: u64,
+    forced_started_at: Option<SystemTime>,
     forced_until: Option<SystemTime>,
+    forced_sampled_shares: u64,
+    forced_invalid_samples: u64,
+    resume_forced_at: Option<SystemTime>,
     provisional_at: VecDeque<SystemTime>,
     last_seen_at: SystemTime,
 }
@@ -131,10 +150,40 @@ impl Default for ValidationAddressState {
             total_shares: 0,
             sampled_shares: 0,
             invalid_samples: 0,
+            risk_sampled_shares: 0,
+            risk_invalid_samples: 0,
+            forced_started_at: None,
             forced_until: None,
+            forced_sampled_shares: 0,
+            forced_invalid_samples: 0,
+            resume_forced_at: None,
             provisional_at: VecDeque::new(),
             last_seen_at: SystemTime::now(),
         }
+    }
+}
+
+impl ValidationAddressState {
+    fn clear_risk_window(&mut self) {
+        self.risk_sampled_shares = 0;
+        self.risk_invalid_samples = 0;
+    }
+
+    fn clear_forced_review(&mut self) {
+        self.forced_started_at = None;
+        self.forced_until = None;
+        self.forced_sampled_shares = 0;
+        self.forced_invalid_samples = 0;
+        self.resume_forced_at = None;
+    }
+
+    fn start_forced_review(&mut self, start_at: SystemTime, duration: Duration) {
+        self.forced_started_at = Some(start_at);
+        self.forced_until = Some(start_at + duration);
+        self.forced_sampled_shares = 0;
+        self.forced_invalid_samples = 0;
+        self.resume_forced_at = None;
+        self.clear_risk_window();
     }
 }
 
@@ -283,6 +332,10 @@ impl ValidationEngine {
         self.inner
             .snapshot(self.candidate_tx.len(), self.regular_tx.len())
     }
+
+    pub fn schedule_forced_review_after(&self, address: &str, start_at: SystemTime) {
+        self.inner.schedule_forced_review_after(address, start_at);
+    }
 }
 
 impl Drop for ValidationEngine {
@@ -313,7 +366,7 @@ impl ValidationInner {
             verified: full_verify,
             is_block_candidate: false,
             suspected_fraud: false,
-            escalate_risk: false,
+            followup_action: ValidationFollowupAction::None,
         };
 
         if full_verify {
@@ -329,15 +382,12 @@ impl ValidationInner {
                     result.reject_reason = Some("hash computation failed");
                     let invalid_sample = true;
                     let provisional_accepted = false;
-                    if self.update_address_state(
+                    result.followup_action = self.update_address_state(
                         &task.address,
                         full_verify,
                         invalid_sample,
-                        result.suspected_fraud,
                         provisional_accepted,
-                    ) {
-                        result.escalate_risk = true;
-                    }
+                    );
                     return result;
                 }
             };
@@ -378,15 +428,12 @@ impl ValidationInner {
 
         let invalid_sample = full_verify && !result.accepted;
         let provisional_accepted = result.accepted && !full_verify;
-        if self.update_address_state(
+        result.followup_action = self.update_address_state(
             &task.address,
             full_verify,
             invalid_sample,
-            result.suspected_fraud,
             provisional_accepted,
-        ) {
-            result.escalate_risk = true;
-        }
+        );
 
         result
     }
@@ -403,13 +450,18 @@ impl ValidationInner {
         self.prune_provisional_locked(st, now);
         st.last_seen_at = now;
 
+        if st.resume_forced_at.is_some_and(|start_at| start_at <= now) {
+            st.start_forced_review(now, self.config.invalid_sample_force_verify_duration());
+        }
+
         if self.config.max_provisional_shares > 0
             && st.provisional_at.len() >= self.config.max_provisional_shares as usize
         {
             st.forced_until = Some(now + self.config.provisional_share_delay_duration());
         }
 
-        if st.forced_until.is_some_and(|deadline| now < deadline) {
+        if st.forced_started_at.is_some() || st.forced_until.is_some_and(|deadline| now < deadline)
+        {
             return true;
         }
 
@@ -439,16 +491,23 @@ impl ValidationInner {
         address: &str,
         sampled: bool,
         invalid_sample: bool,
-        suspected_fraud: bool,
         provisional_accepted: bool,
-    ) -> bool {
+    ) -> ValidationFollowupAction {
         let now = SystemTime::now();
         let mut state = self.state.lock();
         let st = get_or_insert_state(&mut state, address);
+        let forced_review_duration = self.config.invalid_sample_force_verify_duration();
+        let min_samples = self.config.invalid_sample_min.max(1) as u64;
+        let min_invalids = self.config.invalid_sample_count_threshold.max(1) as u64;
+        let forced_clear_threshold = self.config.invalid_sample_threshold;
+        let forced_quarantine_threshold = self.config.forced_validation_quarantine_threshold;
 
         st.total_shares = st.total_shares.saturating_add(1);
         self.prune_provisional_locked(st, now);
         st.last_seen_at = now;
+        if st.resume_forced_at.is_some_and(|start_at| start_at <= now) {
+            st.start_forced_review(now, forced_review_duration);
+        }
         if provisional_accepted {
             st.provisional_at.push_back(now);
         }
@@ -457,31 +516,48 @@ impl ValidationInner {
             if invalid_sample {
                 st.invalid_samples = st.invalid_samples.saturating_add(1);
             }
-        }
-
-        if suspected_fraud {
-            st.forced_until = Some(now + self.config.suspected_fraud_force_verify_duration());
-            let persisted = persisted_validation_state(address, st);
-            drop(state);
-            self.persist_validation_state(&persisted, None, now);
-            return true;
-        }
-
-        let min_samples = self.config.invalid_sample_min.max(1) as u64;
-        let min_invalids = self.config.invalid_sample_count_threshold.max(1) as u64;
-        let mut escalate = false;
-        if st.sampled_shares >= min_samples {
-            let invalid_ratio = if st.sampled_shares == 0 {
-                0.0
+            if st.forced_started_at.is_some() {
+                st.forced_sampled_shares = st.forced_sampled_shares.saturating_add(1);
+                if invalid_sample {
+                    st.forced_invalid_samples = st.forced_invalid_samples.saturating_add(1);
+                }
             } else {
-                st.invalid_samples as f64 / st.sampled_shares as f64
-            };
+                st.risk_sampled_shares = st.risk_sampled_shares.saturating_add(1);
+                if invalid_sample {
+                    st.risk_invalid_samples = st.risk_invalid_samples.saturating_add(1);
+                }
+            }
+        }
 
-            if st.invalid_samples >= min_invalids
-                && invalid_ratio > self.config.invalid_sample_threshold
+        let mut followup = ValidationFollowupAction::None;
+        if st.forced_started_at.is_some() {
+            let forced_ratio = ratio(st.forced_invalid_samples, st.forced_sampled_shares);
+            let forced_elapsed = st.forced_until.is_some_and(|deadline| now >= deadline);
+            let recovered = st.forced_sampled_shares >= min_samples
+                && (st.forced_invalid_samples < min_invalids
+                    || forced_ratio <= forced_clear_threshold);
+            let should_quarantine = forced_elapsed
+                && st.forced_sampled_shares >= min_samples
+                && st.forced_invalid_samples >= min_invalids
+                && forced_ratio > forced_quarantine_threshold;
+            if recovered || forced_elapsed {
+                st.clear_forced_review();
+                st.clear_risk_window();
+            }
+            if should_quarantine {
+                followup = ValidationFollowupAction::Quarantine;
+            }
+        } else {
+            let risk_ratio = ratio(st.risk_invalid_samples, st.risk_sampled_shares);
+            if st.risk_sampled_shares >= min_samples
+                && st.risk_invalid_samples >= min_invalids
+                && risk_ratio > self.config.invalid_sample_threshold
             {
-                st.forced_until = Some(now + self.config.invalid_sample_force_verify_duration());
-                escalate = true;
+                st.start_forced_review(now, forced_review_duration);
+                if sampled {
+                    st.forced_sampled_shares = 1;
+                    st.forced_invalid_samples = u64::from(invalid_sample);
+                }
             }
         }
 
@@ -491,7 +567,7 @@ impl ValidationInner {
         }
         drop(state);
         self.persist_validation_state(&persisted, provisional_accepted.then_some(now), now);
-        escalate
+        followup
     }
 
     fn prune_provisional_locked(&self, st: &mut ValidationAddressState, now: SystemTime) {
@@ -538,7 +614,7 @@ impl ValidationInner {
             snap.pending_provisional = snap
                 .pending_provisional
                 .saturating_add(st.provisional_at.len() as u64);
-            if st.forced_until.is_some_and(|deadline| now < deadline) {
+            if st.forced_started_at.is_some() {
                 snap.forced_verify_addresses += 1;
             }
         }
@@ -554,7 +630,8 @@ impl ValidationInner {
         let cutoff = now.checked_sub(VALIDATION_STATE_RETENTION).unwrap_or(now);
         state.retain(|_, st| {
             st.last_seen_at >= cutoff
-                || st.forced_until.is_some_and(|deadline| deadline > now)
+                || st.forced_started_at.is_some()
+                || st.resume_forced_at.is_some_and(|start_at| start_at > now)
                 || !st.provisional_at.is_empty()
         });
         if state.len() <= VALIDATION_STATE_MAX_TRACKED {
@@ -564,7 +641,8 @@ impl ValidationInner {
         let mut removable = state
             .iter()
             .filter_map(|(address, st)| {
-                if st.forced_until.is_some_and(|deadline| deadline > now)
+                if st.forced_started_at.is_some()
+                    || st.resume_forced_at.is_some_and(|start_at| start_at > now)
                     || !st.provisional_at.is_empty()
                 {
                     return None;
@@ -631,6 +709,22 @@ impl ValidationInner {
             tracing::warn!(error = %err, "failed cleaning persisted validation state");
         }
     }
+
+    fn schedule_forced_review_after(&self, address: &str, start_at: SystemTime) {
+        let now = SystemTime::now();
+        let mut state = self.state.lock();
+        let st = get_or_insert_state(&mut state, address);
+        st.last_seen_at = now;
+        st.clear_forced_review();
+        st.clear_risk_window();
+        st.resume_forced_at = Some(start_at);
+        let persisted = persisted_validation_state(address, st);
+        if state.len() > VALIDATION_STATE_MAX_TRACKED {
+            self.prune_stale_state_locked(&mut state, now);
+        }
+        drop(state);
+        self.persist_validation_state(&persisted, None, now);
+    }
 }
 
 fn get_or_insert_state<'a>(
@@ -645,6 +739,14 @@ fn get_or_insert_state<'a>(
         .expect("address state must be present after insert")
 }
 
+fn ratio(invalid: u64, total: u64) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        invalid as f64 / total as f64
+    }
+}
+
 fn persisted_validation_state(
     address: &str,
     state: &ValidationAddressState,
@@ -654,7 +756,13 @@ fn persisted_validation_state(
         total_shares: state.total_shares,
         sampled_shares: state.sampled_shares,
         invalid_samples: state.invalid_samples,
+        risk_sampled_shares: state.risk_sampled_shares,
+        risk_invalid_samples: state.risk_invalid_samples,
+        forced_started_at: state.forced_started_at,
         forced_until: state.forced_until,
+        forced_sampled_shares: state.forced_sampled_shares,
+        forced_invalid_samples: state.forced_invalid_samples,
+        resume_forced_at: state.resume_forced_at,
         last_seen_at: state.last_seen_at,
     }
 }
@@ -687,7 +795,13 @@ fn load_initial_validation_state(
                 total_shares: entry.total_shares,
                 sampled_shares: entry.sampled_shares,
                 invalid_samples: entry.invalid_samples,
+                risk_sampled_shares: entry.risk_sampled_shares,
+                risk_invalid_samples: entry.risk_invalid_samples,
+                forced_started_at: entry.forced_started_at,
                 forced_until: entry.forced_until.filter(|deadline| *deadline > now),
+                forced_sampled_shares: entry.forced_sampled_shares,
+                forced_invalid_samples: entry.forced_invalid_samples,
+                resume_forced_at: entry.resume_forced_at.filter(|start_at| *start_at > now),
                 provisional_at: VecDeque::new(),
                 last_seen_at: entry.last_seen_at,
             },
@@ -806,7 +920,7 @@ mod tests {
         let result = engine.process_inline(task.clone());
         assert!(!result.accepted);
         assert!(result.suspected_fraud);
-        assert!(result.escalate_risk);
+        assert_eq!(result.followup_action, ValidationFollowupAction::None);
 
         task.force_full_verify = false;
         task.claimed_hash = Some([0x01; 32]);
@@ -845,12 +959,40 @@ mod tests {
         third_bad.share_target = [0x00; 32];
         let third_result = engine.process_inline(third_bad);
         assert_eq!(third_result.reject_reason, Some("low difficulty share"));
-        assert!(third_result.escalate_risk);
+        assert_eq!(third_result.followup_action, ValidationFollowupAction::None);
 
         let after_threshold = engine.process_inline(matching_task(15));
         assert!(
             after_threshold.verified,
             "repeated invalid samples should eventually switch the address into verified-only mode"
+        );
+    }
+
+    #[test]
+    fn forced_review_only_quarantines_after_review_window_expires() {
+        let cfg = test_cfg();
+        let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));
+
+        let mut first_bad = base_task();
+        first_bad.force_full_verify = true;
+        first_bad.claimed_hash = Some([0xAA; 32]);
+        let first_result = engine.process_inline(first_bad);
+        assert_eq!(first_result.reject_reason, Some("invalid share proof"));
+        assert_eq!(first_result.followup_action, ValidationFollowupAction::None);
+
+        {
+            let mut state = engine.inner.state.lock();
+            let entry = state.get_mut("addr1").expect("validation state should exist");
+            entry.forced_until = Some(SystemTime::now() - Duration::from_secs(1));
+        }
+
+        let mut second_bad = base_task();
+        second_bad.force_full_verify = false;
+        second_bad.claimed_hash = Some([0xBB; 32]);
+        let second_result = engine.process_inline(second_bad);
+        assert_eq!(
+            second_result.followup_action,
+            ValidationFollowupAction::Quarantine
         );
     }
 

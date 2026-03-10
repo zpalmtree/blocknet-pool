@@ -39,6 +39,7 @@ pub struct Config {
     pub invalid_sample_threshold: f64,
     pub invalid_sample_min: i32,
     pub invalid_sample_count_threshold: i32,
+    pub forced_validation_quarantine_threshold: f64,
     pub invalid_escalation_window_duration: String,
     pub forced_verify_duration: String,
     pub quarantine_duration: String,
@@ -121,19 +122,20 @@ impl Default for Config {
             sample_rate: 0.10,
             warmup_shares: 20,
             min_sample_every: 10,
-            invalid_sample_threshold: 0.05,
-            invalid_sample_min: 100,
-            invalid_sample_count_threshold: 3,
-            invalid_escalation_window_duration: "6h".to_string(),
-            forced_verify_duration: "2h".to_string(),
-            quarantine_duration: "15m".to_string(),
-            max_quarantine_duration: "2h".to_string(),
+            invalid_sample_threshold: 0.10,
+            invalid_sample_min: 50,
+            invalid_sample_count_threshold: 5,
+            forced_validation_quarantine_threshold: 0.20,
+            invalid_escalation_window_duration: "24h".to_string(),
+            forced_verify_duration: "1h".to_string(),
+            quarantine_duration: "1h".to_string(),
+            max_quarantine_duration: "168h".to_string(),
             suspected_fraud_force_verify_duration: "24h".to_string(),
             suspected_fraud_window_duration: "24h".to_string(),
             suspected_fraud_quarantine_duration: "1h".to_string(),
             suspected_fraud_max_quarantine_duration: "168h".to_string(),
             suspected_fraud_quarantine_strikes: 3,
-            invalid_escalation_quarantine_strikes: 0,
+            invalid_escalation_quarantine_strikes: 1,
             provisional_share_delay: "15m".to_string(),
             max_provisional_shares: 200,
             stratum_submit_v2_required: true,
@@ -222,7 +224,12 @@ impl Config {
             self.invalid_sample_count_threshold = 1;
         }
         if !(0.0 < self.invalid_sample_threshold && self.invalid_sample_threshold <= 1.0) {
-            self.invalid_sample_threshold = 0.05;
+            self.invalid_sample_threshold = 0.10;
+        }
+        if !(0.0 < self.forced_validation_quarantine_threshold
+            && self.forced_validation_quarantine_threshold <= 1.0)
+        {
+            self.forced_validation_quarantine_threshold = 0.20;
         }
         if self.max_provisional_shares < 0 {
             self.max_provisional_shares = 0;
@@ -518,6 +525,7 @@ mod tests {
             invalid_sample_min: 0,
             invalid_sample_count_threshold: 0,
             invalid_sample_threshold: 2.0,
+            forced_validation_quarantine_threshold: 2.0,
             suspected_fraud_quarantine_strikes: -3,
             invalid_escalation_quarantine_strikes: -2,
             max_provisional_shares: -1,
@@ -549,7 +557,8 @@ mod tests {
         assert_eq!(cfg.min_sample_every, 0);
         assert_eq!(cfg.invalid_sample_min, 1);
         assert_eq!(cfg.invalid_sample_count_threshold, 1);
-        assert_eq!(cfg.invalid_sample_threshold, 0.05);
+        assert_eq!(cfg.invalid_sample_threshold, 0.10);
+        assert_eq!(cfg.forced_validation_quarantine_threshold, 0.20);
         assert_eq!(cfg.suspected_fraud_quarantine_strikes, 0);
         assert_eq!(cfg.invalid_escalation_quarantine_strikes, 0);
         assert_eq!(cfg.max_provisional_shares, 0);

@@ -25,8 +25,8 @@ use crate::protocol::{
     STRATUM_PROTOCOL_VERSION_CURRENT,
 };
 use crate::validation::{
-    ValidationEngine, ValidationResult, ValidationTask, SHARE_STATUS_PROVISIONAL,
-    SHARE_STATUS_REJECTED, SHARE_STATUS_VERIFIED,
+    ValidationEngine, ValidationFollowupAction, ValidationResult, ValidationTask,
+    SHARE_STATUS_PROVISIONAL, SHARE_STATUS_REJECTED, SHARE_STATUS_VERIFIED,
 };
 
 // Start retargeting after two accepted shares so reconnects/high starting diff
@@ -829,39 +829,11 @@ impl PoolEngine {
                     share_difficulty,
                     Some(reason),
                 );
-                if validation.suspected_fraud {
-                    if let Err(err) = self.store.record_suspected_fraud(
+                if validation.followup_action == ValidationFollowupAction::Quarantine {
+                    self.trigger_forced_validation_quarantine(
                         &session.address,
-                        reason,
-                        self.cfg.suspected_fraud_quarantine_strikes.max(0) as u64,
-                        self.cfg.suspected_fraud_window_duration(),
-                        self.cfg.suspected_fraud_quarantine_duration_duration(),
-                        self.cfg.suspected_fraud_max_quarantine_duration_duration(),
-                        self.cfg.suspected_fraud_force_verify_duration(),
-                    ) {
-                        tracing::warn!(
-                            address = %session.address,
-                            error = %err,
-                            "failed to persist suspected-fraud escalation"
-                        );
-                    }
-                } else if validation.escalate_risk {
-                    let reason = validation.reject_reason.unwrap_or("risk escalation");
-                    if let Err(err) = self.store.escalate_address_risk(
-                        &session.address,
-                        reason,
-                        self.cfg.invalid_escalation_window_duration(),
-                        self.cfg.invalid_escalation_quarantine_strikes.max(0) as u64,
-                        self.cfg.quarantine_duration_duration(),
-                        self.cfg.max_quarantine_duration_duration(),
-                        self.cfg.invalid_sample_force_verify_duration(),
-                    ) {
-                        tracing::warn!(
-                            address = %session.address,
-                            error = %err,
-                            "failed to persist risk escalation"
-                        );
-                    }
+                        "bad share ratio during forced validation",
+                    );
                 }
                 return Err(anyhow!(
                     "{}",
@@ -956,6 +928,12 @@ impl PoolEngine {
                     "failed to release share claim after successful persistence"
                 );
             }
+            if validation.followup_action == ValidationFollowupAction::Quarantine {
+                self.trigger_forced_validation_quarantine(
+                    &session.address,
+                    "bad share ratio during forced validation",
+                );
+            }
 
             let next_difficulty = self.note_share_and_maybe_adjust_difficulty(conn_id);
 
@@ -982,6 +960,44 @@ impl PoolEngine {
 
         self.seen_in_memory.lock().remove(&seen_key);
         result
+    }
+
+    fn trigger_forced_validation_quarantine(&self, address: &str, reason: &str) {
+        if let Err(err) = self.store.escalate_address_risk(
+            address,
+            reason,
+            self.cfg.invalid_escalation_window_duration(),
+            self.cfg.invalid_escalation_quarantine_strikes.max(0) as u64,
+            self.cfg.quarantine_duration_duration(),
+            self.cfg.max_quarantine_duration_duration(),
+            Duration::from_secs(0),
+        ) {
+            tracing::warn!(
+                address = %address,
+                error = %err,
+                "failed to persist forced-validation quarantine"
+            );
+            return;
+        }
+
+        match self.store.address_risk_state(address) {
+            Ok(Some(state)) => {
+                if let Some(quarantined_until) =
+                    state.quarantined_until.filter(|until| *until > SystemTime::now())
+                {
+                    self.validation
+                        .schedule_forced_review_after(address, quarantined_until);
+                }
+            }
+            Ok(None) => {}
+            Err(err) => {
+                tracing::warn!(
+                    address = %address,
+                    error = %err,
+                    "failed to load quarantine state after forced-validation quarantine"
+                );
+            }
+        }
     }
 
     fn persist_rejected_share(
@@ -3549,10 +3565,9 @@ mod tests {
     }
 
     #[test]
-    fn suspected_fraud_requires_three_strikes_before_quarantine_message() {
+    fn invalid_proof_burst_does_not_quarantine_immediately() {
         let mut cfg = cfg();
         cfg.validation_mode = "full".to_string();
-        cfg.suspected_fraud_quarantine_strikes = 3;
 
         let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
         let validation = Arc::new(validation);
@@ -3581,20 +3596,16 @@ mod tests {
 
         engine
             .login("conn2", address.clone(), None, 2, submit_hash_cap())
-            .expect("address should not be quarantined before threshold");
+            .expect("address should remain allowed while only forced review is active");
 
         let third = engine
             .submit("conn1", "job1".to_string(), 102, Some("ff".repeat(32)))
             .expect_err("third invalid proof still returns the proof rejection");
         assert!(third.to_string().contains("invalid share proof"));
 
-        let login_err = engine
+        engine
             .login("conn3", address, None, 2, submit_hash_cap())
-            .expect_err("address should be quarantined after third invalid proof");
-        let message = login_err.to_string();
-        assert!(message.contains("address quarantined"));
-        assert!(message.contains("invalid share proof"));
-        assert!(message.contains("remaining"));
+            .expect("invalid proofs alone should not immediately quarantine the address");
     }
 
     #[test]

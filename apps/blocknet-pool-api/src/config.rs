@@ -43,6 +43,7 @@ pub struct Config {
     pub invalid_sample_threshold: f64,
     pub invalid_sample_min: i32,
     pub invalid_sample_count_threshold: i32,
+    pub forced_validation_quarantine_threshold: f64,
     pub invalid_escalation_window_duration: String,
     pub forced_verify_duration: String,
     pub quarantine_duration: String,
@@ -138,6 +139,8 @@ impl Default for Config {
             invalid_sample_threshold: runtime.invalid_sample_threshold,
             invalid_sample_min: runtime.invalid_sample_min,
             invalid_sample_count_threshold: runtime.invalid_sample_count_threshold,
+            forced_validation_quarantine_threshold: runtime
+                .forced_validation_quarantine_threshold,
             invalid_escalation_window_duration: runtime.invalid_escalation_window_duration,
             forced_verify_duration: runtime.forced_verify_duration,
             quarantine_duration: runtime.quarantine_duration,
@@ -251,6 +254,8 @@ impl Config {
             invalid_sample_threshold: self.invalid_sample_threshold,
             invalid_sample_min: self.invalid_sample_min,
             invalid_sample_count_threshold: self.invalid_sample_count_threshold,
+            forced_validation_quarantine_threshold: self
+                .forced_validation_quarantine_threshold,
             invalid_escalation_window_duration: self.invalid_escalation_window_duration.clone(),
             forced_verify_duration: self.forced_verify_duration.clone(),
             quarantine_duration: self.quarantine_duration.clone(),
@@ -340,6 +345,8 @@ impl Config {
         self.invalid_sample_threshold = runtime.invalid_sample_threshold;
         self.invalid_sample_min = runtime.invalid_sample_min;
         self.invalid_sample_count_threshold = runtime.invalid_sample_count_threshold;
+        self.forced_validation_quarantine_threshold =
+            runtime.forced_validation_quarantine_threshold;
         self.invalid_escalation_window_duration = runtime.invalid_escalation_window_duration;
         self.forced_verify_duration = runtime.forced_verify_duration;
         self.quarantine_duration = runtime.quarantine_duration;

@@ -391,7 +391,13 @@ CREATE TABLE IF NOT EXISTS validation_address_states (
     total_shares BIGINT NOT NULL,
     sampled_shares BIGINT NOT NULL,
     invalid_samples BIGINT NOT NULL,
+    risk_sampled_shares BIGINT NOT NULL DEFAULT 0,
+    risk_invalid_samples BIGINT NOT NULL DEFAULT 0,
+    forced_started_at BIGINT,
     forced_until BIGINT,
+    forced_sampled_shares BIGINT NOT NULL DEFAULT 0,
+    forced_invalid_samples BIGINT NOT NULL DEFAULT 0,
+    resume_forced_at BIGINT,
     last_seen_at BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_validation_address_states_last_seen
@@ -473,6 +479,30 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             "ALTER TABLE address_risk ADD COLUMN IF NOT EXISTS suspected_fraud_window_until BIGINT",
         )
         .context("ensure address_risk.suspected_fraud_window_until column")?;
+        conn.batch_execute(
+            "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS risk_sampled_shares BIGINT NOT NULL DEFAULT 0",
+        )
+        .context("ensure validation_address_states.risk_sampled_shares column")?;
+        conn.batch_execute(
+            "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS risk_invalid_samples BIGINT NOT NULL DEFAULT 0",
+        )
+        .context("ensure validation_address_states.risk_invalid_samples column")?;
+        conn.batch_execute(
+            "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS forced_started_at BIGINT",
+        )
+        .context("ensure validation_address_states.forced_started_at column")?;
+        conn.batch_execute(
+            "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS forced_sampled_shares BIGINT NOT NULL DEFAULT 0",
+        )
+        .context("ensure validation_address_states.forced_sampled_shares column")?;
+        conn.batch_execute(
+            "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS forced_invalid_samples BIGINT NOT NULL DEFAULT 0",
+        )
+        .context("ensure validation_address_states.forced_invalid_samples column")?;
+        conn.batch_execute(
+            "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS resume_forced_at BIGINT",
+        )
+        .context("ensure validation_address_states.resume_forced_at column")?;
         conn.batch_execute(
             "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS wallet_up BOOLEAN",
         )
@@ -2055,11 +2085,20 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     ) -> Result<(bool, Option<AddressRiskState>)> {
         let state = self.get_address_risk(address)?;
         let now = SystemTime::now();
+        let validation_forced_until = self.validation_forced_until(address)?;
         let force = state.as_ref().is_some_and(|s| {
             s.force_verify_until.is_some_and(|until| until > now)
                 || s.quarantined_until.is_some_and(|until| until > now)
-        });
+        }) || validation_forced_until.is_some_and(|until| until > now);
         Ok((force, state))
+    }
+
+    pub fn validation_forced_until(&self, address: &str) -> Result<Option<SystemTime>> {
+        let row = self.conn().lock().query_opt(
+            "SELECT forced_until FROM validation_address_states WHERE address = $1",
+            &[&address],
+        )?;
+        Ok(row.and_then(|row| row.get::<_, Option<i64>>(0).map(from_unix)))
     }
 
     pub fn clear_address_risk_history(&self, address: &str) -> Result<()> {
@@ -2766,9 +2805,15 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         now: SystemTime,
     ) -> Result<LoadedValidationState> {
         let rows = self.conn().lock().query(
-            "SELECT address, total_shares, sampled_shares, invalid_samples, forced_until, last_seen_at
+            "SELECT address, total_shares, sampled_shares, invalid_samples,
+                    risk_sampled_shares, risk_invalid_samples,
+                    forced_started_at, forced_until,
+                    forced_sampled_shares, forced_invalid_samples,
+                    resume_forced_at, last_seen_at
              FROM validation_address_states
-             WHERE last_seen_at >= $1 OR (forced_until IS NOT NULL AND forced_until > $2)",
+             WHERE last_seen_at >= $1
+                OR (forced_until IS NOT NULL AND forced_until > $2)
+                OR (resume_forced_at IS NOT NULL AND resume_forced_at > $2)",
             &[&to_unix(state_cutoff), &to_unix(now)],
         )?;
         let states = rows
@@ -2778,8 +2823,14 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 total_shares: row.get::<_, i64>(1).max(0) as u64,
                 sampled_shares: row.get::<_, i64>(2).max(0) as u64,
                 invalid_samples: row.get::<_, i64>(3).max(0) as u64,
-                forced_until: row.get::<_, Option<i64>>(4).map(from_unix),
-                last_seen_at: from_unix(row.get::<_, i64>(5)),
+                risk_sampled_shares: row.get::<_, i64>(4).max(0) as u64,
+                risk_invalid_samples: row.get::<_, i64>(5).max(0) as u64,
+                forced_started_at: row.get::<_, Option<i64>>(6).map(from_unix),
+                forced_until: row.get::<_, Option<i64>>(7).map(from_unix),
+                forced_sampled_shares: row.get::<_, i64>(8).max(0) as u64,
+                forced_invalid_samples: row.get::<_, i64>(9).max(0) as u64,
+                resume_forced_at: row.get::<_, Option<i64>>(10).map(from_unix),
+                last_seen_at: from_unix(row.get::<_, i64>(11)),
             })
             .collect::<Vec<_>>();
 
@@ -2807,20 +2858,36 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     pub fn upsert_validation_state(&self, state: &PersistedValidationAddressState) -> Result<()> {
         self.conn().lock().execute(
             "INSERT INTO validation_address_states (
-                address, total_shares, sampled_shares, invalid_samples, forced_until, last_seen_at
-             ) VALUES ($1, $2, $3, $4, $5, $6)
+                address, total_shares, sampled_shares, invalid_samples,
+                risk_sampled_shares, risk_invalid_samples,
+                forced_started_at, forced_until,
+                forced_sampled_shares, forced_invalid_samples,
+                resume_forced_at, last_seen_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
              ON CONFLICT(address) DO UPDATE SET
                 total_shares = EXCLUDED.total_shares,
                 sampled_shares = EXCLUDED.sampled_shares,
                 invalid_samples = EXCLUDED.invalid_samples,
+                risk_sampled_shares = EXCLUDED.risk_sampled_shares,
+                risk_invalid_samples = EXCLUDED.risk_invalid_samples,
+                forced_started_at = EXCLUDED.forced_started_at,
                 forced_until = EXCLUDED.forced_until,
+                forced_sampled_shares = EXCLUDED.forced_sampled_shares,
+                forced_invalid_samples = EXCLUDED.forced_invalid_samples,
+                resume_forced_at = EXCLUDED.resume_forced_at,
                 last_seen_at = EXCLUDED.last_seen_at",
             &[
                 &state.address,
                 &u64_to_i64(state.total_shares)?,
                 &u64_to_i64(state.sampled_shares)?,
                 &u64_to_i64(state.invalid_samples)?,
+                &u64_to_i64(state.risk_sampled_shares)?,
+                &u64_to_i64(state.risk_invalid_samples)?,
+                &state.forced_started_at.map(to_unix),
                 &state.forced_until.map(to_unix),
+                &u64_to_i64(state.forced_sampled_shares)?,
+                &u64_to_i64(state.forced_invalid_samples)?,
+                &state.resume_forced_at.map(to_unix),
                 &to_unix(state.last_seen_at),
             ],
         )?;
@@ -2851,6 +2918,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             "DELETE FROM validation_address_states
              WHERE last_seen_at < $1
                AND (forced_until IS NULL OR forced_until <= $2)
+               AND (resume_forced_at IS NULL OR resume_forced_at <= $2)
                AND NOT EXISTS (
                    SELECT 1 FROM validation_provisionals vp
                    WHERE vp.address = validation_address_states.address
@@ -3768,7 +3836,13 @@ mod tests {
                 total_shares: 10,
                 sampled_shares: 2,
                 invalid_samples: 1,
+                risk_sampled_shares: 2,
+                risk_invalid_samples: 1,
+                forced_started_at: None,
                 forced_until: Some(SystemTime::now() + Duration::from_secs(60)),
+                forced_sampled_shares: 0,
+                forced_invalid_samples: 0,
+                resume_forced_at: None,
                 last_seen_at: SystemTime::now(),
             })
             .expect("seed validation state");

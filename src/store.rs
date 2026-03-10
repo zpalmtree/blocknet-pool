@@ -84,6 +84,10 @@ impl PoolStore {
         self.inner.list_active_verification_holds()
     }
 
+    pub fn validation_forced_until(&self, address: &str) -> Result<Option<SystemTime>> {
+        self.inner.validation_forced_until(address)
+    }
+
     pub fn miner_share_window_stats_since(
         &self,
         miner: &str,
