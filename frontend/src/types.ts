@@ -14,6 +14,7 @@ export type AdminTab =
   | "devfee"
   | "rewards"
   | "health"
+  | "holds"
   | "balances"
   | "recovery"
   | "logs";

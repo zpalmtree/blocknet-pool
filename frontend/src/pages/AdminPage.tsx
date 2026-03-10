@@ -146,9 +146,9 @@ function verificationHoldBadgeClass(active: boolean, tone: 'warn' | 'good' = 'wa
 
 function verificationHoldLabel(hold: ActiveVerificationHold): string {
   if (hold.quarantined_until) return 'Quarantined';
-  if (hold.force_verify_until && hold.validation_forced_until) return 'Risk + validator';
+  if (hold.force_verify_until && hold.validation_forced_until) return 'Risk + validation';
   if (hold.force_verify_until) return 'Risk forced';
-  if (hold.validation_forced_until) return 'Validator forced';
+  if (hold.validation_forced_until) return 'Validation forced';
   return 'Active';
 }
 
@@ -553,7 +553,7 @@ export function AdminPage({
         void loadRewardBreakdown(rewardBlockInput);
       }
     }
-    if (tab === 'health') void loadHealth();
+    if (tab === 'health' || tab === 'holds') void loadHealth();
     if (tab === 'balances') void loadBalances();
     if (tab === 'recovery') void loadRecovery();
   }, [
@@ -586,7 +586,7 @@ export function AdminPage({
         void loadRewardBreakdown(rewardBlockInput);
       }
     }
-    if (tab === 'health') void loadHealth();
+    if (tab === 'health' || tab === 'holds') void loadHealth();
     if (tab === 'balances') void loadBalances();
     if (tab === 'recovery') void loadRecovery();
   }, [
@@ -968,6 +968,9 @@ export function AdminPage({
             </button>
             <button className={tab === 'health' ? 'active' : ''} onClick={() => setTab('health')}>
               Health
+            </button>
+            <button className={tab === 'holds' ? 'active' : ''} onClick={() => setTab('holds')}>
+              Holds
             </button>
             <button className={tab === 'balances' ? 'active' : ''} onClick={() => setTab('balances')}>
               Balances
@@ -1996,14 +1999,61 @@ export function AdminPage({
               </div>
             </div>
 
+            <div className="card section">
+              <div className="section-header">
+                <div>
+                  <h3>Raw Health Data</h3>
+                  <p className="section-lead">
+                    Keep the full protected health payload available for copy and low-level debugging without making it
+                    the primary UI.
+                  </p>
+                </div>
+                <button className="btn btn-secondary" onClick={copyHealthJson} disabled={!rawHealthJson}>
+                  Copy JSON
+                </button>
+              </div>
+              <details className="health-raw-toggle">
+                <summary>Show raw JSON</summary>
+                <pre className="raw-json">{rawHealthJson || 'Loading...'}</pre>
+              </details>
+            </div>
+          </div>
+
+          <div style={{ display: tab === 'holds' ? '' : 'none' }}>
+            <div className="stats-card-group">
+              <div className="stats-card-group-title">Verification Holds</div>
+              <div className="stats-card-group-grid stats-grid-dense">
+                <div className="stat-card">
+                  <div className="label">Active Holds</div>
+                  <div className="value mono">{activeVerificationHolds.length}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Forced Verify</div>
+                  <div className="value mono">{health?.validation?.forced_verify_addresses ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Pending Provisional</div>
+                  <div className="value mono">{health?.validation?.pending_provisional ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Fraud Detections</div>
+                  <div className="value mono">{health?.validation?.fraud_detections ?? '-'}</div>
+                </div>
+              </div>
+            </div>
+
             <div className="card section" style={{ marginTop: 16 }}>
               <div className="section-header">
                 <div>
                   <h3>Active Verification Holds</h3>
                   <p className="section-lead">
-                    Addresses currently quarantined or being forced through verified-only validation.
+                    Addresses currently quarantined or forced into verified-only share validation.
                   </p>
                 </div>
+              </div>
+              <div style={{ marginTop: 12, fontSize: 13, color: 'var(--muted)' }}>
+                <span className="mono">Validation forced</span> comes from the share validation engine after repeated
+                invalid samples, suspected fraud, or too many provisional shares waiting for full verification.
               </div>
               <div className="table-scroll" style={{ marginTop: 12 }}>
                 <table>
@@ -2013,7 +2063,7 @@ export function AdminPage({
                       <th>Mode</th>
                       <th>Quarantine Until</th>
                       <th>Risk Verify Until</th>
-                      <th>Validator Until</th>
+                      <th>Validation Until</th>
                       <th>Strikes</th>
                       <th>Reason</th>
                       <th>Last Event</th>
@@ -2086,25 +2136,6 @@ export function AdminPage({
                   </tbody>
                 </table>
               </div>
-            </div>
-
-            <div className="card section">
-              <div className="section-header">
-                <div>
-                  <h3>Raw Health Data</h3>
-                  <p className="section-lead">
-                    Keep the full protected health payload available for copy and low-level debugging without making it
-                    the primary UI.
-                  </p>
-                </div>
-                <button className="btn btn-secondary" onClick={copyHealthJson} disabled={!rawHealthJson}>
-                  Copy JSON
-                </button>
-              </div>
-              <details className="health-raw-toggle">
-                <summary>Show raw JSON</summary>
-                <pre className="raw-json">{rawHealthJson || 'Loading...'}</pre>
-              </details>
             </div>
           </div>
 
