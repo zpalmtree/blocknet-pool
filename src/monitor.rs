@@ -20,6 +20,7 @@ use tokio::net::TcpListener;
 use crate::config::Config;
 use crate::db::{MonitorHeartbeatUpsert, MonitorIncidentUpsert};
 use crate::node::{NodeClient, NodeCurrentProcessBlock, NodeLastProcessBlock, NodeStatus};
+use crate::pool_activity::{assess_pool_activity, POOL_ACTIVITY_SNAPSHOT_STALE_AFTER};
 use crate::service_state::{PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY};
 use crate::store::PoolStore;
 
@@ -31,12 +32,14 @@ const LOCAL_WALLET_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 const DEFAULT_HEARTBEAT_RETENTION: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 const DEFAULT_INCIDENT_RETENTION: Duration = Duration::from_secs(180 * 24 * 60 * 60);
 const HOUSEKEEPING_INTERVAL: Duration = Duration::from_secs(60 * 60);
-const STRATUM_SNAPSHOT_STALE_AFTER: Duration = Duration::from_secs(30);
+const STRATUM_SNAPSHOT_STALE_AFTER: Duration = POOL_ACTIVITY_SNAPSHOT_STALE_AFTER;
 const TEMPLATE_REFRESH_WARN_AFTER: Duration = Duration::from_secs(45);
 const TEMPLATE_REFRESH_CRITICAL_AFTER: Duration = Duration::from_secs(120);
 const DAEMON_SLOW_BLOCK_WARN_AFTER: Duration = Duration::from_secs(5);
 const DAEMON_SLOW_BLOCK_CRITICAL_AFTER: Duration = Duration::from_secs(15);
 const DAEMON_SLOW_BLOCK_RECENT_AFTER: Duration = Duration::from_secs(60);
+const POOL_ACTIVITY_LOSS_MIN_THRESHOLD: Duration = Duration::from_secs(60);
+const POOL_ACTIVITY_LOSS_THRESHOLD_SAMPLES: u32 = 6;
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct MonitorSnapshot {
@@ -113,6 +116,7 @@ struct IncidentState {
     api_down: ConditionState,
     db_down: ConditionState,
     stratum_down: ConditionState,
+    pool_activity_lost: ConditionState,
     daemon_down: ConditionState,
     daemon_syncing: ConditionState,
     daemon_slow_block_processing: ConditionState,
@@ -311,6 +315,11 @@ impl MonitorRuntime {
         let payout_queue_stalled =
             payout_queue_state(&self.cfg, sampled_at, payout_summary.as_ref());
         let share_ingest_stalled = share_progress_state(sampled_at, runtime_snapshot.as_ref());
+        let pool_activity_lost = pool_activity_loss_state(
+            sampled_at,
+            runtime_snapshot.as_ref(),
+            STRATUM_SNAPSHOT_STALE_AFTER,
+        );
         let daemon_slow_block = daemon_slow_block_state(sampled_at, daemon.value.as_ref());
         let summary_state = summarize_state(
             api.error.is_none(),
@@ -319,6 +328,7 @@ impl MonitorRuntime {
             daemon.value.as_ref().is_some_and(|status| !status.syncing),
             template_refresh_millis,
             daemon_slow_block.as_ref().map(|(severity, _)| *severity),
+            pool_activity_lost.as_ref().map(|(severity, _)| *severity),
             validation_backlog.as_ref().map(|(severity, _)| *severity),
             payout_queue_stalled.as_ref().map(|(severity, _)| *severity),
             share_ingest_stalled.as_ref().map(|(severity, _)| *severity),
@@ -381,6 +391,11 @@ impl MonitorRuntime {
         let payout_queue_stalled =
             payout_queue_state(&self.cfg, now, sample.payout_summary.as_ref());
         let share_ingest_stalled = share_progress_state(now, sample.runtime_snapshot.as_ref());
+        let pool_activity_lost = pool_activity_loss_state(
+            now,
+            sample.runtime_snapshot.as_ref(),
+            STRATUM_SNAPSHOT_STALE_AFTER,
+        );
         let daemon_slow_block = daemon_slow_block_state(now, sample.daemon_status.value.as_ref());
 
         self.sync_condition(
@@ -421,6 +436,21 @@ impl MonitorRuntime {
                 .error
                 .clone()
                 .or_else(|| Some("persisted runtime snapshot is stale".to_string())),
+            &mut actions,
+        )?;
+        self.sync_condition(
+            &mut incidents.pool_activity_lost,
+            "local_pool_activity_lost",
+            "pool_activity_lost",
+            pool_activity_lost
+                .as_ref()
+                .map(|(severity, _)| *severity)
+                .unwrap_or("critical"),
+            "private",
+            pool_activity_lost.is_some(),
+            pool_activity_loss_threshold(self.interval),
+            now,
+            pool_activity_lost.map(|(_, detail)| detail),
             &mut actions,
         )?;
         self.sync_condition(
@@ -1122,6 +1152,7 @@ fn summarize_state(
     daemon_ready: bool,
     template_refresh_millis: Option<u64>,
     daemon_slow_block_severity: Option<&'static str>,
+    pool_activity_loss_severity: Option<&'static str>,
     validation_backlog_severity: Option<&'static str>,
     payout_queue_severity: Option<&'static str>,
     share_ingest_severity: Option<&'static str>,
@@ -1136,6 +1167,7 @@ fn summarize_state(
     if template_refresh_millis
         .is_some_and(|lag| lag >= TEMPLATE_REFRESH_WARN_AFTER.as_millis() as u64)
         || daemon_slow_block_severity.is_some()
+        || pool_activity_loss_severity.is_some()
         || validation_backlog_severity.is_some()
         || payout_queue_severity.is_some()
         || share_ingest_severity.is_some()
@@ -1222,6 +1254,12 @@ fn runtime_snapshot_age(
     snapshot: Option<&PersistedRuntimeSnapshot>,
 ) -> Option<Duration> {
     snapshot.and_then(|snapshot| sampled_at.duration_since(snapshot.sampled_at).ok())
+}
+
+fn pool_activity_loss_threshold(interval: Duration) -> Duration {
+    interval
+        .saturating_mul(POOL_ACTIVITY_LOSS_THRESHOLD_SAMPLES)
+        .max(POOL_ACTIVITY_LOSS_MIN_THRESHOLD)
 }
 
 fn validation_backlog_state(
@@ -1333,6 +1371,18 @@ fn share_progress_state(
             snapshot.connected_workers,
         ),
     ))
+}
+
+fn pool_activity_loss_state(
+    now: SystemTime,
+    snapshot: Option<&PersistedRuntimeSnapshot>,
+    snapshot_stale_after: Duration,
+) -> Option<(&'static str, String)> {
+    let assessment = assess_pool_activity(now, snapshot, snapshot_stale_after);
+    if assessment.state != "collapsed" {
+        return None;
+    }
+    Some(("critical", assessment.detail))
 }
 
 fn load_dotenv(config_path: &Path) {
@@ -1578,12 +1628,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        bool_gauge, daemon_slow_block_state, payout_queue_state, render_metrics,
-        share_progress_state, summarize_state, validation_backlog_state, MonitorSnapshot,
-        PendingPayoutSummary,
+        bool_gauge, daemon_slow_block_state, payout_queue_state, pool_activity_loss_state,
+        render_metrics, share_progress_state, summarize_state, validation_backlog_state,
+        MonitorSnapshot, PendingPayoutSummary, STRATUM_SNAPSHOT_STALE_AFTER,
     };
     use crate::config::Config;
     use crate::node::{NodeCurrentProcessBlock, NodeLastProcessBlock, NodeStatus};
+    use crate::pool_activity::assess_pool_activity;
     use crate::service_state::{PersistedRuntimeSnapshot, PersistedValidationSummary};
     use pool_runtime::jobs::JobRuntimeSnapshot;
     use std::time::{Duration, SystemTime};
@@ -1669,6 +1720,55 @@ mod tests {
     }
 
     #[test]
+    fn pool_activity_loss_detects_recent_zeroed_pool() {
+        let now = SystemTime::now();
+        let mut snapshot = sample_runtime_snapshot();
+        snapshot.connected_miners = 0;
+        snapshot.connected_workers = 0;
+        snapshot.estimated_hashrate = 0.0;
+        snapshot.last_share_at = Some(now - Duration::from_secs(30));
+        let state = pool_activity_loss_state(now, Some(&snapshot), STRATUM_SNAPSHOT_STALE_AFTER)
+            .expect("pool activity loss");
+        assert_eq!(state.0, "critical");
+        assert!(state.1.contains("miners=0"));
+        assert!(state.1.contains("hashrate=0.00"));
+    }
+
+    #[test]
+    fn pool_activity_loss_ignores_long_idle_pool() {
+        let now = SystemTime::now();
+        let mut snapshot = sample_runtime_snapshot();
+        snapshot.connected_miners = 0;
+        snapshot.connected_workers = 0;
+        snapshot.estimated_hashrate = 0.0;
+        snapshot.last_share_at = Some(now - Duration::from_secs(20 * 60));
+        assert!(pool_activity_loss_state(now, Some(&snapshot), STRATUM_SNAPSHOT_STALE_AFTER).is_none());
+    }
+
+    #[test]
+    fn pool_activity_loss_ignores_partial_drop() {
+        let now = SystemTime::now();
+        let mut snapshot = sample_runtime_snapshot();
+        snapshot.connected_miners = 0;
+        snapshot.connected_workers = 3;
+        snapshot.estimated_hashrate = 12.5;
+        snapshot.last_share_at = Some(now - Duration::from_secs(30));
+        assert!(pool_activity_loss_state(now, Some(&snapshot), STRATUM_SNAPSHOT_STALE_AFTER).is_none());
+    }
+
+    #[test]
+    fn pool_activity_loss_ignores_stale_snapshot() {
+        let now = SystemTime::now();
+        let mut snapshot = sample_runtime_snapshot();
+        snapshot.sampled_at = now - Duration::from_secs(45);
+        snapshot.connected_miners = 0;
+        snapshot.connected_workers = 0;
+        snapshot.estimated_hashrate = 0.0;
+        snapshot.last_share_at = Some(now - Duration::from_secs(10));
+        assert!(pool_activity_loss_state(now, Some(&snapshot), STRATUM_SNAPSHOT_STALE_AFTER).is_none());
+    }
+
+    #[test]
     fn payout_queue_stall_degrades_summary_state() {
         let state = summarize_state(
             true,
@@ -1678,11 +1778,40 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some("critical"),
             None,
             true,
         );
         assert_eq!(state, "degraded");
+    }
+
+    #[test]
+    fn pool_activity_loss_marks_summary_degraded() {
+        let state = summarize_state(
+            true,
+            true,
+            true,
+            true,
+            None,
+            None,
+            Some("critical"),
+            None,
+            None,
+            None,
+            true,
+        );
+        assert_eq!(state, "degraded");
+    }
+
+    #[test]
+    fn assess_pool_activity_reports_stale_snapshot() {
+        let now = SystemTime::now();
+        let mut snapshot = sample_runtime_snapshot();
+        snapshot.sampled_at = now - Duration::from_secs(45);
+        let assessment = assess_pool_activity(now, Some(&snapshot), STRATUM_SNAPSHOT_STALE_AFTER);
+        assert_eq!(assessment.state, "stale");
+        assert_eq!(assessment.snapshot_age_seconds, Some(45));
     }
 
     #[test]

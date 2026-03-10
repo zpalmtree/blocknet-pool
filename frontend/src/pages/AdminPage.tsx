@@ -239,6 +239,35 @@ function recoveryStateBadgeClass(state: RecoveryInstanceStatus['state'] | undefi
   }
 }
 
+function poolActivityLabel(state: string | undefined): string {
+  switch (state) {
+    case 'active':
+      return 'Active';
+    case 'collapsed':
+      return 'Collapsed';
+    case 'stale':
+      return 'Stale';
+    case 'idle':
+      return 'Idle';
+    default:
+      return 'Unknown';
+  }
+}
+
+function poolActivityBadgeClass(state: string | undefined): string {
+  switch (state) {
+    case 'active':
+      return 'badge-confirmed';
+    case 'collapsed':
+      return 'badge-orphaned';
+    case 'stale':
+    case 'idle':
+      return 'badge-pending';
+    default:
+      return 'badge-pending';
+  }
+}
+
 function recoveryInstanceLabel(instance: RecoveryInstanceId | null | undefined): string {
   switch (instance) {
     case 'primary':
@@ -790,6 +819,7 @@ export function AdminPage({
   const rewardBreakdownProjected = !!rewardBreakdown && !rewardBreakdownOrphaned && !rewardBreakdown.block.paid_out;
   const rawHealthJson = useMemo(() => (health ? JSON.stringify(health, null, 2) : ''), [health]);
   const activeVerificationHolds = health?.active_verification_holds ?? [];
+  const poolActivity = health?.pool_activity ?? null;
   const copyHealthJson = useCallback(() => {
     if (!rawHealthJson || !navigator.clipboard) return;
     void navigator.clipboard.writeText(rawHealthJson);
@@ -2006,6 +2036,51 @@ export function AdminPage({
                   <div className="value mono">
                     {health?.wallet?.total != null
                       ? formatCoins(health.wallet.total)
+                      : '-'}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="stats-card-group">
+              <div className="stats-card-group-title">Pool Activity</div>
+              <div className="stats-card-group-grid stats-grid-dense">
+                <div className="stat-card">
+                  <div className="label">State</div>
+                  <div className="value">
+                    <span className={`badge ${poolActivityBadgeClass(poolActivity?.state)}`}>
+                      {poolActivityLabel(poolActivity?.state)}
+                    </span>
+                  </div>
+                  <div className="stat-meta">{poolActivity?.detail ?? 'No runtime activity assessment yet.'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Connected Miners</div>
+                  <div className="value mono">{poolActivity?.connected_miners ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Connected Workers</div>
+                  <div className="value mono">{poolActivity?.connected_workers ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Estimated Hashrate</div>
+                  <div className="value mono">
+                    {poolActivity ? humanRate(poolActivity.estimated_hashrate) : '-'}
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Snapshot Age</div>
+                  <div className="value mono">
+                    {poolActivity?.snapshot_age_seconds != null
+                      ? fmtSeconds(poolActivity.snapshot_age_seconds)
+                      : '-'}
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Last Accepted Share</div>
+                  <div className="value mono">
+                    {poolActivity?.last_share_age_seconds != null
+                      ? fmtSeconds(poolActivity.last_share_age_seconds)
                       : '-'}
                   </div>
                 </div>

@@ -329,6 +329,15 @@ export interface HealthResponse {
     pending_provisional?: number;
     fraud_detections?: number;
   };
+  pool_activity?: {
+    state?: string;
+    detail?: string;
+    connected_miners?: number;
+    connected_workers?: number;
+    estimated_hashrate?: number;
+    snapshot_age_seconds?: number | null;
+    last_share_age_seconds?: number | null;
+  };
   active_verification_holds?: ActiveVerificationHold[];
 }
 

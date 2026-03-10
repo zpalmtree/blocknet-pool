@@ -40,6 +40,7 @@ use crate::payout::{
     is_share_payout_eligible, recover_share_window_by_replay,
     resolve_pool_fee_destination_from_address, reward_window_end, weight_shares, PayoutTrustPolicy,
 };
+use crate::pool_activity::{assess_pool_activity, POOL_ACTIVITY_SNAPSHOT_STALE_AFTER};
 use crate::recovery::{RecoveryAgentClient, RecoveryInstanceId, RecoveryOperation, RecoveryStatus};
 use crate::service_state::{
     PersistedPayoutRuntime, PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY,
@@ -2381,7 +2382,19 @@ struct HealthResponse {
     payouts: PayoutHealth,
     wallet: Option<WalletHealth>,
     validation: ValidationSummary,
+    pool_activity: PoolActivityHealth,
     active_verification_holds: Vec<ActiveVerificationHold>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PoolActivityHealth {
+    state: String,
+    detail: String,
+    connected_miners: u64,
+    connected_workers: u64,
+    estimated_hashrate: f64,
+    snapshot_age_seconds: Option<u64>,
+    last_share_age_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3332,6 +3345,7 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
     let daemon = state.daemon_health().await;
     let validation = state.effective_validation_summary().await;
     let persisted_runtime = state.persisted_runtime_snapshot().await;
+    let pool_activity = pool_activity_health(SystemTime::now(), persisted_runtime.as_ref());
 
     let current_job = state.jobs.current_job();
     let mut current_height = current_job.as_ref().map(|job| job.height);
@@ -3345,7 +3359,7 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
     let mut tracked_templates = state.jobs.tracked_job_count();
     let mut active_assignments = state.jobs.active_assignment_count();
 
-    if let Some(persisted) = persisted_runtime {
+    if let Some(persisted) = persisted_runtime.as_ref() {
         current_height = current_height.or(persisted.jobs.current_height);
         current_difficulty = current_difficulty.or(persisted.jobs.current_difficulty);
         if template_id.is_none() {
@@ -3439,6 +3453,7 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
         payouts: payout_health,
         wallet,
         validation,
+        pool_activity,
         active_verification_holds,
     };
 
@@ -4756,6 +4771,22 @@ fn active_window_strikes(strikes: u64, window_until: Option<SystemTime>, now: Sy
         .filter(|until| *until > now)
         .map(|_| strikes)
         .unwrap_or_default()
+}
+
+fn pool_activity_health(
+    now: SystemTime,
+    persisted_runtime: Option<&PersistedRuntimeSnapshot>,
+) -> PoolActivityHealth {
+    let assessment = assess_pool_activity(now, persisted_runtime, POOL_ACTIVITY_SNAPSHOT_STALE_AFTER);
+    PoolActivityHealth {
+        state: assessment.state.to_string(),
+        detail: assessment.detail,
+        connected_miners: assessment.connected_miners,
+        connected_workers: assessment.connected_workers,
+        estimated_hashrate: assessment.estimated_hashrate,
+        snapshot_age_seconds: assessment.snapshot_age_seconds,
+        last_share_age_seconds: assessment.last_share_age_seconds,
+    }
 }
 
 fn miner_verification_hold(
@@ -8154,6 +8185,8 @@ mod tests {
         assert_eq!(payload["job"]["last_refresh_millis"], 321);
         assert_eq!(payload["job"]["tracked_templates"], 4);
         assert_eq!(payload["job"]["active_assignments"], 12);
+        assert_eq!(payload["pool_activity"]["state"], "idle");
+        assert_eq!(payload["pool_activity"]["connected_miners"], 0);
     }
 
     #[test]

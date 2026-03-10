@@ -9,5 +9,8 @@ pub mod recovery {
     pub use pool_recovery::*;
 }
 
+#[path = "../../../src/pool_activity.rs"]
+pub mod pool_activity;
+
 #[path = "../../../src/api.rs"]
 pub mod api;
