@@ -61,6 +61,15 @@
 - Run git commands from `blocknet-pool/` or use `git -C /media/Code/blocknet/blocknet-pool`.
 - The canonical repo instruction file is `AGENTS.md`. Do not add `agent.md` or `agents.md`; those filenames are ignored.
 
+## Async and Database Safety
+
+- Treat `PoolStore`, `PostgresStore`, and any `PoolEngine` path that can persist state as blocking code.
+- Do not call synchronous Postgres-backed store methods directly from Tokio worker threads, Axum handlers, or long-lived async Stratum tasks.
+- When async code needs one of those paths, move it behind `tokio::task::spawn_blocking` or an existing helper that already does that.
+- This includes engine methods that look in-memory but may flush vardiff hints, incidents, payouts, or runtime state through the store.
+- The failure signature for violating this rule is the Postgres panic `Cannot start a runtime from within a runtime`.
+- If you are unsure whether a path touches the store, inspect it first and default to `spawn_blocking` until proven otherwise.
+
 ## Frontend
 
 - Built with Vite, React, and TypeScript
