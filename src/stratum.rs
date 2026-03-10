@@ -4,10 +4,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
+use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use parking_lot::Mutex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc, Notify};
+use tokio_tungstenite::accept_async;
+use tokio_tungstenite::tungstenite::Message;
 
 use crate::dev_fee::should_defer_submit_ack_difficulty;
 use crate::engine::{canonical_share_reject_reason, PoolEngine, SubmitAck};
@@ -24,6 +27,7 @@ const MAX_CONNS_TOTAL: usize = 4096;
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_STRATUM_REQUEST_BYTES: usize = 8 * 1024;
 const NOTIFICATION_CHANNEL_CAPACITY: usize = 256;
+const INBOUND_QUEUE_CAPACITY: usize = 256;
 const OUTBOUND_QUEUE_CAPACITY: usize = 256;
 const SUBMIT_QUEUE_CAPACITY: usize = 256;
 const OUTBOUND_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -48,13 +52,13 @@ struct ConnState {
 
 #[derive(Clone)]
 struct OutboundHandle {
-    normal_tx: mpsc::Sender<Vec<u8>>,
-    latest_job: Arc<Mutex<Option<Vec<u8>>>>,
+    normal_tx: mpsc::Sender<String>,
+    latest_job: Arc<Mutex<Option<String>>>,
     latest_job_notify: Arc<Notify>,
 }
 
 impl OutboundHandle {
-    fn new(capacity: usize) -> (Self, mpsc::Receiver<Vec<u8>>) {
+    fn new(capacity: usize) -> (Self, mpsc::Receiver<String>) {
         let (normal_tx, normal_rx) = mpsc::channel(capacity);
         (
             Self {
@@ -65,6 +69,12 @@ impl OutboundHandle {
             normal_rx,
         )
     }
+}
+
+#[derive(Debug)]
+enum InboundFrame {
+    Text(String),
+    ReadError(String),
 }
 
 #[derive(Debug)]
@@ -90,6 +100,7 @@ struct SubmitCompletion {
 
 pub struct StratumServer {
     listen_addr: SocketAddr,
+    ws_listen_addr: Option<SocketAddr>,
     engine: Arc<PoolEngine>,
     jobs: Arc<JobManager>,
     stats: Arc<PoolStats>,
@@ -103,6 +114,7 @@ pub struct StratumServer {
 impl StratumServer {
     pub fn new(
         listen_addr: SocketAddr,
+        ws_listen_addr: Option<SocketAddr>,
         engine: Arc<PoolEngine>,
         jobs: Arc<JobManager>,
         stats: Arc<PoolStats>,
@@ -113,6 +125,7 @@ impl StratumServer {
         let (notifications, _) = broadcast::channel(NOTIFICATION_CHANNEL_CAPACITY);
         Arc::new(Self {
             listen_addr,
+            ws_listen_addr,
             engine,
             jobs,
             stats,
@@ -130,23 +143,18 @@ impl StratumServer {
     pub async fn run(self: Arc<Self>) -> Result<()> {
         let listener = TcpListener::bind(self.listen_addr).await?;
         tracing::info!(addr = %self.listen_addr, "stratum listening");
-
-        loop {
-            let (stream, peer) = listener.accept().await?;
-            let ip = peer.ip().to_string();
-
-            if !self.try_track_conn(&ip) {
-                tracing::warn!(ip = %ip, "rejecting stratum connection due to limits");
-                continue;
-            }
-
-            let this = Arc::clone(&self);
-            tokio::spawn(async move {
-                if let Err(err) = this.handle_conn(stream, peer).await {
-                    tracing::warn!(peer = %peer, error = %err, "stratum connection ended with error");
-                }
-                this.untrack_conn(&ip);
-            });
+        if let Some(ws_addr) = self.ws_listen_addr {
+            let ws_listener = TcpListener::bind(ws_addr).await?;
+            tracing::info!(addr = %ws_addr, "stratum websocket listening");
+            let tcp_server = Arc::clone(&self);
+            let ws_server = Arc::clone(&self);
+            tokio::try_join!(
+                async move { tcp_server.run_tcp_listener(listener).await },
+                async move { ws_server.run_ws_listener(ws_listener).await }
+            )?;
+            Ok(())
+        } else {
+            self.run_tcp_listener(listener).await
         }
     }
 
@@ -178,19 +186,103 @@ impl StratumServer {
         }
     }
 
-    async fn handle_conn(&self, stream: TcpStream, peer: SocketAddr) -> Result<()> {
+    async fn run_tcp_listener(self: Arc<Self>, listener: TcpListener) -> Result<()> {
+        loop {
+            let (stream, peer) = listener.accept().await?;
+            let ip = peer.ip().to_string();
+            if !self.try_track_conn(&ip) {
+                tracing::warn!(ip = %ip, "rejecting stratum connection due to limits");
+                continue;
+            }
+
+            let this = Arc::clone(&self);
+            tokio::spawn(async move {
+                if let Err(err) = this.handle_tcp_conn(stream, peer).await {
+                    tracing::warn!(peer = %peer, error = %err, "stratum tcp connection ended with error");
+                }
+                this.untrack_conn(&ip);
+            });
+        }
+    }
+
+    async fn run_ws_listener(self: Arc<Self>, listener: TcpListener) -> Result<()> {
+        loop {
+            let (stream, peer) = listener.accept().await?;
+            let ip = peer.ip().to_string();
+            if !self.try_track_conn(&ip) {
+                tracing::warn!(ip = %ip, "rejecting stratum websocket connection due to limits");
+                continue;
+            }
+
+            let this = Arc::clone(&self);
+            tokio::spawn(async move {
+                if let Err(err) = this.handle_ws_conn(stream, peer).await {
+                    tracing::warn!(peer = %peer, error = %err, "stratum websocket connection ended with error");
+                }
+                this.untrack_conn(&ip);
+            });
+        }
+    }
+
+    async fn handle_tcp_conn(&self, stream: TcpStream, peer: SocketAddr) -> Result<()> {
         let conn_id = peer.to_string();
         let (reader_half, writer_half) = stream.into_split();
+        let (inbound_tx, inbound_rx) = mpsc::channel(INBOUND_QUEUE_CAPACITY);
+        let reader_task =
+            tokio::spawn(
+                async move { run_tcp_reader(BufReader::new(reader_half), inbound_tx).await },
+            );
         let (outbound, outbound_rx) = OutboundHandle::new(OUTBOUND_QUEUE_CAPACITY);
         let latest_job = Arc::clone(&outbound.latest_job);
         let latest_job_notify = Arc::clone(&outbound.latest_job_notify);
-        let mut writer_task = tokio::spawn(async move {
-            run_outbound_writer(writer_half, outbound_rx, latest_job, latest_job_notify).await
+        let writer_task = tokio::spawn(async move {
+            run_tcp_outbound_writer(writer_half, outbound_rx, latest_job, latest_job_notify).await
         });
-        let mut writer_task_finished = false;
+        self.handle_conn_loop(
+            peer,
+            conn_id,
+            inbound_rx,
+            reader_task,
+            writer_task,
+            outbound,
+        )
+        .await
+    }
 
-        let mut logged_in: Option<(String, String, u64)> = None; // address, worker, difficulty
-        let mut reader = BufReader::new(reader_half);
+    async fn handle_ws_conn(&self, stream: TcpStream, peer: SocketAddr) -> Result<()> {
+        let conn_id = peer.to_string();
+        let ws = accept_async(stream).await?;
+        let (writer, reader) = ws.split();
+        let (inbound_tx, inbound_rx) = mpsc::channel(INBOUND_QUEUE_CAPACITY);
+        let reader_task = tokio::spawn(async move { run_ws_reader(reader, inbound_tx).await });
+        let (outbound, outbound_rx) = OutboundHandle::new(OUTBOUND_QUEUE_CAPACITY);
+        let latest_job = Arc::clone(&outbound.latest_job);
+        let latest_job_notify = Arc::clone(&outbound.latest_job_notify);
+        let writer_task = tokio::spawn(async move {
+            run_ws_outbound_writer(writer, outbound_rx, latest_job, latest_job_notify).await
+        });
+        self.handle_conn_loop(
+            peer,
+            conn_id,
+            inbound_rx,
+            reader_task,
+            writer_task,
+            outbound,
+        )
+        .await
+    }
+
+    async fn handle_conn_loop(
+        &self,
+        peer: SocketAddr,
+        conn_id: String,
+        mut inbound_rx: mpsc::Receiver<InboundFrame>,
+        reader_task: tokio::task::JoinHandle<Result<()>>,
+        mut writer_task: tokio::task::JoinHandle<Result<()>>,
+        outbound: OutboundHandle,
+    ) -> Result<()> {
+        let mut writer_task_finished = false;
+        let mut logged_in: Option<(String, String, u64)> = None;
         let mut rx_jobs = self.jobs.subscribe();
         let mut rx_notifications = self.notifications.subscribe();
         let post_login_idle_timeout = self.post_login_idle_timeout;
@@ -300,12 +392,15 @@ impl StratumServer {
                         }
                     }
                 }
-                line = read_line_limited(&mut reader, MAX_STRATUM_REQUEST_BYTES) => {
-                    let line = match line {
-                        Ok(Some(v)) => v,
-                        Ok(None) => break,
-                        Err(err) => {
-                            let _ = queue_error(&outbound, 0, &err.to_string());
+                maybe_inbound = inbound_rx.recv() => {
+                    let inbound = match maybe_inbound {
+                        Some(v) => v,
+                        None => break,
+                    };
+                    let line = match inbound {
+                        InboundFrame::Text(line) => line,
+                        InboundFrame::ReadError(err) => {
+                            let _ = queue_error(&outbound, 0, &err);
                             break;
                         }
                     };
@@ -534,6 +629,19 @@ impl StratumServer {
                     Ok(Err(err)) => Err(err),
                     Err(err) => Err(anyhow!("stratum writer task failed: {err}")),
                 };
+            }
+        }
+        match reader_task.await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                if run_result.is_ok() {
+                    run_result = Err(err);
+                }
+            }
+            Err(err) => {
+                if run_result.is_ok() {
+                    run_result = Err(anyhow!("stratum reader task failed: {err}"));
+                }
             }
         }
 
@@ -783,7 +891,7 @@ async fn read_line_limited(
 }
 
 fn queue_json<T: serde::Serialize>(outbound: &OutboundHandle, value: &T) -> Result<()> {
-    let payload = serialize_json_line(value)?;
+    let payload = serialize_json_text(value)?;
     outbound
         .normal_tx
         .try_send(payload)
@@ -791,62 +899,163 @@ fn queue_json<T: serde::Serialize>(outbound: &OutboundHandle, value: &T) -> Resu
 }
 
 fn queue_job_json<T: serde::Serialize>(outbound: &OutboundHandle, value: &T) -> Result<()> {
-    let payload = serialize_json_line(value)?;
+    let payload = serialize_json_text(value)?;
     *outbound.latest_job.lock() = Some(payload);
     outbound.latest_job_notify.notify_one();
     Ok(())
 }
 
-fn serialize_json_line<T: serde::Serialize>(value: &T) -> Result<Vec<u8>> {
-    let mut data = serde_json::to_vec(value)?;
-    data.push(b'\n');
-    Ok(data)
+fn serialize_json_text<T: serde::Serialize>(value: &T) -> Result<String> {
+    serde_json::to_string(value).map_err(Into::into)
 }
 
-async fn run_outbound_writer<W>(
-    mut writer: W,
-    mut rx: mpsc::Receiver<Vec<u8>>,
-    latest_job: Arc<Mutex<Option<Vec<u8>>>>,
-    latest_job_notify: Arc<Notify>,
-) -> Result<()>
-where
-    W: tokio::io::AsyncWrite + Unpin,
-{
+async fn run_tcp_reader(
+    mut reader: BufReader<tokio::net::tcp::OwnedReadHalf>,
+    inbound_tx: mpsc::Sender<InboundFrame>,
+) -> Result<()> {
     loop {
-        if let Some(data) = take_priority_job(&latest_job) {
-            write_outbound_payload(&mut writer, &data).await?;
-            continue;
-        }
-
-        tokio::select! {
-            biased;
-            _ = latest_job_notify.notified() => {
-                continue;
-            }
-            maybe = rx.recv() => {
-                let Some(data) = maybe else {
-                    if let Some(data) = take_priority_job(&latest_job) {
-                        write_outbound_payload(&mut writer, &data).await?;
-                        continue;
-                    }
+        match read_line_limited(&mut reader, MAX_STRATUM_REQUEST_BYTES).await {
+            Ok(Some(line)) => {
+                if inbound_tx.send(InboundFrame::Text(line)).await.is_err() {
                     break;
-                };
-                write_outbound_payload(&mut writer, &data).await?;
+                }
+            }
+            Ok(None) => break,
+            Err(err) => {
+                let _ = inbound_tx
+                    .send(InboundFrame::ReadError(err.to_string()))
+                    .await;
+                break;
             }
         }
     }
     Ok(())
 }
 
-fn take_priority_job(latest_job: &Mutex<Option<Vec<u8>>>) -> Option<Vec<u8>> {
-    latest_job.lock().take()
+async fn run_ws_reader<S>(mut reader: S, inbound_tx: mpsc::Sender<InboundFrame>) -> Result<()>
+where
+    S: Stream<Item = std::result::Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    while let Some(message) = reader.next().await {
+        match message {
+            Ok(Message::Text(text)) => {
+                if inbound_tx
+                    .send(InboundFrame::Text(text.to_string()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            Ok(Message::Binary(_)) => {
+                let _ = inbound_tx
+                    .send(InboundFrame::ReadError(
+                        "binary websocket frames are not supported".to_string(),
+                    ))
+                    .await;
+                break;
+            }
+            Ok(Message::Close(_)) => break,
+            Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {}
+            Ok(_) => {}
+            Err(err) => {
+                let _ = inbound_tx
+                    .send(InboundFrame::ReadError(err.to_string()))
+                    .await;
+                break;
+            }
+        }
+    }
+    Ok(())
 }
 
-async fn write_outbound_payload<W>(writer: &mut W, data: &[u8]) -> Result<()>
+async fn run_tcp_outbound_writer<W>(
+    mut writer: W,
+    mut rx: mpsc::Receiver<String>,
+    latest_job: Arc<Mutex<Option<String>>>,
+    latest_job_notify: Arc<Notify>,
+) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    match tokio::time::timeout(OUTBOUND_WRITE_TIMEOUT, writer.write_all(data)).await {
+    while let Some(data) =
+        next_outbound_payload(&mut rx, latest_job.as_ref(), &latest_job_notify).await
+    {
+        write_tcp_outbound_payload(&mut writer, &data).await?;
+    }
+    Ok(())
+}
+
+async fn run_ws_outbound_writer<W>(
+    mut writer: W,
+    mut rx: mpsc::Receiver<String>,
+    latest_job: Arc<Mutex<Option<String>>>,
+    latest_job_notify: Arc<Notify>,
+) -> Result<()>
+where
+    W: Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
+{
+    while let Some(data) =
+        next_outbound_payload(&mut rx, latest_job.as_ref(), &latest_job_notify).await
+    {
+        write_ws_outbound_payload(&mut writer, &data).await?;
+    }
+    Ok(())
+}
+
+async fn next_outbound_payload(
+    rx: &mut mpsc::Receiver<String>,
+    latest_job: &Mutex<Option<String>>,
+    latest_job_notify: &Notify,
+) -> Option<String> {
+    loop {
+        if let Some(data) = take_priority_job(latest_job) {
+            return Some(data);
+        }
+
+        tokio::select! {
+            biased;
+            _ = latest_job_notify.notified() => {}
+            maybe = rx.recv() => {
+                let Some(data) = maybe else {
+                    return take_priority_job(latest_job);
+                };
+                return Some(data);
+            }
+        }
+    }
+}
+
+fn take_priority_job(latest_job: &Mutex<Option<String>>) -> Option<String> {
+    latest_job.lock().take()
+}
+
+async fn write_tcp_outbound_payload<W>(writer: &mut W, data: &str) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut line = data.as_bytes().to_vec();
+    line.push(b'\n');
+    match tokio::time::timeout(OUTBOUND_WRITE_TIMEOUT, writer.write_all(&line)).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(err)) => Err(err.into()),
+        Err(_) => Err(anyhow!(
+            "stratum outbound write timed out after {}ms",
+            OUTBOUND_WRITE_TIMEOUT.as_millis()
+        )),
+    }
+}
+
+async fn write_ws_outbound_payload<W>(writer: &mut W, data: &str) -> Result<()>
+where
+    W: Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
+{
+    match tokio::time::timeout(
+        OUTBOUND_WRITE_TIMEOUT,
+        writer.send(Message::Text(data.to_string().into())),
+    )
+    .await
+    {
         Ok(Ok(())) => Ok(()),
         Ok(Err(err)) => Err(err.into()),
         Err(_) => Err(anyhow!(
@@ -881,7 +1090,7 @@ fn log_rejection_at_info(reason_code: &str) -> bool {
 mod tests {
     use super::{
         client_submit_ack_difficulty, log_rejection_at_info, queue_job_json, queue_json,
-        run_outbound_writer, run_submit_worker, OutboundHandle, QueuedSubmit, StratumResponse,
+        run_submit_worker, run_tcp_outbound_writer, OutboundHandle, QueuedSubmit, StratumResponse,
         SubmitCompletionOutcome,
     };
     use crate::config::Config;
@@ -950,7 +1159,7 @@ mod tests {
         let (outbound, _rx) = OutboundHandle::new(1);
         outbound
             .normal_tx
-            .try_send(b"occupied\n".to_vec())
+            .try_send("occupied".to_string())
             .expect("seeded payload should fit");
 
         let err = queue_json(
@@ -975,12 +1184,12 @@ mod tests {
         let latest_job_notify = Arc::clone(&outbound.latest_job_notify);
         outbound
             .normal_tx
-            .send(vec![b'a'; 64])
+            .send("a".repeat(64))
             .await
             .expect("seed payload should enqueue");
         drop(outbound);
 
-        let err = run_outbound_writer(writer, rx, latest_job, latest_job_notify)
+        let err = run_tcp_outbound_writer(writer, rx, latest_job, latest_job_notify)
             .await
             .expect_err("writer should time out when peer stops reading");
 
@@ -1022,7 +1231,7 @@ mod tests {
         .expect("new job should replace the stale one");
         drop(outbound);
 
-        run_outbound_writer(writer, rx, latest_job, latest_job_notify)
+        run_tcp_outbound_writer(writer, rx, latest_job, latest_job_notify)
             .await
             .expect("writer should flush queued payloads");
 

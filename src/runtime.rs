@@ -56,6 +56,13 @@ pub async fn bootstrap_shared_runtime_from_config(cfg: Config) -> Result<SharedR
             "stratum is bound on a non-local host and transport is plaintext; place stratum behind a tls terminator when exposed publicly"
         );
     }
+    if cfg.stratum_ws_enabled() && !is_local_bind_host(&cfg.stratum_ws_host) {
+        warn!(
+            host = %cfg.stratum_ws_host,
+            port = cfg.stratum_ws_port,
+            "stratum websocket is bound on a non-local host and transport is plaintext; place websocket stratum behind a tls terminator when exposed publicly"
+        );
+    }
     warn_on_validation_visibility_config(&cfg);
 
     let cfg_for_store = cfg.clone();
@@ -147,8 +154,10 @@ pub fn build_stratum_server(
     engine: Arc<PoolEngine>,
 ) -> Result<Arc<StratumServer>> {
     let addr = stratum_listen_addr(&shared.cfg)?;
+    let ws_addr = stratum_ws_listen_addr(&shared.cfg)?;
     Ok(StratumServer::new(
         addr,
+        ws_addr,
         engine,
         Arc::clone(&shared.jobs),
         Arc::clone(&shared.stats),
@@ -167,6 +176,21 @@ pub fn stratum_listen_addr(cfg: &Config) -> Result<SocketAddr> {
                 cfg.stratum_host, cfg.stratum_port
             )
         })
+}
+
+pub fn stratum_ws_listen_addr(cfg: &Config) -> Result<Option<SocketAddr>> {
+    if !cfg.stratum_ws_enabled() {
+        return Ok(None);
+    }
+    format!("{}:{}", cfg.stratum_ws_host, cfg.stratum_ws_port)
+        .parse()
+        .with_context(|| {
+            format!(
+                "invalid stratum websocket listen address {}:{}",
+                cfg.stratum_ws_host, cfg.stratum_ws_port
+            )
+        })
+        .map(Some)
 }
 
 pub fn start_stratum_background_tasks(shared: &SharedRuntime, engine: Arc<PoolEngine>) {

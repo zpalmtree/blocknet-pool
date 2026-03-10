@@ -14,6 +14,9 @@ pub struct Config {
 
     pub stratum_host: String,
     pub stratum_port: u16,
+    pub stratum_ws_host: String,
+    pub stratum_ws_port: u16,
+    pub stratum_ws_public_url: String,
     pub api_port: u16,
     pub api_host: String,
     pub api_tls_cert_path: String,
@@ -108,6 +111,9 @@ impl Default for Config {
             pool_url: "http://localhost:24783".to_string(),
             stratum_host: runtime.stratum_host,
             stratum_port: runtime.stratum_port,
+            stratum_ws_host: runtime.stratum_ws_host,
+            stratum_ws_port: runtime.stratum_ws_port,
+            stratum_ws_public_url: runtime.stratum_ws_public_url,
             api_port: 24783,
             api_host: "127.0.0.1".to_string(),
             api_tls_cert_path: String::new(),
@@ -222,6 +228,9 @@ impl Config {
             pool_name: self.pool_name.clone(),
             stratum_host: self.stratum_host.clone(),
             stratum_port: self.stratum_port,
+            stratum_ws_host: self.stratum_ws_host.clone(),
+            stratum_ws_port: self.stratum_ws_port,
+            stratum_ws_public_url: self.stratum_ws_public_url.clone(),
             daemon_data_dir: self.daemon_data_dir.clone(),
             daemon_api: self.daemon_api.clone(),
             daemon_token: self.daemon_token.clone(),
@@ -308,6 +317,9 @@ impl Config {
         self.pool_name = runtime.pool_name;
         self.stratum_host = runtime.stratum_host;
         self.stratum_port = runtime.stratum_port;
+        self.stratum_ws_host = runtime.stratum_ws_host;
+        self.stratum_ws_port = runtime.stratum_ws_port;
+        self.stratum_ws_public_url = runtime.stratum_ws_public_url;
         self.daemon_data_dir = runtime.daemon_data_dir;
         self.daemon_api = runtime.daemon_api;
         self.daemon_token = runtime.daemon_token;

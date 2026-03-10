@@ -14,6 +14,9 @@ pub struct Config {
 
     pub stratum_host: String,
     pub stratum_port: u16,
+    pub stratum_ws_host: String,
+    pub stratum_ws_port: u16,
+    pub stratum_ws_public_url: String,
 
     pub daemon_data_dir: String,
     pub daemon_api: String,
@@ -98,6 +101,9 @@ impl Default for Config {
             pool_name: "blocknet pool".to_string(),
             stratum_host: "127.0.0.1".to_string(),
             stratum_port: 3333,
+            stratum_ws_host: "127.0.0.1".to_string(),
+            stratum_ws_port: 0,
+            stratum_ws_public_url: String::new(),
             daemon_data_dir: "data".to_string(),
             daemon_api: "http://127.0.0.1:8332".to_string(),
             daemon_token: String::new(),
@@ -199,6 +205,9 @@ impl Config {
         if self.max_validation_queue < 1 {
             self.max_validation_queue = 2048;
         }
+        if self.stratum_ws_host.trim().is_empty() {
+            self.stratum_ws_host = "127.0.0.1".to_string();
+        }
         self.sample_rate = self.sample_rate.clamp(0.0, 1.0);
         if self.warmup_shares < 0 {
             self.warmup_shares = 0;
@@ -285,6 +294,11 @@ impl Config {
         } else {
             self.min_payout_amount = self.min_payout_amount.clamp(0.0, max_atomic_amount);
         }
+        self.stratum_ws_public_url = self.stratum_ws_public_url.trim().to_string();
+    }
+
+    pub fn stratum_ws_enabled(&self) -> bool {
+        self.stratum_ws_port != 0
     }
 
     pub fn block_poll_duration(&self) -> Duration {

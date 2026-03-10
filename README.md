@@ -204,11 +204,16 @@ Recommended order:
 ## Transport Security
 
 - Stratum now defaults to loopback bind (`stratum_host=127.0.0.1`). Set `stratum_host` explicitly to expose it.
+- Optional WebSocket Stratum is configured separately via:
+  - `stratum_ws_host`
+  - `stratum_ws_port`
+  - `stratum_ws_public_url`
 - API TLS is supported via:
   - `api_tls_cert_path`
   - `api_tls_key_path`
 - If only one TLS path is set, startup logs a warning and serves HTTP.
 - If Stratum is exposed publicly, place it behind a TLS terminator.
+- Recommended public WS deployment is `wss://` via nginx TLS termination, proxying upgraded connections to the internal plain-WS listener on `stratum_ws_host:stratum_ws_port`.
 
 ## Runtime Components
 

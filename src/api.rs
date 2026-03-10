@@ -706,6 +706,10 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
             "/api/admin/recovery/inactive/purge-resync",
             post(handle_recovery_purge_inactive_daemon),
         )
+        .route(
+            "/api/admin/addresses/clear-risk-history",
+            post(handle_admin_clear_address_risk_history),
+        )
         .route("/api/daemon/logs/stream", get(handle_daemon_logs_stream))
         .route_layer(middleware::from_fn_with_state(
             app_state.clone(),
@@ -2155,6 +2159,8 @@ struct PoolInfoResponse {
     pool_name: String,
     pool_url: String,
     stratum_port: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stratum_ws_public_url: Option<String>,
     api_auth_configured: bool,
     started_at_unix_secs: u64,
     version: &'static str,
@@ -2181,6 +2187,7 @@ async fn handle_info(State(state): State<ApiState>) -> impl IntoResponse {
         pool_name: state.pool_name.clone(),
         pool_url: state.pool_url.clone(),
         stratum_port: state.stratum_port,
+        stratum_ws_public_url: state.stratum_ws_public_url(),
         api_auth_configured: !state.api_key.trim().is_empty(),
         started_at_unix_secs: system_time_to_unix_secs(state.started_at_system),
         version: env!("CARGO_PKG_VERSION"),
@@ -3443,6 +3450,17 @@ struct RecoveryCutoverRequest {
     target: RecoveryInstanceId,
 }
 
+#[derive(Debug, Deserialize)]
+struct ClearAddressRiskHistoryRequest {
+    address: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ClearAddressRiskHistoryResponse {
+    ok: bool,
+    address: String,
+}
+
 async fn handle_recovery_status(State(state): State<ApiState>) -> impl IntoResponse {
     if !state.config.recovery.enabled {
         return Json(RecoveryStatus::disabled(&state.config.payout_pause_file)).into_response();
@@ -3498,6 +3516,37 @@ async fn handle_recovery_purge_inactive_daemon(State(state): State<ApiState>) ->
     match recovery_operation_response(&state, state.recovery.purge_inactive_daemon().await).await {
         Ok(response) => response,
         Err(response) => response,
+    }
+}
+
+async fn handle_admin_clear_address_risk_history(
+    State(state): State<ApiState>,
+    Json(request): Json<ClearAddressRiskHistoryRequest>,
+) -> impl IntoResponse {
+    let address = request.address.trim();
+    if address.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error":"address is required"})),
+        )
+            .into_response();
+    }
+
+    let address = address.to_string();
+    let store = Arc::clone(&state.store);
+    match tokio::task::spawn_blocking({
+        let address = address.clone();
+        move || store.clear_address_risk_history(&address)
+    })
+    .await
+    {
+        Ok(Ok(())) => Json(ClearAddressRiskHistoryResponse { ok: true, address }).into_response(),
+        Ok(Err(err)) => internal_error("failed clearing address risk history", err).into_response(),
+        Err(err) => internal_error(
+            "failed clearing address risk history",
+            anyhow::anyhow!("join error: {err}"),
+        )
+        .into_response(),
     }
 }
 
@@ -6125,6 +6174,11 @@ async fn handle_admin_block_reward_breakdown(
 }
 
 impl ApiState {
+    fn stratum_ws_public_url(&self) -> Option<String> {
+        let value = self.config.stratum_ws_public_url.trim();
+        (!value.is_empty()).then(|| value.to_string())
+    }
+
     pub async fn sample_status(&self) {
         let (daemon, pool) = tokio::join!(self.daemon_health(), self.pool_health());
         let snapshot = {
