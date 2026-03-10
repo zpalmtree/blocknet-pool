@@ -29,13 +29,13 @@ use tokio_stream::StreamExt;
 
 use crate::config::Config;
 use crate::db::{
-    AddressRiskState, Balance, DbBlock, DbShare, MonitorHeartbeat, MonitorIncident, Payout,
-    PendingPayout, PoolFeeEvent, PublicPayoutBatch,
+    ActiveVerificationHold, AddressRiskState, Balance, DbBlock, DbShare, MonitorHeartbeat,
+    MonitorIncident, Payout, PendingPayout, PoolFeeEvent, PublicPayoutBatch,
 };
 use crate::dev_fee::{SEINE_DEV_FEE_ADDRESS, SEINE_DEV_FEE_REFERENCE_TARGET_PCT};
 use crate::engine::JobRepository;
 use crate::jobs::JobManager;
-use crate::node::{NodeClient, WalletBalance};
+use crate::node::{NodeClient, NodeCurrentProcessBlock, NodeLastProcessBlock, WalletBalance};
 use crate::payout::{
     is_share_payout_eligible, recover_share_window_by_replay,
     resolve_pool_fee_destination_from_address, reward_window_end, weight_shares, PayoutTrustPolicy,
@@ -410,6 +410,8 @@ pub struct DaemonHealth {
     syncing: Option<bool>,
     mempool_size: Option<i64>,
     best_hash: Option<String>,
+    current_process_block: Option<NodeCurrentProcessBlock>,
+    last_process_block: Option<NodeLastProcessBlock>,
     error: Option<String>,
 }
 
@@ -2372,6 +2374,7 @@ struct HealthResponse {
     payouts: PayoutHealth,
     wallet: Option<WalletHealth>,
     validation: ValidationSummary,
+    active_verification_holds: Vec<ActiveVerificationHold>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2798,6 +2801,7 @@ fn service_health_from_public(latest: Option<&MonitorHeartbeat>) -> ServiceHealt
 }
 
 fn daemon_health_from_heartbeat(latest: Option<&MonitorHeartbeat>) -> DaemonHealth {
+    let details = latest.and_then(parse_monitor_heartbeat_details);
     DaemonHealth {
         reachable: latest.and_then(|row| row.daemon_up).unwrap_or(false),
         chain_height: latest.and_then(|row| row.chain_height),
@@ -2805,10 +2809,37 @@ fn daemon_health_from_heartbeat(latest: Option<&MonitorHeartbeat>) -> DaemonHeal
         syncing: latest.and_then(|row| row.daemon_syncing),
         mempool_size: None,
         best_hash: None,
+        current_process_block: details
+            .as_ref()
+            .and_then(|details| details.daemon_current_process_block.clone()),
+        last_process_block: details
+            .as_ref()
+            .and_then(|details| details.daemon_last_process_block.clone()),
         error: latest
             .filter(|row| row.daemon_up == Some(false))
-            .and_then(|row| row.details_json.clone()),
+            .and_then(|row| {
+                details
+                    .as_ref()
+                    .and_then(|details| details.daemon_error.clone())
+                    .or_else(|| row.details_json.clone())
+            }),
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct MonitorHeartbeatDetails {
+    #[serde(default)]
+    daemon_error: Option<String>,
+    #[serde(default)]
+    daemon_current_process_block: Option<NodeCurrentProcessBlock>,
+    #[serde(default)]
+    daemon_last_process_block: Option<NodeLastProcessBlock>,
+}
+
+fn parse_monitor_heartbeat_details(row: &MonitorHeartbeat) -> Option<MonitorHeartbeatDetails> {
+    row.details_json
+        .as_ref()
+        .and_then(|raw| serde_json::from_str(raw).ok())
 }
 
 fn build_monitor_uptime_window(
@@ -3368,6 +3399,23 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
         }
     };
 
+    let store = Arc::clone(&state.store);
+    let active_verification_holds =
+        match tokio::task::spawn_blocking(move || store.list_active_verification_holds()).await {
+            Ok(Ok(v)) => v,
+            Ok(Err(err)) => {
+                return internal_error("failed loading active verification holds", err)
+                    .into_response();
+            }
+            Err(err) => {
+                return internal_error(
+                    "failed loading active verification holds",
+                    anyhow::anyhow!("join error: {err}"),
+                )
+                .into_response();
+            }
+        };
+
     let response = HealthResponse {
         uptime_seconds: state.started_at.elapsed().as_secs(),
         api_key_configured: !state.api_key.trim().is_empty(),
@@ -3384,6 +3432,7 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
         payouts: payout_health,
         wallet,
         validation,
+        active_verification_holds,
     };
 
     Json(response).into_response()
@@ -6673,6 +6722,8 @@ impl ApiState {
                 syncing: Some(status.syncing),
                 mempool_size: Some(status.mempool_size),
                 best_hash: Some(status.best_hash),
+                current_process_block: status.current_process_block,
+                last_process_block: status.last_process_block,
                 error: None,
             },
             Ok(Err(err)) => DaemonHealth {
@@ -6682,6 +6733,8 @@ impl ApiState {
                 syncing: None,
                 mempool_size: None,
                 best_hash: None,
+                current_process_block: None,
+                last_process_block: None,
                 error: Some(err.to_string()),
             },
             Err(err) => DaemonHealth {
@@ -6691,6 +6744,8 @@ impl ApiState {
                 syncing: None,
                 mempool_size: None,
                 best_hash: None,
+                current_process_block: None,
+                last_process_block: None,
                 error: Some(format!("join error: {err}")),
             },
         };
@@ -7353,7 +7408,9 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use crate::config::Config;
-    use crate::db::{Balance, DbBlock, Payout, PendingPayout, PoolFeeRecord, ShareReplayData};
+    use crate::db::{
+        Balance, DbBlock, MonitorHeartbeat, Payout, PendingPayout, PoolFeeRecord, ShareReplayData,
+    };
     use crate::engine::{ShareRecord, ShareStore};
     use crate::jobs::{JobManager, JobRuntimeSnapshot};
     use crate::node::{NodeClient, WalletBalance};
@@ -7363,7 +7420,9 @@ mod tests {
     };
     use crate::stats::PoolStats;
     use crate::store::PoolStore;
-    use crate::validation::ValidationEngine;
+    use crate::validation::{
+        PersistedValidationAddressState, ValidationEngine, ValidationStateStore,
+    };
     use axum::body::to_bytes;
     use axum::extract::{Path, Query, State};
     use axum::response::IntoResponse;
@@ -7373,9 +7432,9 @@ mod tests {
     use super::{
         apply_wallet_liquidity_to_payout_eta, batch_payouts, block_page_item_response,
         build_block_reward_breakdown, build_fee_page, compute_luck_details_for_hashes,
-        compute_luck_history, contains_ci, daemon_debug_log_path, daemon_log_commands,
-        estimate_unconfirmed_pending_for_miner, estimated_block_reward, handle_admin_dev_fee,
-        handle_health, handle_miner, handle_miners, handle_stats,
+        compute_luck_history, contains_ci, daemon_debug_log_path, daemon_health_from_heartbeat,
+        daemon_log_commands, estimate_unconfirmed_pending_for_miner, estimated_block_reward,
+        handle_admin_dev_fee, handle_health, handle_miner, handle_miners, handle_stats,
         hashrate_from_stats_with_miner_ramp, hashrate_from_stats_with_warmup,
         hydrate_provisional_block_reward, load_persisted_status_history, miner_balance_response,
         miner_has_activity, page_bounds, payout_status_note, pending_balance_note,
@@ -7883,6 +7942,95 @@ mod tests {
     }
 
     #[test]
+    fn daemon_health_from_heartbeat_uses_process_block_details() {
+        let heartbeat = MonitorHeartbeat {
+            id: 1,
+            sampled_at: UNIX_EPOCH + Duration::from_secs(10),
+            source: "local".to_string(),
+            synthetic: false,
+            api_up: Some(true),
+            stratum_up: Some(true),
+            db_up: true,
+            daemon_up: Some(true),
+            public_http_up: None,
+            daemon_syncing: Some(false),
+            chain_height: Some(44),
+            template_age_seconds: None,
+            last_refresh_millis: None,
+            stratum_snapshot_age_seconds: None,
+            connected_miners: None,
+            connected_workers: None,
+            estimated_hashrate: None,
+            wallet_up: Some(true),
+            last_accepted_share_at: None,
+            last_accepted_share_age_seconds: None,
+            payout_pending_count: None,
+            payout_pending_amount: None,
+            oldest_pending_payout_at: None,
+            oldest_pending_payout_age_seconds: None,
+            oldest_pending_send_started_at: None,
+            oldest_pending_send_age_seconds: None,
+            validation_candidate_queue_depth: None,
+            validation_regular_queue_depth: None,
+            summary_state: "healthy".to_string(),
+            details_json: Some(
+                serde_json::json!({
+                    "daemon_error": "daemon probe timed out",
+                    "daemon_current_process_block": {
+                        "height": 45,
+                        "tx_count": 1,
+                        "stage": "validate",
+                        "started_at_unix_millis": 15_000,
+                        "stage_started_at_unix_millis": 15_000,
+                        "elapsed_millis": 12_000,
+                        "stage_elapsed_millis": 12_000
+                    },
+                    "daemon_last_process_block": {
+                        "height": 44,
+                        "tx_count": 2,
+                        "completed_at_unix_millis": 14_000,
+                        "validate_millis": 8_000,
+                        "commit_millis": 500,
+                        "reorg_millis": 100,
+                        "total_millis": 8_600,
+                        "accepted": true,
+                        "main_chain": true,
+                        "error": ""
+                    }
+                })
+                .to_string(),
+            ),
+        };
+
+        let health = daemon_health_from_heartbeat(Some(&heartbeat));
+        assert_eq!(health.chain_height, Some(44));
+        assert_eq!(
+            health
+                .current_process_block
+                .as_ref()
+                .map(|block| (&block.stage, block.elapsed_millis)),
+            Some((&"validate".to_string(), 12_000))
+        );
+        assert_eq!(
+            health
+                .last_process_block
+                .as_ref()
+                .map(|block| block.total_millis),
+            Some(8_600)
+        );
+
+        let failed = MonitorHeartbeat {
+            daemon_up: Some(false),
+            ..heartbeat
+        };
+        let failed_health = daemon_health_from_heartbeat(Some(&failed));
+        assert_eq!(
+            failed_health.error.as_deref(),
+            Some("daemon probe timed out")
+        );
+    }
+
+    #[test]
     fn health_handler_uses_persisted_job_snapshot_when_live_assignments_are_empty() {
         let store = require_test_store!();
         let snapshot = PersistedRuntimeSnapshot {
@@ -7932,6 +8080,68 @@ mod tests {
         assert_eq!(payload["job"]["last_refresh_millis"], 321);
         assert_eq!(payload["job"]["tracked_templates"], 4);
         assert_eq!(payload["job"]["active_assignments"], 12);
+    }
+
+    #[test]
+    fn health_handler_includes_active_verification_holds() {
+        let store = require_test_store!();
+        let now = SystemTime::now();
+
+        store
+            .escalate_address_risk(
+                "risk-addr",
+                "invalid share proof",
+                Duration::from_secs(60),
+                1,
+                Duration::from_secs(120),
+                Duration::from_secs(120),
+                Duration::from_secs(600),
+            )
+            .expect("escalate address risk");
+        store
+            .upsert_validation_state(&PersistedValidationAddressState {
+                address: "validator-addr".to_string(),
+                total_shares: 42,
+                sampled_shares: 7,
+                invalid_samples: 1,
+                forced_until: Some(now + Duration::from_secs(180)),
+                last_seen_at: now,
+            })
+            .expect("persist validation state");
+
+        let state = test_api_state(store);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let response = runtime
+            .block_on(handle_health(State(state)))
+            .into_response();
+        let bytes = runtime
+            .block_on(to_bytes(response.into_body(), usize::MAX))
+            .expect("body bytes");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("health response json");
+        let holds = payload["active_verification_holds"]
+            .as_array()
+            .expect("active verification hold array");
+
+        assert_eq!(holds.len(), 2);
+
+        let risk_row = holds
+            .iter()
+            .find(|row| row["address"] == "risk-addr")
+            .expect("risk row");
+        assert_eq!(risk_row["last_reason"], "invalid share proof");
+        assert!(risk_row["quarantined_until"].is_object());
+        assert!(risk_row["force_verify_until"].is_object());
+
+        let validation_row = holds
+            .iter()
+            .find(|row| row["address"] == "validator-addr")
+            .expect("validation row");
+        assert!(validation_row["validation_forced_until"].is_object());
+        assert!(validation_row["quarantined_until"].is_null());
     }
 
     #[test]

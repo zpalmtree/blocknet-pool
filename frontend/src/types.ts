@@ -160,6 +160,17 @@ export interface MinerVerificationHold {
   active_fraud_strikes?: number;
 }
 
+export interface ActiveVerificationHold {
+  address: string;
+  strikes: number;
+  suspected_fraud_strikes: number;
+  last_reason?: string | null;
+  last_event_at?: UnixLike;
+  quarantined_until?: UnixLike;
+  force_verify_until?: UnixLike;
+  validation_forced_until?: UnixLike;
+}
+
 export interface MinerResponse {
   hashrate: number;
   mining_since?: UnixLike;
@@ -312,6 +323,7 @@ export interface HealthResponse {
     pending_provisional?: number;
     fraud_detections?: number;
   };
+  active_verification_holds?: ActiveVerificationHold[];
 }
 
 export type RecoveryInstanceId = "primary" | "standby";
@@ -540,6 +552,29 @@ export interface StatusIncident {
   ongoing: boolean;
 }
 
+export interface DaemonCurrentProcessBlock {
+  height: number;
+  tx_count: number;
+  stage: string;
+  started_at_unix_millis: number;
+  stage_started_at_unix_millis: number;
+  elapsed_millis: number;
+  stage_elapsed_millis: number;
+}
+
+export interface DaemonLastProcessBlock {
+  height: number;
+  tx_count: number;
+  completed_at_unix_millis: number;
+  validate_millis: number;
+  commit_millis: number;
+  reorg_millis: number;
+  total_millis: number;
+  accepted: boolean;
+  main_chain: boolean;
+  error?: string | null;
+}
+
 export interface StatusResponse {
   checked_at: UnixLike;
   pool_uptime_seconds: number;
@@ -587,6 +622,8 @@ export interface StatusResponse {
     syncing?: boolean | null;
     mempool_size?: number | null;
     best_hash?: string | null;
+    current_process_block?: DaemonCurrentProcessBlock | null;
+    last_process_block?: DaemonLastProcessBlock | null;
     error?: string | null;
   };
   template: {

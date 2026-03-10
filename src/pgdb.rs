@@ -10,9 +10,10 @@ use postgres::{types::ToSql, Client, Config as PostgresConfig, NoTls, Row, Trans
 use tracing::warn;
 
 use crate::db::{
-    AddressRiskState, Balance, BlockCreditEvent, DbBlock, DbShare, MonitorHeartbeat,
-    MonitorHeartbeatUpsert, MonitorIncident, MonitorIncidentUpsert, Payout, PendingPayout,
-    PoolFeeEvent, PoolFeeRecord, PublicPayoutBatch, ShareReplayData, ShareReplayUpdate,
+    ActiveVerificationHold, AddressRiskState, Balance, BlockCreditEvent, DbBlock, DbShare,
+    MonitorHeartbeat, MonitorHeartbeatUpsert, MonitorIncident, MonitorIncidentUpsert, Payout,
+    PendingPayout, PoolFeeEvent, PoolFeeRecord, PublicPayoutBatch, ShareReplayData,
+    ShareReplayUpdate,
 };
 use crate::engine::{ShareRecord, ShareStore};
 use crate::stats::RejectionReasonCount;
@@ -2059,6 +2060,48 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 || s.quarantined_until.is_some_and(|until| until > now)
         });
         Ok((force, state))
+    }
+
+    pub fn list_active_verification_holds(&self) -> Result<Vec<ActiveVerificationHold>> {
+        let rows = self.conn().lock().query(
+            "SELECT COALESCE(r.address, v.address) AS address,
+                    r.strikes,
+                    r.suspected_fraud_strikes,
+                    r.last_reason,
+                    r.last_event_at,
+                    r.quarantined_until,
+                    r.force_verify_until,
+                    v.forced_until
+             FROM (
+                 SELECT address, strikes, suspected_fraud_strikes, last_reason, last_event_at,
+                        quarantined_until, force_verify_until
+                 FROM address_risk
+                 WHERE (quarantined_until IS NOT NULL AND quarantined_until > $1)
+                    OR (force_verify_until IS NOT NULL AND force_verify_until > $1)
+             ) r
+             FULL OUTER JOIN (
+                 SELECT address, forced_until
+                 FROM validation_address_states
+                 WHERE forced_until IS NOT NULL AND forced_until > $1
+             ) v
+             ON r.address = v.address
+             ORDER BY address ASC",
+            &[&now_unix()],
+        )?;
+        Ok(rows
+            .iter()
+            .map(|row| ActiveVerificationHold {
+                address: row.get::<_, String>(0),
+                strikes: row.get::<_, Option<i64>>(1).unwrap_or_default().max(0) as u64,
+                suspected_fraud_strikes: row.get::<_, Option<i64>>(2).unwrap_or_default().max(0)
+                    as u64,
+                last_reason: row.get::<_, Option<String>>(3),
+                last_event_at: row.get::<_, Option<i64>>(4).map(from_unix),
+                quarantined_until: row.get::<_, Option<i64>>(5).map(from_unix),
+                force_verify_until: row.get::<_, Option<i64>>(6).map(from_unix),
+                validation_forced_until: row.get::<_, Option<i64>>(7).map(from_unix),
+            })
+            .collect())
     }
 
     pub fn escalate_address_risk(

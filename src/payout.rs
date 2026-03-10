@@ -1976,6 +1976,8 @@ mod tests {
             mempool_bytes: 0,
             syncing: true,
             identity_age: "1m".to_string(),
+            current_process_block: None,
+            last_process_block: None,
         };
         assert!(!daemon_ready_for_payouts(&status));
 

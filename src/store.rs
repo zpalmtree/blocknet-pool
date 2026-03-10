@@ -8,8 +8,8 @@ use anyhow::{anyhow, Result};
 use tracing::warn;
 
 use crate::db::{
-    AddressRiskState, DbBlock, MonitorHeartbeat, MonitorHeartbeatUpsert, MonitorIncident,
-    MonitorIncidentUpsert, ShareReplayData,
+    ActiveVerificationHold, AddressRiskState, DbBlock, MonitorHeartbeat, MonitorHeartbeatUpsert,
+    MonitorIncident, MonitorIncidentUpsert, ShareReplayData,
 };
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::pgdb::{
@@ -78,6 +78,10 @@ impl PoolStore {
 
     pub fn get_address_risk(&self, address: &str) -> Result<Option<AddressRiskState>> {
         self.inner.get_address_risk(address)
+    }
+
+    pub fn list_active_verification_holds(&self) -> Result<Vec<ActiveVerificationHold>> {
+        self.inner.list_active_verification_holds()
     }
 
     pub fn miner_share_window_stats_since(

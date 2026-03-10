@@ -20,7 +20,9 @@ pub async fn bootstrap_api_runtime(config_path: &Path) -> Result<(Config, Shared
     pool_runtime::runtime::load_dotenv(config_path);
     let cfg = Config::load(config_path)?;
     warn_api_config(&cfg);
-    let shared = pool_runtime::runtime::bootstrap_shared_runtime_from_config(cfg.to_runtime_config()).await?;
+    let shared =
+        pool_runtime::runtime::bootstrap_shared_runtime_from_config(cfg.to_runtime_config())
+            .await?;
     Ok((cfg, shared))
 }
 
@@ -53,7 +55,9 @@ pub async fn build_api_state(cfg: &Config, shared: &SharedRuntime) -> Result<Api
         insights_cache: Arc::new(Mutex::new(InsightsCache::default())),
         miner_pending_estimate_cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
         recovery: Arc::new(RecoveryAgentClient::new(cfg.recovery.socket_path.clone())),
-        live_runtime_snapshot_cache: Arc::new(Mutex::new(crate::api::LiveRuntimeSnapshotCache::default())),
+        live_runtime_snapshot_cache: Arc::new(Mutex::new(
+            crate::api::LiveRuntimeSnapshotCache::default(),
+        )),
         status_history: Arc::new(Mutex::new(persisted_status_history)),
         sse_subscriber_limiter: Arc::new(tokio::sync::Semaphore::new(DEFAULT_MAX_SSE_SUBSCRIBERS)),
         api_key: cfg.api_key.clone(),
@@ -73,7 +77,12 @@ pub async fn build_api_state(cfg: &Config, shared: &SharedRuntime) -> Result<Api
 pub fn api_listen_addr(cfg: &Config) -> Result<SocketAddr> {
     format!("{}:{}", cfg.api_host, cfg.api_port)
         .parse()
-        .with_context(|| format!("invalid api listen address {}:{}", cfg.api_host, cfg.api_port))
+        .with_context(|| {
+            format!(
+                "invalid api listen address {}:{}",
+                cfg.api_host, cfg.api_port
+            )
+        })
 }
 
 pub fn start_api_background_tasks(api_state: ApiState) {

@@ -60,7 +60,10 @@ pub async fn bootstrap_shared_runtime_from_config(cfg: Config) -> Result<SharedR
 
     let cfg_for_store = cfg.clone();
     let store = tokio::task::spawn_blocking(move || {
-        PoolStore::open(&cfg_for_store.database_url, cfg_for_store.database_pool_size)
+        PoolStore::open(
+            &cfg_for_store.database_url,
+            cfg_for_store.database_pool_size,
+        )
     })
     .await
     .context("join store initialization task")??;

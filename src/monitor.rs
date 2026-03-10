@@ -19,7 +19,7 @@ use tokio::net::TcpListener;
 
 use crate::config::Config;
 use crate::db::{MonitorHeartbeatUpsert, MonitorIncidentUpsert};
-use crate::node::{NodeClient, NodeStatus};
+use crate::node::{NodeClient, NodeCurrentProcessBlock, NodeLastProcessBlock, NodeStatus};
 use crate::service_state::{PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY};
 use crate::store::PoolStore;
 
@@ -34,6 +34,9 @@ const HOUSEKEEPING_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const STRATUM_SNAPSHOT_STALE_AFTER: Duration = Duration::from_secs(30);
 const TEMPLATE_REFRESH_WARN_AFTER: Duration = Duration::from_secs(45);
 const TEMPLATE_REFRESH_CRITICAL_AFTER: Duration = Duration::from_secs(120);
+const DAEMON_SLOW_BLOCK_WARN_AFTER: Duration = Duration::from_secs(5);
+const DAEMON_SLOW_BLOCK_CRITICAL_AFTER: Duration = Duration::from_secs(15);
+const DAEMON_SLOW_BLOCK_RECENT_AFTER: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct MonitorSnapshot {
@@ -44,6 +47,8 @@ pub struct MonitorSnapshot {
     pub db_up: Option<bool>,
     pub daemon_up: Option<bool>,
     pub daemon_syncing: Option<bool>,
+    pub daemon_current_process_block: Option<NodeCurrentProcessBlock>,
+    pub daemon_last_process_block: Option<NodeLastProcessBlock>,
     pub chain_height: Option<u64>,
     pub template_age_seconds: Option<u64>,
     pub last_refresh_millis: Option<u64>,
@@ -110,6 +115,7 @@ struct IncidentState {
     stratum_down: ConditionState,
     daemon_down: ConditionState,
     daemon_syncing: ConditionState,
+    daemon_slow_block_processing: ConditionState,
     template_stale: ConditionState,
     validation_backlog: ConditionState,
     payout_queue_stalled: ConditionState,
@@ -158,7 +164,10 @@ pub async fn run_monitor(config_path: &Path) -> Result<()> {
     let cfg = Config::load(config_path)?;
     let cfg_for_store = cfg.clone();
     let store = tokio::task::spawn_blocking(move || {
-        PoolStore::open(&cfg_for_store.database_url, cfg_for_store.database_pool_size)
+        PoolStore::open(
+            &cfg_for_store.database_url,
+            cfg_for_store.database_pool_size,
+        )
     })
     .await
     .context("join monitor store initialization task")??;
@@ -302,12 +311,14 @@ impl MonitorRuntime {
         let payout_queue_stalled =
             payout_queue_state(&self.cfg, sampled_at, payout_summary.as_ref());
         let share_ingest_stalled = share_progress_state(sampled_at, runtime_snapshot.as_ref());
+        let daemon_slow_block = daemon_slow_block_state(sampled_at, daemon.value.as_ref());
         let summary_state = summarize_state(
             api.error.is_none(),
             stratum.error.is_none() && stratum_snapshot_fresh,
             db.error.is_none(),
             daemon.value.as_ref().is_some_and(|status| !status.syncing),
             template_refresh_millis,
+            daemon_slow_block.as_ref().map(|(severity, _)| *severity),
             validation_backlog.as_ref().map(|(severity, _)| *severity),
             payout_queue_stalled.as_ref().map(|(severity, _)| *severity),
             share_ingest_stalled.as_ref().map(|(severity, _)| *severity),
@@ -370,6 +381,7 @@ impl MonitorRuntime {
         let payout_queue_stalled =
             payout_queue_state(&self.cfg, now, sample.payout_summary.as_ref());
         let share_ingest_stalled = share_progress_state(now, sample.runtime_snapshot.as_ref());
+        let daemon_slow_block = daemon_slow_block_state(now, sample.daemon_status.value.as_ref());
 
         self.sync_condition(
             &mut incidents.api_down,
@@ -433,6 +445,21 @@ impl MonitorRuntime {
             Duration::from_secs(0),
             now,
             Some("daemon reported syncing".to_string()),
+            &mut actions,
+        )?;
+        self.sync_condition(
+            &mut incidents.daemon_slow_block_processing,
+            "local_daemon_slow_block_processing",
+            "daemon_slow_block_processing",
+            daemon_slow_block
+                .as_ref()
+                .map(|(severity, _)| *severity)
+                .unwrap_or("warn"),
+            "public",
+            daemon_slow_block.is_some(),
+            Duration::from_secs(0),
+            now,
+            daemon_slow_block.map(|(_, detail)| detail),
             &mut actions,
         )?;
         self.sync_condition(
@@ -630,6 +657,10 @@ impl MonitorRuntime {
         metrics.db_up = Some(sample.db_probe.error.is_none());
         metrics.daemon_up = Some(sample.daemon_status.error.is_none());
         metrics.daemon_syncing = daemon.map(|status| status.syncing);
+        metrics.daemon_current_process_block =
+            daemon.and_then(|status| status.current_process_block.clone());
+        metrics.daemon_last_process_block =
+            daemon.and_then(|status| status.last_process_block.clone());
         metrics.chain_height = daemon.map(|status| status.chain_height);
         metrics.template_age_seconds =
             runtime.and_then(|snapshot| snapshot.jobs.template_age_seconds);
@@ -700,6 +731,8 @@ impl MonitorRuntime {
             "db_error": sample.db_probe.error,
             "daemon_error": sample.daemon_status.error,
             "wallet_error": sample.wallet_probe.error,
+            "daemon_current_process_block": daemon.and_then(|status| status.current_process_block.as_ref()),
+            "daemon_last_process_block": daemon.and_then(|status| status.last_process_block.as_ref()),
         });
         Ok(MonitorHeartbeatUpsert {
             sampled_at: sample.sampled_at,
@@ -1088,6 +1121,7 @@ fn summarize_state(
     db_up: bool,
     daemon_ready: bool,
     template_refresh_millis: Option<u64>,
+    daemon_slow_block_severity: Option<&'static str>,
     validation_backlog_severity: Option<&'static str>,
     payout_queue_severity: Option<&'static str>,
     share_ingest_severity: Option<&'static str>,
@@ -1101,6 +1135,7 @@ fn summarize_state(
     }
     if template_refresh_millis
         .is_some_and(|lag| lag >= TEMPLATE_REFRESH_WARN_AFTER.as_millis() as u64)
+        || daemon_slow_block_severity.is_some()
         || validation_backlog_severity.is_some()
         || payout_queue_severity.is_some()
         || share_ingest_severity.is_some()
@@ -1108,6 +1143,78 @@ fn summarize_state(
         return "degraded".to_string();
     }
     "healthy".to_string()
+}
+
+fn format_millis(ms: u64) -> String {
+    if ms < 1_000 {
+        format!("{ms}ms")
+    } else {
+        format!("{:.1}s", ms as f64 / 1_000.0)
+    }
+}
+
+fn system_time_from_unix_millis(unix_millis: i64) -> Option<SystemTime> {
+    if unix_millis <= 0 {
+        return None;
+    }
+    UNIX_EPOCH.checked_add(Duration::from_millis(unix_millis as u64))
+}
+
+fn daemon_slow_block_state(
+    now: SystemTime,
+    status: Option<&NodeStatus>,
+) -> Option<(&'static str, String)> {
+    let status = status?;
+
+    if let Some(current) = status.current_process_block.as_ref() {
+        if current.elapsed_millis >= DAEMON_SLOW_BLOCK_WARN_AFTER.as_millis() as u64 {
+            let severity =
+                if current.elapsed_millis >= DAEMON_SLOW_BLOCK_CRITICAL_AFTER.as_millis() as u64 {
+                    "critical"
+                } else {
+                    "warn"
+                };
+            return Some((
+                severity,
+                format!(
+                    "daemon processing block height={} stage={} txs={} elapsed={} stage_elapsed={}",
+                    current.height,
+                    current.stage,
+                    current.tx_count,
+                    format_millis(current.elapsed_millis),
+                    format_millis(current.stage_elapsed_millis),
+                ),
+            ));
+        }
+    }
+
+    let last = status.last_process_block.as_ref()?;
+    if last.total_millis < DAEMON_SLOW_BLOCK_WARN_AFTER.as_millis() as u64 {
+        return None;
+    }
+    let completed_at = system_time_from_unix_millis(last.completed_at_unix_millis)?;
+    if now.duration_since(completed_at).unwrap_or_default() > DAEMON_SLOW_BLOCK_RECENT_AFTER {
+        return None;
+    }
+
+    let severity = if last.total_millis >= DAEMON_SLOW_BLOCK_CRITICAL_AFTER.as_millis() as u64 {
+        "critical"
+    } else {
+        "warn"
+    };
+    let mut detail = format!(
+        "daemon processed block height={} txs={} total={} validate={} commit={} reorg={}",
+        last.height,
+        last.tx_count,
+        format_millis(last.total_millis),
+        format_millis(last.validate_millis),
+        format_millis(last.commit_millis),
+        format_millis(last.reorg_millis),
+    );
+    if !last.error.trim().is_empty() {
+        detail.push_str(&format!(" error={}", last.error.trim()));
+    }
+    Some((severity, detail))
 }
 
 fn runtime_snapshot_age(
@@ -1290,6 +1397,65 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
     );
     metric_line(
         &mut out,
+        "blocknet_pool_monitor_daemon_process_block_active",
+        bool_gauge(snapshot.daemon_current_process_block.is_some()),
+    );
+    metric_line(
+        &mut out,
+        "blocknet_pool_monitor_daemon_process_block_elapsed_millis",
+        snapshot
+            .daemon_current_process_block
+            .as_ref()
+            .map(|block| block.elapsed_millis)
+            .unwrap_or(0),
+    );
+    metric_line(
+        &mut out,
+        "blocknet_pool_monitor_daemon_process_block_stage_elapsed_millis",
+        snapshot
+            .daemon_current_process_block
+            .as_ref()
+            .map(|block| block.stage_elapsed_millis)
+            .unwrap_or(0),
+    );
+    metric_line(
+        &mut out,
+        "blocknet_pool_monitor_daemon_last_process_block_total_millis",
+        snapshot
+            .daemon_last_process_block
+            .as_ref()
+            .map(|block| block.total_millis)
+            .unwrap_or(0),
+    );
+    metric_line(
+        &mut out,
+        "blocknet_pool_monitor_daemon_last_process_block_validate_millis",
+        snapshot
+            .daemon_last_process_block
+            .as_ref()
+            .map(|block| block.validate_millis)
+            .unwrap_or(0),
+    );
+    metric_line(
+        &mut out,
+        "blocknet_pool_monitor_daemon_last_process_block_commit_millis",
+        snapshot
+            .daemon_last_process_block
+            .as_ref()
+            .map(|block| block.commit_millis)
+            .unwrap_or(0),
+    );
+    metric_line(
+        &mut out,
+        "blocknet_pool_monitor_daemon_last_process_block_reorg_millis",
+        snapshot
+            .daemon_last_process_block
+            .as_ref()
+            .map(|block| block.reorg_millis)
+            .unwrap_or(0),
+    );
+    metric_line(
+        &mut out,
         "blocknet_pool_monitor_wallet_up",
         bool_gauge(snapshot.wallet_up.unwrap_or(false)),
     );
@@ -1412,10 +1578,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        bool_gauge, payout_queue_state, render_metrics, share_progress_state, summarize_state,
-        validation_backlog_state, MonitorSnapshot, PendingPayoutSummary,
+        bool_gauge, daemon_slow_block_state, payout_queue_state, render_metrics,
+        share_progress_state, summarize_state, validation_backlog_state, MonitorSnapshot,
+        PendingPayoutSummary,
     };
     use crate::config::Config;
+    use crate::node::{NodeCurrentProcessBlock, NodeLastProcessBlock, NodeStatus};
     use crate::service_state::{PersistedRuntimeSnapshot, PersistedValidationSummary};
     use pool_runtime::jobs::JobRuntimeSnapshot;
     use std::time::{Duration, SystemTime};
@@ -1446,11 +1614,36 @@ mod tests {
             summary_state: "healthy".to_string(),
             api_up: Some(true),
             wallet_up: Some(false),
+            daemon_current_process_block: Some(NodeCurrentProcessBlock {
+                height: 5,
+                tx_count: 1,
+                stage: "validate".to_string(),
+                started_at_unix_millis: 1,
+                stage_started_at_unix_millis: 1,
+                elapsed_millis: 6_000,
+                stage_elapsed_millis: 6_000,
+            }),
+            daemon_last_process_block: Some(NodeLastProcessBlock {
+                height: 4,
+                tx_count: 1,
+                completed_at_unix_millis: 1,
+                validate_millis: 4_000,
+                commit_millis: 500,
+                reorg_millis: 250,
+                total_millis: 4_750,
+                accepted: true,
+                main_chain: true,
+                error: String::new(),
+            }),
             ..MonitorSnapshot::default()
         };
         let rendered = render_metrics(&snapshot);
         assert!(rendered.contains("blocknet_pool_monitor_api_up 1"));
         assert!(rendered.contains("blocknet_pool_monitor_wallet_up 0"));
+        assert!(rendered.contains("blocknet_pool_monitor_daemon_process_block_active 1"));
+        assert!(
+            rendered.contains("blocknet_pool_monitor_daemon_last_process_block_total_millis 4750")
+        );
         assert!(!rendered.contains("true"));
         assert!(!rendered.contains("false"));
     }
@@ -1484,11 +1677,81 @@ mod tests {
             true,
             None,
             None,
+            None,
             Some("critical"),
             None,
             true,
         );
         assert_eq!(state, "degraded");
+    }
+
+    #[test]
+    fn daemon_slow_block_state_prefers_active_block() {
+        let now = SystemTime::now();
+        let status = NodeStatus {
+            peer_id: "peer".to_string(),
+            peers: 2,
+            chain_height: 42,
+            best_hash: "abcd".to_string(),
+            total_work: 100,
+            mempool_size: 0,
+            mempool_bytes: 0,
+            syncing: false,
+            identity_age: "1m".to_string(),
+            current_process_block: Some(NodeCurrentProcessBlock {
+                height: 43,
+                tx_count: 1,
+                stage: "validate".to_string(),
+                started_at_unix_millis: 1,
+                stage_started_at_unix_millis: 1,
+                elapsed_millis: 18_000,
+                stage_elapsed_millis: 18_000,
+            }),
+            last_process_block: None,
+        };
+
+        let state = daemon_slow_block_state(now, Some(&status)).expect("slow block");
+        assert_eq!(state.0, "critical");
+        assert!(state.1.contains("stage=validate"));
+        assert!(state.1.contains("height=43"));
+    }
+
+    #[test]
+    fn daemon_slow_block_state_reports_recent_completed_block() {
+        let now = SystemTime::now();
+        let completed_at = now
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        let status = NodeStatus {
+            peer_id: "peer".to_string(),
+            peers: 2,
+            chain_height: 42,
+            best_hash: "abcd".to_string(),
+            total_work: 100,
+            mempool_size: 0,
+            mempool_bytes: 0,
+            syncing: false,
+            identity_age: "1m".to_string(),
+            current_process_block: None,
+            last_process_block: Some(NodeLastProcessBlock {
+                height: 43,
+                tx_count: 2,
+                completed_at_unix_millis: completed_at,
+                validate_millis: 8_000,
+                commit_millis: 900,
+                reorg_millis: 100,
+                total_millis: 9_000,
+                accepted: true,
+                main_chain: true,
+                error: String::new(),
+            }),
+        };
+
+        let state = daemon_slow_block_state(now, Some(&status)).expect("recent slow completion");
+        assert_eq!(state.0, "warn");
+        assert!(state.1.contains("validate=8.0s"));
+        assert!(state.1.contains("commit=900ms"));
     }
 
     #[test]

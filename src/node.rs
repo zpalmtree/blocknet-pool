@@ -35,6 +35,36 @@ pub struct NodeStatus {
     pub mempool_bytes: i64,
     pub syncing: bool,
     pub identity_age: String,
+    #[serde(default)]
+    pub current_process_block: Option<NodeCurrentProcessBlock>,
+    #[serde(default)]
+    pub last_process_block: Option<NodeLastProcessBlock>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeCurrentProcessBlock {
+    pub height: u64,
+    pub tx_count: u64,
+    pub stage: String,
+    pub started_at_unix_millis: i64,
+    pub stage_started_at_unix_millis: i64,
+    pub elapsed_millis: u64,
+    pub stage_elapsed_millis: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeLastProcessBlock {
+    pub height: u64,
+    pub tx_count: u64,
+    pub completed_at_unix_millis: i64,
+    pub validate_millis: u64,
+    pub commit_millis: u64,
+    pub reorg_millis: u64,
+    pub total_millis: u64,
+    pub accepted: bool,
+    pub main_chain: bool,
+    #[serde(default)]
+    pub error: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

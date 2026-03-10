@@ -15,6 +15,7 @@ import {
   toUnixMs,
 } from '../lib/format';
 import type {
+  ActiveVerificationHold,
   AdminBalanceItem,
   AdminDevFeeTelemetryResponse,
   AdminPayoutItem,
@@ -29,6 +30,7 @@ import type {
   RecoveryInstanceStatus,
   RecoveryOperationKind,
   RecoveryStatusResponse,
+  UnixLike,
 } from '../types';
 
 const MAX_DAEMON_LOG_LINES = 1000;
@@ -130,6 +132,24 @@ function compactHash(value: string | null | undefined): string {
   if (!value) return '-';
   if (value.length <= 18) return value;
   return `${value.slice(0, 8)}...${value.slice(-8)}`;
+}
+
+function formatAdminTimestamp(value: UnixLike): string {
+  const ms = toUnixMs(value);
+  return ms ? new Date(ms).toLocaleString() : '-';
+}
+
+function verificationHoldBadgeClass(active: boolean, tone: 'warn' | 'good' = 'warn'): string {
+  if (!active) return 'badge-pending';
+  return tone === 'good' ? 'badge-confirmed' : 'badge-orphaned';
+}
+
+function verificationHoldLabel(hold: ActiveVerificationHold): string {
+  if (hold.quarantined_until) return 'Quarantined';
+  if (hold.force_verify_until && hold.validation_forced_until) return 'Risk + validator';
+  if (hold.force_verify_until) return 'Risk forced';
+  if (hold.validation_forced_until) return 'Validator forced';
+  return 'Active';
 }
 
 function devFeeHintBadgeClass(position: string): string {
@@ -713,6 +733,7 @@ export function AdminPage({
   const rewardBreakdownOrphaned = rewardBreakdown?.block.orphaned ?? false;
   const rewardBreakdownProjected = !!rewardBreakdown && !rewardBreakdownOrphaned && !rewardBreakdown.block.paid_out;
   const rawHealthJson = useMemo(() => (health ? JSON.stringify(health, null, 2) : ''), [health]);
+  const activeVerificationHolds = health?.active_verification_holds ?? [];
   const copyHealthJson = useCallback(() => {
     if (!rawHealthJson || !navigator.clipboard) return;
     void navigator.clipboard.writeText(rawHealthJson);
@@ -1972,6 +1993,98 @@ export function AdminPage({
                   <div className="label">Fraud Detections</div>
                   <div className="value mono">{health?.validation?.fraud_detections ?? '-'}</div>
                 </div>
+              </div>
+            </div>
+
+            <div className="card section" style={{ marginTop: 16 }}>
+              <div className="section-header">
+                <div>
+                  <h3>Active Verification Holds</h3>
+                  <p className="section-lead">
+                    Addresses currently quarantined or being forced through verified-only validation.
+                  </p>
+                </div>
+              </div>
+              <div className="table-scroll" style={{ marginTop: 12 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Address</th>
+                      <th>Mode</th>
+                      <th>Quarantine Until</th>
+                      <th>Risk Verify Until</th>
+                      <th>Validator Until</th>
+                      <th>Strikes</th>
+                      <th>Reason</th>
+                      <th>Last Event</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {!activeVerificationHolds.length ? (
+                      <tr>
+                        <td colSpan={8} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                          No active verification holds
+                        </td>
+                      </tr>
+                    ) : (
+                      activeVerificationHolds.map((hold) => (
+                        <tr key={hold.address}>
+                          <td title={hold.address}>
+                            <a
+                              href="/stats"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                onJumpToStats(hold.address);
+                              }}
+                            >
+                              {shortAddr(hold.address)}
+                            </a>
+                          </td>
+                          <td>
+                            <span
+                              className={verificationHoldBadgeClass(
+                                !!hold.quarantined_until,
+                                hold.quarantined_until ? 'warn' : 'good'
+                              )}
+                            >
+                              {verificationHoldLabel(hold)}
+                            </span>
+                          </td>
+                          <td
+                            className="mono"
+                            title={hold.quarantined_until ? formatAdminTimestamp(hold.quarantined_until) : undefined}
+                          >
+                            {hold.quarantined_until ? timeAgo(hold.quarantined_until) : '-'}
+                          </td>
+                          <td
+                            className="mono"
+                            title={hold.force_verify_until ? formatAdminTimestamp(hold.force_verify_until) : undefined}
+                          >
+                            {hold.force_verify_until ? timeAgo(hold.force_verify_until) : '-'}
+                          </td>
+                          <td
+                            className="mono"
+                            title={
+                              hold.validation_forced_until
+                                ? formatAdminTimestamp(hold.validation_forced_until)
+                                : undefined
+                            }
+                          >
+                            {hold.validation_forced_until ? timeAgo(hold.validation_forced_until) : '-'}
+                          </td>
+                          <td className="mono">
+                            {hold.strikes}
+                            {hold.suspected_fraud_strikes > 0 ? ` / fraud ${hold.suspected_fraud_strikes}` : ''}
+                          </td>
+                          <td title={hold.last_reason ?? undefined}>{hold.last_reason ?? '-'}</td>
+                          <td className="mono" title={hold.last_event_at ? formatAdminTimestamp(hold.last_event_at) : undefined}>
+                            {hold.last_event_at ? timeAgo(hold.last_event_at) : '-'}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
 

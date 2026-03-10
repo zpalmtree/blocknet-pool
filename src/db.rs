@@ -64,6 +64,18 @@ pub struct Balance {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ActiveVerificationHold {
+    pub address: String,
+    pub strikes: u64,
+    pub suspected_fraud_strikes: u64,
+    pub last_reason: Option<String>,
+    pub last_event_at: Option<SystemTime>,
+    pub quarantined_until: Option<SystemTime>,
+    pub force_verify_until: Option<SystemTime>,
+    pub validation_forced_until: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct Payout {
     pub id: i64,
     pub address: String,
