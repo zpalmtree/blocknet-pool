@@ -363,7 +363,6 @@ impl ValidationEngine {
     }
 
     pub fn snapshot(&self) -> ValidationSnapshot {
-        self.inner.sync_external_clears(false);
         self.inner
             .snapshot(self.candidate_tx.len(), self.regular_tx.len())
     }
