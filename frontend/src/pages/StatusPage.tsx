@@ -47,27 +47,6 @@ function fmtRefreshLag(ms: number | null | undefined): string {
   return fmtSeconds(Math.max(1, Math.floor(ms / 1000)));
 }
 
-function fmtMillis(ms: number | null | undefined): string {
-  if (ms == null || !Number.isFinite(ms)) return "-";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
-  return fmtSeconds(Math.max(1, Math.floor(ms / 1000)));
-}
-
-function currentBlockState(status: StatusResponse | null): string {
-  const block = status?.daemon?.current_process_block;
-  if (!block) return "Idle";
-  return `#${block.height} ${block.stage}`;
-}
-
-function lastBlockState(status: StatusResponse | null): string {
-  const block = status?.daemon?.last_process_block;
-  if (!block) return "-";
-  if (block.error) return "Failed";
-  if (!block.accepted) return "Rejected";
-  return block.main_chain ? "Main Chain" : "Fork";
-}
-
 export function StatusPage({ active, api, liveTick }: StatusPageProps) {
   const [status, setStatus] = useState<StatusResponse | null>(null);
 
@@ -173,55 +152,6 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
             <div className="value mono">
               {status?.daemon?.chain_height ?? "-"}
             </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="stats-card-group">
-        <div className="stats-card-group-title">Daemon Block Processing</div>
-        <div className="stats-card-group-grid stats-grid-dense">
-          <div className="stat-card">
-            <div className="label">Current Block</div>
-            <div className="value mono">{currentBlockState(status)}</div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Current Elapsed</div>
-            <div className="value mono">
-              {fmtMillis(status?.daemon?.current_process_block?.elapsed_millis)}
-            </div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Last Block</div>
-            <div className="value mono">
-              {status?.daemon?.last_process_block
-                ? `#${status.daemon.last_process_block.height}`
-                : "-"}
-            </div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Last Total</div>
-            <div className="value mono">
-              {fmtMillis(status?.daemon?.last_process_block?.total_millis)}
-            </div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Last Breakdown</div>
-            <div
-              className="value mono"
-              title={
-                status?.daemon?.last_process_block?.error
-                  ? status.daemon.last_process_block.error
-                  : undefined
-              }
-            >
-              {status?.daemon?.last_process_block
-                ? `V ${fmtMillis(status.daemon.last_process_block.validate_millis)} C ${fmtMillis(status.daemon.last_process_block.commit_millis)} R ${fmtMillis(status.daemon.last_process_block.reorg_millis)}`
-                : "-"}
-            </div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Last Result</div>
-            <div className="value">{lastBlockState(status)}</div>
           </div>
         </div>
       </div>
