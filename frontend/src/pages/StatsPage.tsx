@@ -54,12 +54,42 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   const [insights, setInsights] = useState<StatsInsightsResponse | null>(null);
   const minerAddressRef = useRef(minerAddress);
   const lookupRequestSeq = useRef(0);
+  const hashrateRequestKeyRef = useRef('');
   const [resolving, setResolving] = useState(false);
   const [resolvedHandle, setResolvedHandle] = useState<string | null>(null);
 
   useEffect(() => {
     minerAddressRef.current = minerAddress;
   }, [minerAddress]);
+
+  const refreshMinerData = useCallback(async () => {
+    if (!minerAddress) return;
+    const addr = minerAddress;
+    try {
+      const d = await api.getMiner(addr);
+      if (minerAddressRef.current !== addr) return;
+      setMinerData(d);
+    } catch {
+      // handled by api client
+    }
+  }, [api, minerAddress]);
+
+  const loadMinerHashrate = useCallback(async (addressOverride?: string, rangeOverride?: Range) => {
+    const addr = (addressOverride ?? minerAddress).trim();
+    const selectedRange = rangeOverride ?? range;
+    if (!addr) return;
+    const requestKey = `${addr}:${selectedRange}`;
+    hashrateRequestKeyRef.current = requestKey;
+    try {
+      const d = await api.getMinerHashrate(addr, selectedRange);
+      if (hashrateRequestKeyRef.current !== requestKey) return;
+      setHistory(d || []);
+    } catch {
+      if (hashrateRequestKeyRef.current === requestKey) {
+        setHistory([]);
+      }
+    }
+  }, [api, minerAddress, range]);
 
   const loadMinerLookup = useCallback(
     async (input?: string) => {
@@ -99,39 +129,14 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
         localStorage.setItem(LAST_MINER_LOOKUP_KEY, addr);
         setMinerData(d);
         setResolvedHandle(resolved?.handle ?? null);
+        void loadMinerHashrate(addr, range);
       } catch {
         setResolvedHandle(null);
         // handled by api client
       }
     },
-    [api, minerInput]
+    [api, loadMinerHashrate, minerInput, range]
   );
-
-  const refreshMinerData = useCallback(async () => {
-    if (!minerAddress) return;
-    const addr = minerAddress;
-    try {
-      const d = await api.getMiner(addr);
-      if (minerAddressRef.current !== addr) return;
-      setMinerData(d);
-    } catch {
-      // handled by api client
-    }
-  }, [api, minerAddress]);
-
-  const loadMinerHashrate = useCallback(async () => {
-    if (!minerAddress) return;
-    const addr = minerAddress;
-    try {
-      const d = await api.getMinerHashrate(addr, range);
-      if (minerAddressRef.current !== addr) return;
-      setHistory(d || []);
-    } catch {
-      if (minerAddressRef.current === addr) {
-        setHistory([]);
-      }
-    }
-  }, [api, minerAddress, range]);
 
   const loadRejections = useCallback(async () => {
     try {
@@ -159,15 +164,13 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
     }
   }, [active, loadMinerLookup, minerAddress, minerInput]);
 
-  useEffect(() => {
-    if (!active || !minerAddress) return;
-    void loadMinerHashrate();
-  }, [active, loadMinerHashrate, minerAddress, range]);
+  const currentHashrateKey = minerAddress ? `${minerAddress}:${range}` : '';
 
   useEffect(() => {
     if (!active || !minerAddress) return;
-    void refreshMinerData();
-  }, [active, minerAddress, refreshMinerData]);
+    if (hashrateRequestKeyRef.current === currentHashrateKey) return;
+    void loadMinerHashrate();
+  }, [active, currentHashrateKey, loadMinerHashrate, minerAddress]);
 
   useEffect(() => {
     if (!active) return;
@@ -268,6 +271,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
             className="btn btn-secondary"
             onClick={() => {
               lookupRequestSeq.current += 1;
+              hashrateRequestKeyRef.current = '';
               setMinerInput('');
               setMinerAddress('');
               setMinerData(null);
