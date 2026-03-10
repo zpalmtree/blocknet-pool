@@ -14,8 +14,9 @@ use serde::{Deserialize, Serialize};
 use crate::config::Config;
 use crate::db::{AddressRiskState, ShareReplayData};
 use crate::dev_fee::{
-    login_difficulty_floor, should_bootstrap_login_from_address_hints,
-    should_persist_login_hint_immediately, DEV_VARDIFF_BOOTSTRAP_HINT_LIMIT,
+    is_seine_dev_fee_address, login_difficulty_floor, should_allow_login_difficulty_hint_raise,
+    should_bootstrap_login_from_address_hints, should_persist_login_hint_immediately,
+    DEV_VARDIFF_BOOTSTRAP_HINT_LIMIT,
 };
 use crate::pow::{check_target, difficulty_to_target};
 use crate::protocol::{
@@ -549,7 +550,13 @@ impl PoolEngine {
             difficulty = difficulty.max(bootstrap);
         }
         if let Some(hint) = difficulty_hint {
-            difficulty = clamp_login_difficulty_hint(hint, difficulty, min_diff, max_diff);
+            difficulty = clamp_login_difficulty_hint(
+                hint,
+                difficulty,
+                min_diff,
+                max_diff,
+                should_allow_login_difficulty_hint_raise(address),
+            );
         }
         if let Some(bootstrap) = address_bootstrap {
             difficulty = difficulty.max(bootstrap);
@@ -1277,12 +1284,90 @@ impl PoolEngine {
     }
 
     pub fn retarget_on_job_if_needed(&self, conn_id: &str) -> Option<u64> {
-        // Difficulty is only adjusted on share submission (retarget_on_submit),
-        // not on job ticks. Lowering difficulty between shares destroys weight
-        // for intermittent connections (e.g. dev fee sessions that are idle 99%
-        // of the time). The submit-based retarget uses actual share timing data
-        // and handles both fast and slow miners correctly.
-        self.session_difficulty(conn_id)
+        if !self.cfg.enable_vardiff {
+            return self.session_difficulty(conn_id);
+        }
+
+        let mut hint_to_write: Option<(String, String, u64)> = None;
+        let mut sessions = self.sessions.lock();
+        let session = sessions.get_mut(conn_id)?;
+        let min_diff = self.cfg.min_share_difficulty.max(1);
+        let max_diff = self.cfg.max_share_difficulty.max(min_diff);
+        session.difficulty = session.difficulty.clamp(min_diff, max_diff);
+
+        // Keep dev-fee sessions on submit-only retargeting so their long idle
+        // periods do not collapse difficulty between the brief fee windows.
+        if !is_seine_dev_fee_address(&session.address) {
+            let now = Instant::now();
+            let retarget_interval = self
+                .cfg
+                .vardiff_retarget_interval_duration()
+                .clamp(Duration::from_secs(2), Duration::from_secs(8));
+            let target_interval = vardiff_target_interval_seconds(&self.cfg);
+            let tolerance = self.cfg.vardiff_tolerance.clamp(0.01, 0.95);
+            let can_retarget = session
+                .last_difficulty_adjustment
+                .is_none_or(|last| now.duration_since(last) >= retarget_interval);
+            if can_retarget {
+                if let Some(last) = session.last_accepted_share_at {
+                    let observed_interval = now.duration_since(last).as_secs_f64();
+                    let upper = target_interval * (1.0 + tolerance);
+                    if observed_interval > upper {
+                        let raw_ratio = observed_interval / target_interval;
+                        let ratio = raw_ratio
+                            .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
+                            .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
+                        let next_diff =
+                            ((session.difficulty as f64) / ratio).floor().max(1.0) as u64;
+                        let next_diff = next_diff.clamp(min_diff, max_diff);
+                        session.last_difficulty_adjustment = Some(now);
+                        if next_diff != session.difficulty {
+                            let miner = compact_address(&session.address);
+                            tracing::debug!(
+                                "vardiff {:>4} -> {:>4} (job tick idle {:>5.1}s, target {:>4.0}s, miner {})",
+                                session.difficulty,
+                                next_diff,
+                                observed_interval,
+                                target_interval,
+                                miner
+                            );
+                            session.difficulty = next_diff;
+                        }
+                    }
+                }
+            }
+
+            let should_write_hint = session
+                .last_difficulty_hint_write
+                .is_none_or(|last| now.duration_since(last) >= VARDIFF_HINT_PERSIST_INTERVAL);
+            if should_write_hint {
+                session.last_difficulty_hint_write = Some(now);
+                hint_to_write = Some((
+                    session.address.clone(),
+                    session.worker.clone(),
+                    session.difficulty,
+                ));
+            }
+        }
+
+        let difficulty = session.difficulty;
+        drop(sessions);
+
+        if let Some((address, worker, difficulty)) = hint_to_write {
+            if let Err(err) =
+                self.store
+                    .upsert_vardiff_hint(&address, &worker, difficulty, SystemTime::now())
+            {
+                tracing::warn!(
+                    address = %address,
+                    worker = %worker,
+                    error = %err,
+                    "failed to persist vardiff hint on job tick"
+                );
+            }
+        }
+
+        Some(difficulty)
     }
 
     pub fn session_capabilities(&self, conn_id: &str) -> Option<Vec<String>> {
@@ -1518,16 +1603,26 @@ fn median_difficulty(values: &mut [u64]) -> u64 {
     }
 }
 
-fn clamp_login_difficulty_hint(hint: u64, baseline: u64, min_diff: u64, max_diff: u64) -> u64 {
+fn clamp_login_difficulty_hint(
+    hint: u64,
+    baseline: u64,
+    min_diff: u64,
+    max_diff: u64,
+    allow_raise: bool,
+) -> u64 {
     let baseline = baseline.max(1).clamp(min_diff, max_diff);
     let hint = hint.max(1).clamp(min_diff, max_diff);
 
     let lower = ((baseline as f64) * LOGIN_DIFFICULTY_HINT_MIN_FACTOR)
         .floor()
         .max(1.0) as u64;
-    let upper = ((baseline as f64) * LOGIN_DIFFICULTY_HINT_MAX_FACTOR)
-        .ceil()
-        .max(lower as f64) as u64;
+    let upper = if allow_raise {
+        ((baseline as f64) * LOGIN_DIFFICULTY_HINT_MAX_FACTOR)
+            .ceil()
+            .max(lower as f64) as u64
+    } else {
+        baseline.max(lower)
+    };
 
     let bounded_lower = lower.max(min_diff);
     let bounded_upper = upper.min(max_diff).max(bounded_lower);
@@ -2485,8 +2580,9 @@ mod tests {
                 Some(10_000),
             )
             .expect("login");
-        // Baseline=100, max factor=4x, so hint should clamp to 400.
-        assert_eq!(engine.session_difficulty("conn1"), Some(400));
+        // Normal-user login hints may lower difficulty, but they should not
+        // raise above the pool's own baseline anymore.
+        assert_eq!(engine.session_difficulty("conn1"), Some(100));
 
         engine
             .login_with_hint(
@@ -2500,6 +2596,36 @@ mod tests {
             .expect("login");
         // Baseline=100, min factor=0.25x, so hint should clamp to 25.
         assert_eq!(engine.session_difficulty("conn2"), Some(25));
+    }
+
+    #[test]
+    fn dev_fee_login_allows_higher_client_difficulty_hint_with_safety_bounds() {
+        let mut cfg = cfg();
+        cfg.initial_share_difficulty = 60;
+        cfg.min_share_difficulty = 1;
+        cfg.max_share_difficulty = 10_000;
+
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = Arc::new(validation);
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            Arc::new(InMemoryJobs::default()),
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login_with_hint(
+                "conn-dev",
+                crate::dev_fee::SEINE_DEV_FEE_ADDRESS.to_string(),
+                Some("seine-devfee-1".to_string()),
+                2,
+                submit_hash_cap(),
+                Some(10_000),
+            )
+            .expect("login");
+        assert_eq!(engine.session_difficulty("conn-dev"), Some(240));
     }
 
     #[test]
@@ -3082,7 +3208,7 @@ mod tests {
     }
 
     #[test]
-    fn vardiff_job_tick_does_not_decay_idle_sessions() {
+    fn vardiff_job_tick_decays_idle_user_sessions() {
         struct ZeroHasher;
         impl PowHasher for ZeroHasher {
             fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
@@ -3127,9 +3253,67 @@ mod tests {
             .retarget_on_job_if_needed("conn1")
             .expect("session difficulty should still exist");
 
+        assert!(
+            after < before,
+            "job-tick retarget should decay idle user sessions so they can recover from overshoot"
+        );
+    }
+
+    #[test]
+    fn vardiff_job_tick_does_not_decay_idle_dev_fee_sessions() {
+        struct ZeroHasher;
+        impl PowHasher for ZeroHasher {
+            fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
+                Ok([0u8; 32])
+            }
+        }
+
+        let mut cfg = cfg();
+        cfg.enable_vardiff = true;
+        cfg.validation_mode = "full".to_string();
+        cfg.initial_share_difficulty = 100;
+        cfg.vardiff_target_shares = 60;
+        cfg.vardiff_window = "1s".to_string();
+        cfg.vardiff_retarget_interval = "1s".to_string();
+
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(ZeroHasher));
+        let validation = Arc::new(validation);
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login(
+                "conn-dev",
+                crate::dev_fee::SEINE_DEV_FEE_ADDRESS.to_string(),
+                None,
+                2,
+                submit_hash_cap(),
+            )
+            .expect("login");
+        let first = engine
+            .submit("conn-dev", "job1".to_string(), 401, Some("00".repeat(32)))
+            .expect("share 1");
+        assert_eq!(first.next_difficulty, 100);
+
+        std::thread::sleep(Duration::from_millis(2_200));
+
+        let before = engine
+            .session_difficulty("conn-dev")
+            .expect("session difficulty should exist");
+        let after = engine
+            .retarget_on_job_if_needed("conn-dev")
+            .expect("session difficulty should still exist");
+
         assert_eq!(
             after, before,
-            "job-tick retarget should not decay idle sessions (prevents dev fee weight drain)"
+            "job-tick retarget should not decay idle dev-fee sessions"
         );
     }
 
