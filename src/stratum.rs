@@ -10,7 +10,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc, Notify};
 
 use crate::dev_fee::should_defer_submit_ack_difficulty;
-use crate::engine::{canonical_share_reject_reason, PoolEngine};
+use crate::engine::{canonical_share_reject_reason, PoolEngine, SubmitAck};
 use crate::jobs::JobManager;
 use crate::protocol::{
     normalize_worker_name, LoginParams, StratumNotify, StratumRequest, StratumResponse,
@@ -25,6 +25,7 @@ const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_STRATUM_REQUEST_BYTES: usize = 8 * 1024;
 const NOTIFICATION_CHANNEL_CAPACITY: usize = 256;
 const OUTBOUND_QUEUE_CAPACITY: usize = 256;
+const SUBMIT_QUEUE_CAPACITY: usize = 256;
 const OUTBOUND_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn client_submit_ack_difficulty(
@@ -64,6 +65,27 @@ impl OutboundHandle {
             normal_rx,
         )
     }
+}
+
+#[derive(Debug)]
+struct QueuedSubmit {
+    req_id: u64,
+    params: SubmitParams,
+    received_at: Instant,
+}
+
+#[derive(Debug)]
+enum SubmitCompletionOutcome {
+    Finished(Result<SubmitAck>),
+    WorkerFailure(String),
+}
+
+#[derive(Debug)]
+struct SubmitCompletion {
+    req_id: u64,
+    job_id: String,
+    nonce: u64,
+    outcome: SubmitCompletionOutcome,
 }
 
 pub struct StratumServer {
@@ -175,6 +197,15 @@ impl StratumServer {
         let submit_rate_limit_window = self.submit_rate_limit_window;
         let submit_rate_limit_max = self.submit_rate_limit_max;
         let mut submit_timestamps = VecDeque::<Instant>::new();
+        let (submit_tx, submit_rx) =
+            mpsc::channel(submit_rate_limit_max.min(SUBMIT_QUEUE_CAPACITY).max(1));
+        let (submit_result_tx, mut submit_result_rx) = mpsc::unbounded_channel();
+        let submit_engine = Arc::clone(&self.engine);
+        let submit_conn_id = conn_id.clone();
+        let submit_task = tokio::spawn(async move {
+            run_submit_worker(submit_engine, submit_conn_id, submit_rx, submit_result_tx).await;
+        });
+        let mut submit_results_open = true;
 
         let login_deadline = tokio::time::sleep(LOGIN_TIMEOUT);
         tokio::pin!(login_deadline);
@@ -200,6 +231,25 @@ impl StratumServer {
                 _ = &mut idle_deadline, if logged_in.is_some() => {
                     tracing::warn!(peer = %peer, "stratum idle timeout");
                     break;
+                }
+                maybe_submit_result = submit_result_rx.recv(), if submit_results_open => {
+                    match maybe_submit_result {
+                        Some(completion) => {
+                            if let Err(err) = self.handle_submit_completion(
+                                peer,
+                                &conn_id,
+                                Some(&outbound),
+                                &mut logged_in,
+                                completion,
+                            ) {
+                                run_result = Err(err);
+                                break;
+                            }
+                        }
+                        None => {
+                            submit_results_open = false;
+                        }
+                    }
                 }
                 maybe_job = rx_jobs.recv(), if logged_in.is_some() => {
                     if let Ok(job) = maybe_job {
@@ -402,170 +452,32 @@ impl StratumServer {
                             submit_timestamps.push_back(now);
                             let submit_job_id = params.job_id.clone();
                             let submit_nonce = params.nonce;
-
-                            let engine = Arc::clone(&self.engine);
-                            let submit_conn_id = conn_id.clone();
-                            let received_at = Instant::now();
-                            let submit = tokio::task::spawn_blocking(move || {
-                                engine.submit_with_received_at(
-                                    &submit_conn_id,
-                                    params.job_id,
-                                    params.nonce,
-                                    params.claimed_hash,
-                                    received_at,
-                                )
-                            })
-                            .await;
-
-                            match submit {
-                                Ok(Ok(ack)) => {
-                                    let mut finder_address = None::<String>;
-                                    let mut finder_worker = None::<String>;
-                                    let mut response_difficulty = ack.next_difficulty;
-                                    if let Some((address, worker, difficulty)) = logged_in.as_mut() {
-                                        self.stats
-                                            .record_accepted_share(address, ack.share_difficulty);
-                                        if ack.block_accepted {
-                                            self.stats.record_block_found(address);
-                                            finder_address = Some(address.clone());
-                                            finder_worker = Some(worker.clone());
-                                        }
-                                        response_difficulty = client_submit_ack_difficulty(
-                                            address,
-                                            *difficulty,
-                                            ack.next_difficulty,
-                                        );
-                                        if ack.next_difficulty != *difficulty {
-                                            if should_defer_submit_ack_difficulty(address) {
-                                                tracing::debug!(
-                                                    peer = %peer,
-                                                    address = %address,
-                                                    worker = %worker,
-                                                    active_difficulty = *difficulty,
-                                                    deferred_difficulty = ack.next_difficulty,
-                                                    "stratum deferred difficulty update until next template"
-                                                );
-                                            } else {
-                                                *difficulty = ack.next_difficulty;
-                                                if let Some(miner_job) =
-                                                    self.jobs
-                                                        .build_miner_job(
-                                                            &conn_id,
-                                                            ack.next_difficulty,
-                                                            address,
-                                                        )
-                                                {
-                                                    let notify = StratumNotify {
-                                                        method: "job".to_string(),
-                                                        params: serde_json::to_value(miner_job)?,
-                                                    };
-                                                    if let Err(err) = queue_job_json(&outbound, &notify) {
-                                                        run_result = Err(err);
-                                                        break;
-                                                    }
-                                                }
-                                                tracing::debug!(
-                                                    peer = %peer,
-                                                    address = %address,
-                                                    worker = %worker,
-                                                    difficulty = ack.next_difficulty,
-                                                    "stratum difficulty updated"
-                                                );
-                                            }
-                                        }
-                                    }
-                                    let response = StratumResponse {
-                                        id: req.id,
-                                        status: Some("ok".to_string()),
-                                        error: None,
-                                        result: Some(serde_json::json!({
-                                            "accepted": ack.accepted,
-                                            "verified": ack.verified,
-                                            "status": ack.status,
-                                            "difficulty": response_difficulty,
-                                        })),
-                                    };
-                                    if let Err(err) = queue_json(&outbound, &response) {
-                                        run_result = Err(err);
-                                        break;
-                                    }
-                                    if ack.block_accepted {
-                                        let miner_notification = block_notification(
-                                            NOTIFY_MINER_BLOCK_FOUND,
-                                            "great success: you found a block for the pool",
-                                        );
-                                        if let Err(err) = queue_json(&outbound, &miner_notification) {
-                                            run_result = Err(err);
-                                            break;
-                                        }
-
-                                        let pool_notification = block_notification(
-                                            NOTIFY_POOL_BLOCK_SOLVED,
-                                            "pool solved a block: share rewards are now pending confirmation",
-                                        );
-                                        let _ = self.notifications.send(pool_notification);
-                                        tracing::info!(
-                                            peer = %peer,
-                                            finder = finder_address.unwrap_or_default(),
-                                            worker = finder_worker.unwrap_or_default(),
-                                            "broadcasted pool block solved notification"
-                                        );
-                                    }
-                                }
-                                Ok(Err(err)) => {
-                                    let err_text = err.to_string();
-                                    let reason_code = canonical_share_reject_reason(&err_text);
+                            let queued_submit = QueuedSubmit {
+                                req_id: req.id,
+                                params,
+                                received_at: Instant::now(),
+                            };
+                            match submit_tx.try_send(queued_submit) {
+                                Ok(()) => {}
+                                Err(mpsc::error::TrySendError::Full(_)) => {
                                     if let Some((address, _, _)) = logged_in.as_ref() {
-                                        self.stats
-                                            .record_rejected_share(address, reason_code);
-                                        if log_rejection_at_info(reason_code) {
-                                            tracing::info!(
-                                                peer = %peer,
-                                                address = %address,
-                                                job_id = %submit_job_id,
-                                                nonce = submit_nonce,
-                                                reason_code,
-                                                error = %err_text,
-                                                "share rejected"
-                                            );
-                                        } else {
-                                            tracing::debug!(
-                                                peer = %peer,
-                                                address = %address,
-                                                job_id = %submit_job_id,
-                                                nonce = submit_nonce,
-                                                reason_code,
-                                                error = %err_text,
-                                                "share rejected"
-                                            );
-                                        }
-                                    }
-                                    if let Err(err) = queue_error(&outbound, req.id, &err_text) {
-                                        run_result = Err(err);
-                                        break;
-                                    }
-                                }
-                                Err(err) => {
-                                    if let Some((address, _, _)) = logged_in.as_ref() {
-                                        self.stats
-                                            .record_rejected_share(address, "submit worker failure");
+                                        self.stats.record_rejected_share(address, "server busy");
                                         tracing::warn!(
                                             peer = %peer,
                                             address = %address,
                                             job_id = %submit_job_id,
                                             nonce = submit_nonce,
-                                            error = %err,
-                                            "submit worker failure"
+                                            "submit queue saturated"
                                         );
                                     }
-                                    if let Err(err) = queue_error(
-                                        &outbound,
-                                        req.id,
-                                        &format!("submit worker failure: {err}"),
-                                    ) {
+                                    if let Err(err) = queue_error(&outbound, req.id, "server busy, retry") {
                                         run_result = Err(err);
                                         break;
                                     }
+                                }
+                                Err(mpsc::error::TrySendError::Closed(_)) => {
+                                    run_result = Err(anyhow!("submit worker queue closed"));
+                                    break;
                                 }
                             }
                         }
@@ -577,6 +489,39 @@ impl StratumServer {
                         }
                     }
                 }
+            }
+        }
+
+        drop(submit_tx);
+        let mut drain_outbound = if run_result.is_ok() && !writer_task_finished {
+            Some(&outbound)
+        } else {
+            None
+        };
+        while submit_results_open {
+            match submit_result_rx.recv().await {
+                Some(completion) => {
+                    if let Err(err) = self.handle_submit_completion(
+                        peer,
+                        &conn_id,
+                        drain_outbound,
+                        &mut logged_in,
+                        completion,
+                    ) {
+                        if run_result.is_ok() {
+                            run_result = Err(err);
+                        }
+                        drain_outbound = None;
+                    }
+                }
+                None => {
+                    submit_results_open = false;
+                }
+            }
+        }
+        if let Err(err) = submit_task.await {
+            if run_result.is_ok() {
+                run_result = Err(anyhow!("stratum submit task failed: {err}"));
             }
         }
 
@@ -604,6 +549,193 @@ impl StratumServer {
         }
 
         run_result
+    }
+
+    fn handle_submit_completion(
+        &self,
+        peer: SocketAddr,
+        conn_id: &str,
+        outbound: Option<&OutboundHandle>,
+        logged_in: &mut Option<(String, String, u64)>,
+        completion: SubmitCompletion,
+    ) -> Result<()> {
+        match completion.outcome {
+            SubmitCompletionOutcome::Finished(Ok(ack)) => {
+                let mut finder_address = None::<String>;
+                let mut finder_worker = None::<String>;
+                let mut response_difficulty = ack.next_difficulty;
+                if let Some((address, worker, difficulty)) = logged_in.as_mut() {
+                    self.stats
+                        .record_accepted_share(address, ack.share_difficulty);
+                    if ack.block_accepted {
+                        self.stats.record_block_found(address);
+                        finder_address = Some(address.clone());
+                        finder_worker = Some(worker.clone());
+                    }
+                    response_difficulty =
+                        client_submit_ack_difficulty(address, *difficulty, ack.next_difficulty);
+                    if ack.next_difficulty != *difficulty {
+                        if should_defer_submit_ack_difficulty(address) {
+                            tracing::debug!(
+                                peer = %peer,
+                                address = %address,
+                                worker = %worker,
+                                active_difficulty = *difficulty,
+                                deferred_difficulty = ack.next_difficulty,
+                                "stratum deferred difficulty update until next template"
+                            );
+                        } else {
+                            *difficulty = ack.next_difficulty;
+                            if let Some(miner_job) =
+                                self.jobs
+                                    .build_miner_job(conn_id, ack.next_difficulty, address)
+                            {
+                                if let Some(outbound) = outbound {
+                                    let notify = StratumNotify {
+                                        method: "job".to_string(),
+                                        params: serde_json::to_value(miner_job)?,
+                                    };
+                                    queue_job_json(outbound, &notify)?;
+                                }
+                            }
+                            tracing::debug!(
+                                peer = %peer,
+                                address = %address,
+                                worker = %worker,
+                                difficulty = ack.next_difficulty,
+                                "stratum difficulty updated"
+                            );
+                        }
+                    }
+                }
+                if let Some(outbound) = outbound {
+                    let response = StratumResponse {
+                        id: completion.req_id,
+                        status: Some("ok".to_string()),
+                        error: None,
+                        result: Some(serde_json::json!({
+                            "accepted": ack.accepted,
+                            "verified": ack.verified,
+                            "status": ack.status,
+                            "difficulty": response_difficulty,
+                        })),
+                    };
+                    queue_json(outbound, &response)?;
+                    if ack.block_accepted {
+                        let miner_notification = block_notification(
+                            NOTIFY_MINER_BLOCK_FOUND,
+                            "great success: you found a block for the pool",
+                        );
+                        queue_json(outbound, &miner_notification)?;
+                    }
+                }
+                if ack.block_accepted {
+                    let pool_notification = block_notification(
+                        NOTIFY_POOL_BLOCK_SOLVED,
+                        "pool solved a block: share rewards are now pending confirmation",
+                    );
+                    let _ = self.notifications.send(pool_notification);
+                    tracing::info!(
+                        peer = %peer,
+                        finder = finder_address.unwrap_or_default(),
+                        worker = finder_worker.unwrap_or_default(),
+                        "broadcasted pool block solved notification"
+                    );
+                }
+            }
+            SubmitCompletionOutcome::Finished(Err(err)) => {
+                let err_text = err.to_string();
+                let reason_code = canonical_share_reject_reason(&err_text);
+                if let Some((address, _, _)) = logged_in.as_ref() {
+                    self.stats.record_rejected_share(address, reason_code);
+                    if log_rejection_at_info(reason_code) {
+                        tracing::info!(
+                            peer = %peer,
+                            address = %address,
+                            job_id = %completion.job_id,
+                            nonce = completion.nonce,
+                            reason_code,
+                            error = %err_text,
+                            "share rejected"
+                        );
+                    } else {
+                        tracing::debug!(
+                            peer = %peer,
+                            address = %address,
+                            job_id = %completion.job_id,
+                            nonce = completion.nonce,
+                            reason_code,
+                            error = %err_text,
+                            "share rejected"
+                        );
+                    }
+                }
+                if let Some(outbound) = outbound {
+                    queue_error(outbound, completion.req_id, &err_text)?;
+                }
+            }
+            SubmitCompletionOutcome::WorkerFailure(err_text) => {
+                if let Some((address, _, _)) = logged_in.as_ref() {
+                    self.stats
+                        .record_rejected_share(address, "submit worker failure");
+                    tracing::warn!(
+                        peer = %peer,
+                        address = %address,
+                        job_id = %completion.job_id,
+                        nonce = completion.nonce,
+                        error = %err_text,
+                        "submit worker failure"
+                    );
+                }
+                if let Some(outbound) = outbound {
+                    queue_error(
+                        outbound,
+                        completion.req_id,
+                        &format!("submit worker failure: {err_text}"),
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+async fn run_submit_worker(
+    engine: Arc<PoolEngine>,
+    conn_id: String,
+    mut submit_rx: mpsc::Receiver<QueuedSubmit>,
+    submit_result_tx: mpsc::UnboundedSender<SubmitCompletion>,
+) {
+    while let Some(queued) = submit_rx.recv().await {
+        let engine = Arc::clone(&engine);
+        let submit_conn_id = conn_id.clone();
+        let job_id = queued.params.job_id.clone();
+        let nonce = queued.params.nonce;
+        let outcome = match tokio::task::spawn_blocking(move || {
+            engine.submit_with_received_at(
+                &submit_conn_id,
+                queued.params.job_id,
+                queued.params.nonce,
+                queued.params.claimed_hash,
+                queued.received_at,
+            )
+        })
+        .await
+        {
+            Ok(result) => SubmitCompletionOutcome::Finished(result),
+            Err(err) => SubmitCompletionOutcome::WorkerFailure(err.to_string()),
+        };
+        if submit_result_tx
+            .send(SubmitCompletion {
+                req_id: queued.req_id,
+                job_id,
+                nonce,
+                outcome,
+            })
+            .is_err()
+        {
+            break;
+        }
     }
 }
 
@@ -749,12 +881,18 @@ fn log_rejection_at_info(reason_code: &str) -> bool {
 mod tests {
     use super::{
         client_submit_ack_difficulty, log_rejection_at_info, queue_job_json, queue_json,
-        run_outbound_writer, OutboundHandle, StratumResponse,
+        run_outbound_writer, run_submit_worker, OutboundHandle, QueuedSubmit, StratumResponse,
+        SubmitCompletionOutcome,
     };
+    use crate::config::Config;
     use crate::engine::canonical_share_reject_reason;
+    use crate::engine::{InMemoryJobs, InMemoryNode, InMemoryStore, Job, PoolEngine};
+    use crate::pow::PowHasher;
     use crate::protocol::StratumNotify;
+    use crate::validation::ValidationEngine;
     use serde_json::Value;
     use std::sync::Arc;
+    use std::time::{Duration, Instant};
     use tokio::io::{duplex, AsyncReadExt};
 
     #[test]
@@ -903,5 +1041,102 @@ mod tests {
         assert_eq!(messages[0]["method"], "job");
         assert_eq!(messages[0]["params"]["job_id"], "new");
         assert_eq!(messages[1]["id"], 7);
+    }
+
+    #[tokio::test]
+    async fn submit_worker_preserves_submit_order() {
+        struct SlowHasher;
+
+        impl PowHasher for SlowHasher {
+            fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
+                std::thread::sleep(Duration::from_millis(60));
+                Ok([0x01; 32])
+            }
+        }
+
+        let mut cfg = Config::default();
+        cfg.validation_mode = "full".to_string();
+        cfg.max_verifiers = 1;
+        cfg.max_validation_queue = 8;
+        cfg.job_timeout = "10s".to_string();
+        let validation = Arc::new(ValidationEngine::new(cfg.clone(), Arc::new(SlowHasher)));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(Job {
+            id: "job1".to_string(),
+            height: 100,
+            header_base: vec![1, 2, 3],
+            network_target: [0u8; 32],
+            network_difficulty: 1_000_000,
+            template_id: Some("tmpl1".to_string()),
+            full_block: None,
+        });
+        let address = bs58::encode([0x11; 64]).into_string();
+        jobs.insert_assignment("assign1", "job1", 1, Some(address.clone()), 0, u64::MAX);
+        let engine = Arc::new(PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        ));
+        engine
+            .login(
+                "conn1",
+                address,
+                None,
+                2,
+                vec!["submit_claimed_hash".to_string()],
+            )
+            .expect("login should succeed");
+
+        let (submit_tx, submit_rx) = tokio::sync::mpsc::channel(2);
+        let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel();
+        let worker = tokio::spawn(run_submit_worker(
+            Arc::clone(&engine),
+            "conn1".to_string(),
+            submit_rx,
+            result_tx,
+        ));
+        let submitted_at = Instant::now();
+        submit_tx
+            .send(QueuedSubmit {
+                req_id: 1,
+                params: crate::protocol::SubmitParams {
+                    job_id: "assign1".to_string(),
+                    nonce: 1,
+                    claimed_hash: Some(hex::encode([0x01; 32])),
+                },
+                received_at: submitted_at,
+            })
+            .await
+            .expect("first submit should enqueue");
+        submit_tx
+            .send(QueuedSubmit {
+                req_id: 2,
+                params: crate::protocol::SubmitParams {
+                    job_id: "assign1".to_string(),
+                    nonce: 2,
+                    claimed_hash: Some(hex::encode([0x01; 32])),
+                },
+                received_at: submitted_at + Duration::from_millis(5),
+            })
+            .await
+            .expect("second submit should enqueue");
+        drop(submit_tx);
+
+        let first = result_rx.recv().await.expect("first result");
+        let second = result_rx.recv().await.expect("second result");
+        worker.await.expect("worker should exit cleanly");
+
+        assert_eq!(first.req_id, 1);
+        assert_eq!(second.req_id, 2);
+        assert!(matches!(
+            first.outcome,
+            SubmitCompletionOutcome::Finished(Ok(_))
+        ));
+        assert!(matches!(
+            second.outcome,
+            SubmitCompletionOutcome::Finished(Ok(_))
+        ));
     }
 }
