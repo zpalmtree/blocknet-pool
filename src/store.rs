@@ -17,7 +17,8 @@ use crate::pgdb::{
     VardiffHintSummary,
 };
 use crate::validation::{
-    LoadedValidationState, PersistedValidationAddressState, ValidationStateStore,
+    LoadedValidationState, PersistedValidationAddressState, ValidationClearEvent,
+    ValidationStateStore,
 };
 
 // Matches daemon emission curve for provisional pending-block display values.
@@ -382,6 +383,14 @@ impl ValidationStateStore for PoolStore {
     ) -> Result<()> {
         self.inner
             .clean_validation_state(state_cutoff, provisional_cutoff, now)
+    }
+
+    fn latest_validation_clear_event_id(&self) -> Result<i64> {
+        self.inner.latest_validation_clear_event_id()
+    }
+
+    fn load_validation_clear_events_since(&self, cursor: i64) -> Result<Vec<ValidationClearEvent>> {
+        self.inner.load_validation_clear_events_since(cursor)
     }
 }
 

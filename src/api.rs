@@ -3540,7 +3540,10 @@ async fn handle_admin_clear_address_risk_history(
     })
     .await
     {
-        Ok(Ok(())) => Json(ClearAddressRiskHistoryResponse { ok: true, address }).into_response(),
+        Ok(Ok(())) => {
+            state.validation.clear_address_state(&address);
+            Json(ClearAddressRiskHistoryResponse { ok: true, address }).into_response()
+        }
         Ok(Err(err)) => internal_error("failed clearing address risk history", err).into_response(),
         Err(err) => internal_error(
             "failed clearing address risk history",

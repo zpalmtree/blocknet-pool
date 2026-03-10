@@ -18,6 +18,7 @@ pub const SHARE_STATUS_REJECTED: &str = "rejected";
 const VALIDATION_STATE_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 const VALIDATION_STATE_MAX_TRACKED: usize = 100_000;
 const VALIDATION_PERSIST_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
+const VALIDATION_CLEAR_SYNC_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone)]
 pub struct ValidationTask {
@@ -71,6 +72,13 @@ pub struct PersistedValidationProvisional {
     pub created_at: SystemTime,
 }
 
+#[derive(Debug, Clone)]
+pub struct ValidationClearEvent {
+    pub id: i64,
+    pub address: String,
+    pub cleared_at: SystemTime,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct LoadedValidationState {
     pub states: Vec<PersistedValidationAddressState>,
@@ -95,6 +103,10 @@ pub trait ValidationStateStore: Send + Sync + 'static {
         provisional_cutoff: SystemTime,
         now: SystemTime,
     ) -> Result<()>;
+
+    fn latest_validation_clear_event_id(&self) -> Result<i64>;
+
+    fn load_validation_clear_events_since(&self, cursor: i64) -> Result<Vec<ValidationClearEvent>>;
 }
 
 #[derive(Debug, Default)]
@@ -125,6 +137,17 @@ impl ValidationStateStore for NullValidationStateStore {
         _now: SystemTime,
     ) -> Result<()> {
         Ok(())
+    }
+
+    fn latest_validation_clear_event_id(&self) -> Result<i64> {
+        Ok(0)
+    }
+
+    fn load_validation_clear_events_since(
+        &self,
+        _cursor: i64,
+    ) -> Result<Vec<ValidationClearEvent>> {
+        Ok(Vec::new())
     }
 }
 
@@ -215,6 +238,8 @@ struct ValidationInner {
     fraud: AtomicU64,
     state_store: Arc<dyn ValidationStateStore>,
     last_cleanup_at: Mutex<Option<Instant>>,
+    last_clear_sync_at: Mutex<Option<Instant>>,
+    last_clear_event_id: Mutex<i64>,
 }
 
 pub struct ValidationEngine {
@@ -248,6 +273,13 @@ impl ValidationEngine {
         let (candidate_tx, candidate_rx) = flume::bounded::<QueuedTask>(queue_size);
         let (regular_tx, regular_rx) = flume::bounded::<QueuedTask>(queue_size);
         let shutdown = Arc::new(AtomicBool::new(false));
+        let initial_clear_event_id = match state_store.latest_validation_clear_event_id() {
+            Ok(value) => value.max(0),
+            Err(err) => {
+                tracing::warn!(error = %err, "failed loading validation clear cursor");
+                0
+            }
+        };
         let initial_state = load_initial_validation_state(&config, state_store.as_ref());
 
         let inner = Arc::new(ValidationInner {
@@ -259,6 +291,8 @@ impl ValidationEngine {
             fraud: AtomicU64::new(0),
             state_store,
             last_cleanup_at: Mutex::new(None),
+            last_clear_sync_at: Mutex::new(None),
+            last_clear_event_id: Mutex::new(initial_clear_event_id),
         });
 
         let mut workers = Vec::with_capacity(worker_count);
@@ -329,12 +363,17 @@ impl ValidationEngine {
     }
 
     pub fn snapshot(&self) -> ValidationSnapshot {
+        self.inner.sync_external_clears(false);
         self.inner
             .snapshot(self.candidate_tx.len(), self.regular_tx.len())
     }
 
     pub fn schedule_forced_review_after(&self, address: &str, start_at: SystemTime) {
         self.inner.schedule_forced_review_after(address, start_at);
+    }
+
+    pub fn clear_address_state(&self, address: &str) {
+        self.inner.clear_address_state(address);
     }
 }
 
@@ -356,6 +395,7 @@ impl ValidationInner {
     }
 
     fn process_task(&self, task: &ValidationTask) -> ValidationResult {
+        self.sync_external_clears(self.address_has_live_hold(&task.address));
         let full_verify = task.force_full_verify || self.should_fully_verify(&task.address);
 
         let mut result = ValidationResult {
@@ -620,6 +660,56 @@ impl ValidationInner {
         }
 
         snap
+    }
+
+    fn clear_address_state(&self, address: &str) {
+        self.state.lock().remove(address);
+    }
+
+    fn address_has_live_hold(&self, address: &str) -> bool {
+        let now = SystemTime::now();
+        self.state.lock().get(address).is_some_and(|st| {
+            st.forced_started_at.is_some()
+                || st.forced_until.is_some_and(|deadline| deadline > now)
+                || st.resume_forced_at.is_some_and(|start_at| start_at > now)
+        })
+    }
+
+    fn sync_external_clears(&self, force: bool) {
+        if !force {
+            let mut last_sync = self.last_clear_sync_at.lock();
+            if last_sync.is_some_and(|last| last.elapsed() < VALIDATION_CLEAR_SYNC_INTERVAL) {
+                return;
+            }
+            *last_sync = Some(Instant::now());
+        }
+
+        let cursor = *self.last_clear_event_id.lock();
+        let events = match self.state_store.load_validation_clear_events_since(cursor) {
+            Ok(value) => value,
+            Err(err) => {
+                tracing::warn!(error = %err, "failed loading validation clear events");
+                return;
+            }
+        };
+        if events.is_empty() {
+            return;
+        }
+
+        let mut state = self.state.lock();
+        let mut last_id = cursor;
+        for event in events {
+            last_id = last_id.max(event.id);
+            state.remove(&event.address);
+            tracing::info!(
+                address = %event.address,
+                cleared_at = ?event.cleared_at,
+                "applied external validation clear event"
+            );
+        }
+        drop(state);
+        *self.last_clear_event_id.lock() = last_id;
+        *self.last_clear_sync_at.lock() = Some(Instant::now());
     }
 
     fn prune_stale_state_locked(
@@ -1225,6 +1315,60 @@ mod tests {
         assert!(
             after_restart.verified,
             "persisted provisional share pressure should survive restart"
+        );
+    }
+
+    #[test]
+    fn external_clear_event_resets_live_forced_state() {
+        let mut cfg = test_cfg();
+        cfg.max_provisional_shares = 100;
+        let store = require_test_store!();
+        let address = format!("validation-clear-{}", rand::random::<u64>());
+        store
+            .upsert_validation_state(&PersistedValidationAddressState {
+                address: address.clone(),
+                total_shares: 12,
+                sampled_shares: 3,
+                invalid_samples: 1,
+                risk_sampled_shares: 3,
+                risk_invalid_samples: 1,
+                forced_started_at: Some(SystemTime::now()),
+                forced_until: Some(SystemTime::now() + Duration::from_secs(60)),
+                forced_sampled_shares: 1,
+                forced_invalid_samples: 0,
+                resume_forced_at: None,
+                last_seen_at: SystemTime::now(),
+            })
+            .expect("seed forced validation state");
+
+        let engine = ValidationEngine::new_with_state_store(
+            cfg,
+            Arc::new(DeterministicTestHasher),
+            Arc::clone(&store) as Arc<dyn ValidationStateStore>,
+        );
+
+        let mut before_clear = matching_task(1);
+        before_clear.address = address.clone();
+        let before = engine.process_inline(before_clear);
+        assert!(before.verified, "seeded forced state should force verification");
+
+        store
+            .clear_address_risk_history(&address)
+            .expect("clear validation history");
+
+        let mut after_clear = matching_task(2);
+        after_clear.address = address.clone();
+        let after = engine.process_inline(after_clear);
+        assert!(
+            !after.verified,
+            "external clear should remove live forced validation state"
+        );
+        assert!(
+            store
+                .validation_forced_until(&address)
+                .expect("read validation row")
+                .is_none(),
+            "cleared address should not retain a forced-until timestamp"
         );
     }
 }

@@ -19,6 +19,7 @@ use crate::engine::{ShareRecord, ShareStore};
 use crate::stats::RejectionReasonCount;
 use crate::validation::{
     LoadedValidationState, PersistedValidationAddressState, PersistedValidationProvisional,
+    ValidationClearEvent,
 };
 
 const SHARE_CLAIM_EXPIRY_SECS: i64 = 2 * 60;
@@ -404,6 +405,14 @@ CREATE INDEX IF NOT EXISTS idx_validation_address_states_last_seen
     ON validation_address_states(last_seen_at DESC);
 CREATE INDEX IF NOT EXISTS idx_validation_address_states_forced_until
     ON validation_address_states(forced_until DESC);
+
+CREATE TABLE IF NOT EXISTS validation_clear_events (
+    id BIGSERIAL PRIMARY KEY,
+    address TEXT NOT NULL,
+    cleared_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_validation_clear_events_cleared_at
+    ON validation_clear_events(cleared_at DESC);
 
 CREATE TABLE IF NOT EXISTS validation_provisionals (
     id BIGSERIAL PRIMARY KEY,
@@ -2102,9 +2111,18 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     }
 
     pub fn clear_address_risk_history(&self, address: &str) -> Result<()> {
+        let now = now_unix();
         let mut conn = self.conn().lock();
         let mut tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO validation_clear_events (address, cleared_at) VALUES ($1, $2)",
+            &[&address, &now],
+        )?;
         tx.execute("DELETE FROM address_risk WHERE address = $1", &[&address])?;
+        tx.execute(
+            "DELETE FROM validation_provisionals WHERE address = $1",
+            &[&address],
+        )?;
         tx.execute(
             "DELETE FROM validation_address_states WHERE address = $1",
             &[&address],
@@ -2855,6 +2873,35 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         })
     }
 
+    pub fn latest_validation_clear_event_id(&self) -> Result<i64> {
+        let row = self
+            .conn()
+            .lock()
+            .query_one("SELECT COALESCE(MAX(id), 0) FROM validation_clear_events", &[])?;
+        Ok(row.get::<_, i64>(0).max(0))
+    }
+
+    pub fn load_validation_clear_events_since(
+        &self,
+        cursor: i64,
+    ) -> Result<Vec<ValidationClearEvent>> {
+        let rows = self.conn().lock().query(
+            "SELECT id, address, cleared_at
+             FROM validation_clear_events
+             WHERE id > $1
+             ORDER BY id ASC",
+            &[&cursor],
+        )?;
+        Ok(rows
+            .iter()
+            .map(|row| ValidationClearEvent {
+                id: row.get::<_, i64>(0),
+                address: row.get::<_, String>(1),
+                cleared_at: from_unix(row.get::<_, i64>(2)),
+            })
+            .collect())
+    }
+
     pub fn upsert_validation_state(&self, state: &PersistedValidationAddressState) -> Result<()> {
         self.conn().lock().execute(
             "INSERT INTO validation_address_states (
@@ -2924,6 +2971,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                    WHERE vp.address = validation_address_states.address
                )",
             &[&to_unix(state_cutoff), &to_unix(now)],
+        )?;
+        tx.execute(
+            "DELETE FROM validation_clear_events WHERE cleared_at <= $1",
+            &[&to_unix(state_cutoff)],
         )?;
         tx.commit()?;
         Ok(())
@@ -3846,6 +3897,9 @@ mod tests {
                 last_seen_at: SystemTime::now(),
             })
             .expect("seed validation state");
+        store
+            .add_validation_provisional(&address, SystemTime::now())
+            .expect("seed validation provisional");
 
         store
             .clear_address_risk_history(&address)
@@ -3868,6 +3922,14 @@ mod tests {
             )
             .expect("load validation state");
         assert!(!loaded.states.iter().any(|state| state.address == address));
+        assert!(!loaded
+            .provisionals
+            .iter()
+            .any(|provisional| provisional.address == address));
+        let clear_events = store
+            .load_validation_clear_events_since(0)
+            .expect("load validation clear events");
+        assert!(clear_events.iter().any(|event| event.address == address));
     }
 
     #[test]
