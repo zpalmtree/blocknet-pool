@@ -342,6 +342,7 @@ export function AdminPage({
   onJumpToStats,
 }: AdminPageProps) {
   const [tab, setTab] = useState<AdminTab>('miners');
+  const [showKeyInput, setShowKeyInput] = useState(false);
 
   const [minersSearch, setMinersSearch] = useState('');
   const [minersSort, setMinersSort] = useState('hashrate_desc');
@@ -674,7 +675,7 @@ export function AdminPage({
     viewport.scrollTop = viewport.scrollHeight;
   }, [daemonLogs, daemonLogsAutoScroll, tab]);
 
-  const apiStatus = apiKey ? 'Key set' : 'No key';
+
   const daemonLogsStatusText =
     daemonLogsStatus === 'connecting'
       ? 'Connecting'
@@ -990,30 +991,58 @@ export function AdminPage({
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-admin">
-      <h2>Admin</h2>
+      <div className="admin-header">
+        <h2>Admin</h2>
+        {apiKey && !showKeyInput ? (
+          <div className="admin-key-status">
+            <span className="status-dot dot-green" />
+            <span style={{ fontSize: 13, color: 'var(--muted)' }}>Key set</span>
+            <button
+              className="btn btn-secondary btn-xs"
+              onClick={() => setShowKeyInput(true)}
+            >
+              Change
+            </button>
+          </div>
+        ) : null}
+      </div>
 
-      <div className="card section">
-        <h3>API Key</h3>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+      {!apiKey || showKeyInput ? (
+        <div className="admin-key-bar">
           <input
             type="password"
             placeholder="Enter API key"
-            style={{ flex: 1, minWidth: 200 }}
             value={apiKeyInput}
             onChange={(e) => setApiKeyInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') onSaveApiKey();
+            }}
           />
-          <button className="btn btn-primary" onClick={onSaveApiKey}>
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              onSaveApiKey();
+              setShowKeyInput(false);
+            }}
+          >
             Save
           </button>
-          <button className="btn btn-secondary" onClick={onClearApiKey}>
+          {apiKey ? (
+            <button className="btn btn-secondary" onClick={() => setShowKeyInput(false)}>
+              Cancel
+            </button>
+          ) : null}
+          <button
+            className="btn btn-secondary"
+            onClick={() => {
+              onClearApiKey();
+              setShowKeyInput(false);
+            }}
+          >
             Clear
           </button>
-          <span style={{ fontSize: 13, color: 'var(--muted)' }}>
-            <span className={`status-dot ${apiKey ? 'dot-green' : 'dot-amber'}`} />
-            {apiStatus}
-          </span>
         </div>
-      </div>
+      ) : null}
 
       {!apiKey ? (
         <div className="auth-gate card section">

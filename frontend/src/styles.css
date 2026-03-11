@@ -706,6 +706,43 @@ tr:hover td {
   }
 }
 
+.admin-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-header h2 {
+  margin-bottom: 0;
+}
+
+.admin-key-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.btn-xs {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.admin-key-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.admin-key-bar input {
+  flex: 1;
+  min-width: 180px;
+  max-width: 360px;
+}
+
 #page-admin .table-scroll th,
 #page-admin .table-scroll td {
   padding: 8px 6px;
