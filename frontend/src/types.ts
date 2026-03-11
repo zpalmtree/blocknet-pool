@@ -9,14 +9,10 @@ export type Route =
   | "status";
 export type AdminTab =
   | "miners"
-  | "payouts"
-  | "fees"
-  | "devfee"
-  | "rewards"
-  | "health"
-  | "shares"
   | "holds"
   | "balances"
+  | "shares"
+  | "rewards"
   | "recovery"
   | "logs";
 export type Range = "1h" | "24h" | "7d" | "30d";

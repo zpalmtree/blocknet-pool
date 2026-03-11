@@ -7,10 +7,8 @@ import {
   fmtSeconds,
   formatCoinAmount,
   formatCoins,
-  formatFee,
   humanRate,
   shortAddr,
-  shortTx,
   timeAgo,
   timeUntil,
   toUnixMs,
@@ -18,14 +16,11 @@ import {
 import type {
   ActiveVerificationHold,
   AdminBalanceItem,
-  AdminDevFeeTelemetryResponse,
-  AdminPayoutItem,
   AdminShareDiagnosticsResponse,
   AdminShareDiagnosticsWindow,
   AdminTab,
   BlockRewardBreakdownResponse,
   BlockItem,
-  FeeEvent,
   HealthResponse,
   MinerListItem,
   PagerState,
@@ -76,43 +71,6 @@ function rewardStatusTone(status: string): string {
   }
 }
 
-function feeStatusLabel(status: string | undefined): string {
-  switch (status) {
-    case 'pending':
-      return 'Pending';
-    case 'ready':
-      return 'Ready';
-    case 'missing':
-      return 'Missing';
-    default:
-      return 'Collected';
-  }
-}
-
-function feeStatusBadgeClass(status: string | undefined): string {
-  switch (status) {
-    case 'missing':
-      return 'badge-orphaned';
-    case 'pending':
-    case 'ready':
-      return 'badge-pending';
-    default:
-      return 'badge-confirmed';
-  }
-}
-
-function feeStatusNote(item: FeeEvent): string | null {
-  if (item.status === 'pending' && (item.confirmations_remaining ?? 0) > 0) {
-    return `${item.confirmations_remaining} conf`;
-  }
-  if (item.status === 'ready') {
-    return 'awaiting fee sweep';
-  }
-  if (item.status === 'missing') {
-    return 'fee row missing';
-  }
-  return null;
-}
 
 function formatSignedCoins(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '-';
@@ -131,11 +89,6 @@ function formatRefreshLag(ms: number | null | undefined): string {
   return fmtSeconds(Math.max(1, Math.floor(ms / 1000)));
 }
 
-function compactHash(value: string | null | undefined): string {
-  if (!value) return '-';
-  if (value.length <= 18) return value;
-  return `${value.slice(0, 8)}...${value.slice(-8)}`;
-}
 
 function formatAdminTimestamp(value: UnixLike): string {
   const ms = toUnixMs(value);
@@ -182,27 +135,6 @@ function verificationHoldLabel(hold: ActiveVerificationHold): string {
   return 'Active';
 }
 
-function devFeeHintBadgeClass(position: string): string {
-  switch (position) {
-    case 'below-floor':
-      return 'badge-orphaned';
-    case 'above-floor':
-      return 'badge-confirmed';
-    default:
-      return 'badge-pending';
-  }
-}
-
-function devFeeHintLabel(position: string): string {
-  switch (position) {
-    case 'below-floor':
-      return 'Below floor';
-    case 'above-floor':
-      return 'Above floor';
-    default:
-      return 'At floor';
-  }
-}
 
 function rewardBlockOptionLabel(block: BlockItem): string {
   const status = block.orphaned ? 'orphaned' : block.confirmed ? 'confirmed' : 'pending';
@@ -416,16 +348,6 @@ export function AdminPage({
   const [minersItems, setMinersItems] = useState<MinerListItem[]>([]);
   const [minersPager, setMinersPager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
 
-  const [payoutAddress, setPayoutAddress] = useState('');
-  const [payoutTx, setPayoutTx] = useState('');
-  const [payoutItems, setPayoutItems] = useState<AdminPayoutItem[]>([]);
-  const [payoutPager, setPayoutPager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
-
-  const [feesTotal, setFeesTotal] = useState(0);
-  const [feesPendingTotal, setFeesPendingTotal] = useState(0);
-  const [feeItems, setFeeItems] = useState<FeeEvent[]>([]);
-  const [feePager, setFeePager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
-  const [devFeeTelemetry, setDevFeeTelemetry] = useState<AdminDevFeeTelemetryResponse | null>(null);
 
   const [rewardBlockInput, setRewardBlockInput] = useState('');
   const [rewardBlockOptions, setRewardBlockOptions] = useState<BlockItem[]>([]);
@@ -476,54 +398,6 @@ export function AdminPage({
     }
   }, [api, apiKey, minersPager.limit, minersPager.offset, minersSearch, minersSort]);
 
-  const loadPayouts = useCallback(async () => {
-    if (!apiKey) return;
-    try {
-      const d = await api.getAdminPayouts({
-        paged: 'true',
-        limit: payoutPager.limit,
-        offset: payoutPager.offset,
-        sort: 'time_desc',
-        address: payoutAddress.trim() || undefined,
-        tx_hash: payoutTx.trim() || undefined,
-      });
-      const items = d.items || [];
-      setPayoutItems(items);
-      setPayoutPager((prev) => ({ ...prev, total: d.page ? d.page.total : items.length }));
-    } catch {
-      setPayoutItems([]);
-    }
-  }, [api, apiKey, payoutAddress, payoutPager.limit, payoutPager.offset, payoutTx]);
-
-  const loadFees = useCallback(async () => {
-    if (!apiKey) return;
-    try {
-      const d = await api.getFees({
-        paged: 'true',
-        limit: feePager.limit,
-        offset: feePager.offset,
-        sort: 'time_desc',
-      });
-      setFeesTotal(d.total_collected || 0);
-      setFeesPendingTotal(d.total_pending || 0);
-      const items = d.recent?.items || [];
-      setFeeItems(items);
-      setFeePager((prev) => ({ ...prev, total: d.recent?.page ? d.recent.page.total : items.length }));
-    } catch {
-      setFeesPendingTotal(0);
-      setFeeItems([]);
-    }
-  }, [api, apiKey, feePager.limit, feePager.offset]);
-
-  const loadDevFeeTelemetry = useCallback(async () => {
-    if (!apiKey) return;
-    try {
-      const d = await api.fetchJson<AdminDevFeeTelemetryResponse>('/api/admin/dev-fee', { auth: true });
-      setDevFeeTelemetry(d);
-    } catch {
-      setDevFeeTelemetry(null);
-    }
-  }, [api, apiKey]);
 
   const loadRewardBreakdown = useCallback(
     async (heightOverride?: number | string) => {
@@ -666,30 +540,26 @@ export function AdminPage({
   useEffect(() => {
     if (!active || !apiKey) return;
 
+    // Always load overview data regardless of tab
+    void loadHealth();
+    void loadShareDiagnostics();
+
     if (tab === 'miners') void loadMiners();
-    if (tab === 'payouts') void loadPayouts();
-    if (tab === 'fees') void loadFees();
-    if (tab === 'devfee') void loadDevFeeTelemetry();
     if (tab === 'rewards') {
       void loadRewardBlocks();
       if (rewardBlockInput.trim()) {
         void loadRewardBreakdown(rewardBlockInput);
       }
     }
-    if (tab === 'health' || tab === 'holds') void loadHealth();
-    if (tab === 'shares') void loadShareDiagnostics();
     if (tab === 'balances') void loadBalances();
     if (tab === 'recovery') void loadRecovery();
   }, [
     active,
     apiKey,
     loadBalances,
-    loadFees,
-    loadDevFeeTelemetry,
     loadHealth,
     loadShareDiagnostics,
     loadMiners,
-    loadPayouts,
     loadRecovery,
     loadRewardBlocks,
     loadRewardBreakdown,
@@ -701,18 +571,17 @@ export function AdminPage({
     if (!active || !apiKey || liveTick <= 0) return;
     if (liveTick % 2 !== 0) return;
 
+    // Always refresh overview data
+    void loadHealth();
+    void loadShareDiagnostics();
+
     if (tab === 'miners') void loadMiners();
-    if (tab === 'payouts') void loadPayouts();
-    if (tab === 'fees') void loadFees();
-    if (tab === 'devfee') void loadDevFeeTelemetry();
     if (tab === 'rewards') {
       void loadRewardBlocks();
       if (rewardBlockInput.trim()) {
         void loadRewardBreakdown(rewardBlockInput);
       }
     }
-    if (tab === 'health' || tab === 'holds') void loadHealth();
-    if (tab === 'shares') void loadShareDiagnostics();
     if (tab === 'balances') void loadBalances();
     if (tab === 'recovery') void loadRecovery();
   }, [
@@ -721,12 +590,9 @@ export function AdminPage({
     liveTick,
     tab,
     loadBalances,
-    loadFees,
-    loadDevFeeTelemetry,
     loadHealth,
     loadShareDiagnostics,
     loadMiners,
-    loadPayouts,
     loadRecovery,
     loadRewardBlocks,
     loadRewardBreakdown,
@@ -809,10 +675,6 @@ export function AdminPage({
   }, [daemonLogs, daemonLogsAutoScroll, tab]);
 
   const apiStatus = apiKey ? 'Key set' : 'No key';
-  const devFee24h = useMemo(
-    () => devFeeTelemetry?.windows?.find((row) => row.label === '24h') ?? devFeeTelemetry?.windows?.[0] ?? null,
-    [devFeeTelemetry]
-  );
   const daemonLogsStatusText =
     daemonLogsStatus === 'connecting'
       ? 'Connecting'
@@ -859,7 +721,6 @@ export function AdminPage({
   }, [rewardBreakdown]);
   const rewardBreakdownOrphaned = rewardBreakdown?.block.orphaned ?? false;
   const rewardBreakdownProjected = !!rewardBreakdown && !rewardBreakdownOrphaned && !rewardBreakdown.block.paid_out;
-  const rawHealthJson = useMemo(() => (health ? JSON.stringify(health, null, 2) : ''), [health]);
   const activeVerificationHolds = health?.active_verification_holds ?? [];
   const poolActivity = health?.pool_activity ?? null;
   const shareWindows = shareDiagnostics?.windows ?? [];
@@ -948,10 +809,6 @@ export function AdminPage({
 
     return signals;
   }, [shareJob?.last_refresh_millis, shareJob?.template_age_seconds, shareValidation?.in_flight, shareValidation?.pending_provisional, shareValidationQueueDepth, shareWindow1h, shareWindow5m]);
-  const copyHealthJson = useCallback(() => {
-    if (!rawHealthJson || !navigator.clipboard) return;
-    void navigator.clipboard.writeText(rawHealthJson);
-  }, [rawHealthJson]);
   const recoveryPrimary = useMemo(
     () => recoveryStatus?.instances.find((item) => item.instance === 'primary') ?? null,
     [recoveryStatus]
@@ -1164,27 +1021,58 @@ export function AdminPage({
         </div>
       ) : (
         <div id="admin-content">
+          <div className="stats-grid stats-grid-dense admin-overview-strip">
+            <div
+              className="stat-card"
+              style={activeVerificationHolds.length > 0 ? { borderColor: 'var(--warn)' } : undefined}
+              onClick={() => setTab('holds')}
+            >
+              <div className="label">Verification Holds</div>
+              <div
+                className="value mono"
+                style={activeVerificationHolds.length > 0 ? { color: 'var(--warn)' } : undefined}
+              >
+                {activeVerificationHolds.length}
+              </div>
+              <div className="stat-meta">
+                {activeVerificationHolds.length > 0 ? 'miners quarantined or forced-verify' : 'all clear'}
+              </div>
+            </div>
+            <div className="stat-card" onClick={() => setTab('shares')}>
+              <div className="label">5m Reject Rate</div>
+              <div
+                className="value mono"
+                style={
+                  (shareWindow5m?.rejection_rate_pct ?? 0) >= 5 ? { color: 'var(--warn)' } : undefined
+                }
+              >
+                {pct(shareWindow5m?.rejection_rate_pct)}
+              </div>
+              <div className="stat-meta">
+                {shareWindow5m?.rejected ?? 0} rejected of {shareWindow5m?.total ?? 0}
+              </div>
+            </div>
+            <div className="stat-card" onClick={() => setTab('balances')}>
+              <div className="label">Pending Payouts</div>
+              <div className="value mono">{health?.payouts?.pending_count ?? '-'}</div>
+              <div className="stat-meta">
+                {health?.payouts?.pending_amount != null
+                  ? `${formatCoins(health.payouts.pending_amount)} owed`
+                  : '-'}
+              </div>
+            </div>
+            <div className="stat-card" onClick={() => setTab('miners')}>
+              <div className="label">Connected Miners</div>
+              <div className="value mono">{poolActivity?.connected_miners ?? '-'}</div>
+              <div className="stat-meta">
+                {poolActivity ? humanRate(poolActivity.estimated_hashrate) : '-'}
+              </div>
+            </div>
+          </div>
+
           <div className="sub-tabs" id="admin-tabs">
             <button className={tab === 'miners' ? 'active' : ''} onClick={() => setTab('miners')}>
               Miners
-            </button>
-            <button className={tab === 'payouts' ? 'active' : ''} onClick={() => setTab('payouts')}>
-              Payouts
-            </button>
-            <button className={tab === 'fees' ? 'active' : ''} onClick={() => setTab('fees')}>
-              Fees
-            </button>
-            <button className={tab === 'devfee' ? 'active' : ''} onClick={() => setTab('devfee')}>
-              Dev Fee
-            </button>
-            <button className={tab === 'rewards' ? 'active' : ''} onClick={() => setTab('rewards')}>
-              Rewards
-            </button>
-            <button className={tab === 'health' ? 'active' : ''} onClick={() => setTab('health')}>
-              Health
-            </button>
-            <button className={tab === 'shares' ? 'active' : ''} onClick={() => setTab('shares')}>
-              Shares
             </button>
             <button className={tab === 'holds' ? 'active' : ''} onClick={() => setTab('holds')}>
               Holds
@@ -1192,6 +1080,13 @@ export function AdminPage({
             <button className={tab === 'balances' ? 'active' : ''} onClick={() => setTab('balances')}>
               Balances
             </button>
+            <button className={tab === 'shares' ? 'active' : ''} onClick={() => setTab('shares')}>
+              Shares
+            </button>
+            <button className={tab === 'rewards' ? 'active' : ''} onClick={() => setTab('rewards')}>
+              Rewards
+            </button>
+            <span className="sub-tabs-divider" />
             <button className={tab === 'recovery' ? 'active' : ''} onClick={() => setTab('recovery')}>
               Recovery
             </button>
@@ -1283,305 +1178,6 @@ export function AdminPage({
                 onPrev={() => setMinersPager((p) => ({ ...p, offset: Math.max(0, p.offset - p.limit) }))}
                 onNext={() => setMinersPager((p) => ({ ...p, offset: p.offset + p.limit }))}
               />
-            </div>
-          </div>
-
-          <div style={{ display: tab === 'payouts' ? '' : 'none' }}>
-            <div className="filter-bar">
-              <input
-                type="text"
-                placeholder="Filter by address..."
-                value={payoutAddress}
-                onChange={(e) => setPayoutAddress(e.target.value)}
-              />
-              <input
-                type="text"
-                placeholder="Filter by tx hash..."
-                value={payoutTx}
-                onChange={(e) => setPayoutTx(e.target.value)}
-              />
-              <button className="btn btn-primary" onClick={() => setPayoutPager((p) => ({ ...p, offset: 0 }))}>
-                Search
-              </button>
-            </div>
-
-            <div className="card table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Address</th>
-                    <th>Amount</th>
-                    <th>Fee</th>
-                    <th>TX Hash</th>
-                    <th>Status</th>
-                    <th>Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {!payoutItems.length ? (
-                    <tr>
-                      <td colSpan={6} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                        No payouts
-                      </td>
-                    </tr>
-                  ) : (
-                    payoutItems.map((p, idx) => (
-                      <tr key={`${p.tx_hash}-${idx}`}>
-                        <td title={p.address}>
-                          <a
-                            href="/stats"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              onJumpToStats(p.address);
-                            }}
-                          >
-                            {shortAddr(p.address)}
-                          </a>
-                        </td>
-                        <td>{formatCoins(p.amount)}</td>
-                        <td>{formatFee(p.fee)}</td>
-                        <td>
-                          <a href={`https://explorer.blocknetcrypto.com/tx/${p.tx_hash}`} target="_blank" rel="noopener" title={p.tx_hash}>
-                            {shortTx(p.tx_hash)}
-                          </a>
-                        </td>
-                        <td>
-                          <span className={`badge ${p.confirmed === false ? 'badge-pending' : 'badge-confirmed'}`}>
-                            {p.confirmed === false ? 'unconfirmed' : 'confirmed'}
-                          </span>
-                        </td>
-                        <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-              <Pager
-                offset={payoutPager.offset}
-                limit={payoutPager.limit}
-                total={payoutPager.total}
-                onPrev={() => setPayoutPager((p) => ({ ...p, offset: Math.max(0, p.offset - p.limit) }))}
-                onNext={() => setPayoutPager((p) => ({ ...p, offset: p.offset + p.limit }))}
-              />
-            </div>
-          </div>
-
-          <div style={{ display: tab === 'fees' ? '' : 'none' }}>
-            <p style={{ fontSize: 14, color: 'var(--muted)', marginBottom: 12 }}>
-              Collected: <span className="mono">{formatCoins(feesTotal)}</span>
-              {' · '}
-              Pending estimate: <span className="mono">{formatCoins(feesPendingTotal)}</span>
-            </p>
-
-            <div className="card table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Block</th>
-                    <th>Amount</th>
-                    <th>Status</th>
-                    <th>Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {!feeItems.length ? (
-                    <tr>
-                      <td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                        No fee rows
-                      </td>
-                    </tr>
-                  ) : (
-                    feeItems.map((f, idx) => (
-                      <tr key={`${f.block_height}-${idx}`}>
-                        <td>{f.block_height}</td>
-                        <td>{formatCoins(f.amount)}</td>
-                        <td>
-                          <div className="fee-status-cell">
-                            <span className={`badge ${feeStatusBadgeClass(f.status)}`}>{feeStatusLabel(f.status)}</span>
-                            {feeStatusNote(f) ? <span className="fee-status-cell__meta">{feeStatusNote(f)}</span> : null}
-                          </div>
-                        </td>
-                        <td title={new Date(toUnixMs(f.timestamp)).toLocaleString()}>{timeAgo(f.timestamp)}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-              <Pager
-                offset={feePager.offset}
-                limit={feePager.limit}
-                total={feePager.total}
-                onPrev={() => setFeePager((p) => ({ ...p, offset: Math.max(0, p.offset - p.limit) }))}
-                onNext={() => setFeePager((p) => ({ ...p, offset: p.offset + p.limit }))}
-              />
-            </div>
-          </div>
-
-          <div style={{ display: tab === 'devfee' ? '' : 'none' }}>
-            <div className="card section" style={{ marginBottom: 16 }}>
-              <p className="section-lead" style={{ margin: 0 }}>
-                Credited % tracks the dev fee that actually lands in pool rewards. Gross % includes rejected dev work,
-                which makes pool or miner-side loss visible. The reference target assumes connected hash is mining with
-                Seine on this pool.
-              </p>
-            </div>
-
-            <div className="stats-grid">
-              <div className="stat-card">
-                <div className="label">Reference Target</div>
-                <div className="value mono">{pct(devFeeTelemetry?.reference_target_pct)}</div>
-              </div>
-              <div className="stat-card">
-                <div className="label">24h Credited</div>
-                <div className="value mono">{pct(devFee24h?.accepted_pct)}</div>
-              </div>
-              <div className="stat-card">
-                <div className="label">24h Gross</div>
-                <div className="value mono">{pct(devFee24h?.gross_pct)}</div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Hint Floor</div>
-                <div className="value mono">{devFeeTelemetry?.hint_floor ?? '-'}</div>
-              </div>
-            </div>
-
-            <div className="stats-grid">
-              <div className="stat-card">
-                <div className="label">Tracked Workers</div>
-                <div className="value mono">{devFeeTelemetry?.hints.total_workers ?? '-'}</div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Below Floor</div>
-                <div className="value mono">{devFeeTelemetry?.hints.below_floor_workers ?? '-'}</div>
-              </div>
-              <div className="stat-card">
-                <div className="label">At Floor</div>
-                <div className="value mono">{devFeeTelemetry?.hints.at_floor_workers ?? '-'}</div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Above Floor</div>
-                <div className="value mono">{devFeeTelemetry?.hints.above_floor_workers ?? '-'}</div>
-              </div>
-            </div>
-
-            <div className="section">
-              <div className="section-header">
-                <div>
-                  <h3>Windowed Attribution</h3>
-                  <p className="section-lead">
-                    Compare dev accepted share difficulty to total pool accepted share difficulty over the same window.
-                  </p>
-                </div>
-              </div>
-              <div className="card table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Window</th>
-                      <th>Credited %</th>
-                      <th>Gross %</th>
-                      <th>Reject Rate</th>
-                      <th>Stale Reject %</th>
-                      <th>Accepted Diff</th>
-                      <th>Rejected Diff</th>
-                      <th>Accepted Shares</th>
-                      <th>Rejected Shares</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {!devFeeTelemetry?.windows?.length ? (
-                      <tr>
-                        <td colSpan={9} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                          No dev fee telemetry yet
-                        </td>
-                      </tr>
-                    ) : (
-                      devFeeTelemetry.windows.map((row) => (
-                        <tr key={row.label}>
-                          <td>{row.label}</td>
-                          <td className="mono">{pct(row.accepted_pct)}</td>
-                          <td className="mono">{pct(row.gross_pct)}</td>
-                          <td className="mono">{pct(row.reject_rate_pct)}</td>
-                          <td className="mono">
-                            {pct(row.stale_reject_rate_pct)}
-                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>{row.stale_rejected_shares} stale</div>
-                          </td>
-                          <td className="mono">{row.dev_accepted_difficulty}</td>
-                          <td className="mono">{row.dev_rejected_difficulty}</td>
-                          <td className="mono">{row.accepted_shares}</td>
-                          <td className="mono">{row.rejected_shares}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="section">
-              <div className="section-header">
-                <div>
-                  <h3>Hint Diagnostics</h3>
-                  <p className="section-lead">
-                    Recent dev-worker vardiff hints help confirm whether workers are stuck on the floor or ramping to a
-                    healthier range.
-                  </p>
-                </div>
-              </div>
-
-              <div className="stats-grid stats-grid-3">
-                <div className="stat-card">
-                  <div className="label">Median Hint</div>
-                  <div className="value mono">{devFeeTelemetry?.hints.median_difficulty ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Min / Max</div>
-                  <div className="value mono">
-                    {devFeeTelemetry?.hints.min_difficulty ?? '-'} / {devFeeTelemetry?.hints.max_difficulty ?? '-'}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Latest Hint Update</div>
-                  <div className="value mono" style={{ fontSize: 16 }}>
-                    {devFeeTelemetry?.hints.latest_updated_at ? timeAgo(devFeeTelemetry.hints.latest_updated_at) : '-'}
-                  </div>
-                </div>
-              </div>
-
-              <div className="card table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Worker</th>
-                      <th>Difficulty</th>
-                      <th>Status</th>
-                      <th>Updated</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {!devFeeTelemetry?.recent_hints?.length ? (
-                      <tr>
-                        <td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                          No dev worker hints recorded yet
-                        </td>
-                      </tr>
-                    ) : (
-                      devFeeTelemetry.recent_hints.map((row) => (
-                        <tr key={`${row.worker}-${String(row.updated_at)}`}>
-                          <td title={row.worker}>{row.worker}</td>
-                          <td className="mono">{row.difficulty}</td>
-                          <td>
-                            <span className={`badge ${devFeeHintBadgeClass(row.position)}`}>
-                              {devFeeHintLabel(row.position)}
-                            </span>
-                          </td>
-                          <td title={new Date(toUnixMs(row.updated_at)).toLocaleString()}>{timeAgo(row.updated_at)}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
             </div>
           </div>
 
@@ -1981,408 +1577,6 @@ export function AdminPage({
                 </div>
               </>
             )}
-          </div>
-
-          <div style={{ display: tab === 'health' ? '' : 'none' }}>
-            <div className="stats-card-group">
-              <div className="stats-card-group-title">Runtime</div>
-              <div className="stats-card-group-grid stats-grid-dense">
-                <div className="stat-card">
-                  <div className="label">Uptime</div>
-                  <div className="value mono">{health ? fmtSeconds(health.uptime_seconds || 0) : '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">API Key</div>
-                  <div className="value">
-                    {health == null ? (
-                      '-'
-                    ) : health.api_key_configured ? (
-                      <>
-                        <span className="status-dot dot-green" />Configured
-                      </>
-                    ) : (
-                      <>
-                        <span className="status-dot dot-amber" />Missing
-                      </>
-                    )}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Daemon Reachability</div>
-                  <div className="value">
-                    {health == null ? (
-                      '-'
-                    ) : health.daemon?.reachable ? (
-                      <>
-                        <span className="status-dot dot-green" />OK
-                      </>
-                    ) : (
-                      <>
-                        <span className="status-dot dot-red" />Down
-                      </>
-                    )}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Sync State</div>
-                  <div className="value">
-                    {health?.daemon?.syncing == null ? '-' : health.daemon.syncing ? 'Syncing' : 'Ready'}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="stats-card-group">
-              <div className="stats-card-group-title">Daemon</div>
-              <div className="stats-card-group-grid stats-grid-dense">
-                <div className="stat-card">
-                  <div className="label">Chain Height</div>
-                  <div className="value mono">{health?.daemon?.chain_height ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Peers</div>
-                  <div className="value mono">{health?.daemon?.peers ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Mempool Size</div>
-                  <div className="value mono">{health?.daemon?.mempool_size ?? '-'}</div>
-                </div>
-                {health?.daemon?.error ? (
-                  <div className="stat-card">
-                    <div className="label">Error</div>
-                    <div className="value" style={{ fontSize: 14 }}>{health.daemon.error}</div>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="stats-card-group">
-              <div className="stats-card-group-title">Job Template</div>
-              <div className="stats-card-group-grid stats-grid-dense">
-                <div className="stat-card">
-                  <div className="label">Current Height</div>
-                  <div className="value mono">{health?.job?.current_height ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Current Difficulty</div>
-                  <div className="value mono">{health?.job?.current_difficulty ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Refresh Lag</div>
-                  <div className="value mono">{formatRefreshLag(health?.job?.last_refresh_millis)}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Template Age</div>
-                  <div className="value mono">
-                    {health?.job?.template_age_seconds != null ? fmtSeconds(health.job.template_age_seconds) : '-'}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Tracked Templates</div>
-                  <div className="value mono">{health?.job?.tracked_templates ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Active Assignments</div>
-                  <div className="value mono">{health?.job?.active_assignments ?? '-'}</div>
-                </div>
-                <div className="stat-card" title={health?.job?.template_id ?? undefined}>
-                  <div className="label">Template ID</div>
-                  <div className="value mono">{compactHash(health?.job?.template_id)}</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="stats-card-group">
-              <div className="stats-card-group-title">
-                Payouts
-                {health?.payouts?.last_payout ? (
-                  <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, marginLeft: 8, fontSize: 11, color: 'var(--muted)' }}>
-                    Last: {timeAgo(health.payouts.last_payout.timestamp)}
-                    {' \u2022 '}
-                    <span className="mono">{shortTx(health.payouts.last_payout.tx_hash)}</span>
-                    {' \u2022 '}
-                    {formatCoins(health.payouts.last_payout.amount)}
-                  </span>
-                ) : null}
-              </div>
-              <div className="stats-card-group-grid stats-grid-dense">
-                <div className="stat-card">
-                  <div className="label">Pending Payouts</div>
-                  <div className="value mono">{health?.payouts?.pending_count ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Pending Amount</div>
-                  <div className="value mono">
-                    {health?.payouts?.pending_amount != null
-                      ? formatCoins(health.payouts.pending_amount)
-                      : '-'}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Last Payout</div>
-                  <div className="value mono">
-                    {health?.payouts?.last_payout?.timestamp ? timeAgo(health.payouts.last_payout.timestamp) : '-'}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Wallet Pending</div>
-                  <div className="value mono">
-                    {health?.wallet?.pending != null
-                      ? formatCoins(health.wallet.pending)
-                      : '-'}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="stats-card-group">
-              <div className="stats-card-group-title">Wallet</div>
-              <div className="stats-card-group-grid stats-grid-dense">
-                <div className="stat-card">
-                  <div className="label">Wallet Spendable</div>
-                  <div className="value mono">
-                    {health?.wallet?.spendable != null
-                      ? formatCoins(health.wallet.spendable)
-                      : '-'}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Unconfirmed Change</div>
-                  <div className="value mono">
-                    {health?.wallet?.pending_unconfirmed != null
-                      ? formatCoins(health.wallet.pending_unconfirmed)
-                      : '-'}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Change ETA</div>
-                  <div className="value mono">
-                    {health?.wallet?.pending_unconfirmed_eta != null
-                      ? fmtSeconds(health.wallet.pending_unconfirmed_eta)
-                      : '-'}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Wallet Total</div>
-                  <div className="value mono">
-                    {health?.wallet?.total != null
-                      ? formatCoins(health.wallet.total)
-                      : '-'}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="stats-card-group">
-              <div className="stats-card-group-title">Pool Activity</div>
-              <div className="stats-card-group-grid stats-grid-dense">
-                <div className="stat-card">
-                  <div className="label">State</div>
-                  <div className="value">
-                    <span className={`badge ${poolActivityBadgeClass(poolActivity?.state)}`}>
-                      {poolActivityLabel(poolActivity?.state)}
-                    </span>
-                  </div>
-                  <div className="stat-meta">{poolActivity?.detail ?? 'No runtime activity assessment yet.'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Connected Miners</div>
-                  <div className="value mono">{poolActivity?.connected_miners ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Connected Workers</div>
-                  <div className="value mono">{poolActivity?.connected_workers ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Estimated Hashrate</div>
-                  <div className="value mono">
-                    {poolActivity ? humanRate(poolActivity.estimated_hashrate) : '-'}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Snapshot Age</div>
-                  <div className="value mono">
-                    {poolActivity?.snapshot_age_seconds != null
-                      ? fmtSeconds(poolActivity.snapshot_age_seconds)
-                      : '-'}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Last Accepted Share</div>
-                  <div className="value mono">
-                    {poolActivity?.last_share_age_seconds != null
-                      ? fmtSeconds(poolActivity.last_share_age_seconds)
-                      : '-'}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="stats-card-group">
-              <div className="stats-card-group-title">Validation</div>
-              <div className="stats-card-group-grid stats-grid-dense">
-                <div className="stat-card">
-                  <div className="label">In Flight</div>
-                  <div className="value mono">{health?.validation?.in_flight ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Candidate Queue</div>
-                  <div className="value mono">{health?.validation?.candidate_queue_depth ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Regular Queue</div>
-                  <div className="value mono">{health?.validation?.regular_queue_depth ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Tracked Addresses</div>
-                  <div className="value mono">{health?.validation?.tracked_addresses ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Forced Verify</div>
-                  <div className="value mono">{health?.validation?.forced_verify_addresses ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Pending Provisional</div>
-                  <div className="value mono">{health?.validation?.pending_provisional ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Sampled Shares</div>
-                  <div className="value mono">{health?.validation?.sampled_shares ?? '-'}</div>
-                  <div className="stat-meta">of {health?.validation?.total_shares ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Invalid Samples</div>
-                  <div className="value mono">{health?.validation?.invalid_samples ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Fraud Detections</div>
-                  <div className="value mono">{health?.validation?.fraud_detections ?? '-'}</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="card section" style={{ marginTop: 16 }}>
-              <div className="section-header">
-                <div>
-                  <h3>Active Verification Holds</h3>
-                  <p className="section-lead">
-                    Addresses currently quarantined or being forced through verified-only validation.
-                  </p>
-                </div>
-              </div>
-              {holdActionError ? (
-                <div
-                  style={{
-                    marginTop: 12,
-                    padding: '10px 12px',
-                    borderRadius: 12,
-                    background: 'var(--error-bg)',
-                    color: 'var(--error-text)',
-                    fontSize: 13,
-                  }}
-                >
-                  {holdActionError}
-                </div>
-              ) : null}
-              <div className="table-scroll" style={{ marginTop: 12 }}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Address</th>
-                      <th>Mode</th>
-                      <th>Quarantine Until</th>
-                      <th>Risk Verify Until</th>
-                      <th>Validator Until</th>
-                      <th>Strikes</th>
-                      <th>Reason</th>
-                      <th>Last Event</th>
-                      <th>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {!activeVerificationHolds.length ? (
-                      <tr>
-                        <td colSpan={9} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                          No active verification holds
-                        </td>
-                      </tr>
-                    ) : (
-                      activeVerificationHolds.map((hold) => (
-                        <tr key={hold.address}>
-                          <td title={hold.address}>
-                            <a
-                              href="/stats"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                onJumpToStats(hold.address);
-                              }}
-                            >
-                              {shortAddr(hold.address)}
-                            </a>
-                          </td>
-                          <td>
-                            <span
-                              className={verificationHoldBadgeClass(
-                                verificationHoldActive(hold),
-                                verificationHoldTone(hold)
-                              )}
-                            >
-                              {verificationHoldLabel(hold)}
-                            </span>
-                          </td>
-                          <td className="mono" title={holdUntilTitle(hold.quarantined_until)}>
-                            {holdUntilLabel(hold.quarantined_until)}
-                          </td>
-                          <td className="mono" title={holdUntilTitle(hold.force_verify_until)}>
-                            {holdUntilLabel(hold.force_verify_until)}
-                          </td>
-                          <td className="mono" title={holdUntilTitle(hold.validation_forced_until)}>
-                            {holdUntilLabel(hold.validation_forced_until)}
-                          </td>
-                          <td className="mono">
-                            {hold.strikes}
-                            {hold.suspected_fraud_strikes > 0 ? ` / fraud ${hold.suspected_fraud_strikes}` : ''}
-                          </td>
-                          <td title={hold.last_reason ?? undefined}>{hold.last_reason ?? '-'}</td>
-                          <td className="mono" title={hold.last_event_at ? formatAdminTimestamp(hold.last_event_at) : undefined}>
-                            {hold.last_event_at ? timeAgo(hold.last_event_at) : '-'}
-                          </td>
-                          <td>
-                            <button
-                              className="btn btn-secondary"
-                              disabled={holdBusyAddress !== null}
-                              onClick={() => void clearAddressRiskHistory(hold.address)}
-                              title="Delete all admin risk and validation hold history for this address"
-                            >
-                              {holdBusyAddress === hold.address ? 'Clearing…' : 'Clear History'}
-                            </button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="card section">
-              <div className="section-header">
-                <div>
-                  <h3>Raw Health Data</h3>
-                  <p className="section-lead">
-                    Keep the full protected health payload available for copy and low-level debugging without making it
-                    the primary UI.
-                  </p>
-                </div>
-                <button className="btn btn-secondary" onClick={copyHealthJson} disabled={!rawHealthJson}>
-                  Copy JSON
-                </button>
-              </div>
-              <details className="health-raw-toggle">
-                <summary>Show raw JSON</summary>
-                <pre className="raw-json">{rawHealthJson || 'Loading...'}</pre>
-              </details>
-            </div>
           </div>
 
           <div style={{ display: tab === 'shares' ? '' : 'none' }}>

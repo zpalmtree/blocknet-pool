@@ -1016,6 +1016,27 @@ input:focus {
   border-bottom-color: var(--accent);
 }
 
+.sub-tabs-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 8px;
+  background: var(--border);
+}
+
+.admin-overview-strip {
+  margin-bottom: 20px;
+}
+
+.admin-overview-strip .stat-card {
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.admin-overview-strip .stat-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
 h2 {
   font-size: 18px;
   font-weight: 700;
