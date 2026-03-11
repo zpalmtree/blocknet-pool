@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::db::ValidationHoldCause;
+use crate::payout::ShareReplayRecovery;
 use crate::pow::{check_target, PowHasher};
 use crate::telemetry::{default_latency_window, LatencyWindow, PercentileSummary, QueueTracker};
 
@@ -22,6 +23,8 @@ const VALIDATION_STATE_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 const VALIDATION_STATE_MAX_TRACKED: usize = 100_000;
 const VALIDATION_PERSIST_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 const VALIDATION_CLEAR_SYNC_INTERVAL: Duration = Duration::from_secs(1);
+const VALIDATION_REPLAY_BACKFILL_INTERVAL: Duration = Duration::from_secs(10);
+const VALIDATION_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone)]
 pub struct ValidationTask {
@@ -128,6 +131,12 @@ pub struct LoadedValidationState {
     pub accepted_window: Vec<PersistedValidationAcceptedShare>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct LoadedValidationAddressActivity {
+    pub provisionals: Vec<PersistedValidationProvisional>,
+    pub accepted_window: Vec<PersistedValidationAcceptedShare>,
+}
+
 pub trait ValidationStateStore: Send + Sync + 'static {
     fn load_validation_state(
         &self,
@@ -151,6 +160,20 @@ pub trait ValidationStateStore: Send + Sync + 'static {
     fn latest_validation_clear_event_id(&self) -> Result<i64>;
 
     fn load_validation_clear_events_since(&self, cursor: i64) -> Result<Vec<ValidationClearEvent>>;
+
+    fn load_validation_address_activity(
+        &self,
+        address: &str,
+        provisional_cutoff: SystemTime,
+        accepted_window_cutoff: SystemTime,
+    ) -> Result<LoadedValidationAddressActivity>;
+
+    fn replay_address_shares_for_unconfirmed_blocks(
+        &self,
+        address: &str,
+        config: &Config,
+        now: SystemTime,
+    ) -> Result<ShareReplayRecovery>;
 }
 
 #[derive(Debug, Default)]
@@ -194,6 +217,24 @@ impl ValidationStateStore for NullValidationStateStore {
     ) -> Result<Vec<ValidationClearEvent>> {
         Ok(Vec::new())
     }
+
+    fn load_validation_address_activity(
+        &self,
+        _address: &str,
+        _provisional_cutoff: SystemTime,
+        _accepted_window_cutoff: SystemTime,
+    ) -> Result<LoadedValidationAddressActivity> {
+        Ok(LoadedValidationAddressActivity::default())
+    }
+
+    fn replay_address_shares_for_unconfirmed_blocks(
+        &self,
+        _address: &str,
+        _config: &Config,
+        _now: SystemTime,
+    ) -> Result<ShareReplayRecovery> {
+        Ok(ShareReplayRecovery::default())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -211,6 +252,7 @@ struct ValidationAddressState {
     hold_cause: Option<ValidationHoldCause>,
     provisional_at: VecDeque<SystemTime>,
     accepted_window: VecDeque<AcceptedWindowShare>,
+    last_replay_backfill_at: Option<SystemTime>,
     last_seen_at: SystemTime,
 }
 
@@ -237,6 +279,7 @@ impl Default for ValidationAddressState {
             hold_cause: None,
             provisional_at: VecDeque::new(),
             accepted_window: VecDeque::new(),
+            last_replay_backfill_at: None,
             last_seen_at: SystemTime::now(),
         }
     }
@@ -255,6 +298,7 @@ impl ValidationAddressState {
         self.forced_invalid_samples = 0;
         self.resume_forced_at = None;
         self.hold_cause = None;
+        self.last_replay_backfill_at = None;
     }
 
     fn start_forced_review(
@@ -269,6 +313,7 @@ impl ValidationAddressState {
         self.forced_invalid_samples = 0;
         self.resume_forced_at = None;
         self.hold_cause = Some(cause);
+        self.last_replay_backfill_at = None;
         self.clear_risk_window();
     }
 
@@ -282,6 +327,7 @@ impl ValidationAddressState {
         self.forced_until = Some(start_at + duration);
         self.resume_forced_at = None;
         self.hold_cause = Some(cause);
+        self.last_replay_backfill_at = None;
     }
 }
 
@@ -351,6 +397,7 @@ pub struct ValidationEngine {
     candidate_tx: flume::Sender<QueuedTask>,
     regular_tx: flume::Sender<QueuedTask>,
     shutdown: Arc<AtomicBool>,
+    maintenance_worker: Option<thread::JoinHandle<()>>,
     candidate_workers: Vec<thread::JoinHandle<()>>,
     regular_workers: Vec<thread::JoinHandle<()>>,
 }
@@ -433,11 +480,21 @@ impl ValidationEngine {
             }));
         }
 
+        let maintenance_inner = Arc::clone(&inner);
+        let maintenance_shutdown = Arc::clone(&shutdown);
+        let maintenance_worker = Some(thread::spawn(move || {
+            while !maintenance_shutdown.load(Ordering::Relaxed) {
+                maintenance_inner.maintenance_tick();
+                thread::sleep(VALIDATION_MAINTENANCE_INTERVAL);
+            }
+        }));
+
         Self {
             inner,
             candidate_tx,
             regular_tx,
             shutdown,
+            maintenance_worker,
             candidate_workers: candidate_handles,
             regular_workers: regular_handles,
         }
@@ -526,6 +583,9 @@ impl ValidationEngine {
 impl Drop for ValidationEngine {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.maintenance_worker.take() {
+            let _ = handle.join();
+        }
         while let Some(handle) = self.candidate_workers.pop() {
             let _ = handle.join();
         }
@@ -536,6 +596,12 @@ impl Drop for ValidationEngine {
 }
 
 impl ValidationInner {
+    fn maintenance_tick(&self) {
+        self.sync_external_clears(false);
+        self.evaluate_overload(Instant::now());
+        self.backfill_due_hold_windows(SystemTime::now());
+    }
+
     fn process(&self, queued: QueuedTask, candidate_lane: bool) {
         let started_at = Instant::now();
         if candidate_lane {
@@ -847,11 +913,20 @@ impl ValidationInner {
         refresh_dynamic_validation_hold(st, &self.config, now);
 
         let persisted = persisted_validation_state(address, st);
+        let should_backfill_windows = overload_mode == OverloadMode::Normal
+            && matches!(
+                st.hold_cause,
+                Some(ValidationHoldCause::ProvisionalBacklog | ValidationHoldCause::PayoutCoverage)
+            )
+            && st.forced_until.is_some_and(|deadline| deadline > now);
         if state.len() > VALIDATION_STATE_MAX_TRACKED {
             self.prune_stale_state_locked(&mut state, now);
         }
         drop(state);
         self.persist_validation_state(&persisted, provisional_accepted.then_some(now), now);
+        if should_backfill_windows {
+            self.backfill_hold_window_for_address(address, now);
+        }
         followup
     }
 
@@ -939,8 +1014,143 @@ impl ValidationInner {
         for persisted in changed {
             self.persist_validation_state(&persisted, None, now);
         }
+        self.backfill_due_hold_windows(now);
 
         snap
+    }
+
+    fn backfill_due_hold_windows(&self, now: SystemTime) {
+        if self.evaluate_overload(Instant::now()) != OverloadMode::Normal {
+            return;
+        }
+
+        let mut due = Vec::<String>::new();
+        {
+            let mut state = self.state.lock();
+            for (address, st) in state.iter_mut() {
+                self.prune_provisional_locked(st, now);
+                prune_accepted_window(st, &self.config, now);
+                refresh_dynamic_validation_hold(st, &self.config, now);
+                if !matches!(
+                    st.hold_cause,
+                    Some(ValidationHoldCause::ProvisionalBacklog | ValidationHoldCause::PayoutCoverage)
+                ) {
+                    continue;
+                }
+                if !st.forced_until.is_some_and(|deadline| deadline > now) {
+                    continue;
+                }
+                let due_now = st.last_replay_backfill_at.is_none_or(|last| {
+                    now.duration_since(last).unwrap_or_default()
+                        >= VALIDATION_REPLAY_BACKFILL_INTERVAL
+                });
+                if due_now {
+                    st.last_replay_backfill_at = Some(now);
+                    due.push(address.clone());
+                }
+            }
+        }
+
+        for address in due {
+            self.replay_pending_window_for_address(&address, now);
+        }
+    }
+
+    fn backfill_hold_window_for_address(&self, address: &str, now: SystemTime) {
+        {
+            let mut state = self.state.lock();
+            let Some(st) = state.get_mut(address) else {
+                return;
+            };
+            let due_now = st.last_replay_backfill_at.is_none_or(|last| {
+                now.duration_since(last).unwrap_or_default() >= VALIDATION_REPLAY_BACKFILL_INTERVAL
+            });
+            if !due_now {
+                return;
+            }
+            st.last_replay_backfill_at = Some(now);
+        }
+
+        self.replay_pending_window_for_address(address, now);
+    }
+
+    fn replay_pending_window_for_address(&self, address: &str, now: SystemTime) {
+        let recovery = match self
+            .state_store
+            .replay_address_shares_for_unconfirmed_blocks(address, &self.config, now)
+        {
+            Ok(value) => value,
+            Err(err) => {
+                tracing::warn!(
+                    address = %address,
+                    error = %err,
+                    "failed replaying provisional shares for active validation hold"
+                );
+                return;
+            }
+        };
+
+        if !recovery.attempted {
+            return;
+        }
+
+        if recovery.verified > 0 || recovery.rejected > 0 {
+            tracing::info!(
+                address = %address,
+                replay_verified = recovery.verified,
+                replay_rejected = recovery.rejected,
+                "replayed provisional shares for active validation hold"
+            );
+        }
+
+        self.refresh_address_activity_from_store(address, now);
+    }
+
+    fn refresh_address_activity_from_store(&self, address: &str, now: SystemTime) {
+        let provisional_cutoff = now
+            .checked_sub(self.config.provisional_share_delay_duration())
+            .unwrap_or(now);
+        let accepted_window_cutoff = payout_coverage_window_start(&self.config, now).unwrap_or(now);
+        let loaded = match self.state_store.load_validation_address_activity(
+            address,
+            provisional_cutoff,
+            accepted_window_cutoff,
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                tracing::warn!(
+                    address = %address,
+                    error = %err,
+                    "failed reloading validation activity after replay"
+                );
+                return;
+            }
+        };
+
+        let mut state = self.state.lock();
+        let Some(entry) = state.get_mut(address) else {
+            return;
+        };
+        entry.provisional_at = loaded
+            .provisionals
+            .into_iter()
+            .map(|share| share.created_at)
+            .collect();
+        entry.accepted_window = loaded
+            .accepted_window
+            .into_iter()
+            .map(|share| AcceptedWindowShare {
+                created_at: share.created_at,
+                difficulty: share.difficulty,
+                verified: share.verified,
+            })
+            .collect();
+        self.prune_provisional_locked(entry, now);
+        prune_accepted_window(entry, &self.config, now);
+        refresh_dynamic_validation_hold(entry, &self.config, now);
+        let persisted = persisted_validation_state(address, entry);
+        drop(state);
+        self.persist_validation_state(&persisted, None, now);
     }
 
     fn effective_sample_rate(&self, overload_mode: OverloadMode) -> f64 {
@@ -1451,6 +1661,7 @@ fn load_initial_validation_state(
                 }),
                 provisional_at: VecDeque::new(),
                 accepted_window: VecDeque::new(),
+                last_replay_backfill_at: None,
                 last_seen_at: entry.last_seen_at,
             },
         );
@@ -1509,6 +1720,8 @@ fn load_initial_validation_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::{DbBlock, ShareReplayData};
+    use crate::engine::ShareRecord;
     use crate::pow::{difficulty_to_target, DeterministicTestHasher};
     use crate::store::PoolStore;
     use std::sync::Arc;
@@ -1757,6 +1970,218 @@ mod tests {
     }
 
     #[test]
+    fn payout_coverage_hold_replays_pending_window_shares_and_clears() {
+        let store = require_test_store!();
+        let mut cfg = test_cfg();
+        cfg.sample_rate = 0.0;
+        cfg.warmup_shares = 0;
+        cfg.min_sample_every = 0;
+        cfg.max_provisional_shares = 100;
+        cfg.payout_scheme = "pplns".to_string();
+        cfg.pplns_window_duration = "6h".to_string();
+        cfg.provisional_share_delay = "0s".to_string();
+        cfg.payout_min_verified_shares = 1;
+        cfg.payout_provisional_cap_multiplier = 1.0;
+
+        let address = format!("coverage-replay-{}", rand::random::<u64>());
+        let base = SystemTime::now() - Duration::from_secs(120);
+        for (job_id, nonce, offset) in [("cov-prov-a", 7u64, 0u64), ("cov-prov-b", 8u64, 1u64)] {
+            store
+                .add_share_with_replay(
+                    ShareRecord {
+                        job_id: job_id.to_string(),
+                        miner: address.clone(),
+                        worker: "wa".to_string(),
+                        difficulty: 1,
+                        nonce,
+                        status: SHARE_STATUS_PROVISIONAL,
+                        was_sampled: false,
+                        block_hash: None,
+                        reject_reason: None,
+                        created_at: base + Duration::from_secs(offset),
+                    },
+                    Some(ShareReplayData {
+                        job_id: job_id.to_string(),
+                        header_base: vec![1, 2, 3, offset as u8],
+                        network_target: [0xff; 32],
+                        created_at: base + Duration::from_secs(offset),
+                    }),
+                )
+                .expect("add replayable provisional share");
+        }
+        store
+            .add_share(ShareRecord {
+                job_id: "cov-verified".to_string(),
+                miner: address.clone(),
+                worker: "wa".to_string(),
+                difficulty: 1,
+                nonce: 9,
+                status: SHARE_STATUS_VERIFIED,
+                was_sampled: true,
+                block_hash: None,
+                reject_reason: None,
+                created_at: base + Duration::from_secs(2),
+            })
+            .expect("add verified share");
+        store
+            .add_block(&DbBlock {
+                height: 9001,
+                hash: "cov-replay-block".to_string(),
+                difficulty: 1,
+                finder: address.clone(),
+                finder_worker: "wa".to_string(),
+                reward: 1_000,
+                timestamp: base + Duration::from_secs(30),
+                confirmed: false,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("add unconfirmed block");
+        store
+            .upsert_validation_state(&PersistedValidationAddressState {
+                address: address.clone(),
+                total_shares: 3,
+                sampled_shares: 1,
+                invalid_samples: 0,
+                risk_sampled_shares: 1,
+                risk_invalid_samples: 0,
+                forced_started_at: None,
+                forced_until: Some(SystemTime::now() + Duration::from_secs(60)),
+                forced_sampled_shares: 0,
+                forced_invalid_samples: 0,
+                resume_forced_at: None,
+                hold_cause: Some(ValidationHoldCause::PayoutCoverage),
+                last_seen_at: SystemTime::now(),
+            })
+            .expect("seed validation hold");
+
+        let engine = ValidationEngine::new_with_state_store(
+            cfg,
+            Arc::new(DeterministicTestHasher),
+            Arc::clone(&store) as Arc<dyn ValidationStateStore>,
+        );
+        engine.inner.maintenance_tick();
+
+        let replayed = store
+            .get_recent_shares(10)
+            .expect("recent shares after replay")
+            .into_iter()
+            .filter(|share| share.miner == address && share.job_id.starts_with("cov-prov"))
+            .collect::<Vec<_>>();
+        assert_eq!(replayed.len(), 2);
+        assert!(
+            replayed
+                .iter()
+                .all(|share| share.status == SHARE_STATUS_VERIFIED && share.was_sampled),
+            "pending-window provisionals should be replay-verified during payout coverage hold"
+        );
+
+        let mut next = matching_task(10);
+        next.address = address;
+        let result = engine.process_inline(next);
+        assert!(
+            !result.verified,
+            "replayed verified weight should clear the payout coverage hold"
+        );
+    }
+
+    #[test]
+    fn provisional_backlog_hold_replays_existing_pending_window_shares() {
+        let store = require_test_store!();
+        let mut cfg = test_cfg();
+        cfg.sample_rate = 0.0;
+        cfg.warmup_shares = 0;
+        cfg.min_sample_every = 0;
+        cfg.max_provisional_shares = 2;
+        cfg.payout_scheme = "pplns".to_string();
+        cfg.pplns_window_duration = "6h".to_string();
+        cfg.provisional_share_delay = "50ms".to_string();
+        cfg.payout_min_verified_shares = 1;
+        cfg.payout_provisional_cap_multiplier = 1.0;
+
+        let address = format!("backlog-replay-{}", rand::random::<u64>());
+        let now = SystemTime::now();
+        let old_share_time = now - Duration::from_millis(200);
+        store
+            .add_share_with_replay(
+                ShareRecord {
+                    job_id: "backlog-prov".to_string(),
+                    miner: address.clone(),
+                    worker: "wa".to_string(),
+                    difficulty: 1,
+                    nonce: 11,
+                    status: SHARE_STATUS_PROVISIONAL,
+                    was_sampled: false,
+                    block_hash: None,
+                    reject_reason: None,
+                    created_at: old_share_time,
+                },
+                Some(ShareReplayData {
+                    job_id: "backlog-prov".to_string(),
+                    header_base: vec![9, 8, 7, 6],
+                    network_target: [0xff; 32],
+                    created_at: old_share_time,
+                }),
+            )
+            .expect("add backlog replay share");
+        store
+            .add_block(&DbBlock {
+                height: 9002,
+                hash: "backlog-replay-block".to_string(),
+                difficulty: 1,
+                finder: address.clone(),
+                finder_worker: "wa".to_string(),
+                reward: 1_000,
+                timestamp: now - Duration::from_millis(100),
+                confirmed: false,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("add backlog block");
+        store
+            .add_validation_provisional(&address, now - Duration::from_millis(10))
+            .expect("seed provisional a");
+        store
+            .add_validation_provisional(&address, now - Duration::from_millis(20))
+            .expect("seed provisional b");
+        store
+            .upsert_validation_state(&PersistedValidationAddressState {
+                address: address.clone(),
+                total_shares: 3,
+                sampled_shares: 0,
+                invalid_samples: 0,
+                risk_sampled_shares: 0,
+                risk_invalid_samples: 0,
+                forced_started_at: None,
+                forced_until: Some(SystemTime::now() + Duration::from_secs(60)),
+                forced_sampled_shares: 0,
+                forced_invalid_samples: 0,
+                resume_forced_at: None,
+                hold_cause: Some(ValidationHoldCause::ProvisionalBacklog),
+                last_seen_at: SystemTime::now(),
+            })
+            .expect("seed backlog hold");
+
+        let engine = ValidationEngine::new_with_state_store(
+            cfg,
+            Arc::new(DeterministicTestHasher),
+            Arc::clone(&store) as Arc<dyn ValidationStateStore>,
+        );
+        engine.inner.maintenance_tick();
+
+        let replayed = store
+            .get_recent_shares(10)
+            .expect("recent shares after backlog replay")
+            .into_iter()
+            .find(|share| share.job_id == "backlog-prov")
+            .expect("backlog replay share");
+        assert_eq!(replayed.status, SHARE_STATUS_VERIFIED);
+        assert!(replayed.was_sampled);
+    }
+
+    #[test]
     fn full_mode_always_verifies() {
         let mut cfg = test_cfg();
         cfg.validation_mode = "full".to_string();
@@ -1804,8 +2229,15 @@ mod tests {
 
         let r1 = engine.submit(task.clone(), false);
         assert!(r1.is_some());
+        let started = Instant::now();
+        while engine.snapshot().in_flight == 0 && started.elapsed() < Duration::from_secs(1) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
         let r2 = engine.submit(task.clone(), false);
-        assert!(r2.is_none(), "second submit should fail when queue is full");
+        assert!(r2.is_some(), "second submit should occupy the bounded queue");
+        let r3 = engine.submit(task.clone(), false);
+        assert!(r3.is_none(), "third submit should fail when queue is full");
     }
 
     #[test]

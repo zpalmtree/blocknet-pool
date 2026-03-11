@@ -18,8 +18,8 @@ use crate::db::{
 use crate::engine::{ShareRecord, ShareStore};
 use crate::stats::RejectionReasonCount;
 use crate::validation::{
-    LoadedValidationState, PersistedValidationAcceptedShare, PersistedValidationAddressState,
-    PersistedValidationProvisional, ValidationClearEvent,
+    LoadedValidationAddressActivity, LoadedValidationState, PersistedValidationAcceptedShare,
+    PersistedValidationAddressState, PersistedValidationProvisional, ValidationClearEvent,
 };
 
 const SHARE_CLAIM_EXPIRY_SECS: i64 = 2 * 60;
@@ -2981,6 +2981,56 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .lock()
             .query_one("SELECT COALESCE(MAX(id), 0) FROM validation_clear_events", &[])?;
         Ok(row.get::<_, i64>(0).max(0))
+    }
+
+    pub fn load_validation_address_activity(
+        &self,
+        address: &str,
+        provisional_cutoff: SystemTime,
+        accepted_window_cutoff: SystemTime,
+    ) -> Result<LoadedValidationAddressActivity> {
+        let provisional_rows = self.conn().lock().query(
+            "SELECT address, created_at
+             FROM validation_provisionals
+             WHERE address = $1
+               AND created_at > $2
+             ORDER BY created_at ASC",
+            &[&address, &to_unix(provisional_cutoff)],
+        )?;
+        let provisionals = provisional_rows
+            .iter()
+            .map(|row| PersistedValidationProvisional {
+                address: row.get::<_, String>(0),
+                created_at: from_unix(row.get::<_, i64>(1)),
+            })
+            .collect::<Vec<_>>();
+
+        let accepted_rows = self.conn().lock().query(
+            "SELECT miner, created_at, difficulty, status
+             FROM shares
+             WHERE miner = $1
+               AND created_at > $2
+               AND status IN ('verified', 'provisional')
+             ORDER BY created_at ASC, id ASC",
+            &[&address, &to_unix(accepted_window_cutoff)],
+        )?;
+        let accepted_window = accepted_rows
+            .iter()
+            .map(|row| PersistedValidationAcceptedShare {
+                address: row.get::<_, String>(0),
+                created_at: from_unix(row.get::<_, i64>(1)),
+                difficulty: row.get::<_, i64>(2).max(0) as u64,
+                verified: row
+                    .get::<_, String>(3)
+                    .trim()
+                    .eq_ignore_ascii_case("verified"),
+            })
+            .collect::<Vec<_>>();
+
+        Ok(LoadedValidationAddressActivity {
+            provisionals,
+            accepted_window,
+        })
     }
 
     pub fn load_validation_clear_events_since(

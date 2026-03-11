@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -7,18 +8,21 @@ use anyhow::Context;
 use anyhow::{anyhow, Result};
 use tracing::warn;
 
+use crate::config::Config;
 use crate::db::{
-    ActiveVerificationHold, AddressRiskState, DbBlock, MonitorHeartbeat, MonitorHeartbeatUpsert,
-    MonitorIncident, MonitorIncidentUpsert, ShareReplayData, ValidationHoldState,
+    ActiveVerificationHold, AddressRiskState, DbBlock, DbShare, MonitorHeartbeat,
+    MonitorHeartbeatUpsert, MonitorIncident, MonitorIncidentUpsert, ShareReplayData,
+    ValidationHoldState,
 };
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
+use crate::payout::{recover_share_window_by_replay, reward_window_end, ShareReplayRecovery};
 use crate::pgdb::{
     MinerShareWindowStats, PoolFeeCreditBackfillReport, PostgresStore, VardiffHintDiagnostic,
     VardiffHintSummary,
 };
 use crate::validation::{
-    LoadedValidationState, PersistedValidationAddressState, ValidationClearEvent,
-    ValidationStateStore,
+    LoadedValidationAddressActivity, LoadedValidationState, PersistedValidationAddressState,
+    ValidationClearEvent, ValidationStateStore,
 };
 
 // Matches daemon emission curve for provisional pending-block display values.
@@ -99,6 +103,48 @@ impl PoolStore {
         provisional_cutoff: SystemTime,
     ) -> Result<Option<ValidationHoldState>> {
         self.inner.validation_hold_state(address, provisional_cutoff)
+    }
+
+    pub fn replay_address_shares_for_unconfirmed_blocks(
+        &self,
+        address: &str,
+        config: &Config,
+        now: SystemTime,
+    ) -> Result<ShareReplayRecovery> {
+        let address = address.trim();
+        if address.is_empty() {
+            return Ok(ShareReplayRecovery::default());
+        }
+
+        let provisional_delay = config.provisional_share_delay_duration();
+        let mut replayable = Vec::<DbShare>::new();
+        let mut seen = HashSet::<i64>::new();
+        for block in self.get_unconfirmed_blocks()? {
+            let window_end = reward_window_end(self, &block)?;
+            let window_shares = if config.payout_scheme.trim().eq_ignore_ascii_case("pplns") {
+                if config.pplns_window_duration_duration().is_zero() {
+                    self.get_last_n_shares_before(window_end, i64::from(config.pplns_window.max(1)))?
+                } else {
+                    let start = window_end
+                        .checked_sub(config.pplns_window_duration_duration())
+                        .unwrap_or(std::time::UNIX_EPOCH);
+                    self.get_shares_between(start, window_end)?
+                }
+            } else {
+                let start = window_end
+                    .checked_sub(Duration::from_secs(60 * 60))
+                    .unwrap_or(std::time::UNIX_EPOCH);
+                self.get_shares_between(start, window_end)?
+            };
+
+            for share in window_shares {
+                if share.miner == address && seen.insert(share.id) {
+                    replayable.push(share);
+                }
+            }
+        }
+
+        recover_share_window_by_replay(self, &mut replayable, now, provisional_delay, true)
     }
 
     pub fn miner_share_window_stats_since(
@@ -404,6 +450,28 @@ impl ValidationStateStore for PoolStore {
 
     fn load_validation_clear_events_since(&self, cursor: i64) -> Result<Vec<ValidationClearEvent>> {
         self.inner.load_validation_clear_events_since(cursor)
+    }
+
+    fn load_validation_address_activity(
+        &self,
+        address: &str,
+        provisional_cutoff: SystemTime,
+        accepted_window_cutoff: SystemTime,
+    ) -> Result<LoadedValidationAddressActivity> {
+        self.inner.load_validation_address_activity(
+            address,
+            provisional_cutoff,
+            accepted_window_cutoff,
+        )
+    }
+
+    fn replay_address_shares_for_unconfirmed_blocks(
+        &self,
+        address: &str,
+        config: &Config,
+        now: SystemTime,
+    ) -> Result<ShareReplayRecovery> {
+        PoolStore::replay_address_shares_for_unconfirmed_blocks(self, address, config, now)
     }
 }
 
