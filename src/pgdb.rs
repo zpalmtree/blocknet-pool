@@ -426,8 +426,6 @@ CREATE INDEX IF NOT EXISTS idx_validation_provisionals_created_at
     ON validation_provisionals(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_validation_provisionals_address_created_at
     ON validation_provisionals(address, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_validation_provisionals_share_id
-    ON validation_provisionals(share_id);
 
 CREATE TABLE IF NOT EXISTS share_daily_summaries (
     day_start BIGINT PRIMARY KEY,
@@ -527,6 +525,11 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             "ALTER TABLE validation_provisionals ADD COLUMN IF NOT EXISTS share_id BIGINT",
         )
         .context("ensure validation_provisionals.share_id column")?;
+        conn.batch_execute(
+            "CREATE INDEX IF NOT EXISTS idx_validation_provisionals_share_id
+             ON validation_provisionals(share_id)",
+        )
+        .context("ensure validation_provisionals.share_id index")?;
         conn.batch_execute(
             "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS wallet_up BOOLEAN",
         )
