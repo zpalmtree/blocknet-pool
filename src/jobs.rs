@@ -713,6 +713,39 @@ impl JobManager {
     }
 }
 
+#[cfg(test)]
+impl JobManager {
+    pub(crate) fn install_test_job(&self, job: Job) {
+        let mut state = self.state.write();
+        let now = Instant::now();
+
+        if let Some(prev_id) = state.current.as_ref().map(|current| current.id.clone()) {
+            if prev_id != job.id {
+                if let Some(meta) = state.job_meta.get_mut(&prev_id) {
+                    meta.stale_since = Some(now);
+                }
+            }
+        }
+
+        state.current = Some(job.clone());
+        state.jobs.insert(job.id.clone(), job.clone());
+        state.job_meta.insert(
+            job.id.clone(),
+            JobTemplateMeta {
+                created_at: now,
+                stale_since: None,
+            },
+        );
+        state.order.retain(|id| id != &job.id);
+        state.order.push_back(job.id.clone());
+        self.nonce_counter
+            .store(random_nonce_slot(), Ordering::Relaxed);
+        drop(state);
+        *self.last_refresh.lock() = Some(now);
+        let _ = self.tx.send(job);
+    }
+}
+
 fn is_wallet_recoverable_template_error(err: &anyhow::Error) -> bool {
     if is_http_status(err, 403) {
         return true;

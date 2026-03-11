@@ -83,6 +83,29 @@ function pct(value: number | null | undefined): string {
   return `${value.toFixed(2)}%`;
 }
 
+function ratioPct(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '-';
+  return `${(value * 100).toFixed(2)}%`;
+}
+
+function formatMillis(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '-';
+  if (value >= 10_000) return `${(value / 1000).toFixed(0)}s`;
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}s`;
+  return `${Math.round(value)}ms`;
+}
+
+function overloadModeLabel(mode: string | null | undefined): string {
+  switch (mode) {
+    case 'emergency':
+      return 'Emergency';
+    case 'shed':
+      return 'Shedding';
+    default:
+      return 'Normal';
+  }
+}
+
 
 
 function formatAdminTimestamp(value: UnixLike): string {
@@ -691,10 +714,76 @@ export function AdminPage({
     () => shareWindows.find((item) => item.label === '24h') ?? null,
     [shareWindows]
   );
+  const shareSubmit = shareDiagnostics?.submit ?? null;
   const shareValidation = shareDiagnostics?.validation ?? null;
 
+  const shareSubmitQueueDepth =
+    (shareSubmit?.candidate_queue_depth ?? 0) + (shareSubmit?.regular_queue_depth ?? 0);
   const shareValidationQueueDepth =
     (shareValidation?.candidate_queue_depth ?? 0) + (shareValidation?.regular_queue_depth ?? 0);
+  const shareSubmitOldestAge = Math.max(
+    shareSubmit?.candidate_oldest_age_millis ?? 0,
+    shareSubmit?.regular_oldest_age_millis ?? 0
+  );
+  const shareValidationOldestAge = Math.max(
+    shareValidation?.candidate_oldest_age_millis ?? 0,
+    shareValidation?.regular_oldest_age_millis ?? 0
+  );
+  const shareSubmitWaitP95 = Math.max(
+    shareSubmit?.candidate_wait?.p95_millis ?? 0,
+    shareSubmit?.regular_wait?.p95_millis ?? 0
+  );
+  const shareValidationWaitP95 = Math.max(
+    shareValidation?.candidate_wait?.p95_millis ?? 0,
+    shareValidation?.regular_wait?.p95_millis ?? 0
+  );
+  const shareValidationDurationP95 = shareValidation?.validation_duration?.p95_millis ?? 0;
+  const shareBusy5m = shareWindowReasonPct(shareWindow5m, 'server busy');
+  const shareTimeout5m = shareWindowReasonPct(shareWindow5m, 'validation timeout');
+  const shareBusyCount5m = shareWindowReasonCount(shareWindow5m, 'server busy');
+  const shareTimeoutCount5m = shareWindowReasonCount(shareWindow5m, 'validation timeout');
+  const sharePressureSignal = useMemo(() => {
+    if (!shareDiagnostics) {
+      return {
+        label: 'No data',
+        detail: 'Waiting for runtime diagnostics from the pool.',
+        tone: 'var(--muted)',
+      };
+    }
+    if (shareValidation?.overload_mode === 'emergency') {
+      return {
+        label: 'Emergency shed',
+        detail: 'Regular shares are being admitted with minimal verification to protect candidate processing.',
+        tone: 'var(--warn)',
+      };
+    }
+    if (shareValidation?.overload_mode === 'shed') {
+      return {
+        label: 'Shedding',
+        detail: 'Sample rate is being reduced because the regular validation lane is backing up.',
+        tone: 'var(--warn)',
+      };
+    }
+    if (shareBusyCount5m > 0 || shareTimeoutCount5m > 0 || shareSubmitOldestAge >= 2000 || shareValidationOldestAge >= 2000) {
+      return {
+        label: 'Queue pressure',
+        detail: 'Backlog is visible even though overload shedding has not fully tripped yet.',
+        tone: 'var(--warn)',
+      };
+    }
+    return {
+      label: 'Normal',
+      detail: 'Submit and validation queues are draining without overload symptoms.',
+      tone: 'var(--good)',
+    };
+  }, [
+    shareBusyCount5m,
+    shareDiagnostics,
+    shareSubmitOldestAge,
+    shareTimeoutCount5m,
+    shareValidation?.overload_mode,
+    shareValidationOldestAge,
+  ]);
   const recoveryPrimary = useMemo(
     () => recoveryStatus?.instances.find((item) => item.instance === 'primary') ?? null,
     [recoveryStatus]
@@ -1411,6 +1500,34 @@ export function AdminPage({
                   <div className="stat-meta">{shareWindow24h?.rejected ?? 0} rejected</div>
                 </div>
                 <div className="stat-card">
+                  <div className="label">Overload Mode</div>
+                  <div className="value mono">{overloadModeLabel(shareValidation?.overload_mode)}</div>
+                  <div className="stat-meta">{sharePressureSignal.detail}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Effective Sample Rate</div>
+                  <div className="value mono">{ratioPct(shareValidation?.effective_sample_rate)}</div>
+                  <div className="stat-meta">{shareValidation?.sampled_shares ?? 0} sampled shares</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="stats-card-group">
+              <div className="stats-card-group-title">Runtime Pressure</div>
+              <div className="stats-card-group-grid stats-grid-dense">
+                <div className="stat-card">
+                  <div className="label">Submit Queue</div>
+                  <div className="value mono">{shareSubmitQueueDepth}</div>
+                  <div className="stat-meta">
+                    {shareSubmit?.candidate_queue_depth ?? 0} candidate · {shareSubmit?.regular_queue_depth ?? 0} regular
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Submit Wait P95</div>
+                  <div className="value mono">{formatMillis(shareSubmitWaitP95)}</div>
+                  <div className="stat-meta">oldest {formatMillis(shareSubmitOldestAge)}</div>
+                </div>
+                <div className="stat-card">
                   <div className="label">Validation Queue</div>
                   <div className="value mono">{shareValidationQueueDepth}</div>
                   <div className="stat-meta">
@@ -1418,9 +1535,35 @@ export function AdminPage({
                   </div>
                 </div>
                 <div className="stat-card">
+                  <div className="label">Validation Wait P95</div>
+                  <div className="value mono">{formatMillis(shareValidationWaitP95)}</div>
+                  <div className="stat-meta">oldest {formatMillis(shareValidationOldestAge)}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Validation Time P95</div>
+                  <div className="value mono">{formatMillis(shareValidationDurationP95)}</div>
+                  <div className="stat-meta">{shareValidation?.in_flight ?? 0} in flight</div>
+                </div>
+                <div className="stat-card">
                   <div className="label">Pending Provisional</div>
                   <div className="value mono">{shareValidation?.pending_provisional ?? '-'}</div>
-                  <div className="stat-meta">{shareValidation?.in_flight ?? 0} in flight</div>
+                  <div className="stat-meta">{shareValidation?.forced_verify_addresses ?? 0} forced addresses</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">5m Busy / Timeout</div>
+                  <div className="value mono">
+                    {shareBusyCount5m + shareTimeoutCount5m}
+                  </div>
+                  <div className="stat-meta">
+                    {shareBusyCount5m} busy · {shareTimeoutCount5m} timeout
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Candidate False Claims</div>
+                  <div className="value mono">{shareValidation?.candidate_false_claims ?? 0}</div>
+                  <div className="stat-meta" style={{ color: sharePressureSignal.tone }}>
+                    {sharePressureSignal.label}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1437,13 +1580,15 @@ export function AdminPage({
                     <th>Low Diff %</th>
                     <th>Stale %</th>
                     <th>Quarantined %</th>
+                    <th>Busy %</th>
+                    <th>Timeout %</th>
                     <th>Top Reject</th>
                   </tr>
                 </thead>
                 <tbody>
                   {!shareWindows.length ? (
                     <tr>
-                      <td colSpan={9} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                      <td colSpan={11} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                         No share diagnostics available yet
                       </td>
                     </tr>
@@ -1483,6 +1628,18 @@ export function AdminPage({
                             {pct(shareWindowReasonPct(window, 'address quarantined'))}
                             <div style={{ fontSize: 11, color: 'var(--muted)' }}>
                               {shareWindowReasonCount(window, 'address quarantined')} rejects
+                            </div>
+                          </td>
+                          <td className="mono">
+                            {pct(shareWindowReasonPct(window, 'server busy'))}
+                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                              {shareWindowReasonCount(window, 'server busy')} rejects
+                            </div>
+                          </td>
+                          <td className="mono">
+                            {pct(shareWindowReasonPct(window, 'validation timeout'))}
+                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                              {shareWindowReasonCount(window, 'validation timeout')} rejects
                             </div>
                           </td>
                           <td>

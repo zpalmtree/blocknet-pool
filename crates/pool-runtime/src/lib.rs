@@ -36,5 +36,8 @@ pub mod store;
 #[path = "../../../src/stratum.rs"]
 pub mod stratum;
 
+#[path = "../../../src/telemetry.rs"]
+pub mod telemetry;
+
 #[path = "../../../src/validation.rs"]
 pub mod validation;

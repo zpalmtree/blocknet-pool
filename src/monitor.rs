@@ -1635,7 +1635,9 @@ mod tests {
     use crate::config::Config;
     use crate::node::{NodeCurrentProcessBlock, NodeLastProcessBlock, NodeStatus};
     use crate::pool_activity::assess_pool_activity;
-    use crate::service_state::{PersistedRuntimeSnapshot, PersistedValidationSummary};
+    use crate::service_state::{
+        PersistedRuntimeSnapshot, PersistedSubmitSummary, PersistedValidationSummary,
+    };
     use pool_runtime::jobs::JobRuntimeSnapshot;
     use std::time::{Duration, SystemTime};
 
@@ -1649,6 +1651,7 @@ mod tests {
             last_share_at: Some(SystemTime::now()),
             jobs: JobRuntimeSnapshot::default(),
             payouts: Default::default(),
+            submit: PersistedSubmitSummary::default(),
             validation: PersistedValidationSummary::default(),
         }
     }

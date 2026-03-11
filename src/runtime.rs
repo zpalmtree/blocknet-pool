@@ -161,9 +161,7 @@ pub fn build_stratum_server(
         engine,
         Arc::clone(&shared.jobs),
         Arc::clone(&shared.stats),
-        shared.cfg.stratum_idle_timeout_duration(),
-        shared.cfg.stratum_submit_rate_limit_window_duration(),
-        shared.cfg.stratum_submit_rate_limit_max.max(1) as usize,
+        shared.cfg.clone(),
     ))
 }
 
@@ -193,7 +191,11 @@ pub fn stratum_ws_listen_addr(cfg: &Config) -> Result<Option<SocketAddr>> {
         .map(Some)
 }
 
-pub fn start_stratum_background_tasks(shared: &SharedRuntime, engine: Arc<PoolEngine>) {
+pub fn start_stratum_background_tasks(
+    shared: &SharedRuntime,
+    engine: Arc<PoolEngine>,
+    stratum: Arc<StratumServer>,
+) {
     start_found_block_recovery(engine);
     let payout = PayoutProcessor::new(
         shared.cfg.clone(),
@@ -208,6 +210,7 @@ pub fn start_stratum_background_tasks(shared: &SharedRuntime, engine: Arc<PoolEn
         Arc::clone(&shared.jobs),
         Arc::clone(&payout),
         Arc::clone(&shared.stats),
+        stratum,
         Arc::clone(&shared.validation),
         Arc::clone(&shared.store),
     );
@@ -325,6 +328,7 @@ fn start_live_runtime_snapshot_persist(
     jobs: Arc<JobManager>,
     payouts: Arc<PayoutProcessor>,
     stats: Arc<PoolStats>,
+    stratum: Arc<StratumServer>,
     validation: Arc<ValidationEngine>,
     store: Arc<PoolStore>,
 ) {
@@ -334,6 +338,7 @@ fn start_live_runtime_snapshot_persist(
             ticker.tick().await;
             let payload = PersistedRuntimeSnapshot::from_live(
                 stats.snapshot(),
+                stratum.submit_snapshot(),
                 validation.snapshot(),
                 jobs.runtime_snapshot(),
                 payouts.runtime_snapshot(),

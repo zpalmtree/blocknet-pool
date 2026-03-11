@@ -318,6 +318,11 @@ export interface HealthResponse {
     in_flight?: number;
     candidate_queue_depth?: number;
     regular_queue_depth?: number;
+    candidate_oldest_age_millis?: number | null;
+    regular_oldest_age_millis?: number | null;
+    candidate_wait?: PercentileSummary;
+    regular_wait?: PercentileSummary;
+    validation_duration?: PercentileSummary;
     tracked_addresses?: number;
     forced_verify_addresses?: number;
     total_shares?: number;
@@ -325,6 +330,9 @@ export interface HealthResponse {
     invalid_samples?: number;
     pending_provisional?: number;
     fraud_detections?: number;
+    candidate_false_claims?: number;
+    overload_mode?: OverloadMode;
+    effective_sample_rate?: number;
   };
   pool_activity?: {
     state?: string;
@@ -336,6 +344,23 @@ export interface HealthResponse {
     last_share_age_seconds?: number | null;
   };
   active_verification_holds?: ActiveVerificationHold[];
+}
+
+export interface PercentileSummary {
+  samples?: number;
+  p50_millis?: number | null;
+  p95_millis?: number | null;
+}
+
+export type OverloadMode = 'normal' | 'shed' | 'emergency';
+
+export interface AdminSubmitSummary {
+  candidate_queue_depth?: number;
+  regular_queue_depth?: number;
+  candidate_oldest_age_millis?: number | null;
+  regular_oldest_age_millis?: number | null;
+  candidate_wait?: PercentileSummary;
+  regular_wait?: PercentileSummary;
 }
 
 export interface AdminShareDiagnosticsWindow {
@@ -351,6 +376,7 @@ export interface AdminShareDiagnosticsWindow {
 export interface AdminShareDiagnosticsResponse {
   generated_at: UnixLike;
   windows: AdminShareDiagnosticsWindow[];
+  submit?: AdminSubmitSummary;
   job?: HealthResponse["job"];
   validation?: HealthResponse["validation"];
   pool_activity?: HealthResponse["pool_activity"];

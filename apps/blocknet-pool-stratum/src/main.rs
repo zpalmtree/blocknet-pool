@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
     let shared = bootstrap_shared_runtime(&config_path).await?;
     let engine = build_engine(&shared).await?;
     let stratum = build_stratum_server(&shared, Arc::clone(&engine))?;
-    start_stratum_background_tasks(&shared, engine);
+    start_stratum_background_tasks(&shared, engine, Arc::clone(&stratum));
 
     info!(pool = %shared.cfg.pool_name, "stratum runtime started");
 

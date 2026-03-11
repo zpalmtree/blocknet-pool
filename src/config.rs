@@ -33,6 +33,26 @@ pub struct Config {
     pub validation_mode: String,
     pub max_verifiers: i32,
     pub max_validation_queue: i32,
+    pub candidate_submit_queue: i32,
+    pub regular_submit_queue: i32,
+    pub candidate_submit_workers: i32,
+    pub regular_submit_workers: i32,
+    pub candidate_validation_queue: i32,
+    pub regular_validation_queue: i32,
+    pub candidate_verifiers: i32,
+    pub regular_verifiers: i32,
+    pub validation_wait_timeout: String,
+    pub overload_shed_queue_pct: f64,
+    pub overload_emergency_queue_pct: f64,
+    pub overload_clear_queue_pct: f64,
+    pub overload_shed_oldest_age: String,
+    pub overload_emergency_oldest_age: String,
+    pub overload_clear_oldest_age: String,
+    pub overload_clear_hold: String,
+    pub overload_sample_rate_floor: f64,
+    pub candidate_claim_window: String,
+    pub candidate_claim_max_per_window: i32,
+    pub candidate_claim_max_inflight: i32,
     pub sample_rate: f64,
     pub warmup_shares: i32,
     pub min_sample_every: i32,
@@ -119,6 +139,26 @@ impl Default for Config {
             validation_mode: "probabilistic".to_string(),
             max_verifiers: 2,
             max_validation_queue: 2048,
+            candidate_submit_queue: 64,
+            regular_submit_queue: 512,
+            candidate_submit_workers: 1,
+            regular_submit_workers: 4,
+            candidate_validation_queue: 64,
+            regular_validation_queue: 512,
+            candidate_verifiers: 1,
+            regular_verifiers: 1,
+            validation_wait_timeout: "10s".to_string(),
+            overload_shed_queue_pct: 0.50,
+            overload_emergency_queue_pct: 0.80,
+            overload_clear_queue_pct: 0.30,
+            overload_shed_oldest_age: "2s".to_string(),
+            overload_emergency_oldest_age: "5s".to_string(),
+            overload_clear_oldest_age: "1s".to_string(),
+            overload_clear_hold: "60s".to_string(),
+            overload_sample_rate_floor: 0.01,
+            candidate_claim_window: "60s".to_string(),
+            candidate_claim_max_per_window: 4,
+            candidate_claim_max_inflight: 1,
             sample_rate: 0.10,
             warmup_shares: 20,
             min_sample_every: 10,
@@ -207,10 +247,45 @@ impl Config {
         if self.max_validation_queue < 1 {
             self.max_validation_queue = 2048;
         }
+        if self.candidate_submit_queue < 1 {
+            self.candidate_submit_queue = 64;
+        }
+        if self.regular_submit_queue < 1 {
+            self.regular_submit_queue = 512;
+        }
+        if self.candidate_submit_workers < 1 {
+            self.candidate_submit_workers = 1;
+        }
+        if self.regular_submit_workers < 1 {
+            self.regular_submit_workers = 1;
+        }
+        if self.candidate_validation_queue < 1 {
+            self.candidate_validation_queue = 64;
+        }
+        if self.regular_validation_queue < 1 {
+            self.regular_validation_queue = 512;
+        }
+        if self.candidate_verifiers < 0 {
+            self.candidate_verifiers = 0;
+        }
+        if self.regular_verifiers < 0 {
+            self.regular_verifiers = 0;
+        }
         if self.stratum_ws_host.trim().is_empty() {
             self.stratum_ws_host = "127.0.0.1".to_string();
         }
         self.sample_rate = self.sample_rate.clamp(0.0, 1.0);
+        if !(0.0 < self.overload_shed_queue_pct && self.overload_shed_queue_pct <= 1.0) {
+            self.overload_shed_queue_pct = 0.50;
+        }
+        if !(0.0 < self.overload_emergency_queue_pct && self.overload_emergency_queue_pct <= 1.0)
+        {
+            self.overload_emergency_queue_pct = 0.80;
+        }
+        if !(0.0 < self.overload_clear_queue_pct && self.overload_clear_queue_pct <= 1.0) {
+            self.overload_clear_queue_pct = 0.30;
+        }
+        self.overload_sample_rate_floor = self.overload_sample_rate_floor.clamp(0.0, 1.0);
         if self.warmup_shares < 0 {
             self.warmup_shares = 0;
         }
@@ -236,6 +311,12 @@ impl Config {
         }
         if self.stratum_submit_rate_limit_max < 1 {
             self.stratum_submit_rate_limit_max = 1;
+        }
+        if self.candidate_claim_max_per_window < 1 {
+            self.candidate_claim_max_per_window = 1;
+        }
+        if self.candidate_claim_max_inflight < 1 {
+            self.candidate_claim_max_inflight = 1;
         }
         if self.suspected_fraud_quarantine_strikes < 0 {
             self.suspected_fraud_quarantine_strikes = 0;
@@ -316,6 +397,11 @@ impl Config {
         parse_duration_or(&self.job_timeout, Duration::from_secs(5 * 60))
     }
 
+    pub fn validation_wait_timeout_duration(&self) -> Duration {
+        parse_duration_or(&self.validation_wait_timeout, Duration::from_secs(10))
+            .clamp(Duration::from_secs(1), Duration::from_secs(60))
+    }
+
     pub fn stale_submit_grace_duration(&self) -> Duration {
         parse_duration_or(&self.stale_submit_grace, Duration::from_secs(8))
     }
@@ -331,6 +417,70 @@ impl Config {
             Duration::from_secs(10),
         )
         .clamp(Duration::from_secs(1), Duration::from_secs(5 * 60))
+    }
+
+    pub fn candidate_submit_queue_size(&self) -> usize {
+        self.candidate_submit_queue.max(1) as usize
+    }
+
+    pub fn regular_submit_queue_size(&self) -> usize {
+        self.regular_submit_queue.max(1) as usize
+    }
+
+    pub fn candidate_submit_workers(&self) -> usize {
+        self.candidate_submit_workers.max(1) as usize
+    }
+
+    pub fn regular_submit_workers(&self) -> usize {
+        self.regular_submit_workers.max(1) as usize
+    }
+
+    pub fn candidate_validation_queue_size(&self) -> usize {
+        self.candidate_validation_queue.max(1) as usize
+    }
+
+    pub fn regular_validation_queue_size(&self) -> usize {
+        self.regular_validation_queue.max(1) as usize
+    }
+
+    pub fn candidate_verifier_count(&self) -> usize {
+        self.candidate_verifiers.max(1) as usize
+    }
+
+    pub fn regular_verifier_count(&self) -> usize {
+        if self.regular_verifiers > 0 {
+            return self.regular_verifiers as usize;
+        }
+        let total = if self.max_verifiers <= 0 {
+            std::thread::available_parallelism()
+                .map(|n| n.get().max(1) / 2)
+                .unwrap_or(1)
+                .max(1)
+        } else {
+            self.max_verifiers as usize
+        };
+        total.saturating_sub(self.candidate_verifier_count()).max(1)
+    }
+
+    pub fn overload_shed_oldest_age_duration(&self) -> Duration {
+        parse_duration_or(&self.overload_shed_oldest_age, Duration::from_secs(2))
+    }
+
+    pub fn overload_emergency_oldest_age_duration(&self) -> Duration {
+        parse_duration_or(&self.overload_emergency_oldest_age, Duration::from_secs(5))
+    }
+
+    pub fn overload_clear_oldest_age_duration(&self) -> Duration {
+        parse_duration_or(&self.overload_clear_oldest_age, Duration::from_secs(1))
+    }
+
+    pub fn overload_clear_hold_duration(&self) -> Duration {
+        parse_duration_or(&self.overload_clear_hold, Duration::from_secs(60))
+    }
+
+    pub fn candidate_claim_window_duration(&self) -> Duration {
+        parse_duration_or(&self.candidate_claim_window, Duration::from_secs(60))
+            .clamp(Duration::from_secs(1), Duration::from_secs(15 * 60))
     }
 
     pub fn forced_verify_duration(&self) -> Duration {
@@ -519,6 +669,21 @@ mod tests {
             validation_mode: "invalid".to_string(),
             max_verifiers: -1,
             max_validation_queue: 0,
+            candidate_submit_queue: 0,
+            regular_submit_queue: 0,
+            candidate_submit_workers: 0,
+            regular_submit_workers: 0,
+            candidate_validation_queue: 0,
+            regular_validation_queue: 0,
+            candidate_verifiers: -1,
+            regular_verifiers: -1,
+            validation_wait_timeout: "".to_string(),
+            overload_shed_queue_pct: 2.0,
+            overload_emergency_queue_pct: 2.0,
+            overload_clear_queue_pct: 2.0,
+            overload_sample_rate_floor: 2.0,
+            candidate_claim_max_per_window: 0,
+            candidate_claim_max_inflight: 0,
             sample_rate: 2.0,
             warmup_shares: -5,
             min_sample_every: -1,
@@ -552,6 +717,20 @@ mod tests {
         assert_eq!(cfg.validation_mode, "probabilistic");
         assert_eq!(cfg.max_verifiers, 0);
         assert_eq!(cfg.max_validation_queue, 2048);
+        assert_eq!(cfg.candidate_submit_queue, 64);
+        assert_eq!(cfg.regular_submit_queue, 512);
+        assert_eq!(cfg.candidate_submit_workers, 1);
+        assert_eq!(cfg.regular_submit_workers, 1);
+        assert_eq!(cfg.candidate_validation_queue, 64);
+        assert_eq!(cfg.regular_validation_queue, 512);
+        assert_eq!(cfg.candidate_verifiers, 0);
+        assert_eq!(cfg.regular_verifiers, 0);
+        assert_eq!(cfg.overload_shed_queue_pct, 0.50);
+        assert_eq!(cfg.overload_emergency_queue_pct, 0.80);
+        assert_eq!(cfg.overload_clear_queue_pct, 0.30);
+        assert_eq!(cfg.overload_sample_rate_floor, 1.0);
+        assert_eq!(cfg.candidate_claim_max_per_window, 1);
+        assert_eq!(cfg.candidate_claim_max_inflight, 1);
         assert_eq!(cfg.sample_rate, 1.0);
         assert_eq!(cfg.warmup_shares, 0);
         assert_eq!(cfg.min_sample_every, 0);

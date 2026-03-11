@@ -37,6 +37,26 @@ pub struct Config {
     pub validation_mode: String,
     pub max_verifiers: i32,
     pub max_validation_queue: i32,
+    pub candidate_submit_queue: i32,
+    pub regular_submit_queue: i32,
+    pub candidate_submit_workers: i32,
+    pub regular_submit_workers: i32,
+    pub candidate_validation_queue: i32,
+    pub regular_validation_queue: i32,
+    pub candidate_verifiers: i32,
+    pub regular_verifiers: i32,
+    pub validation_wait_timeout: String,
+    pub overload_shed_queue_pct: f64,
+    pub overload_emergency_queue_pct: f64,
+    pub overload_clear_queue_pct: f64,
+    pub overload_shed_oldest_age: String,
+    pub overload_emergency_oldest_age: String,
+    pub overload_clear_oldest_age: String,
+    pub overload_clear_hold: String,
+    pub overload_sample_rate_floor: f64,
+    pub candidate_claim_window: String,
+    pub candidate_claim_max_per_window: i32,
+    pub candidate_claim_max_inflight: i32,
     pub sample_rate: f64,
     pub warmup_shares: i32,
     pub min_sample_every: i32,
@@ -133,6 +153,26 @@ impl Default for Config {
             validation_mode: runtime.validation_mode,
             max_verifiers: runtime.max_verifiers,
             max_validation_queue: runtime.max_validation_queue,
+            candidate_submit_queue: runtime.candidate_submit_queue,
+            regular_submit_queue: runtime.regular_submit_queue,
+            candidate_submit_workers: runtime.candidate_submit_workers,
+            regular_submit_workers: runtime.regular_submit_workers,
+            candidate_validation_queue: runtime.candidate_validation_queue,
+            regular_validation_queue: runtime.regular_validation_queue,
+            candidate_verifiers: runtime.candidate_verifiers,
+            regular_verifiers: runtime.regular_verifiers,
+            validation_wait_timeout: runtime.validation_wait_timeout,
+            overload_shed_queue_pct: runtime.overload_shed_queue_pct,
+            overload_emergency_queue_pct: runtime.overload_emergency_queue_pct,
+            overload_clear_queue_pct: runtime.overload_clear_queue_pct,
+            overload_shed_oldest_age: runtime.overload_shed_oldest_age,
+            overload_emergency_oldest_age: runtime.overload_emergency_oldest_age,
+            overload_clear_oldest_age: runtime.overload_clear_oldest_age,
+            overload_clear_hold: runtime.overload_clear_hold,
+            overload_sample_rate_floor: runtime.overload_sample_rate_floor,
+            candidate_claim_window: runtime.candidate_claim_window,
+            candidate_claim_max_per_window: runtime.candidate_claim_max_per_window,
+            candidate_claim_max_inflight: runtime.candidate_claim_max_inflight,
             sample_rate: runtime.sample_rate,
             warmup_shares: runtime.warmup_shares,
             min_sample_every: runtime.min_sample_every,
@@ -248,6 +288,26 @@ impl Config {
             validation_mode: self.validation_mode.clone(),
             max_verifiers: self.max_verifiers,
             max_validation_queue: self.max_validation_queue,
+            candidate_submit_queue: self.candidate_submit_queue,
+            regular_submit_queue: self.regular_submit_queue,
+            candidate_submit_workers: self.candidate_submit_workers,
+            regular_submit_workers: self.regular_submit_workers,
+            candidate_validation_queue: self.candidate_validation_queue,
+            regular_validation_queue: self.regular_validation_queue,
+            candidate_verifiers: self.candidate_verifiers,
+            regular_verifiers: self.regular_verifiers,
+            validation_wait_timeout: self.validation_wait_timeout.clone(),
+            overload_shed_queue_pct: self.overload_shed_queue_pct,
+            overload_emergency_queue_pct: self.overload_emergency_queue_pct,
+            overload_clear_queue_pct: self.overload_clear_queue_pct,
+            overload_shed_oldest_age: self.overload_shed_oldest_age.clone(),
+            overload_emergency_oldest_age: self.overload_emergency_oldest_age.clone(),
+            overload_clear_oldest_age: self.overload_clear_oldest_age.clone(),
+            overload_clear_hold: self.overload_clear_hold.clone(),
+            overload_sample_rate_floor: self.overload_sample_rate_floor,
+            candidate_claim_window: self.candidate_claim_window.clone(),
+            candidate_claim_max_per_window: self.candidate_claim_max_per_window,
+            candidate_claim_max_inflight: self.candidate_claim_max_inflight,
             sample_rate: self.sample_rate,
             warmup_shares: self.warmup_shares,
             min_sample_every: self.min_sample_every,
@@ -339,6 +399,26 @@ impl Config {
         self.validation_mode = runtime.validation_mode;
         self.max_verifiers = runtime.max_verifiers;
         self.max_validation_queue = runtime.max_validation_queue;
+        self.candidate_submit_queue = runtime.candidate_submit_queue;
+        self.regular_submit_queue = runtime.regular_submit_queue;
+        self.candidate_submit_workers = runtime.candidate_submit_workers;
+        self.regular_submit_workers = runtime.regular_submit_workers;
+        self.candidate_validation_queue = runtime.candidate_validation_queue;
+        self.regular_validation_queue = runtime.regular_validation_queue;
+        self.candidate_verifiers = runtime.candidate_verifiers;
+        self.regular_verifiers = runtime.regular_verifiers;
+        self.validation_wait_timeout = runtime.validation_wait_timeout;
+        self.overload_shed_queue_pct = runtime.overload_shed_queue_pct;
+        self.overload_emergency_queue_pct = runtime.overload_emergency_queue_pct;
+        self.overload_clear_queue_pct = runtime.overload_clear_queue_pct;
+        self.overload_shed_oldest_age = runtime.overload_shed_oldest_age;
+        self.overload_emergency_oldest_age = runtime.overload_emergency_oldest_age;
+        self.overload_clear_oldest_age = runtime.overload_clear_oldest_age;
+        self.overload_clear_hold = runtime.overload_clear_hold;
+        self.overload_sample_rate_floor = runtime.overload_sample_rate_floor;
+        self.candidate_claim_window = runtime.candidate_claim_window;
+        self.candidate_claim_max_per_window = runtime.candidate_claim_max_per_window;
+        self.candidate_claim_max_inflight = runtime.candidate_claim_max_inflight;
         self.sample_rate = runtime.sample_rate;
         self.warmup_shares = runtime.warmup_shares;
         self.min_sample_every = runtime.min_sample_every;

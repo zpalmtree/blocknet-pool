@@ -2266,6 +2266,11 @@ struct ValidationSummary {
     in_flight: i64,
     candidate_queue_depth: usize,
     regular_queue_depth: usize,
+    candidate_oldest_age_millis: Option<u64>,
+    regular_oldest_age_millis: Option<u64>,
+    candidate_wait: crate::telemetry::PercentileSummary,
+    regular_wait: crate::telemetry::PercentileSummary,
+    validation_duration: crate::telemetry::PercentileSummary,
     tracked_addresses: usize,
     forced_verify_addresses: usize,
     total_shares: u64,
@@ -2273,6 +2278,19 @@ struct ValidationSummary {
     invalid_samples: u64,
     pending_provisional: u64,
     fraud_detections: u64,
+    candidate_false_claims: u64,
+    overload_mode: crate::validation::OverloadMode,
+    effective_sample_rate: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+struct SubmitSummary {
+    candidate_queue_depth: usize,
+    regular_queue_depth: usize,
+    candidate_oldest_age_millis: Option<u64>,
+    regular_oldest_age_millis: Option<u64>,
+    candidate_wait: crate::telemetry::PercentileSummary,
+    regular_wait: crate::telemetry::PercentileSummary,
 }
 
 fn validation_summary_from_snapshot(snapshot: ValidationSnapshot) -> ValidationSummary {
@@ -2280,6 +2298,11 @@ fn validation_summary_from_snapshot(snapshot: ValidationSnapshot) -> ValidationS
         in_flight: snapshot.in_flight,
         candidate_queue_depth: snapshot.candidate_queue_depth,
         regular_queue_depth: snapshot.regular_queue_depth,
+        candidate_oldest_age_millis: snapshot.candidate_oldest_age_millis,
+        regular_oldest_age_millis: snapshot.regular_oldest_age_millis,
+        candidate_wait: snapshot.candidate_wait,
+        regular_wait: snapshot.regular_wait,
+        validation_duration: snapshot.validation_duration,
         tracked_addresses: snapshot.tracked_addresses,
         forced_verify_addresses: snapshot.forced_verify_addresses,
         total_shares: snapshot.total_shares,
@@ -2287,6 +2310,25 @@ fn validation_summary_from_snapshot(snapshot: ValidationSnapshot) -> ValidationS
         invalid_samples: snapshot.invalid_samples,
         pending_provisional: snapshot.pending_provisional,
         fraud_detections: snapshot.fraud_detections,
+        candidate_false_claims: snapshot.candidate_false_claims,
+        overload_mode: snapshot.overload_mode,
+        effective_sample_rate: snapshot.effective_sample_rate,
+    }
+}
+
+fn submit_summary_from_persisted(
+    snapshot: Option<&PersistedRuntimeSnapshot>,
+) -> SubmitSummary {
+    let Some(snapshot) = snapshot else {
+        return SubmitSummary::default();
+    };
+    SubmitSummary {
+        candidate_queue_depth: snapshot.submit.candidate_queue_depth,
+        regular_queue_depth: snapshot.submit.regular_queue_depth,
+        candidate_oldest_age_millis: snapshot.submit.candidate_oldest_age_millis,
+        regular_oldest_age_millis: snapshot.submit.regular_oldest_age_millis,
+        candidate_wait: snapshot.submit.candidate_wait,
+        regular_wait: snapshot.submit.regular_wait,
     }
 }
 
@@ -2294,6 +2336,8 @@ fn validation_summary_is_empty(summary: &ValidationSummary) -> bool {
     summary.in_flight == 0
         && summary.candidate_queue_depth == 0
         && summary.regular_queue_depth == 0
+        && summary.candidate_oldest_age_millis.is_none()
+        && summary.regular_oldest_age_millis.is_none()
         && summary.tracked_addresses == 0
         && summary.forced_verify_addresses == 0
         && summary.total_shares == 0
@@ -2301,6 +2345,7 @@ fn validation_summary_is_empty(summary: &ValidationSummary) -> bool {
         && summary.invalid_samples == 0
         && summary.pending_provisional == 0
         && summary.fraud_detections == 0
+        && summary.candidate_false_claims == 0
 }
 
 fn pool_snapshot_has_live_data(snapshot: &PoolSnapshot) -> bool {
@@ -2402,6 +2447,7 @@ struct PoolActivityHealth {
 struct AdminShareDiagnosticsResponse {
     generated_at: SystemTime,
     windows: Vec<AdminShareWindowResponse>,
+    submit: SubmitSummary,
     validation: ValidationSummary,
     job: JobHealth,
     pool_activity: PoolActivityHealth,
@@ -6401,6 +6447,11 @@ impl ApiState {
                 in_flight: persisted.validation.in_flight,
                 candidate_queue_depth: persisted.validation.candidate_queue_depth,
                 regular_queue_depth: persisted.validation.regular_queue_depth,
+                candidate_oldest_age_millis: persisted.validation.candidate_oldest_age_millis,
+                regular_oldest_age_millis: persisted.validation.regular_oldest_age_millis,
+                candidate_wait: persisted.validation.candidate_wait,
+                regular_wait: persisted.validation.regular_wait,
+                validation_duration: persisted.validation.validation_duration,
                 tracked_addresses: persisted.validation.tracked_addresses,
                 forced_verify_addresses: persisted.validation.forced_verify_addresses,
                 total_shares: persisted.validation.total_shares,
@@ -6408,6 +6459,9 @@ impl ApiState {
                 invalid_samples: persisted.validation.invalid_samples,
                 pending_provisional: persisted.validation.pending_provisional,
                 fraud_detections: persisted.validation.fraud_detections,
+                candidate_false_claims: persisted.validation.candidate_false_claims,
+                overload_mode: persisted.validation.overload_mode,
+                effective_sample_rate: persisted.validation.effective_sample_rate,
             };
         }
         live
@@ -6497,6 +6551,7 @@ impl ApiState {
         let now = SystemTime::now();
         let validation = self.effective_validation_summary().await;
         let persisted_runtime = self.persisted_runtime_snapshot().await;
+        let submit = submit_summary_from_persisted(persisted_runtime.as_ref());
         let job = effective_job_health(self, persisted_runtime.as_ref());
         let pool_activity = pool_activity_health(now, persisted_runtime.as_ref());
         let store = Arc::clone(&self.store);
@@ -6507,6 +6562,7 @@ impl ApiState {
         Ok(AdminShareDiagnosticsResponse {
             generated_at: now,
             windows,
+            submit,
             validation,
             job,
             pool_activity,
@@ -8245,6 +8301,7 @@ mod tests {
                 active_assignments: 12,
             },
             payouts: PersistedPayoutRuntime::default(),
+            submit: Default::default(),
             validation: PersistedValidationSummary::default(),
         };
         store
@@ -8503,6 +8560,7 @@ mod tests {
                 active_assignments: 14,
             },
             payouts: PersistedPayoutRuntime::default(),
+            submit: Default::default(),
             validation: PersistedValidationSummary {
                 in_flight: 2,
                 candidate_queue_depth: 5,
@@ -8514,6 +8572,7 @@ mod tests {
                 invalid_samples: 1,
                 pending_provisional: 8,
                 fraud_detections: 0,
+                ..PersistedValidationSummary::default()
             },
         };
         store

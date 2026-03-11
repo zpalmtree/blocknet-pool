@@ -8,9 +8,11 @@ use anyhow::Result;
 use parking_lot::Mutex;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::pow::{check_target, PowHasher};
+use crate::telemetry::{default_latency_window, LatencyWindow, PercentileSummary, QueueTracker};
 
 pub const SHARE_STATUS_VERIFIED: &str = "verified";
 pub const SHARE_STATUS_PROVISIONAL: &str = "provisional";
@@ -28,6 +30,7 @@ pub struct ValidationTask {
     pub share_target: [u8; 32],
     pub network_target: [u8; 32],
     pub claimed_hash: Option<[u8; 32]>,
+    pub candidate_claim: bool,
     pub force_full_verify: bool,
 }
 
@@ -48,6 +51,15 @@ pub enum ValidationFollowupAction {
     #[default]
     None,
     Quarantine,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OverloadMode {
+    #[default]
+    Normal,
+    Shed,
+    Emergency,
 }
 
 #[derive(Debug, Clone)]
@@ -215,6 +227,11 @@ pub struct ValidationSnapshot {
     pub in_flight: i64,
     pub candidate_queue_depth: usize,
     pub regular_queue_depth: usize,
+    pub candidate_oldest_age_millis: Option<u64>,
+    pub regular_oldest_age_millis: Option<u64>,
+    pub candidate_wait: PercentileSummary,
+    pub regular_wait: PercentileSummary,
+    pub validation_duration: PercentileSummary,
     pub tracked_addresses: usize,
     pub forced_verify_addresses: usize,
     pub total_shares: u64,
@@ -222,11 +239,29 @@ pub struct ValidationSnapshot {
     pub invalid_samples: u64,
     pub pending_provisional: u64,
     pub fraud_detections: u64,
+    pub candidate_false_claims: u64,
+    pub overload_mode: OverloadMode,
+    pub effective_sample_rate: f64,
 }
 
 struct QueuedTask {
     task: ValidationTask,
     result_tx: flume::Sender<ValidationResult>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct OverloadState {
+    mode: OverloadMode,
+    below_clear_started_at: Option<Instant>,
+}
+
+impl Default for OverloadState {
+    fn default() -> Self {
+        Self {
+            mode: OverloadMode::Normal,
+            below_clear_started_at: None,
+        }
+    }
 }
 
 struct ValidationInner {
@@ -236,10 +271,15 @@ struct ValidationInner {
     rng: Mutex<StdRng>,
     in_flight: AtomicI64,
     fraud: AtomicU64,
+    candidate_false_claims: AtomicU64,
     state_store: Arc<dyn ValidationStateStore>,
     last_cleanup_at: Mutex<Option<Instant>>,
     last_clear_sync_at: Mutex<Option<Instant>>,
     last_clear_event_id: Mutex<i64>,
+    candidate_queue: QueueTracker,
+    regular_queue: QueueTracker,
+    validation_duration: Mutex<LatencyWindow>,
+    overload: Mutex<OverloadState>,
 }
 
 pub struct ValidationEngine {
@@ -247,7 +287,8 @@ pub struct ValidationEngine {
     candidate_tx: flume::Sender<QueuedTask>,
     regular_tx: flume::Sender<QueuedTask>,
     shutdown: Arc<AtomicBool>,
-    workers: Vec<thread::JoinHandle<()>>,
+    candidate_workers: Vec<thread::JoinHandle<()>>,
+    regular_workers: Vec<thread::JoinHandle<()>>,
 }
 
 impl ValidationEngine {
@@ -260,18 +301,13 @@ impl ValidationEngine {
         hasher: Arc<dyn PowHasher>,
         state_store: Arc<dyn ValidationStateStore>,
     ) -> Self {
-        let worker_count = if config.max_verifiers <= 0 {
-            std::thread::available_parallelism()
-                .map(|n| n.get().max(1) / 2)
-                .unwrap_or(1)
-                .max(1)
-        } else {
-            config.max_verifiers as usize
-        };
-        let queue_size = config.max_validation_queue.max(1) as usize;
+        let candidate_workers = config.candidate_verifier_count();
+        let regular_workers = config.regular_verifier_count();
+        let candidate_queue_size = config.candidate_validation_queue_size();
+        let regular_queue_size = config.regular_validation_queue_size();
 
-        let (candidate_tx, candidate_rx) = flume::bounded::<QueuedTask>(queue_size);
-        let (regular_tx, regular_rx) = flume::bounded::<QueuedTask>(queue_size);
+        let (candidate_tx, candidate_rx) = flume::bounded::<QueuedTask>(candidate_queue_size);
+        let (regular_tx, regular_rx) = flume::bounded::<QueuedTask>(regular_queue_size);
         let shutdown = Arc::new(AtomicBool::new(false));
         let initial_clear_event_id = match state_store.latest_validation_clear_event_id() {
             Ok(value) => value.max(0),
@@ -289,33 +325,44 @@ impl ValidationEngine {
             rng: Mutex::new(StdRng::from_entropy()),
             in_flight: AtomicI64::new(0),
             fraud: AtomicU64::new(0),
+            candidate_false_claims: AtomicU64::new(0),
             state_store,
             last_cleanup_at: Mutex::new(None),
             last_clear_sync_at: Mutex::new(None),
             last_clear_event_id: Mutex::new(initial_clear_event_id),
+            candidate_queue: QueueTracker::new(512),
+            regular_queue: QueueTracker::new(512),
+            validation_duration: Mutex::new(default_latency_window()),
+            overload: Mutex::new(OverloadState::default()),
         });
 
-        let mut workers = Vec::with_capacity(worker_count);
-        for _ in 0..worker_count {
+        let mut candidate_handles = Vec::with_capacity(candidate_workers);
+        for _ in 0..candidate_workers {
             let inner_cloned = Arc::clone(&inner);
             let candidate_rx = candidate_rx.clone();
+            let shutdown = Arc::clone(&shutdown);
+            candidate_handles.push(thread::spawn(move || {
+                while !shutdown.load(Ordering::Relaxed) {
+                    match candidate_rx.recv_timeout(Duration::from_millis(25)) {
+                        Ok(queued) => inner_cloned.process(queued, true),
+                        Err(flume::RecvTimeoutError::Timeout) => continue,
+                        Err(flume::RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+            }));
+        }
+
+        let mut regular_handles = Vec::with_capacity(regular_workers);
+        for _ in 0..regular_workers {
+            let inner_cloned = Arc::clone(&inner);
             let regular_rx = regular_rx.clone();
             let shutdown = Arc::clone(&shutdown);
-            workers.push(thread::spawn(move || {
+            regular_handles.push(thread::spawn(move || {
                 while !shutdown.load(Ordering::Relaxed) {
-                    if let Ok(queued) = candidate_rx.try_recv() {
-                        inner_cloned.process(queued);
-                        continue;
-                    }
-
                     match regular_rx.recv_timeout(Duration::from_millis(25)) {
-                        Ok(queued) => inner_cloned.process(queued),
+                        Ok(queued) => inner_cloned.process(queued, false),
                         Err(flume::RecvTimeoutError::Timeout) => continue,
-                        Err(flume::RecvTimeoutError::Disconnected) => {
-                            if candidate_rx.is_disconnected() {
-                                break;
-                            }
-                        }
+                        Err(flume::RecvTimeoutError::Disconnected) => break,
                     }
                 }
             }));
@@ -326,7 +373,8 @@ impl ValidationEngine {
             candidate_tx,
             regular_tx,
             shutdown,
-            workers,
+            candidate_workers: candidate_handles,
+            regular_workers: regular_handles,
         }
     }
 
@@ -340,6 +388,12 @@ impl ValidationEngine {
             task,
             result_tx: tx,
         };
+        let queued_at = Instant::now();
+        let tracker_id = if candidate {
+            self.inner.candidate_queue.push(queued_at)
+        } else {
+            self.inner.regular_queue.push(queued_at)
+        };
 
         let result = if candidate {
             self.candidate_tx.try_send(queued)
@@ -348,23 +402,35 @@ impl ValidationEngine {
         };
 
         match result {
-            Ok(()) => Some(rx),
-            Err(flume::TrySendError::Full(_)) | Err(flume::TrySendError::Disconnected(_)) => None,
+            Ok(()) => {
+                self.inner.evaluate_overload(Instant::now());
+                Some(rx)
+            }
+            Err(flume::TrySendError::Full(_)) | Err(flume::TrySendError::Disconnected(_)) => {
+                if candidate {
+                    self.inner.candidate_queue.remove(tracker_id);
+                } else {
+                    self.inner.regular_queue.remove(tracker_id);
+                }
+                None
+            }
         }
     }
 
     pub fn process_inline(&self, task: ValidationTask) -> ValidationResult {
         let (tx, rx) = flume::bounded(1);
-        self.inner.process(QueuedTask {
-            task,
-            result_tx: tx,
-        });
+        self.inner.process(
+            QueuedTask {
+                task,
+                result_tx: tx,
+            },
+            true,
+        );
         rx.recv().expect("inline validation should return result")
     }
 
     pub fn snapshot(&self) -> ValidationSnapshot {
-        self.inner
-            .snapshot(self.candidate_tx.len(), self.regular_tx.len())
+        self.inner.snapshot()
     }
 
     pub fn schedule_forced_review_after(&self, address: &str, start_at: SystemTime) {
@@ -379,23 +445,37 @@ impl ValidationEngine {
 impl Drop for ValidationEngine {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);
-        while let Some(handle) = self.workers.pop() {
+        while let Some(handle) = self.candidate_workers.pop() {
+            let _ = handle.join();
+        }
+        while let Some(handle) = self.regular_workers.pop() {
             let _ = handle.join();
         }
     }
 }
 
 impl ValidationInner {
-    fn process(&self, queued: QueuedTask) {
+    fn process(&self, queued: QueuedTask, candidate_lane: bool) {
+        let started_at = Instant::now();
+        if candidate_lane {
+            self.candidate_queue.pop_and_record_wait(started_at);
+        } else {
+            self.regular_queue.pop_and_record_wait(started_at);
+        }
         self.in_flight.fetch_add(1, Ordering::Relaxed);
         let result = self.process_task(&queued.task);
         self.in_flight.fetch_sub(1, Ordering::Relaxed);
+        self.validation_duration
+            .lock()
+            .record(started_at.elapsed());
+        self.evaluate_overload(Instant::now());
         let _ = queued.result_tx.send(result);
     }
 
     fn process_task(&self, task: &ValidationTask) -> ValidationResult {
         self.sync_external_clears(self.address_has_live_hold(&task.address));
-        let full_verify = task.force_full_verify || self.should_fully_verify(&task.address);
+        let overload_mode = self.current_overload_mode();
+        let full_verify = task.force_full_verify || self.should_fully_verify(&task.address, overload_mode);
 
         let mut result = ValidationResult {
             nonce: task.nonce,
@@ -426,6 +506,7 @@ impl ValidationInner {
                         full_verify,
                         invalid_sample,
                         provisional_accepted,
+                        overload_mode,
                     );
                     return result;
                 }
@@ -437,6 +518,9 @@ impl ValidationInner {
                     result.reject_reason = Some("invalid share proof");
                     result.suspected_fraud = true;
                     self.fraud.fetch_add(1, Ordering::Relaxed);
+                    if task.candidate_claim {
+                        self.candidate_false_claims.fetch_add(1, Ordering::Relaxed);
+                    }
                 } else if !check_target(hash, task.share_target) {
                     result.reject_reason = Some("low difficulty share");
                 } else {
@@ -472,12 +556,13 @@ impl ValidationInner {
             full_verify,
             invalid_sample,
             provisional_accepted,
+            overload_mode,
         );
 
         result
     }
 
-    fn should_fully_verify(&self, address: &str) -> bool {
+    fn should_fully_verify(&self, address: &str, overload_mode: OverloadMode) -> bool {
         if self.config.validation_mode.eq_ignore_ascii_case("full") {
             return true;
         }
@@ -493,7 +578,8 @@ impl ValidationInner {
             st.start_forced_review(now, self.config.invalid_sample_force_verify_duration());
         }
 
-        if self.config.max_provisional_shares > 0
+        if overload_mode == OverloadMode::Normal
+            && self.config.max_provisional_shares > 0
             && st.provisional_at.len() >= self.config.max_provisional_shares as usize
         {
             st.forced_until = Some(now + self.config.provisional_share_delay_duration());
@@ -504,17 +590,24 @@ impl ValidationInner {
             return true;
         }
 
-        let next_share_idx = st.total_shares + 1;
-        if self.config.warmup_shares > 0 && next_share_idx <= self.config.warmup_shares as u64 {
-            return true;
-        }
-        if self.config.min_sample_every > 0
-            && next_share_idx.is_multiple_of(self.config.min_sample_every as u64)
-        {
-            return true;
+        if overload_mode == OverloadMode::Emergency {
+            return false;
         }
 
-        let rate = self.config.sample_rate;
+        if overload_mode == OverloadMode::Normal {
+            let next_share_idx = st.total_shares + 1;
+            if self.config.warmup_shares > 0 && next_share_idx <= self.config.warmup_shares as u64
+            {
+                return true;
+            }
+            if self.config.min_sample_every > 0
+                && next_share_idx.is_multiple_of(self.config.min_sample_every as u64)
+            {
+                return true;
+            }
+        }
+
+        let rate = self.effective_sample_rate(overload_mode);
         if rate <= 0.0 {
             return false;
         }
@@ -531,6 +624,7 @@ impl ValidationInner {
         sampled: bool,
         invalid_sample: bool,
         provisional_accepted: bool,
+        overload_mode: OverloadMode,
     ) -> ValidationFollowupAction {
         let now = SystemTime::now();
         let mut state = self.state.lock();
@@ -591,6 +685,7 @@ impl ValidationInner {
             if st.risk_sampled_shares >= min_samples
                 && st.risk_invalid_samples >= min_invalids
                 && risk_ratio > self.config.invalid_sample_threshold
+                && overload_mode == OverloadMode::Normal
             {
                 st.start_forced_review(now, forced_review_duration);
                 if sampled {
@@ -630,13 +725,25 @@ impl ValidationInner {
         }
     }
 
-    fn snapshot(&self, candidate_depth: usize, regular_depth: usize) -> ValidationSnapshot {
+    fn snapshot(&self) -> ValidationSnapshot {
         let now = SystemTime::now();
+        let now_instant = Instant::now();
+        let candidate_queue = self.candidate_queue.snapshot(now_instant);
+        let regular_queue = self.regular_queue.snapshot(now_instant);
+        let overload_mode = self.evaluate_overload(now_instant);
         let mut snap = ValidationSnapshot {
             in_flight: self.in_flight.load(Ordering::Relaxed),
-            candidate_queue_depth: candidate_depth,
-            regular_queue_depth: regular_depth,
+            candidate_queue_depth: candidate_queue.depth,
+            regular_queue_depth: regular_queue.depth,
+            candidate_oldest_age_millis: candidate_queue.oldest_age_millis,
+            regular_oldest_age_millis: regular_queue.oldest_age_millis,
+            candidate_wait: candidate_queue.wait,
+            regular_wait: regular_queue.wait,
+            validation_duration: self.validation_duration.lock().snapshot(),
             fraud_detections: self.fraud.load(Ordering::Relaxed),
+            candidate_false_claims: self.candidate_false_claims.load(Ordering::Relaxed),
+            overload_mode,
+            effective_sample_rate: self.effective_sample_rate(overload_mode),
             ..ValidationSnapshot::default()
         };
 
@@ -659,6 +766,71 @@ impl ValidationInner {
         }
 
         snap
+    }
+
+    fn current_overload_mode(&self) -> OverloadMode {
+        self.overload.lock().mode
+    }
+
+    fn effective_sample_rate(&self, overload_mode: OverloadMode) -> f64 {
+        let base = self.config.sample_rate.clamp(0.0, 1.0);
+        match overload_mode {
+            OverloadMode::Normal => base,
+            OverloadMode::Shed => base.min(self.config.overload_sample_rate_floor),
+            OverloadMode::Emergency => 0.0,
+        }
+    }
+
+    fn evaluate_overload(&self, now: Instant) -> OverloadMode {
+        let regular = self.regular_queue.snapshot(now);
+        let queue_depth = regular.depth as f64;
+        let queue_cap = self.config.regular_validation_queue_size().max(1) as f64;
+        let queue_pct = queue_depth / queue_cap;
+        let oldest_age = Duration::from_millis(regular.oldest_age_millis.unwrap_or_default());
+        let emergency = queue_pct >= self.config.overload_emergency_queue_pct
+            || oldest_age >= self.config.overload_emergency_oldest_age_duration();
+        let shed = queue_pct >= self.config.overload_shed_queue_pct
+            || oldest_age >= self.config.overload_shed_oldest_age_duration();
+        let below_clear = queue_pct <= self.config.overload_clear_queue_pct
+            && oldest_age <= self.config.overload_clear_oldest_age_duration();
+        let clear_hold = self.config.overload_clear_hold_duration();
+
+        let mut state = self.overload.lock();
+        match state.mode {
+            OverloadMode::Normal => {
+                if emergency {
+                    state.mode = OverloadMode::Emergency;
+                    state.below_clear_started_at = None;
+                } else if shed {
+                    state.mode = OverloadMode::Shed;
+                    state.below_clear_started_at = None;
+                }
+            }
+            OverloadMode::Shed | OverloadMode::Emergency => {
+                if below_clear {
+                    if let Some(started_at) = state.below_clear_started_at {
+                        if now.saturating_duration_since(started_at) >= clear_hold {
+                            state.mode = OverloadMode::Normal;
+                            state.below_clear_started_at = None;
+                        }
+                    } else {
+                        state.below_clear_started_at = Some(now);
+                    }
+                } else {
+                    if emergency {
+                        state.mode = OverloadMode::Emergency;
+                    } else if shed && state.mode == OverloadMode::Normal {
+                        state.mode = OverloadMode::Shed;
+                    }
+                    state.below_clear_started_at = None;
+                }
+            }
+        }
+
+        if state.mode == OverloadMode::Shed && emergency {
+            state.mode = OverloadMode::Emergency;
+        }
+        state.mode
     }
 
     fn clear_address_state(&self, address: &str) {
@@ -963,6 +1135,7 @@ mod tests {
             invalid_sample_threshold: 0.01,
             max_verifiers: 1,
             max_validation_queue: 16,
+            regular_validation_queue: 16,
             max_provisional_shares: 2,
             provisional_share_delay: "10m".to_string(),
             forced_verify_duration: "1h".to_string(),
@@ -979,6 +1152,7 @@ mod tests {
             network_target: [0x0F; 32],
             claimed_hash: Some([0x01; 32]),
             force_full_verify: false,
+            candidate_claim: false,
         }
     }
 
@@ -995,6 +1169,7 @@ mod tests {
             network_target: [0x0F; 32],
             claimed_hash: Some(claimed_hash),
             force_full_verify: false,
+            candidate_claim: false,
         }
     }
 
@@ -1136,6 +1311,7 @@ mod tests {
     fn queue_submit_returns_none_when_full() {
         let mut cfg = test_cfg();
         cfg.max_validation_queue = 1;
+        cfg.regular_validation_queue = 1;
 
         struct SlowHasher;
         impl PowHasher for SlowHasher {

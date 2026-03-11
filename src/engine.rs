@@ -264,6 +264,18 @@ pub(crate) fn canonical_share_reject_reason(error: &str) -> &'static str {
     if trimmed.starts_with("rate limited") {
         return "rate limited";
     }
+    if trimmed.starts_with("candidate claim busy") {
+        return "candidate claim busy";
+    }
+    if trimmed.starts_with("candidate claim rate limited") {
+        return "candidate claim rate limited";
+    }
+    if trimmed.starts_with("server busy") {
+        return "server busy";
+    }
+    if trimmed.starts_with("validation timeout") {
+        return "validation timeout";
+    }
     if trimmed.starts_with("address quarantined") {
         return "address quarantined";
     }
@@ -405,6 +417,12 @@ pub struct SubmitAck {
     pub next_difficulty: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubmitQueueRoute {
+    Candidate,
+    Regular,
+}
+
 #[derive(Debug, Clone)]
 struct MinerSession {
     address: String,
@@ -432,6 +450,54 @@ pub struct PoolEngine {
 }
 
 impl PoolEngine {
+    pub fn preclassify_submit_route(
+        &self,
+        job_id: &str,
+        claimed_hash_hex: Option<&str>,
+        received_at: Instant,
+    ) -> Result<SubmitQueueRoute> {
+        let claimed_hash = match claimed_hash_hex {
+            Some(value) if !value.trim().is_empty() => Some(
+                parse_hash_hex(value).map_err(|err| anyhow!(err))?,
+            ),
+            _ => None,
+        };
+        if self.cfg.stratum_submit_v2_required && claimed_hash.is_none() {
+            return Err(anyhow!("claimed hash required"));
+        }
+
+        let candidate = claimed_hash.is_some_and(|hash| {
+            self.jobs
+                .resolve_submit_job(job_id, received_at)
+                .is_some_and(|binding| check_target(hash, binding.job.network_target))
+        });
+        Ok(if candidate {
+            SubmitQueueRoute::Candidate
+        } else {
+            SubmitQueueRoute::Regular
+        })
+    }
+
+    pub fn record_prequeue_reject(
+        &self,
+        conn_id: &str,
+        job_id: &str,
+        nonce: u64,
+        received_at: Instant,
+        reason: &str,
+    ) {
+        let Some(session) = self.sessions.lock().get(conn_id).cloned() else {
+            return;
+        };
+        let share_difficulty = self
+            .jobs
+            .resolve_submit_job(job_id, received_at)
+            .and_then(|binding| binding.share_difficulty)
+            .unwrap_or(session.difficulty)
+            .max(1);
+        self.persist_rejected_share_for_error(&session, job_id, nonce, share_difficulty, reason);
+    }
+
     pub fn new(
         cfg: Config,
         validation: Arc<ValidationEngine>,
@@ -800,6 +866,7 @@ impl PoolEngine {
                 share_target,
                 network_target: job.network_target,
                 claimed_hash,
+                candidate_claim,
                 force_full_verify: candidate_claim
                     || self.store.should_force_verify_address(&session.address)?
                     || (!require_claimed_hash && claimed_hash.is_none()),
@@ -1277,12 +1344,15 @@ impl PoolEngine {
     }
 
     fn validate_task(&self, task: ValidationTask, candidate: bool) -> Result<ValidationResult> {
-        if let Some(rx) = self.validation.submit(task, candidate) {
-            let mut timeout = self.cfg.job_timeout_duration();
-            timeout = timeout.clamp(Duration::from_secs(5), Duration::from_secs(60));
+        if let Some(rx) = self.validation.submit(task.clone(), candidate) {
+            let timeout = self.cfg.validation_wait_timeout_duration();
             return rx
                 .recv_timeout(timeout)
                 .map_err(|_| anyhow!("validation timeout"));
+        }
+
+        if candidate {
+            return Ok(self.validation.process_inline(task));
         }
 
         Err(anyhow!("server busy, retry"))
@@ -2278,6 +2348,7 @@ mod tests {
             min_sample_every: 0,
             max_verifiers: 1,
             max_validation_queue: 8,
+            regular_validation_queue: 8,
             job_timeout: "10s".to_string(),
             initial_share_difficulty: 1,
             ..Config::default()
@@ -3384,6 +3455,7 @@ mod tests {
 
         let mut cfg = cfg();
         cfg.max_validation_queue = 1;
+        cfg.regular_validation_queue = 1;
         cfg.validation_mode = "full".to_string();
 
         let validation = ValidationEngine::new(cfg.clone(), Arc::new(SlowHasher));
