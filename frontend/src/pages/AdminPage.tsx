@@ -83,11 +83,6 @@ function pct(value: number | null | undefined): string {
   return `${value.toFixed(2)}%`;
 }
 
-function formatRefreshLag(ms: number | null | undefined): string {
-  if (ms == null || !Number.isFinite(ms)) return '-';
-  if (ms < 1000) return '<1s';
-  return fmtSeconds(Math.max(1, Math.floor(ms / 1000)));
-}
 
 
 function formatAdminTimestamp(value: UnixLike): string {
@@ -173,34 +168,6 @@ function recoveryStateBadgeClass(state: RecoveryInstanceStatus['state'] | undefi
   }
 }
 
-function poolActivityLabel(state: string | undefined): string {
-  switch (state) {
-    case 'active':
-      return 'Active';
-    case 'collapsed':
-      return 'Collapsed';
-    case 'stale':
-      return 'Stale';
-    case 'idle':
-      return 'Idle';
-    default:
-      return 'Unknown';
-  }
-}
-
-function poolActivityBadgeClass(state: string | undefined): string {
-  switch (state) {
-    case 'active':
-      return 'badge-confirmed';
-    case 'collapsed':
-      return 'badge-orphaned';
-    case 'stale':
-    case 'idle':
-      return 'badge-pending';
-    default:
-      return 'badge-pending';
-  }
-}
 
 function shareWindowReasonCount(window: AdminShareDiagnosticsWindow | null | undefined, reason: string): number {
   const target = reason.trim().toLowerCase();
@@ -216,16 +183,6 @@ function shareWindowReasonPct(window: AdminShareDiagnosticsWindow | null | undef
   return (shareWindowReasonCount(window, reason) / total) * 100;
 }
 
-function shareSignalBadgeClass(level: 'good' | 'warn' | 'info'): string {
-  switch (level) {
-    case 'good':
-      return 'badge-confirmed';
-    case 'warn':
-      return 'badge-orphaned';
-    default:
-      return 'badge-pending';
-  }
-}
 
 function recoveryInstanceLabel(instance: RecoveryInstanceId | null | undefined): string {
   switch (instance) {
@@ -735,78 +692,9 @@ export function AdminPage({
     [shareWindows]
   );
   const shareValidation = shareDiagnostics?.validation ?? null;
-  const shareJob = shareDiagnostics?.job ?? null;
-  const sharePoolActivity = shareDiagnostics?.pool_activity ?? null;
+
   const shareValidationQueueDepth =
     (shareValidation?.candidate_queue_depth ?? 0) + (shareValidation?.regular_queue_depth ?? 0);
-  const shareSignals = useMemo(() => {
-    const signals: Array<{ level: 'good' | 'warn' | 'info'; title: string; detail: string }> = [];
-    const recentRejected = shareWindow5m?.rejected ?? 0;
-    const recentRejectRate = shareWindow5m?.rejection_rate_pct ?? 0;
-    const hourlyRejectRate = shareWindow1h?.rejection_rate_pct ?? 0;
-    const refreshLagMs = shareJob?.last_refresh_millis ?? 0;
-    const templateAgeSeconds = shareJob?.template_age_seconds ?? 0;
-
-    if (
-      recentRejected >= 10 &&
-      recentRejectRate >= Math.max(5, hourlyRejectRate * 2)
-    ) {
-      signals.push({
-        level: 'warn',
-        title: 'Reject spike',
-        detail: `5m rejects are ${pct(recentRejectRate)} versus ${pct(hourlyRejectRate)} over 1h.`,
-      });
-    }
-
-    if (shareValidationQueueDepth > 0 || (shareValidation?.in_flight ?? 0) > 0) {
-      signals.push({
-        level: 'warn',
-        title: 'Validation backlog',
-        detail: `${shareValidationQueueDepth} queued, ${shareValidation?.in_flight ?? 0} in flight, ${shareValidation?.pending_provisional ?? 0} provisional pending.`,
-      });
-    }
-
-    if (refreshLagMs >= 15_000 || templateAgeSeconds >= 30) {
-      signals.push({
-        level: 'warn',
-        title: 'Template churn risk',
-        detail: `Refresh lag is ${formatRefreshLag(refreshLagMs)} and template age is ${templateAgeSeconds > 0 ? fmtSeconds(templateAgeSeconds) : '-'}.`,
-      });
-    }
-
-    const topReason = shareWindow5m?.by_reason?.[0];
-    const topReasonRejectPct =
-      topReason && (shareWindow5m?.rejected ?? 0) > 0
-        ? (topReason.count / (shareWindow5m?.rejected ?? 1)) * 100
-        : 0;
-    if (topReason && recentRejected >= 5 && topReasonRejectPct >= 50) {
-      let detail = `${topReason.reason} accounts for ${topReason.count} of ${shareWindow5m?.rejected ?? 0} recent rejects.`;
-      if (topReason.reason === 'stale job') {
-        detail += ' Check template propagation and daemon refresh cadence.';
-      } else if (topReason.reason === 'low difficulty share') {
-        detail += ' This usually points to vardiff or worker difficulty mismatch.';
-      } else if (topReason.reason === 'invalid share proof') {
-        detail += ' This is miner-side bad proof traffic, not queue pressure.';
-      } else if (topReason.reason === 'address quarantined') {
-        detail += ' Quarantined miners are still retrying and inflating rejects.';
-      }
-      signals.push({
-        level: 'info',
-        title: 'Dominant recent reject reason',
-        detail,
-      });
-    }
-
-    if (!signals.length) {
-      signals.push({
-        level: 'good',
-        title: 'Share intake looks stable',
-        detail: 'No obvious reject spike or validation backlog is visible in the current windows.',
-      });
-    }
-
-    return signals;
-  }, [shareJob?.last_refresh_millis, shareJob?.template_age_seconds, shareValidation?.in_flight, shareValidation?.pending_provisional, shareValidationQueueDepth, shareWindow1h, shareWindow5m]);
   const recoveryPrimary = useMemo(
     () => recoveryStatus?.instances.find((item) => item.instance === 'primary') ?? null,
     [recoveryStatus]
@@ -960,31 +848,6 @@ export function AdminPage({
     : rewardBreakdownProjected
       ? 'Projected Status'
       : 'Status';
-  const rewardAuditIntro = rewardBreakdownOrphaned
-    ? 'Preview shows the estimate miners would have seen before the round was orphaned. The actual payout outcome from an orphaned block is always zero.'
-    : rewardBreakdownProjected
-      ? 'Preview shows the current estimator used on My Stats. Projected payout shows the final split under the pool payout rules if this block reaches payout processing. Actual shows what the payout processor has recorded so far.'
-      : 'Preview shows the unconfirmed estimator used on My Stats. Payout shows the final weighting rules, including verified-share anchors and any provisional cap. Actual shows what the payout processor recorded for this block, when available.';
-  const rewardAuditNotice = rewardBreakdown
-    ? rewardBreakdownOrphaned
-      ? 'This block was orphaned. Preview is shown for reference, but the actual payout outcome from this block was 0.'
-      : rewardBreakdownProjected
-        ? 'This block has not been paid yet. The Projected columns show the current final payout math; Actual remains empty until the payout processor records credits.'
-        : rewardBreakdown.actual_credit_events_available
-        ? ''
-        : rewardBreakdown.block.paid_out
-          ? 'This block was paid before per-block credit audit rows were available, so the Actual column cannot be shown from storage.'
-          : ''
-    : '';
-  const rewardAuditNoticeStyles = rewardBreakdownOrphaned
-    ? {
-        background: 'var(--status-orphaned-bg)',
-        borderColor: 'var(--status-orphaned-border)',
-      }
-    : {
-        background: 'rgba(247, 180, 75, 0.12)',
-        borderColor: 'rgba(247, 180, 75, 0.45)',
-      };
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-admin">
@@ -1282,51 +1145,6 @@ export function AdminPage({
                   </div>
                 </div>
 
-                <div className="card" style={{ marginBottom: 20 }}>
-                  <div style={{ display: 'flex', gap: 12, justifyContent: 'space-between', flexWrap: 'wrap' }}>
-                    <div style={{ display: 'grid', gap: 6 }}>
-                      <div style={{ fontSize: 14, fontWeight: 700 }}>
-                        {rewardBreakdown.payout_scheme.toUpperCase()} reward audit for block {rewardBreakdown.block.height}
-                      </div>
-                      <div style={{ fontSize: 13, color: 'var(--muted)' }}>
-                        {rewardAuditIntro}
-                      </div>
-                    </div>
-                    <div style={{ display: 'grid', gap: 6, justifyItems: 'start' }}>
-                      <span
-                        className={
-                          rewardBreakdown.block.orphaned
-                            ? 'badge badge-orphaned'
-                            : rewardBreakdown.block.confirmed
-                              ? 'badge badge-confirmed'
-                              : 'badge badge-pending'
-                        }
-                      >
-                        {rewardBreakdown.block.orphaned
-                          ? 'orphaned'
-                          : rewardBreakdown.block.confirmed
-                            ? 'confirmed'
-                            : 'unconfirmed'}
-                      </span>
-                      <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-                        Window end {new Date(toUnixMs(rewardBreakdown.share_window.end)).toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {rewardAuditNotice ? (
-                  <div
-                    className="card"
-                    style={{
-                      marginBottom: 20,
-                      ...rewardAuditNoticeStyles,
-                    }}
-                  >
-                    <div style={{ color: 'var(--text)', fontSize: 13 }}>{rewardAuditNotice}</div>
-                  </div>
-                ) : null}
-
                 <div className="card table-scroll">
                   <table>
                     <thead>
@@ -1569,20 +1387,6 @@ export function AdminPage({
           </div>
 
           <div style={{ display: tab === 'shares' ? '' : 'none' }}>
-            <div className="card section" style={{ marginBottom: 16 }}>
-              <div className="section-header">
-                <div>
-                  <h3>Share Diagnostics</h3>
-                  <p className="section-lead">
-                    Compare recent reject rates and reject causes against the current validation queue and job state.
-                  </p>
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-                  Updated {shareDiagnostics?.generated_at ? timeAgo(shareDiagnostics.generated_at) : '-'}
-                </div>
-              </div>
-            </div>
-
             <div className="stats-card-group">
               <div className="stats-card-group-title">Overview</div>
               <div className="stats-card-group-grid stats-grid-dense">
@@ -1617,67 +1421,6 @@ export function AdminPage({
                   <div className="label">Pending Provisional</div>
                   <div className="value mono">{shareValidation?.pending_provisional ?? '-'}</div>
                   <div className="stat-meta">{shareValidation?.in_flight ?? 0} in flight</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="stats-card-group">
-              <div className="stats-card-group-title">Pressure Signals</div>
-              <div className="stats-card-group-grid stats-grid-dense">
-                {shareSignals.map((signal) => (
-                  <div className="stat-card" key={`${signal.level}-${signal.title}`}>
-                    <div className="label">
-                      <span className={`badge ${shareSignalBadgeClass(signal.level)}`}>{signal.title}</span>
-                    </div>
-                    <div className="stat-meta" style={{ marginTop: 12, fontSize: 13, color: 'var(--text)' }}>
-                      {signal.detail}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="stats-card-group">
-              <div className="stats-card-group-title">Queue & Runtime</div>
-              <div className="stats-card-group-grid stats-grid-dense">
-                <div className="stat-card">
-                  <div className="label">In Flight</div>
-                  <div className="value mono">{shareValidation?.in_flight ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Tracked Addresses</div>
-                  <div className="value mono">{shareValidation?.tracked_addresses ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Forced Verify</div>
-                  <div className="value mono">{shareValidation?.forced_verify_addresses ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Active Assignments</div>
-                  <div className="value mono">{shareJob?.active_assignments ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Tracked Templates</div>
-                  <div className="value mono">{shareJob?.tracked_templates ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Template Age</div>
-                  <div className="value mono">
-                    {shareJob?.template_age_seconds != null ? fmtSeconds(shareJob.template_age_seconds) : '-'}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Refresh Lag</div>
-                  <div className="value mono">{formatRefreshLag(shareJob?.last_refresh_millis)}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Pool Activity</div>
-                  <div className="value">
-                    <span className={`badge ${poolActivityBadgeClass(sharePoolActivity?.state)}`}>
-                      {poolActivityLabel(sharePoolActivity?.state)}
-                    </span>
-                  </div>
-                  <div className="stat-meta">{sharePoolActivity?.detail ?? 'No pool activity snapshot available.'}</div>
                 </div>
               </div>
             </div>
