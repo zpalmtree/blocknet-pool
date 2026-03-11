@@ -46,6 +46,25 @@ pub struct ValidationResult {
     pub followup_action: ValidationFollowupAction,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ValidationComputeResult {
+    pub nonce: u64,
+    pub accepted: bool,
+    pub reject_reason: Option<&'static str>,
+    pub hash: [u8; 32],
+    pub verified: bool,
+    pub is_block_candidate: bool,
+    pub suspected_fraud: bool,
+    pub candidate_false_claim: bool,
+    pub overload_mode: OverloadMode,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ValidationPlan {
+    full_verify: bool,
+    overload_mode: OverloadMode,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ValidationFollowupAction {
     #[default]
@@ -246,7 +265,7 @@ pub struct ValidationSnapshot {
 
 struct QueuedTask {
     task: ValidationTask,
-    result_tx: flume::Sender<ValidationResult>,
+    result_tx: flume::Sender<ValidationComputeResult>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -378,11 +397,11 @@ impl ValidationEngine {
         }
     }
 
-    pub fn submit(
+    pub(crate) fn submit(
         &self,
         task: ValidationTask,
         candidate: bool,
-    ) -> Option<flume::Receiver<ValidationResult>> {
+    ) -> Option<flume::Receiver<ValidationComputeResult>> {
         let (tx, rx) = flume::bounded(1);
         let queued = QueuedTask {
             task,
@@ -417,16 +436,27 @@ impl ValidationEngine {
         }
     }
 
-    pub fn process_inline(&self, task: ValidationTask) -> ValidationResult {
-        let (tx, rx) = flume::bounded(1);
-        self.inner.process(
-            QueuedTask {
-                task,
-                result_tx: tx,
-            },
-            true,
-        );
-        rx.recv().expect("inline validation should return result")
+    pub(crate) fn process_inline(&self, task: ValidationTask) -> ValidationResult {
+        let started_at = Instant::now();
+        self.inner.in_flight.fetch_add(1, Ordering::Relaxed);
+        let prepared = self.inner.prepare_task(&task.address);
+        let computed = self.inner.compute_task(&task, prepared);
+        let result = self.inner.finalize_result(&task.address, computed);
+        self.inner.in_flight.fetch_sub(1, Ordering::Relaxed);
+        self.inner
+            .validation_duration
+            .lock()
+            .record(started_at.elapsed());
+        self.inner.evaluate_overload(Instant::now());
+        result
+    }
+
+    pub(crate) fn complete_result(
+        &self,
+        address: &str,
+        computed: ValidationComputeResult,
+    ) -> ValidationResult {
+        self.inner.finalize_result(address, computed)
     }
 
     pub fn snapshot(&self) -> ValidationSnapshot {
@@ -463,21 +493,28 @@ impl ValidationInner {
             self.regular_queue.pop_and_record_wait(started_at);
         }
         self.in_flight.fetch_add(1, Ordering::Relaxed);
-        let result = self.process_task(&queued.task);
+        let prepared = self.prepare_task(&queued.task.address);
+        let result = self.compute_task(&queued.task, prepared);
         self.in_flight.fetch_sub(1, Ordering::Relaxed);
-        self.validation_duration
-            .lock()
-            .record(started_at.elapsed());
+        self.validation_duration.lock().record(started_at.elapsed());
         self.evaluate_overload(Instant::now());
         let _ = queued.result_tx.send(result);
     }
 
-    fn process_task(&self, task: &ValidationTask) -> ValidationResult {
-        self.sync_external_clears(self.address_has_live_hold(&task.address));
+    fn prepare_task(&self, address: &str) -> ValidationPlan {
+        self.sync_external_clears(self.address_has_live_hold(address));
         let overload_mode = self.current_overload_mode();
-        let full_verify = task.force_full_verify || self.should_fully_verify(&task.address, overload_mode);
+        let full_verify = self.should_fully_verify(address, overload_mode);
+        ValidationPlan {
+            full_verify,
+            overload_mode,
+        }
+    }
 
-        let mut result = ValidationResult {
+    fn compute_task(&self, task: &ValidationTask, plan: ValidationPlan) -> ValidationComputeResult {
+        let full_verify = task.force_full_verify || plan.full_verify;
+
+        let mut result = ValidationComputeResult {
             nonce: task.nonce,
             accepted: false,
             reject_reason: None,
@@ -485,7 +522,8 @@ impl ValidationInner {
             verified: full_verify,
             is_block_candidate: false,
             suspected_fraud: false,
-            followup_action: ValidationFollowupAction::None,
+            candidate_false_claim: false,
+            overload_mode: plan.overload_mode,
         };
 
         if full_verify {
@@ -499,15 +537,6 @@ impl ValidationInner {
                         "share hash computation failed"
                     );
                     result.reject_reason = Some("hash computation failed");
-                    let invalid_sample = true;
-                    let provisional_accepted = false;
-                    result.followup_action = self.update_address_state(
-                        &task.address,
-                        full_verify,
-                        invalid_sample,
-                        provisional_accepted,
-                        overload_mode,
-                    );
                     return result;
                 }
             };
@@ -517,10 +546,7 @@ impl ValidationInner {
                 if claimed_hash != hash {
                     result.reject_reason = Some("invalid share proof");
                     result.suspected_fraud = true;
-                    self.fraud.fetch_add(1, Ordering::Relaxed);
-                    if task.candidate_claim {
-                        self.candidate_false_claims.fetch_add(1, Ordering::Relaxed);
-                    }
+                    result.candidate_false_claim = task.candidate_claim;
                 } else if !check_target(hash, task.share_target) {
                     result.reject_reason = Some("low difficulty share");
                 } else {
@@ -549,16 +575,6 @@ impl ValidationInner {
             }
         }
 
-        let invalid_sample = full_verify && !result.accepted;
-        let provisional_accepted = result.accepted && !full_verify;
-        result.followup_action = self.update_address_state(
-            &task.address,
-            full_verify,
-            invalid_sample,
-            provisional_accepted,
-            overload_mode,
-        );
-
         result
     }
 
@@ -568,24 +584,22 @@ impl ValidationInner {
         }
 
         let now = SystemTime::now();
+        let state = self.state.lock();
+        let provisional_delay = self.config.provisional_share_delay_duration();
+        let default_state = ValidationAddressState::default();
+        let st = state.get(address).unwrap_or(&default_state);
+        let live_provisionals = live_provisional_count(st, now, provisional_delay);
 
-        let mut state = self.state.lock();
-        let st = get_or_insert_state(&mut state, address);
-        self.prune_provisional_locked(st, now);
-        st.last_seen_at = now;
-
-        if st.resume_forced_at.is_some_and(|start_at| start_at <= now) {
-            st.start_forced_review(now, self.config.invalid_sample_force_verify_duration());
+        if st.resume_forced_at.is_some_and(|start_at| start_at <= now)
+            || st.forced_started_at.is_some()
+            || st.forced_until.is_some_and(|deadline| now < deadline)
+        {
+            return true;
         }
 
         if overload_mode == OverloadMode::Normal
             && self.config.max_provisional_shares > 0
-            && st.provisional_at.len() >= self.config.max_provisional_shares as usize
-        {
-            st.forced_until = Some(now + self.config.provisional_share_delay_duration());
-        }
-
-        if st.forced_started_at.is_some() || st.forced_until.is_some_and(|deadline| now < deadline)
+            && live_provisionals >= self.config.max_provisional_shares as usize
         {
             return true;
         }
@@ -595,9 +609,8 @@ impl ValidationInner {
         }
 
         if overload_mode == OverloadMode::Normal {
-            let next_share_idx = st.total_shares + 1;
-            if self.config.warmup_shares > 0 && next_share_idx <= self.config.warmup_shares as u64
-            {
+            let next_share_idx = st.total_shares.saturating_add(1);
+            if self.config.warmup_shares > 0 && next_share_idx <= self.config.warmup_shares as u64 {
                 return true;
             }
             if self.config.min_sample_every > 0
@@ -616,6 +629,40 @@ impl ValidationInner {
         }
 
         self.rng.lock().gen::<f64>() < rate
+    }
+
+    fn finalize_result(
+        &self,
+        address: &str,
+        computed: ValidationComputeResult,
+    ) -> ValidationResult {
+        if computed.suspected_fraud {
+            self.fraud.fetch_add(1, Ordering::Relaxed);
+            if computed.candidate_false_claim {
+                self.candidate_false_claims.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        let invalid_sample = computed.verified && !computed.accepted;
+        let provisional_accepted = computed.accepted && !computed.verified;
+        let followup_action = self.update_address_state(
+            address,
+            computed.verified,
+            invalid_sample,
+            provisional_accepted,
+            computed.overload_mode,
+        );
+
+        ValidationResult {
+            nonce: computed.nonce,
+            accepted: computed.accepted,
+            reject_reason: computed.reject_reason,
+            hash: computed.hash,
+            verified: computed.verified,
+            is_block_candidate: computed.is_block_candidate,
+            suspected_fraud: computed.suspected_fraud,
+            followup_action,
+        }
     }
 
     fn update_address_state(
@@ -640,6 +687,12 @@ impl ValidationInner {
         st.last_seen_at = now;
         if st.resume_forced_at.is_some_and(|start_at| start_at <= now) {
             st.start_forced_review(now, forced_review_duration);
+        }
+        if overload_mode == OverloadMode::Normal
+            && self.config.max_provisional_shares > 0
+            && st.provisional_at.len() >= self.config.max_provisional_shares as usize
+        {
+            st.forced_until = Some(now + self.config.provisional_share_delay_duration());
         }
         if provisional_accepted {
             st.provisional_at.push_back(now);
@@ -1008,6 +1061,23 @@ fn ratio(invalid: u64, total: u64) -> f64 {
     }
 }
 
+fn live_provisional_count(
+    state: &ValidationAddressState,
+    now: SystemTime,
+    delay: Duration,
+) -> usize {
+    if state.provisional_at.is_empty() || delay.is_zero() {
+        return 0;
+    }
+
+    let cutoff = now.checked_sub(delay).unwrap_or(now);
+    state
+        .provisional_at
+        .iter()
+        .filter(|timestamp| **timestamp > cutoff)
+        .count()
+}
+
 fn persisted_validation_state(
     address: &str,
     state: &ValidationAddressState,
@@ -1246,7 +1316,9 @@ mod tests {
 
         {
             let mut state = engine.inner.state.lock();
-            let entry = state.get_mut("addr1").expect("validation state should exist");
+            let entry = state
+                .get_mut("addr1")
+                .expect("validation state should exist");
             entry.forced_until = Some(SystemTime::now() - Duration::from_secs(1));
         }
 
@@ -1383,6 +1455,102 @@ mod tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("third result");
         assert_eq!(third.nonce, 2);
+    }
+
+    #[test]
+    fn dropped_timed_out_invalid_sample_does_not_force_review() {
+        struct SlowDeterministicHasher;
+        impl PowHasher for SlowDeterministicHasher {
+            fn hash(&self, header_base: &[u8], nonce: u64) -> anyhow::Result<[u8; 32]> {
+                std::thread::sleep(Duration::from_millis(80));
+                DeterministicTestHasher.hash(header_base, nonce)
+            }
+        }
+
+        let mut cfg = test_cfg();
+        cfg.sample_rate = 0.0;
+        cfg.warmup_shares = 0;
+        cfg.min_sample_every = 0;
+        cfg.invalid_sample_min = 1;
+        cfg.invalid_sample_count_threshold = 1;
+        cfg.invalid_sample_threshold = 0.01;
+        cfg.max_provisional_shares = 100;
+        let engine = ValidationEngine::new(cfg, Arc::new(SlowDeterministicHasher));
+
+        let mut timed_out = matching_task(1);
+        timed_out.force_full_verify = true;
+        timed_out.claimed_hash = Some([0xAA; 32]);
+        let rx = engine
+            .submit(timed_out, false)
+            .expect("timed-out share should enqueue");
+        assert!(
+            matches!(
+                rx.recv_timeout(Duration::from_millis(10)),
+                Err(flume::RecvTimeoutError::Timeout)
+            ),
+            "share should still be waiting when the caller gives up"
+        );
+        drop(rx);
+        std::thread::sleep(Duration::from_millis(120));
+
+        let next = engine.process_inline(matching_task(2));
+        assert!(
+            !next.verified,
+            "dropped timeout should not leave the address in forced validation"
+        );
+
+        let snapshot = engine.snapshot();
+        assert_eq!(snapshot.tracked_addresses, 1);
+        assert_eq!(snapshot.total_shares, 1);
+        assert_eq!(snapshot.sampled_shares, 0);
+        assert_eq!(snapshot.invalid_samples, 0);
+    }
+
+    #[test]
+    fn dropped_timed_out_provisional_share_does_not_build_force_verify_pressure() {
+        struct SlowDeterministicHasher;
+        impl PowHasher for SlowDeterministicHasher {
+            fn hash(&self, header_base: &[u8], nonce: u64) -> anyhow::Result<[u8; 32]> {
+                std::thread::sleep(Duration::from_millis(80));
+                DeterministicTestHasher.hash(header_base, nonce)
+            }
+        }
+
+        let mut cfg = test_cfg();
+        cfg.max_provisional_shares = 1;
+        cfg.sample_rate = 0.0;
+        cfg.warmup_shares = 0;
+        cfg.min_sample_every = 0;
+        let engine = ValidationEngine::new(cfg, Arc::new(SlowDeterministicHasher));
+
+        let mut blocker = matching_task(100);
+        blocker.force_full_verify = true;
+        let blocker_rx = engine
+            .submit(blocker, false)
+            .expect("blocking share should enqueue");
+
+        let rx = engine
+            .submit(matching_task(1), false)
+            .expect("timed-out provisional share should enqueue");
+        assert!(
+            matches!(
+                rx.recv_timeout(Duration::from_millis(10)),
+                Err(flume::RecvTimeoutError::Timeout)
+            ),
+            "share should still be waiting when the caller gives up"
+        );
+        drop(rx);
+        let _ = blocker_rx.recv_timeout(Duration::from_secs(1));
+        std::thread::sleep(Duration::from_millis(120));
+
+        let next = engine.process_inline(matching_task(2));
+        assert!(
+            !next.verified,
+            "dropped timeout should not count toward provisional pressure"
+        );
+
+        let snapshot = engine.snapshot();
+        assert_eq!(snapshot.pending_provisional, 1);
     }
 
     #[test]
@@ -1525,7 +1693,10 @@ mod tests {
         let mut before_clear = matching_task(1);
         before_clear.address = address.clone();
         let before = engine.process_inline(before_clear);
-        assert!(before.verified, "seeded forced state should force verification");
+        assert!(
+            before.verified,
+            "seeded forced state should force verification"
+        );
 
         store
             .clear_address_risk_history(&address)

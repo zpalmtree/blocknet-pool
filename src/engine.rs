@@ -1346,9 +1346,11 @@ impl PoolEngine {
     fn validate_task(&self, task: ValidationTask, candidate: bool) -> Result<ValidationResult> {
         if let Some(rx) = self.validation.submit(task.clone(), candidate) {
             let timeout = self.cfg.validation_wait_timeout_duration();
-            return rx
+            let computed = rx
                 .recv_timeout(timeout)
                 .map_err(|_| anyhow!("validation timeout"));
+            return computed
+                .map(|computed| self.validation.complete_result(&task.address, computed));
         }
 
         if candidate {
