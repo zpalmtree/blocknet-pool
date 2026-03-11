@@ -14,6 +14,7 @@ export type AdminTab =
   | "devfee"
   | "rewards"
   | "health"
+  | "shares"
   | "holds"
   | "balances"
   | "recovery"
@@ -339,6 +340,24 @@ export interface HealthResponse {
     last_share_age_seconds?: number | null;
   };
   active_verification_holds?: ActiveVerificationHold[];
+}
+
+export interface AdminShareDiagnosticsWindow {
+  label: string;
+  window_seconds: number;
+  accepted: number;
+  rejected: number;
+  total: number;
+  rejection_rate_pct: number;
+  by_reason: RejectionReasonCount[];
+}
+
+export interface AdminShareDiagnosticsResponse {
+  generated_at: UnixLike;
+  windows: AdminShareDiagnosticsWindow[];
+  job?: HealthResponse["job"];
+  validation?: HealthResponse["validation"];
+  pool_activity?: HealthResponse["pool_activity"];
 }
 
 export type RecoveryInstanceId = "primary" | "standby";

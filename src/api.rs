@@ -672,6 +672,7 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
         .route("/api/fees", get(handle_fees))
         .route("/api/admin/dev-fee", get(handle_admin_dev_fee))
         .route("/api/admin/balances", get(handle_admin_balances))
+        .route("/api/admin/shares", get(handle_admin_share_diagnostics))
         .route(
             "/api/admin/blocks/:height/reward-breakdown",
             get(handle_admin_block_reward_breakdown),
@@ -2398,6 +2399,26 @@ struct PoolActivityHealth {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct AdminShareDiagnosticsResponse {
+    generated_at: SystemTime,
+    windows: Vec<AdminShareWindowResponse>,
+    validation: ValidationSummary,
+    job: JobHealth,
+    pool_activity: PoolActivityHealth,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AdminShareWindowResponse {
+    label: String,
+    window_seconds: u64,
+    accepted: u64,
+    rejected: u64,
+    total: u64,
+    rejection_rate_pct: f64,
+    by_reason: Vec<RejectionReasonCount>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct AdminDevFeeTelemetryResponse {
     address: String,
     reference_target_pct: f64,
@@ -2445,7 +2466,7 @@ struct AdminDevFeeHintRowResponse {
     position: &'static str,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct JobHealth {
     current_height: Option<u64>,
     current_difficulty: Option<u64>,
@@ -2759,6 +2780,75 @@ fn ratio_pct(numerator: u64, denominator: u64) -> f64 {
     } else {
         (numerator as f64 / denominator as f64) * 100.0
     }
+}
+
+fn effective_job_health(
+    state: &ApiState,
+    persisted_runtime: Option<&PersistedRuntimeSnapshot>,
+) -> JobHealth {
+    let current_job = state.jobs.current_job();
+    let mut current_height = current_job.as_ref().map(|job| job.height);
+    let mut current_difficulty = current_job.as_ref().map(|job| job.network_difficulty);
+    let mut template_id = current_job.as_ref().and_then(|job| job.template_id.clone());
+    let mut template_age_seconds = state.jobs.current_job_age().map(|age| age.as_secs());
+    let mut last_refresh_millis = state
+        .jobs
+        .last_refresh_elapsed()
+        .map(|age| age.as_millis() as u64);
+    let mut tracked_templates = state.jobs.tracked_job_count();
+    let mut active_assignments = state.jobs.active_assignment_count();
+
+    if let Some(persisted) = persisted_runtime {
+        current_height = current_height.or(persisted.jobs.current_height);
+        current_difficulty = current_difficulty.or(persisted.jobs.current_difficulty);
+        if template_id.is_none() {
+            template_id = persisted.jobs.template_id.clone();
+        }
+        template_age_seconds = template_age_seconds.or(persisted.jobs.template_age_seconds);
+        last_refresh_millis = last_refresh_millis.or(persisted.jobs.last_refresh_millis);
+        tracked_templates = tracked_templates.max(persisted.jobs.tracked_templates);
+        active_assignments = active_assignments.max(persisted.jobs.active_assignments);
+    }
+
+    JobHealth {
+        current_height,
+        current_difficulty,
+        template_id,
+        template_age_seconds,
+        last_refresh_millis,
+        tracked_templates,
+        active_assignments,
+    }
+}
+
+fn collect_admin_share_windows(
+    store: &PoolStore,
+    now: SystemTime,
+) -> anyhow::Result<Vec<AdminShareWindowResponse>> {
+    let windows = [
+        ("5m", Duration::from_secs(5 * 60)),
+        ("15m", Duration::from_secs(15 * 60)),
+        ("1h", Duration::from_secs(60 * 60)),
+        ("6h", Duration::from_secs(6 * 60 * 60)),
+        ("24h", Duration::from_secs(24 * 60 * 60)),
+    ];
+    let mut rows = Vec::with_capacity(windows.len());
+    for (label, window) in windows {
+        let since = now.checked_sub(window).unwrap_or(UNIX_EPOCH);
+        let (accepted, rejected) = store.share_outcome_counts_since(since)?;
+        let by_reason = store.rejection_reason_counts_since(since)?;
+        let total = accepted.saturating_add(rejected);
+        rows.push(AdminShareWindowResponse {
+            label: label.to_string(),
+            window_seconds: window.as_secs(),
+            accepted,
+            rejected,
+            total,
+            rejection_rate_pct: ratio_pct(rejected, total),
+            by_reason,
+        });
+    }
+    Ok(rows)
 }
 
 fn unix_secs_to_system_time(value: u64) -> SystemTime {
@@ -3346,30 +3436,7 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
     let validation = state.effective_validation_summary().await;
     let persisted_runtime = state.persisted_runtime_snapshot().await;
     let pool_activity = pool_activity_health(SystemTime::now(), persisted_runtime.as_ref());
-
-    let current_job = state.jobs.current_job();
-    let mut current_height = current_job.as_ref().map(|job| job.height);
-    let mut current_difficulty = current_job.as_ref().map(|job| job.network_difficulty);
-    let mut template_id = current_job.as_ref().and_then(|job| job.template_id.clone());
-    let mut template_age_seconds = state.jobs.current_job_age().map(|age| age.as_secs());
-    let mut last_refresh_millis = state
-        .jobs
-        .last_refresh_elapsed()
-        .map(|age| age.as_millis() as u64);
-    let mut tracked_templates = state.jobs.tracked_job_count();
-    let mut active_assignments = state.jobs.active_assignment_count();
-
-    if let Some(persisted) = persisted_runtime.as_ref() {
-        current_height = current_height.or(persisted.jobs.current_height);
-        current_difficulty = current_difficulty.or(persisted.jobs.current_difficulty);
-        if template_id.is_none() {
-            template_id = persisted.jobs.template_id.clone();
-        }
-        template_age_seconds = template_age_seconds.or(persisted.jobs.template_age_seconds);
-        last_refresh_millis = last_refresh_millis.or(persisted.jobs.last_refresh_millis);
-        tracked_templates = tracked_templates.max(persisted.jobs.tracked_templates);
-        active_assignments = active_assignments.max(persisted.jobs.active_assignments);
-    }
+    let job = effective_job_health(&state, persisted_runtime.as_ref());
 
     let store = Arc::clone(&state.store);
     let payout_health =
@@ -3441,15 +3508,7 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
         uptime_seconds: state.started_at.elapsed().as_secs(),
         api_key_configured: !state.api_key.trim().is_empty(),
         daemon,
-        job: JobHealth {
-            current_height,
-            current_difficulty,
-            template_id,
-            template_age_seconds,
-            last_refresh_millis,
-            tracked_templates,
-            active_assignments,
-        },
+        job,
         payouts: payout_health,
         wallet,
         validation,
@@ -3458,6 +3517,13 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
     };
 
     Json(response).into_response()
+}
+
+async fn handle_admin_share_diagnostics(State(state): State<ApiState>) -> impl IntoResponse {
+    match state.admin_share_diagnostics().await {
+        Ok(response) => Json(response).into_response(),
+        Err(err) => internal_error("failed loading admin share diagnostics", err).into_response(),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -4777,7 +4843,8 @@ fn pool_activity_health(
     now: SystemTime,
     persisted_runtime: Option<&PersistedRuntimeSnapshot>,
 ) -> PoolActivityHealth {
-    let assessment = assess_pool_activity(now, persisted_runtime, POOL_ACTIVITY_SNAPSHOT_STALE_AFTER);
+    let assessment =
+        assess_pool_activity(now, persisted_runtime, POOL_ACTIVITY_SNAPSHOT_STALE_AFTER);
     PoolActivityHealth {
         state: assessment.state.to_string(),
         detail: assessment.detail,
@@ -4794,7 +4861,9 @@ fn miner_verification_hold(
     validation_forced_until: Option<SystemTime>,
     now: SystemTime,
 ) -> Option<MinerVerificationHold> {
-    let quarantined_until = state.and_then(|s| s.quarantined_until).filter(|until| *until > now);
+    let quarantined_until = state
+        .and_then(|s| s.quarantined_until)
+        .filter(|until| *until > now);
     let verified_only_until = state
         .and_then(|s| s.force_verify_until)
         .into_iter()
@@ -6424,6 +6493,26 @@ impl ApiState {
         .map_err(|err| anyhow::anyhow!("join error: {err}"))?
     }
 
+    async fn admin_share_diagnostics(&self) -> anyhow::Result<AdminShareDiagnosticsResponse> {
+        let now = SystemTime::now();
+        let validation = self.effective_validation_summary().await;
+        let persisted_runtime = self.persisted_runtime_snapshot().await;
+        let job = effective_job_health(self, persisted_runtime.as_ref());
+        let pool_activity = pool_activity_health(now, persisted_runtime.as_ref());
+        let store = Arc::clone(&self.store);
+        let windows = tokio::task::spawn_blocking(move || collect_admin_share_windows(&store, now))
+            .await
+            .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+
+        Ok(AdminShareDiagnosticsResponse {
+            generated_at: now,
+            windows,
+            validation,
+            job,
+            pool_activity,
+        })
+    }
+
     async fn cached_pending_estimate_for_miner(
         &self,
         address: &str,
@@ -7539,17 +7628,18 @@ mod tests {
         build_block_reward_breakdown, build_fee_page, compute_luck_details_for_hashes,
         compute_luck_history, contains_ci, daemon_debug_log_path, daemon_health_from_heartbeat,
         daemon_log_commands, estimate_unconfirmed_pending_for_miner, estimated_block_reward,
-        handle_admin_dev_fee, handle_health, handle_miner, handle_miners, handle_stats,
-        hashrate_from_stats_with_miner_ramp, hashrate_from_stats_with_warmup,
-        hydrate_provisional_block_reward, load_persisted_status_history, miner_balance_response,
-        miner_has_activity, page_bounds, payout_status_note, pending_balance_note,
-        rejection_window_duration, share_limit, sort_workers_for_miner, system_time_to_unix_secs,
-        trim_log_line, worker_hashrate_by_name, ApiState, DaemonHealthCache, DbTotalsCache,
-        InsightsCache, LiveRuntimeSnapshotCache, MinerDetailQuery, MinerPendingBlockEstimate,
-        MinerPendingEstimate, MinersQuery, NetworkHashrateCache, OpenIncident, PayoutEtaResponse,
-        PoolHealthCache, StatusHistory, StatusIncident, DAEMON_LOG_LINE_LIMIT,
-        HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
-        LIVE_RUNTIME_SNAPSHOT_META_KEY, STATUS_HISTORY_META_KEY,
+        handle_admin_dev_fee, handle_admin_share_diagnostics, handle_health, handle_miner,
+        handle_miners, handle_stats, hashrate_from_stats_with_miner_ramp,
+        hashrate_from_stats_with_warmup, hydrate_provisional_block_reward,
+        load_persisted_status_history, miner_balance_response, miner_has_activity, page_bounds,
+        payout_status_note, pending_balance_note, rejection_window_duration, share_limit,
+        sort_workers_for_miner, system_time_to_unix_secs, trim_log_line, worker_hashrate_by_name,
+        ApiState, DaemonHealthCache, DbTotalsCache, InsightsCache, LiveRuntimeSnapshotCache,
+        MinerDetailQuery, MinerPendingBlockEstimate, MinerPendingEstimate, MinersQuery,
+        NetworkHashrateCache, OpenIncident, PayoutEtaResponse, PoolHealthCache, StatusHistory,
+        StatusIncident, DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW,
+        HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY,
+        STATUS_HISTORY_META_KEY,
     };
 
     const TEST_POSTGRES_URL_ENV: &str = "BLOCKNET_POOL_TEST_POSTGRES_URL";
@@ -8346,6 +8436,120 @@ mod tests {
 
         let recent = payload["recent_hints"].as_array().expect("recent hints");
         assert_eq!(recent.len(), 2);
+    }
+
+    #[test]
+    fn admin_share_diagnostics_reports_windows_and_runtime_pressure() {
+        let store = require_test_store!();
+        let now = SystemTime::now();
+
+        store
+            .add_share(ShareRecord {
+                job_id: "share-ok".to_string(),
+                miner: "miner-a".to_string(),
+                worker: "rig-1".to_string(),
+                difficulty: 100,
+                nonce: 1,
+                status: "verified",
+                was_sampled: true,
+                block_hash: None,
+                reject_reason: None,
+                created_at: now,
+            })
+            .expect("insert accepted share");
+        store
+            .add_share(ShareRecord {
+                job_id: "share-invalid".to_string(),
+                miner: "miner-a".to_string(),
+                worker: "rig-1".to_string(),
+                difficulty: 100,
+                nonce: 2,
+                status: "rejected",
+                was_sampled: true,
+                block_hash: None,
+                reject_reason: Some("invalid share proof".to_string()),
+                created_at: now,
+            })
+            .expect("insert invalid share");
+        store
+            .add_share(ShareRecord {
+                job_id: "share-quarantine".to_string(),
+                miner: "miner-a".to_string(),
+                worker: "rig-1".to_string(),
+                difficulty: 100,
+                nonce: 3,
+                status: "rejected",
+                was_sampled: true,
+                block_hash: None,
+                reject_reason: Some("address quarantined".to_string()),
+                created_at: now,
+            })
+            .expect("insert quarantine share");
+
+        let snapshot = PersistedRuntimeSnapshot {
+            sampled_at: now,
+            total_shares_accepted: 1,
+            connected_miners: 4,
+            connected_workers: 7,
+            estimated_hashrate: 42.5,
+            last_share_at: Some(now),
+            jobs: JobRuntimeSnapshot {
+                current_height: Some(999),
+                current_difficulty: Some(123),
+                template_id: Some("tmpl-share-tab".to_string()),
+                template_age_seconds: Some(6),
+                last_refresh_millis: Some(1200),
+                tracked_templates: 3,
+                active_assignments: 14,
+            },
+            payouts: PersistedPayoutRuntime::default(),
+            validation: PersistedValidationSummary {
+                in_flight: 2,
+                candidate_queue_depth: 5,
+                regular_queue_depth: 9,
+                tracked_addresses: 3,
+                forced_verify_addresses: 1,
+                total_shares: 20,
+                sampled_shares: 4,
+                invalid_samples: 1,
+                pending_provisional: 8,
+                fraud_detections: 0,
+            },
+        };
+        store
+            .set_meta(
+                LIVE_RUNTIME_SNAPSHOT_META_KEY,
+                &serde_json::to_vec(&snapshot).expect("serialize runtime snapshot"),
+            )
+            .expect("persist runtime snapshot");
+
+        let state = test_api_state(store);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let response = runtime
+            .block_on(handle_admin_share_diagnostics(State(state)))
+            .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let bytes = runtime
+            .block_on(to_bytes(response.into_body(), usize::MAX))
+            .expect("body bytes");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("share diagnostics json");
+
+        let windows = payload["windows"].as_array().expect("window rows");
+        let five_min = windows
+            .iter()
+            .find(|row| row["label"] == "5m")
+            .expect("5m row");
+        assert_eq!(five_min["accepted"], 1);
+        assert_eq!(five_min["rejected"], 2);
+        assert_eq!(five_min["total"], 3);
+        assert_eq!(five_min["by_reason"][0]["reason"], "address quarantined");
+        assert_eq!(five_min["by_reason"][0]["count"], 1);
+
+        assert_eq!(payload["validation"]["candidate_queue_depth"], 5);
+        assert_eq!(payload["validation"]["regular_queue_depth"], 9);
+        assert_eq!(payload["job"]["active_assignments"], 14);
+        assert_eq!(payload["pool_activity"]["connected_workers"], 7);
     }
 
     #[test]

@@ -20,6 +20,8 @@ import type {
   AdminBalanceItem,
   AdminDevFeeTelemetryResponse,
   AdminPayoutItem,
+  AdminShareDiagnosticsResponse,
+  AdminShareDiagnosticsWindow,
   AdminTab,
   BlockRewardBreakdownResponse,
   BlockItem,
@@ -268,6 +270,31 @@ function poolActivityBadgeClass(state: string | undefined): string {
   }
 }
 
+function shareWindowReasonCount(window: AdminShareDiagnosticsWindow | null | undefined, reason: string): number {
+  const target = reason.trim().toLowerCase();
+  if (!window?.by_reason?.length || !target) return 0;
+  const match = window.by_reason.find((item) => item.reason.trim().toLowerCase() === target);
+  return match?.count ?? 0;
+}
+
+function shareWindowReasonPct(window: AdminShareDiagnosticsWindow | null | undefined, reason: string): number | null {
+  if (!window) return null;
+  const total = window.total ?? 0;
+  if (total <= 0) return null;
+  return (shareWindowReasonCount(window, reason) / total) * 100;
+}
+
+function shareSignalBadgeClass(level: 'good' | 'warn' | 'info'): string {
+  switch (level) {
+    case 'good':
+      return 'badge-confirmed';
+    case 'warn':
+      return 'badge-orphaned';
+    default:
+      return 'badge-pending';
+  }
+}
+
 function recoveryInstanceLabel(instance: RecoveryInstanceId | null | undefined): string {
   switch (instance) {
     case 'primary':
@@ -408,6 +435,7 @@ export function AdminPage({
   const [rewardBreakdownLoading, setRewardBreakdownLoading] = useState(false);
 
   const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [shareDiagnostics, setShareDiagnostics] = useState<AdminShareDiagnosticsResponse | null>(null);
 
   const [balancesSearch, setBalancesSearch] = useState('');
   const [balancesSort, setBalancesSort] = useState('pending_desc');
@@ -555,6 +583,16 @@ export function AdminPage({
     }
   }, [api, apiKey]);
 
+  const loadShareDiagnostics = useCallback(async () => {
+    if (!apiKey) return;
+    try {
+      const d = await api.getAdminShareDiagnostics();
+      setShareDiagnostics(d);
+    } catch {
+      setShareDiagnostics(null);
+    }
+  }, [api, apiKey]);
+
   const loadBalances = useCallback(async () => {
     if (!apiKey) return;
     try {
@@ -639,6 +677,7 @@ export function AdminPage({
       }
     }
     if (tab === 'health' || tab === 'holds') void loadHealth();
+    if (tab === 'shares') void loadShareDiagnostics();
     if (tab === 'balances') void loadBalances();
     if (tab === 'recovery') void loadRecovery();
   }, [
@@ -648,6 +687,7 @@ export function AdminPage({
     loadFees,
     loadDevFeeTelemetry,
     loadHealth,
+    loadShareDiagnostics,
     loadMiners,
     loadPayouts,
     loadRecovery,
@@ -672,6 +712,7 @@ export function AdminPage({
       }
     }
     if (tab === 'health' || tab === 'holds') void loadHealth();
+    if (tab === 'shares') void loadShareDiagnostics();
     if (tab === 'balances') void loadBalances();
     if (tab === 'recovery') void loadRecovery();
   }, [
@@ -683,6 +724,7 @@ export function AdminPage({
     loadFees,
     loadDevFeeTelemetry,
     loadHealth,
+    loadShareDiagnostics,
     loadMiners,
     loadPayouts,
     loadRecovery,
@@ -820,6 +862,92 @@ export function AdminPage({
   const rawHealthJson = useMemo(() => (health ? JSON.stringify(health, null, 2) : ''), [health]);
   const activeVerificationHolds = health?.active_verification_holds ?? [];
   const poolActivity = health?.pool_activity ?? null;
+  const shareWindows = shareDiagnostics?.windows ?? [];
+  const shareWindow5m = useMemo(
+    () => shareWindows.find((item) => item.label === '5m') ?? null,
+    [shareWindows]
+  );
+  const shareWindow1h = useMemo(
+    () => shareWindows.find((item) => item.label === '1h') ?? null,
+    [shareWindows]
+  );
+  const shareWindow24h = useMemo(
+    () => shareWindows.find((item) => item.label === '24h') ?? null,
+    [shareWindows]
+  );
+  const shareValidation = shareDiagnostics?.validation ?? null;
+  const shareJob = shareDiagnostics?.job ?? null;
+  const sharePoolActivity = shareDiagnostics?.pool_activity ?? null;
+  const shareValidationQueueDepth =
+    (shareValidation?.candidate_queue_depth ?? 0) + (shareValidation?.regular_queue_depth ?? 0);
+  const shareSignals = useMemo(() => {
+    const signals: Array<{ level: 'good' | 'warn' | 'info'; title: string; detail: string }> = [];
+    const recentRejected = shareWindow5m?.rejected ?? 0;
+    const recentRejectRate = shareWindow5m?.rejection_rate_pct ?? 0;
+    const hourlyRejectRate = shareWindow1h?.rejection_rate_pct ?? 0;
+    const refreshLagMs = shareJob?.last_refresh_millis ?? 0;
+    const templateAgeSeconds = shareJob?.template_age_seconds ?? 0;
+
+    if (
+      recentRejected >= 10 &&
+      recentRejectRate >= Math.max(5, hourlyRejectRate * 2)
+    ) {
+      signals.push({
+        level: 'warn',
+        title: 'Reject spike',
+        detail: `5m rejects are ${pct(recentRejectRate)} versus ${pct(hourlyRejectRate)} over 1h.`,
+      });
+    }
+
+    if (shareValidationQueueDepth > 0 || (shareValidation?.in_flight ?? 0) > 0) {
+      signals.push({
+        level: 'warn',
+        title: 'Validation backlog',
+        detail: `${shareValidationQueueDepth} queued, ${shareValidation?.in_flight ?? 0} in flight, ${shareValidation?.pending_provisional ?? 0} provisional pending.`,
+      });
+    }
+
+    if (refreshLagMs >= 15_000 || templateAgeSeconds >= 30) {
+      signals.push({
+        level: 'warn',
+        title: 'Template churn risk',
+        detail: `Refresh lag is ${formatRefreshLag(refreshLagMs)} and template age is ${templateAgeSeconds > 0 ? fmtSeconds(templateAgeSeconds) : '-'}.`,
+      });
+    }
+
+    const topReason = shareWindow5m?.by_reason?.[0];
+    const topReasonRejectPct =
+      topReason && (shareWindow5m?.rejected ?? 0) > 0
+        ? (topReason.count / (shareWindow5m?.rejected ?? 1)) * 100
+        : 0;
+    if (topReason && recentRejected >= 5 && topReasonRejectPct >= 50) {
+      let detail = `${topReason.reason} accounts for ${topReason.count} of ${shareWindow5m?.rejected ?? 0} recent rejects.`;
+      if (topReason.reason === 'stale job') {
+        detail += ' Check template propagation and daemon refresh cadence.';
+      } else if (topReason.reason === 'low difficulty share') {
+        detail += ' This usually points to vardiff or worker difficulty mismatch.';
+      } else if (topReason.reason === 'invalid share proof') {
+        detail += ' This is miner-side bad proof traffic, not queue pressure.';
+      } else if (topReason.reason === 'address quarantined') {
+        detail += ' Quarantined miners are still retrying and inflating rejects.';
+      }
+      signals.push({
+        level: 'info',
+        title: 'Dominant recent reject reason',
+        detail,
+      });
+    }
+
+    if (!signals.length) {
+      signals.push({
+        level: 'good',
+        title: 'Share intake looks stable',
+        detail: 'No obvious reject spike or validation backlog is visible in the current windows.',
+      });
+    }
+
+    return signals;
+  }, [shareJob?.last_refresh_millis, shareJob?.template_age_seconds, shareValidation?.in_flight, shareValidation?.pending_provisional, shareValidationQueueDepth, shareWindow1h, shareWindow5m]);
   const copyHealthJson = useCallback(() => {
     if (!rawHealthJson || !navigator.clipboard) return;
     void navigator.clipboard.writeText(rawHealthJson);
@@ -1054,6 +1182,9 @@ export function AdminPage({
             </button>
             <button className={tab === 'health' ? 'active' : ''} onClick={() => setTab('health')}>
               Health
+            </button>
+            <button className={tab === 'shares' ? 'active' : ''} onClick={() => setTab('shares')}>
+              Shares
             </button>
             <button className={tab === 'holds' ? 'active' : ''} onClick={() => setTab('holds')}>
               Holds
@@ -2251,6 +2382,201 @@ export function AdminPage({
                 <summary>Show raw JSON</summary>
                 <pre className="raw-json">{rawHealthJson || 'Loading...'}</pre>
               </details>
+            </div>
+          </div>
+
+          <div style={{ display: tab === 'shares' ? '' : 'none' }}>
+            <div className="card section" style={{ marginBottom: 16 }}>
+              <div className="section-header">
+                <div>
+                  <h3>Share Diagnostics</h3>
+                  <p className="section-lead">
+                    Compare recent reject rates and reject causes against the current validation queue and job state.
+                  </p>
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                  Updated {shareDiagnostics?.generated_at ? timeAgo(shareDiagnostics.generated_at) : '-'}
+                </div>
+              </div>
+            </div>
+
+            <div className="stats-card-group">
+              <div className="stats-card-group-title">Overview</div>
+              <div className="stats-card-group-grid stats-grid-dense">
+                <div className="stat-card">
+                  <div className="label">5m Reject Rate</div>
+                  <div className="value mono">{pct(shareWindow5m?.rejection_rate_pct)}</div>
+                  <div className="stat-meta">{shareWindow5m?.rejected ?? 0} rejected</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">5m Invalid Proof</div>
+                  <div className="value mono">{pct(shareWindowReasonPct(shareWindow5m, 'invalid share proof'))}</div>
+                  <div className="stat-meta">{shareWindowReasonCount(shareWindow5m, 'invalid share proof')} rejects</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">1h Reject Rate</div>
+                  <div className="value mono">{pct(shareWindow1h?.rejection_rate_pct)}</div>
+                  <div className="stat-meta">{shareWindow1h?.rejected ?? 0} rejected</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">24h Reject Rate</div>
+                  <div className="value mono">{pct(shareWindow24h?.rejection_rate_pct)}</div>
+                  <div className="stat-meta">{shareWindow24h?.rejected ?? 0} rejected</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Validation Queue</div>
+                  <div className="value mono">{shareValidationQueueDepth}</div>
+                  <div className="stat-meta">
+                    {shareValidation?.candidate_queue_depth ?? 0} candidate · {shareValidation?.regular_queue_depth ?? 0} regular
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Pending Provisional</div>
+                  <div className="value mono">{shareValidation?.pending_provisional ?? '-'}</div>
+                  <div className="stat-meta">{shareValidation?.in_flight ?? 0} in flight</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="stats-card-group">
+              <div className="stats-card-group-title">Pressure Signals</div>
+              <div className="stats-card-group-grid stats-grid-dense">
+                {shareSignals.map((signal) => (
+                  <div className="stat-card" key={`${signal.level}-${signal.title}`}>
+                    <div className="label">
+                      <span className={`badge ${shareSignalBadgeClass(signal.level)}`}>{signal.title}</span>
+                    </div>
+                    <div className="stat-meta" style={{ marginTop: 12, fontSize: 13, color: 'var(--text)' }}>
+                      {signal.detail}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="stats-card-group">
+              <div className="stats-card-group-title">Queue & Runtime</div>
+              <div className="stats-card-group-grid stats-grid-dense">
+                <div className="stat-card">
+                  <div className="label">In Flight</div>
+                  <div className="value mono">{shareValidation?.in_flight ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Tracked Addresses</div>
+                  <div className="value mono">{shareValidation?.tracked_addresses ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Forced Verify</div>
+                  <div className="value mono">{shareValidation?.forced_verify_addresses ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Active Assignments</div>
+                  <div className="value mono">{shareJob?.active_assignments ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Tracked Templates</div>
+                  <div className="value mono">{shareJob?.tracked_templates ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Template Age</div>
+                  <div className="value mono">
+                    {shareJob?.template_age_seconds != null ? fmtSeconds(shareJob.template_age_seconds) : '-'}
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Refresh Lag</div>
+                  <div className="value mono">{formatRefreshLag(shareJob?.last_refresh_millis)}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Pool Activity</div>
+                  <div className="value">
+                    <span className={`badge ${poolActivityBadgeClass(sharePoolActivity?.state)}`}>
+                      {poolActivityLabel(sharePoolActivity?.state)}
+                    </span>
+                  </div>
+                  <div className="stat-meta">{sharePoolActivity?.detail ?? 'No pool activity snapshot available.'}</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="card table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Window</th>
+                    <th>Accepted</th>
+                    <th>Rejected</th>
+                    <th>Reject %</th>
+                    <th>Invalid %</th>
+                    <th>Low Diff %</th>
+                    <th>Stale %</th>
+                    <th>Quarantined %</th>
+                    <th>Top Reject</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {!shareWindows.length ? (
+                    <tr>
+                      <td colSpan={9} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                        No share diagnostics available yet
+                      </td>
+                    </tr>
+                  ) : (
+                    shareWindows.map((window) => {
+                      const topReason = window.by_reason?.[0];
+                      const topReasonRejectPct =
+                        topReason && window.rejected > 0 ? (topReason.count / window.rejected) * 100 : 0;
+                      return (
+                        <tr key={window.label}>
+                          <td>
+                            <div style={{ fontWeight: 600 }}>{window.label}</div>
+                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>{window.total} submits</div>
+                          </td>
+                          <td className="mono">{window.accepted}</td>
+                          <td className="mono">{window.rejected}</td>
+                          <td className="mono">{pct(window.rejection_rate_pct)}</td>
+                          <td className="mono">
+                            {pct(shareWindowReasonPct(window, 'invalid share proof'))}
+                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                              {shareWindowReasonCount(window, 'invalid share proof')} rejects
+                            </div>
+                          </td>
+                          <td className="mono">
+                            {pct(shareWindowReasonPct(window, 'low difficulty share'))}
+                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                              {shareWindowReasonCount(window, 'low difficulty share')} rejects
+                            </div>
+                          </td>
+                          <td className="mono">
+                            {pct(shareWindowReasonPct(window, 'stale job'))}
+                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                              {shareWindowReasonCount(window, 'stale job')} rejects
+                            </div>
+                          </td>
+                          <td className="mono">
+                            {pct(shareWindowReasonPct(window, 'address quarantined'))}
+                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                              {shareWindowReasonCount(window, 'address quarantined')} rejects
+                            </div>
+                          </td>
+                          <td>
+                            {!topReason ? (
+                              <span style={{ color: 'var(--muted)' }}>None</span>
+                            ) : (
+                              <>
+                                <div style={{ fontWeight: 600 }}>{topReason.reason}</div>
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                  {topReason.count} rejects · {pct(topReasonRejectPct)} of rejects
+                                </div>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
 

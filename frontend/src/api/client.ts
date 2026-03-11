@@ -1,6 +1,7 @@
 import type {
   AdminBalanceItem,
   AdminPayoutItem,
+  AdminShareDiagnosticsResponse,
   BlockRewardBreakdownResponse,
   BlockItem,
   ClearAddressRiskHistoryResponse,
@@ -55,6 +56,7 @@ export interface ApiClient {
   getFees(params: QueryParams): Promise<FeesResponse>;
   getAdminBlockRewardBreakdown(height: number): Promise<BlockRewardBreakdownResponse>;
   getHealth(): Promise<HealthResponse>;
+  getAdminShareDiagnostics(): Promise<AdminShareDiagnosticsResponse>;
   getAdminBalances(params: QueryParams): Promise<PagedResponse<AdminBalanceItem>>;
   clearAddressRiskHistory(address: string): Promise<ClearAddressRiskHistoryResponse>;
   getRecoveryStatus(): Promise<RecoveryStatusResponse>;
@@ -145,6 +147,8 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
         auth: true,
       }),
     getHealth: () => fetchJson<HealthResponse>('/api/health', { auth: true }),
+    getAdminShareDiagnostics: () =>
+      fetchJson<AdminShareDiagnosticsResponse>('/api/admin/shares', { auth: true }),
     getAdminBalances: (params: QueryParams) =>
       fetchJson<PagedResponse<AdminBalanceItem>>(withQuery('/api/admin/balances', params), { auth: true }),
     clearAddressRiskHistory: (address: string) =>
