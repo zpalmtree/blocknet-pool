@@ -698,6 +698,7 @@ export function AdminPage({
     );
   }, [rewardBreakdown]);
   const rewardBreakdownOrphaned = rewardBreakdown?.block.orphaned ?? false;
+  const rewardBreakdownPaidOut = rewardBreakdown?.block.paid_out ?? false;
   const rewardBreakdownProjected = !!rewardBreakdown && !rewardBreakdownOrphaned && !rewardBreakdown.block.paid_out;
   const activeVerificationHolds = health?.active_verification_holds ?? [];
   const poolActivity = health?.pool_activity ?? null;
@@ -930,11 +931,23 @@ export function AdminPage({
       ? rewardActualBlockTotal - rewardProjectedBlockTotal
       : null;
   const rewardPreviewColumnLabel = rewardBreakdownOrphaned ? 'Preview Estimate' : 'Preview';
-  const rewardPayoutColumnLabel = rewardBreakdownProjected ? 'Projected Payout' : 'Payout';
-  const rewardPayoutWeightLabel = rewardBreakdownProjected ? 'Projected Weight' : 'Payout Weight';
+  const rewardPayoutColumnLabel = rewardBreakdownProjected
+    ? 'Projected Payout'
+    : rewardBreakdownPaidOut
+      ? 'Current Recompute'
+      : 'Payout';
+  const rewardActualColumnLabel = rewardBreakdownPaidOut ? 'Recorded Payout' : 'Actual';
+  const rewardDeltaColumnLabel = rewardBreakdownPaidOut ? 'Delta vs Recompute' : 'Delta';
+  const rewardPayoutWeightLabel = rewardBreakdownProjected
+    ? 'Projected Weight'
+    : rewardBreakdownPaidOut
+      ? 'Current Recompute Weight'
+      : 'Payout Weight';
   const rewardStatusColumnLabel = rewardBreakdownOrphaned
     ? 'Resolution'
-    : rewardBreakdownProjected
+    : rewardBreakdownPaidOut
+      ? 'Notes'
+      : rewardBreakdownProjected
       ? 'Projected Status'
       : 'Status';
 
@@ -1167,7 +1180,7 @@ export function AdminPage({
               <div className="card section">
                 <h3>Reward Breakdown</h3>
                 <p style={{ color: 'var(--muted)', fontSize: 14 }}>
-                  Load a block height to inspect the current preview math, the final payout math, and any recorded
+                  Load a block height to inspect the preview share math, the current payout recompute, and any recorded
                   credited amounts for that block.
                 </p>
               </div>
@@ -1216,7 +1229,9 @@ export function AdminPage({
                         ? 'Estimated payout collapsed to zero when the block orphaned'
                         : rewardBreakdownProjected
                           ? 'Current final split if the block reaches payout processing'
-                        : 'Final reward split after payout gates'}
+                          : rewardBreakdownPaidOut
+                            ? 'Live recompute using current policy and risk state; recorded payout is authoritative'
+                            : 'Final reward split after payout gates'}
                     </div>
                   </div>
                   <div className="stat-card">
@@ -1234,6 +1249,21 @@ export function AdminPage({
                   </div>
                 </div>
 
+                {rewardBreakdownPaidOut && !rewardBreakdown.block.orphaned ? (
+                  <div
+                    className="card section"
+                    style={{ marginBottom: 20, borderColor: 'var(--warn)', background: 'var(--surface-hover)' }}
+                  >
+                    <h3 style={{ marginBottom: 8 }}>Recorded Payout Is Authoritative</h3>
+                    <p style={{ color: 'var(--muted)', fontSize: 13, margin: 0 }}>
+                      This block is already paid out. <span className="mono">Recorded Payout</span> comes from the
+                      historical credit events written at payout time. <span className="mono">Current Recompute</span>{' '}
+                      uses today&apos;s verification, risk, and cap state, so it can differ from the recorded payout if
+                      an address was forced-verify or otherwise treated differently when the block was finalized.
+                    </p>
+                  </div>
+                ) : null}
+
                 <div className="card table-scroll">
                   <table>
                     <thead>
@@ -1243,8 +1273,8 @@ export function AdminPage({
                         {rewardBreakdown.block.orphaned ? <th>Actual</th> : <th>Preview Weight</th>}
                         {rewardBreakdown.block.orphaned ? <th>Delta</th> : null}
                         {rewardBreakdown.block.orphaned ? null : <th>{rewardPayoutColumnLabel}</th>}
-                        {rewardBreakdown.block.orphaned ? null : <th>Actual</th>}
-                        {rewardBreakdown.block.orphaned ? null : <th>Delta</th>}
+                        {rewardBreakdown.block.orphaned ? null : <th>{rewardActualColumnLabel}</th>}
+                        {rewardBreakdown.block.orphaned ? null : <th>{rewardDeltaColumnLabel}</th>}
                         {rewardBreakdown.block.orphaned ? null : <th>{rewardPayoutWeightLabel}</th>}
                         <th>Verified Diff</th>
                         <th>Eligible Prov Diff</th>
@@ -1310,7 +1340,9 @@ export function AdminPage({
                                       ? 'var(--muted)'
                                       : row.delta_vs_payout === 0
                                         ? 'var(--good)'
-                                        : 'var(--warn)',
+                                        : rewardBreakdownPaidOut
+                                          ? 'var(--muted)'
+                                          : 'var(--warn)',
                                 }}
                               >
                                 {formatSignedCoins(row.delta_vs_payout)}
@@ -1342,13 +1374,27 @@ export function AdminPage({
                                 </>
                               ) : (
                                 <>
-                                  <div style={{ color: rewardStatusTone(row.payout_status), fontWeight: 600 }}>
-                                    {rewardStatusLabel(row.payout_status)}
-                                  </div>
-                                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                                    Preview: {rewardStatusLabel(row.preview_status)}
-                                    {row.risky ? ' · verification hold' : ''}
-                                  </div>
+                                  {rewardBreakdownPaidOut ? (
+                                    <>
+                                      <div style={{ color: 'var(--muted)', fontWeight: 600 }}>
+                                        Recorded payout finalized
+                                      </div>
+                                      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                                        Current recompute: {rewardStatusLabel(row.payout_status)} · Preview:{' '}
+                                        {rewardStatusLabel(row.preview_status)}
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <div style={{ color: rewardStatusTone(row.payout_status), fontWeight: 600 }}>
+                                        {rewardStatusLabel(row.payout_status)}
+                                      </div>
+                                      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                                        Preview: {rewardStatusLabel(row.preview_status)}
+                                        {row.risky ? ' · verification hold' : ''}
+                                      </div>
+                                    </>
+                                  )}
                                 </>
                               )}
                             </td>
@@ -1435,7 +1481,9 @@ export function AdminPage({
                                   ? 'var(--muted)'
                                   : rewardActualBlockDelta === 0
                                     ? 'var(--good)'
-                                    : 'var(--warn)',
+                                    : rewardBreakdownPaidOut
+                                      ? 'var(--muted)'
+                                      : 'var(--warn)',
                             }}
                           >
                             {formatSignedCoins(rewardActualBlockDelta)}
@@ -1451,14 +1499,24 @@ export function AdminPage({
                                     ? 'var(--muted)'
                                     : rewardActualBlockDelta === 0
                                       ? 'var(--good)'
-                                      : 'var(--warn)',
+                                      : rewardBreakdownPaidOut
+                                        ? 'var(--muted)'
+                                        : 'var(--warn)',
                                 fontWeight: 600,
                               }}
                             >
-                              {rewardActualBlockDelta == null ? 'Pending' : rewardActualBlockDelta === 0 ? 'Balanced' : 'Mismatch'}
+                              {rewardActualBlockDelta == null
+                                ? 'Pending'
+                                : rewardActualBlockDelta === 0
+                                  ? 'Balanced'
+                                  : rewardBreakdownPaidOut
+                                    ? 'Historical differs from recompute'
+                                    : 'Mismatch'}
                             </div>
                             <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                              summary across the full block
+                              {rewardBreakdownPaidOut
+                                ? 'recorded payout vs current recompute across the full block'
+                                : 'summary across the full block'}
                             </div>
                           </td>
                         </tr>
