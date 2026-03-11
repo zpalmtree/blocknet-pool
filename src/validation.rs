@@ -769,9 +769,11 @@ impl Drop for ValidationEngine {
 impl ValidationInner {
     fn maintenance_tick(&self) {
         self.sync_external_clears(false);
+        let now = SystemTime::now();
+        self.refresh_dynamic_state(now);
         let overload_mode = self.evaluate_overload(Instant::now());
         if overload_mode == OverloadMode::Normal {
-            self.schedule_background_audits(SystemTime::now());
+            self.schedule_background_audits(now);
         }
     }
 
@@ -1307,6 +1309,32 @@ impl ValidationInner {
             self.prune_stale_state_locked(&mut state, now);
         }
         snap.tracked_addresses = state.len();
+        for st in state.values_mut() {
+            self.prune_provisional_locked(st, now);
+            prune_accepted_window(st, &self.config, now);
+            refresh_dynamic_validation_hold(st, &self.config, now);
+            snap.total_shares = snap.total_shares.saturating_add(st.total_shares);
+            snap.sampled_shares = snap.sampled_shares.saturating_add(st.sampled_shares);
+            snap.invalid_samples = snap.invalid_samples.saturating_add(st.invalid_samples);
+            snap.pending_provisional = snap
+                .pending_provisional
+                .saturating_add(st.provisional_at.len() as u64);
+            if st.forced_started_at.is_some()
+                || st.forced_until.is_some_and(|deadline| deadline > now)
+            {
+                snap.forced_verify_addresses += 1;
+            }
+        }
+        drop(state);
+
+        snap
+    }
+
+    fn refresh_dynamic_state(&self, now: SystemTime) {
+        let mut state = self.state.lock();
+        if state.len() > VALIDATION_STATE_MAX_TRACKED {
+            self.prune_stale_state_locked(&mut state, now);
+        }
         let mut changed = Vec::new();
         for (address, st) in state.iter_mut() {
             let before = (
@@ -1327,24 +1355,11 @@ impl ValidationInner {
             if before != after {
                 changed.push(persisted_validation_state(address, st));
             }
-            snap.total_shares = snap.total_shares.saturating_add(st.total_shares);
-            snap.sampled_shares = snap.sampled_shares.saturating_add(st.sampled_shares);
-            snap.invalid_samples = snap.invalid_samples.saturating_add(st.invalid_samples);
-            snap.pending_provisional = snap
-                .pending_provisional
-                .saturating_add(st.provisional_at.len() as u64);
-            if st.forced_started_at.is_some()
-                || st.forced_until.is_some_and(|deadline| deadline > now)
-            {
-                snap.forced_verify_addresses += 1;
-            }
         }
         drop(state);
         for persisted in changed {
             self.persist_validation_state(&persisted, None, now);
         }
-
-        snap
     }
 
     fn enqueue_live_audit(&self, share: PendingAuditShare, source: ValidationAuditSource) {
