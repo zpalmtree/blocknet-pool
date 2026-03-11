@@ -25,7 +25,7 @@ use crate::protocol::{
 use crate::stats::PoolStats;
 use crate::telemetry::{PercentileSummary, QueueTracker};
 
-const MAX_CONNS_PER_IP: usize = 16;
+const MAX_CONNS_PER_IP: usize = 256;
 const MAX_CONNS_TOTAL: usize = 4096;
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_STRATUM_REQUEST_BYTES: usize = 8 * 1024;
