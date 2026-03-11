@@ -43,7 +43,8 @@ use crate::payout::{
 use crate::pool_activity::{assess_pool_activity, POOL_ACTIVITY_SNAPSHOT_STALE_AFTER};
 use crate::recovery::{RecoveryAgentClient, RecoveryInstanceId, RecoveryOperation, RecoveryStatus};
 use crate::service_state::{
-    PersistedPayoutRuntime, PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY,
+    PersistedPayoutRuntime, PersistedRuntimeSnapshot, PersistedValidationSummary,
+    LIVE_RUNTIME_SNAPSHOT_META_KEY,
 };
 use crate::stats::{
     MinerStats, PoolSnapshot, PoolStats, RejectionAnalyticsSnapshot, RejectionReasonCount,
@@ -2333,6 +2334,130 @@ fn validation_summary_from_snapshot(snapshot: ValidationSnapshot) -> ValidationS
         audit_deferred: snapshot.audit_deferred,
         overload_mode: snapshot.overload_mode,
         effective_sample_rate: snapshot.effective_sample_rate,
+    }
+}
+
+fn validation_summary_from_persisted(
+    summary: &PersistedValidationSummary,
+) -> ValidationSummary {
+    ValidationSummary {
+        in_flight: summary.in_flight,
+        candidate_queue_depth: summary.candidate_queue_depth,
+        regular_queue_depth: summary.regular_queue_depth,
+        audit_queue_depth: summary.audit_queue_depth,
+        candidate_oldest_age_millis: summary.candidate_oldest_age_millis,
+        regular_oldest_age_millis: summary.regular_oldest_age_millis,
+        audit_oldest_age_millis: summary.audit_oldest_age_millis,
+        candidate_wait: summary.candidate_wait,
+        regular_wait: summary.regular_wait,
+        audit_wait: summary.audit_wait,
+        validation_duration: summary.validation_duration,
+        audit_duration: summary.audit_duration,
+        tracked_addresses: summary.tracked_addresses,
+        forced_verify_addresses: summary.forced_verify_addresses,
+        total_shares: summary.total_shares,
+        sampled_shares: summary.sampled_shares,
+        invalid_samples: summary.invalid_samples,
+        pending_provisional: summary.pending_provisional,
+        fraud_detections: summary.fraud_detections,
+        candidate_false_claims: summary.candidate_false_claims,
+        hot_accepts: summary.hot_accepts,
+        sync_full_verifies: summary.sync_full_verifies,
+        audit_enqueued: summary.audit_enqueued,
+        audit_verified: summary.audit_verified,
+        audit_rejected: summary.audit_rejected,
+        audit_deferred: summary.audit_deferred,
+        overload_mode: summary.overload_mode,
+        effective_sample_rate: summary.effective_sample_rate,
+    }
+}
+
+fn merge_percentile_summary(
+    live: crate::telemetry::PercentileSummary,
+    persisted: crate::telemetry::PercentileSummary,
+) -> crate::telemetry::PercentileSummary {
+    if persisted.samples >= live.samples {
+        persisted
+    } else {
+        live
+    }
+}
+
+fn merge_oldest_age(live: Option<u64>, persisted: Option<u64>) -> Option<u64> {
+    match (live, persisted) {
+        (Some(left), Some(right)) => Some(left.max(right)),
+        (Some(left), None) => Some(left),
+        (None, Some(right)) => Some(right),
+        (None, None) => None,
+    }
+}
+
+fn overload_mode_rank(mode: crate::validation::OverloadMode) -> u8 {
+    match mode {
+        crate::validation::OverloadMode::Normal => 0,
+        crate::validation::OverloadMode::Shed => 1,
+        crate::validation::OverloadMode::Emergency => 2,
+    }
+}
+
+fn merge_validation_summary(
+    live: ValidationSummary,
+    persisted: &PersistedValidationSummary,
+) -> ValidationSummary {
+    let persisted = validation_summary_from_persisted(persisted);
+    ValidationSummary {
+        in_flight: live.in_flight.max(persisted.in_flight),
+        candidate_queue_depth: live.candidate_queue_depth.max(persisted.candidate_queue_depth),
+        regular_queue_depth: live.regular_queue_depth.max(persisted.regular_queue_depth),
+        audit_queue_depth: live.audit_queue_depth.max(persisted.audit_queue_depth),
+        candidate_oldest_age_millis: merge_oldest_age(
+            live.candidate_oldest_age_millis,
+            persisted.candidate_oldest_age_millis,
+        ),
+        regular_oldest_age_millis: merge_oldest_age(
+            live.regular_oldest_age_millis,
+            persisted.regular_oldest_age_millis,
+        ),
+        audit_oldest_age_millis: merge_oldest_age(
+            live.audit_oldest_age_millis,
+            persisted.audit_oldest_age_millis,
+        ),
+        candidate_wait: merge_percentile_summary(live.candidate_wait, persisted.candidate_wait),
+        regular_wait: merge_percentile_summary(live.regular_wait, persisted.regular_wait),
+        audit_wait: merge_percentile_summary(live.audit_wait, persisted.audit_wait),
+        validation_duration: merge_percentile_summary(
+            live.validation_duration,
+            persisted.validation_duration,
+        ),
+        audit_duration: merge_percentile_summary(live.audit_duration, persisted.audit_duration),
+        tracked_addresses: live.tracked_addresses.max(persisted.tracked_addresses),
+        forced_verify_addresses: live
+            .forced_verify_addresses
+            .max(persisted.forced_verify_addresses),
+        total_shares: live.total_shares.max(persisted.total_shares),
+        sampled_shares: live.sampled_shares.max(persisted.sampled_shares),
+        invalid_samples: live.invalid_samples.max(persisted.invalid_samples),
+        pending_provisional: live.pending_provisional.max(persisted.pending_provisional),
+        fraud_detections: live.fraud_detections.max(persisted.fraud_detections),
+        candidate_false_claims: live
+            .candidate_false_claims
+            .max(persisted.candidate_false_claims),
+        hot_accepts: live.hot_accepts.max(persisted.hot_accepts),
+        sync_full_verifies: live.sync_full_verifies.max(persisted.sync_full_verifies),
+        audit_enqueued: live.audit_enqueued.max(persisted.audit_enqueued),
+        audit_verified: live.audit_verified.max(persisted.audit_verified),
+        audit_rejected: live.audit_rejected.max(persisted.audit_rejected),
+        audit_deferred: live.audit_deferred.max(persisted.audit_deferred),
+        overload_mode: if overload_mode_rank(persisted.overload_mode)
+            >= overload_mode_rank(live.overload_mode)
+        {
+            persisted.overload_mode
+        } else {
+            live.overload_mode
+        },
+        effective_sample_rate: live
+            .effective_sample_rate
+            .max(persisted.effective_sample_rate),
     }
 }
 
@@ -6529,40 +6654,11 @@ impl ApiState {
 
     async fn effective_validation_summary(&self) -> ValidationSummary {
         let live = validation_summary_from_snapshot(self.validation.snapshot());
-        if !validation_summary_is_empty(&live) {
-            return live;
-        }
         if let Some(persisted) = self.persisted_runtime_snapshot().await {
-            return ValidationSummary {
-                in_flight: persisted.validation.in_flight,
-                candidate_queue_depth: persisted.validation.candidate_queue_depth,
-                regular_queue_depth: persisted.validation.regular_queue_depth,
-                audit_queue_depth: persisted.validation.audit_queue_depth,
-                candidate_oldest_age_millis: persisted.validation.candidate_oldest_age_millis,
-                regular_oldest_age_millis: persisted.validation.regular_oldest_age_millis,
-                audit_oldest_age_millis: persisted.validation.audit_oldest_age_millis,
-                candidate_wait: persisted.validation.candidate_wait,
-                regular_wait: persisted.validation.regular_wait,
-                audit_wait: persisted.validation.audit_wait,
-                validation_duration: persisted.validation.validation_duration,
-                audit_duration: persisted.validation.audit_duration,
-                tracked_addresses: persisted.validation.tracked_addresses,
-                forced_verify_addresses: persisted.validation.forced_verify_addresses,
-                total_shares: persisted.validation.total_shares,
-                sampled_shares: persisted.validation.sampled_shares,
-                invalid_samples: persisted.validation.invalid_samples,
-                pending_provisional: persisted.validation.pending_provisional,
-                fraud_detections: persisted.validation.fraud_detections,
-                candidate_false_claims: persisted.validation.candidate_false_claims,
-                hot_accepts: persisted.validation.hot_accepts,
-                sync_full_verifies: persisted.validation.sync_full_verifies,
-                audit_enqueued: persisted.validation.audit_enqueued,
-                audit_verified: persisted.validation.audit_verified,
-                audit_rejected: persisted.validation.audit_rejected,
-                audit_deferred: persisted.validation.audit_deferred,
-                overload_mode: persisted.validation.overload_mode,
-                effective_sample_rate: persisted.validation.effective_sample_rate,
-            };
+            if validation_summary_is_empty(&live) {
+                return validation_summary_from_persisted(&persisted.validation);
+            }
+            return merge_validation_summary(live, &persisted.validation);
         }
         live
     }
@@ -8724,6 +8820,83 @@ mod tests {
         assert_eq!(payload["validation"]["regular_queue_depth"], 9);
         assert_eq!(payload["job"]["active_assignments"], 14);
         assert_eq!(payload["pool_activity"]["connected_workers"], 7);
+    }
+
+    #[test]
+    fn admin_share_diagnostics_prefers_persisted_runtime_counters_over_idle_api_snapshot() {
+        let store = require_test_store!();
+        let now = SystemTime::now();
+
+        store
+            .upsert_validation_state(&PersistedValidationAddressState {
+                address: "miner-live".to_string(),
+                total_shares: 5,
+                sampled_shares: 1,
+                invalid_samples: 0,
+                risk_sampled_shares: 1,
+                risk_invalid_samples: 0,
+                forced_started_at: None,
+                forced_until: None,
+                forced_sampled_shares: 0,
+                forced_invalid_samples: 0,
+                resume_forced_at: None,
+                hold_cause: None,
+                last_seen_at: now,
+            })
+            .expect("persist validation state");
+        store
+            .add_validation_provisional("miner-live", Some(42), now)
+            .expect("persist provisional");
+
+        let snapshot = PersistedRuntimeSnapshot {
+            sampled_at: now,
+            total_shares_accepted: 74,
+            connected_miners: 3,
+            connected_workers: 4,
+            estimated_hashrate: 12.5,
+            last_share_at: Some(now),
+            jobs: JobRuntimeSnapshot::default(),
+            payouts: PersistedPayoutRuntime::default(),
+            submit: Default::default(),
+            validation: PersistedValidationSummary {
+                hot_accepts: 74,
+                audit_enqueued: 13,
+                audit_verified: 13,
+                audit_duration: crate::telemetry::PercentileSummary {
+                    samples: 13,
+                    p50_millis: Some(1404),
+                    p95_millis: Some(1502),
+                },
+                tracked_addresses: 1,
+                total_shares: 74,
+                pending_provisional: 12,
+                ..PersistedValidationSummary::default()
+            },
+        };
+        store
+            .set_meta(
+                LIVE_RUNTIME_SNAPSHOT_META_KEY,
+                &serde_json::to_vec(&snapshot).expect("serialize runtime snapshot"),
+            )
+            .expect("persist runtime snapshot");
+
+        let state = test_api_state(store);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let response = runtime
+            .block_on(handle_admin_share_diagnostics(State(state)))
+            .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let bytes = runtime
+            .block_on(to_bytes(response.into_body(), usize::MAX))
+            .expect("body bytes");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("share diagnostics json");
+
+        assert_eq!(payload["validation"]["hot_accepts"], 74);
+        assert_eq!(payload["validation"]["audit_enqueued"], 13);
+        assert_eq!(payload["validation"]["audit_verified"], 13);
+        assert_eq!(payload["validation"]["audit_duration"]["samples"], 13);
+        assert_eq!(payload["validation"]["audit_duration"]["p50_millis"], 1404);
     }
 
     #[test]
