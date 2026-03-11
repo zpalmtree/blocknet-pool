@@ -297,6 +297,7 @@ struct ValidationInner {
     last_clear_event_id: Mutex<i64>,
     candidate_queue: QueueTracker,
     regular_queue: QueueTracker,
+    submit_regular_queue: Mutex<Option<Arc<QueueTracker>>>,
     validation_duration: Mutex<LatencyWindow>,
     overload: Mutex<OverloadState>,
 }
@@ -351,6 +352,7 @@ impl ValidationEngine {
             last_clear_event_id: Mutex::new(initial_clear_event_id),
             candidate_queue: QueueTracker::new(512),
             regular_queue: QueueTracker::new(512),
+            submit_regular_queue: Mutex::new(None),
             validation_duration: Mutex::new(default_latency_window()),
             overload: Mutex::new(OverloadState::default()),
         });
@@ -459,6 +461,11 @@ impl ValidationEngine {
         self.inner.finalize_result(address, computed)
     }
 
+    pub(crate) fn attach_submit_regular_queue(&self, queue: Arc<QueueTracker>) {
+        *self.inner.submit_regular_queue.lock() = Some(queue);
+        self.inner.evaluate_overload(Instant::now());
+    }
+
     pub fn snapshot(&self) -> ValidationSnapshot {
         self.inner.snapshot()
     }
@@ -503,7 +510,7 @@ impl ValidationInner {
 
     fn prepare_task(&self, address: &str) -> ValidationPlan {
         self.sync_external_clears(self.address_has_live_hold(address));
-        let overload_mode = self.current_overload_mode();
+        let overload_mode = self.evaluate_overload(Instant::now());
         let full_verify = self.should_fully_verify(address, overload_mode);
         ValidationPlan {
             full_verify,
@@ -821,10 +828,6 @@ impl ValidationInner {
         snap
     }
 
-    fn current_overload_mode(&self) -> OverloadMode {
-        self.overload.lock().mode
-    }
-
     fn effective_sample_rate(&self, overload_mode: OverloadMode) -> f64 {
         let base = self.config.sample_rate.clamp(0.0, 1.0);
         match overload_mode {
@@ -835,11 +838,32 @@ impl ValidationInner {
     }
 
     fn evaluate_overload(&self, now: Instant) -> OverloadMode {
-        let regular = self.regular_queue.snapshot(now);
-        let queue_depth = regular.depth as f64;
-        let queue_cap = self.config.regular_validation_queue_size().max(1) as f64;
-        let queue_pct = queue_depth / queue_cap;
-        let oldest_age = Duration::from_millis(regular.oldest_age_millis.unwrap_or_default());
+        let regular_validation = self.regular_queue.snapshot(now);
+        let regular_submit = self
+            .submit_regular_queue
+            .lock()
+            .as_ref()
+            .map(|queue| queue.snapshot(now));
+        let validation_pct = regular_validation.depth as f64
+            / self.config.regular_validation_queue_size().max(1) as f64;
+        let submit_pct = regular_submit
+            .as_ref()
+            .map(|snapshot| {
+                snapshot.depth as f64 / self.config.regular_submit_queue_size().max(1) as f64
+            })
+            .unwrap_or_default();
+        let queue_pct = validation_pct.max(submit_pct);
+        let oldest_age = Duration::from_millis(
+            regular_validation
+                .oldest_age_millis
+                .unwrap_or_default()
+                .max(
+                    regular_submit
+                        .as_ref()
+                        .and_then(|snapshot| snapshot.oldest_age_millis)
+                        .unwrap_or_default(),
+                ),
+        );
         let emergency = queue_pct >= self.config.overload_emergency_queue_pct
             || oldest_age >= self.config.overload_emergency_oldest_age_duration();
         let shed = queue_pct >= self.config.overload_shed_queue_pct
@@ -1715,6 +1739,27 @@ mod tests {
                 .expect("read validation row")
                 .is_none(),
             "cleared address should not retain a forced-until timestamp"
+        );
+    }
+
+    #[test]
+    fn submit_queue_pressure_triggers_overload_mode() {
+        let mut cfg = test_cfg();
+        cfg.sample_rate = 1.0;
+        cfg.max_provisional_shares = 100;
+        let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));
+        let submit_queue = Arc::new(QueueTracker::new(32));
+        engine.attach_submit_regular_queue(Arc::clone(&submit_queue));
+        submit_queue.push(Instant::now() - Duration::from_secs(6));
+
+        let snapshot = engine.snapshot();
+        assert_eq!(snapshot.overload_mode, OverloadMode::Emergency);
+        assert_eq!(snapshot.effective_sample_rate, 0.0);
+
+        let result = engine.process_inline(matching_task(1));
+        assert!(
+            !result.verified,
+            "submit backlog emergency should suppress discretionary full verification"
         );
     }
 }

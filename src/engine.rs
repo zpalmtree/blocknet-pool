@@ -24,6 +24,7 @@ use crate::protocol::{
     parse_hash_hex, validate_miner_address_for_network, AddressNetwork, CAP_SUBMIT_CLAIMED_HASH,
     STRATUM_PROTOCOL_VERSION_CURRENT,
 };
+use crate::telemetry::QueueTracker;
 use crate::validation::{
     ValidationEngine, ValidationFollowupAction, ValidationResult, ValidationTask,
     SHARE_STATUS_PROVISIONAL, SHARE_STATUS_REJECTED, SHARE_STATUS_VERIFIED,
@@ -457,9 +458,9 @@ impl PoolEngine {
         received_at: Instant,
     ) -> Result<SubmitQueueRoute> {
         let claimed_hash = match claimed_hash_hex {
-            Some(value) if !value.trim().is_empty() => Some(
-                parse_hash_hex(value).map_err(|err| anyhow!(err))?,
-            ),
+            Some(value) if !value.trim().is_empty() => {
+                Some(parse_hash_hex(value).map_err(|err| anyhow!(err))?)
+            }
             _ => None,
         };
         if self.cfg.stratum_submit_v2_required && claimed_hash.is_none() {
@@ -529,6 +530,10 @@ impl PoolEngine {
         };
         engine.recover_found_block_outbox();
         engine
+    }
+
+    pub fn attach_submit_regular_queue(&self, queue: Arc<QueueTracker>) {
+        self.validation.attach_submit_regular_queue(queue);
     }
 
     pub fn login(
@@ -1049,8 +1054,9 @@ impl PoolEngine {
 
         match self.store.address_risk_state(address) {
             Ok(Some(state)) => {
-                if let Some(quarantined_until) =
-                    state.quarantined_until.filter(|until| *until > SystemTime::now())
+                if let Some(quarantined_until) = state
+                    .quarantined_until
+                    .filter(|until| *until > SystemTime::now())
                 {
                     self.validation
                         .schedule_forced_review_after(address, quarantined_until);

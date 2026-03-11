@@ -143,8 +143,8 @@ struct CandidateClaimPermit {
 struct SubmitDispatcher {
     candidate_tx: flume::Sender<SubmitWorkItem>,
     regular_tx: flume::Sender<SubmitWorkItem>,
-    candidate_queue: QueueTracker,
-    regular_queue: QueueTracker,
+    candidate_queue: Arc<QueueTracker>,
+    regular_queue: Arc<QueueTracker>,
     candidate_tracker: Arc<CandidateClaimTracker>,
 }
 
@@ -206,11 +206,14 @@ impl SubmitDispatcher {
             flume::bounded::<SubmitWorkItem>(cfg.candidate_submit_queue_size());
         let (regular_tx, regular_rx) =
             flume::bounded::<SubmitWorkItem>(cfg.regular_submit_queue_size());
+        let candidate_queue = Arc::new(QueueTracker::new(512));
+        let regular_queue = Arc::new(QueueTracker::new(512));
+        engine.attach_submit_regular_queue(Arc::clone(&regular_queue));
         let dispatcher = Arc::new(Self {
             candidate_tx,
             regular_tx,
-            candidate_queue: QueueTracker::new(512),
-            regular_queue: QueueTracker::new(512),
+            candidate_queue,
+            regular_queue,
             candidate_tracker: CandidateClaimTracker::new(
                 cfg.candidate_claim_window_duration(),
                 cfg.candidate_claim_max_per_window as usize,

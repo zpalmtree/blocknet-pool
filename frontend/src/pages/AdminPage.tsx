@@ -753,14 +753,14 @@ export function AdminPage({
     if (shareValidation?.overload_mode === 'emergency') {
       return {
         label: 'Emergency shed',
-        detail: 'Regular shares are being admitted with minimal verification to protect candidate processing.',
+        detail: 'Regular shares are being admitted with minimal verification because the regular share pipeline is severely backed up.',
         tone: 'var(--warn)',
       };
     }
     if (shareValidation?.overload_mode === 'shed') {
       return {
         label: 'Shedding',
-        detail: 'Sample rate is being reduced because the regular validation lane is backing up.',
+        detail: 'Sample rate is being reduced because the regular share pipeline is backing up.',
         tone: 'var(--warn)',
       };
     }
