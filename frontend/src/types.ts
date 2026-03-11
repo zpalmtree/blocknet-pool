@@ -327,11 +327,15 @@ export interface HealthResponse {
     in_flight?: number;
     candidate_queue_depth?: number;
     regular_queue_depth?: number;
+    audit_queue_depth?: number;
     candidate_oldest_age_millis?: number | null;
     regular_oldest_age_millis?: number | null;
+    audit_oldest_age_millis?: number | null;
     candidate_wait?: PercentileSummary;
     regular_wait?: PercentileSummary;
+    audit_wait?: PercentileSummary;
     validation_duration?: PercentileSummary;
+    audit_duration?: PercentileSummary;
     tracked_addresses?: number;
     forced_verify_addresses?: number;
     total_shares?: number;
@@ -340,6 +344,12 @@ export interface HealthResponse {
     pending_provisional?: number;
     fraud_detections?: number;
     candidate_false_claims?: number;
+    hot_accepts?: number;
+    sync_full_verifies?: number;
+    audit_enqueued?: number;
+    audit_verified?: number;
+    audit_rejected?: number;
+    audit_deferred?: number;
     overload_mode?: OverloadMode;
     effective_sample_rate?: number;
   };

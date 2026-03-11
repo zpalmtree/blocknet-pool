@@ -190,6 +190,7 @@ CREATE TABLE IF NOT EXISTS shares (
     status TEXT NOT NULL,
     was_sampled BOOLEAN NOT NULL,
     block_hash TEXT,
+    claimed_hash TEXT,
     reject_reason TEXT,
     created_at BIGINT NOT NULL
 );
@@ -418,12 +419,15 @@ CREATE INDEX IF NOT EXISTS idx_validation_clear_events_cleared_at
 CREATE TABLE IF NOT EXISTS validation_provisionals (
     id BIGSERIAL PRIMARY KEY,
     address TEXT NOT NULL,
+    share_id BIGINT,
     created_at BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_validation_provisionals_created_at
     ON validation_provisionals(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_validation_provisionals_address_created_at
     ON validation_provisionals(address, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_validation_provisionals_share_id
+    ON validation_provisionals(share_id);
 
 CREATE TABLE IF NOT EXISTS share_daily_summaries (
     day_start BIGINT PRIMARY KEY,
@@ -473,6 +477,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .context("ensure pending_payouts.sent_at column")?;
         conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS reject_reason TEXT")
             .context("ensure shares.reject_reason column")?;
+        conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS claimed_hash TEXT")
+            .context("ensure shares.claimed_hash column")?;
         conn.batch_execute(
             "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS effort_pct DOUBLE PRECISION",
         )
@@ -517,6 +523,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS hold_cause TEXT",
         )
         .context("ensure validation_address_states.hold_cause column")?;
+        conn.batch_execute(
+            "ALTER TABLE validation_provisionals ADD COLUMN IF NOT EXISTS share_id BIGINT",
+        )
+        .context("ensure validation_provisionals.share_id column")?;
         conn.batch_execute(
             "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS wallet_up BOOLEAN",
         )
@@ -569,6 +579,18 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         share: ShareRecord,
         replay: Option<ShareReplayData>,
     ) -> Result<()> {
+        self.add_share_with_replay_and_id(share, replay).map(|_| ())
+    }
+
+    pub fn add_share_with_id(&self, share: ShareRecord) -> Result<i64> {
+        self.add_share_with_replay_and_id(share, None)
+    }
+
+    pub fn add_share_with_replay_and_id(
+        &self,
+        share: ShareRecord,
+        replay: Option<ShareReplayData>,
+    ) -> Result<i64> {
         let created = to_unix(share.created_at);
         let mut conn = self.conn().lock();
         let mut tx = conn.transaction()?;
@@ -591,9 +613,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             )?;
         }
 
-        tx.execute(
-            "INSERT INTO shares (job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, reject_reason, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+        let row = tx.query_one(
+            "INSERT INTO shares (job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, claimed_hash, reject_reason, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             RETURNING id",
             &[
                 &share.job_id,
                 &share.miner,
@@ -603,12 +626,13 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 &share.status,
                 &share.was_sampled,
                 &share.block_hash,
+                &share.claimed_hash,
                 &share.reject_reason,
                 &created,
             ],
         )?;
         tx.commit()?;
-        Ok(())
+        Ok(row.get::<_, i64>(0))
     }
 
     pub fn get_share_replay(&self, job_id: &str) -> Result<Option<ShareReplayData>> {
@@ -669,9 +693,33 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(())
     }
 
+    pub fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<()> {
+        let mut conn = self.conn().lock();
+        let mut tx = conn.transaction()?;
+        tx.execute(
+            "UPDATE shares
+             SET status = $2,
+                 was_sampled = $3,
+                 reject_reason = $4
+             WHERE id = $1",
+            &[
+                &update.share_id,
+                &update.status,
+                &update.was_sampled,
+                &update.reject_reason,
+            ],
+        )?;
+        tx.execute(
+            "DELETE FROM validation_provisionals WHERE share_id = $1",
+            &[&update.share_id],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn get_recent_shares(&self, limit: i64) -> Result<Vec<DbShare>> {
         let rows = self.conn().lock().query(
-            "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
+            "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, claimed_hash, created_at
              FROM shares ORDER BY created_at DESC LIMIT $1",
             &[&limit],
         )?;
@@ -680,9 +728,29 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_shares_for_miner(&self, address: &str, limit: i64) -> Result<Vec<DbShare>> {
         let rows = self.conn().lock().query(
-            "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
+            "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, claimed_hash, created_at
              FROM shares WHERE miner = $1 ORDER BY created_at DESC LIMIT $2",
             &[&address, &limit],
+        )?;
+        Ok(rows.into_iter().map(row_to_share).collect())
+    }
+
+    pub fn get_provisional_shares_for_miner_since(
+        &self,
+        address: &str,
+        cutoff: SystemTime,
+        limit: i64,
+    ) -> Result<Vec<DbShare>> {
+        let rows = self.conn().lock().query(
+            "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, claimed_hash, created_at
+             FROM shares
+             WHERE miner = $1
+               AND status = 'provisional'
+               AND was_sampled = FALSE
+               AND created_at > $2
+             ORDER BY created_at ASC, id ASC
+             LIMIT $3",
+            &[&address, &to_unix(cutoff), &limit.max(1)],
         )?;
         Ok(rows.into_iter().map(row_to_share).collect())
     }
@@ -699,7 +767,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let start_ts = to_unix(start);
         let end_ts = to_unix(end);
         let rows = self.conn().lock().query(
-            "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
+            "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, claimed_hash, created_at
              FROM shares WHERE created_at >= $1 AND created_at <= $2",
             &[&start_ts, &end_ts],
         )?;
@@ -709,7 +777,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     pub fn get_last_n_shares_before(&self, before: SystemTime, n: i64) -> Result<Vec<DbShare>> {
         let before_ts = to_unix(before);
         let rows = self.conn().lock().query(
-            "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, created_at
+            "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, claimed_hash, created_at
              FROM shares WHERE created_at <= $1 ORDER BY created_at DESC LIMIT $2",
             &[&before_ts, &n],
         )?;
@@ -2141,15 +2209,13 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 .get::<_, Option<i64>>(1)
                 .map(from_unix)
                 .filter(|until| *until > now),
-            hold_cause: validation_hold_cause_from_db(
-                row.get::<_, Option<String>>(2).as_deref(),
-            )
-            .or_else(|| {
-                infer_validation_hold_cause_from_row(
-                    row.get::<_, Option<i64>>(0).map(from_unix),
-                    row.get::<_, Option<i64>>(1).map(from_unix),
-                )
-            }),
+            hold_cause: validation_hold_cause_from_db(row.get::<_, Option<String>>(2).as_deref())
+                .or_else(|| {
+                    infer_validation_hold_cause_from_row(
+                        row.get::<_, Option<i64>>(0).map(from_unix),
+                        row.get::<_, Option<i64>>(1).map(from_unix),
+                    )
+                }),
             pending_provisional: row.get::<_, i64>(3).max(0) as u64,
         }))
     }
@@ -2220,15 +2286,14 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .iter()
             .map(|row| {
                 let last_reason = row.get::<_, Option<String>>(3);
-                let validation_hold_cause = validation_hold_cause_from_db(
-                    row.get::<_, Option<String>>(9).as_deref(),
-                )
-                .or_else(|| {
-                    infer_validation_hold_cause_from_row(
-                        row.get::<_, Option<i64>>(8).map(from_unix),
-                        row.get::<_, Option<i64>>(7).map(from_unix),
-                    )
-                });
+                let validation_hold_cause =
+                    validation_hold_cause_from_db(row.get::<_, Option<String>>(9).as_deref())
+                        .or_else(|| {
+                            infer_validation_hold_cause_from_row(
+                                row.get::<_, Option<i64>>(8).map(from_unix),
+                                row.get::<_, Option<i64>>(7).map(from_unix),
+                            )
+                        });
                 let validation_pending_provisional = row.get::<_, i64>(10).max(0) as u64;
                 let reason = last_reason.clone().or_else(|| {
                     validation_hold_reason(validation_hold_cause, validation_pending_provisional)
@@ -2933,7 +2998,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .collect::<Vec<_>>();
 
         let provisional_rows = self.conn().lock().query(
-            "SELECT address, created_at
+            "SELECT address, share_id, created_at
              FROM validation_provisionals
              WHERE created_at > $1
              ORDER BY address ASC, created_at ASC",
@@ -2943,12 +3008,13 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .iter()
             .map(|row| PersistedValidationProvisional {
                 address: row.get::<_, String>(0),
-                created_at: from_unix(row.get::<_, i64>(1)),
+                share_id: row.get::<_, Option<i64>>(1),
+                created_at: from_unix(row.get::<_, i64>(2)),
             })
             .collect::<Vec<_>>();
 
         let accepted_rows = self.conn().lock().query(
-            "SELECT miner, created_at, difficulty, status
+            "SELECT id, miner, created_at, difficulty, status
              FROM shares
              WHERE created_at > $1
                AND status IN ('verified', 'provisional')
@@ -2958,11 +3024,12 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let accepted_window = accepted_rows
             .iter()
             .map(|row| PersistedValidationAcceptedShare {
-                address: row.get::<_, String>(0),
-                created_at: from_unix(row.get::<_, i64>(1)),
-                difficulty: row.get::<_, i64>(2).max(0) as u64,
+                share_id: row.get::<_, i64>(0),
+                address: row.get::<_, String>(1),
+                created_at: from_unix(row.get::<_, i64>(2)),
+                difficulty: row.get::<_, i64>(3).max(0) as u64,
                 verified: row
-                    .get::<_, String>(3)
+                    .get::<_, String>(4)
                     .trim()
                     .eq_ignore_ascii_case("verified"),
             })
@@ -2976,10 +3043,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     }
 
     pub fn latest_validation_clear_event_id(&self) -> Result<i64> {
-        let row = self
-            .conn()
-            .lock()
-            .query_one("SELECT COALESCE(MAX(id), 0) FROM validation_clear_events", &[])?;
+        let row = self.conn().lock().query_one(
+            "SELECT COALESCE(MAX(id), 0) FROM validation_clear_events",
+            &[],
+        )?;
         Ok(row.get::<_, i64>(0).max(0))
     }
 
@@ -2990,7 +3057,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         accepted_window_cutoff: SystemTime,
     ) -> Result<LoadedValidationAddressActivity> {
         let provisional_rows = self.conn().lock().query(
-            "SELECT address, created_at
+            "SELECT address, share_id, created_at
              FROM validation_provisionals
              WHERE address = $1
                AND created_at > $2
@@ -3001,12 +3068,13 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .iter()
             .map(|row| PersistedValidationProvisional {
                 address: row.get::<_, String>(0),
-                created_at: from_unix(row.get::<_, i64>(1)),
+                share_id: row.get::<_, Option<i64>>(1),
+                created_at: from_unix(row.get::<_, i64>(2)),
             })
             .collect::<Vec<_>>();
 
         let accepted_rows = self.conn().lock().query(
-            "SELECT miner, created_at, difficulty, status
+            "SELECT id, miner, created_at, difficulty, status
              FROM shares
              WHERE miner = $1
                AND created_at > $2
@@ -3017,11 +3085,12 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let accepted_window = accepted_rows
             .iter()
             .map(|row| PersistedValidationAcceptedShare {
-                address: row.get::<_, String>(0),
-                created_at: from_unix(row.get::<_, i64>(1)),
-                difficulty: row.get::<_, i64>(2).max(0) as u64,
+                share_id: row.get::<_, i64>(0),
+                address: row.get::<_, String>(1),
+                created_at: from_unix(row.get::<_, i64>(2)),
+                difficulty: row.get::<_, i64>(3).max(0) as u64,
                 verified: row
-                    .get::<_, String>(3)
+                    .get::<_, String>(4)
                     .trim()
                     .eq_ignore_ascii_case("verified"),
             })
@@ -3095,10 +3164,15 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(())
     }
 
-    pub fn add_validation_provisional(&self, address: &str, created_at: SystemTime) -> Result<()> {
+    pub fn add_validation_provisional(
+        &self,
+        address: &str,
+        share_id: Option<i64>,
+        created_at: SystemTime,
+    ) -> Result<()> {
         self.conn().lock().execute(
-            "INSERT INTO validation_provisionals (address, created_at) VALUES ($1, $2)",
-            &[&address, &to_unix(created_at)],
+            "INSERT INTO validation_provisionals (address, share_id, created_at) VALUES ($1, $2, $3)",
+            &[&address, &share_id, &to_unix(created_at)],
         )?;
         Ok(())
     }
@@ -3491,7 +3565,8 @@ fn row_to_share(row: postgres::Row) -> DbShare {
         status: row.get::<_, String>(6),
         was_sampled: row.get::<_, bool>(7),
         block_hash: row.get::<_, Option<String>>(8),
-        created_at: from_unix(row.get::<_, i64>(9)),
+        claimed_hash: row.get::<_, Option<String>>(9),
+        created_at: from_unix(row.get::<_, i64>(10)),
     }
 }
 
@@ -3729,9 +3804,9 @@ fn validation_hold_reason(
         } else {
             "recent provisional backlog is draining".to_string()
         }),
-        Some(ValidationHoldCause::PayoutCoverage) => Some(
-            "boosting verified-share coverage so payout weight stays proportional".to_string(),
-        ),
+        Some(ValidationHoldCause::PayoutCoverage) => {
+            Some("boosting verified-share coverage so payout weight stays proportional".to_string())
+        }
         None => None,
     }
 }
@@ -4106,7 +4181,7 @@ mod tests {
             })
             .expect("seed validation state");
         store
-            .add_validation_provisional(&address, SystemTime::now())
+            .add_validation_provisional(&address, None, SystemTime::now())
             .expect("seed validation provisional");
 
         store

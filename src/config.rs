@@ -39,8 +39,10 @@ pub struct Config {
     pub regular_submit_workers: i32,
     pub candidate_validation_queue: i32,
     pub regular_validation_queue: i32,
+    pub audit_validation_queue: i32,
     pub candidate_verifiers: i32,
     pub regular_verifiers: i32,
+    pub audit_verifiers: i32,
     pub validation_wait_timeout: String,
     pub overload_shed_queue_pct: f64,
     pub overload_emergency_queue_pct: f64,
@@ -50,6 +52,8 @@ pub struct Config {
     pub overload_clear_oldest_age: String,
     pub overload_clear_hold: String,
     pub overload_sample_rate_floor: f64,
+    pub audit_max_addresses_per_tick: i32,
+    pub audit_max_shares_per_address: i32,
     pub candidate_claim_window: String,
     pub candidate_claim_max_per_window: i32,
     pub candidate_claim_max_inflight: i32,
@@ -145,8 +149,10 @@ impl Default for Config {
             regular_submit_workers: 4,
             candidate_validation_queue: 64,
             regular_validation_queue: 512,
+            audit_validation_queue: 128,
             candidate_verifiers: 1,
-            regular_verifiers: 1,
+            regular_verifiers: 2,
+            audit_verifiers: 1,
             validation_wait_timeout: "10s".to_string(),
             overload_shed_queue_pct: 0.50,
             overload_emergency_queue_pct: 0.80,
@@ -156,6 +162,8 @@ impl Default for Config {
             overload_clear_oldest_age: "1s".to_string(),
             overload_clear_hold: "60s".to_string(),
             overload_sample_rate_floor: 0.01,
+            audit_max_addresses_per_tick: 4,
+            audit_max_shares_per_address: 8,
             candidate_claim_window: "60s".to_string(),
             candidate_claim_max_per_window: 4,
             candidate_claim_max_inflight: 1,
@@ -265,6 +273,18 @@ impl Config {
         if self.regular_validation_queue < 1 {
             self.regular_validation_queue = 512;
         }
+        if self.audit_validation_queue < 1 {
+            self.audit_validation_queue = 128;
+        }
+        if self.audit_verifiers < 1 {
+            self.audit_verifiers = 1;
+        }
+        if self.audit_max_addresses_per_tick < 1 {
+            self.audit_max_addresses_per_tick = 4;
+        }
+        if self.audit_max_shares_per_address < 1 {
+            self.audit_max_shares_per_address = 8;
+        }
         if self.candidate_verifiers < 0 {
             self.candidate_verifiers = 0;
         }
@@ -278,8 +298,7 @@ impl Config {
         if !(0.0 < self.overload_shed_queue_pct && self.overload_shed_queue_pct <= 1.0) {
             self.overload_shed_queue_pct = 0.50;
         }
-        if !(0.0 < self.overload_emergency_queue_pct && self.overload_emergency_queue_pct <= 1.0)
-        {
+        if !(0.0 < self.overload_emergency_queue_pct && self.overload_emergency_queue_pct <= 1.0) {
             self.overload_emergency_queue_pct = 0.80;
         }
         if !(0.0 < self.overload_clear_queue_pct && self.overload_clear_queue_pct <= 1.0) {
@@ -443,6 +462,10 @@ impl Config {
         self.regular_validation_queue.max(1) as usize
     }
 
+    pub fn audit_validation_queue_size(&self) -> usize {
+        self.audit_validation_queue.max(1) as usize
+    }
+
     pub fn candidate_verifier_count(&self) -> usize {
         self.candidate_verifiers.max(1) as usize
     }
@@ -460,6 +483,10 @@ impl Config {
             self.max_verifiers as usize
         };
         total.saturating_sub(self.candidate_verifier_count()).max(1)
+    }
+
+    pub fn audit_verifier_count(&self) -> usize {
+        self.audit_verifiers.max(1) as usize
     }
 
     pub fn overload_shed_oldest_age_duration(&self) -> Duration {

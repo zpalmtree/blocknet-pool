@@ -11,15 +11,16 @@ use tracing::warn;
 use crate::config::Config;
 use crate::db::{
     ActiveVerificationHold, AddressRiskState, DbBlock, DbShare, MonitorHeartbeat,
-    MonitorHeartbeatUpsert, MonitorIncident, MonitorIncidentUpsert, ShareReplayData,
-    ValidationHoldState,
+    MonitorHeartbeatUpsert, MonitorIncident, MonitorIncidentUpsert, PendingAuditShare,
+    ShareReplayData, ShareReplayUpdate, ValidationHoldState,
 };
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
-use crate::payout::{recover_share_window_by_replay, reward_window_end, ShareReplayRecovery};
+use crate::payout::{is_share_payout_eligible, reward_window_end};
 use crate::pgdb::{
     MinerShareWindowStats, PoolFeeCreditBackfillReport, PostgresStore, VardiffHintDiagnostic,
     VardiffHintSummary,
 };
+use crate::protocol::parse_hash_hex;
 use crate::validation::{
     LoadedValidationAddressActivity, LoadedValidationState, PersistedValidationAddressState,
     ValidationClearEvent, ValidationStateStore,
@@ -102,28 +103,33 @@ impl PoolStore {
         address: &str,
         provisional_cutoff: SystemTime,
     ) -> Result<Option<ValidationHoldState>> {
-        self.inner.validation_hold_state(address, provisional_cutoff)
+        self.inner
+            .validation_hold_state(address, provisional_cutoff)
     }
 
-    pub fn replay_address_shares_for_unconfirmed_blocks(
+    pub fn load_pending_payout_audit_shares(
         &self,
         address: &str,
         config: &Config,
         now: SystemTime,
-    ) -> Result<ShareReplayRecovery> {
+        limit: usize,
+    ) -> Result<Vec<PendingAuditShare>> {
         let address = address.trim();
-        if address.is_empty() {
-            return Ok(ShareReplayRecovery::default());
+        if address.is_empty() || limit == 0 {
+            return Ok(Vec::new());
         }
 
         let provisional_delay = config.provisional_share_delay_duration();
-        let mut replayable = Vec::<DbShare>::new();
+        let mut window_shares = Vec::<DbShare>::new();
         let mut seen = HashSet::<i64>::new();
         for block in self.get_unconfirmed_blocks()? {
             let window_end = reward_window_end(self, &block)?;
-            let window_shares = if config.payout_scheme.trim().eq_ignore_ascii_case("pplns") {
+            let shares = if config.payout_scheme.trim().eq_ignore_ascii_case("pplns") {
                 if config.pplns_window_duration_duration().is_zero() {
-                    self.get_last_n_shares_before(window_end, i64::from(config.pplns_window.max(1)))?
+                    self.get_last_n_shares_before(
+                        window_end,
+                        i64::from(config.pplns_window.max(1)),
+                    )?
                 } else {
                     let start = window_end
                         .checked_sub(config.pplns_window_duration_duration())
@@ -137,14 +143,124 @@ impl PoolStore {
                 self.get_shares_between(start, window_end)?
             };
 
-            for share in window_shares {
+            for share in shares {
                 if share.miner == address && seen.insert(share.id) {
-                    replayable.push(share);
+                    window_shares.push(share);
                 }
             }
         }
 
-        recover_share_window_by_replay(self, &mut replayable, now, provisional_delay, true)
+        if window_shares.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut verified_difficulty = 0u64;
+        let mut eligible_provisional_difficulty = 0u64;
+        let mut replayable = Vec::<DbShare>::new();
+        for share in &window_shares {
+            match share.status.as_str() {
+                "" | "verified" => {
+                    verified_difficulty =
+                        verified_difficulty.saturating_add(share.difficulty.max(1));
+                }
+                "provisional" if is_share_payout_eligible(share, now, provisional_delay) => {
+                    eligible_provisional_difficulty =
+                        eligible_provisional_difficulty.saturating_add(share.difficulty.max(1));
+                    if !share.was_sampled {
+                        replayable.push(share.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let target_diff = payout_audit_deficit_difficulty(
+            verified_difficulty,
+            eligible_provisional_difficulty,
+            config.payout_provisional_cap_multiplier,
+        );
+        if target_diff == 0 {
+            return Ok(Vec::new());
+        }
+
+        replayable.sort_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        let mut selected = Vec::<DbShare>::new();
+        let mut covered = 0u64;
+        for share in replayable {
+            selected.push(share.clone());
+            covered = covered.saturating_add(share.difficulty.max(1));
+            if selected.len() >= limit || covered >= target_diff {
+                break;
+            }
+        }
+        self.build_pending_audit_shares(selected)
+    }
+
+    pub fn load_recent_provisional_audit_shares(
+        &self,
+        address: &str,
+        provisional_cutoff: SystemTime,
+        limit: usize,
+    ) -> Result<Vec<PendingAuditShare>> {
+        let address = address.trim();
+        if address.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let shares = self.inner.get_provisional_shares_for_miner_since(
+            address,
+            provisional_cutoff,
+            limit as i64,
+        )?;
+        self.build_pending_audit_shares(shares)
+    }
+
+    pub fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<()> {
+        self.inner.complete_validation_audit(update)
+    }
+
+    fn build_pending_audit_shares(&self, shares: Vec<DbShare>) -> Result<Vec<PendingAuditShare>> {
+        if shares.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let job_ids = shares
+            .iter()
+            .map(|share| share.job_id.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let replays = self.get_share_replays_for_job_ids(&job_ids)?;
+
+        let mut out = Vec::with_capacity(shares.len());
+        for share in shares {
+            let Some(replay) = replays.get(&share.job_id) else {
+                continue;
+            };
+            let claimed_hash = share
+                .claimed_hash
+                .as_deref()
+                .map(parse_hash_hex)
+                .transpose()
+                .map_err(|err| anyhow!("parse claimed hash for share {}: {}", share.id, err))?;
+            out.push(PendingAuditShare {
+                share_id: share.id,
+                job_id: share.job_id,
+                miner: share.miner,
+                worker: share.worker,
+                difficulty: share.difficulty.max(1),
+                nonce: share.nonce,
+                claimed_hash,
+                header_base: replay.header_base.clone(),
+                network_target: replay.network_target,
+                created_at: share.created_at,
+            });
+        }
+        Ok(out)
     }
 
     pub fn miner_share_window_stats_since(
@@ -285,12 +401,24 @@ impl ShareStore for PoolStore {
         self.inner.add_share(share)
     }
 
+    fn add_share_with_id(&self, share: ShareRecord) -> Result<i64> {
+        self.inner.add_share_with_id(share)
+    }
+
     fn add_share_with_replay(
         &self,
         share: ShareRecord,
         replay: Option<ShareReplayData>,
     ) -> Result<()> {
         self.inner.add_share_with_replay(share, replay)
+    }
+
+    fn add_share_with_replay_and_id(
+        &self,
+        share: ShareRecord,
+        replay: Option<ShareReplayData>,
+    ) -> Result<i64> {
+        self.inner.add_share_with_replay_and_id(share, replay)
     }
 
     fn add_found_block(&self, block: FoundBlockRecord) -> Result<()> {
@@ -422,16 +550,26 @@ impl ValidationStateStore for PoolStore {
         accepted_window_cutoff: SystemTime,
         now: SystemTime,
     ) -> Result<LoadedValidationState> {
-        self.inner
-            .load_validation_state(state_cutoff, provisional_cutoff, accepted_window_cutoff, now)
+        self.inner.load_validation_state(
+            state_cutoff,
+            provisional_cutoff,
+            accepted_window_cutoff,
+            now,
+        )
     }
 
     fn upsert_validation_state(&self, state: &PersistedValidationAddressState) -> Result<()> {
         self.inner.upsert_validation_state(state)
     }
 
-    fn add_validation_provisional(&self, address: &str, created_at: SystemTime) -> Result<()> {
-        self.inner.add_validation_provisional(address, created_at)
+    fn add_validation_provisional(
+        &self,
+        address: &str,
+        share_id: Option<i64>,
+        created_at: SystemTime,
+    ) -> Result<()> {
+        self.inner
+            .add_validation_provisional(address, share_id, created_at)
     }
 
     fn clean_validation_state(
@@ -465,14 +603,50 @@ impl ValidationStateStore for PoolStore {
         )
     }
 
-    fn replay_address_shares_for_unconfirmed_blocks(
+    fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<()> {
+        PoolStore::complete_validation_audit(self, update)
+    }
+
+    fn load_recent_provisional_audit_shares(
+        &self,
+        address: &str,
+        provisional_cutoff: SystemTime,
+        limit: usize,
+    ) -> Result<Vec<PendingAuditShare>> {
+        PoolStore::load_recent_provisional_audit_shares(self, address, provisional_cutoff, limit)
+    }
+
+    fn load_pending_payout_audit_shares(
         &self,
         address: &str,
         config: &Config,
         now: SystemTime,
-    ) -> Result<ShareReplayRecovery> {
-        PoolStore::replay_address_shares_for_unconfirmed_blocks(self, address, config, now)
+        limit: usize,
+    ) -> Result<Vec<PendingAuditShare>> {
+        PoolStore::load_pending_payout_audit_shares(self, address, config, now, limit)
     }
+}
+
+fn payout_audit_deficit_difficulty(
+    verified_difficulty: u64,
+    provisional_difficulty: u64,
+    cap_multiplier: f64,
+) -> u64 {
+    if provisional_difficulty == 0 {
+        return 0;
+    }
+    if cap_multiplier <= 0.0 {
+        return provisional_difficulty;
+    }
+
+    let verified = verified_difficulty as f64;
+    let provisional = provisional_difficulty as f64;
+    let cap = cap_multiplier.max(0.0);
+    let covered = verified * cap;
+    if provisional <= covered + f64::EPSILON {
+        return 0;
+    }
+    ((provisional - covered) / (cap + 1.0)).ceil().max(0.0) as u64
 }
 
 fn estimated_block_reward(height: u64) -> u64 {
@@ -601,5 +775,13 @@ mod tests {
     fn estimated_block_reward_has_tail_floor() {
         let very_high_height = BLOCKS_PER_MONTH.saturating_mul(5_000);
         assert_eq!(estimated_block_reward(very_high_height), TAIL_EMISSION);
+    }
+
+    #[test]
+    fn payout_audit_deficit_only_requests_needed_verified_difficulty() {
+        assert_eq!(payout_audit_deficit_difficulty(10, 190, 19.0), 0);
+        assert_eq!(payout_audit_deficit_difficulty(1, 39, 19.0), 1);
+        assert_eq!(payout_audit_deficit_difficulty(5, 200, 19.0), 6);
+        assert_eq!(payout_audit_deficit_difficulty(0, 25, 0.0), 25);
     }
 }

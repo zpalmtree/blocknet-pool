@@ -737,6 +737,7 @@ export function AdminPage({
     (shareSubmit?.candidate_queue_depth ?? 0) + (shareSubmit?.regular_queue_depth ?? 0);
   const shareValidationQueueDepth =
     (shareValidation?.candidate_queue_depth ?? 0) + (shareValidation?.regular_queue_depth ?? 0);
+  const shareAuditQueueDepth = shareValidation?.audit_queue_depth ?? 0;
   const shareSubmitOldestAge = Math.max(
     shareSubmit?.candidate_oldest_age_millis ?? 0,
     shareSubmit?.regular_oldest_age_millis ?? 0
@@ -745,6 +746,7 @@ export function AdminPage({
     shareValidation?.candidate_oldest_age_millis ?? 0,
     shareValidation?.regular_oldest_age_millis ?? 0
   );
+  const shareAuditOldestAge = shareValidation?.audit_oldest_age_millis ?? 0;
   const shareSubmitWaitP95 = Math.max(
     shareSubmit?.candidate_wait?.p95_millis ?? 0,
     shareSubmit?.regular_wait?.p95_millis ?? 0
@@ -754,6 +756,8 @@ export function AdminPage({
     shareValidation?.regular_wait?.p95_millis ?? 0
   );
   const shareValidationDurationP95 = shareValidation?.validation_duration?.p95_millis ?? 0;
+  const shareAuditWaitP95 = shareValidation?.audit_wait?.p95_millis ?? 0;
+  const shareAuditDurationP95 = shareValidation?.audit_duration?.p95_millis ?? 0;
   const shareBusy5m = shareWindowReasonPct(shareWindow5m, 'server busy');
   const shareTimeout5m = shareWindowReasonPct(shareWindow5m, 'validation timeout');
   const shareBusyCount5m = shareWindowReasonCount(shareWindow5m, 'server busy');
@@ -1613,9 +1617,19 @@ export function AdminPage({
                   </div>
                 </div>
                 <div className="stat-card">
+                  <div className="label">Audit Queue</div>
+                  <div className="value mono">{shareAuditQueueDepth}</div>
+                  <div className="stat-meta">oldest {formatMillis(shareAuditOldestAge)}</div>
+                </div>
+                <div className="stat-card">
                   <div className="label">Validation Wait P95</div>
                   <div className="value mono">{formatMillis(shareValidationWaitP95)}</div>
                   <div className="stat-meta">oldest {formatMillis(shareValidationOldestAge)}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Audit Wait / Time P95</div>
+                  <div className="value mono">{formatMillis(shareAuditWaitP95)}</div>
+                  <div className="stat-meta">hash {formatMillis(shareAuditDurationP95)}</div>
                 </div>
                 <div className="stat-card">
                   <div className="label">Validation Time P95</div>
@@ -1642,6 +1656,23 @@ export function AdminPage({
                   <div className="stat-meta" style={{ color: sharePressureSignal.tone }}>
                     {sharePressureSignal.label}
                   </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Hot Accepts / Sync</div>
+                  <div className="value mono">{shareValidation?.hot_accepts ?? 0}</div>
+                  <div className="stat-meta">{shareValidation?.sync_full_verifies ?? 0} sync verified</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Audit Outcomes</div>
+                  <div className="value mono">{shareValidation?.audit_verified ?? 0}</div>
+                  <div className="stat-meta">
+                    {shareValidation?.audit_rejected ?? 0} rejected · {shareValidation?.audit_deferred ?? 0} deferred
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Audit Enqueued</div>
+                  <div className="value mono">{shareValidation?.audit_enqueued ?? 0}</div>
+                  <div className="stat-meta">{shareAuditQueueDepth} queued now</div>
                 </div>
               </div>
             </div>

@@ -2266,11 +2266,15 @@ struct ValidationSummary {
     in_flight: i64,
     candidate_queue_depth: usize,
     regular_queue_depth: usize,
+    audit_queue_depth: usize,
     candidate_oldest_age_millis: Option<u64>,
     regular_oldest_age_millis: Option<u64>,
+    audit_oldest_age_millis: Option<u64>,
     candidate_wait: crate::telemetry::PercentileSummary,
     regular_wait: crate::telemetry::PercentileSummary,
+    audit_wait: crate::telemetry::PercentileSummary,
     validation_duration: crate::telemetry::PercentileSummary,
+    audit_duration: crate::telemetry::PercentileSummary,
     tracked_addresses: usize,
     forced_verify_addresses: usize,
     total_shares: u64,
@@ -2279,6 +2283,12 @@ struct ValidationSummary {
     pending_provisional: u64,
     fraud_detections: u64,
     candidate_false_claims: u64,
+    hot_accepts: u64,
+    sync_full_verifies: u64,
+    audit_enqueued: u64,
+    audit_verified: u64,
+    audit_rejected: u64,
+    audit_deferred: u64,
     overload_mode: crate::validation::OverloadMode,
     effective_sample_rate: f64,
 }
@@ -2298,11 +2308,15 @@ fn validation_summary_from_snapshot(snapshot: ValidationSnapshot) -> ValidationS
         in_flight: snapshot.in_flight,
         candidate_queue_depth: snapshot.candidate_queue_depth,
         regular_queue_depth: snapshot.regular_queue_depth,
+        audit_queue_depth: snapshot.audit_queue_depth,
         candidate_oldest_age_millis: snapshot.candidate_oldest_age_millis,
         regular_oldest_age_millis: snapshot.regular_oldest_age_millis,
+        audit_oldest_age_millis: snapshot.audit_oldest_age_millis,
         candidate_wait: snapshot.candidate_wait,
         regular_wait: snapshot.regular_wait,
+        audit_wait: snapshot.audit_wait,
         validation_duration: snapshot.validation_duration,
+        audit_duration: snapshot.audit_duration,
         tracked_addresses: snapshot.tracked_addresses,
         forced_verify_addresses: snapshot.forced_verify_addresses,
         total_shares: snapshot.total_shares,
@@ -2311,14 +2325,18 @@ fn validation_summary_from_snapshot(snapshot: ValidationSnapshot) -> ValidationS
         pending_provisional: snapshot.pending_provisional,
         fraud_detections: snapshot.fraud_detections,
         candidate_false_claims: snapshot.candidate_false_claims,
+        hot_accepts: snapshot.hot_accepts,
+        sync_full_verifies: snapshot.sync_full_verifies,
+        audit_enqueued: snapshot.audit_enqueued,
+        audit_verified: snapshot.audit_verified,
+        audit_rejected: snapshot.audit_rejected,
+        audit_deferred: snapshot.audit_deferred,
         overload_mode: snapshot.overload_mode,
         effective_sample_rate: snapshot.effective_sample_rate,
     }
 }
 
-fn submit_summary_from_persisted(
-    snapshot: Option<&PersistedRuntimeSnapshot>,
-) -> SubmitSummary {
+fn submit_summary_from_persisted(snapshot: Option<&PersistedRuntimeSnapshot>) -> SubmitSummary {
     let Some(snapshot) = snapshot else {
         return SubmitSummary::default();
     };
@@ -2336,8 +2354,10 @@ fn validation_summary_is_empty(summary: &ValidationSummary) -> bool {
     summary.in_flight == 0
         && summary.candidate_queue_depth == 0
         && summary.regular_queue_depth == 0
+        && summary.audit_queue_depth == 0
         && summary.candidate_oldest_age_millis.is_none()
         && summary.regular_oldest_age_millis.is_none()
+        && summary.audit_oldest_age_millis.is_none()
         && summary.tracked_addresses == 0
         && summary.forced_verify_addresses == 0
         && summary.total_shares == 0
@@ -2346,6 +2366,12 @@ fn validation_summary_is_empty(summary: &ValidationSummary) -> bool {
         && summary.pending_provisional == 0
         && summary.fraud_detections == 0
         && summary.candidate_false_claims == 0
+        && summary.hot_accepts == 0
+        && summary.sync_full_verifies == 0
+        && summary.audit_enqueued == 0
+        && summary.audit_verified == 0
+        && summary.audit_rejected == 0
+        && summary.audit_deferred == 0
 }
 
 fn pool_snapshot_has_live_data(snapshot: &PoolSnapshot) -> bool {
@@ -3495,7 +3521,10 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
     let payout_health =
         match tokio::task::spawn_blocking(move || -> anyhow::Result<PayoutHealth> {
             let balances = store.get_all_balances()?;
-            let unpaid_count = balances.iter().filter(|balance| balance.pending > 0).count();
+            let unpaid_count = balances
+                .iter()
+                .filter(|balance| balance.pending > 0)
+                .count();
             let unpaid_amount = balances
                 .iter()
                 .fold(0u64, |acc, balance| acc.saturating_add(balance.pending));
@@ -3550,25 +3579,23 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
     };
 
     let store = Arc::clone(&state.store);
-    let active_verification_holds =
-        match tokio::task::spawn_blocking(move || {
-            store.list_active_verification_holds(provisional_cutoff)
-        })
-        .await
-        {
-            Ok(Ok(v)) => v,
-            Ok(Err(err)) => {
-                return internal_error("failed loading active verification holds", err)
-                    .into_response();
-            }
-            Err(err) => {
-                return internal_error(
-                    "failed loading active verification holds",
-                    anyhow::anyhow!("join error: {err}"),
-                )
-                .into_response();
-            }
-        };
+    let active_verification_holds = match tokio::task::spawn_blocking(move || {
+        store.list_active_verification_holds(provisional_cutoff)
+    })
+    .await
+    {
+        Ok(Ok(v)) => v,
+        Ok(Err(err)) => {
+            return internal_error("failed loading active verification holds", err).into_response();
+        }
+        Err(err) => {
+            return internal_error(
+                "failed loading active verification holds",
+                anyhow::anyhow!("join error: {err}"),
+            )
+            .into_response();
+        }
+    };
 
     let response = HealthResponse {
         uptime_seconds: state.started_at.elapsed().as_secs(),
@@ -4372,8 +4399,11 @@ async fn handle_miner(
     } else {
         MinerPendingEstimate::default()
     };
-    let verification_hold =
-        miner_verification_hold(risk_state.as_ref(), validation_state.as_ref(), SystemTime::now());
+    let verification_hold = miner_verification_hold(
+        risk_state.as_ref(),
+        validation_state.as_ref(),
+        SystemTime::now(),
+    );
 
     let pending_confirmed = balance.pending;
     let pending_estimated = pending_estimate.estimated_pending;
@@ -4932,19 +4962,19 @@ fn validation_hold_reason(
         Some(crate::db::ValidationHoldCause::InvalidSamples) => {
             Some("recent invalid sampled shares are under review".to_string())
         }
-        Some(crate::db::ValidationHoldCause::ProvisionalBacklog) => Some(
-            if pending_provisional > 0 {
+        Some(crate::db::ValidationHoldCause::ProvisionalBacklog) => {
+            Some(if pending_provisional > 0 {
                 format!(
                     "{pending_provisional} provisional share{} waiting for full verification",
                     if pending_provisional == 1 { "" } else { "s" }
                 )
             } else {
                 "recent provisional backlog is draining".to_string()
-            },
-        ),
-        Some(crate::db::ValidationHoldCause::PayoutCoverage) => Some(
-            "boosting verified-share coverage so payout weight stays proportional".to_string(),
-        ),
+            })
+        }
+        Some(crate::db::ValidationHoldCause::PayoutCoverage) => {
+            Some("boosting verified-share coverage so payout weight stays proportional".to_string())
+        }
         None => None,
     }
 }
@@ -6507,11 +6537,15 @@ impl ApiState {
                 in_flight: persisted.validation.in_flight,
                 candidate_queue_depth: persisted.validation.candidate_queue_depth,
                 regular_queue_depth: persisted.validation.regular_queue_depth,
+                audit_queue_depth: persisted.validation.audit_queue_depth,
                 candidate_oldest_age_millis: persisted.validation.candidate_oldest_age_millis,
                 regular_oldest_age_millis: persisted.validation.regular_oldest_age_millis,
+                audit_oldest_age_millis: persisted.validation.audit_oldest_age_millis,
                 candidate_wait: persisted.validation.candidate_wait,
                 regular_wait: persisted.validation.regular_wait,
+                audit_wait: persisted.validation.audit_wait,
                 validation_duration: persisted.validation.validation_duration,
+                audit_duration: persisted.validation.audit_duration,
                 tracked_addresses: persisted.validation.tracked_addresses,
                 forced_verify_addresses: persisted.validation.forced_verify_addresses,
                 total_shares: persisted.validation.total_shares,
@@ -6520,6 +6554,12 @@ impl ApiState {
                 pending_provisional: persisted.validation.pending_provisional,
                 fraud_detections: persisted.validation.fraud_detections,
                 candidate_false_claims: persisted.validation.candidate_false_claims,
+                hot_accepts: persisted.validation.hot_accepts,
+                sync_full_verifies: persisted.validation.sync_full_verifies,
+                audit_enqueued: persisted.validation.audit_enqueued,
+                audit_verified: persisted.validation.audit_verified,
+                audit_rejected: persisted.validation.audit_rejected,
+                audit_deferred: persisted.validation.audit_deferred,
                 overload_mode: persisted.validation.overload_mode,
                 effective_sample_rate: persisted.validation.effective_sample_rate,
             };
@@ -8489,6 +8529,7 @@ mod tests {
                 status: crate::validation::SHARE_STATUS_VERIFIED,
                 was_sampled: false,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: now,
             })
@@ -8503,6 +8544,7 @@ mod tests {
                 status: crate::validation::SHARE_STATUS_REJECTED,
                 was_sampled: false,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: Some("stale job".to_string()),
                 created_at: now,
             })
@@ -8517,6 +8559,7 @@ mod tests {
                 status: crate::validation::SHARE_STATUS_VERIFIED,
                 was_sampled: false,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: now,
             })
@@ -8579,6 +8622,7 @@ mod tests {
                 status: "verified",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: now,
             })
@@ -8593,6 +8637,7 @@ mod tests {
                 status: "rejected",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: Some("invalid share proof".to_string()),
                 created_at: now,
             })
@@ -8607,6 +8652,7 @@ mod tests {
                 status: "rejected",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: Some("address quarantined".to_string()),
                 created_at: now,
             })
@@ -8694,6 +8740,7 @@ mod tests {
                 status: "verified",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: now,
             })
@@ -8708,6 +8755,7 @@ mod tests {
                 status: "rejected",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: Some("bad hash".to_string()),
                 created_at: now,
             })
@@ -8741,6 +8789,7 @@ mod tests {
                 status: "verified",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: now,
             })
@@ -8755,6 +8804,7 @@ mod tests {
                 status: "rejected",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: Some("bad share".to_string()),
                 created_at: now,
             })
@@ -8796,6 +8846,7 @@ mod tests {
                     status: "verified",
                     was_sampled: true,
                     block_hash: None,
+                    claimed_hash: None,
                     reject_reason: None,
                     created_at,
                 })
@@ -8847,6 +8898,7 @@ mod tests {
                 status: "verified",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at,
             })
@@ -8906,6 +8958,7 @@ mod tests {
                 status: "provisional",
                 was_sampled: false,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: now,
             })
@@ -8928,7 +8981,7 @@ mod tests {
             })
             .expect("persist validation state");
         store
-            .add_validation_provisional("miner-backlog", now)
+            .add_validation_provisional("miner-backlog", None, now)
             .expect("persist provisional");
 
         let state = test_api_state(store);
@@ -9061,6 +9114,7 @@ mod tests {
                 status: "verified",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: base,
             })
@@ -9075,6 +9129,7 @@ mod tests {
                 status: "verified",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: base + Duration::from_secs(10),
             })
@@ -9134,6 +9189,7 @@ mod tests {
                 status: "verified",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: base,
             },
@@ -9146,6 +9202,7 @@ mod tests {
                 status: "verified",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: base + Duration::from_secs(1),
             },
@@ -9225,6 +9282,7 @@ mod tests {
                 status: "verified",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: base,
             },
@@ -9237,6 +9295,7 @@ mod tests {
                 status: "provisional",
                 was_sampled: false,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: base + Duration::from_secs(1),
             },
@@ -9249,6 +9308,7 @@ mod tests {
                 status: "verified",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: base + Duration::from_secs(2),
             },
@@ -9310,6 +9370,7 @@ mod tests {
                     status: "provisional",
                     was_sampled: false,
                     block_hash: None,
+                    claimed_hash: None,
                     reject_reason: None,
                     created_at: base,
                 },
@@ -9379,6 +9440,7 @@ mod tests {
                 status: "verified",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: base,
             },
@@ -9391,6 +9453,7 @@ mod tests {
                 status: "provisional",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: base + Duration::from_secs(1),
             },
@@ -9403,6 +9466,7 @@ mod tests {
                 status: "verified",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: base + Duration::from_secs(2),
             },
@@ -9478,6 +9542,7 @@ mod tests {
                 status: "verified",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: base,
             },
@@ -9490,6 +9555,7 @@ mod tests {
                 status: "provisional",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: base + Duration::from_secs(1),
             },
@@ -9502,6 +9568,7 @@ mod tests {
                 status: "verified",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: base + Duration::from_secs(2),
             },
@@ -9566,6 +9633,7 @@ mod tests {
                 status: "verified",
                 was_sampled: true,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: base - Duration::from_secs(10),
             })
@@ -9580,6 +9648,7 @@ mod tests {
                 status: "verified",
                 was_sampled: true,
                 block_hash: Some("blk-anchor".to_string()),
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: base + Duration::from_secs(10),
             })
@@ -9638,6 +9707,7 @@ mod tests {
                 status: "provisional",
                 was_sampled: false,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: base,
             })
@@ -9699,6 +9769,7 @@ mod tests {
                     status: "verified",
                     was_sampled: true,
                     block_hash: None,
+                    claimed_hash: None,
                     reject_reason: None,
                     created_at,
                 })
@@ -9762,6 +9833,7 @@ mod tests {
                     status: "verified",
                     was_sampled: true,
                     block_hash: None,
+                    claimed_hash: None,
                     reject_reason: None,
                     created_at,
                 })

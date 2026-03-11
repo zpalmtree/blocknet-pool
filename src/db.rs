@@ -22,6 +22,7 @@ pub struct DbShare {
     pub status: String,
     pub was_sampled: bool,
     pub block_hash: Option<String>,
+    pub claimed_hash: Option<String>,
     pub created_at: SystemTime,
 }
 
@@ -39,6 +40,20 @@ pub struct ShareReplayUpdate {
     pub status: String,
     pub was_sampled: bool,
     pub reject_reason: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingAuditShare {
+    pub share_id: i64,
+    pub job_id: String,
+    pub miner: String,
+    pub worker: String,
+    pub difficulty: u64,
+    pub nonce: u64,
+    pub claimed_hash: Option<[u8; 32]>,
+    pub header_base: Vec<u8>,
+    pub network_target: [u8; 32],
+    pub created_at: SystemTime,
 }
 
 #[derive(Debug, Clone, Serialize)]

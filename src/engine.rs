@@ -12,7 +12,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
-use crate::db::{AddressRiskState, ShareReplayData};
+use crate::db::{AddressRiskState, PendingAuditShare, ShareReplayData};
 use crate::dev_fee::{
     is_seine_dev_fee_address, login_difficulty_floor, should_allow_login_difficulty_hint_raise,
     should_bootstrap_login_from_address_hints, should_persist_login_hint_immediately,
@@ -66,6 +66,7 @@ pub struct ShareRecord {
     pub status: &'static str,
     pub was_sampled: bool,
     pub block_hash: Option<String>,
+    pub claimed_hash: Option<String>,
     pub reject_reason: Option<String>,
     pub created_at: SystemTime,
 }
@@ -315,12 +316,28 @@ pub trait ShareStore: Send + Sync + 'static {
         Ok(())
     }
     fn add_share(&self, share: ShareRecord) -> Result<()>;
+    fn add_share_with_id(&self, share: ShareRecord) -> Result<i64> {
+        self.add_share(share)?;
+        Err(anyhow!(
+            "share store does not support returning inserted share ids"
+        ))
+    }
     fn add_share_with_replay(
         &self,
         share: ShareRecord,
         _replay: Option<ShareReplayData>,
     ) -> Result<()> {
         self.add_share(share)
+    }
+    fn add_share_with_replay_and_id(
+        &self,
+        share: ShareRecord,
+        replay: Option<ShareReplayData>,
+    ) -> Result<i64> {
+        self.add_share_with_replay(share, replay)?;
+        Err(anyhow!(
+            "share store does not support returning inserted share ids with replay data"
+        ))
     }
     fn add_found_block(&self, _block: FoundBlockRecord) -> Result<()> {
         Ok(())
@@ -864,125 +881,199 @@ impl PoolEngine {
                 .map(|hash| check_target(hash, job.network_target))
                 .unwrap_or(false);
 
-            let task = ValidationTask {
-                address: session.address.clone(),
-                nonce,
-                difficulty: share_difficulty,
-                header_base: job.header_base.clone(),
-                share_target,
-                network_target: job.network_target,
-                claimed_hash,
-                candidate_claim,
-                force_full_verify: candidate_claim
-                    || self.store.should_force_verify_address(&session.address)?
-                    || (!require_claimed_hash && claimed_hash.is_none()),
-            };
+            let risk_force_verify = self.store.should_force_verify_address(&session.address)?;
+            let plan = self.validation.plan_regular_submit(&session.address);
+            let sync_full_verify = candidate_claim
+                || risk_force_verify
+                || (!require_claimed_hash && claimed_hash.is_none())
+                || plan.sync_full_verify;
 
-            let validation = match self.validate_task(task, candidate_claim) {
-                Ok(v) => v,
-                Err(err) => {
-                    self.persist_rejected_share_for_error(
+            if sync_full_verify {
+                let task = ValidationTask {
+                    address: session.address.clone(),
+                    nonce,
+                    difficulty: share_difficulty,
+                    header_base: job.header_base.clone(),
+                    share_target,
+                    network_target: job.network_target,
+                    claimed_hash,
+                    candidate_claim,
+                    force_full_verify: true,
+                };
+
+                let validation = match self.validate_task(task, candidate_claim) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        self.persist_rejected_share_for_error(
+                            &session,
+                            &job_id_for_share,
+                            nonce,
+                            share_difficulty,
+                            &err.to_string(),
+                        );
+                        return Err(err);
+                    }
+                };
+
+                if !validation.accepted {
+                    release_claim_on_error = false;
+                    let reason = validation.reject_reason.unwrap_or("invalid share");
+                    self.persist_rejected_share(
                         &session,
                         &job_id_for_share,
                         nonce,
                         share_difficulty,
-                        &err.to_string(),
+                        Some(reason),
                     );
-                    return Err(err);
+                    if validation.followup_action == ValidationFollowupAction::Quarantine {
+                        self.trigger_forced_validation_quarantine(
+                            &session.address,
+                            "bad share ratio during forced validation",
+                        );
+                    }
+                    return Err(anyhow!(
+                        "{}",
+                        validation.reject_reason.unwrap_or("invalid share")
+                    ));
                 }
-            };
 
-            if !validation.accepted {
-                release_claim_on_error = false;
-                let reason = validation.reject_reason.unwrap_or("invalid share");
-                self.persist_rejected_share(
-                    &session,
-                    &job_id_for_share,
-                    nonce,
-                    share_difficulty,
-                    Some(reason),
-                );
+                let mut block_hash = None;
+                let mut block_accepted = false;
+                if validation.is_block_candidate {
+                    let computed_hash = hex_string(validation.hash);
+                    block_hash = Some(computed_hash.clone());
+                    let staged_found = FoundBlockRecord {
+                        height: job.height,
+                        hash: computed_hash.clone(),
+                        difficulty: job.network_difficulty,
+                        reward: job_template_reward(&job),
+                        finder: session.address.clone(),
+                        finder_worker: session.worker.clone(),
+                        timestamp: SystemTime::now(),
+                    };
+                    self.stage_found_block_submission(&staged_found)?;
+
+                    let submit = self.node.submit_block(&job, nonce)?;
+                    block_accepted = submit.accepted;
+                    if let Some(network_hash) = submit.hash.clone() {
+                        block_hash = Some(network_hash);
+                    }
+
+                    if block_accepted {
+                        let mut persisted_found = staged_found.clone();
+                        persisted_found.height = submit.height.unwrap_or(staged_found.height);
+                        if let Some(network_hash) = submit.hash {
+                            persisted_found.hash = network_hash;
+                        }
+                        let accepted_hash = block_hash
+                            .clone()
+                            .unwrap_or_else(|| persisted_found.hash.clone());
+                        tracing::warn!(
+                            height = persisted_found.height,
+                            hash = %accepted_hash,
+                            finder = %session.address,
+                            worker = %session.worker,
+                            difficulty = job.network_difficulty,
+                            nonce,
+                            "POOL BLOCK FOUND"
+                        );
+                        self.persist_found_block(&staged_found, persisted_found);
+                    } else if let Err(err) = self.clear_found_block_submission(&staged_found) {
+                        tracing::warn!(
+                            height = staged_found.height,
+                            hash = %staged_found.hash,
+                            finder = %staged_found.finder,
+                            error = %err,
+                            "failed clearing rejected block submission journal entry"
+                        );
+                    }
+                }
+
+                let created_at = SystemTime::now();
+                self.store.add_share_with_replay(
+                    ShareRecord {
+                        job_id: job_id_for_share.clone(),
+                        miner: session.address.clone(),
+                        worker: session.worker.clone(),
+                        difficulty: share_difficulty,
+                        nonce,
+                        status: SHARE_STATUS_VERIFIED,
+                        was_sampled: true,
+                        block_hash,
+                        claimed_hash: claimed_hash_hex.clone(),
+                        reject_reason: None,
+                        created_at,
+                    },
+                    Some(ShareReplayData {
+                        job_id: job_id_for_share.clone(),
+                        header_base: job.header_base.clone(),
+                        network_target: job.network_target,
+                        created_at,
+                    }),
+                )?;
+                if let Err(err) = self.store.release_share_claim(&job_id_for_share, nonce) {
+                    tracing::warn!(
+                        job_id = %job_id_for_share,
+                        nonce,
+                        error = %err,
+                        "failed to release share claim after successful persistence"
+                    );
+                }
                 if validation.followup_action == ValidationFollowupAction::Quarantine {
                     self.trigger_forced_validation_quarantine(
                         &session.address,
                         "bad share ratio during forced validation",
                     );
                 }
-                return Err(anyhow!(
-                    "{}",
-                    validation.reject_reason.unwrap_or("invalid share")
-                ));
+
+                let next_difficulty = self.note_share_and_maybe_adjust_difficulty(conn_id);
+                return Ok(SubmitAck {
+                    accepted: true,
+                    verified: true,
+                    status: SHARE_STATUS_VERIFIED,
+                    block_accepted,
+                    share_difficulty,
+                    next_difficulty,
+                });
             }
 
-            let status = if validation.verified {
-                SHARE_STATUS_VERIFIED
-            } else {
-                SHARE_STATUS_PROVISIONAL
-            };
-
-            let mut block_hash = None;
-            let mut block_accepted = false;
-            if validation.is_block_candidate {
-                let computed_hash = hex_string(validation.hash);
-                block_hash = Some(computed_hash.clone());
-                let staged_found = FoundBlockRecord {
-                    height: job.height,
-                    hash: computed_hash.clone(),
-                    difficulty: job.network_difficulty,
-                    reward: job_template_reward(&job),
-                    finder: session.address.clone(),
-                    finder_worker: session.worker.clone(),
-                    timestamp: SystemTime::now(),
-                };
-                self.stage_found_block_submission(&staged_found)?;
-
-                let submit = self.node.submit_block(&job, nonce)?;
-                block_accepted = submit.accepted;
-                if let Some(network_hash) = submit.hash.clone() {
-                    block_hash = Some(network_hash);
-                }
-
-                if block_accepted {
-                    let mut persisted_found = staged_found.clone();
-                    persisted_found.height = submit.height.unwrap_or(staged_found.height);
-                    if let Some(network_hash) = submit.hash {
-                        persisted_found.hash = network_hash;
-                    }
-                    let accepted_hash = block_hash
-                        .clone()
-                        .unwrap_or_else(|| persisted_found.hash.clone());
-                    tracing::warn!(
-                        height = persisted_found.height,
-                        hash = %accepted_hash,
-                        finder = %session.address,
-                        worker = %session.worker,
-                        difficulty = job.network_difficulty,
+            let claimed_hash = match claimed_hash {
+                Some(hash) => hash,
+                None => {
+                    self.persist_rejected_share_for_error(
+                        &session,
+                        &job_id_for_share,
                         nonce,
-                        "POOL BLOCK FOUND"
+                        share_difficulty,
+                        "claimed hash required",
                     );
-                    self.persist_found_block(&staged_found, persisted_found);
-                } else if let Err(err) = self.clear_found_block_submission(&staged_found) {
-                    tracing::warn!(
-                        height = staged_found.height,
-                        hash = %staged_found.hash,
-                        finder = %staged_found.finder,
-                        error = %err,
-                        "failed clearing rejected block submission journal entry"
-                    );
+                    return Err(anyhow!("claimed hash required"));
                 }
+            };
+            if !check_target(claimed_hash, share_target) {
+                release_claim_on_error = false;
+                self.persist_rejected_share(
+                    &session,
+                    &job_id_for_share,
+                    nonce,
+                    share_difficulty,
+                    Some("low difficulty share"),
+                );
+                return Err(anyhow!("low difficulty share"));
             }
 
             let created_at = SystemTime::now();
-            self.store.add_share_with_replay(
+            let share_id = self.store.add_share_with_replay_and_id(
                 ShareRecord {
                     job_id: job_id_for_share.clone(),
                     miner: session.address.clone(),
                     worker: session.worker.clone(),
                     difficulty: share_difficulty,
                     nonce,
-                    status,
-                    was_sampled: validation.verified,
-                    block_hash,
+                    status: SHARE_STATUS_PROVISIONAL,
+                    was_sampled: false,
+                    block_hash: None,
+                    claimed_hash: claimed_hash_hex.clone(),
                     reject_reason: None,
                     created_at,
                 },
@@ -998,23 +1089,36 @@ impl PoolEngine {
                     job_id = %job_id_for_share,
                     nonce,
                     error = %err,
-                    "failed to release share claim after successful persistence"
+                    "failed to release share claim after provisional persistence"
                 );
             }
-            if validation.followup_action == ValidationFollowupAction::Quarantine {
-                self.trigger_forced_validation_quarantine(
-                    &session.address,
-                    "bad share ratio during forced validation",
-                );
-            }
+
+            self.validation.record_hot_accept(
+                &session.address,
+                share_id,
+                share_difficulty,
+                created_at,
+                plan.enqueue_audit.then_some(PendingAuditShare {
+                    share_id,
+                    job_id: job_id_for_share.clone(),
+                    miner: session.address.clone(),
+                    worker: session.worker.clone(),
+                    difficulty: share_difficulty,
+                    nonce,
+                    claimed_hash: Some(claimed_hash),
+                    header_base: job.header_base.clone(),
+                    network_target: job.network_target,
+                    created_at,
+                }),
+                plan,
+            );
 
             let next_difficulty = self.note_share_and_maybe_adjust_difficulty(conn_id);
-
             Ok(SubmitAck {
                 accepted: true,
-                verified: validation.verified,
-                status,
-                block_accepted,
+                verified: false,
+                status: SHARE_STATUS_PROVISIONAL,
+                block_accepted: false,
                 share_difficulty,
                 next_difficulty,
             })
@@ -1091,6 +1195,7 @@ impl PoolEngine {
             status: SHARE_STATUS_REJECTED,
             was_sampled: false,
             block_hash: None,
+            claimed_hash: None,
             reject_reason: reject_reason
                 .map(|value| canonical_share_reject_reason(value).to_string()),
             created_at: SystemTime::now(),
@@ -1356,8 +1461,7 @@ impl PoolEngine {
             let computed = rx
                 .recv_timeout(timeout)
                 .map_err(|_| anyhow!("validation timeout"));
-            return computed
-                .map(|computed| self.validation.complete_result(&task, computed));
+            return computed.map(|computed| self.validation.complete_result(&task, computed));
         }
 
         if candidate {
@@ -2009,6 +2113,12 @@ impl ShareStore for InMemoryStore {
         Ok(())
     }
 
+    fn add_share_with_id(&self, share: ShareRecord) -> Result<i64> {
+        let mut shares = self.shares.lock();
+        shares.push(share);
+        Ok(shares.len() as i64)
+    }
+
     fn add_share_with_replay(
         &self,
         share: ShareRecord,
@@ -2018,6 +2128,17 @@ impl ShareStore for InMemoryStore {
             self.replays.lock().insert(replay.job_id.clone(), replay);
         }
         self.add_share(share)
+    }
+
+    fn add_share_with_replay_and_id(
+        &self,
+        share: ShareRecord,
+        replay: Option<ShareReplayData>,
+    ) -> Result<i64> {
+        if let Some(replay) = replay {
+            self.replays.lock().insert(replay.job_id.clone(), replay);
+        }
+        self.add_share_with_id(share)
     }
 
     fn add_found_block(&self, block: FoundBlockRecord) -> Result<()> {
@@ -3026,6 +3147,133 @@ mod tests {
         let shares = store.shares();
         assert_eq!(shares.len(), 1);
         assert_eq!(shares[0].nonce, 42);
+    }
+
+    #[test]
+    fn regular_submits_stay_fast_while_live_audit_hashing_is_busy() {
+        struct SlowMatchingHasher;
+        impl PowHasher for SlowMatchingHasher {
+            fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
+                std::thread::sleep(Duration::from_millis(120));
+                Ok([0xff; 32])
+            }
+        }
+
+        let mut cfg = cfg();
+        cfg.sample_rate = 1.0;
+        cfg.regular_verifiers = 1;
+        cfg.regular_validation_queue = 1;
+        cfg.warmup_shares = 0;
+        cfg.min_sample_every = 0;
+
+        let validation = Arc::new(ValidationEngine::new(
+            cfg.clone(),
+            Arc::new(SlowMatchingHasher),
+        ));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let store = Arc::new(InMemoryStore::default());
+        let engine = PoolEngine::new(
+            cfg,
+            Arc::clone(&validation),
+            jobs,
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode::default()),
+        );
+
+        engine
+            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .expect("login");
+
+        let first_started = Instant::now();
+        let first = engine
+            .submit("conn1", "job1".to_string(), 500, Some("ff".repeat(32)))
+            .expect("first share");
+        let first_elapsed = first_started.elapsed();
+        let second_started = Instant::now();
+        let second = engine
+            .submit("conn1", "job1".to_string(), 501, Some("ff".repeat(32)))
+            .expect("second share");
+        let second_elapsed = second_started.elapsed();
+
+        assert_eq!(first.status, SHARE_STATUS_PROVISIONAL);
+        assert_eq!(second.status, SHARE_STATUS_PROVISIONAL);
+        assert!(
+            first_elapsed < Duration::from_millis(80),
+            "first hot accept should not wait on the async audit lane"
+        );
+        assert!(
+            second_elapsed < Duration::from_millis(80),
+            "second hot accept should still stay fast while the audit worker is hashing"
+        );
+
+        let snapshot = validation.snapshot();
+        assert_eq!(snapshot.hot_accepts, 2);
+        assert!(
+            snapshot.audit_enqueued >= 1,
+            "sampled hot accepts should enqueue live audit work"
+        );
+    }
+
+    #[test]
+    fn candidate_submit_bypasses_busy_regular_audit_lane() {
+        struct SplitHasher;
+        impl PowHasher for SplitHasher {
+            fn hash(&self, _header_base: &[u8], nonce: u64) -> anyhow::Result<[u8; 32]> {
+                std::thread::sleep(Duration::from_millis(120));
+                Ok(if nonce == 777 { [0x00; 32] } else { [0xff; 32] })
+            }
+        }
+
+        let mut cfg = cfg();
+        cfg.sample_rate = 1.0;
+        cfg.regular_verifiers = 1;
+        cfg.regular_validation_queue = 1;
+        cfg.warmup_shares = 0;
+        cfg.min_sample_every = 0;
+
+        let validation = Arc::new(ValidationEngine::new(cfg.clone(), Arc::new(SplitHasher)));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(Job {
+            network_target: [0x01; 32],
+            ..job()
+        });
+        let node = Arc::new(InMemoryNode {
+            accepted: true,
+            ..InMemoryNode::default()
+        });
+        let engine = PoolEngine::new(
+            cfg,
+            Arc::clone(&validation),
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::clone(&node) as Arc<dyn NodeApi>,
+        );
+
+        engine
+            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .expect("login");
+
+        let regular = engine
+            .submit("conn1", "job1".to_string(), 700, Some("ff".repeat(32)))
+            .expect("regular share");
+        assert_eq!(regular.status, SHARE_STATUS_PROVISIONAL);
+
+        let candidate_started = Instant::now();
+        let candidate = engine
+            .submit("conn1", "job1".to_string(), 777, Some("00".repeat(32)))
+            .expect("candidate share");
+        let candidate_elapsed = candidate_started.elapsed();
+
+        assert!(
+            candidate.block_accepted,
+            "candidate should still reach block submit"
+        );
+        assert!(
+            candidate_elapsed < Duration::from_millis(220),
+            "candidate path should not wait behind the regular audit worker"
+        );
+        assert_eq!(node.submits.lock().len(), 1);
     }
 
     #[test]

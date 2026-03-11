@@ -1436,6 +1436,7 @@ mod tests {
             status: status.into(),
             was_sampled: true,
             block_hash: None,
+            claimed_hash: None,
             created_at,
         }
     }
@@ -1763,6 +1764,7 @@ mod tests {
                     status: SHARE_STATUS_PROVISIONAL,
                     was_sampled: false,
                     block_hash: None,
+                    claimed_hash: None,
                     reject_reason: None,
                     created_at: share_time,
                 },
@@ -1832,6 +1834,7 @@ mod tests {
                 status: SHARE_STATUS_PROVISIONAL,
                 was_sampled: false,
                 block_hash: None,
+                claimed_hash: None,
                 reject_reason: None,
                 created_at: share_time,
             })
@@ -1873,6 +1876,7 @@ mod tests {
                     status: SHARE_STATUS_PROVISIONAL,
                     was_sampled: false,
                     block_hash: Some("candidate-hash".to_string()),
+                    claimed_hash: None,
                     reject_reason: None,
                     created_at: share_time,
                 },
