@@ -321,7 +321,6 @@ interface AdminPageProps {
   apiKeyInput: string;
   setApiKeyInput: (value: string) => void;
   onSaveApiKey: () => void;
-  onClearApiKey: () => void;
   onJumpToStats: (address: string) => void;
 }
 
@@ -338,11 +337,9 @@ export function AdminPage({
   apiKeyInput,
   setApiKeyInput,
   onSaveApiKey,
-  onClearApiKey,
   onJumpToStats,
 }: AdminPageProps) {
   const [tab, setTab] = useState<AdminTab>('miners');
-  const [showKeyInput, setShowKeyInput] = useState(false);
 
   const [minersSearch, setMinersSearch] = useState('');
   const [minersSort, setMinersSort] = useState('hashrate_desc');
@@ -991,62 +988,25 @@ export function AdminPage({
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-admin">
-      <div className="admin-header">
-        <h2>Admin</h2>
-        {apiKey && !showKeyInput ? (
-          <div className="admin-key-status">
-            <span className="status-dot dot-green" />
-            <span style={{ fontSize: 13, color: 'var(--muted)' }}>Key set</span>
-            <button
-              className="btn btn-secondary btn-xs"
-              onClick={() => setShowKeyInput(true)}
-            >
-              Change
-            </button>
-          </div>
-        ) : null}
-      </div>
-
-      {!apiKey || showKeyInput ? (
-        <div className="admin-key-bar">
-          <input
-            type="password"
-            placeholder="Enter API key"
-            value={apiKeyInput}
-            onChange={(e) => setApiKeyInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') onSaveApiKey();
-            }}
-          />
-          <button
-            className="btn btn-primary"
-            onClick={() => {
-              onSaveApiKey();
-              setShowKeyInput(false);
-            }}
-          >
-            Save
-          </button>
-          {apiKey ? (
-            <button className="btn btn-secondary" onClick={() => setShowKeyInput(false)}>
-              Cancel
-            </button>
-          ) : null}
-          <button
-            className="btn btn-secondary"
-            onClick={() => {
-              onClearApiKey();
-              setShowKeyInput(false);
-            }}
-          >
-            Clear
-          </button>
-        </div>
-      ) : null}
+      <h2>Admin</h2>
 
       {!apiKey ? (
         <div className="auth-gate card section">
-          <p>Enter your API key above to access admin features.</p>
+          <p style={{ marginBottom: 12 }}>Enter your API key to access admin features.</p>
+          <div className="admin-key-bar">
+            <input
+              type="password"
+              placeholder="API key"
+              value={apiKeyInput}
+              onChange={(e) => setApiKeyInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') onSaveApiKey();
+              }}
+            />
+            <button className="btn btn-primary" onClick={onSaveApiKey}>
+              Save
+            </button>
+          </div>
         </div>
       ) : (
         <div id="admin-content">

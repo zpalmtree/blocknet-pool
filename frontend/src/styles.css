@@ -242,6 +242,41 @@ nav {
   margin-left: auto;
 }
 
+.nav-key-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--accent);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.nav-key-badge:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.nav-key-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nav-key-input input {
+  width: 160px;
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
 .theme-toggle {
   position: relative;
   display: inline-flex;
@@ -706,24 +741,6 @@ tr:hover td {
   }
 }
 
-.admin-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.admin-header h2 {
-  margin-bottom: 0;
-}
-
-.admin-key-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 16px;
-}
-
 .btn-xs {
   font-size: 11px;
   padding: 3px 8px;
@@ -734,7 +751,6 @@ tr:hover td {
   display: flex;
   gap: 8px;
   align-items: center;
-  margin-bottom: 16px;
 }
 
 .admin-key-bar input {
