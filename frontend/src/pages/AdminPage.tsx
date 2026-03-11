@@ -149,7 +149,18 @@ function verificationHoldLabel(hold: ActiveVerificationHold): string {
     return 'Risk + validation';
   }
   if (hasActiveUntil(hold.force_verify_until)) return 'Risk forced';
-  if (hasActiveUntil(hold.validation_forced_until)) return 'Validation forced';
+  if (hasActiveUntil(hold.validation_forced_until)) {
+    switch (hold.validation_hold_cause) {
+      case 'provisional_backlog':
+        return 'Backlog drain';
+      case 'payout_coverage':
+        return 'Payout boost';
+      case 'invalid_samples':
+        return 'Validation review';
+      default:
+        return 'Validation forced';
+    }
+  }
   return 'Active';
 }
 
@@ -702,6 +713,10 @@ export function AdminPage({
   const rewardBreakdownProjected = !!rewardBreakdown && !rewardBreakdownOrphaned && !rewardBreakdown.block.paid_out;
   const activeVerificationHolds = health?.active_verification_holds ?? [];
   const poolActivity = health?.pool_activity ?? null;
+  const unpaidPayoutCount = health?.payouts?.unpaid_count ?? health?.payouts?.pending_count ?? null;
+  const unpaidPayoutAmount = health?.payouts?.unpaid_amount ?? health?.payouts?.pending_amount ?? null;
+  const queuedPayoutCount = health?.payouts?.queued_count ?? health?.payouts?.pending_count ?? null;
+  const queuedPayoutAmount = health?.payouts?.queued_amount ?? health?.payouts?.pending_amount ?? null;
   const shareWindows = shareDiagnostics?.windows ?? [];
   const shareWindow5m = useMemo(
     () => shareWindows.find((item) => item.label === '5m') ?? null,
@@ -1007,11 +1022,16 @@ export function AdminPage({
               </div>
             </div>
             <div className="stat-card" onClick={() => setTab('balances')}>
-              <div className="label">Pending Payouts</div>
-              <div className="value mono">{health?.payouts?.pending_count ?? '-'}</div>
+              <div className="label">Unpaid Balances</div>
+              <div className="value mono">{unpaidPayoutCount ?? '-'}</div>
               <div className="stat-meta">
-                {health?.payouts?.pending_amount != null
-                  ? `${formatCoins(health.payouts.pending_amount)} owed`
+                {unpaidPayoutAmount != null
+                  ? `${formatCoins(unpaidPayoutAmount)} owed`
+                  : '-'}
+              </div>
+              <div className="stat-meta">
+                {queuedPayoutAmount != null
+                  ? `${queuedPayoutCount ?? 0} queued · ${formatCoins(queuedPayoutAmount)} in queue`
                   : '-'}
               </div>
             </div>
@@ -1755,7 +1775,8 @@ export function AdminPage({
               </div>
               <div style={{ marginTop: 12, fontSize: 13, color: 'var(--muted)' }}>
                 <span className="mono">Validation forced</span> comes from the share validation engine after repeated
-                invalid samples, suspected fraud, or too many provisional shares waiting for full verification.
+                invalid samples, suspected fraud, too many provisional shares waiting for full verification, or a
+                temporary payout-coverage boost for honest miners.
               </div>
               {holdActionError ? (
                 <div
@@ -1830,7 +1851,9 @@ export function AdminPage({
                             {hold.strikes}
                             {hold.suspected_fraud_strikes > 0 ? ` / fraud ${hold.suspected_fraud_strikes}` : ''}
                           </td>
-                          <td title={hold.last_reason ?? undefined}>{hold.last_reason ?? '-'}</td>
+                          <td title={hold.reason ?? hold.last_reason ?? undefined}>
+                            {hold.reason ?? hold.last_reason ?? '-'}
+                          </td>
                           <td className="mono" title={hold.last_event_at ? formatAdminTimestamp(hold.last_event_at) : undefined}>
                             {hold.last_event_at ? timeAgo(hold.last_event_at) : '-'}
                           </td>

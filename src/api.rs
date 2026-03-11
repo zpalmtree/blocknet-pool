@@ -2525,6 +2525,10 @@ struct JobHealth {
 
 #[derive(Serialize)]
 struct PayoutHealth {
+    unpaid_count: usize,
+    unpaid_amount: u64,
+    queued_count: usize,
+    queued_amount: u64,
     pending_count: usize,
     pending_amount: u64,
     last_payout: Option<Payout>,
@@ -3478,6 +3482,9 @@ async fn handle_admin_balances(
 }
 
 async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
+    let provisional_cutoff = SystemTime::now()
+        .checked_sub(state.config.provisional_share_delay_duration())
+        .unwrap_or(UNIX_EPOCH);
     let daemon = state.daemon_health().await;
     let validation = state.effective_validation_summary().await;
     let persisted_runtime = state.persisted_runtime_snapshot().await;
@@ -3487,15 +3494,24 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
     let store = Arc::clone(&state.store);
     let payout_health =
         match tokio::task::spawn_blocking(move || -> anyhow::Result<PayoutHealth> {
+            let balances = store.get_all_balances()?;
+            let unpaid_count = balances.iter().filter(|balance| balance.pending > 0).count();
+            let unpaid_amount = balances
+                .iter()
+                .fold(0u64, |acc, balance| acc.saturating_add(balance.pending));
             let pending = store.get_pending_payouts()?;
-            let pending_count = pending.len();
-            let pending_amount = pending
+            let queued_count = pending.len();
+            let queued_amount = pending
                 .iter()
                 .fold(0u64, |acc, payout| acc.saturating_add(payout.amount));
             let last_payout = store.get_recent_payouts(1)?.into_iter().next();
             Ok(PayoutHealth {
-                pending_count,
-                pending_amount,
+                unpaid_count,
+                unpaid_amount,
+                queued_count,
+                queued_amount,
+                pending_count: queued_count,
+                pending_amount: queued_amount,
                 last_payout,
             })
         })
@@ -3535,7 +3551,11 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
 
     let store = Arc::clone(&state.store);
     let active_verification_holds =
-        match tokio::task::spawn_blocking(move || store.list_active_verification_holds()).await {
+        match tokio::task::spawn_blocking(move || {
+            store.list_active_verification_holds(provisional_cutoff)
+        })
+        .await
+        {
             Ok(Ok(v)) => v,
             Ok(Err(err)) => {
                 return internal_error("failed loading active verification holds", err)
@@ -4265,6 +4285,9 @@ async fn handle_miner(
 ) -> impl IntoResponse {
     let store = Arc::clone(&state.store);
     let chain_height = state.node.chain_height();
+    let provisional_cutoff = SystemTime::now()
+        .checked_sub(state.config.provisional_share_delay_duration())
+        .unwrap_or(UNIX_EPOCH);
     let addr = address.clone();
     let share_limit = share_limit(query.share_limit);
     let include_pending_estimate = query.include_pending_estimate.unwrap_or(true);
@@ -4287,7 +4310,7 @@ async fn handle_miner(
         let worker_hashrate_raw = store.worker_hashrate_stats_for_miner(&addr, since_hr_window)?;
         let miner_blocks = store.get_blocks_for_miner(&addr)?;
         let risk_state = store.get_address_risk(&addr)?;
-        let validation_forced_until = store.validation_forced_until(&addr)?;
+        let validation_state = store.validation_hold_state(&addr, provisional_cutoff)?;
         Ok::<_, anyhow::Error>((
             shares,
             mining_since,
@@ -4299,7 +4322,7 @@ async fn handle_miner(
             worker_hashrate_raw,
             miner_blocks,
             risk_state,
-            validation_forced_until,
+            validation_state,
         ))
     })
     .await
@@ -4325,7 +4348,7 @@ async fn handle_miner(
         worker_hashrate_raw,
         mut miner_blocks,
         risk_state,
-        validation_forced_until,
+        validation_state,
     ) = db_result;
     for block in &mut miner_blocks {
         hydrate_provisional_block_reward(block);
@@ -4349,11 +4372,8 @@ async fn handle_miner(
     } else {
         MinerPendingEstimate::default()
     };
-    let verification_hold = miner_verification_hold(
-        risk_state.as_ref(),
-        validation_forced_until,
-        SystemTime::now(),
-    );
+    let verification_hold =
+        miner_verification_hold(risk_state.as_ref(), validation_state.as_ref(), SystemTime::now());
 
     let pending_confirmed = balance.pending;
     let pending_estimated = pending_estimate.estimated_pending;
@@ -4702,6 +4722,8 @@ struct MinerVerificationHold {
     quarantined_until: Option<SystemTime>,
     active_risk_strikes: u64,
     active_fraud_strikes: u64,
+    validation_hold_cause: Option<crate::db::ValidationHoldCause>,
+    validation_pending_provisional: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -4902,9 +4924,34 @@ fn pool_activity_health(
     }
 }
 
+fn validation_hold_reason(
+    cause: Option<crate::db::ValidationHoldCause>,
+    pending_provisional: u64,
+) -> Option<String> {
+    match cause {
+        Some(crate::db::ValidationHoldCause::InvalidSamples) => {
+            Some("recent invalid sampled shares are under review".to_string())
+        }
+        Some(crate::db::ValidationHoldCause::ProvisionalBacklog) => Some(
+            if pending_provisional > 0 {
+                format!(
+                    "{pending_provisional} provisional share{} waiting for full verification",
+                    if pending_provisional == 1 { "" } else { "s" }
+                )
+            } else {
+                "recent provisional backlog is draining".to_string()
+            },
+        ),
+        Some(crate::db::ValidationHoldCause::PayoutCoverage) => Some(
+            "boosting verified-share coverage so payout weight stays proportional".to_string(),
+        ),
+        None => None,
+    }
+}
+
 fn miner_verification_hold(
     state: Option<&AddressRiskState>,
-    validation_forced_until: Option<SystemTime>,
+    validation_state: Option<&crate::db::ValidationHoldState>,
     now: SystemTime,
 ) -> Option<MinerVerificationHold> {
     let quarantined_until = state
@@ -4913,12 +4960,15 @@ fn miner_verification_hold(
     let verified_only_until = state
         .and_then(|s| s.force_verify_until)
         .into_iter()
-        .chain(validation_forced_until)
+        .chain(validation_state.and_then(|s| s.forced_until))
         .filter(|until| *until > now)
         .max();
     if quarantined_until.is_none() && verified_only_until.is_none() {
         return None;
     }
+
+    let validation_hold_cause = validation_state.and_then(|state| state.hold_cause);
+    let validation_pending_provisional = validation_state.map(|state| state.pending_provisional);
 
     Some(MinerVerificationHold {
         mode: if quarantined_until.is_some() {
@@ -4930,8 +4980,16 @@ fn miner_verification_hold(
             .and_then(|s| s.last_reason.as_deref())
             .map(str::trim)
             .filter(|reason| !reason.is_empty())
-            .map(ToOwned::to_owned),
-        started_at: state.and_then(|s| s.last_event_at),
+            .map(ToOwned::to_owned)
+            .or_else(|| {
+                validation_hold_reason(
+                    validation_hold_cause,
+                    validation_pending_provisional.unwrap_or_default(),
+                )
+            }),
+        started_at: state
+            .and_then(|s| s.last_event_at)
+            .or_else(|| validation_state.and_then(|state| state.forced_started_at)),
         verified_only_until,
         quarantined_until,
         active_risk_strikes: state
@@ -4946,6 +5004,8 @@ fn miner_verification_hold(
                 )
             })
             .unwrap_or_default(),
+        validation_hold_cause,
+        validation_pending_provisional,
     })
 }
 
@@ -8365,6 +8425,7 @@ mod tests {
                 forced_sampled_shares: 7,
                 forced_invalid_samples: 1,
                 resume_forced_at: None,
+                hold_cause: Some(crate::db::ValidationHoldCause::InvalidSamples),
                 last_seen_at: now,
             })
             .expect("persist validation state");
@@ -8402,6 +8463,14 @@ mod tests {
             .expect("validation row");
         assert!(validation_row["validation_forced_until"].is_object());
         assert!(validation_row["quarantined_until"].is_null());
+        assert_eq!(
+            validation_row["validation_hold_cause"].as_str(),
+            Some("invalid_samples")
+        );
+        assert_eq!(
+            validation_row["reason"].as_str(),
+            Some("recent invalid sampled shares are under review")
+        );
     }
 
     #[test]
@@ -8821,6 +8890,77 @@ mod tests {
             Some("low difficulty share")
         );
         assert!(payload["verification_hold"]["verified_only_until"].is_object());
+    }
+
+    #[test]
+    fn miner_handler_reports_validation_backlog_hold_reason() {
+        let store = require_test_store!();
+        let now = SystemTime::now();
+        store
+            .add_share(ShareRecord {
+                job_id: "job-backlog".to_string(),
+                miner: "miner-backlog".to_string(),
+                worker: "worker-1".to_string(),
+                difficulty: 250,
+                nonce: 1,
+                status: "provisional",
+                was_sampled: false,
+                block_hash: None,
+                reject_reason: None,
+                created_at: now,
+            })
+            .expect("add share");
+        store
+            .upsert_validation_state(&PersistedValidationAddressState {
+                address: "miner-backlog".to_string(),
+                total_shares: 20,
+                sampled_shares: 0,
+                invalid_samples: 0,
+                risk_sampled_shares: 0,
+                risk_invalid_samples: 0,
+                forced_started_at: None,
+                forced_until: Some(now + Duration::from_secs(180)),
+                forced_sampled_shares: 0,
+                forced_invalid_samples: 0,
+                resume_forced_at: None,
+                hold_cause: Some(crate::db::ValidationHoldCause::ProvisionalBacklog),
+                last_seen_at: now,
+            })
+            .expect("persist validation state");
+        store
+            .add_validation_provisional("miner-backlog", now)
+            .expect("persist provisional");
+
+        let state = test_api_state(store);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let response = runtime
+            .block_on(handle_miner(
+                Path("miner-backlog".to_string()),
+                Query(MinerDetailQuery {
+                    share_limit: Some(1),
+                    include_pending_estimate: Some(false),
+                }),
+                State(state),
+            ))
+            .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = runtime
+            .block_on(to_bytes(response.into_body(), usize::MAX))
+            .expect("read body");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("decode miner json");
+
+        assert_eq!(
+            payload["verification_hold"]["validation_hold_cause"].as_str(),
+            Some("provisional_backlog")
+        );
+        assert_eq!(
+            payload["verification_hold"]["reason"].as_str(),
+            Some("1 provisional share waiting for full verification")
+        );
+        assert_eq!(
+            payload["verification_hold"]["validation_pending_provisional"].as_u64(),
+            Some(1)
+        );
     }
 
     #[test]

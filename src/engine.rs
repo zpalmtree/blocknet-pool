@@ -867,6 +867,7 @@ impl PoolEngine {
             let task = ValidationTask {
                 address: session.address.clone(),
                 nonce,
+                difficulty: share_difficulty,
                 header_base: job.header_base.clone(),
                 share_target,
                 network_target: job.network_target,
@@ -1356,7 +1357,7 @@ impl PoolEngine {
                 .recv_timeout(timeout)
                 .map_err(|_| anyhow!("validation timeout"));
             return computed
-                .map(|computed| self.validation.complete_result(&task.address, computed));
+                .map(|computed| self.validation.complete_result(&task, computed));
         }
 
         if candidate {

@@ -234,9 +234,14 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   const previewBlocks = minerData?.pending_estimate?.blocks ?? [];
   const verificationHold = minerData?.verification_hold ?? null;
   const verificationReason = verificationHold?.reason?.trim() || 'share validation issue';
+  const verificationPendingProvisional = verificationHold?.validation_pending_provisional ?? 0;
   const verificationStartedAt = toUnixMs(verificationHold?.started_at);
   const verificationOnlyUntil = toUnixMs(verificationHold?.verified_only_until);
   const verificationQuarantineUntil = toUnixMs(verificationHold?.quarantined_until);
+  const pendingNoteRepeatsHold =
+    !!verificationHold &&
+    !!minerData.pending_note &&
+    minerData.pending_note.toLowerCase().includes('verification hold');
 
   const rejectionChecked = (rejectionWindow?.accepted ?? 0) + (rejectionWindow?.rejected ?? 0);
   const topWindowReason = rejectionWindow?.by_reason?.[0];
@@ -357,14 +362,19 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
                   verificationOnlyUntil !== verificationQuarantineUntil && (
                     <> {`Verified-only credit continues until ${new Date(verificationOnlyUntil).toLocaleString()} after quarantine ends.`}</>
                   )}
-                {` Reason: ${verificationReason}.`}
+                {verificationHold.validation_hold_cause === 'provisional_backlog' &&
+                verificationPendingProvisional > 0
+                  ? ` Reason: ${verificationReason}. ${verificationPendingProvisional} provisional share${
+                      verificationPendingProvisional === 1 ? '' : 's'
+                    } are still waiting for full verification.`
+                  : ` Reason: ${verificationReason}.`}
                 {verificationStartedAt && <> {`Started ${new Date(verificationStartedAt).toLocaleString()}.`}</>}
                 {' Confirmed balance and completed payouts are unaffected.'}
               </div>
             </div>
           )}
 
-          {minerData.pending_note && (
+          {minerData.pending_note && !pendingNoteRepeatsHold && (
             <div
               className="card"
               style={{ marginBottom: 24, background: 'var(--accent-light)', borderColor: 'var(--accent)' }}

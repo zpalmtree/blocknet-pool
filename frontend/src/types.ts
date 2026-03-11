@@ -156,6 +156,8 @@ export interface MinerVerificationHold {
   quarantined_until?: UnixLike;
   active_risk_strikes?: number;
   active_fraud_strikes?: number;
+  validation_hold_cause?: 'invalid_samples' | 'provisional_backlog' | 'payout_coverage' | null;
+  validation_pending_provisional?: number | null;
 }
 
 export interface ActiveVerificationHold {
@@ -163,10 +165,13 @@ export interface ActiveVerificationHold {
   strikes: number;
   suspected_fraud_strikes: number;
   last_reason?: string | null;
+  reason?: string | null;
   last_event_at?: UnixLike;
   quarantined_until?: UnixLike;
   force_verify_until?: UnixLike;
   validation_forced_until?: UnixLike;
+  validation_hold_cause?: 'invalid_samples' | 'provisional_backlog' | 'payout_coverage' | null;
+  validation_pending_provisional?: number;
 }
 
 export interface ClearAddressRiskHistoryResponse {
@@ -303,6 +308,10 @@ export interface HealthResponse {
     active_assignments?: number;
   };
   payouts?: {
+    unpaid_count?: number;
+    unpaid_amount?: number;
+    queued_count?: number;
+    queued_amount?: number;
     pending_count?: number;
     pending_amount?: number;
     last_payout?: AdminPayoutItem | null;

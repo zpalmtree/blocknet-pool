@@ -63,16 +63,45 @@ pub struct Balance {
     pub paid: u64,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidationHoldCause {
+    InvalidSamples,
+    ProvisionalBacklog,
+    PayoutCoverage,
+}
+
+impl ValidationHoldCause {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidSamples => "invalid_samples",
+            Self::ProvisionalBacklog => "provisional_backlog",
+            Self::PayoutCoverage => "payout_coverage",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ActiveVerificationHold {
     pub address: String,
     pub strikes: u64,
     pub suspected_fraud_strikes: u64,
     pub last_reason: Option<String>,
+    pub reason: Option<String>,
     pub last_event_at: Option<SystemTime>,
     pub quarantined_until: Option<SystemTime>,
     pub force_verify_until: Option<SystemTime>,
     pub validation_forced_until: Option<SystemTime>,
+    pub validation_hold_cause: Option<ValidationHoldCause>,
+    pub validation_pending_provisional: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidationHoldState {
+    pub forced_started_at: Option<SystemTime>,
+    pub forced_until: Option<SystemTime>,
+    pub hold_cause: Option<ValidationHoldCause>,
+    pub pending_provisional: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]

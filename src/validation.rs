@@ -11,6 +11,7 @@ use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
+use crate::db::ValidationHoldCause;
 use crate::pow::{check_target, PowHasher};
 use crate::telemetry::{default_latency_window, LatencyWindow, PercentileSummary, QueueTracker};
 
@@ -26,6 +27,7 @@ const VALIDATION_CLEAR_SYNC_INTERVAL: Duration = Duration::from_secs(1);
 pub struct ValidationTask {
     pub address: String,
     pub nonce: u64,
+    pub difficulty: u64,
     pub header_base: Vec<u8>,
     pub share_target: [u8; 32],
     pub network_target: [u8; 32],
@@ -94,6 +96,7 @@ pub struct PersistedValidationAddressState {
     pub forced_sampled_shares: u64,
     pub forced_invalid_samples: u64,
     pub resume_forced_at: Option<SystemTime>,
+    pub hold_cause: Option<ValidationHoldCause>,
     pub last_seen_at: SystemTime,
 }
 
@@ -101,6 +104,14 @@ pub struct PersistedValidationAddressState {
 pub struct PersistedValidationProvisional {
     pub address: String,
     pub created_at: SystemTime,
+}
+
+#[derive(Debug, Clone)]
+pub struct PersistedValidationAcceptedShare {
+    pub address: String,
+    pub created_at: SystemTime,
+    pub difficulty: u64,
+    pub verified: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +125,7 @@ pub struct ValidationClearEvent {
 pub struct LoadedValidationState {
     pub states: Vec<PersistedValidationAddressState>,
     pub provisionals: Vec<PersistedValidationProvisional>,
+    pub accepted_window: Vec<PersistedValidationAcceptedShare>,
 }
 
 pub trait ValidationStateStore: Send + Sync + 'static {
@@ -121,6 +133,7 @@ pub trait ValidationStateStore: Send + Sync + 'static {
         &self,
         state_cutoff: SystemTime,
         provisional_cutoff: SystemTime,
+        accepted_window_cutoff: SystemTime,
         now: SystemTime,
     ) -> Result<LoadedValidationState>;
 
@@ -148,6 +161,7 @@ impl ValidationStateStore for NullValidationStateStore {
         &self,
         _state_cutoff: SystemTime,
         _provisional_cutoff: SystemTime,
+        _accepted_window_cutoff: SystemTime,
         _now: SystemTime,
     ) -> Result<LoadedValidationState> {
         Ok(LoadedValidationState::default())
@@ -194,8 +208,17 @@ struct ValidationAddressState {
     forced_sampled_shares: u64,
     forced_invalid_samples: u64,
     resume_forced_at: Option<SystemTime>,
+    hold_cause: Option<ValidationHoldCause>,
     provisional_at: VecDeque<SystemTime>,
+    accepted_window: VecDeque<AcceptedWindowShare>,
     last_seen_at: SystemTime,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AcceptedWindowShare {
+    created_at: SystemTime,
+    difficulty: u64,
+    verified: bool,
 }
 
 impl Default for ValidationAddressState {
@@ -211,7 +234,9 @@ impl Default for ValidationAddressState {
             forced_sampled_shares: 0,
             forced_invalid_samples: 0,
             resume_forced_at: None,
+            hold_cause: None,
             provisional_at: VecDeque::new(),
+            accepted_window: VecDeque::new(),
             last_seen_at: SystemTime::now(),
         }
     }
@@ -229,15 +254,34 @@ impl ValidationAddressState {
         self.forced_sampled_shares = 0;
         self.forced_invalid_samples = 0;
         self.resume_forced_at = None;
+        self.hold_cause = None;
     }
 
-    fn start_forced_review(&mut self, start_at: SystemTime, duration: Duration) {
+    fn start_forced_review(
+        &mut self,
+        start_at: SystemTime,
+        duration: Duration,
+        cause: ValidationHoldCause,
+    ) {
         self.forced_started_at = Some(start_at);
         self.forced_until = Some(start_at + duration);
         self.forced_sampled_shares = 0;
         self.forced_invalid_samples = 0;
         self.resume_forced_at = None;
+        self.hold_cause = Some(cause);
         self.clear_risk_window();
+    }
+
+    fn start_temporary_hold(
+        &mut self,
+        start_at: SystemTime,
+        duration: Duration,
+        cause: ValidationHoldCause,
+    ) {
+        self.forced_started_at = None;
+        self.forced_until = Some(start_at + duration);
+        self.resume_forced_at = None;
+        self.hold_cause = Some(cause);
     }
 }
 
@@ -443,7 +487,7 @@ impl ValidationEngine {
         self.inner.in_flight.fetch_add(1, Ordering::Relaxed);
         let prepared = self.inner.prepare_task(&task.address);
         let computed = self.inner.compute_task(&task, prepared);
-        let result = self.inner.finalize_result(&task.address, computed);
+        let result = self.inner.finalize_result(&task, computed);
         self.inner.in_flight.fetch_sub(1, Ordering::Relaxed);
         self.inner
             .validation_duration
@@ -455,10 +499,10 @@ impl ValidationEngine {
 
     pub(crate) fn complete_result(
         &self,
-        address: &str,
+        task: &ValidationTask,
         computed: ValidationComputeResult,
     ) -> ValidationResult {
-        self.inner.finalize_result(address, computed)
+        self.inner.finalize_result(task, computed)
     }
 
     pub(crate) fn attach_submit_regular_queue(&self, queue: Arc<QueueTracker>) {
@@ -593,13 +637,18 @@ impl ValidationInner {
         let now = SystemTime::now();
         let state = self.state.lock();
         let provisional_delay = self.config.provisional_share_delay_duration();
-        let default_state = ValidationAddressState::default();
+        let mut default_state = ValidationAddressState::default();
+        prune_accepted_window(&mut default_state, &self.config, now);
         let st = state.get(address).unwrap_or(&default_state);
-        let live_provisionals = live_provisional_count(st, now, provisional_delay);
+        let mut effective = st.clone();
+        self.prune_provisional_locked(&mut effective, now);
+        prune_accepted_window(&mut effective, &self.config, now);
+        refresh_dynamic_validation_hold(&mut effective, &self.config, now);
+        let live_provisionals = live_provisional_count(&effective, now, provisional_delay);
 
-        if st.resume_forced_at.is_some_and(|start_at| start_at <= now)
-            || st.forced_started_at.is_some()
-            || st.forced_until.is_some_and(|deadline| now < deadline)
+        if effective.resume_forced_at.is_some_and(|start_at| start_at <= now)
+            || effective.forced_started_at.is_some()
+            || effective.forced_until.is_some_and(|deadline| now < deadline)
         {
             return true;
         }
@@ -611,12 +660,18 @@ impl ValidationInner {
             return true;
         }
 
+        if overload_mode == OverloadMode::Normal
+            && should_force_for_payout_coverage(&effective, &self.config, now)
+        {
+            return true;
+        }
+
         if overload_mode == OverloadMode::Emergency {
             return false;
         }
 
         if overload_mode == OverloadMode::Normal {
-            let next_share_idx = st.total_shares.saturating_add(1);
+            let next_share_idx = effective.total_shares.saturating_add(1);
             if self.config.warmup_shares > 0 && next_share_idx <= self.config.warmup_shares as u64 {
                 return true;
             }
@@ -640,7 +695,7 @@ impl ValidationInner {
 
     fn finalize_result(
         &self,
-        address: &str,
+        task: &ValidationTask,
         computed: ValidationComputeResult,
     ) -> ValidationResult {
         if computed.suspected_fraud {
@@ -653,7 +708,9 @@ impl ValidationInner {
         let invalid_sample = computed.verified && !computed.accepted;
         let provisional_accepted = computed.accepted && !computed.verified;
         let followup_action = self.update_address_state(
-            address,
+            &task.address,
+            task.difficulty,
+            computed.accepted,
             computed.verified,
             invalid_sample,
             provisional_accepted,
@@ -675,6 +732,8 @@ impl ValidationInner {
     fn update_address_state(
         &self,
         address: &str,
+        difficulty: u64,
+        accepted: bool,
         sampled: bool,
         invalid_sample: bool,
         provisional_accepted: bool,
@@ -691,15 +750,22 @@ impl ValidationInner {
 
         st.total_shares = st.total_shares.saturating_add(1);
         self.prune_provisional_locked(st, now);
+        prune_accepted_window(st, &self.config, now);
+        refresh_dynamic_validation_hold(st, &self.config, now);
         st.last_seen_at = now;
         if st.resume_forced_at.is_some_and(|start_at| start_at <= now) {
-            st.start_forced_review(now, forced_review_duration);
+            st.start_forced_review(
+                now,
+                forced_review_duration,
+                ValidationHoldCause::InvalidSamples,
+            );
         }
-        if overload_mode == OverloadMode::Normal
-            && self.config.max_provisional_shares > 0
-            && st.provisional_at.len() >= self.config.max_provisional_shares as usize
-        {
-            st.forced_until = Some(now + self.config.provisional_share_delay_duration());
+        if accepted {
+            st.accepted_window.push_back(AcceptedWindowShare {
+                created_at: now,
+                difficulty: difficulty.max(1),
+                verified: sampled,
+            });
         }
         if provisional_accepted {
             st.provisional_at.push_back(now);
@@ -747,13 +813,38 @@ impl ValidationInner {
                 && risk_ratio > self.config.invalid_sample_threshold
                 && overload_mode == OverloadMode::Normal
             {
-                st.start_forced_review(now, forced_review_duration);
+                st.start_forced_review(
+                    now,
+                    forced_review_duration,
+                    ValidationHoldCause::InvalidSamples,
+                );
                 if sampled {
                     st.forced_sampled_shares = 1;
                     st.forced_invalid_samples = u64::from(invalid_sample);
                 }
             }
         }
+
+        if overload_mode == OverloadMode::Normal && st.forced_started_at.is_none() {
+            let provisional_delay = self.config.provisional_share_delay_duration();
+            let live_provisionals = live_provisional_count(st, now, provisional_delay);
+            if self.config.max_provisional_shares > 0
+                && live_provisionals >= self.config.max_provisional_shares as usize
+            {
+                st.start_temporary_hold(
+                    now,
+                    provisional_delay,
+                    ValidationHoldCause::ProvisionalBacklog,
+                );
+            } else if should_force_for_payout_coverage(st, &self.config, now) {
+                st.start_temporary_hold(
+                    now,
+                    provisional_delay,
+                    ValidationHoldCause::PayoutCoverage,
+                );
+            }
+        }
+        refresh_dynamic_validation_hold(st, &self.config, now);
 
         let persisted = persisted_validation_state(address, st);
         if state.len() > VALIDATION_STATE_MAX_TRACKED {
@@ -812,17 +903,41 @@ impl ValidationInner {
             self.prune_stale_state_locked(&mut state, now);
         }
         snap.tracked_addresses = state.len();
-        for st in state.values_mut() {
+        let mut changed = Vec::new();
+        for (address, st) in state.iter_mut() {
+            let before = (
+                st.forced_started_at,
+                st.forced_until,
+                st.resume_forced_at,
+                st.hold_cause,
+            );
             self.prune_provisional_locked(st, now);
+            prune_accepted_window(st, &self.config, now);
+            refresh_dynamic_validation_hold(st, &self.config, now);
+            let after = (
+                st.forced_started_at,
+                st.forced_until,
+                st.resume_forced_at,
+                st.hold_cause,
+            );
+            if before != after {
+                changed.push(persisted_validation_state(address, st));
+            }
             snap.total_shares = snap.total_shares.saturating_add(st.total_shares);
             snap.sampled_shares = snap.sampled_shares.saturating_add(st.sampled_shares);
             snap.invalid_samples = snap.invalid_samples.saturating_add(st.invalid_samples);
             snap.pending_provisional = snap
                 .pending_provisional
                 .saturating_add(st.provisional_at.len() as u64);
-            if st.forced_started_at.is_some() {
+            if st.forced_started_at.is_some()
+                || st.forced_until.is_some_and(|deadline| deadline > now)
+            {
                 snap.forced_verify_addresses += 1;
             }
+        }
+        drop(state);
+        for persisted in changed {
+            self.persist_validation_state(&persisted, None, now);
         }
 
         snap
@@ -917,9 +1032,17 @@ impl ValidationInner {
     fn address_has_live_hold(&self, address: &str) -> bool {
         let now = SystemTime::now();
         self.state.lock().get(address).is_some_and(|st| {
-            st.forced_started_at.is_some()
-                || st.forced_until.is_some_and(|deadline| deadline > now)
-                || st.resume_forced_at.is_some_and(|start_at| start_at > now)
+            let mut effective = st.clone();
+            if self.config.provisional_share_delay_duration().is_zero() {
+                effective.provisional_at.clear();
+            } else {
+                self.prune_provisional_locked(&mut effective, now);
+            }
+            prune_accepted_window(&mut effective, &self.config, now);
+            refresh_dynamic_validation_hold(&mut effective, &self.config, now);
+            effective.forced_started_at.is_some()
+                || effective.forced_until.is_some_and(|deadline| deadline > now)
+                || effective.resume_forced_at.is_some_and(|start_at| start_at > now)
         })
     }
 
@@ -967,10 +1090,15 @@ impl ValidationInner {
     ) {
         let cutoff = now.checked_sub(VALIDATION_STATE_RETENTION).unwrap_or(now);
         state.retain(|_, st| {
+            self.prune_provisional_locked(st, now);
+            prune_accepted_window(st, &self.config, now);
+            refresh_dynamic_validation_hold(st, &self.config, now);
             st.last_seen_at >= cutoff
                 || st.forced_started_at.is_some()
+                || st.forced_until.is_some_and(|deadline| deadline > now)
                 || st.resume_forced_at.is_some_and(|start_at| start_at > now)
                 || !st.provisional_at.is_empty()
+                || !st.accepted_window.is_empty()
         });
         if state.len() <= VALIDATION_STATE_MAX_TRACKED {
             return;
@@ -980,8 +1108,10 @@ impl ValidationInner {
             .iter()
             .filter_map(|(address, st)| {
                 if st.forced_started_at.is_some()
+                    || st.forced_until.is_some_and(|deadline| deadline > now)
                     || st.resume_forced_at.is_some_and(|start_at| start_at > now)
                     || !st.provisional_at.is_empty()
+                    || !st.accepted_window.is_empty()
                 {
                     return None;
                 }
@@ -1056,6 +1186,7 @@ impl ValidationInner {
         st.clear_forced_review();
         st.clear_risk_window();
         st.resume_forced_at = Some(start_at);
+        st.hold_cause = Some(ValidationHoldCause::InvalidSamples);
         let persisted = persisted_validation_state(address, st);
         if state.len() > VALIDATION_STATE_MAX_TRACKED {
             self.prune_stale_state_locked(&mut state, now);
@@ -1102,6 +1233,157 @@ fn live_provisional_count(
         .count()
 }
 
+fn infer_validation_hold_cause(
+    forced_started_at: Option<SystemTime>,
+    forced_until: Option<SystemTime>,
+) -> Option<ValidationHoldCause> {
+    if forced_started_at.is_some() {
+        Some(ValidationHoldCause::InvalidSamples)
+    } else if forced_until.is_some() {
+        Some(ValidationHoldCause::ProvisionalBacklog)
+    } else {
+        None
+    }
+}
+
+fn payout_coverage_target_ratio(config: &Config) -> Option<f64> {
+    let cap_target = if config.payout_provisional_cap_multiplier > 0.0 {
+        Some(1.0 / (1.0 + config.payout_provisional_cap_multiplier.max(0.0)))
+    } else {
+        None
+    };
+    let min_ratio = config.payout_min_verified_ratio.clamp(0.0, 1.0);
+    match (cap_target, min_ratio > 0.0) {
+        (Some(target), true) => Some(target.max(min_ratio)),
+        (Some(target), false) => Some(target),
+        (None, true) => Some(min_ratio),
+        (None, false) => None,
+    }
+}
+
+fn payout_coverage_window_start(config: &Config, now: SystemTime) -> Option<SystemTime> {
+    let duration = if config.payout_scheme.trim().eq_ignore_ascii_case("pplns") {
+        config.pplns_window_duration_duration()
+    } else {
+        Duration::from_secs(60 * 60)
+    };
+    if duration.is_zero() {
+        None
+    } else {
+        Some(now.checked_sub(duration).unwrap_or(UNIX_EPOCH))
+    }
+}
+
+fn prune_accepted_window(
+    state: &mut ValidationAddressState,
+    config: &Config,
+    now: SystemTime,
+) {
+    let Some(cutoff) = payout_coverage_window_start(config, now) else {
+        state.accepted_window.clear();
+        return;
+    };
+    while state
+        .accepted_window
+        .front()
+        .is_some_and(|share| share.created_at < cutoff)
+    {
+        state.accepted_window.pop_front();
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct PayoutCoverageStats {
+    verified_shares: u64,
+    verified_difficulty: u64,
+    eligible_provisional_shares: u64,
+    eligible_provisional_difficulty: u64,
+}
+
+impl PayoutCoverageStats {
+    fn eligible_shares(self) -> u64 {
+        self.verified_shares
+            .saturating_add(self.eligible_provisional_shares)
+    }
+
+    fn eligible_difficulty(self) -> u64 {
+        self.verified_difficulty
+            .saturating_add(self.eligible_provisional_difficulty)
+    }
+
+    fn verified_ratio(self) -> f64 {
+        ratio(self.verified_difficulty, self.eligible_difficulty())
+    }
+}
+
+fn payout_coverage_stats(
+    state: &ValidationAddressState,
+    config: &Config,
+    now: SystemTime,
+) -> Option<PayoutCoverageStats> {
+    let _ = payout_coverage_window_start(config, now)?;
+    let provisional_delay = config.provisional_share_delay_duration();
+    let provisional_cutoff = now.checked_sub(provisional_delay).unwrap_or(now);
+    let mut stats = PayoutCoverageStats::default();
+    for share in &state.accepted_window {
+        if share.verified {
+            stats.verified_shares = stats.verified_shares.saturating_add(1);
+            stats.verified_difficulty = stats.verified_difficulty.saturating_add(share.difficulty);
+        } else if provisional_delay.is_zero() || share.created_at <= provisional_cutoff {
+            stats.eligible_provisional_shares =
+                stats.eligible_provisional_shares.saturating_add(1);
+            stats.eligible_provisional_difficulty = stats
+                .eligible_provisional_difficulty
+                .saturating_add(share.difficulty);
+        }
+    }
+    Some(stats)
+}
+
+fn should_force_for_payout_coverage(
+    state: &ValidationAddressState,
+    config: &Config,
+    now: SystemTime,
+) -> bool {
+    let Some(target_ratio) = payout_coverage_target_ratio(config) else {
+        return false;
+    };
+    let Some(stats) = payout_coverage_stats(state, config, now) else {
+        return false;
+    };
+    let min_eligible_shares = config.warmup_shares.max(config.payout_min_verified_shares) as u64;
+    if stats.eligible_shares() < min_eligible_shares.max(1) {
+        return false;
+    }
+    stats.eligible_provisional_shares > 0 && stats.verified_ratio() + f64::EPSILON < target_ratio
+}
+
+fn refresh_dynamic_validation_hold(
+    state: &mut ValidationAddressState,
+    config: &Config,
+    now: SystemTime,
+) {
+    match state.hold_cause {
+        Some(ValidationHoldCause::ProvisionalBacklog) => {
+            let max_provisionals = config.max_provisional_shares.max(0) as usize;
+            let still_backlogged = max_provisionals > 0
+                && live_provisional_count(state, now, config.provisional_share_delay_duration())
+                    >= max_provisionals;
+            let active = state.forced_until.is_some_and(|deadline| deadline > now);
+            if !still_backlogged || !active {
+                state.clear_forced_review();
+            }
+        }
+        Some(ValidationHoldCause::PayoutCoverage) => {
+            let active = state.forced_until.is_some_and(|deadline| deadline > now);
+            if !active || !should_force_for_payout_coverage(state, config, now) {
+                state.clear_forced_review();
+            }
+        }
+        _ => {}
+    }
+}
+
 fn persisted_validation_state(
     address: &str,
     state: &ValidationAddressState,
@@ -1118,6 +1400,7 @@ fn persisted_validation_state(
         forced_sampled_shares: state.forced_sampled_shares,
         forced_invalid_samples: state.forced_invalid_samples,
         resume_forced_at: state.resume_forced_at,
+        hold_cause: state.hold_cause,
         last_seen_at: state.last_seen_at,
     }
 }
@@ -1133,8 +1416,14 @@ fn load_initial_validation_state(
     let provisional_cutoff = now
         .checked_sub(config.provisional_share_delay_duration())
         .unwrap_or(UNIX_EPOCH);
+    let accepted_window_cutoff = payout_coverage_window_start(config, now).unwrap_or(now);
 
-    let loaded = match state_store.load_validation_state(state_cutoff, provisional_cutoff, now) {
+    let loaded = match state_store.load_validation_state(
+        state_cutoff,
+        provisional_cutoff,
+        accepted_window_cutoff,
+        now,
+    ) {
         Ok(value) => value,
         Err(err) => {
             tracing::warn!(error = %err, "failed loading persisted validation state");
@@ -1157,7 +1446,11 @@ fn load_initial_validation_state(
                 forced_sampled_shares: entry.forced_sampled_shares,
                 forced_invalid_samples: entry.forced_invalid_samples,
                 resume_forced_at: entry.resume_forced_at.filter(|start_at| *start_at > now),
+                hold_cause: entry.hold_cause.or_else(|| {
+                    infer_validation_hold_cause(entry.forced_started_at, entry.forced_until)
+                }),
                 provisional_at: VecDeque::new(),
+                accepted_window: VecDeque::new(),
                 last_seen_at: entry.last_seen_at,
             },
         );
@@ -1173,19 +1466,40 @@ fn load_initial_validation_state(
         }
     }
 
+    for accepted in loaded.accepted_window {
+        let entry = state
+            .entry(accepted.address.clone())
+            .or_insert_with(ValidationAddressState::default);
+        entry.accepted_window.push_back(AcceptedWindowShare {
+            created_at: accepted.created_at,
+            difficulty: accepted.difficulty,
+            verified: accepted.verified,
+        });
+        if accepted.created_at > entry.last_seen_at {
+            entry.last_seen_at = accepted.created_at;
+        }
+    }
+
     let delay = config.provisional_share_delay_duration();
     for entry in state.values_mut() {
         if delay.is_zero() {
             entry.provisional_at.clear();
-            continue;
+        } else {
+            let cutoff = now.checked_sub(delay).unwrap_or(now);
+            while entry
+                .provisional_at
+                .front()
+                .is_some_and(|timestamp| *timestamp <= cutoff)
+            {
+                entry.provisional_at.pop_front();
+            }
         }
-        let cutoff = now.checked_sub(delay).unwrap_or(now);
-        while entry
-            .provisional_at
-            .front()
-            .is_some_and(|timestamp| *timestamp <= cutoff)
-        {
-            entry.provisional_at.pop_front();
+        prune_accepted_window(entry, config, now);
+        if matches!(
+            entry.hold_cause,
+            Some(ValidationHoldCause::ProvisionalBacklog | ValidationHoldCause::PayoutCoverage)
+        ) {
+            refresh_dynamic_validation_hold(entry, config, now);
         }
     }
 
@@ -1241,6 +1555,7 @@ mod tests {
         ValidationTask {
             address: "addr1".to_string(),
             nonce: 1,
+            difficulty: 1,
             header_base: vec![1, 2, 3],
             share_target: [0xFF; 32],
             network_target: [0x0F; 32],
@@ -1258,6 +1573,7 @@ mod tests {
         ValidationTask {
             address: "addr1".to_string(),
             nonce,
+            difficulty: 1,
             header_base,
             share_target: [0xFF; 32],
             network_target: [0x0F; 32],
@@ -1374,6 +1690,70 @@ mod tests {
 
         let r3 = engine.process_inline(task);
         assert!(r3.verified, "provisional cap should force full verify");
+    }
+
+    #[test]
+    fn provisional_backlog_hold_clears_once_backlog_drains() {
+        let mut cfg = test_cfg();
+        cfg.sample_rate = 0.0;
+        cfg.warmup_shares = 0;
+        cfg.min_sample_every = 0;
+        cfg.max_provisional_shares = 2;
+        cfg.provisional_share_delay = "50ms".to_string();
+        cfg.payout_min_verified_ratio = 0.0;
+        cfg.payout_provisional_cap_multiplier = 0.0;
+        let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));
+
+        let first = engine.process_inline(matching_task(1));
+        let second = engine.process_inline(matching_task(2));
+        assert!(first.accepted && !first.verified);
+        assert!(second.accepted && !second.verified);
+
+        let pressured = engine.snapshot();
+        assert_eq!(pressured.pending_provisional, 2);
+        assert_eq!(pressured.forced_verify_addresses, 1);
+
+        std::thread::sleep(Duration::from_millis(70));
+
+        let recovered = engine.snapshot();
+        assert_eq!(recovered.pending_provisional, 0);
+        assert_eq!(recovered.forced_verify_addresses, 0);
+
+        let after_drain = engine.process_inline(matching_task(3));
+        assert!(
+            !after_drain.verified,
+            "backlog hold should clear once provisional pressure is gone"
+        );
+    }
+
+    #[test]
+    fn payout_coverage_hold_boosts_verification_until_ratio_recovers() {
+        let mut cfg = test_cfg();
+        cfg.sample_rate = 0.0;
+        cfg.warmup_shares = 0;
+        cfg.min_sample_every = 0;
+        cfg.max_provisional_shares = 100;
+        cfg.provisional_share_delay = "50ms".to_string();
+        cfg.payout_min_verified_shares = 1;
+        cfg.payout_provisional_cap_multiplier = 1.0;
+        let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));
+
+        let first = engine.process_inline(matching_task(1));
+        assert!(first.accepted && !first.verified);
+
+        std::thread::sleep(Duration::from_millis(70));
+
+        let second = engine.process_inline(matching_task(2));
+        assert!(
+            second.verified,
+            "low recent verified ratio should temporarily force verification"
+        );
+
+        let third = engine.process_inline(matching_task(3));
+        assert!(
+            !third.verified,
+            "coverage hold should clear once the recent verified ratio recovers"
+        );
     }
 
     #[test]
@@ -1704,6 +2084,7 @@ mod tests {
                 forced_sampled_shares: 1,
                 forced_invalid_samples: 0,
                 resume_forced_at: None,
+                hold_cause: Some(ValidationHoldCause::InvalidSamples),
                 last_seen_at: SystemTime::now(),
             })
             .expect("seed forced validation state");

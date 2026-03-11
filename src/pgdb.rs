@@ -13,13 +13,13 @@ use crate::db::{
     ActiveVerificationHold, AddressRiskState, Balance, BlockCreditEvent, DbBlock, DbShare,
     MonitorHeartbeat, MonitorHeartbeatUpsert, MonitorIncident, MonitorIncidentUpsert, Payout,
     PendingPayout, PoolFeeEvent, PoolFeeRecord, PublicPayoutBatch, ShareReplayData,
-    ShareReplayUpdate,
+    ShareReplayUpdate, ValidationHoldCause, ValidationHoldState,
 };
 use crate::engine::{ShareRecord, ShareStore};
 use crate::stats::RejectionReasonCount;
 use crate::validation::{
-    LoadedValidationState, PersistedValidationAddressState, PersistedValidationProvisional,
-    ValidationClearEvent,
+    LoadedValidationState, PersistedValidationAcceptedShare, PersistedValidationAddressState,
+    PersistedValidationProvisional, ValidationClearEvent,
 };
 
 const SHARE_CLAIM_EXPIRY_SECS: i64 = 2 * 60;
@@ -399,6 +399,7 @@ CREATE TABLE IF NOT EXISTS validation_address_states (
     forced_sampled_shares BIGINT NOT NULL DEFAULT 0,
     forced_invalid_samples BIGINT NOT NULL DEFAULT 0,
     resume_forced_at BIGINT,
+    hold_cause TEXT,
     last_seen_at BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_validation_address_states_last_seen
@@ -512,6 +513,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS resume_forced_at BIGINT",
         )
         .context("ensure validation_address_states.resume_forced_at column")?;
+        conn.batch_execute(
+            "ALTER TABLE validation_address_states ADD COLUMN IF NOT EXISTS hold_cause TEXT",
+        )
+        .context("ensure validation_address_states.hold_cause column")?;
         conn.batch_execute(
             "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS wallet_up BOOLEAN",
         )
@@ -2094,7 +2099,9 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     ) -> Result<(bool, Option<AddressRiskState>)> {
         let state = self.get_address_risk(address)?;
         let now = SystemTime::now();
-        let validation_forced_until = self.validation_forced_until(address)?;
+        let validation_forced_until = self
+            .validation_hold_state(address, UNIX_EPOCH)?
+            .and_then(|state| state.forced_until);
         let force = state.as_ref().is_some_and(|s| {
             s.force_verify_until.is_some_and(|until| until > now)
                 || s.quarantined_until.is_some_and(|until| until > now)
@@ -2103,11 +2110,48 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     }
 
     pub fn validation_forced_until(&self, address: &str) -> Result<Option<SystemTime>> {
+        Ok(self
+            .validation_hold_state(address, UNIX_EPOCH)?
+            .and_then(|state| state.forced_until))
+    }
+
+    pub fn validation_hold_state(
+        &self,
+        address: &str,
+        provisional_cutoff: SystemTime,
+    ) -> Result<Option<ValidationHoldState>> {
+        let now = SystemTime::now();
         let row = self.conn().lock().query_opt(
-            "SELECT forced_until FROM validation_address_states WHERE address = $1",
-            &[&address],
+            "SELECT s.forced_started_at,
+                    s.forced_until,
+                    s.hold_cause,
+                    COALESCE((
+                        SELECT COUNT(*)::bigint
+                        FROM validation_provisionals vp
+                        WHERE vp.address = s.address
+                          AND vp.created_at > $2
+                    ), 0)::bigint
+             FROM validation_address_states s
+             WHERE s.address = $1",
+            &[&address, &to_unix(provisional_cutoff)],
         )?;
-        Ok(row.and_then(|row| row.get::<_, Option<i64>>(0).map(from_unix)))
+        Ok(row.map(|row| ValidationHoldState {
+            forced_started_at: row.get::<_, Option<i64>>(0).map(from_unix),
+            forced_until: row
+                .get::<_, Option<i64>>(1)
+                .map(from_unix)
+                .filter(|until| *until > now),
+            hold_cause: validation_hold_cause_from_db(
+                row.get::<_, Option<String>>(2).as_deref(),
+            )
+            .or_else(|| {
+                infer_validation_hold_cause_from_row(
+                    row.get::<_, Option<i64>>(0).map(from_unix),
+                    row.get::<_, Option<i64>>(1).map(from_unix),
+                )
+            }),
+            pending_provisional: row.get::<_, i64>(3).max(0) as u64,
+        }))
     }
 
     pub fn clear_address_risk_history(&self, address: &str) -> Result<()> {
@@ -2131,7 +2175,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(())
     }
 
-    pub fn list_active_verification_holds(&self) -> Result<Vec<ActiveVerificationHold>> {
+    pub fn list_active_verification_holds(
+        &self,
+        provisional_cutoff: SystemTime,
+    ) -> Result<Vec<ActiveVerificationHold>> {
         let now = SystemTime::now();
         let now_ts = now_unix();
         let rows = self.conn().lock().query(
@@ -2142,7 +2189,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     r.last_event_at,
                     r.quarantined_until,
                     r.force_verify_until,
-                    v.forced_until
+                    v.forced_until,
+                    v.forced_started_at,
+                    v.hold_cause,
+                    COALESCE(vp.pending_provisional, 0)::bigint
              FROM (
                  SELECT address, strikes, suspected_fraud_strikes, last_reason, last_event_at,
                         quarantined_until, force_verify_until
@@ -2151,35 +2201,61 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     OR (force_verify_until IS NOT NULL AND force_verify_until > $1)
              ) r
              FULL OUTER JOIN (
-                 SELECT address, forced_until
+                 SELECT address, forced_until, forced_started_at, hold_cause
                  FROM validation_address_states
                  WHERE forced_until IS NOT NULL AND forced_until > $1
              ) v
              ON r.address = v.address
+             LEFT JOIN (
+                 SELECT address, COUNT(*)::bigint AS pending_provisional
+                 FROM validation_provisionals
+                 WHERE created_at > $2
+                 GROUP BY address
+             ) vp
+             ON COALESCE(r.address, v.address) = vp.address
              ORDER BY address ASC",
-            &[&now_ts],
+            &[&now_ts, &to_unix(provisional_cutoff)],
         )?;
         Ok(rows
             .iter()
-            .map(|row| ActiveVerificationHold {
-                address: row.get::<_, String>(0),
-                strikes: row.get::<_, Option<i64>>(1).unwrap_or_default().max(0) as u64,
-                suspected_fraud_strikes: row.get::<_, Option<i64>>(2).unwrap_or_default().max(0)
-                    as u64,
-                last_reason: row.get::<_, Option<String>>(3),
-                last_event_at: row.get::<_, Option<i64>>(4).map(from_unix),
-                quarantined_until: row
-                    .get::<_, Option<i64>>(5)
-                    .map(from_unix)
-                    .filter(|until| *until > now),
-                force_verify_until: row
-                    .get::<_, Option<i64>>(6)
-                    .map(from_unix)
-                    .filter(|until| *until > now),
-                validation_forced_until: row
-                    .get::<_, Option<i64>>(7)
-                    .map(from_unix)
-                    .filter(|until| *until > now),
+            .map(|row| {
+                let last_reason = row.get::<_, Option<String>>(3);
+                let validation_hold_cause = validation_hold_cause_from_db(
+                    row.get::<_, Option<String>>(9).as_deref(),
+                )
+                .or_else(|| {
+                    infer_validation_hold_cause_from_row(
+                        row.get::<_, Option<i64>>(8).map(from_unix),
+                        row.get::<_, Option<i64>>(7).map(from_unix),
+                    )
+                });
+                let validation_pending_provisional = row.get::<_, i64>(10).max(0) as u64;
+                let reason = last_reason.clone().or_else(|| {
+                    validation_hold_reason(validation_hold_cause, validation_pending_provisional)
+                });
+                ActiveVerificationHold {
+                    address: row.get::<_, String>(0),
+                    strikes: row.get::<_, Option<i64>>(1).unwrap_or_default().max(0) as u64,
+                    suspected_fraud_strikes: row.get::<_, Option<i64>>(2).unwrap_or_default().max(0)
+                        as u64,
+                    last_reason,
+                    reason,
+                    last_event_at: row.get::<_, Option<i64>>(4).map(from_unix),
+                    quarantined_until: row
+                        .get::<_, Option<i64>>(5)
+                        .map(from_unix)
+                        .filter(|until| *until > now),
+                    force_verify_until: row
+                        .get::<_, Option<i64>>(6)
+                        .map(from_unix)
+                        .filter(|until| *until > now),
+                    validation_forced_until: row
+                        .get::<_, Option<i64>>(7)
+                        .map(from_unix)
+                        .filter(|until| *until > now),
+                    validation_hold_cause,
+                    validation_pending_provisional,
+                }
             })
             .collect())
     }
@@ -2820,6 +2896,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         &self,
         state_cutoff: SystemTime,
         provisional_cutoff: SystemTime,
+        accepted_window_cutoff: SystemTime,
         now: SystemTime,
     ) -> Result<LoadedValidationState> {
         let rows = self.conn().lock().query(
@@ -2827,7 +2904,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     risk_sampled_shares, risk_invalid_samples,
                     forced_started_at, forced_until,
                     forced_sampled_shares, forced_invalid_samples,
-                    resume_forced_at, last_seen_at
+                    resume_forced_at, hold_cause, last_seen_at
              FROM validation_address_states
              WHERE last_seen_at >= $1
                 OR (forced_until IS NOT NULL AND forced_until > $2)
@@ -2848,7 +2925,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 forced_sampled_shares: row.get::<_, i64>(8).max(0) as u64,
                 forced_invalid_samples: row.get::<_, i64>(9).max(0) as u64,
                 resume_forced_at: row.get::<_, Option<i64>>(10).map(from_unix),
-                last_seen_at: from_unix(row.get::<_, i64>(11)),
+                hold_cause: validation_hold_cause_from_db(
+                    row.get::<_, Option<String>>(11).as_deref(),
+                ),
+                last_seen_at: from_unix(row.get::<_, i64>(12)),
             })
             .collect::<Vec<_>>();
 
@@ -2867,9 +2947,31 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             })
             .collect::<Vec<_>>();
 
+        let accepted_rows = self.conn().lock().query(
+            "SELECT miner, created_at, difficulty, status
+             FROM shares
+             WHERE created_at > $1
+               AND status IN ('verified', 'provisional')
+             ORDER BY miner ASC, created_at ASC, id ASC",
+            &[&to_unix(accepted_window_cutoff)],
+        )?;
+        let accepted_window = accepted_rows
+            .iter()
+            .map(|row| PersistedValidationAcceptedShare {
+                address: row.get::<_, String>(0),
+                created_at: from_unix(row.get::<_, i64>(1)),
+                difficulty: row.get::<_, i64>(2).max(0) as u64,
+                verified: row
+                    .get::<_, String>(3)
+                    .trim()
+                    .eq_ignore_ascii_case("verified"),
+            })
+            .collect::<Vec<_>>();
+
         Ok(LoadedValidationState {
             states,
             provisionals,
+            accepted_window,
         })
     }
 
@@ -2909,8 +3011,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 risk_sampled_shares, risk_invalid_samples,
                 forced_started_at, forced_until,
                 forced_sampled_shares, forced_invalid_samples,
-                resume_forced_at, last_seen_at
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                resume_forced_at, hold_cause, last_seen_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
              ON CONFLICT(address) DO UPDATE SET
                 total_shares = EXCLUDED.total_shares,
                 sampled_shares = EXCLUDED.sampled_shares,
@@ -2922,6 +3024,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 forced_sampled_shares = EXCLUDED.forced_sampled_shares,
                 forced_invalid_samples = EXCLUDED.forced_invalid_samples,
                 resume_forced_at = EXCLUDED.resume_forced_at,
+                hold_cause = EXCLUDED.hold_cause,
                 last_seen_at = EXCLUDED.last_seen_at",
             &[
                 &state.address,
@@ -2935,6 +3038,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 &u64_to_i64(state.forced_sampled_shares)?,
                 &u64_to_i64(state.forced_invalid_samples)?,
                 &state.resume_forced_at.map(to_unix),
+                &validation_hold_cause_to_db(state.hold_cause),
                 &to_unix(state.last_seen_at),
             ],
         )?;
@@ -3533,6 +3637,55 @@ fn from_unix(ts: i64) -> SystemTime {
     UNIX_EPOCH + Duration::from_secs(ts as u64)
 }
 
+fn validation_hold_cause_from_db(value: Option<&str>) -> Option<ValidationHoldCause> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        Some("invalid_samples") => Some(ValidationHoldCause::InvalidSamples),
+        Some("provisional_backlog") => Some(ValidationHoldCause::ProvisionalBacklog),
+        Some("payout_coverage") => Some(ValidationHoldCause::PayoutCoverage),
+        _ => None,
+    }
+}
+
+fn validation_hold_cause_to_db(value: Option<ValidationHoldCause>) -> Option<&'static str> {
+    value.map(ValidationHoldCause::as_str)
+}
+
+fn infer_validation_hold_cause_from_row(
+    forced_started_at: Option<SystemTime>,
+    forced_until: Option<SystemTime>,
+) -> Option<ValidationHoldCause> {
+    if forced_started_at.is_some() {
+        Some(ValidationHoldCause::InvalidSamples)
+    } else if forced_until.is_some() {
+        Some(ValidationHoldCause::ProvisionalBacklog)
+    } else {
+        None
+    }
+}
+
+fn validation_hold_reason(
+    cause: Option<ValidationHoldCause>,
+    pending_provisional: u64,
+) -> Option<String> {
+    match cause {
+        Some(ValidationHoldCause::InvalidSamples) => {
+            Some("recent invalid sampled shares are under review".to_string())
+        }
+        Some(ValidationHoldCause::ProvisionalBacklog) => Some(if pending_provisional > 0 {
+            format!(
+                "{pending_provisional} provisional share{} waiting for full verification",
+                if pending_provisional == 1 { "" } else { "s" }
+            )
+        } else {
+            "recent provisional backlog is draining".to_string()
+        }),
+        Some(ValidationHoldCause::PayoutCoverage) => Some(
+            "boosting verified-share coverage so payout weight stays proportional".to_string(),
+        ),
+        None => None,
+    }
+}
+
 fn quarantine_until_for_strikes(
     now: SystemTime,
     strikes: u64,
@@ -3850,7 +4003,11 @@ mod tests {
             .expect("expire quarantine");
 
         let holds = store
-            .list_active_verification_holds()
+            .list_active_verification_holds(
+                SystemTime::now()
+                    .checked_sub(Duration::from_secs(60))
+                    .expect("provisional cutoff"),
+            )
             .expect("list active verification holds");
         let hold = holds
             .iter()
@@ -3894,6 +4051,7 @@ mod tests {
                 forced_sampled_shares: 0,
                 forced_invalid_samples: 0,
                 resume_forced_at: None,
+                hold_cause: Some(ValidationHoldCause::ProvisionalBacklog),
                 last_seen_at: SystemTime::now(),
             })
             .expect("seed validation state");
@@ -3918,6 +4076,9 @@ mod tests {
                 SystemTime::now()
                     .checked_sub(Duration::from_secs(60))
                     .expect("provisional cutoff"),
+                SystemTime::now()
+                    .checked_sub(Duration::from_secs(60))
+                    .expect("accepted cutoff"),
                 SystemTime::now(),
             )
             .expect("load validation state");

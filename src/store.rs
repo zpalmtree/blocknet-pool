@@ -9,7 +9,7 @@ use tracing::warn;
 
 use crate::db::{
     ActiveVerificationHold, AddressRiskState, DbBlock, MonitorHeartbeat, MonitorHeartbeatUpsert,
-    MonitorIncident, MonitorIncidentUpsert, ShareReplayData,
+    MonitorIncident, MonitorIncidentUpsert, ShareReplayData, ValidationHoldState,
 };
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::pgdb::{
@@ -81,12 +81,24 @@ impl PoolStore {
         self.inner.get_address_risk(address)
     }
 
-    pub fn list_active_verification_holds(&self) -> Result<Vec<ActiveVerificationHold>> {
-        self.inner.list_active_verification_holds()
+    pub fn list_active_verification_holds(
+        &self,
+        provisional_cutoff: SystemTime,
+    ) -> Result<Vec<ActiveVerificationHold>> {
+        self.inner
+            .list_active_verification_holds(provisional_cutoff)
     }
 
     pub fn validation_forced_until(&self, address: &str) -> Result<Option<SystemTime>> {
         self.inner.validation_forced_until(address)
+    }
+
+    pub fn validation_hold_state(
+        &self,
+        address: &str,
+        provisional_cutoff: SystemTime,
+    ) -> Result<Option<ValidationHoldState>> {
+        self.inner.validation_hold_state(address, provisional_cutoff)
     }
 
     pub fn miner_share_window_stats_since(
@@ -361,10 +373,11 @@ impl ValidationStateStore for PoolStore {
         &self,
         state_cutoff: SystemTime,
         provisional_cutoff: SystemTime,
+        accepted_window_cutoff: SystemTime,
         now: SystemTime,
     ) -> Result<LoadedValidationState> {
         self.inner
-            .load_validation_state(state_cutoff, provisional_cutoff, now)
+            .load_validation_state(state_cutoff, provisional_cutoff, accepted_window_cutoff, now)
     }
 
     fn upsert_validation_state(&self, state: &PersistedValidationAddressState) -> Result<()> {

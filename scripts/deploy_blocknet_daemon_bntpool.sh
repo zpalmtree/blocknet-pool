@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Deploy a host-built blocknet-core daemon binary to bntpool.
+Deploy a host-built blocknet-core daemon binary to the current primary pool host.
 
 Usage:
   scripts/deploy_blocknet_daemon_bntpool.sh [--skip-build] [--release-id VALUE]
@@ -18,6 +18,7 @@ Environment overrides:
   BNTPOOL_DAEMON_REMOTE_ROOT    Remote daemon root (default: /opt/blocknet/blocknet-core)
   BNTPOOL_DAEMON_LOCAL_BINARY   Local daemon artifact (default: build/blocknet-core-linux-amd64)
   BLOCKNET_DAEMON_REPO          Local blocknet-core repo (default: ../blocknet-core)
+  BNTPOOL_ALLOW_RETIRED_HOST    Set to 1 to allow explicit daemon deploys to oldpool / 5.161.113.120
 EOF
 }
 
@@ -59,6 +60,16 @@ local_binary="${BNTPOOL_DAEMON_LOCAL_BINARY:-${repo_dir}/build/blocknet-core-lin
 unit_file="${repo_dir}/deploy/systemd/blocknetd.service"
 template_unit_file="${repo_dir}/deploy/systemd/blocknetd@.service"
 legacy_service="blocknetd.service"
+allow_retired_host="${BNTPOOL_ALLOW_RETIRED_HOST:-0}"
+
+case "${host}" in
+  oldpool|*5.161.113.120*)
+    if [[ "${allow_retired_host}" != "1" ]]; then
+      echo "refusing to target retired host '${host}'; use bntpool for the primary host or set BNTPOOL_ALLOW_RETIRED_HOST=1 to override" >&2
+      exit 1
+    fi
+    ;;
+esac
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
