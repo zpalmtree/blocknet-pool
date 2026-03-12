@@ -4,14 +4,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
-use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc, Notify};
-use tokio_tungstenite::accept_async;
-use tokio_tungstenite::tungstenite::Message;
 
 use crate::config::Config;
 use crate::dev_fee::should_defer_submit_ack_difficulty;
@@ -294,7 +291,6 @@ impl SubmitDispatcher {
 
 pub struct StratumServer {
     listen_addr: SocketAddr,
-    ws_listen_addr: Option<SocketAddr>,
     engine: Arc<PoolEngine>,
     jobs: Arc<JobManager>,
     stats: Arc<PoolStats>,
@@ -309,7 +305,6 @@ pub struct StratumServer {
 impl StratumServer {
     pub fn new(
         listen_addr: SocketAddr,
-        ws_listen_addr: Option<SocketAddr>,
         engine: Arc<PoolEngine>,
         jobs: Arc<JobManager>,
         stats: Arc<PoolStats>,
@@ -319,7 +314,6 @@ impl StratumServer {
         let submit_dispatcher = SubmitDispatcher::new(Arc::clone(&engine), &cfg);
         Arc::new(Self {
             listen_addr,
-            ws_listen_addr,
             engine,
             jobs,
             stats,
@@ -342,19 +336,7 @@ impl StratumServer {
     pub async fn run(self: Arc<Self>) -> Result<()> {
         let listener = TcpListener::bind(self.listen_addr).await?;
         tracing::info!(addr = %self.listen_addr, "stratum listening");
-        if let Some(ws_addr) = self.ws_listen_addr {
-            let ws_listener = TcpListener::bind(ws_addr).await?;
-            tracing::info!(addr = %ws_addr, "stratum websocket listening");
-            let tcp_server = Arc::clone(&self);
-            let ws_server = Arc::clone(&self);
-            tokio::try_join!(
-                async move { tcp_server.run_tcp_listener(listener).await },
-                async move { ws_server.run_ws_listener(ws_listener).await }
-            )?;
-            Ok(())
-        } else {
-            self.run_tcp_listener(listener).await
-        }
+        self.run_tcp_listener(listener).await
     }
 
     fn try_track_conn(&self, ip: &str) -> bool {
@@ -404,25 +386,6 @@ impl StratumServer {
         }
     }
 
-    async fn run_ws_listener(self: Arc<Self>, listener: TcpListener) -> Result<()> {
-        loop {
-            let (stream, peer) = listener.accept().await?;
-            let ip = peer.ip().to_string();
-            if !self.try_track_conn(&ip) {
-                tracing::warn!(ip = %ip, "rejecting stratum websocket connection due to limits");
-                continue;
-            }
-
-            let this = Arc::clone(&self);
-            tokio::spawn(async move {
-                if let Err(err) = this.handle_ws_conn(stream, peer).await {
-                    tracing::warn!(peer = %peer, error = %err, "stratum websocket connection ended with error");
-                }
-                this.untrack_conn(&ip);
-            });
-        }
-    }
-
     async fn handle_tcp_conn(&self, stream: TcpStream, peer: SocketAddr) -> Result<()> {
         let conn_id = peer.to_string();
         let (reader_half, writer_half) = stream.into_split();
@@ -436,29 +399,6 @@ impl StratumServer {
         let latest_job_notify = Arc::clone(&outbound.latest_job_notify);
         let writer_task = tokio::spawn(async move {
             run_tcp_outbound_writer(writer_half, outbound_rx, latest_job, latest_job_notify).await
-        });
-        self.handle_conn_loop(
-            peer,
-            conn_id,
-            inbound_rx,
-            reader_task,
-            writer_task,
-            outbound,
-        )
-        .await
-    }
-
-    async fn handle_ws_conn(&self, stream: TcpStream, peer: SocketAddr) -> Result<()> {
-        let conn_id = peer.to_string();
-        let ws = accept_async(stream).await?;
-        let (writer, reader) = ws.split();
-        let (inbound_tx, inbound_rx) = mpsc::channel(INBOUND_QUEUE_CAPACITY);
-        let reader_task = tokio::spawn(async move { run_ws_reader(reader, inbound_tx).await });
-        let (outbound, outbound_rx) = OutboundHandle::new(OUTBOUND_QUEUE_CAPACITY);
-        let latest_job = Arc::clone(&outbound.latest_job);
-        let latest_job_notify = Arc::clone(&outbound.latest_job_notify);
-        let writer_task = tokio::spawn(async move {
-            run_ws_outbound_writer(writer, outbound_rx, latest_job, latest_job_notify).await
         });
         self.handle_conn_loop(
             peer,
@@ -1185,43 +1125,6 @@ async fn run_tcp_reader(
     Ok(())
 }
 
-async fn run_ws_reader<S>(mut reader: S, inbound_tx: mpsc::Sender<InboundFrame>) -> Result<()>
-where
-    S: Stream<Item = std::result::Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
-{
-    while let Some(message) = reader.next().await {
-        match message {
-            Ok(Message::Text(text)) => {
-                if inbound_tx
-                    .send(InboundFrame::Text(text.to_string()))
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-            }
-            Ok(Message::Binary(_)) => {
-                let _ = inbound_tx
-                    .send(InboundFrame::ReadError(
-                        "binary websocket frames are not supported".to_string(),
-                    ))
-                    .await;
-                break;
-            }
-            Ok(Message::Close(_)) => break,
-            Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {}
-            Ok(_) => {}
-            Err(err) => {
-                let _ = inbound_tx
-                    .send(InboundFrame::ReadError(err.to_string()))
-                    .await;
-                break;
-            }
-        }
-    }
-    Ok(())
-}
-
 async fn run_tcp_outbound_writer<W>(
     mut writer: W,
     mut rx: mpsc::Receiver<String>,
@@ -1235,23 +1138,6 @@ where
         next_outbound_payload(&mut rx, latest_job.as_ref(), &latest_job_notify).await
     {
         write_tcp_outbound_payload(&mut writer, &data).await?;
-    }
-    Ok(())
-}
-
-async fn run_ws_outbound_writer<W>(
-    mut writer: W,
-    mut rx: mpsc::Receiver<String>,
-    latest_job: Arc<Mutex<Option<String>>>,
-    latest_job_notify: Arc<Notify>,
-) -> Result<()>
-where
-    W: Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
-{
-    while let Some(data) =
-        next_outbound_payload(&mut rx, latest_job.as_ref(), &latest_job_notify).await
-    {
-        write_ws_outbound_payload(&mut writer, &data).await?;
     }
     Ok(())
 }
@@ -1299,25 +1185,6 @@ where
     }
 }
 
-async fn write_ws_outbound_payload<W>(writer: &mut W, data: &str) -> Result<()>
-where
-    W: Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
-{
-    match tokio::time::timeout(
-        OUTBOUND_WRITE_TIMEOUT,
-        writer.send(Message::Text(data.to_string().into())),
-    )
-    .await
-    {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(err)) => Err(err.into()),
-        Err(_) => Err(anyhow!(
-            "stratum outbound write timed out after {}ms",
-            OUTBOUND_WRITE_TIMEOUT.as_millis()
-        )),
-    }
-}
-
 fn block_notification(kind: &str, message: &str) -> StratumNotify {
     StratumNotify {
         method: METHOD_NOTIFICATION.to_string(),
@@ -1348,23 +1215,24 @@ mod tests {
     };
     use crate::config::Config;
     use crate::engine::canonical_share_reject_reason;
-    use crate::engine::{
-        InMemoryJobs, InMemoryNode, Job, PoolEngine, ShareRecord, ShareStore,
-    };
+    use crate::engine::{InMemoryJobs, InMemoryNode, Job, PoolEngine, ShareRecord, ShareStore};
     use crate::jobs::{JobManager, MinerJob};
     use crate::node::NodeClient;
     use crate::pow::PowHasher;
     use crate::protocol::{StratumNotify, StratumRequest};
     use crate::stats::PoolStats;
-    use serde::Serialize;
     use crate::validation::ValidationEngine;
+    use serde::Serialize;
     use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
     use tokio::io::{duplex, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-    use tokio::net::{tcp::{OwnedReadHalf, OwnedWriteHalf}, TcpListener, TcpStream};
+    use tokio::net::{
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpListener, TcpStream,
+    };
 
     const TEST_SUBMIT_DELAY: Duration = Duration::from_millis(200);
 
@@ -1471,8 +1339,7 @@ mod tests {
             ));
             let stats = Arc::new(PoolStats::default());
             let listen_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0));
-            let server =
-                StratumServer::new(listen_addr, None, engine, Arc::clone(&jobs), stats, cfg);
+            let server = StratumServer::new(listen_addr, engine, Arc::clone(&jobs), stats, cfg);
             (server, jobs)
         })
         .await
@@ -1482,12 +1349,9 @@ mod tests {
     async fn start_test_tcp_listener(
         server: Arc<StratumServer>,
     ) -> (SocketAddr, tokio::task::JoinHandle<anyhow::Result<()>>) {
-        let listener = TcpListener::bind(SocketAddr::V4(SocketAddrV4::new(
-            Ipv4Addr::LOCALHOST,
-            0,
-        )))
-        .await
-        .expect("bind test listener");
+        let listener = TcpListener::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)))
+            .await
+            .expect("bind test listener");
         let addr = listener.local_addr().expect("listener addr");
         let task = tokio::spawn(async move { server.run_tcp_listener(listener).await });
         (addr, task)
@@ -1597,7 +1461,10 @@ mod tests {
         reader: &mut BufReader<OwnedReadHalf>,
         ids: &[u64],
     ) -> (HashMap<u64, Value>, Vec<u64>) {
-        let mut remaining = ids.iter().copied().collect::<std::collections::BTreeSet<_>>();
+        let mut remaining = ids
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
         let mut responses = HashMap::new();
         let mut order = Vec::new();
         while !remaining.is_empty() {
@@ -1802,7 +1669,10 @@ mod tests {
         );
         assert!(
             tracker
-                .try_acquire("other|127.0.0.1".to_string(), now + Duration::from_millis(3))
+                .try_acquire(
+                    "other|127.0.0.1".to_string(),
+                    now + Duration::from_millis(3)
+                )
                 .is_ok(),
             "other addresses should not share the rate limiter bucket"
         );
@@ -1933,7 +1803,10 @@ mod tests {
             .values()
             .filter(|message| message["status"].as_str() == Some("ok"))
             .count();
-        assert!(ok_count >= 1, "at least one submit should still be accepted");
+        assert!(
+            ok_count >= 1,
+            "at least one submit should still be accepted"
+        );
         assert!(
             busy_count >= 1,
             "at least one submit should fail fast once the regular submit queue is full"

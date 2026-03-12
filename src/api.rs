@@ -2162,8 +2162,6 @@ struct PoolInfoResponse {
     pool_name: String,
     pool_url: String,
     stratum_port: u16,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stratum_ws_public_url: Option<String>,
     api_auth_configured: bool,
     started_at_unix_secs: u64,
     version: &'static str,
@@ -2191,7 +2189,6 @@ async fn handle_info(State(state): State<ApiState>) -> impl IntoResponse {
         pool_name: state.pool_name.clone(),
         pool_url: state.pool_url.clone(),
         stratum_port: state.stratum_port,
-        stratum_ws_public_url: state.stratum_ws_public_url(),
         api_auth_configured: !state.api_key.trim().is_empty(),
         started_at_unix_secs: system_time_to_unix_secs(state.started_at_system),
         version: env!("CARGO_PKG_VERSION"),
@@ -2341,9 +2338,7 @@ fn validation_summary_from_snapshot(snapshot: ValidationSnapshot) -> ValidationS
     }
 }
 
-fn validation_summary_from_persisted(
-    summary: &PersistedValidationSummary,
-) -> ValidationSummary {
+fn validation_summary_from_persisted(summary: &PersistedValidationSummary) -> ValidationSummary {
     ValidationSummary {
         in_flight: summary.in_flight,
         candidate_queue_depth: summary.candidate_queue_depth,
@@ -2409,13 +2404,12 @@ fn merge_validation_summary(
     persisted: &PersistedValidationSummary,
 ) -> ValidationSummary {
     let persisted = validation_summary_from_persisted(persisted);
-    let overload_mode = if overload_mode_rank(persisted.overload_mode)
-        >= overload_mode_rank(live.overload_mode)
-    {
-        persisted.overload_mode
-    } else {
-        live.overload_mode
-    };
+    let overload_mode =
+        if overload_mode_rank(persisted.overload_mode) >= overload_mode_rank(live.overload_mode) {
+            persisted.overload_mode
+        } else {
+            live.overload_mode
+        };
     let effective_sample_rate = match overload_mode {
         crate::validation::OverloadMode::Emergency => 0.0,
         _ if overload_mode == live.overload_mode => live.effective_sample_rate,
@@ -2423,7 +2417,9 @@ fn merge_validation_summary(
     };
     ValidationSummary {
         in_flight: live.in_flight.max(persisted.in_flight),
-        candidate_queue_depth: live.candidate_queue_depth.max(persisted.candidate_queue_depth),
+        candidate_queue_depth: live
+            .candidate_queue_depth
+            .max(persisted.candidate_queue_depth),
         regular_queue_depth: live.regular_queue_depth.max(persisted.regular_queue_depth),
         audit_queue_depth: live.audit_queue_depth.max(persisted.audit_queue_depth),
         candidate_oldest_age_millis: merge_oldest_age(
@@ -5099,29 +5095,27 @@ fn validation_hold_reason(
         Some(crate::db::ValidationHoldCause::InvalidSamples) => {
             Some("recent invalid sampled shares are under review".to_string())
         }
-        Some(crate::db::ValidationHoldCause::ProvisionalBacklog) => {
-            Some(
-                if recent_provisional_difficulty > 0 || recent_verified_difficulty > 0 {
-                    match recent_verified_difficulty {
-                        0 => format!(
-                            "recent provisional diff {} has no recent verified diff yet",
-                            recent_provisional_difficulty
-                        ),
-                        verified => format!(
-                            "recent provisional diff {} vs {} verified",
-                            recent_provisional_difficulty, verified
-                        ),
-                    }
-                } else if pending_provisional > 0 {
-                    format!(
-                        "{pending_provisional} provisional share{} waiting for full verification",
-                        if pending_provisional == 1 { "" } else { "s" }
-                    )
-                } else {
-                    "recent provisional backlog is draining".to_string()
-                },
-            )
-        }
+        Some(crate::db::ValidationHoldCause::ProvisionalBacklog) => Some(
+            if recent_provisional_difficulty > 0 || recent_verified_difficulty > 0 {
+                match recent_verified_difficulty {
+                    0 => format!(
+                        "recent provisional diff {} has no recent verified diff yet",
+                        recent_provisional_difficulty
+                    ),
+                    verified => format!(
+                        "recent provisional diff {} vs {} verified",
+                        recent_provisional_difficulty, verified
+                    ),
+                }
+            } else if pending_provisional > 0 {
+                format!(
+                    "{pending_provisional} provisional share{} waiting for full verification",
+                    if pending_provisional == 1 { "" } else { "s" }
+                )
+            } else {
+                "recent provisional backlog is draining".to_string()
+            },
+        ),
         Some(crate::db::ValidationHoldCause::PayoutCoverage) => {
             Some("boosting verified-share coverage so payout weight stays proportional".to_string())
         }
@@ -6588,11 +6582,6 @@ async fn handle_admin_block_reward_breakdown(
 }
 
 impl ApiState {
-    fn stratum_ws_public_url(&self) -> Option<String> {
-        let value = self.config.stratum_ws_public_url.trim();
-        (!value.is_empty()).then(|| value.to_string())
-    }
-
     pub async fn sample_status(&self) {
         let (daemon, pool) = tokio::join!(self.daemon_health(), self.pool_health());
         let snapshot = {
@@ -7901,8 +7890,7 @@ mod tests {
     use crate::stats::PoolStats;
     use crate::store::PoolStore;
     use crate::validation::{
-        PersistedValidationAddressState, ValidationEngine, ValidationSnapshot,
-        ValidationStateStore,
+        PersistedValidationAddressState, ValidationEngine, ValidationSnapshot, ValidationStateStore,
     };
     use axum::body::to_bytes;
     use axum::extract::{Path, Query, State};
@@ -8948,7 +8936,10 @@ mod tests {
                 ..PersistedValidationSummary::default()
             },
         );
-        assert_eq!(merged.overload_mode, crate::validation::OverloadMode::Emergency);
+        assert_eq!(
+            merged.overload_mode,
+            crate::validation::OverloadMode::Emergency
+        );
         assert_eq!(merged.effective_sample_rate, 0.0);
 
         live.overload_mode = crate::validation::OverloadMode::Shed;

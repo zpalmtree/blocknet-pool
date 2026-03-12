@@ -23,7 +23,6 @@ bs58 = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 flume = "0.11"
-futures-util = "0.3"
 hex = "0.4"
 humantime = "2.1"
 parking_lot = "0.12"
@@ -38,7 +37,6 @@ sysinfo = "0.31"
 tempfile = "3.10"
 tokio = { version = "1.44", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "signal", "process"] }
 tokio-stream = "0.1"
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 urlencoding = "2.1"
