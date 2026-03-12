@@ -5,7 +5,7 @@ use std::future::Future;
 use std::io::ErrorKind;
 use std::os::fd::FromRawFd;
 use std::os::unix::fs::{symlink, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -27,6 +27,11 @@ const STATUS_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const STATUS_CACHE_TTL: Duration = Duration::from_secs(5);
 const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const WALLET_AUTOLOAD_RETRY_INTERVAL: Duration = Duration::from_secs(60);
+const MANAGED_PATH_ROOTS: &[&str] = &[
+    "/var/lib/blocknet",
+    "/var/lib/blocknet-primary",
+    "/var/lib/blocknet-standby",
+];
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -960,16 +965,15 @@ impl RecoveryAgent {
             bail!("target daemon cookie does not exist yet");
         }
 
-        write_proxy_include(
+        apply_cutover_path_transition(
             Path::new(self.cfg.recovery.proxy_include_path.trim()),
-            target_cfg.api.trim(),
-        )?;
-        validate_nginx_config().await?;
-        swap_symlink(
             Path::new(self.cfg.recovery.active_cookie_path.trim()),
+            target_cfg.api.trim(),
             Path::new(target_cfg.cookie_path.trim()),
-        )?;
-        reload_nginx().await?;
+            validate_nginx_config,
+            reload_nginx,
+        )
+        .await?;
         Ok(format!("cut over active daemon to {}", target.as_str()))
     }
 
@@ -1413,6 +1417,73 @@ fn write_proxy_include(path: &Path, upstream: &str) -> Result<()> {
     write_atomic(path, content.as_bytes())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StoredPathState {
+    Missing,
+    File(Vec<u8>),
+    Symlink(PathBuf),
+}
+
+async fn apply_cutover_path_transition<Validate, ValidateFut, Reload, ReloadFut>(
+    proxy_include_path: &Path,
+    active_cookie_path: &Path,
+    upstream: &str,
+    target_cookie_path: &Path,
+    mut validate: Validate,
+    mut reload: Reload,
+) -> Result<()>
+where
+    Validate: FnMut() -> ValidateFut,
+    ValidateFut: Future<Output = Result<()>>,
+    Reload: FnMut() -> ReloadFut,
+    ReloadFut: Future<Output = Result<()>>,
+{
+    let proxy_backup = capture_path_state(proxy_include_path)?;
+    let cookie_backup = capture_path_state(active_cookie_path)?;
+
+    write_proxy_include(proxy_include_path, upstream)?;
+    if let Err(err) = validate().await {
+        let rollback = restore_path_state(proxy_include_path, &proxy_backup)
+            .err()
+            .into_iter()
+            .collect::<Vec<_>>();
+        return Err(cutover_transition_error(
+            "failed validating nginx config after staging cutover",
+            err,
+            rollback,
+        ));
+    }
+
+    if let Err(err) = swap_symlink(active_cookie_path, target_cookie_path) {
+        let rollback = restore_path_state(proxy_include_path, &proxy_backup)
+            .err()
+            .into_iter()
+            .collect::<Vec<_>>();
+        return Err(cutover_transition_error(
+            "failed switching active daemon cookie",
+            err,
+            rollback,
+        ));
+    }
+
+    if let Err(err) = reload().await {
+        let mut rollback_errors = Vec::new();
+        if let Err(rollback_err) = restore_path_state(active_cookie_path, &cookie_backup) {
+            rollback_errors.push(rollback_err);
+        }
+        if let Err(rollback_err) = restore_path_state(proxy_include_path, &proxy_backup) {
+            rollback_errors.push(rollback_err);
+        }
+        return Err(cutover_transition_error(
+            "failed reloading nginx after cutover",
+            err,
+            rollback_errors,
+        ));
+    }
+
+    Ok(())
+}
+
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path
         .parent()
@@ -1445,6 +1516,49 @@ fn swap_symlink(link: &Path, target: &Path) -> Result<()> {
     Ok(())
 }
 
+fn capture_path_state(path: &Path) -> Result<StoredPathState> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(value) => value,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(StoredPathState::Missing),
+        Err(err) => return Err(err).with_context(|| format!("stat {}", path.display())),
+    };
+
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return fs::read_link(path)
+            .map(StoredPathState::Symlink)
+            .with_context(|| format!("readlink {}", path.display()));
+    }
+    if file_type.is_file() {
+        return fs::read(path)
+            .map(StoredPathState::File)
+            .with_context(|| format!("read {}", path.display()));
+    }
+
+    bail!("unsupported managed path type {}", path.display());
+}
+
+fn restore_path_state(path: &Path, state: &StoredPathState) -> Result<()> {
+    match state {
+        StoredPathState::Missing => remove_path_if_exists(path),
+        StoredPathState::File(bytes) => write_atomic(path, bytes),
+        StoredPathState::Symlink(target) => swap_symlink(path, target),
+    }
+}
+
+fn remove_path_if_exists(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_dir() {
+                bail!("refusing to remove directory {}", path.display());
+            }
+            fs::remove_file(path).with_context(|| format!("remove {}", path.display()))
+        }
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| format!("stat {}", path.display())),
+    }
+}
+
 fn clear_directory(path: &Path) -> Result<()> {
     validate_managed_path(path)?;
     if !path.exists() {
@@ -1469,17 +1583,69 @@ fn clear_directory(path: &Path) -> Result<()> {
 }
 
 fn validate_managed_path(path: impl AsRef<Path>) -> Result<()> {
-    let path = path.as_ref();
-    let path_str = path
-        .to_str()
-        .ok_or_else(|| anyhow!("managed path is not valid utf-8"))?;
-    if !path_str.starts_with("/var/lib/blocknet") {
-        bail!("refusing to modify unmanaged path {path_str}");
+    let normalized = normalize_absolute_path(path.as_ref())?;
+    for root in MANAGED_PATH_ROOTS.iter().map(Path::new) {
+        if normalized == root {
+            bail!(
+                "refusing to modify top-level daemon storage path {}",
+                normalized.display()
+            );
+        }
+        if path_is_within_root(&normalized, root) {
+            return Ok(());
+        }
     }
-    if path_str == "/var/lib/blocknet" {
-        bail!("refusing to modify top-level daemon storage path");
+    bail!("refusing to modify unmanaged path {}", normalized.display());
+}
+
+fn normalize_absolute_path(path: &Path) -> Result<PathBuf> {
+    let mut normalized = PathBuf::new();
+    let mut saw_root = false;
+
+    for component in path.components() {
+        match component {
+            Component::RootDir => {
+                normalized.push(Path::new("/"));
+                saw_root = true;
+            }
+            Component::CurDir => {}
+            Component::Normal(segment) => normalized.push(segment),
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    bail!("managed path escapes filesystem root {}", path.display());
+                }
+            }
+            Component::Prefix(_) => bail!("managed path must be unix-style: {}", path.display()),
+        }
     }
-    Ok(())
+
+    if !saw_root {
+        bail!("managed path must be absolute: {}", path.display());
+    }
+    Ok(normalized)
+}
+
+fn path_is_within_root(path: &Path, root: &Path) -> bool {
+    path.strip_prefix(root)
+        .ok()
+        .is_some_and(|remainder| !remainder.as_os_str().is_empty())
+}
+
+fn cutover_transition_error(
+    context: &str,
+    err: anyhow::Error,
+    rollback_errors: Vec<anyhow::Error>,
+) -> anyhow::Error {
+    if rollback_errors.is_empty() {
+        anyhow!("{context}: {err}")
+    } else {
+        let detail = rollback_errors
+            .into_iter()
+            .map(|rollback_err| rollback_err.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+        anyhow!("{context}: {err}; rollback failed: {detail}")
+    }
 }
 
 fn read_token_from_cookie(path: &Path) -> Result<String> {
@@ -1594,6 +1760,126 @@ mod tests {
     #[test]
     fn managed_path_guard_accepts_instance_path() {
         validate_managed_path(Path::new("/var/lib/blocknet-standby/data")).expect("managed path");
+    }
+
+    #[test]
+    fn managed_path_guard_rejects_sibling_prefix_path() {
+        let err = validate_managed_path(Path::new("/var/lib/blocknet-backup/data"))
+            .expect_err("guard should reject sibling path");
+        assert!(err.to_string().contains("unmanaged"));
+    }
+
+    #[test]
+    fn managed_path_guard_rejects_traversal_outside_managed_root() {
+        let err = validate_managed_path(Path::new("/var/lib/blocknet/../../etc"))
+            .expect_err("guard should reject traversal");
+        assert!(err.to_string().contains("unmanaged"));
+    }
+
+    #[test]
+    fn managed_path_guard_accepts_primary_alias_path() {
+        validate_managed_path(Path::new("/var/lib/blocknet-primary/data")).expect("managed path");
+    }
+
+    #[tokio::test]
+    async fn cutover_path_transition_rolls_back_on_validation_failure() {
+        let dir = tempdir().expect("tempdir");
+        let proxy_include = dir.path().join("upstream.inc");
+        fs::write(&proxy_include, "proxy_pass http://127.0.0.1:18331;\n").expect("write include");
+        let old_cookie = dir.path().join("old.api.cookie");
+        let new_cookie = dir.path().join("new.api.cookie");
+        fs::write(&old_cookie, "old").expect("write old cookie");
+        fs::write(&new_cookie, "new").expect("write new cookie");
+        let active_cookie = dir.path().join("active.api.cookie");
+        symlink(&old_cookie, &active_cookie).expect("seed active cookie");
+
+        let err = apply_cutover_path_transition(
+            &proxy_include,
+            &active_cookie,
+            "http://127.0.0.1:18332",
+            &new_cookie,
+            || async { Err(anyhow!("nginx config invalid")) },
+            || async { Ok(()) },
+        )
+        .await
+        .expect_err("validation should fail");
+
+        assert!(err.to_string().contains("validating nginx config"));
+        assert_eq!(
+            fs::read_to_string(&proxy_include).expect("read include"),
+            "proxy_pass http://127.0.0.1:18331;\n"
+        );
+        assert_eq!(
+            fs::read_link(&active_cookie).expect("read active cookie"),
+            old_cookie
+        );
+    }
+
+    #[tokio::test]
+    async fn cutover_path_transition_rolls_back_on_reload_failure() {
+        let dir = tempdir().expect("tempdir");
+        let proxy_include = dir.path().join("upstream.inc");
+        fs::write(&proxy_include, "proxy_pass http://127.0.0.1:18331;\n").expect("write include");
+        let old_cookie = dir.path().join("old.api.cookie");
+        let new_cookie = dir.path().join("new.api.cookie");
+        fs::write(&old_cookie, "old").expect("write old cookie");
+        fs::write(&new_cookie, "new").expect("write new cookie");
+        let active_cookie = dir.path().join("active.api.cookie");
+        symlink(&old_cookie, &active_cookie).expect("seed active cookie");
+
+        let err = apply_cutover_path_transition(
+            &proxy_include,
+            &active_cookie,
+            "http://127.0.0.1:18332",
+            &new_cookie,
+            || async { Ok(()) },
+            || async { Err(anyhow!("reload failed")) },
+        )
+        .await
+        .expect_err("reload should fail");
+
+        assert!(err.to_string().contains("reloading nginx"));
+        assert_eq!(
+            fs::read_to_string(&proxy_include).expect("read include"),
+            "proxy_pass http://127.0.0.1:18331;\n"
+        );
+        assert_eq!(
+            fs::read_link(&active_cookie).expect("read active cookie"),
+            old_cookie
+        );
+    }
+
+    #[tokio::test]
+    async fn cutover_path_transition_updates_include_and_cookie_on_success() {
+        let dir = tempdir().expect("tempdir");
+        let proxy_include = dir.path().join("upstream.inc");
+        fs::write(&proxy_include, "proxy_pass http://127.0.0.1:18331;\n").expect("write include");
+        let old_cookie = dir.path().join("old.api.cookie");
+        let new_cookie = dir.path().join("new.api.cookie");
+        fs::write(&old_cookie, "old").expect("write old cookie");
+        fs::write(&new_cookie, "new").expect("write new cookie");
+        let active_cookie = dir.path().join("active.api.cookie");
+        symlink(&old_cookie, &active_cookie).expect("seed active cookie");
+
+        apply_cutover_path_transition(
+            &proxy_include,
+            &active_cookie,
+            "http://127.0.0.1:18332",
+            &new_cookie,
+            || async { Ok(()) },
+            || async { Ok(()) },
+        )
+        .await
+        .expect("cutover should succeed");
+
+        assert_eq!(
+            fs::read_to_string(&proxy_include).expect("read include"),
+            "proxy_pass http://127.0.0.1:18332;\n"
+        );
+        assert_eq!(
+            fs::read_link(&active_cookie).expect("read active cookie"),
+            new_cookie
+        );
     }
 
     #[test]

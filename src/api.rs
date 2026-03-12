@@ -10,7 +10,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query, State};
 use axum::http::header;
-use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode, Uri};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
@@ -751,7 +751,7 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
         .route("/api/miner/:address", get(handle_miner))
         .route("/api/miner/:address/hashrate", get(handle_miner_hashrate))
         .merge(protected)
-        .fallback(get(handle_ui))
+        .fallback(handle_app_fallback)
         .with_state(app_state);
 
     if state.config.has_api_tls() {
@@ -1959,6 +1959,30 @@ async fn handle_ui(uri: Uri, State(state): State<ApiState>) -> Response {
             .insert(HeaderName::from_static("x-robots-tag"), value);
     }
     response
+}
+
+async fn handle_app_fallback(method: Method, uri: Uri, State(state): State<ApiState>) -> Response {
+    if is_api_request_path(uri.path()) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error":"not found"})),
+        )
+            .into_response();
+    }
+
+    if matches!(method, Method::GET | Method::HEAD) {
+        let mut response = handle_ui(uri, State(state)).await;
+        if method == Method::HEAD {
+            *response.body_mut() = Body::empty();
+        }
+        return response;
+    }
+
+    StatusCode::NOT_FOUND.into_response()
+}
+
+fn is_api_request_path(path: &str) -> bool {
+    path == "/api" || path.starts_with("/api/")
 }
 
 async fn handle_robots_txt(State(state): State<ApiState>) -> impl IntoResponse {
@@ -7894,6 +7918,7 @@ mod tests {
     };
     use axum::body::to_bytes;
     use axum::extract::{Path, Query, State};
+    use axum::http::{header, Method, StatusCode};
     use axum::response::IntoResponse;
     use pool_common::pow::Argon2PowHasher;
     use serde::Serialize;
@@ -7903,9 +7928,9 @@ mod tests {
         build_block_reward_breakdown, build_fee_page, compute_luck_details_for_hashes,
         compute_luck_history, contains_ci, daemon_debug_log_path, daemon_health_from_heartbeat,
         daemon_log_commands, estimate_unconfirmed_pending_for_miner, estimated_block_reward,
-        handle_admin_dev_fee, handle_admin_share_diagnostics, handle_health, handle_miner,
-        handle_miners, handle_stats, hashrate_from_stats_with_miner_ramp,
-        hashrate_from_stats_with_warmup, hydrate_provisional_block_reward,
+        handle_admin_dev_fee, handle_admin_share_diagnostics, handle_app_fallback, handle_health,
+        handle_miner, handle_miners, handle_stats, hashrate_from_stats_with_miner_ramp,
+        hashrate_from_stats_with_warmup, hydrate_provisional_block_reward, is_api_request_path,
         load_persisted_status_history, miner_balance_response, miner_has_activity, page_bounds,
         payout_status_note, pending_balance_note, rejection_window_duration, share_limit,
         sort_workers_for_miner, system_time_to_unix_secs, trim_log_line, worker_hashrate_by_name,
@@ -8003,6 +8028,61 @@ mod tests {
         assert!(miner_has_activity(0, 0, 0, true, 0));
         assert!(miner_has_activity(0, 0, 0, false, 1));
         assert!(!miner_has_activity(0, 0, 0, false, 0));
+    }
+
+    #[test]
+    fn api_request_path_detection_is_boundary_safe() {
+        assert!(is_api_request_path("/api"));
+        assert!(is_api_request_path("/api/status"));
+        assert!(!is_api_request_path("/apiary"));
+        assert!(!is_api_request_path("/status"));
+    }
+
+    #[test]
+    fn app_fallback_returns_json_404_for_unknown_api_paths() {
+        let store = require_test_store!();
+        let state = test_api_state(store);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+
+        let response = runtime.block_on(handle_app_fallback(
+            Method::GET,
+            "/api/does-not-exist".parse().expect("uri"),
+            State(state),
+        ));
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        assert!(content_type.starts_with("application/json"));
+
+        let body = runtime
+            .block_on(to_bytes(response.into_body(), usize::MAX))
+            .expect("body bytes");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("decode json");
+        assert_eq!(payload["error"], "not found");
+    }
+
+    #[test]
+    fn app_fallback_renders_ui_for_unknown_spa_paths() {
+        let store = require_test_store!();
+        let state = test_api_state(store);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+
+        let response = runtime.block_on(handle_app_fallback(
+            Method::GET,
+            "/admin".parse().expect("uri"),
+            State(state),
+        ));
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = runtime
+            .block_on(to_bytes(response.into_body(), usize::MAX))
+            .expect("body bytes");
+        let html = String::from_utf8(body.to_vec()).expect("utf8 html");
+        assert!(html.contains("Admin dashboard"));
     }
 
     #[test]
