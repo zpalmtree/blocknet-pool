@@ -220,12 +220,16 @@ impl PoolStats {
     }
 
     fn prune_miner_stats(&self) {
-        let active_addresses = self
-            .connected_miners
-            .read()
-            .values()
-            .map(|entry| entry.address.clone())
-            .collect::<HashSet<String>>();
+        let mut active_workers_by_address = HashMap::<String, HashSet<String>>::new();
+        {
+            let connected = self.connected_miners.read();
+            for entry in connected.values() {
+                active_workers_by_address
+                    .entry(entry.address.clone())
+                    .or_default()
+                    .insert(entry.worker.clone());
+            }
+        }
 
         let now = SystemTime::now();
         let cutoff = now
@@ -234,7 +238,12 @@ impl PoolStats {
 
         let mut miners = self.miner_stats.write();
         miners.retain(|address, stats| {
-            if active_addresses.contains(address) {
+            let active_workers = active_workers_by_address
+                .remove(address)
+                .unwrap_or_default();
+            let is_active = !active_workers.is_empty();
+            stats.workers = active_workers;
+            if is_active {
                 return true;
             }
             stats.last_share_at.is_some_and(|ts| ts > cutoff)
@@ -247,7 +256,7 @@ impl PoolStats {
         let mut removable = miners
             .iter()
             .filter_map(|(address, stats)| {
-                if active_addresses.contains(address) {
+                if !stats.workers.is_empty() {
                     return None;
                 }
                 Some((
@@ -465,6 +474,8 @@ fn sort_reason_counts(counts: HashMap<String, u64>) -> Vec<RejectionReasonCount>
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::{PoolStats, MAX_RECENT_SHARES};
 
     #[test]
@@ -500,6 +511,26 @@ mod tests {
         stats.remove_miner("c3");
         assert_eq!(stats.connected_miner_count(), 0);
         assert_eq!(stats.connected_worker_count(), 0);
+    }
+
+    #[test]
+    fn all_miner_stats_only_reports_currently_connected_workers() {
+        let stats = PoolStats::new();
+        stats.add_miner("c1", "addr1", "rig-old");
+        stats.add_miner("c2", "addr1", "rig-new");
+
+        let mut miner_stats = stats.all_miner_stats();
+        let workers = miner_stats.remove("addr1").expect("addr1 stats").workers;
+        assert_eq!(
+            workers,
+            HashSet::from(["rig-old".to_string(), "rig-new".to_string(),])
+        );
+
+        stats.remove_miner("c1");
+
+        let mut miner_stats = stats.all_miner_stats();
+        let workers = miner_stats.remove("addr1").expect("addr1 stats").workers;
+        assert_eq!(workers, HashSet::from(["rig-new".to_string()]));
     }
 
     #[test]

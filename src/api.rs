@@ -309,15 +309,31 @@ fn worker_hashrate_by_name(
         .collect()
 }
 
+fn active_worker_cutoff_unix(now: SystemTime, active_cutoff: Duration) -> i64 {
+    let now_unix = i64::try_from(system_time_to_unix_secs(now)).unwrap_or(i64::MAX);
+    let cutoff_secs = i64::try_from(active_cutoff.as_secs()).unwrap_or(i64::MAX);
+    now_unix.saturating_sub(cutoff_secs)
+}
+
+fn filter_active_workers_for_miner(
+    workers: Vec<(String, u64, u64, u64, i64)>,
+    now: SystemTime,
+    active_cutoff: Duration,
+) -> Vec<(String, u64, u64, u64, i64)> {
+    let active_cutoff_unix = active_worker_cutoff_unix(now, active_cutoff);
+    workers
+        .into_iter()
+        .filter(|(_, _, _, _, last_share_ts)| *last_share_ts >= active_cutoff_unix)
+        .collect()
+}
+
 fn sort_workers_for_miner(
     mut workers: Vec<(String, u64, u64, u64, i64)>,
     hashrate_by_name: &HashMap<String, f64>,
     now: SystemTime,
     active_cutoff: Duration,
 ) -> Vec<(String, u64, u64, u64, i64)> {
-    let now_unix = i64::try_from(system_time_to_unix_secs(now)).unwrap_or(i64::MAX);
-    let cutoff_secs = i64::try_from(active_cutoff.as_secs()).unwrap_or(i64::MAX);
-    let active_cutoff_unix = now_unix.saturating_sub(cutoff_secs);
+    let active_cutoff_unix = active_worker_cutoff_unix(now, active_cutoff);
 
     workers.sort_by(|a, b| {
         let a_active = a.4 >= active_cutoff_unix;
@@ -4237,7 +4253,7 @@ async fn handle_miners(
     let fallback_hashrates = state.stats.estimate_all_miner_hashrates();
     let store = Arc::clone(&state.store);
     let worker_window_start = SystemTime::now()
-        .checked_sub(Duration::from_secs(24 * 60 * 60))
+        .checked_sub(HASHRATE_WINDOW)
         .unwrap_or(UNIX_EPOCH);
     let (lifetime_counts, worker_counts) = match tokio::task::spawn_blocking(move || {
         Ok::<_, anyhow::Error>((
@@ -4563,11 +4579,15 @@ async fn handle_miner(
     let pending_total = pending_confirmed.saturating_add(pending_estimated);
     let balance_json = miner_balance_response(&balance, pending_payout.as_ref());
 
+    let now = SystemTime::now();
     let worker_hashrate_by_name = worker_hashrate_by_name(hashrate, worker_hashrate_raw);
+    let total_accepted: u64 = workers_raw.iter().map(|(_, a, _, _, _)| *a).sum();
+    let total_rejected: u64 = workers_raw.iter().map(|(_, _, r, _, _)| *r).sum();
+    let workers_active = filter_active_workers_for_miner(workers_raw, now, HASHRATE_WINDOW);
     let workers_sorted = sort_workers_for_miner(
-        workers_raw,
+        workers_active,
         &worker_hashrate_by_name,
-        SystemTime::now(),
+        now,
         HASHRATE_WINDOW,
     );
 
@@ -4585,8 +4605,6 @@ async fn handle_miner(
         })
         .collect();
 
-    let total_accepted: u64 = workers_sorted.iter().map(|(_, a, _, _, _)| a).sum();
-    let total_rejected: u64 = workers_sorted.iter().map(|(_, _, r, _, _)| r).sum();
     let pending_note = if include_pending_estimate {
         pending_balance_note(&state.config, hashrate, total_accepted, &pending_estimate)
     } else {
@@ -7928,13 +7946,14 @@ mod tests {
         build_block_reward_breakdown, build_fee_page, compute_luck_details_for_hashes,
         compute_luck_history, contains_ci, daemon_debug_log_path, daemon_health_from_heartbeat,
         daemon_log_commands, estimate_unconfirmed_pending_for_miner, estimated_block_reward,
-        handle_admin_dev_fee, handle_admin_share_diagnostics, handle_app_fallback, handle_health,
-        handle_miner, handle_miners, handle_stats, hashrate_from_stats_with_miner_ramp,
-        hashrate_from_stats_with_warmup, hydrate_provisional_block_reward, is_api_request_path,
-        load_persisted_status_history, miner_balance_response, miner_has_activity, page_bounds,
-        payout_status_note, pending_balance_note, rejection_window_duration, share_limit,
-        sort_workers_for_miner, system_time_to_unix_secs, trim_log_line, worker_hashrate_by_name,
-        ApiState, DaemonHealthCache, DbTotalsCache, InsightsCache, LiveRuntimeSnapshotCache,
+        filter_active_workers_for_miner, handle_admin_dev_fee, handle_admin_share_diagnostics,
+        handle_app_fallback, handle_health, handle_miner, handle_miners, handle_stats,
+        hashrate_from_stats_with_miner_ramp, hashrate_from_stats_with_warmup,
+        hydrate_provisional_block_reward, is_api_request_path, load_persisted_status_history,
+        miner_balance_response, miner_has_activity, page_bounds, payout_status_note,
+        pending_balance_note, rejection_window_duration, share_limit, sort_workers_for_miner,
+        system_time_to_unix_secs, trim_log_line, worker_hashrate_by_name, ApiState,
+        DaemonHealthCache, DbTotalsCache, InsightsCache, LiveRuntimeSnapshotCache,
         MinerDetailQuery, MinerPendingBlockEstimate, MinerPendingEstimate, MinersQuery,
         NetworkHashrateCache, OpenIncident, PayoutEtaResponse, PoolHealthCache, StatusHistory,
         StatusIncident, DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW,
@@ -9137,6 +9156,62 @@ mod tests {
     }
 
     #[test]
+    fn miner_handler_omits_workers_without_recent_shares() {
+        let store = require_test_store!();
+        let now = SystemTime::now();
+        let stale_share_at = now
+            .checked_sub(HASHRATE_WINDOW + Duration::from_secs(15 * 60))
+            .expect("stale share timestamp");
+        let recent_share_at = now
+            .checked_sub(Duration::from_secs(5 * 60))
+            .expect("recent share timestamp");
+
+        for (job_id, worker, nonce, created_at) in [
+            ("job-stale", "worker-stale", 1u64, stale_share_at),
+            ("job-recent", "worker-recent", 2u64, recent_share_at),
+        ] {
+            store
+                .add_share(ShareRecord {
+                    job_id: job_id.to_string(),
+                    miner: "miner-workers".to_string(),
+                    worker: worker.to_string(),
+                    difficulty: 250,
+                    nonce,
+                    status: "verified",
+                    was_sampled: true,
+                    block_hash: None,
+                    claimed_hash: None,
+                    reject_reason: None,
+                    created_at,
+                })
+                .expect("add share");
+        }
+
+        let state = test_api_state(store);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let response = runtime
+            .block_on(handle_miner(
+                Path("miner-workers".to_string()),
+                Query(MinerDetailQuery {
+                    share_limit: Some(10),
+                    include_pending_estimate: Some(false),
+                }),
+                State(state),
+            ))
+            .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = runtime
+            .block_on(to_bytes(response.into_body(), usize::MAX))
+            .expect("read body");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("decode miner json");
+
+        let workers = payload["workers"].as_array().expect("worker rows");
+        assert_eq!(workers.len(), 1);
+        assert_eq!(workers[0]["worker"].as_str(), Some("worker-recent"));
+        assert_eq!(payload["total_accepted"].as_u64(), Some(2));
+    }
+
+    #[test]
     fn miner_handler_reports_lifetime_mining_since() {
         let store = require_test_store!();
         let first_share_at = UNIX_EPOCH + Duration::from_secs(1_000_000);
@@ -9192,6 +9267,62 @@ mod tests {
             payload["mining_since"]["secs_since_epoch"].as_u64(),
             Some(system_time_to_unix_secs(first_share_at))
         );
+    }
+
+    #[test]
+    fn miners_handler_counts_only_recent_workers_when_only_db_history_is_available() {
+        let store = require_test_store!();
+        let now = SystemTime::now();
+        let stale_share_at = now
+            .checked_sub(HASHRATE_WINDOW + Duration::from_secs(10 * 60))
+            .expect("stale share timestamp");
+
+        store
+            .add_share(ShareRecord {
+                job_id: "job-stale-worker".to_string(),
+                miner: "miner-stale-workers".to_string(),
+                worker: "worker-old".to_string(),
+                difficulty: 250,
+                nonce: 1,
+                status: "verified",
+                was_sampled: true,
+                block_hash: None,
+                claimed_hash: None,
+                reject_reason: None,
+                created_at: stale_share_at,
+            })
+            .expect("add stale share");
+
+        let state = test_api_state(store);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let response = runtime
+            .block_on(handle_miners(
+                Query(MinersQuery {
+                    paged: Some(true),
+                    limit: Some(25),
+                    offset: Some(0),
+                    search: None,
+                    sort: Some("address_asc".to_string()),
+                }),
+                State(state),
+            ))
+            .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = runtime
+            .block_on(to_bytes(response.into_body(), usize::MAX))
+            .expect("read body");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("decode miners json");
+
+        let stale = payload["items"]
+            .as_array()
+            .and_then(|items| {
+                items
+                    .iter()
+                    .find(|item| item["address"].as_str() == Some("miner-stale-workers"))
+            })
+            .expect("stale miner row");
+
+        assert_eq!(stale["worker_count"].as_u64(), Some(0));
     }
 
     #[test]
@@ -10452,6 +10583,23 @@ mod tests {
             now,
         );
         assert!((hr - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn filter_active_workers_drops_stale_entries() {
+        let now = UNIX_EPOCH + Duration::from_secs(10_000);
+        let workers = vec![
+            ("stale".to_string(), 1, 0, 0, 2_000),
+            ("active".to_string(), 1, 0, 0, 9_900),
+        ];
+
+        let filtered = filter_active_workers_for_miner(workers, now, HASHRATE_WINDOW);
+        let names: Vec<String> = filtered
+            .into_iter()
+            .map(|(name, _, _, _, _)| name)
+            .collect();
+
+        assert_eq!(names, vec!["active"]);
     }
 
     #[test]
