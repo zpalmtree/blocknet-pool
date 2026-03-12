@@ -2201,6 +2201,20 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                         FROM validation_provisionals vp
                         WHERE vp.address = s.address
                           AND vp.created_at > $2
+                    ), 0)::bigint,
+                    COALESCE((
+                        SELECT SUM(sh.difficulty)::bigint
+                        FROM shares sh
+                        WHERE sh.miner = s.address
+                          AND sh.created_at > $2
+                          AND sh.status = 'verified'
+                    ), 0)::bigint,
+                    COALESCE((
+                        SELECT SUM(sh.difficulty)::bigint
+                        FROM shares sh
+                        WHERE sh.miner = s.address
+                          AND sh.created_at > $2
+                          AND sh.status = 'provisional'
                     ), 0)::bigint
              FROM validation_address_states s
              WHERE s.address = $1",
@@ -2220,6 +2234,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     )
                 }),
             pending_provisional: row.get::<_, i64>(3).max(0) as u64,
+            recent_verified_difficulty: row.get::<_, i64>(4).max(0) as u64,
+            recent_provisional_difficulty: row.get::<_, i64>(5).max(0) as u64,
         }))
     }
 
@@ -2261,7 +2277,9 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     v.forced_until,
                     v.forced_started_at,
                     v.hold_cause,
-                    COALESCE(vp.pending_provisional, 0)::bigint
+                    COALESCE(vp.pending_provisional, 0)::bigint,
+                    COALESCE(vs.recent_verified_difficulty, 0)::bigint,
+                    COALESCE(vs.recent_provisional_difficulty, 0)::bigint
              FROM (
                  SELECT address, strikes, suspected_fraud_strikes, last_reason, last_event_at,
                         quarantined_until, force_verify_until
@@ -2282,6 +2300,18 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                  GROUP BY address
              ) vp
              ON COALESCE(r.address, v.address) = vp.address
+             LEFT JOIN (
+                 SELECT miner AS address,
+                        COALESCE(SUM(CASE WHEN status = 'verified' THEN difficulty ELSE 0 END), 0)::bigint
+                            AS recent_verified_difficulty,
+                        COALESCE(SUM(CASE WHEN status = 'provisional' THEN difficulty ELSE 0 END), 0)::bigint
+                            AS recent_provisional_difficulty
+                 FROM shares
+                 WHERE created_at > $2
+                   AND status IN ('verified', 'provisional')
+                 GROUP BY miner
+             ) vs
+             ON COALESCE(r.address, v.address) = vs.address
              ORDER BY address ASC",
             &[&now_ts, &to_unix(provisional_cutoff)],
         )?;
@@ -2298,8 +2328,17 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                             )
                         });
                 let validation_pending_provisional = row.get::<_, i64>(10).max(0) as u64;
+                let validation_recent_verified_difficulty =
+                    row.get::<_, i64>(11).max(0) as u64;
+                let validation_recent_provisional_difficulty =
+                    row.get::<_, i64>(12).max(0) as u64;
                 let reason = last_reason.clone().or_else(|| {
-                    validation_hold_reason(validation_hold_cause, validation_pending_provisional)
+                    validation_hold_reason(
+                        validation_hold_cause,
+                        validation_pending_provisional,
+                        validation_recent_verified_difficulty,
+                        validation_recent_provisional_difficulty,
+                    )
                 });
                 ActiveVerificationHold {
                     address: row.get::<_, String>(0),
@@ -2323,6 +2362,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                         .filter(|until| *until > now),
                     validation_hold_cause,
                     validation_pending_provisional,
+                    validation_recent_verified_difficulty,
+                    validation_recent_provisional_difficulty,
                 }
             })
             .collect())
@@ -3794,19 +3835,34 @@ fn infer_validation_hold_cause_from_row(
 fn validation_hold_reason(
     cause: Option<ValidationHoldCause>,
     pending_provisional: u64,
+    recent_verified_difficulty: u64,
+    recent_provisional_difficulty: u64,
 ) -> Option<String> {
     match cause {
         Some(ValidationHoldCause::InvalidSamples) => {
             Some("recent invalid sampled shares are under review".to_string())
         }
-        Some(ValidationHoldCause::ProvisionalBacklog) => Some(if pending_provisional > 0 {
-            format!(
-                "{pending_provisional} provisional share{} waiting for full verification",
-                if pending_provisional == 1 { "" } else { "s" }
-            )
-        } else {
-            "recent provisional backlog is draining".to_string()
-        }),
+        Some(ValidationHoldCause::ProvisionalBacklog) => Some(
+            if recent_provisional_difficulty > 0 || recent_verified_difficulty > 0 {
+                match recent_verified_difficulty {
+                    0 => format!(
+                        "recent provisional diff {} has no recent verified diff yet",
+                        recent_provisional_difficulty
+                    ),
+                    verified => format!(
+                        "recent provisional diff {} vs {} verified",
+                        recent_provisional_difficulty, verified
+                    ),
+                }
+            } else if pending_provisional > 0 {
+                format!(
+                    "{pending_provisional} provisional share{} waiting for full verification",
+                    if pending_provisional == 1 { "" } else { "s" }
+                )
+            } else {
+                "recent provisional backlog is draining".to_string()
+            },
+        ),
         Some(ValidationHoldCause::PayoutCoverage) => {
             Some("boosting verified-share coverage so payout weight stays proportional".to_string())
         }

@@ -76,6 +76,7 @@ pub struct Config {
     pub invalid_escalation_quarantine_strikes: i32,
     pub provisional_share_delay: String,
     pub max_provisional_shares: i32,
+    pub max_provisional_recent_verified_multiplier: f64,
     pub stratum_submit_v2_required: bool,
     pub stratum_idle_timeout: String,
     pub stratum_submit_rate_limit_window: String,
@@ -186,6 +187,7 @@ impl Default for Config {
             invalid_escalation_quarantine_strikes: 1,
             provisional_share_delay: "15m".to_string(),
             max_provisional_shares: 200,
+            max_provisional_recent_verified_multiplier: 8.0,
             stratum_submit_v2_required: true,
             stratum_idle_timeout: "15m".to_string(),
             stratum_submit_rate_limit_window: "10s".to_string(),
@@ -327,6 +329,11 @@ impl Config {
         }
         if self.max_provisional_shares < 0 {
             self.max_provisional_shares = 0;
+        }
+        if !self.max_provisional_recent_verified_multiplier.is_finite()
+            || self.max_provisional_recent_verified_multiplier < 0.0
+        {
+            self.max_provisional_recent_verified_multiplier = 8.0;
         }
         if self.stratum_submit_rate_limit_max < 1 {
             self.stratum_submit_rate_limit_max = 1;
@@ -532,6 +539,10 @@ impl Config {
         parse_duration_or(&self.provisional_share_delay, Duration::from_secs(15 * 60))
     }
 
+    pub fn max_provisional_recent_verified_multiplier(&self) -> f64 {
+        self.max_provisional_recent_verified_multiplier.max(0.0)
+    }
+
     pub fn quarantine_duration_duration(&self) -> Duration {
         parse_duration_or(&self.quarantine_duration, Duration::from_secs(15 * 60))
     }
@@ -721,6 +732,7 @@ mod tests {
             suspected_fraud_quarantine_strikes: -3,
             invalid_escalation_quarantine_strikes: -2,
             max_provisional_shares: -1,
+            max_provisional_recent_verified_multiplier: f64::NAN,
             stratum_submit_v2_required: false,
             stratum_submit_rate_limit_max: 0,
             initial_share_difficulty: 0,
@@ -768,6 +780,7 @@ mod tests {
         assert_eq!(cfg.suspected_fraud_quarantine_strikes, 0);
         assert_eq!(cfg.invalid_escalation_quarantine_strikes, 0);
         assert_eq!(cfg.max_provisional_shares, 0);
+        assert_eq!(cfg.max_provisional_recent_verified_multiplier, 8.0);
         assert!(!cfg.stratum_submit_v2_required);
         assert_eq!(cfg.stratum_submit_rate_limit_max, 1);
         assert_eq!(cfg.min_share_difficulty, 10);

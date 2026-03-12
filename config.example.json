@@ -67,6 +67,7 @@
   "invalid_escalation_quarantine_strikes": 1,
   "provisional_share_delay": "15m",
   "max_provisional_shares": 200,
+  "max_provisional_recent_verified_multiplier": 8.0,
   "stratum_submit_v2_required": true,
   "stratum_idle_timeout": "15m",
   "stratum_submit_rate_limit_window": "10s",

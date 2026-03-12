@@ -888,7 +888,6 @@ impl ValidationInner {
 
         let now = SystemTime::now();
         let state = self.state.lock();
-        let provisional_delay = self.config.provisional_share_delay_duration();
         let mut default_state = ValidationAddressState::default();
         prune_accepted_window(&mut default_state, &self.config, now);
         let st = state.get(address).unwrap_or(&default_state);
@@ -896,7 +895,6 @@ impl ValidationInner {
         self.prune_provisional_locked(&mut effective, now);
         prune_accepted_window(&mut effective, &self.config, now);
         refresh_dynamic_validation_hold(&mut effective, &self.config, now);
-        let live_provisionals = live_provisional_count(&effective, now, provisional_delay);
 
         if effective
             .resume_forced_at
@@ -910,8 +908,7 @@ impl ValidationInner {
         }
 
         if overload_mode == OverloadMode::Normal
-            && self.config.max_provisional_shares > 0
-            && live_provisionals >= self.config.max_provisional_shares as usize
+            && should_force_for_provisional_backlog(&effective, &self.config, now)
         {
             return true;
         }
@@ -963,7 +960,6 @@ impl ValidationInner {
 
         let now = SystemTime::now();
         let state = self.state.lock();
-        let provisional_delay = self.config.provisional_share_delay_duration();
         let mut default_state = ValidationAddressState::default();
         prune_accepted_window(&mut default_state, &self.config, now);
         let st = state.get(address).unwrap_or(&default_state);
@@ -971,7 +967,6 @@ impl ValidationInner {
         self.prune_provisional_locked(&mut effective, now);
         prune_accepted_window(&mut effective, &self.config, now);
         refresh_dynamic_validation_hold(&mut effective, &self.config, now);
-        let live_provisionals = live_provisional_count(&effective, now, provisional_delay);
 
         let forced_review = effective
             .resume_forced_at
@@ -997,8 +992,7 @@ impl ValidationInner {
                 _ => None,
             }
         } else if overload_mode == OverloadMode::Normal
-            && self.config.max_provisional_shares > 0
-            && live_provisionals >= self.config.max_provisional_shares as usize
+            && should_force_for_provisional_backlog(&effective, &self.config, now)
         {
             Some(ValidationAuditSource::ProvisionalBacklog)
         } else if overload_mode == OverloadMode::Normal
@@ -1229,20 +1223,16 @@ impl ValidationInner {
         }
 
         if overload_mode == OverloadMode::Normal && st.forced_started_at.is_none() {
-            let provisional_delay = self.config.provisional_share_delay_duration();
-            let live_provisionals = live_provisional_count(st, now, provisional_delay);
-            if self.config.max_provisional_shares > 0
-                && live_provisionals >= self.config.max_provisional_shares as usize
-            {
+            if should_force_for_provisional_backlog(st, &self.config, now) {
                 st.start_temporary_hold(
                     now,
-                    provisional_delay,
+                    self.config.provisional_share_delay_duration(),
                     ValidationHoldCause::ProvisionalBacklog,
                 );
             } else if should_force_for_payout_coverage(st, &self.config, now) {
                 st.start_temporary_hold(
                     now,
-                    provisional_delay,
+                    self.config.provisional_share_delay_duration(),
                     ValidationHoldCause::PayoutCoverage,
                 );
             }
@@ -2050,23 +2040,6 @@ fn canonical_audit_reject_reason(reason: &'static str) -> &'static str {
     }
 }
 
-fn live_provisional_count(
-    state: &ValidationAddressState,
-    now: SystemTime,
-    delay: Duration,
-) -> usize {
-    if state.provisional_at.is_empty() || delay.is_zero() {
-        return 0;
-    }
-
-    let cutoff = now.checked_sub(delay).unwrap_or(now);
-    state
-        .provisional_at
-        .iter()
-        .filter(|share| share.created_at > cutoff)
-        .count()
-}
-
 fn infer_validation_hold_cause(
     forced_started_at: Option<SystemTime>,
     forced_until: Option<SystemTime>,
@@ -2146,6 +2119,71 @@ impl PayoutCoverageStats {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct ProvisionalBacklogStats {
+    recent_shares: u64,
+    recent_verified_difficulty: u64,
+    recent_provisional_difficulty: u64,
+}
+
+fn provisional_backlog_stats(
+    state: &ValidationAddressState,
+    config: &Config,
+    now: SystemTime,
+) -> Option<ProvisionalBacklogStats> {
+    let delay = config.provisional_share_delay_duration();
+    if delay.is_zero() {
+        return None;
+    }
+
+    let cutoff = now.checked_sub(delay).unwrap_or(now);
+    let mut stats = ProvisionalBacklogStats::default();
+    for share in &state.accepted_window {
+        if share.created_at <= cutoff {
+            continue;
+        }
+        stats.recent_shares = stats.recent_shares.saturating_add(1);
+        if share.verified {
+            stats.recent_verified_difficulty = stats
+                .recent_verified_difficulty
+                .saturating_add(share.difficulty);
+        } else {
+            stats.recent_provisional_difficulty = stats
+                .recent_provisional_difficulty
+                .saturating_add(share.difficulty);
+        }
+    }
+    Some(stats)
+}
+
+fn should_force_for_provisional_backlog(
+    state: &ValidationAddressState,
+    config: &Config,
+    now: SystemTime,
+) -> bool {
+    let Some(stats) = provisional_backlog_stats(state, config, now) else {
+        return false;
+    };
+    let min_recent_shares = config.warmup_shares.max(1) as u64;
+    if stats.recent_shares < min_recent_shares {
+        return false;
+    }
+    if stats.recent_provisional_difficulty == 0 {
+        return false;
+    }
+    if stats.recent_verified_difficulty == 0 {
+        return true;
+    }
+
+    let budget_multiplier = config.max_provisional_recent_verified_multiplier();
+    if budget_multiplier <= 0.0 {
+        return true;
+    }
+
+    stats.recent_provisional_difficulty as f64
+        > (stats.recent_verified_difficulty as f64 * budget_multiplier) + f64::EPSILON
+}
+
 fn payout_coverage_stats(
     state: &ValidationAddressState,
     config: &Config,
@@ -2207,10 +2245,7 @@ fn refresh_dynamic_validation_hold(
 ) {
     match state.hold_cause {
         Some(ValidationHoldCause::ProvisionalBacklog) => {
-            let max_provisionals = config.max_provisional_shares.max(0) as usize;
-            let still_backlogged = max_provisionals > 0
-                && live_provisional_count(state, now, config.provisional_share_delay_duration())
-                    >= max_provisionals;
+            let still_backlogged = should_force_for_provisional_backlog(state, config, now);
             let active = state.forced_until.is_some_and(|deadline| deadline > now);
             if !still_backlogged || !active {
                 state.clear_forced_review();
@@ -2629,23 +2664,32 @@ mod tests {
     }
 
     #[test]
-    fn provisional_cap_forces_full_verify() {
-        let cfg = test_cfg();
+    fn provisional_backlog_budget_forces_full_verify() {
+        let mut cfg = test_cfg();
+        cfg.sample_rate = 0.0;
+        cfg.warmup_shares = 0;
+        cfg.min_sample_every = 0;
+        cfg.max_provisional_recent_verified_multiplier = 1.0;
         let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));
 
-        let mut task = base_task();
-        task.claimed_hash = Some([0x01; 32]);
+        let mut seed = matching_task(90);
+        seed.force_full_verify = true;
+        let seeded = engine.process_inline(seed);
+        assert!(seeded.accepted && seeded.verified);
 
-        let r1 = engine.process_inline(task.clone());
+        let r1 = engine.process_inline(matching_task(1));
         assert!(r1.accepted);
         assert!(!r1.verified);
 
-        let r2 = engine.process_inline(task.clone());
+        let r2 = engine.process_inline(matching_task(2));
         assert!(r2.accepted);
         assert!(!r2.verified);
 
-        let r3 = engine.process_inline(task);
-        assert!(r3.verified, "provisional cap should force full verify");
+        let r3 = engine.process_inline(matching_task(3));
+        assert!(
+            r3.verified,
+            "recent provisional difficulty above the verified budget should force full verify"
+        );
     }
 
     #[test]
@@ -2655,10 +2699,16 @@ mod tests {
         cfg.warmup_shares = 0;
         cfg.min_sample_every = 0;
         cfg.max_provisional_shares = 2;
+        cfg.max_provisional_recent_verified_multiplier = 1.0;
         cfg.provisional_share_delay = "50ms".to_string();
         cfg.payout_min_verified_ratio = 0.0;
         cfg.payout_provisional_cap_multiplier = 0.0;
         let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));
+
+        let mut seed = matching_task(90);
+        seed.force_full_verify = true;
+        let seeded = engine.process_inline(seed);
+        assert!(seeded.accepted && seeded.verified);
 
         let first = engine.process_inline(matching_task(1));
         let second = engine.process_inline(matching_task(2));
@@ -3426,9 +3476,10 @@ mod tests {
     fn min_sample_every_forces_periodic_full_verification() {
         let mut cfg = test_cfg();
         cfg.sample_rate = 0.0;
-        cfg.warmup_shares = 0;
+        cfg.warmup_shares = 1;
         cfg.min_sample_every = 3;
         cfg.max_provisional_shares = 100;
+        cfg.max_provisional_recent_verified_multiplier = 1_000_000.0;
         let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));
 
         let r1 = engine.process_inline(matching_task(1));
@@ -3438,7 +3489,7 @@ mod tests {
         let r5 = engine.process_inline(matching_task(5));
         let r6 = engine.process_inline(matching_task(6));
 
-        assert!(!r1.verified);
+        assert!(r1.verified);
         assert!(!r2.verified);
         assert!(r3.verified);
         assert!(!r4.verified);

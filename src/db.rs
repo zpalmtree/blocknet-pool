@@ -109,6 +109,8 @@ pub struct ActiveVerificationHold {
     pub validation_forced_until: Option<SystemTime>,
     pub validation_hold_cause: Option<ValidationHoldCause>,
     pub validation_pending_provisional: u64,
+    pub validation_recent_verified_difficulty: u64,
+    pub validation_recent_provisional_difficulty: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +119,8 @@ pub struct ValidationHoldState {
     pub forced_until: Option<SystemTime>,
     pub hold_cause: Option<ValidationHoldCause>,
     pub pending_provisional: u64,
+    pub recent_verified_difficulty: u64,
+    pub recent_provisional_difficulty: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]

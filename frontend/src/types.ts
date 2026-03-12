@@ -51,6 +51,7 @@ export interface InfoResponse {
   pplns_window?: number;
   pplns_window_duration?: string;
   provisional_share_delay?: string;
+  max_provisional_recent_verified_multiplier?: number;
   sample_rate?: number;
   warmup_shares?: number;
   min_sample_every?: number;
@@ -158,6 +159,8 @@ export interface MinerVerificationHold {
   active_fraud_strikes?: number;
   validation_hold_cause?: 'invalid_samples' | 'provisional_backlog' | 'payout_coverage' | null;
   validation_pending_provisional?: number | null;
+  validation_recent_verified_difficulty?: number | null;
+  validation_recent_provisional_difficulty?: number | null;
 }
 
 export interface ActiveVerificationHold {
@@ -172,6 +175,8 @@ export interface ActiveVerificationHold {
   validation_forced_until?: UnixLike;
   validation_hold_cause?: 'invalid_samples' | 'provisional_backlog' | 'payout_coverage' | null;
   validation_pending_provisional?: number;
+  validation_recent_verified_difficulty?: number;
+  validation_recent_provisional_difficulty?: number;
 }
 
 export interface ClearAddressRiskHistoryResponse {

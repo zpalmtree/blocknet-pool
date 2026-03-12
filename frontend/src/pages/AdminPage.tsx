@@ -124,6 +124,11 @@ function formatAdminTimestamp(value: UnixLike): string {
   return ms ? new Date(ms).toLocaleString() : '-';
 }
 
+function formatWholeNumber(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '0';
+  return Math.round(value).toLocaleString();
+}
+
 function hasActiveUntil(value: UnixLike | null | undefined): boolean {
   const ms = value ? toUnixMs(value) : 0;
   return !!ms && ms > Date.now();
@@ -202,6 +207,14 @@ function validationHoldUntilHint(hold: ActiveVerificationHold): string | null {
   if (!hasActiveUntil(hold.validation_forced_until)) return null;
   switch (hold.validation_hold_cause) {
     case 'provisional_backlog':
+      if (
+        (hold.validation_recent_provisional_difficulty ?? 0) > 0 ||
+        (hold.validation_recent_verified_difficulty ?? 0) > 0
+      ) {
+        return `auto-clears once recent provisional diff ${formatWholeNumber(
+          hold.validation_recent_provisional_difficulty
+        )} settles near verified diff ${formatWholeNumber(hold.validation_recent_verified_difficulty)}`;
+      }
       return 'auto-clears once backlog drains';
     case 'payout_coverage':
       return 'auto-clears once coverage recovers';

@@ -80,6 +80,7 @@ pub struct Config {
     pub invalid_escalation_quarantine_strikes: i32,
     pub provisional_share_delay: String,
     pub max_provisional_shares: i32,
+    pub max_provisional_recent_verified_multiplier: f64,
     pub stratum_submit_v2_required: bool,
     pub stratum_idle_timeout: String,
     pub stratum_submit_rate_limit_window: String,
@@ -201,6 +202,8 @@ impl Default for Config {
             invalid_escalation_quarantine_strikes: runtime.invalid_escalation_quarantine_strikes,
             provisional_share_delay: runtime.provisional_share_delay,
             max_provisional_shares: runtime.max_provisional_shares,
+            max_provisional_recent_verified_multiplier: runtime
+                .max_provisional_recent_verified_multiplier,
             stratum_submit_v2_required: runtime.stratum_submit_v2_required,
             stratum_idle_timeout: runtime.stratum_idle_timeout,
             stratum_submit_rate_limit_window: runtime.stratum_submit_rate_limit_window,
@@ -342,6 +345,8 @@ impl Config {
             invalid_escalation_quarantine_strikes: self.invalid_escalation_quarantine_strikes,
             provisional_share_delay: self.provisional_share_delay.clone(),
             max_provisional_shares: self.max_provisional_shares,
+            max_provisional_recent_verified_multiplier: self
+                .max_provisional_recent_verified_multiplier,
             stratum_submit_v2_required: self.stratum_submit_v2_required,
             stratum_idle_timeout: self.stratum_idle_timeout.clone(),
             stratum_submit_rate_limit_window: self.stratum_submit_rate_limit_window.clone(),
@@ -454,6 +459,8 @@ impl Config {
         self.invalid_escalation_quarantine_strikes = runtime.invalid_escalation_quarantine_strikes;
         self.provisional_share_delay = runtime.provisional_share_delay;
         self.max_provisional_shares = runtime.max_provisional_shares;
+        self.max_provisional_recent_verified_multiplier =
+            runtime.max_provisional_recent_verified_multiplier;
         self.stratum_submit_v2_required = runtime.stratum_submit_v2_required;
         self.stratum_idle_timeout = runtime.stratum_idle_timeout;
         self.stratum_submit_rate_limit_window = runtime.stratum_submit_rate_limit_window;
@@ -504,6 +511,10 @@ impl Config {
 
     pub fn provisional_share_delay_duration(&self) -> Duration {
         parse_duration_or(&self.provisional_share_delay, Duration::from_secs(15 * 60))
+    }
+
+    pub fn max_provisional_recent_verified_multiplier(&self) -> f64 {
+        self.max_provisional_recent_verified_multiplier.max(0.0)
     }
 
     pub fn pplns_window_duration_duration(&self) -> Duration {
