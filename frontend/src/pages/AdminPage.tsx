@@ -106,6 +106,17 @@ function overloadModeLabel(mode: string | null | undefined): string {
   }
 }
 
+function roundChipClass(tone: 'ok' | 'warn' | 'critical'): string {
+  switch (tone) {
+    case 'critical':
+      return 'round-chip is-critical';
+    case 'warn':
+      return 'round-chip is-warn';
+    default:
+      return 'round-chip is-ok';
+  }
+}
+
 
 
 function formatAdminTimestamp(value: UnixLike): string {
@@ -162,6 +173,41 @@ function verificationHoldLabel(hold: ActiveVerificationHold): string {
     }
   }
   return 'Active';
+}
+
+function isTemporaryValidationAssist(hold: ActiveVerificationHold): boolean {
+  return (
+    !hasActiveUntil(hold.quarantined_until) &&
+    !hasActiveUntil(hold.force_verify_until) &&
+    hasActiveUntil(hold.validation_forced_until) &&
+    (hold.validation_hold_cause === 'provisional_backlog' || hold.validation_hold_cause === 'payout_coverage')
+  );
+}
+
+function isRiskVerificationHold(hold: ActiveVerificationHold): boolean {
+  return (
+    hasActiveUntil(hold.quarantined_until) ||
+    hasActiveUntil(hold.force_verify_until) ||
+    hold.validation_hold_cause === 'invalid_samples'
+  );
+}
+
+function validationHoldUntilLabel(hold: ActiveVerificationHold): string {
+  if (!hasActiveUntil(hold.validation_forced_until)) return '-';
+  const label = holdUntilLabel(hold.validation_forced_until);
+  return isTemporaryValidationAssist(hold) ? `up to ${label}` : label;
+}
+
+function validationHoldUntilHint(hold: ActiveVerificationHold): string | null {
+  if (!hasActiveUntil(hold.validation_forced_until)) return null;
+  switch (hold.validation_hold_cause) {
+    case 'provisional_backlog':
+      return 'auto-clears once backlog drains';
+    case 'payout_coverage':
+      return 'auto-clears once coverage recovers';
+    default:
+      return null;
+  }
 }
 
 
@@ -558,7 +604,6 @@ export function AdminPage({
 
   useEffect(() => {
     if (!active || !apiKey || liveTick <= 0) return;
-    if (liveTick % 2 !== 0) return;
 
     // Always refresh overview data
     void loadHealth();
@@ -712,6 +757,14 @@ export function AdminPage({
   const rewardBreakdownPaidOut = rewardBreakdown?.block.paid_out ?? false;
   const rewardBreakdownProjected = !!rewardBreakdown && !rewardBreakdownOrphaned && !rewardBreakdown.block.paid_out;
   const activeVerificationHolds = health?.active_verification_holds ?? [];
+  const riskVerificationHolds = useMemo(
+    () => activeVerificationHolds.filter((hold) => isRiskVerificationHold(hold)),
+    [activeVerificationHolds]
+  );
+  const temporaryValidationHolds = useMemo(
+    () => activeVerificationHolds.filter((hold) => isTemporaryValidationAssist(hold)),
+    [activeVerificationHolds]
+  );
   const poolActivity = health?.pool_activity ?? null;
   const unpaidPayoutCount = health?.payouts?.unpaid_count ?? health?.payouts?.pending_count ?? null;
   const unpaidPayoutAmount = health?.payouts?.unpaid_amount ?? health?.payouts?.pending_amount ?? null;
@@ -762,6 +815,19 @@ export function AdminPage({
   const shareTimeout5m = shareWindowReasonPct(shareWindow5m, 'validation timeout');
   const shareBusyCount5m = shareWindowReasonCount(shareWindow5m, 'server busy');
   const shareTimeoutCount5m = shareWindowReasonCount(shareWindow5m, 'validation timeout');
+  const shareInvalidProof5m = shareWindowReasonPct(shareWindow5m, 'invalid share proof') ?? 0;
+  const shareHotAccepts = shareValidation?.hot_accepts ?? 0;
+  const shareSyncFullVerifies = shareValidation?.sync_full_verifies ?? 0;
+  const shareHotPathBackedUp =
+    shareBusyCount5m + shareTimeoutCount5m > 0 ||
+    shareSubmitQueueDepth > 0 ||
+    shareValidationQueueDepth > 0 ||
+    shareSubmitOldestAge >= 2000 ||
+    shareValidationOldestAge >= 2000;
+  const shareHotPathRecentlySlow =
+    shareSubmitWaitP95 >= 5000 || shareValidationWaitP95 >= 5000;
+  const shareActiveTopReject =
+    shareWindow5m?.by_reason?.[0] ?? shareWindow1h?.by_reason?.[0] ?? shareWindow24h?.by_reason?.[0] ?? null;
   const sharePressureSignal = useMemo(() => {
     if (!shareDiagnostics) {
       return {
@@ -770,24 +836,45 @@ export function AdminPage({
         tone: 'var(--muted)',
       };
     }
-    if (shareValidation?.overload_mode === 'emergency') {
+    if (shareValidation?.overload_mode === 'emergency' && shareHotPathBackedUp) {
       return {
         label: 'Emergency shed',
         detail: 'Regular shares are being admitted with minimal verification because the regular share pipeline is severely backed up.',
         tone: 'var(--warn)',
       };
     }
-    if (shareValidation?.overload_mode === 'shed') {
+    if (shareValidation?.overload_mode === 'emergency') {
+      return {
+        label: 'Recovered recently',
+        detail: 'The pool recently entered overload protection, but the live submit and validation queues are draining again.',
+        tone: 'var(--warn)',
+      };
+    }
+    if (shareValidation?.overload_mode === 'shed' && shareHotPathBackedUp) {
       return {
         label: 'Shedding',
         detail: 'Sample rate is being reduced because the regular share pipeline is backing up.',
         tone: 'var(--warn)',
       };
     }
-    if (shareBusyCount5m > 0 || shareTimeoutCount5m > 0 || shareSubmitOldestAge >= 2000 || shareValidationOldestAge >= 2000) {
+    if (shareValidation?.overload_mode === 'shed') {
+      return {
+        label: 'Recovered recently',
+        detail: 'The pool recently reduced sampling because of queue pressure, but the live queue is clear now.',
+        tone: 'var(--warn)',
+      };
+    }
+    if (shareHotPathBackedUp) {
       return {
         label: 'Queue pressure',
         detail: 'Backlog is visible even though overload shedding has not fully tripped yet.',
+        tone: 'var(--warn)',
+      };
+    }
+    if (shareHotPathRecentlySlow) {
+      return {
+        label: 'Recently slowed',
+        detail: 'The live queue is clear, but recent submit or validation waits were elevated.',
         tone: 'var(--warn)',
       };
     }
@@ -799,11 +886,227 @@ export function AdminPage({
   }, [
     shareBusyCount5m,
     shareDiagnostics,
-    shareSubmitOldestAge,
+    shareHotPathBackedUp,
+    shareHotPathRecentlySlow,
+    shareValidation?.overload_mode,
+    shareTimeoutCount5m,
+  ]);
+  const shareHotPathFocus = useMemo(() => {
+    if (!shareDiagnostics) {
+      return {
+        tone: 'warn' as const,
+        title: 'Waiting for data',
+        detail: 'Share runtime diagnostics have not loaded yet.',
+      };
+    }
+    if (
+      shareHotPathBackedUp &&
+      (shareValidation?.overload_mode === 'emergency' ||
+        shareBusyCount5m + shareTimeoutCount5m > 0 ||
+        shareSubmitWaitP95 >= 5000 ||
+        shareValidationWaitP95 >= 5000)
+    ) {
+      return {
+        tone: 'critical' as const,
+        title: 'Hot path is under stress',
+        detail: `Miners are waiting on submit acknowledgements. Submit ${formatMillis(
+          shareSubmitWaitP95
+        )} · validation ${formatMillis(shareValidationWaitP95)}.`,
+      };
+    }
+    if (shareHotPathRecentlySlow) {
+      return {
+        tone: 'warn' as const,
+        title: 'Hot path recently spiked',
+        detail: `Queues have drained, but recent waits were elevated. Submit ${formatMillis(
+          shareSubmitWaitP95
+        )} · validation ${formatMillis(shareValidationWaitP95)}.`,
+      };
+    }
+    if (
+      shareValidation?.overload_mode === 'shed' ||
+      shareHotPathBackedUp ||
+      shareSubmitWaitP95 >= 500 ||
+      shareValidationWaitP95 >= 500
+    ) {
+      return {
+        tone: 'warn' as const,
+        title: 'Watch submit latency',
+        detail: `Hot accepts are still moving, but latency is visible. Submit ${formatMillis(
+          shareSubmitWaitP95
+        )} · validation ${formatMillis(shareValidationWaitP95)}.`,
+      };
+    }
+    return {
+      tone: 'ok' as const,
+      title: 'Hot path is healthy',
+      detail: 'New shares are being admitted without queue pressure.',
+    };
+  }, [
+    shareBusyCount5m,
+    shareDiagnostics,
+    shareHotPathBackedUp,
+    shareHotPathRecentlySlow,
+    shareSubmitWaitP95,
     shareTimeoutCount5m,
     shareValidation?.overload_mode,
-    shareValidationOldestAge,
+    shareValidationWaitP95,
   ]);
+  const shareAuditFocus = useMemo(() => {
+    if (!shareDiagnostics) {
+      return {
+        state: 'waiting' as const,
+        tone: 'warn' as const,
+        title: 'Waiting for data',
+        detail: 'Audit timing has not loaded yet.',
+        badge: 'Loading',
+      };
+    }
+    if (shareValidation?.audit_deferred || shareAuditQueueDepth >= 25 || shareAuditWaitP95 >= 30000) {
+      return {
+        state: 'critical' as const,
+        tone: 'critical' as const,
+        title: 'Audit is falling behind',
+        detail: `Coverage work is lagging. Queue ${shareAuditQueueDepth} · wait ${formatMillis(
+          shareAuditWaitP95
+        )} · deferred ${shareValidation?.audit_deferred ?? 0}.`,
+        badge: 'Lagging',
+      };
+    }
+    if (shareAuditQueueDepth >= 10 || (shareAuditQueueDepth > 0 && shareAuditWaitP95 >= 15000)) {
+      return {
+        state: 'trailing' as const,
+        tone: 'warn' as const,
+        title: 'Audit is trailing',
+        detail: `Background verification is catching up. Queue ${shareAuditQueueDepth} · wait ${formatMillis(
+          shareAuditWaitP95
+        )}.`,
+        badge: 'Trailing',
+      };
+    }
+    if (shareAuditWaitP95 >= 10000) {
+      return {
+        state: 'recent' as const,
+        tone: 'ok' as const,
+        title: 'Audit recently lagged',
+        detail: `The recent p95 wait reached ${formatMillis(
+          shareAuditWaitP95
+        )}, but the queue is drained now.`,
+        badge: 'Recovered',
+      };
+    }
+    return {
+      state: 'ok' as const,
+      tone: 'ok' as const,
+      title: 'Audit is keeping up',
+      detail: 'Background verification is draining normally.',
+      badge: 'Keeping up',
+    };
+  }, [shareAuditQueueDepth, shareAuditWaitP95, shareDiagnostics, shareValidation?.audit_deferred]);
+  const shareRejectFocus = useMemo(() => {
+    const recentRejectPct = shareWindow5m?.rejection_rate_pct ?? 0;
+    const hourlyRejectPct = shareWindow1h?.rejection_rate_pct ?? 0;
+    const dailyRejectPct = shareWindow24h?.rejection_rate_pct ?? 0;
+    const topReason = shareActiveTopReject ? `${shareActiveTopReject.reason} (${shareActiveTopReject.count})` : 'none';
+    if (!shareDiagnostics) {
+      return {
+        tone: 'warn' as const,
+        title: 'Waiting for data',
+        detail: 'Reject telemetry has not loaded yet.',
+      };
+    }
+    if (recentRejectPct >= 5 || shareInvalidProof5m >= 1 || shareBusyCount5m + shareTimeoutCount5m >= 5) {
+      return {
+        tone: 'critical' as const,
+        title: 'Rejects need attention',
+        detail: `5m reject ${pct(recentRejectPct)}. Top reject: ${topReason}.`,
+      };
+    }
+    if (recentRejectPct > 0 || hourlyRejectPct > 0 || dailyRejectPct >= 1) {
+      return {
+        tone: 'warn' as const,
+        title: 'Watch rejects',
+        detail: `5m ${pct(recentRejectPct)} · 1h ${pct(hourlyRejectPct)} · 24h ${pct(dailyRejectPct)}. Top reject: ${topReason}.`,
+      };
+    }
+    return {
+      tone: 'ok' as const,
+      title: 'Rejects are clean',
+      detail: `No recent reject spike. 24h reject rate is ${pct(dailyRejectPct)}.`,
+    };
+  }, [
+    shareActiveTopReject,
+    shareBusyCount5m,
+    shareDiagnostics,
+    shareInvalidProof5m,
+    shareTimeoutCount5m,
+    shareWindow1h?.rejection_rate_pct,
+    shareWindow24h?.rejection_rate_pct,
+    shareWindow5m?.rejection_rate_pct,
+  ]);
+  const shareOperatorFocus = useMemo(() => {
+    if (!shareDiagnostics) {
+      return {
+        tone: 'warn' as const,
+        label: 'Loading',
+        title: 'Waiting for share diagnostics',
+        detail: 'The pool has not published the latest share runtime snapshot yet.',
+        next: 'If this persists, check the API and Stratum runtime snapshots.',
+      };
+    }
+    if (shareHotPathFocus.tone === 'critical') {
+      return {
+        tone: 'critical' as const,
+        label: 'Act now',
+        title: 'Protect the hot path',
+        detail: 'Miners are feeling submit or validation latency right now. Fix this before worrying about payout coverage.',
+        next: 'Watch busy/timeout rejects, submit wait p95, and validation wait p95.',
+      };
+    }
+    if (shareRejectFocus.tone === 'critical') {
+      return {
+        tone: 'critical' as const,
+        label: 'Act now',
+        title: 'Investigate the reject spike',
+        detail: 'Recent rejects are elevated enough to affect miners directly.',
+        next: 'Start with the top reject reason and the 5m window.',
+      };
+    }
+    if (shareHotPathFocus.tone === 'warn') {
+      return {
+        tone: 'warn' as const,
+        label: 'Watch',
+        title: 'Submit latency is the main risk',
+        detail: 'The hot path is still working, but it is the first thing that could degrade if load rises.',
+        next: 'Keep submit and validation waits close to zero.',
+      };
+    }
+    if (shareAuditFocus.state === 'critical' || shareAuditFocus.state === 'trailing') {
+      return {
+        tone: 'warn' as const,
+        label: 'Watch',
+        title: 'Background audit is the main follow-up',
+        detail: 'Mining is healthy, but payout coverage work is trailing and may need more headroom.',
+        next: 'Watch audit queue depth and audit wait p95.',
+      };
+    }
+    if (shareRejectFocus.tone === 'warn') {
+      return {
+        tone: 'warn' as const,
+        label: 'Watch',
+        title: 'Mining is healthy, but rejects deserve a look',
+        detail: 'There is no hot-path pressure, but rejects are the main thing worth understanding next.',
+        next: 'Compare 5m, 1h, and 24h windows to see whether this is active or historical.',
+      };
+    }
+    return {
+      tone: 'ok' as const,
+      label: 'Healthy',
+      title: 'Nothing urgent',
+      detail: 'The hot path is healthy, rejects are quiet, and background verification is keeping up.',
+      next: 'Only dig into advanced diagnostics if payouts look unfair or a miner reports lag.',
+    };
+  }, [shareAuditFocus.state, shareDiagnostics, shareHotPathFocus.tone, shareRejectFocus.tone]);
   const recoveryPrimary = useMemo(
     () => recoveryStatus?.instances.find((item) => item.instance === 'primary') ?? null,
     [recoveryStatus]
@@ -997,18 +1300,25 @@ export function AdminPage({
           <div className="stats-grid stats-grid-dense admin-overview-strip">
             <div
               className="stat-card"
-              style={activeVerificationHolds.length > 0 ? { borderColor: 'var(--warn)' } : undefined}
+              style={riskVerificationHolds.length > 0 ? { borderColor: 'var(--warn)' } : undefined}
               onClick={() => setTab('holds')}
             >
-              <div className="label">Verification Holds</div>
+              <div className="label">Risk Holds</div>
               <div
                 className="value mono"
-                style={activeVerificationHolds.length > 0 ? { color: 'var(--warn)' } : undefined}
+                style={riskVerificationHolds.length > 0 ? { color: 'var(--warn)' } : undefined}
               >
-                {activeVerificationHolds.length}
+                {riskVerificationHolds.length}
               </div>
               <div className="stat-meta">
-                {activeVerificationHolds.length > 0 ? 'miners quarantined or forced-verify' : 'all clear'}
+                {riskVerificationHolds.length > 0 ? 'quarantine or risk review active' : 'no risky miners'}
+              </div>
+              <div className="stat-meta">
+                {temporaryValidationHolds.length > 0
+                  ? `${temporaryValidationHolds.length} temporary validation assist${
+                      temporaryValidationHolds.length === 1 ? '' : 's'
+                    }`
+                  : 'no temporary assists'}
               </div>
             </div>
             <div className="stat-card" onClick={() => setTab('shares')}>
@@ -1559,217 +1869,292 @@ export function AdminPage({
 
           <div style={{ display: tab === 'shares' ? '' : 'none' }}>
             <div className="stats-card-group">
-              <div className="stats-card-group-title">Overview</div>
-              <div className="stats-card-group-grid stats-grid-dense">
-                <div className="stat-card">
-                  <div className="label">5m Reject Rate</div>
-                  <div className="value mono">{pct(shareWindow5m?.rejection_rate_pct)}</div>
-                  <div className="stat-meta">{shareWindow5m?.rejected ?? 0} rejected</div>
+              <div className="section-header" style={{ marginBottom: 12 }}>
+                <div>
+                  <div className="stats-card-group-title">Shares</div>
+                  <div className="share-focus-title">{shareOperatorFocus.title}</div>
+                  <div className="section-lead" style={{ maxWidth: '72ch' }}>
+                    {shareOperatorFocus.detail}
+                  </div>
                 </div>
-                <div className="stat-card">
-                  <div className="label">5m Invalid Proof</div>
-                  <div className="value mono">{pct(shareWindowReasonPct(shareWindow5m, 'invalid share proof'))}</div>
-                  <div className="stat-meta">{shareWindowReasonCount(shareWindow5m, 'invalid share proof')} rejects</div>
+                <span className={roundChipClass(shareOperatorFocus.tone)}>{shareOperatorFocus.label}</span>
+              </div>
+              <div className="share-focus-next">Next: {shareOperatorFocus.next}</div>
+              <div className="share-focus-grid">
+                <div className="share-focus-card">
+                  <div className="share-focus-card-head">
+                    <div className="share-focus-card-title">Hot Path</div>
+                    <span className={roundChipClass(shareHotPathFocus.tone)}>
+                      {shareHotPathFocus.tone === 'ok'
+                        ? 'Healthy'
+                        : shareHotPathFocus.tone === 'warn'
+                          ? 'Watch'
+                          : 'Act now'}
+                    </span>
+                  </div>
+                  <div className="share-focus-card-body">{shareHotPathFocus.title}</div>
+                  <div className="stat-meta">
+                    <div>{shareHotPathFocus.detail}</div>
+                    <div>
+                      {shareHotAccepts} hot accepts · {shareSyncFullVerifies} sync verified
+                    </div>
+                  </div>
                 </div>
-                <div className="stat-card">
-                  <div className="label">1h Reject Rate</div>
-                  <div className="value mono">{pct(shareWindow1h?.rejection_rate_pct)}</div>
-                  <div className="stat-meta">{shareWindow1h?.rejected ?? 0} rejected</div>
+                <div className="share-focus-card">
+                  <div className="share-focus-card-head">
+                    <div className="share-focus-card-title">Background Audit</div>
+                    <span className={roundChipClass(shareAuditFocus.tone)}>{shareAuditFocus.badge}</span>
+                  </div>
+                  <div className="share-focus-card-body">{shareAuditFocus.title}</div>
+                  <div className="stat-meta">
+                    <div>{shareAuditFocus.detail}</div>
+                    <div>
+                      {shareValidation?.audit_verified ?? 0} verified · {shareValidation?.audit_rejected ?? 0} rejected ·{' '}
+                      {shareValidation?.audit_deferred ?? 0} deferred
+                    </div>
+                  </div>
                 </div>
-                <div className="stat-card">
-                  <div className="label">24h Reject Rate</div>
-                  <div className="value mono">{pct(shareWindow24h?.rejection_rate_pct)}</div>
-                  <div className="stat-meta">{shareWindow24h?.rejected ?? 0} rejected</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Overload Mode</div>
-                  <div className="value mono">{overloadModeLabel(shareValidation?.overload_mode)}</div>
-                  <div className="stat-meta">{sharePressureSignal.detail}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Effective Sample Rate</div>
-                  <div className="value mono">{ratioPct(shareValidation?.effective_sample_rate)}</div>
-                  <div className="stat-meta">{shareValidation?.sampled_shares ?? 0} sampled shares</div>
+                <div className="share-focus-card">
+                  <div className="share-focus-card-head">
+                    <div className="share-focus-card-title">Rejects</div>
+                    <span className={roundChipClass(shareRejectFocus.tone)}>
+                      {shareRejectFocus.tone === 'ok'
+                        ? 'Clean'
+                        : shareRejectFocus.tone === 'warn'
+                          ? 'Watch'
+                          : 'Investigate'}
+                    </span>
+                  </div>
+                  <div className="share-focus-card-body">{shareRejectFocus.title}</div>
+                  <div className="stat-meta">
+                    <div>{shareRejectFocus.detail}</div>
+                    <div>
+                      5m {pct(shareWindow5m?.rejection_rate_pct)} · 1h {pct(shareWindow1h?.rejection_rate_pct)} · 24h{' '}
+                      {pct(shareWindow24h?.rejection_rate_pct)}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
 
             <div className="stats-card-group">
-              <div className="stats-card-group-title">Runtime Pressure</div>
+              <div className="stats-card-group-title">Live Pipeline</div>
               <div className="stats-card-group-grid stats-grid-dense">
                 <div className="stat-card">
-                  <div className="label">Submit Queue</div>
-                  <div className="value mono">{shareSubmitQueueDepth}</div>
-                  <div className="stat-meta">
-                    {shareSubmit?.candidate_queue_depth ?? 0} candidate · {shareSubmit?.regular_queue_depth ?? 0} regular
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Submit Wait P95</div>
+                  <div className="label">Submit Path</div>
                   <div className="value mono">{formatMillis(shareSubmitWaitP95)}</div>
-                  <div className="stat-meta">oldest {formatMillis(shareSubmitOldestAge)}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Validation Queue</div>
-                  <div className="value mono">{shareValidationQueueDepth}</div>
                   <div className="stat-meta">
-                    {shareValidation?.candidate_queue_depth ?? 0} candidate · {shareValidation?.regular_queue_depth ?? 0} regular
+                    {shareSubmitQueueDepth} queued · oldest {formatMillis(shareSubmitOldestAge)}
                   </div>
                 </div>
                 <div className="stat-card">
-                  <div className="label">Audit Queue</div>
-                  <div className="value mono">{shareAuditQueueDepth}</div>
-                  <div className="stat-meta">oldest {formatMillis(shareAuditOldestAge)}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Validation Wait P95</div>
+                  <div className="label">Live Validation</div>
                   <div className="value mono">{formatMillis(shareValidationWaitP95)}</div>
-                  <div className="stat-meta">oldest {formatMillis(shareValidationOldestAge)}</div>
+                  <div className="stat-meta">
+                    {shareValidationQueueDepth} queued · hash {formatMillis(shareValidationDurationP95)}
+                  </div>
                 </div>
                 <div className="stat-card">
-                  <div className="label">Audit Wait / Time P95</div>
+                  <div className="label">Background Audit</div>
                   <div className="value mono">{formatMillis(shareAuditWaitP95)}</div>
-                  <div className="stat-meta">hash {formatMillis(shareAuditDurationP95)}</div>
+                  <div className="stat-meta">
+                    {shareAuditQueueDepth} queued · hash {formatMillis(shareAuditDurationP95)}
+                  </div>
                 </div>
                 <div className="stat-card">
-                  <div className="label">Validation Time P95</div>
-                  <div className="value mono">{formatMillis(shareValidationDurationP95)}</div>
-                  <div className="stat-meta">{shareValidation?.in_flight ?? 0} in flight</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Pending Provisional</div>
-                  <div className="value mono">{shareValidation?.pending_provisional ?? '-'}</div>
-                  <div className="stat-meta">{shareValidation?.forced_verify_addresses ?? 0} forced addresses</div>
+                  <div className="label">Verification Coverage</div>
+                  <div className="value mono">{ratioPct(shareValidation?.effective_sample_rate)}</div>
+                  <div className="stat-meta">
+                    {shareValidation?.sampled_shares ?? 0} sampled · overload {overloadModeLabel(shareValidation?.overload_mode)}
+                  </div>
                 </div>
                 <div className="stat-card">
                   <div className="label">5m Busy / Timeout</div>
-                  <div className="value mono">
-                    {shareBusyCount5m + shareTimeoutCount5m}
-                  </div>
+                  <div className="value mono">{shareBusyCount5m + shareTimeoutCount5m}</div>
                   <div className="stat-meta">
                     {shareBusyCount5m} busy · {shareTimeoutCount5m} timeout
                   </div>
                 </div>
-                <div className="stat-card">
-                  <div className="label">Candidate False Claims</div>
-                  <div className="value mono">{shareValidation?.candidate_false_claims ?? 0}</div>
-                  <div className="stat-meta" style={{ color: sharePressureSignal.tone }}>
-                    {sharePressureSignal.label}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Hot Accepts / Sync</div>
-                  <div className="value mono">{shareValidation?.hot_accepts ?? 0}</div>
-                  <div className="stat-meta">{shareValidation?.sync_full_verifies ?? 0} sync verified</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Audit Outcomes</div>
-                  <div className="value mono">{shareValidation?.audit_verified ?? 0}</div>
-                  <div className="stat-meta">
-                    {shareValidation?.audit_rejected ?? 0} rejected · {shareValidation?.audit_deferred ?? 0} deferred
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Audit Enqueued</div>
-                  <div className="value mono">{shareValidation?.audit_enqueued ?? 0}</div>
-                  <div className="stat-meta">{shareAuditQueueDepth} queued now</div>
-                </div>
               </div>
             </div>
 
-            <div className="card table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Window</th>
-                    <th>Accepted</th>
-                    <th>Rejected</th>
-                    <th>Reject %</th>
-                    <th>Invalid %</th>
-                    <th>Low Diff %</th>
-                    <th>Stale %</th>
-                    <th>Quarantined %</th>
-                    <th>Busy %</th>
-                    <th>Timeout %</th>
-                    <th>Top Reject</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {!shareWindows.length ? (
-                    <tr>
-                      <td colSpan={11} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                        No share diagnostics available yet
-                      </td>
-                    </tr>
-                  ) : (
-                    shareWindows.map((window) => {
-                      const topReason = window.by_reason?.[0];
-                      const topReasonRejectPct =
-                        topReason && window.rejected > 0 ? (topReason.count / window.rejected) * 100 : 0;
-                      return (
-                        <tr key={window.label}>
-                          <td>
-                            <div style={{ fontWeight: 600 }}>{window.label}</div>
-                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>{window.total} submits</div>
-                          </td>
-                          <td className="mono">{window.accepted}</td>
-                          <td className="mono">{window.rejected}</td>
-                          <td className="mono">{pct(window.rejection_rate_pct)}</td>
-                          <td className="mono">
-                            {pct(shareWindowReasonPct(window, 'invalid share proof'))}
-                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                              {shareWindowReasonCount(window, 'invalid share proof')} rejects
-                            </div>
-                          </td>
-                          <td className="mono">
-                            {pct(shareWindowReasonPct(window, 'low difficulty share'))}
-                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                              {shareWindowReasonCount(window, 'low difficulty share')} rejects
-                            </div>
-                          </td>
-                          <td className="mono">
-                            {pct(shareWindowReasonPct(window, 'stale job'))}
-                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                              {shareWindowReasonCount(window, 'stale job')} rejects
-                            </div>
-                          </td>
-                          <td className="mono">
-                            {pct(shareWindowReasonPct(window, 'address quarantined'))}
-                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                              {shareWindowReasonCount(window, 'address quarantined')} rejects
-                            </div>
-                          </td>
-                          <td className="mono">
-                            {pct(shareWindowReasonPct(window, 'server busy'))}
-                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                              {shareWindowReasonCount(window, 'server busy')} rejects
-                            </div>
-                          </td>
-                          <td className="mono">
-                            {pct(shareWindowReasonPct(window, 'validation timeout'))}
-                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                              {shareWindowReasonCount(window, 'validation timeout')} rejects
-                            </div>
-                          </td>
-                          <td>
-                            {!topReason ? (
-                              <span style={{ color: 'var(--muted)' }}>None</span>
-                            ) : (
-                              <>
-                                <div style={{ fontWeight: 600 }}>{topReason.reason}</div>
-                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                                  {topReason.count} rejects · {pct(topReasonRejectPct)} of rejects
-                                </div>
-                              </>
-                            )}
+            <details className="card share-advanced">
+              <summary>
+                <span>Advanced diagnostics</span>
+                <span className="share-advanced-summary">
+                  Use this when you need the raw queue timings, counters, and window-by-window reject breakdown.
+                </span>
+              </summary>
+              <div className="share-advanced-body">
+                <div className="stats-card-group" style={{ marginBottom: 16 }}>
+                  <div className="stats-card-group-title">Detailed Runtime Metrics</div>
+                  <div className="stats-card-group-grid stats-grid-dense">
+                    <div className="stat-card">
+                      <div className="label">Submit Queue</div>
+                      <div className="value mono">{shareSubmitQueueDepth}</div>
+                      <div className="stat-meta">
+                        {shareSubmit?.candidate_queue_depth ?? 0} candidate · {shareSubmit?.regular_queue_depth ?? 0} regular
+                      </div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Validation Queue</div>
+                      <div className="value mono">{shareValidationQueueDepth}</div>
+                      <div className="stat-meta">
+                        {shareValidation?.candidate_queue_depth ?? 0} candidate · {shareValidation?.regular_queue_depth ?? 0} regular
+                      </div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Audit Queue</div>
+                      <div className="value mono">{shareAuditQueueDepth}</div>
+                      <div className="stat-meta">oldest {formatMillis(shareAuditOldestAge)}</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Validation Wait P95</div>
+                      <div className="value mono">{formatMillis(shareValidationWaitP95)}</div>
+                      <div className="stat-meta">oldest {formatMillis(shareValidationOldestAge)}</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Audit Wait / Time P95</div>
+                      <div className="value mono">{formatMillis(shareAuditWaitP95)}</div>
+                      <div className="stat-meta">hash {formatMillis(shareAuditDurationP95)}</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Validation Time P95</div>
+                      <div className="value mono">{formatMillis(shareValidationDurationP95)}</div>
+                      <div className="stat-meta">{shareValidation?.in_flight ?? 0} in flight</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Candidate False Claims</div>
+                      <div className="value mono">{shareValidation?.candidate_false_claims ?? 0}</div>
+                      <div className="stat-meta" style={{ color: sharePressureSignal.tone }}>
+                        {sharePressureSignal.label}
+                      </div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Hot Accepts / Sync</div>
+                      <div className="value mono">{shareHotAccepts}</div>
+                      <div className="stat-meta">{shareSyncFullVerifies} sync verified</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Audit Outcomes</div>
+                      <div className="value mono">{shareValidation?.audit_verified ?? 0}</div>
+                      <div className="stat-meta">
+                        {shareValidation?.audit_rejected ?? 0} rejected · {shareValidation?.audit_deferred ?? 0} deferred
+                      </div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Audit Enqueued</div>
+                      <div className="value mono">{shareValidation?.audit_enqueued ?? 0}</div>
+                      <div className="stat-meta">{shareAuditQueueDepth} queued now</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">5m Invalid Proof</div>
+                      <div className="value mono">{pct(shareWindowReasonPct(shareWindow5m, 'invalid share proof'))}</div>
+                      <div className="stat-meta">{shareWindowReasonCount(shareWindow5m, 'invalid share proof')} rejects</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Overload Mode</div>
+                      <div className="value mono">{overloadModeLabel(shareValidation?.overload_mode)}</div>
+                      <div className="stat-meta">{sharePressureSignal.detail}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Window</th>
+                        <th>Accepted</th>
+                        <th>Rejected</th>
+                        <th>Reject %</th>
+                        <th>Invalid %</th>
+                        <th>Low Diff %</th>
+                        <th>Stale %</th>
+                        <th>Quarantined %</th>
+                        <th>Busy %</th>
+                        <th>Timeout %</th>
+                        <th>Top Reject</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {!shareWindows.length ? (
+                        <tr>
+                          <td colSpan={11} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                            No share diagnostics available yet
                           </td>
                         </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
+                      ) : (
+                        shareWindows.map((window) => {
+                          const topReason = window.by_reason?.[0];
+                          const topReasonRejectPct =
+                            topReason && window.rejected > 0 ? (topReason.count / window.rejected) * 100 : 0;
+                          return (
+                            <tr key={window.label}>
+                              <td>
+                                <div style={{ fontWeight: 600 }}>{window.label}</div>
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>{window.total} submits</div>
+                              </td>
+                              <td className="mono">{window.accepted}</td>
+                              <td className="mono">{window.rejected}</td>
+                              <td className="mono">{pct(window.rejection_rate_pct)}</td>
+                              <td className="mono">
+                                {pct(shareWindowReasonPct(window, 'invalid share proof'))}
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                  {shareWindowReasonCount(window, 'invalid share proof')} rejects
+                                </div>
+                              </td>
+                              <td className="mono">
+                                {pct(shareWindowReasonPct(window, 'low difficulty share'))}
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                  {shareWindowReasonCount(window, 'low difficulty share')} rejects
+                                </div>
+                              </td>
+                              <td className="mono">
+                                {pct(shareWindowReasonPct(window, 'stale job'))}
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                  {shareWindowReasonCount(window, 'stale job')} rejects
+                                </div>
+                              </td>
+                              <td className="mono">
+                                {pct(shareWindowReasonPct(window, 'address quarantined'))}
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                  {shareWindowReasonCount(window, 'address quarantined')} rejects
+                                </div>
+                              </td>
+                              <td className="mono">
+                                {pct(shareWindowReasonPct(window, 'server busy'))}
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                  {shareWindowReasonCount(window, 'server busy')} rejects
+                                </div>
+                              </td>
+                              <td className="mono">
+                                {pct(shareWindowReasonPct(window, 'validation timeout'))}
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                  {shareWindowReasonCount(window, 'validation timeout')} rejects
+                                </div>
+                              </td>
+                              <td>
+                                {!topReason ? (
+                                  <span style={{ color: 'var(--muted)' }}>None</span>
+                                ) : (
+                                  <>
+                                    <div style={{ fontWeight: 600 }}>{topReason.reason}</div>
+                                    <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                      {topReason.count} rejects · {pct(topReasonRejectPct)} of rejects
+                                    </div>
+                                  </>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </details>
           </div>
 
           <div style={{ display: tab === 'holds' ? '' : 'none' }}>
@@ -1777,16 +2162,23 @@ export function AdminPage({
               <div className="stats-card-group-title">Verification Holds</div>
               <div className="stats-card-group-grid stats-grid-dense">
                 <div className="stat-card">
-                  <div className="label">Active Holds</div>
-                  <div className="value mono">{activeVerificationHolds.length}</div>
+                  <div className="label">Risk Holds</div>
+                  <div className="value mono">{riskVerificationHolds.length}</div>
                 </div>
                 <div className="stat-card">
-                  <div className="label">Forced Verify</div>
-                  <div className="value mono">{health?.validation?.forced_verify_addresses ?? '-'}</div>
+                  <div className="label">Temporary Assists</div>
+                  <div className="value mono">{temporaryValidationHolds.length}</div>
+                  <div className="stat-meta">coverage or backlog boosts</div>
                 </div>
                 <div className="stat-card">
-                  <div className="label">Pending Provisional</div>
-                  <div className="value mono">{health?.validation?.pending_provisional ?? '-'}</div>
+                  <div className="label">Risk Forced Verify</div>
+                  <div className="value mono">
+                    {
+                      activeVerificationHolds.filter(
+                        (hold) => hasActiveUntil(hold.force_verify_until) || hold.validation_hold_cause === 'invalid_samples'
+                      ).length
+                    }
+                  </div>
                 </div>
                 <div className="stat-card">
                   <div className="label">Fraud Detections</div>
@@ -1800,14 +2192,14 @@ export function AdminPage({
                 <div>
                   <h3>Active Verification Holds</h3>
                   <p className="section-lead">
-                    Addresses currently quarantined or forced into verified-only share validation.
+                    Risk holds and temporary validation assists currently affecting share validation.
                   </p>
                 </div>
               </div>
               <div style={{ marginTop: 12, fontSize: 13, color: 'var(--muted)' }}>
-                <span className="mono">Validation forced</span> comes from the share validation engine after repeated
-                invalid samples, suspected fraud, too many provisional shares waiting for full verification, or a
-                temporary payout-coverage boost for honest miners.
+                <span className="mono">Backlog drain</span> and <span className="mono">Payout boost</span> are temporary
+                assists, not fraud events. They clear early as soon as verification catches up, even if the countdown
+                still shows time remaining.
               </div>
               {holdActionError ? (
                 <div
@@ -1876,7 +2268,12 @@ export function AdminPage({
                             {holdUntilLabel(hold.force_verify_until)}
                           </td>
                           <td className="mono" title={holdUntilTitle(hold.validation_forced_until)}>
-                            {holdUntilLabel(hold.validation_forced_until)}
+                            <div>{validationHoldUntilLabel(hold)}</div>
+                            {validationHoldUntilHint(hold) ? (
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                                {validationHoldUntilHint(hold)}
+                              </div>
+                            ) : null}
                           </td>
                           <td className="mono">
                             {hold.strikes}

@@ -22,8 +22,9 @@ const VALIDATION_STATE_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 const VALIDATION_STATE_MAX_TRACKED: usize = 100_000;
 const VALIDATION_PERSIST_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 const VALIDATION_CLEAR_SYNC_INTERVAL: Duration = Duration::from_secs(1);
-const VALIDATION_AUDIT_SCHED_INTERVAL: Duration = Duration::from_secs(10);
+const VALIDATION_AUDIT_SCHED_INTERVAL: Duration = Duration::from_secs(2);
 const VALIDATION_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
+const VALIDATION_AUDIT_TARGET_QUEUE_MULTIPLIER: usize = 2;
 
 #[derive(Debug, Clone)]
 pub struct ValidationTask {
@@ -1593,7 +1594,18 @@ impl ValidationInner {
     }
 
     fn schedule_background_audits(&self, now: SystemTime) {
-        if !self.can_schedule_background_audits(Instant::now()) {
+        let instant_now = Instant::now();
+        if !self.can_schedule_background_audits(instant_now) {
+            return;
+        }
+        let audit_snapshot = self.audit_queue.snapshot(instant_now);
+        let target_depth = self
+            .config
+            .audit_verifier_count()
+            .saturating_mul(VALIDATION_AUDIT_TARGET_QUEUE_MULTIPLIER)
+            .max(1);
+        let mut remaining_budget = target_depth.saturating_sub(audit_snapshot.depth);
+        if remaining_budget == 0 {
             return;
         }
 
@@ -1633,20 +1645,22 @@ impl ValidationInner {
         due.sort_by(|(left, _), (right, _)| left.cmp(right));
         let mut scheduled_addresses = 0usize;
         let mut scheduled_shares = 0usize;
+        let mut share_batches = Vec::<(ValidationAuditSource, VecDeque<PendingAuditShare>)>::new();
         for (address, source) in due.into_iter().take(max_addresses) {
+            let load_limit = per_address_limit.min(remaining_budget.max(1));
             let shares = match source {
                 ValidationAuditSource::ProvisionalBacklog => {
                     self.state_store.load_recent_provisional_audit_shares(
                         &address,
                         provisional_cutoff,
-                        per_address_limit,
+                        load_limit,
                     )
                 }
                 _ => self.state_store.load_pending_payout_audit_shares(
                     &address,
                     &self.config,
                     now,
-                    per_address_limit,
+                    load_limit,
                 ),
             };
             match shares {
@@ -1655,10 +1669,7 @@ impl ValidationInner {
                         continue;
                     }
                     scheduled_addresses += 1;
-                    for share in shares {
-                        scheduled_shares += 1;
-                        self.enqueue_background_audit(share, source);
-                    }
+                    share_batches.push((source, shares.into_iter().collect()));
                 }
                 Err(err) => {
                     tracing::warn!(
@@ -1671,10 +1682,30 @@ impl ValidationInner {
             }
         }
 
+        while remaining_budget > 0 {
+            let mut progress = false;
+            for (source, shares) in share_batches.iter_mut() {
+                let Some(share) = shares.pop_front() else {
+                    continue;
+                };
+                self.enqueue_background_audit(share, *source);
+                scheduled_shares += 1;
+                remaining_budget -= 1;
+                progress = true;
+                if remaining_budget == 0 {
+                    break;
+                }
+            }
+            if !progress {
+                break;
+            }
+        }
+
         if scheduled_shares > 0 {
             tracing::debug!(
                 scheduled_addresses,
                 scheduled_shares,
+                audit_budget = target_depth,
                 regular_queue_depth = self.regular_queue.snapshot(Instant::now()).depth,
                 audit_queue_depth = self.audit_queue.snapshot(Instant::now()).depth,
                 "scheduled background validation audits"
@@ -1767,7 +1798,7 @@ impl ValidationInner {
                 } else {
                     if emergency {
                         state.mode = OverloadMode::Emergency;
-                    } else if shed && state.mode == OverloadMode::Normal {
+                    } else if shed {
                         state.mode = OverloadMode::Shed;
                     }
                     state.below_clear_started_at = None;
@@ -2329,6 +2360,7 @@ mod tests {
     use crate::engine::ShareRecord;
     use crate::pow::{difficulty_to_target, DeterministicTestHasher};
     use crate::store::PoolStore;
+    use std::collections::HashSet;
     use std::sync::Arc;
 
     fn test_store() -> Option<Arc<PoolStore>> {
@@ -2366,6 +2398,112 @@ mod tests {
             provisional_share_delay: "10m".to_string(),
             forced_verify_duration: "1h".to_string(),
             ..Config::default()
+        }
+    }
+
+    #[derive(Default)]
+    struct InMemoryAuditStore {
+        loaded: LoadedValidationState,
+        pending_payout_audits: Mutex<Vec<PendingAuditShare>>,
+        completed: Mutex<HashSet<i64>>,
+    }
+
+    impl InMemoryAuditStore {
+        fn new(loaded: LoadedValidationState, pending_payout_audits: Vec<PendingAuditShare>) -> Self {
+            Self {
+                loaded,
+                pending_payout_audits: Mutex::new(pending_payout_audits),
+                completed: Mutex::new(HashSet::new()),
+            }
+        }
+    }
+
+    impl ValidationStateStore for InMemoryAuditStore {
+        fn load_validation_state(
+            &self,
+            _state_cutoff: SystemTime,
+            _provisional_cutoff: SystemTime,
+            _accepted_window_cutoff: SystemTime,
+            _now: SystemTime,
+        ) -> Result<LoadedValidationState> {
+            Ok(self.loaded.clone())
+        }
+
+        fn upsert_validation_state(&self, _state: &PersistedValidationAddressState) -> Result<()> {
+            Ok(())
+        }
+
+        fn add_validation_provisional(
+            &self,
+            _address: &str,
+            _share_id: Option<i64>,
+            _created_at: SystemTime,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        fn clean_validation_state(
+            &self,
+            _state_cutoff: SystemTime,
+            _provisional_cutoff: SystemTime,
+            _now: SystemTime,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        fn latest_validation_clear_event_id(&self) -> Result<i64> {
+            Ok(0)
+        }
+
+        fn load_validation_clear_events_since(&self, _cursor: i64) -> Result<Vec<ValidationClearEvent>> {
+            Ok(Vec::new())
+        }
+
+        fn load_validation_address_activity(
+            &self,
+            _address: &str,
+            _provisional_cutoff: SystemTime,
+            _accepted_window_cutoff: SystemTime,
+        ) -> Result<LoadedValidationAddressActivity> {
+            Ok(LoadedValidationAddressActivity::default())
+        }
+
+        fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<()> {
+            self.completed.lock().insert(update.share_id);
+            Ok(())
+        }
+
+        fn load_recent_provisional_audit_shares(
+            &self,
+            _address: &str,
+            _provisional_cutoff: SystemTime,
+            _limit: usize,
+        ) -> Result<Vec<PendingAuditShare>> {
+            Ok(Vec::new())
+        }
+
+        fn load_pending_payout_audit_shares(
+            &self,
+            address: &str,
+            _config: &Config,
+            _now: SystemTime,
+            limit: usize,
+        ) -> Result<Vec<PendingAuditShare>> {
+            let completed = self.completed.lock().clone();
+            let pending = self.pending_payout_audits.lock();
+            Ok(pending
+                .iter()
+                .filter(|share| share.miner == address && !completed.contains(&share.share_id))
+                .take(limit)
+                .cloned()
+                .collect())
+        }
+    }
+
+    fn wait_for(predicate: impl Fn() -> bool, timeout: Duration) {
+        let started = Instant::now();
+        while !predicate() && started.elapsed() < timeout {
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
 
@@ -2913,6 +3051,106 @@ mod tests {
     }
 
     #[test]
+    fn background_audit_scheduler_drip_feeds_small_batches() {
+        let mut cfg = test_cfg();
+        cfg.audit_verifiers = 1;
+        cfg.sample_rate = 0.0;
+        cfg.warmup_shares = 0;
+        cfg.min_sample_every = 0;
+        cfg.max_provisional_shares = 100;
+        cfg.provisional_share_delay = "0s".to_string();
+        cfg.payout_scheme = "pplns".to_string();
+        cfg.pplns_window_duration = "6h".to_string();
+        cfg.payout_min_verified_shares = 1;
+        cfg.payout_provisional_cap_multiplier = 1.0;
+
+        let address = "audit-drip-feed".to_string();
+        let base = SystemTime::now() - Duration::from_secs(120);
+        let hasher = DeterministicTestHasher;
+        let mut accepted_window = vec![PersistedValidationAcceptedShare {
+            address: address.clone(),
+            share_id: 1,
+            created_at: base,
+            difficulty: 1,
+            verified: true,
+        }];
+        let mut pending_audits = Vec::new();
+
+        for offset in 0..8u64 {
+            let share_id = 100 + offset as i64;
+            let nonce = 50 + offset;
+            let header_base = vec![9, 8, 7, offset as u8];
+            let created_at = base + Duration::from_secs(offset + 1);
+            let claimed_hash = hasher.hash(&header_base, nonce).expect("hash");
+            accepted_window.push(PersistedValidationAcceptedShare {
+                address: address.clone(),
+                share_id,
+                created_at,
+                difficulty: 1,
+                verified: false,
+            });
+            pending_audits.push(PendingAuditShare {
+                share_id,
+                job_id: format!("audit-drip-{offset}"),
+                miner: address.clone(),
+                worker: "wa".to_string(),
+                difficulty: 1,
+                nonce,
+                claimed_hash: Some(claimed_hash),
+                header_base,
+                network_target: [0xff; 32],
+                created_at,
+            });
+        }
+
+        let store = Arc::new(InMemoryAuditStore::new(
+            LoadedValidationState {
+                states: vec![PersistedValidationAddressState {
+                    address: address.clone(),
+                    total_shares: accepted_window.len() as u64,
+                    sampled_shares: 1,
+                    invalid_samples: 0,
+                    risk_sampled_shares: 1,
+                    risk_invalid_samples: 0,
+                    forced_started_at: None,
+                    forced_until: None,
+                    forced_sampled_shares: 0,
+                    forced_invalid_samples: 0,
+                    resume_forced_at: None,
+                    hold_cause: None,
+                    last_seen_at: SystemTime::now(),
+                }],
+                provisionals: Vec::new(),
+                accepted_window,
+            },
+            pending_audits,
+        ));
+
+        let engine = ValidationEngine::new_with_state_store(
+            cfg,
+            Arc::new(DeterministicTestHasher),
+            Arc::clone(&store) as Arc<dyn ValidationStateStore>,
+        );
+
+        engine.inner.maintenance_tick();
+        wait_for(|| engine.snapshot().audit_enqueued >= 2, Duration::from_secs(1));
+        assert_eq!(
+            engine.snapshot().audit_enqueued,
+            2,
+            "one maintenance pass should only enqueue a bounded drip-feed batch"
+        );
+
+        std::thread::sleep(VALIDATION_AUDIT_SCHED_INTERVAL + Duration::from_millis(100));
+        engine.inner.maintenance_tick();
+        wait_for(|| engine.snapshot().audit_enqueued >= 4, Duration::from_secs(1));
+        let second_pass = engine.snapshot().audit_enqueued;
+        assert!(
+            (4..8).contains(&second_pass),
+            "later maintenance passes should continue draining the backlog in bounded batches, got {second_pass}"
+        );
+    }
+
+    #[test]
     fn full_mode_always_verifies() {
         let mut cfg = test_cfg();
         cfg.validation_mode = "full".to_string();
@@ -3301,7 +3539,7 @@ mod tests {
         let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));
         let submit_queue = Arc::new(QueueTracker::new(32));
         engine.attach_submit_regular_queue(Arc::clone(&submit_queue));
-        submit_queue.push(Instant::now() - Duration::from_secs(6));
+        submit_queue.push(Instant::now() - Duration::from_secs(11));
 
         let snapshot = engine.snapshot();
         assert_eq!(snapshot.overload_mode, OverloadMode::Emergency);
@@ -3311,6 +3549,31 @@ mod tests {
         assert!(
             !result.verified,
             "submit backlog emergency should suppress discretionary full verification"
+        );
+    }
+
+    #[test]
+    fn overload_mode_can_downgrade_from_emergency_to_shed() {
+        let mut cfg = test_cfg();
+        cfg.overload_shed_oldest_age = "4s".to_string();
+        cfg.overload_emergency_oldest_age = "10s".to_string();
+        cfg.overload_clear_oldest_age = "3s".to_string();
+        cfg.overload_clear_hold = "5m".to_string();
+        let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));
+        let submit_queue = Arc::new(QueueTracker::new(32));
+        engine.attach_submit_regular_queue(Arc::clone(&submit_queue));
+
+        let emergency_id = submit_queue.push(Instant::now() - Duration::from_secs(11));
+        assert_eq!(engine.snapshot().overload_mode, OverloadMode::Emergency);
+
+        submit_queue.remove(emergency_id);
+        submit_queue.push(Instant::now() - Duration::from_secs(5));
+
+        let snapshot = engine.snapshot();
+        assert_eq!(
+            snapshot.overload_mode,
+            OverloadMode::Shed,
+            "overload mode should downgrade once the queue is no longer at the emergency threshold"
         );
     }
 }

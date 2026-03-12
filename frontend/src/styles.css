@@ -542,6 +542,54 @@ nav {
   white-space: nowrap;
 }
 
+.share-focus-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.share-focus-next {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+
+.share-focus-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.share-focus-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.share-focus-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.share-focus-card-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.share-focus-card-body {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
 .stats-grid-dense {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
@@ -596,6 +644,39 @@ nav {
   margin-top: 8px;
   display: grid;
   gap: 2px;
+}
+
+.share-advanced {
+  padding: 0;
+  overflow: hidden;
+}
+
+.share-advanced summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 16px 20px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.share-advanced summary::-webkit-details-marker {
+  display: none;
+}
+
+.share-advanced-summary {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  text-align: right;
+}
+
+.share-advanced-body {
+  border-top: 1px solid var(--border);
+  padding: 0 16px 16px;
 }
 
 .stratum-bar {
@@ -1675,6 +1756,10 @@ pre.raw-json {
     grid-template-columns: repeat(2, 1fr);
   }
 
+  .share-focus-grid {
+    grid-template-columns: 1fr;
+  }
+
   .seo-copy-grid {
     grid-template-columns: 1fr;
   }
@@ -1749,6 +1834,11 @@ pre.raw-json {
 
   .stats-card-group-grid {
     grid-template-columns: 1fr;
+  }
+
+  .share-advanced summary {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .container {
