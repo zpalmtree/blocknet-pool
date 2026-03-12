@@ -86,7 +86,9 @@ pub struct Config {
     pub vardiff_target_shares: i32,
     pub vardiff_window: String,
     pub vardiff_retarget_interval: String,
+    pub vardiff_decrease_retarget_interval: String,
     pub vardiff_tolerance: f64,
+    pub vardiff_min_change_pct: f64,
     pub min_share_difficulty: u64,
     pub max_share_difficulty: u64,
 
@@ -206,7 +208,9 @@ impl Default for Config {
             vardiff_target_shares: runtime.vardiff_target_shares,
             vardiff_window: runtime.vardiff_window,
             vardiff_retarget_interval: runtime.vardiff_retarget_interval,
+            vardiff_decrease_retarget_interval: runtime.vardiff_decrease_retarget_interval,
             vardiff_tolerance: runtime.vardiff_tolerance,
+            vardiff_min_change_pct: runtime.vardiff_min_change_pct,
             min_share_difficulty: runtime.min_share_difficulty,
             max_share_difficulty: runtime.max_share_difficulty,
             pool_fee_flat: runtime.pool_fee_flat,
@@ -346,7 +350,9 @@ impl Config {
             vardiff_target_shares: self.vardiff_target_shares,
             vardiff_window: self.vardiff_window.clone(),
             vardiff_retarget_interval: self.vardiff_retarget_interval.clone(),
+            vardiff_decrease_retarget_interval: self.vardiff_decrease_retarget_interval.clone(),
             vardiff_tolerance: self.vardiff_tolerance,
+            vardiff_min_change_pct: self.vardiff_min_change_pct,
             min_share_difficulty: self.min_share_difficulty,
             max_share_difficulty: self.max_share_difficulty,
             pool_fee_flat: self.pool_fee_flat,
@@ -457,7 +463,9 @@ impl Config {
         self.vardiff_target_shares = runtime.vardiff_target_shares;
         self.vardiff_window = runtime.vardiff_window;
         self.vardiff_retarget_interval = runtime.vardiff_retarget_interval;
+        self.vardiff_decrease_retarget_interval = runtime.vardiff_decrease_retarget_interval;
         self.vardiff_tolerance = runtime.vardiff_tolerance;
+        self.vardiff_min_change_pct = runtime.vardiff_min_change_pct;
         self.min_share_difficulty = runtime.min_share_difficulty;
         self.max_share_difficulty = runtime.max_share_difficulty;
         self.pool_fee_flat = runtime.pool_fee_flat;

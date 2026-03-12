@@ -1501,29 +1501,27 @@ impl PoolEngine {
         // periods do not collapse difficulty between the brief fee windows.
         if !is_seine_dev_fee_address(&session.address) {
             let now = Instant::now();
-            let retarget_interval = self
-                .cfg
-                .vardiff_retarget_interval_duration()
-                .clamp(Duration::from_secs(2), Duration::from_secs(8));
             let target_interval = vardiff_target_interval_seconds(&self.cfg);
             let tolerance = self.cfg.vardiff_tolerance.clamp(0.01, 0.95);
-            let can_retarget = session
-                .last_difficulty_adjustment
-                .is_none_or(|last| now.duration_since(last) >= retarget_interval);
-            if can_retarget {
-                if let Some(last) = session.last_accepted_share_at {
-                    let observed_interval = now.duration_since(last).as_secs_f64();
-                    let upper = target_interval * (1.0 + tolerance);
-                    if observed_interval > upper {
-                        let raw_ratio = observed_interval / target_interval;
-                        let ratio = raw_ratio
-                            .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
-                            .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
-                        let next_diff =
-                            ((session.difficulty as f64) / ratio).floor().max(1.0) as u64;
-                        let next_diff = next_diff.clamp(min_diff, max_diff);
-                        session.last_difficulty_adjustment = Some(now);
-                        if next_diff != session.difficulty {
+            if let Some(last) = session.last_accepted_share_at {
+                let observed_interval = now.duration_since(last).as_secs_f64();
+                let upper = target_interval * (1.0 + tolerance);
+                if observed_interval > upper {
+                    let raw_ratio = observed_interval / target_interval;
+                    let ratio = raw_ratio
+                        .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
+                        .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
+                    let next_diff = ((session.difficulty as f64) / ratio).floor().max(1.0) as u64;
+                    let next_diff = next_diff.clamp(min_diff, max_diff);
+                    if next_diff != session.difficulty
+                        && vardiff_change_is_material(&self.cfg, session.difficulty, next_diff)
+                    {
+                        let retarget_interval =
+                            vardiff_retarget_interval_for_direction(&self.cfg, false);
+                        let can_retarget = session.last_difficulty_adjustment.is_none_or(|last| {
+                            now.duration_since(last) >= retarget_interval
+                        });
+                        if can_retarget {
                             let miner = compact_address(&session.address);
                             tracing::debug!(
                                 "vardiff {:>4} -> {:>4} (job tick idle {:>5.1}s, target {:>4.0}s, miner {})",
@@ -1534,6 +1532,7 @@ impl PoolEngine {
                                 miner
                             );
                             session.difficulty = next_diff;
+                            session.last_difficulty_adjustment = Some(now);
                         }
                     }
                 }
@@ -1582,6 +1581,14 @@ impl PoolEngine {
         })
     }
 
+    pub fn session_supports_capability(&self, conn_id: &str, capability: &str) -> bool {
+        let probe = capability.trim().to_ascii_lowercase();
+        self.sessions
+            .lock()
+            .get(conn_id)
+            .is_some_and(|session| session.capabilities.contains(&probe))
+    }
+
     fn note_share_and_maybe_adjust_difficulty(&self, conn_id: &str) -> u64 {
         if !self.cfg.enable_vardiff {
             return self
@@ -1607,10 +1614,6 @@ impl PoolEngine {
             .cfg
             .vardiff_window_duration()
             .max(Duration::from_secs(30));
-        let retarget_interval = self
-            .cfg
-            .vardiff_retarget_interval_duration()
-            .clamp(Duration::from_secs(2), Duration::from_secs(8));
         let target_interval = vardiff_target_interval_seconds(&self.cfg);
         let tolerance = self.cfg.vardiff_tolerance.clamp(0.01, 0.95);
 
@@ -1628,10 +1631,7 @@ impl PoolEngine {
             session.accepted_share_times.pop_front();
         }
 
-        let can_retarget = session
-            .last_difficulty_adjustment
-            .is_none_or(|last| now.duration_since(last) >= retarget_interval);
-        if session.accepted_share_times.len() >= VARDIFF_MIN_SAMPLE_COUNT && can_retarget {
+        if session.accepted_share_times.len() >= VARDIFF_MIN_SAMPLE_COUNT {
             if let Some(oldest) = session.accepted_share_times.front().copied() {
                 let elapsed = now.duration_since(oldest).as_secs_f64();
                 if elapsed >= 1.0 {
@@ -1656,23 +1656,32 @@ impl PoolEngine {
                     }
 
                     next_diff = next_diff.clamp(min_diff, max_diff);
-                    session.last_difficulty_adjustment = Some(now);
-
-                    if next_diff != session.difficulty {
-                        let miner = compact_address(&session.address);
-                        tracing::debug!(
-                            "vardiff {:>4} -> {:>4} (observed {:>5.1}s, target {:>4.0}s, miner {})",
-                            session.difficulty,
-                            next_diff,
-                            observed_interval,
-                            target_interval,
-                            miner
-                        );
-                        session.difficulty = next_diff;
+                    if next_diff != session.difficulty
+                        && vardiff_change_is_material(&self.cfg, session.difficulty, next_diff)
+                    {
+                        let increasing = next_diff > session.difficulty;
+                        let retarget_interval =
+                            vardiff_retarget_interval_for_direction(&self.cfg, increasing);
+                        let can_retarget = session.last_difficulty_adjustment.is_none_or(|last| {
+                            now.duration_since(last) >= retarget_interval
+                        });
+                        if can_retarget {
+                            let miner = compact_address(&session.address);
+                            tracing::debug!(
+                                "vardiff {:>4} -> {:>4} (observed {:>5.1}s, target {:>4.0}s, miner {})",
+                                session.difficulty,
+                                next_diff,
+                                observed_interval,
+                                target_interval,
+                                miner
+                            );
+                            session.difficulty = next_diff;
+                            session.last_difficulty_adjustment = Some(now);
+                        }
                     }
                 }
             }
-        } else if can_retarget {
+        } else {
             // If the previous accepted share fell out of the vardiff window, we can still
             // decay difficulty based on idle time before this accepted share — but only
             // if the gap is within the window. Gaps longer than the window indicate an
@@ -1688,18 +1697,27 @@ impl PoolEngine {
                         .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
                     let next_diff = ((session.difficulty as f64) / ratio).floor().max(1.0) as u64;
                     let next_diff = next_diff.clamp(min_diff, max_diff);
-                    session.last_difficulty_adjustment = Some(now);
-                    if next_diff != session.difficulty {
-                        let miner = compact_address(&session.address);
-                        tracing::debug!(
-                            "vardiff {:>4} -> {:>4} (idle {:>5.1}s, target {:>4.0}s, miner {})",
-                            session.difficulty,
-                            next_diff,
-                            observed_interval,
-                            target_interval,
-                            miner
-                        );
-                        session.difficulty = next_diff;
+                    if next_diff != session.difficulty
+                        && vardiff_change_is_material(&self.cfg, session.difficulty, next_diff)
+                    {
+                        let retarget_interval =
+                            vardiff_retarget_interval_for_direction(&self.cfg, false);
+                        let can_retarget = session.last_difficulty_adjustment.is_none_or(|last| {
+                            now.duration_since(last) >= retarget_interval
+                        });
+                        if can_retarget {
+                            let miner = compact_address(&session.address);
+                            tracing::debug!(
+                                "vardiff {:>4} -> {:>4} (idle {:>5.1}s, target {:>4.0}s, miner {})",
+                                session.difficulty,
+                                next_diff,
+                                observed_interval,
+                                target_interval,
+                                miner
+                            );
+                            session.difficulty = next_diff;
+                            session.last_difficulty_adjustment = Some(now);
+                        }
                     }
                 }
             }
@@ -1835,6 +1853,27 @@ fn vardiff_target_interval_seconds(cfg: &Config) -> f64 {
     let window = cfg.vardiff_window_duration().max(Duration::from_secs(30));
     let target_shares = cfg.vardiff_target_shares.max(1) as f64;
     (window.as_secs_f64() / target_shares).max(1.0)
+}
+
+fn vardiff_retarget_interval_for_direction(cfg: &Config, increasing: bool) -> Duration {
+    let increase = cfg
+        .vardiff_retarget_interval_duration()
+        .clamp(Duration::from_secs(2), Duration::from_secs(8));
+    if increasing {
+        increase
+    } else {
+        cfg.vardiff_decrease_retarget_interval_duration()
+            .clamp(increase, Duration::from_secs(60))
+    }
+}
+
+fn vardiff_change_is_material(cfg: &Config, current: u64, next: u64) -> bool {
+    if current == 0 || current == next {
+        return false;
+    }
+    let delta = current.abs_diff(next) as f64;
+    let baseline = current.max(1) as f64;
+    delta / baseline >= cfg.vardiff_min_change_pct
 }
 
 fn compact_address(address: &str) -> String {

@@ -15,6 +15,7 @@ pub const CAP_LOGIN_NEGOTIATION: &str = "login_negotiation";
 pub const CAP_SHARE_VALIDATION_STATUS: &str = "share_validation_status";
 pub const CAP_SUBMIT_CLAIMED_HASH: &str = "submit_claimed_hash";
 pub const CAP_DIFFICULTY_HINT: &str = "difficulty_hint";
+pub const CAP_SAME_TEMPLATE_REBIND_V1: &str = "same_template_rebind_v1";
 const STEALTH_ADDRESS_CHECKSUM_TAG: &[u8] = b"blocknet_stealth_address_checksum";
 const NETWORK_ID_MAINNET: &str = "blocknet_mainnet";
 const NETWORK_ID_TESTNET: &str = "blocknet_testnet";
@@ -123,6 +124,7 @@ pub fn build_login_result(protocol_version: u32, submit_v2_required: bool) -> Lo
     if protocol_version >= STRATUM_PROTOCOL_VERSION_CURRENT {
         capabilities.push(CAP_SUBMIT_CLAIMED_HASH.to_string());
         capabilities.push(CAP_DIFFICULTY_HINT.to_string());
+        capabilities.push(CAP_SAME_TEMPLATE_REBIND_V1.to_string());
     }
 
     let mut required_capabilities = Vec::new();

@@ -82,7 +82,9 @@ pub struct Config {
     pub vardiff_target_shares: i32,
     pub vardiff_window: String,
     pub vardiff_retarget_interval: String,
+    pub vardiff_decrease_retarget_interval: String,
     pub vardiff_tolerance: f64,
+    pub vardiff_min_change_pct: f64,
     pub min_share_difficulty: u64,
     pub max_share_difficulty: u64,
 
@@ -190,7 +192,9 @@ impl Default for Config {
             vardiff_target_shares: 10,
             vardiff_window: "5m".to_string(),
             vardiff_retarget_interval: "5s".to_string(),
+            vardiff_decrease_retarget_interval: "20s".to_string(),
             vardiff_tolerance: 0.25,
+            vardiff_min_change_pct: 0.08,
             min_share_difficulty: 1,
             max_share_difficulty: 1_000_000_000,
             pool_fee_flat: 0.0,
@@ -357,6 +361,11 @@ impl Config {
             self.vardiff_target_shares = 1;
         }
         self.vardiff_tolerance = self.vardiff_tolerance.clamp(0.01, 0.95);
+        if !self.vardiff_min_change_pct.is_finite() {
+            self.vardiff_min_change_pct = 0.08;
+        } else {
+            self.vardiff_min_change_pct = self.vardiff_min_change_pct.clamp(0.0, 1.0);
+        }
         if !self.block_finder_bonus_pct.is_finite() {
             self.block_finder_bonus_pct = 0.0;
         } else {
@@ -601,6 +610,13 @@ impl Config {
 
     pub fn vardiff_retarget_interval_duration(&self) -> Duration {
         parse_duration_or(&self.vardiff_retarget_interval, Duration::from_secs(30))
+    }
+
+    pub fn vardiff_decrease_retarget_interval_duration(&self) -> Duration {
+        parse_duration_or(
+            &self.vardiff_decrease_retarget_interval,
+            Duration::from_secs(20),
+        )
     }
 
     pub fn seen_share_gc_interval_duration(&self) -> Duration {

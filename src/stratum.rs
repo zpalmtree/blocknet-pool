@@ -13,11 +13,11 @@ use tokio::sync::{broadcast, mpsc, Notify};
 use crate::config::Config;
 use crate::dev_fee::should_defer_submit_ack_difficulty;
 use crate::engine::{canonical_share_reject_reason, PoolEngine, SubmitAck, SubmitQueueRoute};
-use crate::jobs::JobManager;
+use crate::jobs::{AssignmentRangeMode, JobManager};
 use crate::protocol::{
     normalize_worker_name, LoginParams, StratumNotify, StratumRequest, StratumResponse,
-    SubmitParams, METHOD_LOGIN, METHOD_NOTIFICATION, METHOD_SUBMIT, NOTIFY_MINER_BLOCK_FOUND,
-    NOTIFY_POOL_BLOCK_SOLVED,
+    SubmitParams, CAP_SAME_TEMPLATE_REBIND_V1, METHOD_LOGIN, METHOD_NOTIFICATION, METHOD_SUBMIT,
+    NOTIFY_MINER_BLOCK_FOUND, NOTIFY_POOL_BLOCK_SOLVED,
 };
 use crate::stats::PoolStats;
 use crate::telemetry::{PercentileSummary, QueueTracker};
@@ -838,9 +838,21 @@ impl StratumServer {
                             );
                         } else {
                             *difficulty = ack.next_difficulty;
+                            let range_mode = if self.engine.session_supports_capability(
+                                conn_id,
+                                CAP_SAME_TEMPLATE_REBIND_V1,
+                            ) {
+                                AssignmentRangeMode::PreserveCurrent
+                            } else {
+                                AssignmentRangeMode::Fresh
+                            };
                             if let Some(miner_job) =
-                                self.jobs
-                                    .build_miner_job(conn_id, ack.next_difficulty, address)
+                                self.jobs.build_miner_job_with_range_mode(
+                                    conn_id,
+                                    ack.next_difficulty,
+                                    address,
+                                    range_mode,
+                                )
                             {
                                 if let Some(outbound) = outbound {
                                     let notify = StratumNotify {
