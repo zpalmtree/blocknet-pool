@@ -1020,6 +1020,9 @@ export function AdminPage({
     const recentRejectPct = shareWindow5m?.rejection_rate_pct ?? 0;
     const hourlyRejectPct = shareWindow1h?.rejection_rate_pct ?? 0;
     const dailyRejectPct = shareWindow24h?.rejection_rate_pct ?? 0;
+    const recentRejectCount = shareWindow5m?.rejected ?? 0;
+    const hourlyRejectCount = shareWindow1h?.rejected ?? 0;
+    const dailyRejectCount = shareWindow24h?.rejected ?? 0;
     const topReason = shareActiveTopReject ? `${shareActiveTopReject.reason} (${shareActiveTopReject.count})` : 'none';
     if (!shareDiagnostics) {
       return {
@@ -1028,14 +1031,21 @@ export function AdminPage({
         detail: 'Reject telemetry has not loaded yet.',
       };
     }
-    if (recentRejectPct >= 5 || shareInvalidProof5m >= 1 || shareBusyCount5m + shareTimeoutCount5m >= 5) {
+    if (
+      recentRejectPct >= 5 ||
+      shareInvalidProof5m >= 1 ||
+      shareBusyCount5m + shareTimeoutCount5m >= 5
+    ) {
       return {
         tone: 'critical' as const,
         title: 'Rejects need attention',
         detail: `5m reject ${pct(recentRejectPct)}. Top reject: ${topReason}.`,
       };
     }
-    if (recentRejectPct > 0 || hourlyRejectPct > 0 || dailyRejectPct >= 1) {
+    const meaningfulRecentRejects = recentRejectCount >= 3 || recentRejectPct >= 0.5;
+    const meaningfulHourlyRejects = hourlyRejectCount >= 10 || hourlyRejectPct >= 0.5;
+    const meaningfulDailyRejects = dailyRejectCount >= 50 || dailyRejectPct >= 1.0;
+    if (meaningfulRecentRejects || meaningfulHourlyRejects || meaningfulDailyRejects) {
       return {
         tone: 'warn' as const,
         title: 'Watch rejects',
@@ -1051,6 +1061,9 @@ export function AdminPage({
     shareActiveTopReject,
     shareBusyCount5m,
     shareDiagnostics,
+    shareWindow1h?.rejected,
+    shareWindow24h?.rejected,
+    shareWindow5m?.rejected,
     shareInvalidProof5m,
     shareTimeoutCount5m,
     shareWindow1h?.rejection_rate_pct,
