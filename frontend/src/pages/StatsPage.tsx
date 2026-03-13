@@ -374,24 +374,6 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
             </div>
           )}
 
-          {minerData.pending_note && !pendingNoteRepeatsHold && (
-            <div
-              className="card"
-              style={{ marginBottom: 24, background: 'var(--accent-light)', borderColor: 'var(--accent)' }}
-            >
-              <div style={{ color: 'var(--text)', fontSize: 13 }}>{minerData.pending_note}</div>
-            </div>
-          )}
-
-          {minerData.payout_note && (
-            <div
-              className="card"
-              style={{ marginBottom: 24, background: 'rgba(247, 180, 75, 0.12)', borderColor: 'rgba(247, 180, 75, 0.45)' }}
-            >
-              <div style={{ color: 'var(--text)', fontSize: 13 }}>{minerData.payout_note}</div>
-            </div>
-          )}
-
           {pendingQueued > 0 && !!payoutEta?.liquidity_constrained && (
             <div
               className="card"
