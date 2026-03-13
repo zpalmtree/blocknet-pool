@@ -33,6 +33,8 @@ import type {
 
 const MAX_DAEMON_LOG_LINES = 1000;
 const DAEMON_LOG_RECONNECT_DELAY_MS = 1500;
+const HOT_PATH_LATENCY_WARN_MILLIS = 1000;
+const HOT_PATH_LATENCY_SPIKE_MILLIS = 5000;
 
 function rewardStatusLabel(status: string): string {
   switch (status) {
@@ -838,7 +840,8 @@ export function AdminPage({
     shareSubmitOldestAge >= 2000 ||
     shareValidationOldestAge >= 2000;
   const shareHotPathRecentlySlow =
-    shareSubmitWaitP95 >= 5000 || shareValidationWaitP95 >= 5000;
+    shareSubmitWaitP95 >= HOT_PATH_LATENCY_SPIKE_MILLIS ||
+    shareValidationWaitP95 >= HOT_PATH_LATENCY_SPIKE_MILLIS;
   const shareActiveTopReject =
     shareWindow5m?.by_reason?.[0] ?? shareWindow1h?.by_reason?.[0] ?? shareWindow24h?.by_reason?.[0] ?? null;
   const sharePressureSignal = useMemo(() => {
@@ -916,8 +919,8 @@ export function AdminPage({
       shareHotPathBackedUp &&
       (shareValidation?.overload_mode === 'emergency' ||
         shareBusyCount5m + shareTimeoutCount5m > 0 ||
-        shareSubmitWaitP95 >= 5000 ||
-        shareValidationWaitP95 >= 5000)
+        shareSubmitWaitP95 >= HOT_PATH_LATENCY_SPIKE_MILLIS ||
+        shareValidationWaitP95 >= HOT_PATH_LATENCY_SPIKE_MILLIS)
     ) {
       return {
         tone: 'critical' as const,
@@ -939,8 +942,8 @@ export function AdminPage({
     if (
       shareValidation?.overload_mode === 'shed' ||
       shareHotPathBackedUp ||
-      shareSubmitWaitP95 >= 500 ||
-      shareValidationWaitP95 >= 500
+      shareSubmitWaitP95 >= HOT_PATH_LATENCY_WARN_MILLIS ||
+      shareValidationWaitP95 >= HOT_PATH_LATENCY_WARN_MILLIS
     ) {
       return {
         tone: 'warn' as const,
