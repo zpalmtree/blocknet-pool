@@ -96,8 +96,12 @@ const DEFAULT_DAEMON_LOG_TAIL: usize = 200;
 const MAX_DAEMON_LOG_TAIL: usize = 2000;
 const DAEMON_LOG_LINE_LIMIT: usize = 8192;
 const DAEMON_LOG_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
-const MINER_PENDING_ESTIMATE_CACHE_TTL: Duration = Duration::from_secs(10);
+const MINER_PENDING_ESTIMATE_REFRESH_AFTER: Duration = Duration::from_secs(8);
+const MINER_PENDING_ESTIMATE_STALE_TTL: Duration = Duration::from_secs(60);
 const MINER_PENDING_ESTIMATE_CACHE_MAX_ENTRIES: usize = 4096;
+const MINER_PENDING_ESTIMATE_HOT_WINDOW: Duration = Duration::from_secs(30);
+pub(crate) const MINER_PENDING_ESTIMATE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+const MINER_PENDING_ESTIMATE_REFRESH_BATCH_SIZE: usize = 4;
 const ADMIN_DEV_FEE_HINT_LIMIT: i64 = 12;
 const LOCAL_MONITOR_SOURCE: &str = "local";
 const CLOUDFLARE_MONITOR_SOURCE: &str = "cloudflare";
@@ -652,8 +656,10 @@ pub struct LiveRuntimeSnapshotCache {
 #[derive(Debug, Clone)]
 pub struct MinerPendingEstimateCache {
     updated_at: Instant,
+    last_requested_at: Instant,
     chain_height: u64,
     value: MinerPendingEstimate,
+    refresh_in_flight: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -5193,6 +5199,95 @@ fn validation_hold_reason(
     }
 }
 
+fn pending_estimate_cache_can_serve(
+    entry: &MinerPendingEstimateCache,
+    chain_height: u64,
+    now: Instant,
+) -> bool {
+    entry.chain_height == chain_height
+        && now.duration_since(entry.updated_at) < MINER_PENDING_ESTIMATE_STALE_TTL
+}
+
+fn pending_estimate_cache_needs_refresh(
+    entry: &MinerPendingEstimateCache,
+    chain_height: u64,
+    now: Instant,
+) -> bool {
+    if entry.refresh_in_flight {
+        return false;
+    }
+    if now.duration_since(entry.last_requested_at) >= MINER_PENDING_ESTIMATE_HOT_WINDOW {
+        return false;
+    }
+    entry.chain_height != chain_height
+        || now.duration_since(entry.updated_at) >= MINER_PENDING_ESTIMATE_REFRESH_AFTER
+}
+
+fn prune_pending_estimate_cache(
+    cache: &mut HashMap<String, MinerPendingEstimateCache>,
+    now: Instant,
+) {
+    cache.retain(|_, entry| {
+        now.duration_since(entry.updated_at) < MINER_PENDING_ESTIMATE_STALE_TTL
+            || now.duration_since(entry.last_requested_at) < MINER_PENDING_ESTIMATE_HOT_WINDOW
+            || entry.refresh_in_flight
+    });
+}
+
+fn insert_pending_estimate_cache_entry(
+    cache: &mut HashMap<String, MinerPendingEstimateCache>,
+    address: String,
+    chain_height: u64,
+    value: MinerPendingEstimate,
+    now: Instant,
+) {
+    prune_pending_estimate_cache(cache, now);
+    if cache.len() >= MINER_PENDING_ESTIMATE_CACHE_MAX_ENTRIES {
+        if cache.len() >= MINER_PENDING_ESTIMATE_CACHE_MAX_ENTRIES {
+            cache.clear();
+        }
+    }
+    cache.insert(
+        address,
+        MinerPendingEstimateCache {
+            updated_at: now,
+            last_requested_at: now,
+            chain_height,
+            value,
+            refresh_in_flight: false,
+        },
+    );
+}
+
+fn select_pending_estimate_refresh_addresses(
+    cache: &mut HashMap<String, MinerPendingEstimateCache>,
+    chain_height: u64,
+    now: Instant,
+    limit: usize,
+) -> Vec<String> {
+    prune_pending_estimate_cache(cache, now);
+    let mut candidates = cache
+        .iter()
+        .filter_map(|(address, entry)| {
+            pending_estimate_cache_needs_refresh(entry, chain_height, now).then_some((
+                entry.chain_height != chain_height,
+                entry.updated_at,
+                address.clone(),
+            ))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|a, b| a.0.cmp(&b.0).reverse().then_with(|| a.1.cmp(&b.1)));
+
+    let mut selected = Vec::with_capacity(limit.min(candidates.len()));
+    for (_, _, address) in candidates.into_iter().take(limit) {
+        if let Some(entry) = cache.get_mut(&address) {
+            entry.refresh_in_flight = true;
+            selected.push(address);
+        }
+    }
+    selected
+}
+
 fn miner_verification_hold(
     state: Option<&AddressRiskState>,
     validation_state: Option<&crate::db::ValidationHoldState>,
@@ -6981,16 +7076,31 @@ impl ApiState {
         address: &str,
         chain_height: u64,
     ) -> anyhow::Result<MinerPendingEstimate> {
+        let now = Instant::now();
+        let mut schedule_refresh = false;
+        let mut cached_value = None;
         {
-            let cache = self.miner_pending_estimate_cache.lock();
-            if let Some(entry) = cache.get(address) {
-                if entry.chain_height == chain_height
-                    && entry.updated_at.elapsed() < MINER_PENDING_ESTIMATE_CACHE_TTL
-                {
-                    self.performance.record_cache_hit("pending_estimate");
-                    return Ok(entry.value.clone());
+            let mut cache = self.miner_pending_estimate_cache.lock();
+            if let Some(entry) = cache.get_mut(address) {
+                entry.last_requested_at = now;
+                if pending_estimate_cache_can_serve(entry, chain_height, now) {
+                    if pending_estimate_cache_needs_refresh(entry, chain_height, now) {
+                        entry.refresh_in_flight = true;
+                        schedule_refresh = true;
+                    }
+                    cached_value = Some(entry.value.clone());
                 }
             }
+        }
+        if let Some(value) = cached_value {
+            if schedule_refresh {
+                self.spawn_pending_estimate_refresh(address.to_string(), chain_height);
+            }
+            self.performance.record_cache_hit("pending_estimate");
+            return Ok(value);
+        }
+        if schedule_refresh {
+            self.spawn_pending_estimate_refresh(address.to_string(), chain_height);
         }
 
         self.performance.record_cache_miss("pending_estimate");
@@ -7035,22 +7145,119 @@ impl ApiState {
         };
 
         let mut cache = self.miner_pending_estimate_cache.lock();
-        if cache.len() >= MINER_PENDING_ESTIMATE_CACHE_MAX_ENTRIES {
-            cache.retain(|_, entry| entry.updated_at.elapsed() < MINER_PENDING_ESTIMATE_CACHE_TTL);
-            if cache.len() >= MINER_PENDING_ESTIMATE_CACHE_MAX_ENTRIES {
-                cache.clear();
-            }
-        }
-        cache.insert(
+        insert_pending_estimate_cache_entry(
+            &mut cache,
             address.to_string(),
-            MinerPendingEstimateCache {
-                updated_at: Instant::now(),
-                chain_height,
-                value: estimate.clone(),
-            },
+            chain_height,
+            estimate.clone(),
+            Instant::now(),
         );
 
         Ok(estimate)
+    }
+
+    fn spawn_pending_estimate_refresh(&self, address: String, chain_height: u64) {
+        let state = self.clone();
+        tokio::spawn(async move {
+            state
+                .refresh_pending_estimate_for_miner(address, chain_height)
+                .await;
+        });
+    }
+
+    async fn refresh_pending_estimate_for_miner(&self, address: String, chain_height: u64) {
+        let store = Arc::clone(&self.store);
+        let cfg = self.config.clone();
+        let now = SystemTime::now();
+        let started_at = Instant::now();
+        let refresh_address = address.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            estimate_unconfirmed_pending_for_miner(
+                &store,
+                &refresh_address,
+                &cfg,
+                now,
+                chain_height,
+            )
+        })
+        .await
+        .map_err(|err| anyhow::anyhow!("join error: {err}"));
+
+        match result {
+            Ok(Ok(value)) => {
+                let mut cache = self.miner_pending_estimate_cache.lock();
+                let updated_at = Instant::now();
+                if let Some(entry) = cache.get_mut(&address) {
+                    entry.updated_at = updated_at;
+                    entry.chain_height = chain_height;
+                    entry.value = value;
+                    entry.refresh_in_flight = false;
+                } else {
+                    insert_pending_estimate_cache_entry(
+                        &mut cache,
+                        address.clone(),
+                        chain_height,
+                        value,
+                        updated_at,
+                    );
+                }
+                record_api_task_observation(
+                    self,
+                    "pending_estimate_refresh",
+                    started_at.elapsed(),
+                    false,
+                );
+            }
+            Ok(Err(err)) => {
+                tracing::warn!(
+                    address = %address,
+                    error = %err,
+                    "background pending estimate refresh failed"
+                );
+                if let Some(entry) = self.miner_pending_estimate_cache.lock().get_mut(&address) {
+                    entry.refresh_in_flight = false;
+                }
+                record_api_task_observation(
+                    self,
+                    "pending_estimate_refresh",
+                    started_at.elapsed(),
+                    true,
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    address = %address,
+                    error = %err,
+                    "background pending estimate refresh task join failed"
+                );
+                if let Some(entry) = self.miner_pending_estimate_cache.lock().get_mut(&address) {
+                    entry.refresh_in_flight = false;
+                }
+                record_api_task_observation(
+                    self,
+                    "pending_estimate_refresh",
+                    started_at.elapsed(),
+                    true,
+                );
+            }
+        }
+    }
+
+    pub async fn refresh_hot_pending_estimates(&self) {
+        let chain_height = self.node.chain_height();
+        let now = Instant::now();
+        let addresses = {
+            let mut cache = self.miner_pending_estimate_cache.lock();
+            select_pending_estimate_refresh_addresses(
+                &mut cache,
+                chain_height,
+                now,
+                MINER_PENDING_ESTIMATE_REFRESH_BATCH_SIZE,
+            )
+        };
+        for address in addresses {
+            self.spawn_pending_estimate_refresh(address, chain_height);
+        }
     }
 
     async fn cached_miner_balance_payload(
@@ -8690,11 +8897,13 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use super::{
-        merge_validation_summary, public_telemetry_route_kind_for_path,
-        validation_summary_from_snapshot, MinerBalanceResponseCache, MinerDetailResponseCache,
-        PublicTelemetryRateLimiter, PublicTelemetryRouteKind, StatsResponseCache,
-        PUBLIC_TELEMETRY_MINER_RATE_LIMIT, PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW,
-        PUBLIC_TELEMETRY_STATS_RATE_LIMIT,
+        merge_validation_summary, pending_estimate_cache_can_serve,
+        pending_estimate_cache_needs_refresh, public_telemetry_route_kind_for_path,
+        select_pending_estimate_refresh_addresses, validation_summary_from_snapshot,
+        MinerBalanceResponseCache, MinerDetailResponseCache, PublicTelemetryRateLimiter,
+        PublicTelemetryRouteKind, StatsResponseCache, MINER_PENDING_ESTIMATE_HOT_WINDOW,
+        MINER_PENDING_ESTIMATE_REFRESH_AFTER, PUBLIC_TELEMETRY_MINER_RATE_LIMIT,
+        PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW, PUBLIC_TELEMETRY_STATS_RATE_LIMIT,
     };
     use crate::config::Config;
     use crate::db::{
@@ -8735,10 +8944,11 @@ mod tests {
         sort_workers_for_miner, system_time_to_unix_secs, trim_log_line, worker_hashrate_by_name,
         ApiPerformanceTracker, ApiState, ClearAddressRiskHistoryRequest, DaemonHealthCache,
         DbTotalsCache, InsightsCache, LiveRuntimeSnapshotCache, MinerDetailQuery,
-        MinerPendingBlockEstimate, MinerPendingEstimate, MinersQuery, NetworkHashrateCache,
-        OpenIncident, PayoutEtaResponse, PoolHealthCache, StatusHistory, StatusIncident,
-        DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW,
-        HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY, STATUS_HISTORY_META_KEY,
+        MinerPendingBlockEstimate, MinerPendingEstimate, MinerPendingEstimateCache, MinersQuery,
+        NetworkHashrateCache, OpenIncident, PayoutEtaResponse, PoolHealthCache, StatusHistory,
+        StatusIncident, DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW,
+        HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY,
+        STATUS_HISTORY_META_KEY,
     };
 
     const TEST_POSTGRES_URL_ENV: &str = "BLOCKNET_POOL_TEST_POSTGRES_URL";
@@ -8862,6 +9072,76 @@ mod tests {
             api_performance_route_name(&Uri::from_static("/api/events")),
             None
         );
+    }
+
+    #[test]
+    fn select_pending_estimate_refresh_addresses_prefers_hot_stale_entries() {
+        let now = Instant::now();
+        let mut cache = HashMap::from([
+            (
+                "hot-stale".to_string(),
+                MinerPendingEstimateCache {
+                    updated_at: now - MINER_PENDING_ESTIMATE_REFRESH_AFTER - Duration::from_secs(1),
+                    last_requested_at: now,
+                    chain_height: 100,
+                    value: MinerPendingEstimate::default(),
+                    refresh_in_flight: false,
+                },
+            ),
+            (
+                "cold-stale".to_string(),
+                MinerPendingEstimateCache {
+                    updated_at: now - MINER_PENDING_ESTIMATE_REFRESH_AFTER - Duration::from_secs(1),
+                    last_requested_at: now
+                        - MINER_PENDING_ESTIMATE_HOT_WINDOW
+                        - Duration::from_secs(1),
+                    chain_height: 100,
+                    value: MinerPendingEstimate::default(),
+                    refresh_in_flight: false,
+                },
+            ),
+            (
+                "hot-fresh".to_string(),
+                MinerPendingEstimateCache {
+                    updated_at: now,
+                    last_requested_at: now,
+                    chain_height: 100,
+                    value: MinerPendingEstimate::default(),
+                    refresh_in_flight: false,
+                },
+            ),
+        ]);
+
+        let selected = select_pending_estimate_refresh_addresses(&mut cache, 100, now, 4);
+        assert_eq!(selected, vec!["hot-stale".to_string()]);
+        assert!(
+            cache
+                .get("hot-stale")
+                .expect("hot stale cache entry")
+                .refresh_in_flight
+        );
+        assert!(
+            !cache
+                .get("hot-fresh")
+                .expect("hot fresh cache entry")
+                .refresh_in_flight
+        );
+    }
+
+    #[test]
+    fn pending_estimate_cache_can_serve_stale_same_height_entries() {
+        let now = Instant::now();
+        let entry = MinerPendingEstimateCache {
+            updated_at: now - MINER_PENDING_ESTIMATE_REFRESH_AFTER - Duration::from_secs(1),
+            last_requested_at: now,
+            chain_height: 77,
+            value: MinerPendingEstimate::default(),
+            refresh_in_flight: false,
+        };
+
+        assert!(pending_estimate_cache_can_serve(&entry, 77, now));
+        assert!(pending_estimate_cache_needs_refresh(&entry, 77, now));
+        assert!(!pending_estimate_cache_can_serve(&entry, 78, now));
     }
 
     #[test]

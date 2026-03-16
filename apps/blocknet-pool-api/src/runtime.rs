@@ -93,6 +93,18 @@ pub fn api_listen_addr(cfg: &Config) -> Result<SocketAddr> {
 }
 
 pub fn start_api_background_tasks(api_state: ApiState) {
+    let pending_estimate_state = api_state.clone();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(crate::api::MINER_PENDING_ESTIMATE_REFRESH_INTERVAL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ticker.tick().await;
+
+        loop {
+            ticker.tick().await;
+            pending_estimate_state.refresh_hot_pending_estimates().await;
+        }
+    });
+
     tokio::spawn(async move {
         api_state.sample_status().await;
 
