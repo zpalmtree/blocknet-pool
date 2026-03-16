@@ -10,6 +10,7 @@ dotenvy.workspace = true
 flume.workspace = true
 hex.workspace = true
 humantime.workspace = true
+libc.workspace = true
 parking_lot.workspace = true
 postgres.workspace = true
 rand.workspace = true

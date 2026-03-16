@@ -2,10 +2,13 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
+use std::collections::BTreeMap;
+
 use crate::jobs::JobRuntimeSnapshot;
 use crate::payout::PayoutRuntimeSnapshot;
 use crate::stats::PoolSnapshot;
 use crate::stratum::SubmitRuntimeSnapshot;
+use crate::telemetry::TimedOperationSummary;
 use crate::validation::ValidationSnapshot;
 
 pub const LIVE_RUNTIME_SNAPSHOT_META_KEY: &str = "live_runtime_snapshot_v1";
@@ -164,6 +167,8 @@ pub struct PersistedRuntimeSnapshot {
     #[serde(default)]
     pub submit: PersistedSubmitSummary,
     pub validation: PersistedValidationSummary,
+    #[serde(default)]
+    pub runtime_tasks: BTreeMap<String, TimedOperationSummary>,
 }
 
 impl PersistedRuntimeSnapshot {
@@ -173,6 +178,7 @@ impl PersistedRuntimeSnapshot {
         validation: ValidationSnapshot,
         jobs: JobRuntimeSnapshot,
         payouts: PayoutRuntimeSnapshot,
+        runtime_tasks: BTreeMap<String, TimedOperationSummary>,
     ) -> Self {
         Self {
             sampled_at: SystemTime::now(),
@@ -185,6 +191,7 @@ impl PersistedRuntimeSnapshot {
             payouts: payouts.into(),
             submit: submit.into(),
             validation: validation.into(),
+            runtime_tasks,
         }
     }
 }

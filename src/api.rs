@@ -4,6 +4,7 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path as StdPath, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -51,6 +52,9 @@ use crate::stats::{
     MinerStats, PoolSnapshot, PoolStats, RejectionAnalyticsSnapshot, RejectionReasonCount,
 };
 use crate::store::PoolStore;
+use crate::telemetry::{
+    ApiPerformanceSnapshot, NamedCacheCounterTracker, NamedTimedOperationTracker,
+};
 use crate::validation::{
     ValidationEngine, ValidationSnapshot, SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED,
 };
@@ -97,6 +101,7 @@ const MINER_PENDING_ESTIMATE_CACHE_MAX_ENTRIES: usize = 4096;
 const ADMIN_DEV_FEE_HINT_LIMIT: i64 = 12;
 const LOCAL_MONITOR_SOURCE: &str = "local";
 const CLOUDFLARE_MONITOR_SOURCE: &str = "cloudflare";
+const PERF_SUCCESS_LOG_SAMPLE_RATE: u64 = 128;
 
 fn db_miner_hashrate(store: &PoolStore, address: &str) -> f64 {
     let since = SystemTime::now()
@@ -399,6 +404,7 @@ pub struct ApiState {
     pub miner_balance_response_cache: Arc<Mutex<MinerBalanceResponseCache>>,
     pub miner_detail_response_cache: Arc<Mutex<MinerDetailResponseCache>>,
     pub public_telemetry_rate_limiter: Arc<Mutex<PublicTelemetryRateLimiter>>,
+    pub performance: Arc<ApiPerformanceTracker>,
     pub recovery: Arc<RecoveryAgentClient>,
     pub live_runtime_snapshot_cache: Arc<Mutex<LiveRuntimeSnapshotCache>>,
     pub status_history: Arc<Mutex<StatusHistory>>,
@@ -587,6 +593,53 @@ impl PublicTelemetryRateLimiter {
         }
         bucket.request_count = bucket.request_count.saturating_add(1);
         true
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ApiPerformanceTracker {
+    routes: NamedTimedOperationTracker,
+    operations: NamedTimedOperationTracker,
+    tasks: NamedTimedOperationTracker,
+    caches: NamedCacheCounterTracker,
+    log_sample_counter: AtomicU64,
+}
+
+impl ApiPerformanceTracker {
+    fn snapshot(&self) -> ApiPerformanceSnapshot {
+        ApiPerformanceSnapshot {
+            sampled_at: Some(SystemTime::now()),
+            routes: self.routes.snapshot(),
+            operations: self.operations.snapshot(),
+            tasks: self.tasks.snapshot(),
+            caches: self.caches.snapshot(),
+        }
+    }
+
+    fn record_route(&self, route: &str, duration: Duration, failed: bool, slow: bool) {
+        self.routes.record(route, duration, failed, slow);
+    }
+
+    fn record_operation(&self, operation: &str, duration: Duration, failed: bool, slow: bool) {
+        self.operations.record(operation, duration, failed, slow);
+    }
+
+    fn record_task(&self, task: &str, duration: Duration, failed: bool, slow: bool) {
+        self.tasks.record(task, duration, failed, slow);
+    }
+
+    fn record_cache_hit(&self, cache: &str) {
+        self.caches.record_hit(cache);
+    }
+
+    fn record_cache_miss(&self, cache: &str) {
+        self.caches.record_miss(cache);
+    }
+
+    fn should_sample_success(&self) -> bool {
+        self.log_sample_counter
+            .fetch_add(1, Ordering::Relaxed)
+            .is_multiple_of(PERF_SUCCESS_LOG_SAMPLE_RATE)
     }
 }
 
@@ -811,6 +864,7 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
         .route("/api/miners", get(handle_miners))
         .route("/api/payouts", get(handle_payouts))
         .route("/api/fees", get(handle_fees))
+        .route("/api/admin/perf", get(handle_admin_perf))
         .route("/api/admin/dev-fee", get(handle_admin_dev_fee))
         .route("/api/admin/balances", get(handle_admin_balances))
         .route("/api/admin/shares", get(handle_admin_share_diagnostics))
@@ -898,6 +952,10 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
         .route("/api/miner/:address/hashrate", get(handle_miner_hashrate))
         .merge(public_telemetry)
         .merge(protected)
+        .layer(middleware::from_fn_with_state(
+            app_state.clone(),
+            observe_api_request_performance,
+        ))
         .fallback(handle_app_fallback)
         .with_state(app_state);
 
@@ -3694,6 +3752,10 @@ async fn handle_admin_dev_fee(State(state): State<ApiState>) -> impl IntoRespons
         Ok(response) => Json(response).into_response(),
         Err(err) => internal_error("failed loading dev fee telemetry", err).into_response(),
     }
+}
+
+async fn handle_admin_perf(State(state): State<ApiState>) -> impl IntoResponse {
+    Json(state.performance.snapshot()).into_response()
 }
 
 async fn handle_admin_balances(
@@ -6596,6 +6658,8 @@ async fn handle_admin_block_reward_breakdown(
 
 impl ApiState {
     pub async fn sample_status(&self) {
+        let started_at = Instant::now();
+        let mut failed = false;
         let (daemon, pool) = tokio::join!(self.daemon_health(), self.pool_health());
         let snapshot = {
             let mut history = self.status_history.lock();
@@ -6619,12 +6683,15 @@ impl ApiState {
         {
             Ok(Ok(())) => {}
             Ok(Err(err)) => {
+                failed = true;
                 tracing::warn!(error = %err, "failed persisting status history");
             }
             Err(err) => {
+                failed = true;
                 tracing::warn!(error = %err, "status history persist task join failed");
             }
         }
+        record_api_task_observation(self, "status_sample", started_at.elapsed(), failed);
     }
 
     async fn persisted_runtime_snapshot(&self) -> Option<PersistedRuntimeSnapshot> {
@@ -6639,6 +6706,7 @@ impl ApiState {
         }
 
         let store = Arc::clone(&self.store);
+        let started_at = Instant::now();
         let loaded = match tokio::task::spawn_blocking(
             move || -> anyhow::Result<Option<PersistedRuntimeSnapshot>> {
                 let Some(raw) = store.get_meta(LIVE_RUNTIME_SNAPSHOT_META_KEY)? else {
@@ -6649,12 +6717,32 @@ impl ApiState {
         )
         .await
         {
-            Ok(Ok(value)) => value,
+            Ok(Ok(value)) => {
+                record_api_operation_observation(
+                    self,
+                    "persisted_runtime_snapshot_load",
+                    started_at.elapsed(),
+                    false,
+                );
+                value
+            }
             Ok(Err(err)) => {
+                record_api_operation_observation(
+                    self,
+                    "persisted_runtime_snapshot_load",
+                    started_at.elapsed(),
+                    true,
+                );
                 tracing::warn!(error = %err, "failed loading persisted live runtime snapshot");
                 None
             }
             Err(err) => {
+                record_api_operation_observation(
+                    self,
+                    "persisted_runtime_snapshot_load",
+                    started_at.elapsed(),
+                    true,
+                );
                 tracing::warn!(error = %err, "live runtime snapshot task join failed");
                 None
             }
@@ -6706,11 +6794,13 @@ impl ApiState {
                 .is_some_and(|updated| updated.elapsed() < STATS_RESPONSE_CACHE_TTL)
             {
                 if let Some(value) = cache.value.clone() {
+                    self.performance.record_cache_hit("stats_response");
                     return Ok(value);
                 }
             }
         }
 
+        self.performance.record_cache_miss("stats_response");
         let fresh = self.load_stats_response().await?;
         let mut cache = self.stats_response_cache.lock();
         cache.updated_at = Some(Instant::now());
@@ -6719,6 +6809,7 @@ impl ApiState {
     }
 
     async fn load_stats_response(&self) -> anyhow::Result<StatsResponse> {
+        let started_at = Instant::now();
         let snap = self.effective_pool_snapshot().await;
         let validation = self.effective_validation_summary().await;
         let totals = self.db_totals().await?;
@@ -6727,11 +6818,18 @@ impl ApiState {
         let network_hashrate = self.network_hashrate_for_job(current_job.as_ref()).await;
 
         let store = Arc::clone(&self.store);
+        let pool_hashrate_started_at = Instant::now();
         let pool_hashrate = tokio::task::spawn_blocking(move || db_pool_hashrate(&store))
             .await
             .unwrap_or(0.0);
+        record_api_operation_observation(
+            self,
+            "pool_hashrate_load",
+            pool_hashrate_started_at.elapsed(),
+            false,
+        );
 
-        Ok(StatsResponse {
+        let response = StatsResponse {
             pool: PoolSummary {
                 miners: snap.connected_miners,
                 workers: snap.connected_workers,
@@ -6761,7 +6859,9 @@ impl ApiState {
                 daemon_syncing: self.node.syncing(),
             },
             validation,
-        })
+        };
+        record_api_operation_observation(self, "stats_load", started_at.elapsed(), false);
+        Ok(response)
     }
 
     async fn admin_dev_fee_telemetry(&self) -> anyhow::Result<AdminDevFeeTelemetryResponse> {
@@ -6877,20 +6977,52 @@ impl ApiState {
                 if entry.chain_height == chain_height
                     && entry.updated_at.elapsed() < MINER_PENDING_ESTIMATE_CACHE_TTL
                 {
+                    self.performance.record_cache_hit("pending_estimate");
                     return Ok(entry.value.clone());
                 }
             }
         }
 
+        self.performance.record_cache_miss("pending_estimate");
         let store = Arc::clone(&self.store);
         let cfg = self.config.clone();
         let addr = address.to_string();
         let now = SystemTime::now();
+        let started_at = Instant::now();
         let estimate = tokio::task::spawn_blocking(move || {
             estimate_unconfirmed_pending_for_miner(&store, &addr, &cfg, now, chain_height)
         })
         .await
-        .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+        .map_err(|err| anyhow::anyhow!("join error: {err}"));
+        let estimate = match estimate {
+            Ok(Ok(value)) => {
+                record_api_operation_observation(
+                    self,
+                    "pending_estimate_load",
+                    started_at.elapsed(),
+                    false,
+                );
+                value
+            }
+            Ok(Err(err)) => {
+                record_api_operation_observation(
+                    self,
+                    "pending_estimate_load",
+                    started_at.elapsed(),
+                    true,
+                );
+                return Err(err);
+            }
+            Err(err) => {
+                record_api_operation_observation(
+                    self,
+                    "pending_estimate_load",
+                    started_at.elapsed(),
+                    true,
+                );
+                return Err(err);
+            }
+        };
 
         let mut cache = self.miner_pending_estimate_cache.lock();
         if cache.len() >= MINER_PENDING_ESTIMATE_CACHE_MAX_ENTRIES {
@@ -6934,9 +7066,11 @@ impl ApiState {
                 .filter(|entry| entry.updated_at.elapsed() < MINER_BALANCE_RESPONSE_CACHE_TTL)
                 .map(|entry| entry.value.clone())
         } {
+            self.performance.record_cache_hit("miner_balance");
             return Ok(cached);
         }
 
+        self.performance.record_cache_miss("miner_balance");
         let fresh = self
             .load_miner_balance_payload(address, include_pending_estimate)
             .await?;
@@ -6975,9 +7109,11 @@ impl ApiState {
                 .filter(|entry| entry.updated_at.elapsed() < MINER_DETAIL_RESPONSE_CACHE_TTL)
                 .map(|entry| entry.value.clone())
         } {
+            self.performance.record_cache_hit("miner_detail");
             return Ok(cached);
         }
 
+        self.performance.record_cache_miss("miner_detail");
         let fresh = self
             .load_miner_detail_payload(address, share_limit, include_pending_estimate)
             .await?;
@@ -6997,16 +7133,38 @@ impl ApiState {
         address: &str,
         include_pending_estimate: bool,
     ) -> anyhow::Result<MinerBalancePayload> {
+        let started_at = Instant::now();
         let chain_height = self.node.chain_height();
         let addr = address.to_string();
         let store = Arc::clone(&self.store);
-        let (balance, pending_payout) = tokio::task::spawn_blocking(
+        let db_result = tokio::task::spawn_blocking(
             move || -> anyhow::Result<(Balance, Option<PendingPayout>)> {
                 Ok((store.get_balance(&addr)?, store.get_pending_payout(&addr)?))
             },
         )
         .await
-        .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+        .map_err(|err| anyhow::anyhow!("join error: {err}"));
+        let (balance, pending_payout) = match db_result {
+            Ok(Ok(value)) => value,
+            Ok(Err(err)) => {
+                record_api_operation_observation(
+                    self,
+                    "miner_balance_load",
+                    started_at.elapsed(),
+                    true,
+                );
+                return Err(err);
+            }
+            Err(err) => {
+                record_api_operation_observation(
+                    self,
+                    "miner_balance_load",
+                    started_at.elapsed(),
+                    true,
+                );
+                return Err(err);
+            }
+        };
 
         let pending_estimate = if include_pending_estimate {
             match self
@@ -7027,12 +7185,14 @@ impl ApiState {
             MinerPendingEstimate::default()
         };
 
-        Ok(MinerBalancePayload {
+        let payload = MinerBalancePayload {
             address: address.to_string(),
             balance: miner_balance_response(&balance, pending_payout.as_ref()),
             pending_estimate,
             pending_payout,
-        })
+        };
+        record_api_operation_observation(self, "miner_balance_load", started_at.elapsed(), false);
+        Ok(payload)
     }
 
     async fn load_miner_detail_payload(
@@ -7041,6 +7201,7 @@ impl ApiState {
         share_limit: i64,
         include_pending_estimate: bool,
     ) -> anyhow::Result<MinerDetailPayload> {
+        let started_at = Instant::now();
         let store = Arc::clone(&self.store);
         let chain_height = self.node.chain_height();
         let provisional_cutoff = SystemTime::now()
@@ -7082,7 +7243,28 @@ impl ApiState {
             ))
         })
         .await
-        .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+        .map_err(|err| anyhow::anyhow!("join error: {err}"));
+        let db_result = match db_result {
+            Ok(Ok(value)) => value,
+            Ok(Err(err)) => {
+                record_api_operation_observation(
+                    self,
+                    "miner_detail_load",
+                    started_at.elapsed(),
+                    true,
+                );
+                return Err(err);
+            }
+            Err(err) => {
+                record_api_operation_observation(
+                    self,
+                    "miner_detail_load",
+                    started_at.elapsed(),
+                    true,
+                );
+                return Err(err);
+            }
+        };
         let (
             shares,
             mining_since,
@@ -7194,10 +7376,12 @@ impl ApiState {
             body["error"] = serde_json::Value::String("miner not found".to_string());
         }
 
-        Ok(MinerDetailPayload {
+        let payload = MinerDetailPayload {
             found: has_activity,
             body,
-        })
+        };
+        record_api_operation_observation(self, "miner_detail_load", started_at.elapsed(), false);
+        Ok(payload)
     }
 
     async fn stats_insights(&self) -> anyhow::Result<StatsInsightsResponse> {
@@ -7510,6 +7694,7 @@ impl ApiState {
         }
 
         let store = Arc::clone(&self.store);
+        let started_at = Instant::now();
         let totals = tokio::task::spawn_blocking(move || -> anyhow::Result<DbTotals> {
             let total_shares = store.get_total_share_count()?;
             let rejected_shares = store.total_rejected_share_count()?;
@@ -7526,7 +7711,36 @@ impl ApiState {
             })
         })
         .await
-        .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+        .map_err(|err| anyhow::anyhow!("join error: {err}"));
+        let totals = match totals {
+            Ok(Ok(value)) => {
+                record_api_operation_observation(
+                    self,
+                    "db_totals_load",
+                    started_at.elapsed(),
+                    false,
+                );
+                value
+            }
+            Ok(Err(err)) => {
+                record_api_operation_observation(
+                    self,
+                    "db_totals_load",
+                    started_at.elapsed(),
+                    true,
+                );
+                return Err(err);
+            }
+            Err(err) => {
+                record_api_operation_observation(
+                    self,
+                    "db_totals_load",
+                    started_at.elapsed(),
+                    true,
+                );
+                return Err(err);
+            }
+        };
 
         let mut cache = self.db_totals_cache.lock();
         cache.totals = totals;
@@ -7656,6 +7870,7 @@ impl ApiState {
         }
 
         let node = Arc::clone(&self.node);
+        let started_at = Instant::now();
         let sampled = tokio::task::spawn_blocking(move || {
             estimate_explorer_network_hashrate_hps(node.as_ref(), chain_height, difficulty)
         })
@@ -7663,6 +7878,12 @@ impl ApiState {
         .ok()
         .and_then(Result::ok)
         .filter(|value| value.is_finite() && *value >= 0.0);
+        record_api_operation_observation(
+            self,
+            "network_hashrate_load",
+            started_at.elapsed(),
+            sampled.is_none(),
+        );
 
         let mut cache = self.network_hashrate_cache.lock();
         cache.updated_at = Some(Instant::now());
@@ -7740,6 +7961,161 @@ fn forwarded_client_ip(headers: &HeaderMap) -> Option<String> {
                 .filter(|value| !value.is_empty())
                 .map(str::to_string)
         })
+}
+
+fn query_includes_pending_estimate(uri: &Uri) -> bool {
+    uri.query()
+        .map(|query| query.contains("include_pending_estimate=true"))
+        .unwrap_or(false)
+}
+
+fn api_performance_route_name(uri: &Uri) -> Option<&'static str> {
+    let path = uri.path();
+    if !path.starts_with("/api/") || path == "/api/events" {
+        return None;
+    }
+
+    Some(match path {
+        "/api/stats" => "stats",
+        "/api/status" => "status",
+        "/api/health" => "health",
+        "/api/admin/perf" => "admin_perf",
+        "/api/admin/dev-fee" => "admin_dev_fee",
+        "/api/admin/shares" => "admin_share_diagnostics",
+        _ if path.ends_with("/balance") && path.starts_with("/api/miner/") => {
+            if query_includes_pending_estimate(uri) {
+                "miner_balance_pending"
+            } else {
+                "miner_balance"
+            }
+        }
+        _ if path.starts_with("/api/miner/") && !path.ends_with("/hashrate") => {
+            if query_includes_pending_estimate(uri) {
+                "miner_detail_pending"
+            } else {
+                "miner_detail"
+            }
+        }
+        _ => "other_api",
+    })
+}
+
+fn api_route_slow_threshold_millis(route: &str) -> u64 {
+    match route {
+        "stats" | "status" | "health" | "miner_balance" => 100,
+        "miner_balance_pending" | "miner_detail" | "other_api" => 250,
+        "miner_detail_pending" | "admin_dev_fee" | "admin_share_diagnostics" => 500,
+        _ => 250,
+    }
+}
+
+fn api_operation_slow_threshold_millis(operation: &str) -> u64 {
+    match operation {
+        "persisted_runtime_snapshot_load"
+        | "stats_load"
+        | "db_totals_load"
+        | "pool_hashrate_load" => 100,
+        "network_hashrate_load" | "miner_balance_load" | "miner_detail_load" => 250,
+        "pending_estimate_load" => 500,
+        _ => 250,
+    }
+}
+
+fn api_task_slow_threshold_millis(_task: &str) -> u64 {
+    250
+}
+
+fn record_api_route_observation(
+    state: &ApiState,
+    route: &str,
+    status: StatusCode,
+    duration: Duration,
+) {
+    let failed = status.as_u16() >= 400;
+    let slow = duration.as_millis() >= u128::from(api_route_slow_threshold_millis(route));
+    state
+        .performance
+        .record_route(route, duration, failed, slow);
+    if failed {
+        tracing::warn!(
+            component = "api_perf",
+            operation = "route",
+            route,
+            status = status.as_u16(),
+            duration_ms = duration.as_millis() as u64,
+            "api request completed with error"
+        );
+    } else if slow || state.performance.should_sample_success() {
+        tracing::info!(
+            component = "api_perf",
+            operation = "route",
+            route,
+            status = status.as_u16(),
+            duration_ms = duration.as_millis() as u64,
+            "api request observed"
+        );
+    }
+}
+
+fn record_api_operation_observation(
+    state: &ApiState,
+    operation: &str,
+    duration: Duration,
+    failed: bool,
+) {
+    let slow = duration.as_millis() >= u128::from(api_operation_slow_threshold_millis(operation));
+    state
+        .performance
+        .record_operation(operation, duration, failed, slow);
+    if failed {
+        tracing::warn!(
+            component = "api_perf",
+            operation,
+            duration_ms = duration.as_millis() as u64,
+            "api blocking operation failed"
+        );
+    } else if slow || state.performance.should_sample_success() {
+        tracing::info!(
+            component = "api_perf",
+            operation,
+            duration_ms = duration.as_millis() as u64,
+            "api blocking operation observed"
+        );
+    }
+}
+
+fn record_api_task_observation(state: &ApiState, task: &str, duration: Duration, failed: bool) {
+    let slow = duration.as_millis() >= u128::from(api_task_slow_threshold_millis(task));
+    state.performance.record_task(task, duration, failed, slow);
+    if failed {
+        tracing::warn!(
+            component = "api_perf",
+            operation = task,
+            duration_ms = duration.as_millis() as u64,
+            "api background task failed"
+        );
+    } else if slow || state.performance.should_sample_success() {
+        tracing::info!(
+            component = "api_perf",
+            operation = task,
+            duration_ms = duration.as_millis() as u64,
+            "api background task observed"
+        );
+    }
+}
+
+async fn observe_api_request_performance(
+    State(state): State<ApiState>,
+    req: Request<Body>,
+    next: Next,
+) -> Response {
+    let route = api_performance_route_name(req.uri());
+    let started_at = Instant::now();
+    let response = next.run(req).await;
+    if let Some(route) = route {
+        record_api_route_observation(&state, route, response.status(), started_at.elapsed());
+    }
+    response
 }
 
 async fn limit_public_telemetry_requests(
@@ -8298,7 +8674,7 @@ impl StatusHistory {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet, VecDeque};
+    use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
     use std::env;
     use std::sync::Arc;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -8328,29 +8704,29 @@ mod tests {
     };
     use axum::body::to_bytes;
     use axum::extract::{Path, Query, State};
-    use axum::http::{header, Method, StatusCode};
+    use axum::http::{header, Method, StatusCode, Uri};
     use axum::response::IntoResponse;
     use pool_common::pow::Argon2PowHasher;
     use serde::Serialize;
 
     use super::{
-        apply_wallet_liquidity_to_payout_eta, batch_payouts, block_page_item_response,
-        build_block_reward_breakdown, build_fee_page, compute_luck_details_for_hashes,
-        compute_luck_history, contains_ci, daemon_debug_log_path, daemon_health_from_heartbeat,
-        daemon_log_commands, estimate_unconfirmed_pending_for_miner, estimated_block_reward,
-        filter_active_workers_for_miner, handle_admin_dev_fee, handle_admin_share_diagnostics,
-        handle_app_fallback, handle_health, handle_miner, handle_miners, handle_stats,
-        hashrate_from_stats_with_miner_ramp, hashrate_from_stats_with_warmup,
-        hydrate_provisional_block_reward, is_api_request_path, load_persisted_status_history,
-        miner_balance_response, miner_has_activity, page_bounds, payout_status_note,
-        pending_balance_note, rejection_window_duration, share_limit, sort_workers_for_miner,
-        system_time_to_unix_secs, trim_log_line, worker_hashrate_by_name, ApiState,
-        DaemonHealthCache, DbTotalsCache, InsightsCache, LiveRuntimeSnapshotCache,
-        MinerDetailQuery, MinerPendingBlockEstimate, MinerPendingEstimate, MinersQuery,
-        NetworkHashrateCache, OpenIncident, PayoutEtaResponse, PoolHealthCache, StatusHistory,
-        StatusIncident, DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW,
-        HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY,
-        STATUS_HISTORY_META_KEY,
+        api_performance_route_name, apply_wallet_liquidity_to_payout_eta, batch_payouts,
+        block_page_item_response, build_block_reward_breakdown, build_fee_page,
+        compute_luck_details_for_hashes, compute_luck_history, contains_ci, daemon_debug_log_path,
+        daemon_health_from_heartbeat, daemon_log_commands, estimate_unconfirmed_pending_for_miner,
+        estimated_block_reward, filter_active_workers_for_miner, handle_admin_dev_fee,
+        handle_admin_share_diagnostics, handle_app_fallback, handle_health, handle_miner,
+        handle_miners, handle_stats, hashrate_from_stats_with_miner_ramp,
+        hashrate_from_stats_with_warmup, hydrate_provisional_block_reward, is_api_request_path,
+        load_persisted_status_history, miner_balance_response, miner_has_activity, page_bounds,
+        payout_status_note, pending_balance_note, rejection_window_duration, share_limit,
+        sort_workers_for_miner, system_time_to_unix_secs, trim_log_line, worker_hashrate_by_name,
+        ApiPerformanceTracker, ApiState, DaemonHealthCache, DbTotalsCache, InsightsCache,
+        LiveRuntimeSnapshotCache, MinerDetailQuery, MinerPendingBlockEstimate,
+        MinerPendingEstimate, MinersQuery, NetworkHashrateCache, OpenIncident, PayoutEtaResponse,
+        PoolHealthCache, StatusHistory, StatusIncident, DAEMON_LOG_LINE_LIMIT,
+        HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
+        LIVE_RUNTIME_SNAPSHOT_META_KEY, STATUS_HISTORY_META_KEY,
     };
 
     const TEST_POSTGRES_URL_ENV: &str = "BLOCKNET_POOL_TEST_POSTGRES_URL";
@@ -8417,6 +8793,7 @@ mod tests {
             public_telemetry_rate_limiter: Arc::new(parking_lot::Mutex::new(
                 PublicTelemetryRateLimiter::default(),
             )),
+            performance: Arc::new(ApiPerformanceTracker::default()),
             recovery: Arc::new(RecoveryAgentClient::new(cfg.recovery.socket_path.clone())),
             live_runtime_snapshot_cache: Arc::new(parking_lot::Mutex::new(
                 LiveRuntimeSnapshotCache::default(),
@@ -8435,6 +8812,38 @@ mod tests {
             started_at: Instant::now(),
             started_at_system: SystemTime::now(),
         }
+    }
+
+    #[test]
+    fn api_performance_route_name_classifies_hot_routes() {
+        assert_eq!(
+            api_performance_route_name(&Uri::from_static("/api/stats")),
+            Some("stats")
+        );
+        assert_eq!(
+            api_performance_route_name(&Uri::from_static("/api/miner/test/balance")),
+            Some("miner_balance")
+        );
+        assert_eq!(
+            api_performance_route_name(&Uri::from_static(
+                "/api/miner/test/balance?include_pending_estimate=true",
+            )),
+            Some("miner_balance_pending")
+        );
+        assert_eq!(
+            api_performance_route_name(&Uri::from_static(
+                "/api/miner/test?include_pending_estimate=true",
+            )),
+            Some("miner_detail_pending")
+        );
+        assert_eq!(
+            api_performance_route_name(&Uri::from_static("/api/admin/perf")),
+            Some("admin_perf")
+        );
+        assert_eq!(
+            api_performance_route_name(&Uri::from_static("/api/events")),
+            None
+        );
     }
 
     #[test]
@@ -9070,6 +9479,7 @@ mod tests {
             payouts: PersistedPayoutRuntime::default(),
             submit: Default::default(),
             validation: PersistedValidationSummary::default(),
+            runtime_tasks: BTreeMap::new(),
         };
         store
             .set_meta(
@@ -9356,6 +9766,7 @@ mod tests {
                 fraud_detections: 0,
                 ..PersistedValidationSummary::default()
             },
+            runtime_tasks: BTreeMap::new(),
         };
         store
             .set_meta(
@@ -9443,6 +9854,7 @@ mod tests {
                 pending_provisional: 12,
                 ..PersistedValidationSummary::default()
             },
+            runtime_tasks: BTreeMap::new(),
         };
         store
             .set_meta(

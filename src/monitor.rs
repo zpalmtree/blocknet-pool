@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::net::SocketAddr;
@@ -23,6 +24,7 @@ use crate::node::{NodeClient, NodeCurrentProcessBlock, NodeLastProcessBlock, Nod
 use crate::pool_activity::{assess_pool_activity, POOL_ACTIVITY_SNAPSHOT_STALE_AFTER};
 use crate::service_state::{PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY};
 use crate::store::PoolStore;
+use crate::telemetry::{ApiPerformanceSnapshot, TimedOperationSummary};
 
 const LOCAL_MONITOR_SOURCE: &str = "local";
 const LOCAL_API_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -70,9 +72,23 @@ pub struct MonitorSnapshot {
     pub oldest_pending_send_age_seconds: Option<u64>,
     pub validation_candidate_queue_depth: Option<u64>,
     pub validation_regular_queue_depth: Option<u64>,
+    #[serde(default)]
+    pub api_performance: ApiPerformanceSnapshot,
+    #[serde(default)]
+    pub stratum_runtime_tasks: BTreeMap<String, TimedOperationSummary>,
+    #[serde(default)]
+    pub process_metrics: BTreeMap<String, ProcessMetrics>,
     pub open_public_incidents: u64,
     pub open_private_incidents: u64,
     pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ProcessMetrics {
+    pub user_cpu_seconds: Option<f64>,
+    pub system_cpu_seconds: Option<f64>,
+    pub rss_bytes: Option<u64>,
+    pub thread_count: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -144,6 +160,8 @@ struct MonitorSample {
     daemon_status: ProbeOutcome<NodeStatus>,
     wallet_probe: ProbeOutcome<()>,
     runtime_snapshot: Option<PersistedRuntimeSnapshot>,
+    api_performance: Option<ApiPerformanceSnapshot>,
+    process_metrics: BTreeMap<String, ProcessMetrics>,
     payout_summary: Option<PendingPayoutSummary>,
     summary_state: String,
 }
@@ -302,6 +320,12 @@ impl MonitorRuntime {
             runtime_snapshot = self.load_runtime_snapshot().await;
             payout_summary = self.load_pending_payouts().await;
         }
+        let api_performance = if api.error.is_none() {
+            self.load_api_performance().await
+        } else {
+            None
+        };
+        let process_metrics = self.load_process_metrics().await;
 
         let template_refresh_millis = runtime_snapshot
             .as_ref()
@@ -343,6 +367,8 @@ impl MonitorRuntime {
             daemon_status: daemon,
             wallet_probe: wallet,
             runtime_snapshot,
+            api_performance,
+            process_metrics,
             payout_summary,
             summary_state,
         }
@@ -743,6 +769,11 @@ impl MonitorRuntime {
             runtime.map(|snapshot| snapshot.validation.candidate_queue_depth as u64);
         metrics.validation_regular_queue_depth =
             runtime.map(|snapshot| snapshot.validation.regular_queue_depth as u64);
+        metrics.api_performance = sample.api_performance.clone().unwrap_or_default();
+        metrics.stratum_runtime_tasks = runtime
+            .map(|snapshot| snapshot.runtime_tasks.clone())
+            .unwrap_or_default();
+        metrics.process_metrics = sample.process_metrics.clone();
         metrics.open_public_incidents = open_public;
         metrics.open_private_incidents = open_private;
         metrics.last_error = error;
@@ -958,17 +989,7 @@ impl MonitorRuntime {
     }
 
     async fn probe_api(&self) -> ProbeOutcome<()> {
-        let scheme = if self.cfg.api_tls_cert_path.trim().is_empty()
-            || self.cfg.api_tls_key_path.trim().is_empty()
-        {
-            "http"
-        } else {
-            "https"
-        };
-        let url = format!(
-            "{scheme}://{}:{}/api/info",
-            self.cfg.api_host, self.cfg.api_port
-        );
+        let url = self.local_api_url("/api/info");
         let client = self.api_client.clone();
         match tokio::task::spawn_blocking(move || -> Result<()> {
             let response = client
@@ -985,6 +1006,41 @@ impl MonitorRuntime {
             Ok(Ok(())) => ProbeOutcome::ok(()),
             Ok(Err(err)) => ProbeOutcome::err(err.to_string()),
             Err(err) => ProbeOutcome::err(format!("join error: {err}")),
+        }
+    }
+
+    async fn load_api_performance(&self) -> Option<ApiPerformanceSnapshot> {
+        let url = self.local_api_url("/api/admin/perf");
+        let api_key = self.cfg.api_key.trim().to_string();
+        let client = self.api_client.clone();
+        match tokio::task::spawn_blocking(move || -> Result<Option<ApiPerformanceSnapshot>> {
+            let mut request = client.get(&url);
+            if !api_key.is_empty() {
+                request = request.header("x-api-key", api_key);
+            }
+            let response = request.send().with_context(|| format!("GET {url}"))?;
+            let status = response.status();
+            if status == reqwest::StatusCode::SERVICE_UNAVAILABLE
+                || status == reqwest::StatusCode::UNAUTHORIZED
+            {
+                return Ok(None);
+            }
+            if !status.is_success() {
+                return Err(anyhow!("GET {url} returned HTTP {status}"));
+            }
+            Ok(Some(response.json()?))
+        })
+        .await
+        {
+            Ok(Ok(snapshot)) => snapshot,
+            Ok(Err(err)) => {
+                tracing::warn!(error = %err, "failed loading api performance snapshot");
+                None
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "api performance snapshot task join failed");
+                None
+            }
         }
     }
 
@@ -1065,6 +1121,12 @@ impl MonitorRuntime {
         }
     }
 
+    async fn load_process_metrics(&self) -> BTreeMap<String, ProcessMetrics> {
+        tokio::task::spawn_blocking(collect_process_metrics)
+            .await
+            .unwrap_or_default()
+    }
+
     async fn load_pending_payouts(&self) -> Option<PendingPayoutSummary> {
         let store = Arc::clone(&self.store);
         match tokio::task::spawn_blocking(move || -> Result<PendingPayoutSummary> {
@@ -1095,6 +1157,20 @@ impl MonitorRuntime {
                 None
             }
         }
+    }
+
+    fn local_api_url(&self, path: &str) -> String {
+        let scheme = if self.cfg.api_tls_cert_path.trim().is_empty()
+            || self.cfg.api_tls_key_path.trim().is_empty()
+        {
+            "http"
+        } else {
+            "https"
+        };
+        format!(
+            "{scheme}://{}:{}{path}",
+            self.cfg.api_host, self.cfg.api_port
+        )
     }
 }
 
@@ -1143,6 +1219,96 @@ fn build_local_api_client() -> Result<BlockingClient> {
         .danger_accept_invalid_certs(true)
         .build()
         .context("build local monitor http client")
+}
+
+fn collect_process_metrics() -> BTreeMap<String, ProcessMetrics> {
+    let clock_ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if clock_ticks <= 0 || page_size <= 0 {
+        return BTreeMap::new();
+    }
+
+    [
+        ("api", "blocknet-pool-api"),
+        ("stratum", "blocknet-pool-stratum"),
+        ("monitor", "blocknet-pool-monitor"),
+        ("recoveryd", "blocknet-pool-recoveryd"),
+    ]
+    .into_iter()
+    .filter_map(|(service, needle)| {
+        read_process_metrics(needle, clock_ticks as f64, page_size as u64)
+            .map(|metrics| (service.to_string(), metrics))
+    })
+    .collect()
+}
+
+fn read_process_metrics(
+    command_needle: &str,
+    clock_ticks_per_second: f64,
+    page_size: u64,
+) -> Option<ProcessMetrics> {
+    let entries = fs::read_dir("/proc").ok()?;
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        if file_name
+            .to_str()
+            .is_none_or(|name| !name.bytes().all(|ch| ch.is_ascii_digit()))
+        {
+            continue;
+        }
+
+        let proc_path = entry.path();
+        let cmdline_raw = fs::read(proc_path.join("cmdline")).ok()?;
+        if cmdline_raw.is_empty() {
+            continue;
+        }
+        let cmdline = cmdline_raw
+            .split(|byte| *byte == 0)
+            .filter(|segment| !segment.is_empty())
+            .map(String::from_utf8_lossy)
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !cmdline.contains(command_needle) {
+            continue;
+        }
+
+        let stat_raw = fs::read_to_string(proc_path.join("stat")).ok()?;
+        let (user_cpu_seconds, system_cpu_seconds, thread_count, rss_bytes) =
+            parse_proc_stat_metrics(&stat_raw, clock_ticks_per_second, page_size)?;
+        return Some(ProcessMetrics {
+            user_cpu_seconds: Some(user_cpu_seconds),
+            system_cpu_seconds: Some(system_cpu_seconds),
+            rss_bytes: Some(rss_bytes),
+            thread_count: Some(thread_count),
+        });
+    }
+    None
+}
+
+fn parse_proc_stat_metrics(
+    stat_raw: &str,
+    clock_ticks_per_second: f64,
+    page_size: u64,
+) -> Option<(f64, f64, u64, u64)> {
+    let close_paren = stat_raw.rfind(')')?;
+    let fields = stat_raw
+        .get(close_paren + 2..)?
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    if fields.len() <= 21 {
+        return None;
+    }
+
+    let user_ticks = fields.get(11)?.parse::<u64>().ok()?;
+    let system_ticks = fields.get(12)?.parse::<u64>().ok()?;
+    let thread_count = fields.get(17)?.parse::<u64>().ok()?;
+    let rss_pages = fields.get(21)?.parse::<i64>().ok()?.max(0) as u64;
+    Some((
+        user_ticks as f64 / clock_ticks_per_second,
+        system_ticks as f64 / clock_ticks_per_second,
+        thread_count,
+        rss_pages.saturating_mul(page_size),
+    ))
 }
 
 fn summarize_state(
@@ -1584,6 +1750,70 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
         "blocknet_pool_monitor_validation_regular_queue_depth",
         snapshot.validation_regular_queue_depth.unwrap_or(0),
     );
+    for (service, metrics) in &snapshot.process_metrics {
+        metric_line_labeled(
+            &mut out,
+            "blocknet_pool_monitor_process_user_cpu_seconds",
+            &[("service", service)],
+            metrics.user_cpu_seconds.unwrap_or(0.0),
+        );
+        metric_line_labeled(
+            &mut out,
+            "blocknet_pool_monitor_process_system_cpu_seconds",
+            &[("service", service)],
+            metrics.system_cpu_seconds.unwrap_or(0.0),
+        );
+        metric_line_labeled(
+            &mut out,
+            "blocknet_pool_monitor_process_rss_bytes",
+            &[("service", service)],
+            metrics.rss_bytes.unwrap_or(0),
+        );
+        metric_line_labeled(
+            &mut out,
+            "blocknet_pool_monitor_process_threads",
+            &[("service", service)],
+            metrics.thread_count.unwrap_or(0),
+        );
+    }
+    render_timed_operation_metrics(
+        &mut out,
+        "blocknet_pool_monitor_api_route",
+        "route",
+        &snapshot.api_performance.routes,
+    );
+    render_timed_operation_metrics(
+        &mut out,
+        "blocknet_pool_monitor_api_operation",
+        "operation",
+        &snapshot.api_performance.operations,
+    );
+    render_timed_operation_metrics(
+        &mut out,
+        "blocknet_pool_monitor_api_task",
+        "task",
+        &snapshot.api_performance.tasks,
+    );
+    for (cache, stats) in &snapshot.api_performance.caches {
+        metric_line_labeled(
+            &mut out,
+            "blocknet_pool_monitor_api_cache_hits",
+            &[("cache", cache)],
+            stats.hits,
+        );
+        metric_line_labeled(
+            &mut out,
+            "blocknet_pool_monitor_api_cache_misses",
+            &[("cache", cache)],
+            stats.misses,
+        );
+    }
+    render_timed_operation_metrics(
+        &mut out,
+        "blocknet_pool_monitor_stratum_task",
+        "task",
+        &snapshot.stratum_runtime_tasks,
+    );
     if let Some(hashrate) = snapshot.estimated_hashrate {
         out.push_str(&format!(
             "blocknet_pool_monitor_estimated_hashrate {}\n",
@@ -1625,12 +1855,91 @@ where
     buf.push('\n');
 }
 
+fn metric_line_labeled<T>(buf: &mut String, name: &str, labels: &[(&str, &str)], value: T)
+where
+    T: std::fmt::Display,
+{
+    buf.push_str(name);
+    if !labels.is_empty() {
+        buf.push('{');
+        for (idx, (key, value)) in labels.iter().enumerate() {
+            if idx > 0 {
+                buf.push(',');
+            }
+            buf.push_str(key);
+            buf.push_str("=\"");
+            buf.push_str(&escape_metric_label_value(value));
+            buf.push('"');
+        }
+        buf.push('}');
+    }
+    buf.push(' ');
+    buf.push_str(&value.to_string());
+    buf.push('\n');
+}
+
+fn render_timed_operation_metrics(
+    out: &mut String,
+    prefix: &str,
+    label_name: &str,
+    stats_by_name: &BTreeMap<String, TimedOperationSummary>,
+) {
+    for (name, stats) in stats_by_name {
+        let labels = [(label_name, name.as_str())];
+        metric_line_labeled(out, &format!("{prefix}_count"), &labels, stats.count);
+        metric_line_labeled(
+            out,
+            &format!("{prefix}_error_count"),
+            &labels,
+            stats.error_count,
+        );
+        metric_line_labeled(
+            out,
+            &format!("{prefix}_slow_count"),
+            &labels,
+            stats.slow_count,
+        );
+        metric_line_labeled(
+            out,
+            &format!("{prefix}_total_millis"),
+            &labels,
+            stats.total_millis,
+        );
+        metric_line_labeled(
+            out,
+            &format!("{prefix}_max_millis"),
+            &labels,
+            stats.max_millis,
+        );
+        metric_line_labeled(
+            out,
+            &format!("{prefix}_p50_millis"),
+            &labels,
+            stats.duration.p50_millis.unwrap_or(0),
+        );
+        metric_line_labeled(
+            out,
+            &format!("{prefix}_p95_millis"),
+            &labels,
+            stats.duration.p95_millis.unwrap_or(0),
+        );
+    }
+}
+
+fn escape_metric_label_value(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        bool_gauge, daemon_slow_block_state, payout_queue_state, pool_activity_loss_state,
-        render_metrics, share_progress_state, summarize_state, validation_backlog_state,
-        MonitorSnapshot, PendingPayoutSummary, STRATUM_SNAPSHOT_STALE_AFTER,
+        bool_gauge, daemon_slow_block_state, parse_proc_stat_metrics, payout_queue_state,
+        pool_activity_loss_state, render_metrics, share_progress_state, summarize_state,
+        validation_backlog_state, MonitorSnapshot, PendingPayoutSummary, ProcessMetrics,
+        STRATUM_SNAPSHOT_STALE_AFTER,
     };
     use crate::config::Config;
     use crate::node::{NodeCurrentProcessBlock, NodeLastProcessBlock, NodeStatus};
@@ -1638,7 +1947,9 @@ mod tests {
     use crate::service_state::{
         PersistedRuntimeSnapshot, PersistedSubmitSummary, PersistedValidationSummary,
     };
+    use crate::telemetry::{ApiPerformanceSnapshot, CacheCounterSummary, TimedOperationSummary};
     use pool_runtime::jobs::JobRuntimeSnapshot;
+    use std::collections::BTreeMap;
     use std::time::{Duration, SystemTime};
 
     fn sample_runtime_snapshot() -> PersistedRuntimeSnapshot {
@@ -1653,6 +1964,7 @@ mod tests {
             payouts: Default::default(),
             submit: PersistedSubmitSummary::default(),
             validation: PersistedValidationSummary::default(),
+            runtime_tasks: BTreeMap::new(),
         }
     }
 
@@ -1703,6 +2015,76 @@ mod tests {
     }
 
     #[test]
+    fn render_metrics_outputs_labeled_perf_metrics() {
+        let mut snapshot = MonitorSnapshot {
+            summary_state: "healthy".to_string(),
+            ..MonitorSnapshot::default()
+        };
+        snapshot.process_metrics.insert(
+            "api".to_string(),
+            ProcessMetrics {
+                user_cpu_seconds: Some(12.5),
+                system_cpu_seconds: Some(4.25),
+                rss_bytes: Some(9_000),
+                thread_count: Some(16),
+            },
+        );
+        snapshot.api_performance = ApiPerformanceSnapshot {
+            sampled_at: None,
+            routes: BTreeMap::from([(
+                "stats".to_string(),
+                TimedOperationSummary {
+                    count: 5,
+                    error_count: 1,
+                    slow_count: 2,
+                    total_millis: 600,
+                    max_millis: 250,
+                    duration: Default::default(),
+                },
+            )]),
+            operations: BTreeMap::new(),
+            tasks: BTreeMap::new(),
+            caches: BTreeMap::from([(
+                "stats_response".to_string(),
+                CacheCounterSummary { hits: 7, misses: 3 },
+            )]),
+        };
+        snapshot.stratum_runtime_tasks.insert(
+            "runtime_snapshot_persist".to_string(),
+            TimedOperationSummary {
+                count: 4,
+                error_count: 0,
+                slow_count: 1,
+                total_millis: 240,
+                max_millis: 120,
+                duration: Default::default(),
+            },
+        );
+
+        let rendered = render_metrics(&snapshot);
+        assert!(rendered
+            .contains("blocknet_pool_monitor_process_user_cpu_seconds{service=\"api\"} 12.5"));
+        assert!(rendered.contains("blocknet_pool_monitor_api_route_count{route=\"stats\"} 5"));
+        assert!(
+            rendered.contains("blocknet_pool_monitor_api_cache_hits{cache=\"stats_response\"} 7")
+        );
+        assert!(rendered.contains(
+            "blocknet_pool_monitor_stratum_task_count{task=\"runtime_snapshot_persist\"} 4"
+        ));
+    }
+
+    #[test]
+    fn parse_proc_stat_metrics_reads_expected_fields() {
+        let stat_raw =
+            "4321 (blocknet-pool-api) S 1 2 3 4 5 6 7 8 9 10 200 50 0 0 20 0 4 0 100 4096 32";
+        let metrics = parse_proc_stat_metrics(stat_raw, 100.0, 4096).expect("proc stat parse");
+        assert_eq!(metrics.0, 2.0);
+        assert_eq!(metrics.1, 0.5);
+        assert_eq!(metrics.2, 4);
+        assert_eq!(metrics.3, 32 * 4096);
+    }
+
+    #[test]
     fn validation_backlog_detects_high_depths() {
         let mut snapshot = sample_runtime_snapshot();
         snapshot.validation.candidate_queue_depth = 1_600;
@@ -1745,7 +2127,9 @@ mod tests {
         snapshot.connected_workers = 0;
         snapshot.estimated_hashrate = 0.0;
         snapshot.last_share_at = Some(now - Duration::from_secs(20 * 60));
-        assert!(pool_activity_loss_state(now, Some(&snapshot), STRATUM_SNAPSHOT_STALE_AFTER).is_none());
+        assert!(
+            pool_activity_loss_state(now, Some(&snapshot), STRATUM_SNAPSHOT_STALE_AFTER).is_none()
+        );
     }
 
     #[test]
@@ -1756,7 +2140,9 @@ mod tests {
         snapshot.connected_workers = 3;
         snapshot.estimated_hashrate = 12.5;
         snapshot.last_share_at = Some(now - Duration::from_secs(30));
-        assert!(pool_activity_loss_state(now, Some(&snapshot), STRATUM_SNAPSHOT_STALE_AFTER).is_none());
+        assert!(
+            pool_activity_loss_state(now, Some(&snapshot), STRATUM_SNAPSHOT_STALE_AFTER).is_none()
+        );
     }
 
     #[test]
@@ -1768,7 +2154,9 @@ mod tests {
         snapshot.connected_workers = 0;
         snapshot.estimated_hashrate = 0.0;
         snapshot.last_share_at = Some(now - Duration::from_secs(10));
-        assert!(pool_activity_loss_state(now, Some(&snapshot), STRATUM_SNAPSHOT_STALE_AFTER).is_none());
+        assert!(
+            pool_activity_loss_state(now, Some(&snapshot), STRATUM_SNAPSHOT_STALE_AFTER).is_none()
+        );
     }
 
     #[test]

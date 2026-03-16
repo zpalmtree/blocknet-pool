@@ -1639,13 +1639,9 @@ impl ValidationInner {
         for (address, source) in due.into_iter().take(max_addresses) {
             let load_limit = per_address_limit.min(remaining_budget.max(1));
             let shares = match source {
-                ValidationAuditSource::ProvisionalBacklog => {
-                    self.state_store.load_recent_provisional_audit_shares(
-                        &address,
-                        provisional_cutoff,
-                        load_limit,
-                    )
-                }
+                ValidationAuditSource::ProvisionalBacklog => self
+                    .state_store
+                    .load_recent_provisional_audit_shares(&address, provisional_cutoff, load_limit),
                 _ => self.state_store.load_pending_payout_audit_shares(
                     &address,
                     &self.config,
@@ -2444,7 +2440,10 @@ mod tests {
     }
 
     impl InMemoryAuditStore {
-        fn new(loaded: LoadedValidationState, pending_payout_audits: Vec<PendingAuditShare>) -> Self {
+        fn new(
+            loaded: LoadedValidationState,
+            pending_payout_audits: Vec<PendingAuditShare>,
+        ) -> Self {
             Self {
                 loaded,
                 pending_payout_audits: Mutex::new(pending_payout_audits),
@@ -2490,7 +2489,10 @@ mod tests {
             Ok(0)
         }
 
-        fn load_validation_clear_events_since(&self, _cursor: i64) -> Result<Vec<ValidationClearEvent>> {
+        fn load_validation_clear_events_since(
+            &self,
+            _cursor: i64,
+        ) -> Result<Vec<ValidationClearEvent>> {
             Ok(Vec::new())
         }
 
@@ -3183,7 +3185,10 @@ mod tests {
         );
 
         engine.inner.maintenance_tick();
-        wait_for(|| engine.snapshot().audit_enqueued >= 2, Duration::from_secs(1));
+        wait_for(
+            || engine.snapshot().audit_enqueued >= 2,
+            Duration::from_secs(1),
+        );
         assert_eq!(
             engine.snapshot().audit_enqueued,
             2,
@@ -3192,7 +3197,10 @@ mod tests {
 
         std::thread::sleep(VALIDATION_AUDIT_SCHED_INTERVAL + Duration::from_millis(100));
         engine.inner.maintenance_tick();
-        wait_for(|| engine.snapshot().audit_enqueued >= 4, Duration::from_secs(1));
+        wait_for(
+            || engine.snapshot().audit_enqueued >= 4,
+            Duration::from_secs(1),
+        );
         let second_pass = engine.snapshot().audit_enqueued;
         assert!(
             (4..8).contains(&second_pass),

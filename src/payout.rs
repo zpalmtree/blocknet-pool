@@ -13,6 +13,7 @@ use crate::node::{http_error_body_contains, is_http_status, NodeClient, NodeStat
 use crate::pow::{check_target, difficulty_to_target, Argon2PowHasher, PowHasher};
 use crate::protocol::{address_network, validate_miner_address_for_network, AddressNetwork};
 use crate::store::PoolStore;
+use crate::telemetry::NamedTimedOperationTracker;
 use crate::validation::{SHARE_STATUS_PROVISIONAL, SHARE_STATUS_REJECTED, SHARE_STATUS_VERIFIED};
 
 const MIN_PAYOUT_INTERVAL: Duration = Duration::from_secs(1);
@@ -21,6 +22,7 @@ const MIN_PAYOUT_FEE_BUFFER: u64 = 1_000;
 const PENDING_PAYOUT_RETRY_GRACE: Duration = Duration::from_secs(15 * 60);
 const PAYOUT_CONFIRMATIONS_REQUIRED: u64 = 1;
 const MIN_WALLET_SEND_SPACING: Duration = Duration::from_millis(2_100);
+const PAYOUT_TASK_SLOW_LOG_AFTER: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PayoutRuntimeSnapshot {
@@ -88,10 +90,20 @@ pub struct PayoutProcessor {
     store: Arc<PoolStore>,
     node: Arc<NodeClient>,
     runtime: RwLock<PayoutRuntimeSnapshot>,
+    task_metrics: Option<Arc<NamedTimedOperationTracker>>,
 }
 
 impl PayoutProcessor {
     pub fn new(cfg: Config, store: Arc<PoolStore>, node: Arc<NodeClient>) -> Arc<Self> {
+        Self::new_with_task_metrics(cfg, store, node, None)
+    }
+
+    pub fn new_with_task_metrics(
+        cfg: Config,
+        store: Arc<PoolStore>,
+        node: Arc<NodeClient>,
+        task_metrics: Option<Arc<NamedTimedOperationTracker>>,
+    ) -> Arc<Self> {
         let configured_address_network = configured_payout_address_network(&cfg);
         Arc::new(Self {
             cfg,
@@ -99,6 +111,7 @@ impl PayoutProcessor {
             store,
             node,
             runtime: RwLock::new(PayoutRuntimeSnapshot::default()),
+            task_metrics,
         })
     }
 
@@ -113,7 +126,9 @@ impl PayoutProcessor {
             let maintenance_interval = bounded_payout_maintenance_interval(payout_interval);
             {
                 let this = Arc::clone(&this);
-                let _ = tokio::task::spawn_blocking(move || {
+                let task_metrics = this.task_metrics.clone();
+                let started_at = Instant::now();
+                let startup = tokio::task::spawn_blocking(move || {
                     this.backfill_legacy_pool_fee_credits();
                     this.recover_pending_payouts();
                     this.tick(true);
@@ -126,6 +141,12 @@ impl PayoutProcessor {
                     );
                 })
                 .await;
+                record_payout_task_observation(
+                    task_metrics.as_ref(),
+                    "payout_startup",
+                    started_at.elapsed(),
+                    startup.is_err(),
+                );
             }
 
             let mut next_send_due = Instant::now() + payout_interval;
@@ -136,9 +157,16 @@ impl PayoutProcessor {
                 ticker.tick().await;
                 let should_send = Instant::now() >= next_send_due;
                 let worker = Arc::clone(&this);
-                let send_completed = tokio::task::spawn_blocking(move || worker.tick(should_send))
-                    .await
-                    .unwrap_or(false);
+                let started_at = Instant::now();
+                let send_completed =
+                    tokio::task::spawn_blocking(move || worker.tick(should_send)).await;
+                let (send_completed, failed) = match send_completed {
+                    Ok(value) => (value, false),
+                    Err(err) => {
+                        tracing::warn!(error = %err, "payout tick task join failed");
+                        (false, true)
+                    }
+                };
                 let now = SystemTime::now();
                 if send_completed {
                     next_send_due = Instant::now() + payout_interval;
@@ -151,6 +179,16 @@ impl PayoutProcessor {
                     maintenance_interval,
                     next_send_due_at,
                     Some(now),
+                );
+                record_payout_task_observation(
+                    this.task_metrics.as_ref(),
+                    if should_send {
+                        "payout_tick_send"
+                    } else {
+                        "payout_tick_maintenance"
+                    },
+                    started_at.elapsed(),
+                    failed,
                 );
             }
         });
@@ -1047,6 +1085,37 @@ impl PayoutProcessor {
                 None
             }
         }
+    }
+}
+
+fn record_payout_task_observation(
+    task_metrics: Option<&Arc<NamedTimedOperationTracker>>,
+    task: &str,
+    duration: Duration,
+    failed: bool,
+) {
+    if let Some(task_metrics) = task_metrics {
+        task_metrics.record(
+            task,
+            duration,
+            failed,
+            duration >= PAYOUT_TASK_SLOW_LOG_AFTER,
+        );
+    }
+    if failed {
+        tracing::warn!(
+            component = "runtime_perf",
+            operation = task,
+            duration_ms = duration.as_millis() as u64,
+            "payout runtime task failed"
+        );
+    } else if duration >= PAYOUT_TASK_SLOW_LOG_AFTER {
+        tracing::info!(
+            component = "runtime_perf",
+            operation = task,
+            duration_ms = duration.as_millis() as u64,
+            "payout runtime task observed"
+        );
     }
 }
 

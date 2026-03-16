@@ -1518,9 +1518,9 @@ impl PoolEngine {
                     {
                         let retarget_interval =
                             vardiff_retarget_interval_for_direction(&self.cfg, false);
-                        let can_retarget = session.last_difficulty_adjustment.is_none_or(|last| {
-                            now.duration_since(last) >= retarget_interval
-                        });
+                        let can_retarget = session
+                            .last_difficulty_adjustment
+                            .is_none_or(|last| now.duration_since(last) >= retarget_interval);
                         if can_retarget {
                             let miner = compact_address(&session.address);
                             tracing::debug!(
@@ -1662,9 +1662,9 @@ impl PoolEngine {
                         let increasing = next_diff > session.difficulty;
                         let retarget_interval =
                             vardiff_retarget_interval_for_direction(&self.cfg, increasing);
-                        let can_retarget = session.last_difficulty_adjustment.is_none_or(|last| {
-                            now.duration_since(last) >= retarget_interval
-                        });
+                        let can_retarget = session
+                            .last_difficulty_adjustment
+                            .is_none_or(|last| now.duration_since(last) >= retarget_interval);
                         if can_retarget {
                             let miner = compact_address(&session.address);
                             tracing::debug!(
@@ -1702,9 +1702,9 @@ impl PoolEngine {
                     {
                         let retarget_interval =
                             vardiff_retarget_interval_for_direction(&self.cfg, false);
-                        let can_retarget = session.last_difficulty_adjustment.is_none_or(|last| {
-                            now.duration_since(last) >= retarget_interval
-                        });
+                        let can_retarget = session
+                            .last_difficulty_adjustment
+                            .is_none_or(|last| now.duration_since(last) >= retarget_interval);
                         if can_retarget {
                             let miner = compact_address(&session.address);
                             tracing::debug!(

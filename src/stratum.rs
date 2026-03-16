@@ -838,22 +838,20 @@ impl StratumServer {
                             );
                         } else {
                             *difficulty = ack.next_difficulty;
-                            let range_mode = if self.engine.session_supports_capability(
-                                conn_id,
-                                CAP_SAME_TEMPLATE_REBIND_V1,
-                            ) {
+                            let range_mode = if self
+                                .engine
+                                .session_supports_capability(conn_id, CAP_SAME_TEMPLATE_REBIND_V1)
+                            {
                                 AssignmentRangeMode::PreserveCurrent
                             } else {
                                 AssignmentRangeMode::Fresh
                             };
-                            if let Some(miner_job) =
-                                self.jobs.build_miner_job_with_range_mode(
-                                    conn_id,
-                                    ack.next_difficulty,
-                                    address,
-                                    range_mode,
-                                )
-                            {
+                            if let Some(miner_job) = self.jobs.build_miner_job_with_range_mode(
+                                conn_id,
+                                ack.next_difficulty,
+                                address,
+                                range_mode,
+                            ) {
                                 if let Some(outbound) = outbound {
                                     let notify = StratumNotify {
                                         method: "job".to_string(),

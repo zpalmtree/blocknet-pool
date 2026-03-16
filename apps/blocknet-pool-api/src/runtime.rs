@@ -59,6 +59,7 @@ pub async fn build_api_state(cfg: &Config, shared: &SharedRuntime) -> Result<Api
         miner_balance_response_cache: Arc::new(Mutex::new(MinerBalanceResponseCache::default())),
         miner_detail_response_cache: Arc::new(Mutex::new(MinerDetailResponseCache::default())),
         public_telemetry_rate_limiter: Arc::new(Mutex::new(PublicTelemetryRateLimiter::default())),
+        performance: Arc::new(crate::api::ApiPerformanceTracker::default()),
         recovery: Arc::new(RecoveryAgentClient::new(cfg.recovery.socket_path.clone())),
         live_runtime_snapshot_cache: Arc::new(Mutex::new(
             crate::api::LiveRuntimeSnapshotCache::default(),
