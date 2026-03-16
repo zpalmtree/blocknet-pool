@@ -24,7 +24,7 @@ use crate::node::{NodeClient, NodeCurrentProcessBlock, NodeLastProcessBlock, Nod
 use crate::pool_activity::{assess_pool_activity, POOL_ACTIVITY_SNAPSHOT_STALE_AFTER};
 use crate::service_state::{PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY};
 use crate::store::PoolStore;
-use crate::telemetry::{ApiPerformanceSnapshot, TimedOperationSummary};
+use pool_runtime::telemetry::{ApiPerformanceSnapshot, TimedOperationSummary};
 
 const LOCAL_MONITOR_SOURCE: &str = "local";
 const LOCAL_API_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -1885,7 +1885,7 @@ fn render_timed_operation_metrics(
     stats_by_name: &BTreeMap<String, TimedOperationSummary>,
 ) {
     for (name, stats) in stats_by_name {
-        let labels = [(label_name, name.as_str())];
+        let labels: [(&str, &str); 1] = [(label_name, name.as_str())];
         metric_line_labeled(out, &format!("{prefix}_count"), &labels, stats.count);
         metric_line_labeled(
             out,
@@ -1947,8 +1947,10 @@ mod tests {
     use crate::service_state::{
         PersistedRuntimeSnapshot, PersistedSubmitSummary, PersistedValidationSummary,
     };
-    use crate::telemetry::{ApiPerformanceSnapshot, CacheCounterSummary, TimedOperationSummary};
     use pool_runtime::jobs::JobRuntimeSnapshot;
+    use pool_runtime::telemetry::{
+        ApiPerformanceSnapshot, CacheCounterSummary, TimedOperationSummary,
+    };
     use std::collections::BTreeMap;
     use std::time::{Duration, SystemTime};
 

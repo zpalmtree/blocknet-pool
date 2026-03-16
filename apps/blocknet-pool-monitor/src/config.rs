@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     pub api_host: String,
     pub api_port: u16,
+    pub api_key: String,
     pub api_tls_cert_path: String,
     pub api_tls_key_path: String,
     pub daemon_data_dir: String,
@@ -33,6 +34,7 @@ impl Default for Config {
         Self {
             api_host: "127.0.0.1".to_string(),
             api_port: 24783,
+            api_key: String::new(),
             api_tls_cert_path: String::new(),
             api_tls_key_path: String::new(),
             daemon_data_dir: "data".to_string(),
@@ -68,6 +70,9 @@ impl Config {
         }
         if self.api_port == 0 {
             self.api_port = 24783;
+        }
+        if self.api_key.trim().is_empty() {
+            self.api_key.clear();
         }
         if self.daemon_cookie_path.trim().is_empty() {
             self.daemon_cookie_path = "/etc/blocknet/pool/daemon-active.api.cookie".to_string();
