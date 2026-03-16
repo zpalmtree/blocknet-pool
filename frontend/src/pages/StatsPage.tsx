@@ -7,6 +7,7 @@ import { formatCoins, formatFee, humanRate, timeAgo, toUnixMs } from '../lib/for
 import type { ThemeMode } from '../lib/theme';
 import type {
   HashratePoint,
+  MinerBalancePayload,
   MinerResponse,
   Range,
   StatsInsightsResponse,
@@ -44,10 +45,21 @@ async function resolveHandle(api: ApiClient, raw: string): Promise<{ address: st
   return { address: data.address, handle: data.handle };
 }
 
+function balancePayloadFromMiner(address: string, miner: MinerResponse): MinerBalancePayload | null {
+  if (!miner.balance) return null;
+  return {
+    address,
+    balance: miner.balance,
+    pending_estimate: miner.pending_estimate,
+    pending_payout: miner.pending_payout ?? null,
+  };
+}
+
 export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   const [minerInput, setMinerInput] = useState(localStorage.getItem(LAST_MINER_LOOKUP_KEY) || '');
   const [minerAddress, setMinerAddress] = useState('');
   const [minerData, setMinerData] = useState<MinerResponse | null>(null);
+  const [minerBalanceData, setMinerBalanceData] = useState<MinerBalancePayload | null>(null);
   const [range, setRange] = useState<Range>('1h');
   const [history, setHistory] = useState<HashratePoint[]>([]);
   const [rejectionRange, setRejectionRange] = useState<RejectionWindowRange>('1h');
@@ -66,9 +78,22 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
     if (!minerAddress) return;
     const addr = minerAddress;
     try {
-      const d = await api.getMiner(addr);
+      const d = await api.getMiner(addr, true);
       if (minerAddressRef.current !== addr) return;
       setMinerData(d);
+      setMinerBalanceData(balancePayloadFromMiner(addr, d));
+    } catch {
+      // handled by api client
+    }
+  }, [api, minerAddress]);
+
+  const refreshMinerBalance = useCallback(async () => {
+    if (!minerAddress) return;
+    const addr = minerAddress;
+    try {
+      const d = await api.getMinerBalance(addr, false);
+      if (minerAddressRef.current !== addr) return;
+      setMinerBalanceData(d);
     } catch {
       // handled by api client
     }
@@ -122,12 +147,13 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
         setResolvedHandle(null);
       }
       try {
-        const d = await api.getMiner(addr);
+        const d = await api.getMiner(addr, true);
         if (requestId !== lookupRequestSeq.current) return;
         setMinerAddress(addr);
         setMinerInput(addr);
         localStorage.setItem(LAST_MINER_LOOKUP_KEY, addr);
         setMinerData(d);
+        setMinerBalanceData(balancePayloadFromMiner(addr, d));
         setResolvedHandle(resolved?.handle ?? null);
         void loadMinerHashrate(addr, range);
       } catch {
@@ -180,7 +206,10 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   useEffect(() => {
     if (!active || liveTick <= 0) return;
     if (minerAddress) {
-      void refreshMinerData();
+      void refreshMinerBalance();
+      if (liveTick % 6 === 0) {
+        void refreshMinerData();
+      }
     }
     if (liveTick % 2 === 0) {
       if (minerAddress) {
@@ -188,7 +217,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
       }
       void loadRejections();
     }
-  }, [active, liveTick, minerAddress, refreshMinerData, loadMinerHashrate, loadRejections]);
+  }, [active, liveTick, minerAddress, refreshMinerBalance, refreshMinerData, loadMinerHashrate, loadRejections]);
 
   const lookupDisabled = useMemo(() => {
     const raw = minerInput.trim();
@@ -221,9 +250,11 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
     return oldest ? new Date(oldest).toLocaleDateString() : '-';
   }, [minerData]);
 
-  const pendingConfirmed = minerData?.balance?.pending_confirmed ?? minerData?.balance?.pending ?? 0;
+  const liveBalance = minerBalanceData?.balance ?? minerData?.balance;
+  const livePendingPayout = minerBalanceData?.pending_payout ?? minerData?.pending_payout;
+  const pendingConfirmed = liveBalance?.pending_confirmed ?? liveBalance?.pending ?? 0;
   const pendingEstimated = minerData?.pending_estimate?.estimated_pending ?? 0;
-  const pendingQueued = minerData?.balance?.pending_queued ?? minerData?.pending_payout?.amount ?? 0;
+  const pendingQueued = liveBalance?.pending_queued ?? livePendingPayout?.amount ?? 0;
   const payoutEta = insights?.payout_eta ?? null;
   const rejectionWindow = insights?.rejections?.window ?? null;
   const minerAccepted = minerData?.total_accepted ?? 0;
@@ -280,6 +311,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
               setMinerInput('');
               setMinerAddress('');
               setMinerData(null);
+              setMinerBalanceData(null);
               setHistory([]);
               setResolvedHandle(null);
               localStorage.removeItem(LAST_MINER_LOOKUP_KEY);

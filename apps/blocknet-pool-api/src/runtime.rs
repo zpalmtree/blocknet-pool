@@ -9,7 +9,8 @@ use pool_recovery::RecoveryAgentClient;
 
 use crate::api::{
     load_persisted_status_history, ApiState, DaemonHealthCache, DbTotalsCache, InsightsCache,
-    NetworkHashrateCache, PoolHealthCache, StatusHistory, DEFAULT_MAX_SSE_SUBSCRIBERS,
+    MinerBalanceResponseCache, MinerDetailResponseCache, NetworkHashrateCache, PoolHealthCache,
+    PublicTelemetryRateLimiter, StatsResponseCache, StatusHistory, DEFAULT_MAX_SSE_SUBSCRIBERS,
 };
 use crate::config::Config;
 
@@ -53,7 +54,11 @@ pub async fn build_api_state(cfg: &Config, shared: &SharedRuntime) -> Result<Api
         pool_health_cache: Arc::new(Mutex::new(PoolHealthCache::default())),
         network_hashrate_cache: Arc::new(Mutex::new(NetworkHashrateCache::default())),
         insights_cache: Arc::new(Mutex::new(InsightsCache::default())),
+        stats_response_cache: Arc::new(Mutex::new(StatsResponseCache::default())),
         miner_pending_estimate_cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        miner_balance_response_cache: Arc::new(Mutex::new(MinerBalanceResponseCache::default())),
+        miner_detail_response_cache: Arc::new(Mutex::new(MinerDetailResponseCache::default())),
+        public_telemetry_rate_limiter: Arc::new(Mutex::new(PublicTelemetryRateLimiter::default())),
         recovery: Arc::new(RecoveryAgentClient::new(cfg.recovery.socket_path.clone())),
         live_runtime_snapshot_cache: Arc::new(Mutex::new(
             crate::api::LiveRuntimeSnapshotCache::default(),

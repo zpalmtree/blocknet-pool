@@ -163,6 +163,21 @@ export interface MinerVerificationHold {
   validation_recent_provisional_difficulty?: number | null;
 }
 
+export interface MinerBalanceDetails {
+  pending: number;
+  pending_confirmed?: number;
+  pending_queued?: number;
+  pending_unqueued?: number;
+  paid: number;
+}
+
+export interface MinerBalancePayload {
+  address: string;
+  balance: MinerBalanceDetails;
+  pending_estimate?: MinerPendingEstimate;
+  pending_payout?: PendingPayout | null;
+}
+
 export interface ActiveVerificationHold {
   address: string;
   strikes: number;
@@ -187,13 +202,7 @@ export interface ClearAddressRiskHistoryResponse {
 export interface MinerResponse {
   hashrate: number;
   mining_since?: UnixLike;
-  balance?: {
-    pending: number;
-    pending_confirmed?: number;
-    pending_queued?: number;
-    pending_unqueued?: number;
-    paid: number;
-  };
+  balance?: MinerBalanceDetails;
   workers?: MinerWorker[];
   shares?: MinerShare[];
   blocks_found?: BlockItem[];

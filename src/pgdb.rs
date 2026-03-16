@@ -35,6 +35,17 @@ pub struct MinerShareWindowStats {
     pub stale_rejected_count: u64,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ShareWindowAddressPreview {
+    pub address: String,
+    pub seen_shares: u64,
+    pub verified_shares: u64,
+    pub verified_difficulty: u64,
+    pub provisional_shares_ready: u64,
+    pub provisional_difficulty_ready: u64,
+    pub provisional_shares_delayed: u64,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct VardiffHintSummary {
     pub total_workers: u64,
@@ -785,6 +796,100 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             &[&before_ts, &n],
         )?;
         Ok(rows.into_iter().map(row_to_share).collect())
+    }
+
+    pub fn summarize_shares_between(
+        &self,
+        start: SystemTime,
+        end: SystemTime,
+        provisional_ready_cutoff: Option<SystemTime>,
+    ) -> Result<Vec<ShareWindowAddressPreview>> {
+        let start_ts = to_unix(start);
+        let end_ts = to_unix(end);
+        let ready_enabled = provisional_ready_cutoff.is_some();
+        let ready_cutoff = provisional_ready_cutoff.map(to_unix).unwrap_or_default();
+        let rows = self.conn().lock().query(
+            "SELECT
+                miner,
+                COUNT(*)::bigint AS seen_shares,
+                COUNT(*) FILTER (WHERE status = '' OR status = 'verified')::bigint AS verified_shares,
+                COALESCE(SUM(difficulty) FILTER (WHERE status = '' OR status = 'verified'), 0)::bigint AS verified_difficulty,
+                COUNT(*) FILTER (
+                    WHERE status = 'provisional'
+                      AND $3
+                      AND created_at <= $4
+                )::bigint AS provisional_shares_ready,
+                COALESCE(SUM(difficulty) FILTER (
+                    WHERE status = 'provisional'
+                      AND $3
+                      AND created_at <= $4
+                ), 0)::bigint AS provisional_difficulty_ready,
+                COUNT(*) FILTER (
+                    WHERE status = 'provisional'
+                      AND (
+                        NOT $3
+                        OR created_at > $4
+                      )
+                )::bigint AS provisional_shares_delayed
+             FROM shares
+             WHERE created_at >= $1 AND created_at <= $2
+             GROUP BY miner
+             ORDER BY miner ASC",
+            &[&start_ts, &end_ts, &ready_enabled, &ready_cutoff],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(row_to_share_window_preview)
+            .collect::<Vec<_>>())
+    }
+
+    pub fn summarize_last_n_shares_before(
+        &self,
+        before: SystemTime,
+        n: i64,
+        provisional_ready_cutoff: Option<SystemTime>,
+    ) -> Result<Vec<ShareWindowAddressPreview>> {
+        let before_ts = to_unix(before);
+        let ready_enabled = provisional_ready_cutoff.is_some();
+        let ready_cutoff = provisional_ready_cutoff.map(to_unix).unwrap_or_default();
+        let rows = self.conn().lock().query(
+            "SELECT
+                miner,
+                COUNT(*)::bigint AS seen_shares,
+                COUNT(*) FILTER (WHERE status = '' OR status = 'verified')::bigint AS verified_shares,
+                COALESCE(SUM(difficulty) FILTER (WHERE status = '' OR status = 'verified'), 0)::bigint AS verified_difficulty,
+                COUNT(*) FILTER (
+                    WHERE status = 'provisional'
+                      AND $3
+                      AND created_at <= $4
+                )::bigint AS provisional_shares_ready,
+                COALESCE(SUM(difficulty) FILTER (
+                    WHERE status = 'provisional'
+                      AND $3
+                      AND created_at <= $4
+                ), 0)::bigint AS provisional_difficulty_ready,
+                COUNT(*) FILTER (
+                    WHERE status = 'provisional'
+                      AND (
+                        NOT $3
+                        OR created_at > $4
+                      )
+                )::bigint AS provisional_shares_delayed
+             FROM (
+                SELECT miner, difficulty, status, created_at
+                FROM shares
+                WHERE created_at <= $1
+                ORDER BY created_at DESC
+                LIMIT $2
+             ) AS recent_shares
+             GROUP BY miner
+             ORDER BY miner ASC",
+            &[&before_ts, &n.max(1), &ready_enabled, &ready_cutoff],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(row_to_share_window_preview)
+            .collect::<Vec<_>>())
     }
 
     pub fn latest_share_timestamp_for_block_hash(&self, hash: &str) -> Result<Option<SystemTime>> {
@@ -2328,10 +2433,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                             )
                         });
                 let validation_pending_provisional = row.get::<_, i64>(10).max(0) as u64;
-                let validation_recent_verified_difficulty =
-                    row.get::<_, i64>(11).max(0) as u64;
-                let validation_recent_provisional_difficulty =
-                    row.get::<_, i64>(12).max(0) as u64;
+                let validation_recent_verified_difficulty = row.get::<_, i64>(11).max(0) as u64;
+                let validation_recent_provisional_difficulty = row.get::<_, i64>(12).max(0) as u64;
                 let reason = last_reason.clone().or_else(|| {
                     validation_hold_reason(
                         validation_hold_cause,
@@ -3614,6 +3717,18 @@ fn row_to_share(row: postgres::Row) -> DbShare {
     }
 }
 
+fn row_to_share_window_preview(row: postgres::Row) -> ShareWindowAddressPreview {
+    ShareWindowAddressPreview {
+        address: row.get::<_, String>(0),
+        seen_shares: row.get::<_, i64>(1).max(0) as u64,
+        verified_shares: row.get::<_, i64>(2).max(0) as u64,
+        verified_difficulty: row.get::<_, i64>(3).max(0) as u64,
+        provisional_shares_ready: row.get::<_, i64>(4).max(0) as u64,
+        provisional_difficulty_ready: row.get::<_, i64>(5).max(0) as u64,
+        provisional_shares_delayed: row.get::<_, i64>(6).max(0) as u64,
+    }
+}
+
 fn row_to_share_replay(row: postgres::Row) -> Result<ShareReplayData> {
     let network_target = row.get::<_, Vec<u8>>(2);
     if network_target.len() != 32 {
@@ -3930,6 +4045,180 @@ mod tests {
 
     fn unique_suffix() -> String {
         format!("{}-{}", std::process::id(), rand::random::<u64>())
+    }
+
+    #[test]
+    fn summarize_shares_between_groups_preview_stats_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let miner_a = format!("miner-a-{suffix}");
+        let miner_b = format!("miner-b-{suffix}");
+        let base = UNIX_EPOCH + Duration::from_secs(20_000_000);
+
+        for share in [
+            ShareRecord {
+                job_id: format!("job-a-verified-{suffix}"),
+                miner: miner_a.clone(),
+                worker: "rig-a".to_string(),
+                difficulty: 10,
+                nonce: 1,
+                status: "verified",
+                was_sampled: true,
+                block_hash: None,
+                claimed_hash: None,
+                reject_reason: None,
+                created_at: base,
+            },
+            ShareRecord {
+                job_id: format!("job-a-ready-{suffix}"),
+                miner: miner_a.clone(),
+                worker: "rig-a".to_string(),
+                difficulty: 20,
+                nonce: 2,
+                status: "provisional",
+                was_sampled: false,
+                block_hash: None,
+                claimed_hash: None,
+                reject_reason: None,
+                created_at: base + Duration::from_secs(10),
+            },
+            ShareRecord {
+                job_id: format!("job-a-delayed-{suffix}"),
+                miner: miner_a.clone(),
+                worker: "rig-a".to_string(),
+                difficulty: 30,
+                nonce: 3,
+                status: "provisional",
+                was_sampled: false,
+                block_hash: None,
+                claimed_hash: None,
+                reject_reason: None,
+                created_at: base + Duration::from_secs(50),
+            },
+            ShareRecord {
+                job_id: format!("job-b-reject-{suffix}"),
+                miner: miner_b.clone(),
+                worker: "rig-b".to_string(),
+                difficulty: 40,
+                nonce: 4,
+                status: "rejected",
+                was_sampled: true,
+                block_hash: None,
+                claimed_hash: None,
+                reject_reason: Some("stale".to_string()),
+                created_at: base + Duration::from_secs(20),
+            },
+            ShareRecord {
+                job_id: format!("job-b-verified-{suffix}"),
+                miner: miner_b.clone(),
+                worker: "rig-b".to_string(),
+                difficulty: 50,
+                nonce: 5,
+                status: "verified",
+                was_sampled: true,
+                block_hash: None,
+                claimed_hash: None,
+                reject_reason: None,
+                created_at: base + Duration::from_secs(30),
+            },
+        ] {
+            store.add_share(share).expect("add share");
+        }
+
+        let summary = store
+            .summarize_shares_between(
+                base,
+                base + Duration::from_secs(60),
+                Some(base + Duration::from_secs(40)),
+            )
+            .expect("summarize shares between");
+        assert_eq!(summary.len(), 2);
+
+        let miner_a_summary = summary
+            .iter()
+            .find(|row| row.address == miner_a)
+            .expect("miner a summary");
+        assert_eq!(miner_a_summary.seen_shares, 3);
+        assert_eq!(miner_a_summary.verified_shares, 1);
+        assert_eq!(miner_a_summary.verified_difficulty, 10);
+        assert_eq!(miner_a_summary.provisional_shares_ready, 1);
+        assert_eq!(miner_a_summary.provisional_difficulty_ready, 20);
+        assert_eq!(miner_a_summary.provisional_shares_delayed, 1);
+
+        let miner_b_summary = summary
+            .iter()
+            .find(|row| row.address == miner_b)
+            .expect("miner b summary");
+        assert_eq!(miner_b_summary.seen_shares, 2);
+        assert_eq!(miner_b_summary.verified_shares, 1);
+        assert_eq!(miner_b_summary.verified_difficulty, 50);
+        assert_eq!(miner_b_summary.provisional_shares_ready, 0);
+        assert_eq!(miner_b_summary.provisional_difficulty_ready, 0);
+        assert_eq!(miner_b_summary.provisional_shares_delayed, 0);
+    }
+
+    #[test]
+    fn summarize_shares_between_reduces_materialized_rows_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let base = UNIX_EPOCH + Duration::from_secs(21_000_000);
+        let miner_count = 16u64;
+        let shares_per_miner = 80u64;
+
+        for miner_idx in 0..miner_count {
+            let miner = format!("miner-{miner_idx}-{suffix}");
+            for share_idx in 0..shares_per_miner {
+                let status = if share_idx % 3 == 0 {
+                    "verified"
+                } else {
+                    "provisional"
+                };
+                store
+                    .add_share(ShareRecord {
+                        job_id: format!("job-{suffix}-{miner_idx}-{share_idx}"),
+                        miner: miner.clone(),
+                        worker: format!("rig-{miner_idx}"),
+                        difficulty: 1 + (share_idx % 5),
+                        nonce: share_idx + 1,
+                        status,
+                        was_sampled: status == "verified",
+                        block_hash: None,
+                        claimed_hash: None,
+                        reject_reason: None,
+                        created_at: base + Duration::from_secs(miner_idx * 5 + share_idx),
+                    })
+                    .expect("add perf share");
+            }
+        }
+
+        let start = base;
+        let end = base + Duration::from_secs(miner_count * 5 + shares_per_miner + 5);
+        let raw = store
+            .get_shares_between(start, end)
+            .expect("load raw shares between");
+        let summary = store
+            .summarize_shares_between(start, end, Some(end))
+            .expect("summarize shares between");
+
+        assert_eq!(raw.len(), (miner_count * shares_per_miner) as usize);
+        assert_eq!(
+            summary.iter().map(|row| row.seen_shares).sum::<u64>(),
+            raw.len() as u64
+        );
+        assert!(summary.len() <= miner_count as usize);
+        assert!(summary.len() * 10 < raw.len());
     }
 
     #[test]

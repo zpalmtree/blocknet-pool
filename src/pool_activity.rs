@@ -53,8 +53,7 @@ pub fn assess_pool_activity(
                 estimated_hashrate,
             ),
         )
-    } else if all_zero && last_share_age.is_some_and(|age| age <= POOL_ACTIVITY_LOSS_RECENT_AFTER)
-    {
+    } else if all_zero && last_share_age.is_some_and(|age| age <= POOL_ACTIVITY_LOSS_RECENT_AFTER) {
         (
             "collapsed",
             format!(

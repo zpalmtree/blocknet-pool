@@ -10,6 +10,7 @@ import type {
   HealthResponse,
   InfoResponse,
   LuckRound,
+  MinerBalancePayload,
   MinerListItem,
   MinerResponse,
   PagedResponse,
@@ -49,7 +50,8 @@ export interface ApiClient {
   getStatus(): Promise<StatusResponse>;
   getBlocks(params: QueryParams): Promise<PagedResponse<BlockItem>>;
   getRecentPayouts(params: QueryParams): Promise<PagedResponse<PayoutItem>>;
-  getMiner(address: string): Promise<MinerResponse>;
+  getMiner(address: string, includePendingEstimate?: boolean): Promise<MinerResponse>;
+  getMinerBalance(address: string, includePendingEstimate?: boolean): Promise<MinerBalancePayload>;
   getMinerHashrate(address: string, range: string): Promise<HashratePoint[]>;
   getMiners(params: QueryParams): Promise<PagedResponse<MinerListItem>>;
   getAdminPayouts(params: QueryParams): Promise<PagedResponse<AdminPayoutItem>>;
@@ -134,7 +136,14 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
     getStatus: () => fetchJson<StatusResponse>('/api/status'),
     getBlocks: (params) => fetchJson<PagedResponse<BlockItem>>(withQuery('/api/blocks', params)),
     getRecentPayouts: (params) => fetchJson<PagedResponse<PayoutItem>>(withQuery('/api/payouts/recent', params)),
-    getMiner: (address) => fetchJson<MinerResponse>(`/api/miner/${encodeURIComponent(address)}`),
+    getMiner: (address, includePendingEstimate = true) =>
+      fetchJson<MinerResponse>(
+        `/api/miner/${encodeURIComponent(address)}?include_pending_estimate=${includePendingEstimate ? 'true' : 'false'}`
+      ),
+    getMinerBalance: (address, includePendingEstimate = true) =>
+      fetchJson<MinerBalancePayload>(
+        `/api/miner/${encodeURIComponent(address)}/balance?include_pending_estimate=${includePendingEstimate ? 'true' : 'false'}`
+      ),
     getMinerHashrate: (address, range) =>
       fetchJson<HashratePoint[]>(`/api/miner/${encodeURIComponent(address)}/hashrate?range=${encodeURIComponent(range)}`),
     getMiners: (params) => fetchJson<PagedResponse<MinerListItem>>(withQuery('/api/miners', params), { auth: true }),
