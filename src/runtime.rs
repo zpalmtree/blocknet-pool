@@ -30,7 +30,7 @@ pub struct SharedRuntime {
     pub node: Arc<NodeClient>,
     pub expected_address_network: Option<AddressNetwork>,
     pub jobs: Arc<JobManager>,
-    pub validation: Arc<ValidationEngine>,
+    pub validation: Option<Arc<ValidationEngine>>,
     pub stats: Arc<PoolStats>,
 }
 
@@ -42,6 +42,19 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
 }
 
 pub async fn bootstrap_shared_runtime_from_config(cfg: Config) -> Result<SharedRuntime> {
+    bootstrap_shared_runtime_with_validation_from_config(cfg, true).await
+}
+
+pub async fn bootstrap_shared_runtime_without_validation_from_config(
+    cfg: Config,
+) -> Result<SharedRuntime> {
+    bootstrap_shared_runtime_with_validation_from_config(cfg, false).await
+}
+
+async fn bootstrap_shared_runtime_with_validation_from_config(
+    cfg: Config,
+    include_validation: bool,
+) -> Result<SharedRuntime> {
     validate_pool_fee_destination_config(&cfg)?;
     info!(
         "vardiff init={} min={} max={} target_shares={} retarget={}",
@@ -97,18 +110,22 @@ pub async fn bootstrap_shared_runtime_from_config(cfg: Config) -> Result<SharedR
     let jobs = JobManager::new(Arc::clone(&node), cfg.clone());
     jobs.start();
 
-    let validation = {
+    let validation = if include_validation {
         let cfg = cfg.clone();
         let store = Arc::clone(&store) as Arc<dyn ValidationStateStore>;
-        tokio::task::spawn_blocking(move || {
-            Arc::new(ValidationEngine::new_with_state_store(
-                cfg,
-                Arc::new(Argon2PowHasher::default()),
-                store,
-            ))
-        })
-        .await
-        .context("join validation engine init task")?
+        Some(
+            tokio::task::spawn_blocking(move || {
+                Arc::new(ValidationEngine::new_with_state_store(
+                    cfg,
+                    Arc::new(Argon2PowHasher::default()),
+                    store,
+                ))
+            })
+            .await
+            .context("join validation engine init task")?,
+        )
+    } else {
+        None
     };
 
     Ok(SharedRuntime {
@@ -125,7 +142,12 @@ pub async fn bootstrap_shared_runtime_from_config(cfg: Config) -> Result<SharedR
 pub async fn build_engine(shared: &SharedRuntime) -> Result<Arc<PoolEngine>> {
     let cfg = shared.cfg.clone();
     let expected_address_network = shared.expected_address_network;
-    let validation = Arc::clone(&shared.validation);
+    let validation = Arc::clone(
+        shared
+            .validation
+            .as_ref()
+            .context("validation engine is not available for pool engine bootstrap")?,
+    );
     let jobs = Arc::clone(&shared.jobs) as Arc<dyn JobRepository>;
     let store = Arc::clone(&shared.store) as Arc<dyn ShareStore>;
     let node = Arc::clone(&shared.node) as Arc<dyn NodeApi>;
@@ -174,6 +196,12 @@ pub fn start_stratum_background_tasks(
     engine: Arc<PoolEngine>,
     stratum: Arc<StratumServer>,
 ) {
+    let validation = Arc::clone(
+        shared
+            .validation
+            .as_ref()
+            .expect("stratum runtime requires a validation engine"),
+    );
     let task_metrics = Arc::new(NamedTimedOperationTracker::default());
     start_found_block_recovery(engine, Arc::clone(&task_metrics));
     let payout = PayoutProcessor::new_with_task_metrics(
@@ -203,7 +231,7 @@ pub fn start_stratum_background_tasks(
         Arc::clone(&payout),
         Arc::clone(&shared.stats),
         stratum,
-        Arc::clone(&shared.validation),
+        validation,
         Arc::clone(&shared.store),
         task_metrics,
     );

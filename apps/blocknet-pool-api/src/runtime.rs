@@ -21,9 +21,10 @@ pub async fn bootstrap_api_runtime(config_path: &Path) -> Result<(Config, Shared
     pool_runtime::runtime::load_dotenv(config_path);
     let cfg = Config::load(config_path)?;
     warn_api_config(&cfg);
-    let shared =
-        pool_runtime::runtime::bootstrap_shared_runtime_from_config(cfg.to_runtime_config())
-            .await?;
+    let shared = pool_runtime::runtime::bootstrap_shared_runtime_without_validation_from_config(
+        cfg.to_runtime_config(),
+    )
+    .await?;
     Ok((cfg, shared))
 }
 
@@ -48,7 +49,7 @@ pub async fn build_api_state(cfg: &Config, shared: &SharedRuntime) -> Result<Api
         stats: Arc::clone(&shared.stats),
         jobs: Arc::clone(&shared.jobs),
         node: Arc::clone(&shared.node),
-        validation: Arc::clone(&shared.validation),
+        validation: shared.validation.clone(),
         db_totals_cache: Arc::new(Mutex::new(DbTotalsCache::default())),
         daemon_health_cache: Arc::new(Mutex::new(DaemonHealthCache::default())),
         pool_health_cache: Arc::new(Mutex::new(PoolHealthCache::default())),

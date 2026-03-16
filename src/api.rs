@@ -393,7 +393,7 @@ pub struct ApiState {
     pub stats: Arc<PoolStats>,
     pub jobs: Arc<JobManager>,
     pub node: Arc<NodeClient>,
-    pub validation: Arc<ValidationEngine>,
+    pub validation: Option<Arc<ValidationEngine>>,
     pub db_totals_cache: Arc<Mutex<DbTotalsCache>>,
     pub daemon_health_cache: Arc<Mutex<DaemonHealthCache>>,
     pub pool_health_cache: Arc<Mutex<PoolHealthCache>>,
@@ -4033,7 +4033,9 @@ async fn handle_admin_clear_address_risk_history(
     .await
     {
         Ok(Ok(())) => {
-            state.validation.clear_address_state(&address);
+            if let Some(validation) = &state.validation {
+                validation.clear_address_state(&address);
+            }
             Json(ClearAddressRiskHistoryResponse { ok: true, address }).into_response()
         }
         Ok(Err(err)) => internal_error("failed clearing address risk history", err).into_response(),
@@ -6776,14 +6778,22 @@ impl ApiState {
     }
 
     async fn effective_validation_summary(&self) -> ValidationSummary {
-        let live = validation_summary_from_snapshot(self.validation.snapshot());
+        let live = self
+            .validation
+            .as_ref()
+            .map(|validation| validation_summary_from_snapshot(validation.snapshot()));
         if let Some(persisted) = self.persisted_runtime_snapshot().await {
+            let Some(live) = live else {
+                return validation_summary_from_persisted(&persisted.validation);
+            };
             if validation_summary_is_empty(&live) {
                 return validation_summary_from_persisted(&persisted.validation);
             }
             return merge_validation_summary(live, &persisted.validation);
         }
-        live
+        live.unwrap_or_else(|| {
+            validation_summary_from_persisted(&PersistedValidationSummary::default())
+        })
     }
 
     async fn cached_stats_response(&self) -> anyhow::Result<StatsResponse> {
@@ -8706,6 +8716,7 @@ mod tests {
     use axum::extract::{Path, Query, State};
     use axum::http::{header, Method, StatusCode, Uri};
     use axum::response::IntoResponse;
+    use axum::Json;
     use pool_common::pow::Argon2PowHasher;
     use serde::Serialize;
 
@@ -8714,19 +8725,20 @@ mod tests {
         block_page_item_response, build_block_reward_breakdown, build_fee_page,
         compute_luck_details_for_hashes, compute_luck_history, contains_ci, daemon_debug_log_path,
         daemon_health_from_heartbeat, daemon_log_commands, estimate_unconfirmed_pending_for_miner,
-        estimated_block_reward, filter_active_workers_for_miner, handle_admin_dev_fee,
+        estimated_block_reward, filter_active_workers_for_miner,
+        handle_admin_clear_address_risk_history, handle_admin_dev_fee,
         handle_admin_share_diagnostics, handle_app_fallback, handle_health, handle_miner,
         handle_miners, handle_stats, hashrate_from_stats_with_miner_ramp,
         hashrate_from_stats_with_warmup, hydrate_provisional_block_reward, is_api_request_path,
         load_persisted_status_history, miner_balance_response, miner_has_activity, page_bounds,
         payout_status_note, pending_balance_note, rejection_window_duration, share_limit,
         sort_workers_for_miner, system_time_to_unix_secs, trim_log_line, worker_hashrate_by_name,
-        ApiPerformanceTracker, ApiState, DaemonHealthCache, DbTotalsCache, InsightsCache,
-        LiveRuntimeSnapshotCache, MinerDetailQuery, MinerPendingBlockEstimate,
-        MinerPendingEstimate, MinersQuery, NetworkHashrateCache, OpenIncident, PayoutEtaResponse,
-        PoolHealthCache, StatusHistory, StatusIncident, DAEMON_LOG_LINE_LIMIT,
-        HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
-        LIVE_RUNTIME_SNAPSHOT_META_KEY, STATUS_HISTORY_META_KEY,
+        ApiPerformanceTracker, ApiState, ClearAddressRiskHistoryRequest, DaemonHealthCache,
+        DbTotalsCache, InsightsCache, LiveRuntimeSnapshotCache, MinerDetailQuery,
+        MinerPendingBlockEstimate, MinerPendingEstimate, MinersQuery, NetworkHashrateCache,
+        OpenIncident, PayoutEtaResponse, PoolHealthCache, StatusHistory, StatusIncident,
+        DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW,
+        HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY, STATUS_HISTORY_META_KEY,
     };
 
     const TEST_POSTGRES_URL_ENV: &str = "BLOCKNET_POOL_TEST_POSTGRES_URL";
@@ -8774,7 +8786,7 @@ mod tests {
             stats: Arc::new(PoolStats::new()),
             jobs,
             node,
-            validation,
+            validation: Some(validation),
             db_totals_cache: Arc::new(parking_lot::Mutex::new(DbTotalsCache::default())),
             daemon_health_cache: Arc::new(parking_lot::Mutex::new(DaemonHealthCache::default())),
             pool_health_cache: Arc::new(parking_lot::Mutex::new(PoolHealthCache::default())),
@@ -8812,6 +8824,12 @@ mod tests {
             started_at: Instant::now(),
             started_at_system: SystemTime::now(),
         }
+    }
+
+    fn test_api_state_without_validation(store: Arc<PoolStore>) -> ApiState {
+        let mut state = test_api_state(store);
+        state.validation = None;
+        state
     }
 
     #[test]
@@ -9511,6 +9529,82 @@ mod tests {
         assert_eq!(payload["job"]["active_assignments"], 12);
         assert_eq!(payload["pool_activity"]["state"], "idle");
         assert_eq!(payload["pool_activity"]["connected_miners"], 0);
+    }
+
+    #[test]
+    fn effective_validation_summary_uses_persisted_snapshot_without_live_validator() {
+        let store = require_test_store!();
+        let snapshot = PersistedRuntimeSnapshot {
+            sampled_at: SystemTime::now(),
+            total_shares_accepted: 0,
+            connected_miners: 0,
+            connected_workers: 0,
+            estimated_hashrate: 0.0,
+            last_share_at: None,
+            jobs: JobRuntimeSnapshot::default(),
+            payouts: PersistedPayoutRuntime::default(),
+            submit: Default::default(),
+            validation: PersistedValidationSummary {
+                candidate_queue_depth: 7,
+                regular_queue_depth: 11,
+                tracked_addresses: 5,
+                effective_sample_rate: 0.25,
+                ..PersistedValidationSummary::default()
+            },
+            runtime_tasks: BTreeMap::new(),
+        };
+        store
+            .set_meta(
+                LIVE_RUNTIME_SNAPSHOT_META_KEY,
+                &serde_json::to_vec(&snapshot).expect("serialize runtime snapshot"),
+            )
+            .expect("persist runtime snapshot");
+
+        let state = test_api_state_without_validation(store);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let summary = runtime.block_on(state.effective_validation_summary());
+        assert_eq!(summary.candidate_queue_depth, 7);
+        assert_eq!(summary.regular_queue_depth, 11);
+        assert_eq!(summary.tracked_addresses, 5);
+        assert_eq!(summary.effective_sample_rate, 0.25);
+    }
+
+    #[test]
+    fn clear_risk_history_succeeds_without_live_validator() {
+        let store = require_test_store!();
+        store
+            .escalate_address_risk(
+                "no-live-validator",
+                "manual review",
+                Duration::from_secs(60),
+                1,
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+            )
+            .expect("seed risk state");
+
+        let state = test_api_state_without_validation(Arc::clone(&store));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let response = runtime
+            .block_on(handle_admin_clear_address_risk_history(
+                State(state),
+                Json(ClearAddressRiskHistoryRequest {
+                    address: "no-live-validator".to_string(),
+                }),
+            ))
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(store
+            .get_address_risk("no-live-validator")
+            .expect("load risk state")
+            .is_none());
     }
 
     #[test]
