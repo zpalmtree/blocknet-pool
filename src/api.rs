@@ -5008,6 +5008,13 @@ struct PreparedPendingEstimateBlock {
     previews: Vec<ShareWindowAddressPreview>,
 }
 
+#[derive(Debug, Clone)]
+struct PendingEstimateDurationWindow {
+    index: usize,
+    start: SystemTime,
+    end: SystemTime,
+}
+
 fn collect_address_preview_stats_from_summary(
     preview: Option<&ShareWindowAddressPreview>,
     risky: bool,
@@ -5027,6 +5034,194 @@ fn collect_address_preview_stats_from_summary(
         provisional_shares_delayed: preview.provisional_shares_delayed,
         risky,
     }
+}
+
+fn duration_based_pending_window(config: &Config) -> Option<Duration> {
+    if config.payout_scheme.trim().eq_ignore_ascii_case("pplns") {
+        let duration = config.pplns_window_duration_duration();
+        return (!duration.is_zero()).then_some(duration);
+    }
+
+    Some(PROPORTIONAL_WINDOW)
+}
+
+fn update_window_preview_for_share(
+    preview: &mut ShareWindowAddressPreview,
+    share: &DbShare,
+    provisional_ready_cutoff: Option<SystemTime>,
+    add: bool,
+) {
+    let apply = |value: &mut u64, delta: u64| {
+        if add {
+            *value = value.saturating_add(delta);
+        } else {
+            *value = value.saturating_sub(delta);
+        }
+    };
+
+    apply(&mut preview.seen_shares, 1);
+    match share.status.as_str() {
+        "" | SHARE_STATUS_VERIFIED => {
+            apply(&mut preview.verified_shares, 1);
+            apply(&mut preview.verified_difficulty, share.difficulty);
+        }
+        SHARE_STATUS_PROVISIONAL => {
+            let ready = provisional_ready_cutoff
+                .map(|cutoff| share.created_at <= cutoff)
+                .unwrap_or(false);
+            if ready {
+                apply(&mut preview.provisional_shares_ready, 1);
+                apply(&mut preview.provisional_difficulty_ready, share.difficulty);
+            } else {
+                apply(&mut preview.provisional_shares_delayed, 1);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn clone_sorted_share_window_previews(
+    by_address: &HashMap<String, ShareWindowAddressPreview>,
+) -> Vec<ShareWindowAddressPreview> {
+    let mut previews = by_address
+        .iter()
+        .filter_map(|(address, preview)| {
+            (preview.seen_shares > 0).then(|| {
+                let mut preview = preview.clone();
+                preview.address = address.clone();
+                preview
+            })
+        })
+        .collect::<Vec<_>>();
+    previews.sort_by(|a, b| a.address.cmp(&b.address));
+    previews
+}
+
+fn prepare_duration_pending_estimate_blocks(
+    store: &PoolStore,
+    blocks: Vec<DbBlock>,
+    window_duration: Duration,
+    provisional_ready_cutoff: Option<SystemTime>,
+    chain_height: u64,
+) -> anyhow::Result<Vec<PreparedPendingEstimateBlock>> {
+    if blocks.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let latest_share_timestamps = store.latest_share_timestamps_for_block_hashes(
+        &blocks.iter().map(|b| b.hash.clone()).collect::<Vec<_>>(),
+    )?;
+    let mut windows = Vec::<PendingEstimateDurationWindow>::with_capacity(blocks.len());
+    let mut min_start: Option<SystemTime> = None;
+    let mut max_end: Option<SystemTime> = None;
+
+    for (index, block) in blocks.iter().enumerate() {
+        let end = latest_share_timestamps
+            .get(&block.hash)
+            .copied()
+            .map(|share_time| share_time.max(block.timestamp))
+            .unwrap_or(block.timestamp);
+        let start = end.checked_sub(window_duration).unwrap_or(UNIX_EPOCH);
+        min_start = Some(
+            min_start
+                .map(|existing| existing.min(start))
+                .unwrap_or(start),
+        );
+        max_end = Some(max_end.map(|existing| existing.max(end)).unwrap_or(end));
+        windows.push(PendingEstimateDurationWindow { index, start, end });
+    }
+
+    let (Some(min_start), Some(max_end)) = (min_start, max_end) else {
+        return Ok(Vec::new());
+    };
+    let mut shares = store.get_shares_between(min_start, max_end)?;
+    shares.sort_by(|a, b| {
+        a.created_at
+            .cmp(&b.created_at)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    windows.sort_by(|a, b| a.end.cmp(&b.end).then_with(|| a.index.cmp(&b.index)));
+
+    let mut previews_by_block = vec![Vec::<ShareWindowAddressPreview>::new(); blocks.len()];
+    let mut active = HashMap::<String, ShareWindowAddressPreview>::new();
+    let mut left = 0usize;
+    let mut right = 0usize;
+
+    for window in windows {
+        while right < shares.len() && shares[right].created_at <= window.end {
+            let share = &shares[right];
+            let preview =
+                active
+                    .entry(share.miner.clone())
+                    .or_insert_with(|| ShareWindowAddressPreview {
+                        address: share.miner.clone(),
+                        ..ShareWindowAddressPreview::default()
+                    });
+            update_window_preview_for_share(preview, share, provisional_ready_cutoff, true);
+            right += 1;
+        }
+        while left < right && shares[left].created_at < window.start {
+            let share = &shares[left];
+            let mut remove_address = false;
+            if let Some(preview) = active.get_mut(&share.miner) {
+                update_window_preview_for_share(preview, share, provisional_ready_cutoff, false);
+                remove_address = preview.seen_shares == 0;
+            }
+            if remove_address {
+                active.remove(&share.miner);
+            }
+            left += 1;
+        }
+        previews_by_block[window.index] = clone_sorted_share_window_previews(&active);
+    }
+
+    Ok(blocks
+        .into_iter()
+        .zip(previews_by_block)
+        .map(|(block, previews)| PreparedPendingEstimateBlock {
+            confirmations: chain_height.saturating_sub(block.height),
+            block,
+            previews,
+        })
+        .collect())
+}
+
+fn prepare_pending_estimate_blocks(
+    store: &PoolStore,
+    config: &Config,
+    now: SystemTime,
+    provisional_delay: Duration,
+    chain_height: u64,
+) -> anyhow::Result<Vec<PreparedPendingEstimateBlock>> {
+    let mut blocks = store.get_unconfirmed_blocks()?;
+    blocks.retain(|block| !block.orphaned);
+    for block in &mut blocks {
+        hydrate_provisional_block_reward(block);
+    }
+    blocks.retain(|block| block.reward > 0);
+
+    if let Some(window_duration) = duration_based_pending_window(config) {
+        return prepare_duration_pending_estimate_blocks(
+            store,
+            blocks,
+            window_duration,
+            now.checked_sub(provisional_delay),
+            chain_height,
+        );
+    }
+
+    let mut prepared_blocks = Vec::<PreparedPendingEstimateBlock>::with_capacity(blocks.len());
+    for block in blocks {
+        let window_end = reward_window_end(store, &block)?;
+        let previews =
+            pending_estimate_window_preview(store, config, now, provisional_delay, window_end)?;
+        prepared_blocks.push(PreparedPendingEstimateBlock {
+            confirmations: chain_height.saturating_sub(block.height),
+            block,
+            previews,
+        });
+    }
+    Ok(prepared_blocks)
 }
 
 fn preview_weight(
@@ -5374,7 +5569,6 @@ fn estimate_unconfirmed_pending_snapshot(
     now: SystemTime,
     chain_height: u64,
 ) -> anyhow::Result<HashMap<String, MinerPendingEstimate>> {
-    let unconfirmed_blocks = store.get_unconfirmed_blocks()?;
     let provisional_delay = config.provisional_share_delay_duration();
     let required_confirmations = config.blocks_before_payout.max(0) as u64;
     let trust_policy = PayoutTrustPolicy {
@@ -5388,29 +5582,15 @@ fn estimate_unconfirmed_pending_snapshot(
         provisional_cap_multiplier: 0.0,
     };
 
-    let mut prepared_blocks = Vec::<PreparedPendingEstimateBlock>::new();
+    let prepared_blocks =
+        prepare_pending_estimate_blocks(store, config, now, provisional_delay, chain_height)?;
     let mut addresses_for_risk = HashSet::<String>::new();
-    for mut block in unconfirmed_blocks {
-        if block.orphaned {
-            continue;
-        }
-        hydrate_provisional_block_reward(&mut block);
-        if block.reward == 0 {
-            continue;
-        }
-
-        let window_end = reward_window_end(store, &block)?;
-        let previews =
-            pending_estimate_window_preview(store, config, now, provisional_delay, window_end)?;
+    for prepared in &prepared_blocks {
+        let block = &prepared.block;
         addresses_for_risk.insert(block.finder.clone());
-        for preview in &previews {
+        for preview in &prepared.previews {
             addresses_for_risk.insert(preview.address.clone());
         }
-        prepared_blocks.push(PreparedPendingEstimateBlock {
-            confirmations: chain_height.saturating_sub(block.height),
-            block,
-            previews,
-        });
     }
 
     let force_verify_addresses = store
@@ -11140,6 +11320,118 @@ mod tests {
         assert_eq!(estimate.blocks.len(), 1);
         assert_eq!(estimate.blocks[0].estimated_credit, 667);
         assert_eq!(estimate.blocks[0].validation_state, "ready");
+    }
+
+    #[test]
+    fn estimate_unconfirmed_pending_for_miner_batches_overlapping_duration_windows() {
+        let store = require_test_store!();
+        let mut cfg = Config::default();
+        cfg.payout_scheme = "pplns".to_string();
+        cfg.pplns_window_duration = "1h".to_string();
+        cfg.pool_fee_pct = 0.0;
+        cfg.pool_fee_flat = 0.0;
+        cfg.block_finder_bonus = false;
+        cfg.blocks_before_payout = 60;
+
+        let base = UNIX_EPOCH + Duration::from_secs(6_000_000);
+        for share in [
+            ShareRecord {
+                job_id: "j-batch-a".to_string(),
+                miner: "miner-a".to_string(),
+                worker: "wa".to_string(),
+                difficulty: 100,
+                nonce: 1,
+                status: "verified",
+                was_sampled: true,
+                block_hash: None,
+                claimed_hash: None,
+                reject_reason: None,
+                created_at: base,
+            },
+            ShareRecord {
+                job_id: "j-batch-b".to_string(),
+                miner: "miner-b".to_string(),
+                worker: "wb".to_string(),
+                difficulty: 100,
+                nonce: 2,
+                status: "verified",
+                was_sampled: true,
+                block_hash: None,
+                claimed_hash: None,
+                reject_reason: None,
+                created_at: base + Duration::from_secs(50 * 60),
+            },
+            ShareRecord {
+                job_id: "j-batch-c".to_string(),
+                miner: "miner-c".to_string(),
+                worker: "wc".to_string(),
+                difficulty: 100,
+                nonce: 3,
+                status: "verified",
+                was_sampled: true,
+                block_hash: None,
+                claimed_hash: None,
+                reject_reason: None,
+                created_at: base + Duration::from_secs(90 * 60),
+            },
+        ] {
+            store.add_share(share).expect("add share");
+        }
+        for (height, hash, finder, timestamp) in [
+            (
+                399_u64,
+                "blk-batch-1".to_string(),
+                "miner-a".to_string(),
+                base + Duration::from_secs(55 * 60),
+            ),
+            (
+                400_u64,
+                "blk-batch-2".to_string(),
+                "miner-b".to_string(),
+                base + Duration::from_secs(100 * 60),
+            ),
+        ] {
+            store
+                .add_block(&DbBlock {
+                    height,
+                    hash,
+                    difficulty: 200,
+                    finder,
+                    finder_worker: "w".to_string(),
+                    reward: 900,
+                    timestamp,
+                    confirmed: false,
+                    orphaned: false,
+                    paid_out: false,
+                    effort_pct: None,
+                })
+                .expect("add unconfirmed block");
+        }
+
+        let miner_a = estimate_unconfirmed_pending_for_miner(
+            &store,
+            "miner-a",
+            &cfg,
+            base + Duration::from_secs(101 * 60),
+            401,
+        )
+        .expect("estimate miner a");
+        assert_eq!(miner_a.estimated_pending, 450);
+        assert_eq!(miner_a.blocks.len(), 1);
+        assert_eq!(miner_a.blocks[0].height, 399);
+
+        let miner_b = estimate_unconfirmed_pending_for_miner(
+            &store,
+            "miner-b",
+            &cfg,
+            base + Duration::from_secs(101 * 60),
+            401,
+        )
+        .expect("estimate miner b");
+        assert_eq!(miner_b.estimated_pending, 900);
+        assert_eq!(miner_b.blocks.len(), 2);
+        assert_eq!(miner_b.blocks[0].height, 400);
+        assert_eq!(miner_b.blocks[1].height, 399);
     }
 
     #[test]

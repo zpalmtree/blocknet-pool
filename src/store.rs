@@ -275,6 +275,13 @@ impl PoolStore {
         Ok(out)
     }
 
+    pub fn latest_share_timestamps_for_block_hashes(
+        &self,
+        hashes: &[String],
+    ) -> Result<std::collections::HashMap<String, SystemTime>> {
+        self.inner.latest_share_timestamps_for_block_hashes(hashes)
+    }
+
     pub fn miner_share_window_stats_since(
         &self,
         miner: &str,

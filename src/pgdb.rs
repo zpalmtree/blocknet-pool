@@ -917,6 +917,31 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(row.get::<_, Option<i64>>(0).map(from_unix))
     }
 
+    pub fn latest_share_timestamps_for_block_hashes(
+        &self,
+        hashes: &[String],
+    ) -> Result<HashMap<String, SystemTime>> {
+        if hashes.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let rows = self.conn().lock().query(
+            "SELECT block_hash, MAX(created_at)::bigint
+             FROM shares
+             WHERE block_hash = ANY($1)
+             GROUP BY block_hash",
+            &[&hashes],
+        )?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| {
+                let hash = row.get::<_, Option<String>>(0)?;
+                let created_at = row.get::<_, Option<i64>>(1)?;
+                Some((hash, from_unix(created_at)))
+            })
+            .collect())
+    }
+
     pub fn hashrate_stats_for_miner(
         &self,
         address: &str,
