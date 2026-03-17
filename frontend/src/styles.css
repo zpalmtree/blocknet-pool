@@ -528,10 +528,6 @@ nav {
   gap: 10px;
 }
 
-.stats-card-group-grid--pool {
-  grid-template-columns: repeat(4, 1fr);
-}
-
 .stats-card-group-grid .stat-card {
   background: var(--bg);
   border: 1px solid var(--border);

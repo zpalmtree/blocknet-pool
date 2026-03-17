@@ -801,19 +801,6 @@ export function AdminPage({
   const unpaidPayoutAmount = health?.payouts?.unpaid_amount ?? health?.payouts?.pending_amount ?? null;
   const queuedPayoutCount = health?.payouts?.queued_count ?? health?.payouts?.pending_count ?? null;
   const queuedPayoutAmount = health?.payouts?.queued_amount ?? health?.payouts?.pending_amount ?? null;
-  const walletSummary = balanceOverview?.wallet ?? health?.wallet ?? null;
-  const hotWalletSpendable = walletSummary?.spendable ?? null;
-  const hotWalletLocked = walletSummary?.pending ?? null;
-  const hotWalletQueueDelta =
-    balanceOverview?.liquidity?.spendable_minus_queued ??
-    (walletSummary?.spendable != null && queuedPayoutAmount != null
-      ? walletSummary.spendable - queuedPayoutAmount
-      : null);
-  const hotWalletExplained =
-    balanceOverview != null
-      ? balanceOverview.ledger.miner_rewards_balanced &&
-        balanceOverview.outputs.pending_regular_unmatched_count === 0
-      : null;
   const shareWindows = shareDiagnostics?.windows ?? [];
   const shareWindow5m = useMemo(
     () => shareWindows.find((item) => item.label === '5m') ?? null,
@@ -1407,26 +1394,6 @@ export function AdminPage({
                   : '-'}
               </div>
             </div>
-            <div className="stat-card" onClick={() => setTab('balances')}>
-              <div className="label">Hot Wallet</div>
-              <div
-                className="value mono"
-                style={hotWalletQueueDelta != null && hotWalletQueueDelta < 0 ? { color: 'var(--warn)' } : undefined}
-              >
-                {hotWalletSpendable != null ? formatCoins(hotWalletSpendable) : '-'}
-              </div>
-              <div className="stat-meta">
-                {hotWalletLocked != null ? `${formatCoins(hotWalletLocked)} locked/confirming` : '-'}
-              </div>
-              <div className="stat-meta">
-                {hotWalletQueueDelta != null ? `${formatSignedCoins(hotWalletQueueDelta)} after queued payouts` : '-'}
-              </div>
-              {hotWalletExplained != null ? (
-                <div className="stat-meta" style={!hotWalletExplained ? { color: 'var(--warn)' } : undefined}>
-                  {hotWalletExplained ? 'wallet state reconciled' : 'wallet needs reconciliation review'}
-                </div>
-              ) : null}
-            </div>
             <div className="stat-card" onClick={() => setTab('miners')}>
               <div className="label">Connected Miners</div>
               <div className="value mono">{poolActivity?.connected_miners ?? '-'}</div>
@@ -1438,16 +1405,7 @@ export function AdminPage({
 
           {balanceOverview ? (
             <div className="card section admin-balance-overview">
-              <div className="section-header">
-                <div>
-                  <h3>Wallet Balance Overview</h3>
-                  <p className="section-lead">
-                    {balanceOverview.outputs.pending_regular_unmatched_count > 0
-                      ? 'Pending regular outputs exist that do not map to recorded payout transaction hashes.'
-                      : 'Current wallet funds are fully explained by spendable coinbase, immature coinbase, and recent payout change outputs.'}
-                  </p>
-                </div>
-              </div>
+              <h3>Wallet Balance Overview</h3>
 
               <div className="stats-card-group-grid stats-grid-dense">
                 <div className="stat-card">

@@ -1247,11 +1247,14 @@ fn format_decimal(value: f64) -> String {
 }
 
 fn format_bnt(value: f64) -> String {
-    format!("{} BNT", format_decimal(value))
+    format!("{} BNT", format_grouped_decimal_trimmed(value))
 }
 
 fn format_atomic_bnt(value: u64) -> String {
-    format!("{:.2} BNT", value as f64 / 1e8)
+    format!(
+        "{} BNT",
+        format_grouped_decimal_fixed(value as f64 / 1e8, 2)
+    )
 }
 
 fn format_atomic_fee(value: u64) -> String {
@@ -1259,10 +1262,46 @@ fn format_atomic_fee(value: u64) -> String {
         return "0 BNT".to_string();
     }
     let coins = value as f64 / 1e8;
-    if coins < 0.01 {
-        format!("{coins:.4} BNT")
+    format!("{} BNT", format_grouped_decimal_fixed(coins, 4))
+}
+
+fn format_grouped_decimal_trimmed(value: f64) -> String {
+    let raw = format_decimal(value);
+    format_grouped_decimal_str(&raw)
+}
+
+fn format_grouped_decimal_fixed(value: f64, decimals: usize) -> String {
+    let raw = format!("{value:.prec$}", prec = decimals);
+    format_grouped_decimal_str(&raw)
+}
+
+fn format_grouped_decimal_str(raw: &str) -> String {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return "0".to_string();
+    }
+
+    let (sign, unsigned) = if let Some(rest) = raw.strip_prefix('-') {
+        ("-", rest)
+    } else if let Some(rest) = raw.strip_prefix('+') {
+        ("+", rest)
     } else {
-        format!("{coins:.4} BNT")
+        ("", raw)
+    };
+
+    let (whole, frac) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    let mut grouped_rev = String::with_capacity(whole.len() + whole.len() / 3);
+    for (idx, ch) in whole.chars().rev().enumerate() {
+        if idx > 0 && idx % 3 == 0 {
+            grouped_rev.push(',');
+        }
+        grouped_rev.push(ch);
+    }
+    let grouped: String = grouped_rev.chars().rev().collect();
+    if frac.is_empty() {
+        format!("{sign}{grouped}")
+    } else {
+        format!("{sign}{grouped}.{frac}")
     }
 }
 
@@ -9598,9 +9637,10 @@ mod tests {
         block_page_item_response, build_block_reward_breakdown, build_fee_page, contains_ci,
         daemon_debug_log_path, daemon_health_from_heartbeat, daemon_log_commands,
         estimate_unconfirmed_pending_for_miner, estimated_block_reward,
-        filter_active_workers_for_miner, handle_admin_clear_address_risk_history,
-        handle_admin_dev_fee, handle_admin_share_diagnostics, handle_app_fallback, handle_health,
-        handle_miner, handle_miners, handle_stats, hashrate_from_stats_with_miner_ramp,
+        filter_active_workers_for_miner, format_atomic_bnt, format_atomic_fee, format_bnt,
+        handle_admin_clear_address_risk_history, handle_admin_dev_fee,
+        handle_admin_share_diagnostics, handle_app_fallback, handle_health, handle_miner,
+        handle_miners, handle_stats, hashrate_from_stats_with_miner_ramp,
         hashrate_from_stats_with_warmup, hydrate_provisional_block_reward, is_api_request_path,
         load_persisted_status_history, luck_round_response_from_db, miner_balance_response,
         miner_has_activity, page_bounds, payout_status_note, pending_balance_note,
@@ -9863,6 +9903,13 @@ mod tests {
         assert_eq!(summary.pending_regular_matched_payout_amount, 7);
         assert_eq!(summary.pending_regular_unmatched_count, 1);
         assert_eq!(summary.pending_regular_unmatched_amount, 5);
+    }
+
+    #[test]
+    fn bnt_formatters_insert_grouping() {
+        assert_eq!(format_atomic_bnt(932_854_000_000), "9,328.54 BNT");
+        assert_eq!(format_atomic_fee(2_845_992_000_000), "28,459.9200 BNT");
+        assert_eq!(format_bnt(1_138_396.96), "1,138,396.96 BNT");
     }
 
     #[test]

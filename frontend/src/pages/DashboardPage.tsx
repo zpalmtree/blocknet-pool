@@ -3,7 +3,15 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ApiClient } from '../api/client';
 import { HashrateChart } from '../components/HashrateChart';
 import { PayoutTxLinks } from '../components/PayoutTxLinks';
-import { formatCoins, fmtSeconds, humanRate, stratumUrl, timeAgo, toUnixMs } from '../lib/format';
+import {
+  formatCoins,
+  formatCompactCoins,
+  fmtSeconds,
+  humanRate,
+  stratumUrl,
+  timeAgo,
+  toUnixMs,
+} from '../lib/format';
 import type { ThemeMode } from '../lib/theme';
 import type {
   HashratePoint,
@@ -121,8 +129,6 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
       : nextSweepAt
         ? new Date(nextSweepAt).toLocaleTimeString()
         : '-';
-  const configuredSweepLabel =
-    payoutEta?.configured_interval_seconds != null ? fmtSeconds(payoutEta.configured_interval_seconds) : '-';
 
   const avgLuck = insights?.avg_effort_pct;
   return (
@@ -148,7 +154,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
 
       <div className="stats-card-group">
         <div className="stats-card-group-title">Pool</div>
-        <div className="stats-card-group-grid stats-card-group-grid--pool">
+        <div className="stats-card-group-grid">
           <div className="stat-card">
             <div className="label">Connected Miners</div>
             <div className="value" id="s-miners">{stats?.pool?.miners ?? '-'}</div>
@@ -160,19 +166,6 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
           <div className="stat-card">
             <div className="label">Network Hashrate</div>
             <div className="value" id="s-net-hashrate">{stats?.chain?.network_hashrate ? humanRate(stats.chain.network_hashrate) : '-'}</div>
-          </div>
-          <div
-            className="stat-card"
-            title={
-              stats?.pool?.paid_to_miners_total != null
-                ? `${formatCoins(stats.pool.paid_to_miners_total)} paid to miners`
-                : undefined
-            }
-          >
-            <div className="label">Total BNT Paid</div>
-            <div className="value mono" id="s-total-paid">
-              {stats?.pool?.paid_to_miners_total != null ? formatCoins(stats.pool.paid_to_miners_total) : '-'}
-            </div>
           </div>
         </div>
       </div>
@@ -264,21 +257,26 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
           <div className="label">Pending Amount</div>
           <div className="value mono">{formatCoins(payoutEta?.pending_total_amount ?? 0)}</div>
         </div>
-        <div className="stat-card">
-          <div className="label">Payout ETA</div>
-          <div className="value mono">{payoutEta?.eta_seconds != null ? fmtSeconds(payoutEta.eta_seconds) : '-'}</div>
+        <div
+          className="stat-card"
+          title={
+            stats?.pool?.paid_to_miners_total != null
+              ? `${formatCoins(stats.pool.paid_to_miners_total)} paid to miners`
+              : undefined
+          }
+        >
+          <div className="label">Total BNT Paid</div>
+          <div className="value mono" id="s-total-paid">
+            {stats?.pool?.paid_to_miners_total != null ? formatCompactCoins(stats.pool.paid_to_miners_total) : '-'}
+          </div>
+          <div className="stat-meta">
+            {stats?.pool?.paid_to_miners_total != null ? formatCoins(stats.pool.paid_to_miners_total) : '-'}
+          </div>
         </div>
         <div className="stat-card">
           <div className="label">Next Sweep</div>
           <div className="value mono" title={nextSweepAt ? new Date(nextSweepAt).toLocaleString() : undefined}>
             {nextSweepLabel}
-          </div>
-          <div className="stat-meta">Every {configuredSweepLabel}</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Observed Batch Cadence</div>
-          <div className="value mono">
-            {payoutEta?.typical_interval_seconds ? fmtSeconds(payoutEta.typical_interval_seconds) : '-'}
           </div>
         </div>
       </div>

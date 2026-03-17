@@ -2,6 +2,16 @@ import type { Range, UnixLike } from '../types';
 
 export const STRATUM_HOST = 'bntpool.com';
 
+const COIN_FORMATTER = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const COMPACT_COIN_FORMATTER = new Intl.NumberFormat('en-US', {
+  notation: 'compact',
+  maximumFractionDigits: 2,
+});
+
 export function toUnixMs(val: UnixLike): number {
   if (!val) return 0;
   if (typeof val === 'number') return val < 1e12 ? val * 1000 : val;
@@ -71,19 +81,35 @@ export function humanRate(hps: number | null | undefined): string {
 
 export function formatCoins(sats: number | null | undefined): string {
   if (sats == null) return '0 BNT';
-  return `${(sats / 1e8).toFixed(2)} BNT`;
+  return `${COIN_FORMATTER.format(sats / 1e8)} BNT`;
+}
+
+export function formatCompactCoins(sats: number | null | undefined): string {
+  if (sats == null) return '0 BNT';
+  const amount = sats / 1e8;
+  if (!Number.isFinite(amount)) return '0 BNT';
+  if (Math.abs(amount) < 1000) return `${COIN_FORMATTER.format(amount)} BNT`;
+  return `${COMPACT_COIN_FORMATTER.format(amount)} BNT`;
 }
 
 export function formatCoinAmount(sats: number | null | undefined): string {
   if (sats == null) return '0.00';
-  return (sats / 1e8).toFixed(2);
+  return COIN_FORMATTER.format(sats / 1e8);
 }
 
 export function formatFee(sats: number | null | undefined): string {
   if (sats == null || sats === 0) return '0 BNT';
   const v = sats / 1e8;
-  if (v < 0.01) return `${v.toPrecision(4)} BNT`;
-  return `${v.toFixed(4)} BNT`;
+  if (v < 0.01) {
+    return `${new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 4,
+      maximumFractionDigits: 8,
+    }).format(v)} BNT`;
+  }
+  return `${new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 4,
+  }).format(v)} BNT`;
 }
 
 export function fmtSeconds(s: number): string {
