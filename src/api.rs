@@ -869,6 +869,8 @@ struct PayoutEtaResponse {
     next_sweep_in_seconds: Option<u64>,
     pending_count: usize,
     pending_total_amount: u64,
+    unpaid_count: usize,
+    unpaid_amount: u64,
     wallet_spendable: Option<u64>,
     wallet_pending: Option<u64>,
     queue_shortfall_amount: u64,
@@ -6666,6 +6668,15 @@ fn compute_payout_eta(store: &PoolStore) -> anyhow::Result<PayoutEtaResponse> {
         .iter()
         .fold(0u64, |acc, payout| acc.saturating_add(payout.amount));
 
+    let balances = store.get_all_balances()?;
+    let unpaid_count = balances
+        .iter()
+        .filter(|balance| balance.pending > 0)
+        .count();
+    let unpaid_amount = balances
+        .iter()
+        .fold(0u64, |acc, balance| acc.saturating_add(balance.pending));
+
     Ok(PayoutEtaResponse {
         last_payout_at,
         estimated_next_payout_at,
@@ -6676,6 +6687,8 @@ fn compute_payout_eta(store: &PoolStore) -> anyhow::Result<PayoutEtaResponse> {
         next_sweep_in_seconds: None,
         pending_count: pending.len(),
         pending_total_amount,
+        unpaid_count,
+        unpaid_amount,
         wallet_spendable: None,
         wallet_pending: None,
         queue_shortfall_amount: 0,
@@ -13093,6 +13106,8 @@ mod tests {
             next_sweep_in_seconds: None,
             pending_count: 2,
             pending_total_amount: 90,
+            unpaid_count: 0,
+            unpaid_amount: 0,
             wallet_spendable: None,
             wallet_pending: None,
             queue_shortfall_amount: 0,

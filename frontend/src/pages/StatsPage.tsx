@@ -3,7 +3,7 @@ import { startTransition, useCallback, useEffect, useMemo, useRef, useState } fr
 import type { ApiClient } from '../api/client';
 import { HashrateChart } from '../components/HashrateChart';
 import { LAST_MINER_LOOKUP_KEY } from '../lib/storage';
-import { formatCoins, formatFee, humanRate, timeAgo, toUnixMs } from '../lib/format';
+import { formatCoins, formatCompactCoins, formatFee, humanRate, timeAgo, toUnixMs } from '../lib/format';
 import type { ThemeMode } from '../lib/theme';
 import type {
   HashratePoint,
@@ -447,30 +447,46 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
 
       {showLookupResult && (
         <div id="lookup-result">
-          <div className="stats-grid stats-grid-dense" style={{ marginBottom: 24 }}>
-            <div className="stat-card stat-card--flow">
-              <div className="label">Estimated Rewards</div>
-              <div className="value">{formatCoins(pendingEstimated)}</div>
-              <div className="stat-meta">Recent blocks still confirming</div>
+          <div className="stats-card-group" style={{ marginBottom: 16 }}>
+            <div className="stats-card-group-title">Balance</div>
+            <div className="stats-card-group-grid">
+              <div className="stat-card stat-card--flow" title={formatCoins(pendingEstimated)}>
+                <div className="label">Estimated Rewards</div>
+                <div className="value">{formatCompactCoins(pendingEstimated)}</div>
+                <div className="stat-meta">Recent blocks still confirming</div>
+              </div>
+              <div className="stat-card stat-card--flow" title={formatCoins(pendingConfirmed)}>
+                <div className="label">Confirmed Rewards</div>
+                <div className="value">{formatCompactCoins(pendingConfirmed)}</div>
+                <div className="stat-meta">Matured balance awaiting payout</div>
+              </div>
+              <div className="stat-card" title={formatCoins(livePaid)}>
+                <div className="label">Paid Balance</div>
+                <div className="value">{formatCompactCoins(livePaid)}</div>
+                <div className="stat-meta">Already sent to this address</div>
+              </div>
             </div>
-            <div className="stat-card stat-card--flow">
-              <div className="label">Confirmed Rewards</div>
-              <div className="value">{formatCoins(pendingConfirmed)}</div>
-              <div className="stat-meta">Matured balance awaiting payout</div>
+          </div>
+
+          <div className="stats-card-group" style={{ marginBottom: 24 }}>
+            <div className="stats-card-group-title">Mining</div>
+            <div className="stats-card-group-grid">
+              <div className="stat-card">
+                <div className="label">Hashrate</div>
+                <div className="value">{humanRate(liveHashrate)}</div>
+              </div>
+              <div className="stat-card">
+                <div className="label">Blocks Found</div>
+                <div className="value">{minerData ? (minerData.blocks_found || []).length : '...'}</div>
+              </div>
+              <div className="stat-card">
+                <div className="label">Mining Since</div>
+                <div className="value">{minerData ? minerOldestShareDate : '...'}</div>
+              </div>
             </div>
-            <div className="stat-card">
-              <div className="label">Paid Balance</div>
-              <div className="value">{formatCoins(livePaid)}</div>
-              <div className="stat-meta">Already sent to this address</div>
-            </div>
-            <div className="stat-card">
-              <div className="label">Hashrate</div>
-              <div className="value">{humanRate(liveHashrate)}</div>
-            </div>
-            <div className="stat-card">
-              <div className="label">Blocks Found</div>
-              <div className="value">{minerData ? (minerData.blocks_found || []).length : '...'}</div>
-            </div>
+          </div>
+
+          <div className="stats-grid" style={{ marginBottom: 24 }}>
             <div className="stat-card">
               <div className="label">Shares Accepted</div>
               <div className="value">{minerData ? minerAccepted : '...'}</div>
@@ -486,10 +502,6 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
             <div className="stat-card">
               <div className="label">Avg Difficulty</div>
               <div className="value">{minerData ? minerAvgDiff : '...'}</div>
-            </div>
-            <div className="stat-card">
-              <div className="label">Mining Since</div>
-              <div className="value">{minerData ? minerOldestShareDate : '...'}</div>
             </div>
           </div>
 

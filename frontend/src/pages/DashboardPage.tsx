@@ -248,35 +248,35 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
         </div>
       </div>
 
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div className="label">Pending Payouts</div>
-          <div className="value mono">{payoutEta?.pending_count ?? '-'}</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Pending Amount</div>
-          <div className="value mono">{formatCoins(payoutEta?.pending_total_amount ?? 0)}</div>
-        </div>
-        <div
-          className="stat-card"
-          title={
-            stats?.pool?.paid_to_miners_total != null
-              ? `${formatCoins(stats.pool.paid_to_miners_total)} paid to miners`
-              : undefined
-          }
-        >
-          <div className="label">Total BNT Paid</div>
-          <div className="value mono" id="s-total-paid">
-            {stats?.pool?.paid_to_miners_total != null ? formatCompactCoins(stats.pool.paid_to_miners_total) : '-'}
+      <div className="stats-card-group">
+        <div className="stats-card-group-title">Payouts</div>
+        <div className="stats-card-group-grid">
+          <div className="stat-card" title={payoutEta?.unpaid_count != null ? `${payoutEta.unpaid_count} miners with unpaid balance` : undefined}>
+            <div className="label">Unpaid Miners</div>
+            <div className="value mono">{payoutEta?.unpaid_count ?? '-'}</div>
+            <div className="stat-meta">{payoutEta?.unpaid_amount ? formatCompactCoins(payoutEta.unpaid_amount) : '0 BNT'} owed</div>
           </div>
-          <div className="stat-meta">
-            {stats?.pool?.paid_to_miners_total != null ? formatCoins(stats.pool.paid_to_miners_total) : '-'}
+          <div
+            className="stat-card"
+            title={
+              stats?.pool?.paid_to_miners_total != null
+                ? `${formatCoins(stats.pool.paid_to_miners_total)} paid to miners`
+                : undefined
+            }
+          >
+            <div className="label">Total BNT Paid</div>
+            <div className="value mono" id="s-total-paid">
+              {stats?.pool?.paid_to_miners_total != null ? formatCompactCoins(stats.pool.paid_to_miners_total) : '-'}
+            </div>
+            <div className="stat-meta">
+              {stats?.pool?.paid_to_miners_total != null ? formatCoins(stats.pool.paid_to_miners_total) : ''}
+            </div>
           </div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Next Sweep</div>
-          <div className="value mono" title={nextSweepAt ? new Date(nextSweepAt).toLocaleString() : undefined}>
-            {nextSweepLabel}
+          <div className="stat-card">
+            <div className="label">Next Sweep</div>
+            <div className="value mono" title={nextSweepAt ? new Date(nextSweepAt).toLocaleString() : undefined}>
+              {nextSweepLabel}
+            </div>
           </div>
         </div>
       </div>

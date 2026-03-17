@@ -619,6 +619,8 @@ export interface PayoutEta {
   next_sweep_in_seconds?: number | null;
   pending_count: number;
   pending_total_amount: number;
+  unpaid_count?: number;
+  unpaid_amount?: number;
   wallet_spendable?: number | null;
   wallet_pending?: number | null;
   queue_shortfall_amount?: number;
