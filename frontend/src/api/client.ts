@@ -50,7 +50,7 @@ export interface ApiClient {
   getStatus(): Promise<StatusResponse>;
   getBlocks(params: QueryParams): Promise<PagedResponse<BlockItem>>;
   getRecentPayouts(params: QueryParams): Promise<PagedResponse<PayoutItem>>;
-  getMiner(address: string, includePendingEstimate?: boolean): Promise<MinerResponse>;
+  getMiner(address: string, includePendingEstimate?: boolean, shareLimit?: number): Promise<MinerResponse>;
   getMinerBalance(address: string, includePendingEstimate?: boolean): Promise<MinerBalancePayload>;
   getMinerHashrate(address: string, range: string): Promise<HashratePoint[]>;
   getMiners(params: QueryParams): Promise<PagedResponse<MinerListItem>>;
@@ -136,9 +136,12 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
     getStatus: () => fetchJson<StatusResponse>('/api/status'),
     getBlocks: (params) => fetchJson<PagedResponse<BlockItem>>(withQuery('/api/blocks', params)),
     getRecentPayouts: (params) => fetchJson<PagedResponse<PayoutItem>>(withQuery('/api/payouts/recent', params)),
-    getMiner: (address, includePendingEstimate = true) =>
+    getMiner: (address, includePendingEstimate = true, shareLimit) =>
       fetchJson<MinerResponse>(
-        `/api/miner/${encodeURIComponent(address)}?include_pending_estimate=${includePendingEstimate ? 'true' : 'false'}`
+        withQuery(`/api/miner/${encodeURIComponent(address)}`, {
+          include_pending_estimate: includePendingEstimate ? 'true' : 'false',
+          share_limit: shareLimit,
+        })
       ),
     getMinerBalance: (address, includePendingEstimate = true) =>
       fetchJson<MinerBalancePayload>(

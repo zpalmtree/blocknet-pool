@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
 import { HashrateChart } from '../components/HashrateChart';
@@ -68,32 +68,37 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   const lookupRequestSeq = useRef(0);
   const hashrateRequestKeyRef = useRef('');
   const [resolving, setResolving] = useState(false);
+  const [lookupLoading, setLookupLoading] = useState(false);
   const [resolvedHandle, setResolvedHandle] = useState<string | null>(null);
 
   useEffect(() => {
     minerAddressRef.current = minerAddress;
   }, [minerAddress]);
 
-  const refreshMinerData = useCallback(async (includePendingEstimate: boolean) => {
+  const refreshMinerData = useCallback(async () => {
     if (!minerAddress) return;
     const addr = minerAddress;
     try {
-      const d = await api.getMiner(addr, includePendingEstimate);
+      const d = await api.getMiner(addr, false, RECENT_SHARES_LIMIT);
       if (minerAddressRef.current !== addr) return;
-      setMinerData(d);
-      setMinerBalanceData(balancePayloadFromMiner(addr, d));
+      startTransition(() => {
+        setMinerData(d);
+        setMinerBalanceData((current) => current?.address === addr ? current : balancePayloadFromMiner(addr, d));
+      });
     } catch {
       // handled by api client
     }
   }, [api, minerAddress]);
 
-  const refreshMinerBalance = useCallback(async () => {
+  const refreshMinerBalance = useCallback(async (includePendingEstimate: boolean) => {
     if (!minerAddress) return;
     const addr = minerAddress;
     try {
-      const d = await api.getMinerBalance(addr, false);
+      const d = await api.getMinerBalance(addr, includePendingEstimate);
       if (minerAddressRef.current !== addr) return;
-      setMinerBalanceData(d);
+      startTransition(() => {
+        setMinerBalanceData(d);
+      });
     } catch {
       // handled by api client
     }
@@ -108,10 +113,14 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
     try {
       const d = await api.getMinerHashrate(addr, selectedRange);
       if (hashrateRequestKeyRef.current !== requestKey) return;
-      setHistory(d || []);
+      startTransition(() => {
+        setHistory(d || []);
+      });
     } catch {
       if (hashrateRequestKeyRef.current === requestKey) {
-        setHistory([]);
+        startTransition(() => {
+          setHistory([]);
+        });
       }
     }
   }, [api, minerAddress, range]);
@@ -122,46 +131,106 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
       let resolved: { address: string; handle: string } | null = null;
       if (!addr) return;
       const requestId = ++lookupRequestSeq.current;
+      setLookupLoading(true);
 
-      if (looksLikeHandle(addr)) {
-        setResolving(true);
-        try {
-          setResolvedHandle(null);
-          resolved = await resolveHandle(api, addr);
-          if (!resolved) {
+      try {
+        if (looksLikeHandle(addr)) {
+          setResolving(true);
+          try {
+            setResolvedHandle(null);
+            resolved = await resolveHandle(api, addr);
+            if (!resolved) {
+              if (requestId !== lookupRequestSeq.current) return;
+              setResolvedHandle(null);
+              return;
+            }
+            addr = resolved.address;
+          } catch {
             if (requestId !== lookupRequestSeq.current) return;
             setResolvedHandle(null);
             return;
+          } finally {
+            if (requestId === lookupRequestSeq.current) {
+              setResolving(false);
+            }
           }
-          addr = resolved.address;
-        } catch {
-          if (requestId !== lookupRequestSeq.current) return;
+        } else {
           setResolvedHandle(null);
-          return;
-        } finally {
-          if (requestId === lookupRequestSeq.current) {
-            setResolving(false);
-          }
         }
-      } else {
-        setResolvedHandle(null);
-      }
-      try {
-        const d = await api.getMiner(addr, true);
+
+        let committed = false;
+        let resetPreviousResult = minerAddressRef.current !== addr;
+        const commitLookup = () => {
+          if (committed) return;
+          committed = true;
+          setMinerAddress(addr);
+          setMinerInput(addr);
+          localStorage.setItem(LAST_MINER_LOOKUP_KEY, addr);
+          setResolvedHandle(resolved?.handle ?? null);
+        };
+        const clearPreviousResult = () => {
+          if (!resetPreviousResult) return;
+          resetPreviousResult = false;
+          setMinerData(null);
+          setMinerBalanceData(null);
+          setHistory([]);
+        };
+
+        const requestKey = `${addr}:${range}`;
+        hashrateRequestKeyRef.current = requestKey;
+
+        const balancePromise = api
+          .getMinerBalance(addr, true)
+          .then((value) => ({ ok: true as const, value }))
+          .catch(() => ({ ok: false as const }));
+        const detailPromise = api
+          .getMiner(addr, false, RECENT_SHARES_LIMIT)
+          .then((value) => ({ ok: true as const, value }))
+          .catch(() => ({ ok: false as const }));
+        const hashratePromise = api
+          .getMinerHashrate(addr, range)
+          .then((value) => ({ ok: true as const, value }))
+          .catch(() => ({ ok: false as const }));
+
+        const balanceResult = await balancePromise;
         if (requestId !== lookupRequestSeq.current) return;
-        setMinerAddress(addr);
-        setMinerInput(addr);
-        localStorage.setItem(LAST_MINER_LOOKUP_KEY, addr);
-        setMinerData(d);
-        setMinerBalanceData(balancePayloadFromMiner(addr, d));
-        setResolvedHandle(resolved?.handle ?? null);
-        void loadMinerHashrate(addr, range);
-      } catch {
-        setResolvedHandle(null);
-        // handled by api client
+        if (balanceResult.ok) {
+          commitLookup();
+          startTransition(() => {
+            clearPreviousResult();
+            setMinerBalanceData(balanceResult.value);
+          });
+        }
+
+        const detailResult = await detailPromise;
+        if (requestId !== lookupRequestSeq.current) return;
+        if (detailResult.ok) {
+          commitLookup();
+          startTransition(() => {
+            clearPreviousResult();
+            setMinerData(detailResult.value);
+            setMinerBalanceData((current) =>
+              current?.address === addr ? current : balancePayloadFromMiner(addr, detailResult.value)
+            );
+          });
+        }
+
+        const hashrateResult = await hashratePromise;
+        if (requestId !== lookupRequestSeq.current) return;
+        if (balanceResult.ok || detailResult.ok) {
+          startTransition(() => {
+            setHistory(hashrateResult.ok ? (hashrateResult.value || []) : []);
+          });
+        } else {
+          setResolvedHandle(null);
+        }
+      } finally {
+        if (requestId === lookupRequestSeq.current) {
+          setLookupLoading(false);
+        }
       }
     },
-    [api, loadMinerHashrate, minerInput, range]
+    [api, minerInput, range]
   );
 
   const loadRejections = useCallback(async () => {
@@ -206,11 +275,15 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   useEffect(() => {
     if (!active || liveTick <= 0) return;
     if (minerAddress) {
-      void refreshMinerBalance();
       if (liveTick % 12 === 0) {
-        void refreshMinerData(true);
+        void refreshMinerBalance(true);
+      } else {
+        void refreshMinerBalance(false);
+      }
+      if (liveTick % 12 === 0) {
+        void refreshMinerData();
       } else if (liveTick % 6 === 0) {
-        void refreshMinerData(false);
+        void refreshMinerData();
       }
     }
     if (liveTick % 2 === 0) {
@@ -256,8 +329,9 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
 
   const liveBalance = minerBalanceData?.balance ?? minerData?.balance;
   const livePendingPayout = minerBalanceData?.pending_payout ?? minerData?.pending_payout;
+  const livePendingEstimate = minerBalanceData?.pending_estimate ?? minerData?.pending_estimate;
   const pendingConfirmed = liveBalance?.pending_confirmed ?? liveBalance?.pending ?? 0;
-  const pendingEstimated = minerData?.pending_estimate?.estimated_pending ?? 0;
+  const pendingEstimated = livePendingEstimate?.estimated_pending ?? 0;
   const pendingQueued = liveBalance?.pending_queued ?? livePendingPayout?.amount ?? 0;
   const payoutEta = insights?.payout_eta ?? null;
   const rejectionWindow = insights?.rejections?.window ?? null;
@@ -266,17 +340,18 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   const minerChecked = minerAccepted + minerRejected;
   const minerRejectRate = minerChecked > 0 ? (minerRejected / minerChecked) * 100 : null;
   const recentShares = minerData?.shares?.slice(0, RECENT_SHARES_LIMIT) || [];
-  const previewBlocks = minerData?.pending_estimate?.blocks ?? [];
+  const previewBlocks = livePendingEstimate?.blocks ?? [];
   const verificationHold = minerData?.verification_hold ?? null;
   const verificationReason = verificationHold?.reason?.trim() || 'share validation issue';
   const verificationPendingProvisional = verificationHold?.validation_pending_provisional ?? 0;
   const verificationStartedAt = toUnixMs(verificationHold?.started_at);
   const verificationOnlyUntil = toUnixMs(verificationHold?.verified_only_until);
   const verificationQuarantineUntil = toUnixMs(verificationHold?.quarantined_until);
-  const pendingNoteRepeatsHold =
-    !!verificationHold &&
-    !!minerData.pending_note &&
-    minerData.pending_note.toLowerCase().includes('verification hold');
+  const latestHashratePoint = history.length > 0 ? history[history.length - 1] : null;
+  const liveHashrate = minerData?.hashrate ?? latestHashratePoint?.hashrate ?? 0;
+  const livePaid = liveBalance?.paid ?? minerData?.balance?.paid ?? 0;
+  const showLookupResult = !!minerAddress && (!!minerData || !!minerBalanceData || history.length > 0);
+  const minerDetailLoading = lookupLoading && !minerData;
 
   const rejectionChecked = (rejectionWindow?.accepted ?? 0) + (rejectionWindow?.rejected ?? 0);
   const topWindowReason = rejectionWindow?.by_reason?.[0];
@@ -302,10 +377,10 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
           />
           <button
             className={`btn btn-primary ${minerAddress && minerInput.trim() === minerAddress ? 'is-faded' : ''}`}
-            disabled={lookupDisabled || resolving}
+            disabled={lookupDisabled || resolving || lookupLoading}
             onClick={() => void loadMinerLookup()}
           >
-            {resolving ? 'Resolving…' : 'Lookup'}
+            {resolving ? 'Resolving…' : lookupLoading ? 'Loading…' : 'Lookup'}
           </button>
           <button
             className="btn btn-secondary"
@@ -331,7 +406,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
         </div>
       </div>
 
-      {minerData && (
+      {showLookupResult && (
         <div id="lookup-result">
           <div className="stats-grid stats-grid-dense" style={{ marginBottom: 24 }}>
             <div className="stat-card stat-card--flow">
@@ -346,39 +421,38 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
             </div>
             <div className="stat-card">
               <div className="label">Paid Balance</div>
-              <div className="value">{formatCoins(minerData.balance?.paid || 0)}</div>
+              <div className="value">{formatCoins(livePaid)}</div>
               <div className="stat-meta">Already sent to this address</div>
             </div>
             <div className="stat-card">
               <div className="label">Hashrate</div>
-              <div className="value">{humanRate(minerData.hashrate || 0)}</div>
+              <div className="value">{humanRate(liveHashrate)}</div>
             </div>
             <div className="stat-card">
               <div className="label">Blocks Found</div>
-              <div className="value">{(minerData.blocks_found || []).length}</div>
+              <div className="value">{minerData ? (minerData.blocks_found || []).length : '...'}</div>
             </div>
             <div className="stat-card">
               <div className="label">Shares Accepted</div>
-              <div className="value">{minerAccepted}</div>
+              <div className="value">{minerData ? minerAccepted : '...'}</div>
             </div>
             <div className="stat-card">
               <div className="label">Shares Rejected</div>
-              <div className="value">{minerRejected}</div>
+              <div className="value">{minerData ? minerRejected : '...'}</div>
             </div>
             <div className="stat-card">
               <div className="label">Reject Rate</div>
-              <div className="value">{fmtPct(minerRejectRate)}</div>
+              <div className="value">{minerData ? fmtPct(minerRejectRate) : '...'}</div>
             </div>
             <div className="stat-card">
               <div className="label">Avg Difficulty</div>
-              <div className="value">{minerAvgDiff}</div>
+              <div className="value">{minerData ? minerAvgDiff : '...'}</div>
             </div>
             <div className="stat-card">
               <div className="label">Mining Since</div>
-              <div className="value">{minerOldestShareDate}</div>
+              <div className="value">{minerData ? minerOldestShareDate : '...'}</div>
             </div>
           </div>
-
 
           {verificationHold && (
             <div
@@ -407,6 +481,12 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
                 {verificationStartedAt && <> {`Started ${new Date(verificationStartedAt).toLocaleString()}.`}</>}
                 {' Confirmed balance and completed payouts are unaffected.'}
               </div>
+            </div>
+          )}
+
+          {minerDetailLoading && (
+            <div className="card" style={{ marginBottom: 24, color: 'var(--muted)', fontSize: 13 }}>
+              Loading worker, payout, and share history...
             </div>
           )}
 
@@ -481,87 +561,91 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
             <HashrateChart data={history} range={range} theme={theme} />
           </div>
 
-          <div className="section">
-            <h2>Workers</h2>
-            <div className="card table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Worker</th>
-                    <th>Hashrate</th>
-                    <th>Accepted</th>
-                    <th>Rejected</th>
-                    <th>Last Share</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {!minerData.workers?.length ? (
+          {minerData && (
+            <div className="section">
+              <h2>Workers</h2>
+              <div className="card table-scroll">
+                <table>
+                  <thead>
                     <tr>
-                      <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                        No workers
-                      </td>
+                      <th>Worker</th>
+                      <th>Hashrate</th>
+                      <th>Accepted</th>
+                      <th>Rejected</th>
+                      <th>Last Share</th>
                     </tr>
-                  ) : (
-                    minerData.workers.map((w) => (
-                      <tr key={w.worker}>
-                        <td>{w.worker || 'default'}</td>
-                        <td>{humanRate(w.hashrate || 0)}</td>
-                        <td>{w.accepted || 0}</td>
-                        <td>{w.rejected || 0}</td>
-                        <td title={w.last_share_at ? new Date(toUnixMs(w.last_share_at)).toLocaleString() : ''}>
-                          {timeAgo(w.last_share_at)}
+                  </thead>
+                  <tbody>
+                    {!minerData.workers?.length ? (
+                      <tr>
+                        <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                          No workers
                         </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    ) : (
+                      minerData.workers.map((w) => (
+                        <tr key={w.worker}>
+                          <td>{w.worker || 'default'}</td>
+                          <td>{humanRate(w.hashrate || 0)}</td>
+                          <td>{w.accepted || 0}</td>
+                          <td>{w.rejected || 0}</td>
+                          <td title={w.last_share_at ? new Date(toUnixMs(w.last_share_at)).toLocaleString() : ''}>
+                            {timeAgo(w.last_share_at)}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
+          )}
 
-          <div className="section">
-            <h2>Recent Payouts</h2>
-            <div className="card table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Amount</th>
-                    <th>Fee</th>
-                    <th>Tx</th>
-                    <th>Status</th>
-                    <th>Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {!minerData.payouts?.length ? (
+          {minerData && (
+            <div className="section">
+              <h2>Recent Payouts</h2>
+              <div className="card table-scroll">
+                <table>
+                  <thead>
                     <tr>
-                      <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                        No payouts yet
-                      </td>
+                      <th>Amount</th>
+                      <th>Fee</th>
+                      <th>Tx</th>
+                      <th>Status</th>
+                      <th>Time</th>
                     </tr>
-                  ) : (
-                    minerData.payouts.map((p) => (
-                      <tr key={`${p.id}-${p.tx_hash}-${toUnixMs(p.timestamp)}`}>
-                        <td>{formatCoins(p.amount)}</td>
-                        <td>{formatFee(p.fee || 0)}</td>
-                        <td>
-                          <a href={`https://explorer.blocknetcrypto.com/tx/${p.tx_hash || ''}`} target="_blank" rel="noopener">
-                            {p.tx_hash || '-'}
-                          </a>
+                  </thead>
+                  <tbody>
+                    {!minerData.payouts?.length ? (
+                      <tr>
+                        <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                          No payouts yet
                         </td>
-                        <td>
-                          <span className={`badge ${p.confirmed === false ? 'badge-pending' : 'badge-confirmed'}`}>
-                            {p.confirmed === false ? 'unconfirmed' : 'confirmed'}
-                          </span>
-                        </td>
-                        <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    ) : (
+                      minerData.payouts.map((p) => (
+                        <tr key={`${p.id}-${p.tx_hash}-${toUnixMs(p.timestamp)}`}>
+                          <td>{formatCoins(p.amount)}</td>
+                          <td>{formatFee(p.fee || 0)}</td>
+                          <td>
+                            <a href={`https://explorer.blocknetcrypto.com/tx/${p.tx_hash || ''}`} target="_blank" rel="noopener">
+                              {p.tx_hash || '-'}
+                            </a>
+                          </td>
+                          <td>
+                            <span className={`badge ${p.confirmed === false ? 'badge-pending' : 'badge-confirmed'}`}>
+                              {p.confirmed === false ? 'unconfirmed' : 'confirmed'}
+                            </span>
+                          </td>
+                          <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="section">
             <div className="section-header">
@@ -651,44 +735,46 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
             </div>
           </div>
 
-          <div className="section">
-            <div className="section-header">
-              <h2>Recent Shares</h2>
-              <span className="section-meta">Latest {RECENT_SHARES_LIMIT}</span>
-            </div>
-            <div className="card table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Job</th>
-                    <th>Worker</th>
-                    <th>Difficulty</th>
-                    <th>Status</th>
-                    <th>Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {!recentShares.length ? (
+          {minerData && (
+            <div className="section">
+              <div className="section-header">
+                <h2>Recent Shares</h2>
+                <span className="section-meta">Latest {RECENT_SHARES_LIMIT}</span>
+              </div>
+              <div className="card table-scroll">
+                <table>
+                  <thead>
                     <tr>
-                      <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                        No shares
-                      </td>
+                      <th>Job</th>
+                      <th>Worker</th>
+                      <th>Difficulty</th>
+                      <th>Status</th>
+                      <th>Time</th>
                     </tr>
-                  ) : (
-                    recentShares.map((s, idx) => (
-                      <tr key={`${s.job_id}-${idx}`}>
-                        <td>{s.job_id || ''}</td>
-                        <td>{s.worker || ''}</td>
-                        <td>{s.difficulty}</td>
-                        <td>{s.status || ''}</td>
-                        <td title={new Date(toUnixMs(s.created_at)).toLocaleString()}>{timeAgo(s.created_at)}</td>
+                  </thead>
+                  <tbody>
+                    {!recentShares.length ? (
+                      <tr>
+                        <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                          No shares
+                        </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    ) : (
+                      recentShares.map((s, idx) => (
+                        <tr key={`${s.job_id}-${idx}`}>
+                          <td>{s.job_id || ''}</td>
+                          <td>{s.worker || ''}</td>
+                          <td>{s.difficulty}</td>
+                          <td>{s.status || ''}</td>
+                          <td title={new Date(toUnixMs(s.created_at)).toLocaleString()}>{timeAgo(s.created_at)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
     </div>
