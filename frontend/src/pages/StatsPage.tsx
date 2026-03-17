@@ -8,6 +8,7 @@ import type { ThemeMode } from '../lib/theme';
 import type {
   HashratePoint,
   MinerBalancePayload,
+  MinerPendingEstimate,
   MinerResponse,
   Range,
   StatsInsightsResponse,
@@ -55,6 +56,44 @@ function balancePayloadFromMiner(address: string, miner: MinerResponse): MinerBa
   };
 }
 
+function mergePendingEstimate(
+  current: MinerPendingEstimate | undefined,
+  next: MinerPendingEstimate | undefined,
+  preserveCurrent: boolean
+): MinerPendingEstimate | undefined {
+  if (!preserveCurrent) return next;
+  return current ?? next;
+}
+
+function mergeMinerBalancePayload(
+  current: MinerBalancePayload | null,
+  next: MinerBalancePayload,
+  preservePendingEstimate: boolean
+): MinerBalancePayload {
+  const sameAddress = current?.address === next.address;
+  return {
+    ...next,
+    pending_estimate: mergePendingEstimate(
+      sameAddress ? current?.pending_estimate : undefined,
+      next.pending_estimate,
+      preservePendingEstimate
+    ),
+  };
+}
+
+function mergeMinerResponse(
+  current: MinerResponse | null,
+  next: MinerResponse,
+  preservePendingEstimate: boolean
+): MinerResponse {
+  if (!preservePendingEstimate) return next;
+  return {
+    ...next,
+    pending_estimate: mergePendingEstimate(current?.pending_estimate, next.pending_estimate, true),
+    pending_note: current?.pending_note ?? next.pending_note,
+  };
+}
+
 export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   const [minerInput, setMinerInput] = useState(localStorage.getItem(LAST_MINER_LOOKUP_KEY) || '');
   const [minerAddress, setMinerAddress] = useState('');
@@ -75,14 +114,14 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
     minerAddressRef.current = minerAddress;
   }, [minerAddress]);
 
-  const refreshMinerData = useCallback(async () => {
+  const refreshMinerData = useCallback(async (includePendingEstimate: boolean) => {
     if (!minerAddress) return;
     const addr = minerAddress;
     try {
-      const d = await api.getMiner(addr, false, RECENT_SHARES_LIMIT);
+      const d = await api.getMiner(addr, includePendingEstimate, RECENT_SHARES_LIMIT);
       if (minerAddressRef.current !== addr) return;
       startTransition(() => {
-        setMinerData(d);
+        setMinerData((current) => mergeMinerResponse(current, d, !includePendingEstimate));
         setMinerBalanceData((current) => current?.address === addr ? current : balancePayloadFromMiner(addr, d));
       });
     } catch {
@@ -97,7 +136,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
       const d = await api.getMinerBalance(addr, includePendingEstimate);
       if (minerAddressRef.current !== addr) return;
       startTransition(() => {
-        setMinerBalanceData(d);
+        setMinerBalanceData((current) => mergeMinerBalancePayload(current, d, !includePendingEstimate));
       });
     } catch {
       // handled by api client
@@ -281,9 +320,9 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
         void refreshMinerBalance(false);
       }
       if (liveTick % 12 === 0) {
-        void refreshMinerData();
+        void refreshMinerData(true);
       } else if (liveTick % 6 === 0) {
-        void refreshMinerData();
+        void refreshMinerData(false);
       }
     }
     if (liveTick % 2 === 0) {
