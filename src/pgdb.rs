@@ -2050,6 +2050,43 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(total.max(0) as u64)
     }
 
+    pub fn get_total_confirmed_block_rewards(&self) -> Result<u64> {
+        let row = self.conn().lock().query_one(
+            "SELECT COALESCE(SUM(reward)::BIGINT, 0)
+             FROM blocks
+             WHERE confirmed = TRUE AND orphaned = FALSE",
+            &[],
+        )?;
+        let total: i64 = row.get(0);
+        Ok(total.max(0) as u64)
+    }
+
+    pub fn get_total_paid_to_miners(&self) -> Result<u64> {
+        let row = self
+            .conn()
+            .lock()
+            .query_one("SELECT COALESCE(SUM(paid)::BIGINT, 0) FROM balances", &[])?;
+        let total: i64 = row.get(0);
+        Ok(total.max(0) as u64)
+    }
+
+    pub fn find_existing_payout_tx_hashes(&self, tx_hashes: &[String]) -> Result<HashSet<String>> {
+        if tx_hashes.is_empty() {
+            return Ok(HashSet::new());
+        }
+
+        let rows = self.conn().lock().query(
+            "SELECT DISTINCT tx_hash
+             FROM payouts
+             WHERE tx_hash = ANY($1)",
+            &[&tx_hashes],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect())
+    }
+
     pub fn get_recent_pool_fees(&self, limit: i64) -> Result<Vec<PoolFeeEvent>> {
         let rows = self.conn().lock().query(
             "SELECT id, block_height, amount, fee_address, timestamp

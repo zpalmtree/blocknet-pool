@@ -32,6 +32,7 @@ export interface StatsResponse {
     blocks_found: number;
     orphaned_blocks: number;
     orphan_rate_pct: number;
+    paid_to_miners_total: number;
   };
   chain: {
     current_job_height?: number | null;
@@ -377,6 +378,52 @@ export interface HealthResponse {
     last_share_age_seconds?: number | null;
   };
   active_verification_holds?: ActiveVerificationHold[];
+}
+
+export interface AdminBalanceOverviewResponse {
+  generated_at: UnixLike;
+  wallet: {
+    spendable: number;
+    pending: number;
+    pending_unconfirmed: number;
+    pending_unconfirmed_eta: number;
+    total: number;
+  };
+  payouts: {
+    unpaid_count: number;
+    unpaid_amount: number;
+    queued_count: number;
+    queued_amount: number;
+  };
+  outputs: {
+    live_count: number;
+    spendable_count: number;
+    pending_count: number;
+    spendable_coinbase_count: number;
+    spendable_coinbase_amount: number;
+    spendable_regular_count: number;
+    spendable_regular_amount: number;
+    pending_coinbase_count: number;
+    pending_coinbase_amount: number;
+    pending_regular_count: number;
+    pending_regular_amount: number;
+    pending_regular_matched_payout_count: number;
+    pending_regular_matched_payout_amount: number;
+    pending_regular_unmatched_count: number;
+    pending_regular_unmatched_amount: number;
+  };
+  ledger: {
+    miner_paid_total: number;
+    miner_unpaid_total: number;
+    miner_total_credited: number;
+    net_block_reward_total: number;
+    pool_fee_total: number;
+    miner_rewards_balanced: boolean;
+  };
+  liquidity: {
+    spendable_minus_queued: number;
+    queue_shortfall_amount: number;
+  };
 }
 
 export interface PercentileSummary {

@@ -36,7 +36,9 @@ use crate::db::{
 use crate::dev_fee::{SEINE_DEV_FEE_ADDRESS, SEINE_DEV_FEE_REFERENCE_TARGET_PCT};
 use crate::engine::JobRepository;
 use crate::jobs::JobManager;
-use crate::node::{NodeClient, NodeCurrentProcessBlock, NodeLastProcessBlock, WalletBalance};
+use crate::node::{
+    NodeClient, NodeCurrentProcessBlock, NodeLastProcessBlock, WalletBalance, WalletOutput,
+};
 use crate::payout::{
     is_share_payout_eligible, recover_share_window_by_replay,
     resolve_pool_fee_destination_from_address, reward_window_end, weight_shares, PayoutTrustPolicy,
@@ -438,6 +440,7 @@ struct DbTotals {
     confirmed_blocks: u64,
     orphaned_blocks: u64,
     pool_fees_collected: u64,
+    paid_to_miners_total: u64,
 }
 
 #[derive(Debug, Default)]
@@ -955,6 +958,10 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
         .route("/api/admin/perf", get(handle_admin_perf))
         .route("/api/admin/dev-fee", get(handle_admin_dev_fee))
         .route("/api/admin/balances", get(handle_admin_balances))
+        .route(
+            "/api/admin/balance-overview",
+            get(handle_admin_balance_overview),
+        )
         .route("/api/admin/shares", get(handle_admin_share_diagnostics))
         .route(
             "/api/admin/blocks/:height/reward-breakdown",
@@ -2570,6 +2577,7 @@ struct PoolSummary {
     total_shares: u64,
     total_blocks: u64,
     pool_fees_collected: u64,
+    paid_to_miners_total: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2985,6 +2993,68 @@ struct AdminDevFeeHintRowResponse {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct AdminBalanceOverviewResponse {
+    generated_at: SystemTime,
+    wallet: AdminBalanceOverviewWallet,
+    payouts: AdminBalanceOverviewPayouts,
+    outputs: AdminBalanceOverviewOutputs,
+    ledger: AdminBalanceOverviewLedger,
+    liquidity: AdminBalanceOverviewLiquidity,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AdminBalanceOverviewWallet {
+    spendable: u64,
+    pending: u64,
+    pending_unconfirmed: u64,
+    pending_unconfirmed_eta: u64,
+    total: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AdminBalanceOverviewPayouts {
+    unpaid_count: usize,
+    unpaid_amount: u64,
+    queued_count: usize,
+    queued_amount: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
+struct AdminBalanceOverviewOutputs {
+    live_count: usize,
+    spendable_count: usize,
+    pending_count: usize,
+    spendable_coinbase_count: usize,
+    spendable_coinbase_amount: u64,
+    spendable_regular_count: usize,
+    spendable_regular_amount: u64,
+    pending_coinbase_count: usize,
+    pending_coinbase_amount: u64,
+    pending_regular_count: usize,
+    pending_regular_amount: u64,
+    pending_regular_matched_payout_count: usize,
+    pending_regular_matched_payout_amount: u64,
+    pending_regular_unmatched_count: usize,
+    pending_regular_unmatched_amount: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AdminBalanceOverviewLedger {
+    miner_paid_total: u64,
+    miner_unpaid_total: u64,
+    miner_total_credited: u64,
+    net_block_reward_total: u64,
+    pool_fee_total: u64,
+    miner_rewards_balanced: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AdminBalanceOverviewLiquidity {
+    spendable_minus_queued: i64,
+    queue_shortfall_amount: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct JobHealth {
     current_height: Option<u64>,
     current_difficulty: Option<u64>,
@@ -3258,6 +3328,72 @@ fn ratio_pct(numerator: u64, denominator: u64) -> f64 {
     } else {
         (numerator as f64 / denominator as f64) * 100.0
     }
+}
+
+fn signed_amount_delta(lhs: u64, rhs: u64) -> i64 {
+    let lhs = lhs as i128;
+    let rhs = rhs as i128;
+    let delta = lhs - rhs;
+    delta.clamp(i64::MIN as i128, i64::MAX as i128) as i64
+}
+
+fn summarize_admin_balance_outputs(
+    outputs: &[WalletOutput],
+    matched_payout_tx_hashes: &HashSet<String>,
+) -> AdminBalanceOverviewOutputs {
+    let mut summary = AdminBalanceOverviewOutputs::default();
+
+    for output in outputs {
+        let is_spendable = output.is_spendable();
+        let is_spent = output.status.eq_ignore_ascii_case("spent");
+        if is_spent {
+            continue;
+        }
+
+        summary.live_count += 1;
+
+        if is_spendable {
+            summary.spendable_count += 1;
+            if output.r#type.eq_ignore_ascii_case("coinbase") {
+                summary.spendable_coinbase_count += 1;
+                summary.spendable_coinbase_amount = summary
+                    .spendable_coinbase_amount
+                    .saturating_add(output.amount);
+            } else {
+                summary.spendable_regular_count += 1;
+                summary.spendable_regular_amount = summary
+                    .spendable_regular_amount
+                    .saturating_add(output.amount);
+            }
+            continue;
+        }
+
+        summary.pending_count += 1;
+        if output.r#type.eq_ignore_ascii_case("coinbase") {
+            summary.pending_coinbase_count += 1;
+            summary.pending_coinbase_amount = summary
+                .pending_coinbase_amount
+                .saturating_add(output.amount);
+            continue;
+        }
+
+        summary.pending_regular_count += 1;
+        summary.pending_regular_amount =
+            summary.pending_regular_amount.saturating_add(output.amount);
+        if matched_payout_tx_hashes.contains(&output.txid) {
+            summary.pending_regular_matched_payout_count += 1;
+            summary.pending_regular_matched_payout_amount = summary
+                .pending_regular_matched_payout_amount
+                .saturating_add(output.amount);
+        } else {
+            summary.pending_regular_unmatched_count += 1;
+            summary.pending_regular_unmatched_amount = summary
+                .pending_regular_unmatched_amount
+                .saturating_add(output.amount);
+        }
+    }
+
+    summary
 }
 
 fn effective_job_health(
@@ -3879,6 +4015,13 @@ async fn handle_admin_balances(
             anyhow::anyhow!("join error: {err}"),
         )
         .into_response(),
+    }
+}
+
+async fn handle_admin_balance_overview(State(state): State<ApiState>) -> impl IntoResponse {
+    match state.admin_balance_overview().await {
+        Ok(response) => Json(response).into_response(),
+        Err(err) => internal_error("failed loading balance overview", err).into_response(),
     }
 }
 
@@ -7312,6 +7455,7 @@ impl ApiState {
                 total_shares: totals.total_shares,
                 total_blocks: totals.total_blocks,
                 pool_fees_collected: totals.pool_fees_collected,
+                paid_to_miners_total: totals.paid_to_miners_total,
             },
             chain: ChainSummary {
                 current_job_height,
@@ -7399,6 +7543,85 @@ impl ApiState {
                     latest_updated_at: summary.latest_updated_at,
                 },
                 recent_hints,
+            })
+        })
+        .await
+        .map_err(|err| anyhow::anyhow!("join error: {err}"))?
+    }
+
+    async fn admin_balance_overview(&self) -> anyhow::Result<AdminBalanceOverviewResponse> {
+        let store = Arc::clone(&self.store);
+        let node = Arc::clone(&self.node);
+        tokio::task::spawn_blocking(move || {
+            let generated_at = SystemTime::now();
+            let wallet_balance = node.get_wallet_balance()?;
+            let wallet_outputs = node.get_wallet_outputs()?;
+            let pending_regular_tx_hashes = wallet_outputs
+                .outputs
+                .iter()
+                .filter(|output| {
+                    !output.is_spendable()
+                        && !output.status.eq_ignore_ascii_case("spent")
+                        && !output.r#type.eq_ignore_ascii_case("coinbase")
+                })
+                .map(|output| output.txid.clone())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let matched_payout_tx_hashes =
+                store.find_existing_payout_tx_hashes(&pending_regular_tx_hashes)?;
+            let output_summary =
+                summarize_admin_balance_outputs(&wallet_outputs.outputs, &matched_payout_tx_hashes);
+
+            let balances = store.get_all_balances()?;
+            let pending_payouts = store.get_pending_payouts()?;
+            let miner_paid_total = balances
+                .iter()
+                .fold(0u64, |acc, balance| acc.saturating_add(balance.paid));
+            let miner_unpaid_total = balances
+                .iter()
+                .fold(0u64, |acc, balance| acc.saturating_add(balance.pending));
+            let unpaid_count = balances
+                .iter()
+                .filter(|balance| balance.pending > 0)
+                .count();
+            let queued_amount = pending_payouts
+                .iter()
+                .fold(0u64, |acc, payout| acc.saturating_add(payout.amount));
+            let net_block_reward_total = store.get_total_confirmed_block_rewards()?;
+            let pool_fee_total = store.get_total_pool_fees()?;
+            let miner_total_credited = miner_paid_total.saturating_add(miner_unpaid_total);
+            let spendable_minus_queued =
+                signed_amount_delta(wallet_balance.spendable, queued_amount);
+
+            Ok::<_, anyhow::Error>(AdminBalanceOverviewResponse {
+                generated_at,
+                wallet: AdminBalanceOverviewWallet {
+                    spendable: wallet_balance.spendable,
+                    pending: wallet_balance.pending,
+                    pending_unconfirmed: wallet_balance.pending_unconfirmed,
+                    pending_unconfirmed_eta: wallet_balance.pending_unconfirmed_eta,
+                    total: wallet_balance.total,
+                },
+                payouts: AdminBalanceOverviewPayouts {
+                    unpaid_count,
+                    unpaid_amount: miner_unpaid_total,
+                    queued_count: pending_payouts.len(),
+                    queued_amount,
+                },
+                outputs: output_summary,
+                ledger: AdminBalanceOverviewLedger {
+                    miner_paid_total,
+                    miner_unpaid_total,
+                    miner_total_credited,
+                    net_block_reward_total,
+                    pool_fee_total,
+                    miner_rewards_balanced: miner_total_credited == net_block_reward_total,
+                },
+                liquidity: AdminBalanceOverviewLiquidity {
+                    spendable_minus_queued,
+                    queue_shortfall_amount: queued_amount.saturating_sub(wallet_balance.spendable),
+                },
             })
         })
         .await
@@ -8307,6 +8530,7 @@ impl ApiState {
         let rejected_shares_store = Arc::clone(&self.store);
         let block_totals_store = Arc::clone(&self.store);
         let pool_fees_store = Arc::clone(&self.store);
+        let paid_to_miners_store = Arc::clone(&self.store);
         let total_shares_task =
             tokio::task::spawn_blocking(move || total_shares_store.get_total_share_count());
         let rejected_shares_task =
@@ -8323,11 +8547,20 @@ impl ApiState {
             });
         let pool_fees_task =
             tokio::task::spawn_blocking(move || pool_fees_store.get_total_pool_fees());
-        let (total_shares_result, rejected_shares_result, block_totals_result, pool_fees_result) = tokio::join!(
+        let paid_to_miners_task =
+            tokio::task::spawn_blocking(move || paid_to_miners_store.get_total_paid_to_miners());
+        let (
+            total_shares_result,
+            rejected_shares_result,
+            block_totals_result,
+            pool_fees_result,
+            paid_to_miners_result,
+        ) = tokio::join!(
             total_shares_task,
             rejected_shares_task,
             block_totals_task,
             pool_fees_task,
+            paid_to_miners_task,
         );
         let load_value = || -> anyhow::Result<DbTotals> {
             let total_shares =
@@ -8338,6 +8571,8 @@ impl ApiState {
                 block_totals_result.map_err(|err| anyhow::anyhow!("join error: {err}"))??;
             let pool_fees_collected =
                 pool_fees_result.map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+            let paid_to_miners_total =
+                paid_to_miners_result.map_err(|err| anyhow::anyhow!("join error: {err}"))??;
             Ok(DbTotals {
                 total_shares,
                 accepted_shares: total_shares.saturating_sub(rejected_shares),
@@ -8346,6 +8581,7 @@ impl ApiState {
                 confirmed_blocks,
                 orphaned_blocks,
                 pool_fees_collected,
+                paid_to_miners_total,
             })
         };
         let totals = match load_value() {
@@ -8613,6 +8849,7 @@ fn api_performance_route_name(uri: &Uri) -> Option<&'static str> {
         "/api/health" => "health",
         "/api/admin/perf" => "admin_perf",
         "/api/admin/dev-fee" => "admin_dev_fee",
+        "/api/admin/balance-overview" => "admin_balance_overview",
         "/api/admin/shares" => "admin_share_diagnostics",
         _ if path.ends_with("/balance") && path.starts_with("/api/miner/") => {
             if query_includes_pending_estimate(uri) {
@@ -8638,7 +8875,10 @@ fn api_route_slow_threshold_millis(route: &str) -> u64 {
         "status" | "stats_insights" | "blocks" => 250,
         "luck" => 500,
         "miner_balance_pending" | "miner_detail" | "other_api" => 250,
-        "miner_detail_pending" | "admin_dev_fee" | "admin_share_diagnostics" => 500,
+        "miner_detail_pending"
+        | "admin_dev_fee"
+        | "admin_balance_overview"
+        | "admin_share_diagnostics" => 500,
         _ => 250,
     }
 }
@@ -9335,7 +9575,7 @@ mod tests {
     };
     use crate::engine::{ShareRecord, ShareStore};
     use crate::jobs::{JobManager, JobRuntimeSnapshot};
-    use crate::node::{NodeClient, WalletBalance};
+    use crate::node::{NodeClient, WalletBalance, WalletOutput};
     use crate::recovery::RecoveryAgentClient;
     use crate::service_state::{
         PersistedPayoutRuntime, PersistedRuntimeSnapshot, PersistedValidationSummary,
@@ -9364,14 +9604,15 @@ mod tests {
         hashrate_from_stats_with_warmup, hydrate_provisional_block_reward, is_api_request_path,
         load_persisted_status_history, luck_round_response_from_db, miner_balance_response,
         miner_has_activity, page_bounds, payout_status_note, pending_balance_note,
-        rejection_window_duration, share_limit, sort_workers_for_miner, system_time_to_unix_secs,
-        trim_log_line, worker_hashrate_by_name, ApiPerformanceTracker, ApiState,
-        ClearAddressRiskHistoryRequest, DaemonHealthCache, DbTotalsCache, InsightsCache,
-        LiveRuntimeSnapshotCache, MinerDetailQuery, MinerPendingBlockEstimate,
-        MinerPendingEstimate, MinersQuery, NetworkHashrateCache, OpenIncident, PayoutEtaResponse,
-        PoolHealthCache, StatusHistory, StatusIncident, DAEMON_LOG_LINE_LIMIT,
-        HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
-        LIVE_RUNTIME_SNAPSHOT_META_KEY, STATUS_HISTORY_META_KEY,
+        rejection_window_duration, share_limit, sort_workers_for_miner,
+        summarize_admin_balance_outputs, system_time_to_unix_secs, trim_log_line,
+        worker_hashrate_by_name, ApiPerformanceTracker, ApiState, ClearAddressRiskHistoryRequest,
+        DaemonHealthCache, DbTotalsCache, InsightsCache, LiveRuntimeSnapshotCache,
+        MinerDetailQuery, MinerPendingBlockEstimate, MinerPendingEstimate, MinersQuery,
+        NetworkHashrateCache, OpenIncident, PayoutEtaResponse, PoolHealthCache, StatusHistory,
+        StatusIncident, DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW,
+        HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY,
+        STATUS_HISTORY_META_KEY,
     };
 
     const TEST_POSTGRES_URL_ENV: &str = "BLOCKNET_POOL_TEST_POSTGRES_URL";
@@ -9498,6 +9739,10 @@ mod tests {
             Some("admin_perf")
         );
         assert_eq!(
+            api_performance_route_name(&Uri::from_static("/api/admin/balance-overview")),
+            Some("admin_balance_overview")
+        );
+        assert_eq!(
             api_performance_route_name(&Uri::from_static("/api/luck")),
             Some("luck")
         );
@@ -9521,6 +9766,103 @@ mod tests {
             api_performance_route_name(&Uri::from_static("/api/events")),
             None
         );
+    }
+
+    #[test]
+    fn summarize_admin_balance_outputs_tracks_live_wallet_buckets() {
+        let outputs = vec![
+            WalletOutput {
+                txid: "coinbase-unspent".to_string(),
+                output_index: 0,
+                amount: 25,
+                status: "unspent".to_string(),
+                r#type: "coinbase".to_string(),
+                confirmations: 60,
+                block_height: 10,
+                spent_height: None,
+                one_time_pub: String::new(),
+                commitment: String::new(),
+            },
+            WalletOutput {
+                txid: "regular-unspent".to_string(),
+                output_index: 1,
+                amount: 10,
+                status: "unspent".to_string(),
+                r#type: "regular".to_string(),
+                confirmations: 12,
+                block_height: 11,
+                spent_height: None,
+                one_time_pub: String::new(),
+                commitment: String::new(),
+            },
+            WalletOutput {
+                txid: "payout-change".to_string(),
+                output_index: 1,
+                amount: 7,
+                status: "pending".to_string(),
+                r#type: "regular".to_string(),
+                confirmations: 2,
+                block_height: 12,
+                spent_height: None,
+                one_time_pub: String::new(),
+                commitment: String::new(),
+            },
+            WalletOutput {
+                txid: "immature-coinbase".to_string(),
+                output_index: 0,
+                amount: 12,
+                status: "pending".to_string(),
+                r#type: "coinbase".to_string(),
+                confirmations: 8,
+                block_height: 13,
+                spent_height: None,
+                one_time_pub: String::new(),
+                commitment: String::new(),
+            },
+            WalletOutput {
+                txid: "mystery-regular".to_string(),
+                output_index: 1,
+                amount: 5,
+                status: "pending".to_string(),
+                r#type: "regular".to_string(),
+                confirmations: 1,
+                block_height: 14,
+                spent_height: None,
+                one_time_pub: String::new(),
+                commitment: String::new(),
+            },
+            WalletOutput {
+                txid: "historical-spent".to_string(),
+                output_index: 0,
+                amount: 99,
+                status: "spent".to_string(),
+                r#type: "coinbase".to_string(),
+                confirmations: 100,
+                block_height: 1,
+                spent_height: Some(2),
+                one_time_pub: String::new(),
+                commitment: String::new(),
+            },
+        ];
+
+        let matched = std::collections::HashSet::from(["payout-change".to_string()]);
+        let summary = summarize_admin_balance_outputs(&outputs, &matched);
+
+        assert_eq!(summary.live_count, 5);
+        assert_eq!(summary.spendable_count, 2);
+        assert_eq!(summary.pending_count, 3);
+        assert_eq!(summary.spendable_coinbase_count, 1);
+        assert_eq!(summary.spendable_coinbase_amount, 25);
+        assert_eq!(summary.spendable_regular_count, 1);
+        assert_eq!(summary.spendable_regular_amount, 10);
+        assert_eq!(summary.pending_coinbase_count, 1);
+        assert_eq!(summary.pending_coinbase_amount, 12);
+        assert_eq!(summary.pending_regular_count, 2);
+        assert_eq!(summary.pending_regular_amount, 12);
+        assert_eq!(summary.pending_regular_matched_payout_count, 1);
+        assert_eq!(summary.pending_regular_matched_payout_amount, 7);
+        assert_eq!(summary.pending_regular_unmatched_count, 1);
+        assert_eq!(summary.pending_regular_unmatched_amount, 5);
     }
 
     #[test]

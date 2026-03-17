@@ -148,7 +148,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
 
       <div className="stats-card-group">
         <div className="stats-card-group-title">Pool</div>
-        <div className="stats-card-group-grid">
+        <div className="stats-card-group-grid stats-card-group-grid--pool">
           <div className="stat-card">
             <div className="label">Connected Miners</div>
             <div className="value" id="s-miners">{stats?.pool?.miners ?? '-'}</div>
@@ -160,6 +160,19 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
           <div className="stat-card">
             <div className="label">Network Hashrate</div>
             <div className="value" id="s-net-hashrate">{stats?.chain?.network_hashrate ? humanRate(stats.chain.network_hashrate) : '-'}</div>
+          </div>
+          <div
+            className="stat-card"
+            title={
+              stats?.pool?.paid_to_miners_total != null
+                ? `${formatCoins(stats.pool.paid_to_miners_total)} paid to miners`
+                : undefined
+            }
+          >
+            <div className="label">Total BNT Paid</div>
+            <div className="value mono" id="s-total-paid">
+              {stats?.pool?.paid_to_miners_total != null ? formatCoins(stats.pool.paid_to_miners_total) : '-'}
+            </div>
           </div>
         </div>
       </div>
