@@ -41,7 +41,7 @@ use crate::payout::{
     is_share_payout_eligible, recover_share_window_by_replay,
     resolve_pool_fee_destination_from_address, reward_window_end, weight_shares, PayoutTrustPolicy,
 };
-use crate::pgdb::ShareWindowAddressPreview;
+use crate::pgdb::{MonitorUptimeSummary, ShareWindowAddressPreview};
 use crate::pool_activity::{assess_pool_activity, POOL_ACTIVITY_SNAPSHOT_STALE_AFTER};
 use crate::recovery::{RecoveryAgentClient, RecoveryInstanceId, RecoveryOperation, RecoveryStatus};
 use crate::service_state::{
@@ -3422,55 +3422,24 @@ fn parse_monitor_heartbeat_details(row: &MonitorHeartbeat) -> Option<MonitorHear
 fn build_monitor_uptime_window(
     label: &str,
     window: Duration,
-    local_rows: &[MonitorHeartbeat],
-    external_rows: &[MonitorHeartbeat],
-    now: SystemTime,
+    local: &MonitorUptimeSummary,
+    external: &MonitorUptimeSummary,
 ) -> UptimeWindow {
-    let cutoff = now.checked_sub(window).unwrap_or(UNIX_EPOCH);
-    let local_window = local_rows
-        .iter()
-        .filter(|row| row.sampled_at >= cutoff)
-        .collect::<Vec<_>>();
-    let external_window = external_rows
-        .iter()
-        .filter(|row| row.sampled_at >= cutoff)
-        .collect::<Vec<_>>();
     UptimeWindow {
         label: label.to_string(),
         window_seconds: window.as_secs(),
-        sample_count: local_window.len(),
-        external_sample_count: external_window.len(),
-        api_up_pct: heartbeat_pct(&local_window, |row| row.api_up),
-        stratum_up_pct: heartbeat_pct(&local_window, |row| row.stratum_up),
-        pool_up_pct: heartbeat_pct(&local_window, |row| {
-            Some(
-                row.api_up.unwrap_or(false)
-                    && row.stratum_up.unwrap_or(false)
-                    && row.db_up
-                    && row.daemon_up.unwrap_or(false),
-            )
-        }),
-        daemon_up_pct: heartbeat_pct(&local_window, |row| row.daemon_up),
-        database_up_pct: heartbeat_pct(&local_window, |row| Some(row.db_up)),
-        public_http_up_pct: heartbeat_pct(&external_window, |row| row.public_http_up),
+        sample_count: local.sample_count as usize,
+        external_sample_count: external.sample_count as usize,
+        api_up_pct: uptime_pct(local.api_up, local.api_total),
+        stratum_up_pct: uptime_pct(local.stratum_up, local.stratum_total),
+        pool_up_pct: uptime_pct(local.pool_up, local.pool_total),
+        daemon_up_pct: uptime_pct(local.daemon_up, local.daemon_total),
+        database_up_pct: uptime_pct(local.database_up, local.database_total),
+        public_http_up_pct: uptime_pct(external.public_http_up, external.public_http_total),
     }
 }
 
-fn heartbeat_pct(
-    rows: &[&MonitorHeartbeat],
-    flag: impl Fn(&MonitorHeartbeat) -> Option<bool>,
-) -> Option<f64> {
-    let mut total = 0usize;
-    let mut up = 0usize;
-    for row in rows {
-        let Some(value) = flag(row) else {
-            continue;
-        };
-        total += 1;
-        if value {
-            up += 1;
-        }
-    }
+fn uptime_pct(up: u64, total: u64) -> Option<f64> {
     if total == 0 {
         None
     } else {
@@ -7983,24 +7952,42 @@ impl ApiState {
     async fn build_status_response(&self) -> anyhow::Result<StatusPageResponse> {
         let now = SystemTime::now();
         let pool_uptime_seconds = self.started_at.elapsed().as_secs();
-        let since = now
-            .checked_sub(Duration::from_secs(7 * 24 * 3600))
-            .unwrap_or(UNIX_EPOCH);
+        let uptime_windows = [
+            ("10m", Duration::from_secs(10 * 60)),
+            ("6h", Duration::from_secs(6 * 3600)),
+            ("24h", Duration::from_secs(24 * 3600)),
+            ("7d", Duration::from_secs(7 * 24 * 3600)),
+        ];
         let store = Arc::clone(&self.store);
-        let (local_rows, external_rows, incidents) = tokio::task::spawn_blocking(
-            move || -> anyhow::Result<(Vec<MonitorHeartbeat>, Vec<MonitorHeartbeat>, Vec<MonitorIncident>)> {
-                Ok((
-                    store.get_monitor_heartbeats_since(since, Some(LOCAL_MONITOR_SOURCE))?,
-                    store.get_monitor_heartbeats_since(since, Some(CLOUDFLARE_MONITOR_SOURCE))?,
-                    store.get_recent_monitor_incidents(32, Some("public"))?,
-                ))
+        let (latest_local, latest_external, incidents, uptime_summaries) = tokio::task::spawn_blocking(
+            move || -> anyhow::Result<(
+                Option<MonitorHeartbeat>,
+                Option<MonitorHeartbeat>,
+                Vec<MonitorIncident>,
+                Vec<(String, Duration, MonitorUptimeSummary, MonitorUptimeSummary)>,
+            )> {
+                let latest_local = store.get_latest_monitor_heartbeat(Some(LOCAL_MONITOR_SOURCE))?;
+                let latest_external =
+                    store.get_latest_monitor_heartbeat(Some(CLOUDFLARE_MONITOR_SOURCE))?;
+                let incidents = store.get_recent_monitor_incidents(32, Some("public"))?;
+                let mut uptime_summaries = Vec::with_capacity(uptime_windows.len());
+                for (label, window) in uptime_windows {
+                    let since = now.checked_sub(window).unwrap_or(UNIX_EPOCH);
+                    uptime_summaries.push((
+                        label.to_string(),
+                        window,
+                        store.get_monitor_uptime_summary(since, Some(LOCAL_MONITOR_SOURCE))?,
+                        store.get_monitor_uptime_summary(since, Some(CLOUDFLARE_MONITOR_SOURCE))?,
+                    ));
+                }
+                Ok((latest_local, latest_external, incidents, uptime_summaries))
             },
         )
         .await
         .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
 
-        let latest_local = local_rows.last();
-        let latest_external = external_rows.last();
+        let latest_local = latest_local.as_ref();
+        let latest_external = latest_external.as_ref();
         let template_age = latest_local.and_then(|row| row.template_age_seconds);
         let template_refresh_millis = latest_local.and_then(|row| row.last_refresh_millis);
         let services = StatusServices {
@@ -8053,36 +8040,12 @@ impl ApiState {
             age_seconds: template_age,
             last_refresh_millis: template_refresh_millis,
         };
-        let uptime = vec![
-            build_monitor_uptime_window(
-                "10m",
-                Duration::from_secs(10 * 60),
-                &local_rows,
-                &external_rows,
-                now,
-            ),
-            build_monitor_uptime_window(
-                "6h",
-                Duration::from_secs(6 * 3600),
-                &local_rows,
-                &external_rows,
-                now,
-            ),
-            build_monitor_uptime_window(
-                "24h",
-                Duration::from_secs(24 * 3600),
-                &local_rows,
-                &external_rows,
-                now,
-            ),
-            build_monitor_uptime_window(
-                "7d",
-                Duration::from_secs(7 * 24 * 3600),
-                &local_rows,
-                &external_rows,
-                now,
-            ),
-        ];
+        let uptime = uptime_summaries
+            .into_iter()
+            .map(|(label, window, local, external)| {
+                build_monitor_uptime_window(&label, window, &local, &external)
+            })
+            .collect();
 
         Ok(StatusPageResponse {
             checked_at: now,

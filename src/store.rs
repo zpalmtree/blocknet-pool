@@ -17,8 +17,8 @@ use crate::db::{
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::payout::{is_share_payout_eligible, reward_window_end};
 use crate::pgdb::{
-    MinerShareWindowStats, PoolFeeCreditBackfillReport, PostgresStore, VardiffHintDiagnostic,
-    VardiffHintSummary,
+    MinerShareWindowStats, MonitorUptimeSummary, PoolFeeCreditBackfillReport, PostgresStore,
+    VardiffHintDiagnostic, VardiffHintSummary,
 };
 use crate::protocol::parse_hash_hex;
 use crate::validation::{
@@ -320,6 +320,14 @@ impl PoolStore {
         source: Option<&str>,
     ) -> Result<Option<MonitorHeartbeat>> {
         self.inner.get_latest_monitor_heartbeat(source)
+    }
+
+    pub fn get_monitor_uptime_summary(
+        &self,
+        since: SystemTime,
+        source: Option<&str>,
+    ) -> Result<MonitorUptimeSummary> {
+        self.inner.get_monitor_uptime_summary(since, source)
     }
 
     pub fn upsert_monitor_incident(&self, incident: &MonitorIncidentUpsert) -> Result<()> {

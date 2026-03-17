@@ -58,6 +58,23 @@ pub struct VardiffHintSummary {
     pub latest_updated_at: Option<SystemTime>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct MonitorUptimeSummary {
+    pub sample_count: u64,
+    pub api_total: u64,
+    pub api_up: u64,
+    pub stratum_total: u64,
+    pub stratum_up: u64,
+    pub pool_total: u64,
+    pub pool_up: u64,
+    pub daemon_total: u64,
+    pub daemon_up: u64,
+    pub database_total: u64,
+    pub database_up: u64,
+    pub public_http_total: u64,
+    pub public_http_up: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct VardiffHintDiagnostic {
     pub worker: String,
@@ -2184,6 +2201,53 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             &[&source],
         )?;
         row.map(row_to_monitor_heartbeat).transpose()
+    }
+
+    pub fn get_monitor_uptime_summary(
+        &self,
+        since: SystemTime,
+        source: Option<&str>,
+    ) -> Result<MonitorUptimeSummary> {
+        let row = self.conn().lock().query_one(
+            "SELECT
+                COUNT(*)::bigint AS sample_count,
+                COUNT(api_up)::bigint AS api_total,
+                COUNT(*) FILTER (WHERE api_up = TRUE)::bigint AS api_up,
+                COUNT(stratum_up)::bigint AS stratum_total,
+                COUNT(*) FILTER (WHERE stratum_up = TRUE)::bigint AS stratum_up,
+                COUNT(*)::bigint AS pool_total,
+                COUNT(*) FILTER (
+                    WHERE COALESCE(api_up, FALSE) = TRUE
+                      AND COALESCE(stratum_up, FALSE) = TRUE
+                      AND db_up = TRUE
+                      AND COALESCE(daemon_up, FALSE) = TRUE
+                )::bigint AS pool_up,
+                COUNT(daemon_up)::bigint AS daemon_total,
+                COUNT(*) FILTER (WHERE daemon_up = TRUE)::bigint AS daemon_up,
+                COUNT(*)::bigint AS database_total,
+                COUNT(*) FILTER (WHERE db_up = TRUE)::bigint AS database_up,
+                COUNT(public_http_up)::bigint AS public_http_total,
+                COUNT(*) FILTER (WHERE public_http_up = TRUE)::bigint AS public_http_up
+             FROM monitor_heartbeats
+             WHERE sampled_at >= $1
+               AND ($2::text IS NULL OR source = $2)",
+            &[&to_unix(since), &source],
+        )?;
+        Ok(MonitorUptimeSummary {
+            sample_count: row.get::<_, i64>(0).max(0) as u64,
+            api_total: row.get::<_, i64>(1).max(0) as u64,
+            api_up: row.get::<_, i64>(2).max(0) as u64,
+            stratum_total: row.get::<_, i64>(3).max(0) as u64,
+            stratum_up: row.get::<_, i64>(4).max(0) as u64,
+            pool_total: row.get::<_, i64>(5).max(0) as u64,
+            pool_up: row.get::<_, i64>(6).max(0) as u64,
+            daemon_total: row.get::<_, i64>(7).max(0) as u64,
+            daemon_up: row.get::<_, i64>(8).max(0) as u64,
+            database_total: row.get::<_, i64>(9).max(0) as u64,
+            database_up: row.get::<_, i64>(10).max(0) as u64,
+            public_http_total: row.get::<_, i64>(11).max(0) as u64,
+            public_http_up: row.get::<_, i64>(12).max(0) as u64,
+        })
     }
 
     pub fn upsert_monitor_incident(&self, incident: &MonitorIncidentUpsert) -> Result<()> {
