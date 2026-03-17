@@ -7,6 +7,7 @@ import {
   fmtSeconds,
   formatCoinAmount,
   formatCoins,
+  formatCompactCoins,
   humanRate,
   shortAddr,
   timeAgo,
@@ -1394,6 +1395,20 @@ export function AdminPage({
                   : '-'}
               </div>
             </div>
+            <div className="stat-card" onClick={() => setTab('balances')}>
+              <div className="label">Wallet</div>
+              <div className="value mono">
+                {balanceOverview ? formatCompactCoins(balanceOverview.wallet.spendable) : '-'}
+              </div>
+              <div className="stat-meta">
+                {balanceOverview
+                  ? `${formatCompactCoins(balanceOverview.wallet.total)} total`
+                  : '-'}
+              </div>
+              {balanceOverview && !balanceOverview.ledger.miner_rewards_balanced && (
+                <div className="stat-meta" style={{ color: 'var(--warn)' }}>Ledger unbalanced</div>
+              )}
+            </div>
             <div className="stat-card" onClick={() => setTab('miners')}>
               <div className="label">Connected Miners</div>
               <div className="value mono">{poolActivity?.connected_miners ?? '-'}</div>
@@ -1402,144 +1417,6 @@ export function AdminPage({
               </div>
             </div>
           </div>
-
-          {balanceOverview ? (
-            <div className="card section admin-balance-overview">
-              <h3>Wallet Balance Overview</h3>
-
-              <div className="stats-card-group-grid stats-grid-dense">
-                <div className="stat-card">
-                  <div className="label">Spendable</div>
-                  <div className="value mono">{formatCoins(balanceOverview.wallet.spendable)}</div>
-                  <div className="stat-meta">
-                    {formatWholeNumber(balanceOverview.outputs.spendable_count)} live output
-                    {balanceOverview.outputs.spendable_count === 1 ? '' : 's'}
-                  </div>
-                  <div className="stat-meta">
-                    {formatSignedCoins(balanceOverview.liquidity.spendable_minus_queued)} after queued payouts
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Immature Coinbase</div>
-                  <div className="value mono">{formatCoins(balanceOverview.outputs.pending_coinbase_amount)}</div>
-                  <div className="stat-meta">
-                    {formatWholeNumber(balanceOverview.outputs.pending_coinbase_count)} locked coinbase output
-                    {balanceOverview.outputs.pending_coinbase_count === 1 ? '' : 's'}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Confirming Payout Change</div>
-                  <div className="value mono">{formatCoins(balanceOverview.outputs.pending_regular_matched_payout_amount)}</div>
-                  <div className="stat-meta">
-                    {formatWholeNumber(balanceOverview.outputs.pending_regular_matched_payout_count)} output
-                    {balanceOverview.outputs.pending_regular_matched_payout_count === 1 ? '' : 's'} matched to payout txs
-                  </div>
-                </div>
-                <div
-                  className="stat-card"
-                  style={
-                    balanceOverview.outputs.pending_regular_unmatched_count > 0
-                      ? { borderColor: 'var(--warn)' }
-                      : undefined
-                  }
-                >
-                  <div className="label">Unmatched Pending</div>
-                  <div
-                    className="value mono"
-                    style={
-                      balanceOverview.outputs.pending_regular_unmatched_count > 0
-                        ? { color: 'var(--warn)' }
-                        : undefined
-                    }
-                  >
-                    {formatCoins(balanceOverview.outputs.pending_regular_unmatched_amount)}
-                  </div>
-                  <div className="stat-meta">
-                    {formatWholeNumber(balanceOverview.outputs.pending_regular_unmatched_count)} pending regular output
-                    {balanceOverview.outputs.pending_regular_unmatched_count === 1 ? '' : 's'}
-                  </div>
-                </div>
-              </div>
-
-              <div className="admin-balance-overview__grid">
-                <div className="admin-balance-overview__panel">
-                  <h3>Live Wallet</h3>
-                  <div className="admin-balance-overview__rows">
-                    <div className="admin-balance-overview__row">
-                      <span>Total wallet balance</span>
-                      <span className="mono">{formatCoins(balanceOverview.wallet.total)}</span>
-                    </div>
-                    <div className="admin-balance-overview__row">
-                      <span>Locked / confirming</span>
-                      <span className="mono">{formatCoins(balanceOverview.wallet.pending)}</span>
-                    </div>
-                    <div className="admin-balance-overview__row">
-                      <span>Queued miner payouts</span>
-                      <span className="mono">
-                        {formatCoins(balanceOverview.payouts.queued_amount)} across{' '}
-                        {formatWholeNumber(balanceOverview.payouts.queued_count)}
-                      </span>
-                    </div>
-                    <div className="admin-balance-overview__row">
-                      <span>Total unpaid miner balances</span>
-                      <span className="mono">
-                        {formatCoins(balanceOverview.payouts.unpaid_amount)} across{' '}
-                        {formatWholeNumber(balanceOverview.payouts.unpaid_count)}
-                      </span>
-                    </div>
-                    <div className="admin-balance-overview__row">
-                      <span>Spendable queue shortfall</span>
-                      <span
-                        className="mono"
-                        style={
-                          balanceOverview.liquidity.queue_shortfall_amount > 0
-                            ? { color: 'var(--warn)' }
-                            : undefined
-                        }
-                      >
-                        {formatCoins(balanceOverview.liquidity.queue_shortfall_amount)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="admin-balance-overview__panel">
-                  <h3>Ledger Reconciliation</h3>
-                  <div className="admin-balance-overview__rows">
-                    <div className="admin-balance-overview__row">
-                      <span>Miner paid total</span>
-                      <span className="mono">{formatCoins(balanceOverview.ledger.miner_paid_total)}</span>
-                    </div>
-                    <div className="admin-balance-overview__row">
-                      <span>Miner paid + unpaid</span>
-                      <span className="mono">{formatCoins(balanceOverview.ledger.miner_total_credited)}</span>
-                    </div>
-                    <div className="admin-balance-overview__row">
-                      <span>Recorded net block rewards</span>
-                      <span className="mono">{formatCoins(balanceOverview.ledger.net_block_reward_total)}</span>
-                    </div>
-                    <div className="admin-balance-overview__row">
-                      <span>Recorded pool fees</span>
-                      <span className="mono">{formatCoins(balanceOverview.ledger.pool_fee_total)}</span>
-                    </div>
-                    <div className="admin-balance-overview__row">
-                      <span>Miner credits balanced</span>
-                      <span
-                        className="mono"
-                        style={
-                          balanceOverview.ledger.miner_rewards_balanced
-                            ? { color: 'var(--good)' }
-                            : { color: 'var(--warn)' }
-                        }
-                      >
-                        {balanceOverview.ledger.miner_rewards_balanced ? 'Yes' : 'No'}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
 
           <div className="sub-tabs" id="admin-tabs">
             <button className={tab === 'miners' ? 'active' : ''} onClick={() => setTab('miners')}>
@@ -2488,6 +2365,73 @@ export function AdminPage({
           </div>
 
           <div style={{ display: tab === 'balances' ? '' : 'none' }}>
+            {balanceOverview ? (
+              <div className="admin-balance-overview__grid" style={{ marginBottom: 20 }}>
+                <div className="admin-balance-overview__panel">
+                  <h3>Wallet</h3>
+                  <div className="admin-balance-overview__rows">
+                    <div className="admin-balance-overview__row">
+                      <span>Spendable</span>
+                      <span className="mono">{formatCoins(balanceOverview.wallet.spendable)}</span>
+                    </div>
+                    <div className="admin-balance-overview__row">
+                      <span>Locked / confirming</span>
+                      <span className="mono">{formatCoins(balanceOverview.wallet.pending)}</span>
+                    </div>
+                    <div className="admin-balance-overview__row">
+                      <span>Total</span>
+                      <span className="mono">{formatCoins(balanceOverview.wallet.total)}</span>
+                    </div>
+                    <div className="admin-balance-overview__row">
+                      <span>Queued payouts</span>
+                      <span className="mono">
+                        {formatCoins(balanceOverview.payouts.queued_amount)} across{' '}
+                        {formatWholeNumber(balanceOverview.payouts.queued_count)}
+                      </span>
+                    </div>
+                    {balanceOverview.liquidity.queue_shortfall_amount > 0 && (
+                      <div className="admin-balance-overview__row">
+                        <span>Shortfall</span>
+                        <span className="mono" style={{ color: 'var(--warn)' }}>
+                          {formatCoins(balanceOverview.liquidity.queue_shortfall_amount)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="admin-balance-overview__panel">
+                  <h3>Ledger</h3>
+                  <div className="admin-balance-overview__rows">
+                    <div className="admin-balance-overview__row">
+                      <span>Miner paid total</span>
+                      <span className="mono">{formatCoins(balanceOverview.ledger.miner_paid_total)}</span>
+                    </div>
+                    <div className="admin-balance-overview__row">
+                      <span>Net block rewards</span>
+                      <span className="mono">{formatCoins(balanceOverview.ledger.net_block_reward_total)}</span>
+                    </div>
+                    <div className="admin-balance-overview__row">
+                      <span>Pool fees</span>
+                      <span className="mono">{formatCoins(balanceOverview.ledger.pool_fee_total)}</span>
+                    </div>
+                    <div className="admin-balance-overview__row">
+                      <span>Credits balanced</span>
+                      <span
+                        className="mono"
+                        style={
+                          balanceOverview.ledger.miner_rewards_balanced
+                            ? { color: 'var(--good)' }
+                            : { color: 'var(--warn)' }
+                        }
+                      >
+                        {balanceOverview.ledger.miner_rewards_balanced ? 'Yes' : 'No'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
             <div className="filter-bar">
               <input
                 type="text"
