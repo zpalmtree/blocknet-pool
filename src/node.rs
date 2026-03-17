@@ -386,7 +386,7 @@ impl NodeClient {
         dry_run: bool,
     ) -> Result<WalletSendResponse> {
         let mut extra = HashMap::<String, String>::new();
-        if !idempotency_key.is_empty() {
+        if !dry_run && !idempotency_key.is_empty() {
             extra.insert("Idempotency-Key".to_string(), idempotency_key.to_string());
         }
 
