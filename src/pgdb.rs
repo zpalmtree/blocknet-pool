@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -10,9 +10,9 @@ use postgres::{types::ToSql, Client, Config as PostgresConfig, NoTls, Row, Trans
 use tracing::warn;
 
 use crate::db::{
-    ActiveVerificationHold, AddressRiskState, Balance, BlockCreditEvent, DbBlock, DbShare,
-    MonitorHeartbeat, MonitorHeartbeatUpsert, MonitorIncident, MonitorIncidentUpsert, Payout,
-    PendingPayout, PoolFeeEvent, PoolFeeRecord, PublicPayoutBatch, ShareReplayData,
+    ActiveVerificationHold, AddressRiskState, Balance, BlockCreditEvent, DbBlock, DbLuckRound,
+    DbShare, MonitorHeartbeat, MonitorHeartbeatUpsert, MonitorIncident, MonitorIncidentUpsert,
+    Payout, PendingPayout, PoolFeeEvent, PoolFeeRecord, PublicPayoutBatch, ShareReplayData,
     ShareReplayUpdate, ValidationHoldCause, ValidationHoldState,
 };
 use crate::engine::{ShareRecord, ShareStore};
@@ -1166,6 +1166,112 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(rows.into_iter().map(|row| row_to_block(&row)).collect())
     }
 
+    pub fn get_luck_rounds_page(&self, limit: i64, offset: i64) -> Result<(Vec<DbLuckRound>, u64)> {
+        let mut conn = self.conn().lock();
+        let total_row =
+            conn.query_one("SELECT GREATEST(COUNT(*) - 1, 0)::bigint FROM blocks", &[])?;
+        let total: i64 = total_row.get(0);
+        let rows = conn.query(
+            "WITH ordered_blocks AS (
+                SELECT
+                    height,
+                    hash,
+                    difficulty,
+                    timestamp,
+                    confirmed,
+                    orphaned,
+                    lag(timestamp) OVER (ORDER BY timestamp ASC) AS prev_timestamp
+                FROM blocks
+             ),
+             paged_blocks AS (
+                SELECT *
+                FROM ordered_blocks
+                WHERE prev_timestamp IS NOT NULL
+                ORDER BY height DESC
+                LIMIT $1 OFFSET $2
+             )
+             SELECT
+                pb.height,
+                pb.hash,
+                pb.difficulty,
+                pb.timestamp,
+                pb.confirmed,
+                pb.orphaned,
+                COALESCE(sw.round_work, 0)::bigint AS round_work,
+                GREATEST(pb.timestamp - pb.prev_timestamp, 0)::bigint AS duration_seconds
+             FROM paged_blocks pb
+             LEFT JOIN LATERAL (
+                SELECT COALESCE(SUM(difficulty), 0)::bigint AS round_work
+                FROM shares
+                WHERE created_at >= pb.prev_timestamp
+                  AND created_at <= pb.timestamp
+                  AND status IN ('verified', 'provisional')
+             ) sw ON TRUE
+             ORDER BY pb.height DESC",
+            &[&limit.max(1), &offset.max(0)],
+        )?;
+        Ok((
+            rows.into_iter()
+                .map(|row| row_to_luck_round(&row))
+                .collect(),
+            total.max(0) as u64,
+        ))
+    }
+
+    pub fn get_recent_luck_rounds(&self, limit: i64) -> Result<Vec<DbLuckRound>> {
+        Ok(self.get_luck_rounds_page(limit, 0)?.0)
+    }
+
+    pub fn get_luck_rounds_for_hashes(
+        &self,
+        hashes: &[String],
+    ) -> Result<HashMap<String, DbLuckRound>> {
+        if hashes.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let rows = self.conn().lock().query(
+            "WITH ordered_blocks AS (
+                SELECT
+                    height,
+                    hash,
+                    difficulty,
+                    timestamp,
+                    confirmed,
+                    orphaned,
+                    lag(timestamp) OVER (ORDER BY timestamp ASC) AS prev_timestamp
+                FROM blocks
+             )
+             SELECT
+                ob.height,
+                ob.hash,
+                ob.difficulty,
+                ob.timestamp,
+                ob.confirmed,
+                ob.orphaned,
+                COALESCE(sw.round_work, 0)::bigint AS round_work,
+                GREATEST(ob.timestamp - ob.prev_timestamp, 0)::bigint AS duration_seconds
+             FROM ordered_blocks ob
+             LEFT JOIN LATERAL (
+                SELECT COALESCE(SUM(difficulty), 0)::bigint AS round_work
+                FROM shares
+                WHERE created_at >= ob.prev_timestamp
+                  AND created_at <= ob.timestamp
+                  AND status IN ('verified', 'provisional')
+             ) sw ON TRUE
+             WHERE ob.prev_timestamp IS NOT NULL
+               AND ob.hash = ANY($1)",
+            &[&hashes],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let round = row_to_luck_round(&row);
+                (round.block_hash.clone(), round)
+            })
+            .collect())
+    }
+
     pub fn avg_effort_pct(&self) -> Result<Option<f64>> {
         let row = self.conn().lock().query_one(
             "SELECT AVG(effort_pct) FROM blocks WHERE orphaned = false AND effort_pct IS NOT NULL",
@@ -2275,20 +2381,50 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     ) -> Result<(bool, Option<AddressRiskState>)> {
         let state = self.get_address_risk(address)?;
         let now = SystemTime::now();
-        let validation_forced_until = self
-            .validation_hold_state(address, UNIX_EPOCH)?
-            .and_then(|state| state.forced_until);
+        let validation_forced_until = self.validation_forced_until_after(address, now)?;
         let force = state.as_ref().is_some_and(|s| {
             s.force_verify_until.is_some_and(|until| until > now)
                 || s.quarantined_until.is_some_and(|until| until > now)
-        }) || validation_forced_until.is_some_and(|until| until > now);
+        }) || validation_forced_until.is_some();
         Ok((force, state))
     }
 
     pub fn validation_forced_until(&self, address: &str) -> Result<Option<SystemTime>> {
-        Ok(self
-            .validation_hold_state(address, UNIX_EPOCH)?
-            .and_then(|state| state.forced_until))
+        self.validation_forced_until_after(address, SystemTime::now())
+    }
+
+    pub fn active_force_verify_addresses(
+        &self,
+        addresses: &[String],
+        now: SystemTime,
+    ) -> Result<HashSet<String>> {
+        if addresses.is_empty() {
+            return Ok(HashSet::new());
+        }
+
+        let rows = self.conn().lock().query(
+            "SELECT address
+             FROM (
+                 SELECT address
+                 FROM address_risk
+                 WHERE address = ANY($1)
+                   AND (
+                        (force_verify_until IS NOT NULL AND force_verify_until > $2)
+                     OR (quarantined_until IS NOT NULL AND quarantined_until > $2)
+                   )
+                 UNION
+                 SELECT address
+                 FROM validation_address_states
+                 WHERE address = ANY($1)
+                   AND forced_until IS NOT NULL
+                   AND forced_until > $2
+             ) AS active_force_verify",
+            &[&addresses, &to_unix(now)],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect())
     }
 
     pub fn validation_hold_state(
@@ -2342,6 +2478,24 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             recent_verified_difficulty: row.get::<_, i64>(4).max(0) as u64,
             recent_provisional_difficulty: row.get::<_, i64>(5).max(0) as u64,
         }))
+    }
+
+    fn validation_forced_until_after(
+        &self,
+        address: &str,
+        now: SystemTime,
+    ) -> Result<Option<SystemTime>> {
+        let row = self.conn().lock().query_opt(
+            "SELECT forced_until
+             FROM validation_address_states
+             WHERE address = $1
+               AND forced_until IS NOT NULL
+               AND forced_until > $2",
+            &[&address, &to_unix(now)],
+        )?;
+        Ok(row
+            .and_then(|row| row.get::<_, Option<i64>>(0))
+            .map(from_unix))
     }
 
     pub fn clear_address_risk_history(&self, address: &str) -> Result<()> {
@@ -3581,6 +3735,25 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(rows.iter().map(|row| row_to_block(row)).collect())
     }
 
+    pub fn miner_has_any_activity(&self, address: &str) -> Result<bool> {
+        let row = self.conn().lock().query_one(
+            "SELECT (
+                EXISTS(SELECT 1 FROM shares WHERE miner = $1)
+                OR EXISTS(SELECT 1 FROM blocks WHERE finder = $1)
+                OR EXISTS(SELECT 1 FROM payouts WHERE address = $1)
+                OR EXISTS(SELECT 1 FROM pending_payouts WHERE address = $1)
+                OR EXISTS(
+                    SELECT 1
+                    FROM balances
+                    WHERE address = $1
+                      AND (pending <> 0 OR paid <> 0)
+                )
+            )",
+            &[&address],
+        )?;
+        Ok(row.get::<_, bool>(0))
+    }
+
     /// Bulk per-miner lifetime counts from the DB: (accepted, rejected, blocks_found, last_share_unix).
     pub fn miner_lifetime_counts(
         &self,
@@ -3873,6 +4046,19 @@ fn row_to_block(row: &postgres::Row) -> DbBlock {
         orphaned: row.get::<_, bool>(8),
         paid_out: row.get::<_, bool>(9),
         effort_pct: row.get::<_, Option<f64>>(10),
+    }
+}
+
+fn row_to_luck_round(row: &postgres::Row) -> DbLuckRound {
+    DbLuckRound {
+        block_height: row.get::<_, i64>(0).max(0) as u64,
+        block_hash: row.get::<_, String>(1),
+        difficulty: row.get::<_, i64>(2).max(0) as u64,
+        timestamp: from_unix(row.get::<_, i64>(3)),
+        confirmed: row.get::<_, bool>(4),
+        orphaned: row.get::<_, bool>(5),
+        round_work: row.get::<_, i64>(6).max(0) as u64,
+        duration_seconds: row.get::<_, i64>(7).max(0) as u64,
     }
 }
 

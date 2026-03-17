@@ -9,8 +9,9 @@ use pool_recovery::RecoveryAgentClient;
 
 use crate::api::{
     load_persisted_status_history, ApiState, DaemonHealthCache, DbTotalsCache, InsightsCache,
-    MinerBalanceResponseCache, MinerDetailResponseCache, NetworkHashrateCache, PoolHealthCache,
-    PublicTelemetryRateLimiter, StatsResponseCache, StatusHistory, DEFAULT_MAX_SSE_SUBSCRIBERS,
+    MinerBalanceResponseCache, MinerDetailResponseCache, NetworkHashrateCache,
+    PendingEstimateSnapshotCache, PoolHealthCache, PublicTelemetryRateLimiter,
+    RejectionAnalyticsCache, StatsResponseCache, StatusHistory, DEFAULT_MAX_SSE_SUBSCRIBERS,
 };
 use crate::config::Config;
 
@@ -55,8 +56,12 @@ pub async fn build_api_state(cfg: &Config, shared: &SharedRuntime) -> Result<Api
         pool_health_cache: Arc::new(Mutex::new(PoolHealthCache::default())),
         network_hashrate_cache: Arc::new(Mutex::new(NetworkHashrateCache::default())),
         insights_cache: Arc::new(Mutex::new(InsightsCache::default())),
+        rejection_analytics_cache: Arc::new(Mutex::new(RejectionAnalyticsCache::default())),
         stats_response_cache: Arc::new(Mutex::new(StatsResponseCache::default())),
-        miner_pending_estimate_cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        pending_estimate_snapshot_cache: Arc::new(Mutex::new(
+            PendingEstimateSnapshotCache::default(),
+        )),
+        pending_estimate_snapshot_notify: Arc::new(tokio::sync::Notify::new()),
         miner_balance_response_cache: Arc::new(Mutex::new(MinerBalanceResponseCache::default())),
         miner_detail_response_cache: Arc::new(Mutex::new(MinerDetailResponseCache::default())),
         public_telemetry_rate_limiter: Arc::new(Mutex::new(PublicTelemetryRateLimiter::default())),
@@ -93,18 +98,6 @@ pub fn api_listen_addr(cfg: &Config) -> Result<SocketAddr> {
 }
 
 pub fn start_api_background_tasks(api_state: ApiState) {
-    let pending_estimate_state = api_state.clone();
-    tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(crate::api::MINER_PENDING_ESTIMATE_REFRESH_INTERVAL);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        ticker.tick().await;
-
-        loop {
-            ticker.tick().await;
-            pending_estimate_state.refresh_hot_pending_estimates().await;
-        }
-    });
-
     tokio::spawn(async move {
         api_state.sample_status().await;
 

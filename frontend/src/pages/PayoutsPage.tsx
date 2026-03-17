@@ -33,7 +33,7 @@ export function PayoutsPage({ active, api, liveTick }: PayoutsPageProps) {
   }, [active, loadPage]);
 
   useEffect(() => {
-    if (!active || liveTick <= 0) return;
+    if (!active || liveTick <= 0 || liveTick % 12 !== 0) return;
     void loadPage();
   }, [active, liveTick, loadPage]);
 

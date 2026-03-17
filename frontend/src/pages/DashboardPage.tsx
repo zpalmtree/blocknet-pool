@@ -92,10 +92,12 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
 
   useEffect(() => {
     if (!active || liveTick <= 0) return;
-    void refreshStats();
-    void loadInsights();
-    void loadHistory();
     if (liveTick % 2 === 0) {
+      void refreshStats();
+    }
+    if (liveTick % 6 === 0) {
+      void loadInsights();
+      void loadHistory();
       void loadPayouts();
     }
   }, [active, liveTick, loadHistory, loadInsights, loadPayouts, refreshStats]);

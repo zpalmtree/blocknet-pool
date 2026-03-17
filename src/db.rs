@@ -71,6 +71,18 @@ pub struct DbBlock {
     pub effort_pct: Option<f64>,
 }
 
+#[derive(Debug, Clone)]
+pub struct DbLuckRound {
+    pub block_height: u64,
+    pub block_hash: String,
+    pub timestamp: SystemTime,
+    pub difficulty: u64,
+    pub round_work: u64,
+    pub duration_seconds: u64,
+    pub orphaned: bool,
+    pub confirmed: bool,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Balance {
     pub address: String,

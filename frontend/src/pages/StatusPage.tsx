@@ -65,7 +65,7 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
   }, [active, loadStatus]);
 
   useEffect(() => {
-    if (!active || liveTick <= 0) return;
+    if (!active || liveTick <= 0 || liveTick % 6 !== 0) return;
     void loadStatus();
   }, [active, liveTick, loadStatus]);
 

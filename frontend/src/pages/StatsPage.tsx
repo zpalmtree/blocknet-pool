@@ -74,11 +74,11 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
     minerAddressRef.current = minerAddress;
   }, [minerAddress]);
 
-  const refreshMinerData = useCallback(async () => {
+  const refreshMinerData = useCallback(async (includePendingEstimate: boolean) => {
     if (!minerAddress) return;
     const addr = minerAddress;
     try {
-      const d = await api.getMiner(addr, true);
+      const d = await api.getMiner(addr, includePendingEstimate);
       if (minerAddressRef.current !== addr) return;
       setMinerData(d);
       setMinerBalanceData(balancePayloadFromMiner(addr, d));
@@ -207,14 +207,18 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
     if (!active || liveTick <= 0) return;
     if (minerAddress) {
       void refreshMinerBalance();
-      if (liveTick % 6 === 0) {
-        void refreshMinerData();
+      if (liveTick % 12 === 0) {
+        void refreshMinerData(true);
+      } else if (liveTick % 6 === 0) {
+        void refreshMinerData(false);
       }
     }
     if (liveTick % 2 === 0) {
       if (minerAddress) {
         void loadMinerHashrate();
       }
+    }
+    if (liveTick % 6 === 0) {
       void loadRejections();
     }
   }, [active, liveTick, minerAddress, refreshMinerBalance, refreshMinerData, loadMinerHashrate, loadRejections]);

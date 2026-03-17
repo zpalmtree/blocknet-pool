@@ -24,14 +24,14 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::{mpsc, Notify, Semaphore};
 use tokio_stream::wrappers::{IntervalStream, ReceiverStream};
 use tokio_stream::StreamExt;
 
 use crate::config::Config;
 use crate::db::{
-    ActiveVerificationHold, AddressRiskState, Balance, DbBlock, DbShare, MonitorHeartbeat,
-    MonitorIncident, Payout, PendingPayout, PoolFeeEvent, PublicPayoutBatch,
+    ActiveVerificationHold, AddressRiskState, Balance, DbBlock, DbLuckRound, DbShare,
+    MonitorHeartbeat, MonitorIncident, Payout, PendingPayout, PoolFeeEvent, PublicPayoutBatch,
 };
 use crate::dev_fee::{SEINE_DEV_FEE_ADDRESS, SEINE_DEV_FEE_REFERENCE_TARGET_PCT};
 use crate::engine::JobRepository;
@@ -59,7 +59,7 @@ use crate::validation::{
     ValidationEngine, ValidationSnapshot, SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED,
 };
 
-const DB_TOTALS_CACHE_TTL: Duration = Duration::from_secs(2);
+const DB_TOTALS_CACHE_TTL: Duration = Duration::from_secs(15);
 const DAEMON_HEALTH_CACHE_TTL: Duration = Duration::from_secs(5);
 const POOL_HEALTH_CACHE_TTL: Duration = Duration::from_secs(5);
 const EXPLORER_HASHRATE_SAMPLE_COUNT: usize = 10;
@@ -76,15 +76,19 @@ const DECAY_RATE: f64 = 0.75;
 const BLOCK_INTERVAL_SECS: u64 = 5 * 60;
 const BLOCKS_PER_MONTH: u64 = (30 * 24 * 60 * 60) / BLOCK_INTERVAL_SECS;
 const ROUND_TARGET_SECONDS: f64 = 300.0;
-const INSIGHTS_CACHE_TTL: Duration = Duration::from_secs(10);
-const STATS_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(5);
+const INSIGHTS_CACHE_TTL: Duration = Duration::from_secs(30);
+const REJECTION_ANALYTICS_CACHE_TTL: Duration = Duration::from_secs(30);
+const STATS_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(15);
 const MINER_BALANCE_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(5);
 const MINER_DETAIL_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(10);
+const MINER_BALANCE_RESPONSE_CACHE_MAX_ENTRIES: usize = 2048;
+const MINER_DETAIL_RESPONSE_CACHE_MAX_ENTRIES: usize = 1024;
 const PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(5);
 const PUBLIC_TELEMETRY_STATS_RATE_LIMIT: u32 = 12;
 const PUBLIC_TELEMETRY_MINER_RATE_LIMIT: u32 = 12;
 const PUBLIC_TELEMETRY_RATE_LIMIT_RETENTION: Duration = Duration::from_secs(60);
 const PUBLIC_TELEMETRY_RATE_LIMIT_RETRY_AFTER_SECS: u64 = 5;
+const PUBLIC_TELEMETRY_RATE_LIMIT_MAX_BUCKETS: usize = 4096;
 const STATUS_SAMPLES_RETENTION: Duration = Duration::from_secs(8 * 24 * 60 * 60);
 const STATUS_MAX_INCIDENTS: usize = 256;
 const STATUS_HISTORY_META_KEY: &str = "status_history_v1";
@@ -96,12 +100,9 @@ const DEFAULT_DAEMON_LOG_TAIL: usize = 200;
 const MAX_DAEMON_LOG_TAIL: usize = 2000;
 const DAEMON_LOG_LINE_LIMIT: usize = 8192;
 const DAEMON_LOG_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
-const MINER_PENDING_ESTIMATE_REFRESH_AFTER: Duration = Duration::from_secs(8);
+const MINER_PENDING_ESTIMATE_REFRESH_AFTER: Duration = Duration::from_secs(15);
 const MINER_PENDING_ESTIMATE_STALE_TTL: Duration = Duration::from_secs(60);
-const MINER_PENDING_ESTIMATE_CACHE_MAX_ENTRIES: usize = 4096;
-const MINER_PENDING_ESTIMATE_HOT_WINDOW: Duration = Duration::from_secs(30);
-pub(crate) const MINER_PENDING_ESTIMATE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
-const MINER_PENDING_ESTIMATE_REFRESH_BATCH_SIZE: usize = 4;
+const MINER_PENDING_ESTIMATE_HOT_WINDOW: Duration = Duration::from_secs(60);
 const ADMIN_DEV_FEE_HINT_LIMIT: i64 = 12;
 const LOCAL_MONITOR_SOURCE: &str = "local";
 const CLOUDFLARE_MONITOR_SOURCE: &str = "cloudflare";
@@ -403,8 +404,10 @@ pub struct ApiState {
     pub pool_health_cache: Arc<Mutex<PoolHealthCache>>,
     pub network_hashrate_cache: Arc<Mutex<NetworkHashrateCache>>,
     pub insights_cache: Arc<Mutex<InsightsCache>>,
+    pub rejection_analytics_cache: Arc<Mutex<RejectionAnalyticsCache>>,
     pub stats_response_cache: Arc<Mutex<StatsResponseCache>>,
-    pub miner_pending_estimate_cache: Arc<Mutex<HashMap<String, MinerPendingEstimateCache>>>,
+    pub pending_estimate_snapshot_cache: Arc<Mutex<PendingEstimateSnapshotCache>>,
+    pub pending_estimate_snapshot_notify: Arc<Notify>,
     pub miner_balance_response_cache: Arc<Mutex<MinerBalanceResponseCache>>,
     pub miner_detail_response_cache: Arc<Mutex<MinerDetailResponseCache>>,
     pub public_telemetry_rate_limiter: Arc<Mutex<PublicTelemetryRateLimiter>>,
@@ -489,10 +492,24 @@ pub struct InsightsCache {
     value: Option<StatsInsightsResponse>,
 }
 
+#[derive(Debug, Default)]
+pub struct RejectionAnalyticsCache {
+    entries: HashMap<u64, TimedCacheEntry<RejectionAnalyticsSnapshot>>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct StatsResponseCache {
     updated_at: Option<Instant>,
     value: Option<StatsResponse>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PendingEstimateSnapshotCache {
+    updated_at: Option<Instant>,
+    last_requested_at: Option<Instant>,
+    chain_height: Option<u64>,
+    values: HashMap<String, MinerPendingEstimate>,
+    refresh_in_flight: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -525,6 +542,55 @@ struct MinerDetailPayload {
 pub struct MinerDetailResponseCache {
     entries: HashMap<String, TimedCacheEntry<MinerDetailPayload>>,
     last_cleanup_at: Option<Instant>,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+struct CacheStateSummary {
+    entries: usize,
+    age_millis: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ApiPerformanceResponse {
+    sampled_at: Option<SystemTime>,
+    routes: std::collections::BTreeMap<String, crate::telemetry::TimedOperationSummary>,
+    operations: std::collections::BTreeMap<String, crate::telemetry::TimedOperationSummary>,
+    tasks: std::collections::BTreeMap<String, crate::telemetry::TimedOperationSummary>,
+    caches: std::collections::BTreeMap<String, crate::telemetry::CacheCounterSummary>,
+    cache_states: std::collections::BTreeMap<String, CacheStateSummary>,
+}
+
+fn instant_age_millis(updated_at: Option<Instant>) -> Option<u64> {
+    updated_at.map(|updated| updated.elapsed().as_millis().min(u64::MAX as u128) as u64)
+}
+
+fn latest_timed_cache_update<K, T>(entries: &HashMap<K, TimedCacheEntry<T>>) -> Option<Instant>
+where
+    K: std::cmp::Eq + std::hash::Hash,
+{
+    entries.values().map(|entry| entry.updated_at).max()
+}
+
+fn prune_timed_cache_entries<T>(
+    entries: &mut HashMap<String, TimedCacheEntry<T>>,
+    ttl: Duration,
+    max_entries: usize,
+    now: Instant,
+) {
+    entries.retain(|_, entry| now.duration_since(entry.updated_at) < ttl);
+    if entries.len() <= max_entries {
+        return;
+    }
+
+    let mut oldest = entries
+        .iter()
+        .map(|(key, entry)| (key.clone(), entry.updated_at))
+        .collect::<Vec<_>>();
+    oldest.sort_by_key(|(_, updated_at)| *updated_at);
+    let remove_count = oldest.len().saturating_sub(max_entries);
+    for (key, _) in oldest.into_iter().take(remove_count) {
+        entries.remove(&key);
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -596,6 +662,20 @@ impl PublicTelemetryRateLimiter {
             return false;
         }
         bucket.request_count = bucket.request_count.saturating_add(1);
+        if self.buckets.len() > PUBLIC_TELEMETRY_RATE_LIMIT_MAX_BUCKETS {
+            let mut oldest = self
+                .buckets
+                .iter()
+                .map(|(key, bucket)| (key.clone(), bucket.last_seen_at))
+                .collect::<Vec<_>>();
+            oldest.sort_by_key(|(_, last_seen_at)| *last_seen_at);
+            let remove_count = oldest
+                .len()
+                .saturating_sub(PUBLIC_TELEMETRY_RATE_LIMIT_MAX_BUCKETS);
+            for (key, _) in oldest.into_iter().take(remove_count) {
+                self.buckets.remove(&key);
+            }
+        }
         true
     }
 }
@@ -651,15 +731,6 @@ impl ApiPerformanceTracker {
 pub struct LiveRuntimeSnapshotCache {
     updated_at: Option<Instant>,
     value: Option<PersistedRuntimeSnapshot>,
-}
-
-#[derive(Debug, Clone)]
-pub struct MinerPendingEstimateCache {
-    updated_at: Instant,
-    last_requested_at: Instant,
-    chain_height: u64,
-    value: MinerPendingEstimate,
-    refresh_in_flight: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3761,7 +3832,7 @@ async fn handle_admin_dev_fee(State(state): State<ApiState>) -> impl IntoRespons
 }
 
 async fn handle_admin_perf(State(state): State<ApiState>) -> impl IntoResponse {
-    Json(state.performance.snapshot()).into_response()
+    Json(state.performance_response()).into_response()
 }
 
 async fn handle_admin_balances(
@@ -4764,17 +4835,40 @@ async fn handle_blocks(
         .map(|block| block.hash.clone())
         .collect::<HashSet<_>>();
     let store = Arc::clone(&state.store);
+    let started_at = Instant::now();
     let luck_by_hash = match tokio::task::spawn_blocking(move || {
-        let all_blocks = store.get_all_blocks()?;
-        compute_luck_details_for_hashes(&store, all_blocks, &target_hashes)
+        let hashes = target_hashes.into_iter().collect::<Vec<_>>();
+        store.get_luck_rounds_for_hashes(&hashes)
     })
     .await
     {
-        Ok(Ok(v)) => v,
+        Ok(Ok(v)) => {
+            record_api_operation_observation(
+                &state,
+                "luck_details_load",
+                started_at.elapsed(),
+                false,
+            );
+            v.into_iter()
+                .map(|(hash, round)| (hash, luck_round_response_from_db(round)))
+                .collect::<HashMap<_, _>>()
+        }
         Ok(Err(err)) => {
+            record_api_operation_observation(
+                &state,
+                "luck_details_load",
+                started_at.elapsed(),
+                true,
+            );
             return internal_error("failed loading block luck details", err).into_response();
         }
         Err(err) => {
+            record_api_operation_observation(
+                &state,
+                "luck_details_load",
+                started_at.elapsed(),
+                true,
+            );
             return internal_error(
                 "failed loading block luck details",
                 anyhow::anyhow!("join error: {err}"),
@@ -4938,6 +5032,13 @@ enum PendingPreviewValidation {
     ExtraVerification,
 }
 
+#[derive(Debug, Clone)]
+struct PreparedPendingEstimateBlock {
+    block: DbBlock,
+    confirmations: u64,
+    previews: Vec<ShareWindowAddressPreview>,
+}
+
 fn collect_address_preview_stats_from_summary(
     preview: Option<&ShareWindowAddressPreview>,
     risky: bool,
@@ -4957,25 +5058,6 @@ fn collect_address_preview_stats_from_summary(
         provisional_shares_delayed: preview.provisional_shares_delayed,
         risky,
     }
-}
-
-fn cached_force_verify_state(
-    store: &PoolStore,
-    address: &str,
-    risk_cache: &mut HashMap<String, bool>,
-) -> anyhow::Result<bool> {
-    if let Some(risky) = risk_cache.get(address) {
-        return Ok(*risky);
-    }
-
-    let risky = store
-        .should_force_verify_address(address)
-        .map(|(force_verify, _)| force_verify)
-        .map_err(|err| {
-            anyhow::anyhow!("risk check failed during pending estimate for {address}: {err}")
-        })?;
-    risk_cache.insert(address.to_string(), risky);
-    Ok(risky)
 }
 
 fn preview_weight(
@@ -5094,6 +5176,17 @@ fn pending_preview_validation_tone(state: PendingPreviewValidation) -> &'static 
     }
 }
 
+fn pending_preview_validation_state_key(state: PendingPreviewValidation) -> &'static str {
+    match state {
+        PendingPreviewValidation::Ready => "ready",
+        PendingPreviewValidation::FinderFallback => "finder_fallback",
+        PendingPreviewValidation::AwaitingDelay => "awaiting_delay",
+        PendingPreviewValidation::AwaitingVerifiedShares => "awaiting_shares",
+        PendingPreviewValidation::AwaitingVerifiedRatio => "awaiting_ratio",
+        PendingPreviewValidation::ExtraVerification => "extra_verification",
+    }
+}
+
 fn pending_preview_validation_detail(
     cfg: &Config,
     stats: &AddressPreviewStats,
@@ -5199,93 +5292,43 @@ fn validation_hold_reason(
     }
 }
 
-fn pending_estimate_cache_can_serve(
-    entry: &MinerPendingEstimateCache,
+fn pending_estimate_snapshot_can_serve(cache: &PendingEstimateSnapshotCache, now: Instant) -> bool {
+    cache
+        .updated_at
+        .is_some_and(|updated_at| now.duration_since(updated_at) < MINER_PENDING_ESTIMATE_STALE_TTL)
+}
+
+fn pending_estimate_snapshot_needs_refresh(
+    cache: &PendingEstimateSnapshotCache,
     chain_height: u64,
     now: Instant,
 ) -> bool {
-    entry.chain_height == chain_height
-        && now.duration_since(entry.updated_at) < MINER_PENDING_ESTIMATE_STALE_TTL
-}
-
-fn pending_estimate_cache_needs_refresh(
-    entry: &MinerPendingEstimateCache,
-    chain_height: u64,
-    now: Instant,
-) -> bool {
-    if entry.refresh_in_flight {
+    if cache.refresh_in_flight {
         return false;
     }
-    if now.duration_since(entry.last_requested_at) >= MINER_PENDING_ESTIMATE_HOT_WINDOW {
+    let Some(last_requested_at) = cache.last_requested_at else {
+        return false;
+    };
+    if now.duration_since(last_requested_at) >= MINER_PENDING_ESTIMATE_HOT_WINDOW {
         return false;
     }
-    entry.chain_height != chain_height
-        || now.duration_since(entry.updated_at) >= MINER_PENDING_ESTIMATE_REFRESH_AFTER
+    let Some(updated_at) = cache.updated_at else {
+        return true;
+    };
+    cache.chain_height != Some(chain_height)
+        || now.duration_since(updated_at) >= MINER_PENDING_ESTIMATE_REFRESH_AFTER
 }
 
-fn prune_pending_estimate_cache(
-    cache: &mut HashMap<String, MinerPendingEstimateCache>,
+fn replace_pending_estimate_snapshot(
+    cache: &mut PendingEstimateSnapshotCache,
+    chain_height: u64,
+    values: HashMap<String, MinerPendingEstimate>,
     now: Instant,
 ) {
-    cache.retain(|_, entry| {
-        now.duration_since(entry.updated_at) < MINER_PENDING_ESTIMATE_STALE_TTL
-            || now.duration_since(entry.last_requested_at) < MINER_PENDING_ESTIMATE_HOT_WINDOW
-            || entry.refresh_in_flight
-    });
-}
-
-fn insert_pending_estimate_cache_entry(
-    cache: &mut HashMap<String, MinerPendingEstimateCache>,
-    address: String,
-    chain_height: u64,
-    value: MinerPendingEstimate,
-    now: Instant,
-) {
-    prune_pending_estimate_cache(cache, now);
-    if cache.len() >= MINER_PENDING_ESTIMATE_CACHE_MAX_ENTRIES {
-        if cache.len() >= MINER_PENDING_ESTIMATE_CACHE_MAX_ENTRIES {
-            cache.clear();
-        }
-    }
-    cache.insert(
-        address,
-        MinerPendingEstimateCache {
-            updated_at: now,
-            last_requested_at: now,
-            chain_height,
-            value,
-            refresh_in_flight: false,
-        },
-    );
-}
-
-fn select_pending_estimate_refresh_addresses(
-    cache: &mut HashMap<String, MinerPendingEstimateCache>,
-    chain_height: u64,
-    now: Instant,
-    limit: usize,
-) -> Vec<String> {
-    prune_pending_estimate_cache(cache, now);
-    let mut candidates = cache
-        .iter()
-        .filter_map(|(address, entry)| {
-            pending_estimate_cache_needs_refresh(entry, chain_height, now).then_some((
-                entry.chain_height != chain_height,
-                entry.updated_at,
-                address.clone(),
-            ))
-        })
-        .collect::<Vec<_>>();
-    candidates.sort_by(|a, b| a.0.cmp(&b.0).reverse().then_with(|| a.1.cmp(&b.1)));
-
-    let mut selected = Vec::with_capacity(limit.min(candidates.len()));
-    for (_, _, address) in candidates.into_iter().take(limit) {
-        if let Some(entry) = cache.get_mut(&address) {
-            entry.refresh_in_flight = true;
-            selected.push(address);
-        }
-    }
-    selected
+    cache.updated_at = Some(now);
+    cache.chain_height = Some(chain_height);
+    cache.values = values;
+    cache.refresh_in_flight = false;
 }
 
 fn miner_verification_hold(
@@ -5356,13 +5399,12 @@ fn miner_verification_hold(
     })
 }
 
-fn estimate_unconfirmed_pending_for_miner(
+fn estimate_unconfirmed_pending_snapshot(
     store: &PoolStore,
-    address: &str,
     config: &Config,
     now: SystemTime,
     chain_height: u64,
-) -> anyhow::Result<MinerPendingEstimate> {
+) -> anyhow::Result<HashMap<String, MinerPendingEstimate>> {
     let unconfirmed_blocks = store.get_unconfirmed_blocks()?;
     let provisional_delay = config.provisional_share_delay_duration();
     let required_confirmations = config.blocks_before_payout.max(0) as u64;
@@ -5377,9 +5419,8 @@ fn estimate_unconfirmed_pending_for_miner(
         provisional_cap_multiplier: 0.0,
     };
 
-    let mut risk_cache = HashMap::<String, bool>::new();
-    let mut estimate = MinerPendingEstimate::default();
-
+    let mut prepared_blocks = Vec::<PreparedPendingEstimateBlock>::new();
+    let mut addresses_for_risk = HashSet::<String>::new();
     for mut block in unconfirmed_blocks {
         if block.orphaned {
             continue;
@@ -5389,132 +5430,170 @@ fn estimate_unconfirmed_pending_for_miner(
             continue;
         }
 
-        let mut distributable = block.reward.saturating_sub(config.pool_fee(block.reward));
         let window_end = reward_window_end(store, &block)?;
         let previews =
             pending_estimate_window_preview(store, config, now, provisional_delay, window_end)?;
-        let address_risky = cached_force_verify_state(store, address, &mut risk_cache)?;
-        let target_stats = collect_address_preview_stats_from_summary(
-            previews.iter().find(|preview| preview.address == address),
-            address_risky,
-        );
-
-        let mut estimated_credit = 0u64;
-        if previews.is_empty() {
-            if block.finder == address {
-                estimated_credit = distributable;
-            }
-        } else {
-            let mut total_weight = 0u64;
-            let mut target_weight = 0u64;
-            let mut weighted_addresses = Vec::<(String, u64)>::new();
-            let mut remainder_destination: Option<&str> = None;
-            let mut remainder_weight = 0u64;
-
-            for preview in &previews {
-                let force_verify_active = if preview.address == address {
-                    address_risky
-                } else if preview.provisional_difficulty_ready > 0 {
-                    cached_force_verify_state(store, &preview.address, &mut risk_cache)?
-                } else {
-                    false
-                };
-                let Some(weight) =
-                    preview_weight(preview, force_verify_active, preview_trust_policy)
-                else {
-                    continue;
-                };
-                total_weight = total_weight.saturating_add(weight);
-                if preview.address == address {
-                    target_weight = weight;
-                }
-                if remainder_destination.is_none()
-                    || weight > remainder_weight
-                    || (weight == remainder_weight
-                        && preview.address.as_str() < remainder_destination.unwrap_or_default())
-                {
-                    remainder_destination = Some(preview.address.as_str());
-                    remainder_weight = weight;
-                }
-                weighted_addresses.push((preview.address.clone(), weight));
-            }
-
-            if total_weight > 0 {
-                if config.block_finder_bonus && config.block_finder_bonus_pct > 0.0 {
-                    let bonus =
-                        (distributable as f64 * config.block_finder_bonus_pct / 100.0) as u64;
-                    if block.finder == address {
-                        estimated_credit = estimated_credit.saturating_add(bonus);
-                    }
-                    distributable = distributable.saturating_sub(bonus);
-                }
-
-                if target_weight > 0 {
-                    let weighted_credit = ((distributable as u128) * (target_weight as u128)
-                        / (total_weight as u128)) as u64;
-                    estimated_credit = estimated_credit.saturating_add(weighted_credit);
-                }
-
-                let mut distributed = 0u64;
-                for (_, weight) in &weighted_addresses {
-                    let share = ((distributable as u128) * (*weight as u128)
-                        / (total_weight as u128)) as u64;
-                    distributed = distributed.saturating_add(share);
-                }
-                let remainder = distributable.saturating_sub(distributed);
-                if remainder > 0 && remainder_destination == Some(address) {
-                    estimated_credit = estimated_credit.saturating_add(remainder);
-                }
-            }
+        addresses_for_risk.insert(block.finder.clone());
+        for preview in &previews {
+            addresses_for_risk.insert(preview.address.clone());
         }
-
-        let finder_fallback =
-            previews.is_empty() && block.finder == address && estimated_credit > 0;
-        let validation_state =
-            pending_preview_validation_state(&target_stats, trust_policy, finder_fallback);
-        let credit_withheld = false;
-        let show_row = estimated_credit > 0
-            || matches!(
-                validation_state,
-                PendingPreviewValidation::ExtraVerification
-            )
-            || (target_stats.has_window_activity() && !target_stats.has_eligible_work());
-        if !show_row {
-            continue;
-        }
-
-        estimate.estimated_pending = estimate.estimated_pending.saturating_add(estimated_credit);
-        let confirmations = chain_height.saturating_sub(block.height);
-        estimate.blocks.push(MinerPendingBlockEstimate {
-            height: block.height,
-            hash: block.hash.clone(),
-            reward: block.reward,
-            estimated_credit,
-            credit_withheld,
-            validation_state: match validation_state {
-                PendingPreviewValidation::Ready => "ready",
-                PendingPreviewValidation::FinderFallback => "finder_fallback",
-                PendingPreviewValidation::AwaitingDelay => "awaiting_delay",
-                PendingPreviewValidation::AwaitingVerifiedShares => "awaiting_shares",
-                PendingPreviewValidation::AwaitingVerifiedRatio => "awaiting_ratio",
-                PendingPreviewValidation::ExtraVerification => "extra_verification",
-            }
-            .to_string(),
-            validation_label: pending_preview_validation_label(validation_state).to_string(),
-            validation_tone: pending_preview_validation_tone(validation_state).to_string(),
-            validation_detail: pending_preview_validation_detail(
-                config,
-                &target_stats,
-                trust_policy,
-                validation_state,
-            ),
-            confirmations_remaining: required_confirmations.saturating_sub(confirmations),
-            timestamp: block.timestamp,
+        prepared_blocks.push(PreparedPendingEstimateBlock {
+            confirmations: chain_height.saturating_sub(block.height),
+            block,
+            previews,
         });
     }
 
-    estimate.blocks.sort_by(|a, b| b.height.cmp(&a.height));
-    Ok(estimate)
+    let force_verify_addresses = store
+        .active_force_verify_addresses(&addresses_for_risk.into_iter().collect::<Vec<_>>(), now)?;
+    let mut estimates = HashMap::<String, MinerPendingEstimate>::new();
+
+    for prepared in prepared_blocks {
+        let PreparedPendingEstimateBlock {
+            block,
+            confirmations,
+            previews,
+        } = prepared;
+        let mut distributable = block.reward.saturating_sub(config.pool_fee(block.reward));
+        if previews.is_empty() {
+            let estimated_credit = distributable;
+            let validation_state = PendingPreviewValidation::FinderFallback;
+            let estimate = estimates.entry(block.finder.clone()).or_default();
+            estimate.estimated_pending =
+                estimate.estimated_pending.saturating_add(estimated_credit);
+            estimate.blocks.push(MinerPendingBlockEstimate {
+                height: block.height,
+                hash: block.hash.clone(),
+                reward: block.reward,
+                estimated_credit,
+                credit_withheld: false,
+                validation_state: pending_preview_validation_state_key(validation_state)
+                    .to_string(),
+                validation_label: pending_preview_validation_label(validation_state).to_string(),
+                validation_tone: pending_preview_validation_tone(validation_state).to_string(),
+                validation_detail: pending_preview_validation_detail(
+                    config,
+                    &AddressPreviewStats::default(),
+                    trust_policy,
+                    validation_state,
+                ),
+                confirmations_remaining: required_confirmations.saturating_sub(confirmations),
+                timestamp: block.timestamp,
+            });
+            continue;
+        }
+
+        let mut weights = HashMap::<String, u64>::new();
+        let mut stats_by_address = HashMap::<String, AddressPreviewStats>::new();
+        let mut total_weight = 0u64;
+        let mut remainder_destination: Option<&str> = None;
+        let mut remainder_weight = 0u64;
+
+        for preview in &previews {
+            let risky = force_verify_addresses.contains(&preview.address);
+            let stats = collect_address_preview_stats_from_summary(Some(preview), risky);
+            stats_by_address.insert(preview.address.clone(), stats);
+
+            let Some(weight) = preview_weight(preview, risky, preview_trust_policy) else {
+                continue;
+            };
+            total_weight = total_weight.saturating_add(weight);
+            if remainder_destination.is_none()
+                || weight > remainder_weight
+                || (weight == remainder_weight
+                    && preview.address.as_str() < remainder_destination.unwrap_or_default())
+            {
+                remainder_destination = Some(preview.address.as_str());
+                remainder_weight = weight;
+            }
+            weights.insert(preview.address.clone(), weight);
+        }
+
+        let mut estimated_credits = HashMap::<String, u64>::new();
+        if config.block_finder_bonus && config.block_finder_bonus_pct > 0.0 {
+            let bonus = (distributable as f64 * config.block_finder_bonus_pct / 100.0) as u64;
+            credit_address(&mut estimated_credits, &block.finder, bonus)?;
+            distributable = distributable.saturating_sub(bonus);
+        }
+        if total_weight > 0 {
+            allocate_weighted_credits(
+                &mut estimated_credits,
+                weights,
+                total_weight,
+                distributable,
+            )?;
+        }
+
+        let mut addresses = previews
+            .iter()
+            .map(|preview| preview.address.clone())
+            .collect::<HashSet<_>>();
+        addresses.extend(estimated_credits.keys().cloned());
+
+        for address in addresses {
+            let stats = if let Some(stats) = stats_by_address.get(&address) {
+                stats.clone()
+            } else {
+                let risky = force_verify_addresses.contains(&address);
+                collect_address_preview_stats_from_summary(None, risky)
+            };
+            let estimated_credit = estimated_credits.get(&address).copied().unwrap_or_default();
+            let validation_state = pending_preview_validation_state(&stats, trust_policy, false);
+            let show_row = estimated_credit > 0
+                || matches!(
+                    validation_state,
+                    PendingPreviewValidation::ExtraVerification
+                )
+                || (stats.has_window_activity() && !stats.has_eligible_work());
+            if !show_row {
+                continue;
+            }
+
+            let estimate = estimates.entry(address).or_default();
+            estimate.estimated_pending =
+                estimate.estimated_pending.saturating_add(estimated_credit);
+            estimate.blocks.push(MinerPendingBlockEstimate {
+                height: block.height,
+                hash: block.hash.clone(),
+                reward: block.reward,
+                estimated_credit,
+                credit_withheld: false,
+                validation_state: pending_preview_validation_state_key(validation_state)
+                    .to_string(),
+                validation_label: pending_preview_validation_label(validation_state).to_string(),
+                validation_tone: pending_preview_validation_tone(validation_state).to_string(),
+                validation_detail: pending_preview_validation_detail(
+                    config,
+                    &stats,
+                    trust_policy,
+                    validation_state,
+                ),
+                confirmations_remaining: required_confirmations.saturating_sub(confirmations),
+                timestamp: block.timestamp,
+            });
+        }
+    }
+
+    for estimate in estimates.values_mut() {
+        estimate.blocks.sort_by(|a, b| b.height.cmp(&a.height));
+    }
+
+    Ok(estimates)
+}
+
+#[cfg(test)]
+fn estimate_unconfirmed_pending_for_miner(
+    store: &PoolStore,
+    address: &str,
+    config: &Config,
+    now: SystemTime,
+    chain_height: u64,
+) -> anyhow::Result<MinerPendingEstimate> {
+    Ok(
+        estimate_unconfirmed_pending_snapshot(store, config, now, chain_height)?
+            .remove(address)
+            .unwrap_or_default(),
+    )
 }
 
 fn allocate_weighted_credits(
@@ -6378,70 +6457,31 @@ fn compute_luck_history(
     Ok(rounds)
 }
 
-fn compute_luck_details_for_hashes(
-    store: &PoolStore,
-    mut blocks: Vec<crate::db::DbBlock>,
-    target_hashes: &HashSet<String>,
-) -> anyhow::Result<HashMap<String, LuckRoundResponse>> {
-    if target_hashes.is_empty() || blocks.len() < 2 {
-        return Ok(HashMap::new());
+fn luck_round_response_from_db(round: DbLuckRound) -> LuckRoundResponse {
+    let effort_pct = if round.difficulty > 0 {
+        (round.round_work as f64 / round.difficulty as f64) * 100.0
+    } else {
+        0.0
+    };
+    let timer_effort_pct = if ROUND_TARGET_SECONDS > 0.0 {
+        (round.duration_seconds as f64 / ROUND_TARGET_SECONDS) * 100.0
+    } else {
+        0.0
+    };
+
+    LuckRoundResponse {
+        block_height: round.block_height,
+        block_hash: round.block_hash,
+        timestamp: round.timestamp,
+        difficulty: round.difficulty,
+        round_work: round.round_work,
+        effort_pct,
+        duration_seconds: round.duration_seconds,
+        timer_effort_pct,
+        effort_band: classify_effort(effort_pct),
+        orphaned: round.orphaned,
+        confirmed: round.confirmed,
     }
-
-    blocks.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-
-    let mut rounds = HashMap::<String, LuckRoundResponse>::with_capacity(target_hashes.len());
-    for pair in blocks.windows(2) {
-        let prev = &pair[0];
-        let current = &pair[1];
-        if !target_hashes.contains(current.hash.as_str()) {
-            continue;
-        }
-
-        let shares = store.get_shares_between(prev.timestamp, current.timestamp)?;
-        let round_work = shares
-            .into_iter()
-            .filter(|share| share.status == "verified" || share.status == "provisional")
-            .fold(0u64, |acc, share| acc.saturating_add(share.difficulty));
-
-        let duration_seconds = current
-            .timestamp
-            .duration_since(prev.timestamp)
-            .unwrap_or_default()
-            .as_secs();
-        let effort_pct = if current.difficulty > 0 {
-            (round_work as f64 / current.difficulty as f64) * 100.0
-        } else {
-            0.0
-        };
-        let timer_effort_pct = if ROUND_TARGET_SECONDS > 0.0 {
-            (duration_seconds as f64 / ROUND_TARGET_SECONDS) * 100.0
-        } else {
-            0.0
-        };
-
-        rounds.insert(
-            current.hash.clone(),
-            LuckRoundResponse {
-                block_height: current.height,
-                block_hash: current.hash.clone(),
-                timestamp: current.timestamp,
-                difficulty: current.difficulty,
-                round_work,
-                effort_pct,
-                duration_seconds,
-                timer_effort_pct,
-                effort_band: classify_effort(effort_pct),
-                orphaned: current.orphaned,
-                confirmed: current.confirmed,
-            },
-        );
-
-        if rounds.len() == target_hashes.len() {
-            break;
-        }
-    }
-
-    Ok(rounds)
 }
 
 fn block_page_item_response(
@@ -6472,23 +6512,29 @@ async fn handle_luck_history(
 ) -> impl IntoResponse {
     let (limit, offset) = page_bounds(query.limit, query.offset);
     let store = Arc::clone(&state.store);
+    let started_at = Instant::now();
 
     let (items, total) = match tokio::task::spawn_blocking(move || {
-        let blocks = store.get_all_blocks()?;
-        let rounds = compute_luck_history(&store, blocks, None)?;
-        let total = rounds.len();
-        let items = rounds
-            .into_iter()
-            .skip(offset)
-            .take(limit)
-            .collect::<Vec<_>>();
-        Ok::<_, anyhow::Error>((items, total))
+        store.get_luck_rounds_page(limit as i64, offset as i64)
     })
     .await
     {
-        Ok(Ok(v)) => v,
-        Ok(Err(err)) => return internal_error("failed loading luck history", err).into_response(),
+        Ok(Ok((items, total))) => {
+            record_api_operation_observation(&state, "luck_page_load", started_at.elapsed(), false);
+            (
+                items
+                    .into_iter()
+                    .map(luck_round_response_from_db)
+                    .collect::<Vec<_>>(),
+                total as usize,
+            )
+        }
+        Ok(Err(err)) => {
+            record_api_operation_observation(&state, "luck_page_load", started_at.elapsed(), true);
+            return internal_error("failed loading luck history", err).into_response();
+        }
         Err(err) => {
+            record_api_operation_observation(&state, "luck_page_load", started_at.elapsed(), true);
             return internal_error(
                 "failed loading luck history",
                 anyhow::anyhow!("join error: {err}"),
@@ -6754,6 +6800,118 @@ async fn handle_admin_block_reward_breakdown(
 }
 
 impl ApiState {
+    fn cache_states(&self) -> std::collections::BTreeMap<String, CacheStateSummary> {
+        let stats_response = self.stats_response_cache.lock();
+        let db_totals = self.db_totals_cache.lock();
+        let insights = self.insights_cache.lock();
+        let rejection_analytics = self.rejection_analytics_cache.lock();
+        let daemon_health = self.daemon_health_cache.lock();
+        let pool_health = self.pool_health_cache.lock();
+        let network_hashrate = self.network_hashrate_cache.lock();
+        let persisted_runtime = self.live_runtime_snapshot_cache.lock();
+        let pending_estimates = self.pending_estimate_snapshot_cache.lock();
+        let miner_balance = self.miner_balance_response_cache.lock();
+        let miner_detail = self.miner_detail_response_cache.lock();
+
+        std::collections::BTreeMap::from([
+            (
+                "stats_response".to_string(),
+                CacheStateSummary {
+                    entries: usize::from(stats_response.value.is_some()),
+                    age_millis: instant_age_millis(stats_response.updated_at),
+                },
+            ),
+            (
+                "db_totals".to_string(),
+                CacheStateSummary {
+                    entries: usize::from(db_totals.updated_at.is_some()),
+                    age_millis: instant_age_millis(db_totals.updated_at),
+                },
+            ),
+            (
+                "insights".to_string(),
+                CacheStateSummary {
+                    entries: usize::from(insights.value.is_some()),
+                    age_millis: instant_age_millis(insights.updated_at),
+                },
+            ),
+            (
+                "rejection_analytics".to_string(),
+                CacheStateSummary {
+                    entries: rejection_analytics.entries.len(),
+                    age_millis: instant_age_millis(latest_timed_cache_update(
+                        &rejection_analytics.entries,
+                    )),
+                },
+            ),
+            (
+                "daemon_health".to_string(),
+                CacheStateSummary {
+                    entries: usize::from(daemon_health.value.is_some()),
+                    age_millis: instant_age_millis(daemon_health.updated_at),
+                },
+            ),
+            (
+                "pool_health".to_string(),
+                CacheStateSummary {
+                    entries: usize::from(pool_health.value.is_some()),
+                    age_millis: instant_age_millis(pool_health.updated_at),
+                },
+            ),
+            (
+                "network_hashrate".to_string(),
+                CacheStateSummary {
+                    entries: usize::from(network_hashrate.hashrate_hps.is_some()),
+                    age_millis: instant_age_millis(network_hashrate.updated_at),
+                },
+            ),
+            (
+                "persisted_runtime_snapshot".to_string(),
+                CacheStateSummary {
+                    entries: usize::from(persisted_runtime.value.is_some()),
+                    age_millis: instant_age_millis(persisted_runtime.updated_at),
+                },
+            ),
+            (
+                "pending_estimate_snapshot".to_string(),
+                CacheStateSummary {
+                    entries: pending_estimates.values.len(),
+                    age_millis: instant_age_millis(pending_estimates.updated_at),
+                },
+            ),
+            (
+                "miner_balance_response".to_string(),
+                CacheStateSummary {
+                    entries: miner_balance.entries.len(),
+                    age_millis: instant_age_millis(latest_timed_cache_update(
+                        &miner_balance.entries,
+                    )),
+                },
+            ),
+            (
+                "miner_detail_response".to_string(),
+                CacheStateSummary {
+                    entries: miner_detail.entries.len(),
+                    age_millis: instant_age_millis(latest_timed_cache_update(
+                        &miner_detail.entries,
+                    )),
+                },
+            ),
+        ])
+    }
+
+    fn performance_response(&self) -> ApiPerformanceResponse {
+        let snapshot = self.performance.snapshot();
+        ApiPerformanceResponse {
+            sampled_at: snapshot.sampled_at,
+            routes: snapshot.routes,
+            operations: snapshot.operations,
+            tasks: snapshot.tasks,
+            caches: snapshot.caches,
+            cache_states: self.cache_states(),
+        }
+    }
+
     pub async fn sample_status(&self) {
         let started_at = Instant::now();
         let mut failed = false;
@@ -7076,187 +7234,135 @@ impl ApiState {
         address: &str,
         chain_height: u64,
     ) -> anyhow::Result<MinerPendingEstimate> {
-        let now = Instant::now();
-        let mut schedule_refresh = false;
-        let mut cached_value = None;
-        {
-            let mut cache = self.miner_pending_estimate_cache.lock();
-            if let Some(entry) = cache.get_mut(address) {
-                entry.last_requested_at = now;
-                if pending_estimate_cache_can_serve(entry, chain_height, now) {
-                    if pending_estimate_cache_needs_refresh(entry, chain_height, now) {
-                        entry.refresh_in_flight = true;
+        loop {
+            let now = Instant::now();
+            let mut schedule_refresh = false;
+            let mut cached_values = None;
+            let mut wait_for_refresh = false;
+            let mut should_load = false;
+            {
+                let mut cache = self.pending_estimate_snapshot_cache.lock();
+                cache.last_requested_at = Some(now);
+                if pending_estimate_snapshot_can_serve(&cache, now) {
+                    if pending_estimate_snapshot_needs_refresh(&cache, chain_height, now) {
+                        cache.refresh_in_flight = true;
                         schedule_refresh = true;
                     }
-                    cached_value = Some(entry.value.clone());
+                    cached_values = Some(cache.values.clone());
+                } else if cache.refresh_in_flight {
+                    wait_for_refresh = true;
+                } else {
+                    cache.refresh_in_flight = true;
+                    should_load = true;
                 }
             }
-        }
-        if let Some(value) = cached_value {
-            if schedule_refresh {
-                self.spawn_pending_estimate_refresh(address.to_string(), chain_height);
+            if let Some(values) = cached_values {
+                if schedule_refresh {
+                    self.spawn_pending_estimate_snapshot_refresh(chain_height);
+                }
+                self.performance.record_cache_hit("pending_estimate");
+                return Ok(values.get(address).cloned().unwrap_or_default());
             }
-            self.performance.record_cache_hit("pending_estimate");
-            return Ok(value);
-        }
-        if schedule_refresh {
-            self.spawn_pending_estimate_refresh(address.to_string(), chain_height);
-        }
+            if wait_for_refresh {
+                self.pending_estimate_snapshot_notify.notified().await;
+                continue;
+            }
 
-        self.performance.record_cache_miss("pending_estimate");
-        let store = Arc::clone(&self.store);
-        let cfg = self.config.clone();
-        let addr = address.to_string();
-        let now = SystemTime::now();
-        let started_at = Instant::now();
-        let estimate = tokio::task::spawn_blocking(move || {
-            estimate_unconfirmed_pending_for_miner(&store, &addr, &cfg, now, chain_height)
-        })
-        .await
-        .map_err(|err| anyhow::anyhow!("join error: {err}"));
-        let estimate = match estimate {
-            Ok(Ok(value)) => {
-                record_api_operation_observation(
-                    self,
-                    "pending_estimate_load",
-                    started_at.elapsed(),
-                    false,
-                );
-                value
-            }
-            Ok(Err(err)) => {
-                record_api_operation_observation(
-                    self,
-                    "pending_estimate_load",
-                    started_at.elapsed(),
-                    true,
-                );
-                return Err(err);
-            }
-            Err(err) => {
-                record_api_operation_observation(
-                    self,
-                    "pending_estimate_load",
-                    started_at.elapsed(),
-                    true,
-                );
-                return Err(err);
-            }
-        };
-
-        let mut cache = self.miner_pending_estimate_cache.lock();
-        insert_pending_estimate_cache_entry(
-            &mut cache,
-            address.to_string(),
-            chain_height,
-            estimate.clone(),
-            Instant::now(),
-        );
-
-        Ok(estimate)
+            debug_assert!(should_load);
+            self.performance.record_cache_miss("pending_estimate");
+            let values = self.load_pending_estimate_snapshot(chain_height).await?;
+            return Ok(values.get(address).cloned().unwrap_or_default());
+        }
     }
 
-    fn spawn_pending_estimate_refresh(&self, address: String, chain_height: u64) {
+    fn spawn_pending_estimate_snapshot_refresh(&self, chain_height: u64) {
         let state = self.clone();
         tokio::spawn(async move {
-            state
-                .refresh_pending_estimate_for_miner(address, chain_height)
-                .await;
+            state.refresh_pending_estimate_snapshot(chain_height).await;
         });
     }
 
-    async fn refresh_pending_estimate_for_miner(&self, address: String, chain_height: u64) {
+    async fn load_pending_estimate_snapshot(
+        &self,
+        chain_height: u64,
+    ) -> anyhow::Result<HashMap<String, MinerPendingEstimate>> {
         let store = Arc::clone(&self.store);
         let cfg = self.config.clone();
         let now = SystemTime::now();
         let started_at = Instant::now();
-        let refresh_address = address.clone();
         let result = tokio::task::spawn_blocking(move || {
-            estimate_unconfirmed_pending_for_miner(
-                &store,
-                &refresh_address,
-                &cfg,
-                now,
-                chain_height,
-            )
+            estimate_unconfirmed_pending_snapshot(&store, &cfg, now, chain_height)
         })
         .await
         .map_err(|err| anyhow::anyhow!("join error: {err}"));
 
         match result {
-            Ok(Ok(value)) => {
-                let mut cache = self.miner_pending_estimate_cache.lock();
-                let updated_at = Instant::now();
-                if let Some(entry) = cache.get_mut(&address) {
-                    entry.updated_at = updated_at;
-                    entry.chain_height = chain_height;
-                    entry.value = value;
-                    entry.refresh_in_flight = false;
-                } else {
-                    insert_pending_estimate_cache_entry(
-                        &mut cache,
-                        address.clone(),
-                        chain_height,
-                        value,
-                        updated_at,
-                    );
-                }
-                record_api_task_observation(
+            Ok(Ok(values)) => {
+                record_api_operation_observation(
                     self,
-                    "pending_estimate_refresh",
+                    "pending_estimate_snapshot_load",
                     started_at.elapsed(),
                     false,
                 );
+                let mut cache = self.pending_estimate_snapshot_cache.lock();
+                replace_pending_estimate_snapshot(
+                    &mut cache,
+                    chain_height,
+                    values.clone(),
+                    Instant::now(),
+                );
+                self.pending_estimate_snapshot_notify.notify_waiters();
+                Ok(values)
             }
             Ok(Err(err)) => {
-                tracing::warn!(
-                    address = %address,
-                    error = %err,
-                    "background pending estimate refresh failed"
-                );
-                if let Some(entry) = self.miner_pending_estimate_cache.lock().get_mut(&address) {
-                    entry.refresh_in_flight = false;
-                }
-                record_api_task_observation(
+                record_api_operation_observation(
                     self,
-                    "pending_estimate_refresh",
+                    "pending_estimate_snapshot_load",
                     started_at.elapsed(),
                     true,
                 );
+                self.pending_estimate_snapshot_cache
+                    .lock()
+                    .refresh_in_flight = false;
+                self.pending_estimate_snapshot_notify.notify_waiters();
+                Err(err)
             }
             Err(err) => {
-                tracing::warn!(
-                    address = %address,
-                    error = %err,
-                    "background pending estimate refresh task join failed"
-                );
-                if let Some(entry) = self.miner_pending_estimate_cache.lock().get_mut(&address) {
-                    entry.refresh_in_flight = false;
-                }
-                record_api_task_observation(
+                record_api_operation_observation(
                     self,
-                    "pending_estimate_refresh",
+                    "pending_estimate_snapshot_load",
                     started_at.elapsed(),
                     true,
                 );
+                self.pending_estimate_snapshot_cache
+                    .lock()
+                    .refresh_in_flight = false;
+                self.pending_estimate_snapshot_notify.notify_waiters();
+                Err(err)
             }
         }
     }
 
-    pub async fn refresh_hot_pending_estimates(&self) {
-        let chain_height = self.node.chain_height();
-        let now = Instant::now();
-        let addresses = {
-            let mut cache = self.miner_pending_estimate_cache.lock();
-            select_pending_estimate_refresh_addresses(
-                &mut cache,
-                chain_height,
-                now,
-                MINER_PENDING_ESTIMATE_REFRESH_BATCH_SIZE,
-            )
-        };
-        for address in addresses {
-            self.spawn_pending_estimate_refresh(address, chain_height);
+    async fn refresh_pending_estimate_snapshot(&self, chain_height: u64) {
+        let started_at = Instant::now();
+        match self.load_pending_estimate_snapshot(chain_height).await {
+            Ok(_) => {
+                record_api_task_observation(
+                    self,
+                    "pending_estimate_snapshot_refresh",
+                    started_at.elapsed(),
+                    false,
+                );
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "background pending estimate snapshot refresh failed");
+                record_api_task_observation(
+                    self,
+                    "pending_estimate_snapshot_refresh",
+                    started_at.elapsed(),
+                    true,
+                );
+            }
         }
     }
 
@@ -7268,14 +7374,18 @@ impl ApiState {
         let cache_key = format!("{address}:{include_pending_estimate}");
         if let Some(cached) = {
             let mut cache = self.miner_balance_response_cache.lock();
+            let now = Instant::now();
             if cache
                 .last_cleanup_at
-                .is_none_or(|last| last.elapsed() >= MINER_BALANCE_RESPONSE_CACHE_TTL)
+                .is_none_or(|last| now.duration_since(last) >= MINER_BALANCE_RESPONSE_CACHE_TTL)
             {
-                cache.entries.retain(|_, entry| {
-                    entry.updated_at.elapsed() < MINER_BALANCE_RESPONSE_CACHE_TTL
-                });
-                cache.last_cleanup_at = Some(Instant::now());
+                prune_timed_cache_entries(
+                    &mut cache.entries,
+                    MINER_BALANCE_RESPONSE_CACHE_TTL,
+                    MINER_BALANCE_RESPONSE_CACHE_MAX_ENTRIES,
+                    now,
+                );
+                cache.last_cleanup_at = Some(now);
             }
             cache
                 .entries
@@ -7292,6 +7402,12 @@ impl ApiState {
             .load_miner_balance_payload(address, include_pending_estimate)
             .await?;
         let mut cache = self.miner_balance_response_cache.lock();
+        prune_timed_cache_entries(
+            &mut cache.entries,
+            MINER_BALANCE_RESPONSE_CACHE_TTL,
+            MINER_BALANCE_RESPONSE_CACHE_MAX_ENTRIES.saturating_sub(1),
+            Instant::now(),
+        );
         cache.entries.insert(
             cache_key,
             TimedCacheEntry {
@@ -7311,14 +7427,18 @@ impl ApiState {
         let cache_key = format!("{address}:{share_limit}:{include_pending_estimate}");
         if let Some(cached) = {
             let mut cache = self.miner_detail_response_cache.lock();
+            let now = Instant::now();
             if cache
                 .last_cleanup_at
-                .is_none_or(|last| last.elapsed() >= MINER_DETAIL_RESPONSE_CACHE_TTL)
+                .is_none_or(|last| now.duration_since(last) >= MINER_DETAIL_RESPONSE_CACHE_TTL)
             {
-                cache.entries.retain(|_, entry| {
-                    entry.updated_at.elapsed() < MINER_DETAIL_RESPONSE_CACHE_TTL
-                });
-                cache.last_cleanup_at = Some(Instant::now());
+                prune_timed_cache_entries(
+                    &mut cache.entries,
+                    MINER_DETAIL_RESPONSE_CACHE_TTL,
+                    MINER_DETAIL_RESPONSE_CACHE_MAX_ENTRIES,
+                    now,
+                );
+                cache.last_cleanup_at = Some(now);
             }
             cache
                 .entries
@@ -7335,6 +7455,12 @@ impl ApiState {
             .load_miner_detail_payload(address, share_limit, include_pending_estimate)
             .await?;
         let mut cache = self.miner_detail_response_cache.lock();
+        prune_timed_cache_entries(
+            &mut cache.entries,
+            MINER_DETAIL_RESPONSE_CACHE_TTL,
+            MINER_DETAIL_RESPONSE_CACHE_MAX_ENTRIES.saturating_sub(1),
+            Instant::now(),
+        );
         cache.entries.insert(
             cache_key,
             TimedCacheEntry {
@@ -7355,13 +7481,17 @@ impl ApiState {
         let addr = address.to_string();
         let store = Arc::clone(&self.store);
         let db_result = tokio::task::spawn_blocking(
-            move || -> anyhow::Result<(Balance, Option<PendingPayout>)> {
-                Ok((store.get_balance(&addr)?, store.get_pending_payout(&addr)?))
+            move || -> anyhow::Result<(Balance, Option<PendingPayout>, bool)> {
+                Ok((
+                    store.get_balance(&addr)?,
+                    store.get_pending_payout(&addr)?,
+                    store.miner_has_any_activity(&addr)?,
+                ))
             },
         )
         .await
         .map_err(|err| anyhow::anyhow!("join error: {err}"));
-        let (balance, pending_payout) = match db_result {
+        let (balance, pending_payout, has_activity) = match db_result {
             Ok(Ok(value)) => value,
             Ok(Err(err)) => {
                 record_api_operation_observation(
@@ -7384,19 +7514,23 @@ impl ApiState {
         };
 
         let pending_estimate = if include_pending_estimate {
-            match self
-                .cached_pending_estimate_for_miner(address, chain_height)
-                .await
-            {
-                Ok(value) => value,
-                Err(err) => {
-                    tracing::warn!(
-                        address = %address,
-                        error = %err,
-                        "failed loading pending estimate for miner balance"
-                    );
-                    MinerPendingEstimate::default()
+            if has_activity {
+                match self
+                    .cached_pending_estimate_for_miner(address, chain_height)
+                    .await
+                {
+                    Ok(value) => value,
+                    Err(err) => {
+                        tracing::warn!(
+                            address = %address,
+                            error = %err,
+                            "failed loading pending estimate for miner balance"
+                        );
+                        MinerPendingEstimate::default()
+                    }
                 }
+            } else {
+                MinerPendingEstimate::default()
             }
         } else {
             MinerPendingEstimate::default()
@@ -7445,6 +7579,7 @@ impl ApiState {
             let miner_blocks = store.get_blocks_for_miner(&addr)?;
             let risk_state = store.get_address_risk(&addr)?;
             let validation_state = store.validation_hold_state(&addr, provisional_cutoff)?;
+            let has_any_activity = store.miner_has_any_activity(&addr)?;
             Ok::<_, anyhow::Error>((
                 shares,
                 mining_since,
@@ -7457,6 +7592,7 @@ impl ApiState {
                 miner_blocks,
                 risk_state,
                 validation_state,
+                has_any_activity,
             ))
         })
         .await
@@ -7494,25 +7630,30 @@ impl ApiState {
             mut miner_blocks,
             risk_state,
             validation_state,
+            has_any_activity,
         ) = db_result;
         for block in &mut miner_blocks {
             hydrate_provisional_block_reward(block);
         }
 
         let pending_estimate = if include_pending_estimate {
-            match self
-                .cached_pending_estimate_for_miner(address, chain_height)
-                .await
-            {
-                Ok(value) => value,
-                Err(err) => {
-                    tracing::warn!(
-                        address = %address,
-                        error = %err,
-                        "failed loading pending estimate for miner detail"
-                    );
-                    MinerPendingEstimate::default()
+            if has_any_activity {
+                match self
+                    .cached_pending_estimate_for_miner(address, chain_height)
+                    .await
+                {
+                    Ok(value) => value,
+                    Err(err) => {
+                        tracing::warn!(
+                            address = %address,
+                            error = %err,
+                            "failed loading pending estimate for miner detail"
+                        );
+                        MinerPendingEstimate::default()
+                    }
                 }
+            } else {
+                MinerPendingEstimate::default()
             }
         } else {
             MinerPendingEstimate::default()
@@ -7524,8 +7665,6 @@ impl ApiState {
         );
 
         let pending_confirmed = balance.pending;
-        let pending_estimated = pending_estimate.estimated_pending;
-        let pending_total = pending_confirmed.saturating_add(pending_estimated);
         let balance_json = miner_balance_response(&balance, pending_payout.as_ref());
 
         let now = SystemTime::now();
@@ -7562,13 +7701,7 @@ impl ApiState {
         let payout_note =
             payout_status_note(&self.config, pending_confirmed, pending_payout.as_ref());
 
-        let has_activity = miner_has_activity(
-            shares.len(),
-            pending_total,
-            balance.paid,
-            pending_payout.is_some(),
-            payouts.len(),
-        );
+        let has_activity = has_any_activity;
 
         let mut body = serde_json::json!({
             "shares": shares,
@@ -7642,7 +7775,11 @@ impl ApiState {
                 };
 
                 let payout_eta = compute_payout_eta(&store)?;
-                let luck_history = compute_luck_history(&store, blocks, Some(16))?;
+                let luck_history = store
+                    .get_recent_luck_rounds(16)?
+                    .into_iter()
+                    .map(luck_round_response_from_db)
+                    .collect::<Vec<_>>();
                 let avg_effort_pct = store.avg_effort_pct().unwrap_or(None);
 
                 Ok::<_, anyhow::Error>((
@@ -7728,25 +7865,80 @@ impl ApiState {
         &self,
         window: Duration,
     ) -> anyhow::Result<RejectionAnalyticsSnapshot> {
+        let window_seconds = window.as_secs().max(1);
+        {
+            let cache = self.rejection_analytics_cache.lock();
+            if let Some(entry) = cache.entries.get(&window_seconds) {
+                if entry.updated_at.elapsed() < REJECTION_ANALYTICS_CACHE_TTL {
+                    self.performance.record_cache_hit("rejection_analytics");
+                    return Ok(entry.value.clone());
+                }
+            }
+        }
+
+        self.performance.record_cache_miss("rejection_analytics");
         let mut snapshot = self.stats.rejection_analytics(window);
         let since = SystemTime::now().checked_sub(window).unwrap_or(UNIX_EPOCH);
-        let store = Arc::clone(&self.store);
-        let (accepted, rejected, total_rejected, by_reason, mut totals_by_reason) =
-            tokio::task::spawn_blocking(move || {
-                let (accepted, rejected) = store.share_outcome_counts_since(since)?;
-                let total_rejected = store.total_rejected_share_count()?;
-                let by_reason = store.rejection_reason_counts_since(since)?;
-                let totals_by_reason = store.total_rejection_reason_counts()?;
-                Ok::<_, anyhow::Error>((
+        let started_at = Instant::now();
+        let outcome_store = Arc::clone(&self.store);
+        let total_rejected_store = Arc::clone(&self.store);
+        let by_reason_store = Arc::clone(&self.store);
+        let totals_by_reason_store = Arc::clone(&self.store);
+        let outcome_task =
+            tokio::task::spawn_blocking(move || outcome_store.share_outcome_counts_since(since));
+        let total_rejected_task =
+            tokio::task::spawn_blocking(move || total_rejected_store.total_rejected_share_count());
+        let by_reason_task = tokio::task::spawn_blocking(move || {
+            by_reason_store.rejection_reason_counts_since(since)
+        });
+        let totals_by_reason_task = tokio::task::spawn_blocking(move || {
+            totals_by_reason_store.total_rejection_reason_counts()
+        });
+        let (outcome_result, total_rejected_result, by_reason_result, totals_by_reason_result) = tokio::join!(
+            outcome_task,
+            total_rejected_task,
+            by_reason_task,
+            totals_by_reason_task,
+        );
+        let load_value =
+            || -> anyhow::Result<(u64, u64, u64, Vec<RejectionReasonCount>, Vec<RejectionReasonCount>)> {
+                let (accepted, rejected) = outcome_result
+                    .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+                let total_rejected = total_rejected_result
+                    .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+                let by_reason =
+                    by_reason_result.map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+                let totals_by_reason =
+                    totals_by_reason_result.map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+                Ok((
                     accepted,
                     rejected,
                     total_rejected,
                     by_reason,
                     totals_by_reason,
                 ))
-            })
-            .await
-            .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+            };
+        let (accepted, rejected, total_rejected, by_reason, mut totals_by_reason) =
+            match load_value() {
+                Ok(value) => {
+                    record_api_operation_observation(
+                        self,
+                        "rejection_analytics_load",
+                        started_at.elapsed(),
+                        false,
+                    );
+                    value
+                }
+                Err(err) => {
+                    record_api_operation_observation(
+                        self,
+                        "rejection_analytics_load",
+                        started_at.elapsed(),
+                        true,
+                    );
+                    return Err(err);
+                }
+            };
 
         snapshot.accepted = accepted;
         snapshot.rejected = rejected;
@@ -7777,6 +7969,14 @@ impl ApiState {
             (rejected as f64 / denom as f64) * 100.0
         };
 
+        let mut cache = self.rejection_analytics_cache.lock();
+        cache.entries.insert(
+            window_seconds,
+            TimedCacheEntry {
+                updated_at: Instant::now(),
+                value: snapshot.clone(),
+            },
+        );
         Ok(snapshot)
     }
 
@@ -7910,27 +8110,54 @@ impl ApiState {
             }
         }
 
-        let store = Arc::clone(&self.store);
         let started_at = Instant::now();
-        let totals = tokio::task::spawn_blocking(move || -> anyhow::Result<DbTotals> {
-            let total_shares = store.get_total_share_count()?;
-            let rejected_shares = store.total_rejected_share_count()?;
-            let (confirmed_blocks, orphaned_blocks, _pending_blocks) =
-                store.get_block_status_counts()?;
+        let total_shares_store = Arc::clone(&self.store);
+        let rejected_shares_store = Arc::clone(&self.store);
+        let block_totals_store = Arc::clone(&self.store);
+        let pool_fees_store = Arc::clone(&self.store);
+        let total_shares_task =
+            tokio::task::spawn_blocking(move || total_shares_store.get_total_share_count());
+        let rejected_shares_task =
+            tokio::task::spawn_blocking(move || rejected_shares_store.total_rejected_share_count());
+        let block_totals_task =
+            tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, u64, u64)> {
+                let (confirmed_blocks, orphaned_blocks, _pending_blocks) =
+                    block_totals_store.get_block_status_counts()?;
+                Ok((
+                    block_totals_store.get_block_count()?,
+                    confirmed_blocks,
+                    orphaned_blocks,
+                ))
+            });
+        let pool_fees_task =
+            tokio::task::spawn_blocking(move || pool_fees_store.get_total_pool_fees());
+        let (total_shares_result, rejected_shares_result, block_totals_result, pool_fees_result) = tokio::join!(
+            total_shares_task,
+            rejected_shares_task,
+            block_totals_task,
+            pool_fees_task,
+        );
+        let load_value = || -> anyhow::Result<DbTotals> {
+            let total_shares =
+                total_shares_result.map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+            let rejected_shares =
+                rejected_shares_result.map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+            let (total_blocks, confirmed_blocks, orphaned_blocks) =
+                block_totals_result.map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+            let pool_fees_collected =
+                pool_fees_result.map_err(|err| anyhow::anyhow!("join error: {err}"))??;
             Ok(DbTotals {
                 total_shares,
                 accepted_shares: total_shares.saturating_sub(rejected_shares),
                 rejected_shares,
-                total_blocks: store.get_block_count()?,
+                total_blocks,
                 confirmed_blocks,
                 orphaned_blocks,
-                pool_fees_collected: store.get_total_pool_fees()?,
+                pool_fees_collected,
             })
-        })
-        .await
-        .map_err(|err| anyhow::anyhow!("join error: {err}"));
-        let totals = match totals {
-            Ok(Ok(value)) => {
+        };
+        let totals = match load_value() {
+            Ok(value) => {
                 record_api_operation_observation(
                     self,
                     "db_totals_load",
@@ -7938,15 +8165,6 @@ impl ApiState {
                     false,
                 );
                 value
-            }
-            Ok(Err(err)) => {
-                record_api_operation_observation(
-                    self,
-                    "db_totals_load",
-                    started_at.elapsed(),
-                    true,
-                );
-                return Err(err);
             }
             Err(err) => {
                 record_api_operation_observation(
@@ -8194,7 +8412,12 @@ fn api_performance_route_name(uri: &Uri) -> Option<&'static str> {
 
     Some(match path {
         "/api/stats" => "stats",
+        "/api/stats/history" => "stats_history",
+        "/api/stats/insights" => "stats_insights",
+        "/api/luck" => "luck",
         "/api/status" => "status",
+        "/api/blocks" => "blocks",
+        "/api/payouts/recent" => "payouts_recent",
         "/api/health" => "health",
         "/api/admin/perf" => "admin_perf",
         "/api/admin/dev-fee" => "admin_dev_fee",
@@ -8219,7 +8442,9 @@ fn api_performance_route_name(uri: &Uri) -> Option<&'static str> {
 
 fn api_route_slow_threshold_millis(route: &str) -> u64 {
     match route {
-        "stats" | "status" | "health" | "miner_balance" => 100,
+        "stats" | "stats_history" | "health" | "miner_balance" | "payouts_recent" => 100,
+        "status" | "stats_insights" | "blocks" => 250,
+        "luck" => 500,
         "miner_balance_pending" | "miner_detail" | "other_api" => 250,
         "miner_detail_pending" | "admin_dev_fee" | "admin_share_diagnostics" => 500,
         _ => 250,
@@ -8231,15 +8456,21 @@ fn api_operation_slow_threshold_millis(operation: &str) -> u64 {
         "persisted_runtime_snapshot_load"
         | "stats_load"
         | "db_totals_load"
-        | "pool_hashrate_load" => 100,
+        | "rejection_analytics_load"
+        | "pool_hashrate_load"
+        | "luck_page_load"
+        | "luck_details_load" => 100,
         "network_hashrate_load" | "miner_balance_load" | "miner_detail_load" => 250,
-        "pending_estimate_load" => 500,
+        "pending_estimate_snapshot_load" => 500,
         _ => 250,
     }
 }
 
-fn api_task_slow_threshold_millis(_task: &str) -> u64 {
-    250
+fn api_task_slow_threshold_millis(task: &str) -> u64 {
+    match task {
+        "pending_estimate_snapshot_refresh" => 500,
+        _ => 250,
+    }
 }
 
 fn record_api_route_observation(
@@ -8603,6 +8834,7 @@ impl FeesQuery {
     }
 }
 
+#[cfg(test)]
 fn miner_has_activity(
     shares_len: usize,
     balance_pending: u64,
@@ -8891,17 +9123,17 @@ impl StatusHistory {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+    use std::collections::{BTreeMap, HashMap, VecDeque};
     use std::env;
     use std::sync::Arc;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use super::{
-        merge_validation_summary, pending_estimate_cache_can_serve,
-        pending_estimate_cache_needs_refresh, public_telemetry_route_kind_for_path,
-        select_pending_estimate_refresh_addresses, validation_summary_from_snapshot,
-        MinerBalanceResponseCache, MinerDetailResponseCache, PublicTelemetryRateLimiter,
-        PublicTelemetryRouteKind, StatsResponseCache, MINER_PENDING_ESTIMATE_HOT_WINDOW,
+        merge_validation_summary, pending_estimate_snapshot_can_serve,
+        pending_estimate_snapshot_needs_refresh, public_telemetry_route_kind_for_path,
+        validation_summary_from_snapshot, MinerBalanceResponseCache, MinerDetailResponseCache,
+        PendingEstimateSnapshotCache, PublicTelemetryRateLimiter, PublicTelemetryRouteKind,
+        RejectionAnalyticsCache, StatsResponseCache, MINER_PENDING_ESTIMATE_HOT_WINDOW,
         MINER_PENDING_ESTIMATE_REFRESH_AFTER, PUBLIC_TELEMETRY_MINER_RATE_LIMIT,
         PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW, PUBLIC_TELEMETRY_STATS_RATE_LIMIT,
     };
@@ -8931,24 +9163,23 @@ mod tests {
 
     use super::{
         api_performance_route_name, apply_wallet_liquidity_to_payout_eta, batch_payouts,
-        block_page_item_response, build_block_reward_breakdown, build_fee_page,
-        compute_luck_details_for_hashes, compute_luck_history, contains_ci, daemon_debug_log_path,
-        daemon_health_from_heartbeat, daemon_log_commands, estimate_unconfirmed_pending_for_miner,
-        estimated_block_reward, filter_active_workers_for_miner,
-        handle_admin_clear_address_risk_history, handle_admin_dev_fee,
-        handle_admin_share_diagnostics, handle_app_fallback, handle_health, handle_miner,
-        handle_miners, handle_stats, hashrate_from_stats_with_miner_ramp,
+        block_page_item_response, build_block_reward_breakdown, build_fee_page, contains_ci,
+        daemon_debug_log_path, daemon_health_from_heartbeat, daemon_log_commands,
+        estimate_unconfirmed_pending_for_miner, estimated_block_reward,
+        filter_active_workers_for_miner, handle_admin_clear_address_risk_history,
+        handle_admin_dev_fee, handle_admin_share_diagnostics, handle_app_fallback, handle_health,
+        handle_miner, handle_miners, handle_stats, hashrate_from_stats_with_miner_ramp,
         hashrate_from_stats_with_warmup, hydrate_provisional_block_reward, is_api_request_path,
-        load_persisted_status_history, miner_balance_response, miner_has_activity, page_bounds,
-        payout_status_note, pending_balance_note, rejection_window_duration, share_limit,
-        sort_workers_for_miner, system_time_to_unix_secs, trim_log_line, worker_hashrate_by_name,
-        ApiPerformanceTracker, ApiState, ClearAddressRiskHistoryRequest, DaemonHealthCache,
-        DbTotalsCache, InsightsCache, LiveRuntimeSnapshotCache, MinerDetailQuery,
-        MinerPendingBlockEstimate, MinerPendingEstimate, MinerPendingEstimateCache, MinersQuery,
-        NetworkHashrateCache, OpenIncident, PayoutEtaResponse, PoolHealthCache, StatusHistory,
-        StatusIncident, DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW,
-        HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY,
-        STATUS_HISTORY_META_KEY,
+        load_persisted_status_history, luck_round_response_from_db, miner_balance_response,
+        miner_has_activity, page_bounds, payout_status_note, pending_balance_note,
+        rejection_window_duration, share_limit, sort_workers_for_miner, system_time_to_unix_secs,
+        trim_log_line, worker_hashrate_by_name, ApiPerformanceTracker, ApiState,
+        ClearAddressRiskHistoryRequest, DaemonHealthCache, DbTotalsCache, InsightsCache,
+        LiveRuntimeSnapshotCache, MinerDetailQuery, MinerPendingBlockEstimate,
+        MinerPendingEstimate, MinersQuery, NetworkHashrateCache, OpenIncident, PayoutEtaResponse,
+        PoolHealthCache, StatusHistory, StatusIncident, DAEMON_LOG_LINE_LIMIT,
+        HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
+        LIVE_RUNTIME_SNAPSHOT_META_KEY, STATUS_HISTORY_META_KEY,
     };
 
     const TEST_POSTGRES_URL_ENV: &str = "BLOCKNET_POOL_TEST_POSTGRES_URL";
@@ -9004,8 +9235,14 @@ mod tests {
                 NetworkHashrateCache::default(),
             )),
             insights_cache: Arc::new(parking_lot::Mutex::new(InsightsCache::default())),
+            rejection_analytics_cache: Arc::new(parking_lot::Mutex::new(
+                RejectionAnalyticsCache::default(),
+            )),
             stats_response_cache: Arc::new(parking_lot::Mutex::new(StatsResponseCache::default())),
-            miner_pending_estimate_cache: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            pending_estimate_snapshot_cache: Arc::new(parking_lot::Mutex::new(
+                PendingEstimateSnapshotCache::default(),
+            )),
+            pending_estimate_snapshot_notify: Arc::new(tokio::sync::Notify::new()),
             miner_balance_response_cache: Arc::new(parking_lot::Mutex::new(
                 MinerBalanceResponseCache::default(),
             )),
@@ -9069,79 +9306,85 @@ mod tests {
             Some("admin_perf")
         );
         assert_eq!(
+            api_performance_route_name(&Uri::from_static("/api/luck")),
+            Some("luck")
+        );
+        assert_eq!(
+            api_performance_route_name(&Uri::from_static("/api/blocks")),
+            Some("blocks")
+        );
+        assert_eq!(
+            api_performance_route_name(&Uri::from_static("/api/payouts/recent")),
+            Some("payouts_recent")
+        );
+        assert_eq!(
+            api_performance_route_name(&Uri::from_static("/api/stats/history")),
+            Some("stats_history")
+        );
+        assert_eq!(
+            api_performance_route_name(&Uri::from_static("/api/stats/insights")),
+            Some("stats_insights")
+        );
+        assert_eq!(
             api_performance_route_name(&Uri::from_static("/api/events")),
             None
         );
     }
 
     #[test]
-    fn select_pending_estimate_refresh_addresses_prefers_hot_stale_entries() {
+    fn pending_estimate_snapshot_needs_refresh_only_for_hot_stale_entries() {
         let now = Instant::now();
-        let mut cache = HashMap::from([
-            (
-                "hot-stale".to_string(),
-                MinerPendingEstimateCache {
-                    updated_at: now - MINER_PENDING_ESTIMATE_REFRESH_AFTER - Duration::from_secs(1),
-                    last_requested_at: now,
-                    chain_height: 100,
-                    value: MinerPendingEstimate::default(),
-                    refresh_in_flight: false,
-                },
+        let hot_stale = PendingEstimateSnapshotCache {
+            updated_at: Some(now - MINER_PENDING_ESTIMATE_REFRESH_AFTER - Duration::from_secs(1)),
+            last_requested_at: Some(now),
+            chain_height: Some(100),
+            values: HashMap::new(),
+            refresh_in_flight: false,
+        };
+        let cold_stale = PendingEstimateSnapshotCache {
+            updated_at: Some(now - MINER_PENDING_ESTIMATE_REFRESH_AFTER - Duration::from_secs(1)),
+            last_requested_at: Some(
+                now - MINER_PENDING_ESTIMATE_HOT_WINDOW - Duration::from_secs(1),
             ),
-            (
-                "cold-stale".to_string(),
-                MinerPendingEstimateCache {
-                    updated_at: now - MINER_PENDING_ESTIMATE_REFRESH_AFTER - Duration::from_secs(1),
-                    last_requested_at: now
-                        - MINER_PENDING_ESTIMATE_HOT_WINDOW
-                        - Duration::from_secs(1),
-                    chain_height: 100,
-                    value: MinerPendingEstimate::default(),
-                    refresh_in_flight: false,
-                },
-            ),
-            (
-                "hot-fresh".to_string(),
-                MinerPendingEstimateCache {
-                    updated_at: now,
-                    last_requested_at: now,
-                    chain_height: 100,
-                    value: MinerPendingEstimate::default(),
-                    refresh_in_flight: false,
-                },
-            ),
-        ]);
-
-        let selected = select_pending_estimate_refresh_addresses(&mut cache, 100, now, 4);
-        assert_eq!(selected, vec!["hot-stale".to_string()]);
-        assert!(
-            cache
-                .get("hot-stale")
-                .expect("hot stale cache entry")
-                .refresh_in_flight
-        );
-        assert!(
-            !cache
-                .get("hot-fresh")
-                .expect("hot fresh cache entry")
-                .refresh_in_flight
-        );
-    }
-
-    #[test]
-    fn pending_estimate_cache_can_serve_stale_same_height_entries() {
-        let now = Instant::now();
-        let entry = MinerPendingEstimateCache {
-            updated_at: now - MINER_PENDING_ESTIMATE_REFRESH_AFTER - Duration::from_secs(1),
-            last_requested_at: now,
-            chain_height: 77,
-            value: MinerPendingEstimate::default(),
+            chain_height: Some(100),
+            values: HashMap::new(),
+            refresh_in_flight: false,
+        };
+        let hot_fresh = PendingEstimateSnapshotCache {
+            updated_at: Some(now),
+            last_requested_at: Some(now),
+            chain_height: Some(100),
+            values: HashMap::new(),
             refresh_in_flight: false,
         };
 
-        assert!(pending_estimate_cache_can_serve(&entry, 77, now));
-        assert!(pending_estimate_cache_needs_refresh(&entry, 77, now));
-        assert!(!pending_estimate_cache_can_serve(&entry, 78, now));
+        assert!(pending_estimate_snapshot_needs_refresh(
+            &hot_stale, 100, now
+        ));
+        assert!(!pending_estimate_snapshot_needs_refresh(
+            &cold_stale,
+            100,
+            now
+        ));
+        assert!(!pending_estimate_snapshot_needs_refresh(
+            &hot_fresh, 100, now
+        ));
+    }
+
+    #[test]
+    fn pending_estimate_snapshot_can_serve_stale_same_height_entries() {
+        let now = Instant::now();
+        let entry = PendingEstimateSnapshotCache {
+            updated_at: Some(now - MINER_PENDING_ESTIMATE_REFRESH_AFTER - Duration::from_secs(1)),
+            last_requested_at: Some(now),
+            chain_height: Some(77),
+            values: HashMap::new(),
+            refresh_in_flight: false,
+        };
+
+        assert!(pending_estimate_snapshot_can_serve(&entry, now));
+        assert!(pending_estimate_snapshot_needs_refresh(&entry, 77, now));
+        assert!(pending_estimate_snapshot_needs_refresh(&entry, 78, now));
     }
 
     #[test]
@@ -11521,18 +11764,35 @@ mod tests {
     }
 
     #[test]
-    fn compute_luck_history_returns_all_rounds_and_can_truncate() {
+    fn get_luck_rounds_page_returns_all_rounds_and_can_truncate() {
         let store = require_test_store!();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
         let base = UNIX_EPOCH + Duration::from_secs(2_000_000);
+        let base_height = 700_000_000 + (unique % 10_000) as u64 * 10;
 
         for (job_id, created_at, difficulty) in [
-            ("job-1", base + Duration::from_secs(10), 40_u64),
-            ("job-1", base + Duration::from_secs(20), 60_u64),
-            ("job-2", base + Duration::from_secs(70), 100_u64),
+            (
+                format!("job-{unique}-1"),
+                base + Duration::from_secs(10),
+                40_u64,
+            ),
+            (
+                format!("job-{unique}-1"),
+                base + Duration::from_secs(20),
+                60_u64,
+            ),
+            (
+                format!("job-{unique}-2"),
+                base + Duration::from_secs(70),
+                100_u64,
+            ),
         ] {
             store
                 .add_share(ShareRecord {
-                    job_id: job_id.to_string(),
+                    job_id,
                     miner: "miner-a".to_string(),
                     worker: "wa".to_string(),
                     difficulty,
@@ -11548,14 +11808,22 @@ mod tests {
         }
 
         for (height, hash, timestamp) in [
-            (100_u64, "blk-100", base),
-            (101_u64, "blk-101", base + Duration::from_secs(60)),
-            (102_u64, "blk-102", base + Duration::from_secs(120)),
+            (base_height, format!("blk-{unique}-100"), base),
+            (
+                base_height + 1,
+                format!("blk-{unique}-101"),
+                base + Duration::from_secs(60),
+            ),
+            (
+                base_height + 2,
+                format!("blk-{unique}-102"),
+                base + Duration::from_secs(120),
+            ),
         ] {
             store
                 .add_block(&DbBlock {
                     height,
-                    hash: hash.to_string(),
+                    hash,
                     difficulty: 100,
                     finder: "miner-a".to_string(),
                     finder_worker: "wa".to_string(),
@@ -11569,34 +11837,74 @@ mod tests {
                 .expect("add block");
         }
 
-        let blocks = store.get_all_blocks().expect("load blocks");
-        let full = compute_luck_history(&store, blocks.clone(), None).expect("full luck history");
+        let (full, total) = store
+            .get_luck_rounds_page(25, 0)
+            .expect("full paged luck history");
+        let full = full
+            .into_iter()
+            .filter(|row| row.block_height >= base_height && row.block_height <= base_height + 2)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            total,
+            store
+                .get_all_blocks()
+                .expect("load blocks")
+                .len()
+                .saturating_sub(1) as u64
+        );
         assert_eq!(full.len(), 2);
-        assert_eq!(full[0].block_height, 102);
+        assert_eq!(full[0].block_height, base_height + 2);
         assert_eq!(full[0].round_work, 100);
-        assert!((full[0].effort_pct - 100.0).abs() < f64::EPSILON);
-        assert_eq!(full[1].block_height, 101);
+        assert_eq!(full[0].duration_seconds, 60);
+        assert_eq!(
+            luck_round_response_from_db(full[0].clone()).effort_pct,
+            100.0
+        );
+        assert_eq!(full[1].block_height, base_height + 1);
         assert_eq!(full[1].round_work, 100);
 
-        let truncated =
-            compute_luck_history(&store, blocks, Some(1)).expect("truncated luck history");
+        let (truncated, _total) = store
+            .get_luck_rounds_page(1, 0)
+            .expect("truncated paged luck history");
+        let truncated = truncated
+            .into_iter()
+            .filter(|row| row.block_height >= base_height && row.block_height <= base_height + 2)
+            .collect::<Vec<_>>();
         assert_eq!(truncated.len(), 1);
-        assert_eq!(truncated[0].block_height, 102);
+        assert_eq!(truncated[0].block_height, base_height + 2);
     }
 
     #[test]
-    fn compute_luck_details_for_hashes_returns_only_requested_rows() {
+    fn get_luck_rounds_for_hashes_returns_only_requested_rows() {
         let store = require_test_store!();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
         let base = UNIX_EPOCH + Duration::from_secs(3_000_000);
+        let base_height = 710_000_000 + (unique % 10_000) as u64 * 10;
+        let requested_hash = format!("blk-{unique}-102");
 
         for (job_id, created_at, difficulty) in [
-            ("job-1", base + Duration::from_secs(10), 40_u64),
-            ("job-1", base + Duration::from_secs(20), 60_u64),
-            ("job-2", base + Duration::from_secs(70), 100_u64),
+            (
+                format!("job-{unique}-1"),
+                base + Duration::from_secs(10),
+                40_u64,
+            ),
+            (
+                format!("job-{unique}-1"),
+                base + Duration::from_secs(20),
+                60_u64,
+            ),
+            (
+                format!("job-{unique}-2"),
+                base + Duration::from_secs(70),
+                100_u64,
+            ),
         ] {
             store
                 .add_share(ShareRecord {
-                    job_id: job_id.to_string(),
+                    job_id,
                     miner: "miner-a".to_string(),
                     worker: "wa".to_string(),
                     difficulty,
@@ -11612,14 +11920,22 @@ mod tests {
         }
 
         for (height, hash, timestamp) in [
-            (100_u64, "blk-100", base),
-            (101_u64, "blk-101", base + Duration::from_secs(60)),
-            (102_u64, "blk-102", base + Duration::from_secs(120)),
+            (base_height, format!("blk-{unique}-100"), base),
+            (
+                base_height + 1,
+                format!("blk-{unique}-101"),
+                base + Duration::from_secs(60),
+            ),
+            (
+                base_height + 2,
+                requested_hash.clone(),
+                base + Duration::from_secs(120),
+            ),
         ] {
             store
                 .add_block(&DbBlock {
                     height,
-                    hash: hash.to_string(),
+                    hash,
                     difficulty: 100,
                     finder: "miner-a".to_string(),
                     finder_worker: "wa".to_string(),
@@ -11633,28 +11949,60 @@ mod tests {
                 .expect("add block");
         }
 
-        let details = compute_luck_details_for_hashes(
-            &store,
-            store.get_all_blocks().expect("blocks"),
-            &HashSet::from([String::from("blk-102")]),
-        )
-        .expect("details");
+        let details = store
+            .get_luck_rounds_for_hashes(std::slice::from_ref(&requested_hash))
+            .expect("details");
 
         assert_eq!(details.len(), 1);
-        let row = details.get("blk-102").expect("row");
-        assert_eq!(row.block_height, 102);
+        let row = details.get(&requested_hash).expect("row");
+        assert_eq!(row.block_height, base_height + 2);
         assert_eq!(row.round_work, 100);
 
+        let row = luck_round_response_from_db(row.clone());
         let response = block_page_item_response(
             store
-                .get_block(102)
+                .get_block(base_height + 2)
                 .expect("get block")
                 .expect("block exists"),
-            Some(row),
+            Some(&row),
         );
         assert_eq!(response.effort_pct, Some(100.0));
         assert_eq!(response.duration_seconds, Some(60));
         assert!(response.effort_band.is_some());
+    }
+
+    #[test]
+    fn miner_has_any_activity_detects_historical_share_history() {
+        let store = require_test_store!();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let address = format!("miner-activity-{unique}");
+
+        assert!(!store
+            .miner_has_any_activity(&address)
+            .expect("address should start inactive"));
+
+        store
+            .add_share(ShareRecord {
+                job_id: format!("job-activity-{unique}"),
+                miner: address.clone(),
+                worker: "wa".to_string(),
+                difficulty: 32,
+                nonce: 32,
+                status: "verified",
+                was_sampled: true,
+                block_hash: None,
+                claimed_hash: None,
+                reject_reason: None,
+                created_at: UNIX_EPOCH + Duration::from_secs(4_000_000),
+            })
+            .expect("add share");
+
+        assert!(store
+            .miner_has_any_activity(&address)
+            .expect("address should have activity after share"));
     }
 
     #[test]

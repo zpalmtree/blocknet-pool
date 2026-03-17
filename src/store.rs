@@ -86,6 +86,10 @@ impl PoolStore {
         self.inner.get_address_risk(address)
     }
 
+    pub fn miner_has_any_activity(&self, address: &str) -> Result<bool> {
+        self.inner.miner_has_any_activity(address)
+    }
+
     pub fn list_active_verification_holds(
         &self,
         provisional_cutoff: SystemTime,
@@ -105,6 +109,14 @@ impl PoolStore {
     ) -> Result<Option<ValidationHoldState>> {
         self.inner
             .validation_hold_state(address, provisional_cutoff)
+    }
+
+    pub fn active_force_verify_addresses(
+        &self,
+        addresses: &[String],
+        now: SystemTime,
+    ) -> Result<HashSet<String>> {
+        self.inner.active_force_verify_addresses(addresses, now)
     }
 
     pub fn load_pending_payout_audit_shares(
