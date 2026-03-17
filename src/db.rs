@@ -144,6 +144,8 @@ pub struct Payout {
     pub tx_hash: String,
     pub timestamp: SystemTime,
     pub confirmed: bool,
+    #[serde(skip_serializing)]
+    pub batch_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -169,6 +171,15 @@ pub struct PendingPayout {
     pub fee: Option<u64>,
     #[serde(skip_serializing)]
     pub sent_at: Option<SystemTime>,
+    #[serde(skip_serializing)]
+    pub batch_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingPayoutBatchMember {
+    pub address: String,
+    pub amount: u64,
+    pub fee: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]

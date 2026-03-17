@@ -870,6 +870,17 @@ struct PayoutEtaResponse {
     wallet_pending: Option<u64>,
     queue_shortfall_amount: u64,
     liquidity_constrained: bool,
+    reserve_target_amount: Option<u64>,
+    safe_spend_budget: Option<u64>,
+    spendable_output_count: Option<usize>,
+    small_output_count: Option<usize>,
+    medium_output_count: Option<usize>,
+    large_output_count: Option<usize>,
+    planned_batch_count: Option<usize>,
+    planned_recipient_count: Option<usize>,
+    rebalance_required: bool,
+    rebalance_active: bool,
+    inventory_health: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -4873,6 +4884,8 @@ struct PublicPayout {
     tx_hashes: Vec<String>,
     timestamp: SystemTime,
     confirmed: bool,
+    #[serde(skip_serializing)]
+    batch_id: Option<String>,
 }
 
 /// Group payouts into batches by timestamp proximity (5 min window).
@@ -4883,13 +4896,20 @@ fn batch_payouts(payouts: &[Payout]) -> Vec<PublicPayout> {
     let batch_window = Duration::from_secs(5 * 60);
     let mut batches: Vec<PublicPayout> = Vec::new();
     for p in payouts {
+        let payout_batch_id = p
+            .batch_id
+            .as_deref()
+            .filter(|value| !value.trim().is_empty());
         let merged = batches.last_mut().and_then(|b| {
+            let same_batch_id = payout_batch_id
+                .zip(b.batch_id.as_deref())
+                .is_some_and(|(a, b)| a == b);
             let diff = b
                 .timestamp
                 .duration_since(p.timestamp)
                 .or_else(|_| p.timestamp.duration_since(b.timestamp))
                 .unwrap_or(Duration::ZERO);
-            if diff <= batch_window {
+            if same_batch_id || diff <= batch_window {
                 Some(b)
             } else {
                 None
@@ -4900,6 +4920,9 @@ fn batch_payouts(payouts: &[Payout]) -> Vec<PublicPayout> {
             batch.total_fee += p.fee;
             batch.recipient_count += 1;
             batch.confirmed &= p.confirmed;
+            if batch.batch_id.is_none() {
+                batch.batch_id = payout_batch_id.map(str::to_string);
+            }
             if !p.tx_hash.is_empty() {
                 batch.tx_hashes.push(p.tx_hash.clone());
             }
@@ -4915,6 +4938,7 @@ fn batch_payouts(payouts: &[Payout]) -> Vec<PublicPayout> {
                 },
                 timestamp: p.timestamp,
                 confirmed: p.confirmed,
+                batch_id: payout_batch_id.map(str::to_string),
             });
         }
     }
@@ -6474,6 +6498,17 @@ fn compute_payout_eta(store: &PoolStore) -> anyhow::Result<PayoutEtaResponse> {
         wallet_pending: None,
         queue_shortfall_amount: 0,
         liquidity_constrained: false,
+        reserve_target_amount: None,
+        safe_spend_budget: None,
+        spendable_output_count: None,
+        small_output_count: None,
+        medium_output_count: None,
+        large_output_count: None,
+        planned_batch_count: None,
+        planned_recipient_count: None,
+        rebalance_required: false,
+        rebalance_active: false,
+        inventory_health: None,
     })
 }
 
@@ -6493,6 +6528,19 @@ fn apply_runtime_schedule_to_payout_eta(
             .ok()
             .map(|duration| duration.as_secs())
     });
+    payout_eta.reserve_target_amount =
+        (runtime.reserve_target_amount > 0).then_some(runtime.reserve_target_amount);
+    payout_eta.safe_spend_budget = Some(runtime.safe_spend_budget);
+    payout_eta.spendable_output_count = Some(runtime.spendable_output_count);
+    payout_eta.small_output_count = Some(runtime.small_output_count);
+    payout_eta.medium_output_count = Some(runtime.medium_output_count);
+    payout_eta.large_output_count = Some(runtime.large_output_count);
+    payout_eta.planned_batch_count = Some(runtime.planned_batch_count);
+    payout_eta.planned_recipient_count = Some(runtime.planned_recipient_count);
+    payout_eta.rebalance_required = runtime.rebalance_required;
+    payout_eta.rebalance_active = runtime.rebalance_active;
+    payout_eta.inventory_health =
+        (!runtime.inventory_health.trim().is_empty()).then(|| runtime.inventory_health.clone());
 }
 
 fn apply_wallet_liquidity_to_payout_eta(
@@ -6743,6 +6791,7 @@ async fn handle_public_payouts(
             tx_hashes: batch.tx_hashes,
             timestamp: batch.timestamp,
             confirmed: batch.confirmed,
+            batch_id: None,
         })
         .collect::<Vec<_>>();
     let returned = items.len();
@@ -11100,6 +11149,7 @@ mod tests {
             tx_hash: None,
             fee: None,
             sent_at: None,
+            batch_id: None,
         };
         let queued_note =
             payout_status_note(&cfg, 250_000_000, Some(&queued)).expect("queued note");
@@ -11119,6 +11169,7 @@ mod tests {
                 tx_hash: "tx-confirmed".to_string(),
                 timestamp: t0,
                 confirmed: true,
+                batch_id: None,
             },
             Payout {
                 id: 0,
@@ -11128,6 +11179,7 @@ mod tests {
                 tx_hash: "tx-pending".to_string(),
                 timestamp: t0 + Duration::from_secs(30),
                 confirmed: false,
+                batch_id: None,
             },
         ]);
 
@@ -11135,6 +11187,37 @@ mod tests {
         assert_eq!(batches[0].recipient_count, 2);
         assert_eq!(batches[0].total_amount, 300);
         assert!(!batches[0].confirmed);
+    }
+
+    #[test]
+    fn batch_payouts_uses_batch_id_across_time_gap() {
+        let t0 = UNIX_EPOCH + Duration::from_secs(20_000);
+        let batches = batch_payouts(&[
+            Payout {
+                id: 1,
+                address: "miner-a".to_string(),
+                amount: 100,
+                fee: 1,
+                tx_hash: "tx-a".to_string(),
+                timestamp: t0,
+                confirmed: true,
+                batch_id: Some("batch-1".to_string()),
+            },
+            Payout {
+                id: 2,
+                address: "miner-b".to_string(),
+                amount: 200,
+                fee: 2,
+                tx_hash: "tx-a".to_string(),
+                timestamp: t0 + Duration::from_secs(15 * 60),
+                confirmed: true,
+                batch_id: Some("batch-1".to_string()),
+            },
+        ]);
+
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].recipient_count, 2);
+        assert_eq!(batches[0].total_amount, 300);
     }
 
     #[test]
@@ -11152,6 +11235,7 @@ mod tests {
             tx_hash: None,
             fee: None,
             sent_at: None,
+            batch_id: None,
         };
         let response = miner_balance_response(&balance, Some(&queued));
         assert_eq!(response.pending, 250);
@@ -12624,6 +12708,17 @@ mod tests {
             wallet_pending: None,
             queue_shortfall_amount: 0,
             liquidity_constrained: false,
+            reserve_target_amount: None,
+            safe_spend_budget: None,
+            spendable_output_count: None,
+            small_output_count: None,
+            medium_output_count: None,
+            large_output_count: None,
+            planned_batch_count: None,
+            planned_recipient_count: None,
+            rebalance_required: false,
+            rebalance_active: false,
+            inventory_health: None,
         };
         let wallet_balance = WalletBalance {
             spendable: 25,

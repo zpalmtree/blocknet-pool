@@ -12,8 +12,9 @@ use tracing::warn;
 use crate::db::{
     ActiveVerificationHold, AddressRiskState, Balance, BlockCreditEvent, DbBlock, DbLuckRound,
     DbShare, MonitorHeartbeat, MonitorHeartbeatUpsert, MonitorIncident, MonitorIncidentUpsert,
-    Payout, PendingPayout, PoolFeeEvent, PoolFeeRecord, PublicPayoutBatch, ShareReplayData,
-    ShareReplayUpdate, ValidationHoldCause, ValidationHoldState,
+    Payout, PendingPayout, PendingPayoutBatchMember, PoolFeeEvent, PoolFeeRecord,
+    PublicPayoutBatch, ShareReplayData, ShareReplayUpdate, ValidationHoldCause,
+    ValidationHoldState,
 };
 use crate::engine::{ShareRecord, ShareStore};
 use crate::stats::RejectionReasonCount;
@@ -501,6 +502,20 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .context("ensure pending_payouts.fee column")?;
         conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS sent_at BIGINT")
             .context("ensure pending_payouts.sent_at column")?;
+        conn.batch_execute("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS batch_id TEXT")
+            .context("ensure payouts.batch_id column")?;
+        conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS batch_id TEXT")
+            .context("ensure pending_payouts.batch_id column")?;
+        conn.batch_execute(
+            "CREATE INDEX IF NOT EXISTS idx_payouts_batch_id
+             ON payouts(batch_id)",
+        )
+        .context("ensure payouts.batch_id index")?;
+        conn.batch_execute(
+            "CREATE INDEX IF NOT EXISTS idx_pending_payouts_batch_id
+             ON pending_payouts(batch_id)",
+        )
+        .context("ensure pending_payouts.batch_id index")?;
         conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS reject_reason TEXT")
             .context("ensure shares.reject_reason column")?;
         conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS claimed_hash TEXT")
@@ -1743,14 +1758,27 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     }
 
     pub fn add_payout(&self, address: &str, amount: u64, fee: u64, tx_hash: &str) -> Result<()> {
+        self.add_payout_with_batch(address, amount, fee, tx_hash, None)
+    }
+
+    pub fn add_payout_with_batch(
+        &self,
+        address: &str,
+        amount: u64,
+        fee: u64,
+        tx_hash: &str,
+        batch_id: Option<&str>,
+    ) -> Result<()> {
         self.conn().lock().execute(
-            "INSERT INTO payouts (address, amount, fee, tx_hash, timestamp) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO payouts (address, amount, fee, tx_hash, timestamp, batch_id)
+             VALUES ($1, $2, $3, $4, $5, $6)",
             &[
                 &address,
                 &u64_to_i64(amount)?,
                 &u64_to_i64(fee)?,
                 &tx_hash,
                 &now_unix(),
+                &batch_id,
             ],
         )?;
         Ok(())
@@ -1758,7 +1786,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_recent_payouts(&self, limit: i64) -> Result<Vec<Payout>> {
         let rows = self.conn().lock().query(
-            "SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed
+            "SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed, batch_id
              FROM payouts
              ORDER BY id DESC
              LIMIT $1",
@@ -1769,7 +1797,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_recent_payouts_for_address(&self, address: &str, limit: i64) -> Result<Vec<Payout>> {
         let rows = self.conn().lock().query(
-            "SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed
+            "SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed, batch_id
              FROM payouts
              WHERE address = $1
              ORDER BY id DESC
@@ -1785,9 +1813,9 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         limit: i64,
     ) -> Result<Vec<Payout>> {
         let rows = self.conn().lock().query(
-            "SELECT id, address, amount, fee, tx_hash, timestamp, confirmed
+            "SELECT id, address, amount, fee, tx_hash, timestamp, confirmed, batch_id
              FROM (
-                 SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed
+                 SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed, batch_id
                  FROM payouts
                  WHERE address = $1
                  UNION ALL
@@ -1798,7 +1826,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                      COALESCE(fee, 0) AS fee,
                      tx_hash,
                      COALESCE(sent_at, send_started_at, initiated_at) AS timestamp,
-                     0 AS confirmed
+                     0 AS confirmed,
+                     batch_id
                  FROM pending_payouts
                  WHERE address = $1
                    AND tx_hash IS NOT NULL
@@ -1854,9 +1883,9 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let total: i64 = total_row.get(0);
 
         let sql = format!(
-            "SELECT id, address, amount, fee, tx_hash, timestamp, confirmed
+            "SELECT id, address, amount, fee, tx_hash, timestamp, confirmed, batch_id
              FROM (
-                 SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed
+                 SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed, batch_id
                  FROM payouts
                  UNION ALL
                  SELECT
@@ -1866,7 +1895,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                      COALESCE(fee, 0)::bigint AS fee,
                      tx_hash,
                      COALESCE(sent_at, send_started_at, initiated_at) AS timestamp,
-                     0 AS confirmed
+                     0 AS confirmed,
+                     batch_id
                  FROM pending_payouts
                  WHERE tx_hash IS NOT NULL
                    AND BTRIM(tx_hash) <> ''
@@ -1900,25 +1930,31 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         offset: i64,
     ) -> Result<(Vec<PublicPayoutBatch>, u64)> {
         let order_clause = match sort {
-            "time_asc" => "bucket ASC",
-            "amount_desc" => "total_amount DESC, bucket DESC",
-            "amount_asc" => "total_amount ASC, bucket DESC",
-            _ => "bucket DESC",
+            "time_asc" => "batch_ts ASC",
+            "amount_desc" => "total_amount DESC, batch_ts DESC",
+            "amount_asc" => "total_amount ASC, batch_ts DESC",
+            _ => "batch_ts DESC",
         };
 
         let mut conn = self.conn().lock();
         let total_row = conn.query_one(
             "SELECT COUNT(*) FROM (
-                SELECT (timestamp / 300) AS bucket
+                SELECT batch_key
                 FROM (
-                    SELECT timestamp FROM payouts
+                    SELECT
+                        COALESCE(NULLIF(batch_id, ''), CONCAT('legacy:', (timestamp / 300)::text)) AS batch_key
+                    FROM payouts
                     UNION ALL
-                    SELECT COALESCE(sent_at, send_started_at, initiated_at) AS timestamp
+                    SELECT
+                        COALESCE(
+                            NULLIF(batch_id, ''),
+                            CONCAT('legacy:', (COALESCE(sent_at, send_started_at, initiated_at) / 300)::text)
+                        ) AS batch_key
                     FROM pending_payouts
                     WHERE tx_hash IS NOT NULL
                       AND BTRIM(tx_hash) <> ''
                 ) visible
-                GROUP BY bucket
+                GROUP BY batch_key
             ) grouped",
             &[],
         )?;
@@ -1926,7 +1962,13 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
         let sql = format!(
             "WITH visible AS (
-                SELECT amount, fee, tx_hash, timestamp, 1 AS confirmed
+                SELECT
+                    amount,
+                    fee,
+                    tx_hash,
+                    timestamp,
+                    1 AS confirmed,
+                    COALESCE(NULLIF(batch_id, ''), CONCAT('legacy:', (timestamp / 300)::text)) AS batch_key
                 FROM payouts
                 UNION ALL
                 SELECT
@@ -1934,22 +1976,26 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     COALESCE(fee, 0)::bigint AS fee,
                     tx_hash,
                     COALESCE(sent_at, send_started_at, initiated_at) AS timestamp,
-                    0 AS confirmed
+                    0 AS confirmed,
+                    COALESCE(
+                        NULLIF(batch_id, ''),
+                        CONCAT('legacy:', (COALESCE(sent_at, send_started_at, initiated_at) / 300)::text)
+                    ) AS batch_key
                 FROM pending_payouts
                 WHERE tx_hash IS NOT NULL
                   AND BTRIM(tx_hash) <> ''
              ),
              grouped AS (
                 SELECT
-                    (timestamp / 300) AS bucket,
+                    batch_key,
                     SUM(amount)::bigint AS total_amount,
                     SUM(fee)::bigint AS total_fee,
                     COUNT(*)::bigint AS recipient_count,
-                    STRING_AGG(tx_hash, ',') AS tx_hashes,
+                    STRING_AGG(DISTINCT tx_hash, ',') AS tx_hashes,
                     MAX(timestamp)::bigint AS batch_ts,
                     MIN(confirmed)::bigint AS confirmed
                 FROM visible
-                GROUP BY bucket
+                GROUP BY batch_key
              )
              SELECT total_amount, total_fee, recipient_count, tx_hashes, batch_ts, confirmed
              FROM grouped
@@ -2944,9 +2990,15 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn create_pending_payout(&self, address: &str, amount: u64) -> Result<()> {
         self.conn().lock().execute(
-            "INSERT INTO pending_payouts (address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at)
-             VALUES ($1, $2, $3, NULL, NULL, NULL, NULL)
-             ON CONFLICT(address) DO UPDATE SET amount = EXCLUDED.amount, tx_hash = NULL, fee = NULL, sent_at = NULL
+            "INSERT INTO pending_payouts (
+                address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at, batch_id
+             ) VALUES ($1, $2, $3, NULL, NULL, NULL, NULL, NULL)
+             ON CONFLICT(address) DO UPDATE
+             SET amount = EXCLUDED.amount,
+                 tx_hash = NULL,
+                 fee = NULL,
+                 sent_at = NULL,
+                 batch_id = NULL
              WHERE pending_payouts.send_started_at IS NULL",
             &[&address, &u64_to_i64(amount)?, &now_unix()],
         )?;
@@ -2954,30 +3006,43 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     }
 
     pub fn mark_pending_payout_send_started(&self, address: &str) -> Result<Option<PendingPayout>> {
+        let mut rows = self.mark_pending_payouts_send_started_batch(&[address.to_string()], "")?;
+        Ok(rows.pop())
+    }
+
+    pub fn mark_pending_payouts_send_started_batch(
+        &self,
+        addresses: &[String],
+        batch_id: &str,
+    ) -> Result<Vec<PendingPayout>> {
+        if addresses.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut conn = self.conn().lock();
         let mut tx = conn.transaction()?;
-        tx.execute(
-            "UPDATE pending_payouts
-             SET send_started_at = COALESCE(send_started_at, $2)
-             WHERE address = $1",
-            &[&address, &now_unix()],
-        )?;
-        let row = tx.query_opt(
-            "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at
-             FROM pending_payouts
-             WHERE address = $1",
-            &[&address],
-        )?;
+        let started_at = now_unix();
+        let batch_id = batch_id.trim();
+        let batch_id_param = (!batch_id.is_empty()).then_some(batch_id);
+        let mut rows = Vec::with_capacity(addresses.len());
+        for address in addresses {
+            tx.execute(
+                "UPDATE pending_payouts
+                 SET send_started_at = COALESCE(send_started_at, $2),
+                     batch_id = COALESCE(batch_id, $3)
+                 WHERE address = $1",
+                &[&address, &started_at, &batch_id_param],
+            )?;
+            if let Some(row) = tx.query_opt(
+                "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at, batch_id
+                 FROM pending_payouts
+                 WHERE address = $1",
+                &[&address],
+            )? {
+                rows.push(row_to_pending_payout(&row));
+            }
+        }
         tx.commit()?;
-        Ok(row.map(|row| PendingPayout {
-            address: row.get::<_, String>(0),
-            amount: row.get::<_, i64>(1).max(0) as u64,
-            initiated_at: from_unix(row.get::<_, i64>(2)),
-            send_started_at: row.get::<_, Option<i64>>(3).map(from_unix),
-            tx_hash: row.get(4),
-            fee: row.get::<_, Option<i64>>(5).map(|v| v.max(0) as u64),
-            sent_at: row.get::<_, Option<i64>>(6).map(from_unix),
-        }))
+        Ok(rows)
     }
 
     pub fn record_pending_payout_broadcast(
@@ -2987,72 +3052,117 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         fee: u64,
         tx_hash: &str,
     ) -> Result<PendingPayout> {
+        let mut recorded = self.record_pending_payout_batch_broadcast(
+            &[PendingPayoutBatchMember {
+                address: address.to_string(),
+                amount,
+                fee,
+            }],
+            "",
+            tx_hash,
+        )?;
+        recorded
+            .pop()
+            .ok_or_else(|| anyhow!("no pending payout for {address}"))
+    }
+
+    pub fn record_pending_payout_batch_broadcast(
+        &self,
+        members: &[PendingPayoutBatchMember],
+        batch_id: &str,
+        tx_hash: &str,
+    ) -> Result<Vec<PendingPayout>> {
+        if members.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut conn = self.conn().lock();
         let mut tx = conn.transaction()?;
-
-        let pending = tx.query_opt(
-            "SELECT amount, tx_hash, fee FROM pending_payouts WHERE address = $1",
-            &[&address],
-        )?;
-        let Some(pending_row) = pending else {
-            return Err(anyhow!("no pending payout for {address}"));
-        };
-        let pending_amount = pending_row.get::<_, i64>(0).max(0) as u64;
-        if pending_amount != amount {
-            return Err(anyhow!(
-                "pending payout amount mismatch: expected={}, requested={}",
-                pending_amount,
-                amount
-            ));
-        }
-        let existing_tx_hash = pending_row.get::<_, Option<String>>(1);
-        if let Some(existing_tx_hash) = existing_tx_hash.as_deref() {
-            if existing_tx_hash != tx_hash {
+        let sent_at = now_unix();
+        let batch_id = batch_id.trim();
+        let explicit_batch_id = (!batch_id.is_empty()).then_some(batch_id);
+        let mut recorded = Vec::with_capacity(members.len());
+        for member in members {
+            let pending = tx.query_opt(
+                "SELECT amount, tx_hash, fee, batch_id FROM pending_payouts WHERE address = $1",
+                &[&member.address],
+            )?;
+            let Some(pending_row) = pending else {
+                return Err(anyhow!("no pending payout for {}", member.address));
+            };
+            let pending_amount = pending_row.get::<_, i64>(0).max(0) as u64;
+            if pending_amount != member.amount {
                 return Err(anyhow!(
-                    "pending payout tx mismatch: expected={}, requested={}",
-                    existing_tx_hash,
-                    tx_hash
+                    "pending payout amount mismatch for {}: expected={}, requested={}",
+                    member.address,
+                    pending_amount,
+                    member.amount
                 ));
             }
-        }
-        let existing_fee_raw = pending_row.get::<_, Option<i64>>(2);
-        if let Some(existing_fee_raw) = existing_fee_raw {
-            let existing_fee = existing_fee_raw.max(0) as u64;
-            if existing_fee != fee {
-                return Err(anyhow!(
-                    "pending payout fee mismatch: expected={}, requested={}",
-                    existing_fee,
-                    fee
-                ));
+            let existing_tx_hash = pending_row.get::<_, Option<String>>(1);
+            if let Some(existing_tx_hash) = existing_tx_hash.as_deref() {
+                if existing_tx_hash != tx_hash {
+                    return Err(anyhow!(
+                        "pending payout tx mismatch for {}: expected={}, requested={}",
+                        member.address,
+                        existing_tx_hash,
+                        tx_hash
+                    ));
+                }
             }
+            let existing_fee_raw = pending_row.get::<_, Option<i64>>(2);
+            if let Some(existing_fee_raw) = existing_fee_raw {
+                let existing_fee = existing_fee_raw.max(0) as u64;
+                if existing_fee != member.fee {
+                    return Err(anyhow!(
+                        "pending payout fee mismatch for {}: expected={}, requested={}",
+                        member.address,
+                        existing_fee,
+                        member.fee
+                    ));
+                }
+            }
+            let existing_batch_id = pending_row.get::<_, Option<String>>(3);
+            if let Some(existing_batch_id) = existing_batch_id.as_deref() {
+                if explicit_batch_id
+                    .filter(|candidate| *candidate != existing_batch_id)
+                    .is_some()
+                {
+                    return Err(anyhow!(
+                        "pending payout batch mismatch for {}: expected={}, requested={}",
+                        member.address,
+                        existing_batch_id,
+                        batch_id
+                    ));
+                }
+            }
+
+            tx.execute(
+                "UPDATE pending_payouts
+                 SET send_started_at = COALESCE(send_started_at, $2),
+                     tx_hash = $3,
+                     fee = $4,
+                     sent_at = COALESCE(sent_at, $2),
+                     batch_id = COALESCE(batch_id, $5)
+                 WHERE address = $1",
+                &[
+                    &member.address,
+                    &sent_at,
+                    &tx_hash,
+                    &u64_to_i64(member.fee)?,
+                    &explicit_batch_id,
+                ],
+            )?;
+
+            let row = tx.query_one(
+                "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at, batch_id
+                 FROM pending_payouts
+                 WHERE address = $1",
+                &[&member.address],
+            )?;
+            recorded.push(row_to_pending_payout(&row));
         }
-
-        tx.execute(
-            "UPDATE pending_payouts
-             SET send_started_at = COALESCE(send_started_at, $2),
-                 tx_hash = $3,
-                 fee = $4,
-                 sent_at = COALESCE(sent_at, $2)
-             WHERE address = $1",
-            &[&address, &now_unix(), &tx_hash, &u64_to_i64(fee)?],
-        )?;
-
-        let row = tx.query_one(
-            "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at
-             FROM pending_payouts
-             WHERE address = $1",
-            &[&address],
-        )?;
         tx.commit()?;
-        Ok(PendingPayout {
-            address: row.get::<_, String>(0),
-            amount: row.get::<_, i64>(1).max(0) as u64,
-            initiated_at: from_unix(row.get::<_, i64>(2)),
-            send_started_at: row.get::<_, Option<i64>>(3).map(from_unix),
-            tx_hash: row.get(4),
-            fee: row.get::<_, Option<i64>>(5).map(|v| v.max(0) as u64),
-            sent_at: row.get::<_, Option<i64>>(6).map(from_unix),
-        })
+        Ok(recorded)
     }
 
     pub fn reset_pending_payout_send_state(&self, address: &str) -> Result<()> {
@@ -3061,11 +3171,29 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              SET send_started_at = NULL,
                  tx_hash = NULL,
                  fee = NULL,
-                 sent_at = NULL
+                 sent_at = NULL,
+                 batch_id = NULL
              WHERE address = $1",
             &[&address],
         )?;
         Ok(())
+    }
+
+    pub fn reset_pending_payout_batch_send_state(&self, batch_id: &str) -> Result<u64> {
+        if batch_id.trim().is_empty() {
+            return Ok(0);
+        }
+        let updated = self.conn().lock().execute(
+            "UPDATE pending_payouts
+             SET send_started_at = NULL,
+                 tx_hash = NULL,
+                 fee = NULL,
+                 sent_at = NULL,
+                 batch_id = NULL
+             WHERE batch_id = $1",
+            &[&batch_id],
+        )?;
+        Ok(updated)
     }
 
     pub fn complete_pending_payout(
@@ -3075,11 +3203,17 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         fee: u64,
         tx_hash: &str,
     ) -> Result<()> {
+        let batch_id = self
+            .get_pending_payout(address)?
+            .and_then(|pending| pending.batch_id);
+        if let Some(batch_id) = batch_id.filter(|value| !value.trim().is_empty()) {
+            return self.complete_pending_payout_batch(&batch_id, tx_hash);
+        }
         let mut conn = self.conn().lock();
         let mut tx = conn.transaction()?;
 
         let pending = tx.query_opt(
-            "SELECT amount, initiated_at, send_started_at, sent_at, tx_hash, fee
+            "SELECT amount, initiated_at, send_started_at, sent_at, tx_hash, fee, batch_id
              FROM pending_payouts
              WHERE address = $1",
             &[&address],
@@ -3155,19 +3289,118 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         )?;
 
         tx.execute(
-            "INSERT INTO payouts (address, amount, fee, tx_hash, timestamp) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO payouts (address, amount, fee, tx_hash, timestamp, batch_id)
+             VALUES ($1, $2, $3, $4, $5, $6)",
             &[
                 &address,
                 &u64_to_i64(amount)?,
                 &u64_to_i64(fee)?,
                 &tx_hash,
                 &to_unix(sent_at.or(send_started_at).unwrap_or(initiated_at)),
+                &pending_row.get::<_, Option<String>>(6),
             ],
         )?;
 
         tx.execute(
             "DELETE FROM pending_payouts WHERE address = $1",
             &[&address],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn complete_pending_payout_batch(&self, batch_id: &str, tx_hash: &str) -> Result<()> {
+        if batch_id.trim().is_empty() {
+            return Err(anyhow!("batch_id is required"));
+        }
+        let mut conn = self.conn().lock();
+        let mut tx = conn.transaction()?;
+
+        let rows = tx.query(
+            "SELECT address, amount, initiated_at, send_started_at, sent_at, tx_hash, fee, batch_id
+             FROM pending_payouts
+             WHERE batch_id = $1
+             ORDER BY address ASC",
+            &[&batch_id],
+        )?;
+        if rows.is_empty() {
+            return Err(anyhow!("no pending payouts for batch {batch_id}"));
+        }
+
+        for row in rows {
+            let address = row.get::<_, String>(0);
+            let amount = row.get::<_, i64>(1).max(0) as u64;
+            let initiated_at = from_unix(row.get::<_, i64>(2));
+            let send_started_at = row.get::<_, Option<i64>>(3).map(from_unix);
+            let sent_at = row.get::<_, Option<i64>>(4).map(from_unix);
+            if let Some(pending_tx_hash) = row.get::<_, Option<String>>(5).as_deref() {
+                if pending_tx_hash != tx_hash {
+                    return Err(anyhow!(
+                        "pending payout tx mismatch for {}: expected={}, requested={}",
+                        address,
+                        pending_tx_hash,
+                        tx_hash
+                    ));
+                }
+            }
+            let fee = row
+                .get::<_, Option<i64>>(6)
+                .map(|value| value.max(0) as u64)
+                .unwrap_or_default();
+
+            let balance_row = tx.query_opt(
+                "SELECT address, pending, paid FROM balances WHERE address = $1",
+                &[&address],
+            )?;
+            let mut balance = if let Some(balance_row) = balance_row {
+                Balance {
+                    address: balance_row.get::<_, String>(0),
+                    pending: balance_row.get::<_, i64>(1).max(0) as u64,
+                    paid: balance_row.get::<_, i64>(2).max(0) as u64,
+                }
+            } else {
+                Balance {
+                    address: address.clone(),
+                    pending: 0,
+                    paid: 0,
+                }
+            };
+            if balance.pending < amount {
+                return Err(anyhow!("insufficient balance for {}", address));
+            }
+            balance.pending -= amount;
+            balance.paid = balance
+                .paid
+                .checked_add(amount)
+                .ok_or_else(|| anyhow!("paid overflow"))?;
+
+            tx.execute(
+                "INSERT INTO balances (address, pending, paid) VALUES ($1, $2, $3)
+                 ON CONFLICT(address) DO UPDATE SET pending = EXCLUDED.pending, paid = EXCLUDED.paid",
+                &[
+                    &balance.address,
+                    &u64_to_i64(balance.pending)?,
+                    &u64_to_i64(balance.paid)?,
+                ],
+            )?;
+
+            tx.execute(
+                "INSERT INTO payouts (address, amount, fee, tx_hash, timestamp, batch_id)
+                 VALUES ($1, $2, $3, $4, $5, $6)",
+                &[
+                    &address,
+                    &u64_to_i64(amount)?,
+                    &u64_to_i64(fee)?,
+                    &tx_hash,
+                    &to_unix(sent_at.or(send_started_at).unwrap_or(initiated_at)),
+                    &Some(batch_id.to_string()),
+                ],
+            )?;
+        }
+
+        tx.execute(
+            "DELETE FROM pending_payouts WHERE batch_id = $1",
+            &[&batch_id],
         )?;
         tx.commit()?;
         Ok(())
@@ -3183,41 +3416,25 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_pending_payouts(&self) -> Result<Vec<PendingPayout>> {
         let rows = self.conn().lock().query(
-            "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at
+            "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at, batch_id
              FROM pending_payouts
              ORDER BY initiated_at ASC",
             &[],
         )?;
         Ok(rows
             .into_iter()
-            .map(|row| PendingPayout {
-                address: row.get::<_, String>(0),
-                amount: row.get::<_, i64>(1).max(0) as u64,
-                initiated_at: from_unix(row.get::<_, i64>(2)),
-                send_started_at: row.get::<_, Option<i64>>(3).map(from_unix),
-                tx_hash: row.get(4),
-                fee: row.get::<_, Option<i64>>(5).map(|v| v.max(0) as u64),
-                sent_at: row.get::<_, Option<i64>>(6).map(from_unix),
-            })
+            .map(|row| row_to_pending_payout(&row))
             .collect())
     }
 
     pub fn get_pending_payout(&self, address: &str) -> Result<Option<PendingPayout>> {
         let row = self.conn().lock().query_opt(
-            "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at
+            "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at, batch_id
              FROM pending_payouts
              WHERE address = $1",
             &[&address],
         )?;
-        Ok(row.map(|row| PendingPayout {
-            address: row.get::<_, String>(0),
-            amount: row.get::<_, i64>(1).max(0) as u64,
-            initiated_at: from_unix(row.get::<_, i64>(2)),
-            send_started_at: row.get::<_, Option<i64>>(3).map(from_unix),
-            tx_hash: row.get(4),
-            fee: row.get::<_, Option<i64>>(5).map(|v| v.max(0) as u64),
-            sent_at: row.get::<_, Option<i64>>(6).map(from_unix),
-        }))
+        Ok(row.map(|row| row_to_pending_payout(&row)))
     }
 
     pub fn get_vardiff_hint(
@@ -4037,7 +4254,23 @@ fn row_to_payout(row: postgres::Row) -> Result<Payout> {
         tx_hash: row.get::<_, String>(4),
         timestamp: from_unix(row.get::<_, i64>(5)),
         confirmed: row_get_boolish(&row, 6)?,
+        batch_id: row.get::<_, Option<String>>(7),
     })
+}
+
+fn row_to_pending_payout(row: &postgres::Row) -> PendingPayout {
+    PendingPayout {
+        address: row.get::<_, String>(0),
+        amount: row.get::<_, i64>(1).max(0) as u64,
+        initiated_at: from_unix(row.get::<_, i64>(2)),
+        send_started_at: row.get::<_, Option<i64>>(3).map(from_unix),
+        tx_hash: row.get(4),
+        fee: row
+            .get::<_, Option<i64>>(5)
+            .map(|value| value.max(0) as u64),
+        sent_at: row.get::<_, Option<i64>>(6).map(from_unix),
+        batch_id: row.get::<_, Option<String>>(7),
+    }
 }
 
 fn row_to_public_payout_batch(row: postgres::Row) -> Result<PublicPayoutBatch> {

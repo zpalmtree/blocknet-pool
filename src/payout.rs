@@ -8,8 +8,14 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
-use crate::db::{Balance, DbBlock, DbShare, PendingPayout, PoolFeeRecord, ShareReplayUpdate};
-use crate::node::{http_error_body_contains, is_http_status, NodeClient, NodeStatus};
+use crate::db::{
+    Balance, DbBlock, DbShare, Payout, PendingPayout, PendingPayoutBatchMember, PoolFeeRecord,
+    ShareReplayUpdate,
+};
+use crate::node::{
+    http_error_body_contains, is_http_status, NodeClient, NodeStatus, WalletOutput,
+    WalletOutputRef, WalletRecipient,
+};
 use crate::pow::{check_target, difficulty_to_target, Argon2PowHasher, PowHasher};
 use crate::protocol::{address_network, validate_miner_address_for_network, AddressNetwork};
 use crate::store::PoolStore;
@@ -23,6 +29,12 @@ const PENDING_PAYOUT_RETRY_GRACE: Duration = Duration::from_secs(15 * 60);
 const PAYOUT_CONFIRMATIONS_REQUIRED: u64 = 1;
 const MIN_WALLET_SEND_SPACING: Duration = Duration::from_millis(2_100);
 const PAYOUT_TASK_SLOW_LOG_AFTER: Duration = Duration::from_millis(250);
+const DEFAULT_TARGET_RECIPIENTS_PER_TX: usize = 12;
+const MAX_RECIPIENTS_PER_TX: usize = 48;
+const MAX_TXS_PER_SWEEP: usize = 8;
+const MAX_CHANGE_SPLIT: u32 = 4;
+const REBALANCE_SPENDABLE_SHARE_NUMERATOR: u64 = 1;
+const REBALANCE_SPENDABLE_SHARE_DENOMINATOR: u64 = 4;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PayoutRuntimeSnapshot {
@@ -32,6 +44,28 @@ pub struct PayoutRuntimeSnapshot {
     pub maintenance_interval_seconds: u64,
     pub next_sweep_at: Option<SystemTime>,
     pub last_tick_at: Option<SystemTime>,
+    #[serde(default)]
+    pub reserve_target_amount: u64,
+    #[serde(default)]
+    pub safe_spend_budget: u64,
+    #[serde(default)]
+    pub spendable_output_count: usize,
+    #[serde(default)]
+    pub small_output_count: usize,
+    #[serde(default)]
+    pub medium_output_count: usize,
+    #[serde(default)]
+    pub large_output_count: usize,
+    #[serde(default)]
+    pub planned_batch_count: usize,
+    #[serde(default)]
+    pub planned_recipient_count: usize,
+    #[serde(default)]
+    pub rebalance_required: bool,
+    #[serde(default)]
+    pub rebalance_active: bool,
+    #[serde(default)]
+    pub inventory_health: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -74,6 +108,41 @@ struct AddressShareWeights {
 struct PayoutCandidate {
     balance: Balance,
     pending: PendingPayout,
+}
+
+#[derive(Debug, Clone, Default)]
+struct RecentPayoutStats {
+    median_batch_total: u64,
+    p90_batch_total: u64,
+    p50_recipient_count: usize,
+    p90_recipient_count: usize,
+    median_recipient_amount: u64,
+    p90_recipient_amount: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct OutputInventory {
+    spendable_count: usize,
+    small_count: usize,
+    medium_count: usize,
+    large_count: usize,
+    small_target_amount: u64,
+    medium_target_amount: u64,
+    large_target_amount: u64,
+    small_target_count: usize,
+    medium_target_count: usize,
+    large_target_count: usize,
+}
+
+#[derive(Debug, Clone)]
+struct PlannedPayoutBatch {
+    batch_id: String,
+    idempotency_key: String,
+    recipients: Vec<PayoutCandidate>,
+    recipient_total: u64,
+    inputs: Vec<WalletOutput>,
+    locked_amount: u64,
+    change_split: u32,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -553,11 +622,35 @@ impl PayoutProcessor {
         };
 
         let now = SystemTime::now();
+        let mut reset_batches = HashSet::<String>::new();
         for entry in pending {
             let queued_age = now.duration_since(entry.initiated_at).unwrap_or_default();
             if should_reset_stale_prebroadcast_pending_payout(&entry, now) {
                 let send_age = pending_send_age(&entry, now);
-                if let Err(err) = self.store.reset_pending_payout_send_state(&entry.address) {
+                if let Some(batch_id) = entry
+                    .batch_id
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                {
+                    if reset_batches.insert(batch_id.to_string()) {
+                        if let Err(err) = self.store.reset_pending_payout_batch_send_state(batch_id)
+                        {
+                            tracing::warn!(
+                                batch_id = %batch_id,
+                                error = %err,
+                                "failed to reset stale pre-broadcast payout batch on startup"
+                            );
+                        } else {
+                            tracing::warn!(
+                                batch_id = %batch_id,
+                                queued_age_secs = queued_age.as_secs(),
+                                send_age_secs = send_age.as_secs(),
+                                "reset stale pre-broadcast payout batch on startup"
+                            );
+                        }
+                    }
+                } else if let Err(err) = self.store.reset_pending_payout_send_state(&entry.address)
+                {
                     tracing::warn!(
                         address = %entry.address,
                         amount = entry.amount,
@@ -651,18 +744,20 @@ impl PayoutProcessor {
             return;
         }
 
+        let now = SystemTime::now();
+        let payout_interval = bounded_payout_interval(self.cfg.payout_interval_duration());
         let min_amount = atomic_amount_from_coins(self.cfg.min_payout_amount);
         let max_recipients_per_tick = if self.cfg.payout_max_recipients_per_tick <= 0 {
-            None
+            usize::MAX
         } else {
-            Some(self.cfg.payout_max_recipients_per_tick as usize)
+            self.cfg.payout_max_recipients_per_tick as usize
         };
         let max_total_per_tick = {
             let value = atomic_amount_from_coins(self.cfg.payout_max_total_per_tick);
             if value == 0 {
-                None
+                u64::MAX
             } else {
-                Some(value)
+                value
             }
         };
         let max_per_recipient = {
@@ -674,9 +769,6 @@ impl PayoutProcessor {
             }
         };
         let wait_priority_threshold = self.cfg.payout_wait_priority_threshold_duration();
-        let mut sent_recipients = 0usize;
-        let mut sent_total = 0u64;
-        let mut last_wallet_send_attempt = None::<Instant>;
         let expected_address_network = self.expected_payout_address_network();
         let balances = match self.store.get_all_balances() {
             Ok(v) => v,
@@ -769,104 +861,168 @@ impl PayoutProcessor {
             });
         }
 
-        sort_payout_candidates(&mut candidates, SystemTime::now(), wait_priority_threshold);
+        sort_payout_candidates(&mut candidates, now, wait_priority_threshold);
 
-        for candidate in candidates {
-            if max_recipients_per_tick.is_some_and(|cap| sent_recipients >= cap) {
-                tracing::warn!(
-                    cap = max_recipients_per_tick.unwrap_or(0),
-                    sent_recipients,
-                    sent_total,
-                    "stopping payout tick due to max recipient cap"
+        let mut queued = candidates
+            .into_iter()
+            .filter(|candidate| {
+                candidate.pending.tx_hash.is_none() && candidate.pending.send_started_at.is_none()
+            })
+            .collect::<Vec<_>>();
+
+        let wallet_balance = match self.node.get_wallet_balance() {
+            Ok(v) => v,
+            Err(err) => {
+                tracing::warn!(error = %err, "failed wallet balance check");
+                return;
+            }
+        };
+        let wallet_outputs = match self.node.get_wallet_outputs() {
+            Ok(v) => v,
+            Err(err) => {
+                tracing::warn!(error = %err, "failed wallet outputs check");
+                return;
+            }
+        };
+        let recent_stats = self.load_recent_payout_stats();
+        let mut spendable_outputs = wallet_outputs
+            .outputs
+            .into_iter()
+            .filter(WalletOutput::is_spendable)
+            .collect::<Vec<_>>();
+        let mut inventory = build_output_inventory(&spendable_outputs, min_amount, &recent_stats);
+        let reserve_target =
+            compute_reserve_target(min_amount, &recent_stats, inventory.medium_target_amount);
+        let oldest_age = queued
+            .first()
+            .map(|candidate| payout_wait_age(&candidate.pending, now))
+            .unwrap_or_default();
+        let initial_spendable = sum_output_amounts(&spendable_outputs);
+        let mut safe_spend_budget = compute_safe_spend_budget(
+            initial_spendable,
+            reserve_target,
+            oldest_age,
+            payout_interval,
+        );
+        let mut planned_batch_count = 0usize;
+        let mut planned_recipient_count = 0usize;
+        let mut rebalance_active = false;
+        let rebalance_required = !inventory_is_healthy(&inventory);
+        self.update_liquidity_runtime_snapshot(
+            reserve_target,
+            safe_spend_budget,
+            &inventory,
+            planned_batch_count,
+            planned_recipient_count,
+            rebalance_required,
+            rebalance_active,
+        );
+
+        if queued.is_empty() {
+            if rebalance_required {
+                rebalance_active = self.maybe_rebalance_outputs(
+                    &wallet_balance,
+                    &spendable_outputs,
+                    &inventory,
+                    reserve_target,
                 );
+            }
+            self.update_liquidity_runtime_snapshot(
+                reserve_target,
+                safe_spend_budget,
+                &inventory,
+                planned_batch_count,
+                planned_recipient_count,
+                rebalance_required,
+                rebalance_active,
+            );
+            return;
+        }
+
+        let target_recipients_per_tx =
+            adaptive_target_recipients_per_tx(&recent_stats).min(max_recipients_per_tick.max(1));
+        let max_txs_per_sweep =
+            adaptive_max_txs_per_sweep(max_recipients_per_tick, target_recipients_per_tx);
+        let mut sent_recipients = 0usize;
+        let mut sent_total = 0u64;
+        let mut sent_txs = 0usize;
+        let mut last_wallet_send_attempt = None::<Instant>;
+
+        while !queued.is_empty()
+            && sent_txs < max_txs_per_sweep
+            && sent_recipients < max_recipients_per_tick
+            && sent_total < max_total_per_tick
+        {
+            let remaining_recipient_cap = max_recipients_per_tick.saturating_sub(sent_recipients);
+            if remaining_recipient_cap == 0 || spendable_outputs.is_empty() {
                 break;
             }
-            if max_total_per_tick.is_some_and(|cap| sent_total >= cap) {
-                tracing::warn!(
-                    cap = max_total_per_tick.unwrap_or(0),
-                    sent_recipients,
-                    sent_total,
-                    "stopping payout tick due to max payout total cap"
-                );
+
+            let current_spendable = sum_output_amounts(&spendable_outputs);
+            let oldest_age = payout_wait_age(&queued[0].pending, now);
+            safe_spend_budget = compute_safe_spend_budget(
+                current_spendable,
+                reserve_target,
+                oldest_age,
+                payout_interval,
+            );
+            if safe_spend_budget <= MIN_PAYOUT_FEE_BUFFER {
                 break;
             }
 
-            let bal = candidate.balance;
-            let pending = candidate.pending;
-            let pending_amount = pending.amount;
-
-            match self.reconcile_broadcast_payout(&bal.address, &pending) {
-                Ok(true) => continue,
-                Ok(false) => {}
-                Err(err) => {
-                    tracing::warn!(
-                        address = %bal.address,
-                        error = %err,
-                        "failed to reconcile broadcast payout state"
-                    );
-                    continue;
-                }
-            }
-            if bal.pending < pending_amount {
-                tracing::warn!(
-                    address = %bal.address,
-                    pending_amount,
-                    balance_pending = bal.pending,
-                    "pending payout exceeds local pending balance; skipping"
-                );
-                continue;
-            }
-            if let Some(cap) = max_total_per_tick {
-                if sent_total.saturating_add(pending_amount) > cap {
-                    tracing::warn!(
-                        cap,
-                        sent_total,
-                        next_amount = pending_amount,
-                        address = %bal.address,
-                        "skipping payout due to max payout total cap"
-                    );
-                    continue;
-                }
+            let mut batch_candidates = queued
+                .iter()
+                .take(target_recipients_per_tx.min(remaining_recipient_cap))
+                .cloned()
+                .collect::<Vec<_>>();
+            trim_batch_to_total_cap(
+                &mut batch_candidates,
+                max_total_per_tick.saturating_sub(sent_total),
+            );
+            if batch_candidates.is_empty() {
+                break;
             }
 
-            let wallet_balance = match self.node.get_wallet_balance() {
-                Ok(v) => v,
-                Err(err) => {
-                    tracing::warn!(error = %err, "failed wallet balance check");
-                    return;
-                }
-            };
-            if wallet_balance.spendable < pending_amount.saturating_add(MIN_PAYOUT_FEE_BUFFER) {
-                continue;
-            }
-
-            let pending = if pending.send_started_at.is_some() {
-                pending
-            } else {
-                match self.store.mark_pending_payout_send_started(&bal.address) {
-                    Ok(Some(v)) => v,
-                    Ok(None) => continue,
-                    Err(err) => {
-                        tracing::warn!(
-                            address = %bal.address,
-                            error = %err,
-                            "failed to freeze pending payout before send"
-                        );
-                        continue;
+            let plan = loop {
+                let queue_light = queued.len() <= (target_recipients_per_tx.max(2) / 2);
+                match self.plan_payout_batch(
+                    &batch_candidates,
+                    &spendable_outputs,
+                    &inventory,
+                    safe_spend_budget,
+                    queue_light,
+                ) {
+                    Some(plan) => break Some(plan),
+                    None if batch_candidates.len() > 1 => {
+                        batch_candidates.pop();
                     }
+                    None => break None,
                 }
             };
-
-            let pending_for_send = PendingPayout {
-                address: pending.address.clone(),
-                amount: pending_amount,
-                initiated_at: pending.initiated_at,
-                send_started_at: pending.send_started_at,
-                tx_hash: None,
-                fee: None,
-                sent_at: None,
+            let Some(plan) = plan else {
+                break;
             };
-            let idempotency_key = payout_idempotency_key(&pending_for_send);
+
+            planned_batch_count = planned_batch_count.saturating_add(1);
+            planned_recipient_count = planned_recipient_count.saturating_add(plan.recipients.len());
+
+            let addresses = plan
+                .recipients
+                .iter()
+                .map(|candidate| candidate.balance.address.clone())
+                .collect::<Vec<_>>();
+            if let Err(err) = self
+                .store
+                .mark_pending_payouts_send_started_batch(&addresses, &plan.batch_id)
+            {
+                tracing::warn!(
+                    batch_id = %plan.batch_id,
+                    error = %err,
+                    "failed to freeze payout batch before send"
+                );
+                break;
+            }
+
             if let Some(last_attempt) = last_wallet_send_attempt {
                 let elapsed = last_attempt.elapsed();
                 if elapsed < MIN_WALLET_SEND_SPACING {
@@ -874,66 +1030,139 @@ impl PayoutProcessor {
                 }
             }
             last_wallet_send_attempt = Some(Instant::now());
-            let send = self
-                .node
-                .wallet_send(&bal.address, pending_amount, &idempotency_key);
-            let sent = match send {
-                Ok(v) => v,
+
+            let recipients = plan
+                .recipients
+                .iter()
+                .map(|candidate| WalletRecipient {
+                    address: candidate.balance.address.clone(),
+                    amount: candidate.pending.amount,
+                })
+                .collect::<Vec<_>>();
+            let inputs = plan
+                .inputs
+                .iter()
+                .map(WalletOutputRef::from)
+                .collect::<Vec<_>>();
+
+            let sent = match self.node.wallet_send_advanced(
+                &recipients,
+                &inputs,
+                plan.change_split,
+                &plan.idempotency_key,
+                false,
+            ) {
+                Ok(sent) => sent,
                 Err(err) => {
                     if should_drop_pending_payout(&err) {
-                        if let Err(cancel_err) = self.store.cancel_pending_payout(&bal.address) {
+                        for candidate in &plan.recipients {
+                            if let Err(cancel_err) =
+                                self.store.cancel_pending_payout(&candidate.balance.address)
+                            {
+                                tracing::warn!(
+                                    address = %candidate.balance.address,
+                                    error = %cancel_err,
+                                    "wallet send failed permanently and pending payout cancel failed"
+                                );
+                            }
+                        }
+                        tracing::warn!(
+                            batch_id = %plan.batch_id,
+                            recipients = plan.recipients.len(),
+                            error = %err,
+                            "wallet send failed permanently; dropped payout batch"
+                        );
+                    } else if is_wallet_liquidity_error(&err) {
+                        if let Err(reset_err) = self
+                            .store
+                            .reset_pending_payout_batch_send_state(&plan.batch_id)
+                        {
                             tracing::warn!(
-                                address = %bal.address,
-                                error = %cancel_err,
-                                "wallet send failed permanently and pending payout cancel failed"
-                            );
-                        } else {
-                            tracing::warn!(
-                                address = %bal.address,
-                                error = %err,
-                                "wallet send failed permanently; dropped pending payout"
+                                batch_id = %plan.batch_id,
+                                error = %reset_err,
+                                "wallet liquidity failure could not reset payout batch"
                             );
                         }
-                    } else if is_wallet_liquidity_error(&err) {
                         tracing::info!(
-                            address = %bal.address,
-                            amount = pending_amount,
+                            batch_id = %plan.batch_id,
+                            locked_amount = plan.locked_amount,
+                            recipient_total = plan.recipient_total,
                             error = %err,
-                            "wallet liquidity insufficient to cover payout plus fee; retaining queued payout"
+                            "wallet liquidity insufficient for planned batch; retained queued payouts"
                         );
+                        break;
                     } else {
-                        tracing::warn!(address = %bal.address, error = %err, "wallet send failed");
+                        tracing::warn!(
+                            batch_id = %plan.batch_id,
+                            error = %err,
+                            "advanced wallet send failed; retaining idempotent retry state"
+                        );
                     }
+                    queued.drain(..plan.recipients.len());
                     continue;
                 }
             };
 
-            if let Err(err) = self.store.record_pending_payout_broadcast(
-                &bal.address,
-                pending_amount,
-                sent.fee,
+            let fee_members = allocate_batch_fees(&plan.recipients, sent.fee);
+            if let Err(err) = self.store.record_pending_payout_batch_broadcast(
+                &fee_members,
+                &plan.batch_id,
                 &sent.txid,
             ) {
                 tracing::error!(
-                    address = %bal.address,
+                    batch_id = %plan.batch_id,
                     tx = %sent.txid,
                     error = %err,
-                    "critical payout broadcast persistence failure"
+                    "critical payout batch broadcast persistence failure"
                 );
+                queued.drain(..plan.recipients.len());
                 continue;
             }
-            sent_recipients = sent_recipients.saturating_add(1);
-            sent_total = sent_total.saturating_add(pending_amount);
+
+            sent_txs = sent_txs.saturating_add(1);
+            sent_recipients = sent_recipients.saturating_add(plan.recipients.len());
+            sent_total = sent_total.saturating_add(plan.recipient_total);
+            remove_spent_outputs(&mut spendable_outputs, &plan.inputs);
+            inventory = build_output_inventory(&spendable_outputs, min_amount, &recent_stats);
 
             tracing::info!(
-                address = %bal.address,
-                amount = pending_amount,
+                batch_id = %plan.batch_id,
+                recipients = plan.recipients.len(),
+                amount = plan.recipient_total,
                 fee = sent.fee,
+                change_split = plan.change_split,
+                locked_amount = plan.locked_amount,
                 tx = %sent.txid,
-                idempotency_key = %idempotency_key,
-                "payout broadcast"
+                idempotency_key = %plan.idempotency_key,
+                "payout batch broadcast"
+            );
+            queued.drain(..plan.recipients.len());
+        }
+
+        if queued.is_empty() && !inventory_is_healthy(&inventory) {
+            rebalance_active = self.maybe_rebalance_outputs(
+                &wallet_balance,
+                &spendable_outputs,
+                &inventory,
+                reserve_target,
             );
         }
+
+        safe_spend_budget = compute_safe_spend_budget(
+            sum_output_amounts(&spendable_outputs),
+            reserve_target,
+            oldest_age,
+            payout_interval,
+        );
+        self.update_liquidity_runtime_snapshot(
+            reserve_target,
+            safe_spend_budget,
+            &inventory,
+            planned_batch_count,
+            planned_recipient_count,
+            !inventory_is_healthy(&inventory),
+            rebalance_active,
+        );
     }
 
     fn reconcile_pending_payouts(&self) {
@@ -945,73 +1174,428 @@ impl PayoutProcessor {
             }
         };
 
+        let now = SystemTime::now();
+        let mut grouped = HashMap::<String, Vec<PendingPayout>>::new();
+        let mut reset_batches = HashSet::<String>::new();
         for entry in pending {
-            if let Err(err) = self.reconcile_broadcast_payout(&entry.address, &entry) {
+            if let Some(tx_hash) = entry
+                .tx_hash
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                let key = entry
+                    .batch_id
+                    .clone()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| format!("tx:{tx_hash}"));
+                grouped.entry(key).or_default().push(entry);
+                continue;
+            }
+
+            if !should_reset_stale_prebroadcast_pending_payout(&entry, now) {
+                continue;
+            }
+
+            let send_age = pending_send_age(&entry, now);
+            if let Some(batch_id) = entry
+                .batch_id
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                if reset_batches.insert(batch_id.to_string()) {
+                    match self.store.reset_pending_payout_batch_send_state(batch_id) {
+                        Ok(count) => {
+                            tracing::warn!(
+                                batch_id = %batch_id,
+                                recipients = count,
+                                send_age_secs = send_age.as_secs(),
+                                "reset stale pre-broadcast payout batch for retry"
+                            );
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                batch_id = %batch_id,
+                                error = %err,
+                                "failed to reset stale pre-broadcast payout batch"
+                            );
+                        }
+                    }
+                }
+            } else if let Err(err) = self.store.reset_pending_payout_send_state(&entry.address) {
                 tracing::warn!(
                     address = %entry.address,
                     error = %err,
-                    "failed to reconcile pending payout"
+                    "failed to reset stale pre-broadcast pending payout"
+                );
+            } else {
+                tracing::warn!(
+                    address = %entry.address,
+                    amount = entry.amount,
+                    send_age_secs = send_age.as_secs(),
+                    "reset stale pre-broadcast pending payout for retry"
+                );
+            }
+        }
+
+        for entries in grouped.into_values() {
+            if let Err(err) = self.reconcile_pending_batch(&entries) {
+                let batch_id = entries
+                    .first()
+                    .and_then(|entry| entry.batch_id.as_deref())
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or("legacy");
+                tracing::warn!(
+                    batch_id = %batch_id,
+                    error = %err,
+                    "failed to reconcile pending payout batch"
                 );
             }
         }
     }
 
-    fn reconcile_broadcast_payout(
-        &self,
-        address: &str,
-        pending: &PendingPayout,
-    ) -> anyhow::Result<bool> {
-        let Some(tx_hash) = pending.tx_hash.as_deref().filter(|v| !v.trim().is_empty()) else {
-            let now = SystemTime::now();
-            if should_reset_stale_prebroadcast_pending_payout(pending, now) {
-                let send_age = pending_send_age(pending, now);
-                self.store.reset_pending_payout_send_state(address)?;
-                tracing::warn!(
-                    address = %address,
-                    amount = pending.amount,
-                    send_age_secs = send_age.as_secs(),
-                    "reset stale pre-broadcast pending payout for retry"
-                );
-                return Ok(true);
-            }
-            return Ok(false);
+    fn reconcile_pending_batch(&self, entries: &[PendingPayout]) -> anyhow::Result<()> {
+        let Some(first) = entries.first() else {
+            return Ok(());
         };
-
+        let Some(tx_hash) = first
+            .tx_hash
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        else {
+            return Ok(());
+        };
+        let batch_id = first
+            .batch_id
+            .as_deref()
+            .filter(|value| !value.trim().is_empty());
         let status = self.node.get_tx_status_optional(tx_hash)?;
         match status {
-            Some(status) if status.in_mempool => Ok(true),
+            Some(status) if status.in_mempool => Ok(()),
             Some(status) if status.confirmations >= PAYOUT_CONFIRMATIONS_REQUIRED => {
-                let fee = pending.fee.unwrap_or(0);
-                self.store
-                    .complete_pending_payout(address, pending.amount, fee, tx_hash)?;
+                if let Some(batch_id) = batch_id {
+                    self.store
+                        .complete_pending_payout_batch(batch_id, tx_hash)?;
+                } else {
+                    for pending in entries {
+                        self.store.complete_pending_payout(
+                            &pending.address,
+                            pending.amount,
+                            pending.fee.unwrap_or(0),
+                            tx_hash,
+                        )?;
+                    }
+                }
+                let total_amount = entries
+                    .iter()
+                    .fold(0u64, |acc, entry| acc.saturating_add(entry.amount));
+                let total_fee = entries.iter().fold(0u64, |acc, entry| {
+                    acc.saturating_add(entry.fee.unwrap_or(0))
+                });
                 tracing::info!(
-                    address = %address,
-                    amount = pending.amount,
-                    fee,
+                    batch_id = %batch_id.unwrap_or("legacy"),
+                    recipients = entries.len(),
+                    amount = total_amount,
+                    fee = total_fee,
                     tx = %tx_hash,
                     confirmations = status.confirmations,
-                    "payout confirmed"
+                    "payout batch confirmed"
                 );
-                Ok(true)
+                Ok(())
             }
-            Some(_) => Ok(true),
+            Some(_) => Ok(()),
             None => {
-                let sent_at = pending.sent_at.or(pending.send_started_at);
-                let age = sent_at
-                    .and_then(|ts| SystemTime::now().duration_since(ts).ok())
+                let age = entries
+                    .iter()
+                    .filter_map(|pending| pending.sent_at.or(pending.send_started_at))
+                    .filter_map(|sent_at| SystemTime::now().duration_since(sent_at).ok())
+                    .max()
                     .unwrap_or_default();
                 if age < PENDING_PAYOUT_RETRY_GRACE {
-                    return Ok(true);
+                    return Ok(());
                 }
-                self.store.reset_pending_payout_send_state(address)?;
-                tracing::warn!(
-                    address = %address,
-                    amount = pending.amount,
-                    tx = %tx_hash,
-                    age_secs = age.as_secs(),
-                    "broadcast payout disappeared from mempool/chain; reset for retry"
+                if let Some(batch_id) = batch_id {
+                    self.store.reset_pending_payout_batch_send_state(batch_id)?;
+                    tracing::warn!(
+                        batch_id = %batch_id,
+                        recipients = entries.len(),
+                        tx = %tx_hash,
+                        age_secs = age.as_secs(),
+                        "broadcast payout batch disappeared from mempool/chain; reset for retry"
+                    );
+                } else {
+                    for pending in entries {
+                        self.store
+                            .reset_pending_payout_send_state(&pending.address)?;
+                    }
+                    tracing::warn!(
+                        tx = %tx_hash,
+                        recipients = entries.len(),
+                        age_secs = age.as_secs(),
+                        "broadcast payout batch disappeared from mempool/chain; reset legacy rows for retry"
+                    );
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn update_liquidity_runtime_snapshot(
+        &self,
+        reserve_target_amount: u64,
+        safe_spend_budget: u64,
+        inventory: &OutputInventory,
+        planned_batch_count: usize,
+        planned_recipient_count: usize,
+        rebalance_required: bool,
+        rebalance_active: bool,
+    ) {
+        let mut runtime = self.runtime.write();
+        runtime.reserve_target_amount = reserve_target_amount;
+        runtime.safe_spend_budget = safe_spend_budget;
+        runtime.spendable_output_count = inventory.spendable_count;
+        runtime.small_output_count = inventory.small_count;
+        runtime.medium_output_count = inventory.medium_count;
+        runtime.large_output_count = inventory.large_count;
+        runtime.planned_batch_count = planned_batch_count;
+        runtime.planned_recipient_count = planned_recipient_count;
+        runtime.rebalance_required = rebalance_required;
+        runtime.rebalance_active = rebalance_active;
+        runtime.inventory_health = inventory_health_label(inventory).to_string();
+    }
+
+    fn load_recent_payout_stats(&self) -> RecentPayoutStats {
+        let payouts = match self.store.get_recent_payouts(256) {
+            Ok(payouts) => payouts,
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to load recent payouts for adaptive planning");
+                return RecentPayoutStats::default();
+            }
+        };
+        derive_recent_payout_stats(&payouts)
+    }
+
+    fn plan_payout_batch(
+        &self,
+        candidates: &[PayoutCandidate],
+        spendable_outputs: &[WalletOutput],
+        inventory: &OutputInventory,
+        safe_spend_budget: u64,
+        queue_light: bool,
+    ) -> Option<PlannedPayoutBatch> {
+        if candidates.is_empty()
+            || spendable_outputs.is_empty()
+            || safe_spend_budget <= MIN_PAYOUT_FEE_BUFFER
+        {
+            return None;
+        }
+
+        let recipient_total = candidates.iter().fold(0u64, |acc, candidate| {
+            acc.saturating_add(candidate.pending.amount)
+        });
+        if recipient_total == 0 {
+            return None;
+        }
+
+        let batch_id = payout_batch_id(candidates);
+        let idempotency_key = payout_batch_idempotency_key(&batch_id);
+        let recipients = candidates
+            .iter()
+            .map(|candidate| WalletRecipient {
+                address: candidate.balance.address.clone(),
+                amount: candidate.pending.amount,
+            })
+            .collect::<Vec<_>>();
+
+        let mut required_amount = recipient_total.saturating_add(MIN_PAYOUT_FEE_BUFFER);
+        let mut inputs = select_inputs_for_target(
+            spendable_outputs,
+            required_amount,
+            inventory.large_target_amount,
+            safe_spend_budget,
+        )?;
+
+        for _ in 0..4 {
+            let locked_amount = sum_output_amounts(&inputs);
+            if locked_amount > safe_spend_budget {
+                return None;
+            }
+
+            let input_refs = inputs.iter().map(WalletOutputRef::from).collect::<Vec<_>>();
+            let preview = self
+                .node
+                .wallet_send_advanced(&recipients, &input_refs, 1, &idempotency_key, true)
+                .ok()?;
+            let required_with_fee = recipient_total
+                .saturating_add(preview.fee)
+                .saturating_add(MIN_PAYOUT_FEE_BUFFER);
+            if locked_amount < required_with_fee {
+                if required_with_fee <= required_amount {
+                    return None;
+                }
+                required_amount = required_with_fee;
+                inputs = select_inputs_for_target(
+                    spendable_outputs,
+                    required_amount,
+                    inventory.large_target_amount,
+                    safe_spend_budget,
+                )?;
+                continue;
+            }
+
+            let change_amount = locked_amount
+                .saturating_sub(recipient_total)
+                .saturating_sub(preview.fee);
+            let change_split = choose_change_split(inventory, change_amount, queue_light);
+            let final_preview = if change_split > 1 {
+                self.node
+                    .wallet_send_advanced(
+                        &recipients,
+                        &input_refs,
+                        change_split,
+                        &idempotency_key,
+                        true,
+                    )
+                    .ok()?
+            } else {
+                preview
+            };
+            if locked_amount < recipient_total.saturating_add(final_preview.fee) {
+                let retry_required = recipient_total
+                    .saturating_add(final_preview.fee)
+                    .saturating_add(MIN_PAYOUT_FEE_BUFFER);
+                if retry_required <= required_amount {
+                    return None;
+                }
+                required_amount = retry_required;
+                inputs = select_inputs_for_target(
+                    spendable_outputs,
+                    required_amount,
+                    inventory.large_target_amount,
+                    safe_spend_budget,
+                )?;
+                continue;
+            }
+
+            return Some(PlannedPayoutBatch {
+                batch_id,
+                idempotency_key,
+                recipients: candidates.to_vec(),
+                recipient_total,
+                inputs,
+                locked_amount,
+                change_split,
+            });
+        }
+
+        None
+    }
+
+    fn maybe_rebalance_outputs(
+        &self,
+        wallet_balance: &crate::node::WalletBalance,
+        spendable_outputs: &[WalletOutput],
+        inventory: &OutputInventory,
+        reserve_target: u64,
+    ) -> bool {
+        if inventory_is_healthy(inventory) || spendable_outputs.is_empty() {
+            return false;
+        }
+        let destination = self.cfg.pool_wallet_address.trim();
+        if destination.is_empty() {
+            return false;
+        }
+
+        let safe_spend_budget = compute_safe_spend_budget(
+            wallet_balance.spendable,
+            reserve_target,
+            Duration::ZERO,
+            Duration::from_secs(1),
+        );
+        let rebalance_cap = (wallet_balance.spendable / REBALANCE_SPENDABLE_SHARE_DENOMINATOR)
+            .saturating_mul(REBALANCE_SPENDABLE_SHARE_NUMERATOR);
+        let max_locked_amount = safe_spend_budget.min(rebalance_cap);
+        if max_locked_amount
+            <= inventory
+                .small_target_amount
+                .saturating_add(MIN_PAYOUT_FEE_BUFFER)
+        {
+            return false;
+        }
+
+        let input = spendable_outputs
+            .iter()
+            .filter(|output| {
+                output.amount >= inventory.small_target_amount.saturating_mul(2)
+                    && output.amount <= max_locked_amount
+            })
+            .min_by_key(|output| output.amount)
+            .cloned()
+            .or_else(|| {
+                spendable_outputs
+                    .iter()
+                    .filter(|output| output.amount <= max_locked_amount)
+                    .max_by_key(|output| output.amount)
+                    .cloned()
+            });
+        let Some(input) = input else {
+            return false;
+        };
+
+        let change_split = choose_change_split(inventory, input.amount, true).max(2);
+        let recipient_amount = input
+            .amount
+            .saturating_mul(3)
+            .checked_div(5)
+            .unwrap_or_default()
+            .max(inventory.small_target_amount);
+        if recipient_amount <= MIN_PAYOUT_FEE_BUFFER {
+            return false;
+        }
+
+        let idempotency_key = payout_rebalance_idempotency_key(&input);
+        let recipients = vec![WalletRecipient {
+            address: destination.to_string(),
+            amount: recipient_amount,
+        }];
+        let inputs = vec![WalletOutputRef::from(&input)];
+        let preview = match self.node.wallet_send_advanced(
+            &recipients,
+            &inputs,
+            change_split,
+            &idempotency_key,
+            true,
+        ) {
+            Ok(preview) => preview,
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to preview wallet rebalance");
+                return false;
+            }
+        };
+        if input.amount <= recipient_amount.saturating_add(preview.fee) {
+            return false;
+        }
+
+        match self.node.wallet_send_advanced(
+            &recipients,
+            &inputs,
+            change_split,
+            &idempotency_key,
+            false,
+        ) {
+            Ok(sent) => {
+                tracing::info!(
+                    tx = %sent.txid,
+                    input_amount = input.amount,
+                    recipient_amount,
+                    fee = sent.fee,
+                    change_split,
+                    "broadcast idle wallet rebalance"
                 );
-                Ok(true)
+                true
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "wallet rebalance send failed");
+                false
             }
         }
     }
@@ -1300,11 +1884,9 @@ fn compare_payout_candidates(
             .cmp(&a_age)
             .then_with(|| b.pending.amount.cmp(&a.pending.amount))
             .then_with(|| a.balance.address.cmp(&b.balance.address)),
-        (false, false) => b
-            .pending
-            .amount
-            .cmp(&a.pending.amount)
-            .then_with(|| b_age.cmp(&a_age))
+        (false, false) => b_age
+            .cmp(&a_age)
+            .then_with(|| b.pending.amount.cmp(&a.pending.amount))
             .then_with(|| a.balance.address.cmp(&b.balance.address)),
     }
 }
@@ -1329,6 +1911,373 @@ fn should_reset_stale_prebroadcast_pending_payout(
         .is_none_or(|tx| tx.trim().is_empty())
         && pending.send_started_at.is_some()
         && pending_send_age(pending, now) >= PENDING_PAYOUT_RETRY_GRACE
+}
+
+fn sum_output_amounts(outputs: &[WalletOutput]) -> u64 {
+    outputs
+        .iter()
+        .fold(0u64, |acc, output| acc.saturating_add(output.amount))
+}
+
+fn remove_spent_outputs(spendable_outputs: &mut Vec<WalletOutput>, spent: &[WalletOutput]) {
+    let spent_keys = spent
+        .iter()
+        .map(|output| (output.txid.as_str(), output.output_index))
+        .collect::<HashSet<_>>();
+    spendable_outputs
+        .retain(|output| !spent_keys.contains(&(output.txid.as_str(), output.output_index)));
+}
+
+fn derive_recent_payout_stats(payouts: &[Payout]) -> RecentPayoutStats {
+    if payouts.is_empty() {
+        return RecentPayoutStats::default();
+    }
+
+    let mut grouped = HashMap::<String, (u64, usize)>::new();
+    let mut recipient_amounts = payouts
+        .iter()
+        .map(|payout| payout.amount)
+        .filter(|amount| *amount > 0)
+        .collect::<Vec<_>>();
+    for payout in payouts {
+        let batch_key = payout
+            .batch_id
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| legacy_payout_batch_key(payout.timestamp));
+        let entry = grouped.entry(batch_key).or_insert((0, 0));
+        entry.0 = entry.0.saturating_add(payout.amount);
+        entry.1 = entry.1.saturating_add(1);
+    }
+
+    let mut batch_totals = grouped
+        .values()
+        .map(|(total, _)| *total)
+        .collect::<Vec<_>>();
+    let mut recipient_counts = grouped
+        .values()
+        .map(|(_, recipients)| *recipients)
+        .collect::<Vec<_>>();
+    batch_totals.sort_unstable();
+    recipient_counts.sort_unstable();
+    recipient_amounts.sort_unstable();
+
+    RecentPayoutStats {
+        median_batch_total: quantile_u64(&batch_totals, 1, 2),
+        p90_batch_total: quantile_u64(&batch_totals, 9, 10),
+        p50_recipient_count: quantile_usize(&recipient_counts, 1, 2),
+        p90_recipient_count: quantile_usize(&recipient_counts, 9, 10),
+        median_recipient_amount: quantile_u64(&recipient_amounts, 1, 2),
+        p90_recipient_amount: quantile_u64(&recipient_amounts, 9, 10),
+    }
+}
+
+fn legacy_payout_batch_key(timestamp: SystemTime) -> String {
+    let bucket = timestamp
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        / 300;
+    format!("legacy:{bucket}")
+}
+
+fn quantile_u64(values: &[u64], numerator: usize, denominator: usize) -> u64 {
+    if values.is_empty() {
+        return 0;
+    }
+    let idx = ((values.len() - 1) * numerator) / denominator.max(1);
+    values[idx]
+}
+
+fn quantile_usize(values: &[usize], numerator: usize, denominator: usize) -> usize {
+    if values.is_empty() {
+        return 0;
+    }
+    let idx = ((values.len() - 1) * numerator) / denominator.max(1);
+    values[idx]
+}
+
+fn compute_reserve_target(
+    min_amount: u64,
+    recent_stats: &RecentPayoutStats,
+    medium_target_amount: u64,
+) -> u64 {
+    let min_reserve_floor = min_amount
+        .saturating_mul(4)
+        .max(medium_target_amount)
+        .max(MIN_PAYOUT_FEE_BUFFER.saturating_mul(16));
+    recent_stats
+        .median_batch_total
+        .max(min_reserve_floor)
+        .max(recent_stats.p90_recipient_amount)
+}
+
+fn compute_safe_spend_budget(
+    spendable: u64,
+    reserve_target: u64,
+    oldest_age: Duration,
+    payout_interval: Duration,
+) -> u64 {
+    let mut reserve_floor = reserve_target;
+    if oldest_age >= payout_interval.saturating_mul(4) {
+        reserve_floor = 0;
+    } else if oldest_age >= payout_interval.saturating_mul(2) {
+        reserve_floor /= 2;
+    }
+    spendable
+        .saturating_sub(reserve_floor)
+        .saturating_sub(MIN_PAYOUT_FEE_BUFFER.saturating_mul(4))
+}
+
+fn adaptive_target_recipients_per_tx(recent_stats: &RecentPayoutStats) -> usize {
+    recent_stats
+        .p90_recipient_count
+        .max(DEFAULT_TARGET_RECIPIENTS_PER_TX)
+        .clamp(8, MAX_RECIPIENTS_PER_TX)
+}
+
+fn adaptive_max_txs_per_sweep(
+    max_recipients_per_tick: usize,
+    target_recipients_per_tx: usize,
+) -> usize {
+    let target = target_recipients_per_tx.max(1);
+    let needed = (max_recipients_per_tick.max(1).saturating_add(target - 1)) / target;
+    needed.clamp(1, MAX_TXS_PER_SWEEP)
+}
+
+fn trim_batch_to_total_cap(batch: &mut Vec<PayoutCandidate>, total_cap: u64) {
+    if total_cap == u64::MAX {
+        return;
+    }
+    while batch.iter().fold(0u64, |acc, candidate| {
+        acc.saturating_add(candidate.pending.amount)
+    }) > total_cap
+    {
+        if batch.pop().is_none() {
+            break;
+        }
+    }
+}
+
+fn build_output_inventory(
+    outputs: &[WalletOutput],
+    min_amount: u64,
+    recent_stats: &RecentPayoutStats,
+) -> OutputInventory {
+    let small_target_amount = recent_stats
+        .median_recipient_amount
+        .max(min_amount)
+        .max(min_amount.saturating_mul(4));
+    let medium_target_amount = recent_stats
+        .p90_recipient_amount
+        .max(small_target_amount.saturating_mul(2));
+    let large_target_amount = recent_stats
+        .p90_batch_total
+        .max(medium_target_amount.saturating_mul(2));
+    let spendable_total = sum_output_amounts(outputs);
+    let mut inventory = OutputInventory {
+        spendable_count: outputs.len(),
+        small_target_amount,
+        medium_target_amount,
+        large_target_amount,
+        small_target_count: recent_stats.p50_recipient_count.div_ceil(2).clamp(2, 6),
+        medium_target_count: recent_stats.p90_recipient_count.div_ceil(6).clamp(2, 4),
+        large_target_count: if spendable_total < large_target_amount {
+            1
+        } else {
+            2
+        },
+        ..OutputInventory::default()
+    };
+
+    for output in outputs {
+        if output.amount < medium_target_amount {
+            inventory.small_count = inventory.small_count.saturating_add(1);
+        } else if output.amount < large_target_amount {
+            inventory.medium_count = inventory.medium_count.saturating_add(1);
+        } else {
+            inventory.large_count = inventory.large_count.saturating_add(1);
+        }
+    }
+
+    inventory
+}
+
+fn inventory_is_healthy(inventory: &OutputInventory) -> bool {
+    inventory.small_count >= inventory.small_target_count
+        && inventory.medium_count >= inventory.medium_target_count
+        && inventory.large_count >= inventory.large_target_count
+}
+
+fn inventory_health_label(inventory: &OutputInventory) -> &'static str {
+    if inventory_is_healthy(inventory) {
+        "healthy"
+    } else if inventory.large_count < inventory.large_target_count {
+        "large_deficit"
+    } else if inventory.medium_count < inventory.medium_target_count {
+        "medium_deficit"
+    } else {
+        "small_deficit"
+    }
+}
+
+fn choose_change_split(inventory: &OutputInventory, change_amount: u64, queue_light: bool) -> u32 {
+    if !queue_light || change_amount <= inventory.small_target_amount.saturating_mul(2) {
+        return 1;
+    }
+    let missing_small = inventory
+        .small_target_count
+        .saturating_sub(inventory.small_count);
+    let missing_medium = inventory
+        .medium_target_count
+        .saturating_sub(inventory.medium_count);
+    let desired = missing_small
+        .saturating_add(missing_medium)
+        .clamp(0, MAX_CHANGE_SPLIT as usize) as u32;
+    if desired <= 1 {
+        return 1;
+    }
+    let min_piece = change_amount / u64::from(desired);
+    if min_piece < inventory.small_target_amount / 2 {
+        1
+    } else {
+        desired
+    }
+}
+
+fn select_inputs_for_target(
+    outputs: &[WalletOutput],
+    target_amount: u64,
+    large_target_amount: u64,
+    max_locked_amount: u64,
+) -> Option<Vec<WalletOutput>> {
+    let mut available = outputs
+        .iter()
+        .filter(|output| output.amount <= max_locked_amount)
+        .cloned()
+        .collect::<Vec<_>>();
+    if available.is_empty() {
+        return None;
+    }
+
+    available.sort_by_key(|output| output.amount);
+    let large_count = available
+        .iter()
+        .filter(|output| large_target_amount > 0 && output.amount >= large_target_amount)
+        .count();
+
+    if let Some(single) = available
+        .iter()
+        .filter(|output| output.amount >= target_amount)
+        .filter(|output| {
+            large_target_amount == 0
+                || output.amount < large_target_amount
+                || large_count > 1
+                || target_amount >= large_target_amount
+        })
+        .min_by_key(|output| output.amount)
+    {
+        return Some(vec![single.clone()]);
+    }
+
+    let mut picked = Vec::<WalletOutput>::new();
+    let mut total = 0u64;
+    for output in available.iter().rev() {
+        if total >= target_amount {
+            break;
+        }
+        if total.saturating_add(output.amount) > max_locked_amount {
+            continue;
+        }
+        picked.push(output.clone());
+        total = total.saturating_add(output.amount);
+    }
+    if total >= target_amount {
+        return Some(picked);
+    }
+
+    let mut ascending_pick = Vec::<WalletOutput>::new();
+    total = 0;
+    for output in &available {
+        if total >= target_amount {
+            break;
+        }
+        if total.saturating_add(output.amount) > max_locked_amount {
+            continue;
+        }
+        ascending_pick.push(output.clone());
+        total = total.saturating_add(output.amount);
+    }
+    (total >= target_amount).then_some(ascending_pick)
+}
+
+fn payout_batch_id(candidates: &[PayoutCandidate]) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut input = format!(
+        "blocknet-pool:payout-batch:{}:",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    for candidate in candidates {
+        input.push_str(&candidate.balance.address);
+        input.push(':');
+        input.push_str(&candidate.pending.amount.to_string());
+        input.push('|');
+    }
+    hex::encode(Sha256::digest(input.as_bytes()))
+}
+
+fn payout_batch_idempotency_key(batch_id: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    hex::encode(Sha256::digest(
+        format!("blocknet-pool:payout-batch:{batch_id}").as_bytes(),
+    ))
+}
+
+fn payout_rebalance_idempotency_key(input: &WalletOutput) -> String {
+    use sha2::{Digest, Sha256};
+
+    let payload = format!(
+        "blocknet-pool:rebalance:{}:{}:{}",
+        input.txid, input.output_index, input.amount
+    );
+    hex::encode(Sha256::digest(payload.as_bytes()))
+}
+
+fn allocate_batch_fees(
+    candidates: &[PayoutCandidate],
+    total_fee: u64,
+) -> Vec<PendingPayoutBatchMember> {
+    let total_amount = candidates
+        .iter()
+        .fold(0u64, |acc, candidate| {
+            acc.saturating_add(candidate.pending.amount)
+        })
+        .max(1);
+    let mut remaining_fee = total_fee;
+    candidates
+        .iter()
+        .enumerate()
+        .map(|(idx, candidate)| {
+            let fee = if idx + 1 == candidates.len() {
+                remaining_fee
+            } else {
+                let proportional = ((total_fee as u128) * (candidate.pending.amount as u128)
+                    / (total_amount as u128)) as u64;
+                proportional.min(remaining_fee)
+            };
+            remaining_fee = remaining_fee.saturating_sub(fee);
+            PendingPayoutBatchMember {
+                address: candidate.balance.address.clone(),
+                amount: candidate.pending.amount,
+                fee,
+            }
+        })
+        .collect()
 }
 
 pub fn weight_shares<F>(
@@ -1420,6 +2369,7 @@ pub fn is_share_payout_eligible(
     }
 }
 
+#[cfg(test)]
 fn payout_idempotency_key(p: &PendingPayout) -> String {
     use sha2::{Digest, Sha256};
 
@@ -1545,6 +2495,7 @@ mod tests {
                 tx_hash: None,
                 fee: None,
                 sent_at: None,
+                batch_id: None,
             },
         }
     }
@@ -2002,7 +2953,7 @@ mod tests {
             .into_iter()
             .map(|candidate| candidate.balance.address)
             .collect::<Vec<_>>();
-        assert_eq!(ordered, vec!["a-big", "a-small"]);
+        assert_eq!(ordered, vec!["a-small", "a-big"]);
     }
 
     #[test]
@@ -2114,6 +3065,7 @@ mod tests {
             tx_hash: None,
             fee: None,
             sent_at: None,
+            batch_id: None,
         };
         assert!(should_reset_stale_prebroadcast_pending_payout(&stale, now));
 
@@ -2143,6 +3095,7 @@ mod tests {
             tx_hash: None,
             fee: None,
             sent_at: None,
+            batch_id: None,
         };
         let second = PendingPayout {
             send_started_at: Some(base + Duration::from_secs(15)),
@@ -2157,6 +3110,26 @@ mod tests {
             payout_idempotency_key(&first),
             payout_idempotency_key(&first.clone())
         );
+    }
+
+    #[test]
+    fn allocate_batch_fees_preserves_total_fee() {
+        let candidates = vec![
+            candidate("addr1", 100, Duration::from_secs(60)),
+            candidate("addr2", 200, Duration::from_secs(120)),
+            candidate("addr3", 300, Duration::from_secs(180)),
+        ];
+
+        let allocated = allocate_batch_fees(&candidates, 17);
+        let total_allocated = allocated
+            .iter()
+            .fold(0u64, |acc, member| acc.saturating_add(member.fee));
+
+        assert_eq!(allocated.len(), 3);
+        assert_eq!(total_allocated, 17);
+        assert_eq!(allocated[0].fee, 2);
+        assert_eq!(allocated[1].fee, 5);
+        assert_eq!(allocated[2].fee, 10);
     }
 
     #[test]

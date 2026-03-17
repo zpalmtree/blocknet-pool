@@ -80,8 +80,10 @@ pub struct NodeBlock {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WalletSendResponse {
+    #[serde(default)]
     pub txid: String,
     pub fee: u64,
+    #[serde(default)]
     pub change: u64,
 }
 
@@ -111,6 +113,72 @@ pub struct WalletBalance {
     #[serde(default)]
     pub pending_unconfirmed_eta: u64,
     pub total: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WalletOutputsResponse {
+    #[serde(default)]
+    pub chain_height: u64,
+    #[serde(default)]
+    pub synced_height: u64,
+    #[serde(default)]
+    pub outputs: Vec<WalletOutput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalletOutput {
+    pub txid: String,
+    pub output_index: u32,
+    pub amount: u64,
+    pub status: String,
+    #[serde(default)]
+    pub r#type: String,
+    #[serde(default)]
+    pub confirmations: u64,
+    #[serde(default)]
+    pub block_height: u64,
+    #[serde(default)]
+    pub spent_height: Option<u64>,
+    #[serde(default)]
+    pub one_time_pub: String,
+    #[serde(default)]
+    pub commitment: String,
+}
+
+impl WalletOutput {
+    pub fn is_spendable(&self) -> bool {
+        self.status.eq_ignore_ascii_case("unspent")
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WalletOutputRef {
+    pub txid: String,
+    pub output_index: u32,
+}
+
+impl From<&WalletOutput> for WalletOutputRef {
+    fn from(value: &WalletOutput) -> Self {
+        Self {
+            txid: value.txid.clone(),
+            output_index: value.output_index,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WalletRecipient {
+    pub address: String,
+    pub amount: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WalletAdvancedSendRequest<'a> {
+    recipients: &'a [WalletRecipient],
+    inputs: &'a [WalletOutputRef],
+    dry_run: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    change_split: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -303,6 +371,32 @@ impl NodeClient {
 
     pub fn get_wallet_balance(&self) -> Result<WalletBalance> {
         self.get_json("/api/wallet/balance")
+    }
+
+    pub fn get_wallet_outputs(&self) -> Result<WalletOutputsResponse> {
+        self.get_json("/api/wallet/outputs")
+    }
+
+    pub fn wallet_send_advanced(
+        &self,
+        recipients: &[WalletRecipient],
+        inputs: &[WalletOutputRef],
+        change_split: u32,
+        idempotency_key: &str,
+        dry_run: bool,
+    ) -> Result<WalletSendResponse> {
+        let mut extra = HashMap::<String, String>::new();
+        if !idempotency_key.is_empty() {
+            extra.insert("Idempotency-Key".to_string(), idempotency_key.to_string());
+        }
+
+        let payload = WalletAdvancedSendRequest {
+            recipients,
+            inputs,
+            dry_run,
+            change_split: (change_split > 1).then_some(change_split),
+        };
+        self.post_json_with_headers("/api/wallet/send/advanced", &payload, &extra)
     }
 
     pub fn open_events_stream(&self) -> Result<Response> {

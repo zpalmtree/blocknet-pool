@@ -137,6 +137,28 @@ pub struct PersistedPayoutRuntime {
     pub next_sweep_at: Option<SystemTime>,
     #[serde(default)]
     pub last_tick_at: Option<SystemTime>,
+    #[serde(default)]
+    pub reserve_target_amount: u64,
+    #[serde(default)]
+    pub safe_spend_budget: u64,
+    #[serde(default)]
+    pub spendable_output_count: usize,
+    #[serde(default)]
+    pub small_output_count: usize,
+    #[serde(default)]
+    pub medium_output_count: usize,
+    #[serde(default)]
+    pub large_output_count: usize,
+    #[serde(default)]
+    pub planned_batch_count: usize,
+    #[serde(default)]
+    pub planned_recipient_count: usize,
+    #[serde(default)]
+    pub rebalance_required: bool,
+    #[serde(default)]
+    pub rebalance_active: bool,
+    #[serde(default)]
+    pub inventory_health: String,
 }
 
 impl From<PayoutRuntimeSnapshot> for PersistedPayoutRuntime {
@@ -146,6 +168,17 @@ impl From<PayoutRuntimeSnapshot> for PersistedPayoutRuntime {
             maintenance_interval_seconds: value.maintenance_interval_seconds,
             next_sweep_at: value.next_sweep_at,
             last_tick_at: value.last_tick_at,
+            reserve_target_amount: value.reserve_target_amount,
+            safe_spend_budget: value.safe_spend_budget,
+            spendable_output_count: value.spendable_output_count,
+            small_output_count: value.small_output_count,
+            medium_output_count: value.medium_output_count,
+            large_output_count: value.large_output_count,
+            planned_batch_count: value.planned_batch_count,
+            planned_recipient_count: value.planned_recipient_count,
+            rebalance_required: value.rebalance_required,
+            rebalance_active: value.rebalance_active,
+            inventory_health: value.inventory_health,
         }
     }
 }
