@@ -33,6 +33,7 @@ const DEFAULT_TARGET_RECIPIENTS_PER_TX: usize = 12;
 const MAX_RECIPIENTS_PER_TX: usize = 48;
 const MAX_TXS_PER_SWEEP: usize = 8;
 const CHAIN_RECOVERY_LOOKBACK_BLOCKS: i64 = 1024;
+const RECOVERY_PAYOUT_RECONCILIATION_BATCH_SIZE: i64 = 16;
 const MAX_CHANGE_SPLIT: u32 = 4;
 const REBALANCE_SPENDABLE_SHARE_NUMERATOR: u64 = 1;
 const REBALANCE_SPENDABLE_SHARE_DENOMINATOR: u64 = 4;
@@ -160,6 +161,12 @@ enum ReconcileWindow {
     NeedsOlderBlocks(u64),
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct RecoveryPayoutReconciliationState {
+    active: bool,
+    after_payout_id: i64,
+}
+
 #[derive(Debug)]
 pub struct PayoutProcessor {
     cfg: Config,
@@ -167,6 +174,7 @@ pub struct PayoutProcessor {
     store: Arc<PoolStore>,
     node: Arc<NodeClient>,
     runtime: RwLock<PayoutRuntimeSnapshot>,
+    recovery_payout_reconciliation: RwLock<RecoveryPayoutReconciliationState>,
     task_metrics: Option<Arc<NamedTimedOperationTracker>>,
 }
 
@@ -188,6 +196,9 @@ impl PayoutProcessor {
             store,
             node,
             runtime: RwLock::new(PayoutRuntimeSnapshot::default()),
+            recovery_payout_reconciliation: RwLock::new(
+                RecoveryPayoutReconciliationState::default(),
+            ),
             task_metrics,
         })
     }
@@ -306,15 +317,31 @@ impl PayoutProcessor {
 
         let recovery_detected = self.reconcile_chain_recovery(&status);
         if recovery_detected {
-            self.reconcile_completed_payouts_after_recovery();
+            self.activate_recovery_payout_reconciliation();
         }
         self.confirm_blocks();
         self.distribute_rewards();
         self.reconcile_pending_payouts();
+        if recovery_detected || self.recovery_payout_reconciliation_active() {
+            self.reconcile_completed_payouts_after_recovery();
+        }
         if send_payouts {
             self.send_payouts();
         }
         send_payouts
+    }
+
+    fn activate_recovery_payout_reconciliation(&self) {
+        let mut state = self.recovery_payout_reconciliation.write();
+        if state.active {
+            return;
+        }
+        state.active = true;
+        state.after_payout_id = 0;
+    }
+
+    fn recovery_payout_reconciliation_active(&self) -> bool {
+        self.recovery_payout_reconciliation.read().active
     }
 
     fn reconcile_chain_recovery(&self, status: &NodeStatus) -> bool {
@@ -920,28 +947,34 @@ impl PayoutProcessor {
     }
 
     fn reconcile_completed_payouts_after_recovery(&self) {
-        let payouts = match self.store.get_active_payouts() {
+        let after_payout_id = {
+            let state = self.recovery_payout_reconciliation.read();
+            if !state.active {
+                return;
+            }
+            state.after_payout_id
+        };
+
+        let tx_hashes = match self.store.get_active_payout_tx_hash_batch(
+            after_payout_id,
+            RECOVERY_PAYOUT_RECONCILIATION_BATCH_SIZE,
+        ) {
             Ok(payouts) => payouts,
             Err(err) => {
                 tracing::warn!(error = %err, "failed to load completed payouts for recovery reconciliation");
                 return;
             }
         };
-        if payouts.is_empty() {
+        if tx_hashes.is_empty() {
+            let mut state = self.recovery_payout_reconciliation.write();
+            *state = RecoveryPayoutReconciliationState::default();
             return;
         }
 
-        let mut tx_hashes = payouts
-            .into_iter()
-            .map(|payout| payout.tx_hash)
-            .filter(|tx_hash| !tx_hash.trim().is_empty())
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
-        tx_hashes.sort();
-
-        for tx_hash in tx_hashes {
-            let status = match self.node.get_tx_status_optional(&tx_hash) {
+        let mut last_scanned_payout_id = after_payout_id;
+        for (payout_id, tx_hash) in &tx_hashes {
+            last_scanned_payout_id = last_scanned_payout_id.max(*payout_id);
+            let status = match self.node.get_tx_status_optional(tx_hash) {
                 Ok(status) => status,
                 Err(err) => {
                     tracing::warn!(
@@ -963,7 +996,7 @@ impl PayoutProcessor {
 
             match self
                 .store
-                .revert_completed_payout_tx(&tx_hash, "missing from daemon chain after recovery")
+                .revert_completed_payout_tx(tx_hash, "missing from daemon chain after recovery")
             {
                 Ok(result) => {
                     if result.manual_reconciliation_required {
@@ -989,6 +1022,14 @@ impl PayoutProcessor {
                     );
                 }
             }
+        }
+
+        let mut state = self.recovery_payout_reconciliation.write();
+        if tx_hashes.len() < RECOVERY_PAYOUT_RECONCILIATION_BATCH_SIZE as usize {
+            *state = RecoveryPayoutReconciliationState::default();
+        } else {
+            state.active = true;
+            state.after_payout_id = last_scanned_payout_id;
         }
     }
 
@@ -2908,6 +2949,41 @@ mod tests {
         }
     }
 
+    fn seed_completed_reversible_payout(
+        store: &Arc<PoolStore>,
+        height: u64,
+        address: &str,
+        tx_hash: &str,
+    ) {
+        store
+            .add_block(&DbBlock {
+                height,
+                hash: format!("completed-block-{height}"),
+                difficulty: 1,
+                finder: address.to_string(),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert completed payout block");
+        assert!(store
+            .apply_block_credits_and_mark_paid(height, &[(address.to_string(), 100)])
+            .expect("apply completed payout credits"));
+        store
+            .create_pending_payout(address, 100)
+            .expect("create pending payout");
+        store
+            .record_pending_payout_broadcast(address, 100, 2, tx_hash)
+            .expect("record payout broadcast");
+        store
+            .complete_pending_payout(address, 100, 2, tx_hash)
+            .expect("complete payout");
+    }
+
     #[test]
     fn provisional_shares_mature_after_delay() {
         let now = SystemTime::now();
@@ -3894,5 +3970,120 @@ mod tests {
             .get_recent_payouts_for_address(miner, 5)
             .expect("visible payouts after recovery")
             .is_empty());
+    }
+
+    #[test]
+    fn recovery_reconciliation_processes_completed_payouts_in_batches() {
+        let store = require_test_store!();
+        let base_height = 9_300_000u64 + (rand::random::<u16>() as u64);
+        let payout_count = RECOVERY_PAYOUT_RECONCILIATION_BATCH_SIZE as usize + 1;
+
+        for index in 0..payout_count {
+            seed_completed_reversible_payout(
+                &store,
+                base_height + index as u64,
+                &format!("batched-miner-{index}"),
+                &format!("batched-tx-{index}"),
+            );
+        }
+
+        let base_url = spawn_json_router_server(HashMap::new(), payout_count + 4);
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+        );
+
+        processor.activate_recovery_payout_reconciliation();
+        processor.reconcile_completed_payouts_after_recovery();
+
+        let remaining = store
+            .get_active_payouts()
+            .expect("active payouts after first batch");
+        assert_eq!(remaining.len(), 1);
+        assert!(processor.recovery_payout_reconciliation_active());
+
+        processor.reconcile_completed_payouts_after_recovery();
+
+        assert!(store
+            .get_active_payouts()
+            .expect("active payouts after second batch")
+            .is_empty());
+        assert!(!processor.recovery_payout_reconciliation_active());
+    }
+
+    #[test]
+    fn tick_confirms_blocks_while_recovery_reconciliation_is_active() {
+        let store = require_test_store!();
+        let mature_height = 9_400_000u64 + (rand::random::<u16>() as u64);
+        let payout_count = RECOVERY_PAYOUT_RECONCILIATION_BATCH_SIZE as usize + 1;
+
+        store
+            .add_block(&DbBlock {
+                height: mature_height,
+                hash: format!("mature-{mature_height}"),
+                difficulty: 1,
+                finder: "mature-miner".to_string(),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: false,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert mature unconfirmed block");
+
+        for index in 0..payout_count {
+            seed_completed_reversible_payout(
+                &store,
+                mature_height + 100 + index as u64,
+                &format!("active-miner-{index}"),
+                &format!("active-tx-{index}"),
+            );
+        }
+
+        let chain_height = mature_height + 100;
+        let base_url = spawn_json_router_server(
+            HashMap::from([
+                (
+                    "/api/status".to_string(),
+                    format!(
+                        r#"{{"peer_id":"peer","peers":3,"chain_height":{chain_height},"best_hash":"best-{chain_height}","total_work":{chain_height},"mempool_size":0,"mempool_bytes":0,"syncing":false,"identity_age":"1m"}}"#
+                    ),
+                ),
+                (
+                    format!("/api/block/{mature_height}"),
+                    format!(
+                        r#"{{"height":{mature_height},"hash":"mature-{mature_height}","reward":100,"difficulty":1,"timestamp":0,"tx_count":1}}"#
+                    ),
+                ),
+            ]),
+            payout_count + 16,
+        );
+        let processor = PayoutProcessor::new(
+            Config {
+                blocks_before_payout: 60,
+                ..Config::default()
+            },
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+        );
+
+        processor.activate_recovery_payout_reconciliation();
+        assert!(!processor.tick(false));
+
+        let block = store
+            .get_block(mature_height)
+            .expect("load mature block")
+            .expect("mature block exists");
+        assert!(block.confirmed);
+        assert!(block.paid_out);
+
+        let balance = store
+            .get_balance("mature-miner")
+            .expect("mature miner balance");
+        assert_eq!(balance.pending, 100);
+        assert!(processor.recovery_payout_reconciliation_active());
     }
 }

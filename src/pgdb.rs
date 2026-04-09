@@ -2580,6 +2580,31 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         rows.into_iter().map(row_to_payout).collect()
     }
 
+    pub fn get_active_payout_tx_hash_batch(
+        &self,
+        after_payout_id: i64,
+        limit: i64,
+    ) -> Result<Vec<(i64, String)>> {
+        let rows = self.conn().lock().query(
+            "SELECT first_payout_id, tx_hash
+             FROM (
+                 SELECT MIN(id) AS first_payout_id, tx_hash
+                 FROM payouts
+                 WHERE reverted_at IS NULL
+                   AND BTRIM(tx_hash) <> ''
+                 GROUP BY tx_hash
+             ) active
+             WHERE first_payout_id > $1
+             ORDER BY first_payout_id ASC, tx_hash ASC
+             LIMIT $2",
+            &[&after_payout_id.max(0), &limit.max(1)],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.get::<_, i64>(0), row.get::<_, String>(1)))
+            .collect())
+    }
+
     pub fn get_recent_visible_payouts_for_address(
         &self,
         address: &str,
