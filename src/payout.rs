@@ -287,6 +287,8 @@ impl PayoutProcessor {
     }
 
     fn tick(&self, send_payouts: bool) -> bool {
+        self.reconcile_existing_orphaned_block_credits();
+
         let status = match self.node.get_status() {
             Ok(v) => v,
             Err(err) => {
@@ -309,7 +311,6 @@ impl PayoutProcessor {
         self.confirm_blocks();
         self.distribute_rewards();
         self.reconcile_pending_payouts();
-        self.reconcile_existing_orphaned_block_credits();
         if send_payouts {
             self.send_payouts();
         }

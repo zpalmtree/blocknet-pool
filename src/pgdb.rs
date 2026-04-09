@@ -5167,7 +5167,30 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 .is_some()
         };
 
-        let updated = match (kind, live_matches_hash) {
+        let live_source_exists = if live_matches_hash {
+            match kind {
+                BalanceCreditSourceKind::Block => tx
+                    .query_opt(
+                        "SELECT 1
+                         FROM block_credit_events
+                         WHERE block_height = $1 AND address = $2",
+                        &[&height_i64, &address],
+                    )?
+                    .is_some(),
+                BalanceCreditSourceKind::Fee => tx
+                    .query_opt(
+                        "SELECT 1
+                         FROM pool_fee_balance_credits
+                         WHERE block_height = $1 AND fee_address = $2",
+                        &[&height_i64, &address],
+                    )?
+                    .is_some(),
+            }
+        } else {
+            false
+        };
+
+        let updated = match (kind, live_matches_hash && live_source_exists) {
             (BalanceCreditSourceKind::Block, true) => tx.execute(
                 if require_available_paid_amount {
                     "UPDATE block_credit_events
