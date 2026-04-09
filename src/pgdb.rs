@@ -3199,7 +3199,9 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let mut report = ExistingOrphanBlockReconciliationReport::default();
         for row in rows {
             let height = row.get::<_, i64>(0).max(0) as u64;
-            let result = self.reconcile_existing_orphaned_block_credits(height)?;
+            let result = self
+                .reconcile_existing_orphaned_block_credits(height)
+                .with_context(|| format!("reconciling orphaned block height {height}"))?;
             report.blocks_scanned = report.blocks_scanned.saturating_add(1);
             if result.manual_reconciliation_required {
                 report.blocks_requiring_manual_reconciliation = report
@@ -3331,19 +3333,25 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                         continue;
                     }
                     let balance = Self::load_balance(&mut tx, address)?;
-                    let allow_orphan_only_pending =
-                        if let Some(value) = orphan_only_pending_addresses.get(address) {
-                            *value
-                        } else {
-                            let summary = Self::load_live_pending_source_summary(
+                    let allow_orphan_only_pending = if let Some(value) =
+                        orphan_only_pending_addresses.get(address)
+                    {
+                        *value
+                    } else {
+                        let summary = Self::load_live_pending_source_summary(
                                 &mut tx,
                                 address,
                                 Some(block_height),
-                            )?;
-                            let allow = summary.canonical_pending == 0;
-                            orphan_only_pending_addresses.insert(address.clone(), allow);
-                            allow
-                        };
+                            )
+                            .with_context(|| {
+                                format!(
+                                    "loading live pending source summary for {address} while reconciling block {block_height}"
+                                )
+                            })?;
+                        let allow = summary.canonical_pending == 0;
+                        orphan_only_pending_addresses.insert(address.clone(), allow);
+                        allow
+                    };
                     if balance.pending < unpaid_amount && !allow_orphan_only_pending {
                         can_auto_reconcile = false;
                         break;
@@ -3356,19 +3364,25 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     let unpaid_amount = amount.saturating_sub(*paid_amount);
                     if unpaid_amount > 0 && !fee_address.trim().is_empty() {
                         let balance = Self::load_balance(&mut tx, fee_address)?;
-                        let allow_orphan_only_pending =
-                            if let Some(value) = orphan_only_pending_addresses.get(fee_address) {
-                                *value
-                            } else {
-                                let summary = Self::load_live_pending_source_summary(
+                        let allow_orphan_only_pending = if let Some(value) =
+                            orphan_only_pending_addresses.get(fee_address)
+                        {
+                            *value
+                        } else {
+                            let summary = Self::load_live_pending_source_summary(
                                     &mut tx,
                                     fee_address,
                                     Some(block_height),
-                                )?;
-                                let allow = summary.canonical_pending == 0;
-                                orphan_only_pending_addresses.insert(fee_address.clone(), allow);
-                                allow
-                            };
+                                )
+                                .with_context(|| {
+                                    format!(
+                                        "loading live pending source summary for {fee_address} while reconciling block {block_height}"
+                                    )
+                                })?;
+                            let allow = summary.canonical_pending == 0;
+                            orphan_only_pending_addresses.insert(fee_address.clone(), allow);
+                            allow
+                        };
                         if balance.pending < unpaid_amount && !allow_orphan_only_pending {
                             can_auto_reconcile = false;
                         }
@@ -3392,7 +3406,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     orphaned: true,
                     ..block.clone()
                 };
-                Self::archive_block_credit_state(&mut tx, &archived_block, archived_at)?;
+                Self::archive_block_credit_state(&mut tx, &archived_block, archived_at)
+                    .with_context(|| {
+                        format!("archiving paid orphan credit state for block {block_height}")
+                    })?;
             }
 
             for address in &cancelable_pending_addresses {
@@ -3480,30 +3497,54 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         address: &str,
         exclude_block_height: Option<u64>,
     ) -> Result<LivePendingSourceSummary> {
-        let excluded_height = exclude_block_height.map(u64_to_i64).transpose()?;
-        let row = tx.query_one(
-            "SELECT
-                 COALESCE(SUM(CASE WHEN orphaned THEN 0 ELSE pending_amount END), 0)::BIGINT,
-                 COALESCE(SUM(CASE WHEN orphaned THEN pending_amount ELSE 0 END), 0)::BIGINT
-             FROM (
-                 SELECT
-                     b.orphaned,
-                     GREATEST(e.amount - e.paid_amount, 0)::BIGINT AS pending_amount
-                 FROM block_credit_events e
-                 JOIN blocks b ON b.height = e.block_height
-                 WHERE e.address = $1
-                   AND ($2 IS NULL OR e.block_height <> $2)
-                 UNION ALL
-                 SELECT
-                     b.orphaned,
-                     GREATEST(f.amount - f.paid_amount, 0)::BIGINT AS pending_amount
-                 FROM pool_fee_balance_credits f
-                 JOIN blocks b ON b.height = f.block_height
-                 WHERE f.fee_address = $1
-                   AND ($2 IS NULL OR f.block_height <> $2)
-             ) sources",
-            &[&address, &excluded_height],
-        )?;
+        let row = if let Some(excluded_height) = exclude_block_height {
+            let excluded_height = u64_to_i64(excluded_height)?;
+            tx.query_one(
+                "SELECT
+                     COALESCE(SUM(CASE WHEN orphaned THEN 0 ELSE pending_amount END), 0)::BIGINT,
+                     COALESCE(SUM(CASE WHEN orphaned THEN pending_amount ELSE 0 END), 0)::BIGINT
+                 FROM (
+                     SELECT
+                         b.orphaned,
+                         GREATEST(e.amount - e.paid_amount, 0)::BIGINT AS pending_amount
+                     FROM block_credit_events e
+                     JOIN blocks b ON b.height = e.block_height
+                     WHERE e.address = $1
+                       AND e.block_height <> $2
+                     UNION ALL
+                     SELECT
+                         b.orphaned,
+                         GREATEST(f.amount - f.paid_amount, 0)::BIGINT AS pending_amount
+                     FROM pool_fee_balance_credits f
+                     JOIN blocks b ON b.height = f.block_height
+                     WHERE f.fee_address = $1
+                       AND f.block_height <> $2
+                 ) sources",
+                &[&address, &excluded_height],
+            )?
+        } else {
+            tx.query_one(
+                "SELECT
+                     COALESCE(SUM(CASE WHEN orphaned THEN 0 ELSE pending_amount END), 0)::BIGINT,
+                     COALESCE(SUM(CASE WHEN orphaned THEN pending_amount ELSE 0 END), 0)::BIGINT
+                 FROM (
+                     SELECT
+                         b.orphaned,
+                         GREATEST(e.amount - e.paid_amount, 0)::BIGINT AS pending_amount
+                     FROM block_credit_events e
+                     JOIN blocks b ON b.height = e.block_height
+                     WHERE e.address = $1
+                     UNION ALL
+                     SELECT
+                         b.orphaned,
+                         GREATEST(f.amount - f.paid_amount, 0)::BIGINT AS pending_amount
+                     FROM pool_fee_balance_credits f
+                     JOIN blocks b ON b.height = f.block_height
+                     WHERE f.fee_address = $1
+                 ) sources",
+                &[&address],
+            )?
+        };
         Ok(LivePendingSourceSummary {
             canonical_pending: row.get::<_, i64>(0).max(0) as u64,
             _orphan_pending: row.get::<_, i64>(1).max(0) as u64,

@@ -1023,7 +1023,11 @@ impl PayoutProcessor {
                 }
             }
             Err(err) => {
-                tracing::warn!(error = %err, "failed reconciling existing orphaned block credits");
+                tracing::warn!(
+                    error = %err,
+                    error_chain = %format!("{err:#}"),
+                    "failed reconciling existing orphaned block credits"
+                );
             }
         }
     }
