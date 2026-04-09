@@ -213,6 +213,12 @@ struct BalanceCreditSourceState {
     paid_amount: u64,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct LivePendingSourceSummary {
+    canonical_pending: u64,
+    _orphan_pending: u64,
+}
+
 #[derive(Debug, Clone)]
 struct PayoutCreditAllocation {
     source_kind: BalanceCreditSourceKind,
@@ -3256,6 +3262,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let mut affected_addresses = Vec::<String>::with_capacity(credit_rows.len() + 1);
         let mut has_paid_sources = false;
         let mut can_auto_reconcile = true;
+        let mut orphan_only_pending_addresses = HashMap::<String, bool>::new();
         for row in credit_rows {
             let address = row.get::<_, String>(0);
             let amount = row.get::<_, i64>(1).max(0) as u64;
@@ -3267,7 +3274,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             if paid_amount > 0 {
                 has_paid_sources = true;
             }
-            if !reversible {
+            if !reversible && paid_amount > 0 {
                 can_auto_reconcile = false;
             }
             credit_events.push((address, amount, paid_amount));
@@ -3293,7 +3300,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             if *paid_amount > 0 {
                 has_paid_sources = true;
             }
-            if !*reversible {
+            if !*reversible && *paid_amount > 0 {
                 can_auto_reconcile = false;
             }
         }
@@ -3324,7 +3331,20 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                         continue;
                     }
                     let balance = Self::load_balance(&mut tx, address)?;
-                    if balance.pending < unpaid_amount {
+                    let allow_orphan_only_pending =
+                        if let Some(value) = orphan_only_pending_addresses.get(address) {
+                            *value
+                        } else {
+                            let summary = Self::load_live_pending_source_summary(
+                                &mut tx,
+                                address,
+                                Some(block_height),
+                            )?;
+                            let allow = summary.canonical_pending == 0;
+                            orphan_only_pending_addresses.insert(address.clone(), allow);
+                            allow
+                        };
+                    if balance.pending < unpaid_amount && !allow_orphan_only_pending {
                         can_auto_reconcile = false;
                         break;
                     }
@@ -3336,7 +3356,20 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     let unpaid_amount = amount.saturating_sub(*paid_amount);
                     if unpaid_amount > 0 && !fee_address.trim().is_empty() {
                         let balance = Self::load_balance(&mut tx, fee_address)?;
-                        if balance.pending < unpaid_amount {
+                        let allow_orphan_only_pending =
+                            if let Some(value) = orphan_only_pending_addresses.get(fee_address) {
+                                *value
+                            } else {
+                                let summary = Self::load_live_pending_source_summary(
+                                    &mut tx,
+                                    fee_address,
+                                    Some(block_height),
+                                )?;
+                                let allow = summary.canonical_pending == 0;
+                                orphan_only_pending_addresses.insert(fee_address.clone(), allow);
+                                allow
+                            };
+                        if balance.pending < unpaid_amount && !allow_orphan_only_pending {
                             can_auto_reconcile = false;
                         }
                     }
@@ -3375,10 +3408,22 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 if unpaid_amount == 0 || address.trim().is_empty() {
                     continue;
                 }
-                Self::debit_pending_balance(&mut tx, address, unpaid_amount)?;
+                let balance = Self::load_balance(&mut tx, address)?;
+                let debit_amount = if orphan_only_pending_addresses
+                    .get(address)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    balance.pending.min(unpaid_amount)
+                } else {
+                    unpaid_amount
+                };
+                if debit_amount > 0 {
+                    Self::debit_pending_balance(&mut tx, address, debit_amount)?;
+                    result.reversed_credit_amount =
+                        result.reversed_credit_amount.saturating_add(debit_amount);
+                }
                 result.reversed_credit_events = result.reversed_credit_events.saturating_add(1);
-                result.reversed_credit_amount =
-                    result.reversed_credit_amount.saturating_add(unpaid_amount);
             }
             if !credit_events.is_empty() {
                 tx.execute(
@@ -3390,8 +3435,20 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             if let Some((fee_address, amount, paid_amount, _)) = fee_credit.as_ref() {
                 let unpaid_amount = amount.saturating_sub(*paid_amount);
                 if unpaid_amount > 0 && !fee_address.trim().is_empty() {
-                    Self::debit_pending_balance(&mut tx, fee_address, unpaid_amount)?;
-                    result.reversed_fee_amount = unpaid_amount;
+                    let balance = Self::load_balance(&mut tx, fee_address)?;
+                    let debit_amount = if orphan_only_pending_addresses
+                        .get(fee_address)
+                        .copied()
+                        .unwrap_or(false)
+                    {
+                        balance.pending.min(unpaid_amount)
+                    } else {
+                        unpaid_amount
+                    };
+                    if debit_amount > 0 {
+                        Self::debit_pending_balance(&mut tx, fee_address, debit_amount)?;
+                        result.reversed_fee_amount = debit_amount;
+                    }
                 }
                 tx.execute(
                     "DELETE FROM pool_fee_balance_credits WHERE block_height = $1",
@@ -3416,6 +3473,41 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         )?;
         tx.commit()?;
         Ok(result)
+    }
+
+    fn load_live_pending_source_summary(
+        tx: &mut Transaction<'_>,
+        address: &str,
+        exclude_block_height: Option<u64>,
+    ) -> Result<LivePendingSourceSummary> {
+        let excluded_height = exclude_block_height.map(u64_to_i64).transpose()?;
+        let row = tx.query_one(
+            "SELECT
+                 COALESCE(SUM(CASE WHEN orphaned THEN 0 ELSE pending_amount END), 0)::BIGINT,
+                 COALESCE(SUM(CASE WHEN orphaned THEN pending_amount ELSE 0 END), 0)::BIGINT
+             FROM (
+                 SELECT
+                     b.orphaned,
+                     GREATEST(e.amount - e.paid_amount, 0)::BIGINT AS pending_amount
+                 FROM block_credit_events e
+                 JOIN blocks b ON b.height = e.block_height
+                 WHERE e.address = $1
+                   AND ($2 IS NULL OR e.block_height <> $2)
+                 UNION ALL
+                 SELECT
+                     b.orphaned,
+                     GREATEST(f.amount - f.paid_amount, 0)::BIGINT AS pending_amount
+                 FROM pool_fee_balance_credits f
+                 JOIN blocks b ON b.height = f.block_height
+                 WHERE f.fee_address = $1
+                   AND ($2 IS NULL OR f.block_height <> $2)
+             ) sources",
+            &[&address, &excluded_height],
+        )?;
+        Ok(LivePendingSourceSummary {
+            canonical_pending: row.get::<_, i64>(0).max(0) as u64,
+            _orphan_pending: row.get::<_, i64>(1).max(0) as u64,
+        })
     }
 
     pub fn set_meta(&self, key: &str, value: &[u8]) -> Result<()> {
