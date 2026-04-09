@@ -1,7 +1,10 @@
 import type {
   AdminBalanceItem,
   AdminBalanceOverviewResponse,
+  AdminOrphanedBlockCleanupResponse,
   AdminPayoutItem,
+  AdminReconciliationIssuesResponse,
+  AdminReconciliationPayoutResolutionResponse,
   AdminShareDiagnosticsResponse,
   BlockRewardBreakdownResponse,
   BlockItem,
@@ -16,6 +19,7 @@ import type {
   MinerResponse,
   PagedResponse,
   PayoutItem,
+  ReconciliationPayoutResolutionAction,
   RecoveryInstanceId,
   RecoveryOperation,
   RecoveryStatusResponse,
@@ -62,6 +66,12 @@ export interface ApiClient {
   getAdminBalanceOverview(): Promise<AdminBalanceOverviewResponse>;
   getAdminShareDiagnostics(): Promise<AdminShareDiagnosticsResponse>;
   getAdminBalances(params: QueryParams): Promise<PagedResponse<AdminBalanceItem>>;
+  getAdminReconciliationIssues(): Promise<AdminReconciliationIssuesResponse>;
+  resolveAdminReconciliationPayout(
+    txHash: string,
+    action: ReconciliationPayoutResolutionAction
+  ): Promise<AdminReconciliationPayoutResolutionResponse>;
+  retryAdminOrphanedBlockCleanup(blockHeight: number): Promise<AdminOrphanedBlockCleanupResponse>;
   clearAddressRiskHistory(address: string): Promise<ClearAddressRiskHistoryResponse>;
   getRecoveryStatus(): Promise<RecoveryStatusResponse>;
   pauseRecoveryPayouts(): Promise<RecoveryOperation>;
@@ -163,10 +173,30 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
     getHealth: () => fetchJson<HealthResponse>('/api/health', { auth: true }),
     getAdminBalanceOverview: () =>
       fetchJson<AdminBalanceOverviewResponse>('/api/admin/balance-overview', { auth: true }),
+    getAdminReconciliationIssues: () =>
+      fetchJson<AdminReconciliationIssuesResponse>('/api/admin/reconciliation/issues', { auth: true }),
     getAdminShareDiagnostics: () =>
       fetchJson<AdminShareDiagnosticsResponse>('/api/admin/shares', { auth: true }),
     getAdminBalances: (params: QueryParams) =>
       fetchJson<PagedResponse<AdminBalanceItem>>(withQuery('/api/admin/balances', params), { auth: true }),
+    resolveAdminReconciliationPayout: (txHash, action) =>
+      fetchJson<AdminReconciliationPayoutResolutionResponse>('/api/admin/reconciliation/payouts/resolve', {
+        auth: true,
+        method: 'POST',
+        body: JSON.stringify({ tx_hash: txHash, action }),
+        headers: {
+          'content-type': 'application/json',
+        },
+      }),
+    retryAdminOrphanedBlockCleanup: (blockHeight) =>
+      fetchJson<AdminOrphanedBlockCleanupResponse>('/api/admin/reconciliation/orphan-blocks/retry-cleanup', {
+        auth: true,
+        method: 'POST',
+        body: JSON.stringify({ block_height: blockHeight }),
+        headers: {
+          'content-type': 'application/json',
+        },
+      }),
     clearAddressRiskHistory: (address: string) =>
       fetchJson<ClearAddressRiskHistoryResponse>('/api/admin/addresses/clear-risk-history', {
         auth: true,

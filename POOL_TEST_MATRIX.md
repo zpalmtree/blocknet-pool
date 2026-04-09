@@ -5,9 +5,9 @@
 Run from `/media/Code/blocknet`.
 
 ```bash
-# daemon patch branch
-git -C blocknet rev-parse --abbrev-ref HEAD
-git -C blocknet log --oneline -1
+# daemon branch for pool integrations
+git -C blocknet-core rev-parse --abbrev-ref HEAD
+git -C blocknet-core log --oneline -1
 
 # pool + miner local changes/build sanity
 cargo test --manifest-path blocknet-pool/Cargo.toml
@@ -15,7 +15,7 @@ cargo test --no-run --manifest-path seine/Cargo.toml
 ```
 
 Expected:
-- daemon branch is `mining-template-speed-patch` (or equivalent patched branch)
+- daemon branch is `pool`
 - `blocknet-pool` tests pass
 - `seine` compiles/tests build
 

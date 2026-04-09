@@ -121,7 +121,9 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
 
   const round = insights?.round;
   const payoutEta = insights?.payout_eta;
-  const latestSolvedBlock = insights?.luck_history?.[0];
+  const dashboardLuckHistory = (insights?.luck_history ?? []).filter((row) => !row.orphaned);
+  const hiddenOrphanRounds = Math.max(0, (insights?.luck_history?.length ?? 0) - dashboardLuckHistory.length);
+  const latestSolvedBlock = dashboardLuckHistory[0];
   const nextSweepAt = toUnixMs(payoutEta?.next_sweep_at);
   const nextSweepLabel =
     payoutEta?.next_sweep_in_seconds != null
@@ -251,10 +253,19 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
       <div className="stats-card-group">
         <div className="stats-card-group-title">Payouts</div>
         <div className="stats-card-group-grid">
-          <div className="stat-card" title={payoutEta?.unpaid_count != null ? `${payoutEta.unpaid_count} miners with unpaid balance` : undefined}>
-            <div className="label">Unpaid Miners</div>
-            <div className="value mono">{payoutEta?.unpaid_count ?? '-'}</div>
-            <div className="stat-meta">{payoutEta?.unpaid_amount ? formatCompactCoins(payoutEta.unpaid_amount) : '0 BNT'} owed</div>
+          <div
+            className="stat-card"
+            title={
+              payoutEta?.pending_count != null
+                ? `${payoutEta.pending_count} payout recipient${payoutEta.pending_count === 1 ? '' : 's'} currently queued`
+                : undefined
+            }
+          >
+            <div className="label">Payout Queue</div>
+            <div className="value mono">{payoutEta?.pending_count ?? '-'}</div>
+            <div className="stat-meta">
+              {payoutEta?.pending_total_amount ? formatCompactCoins(payoutEta.pending_total_amount) : '0 BNT'} queued
+            </div>
           </div>
           <div
             className="stat-card"
@@ -324,6 +335,12 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
             View All
           </a>
         </div>
+        {hiddenOrphanRounds > 0 && (
+          <div style={{ marginBottom: 12, color: 'var(--muted)', fontSize: 13 }}>
+            Showing canonical rounds only on the dashboard. {hiddenOrphanRounds} orphaned
+            {hiddenOrphanRounds === 1 ? ' row is' : ' rows are'} hidden here.
+          </div>
+        )}
         <div className="card table-scroll">
           <table>
             <thead>
@@ -336,14 +353,14 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
               </tr>
             </thead>
             <tbody>
-              {!insights?.luck_history?.length ? (
+              {!dashboardLuckHistory.length ? (
                 <tr>
                   <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                     No round history yet
                   </td>
                 </tr>
               ) : (
-                insights.luck_history.map((row) => (
+                dashboardLuckHistory.map((row) => (
                   <tr key={`${row.block_height}-${row.block_hash}`}>
                     <td>
                       <a href={`https://explorer.blocknetcrypto.com/block/${row.block_hash}`} target="_blank" rel="noopener">

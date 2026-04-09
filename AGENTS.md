@@ -10,8 +10,8 @@
 - `scripts/deploy_bntpool.sh` - Normal production deploy path for the current primary pool host (`bntpool` SSH alias)
 - `scripts/provision_bntpool_monitoring.sh` - Idempotent provisioning/update path for Prometheus/Alertmanager/exporters and monitoring configs on the current primary pool host
 - `scripts/deploy_cloudflare_monitor_worker.sh` - Deploy the outside-in Cloudflare Worker probe using the local TRMNL Cloudflare credentials
-- `scripts/build_blocknet_daemon.sh` - Local helper for building a server-compatible `blocknet-core` daemon binary from the sibling `../blocknet-core` repo
-- `scripts/deploy_blocknet_daemon_bntpool.sh` - Repeatable host-built daemon deploy path for the current primary pool host that updates `blocknetd.service` and switches the active core release
+- `scripts/build_blocknet_daemon.sh` - Local helper for building a server-compatible `blocknet-core` daemon binary from the sibling `../blocknet-core` repo; resolves branch `pool` into a temporary worktree unless intentionally overridden
+- `scripts/deploy_blocknet_daemon_bntpool.sh` - Repeatable host-built daemon deploy path for the current primary pool host that updates `blocknetd.service`, switches the active core release, and records branch/revision metadata in the deployed release
 
 ## Deployment
 
@@ -20,6 +20,7 @@
 - Use `./scripts/deploy_cloudflare_monitor_worker.sh` for the external Cloudflare public probe. Do not hand-run `wrangler` with copied secrets when the script can do it repeatably.
 - Use `./scripts/build_blocknet_daemon.sh` when you need a fresh daemon binary for the current primary production host without compiling on the live server.
 - Use `./scripts/deploy_blocknet_daemon_bntpool.sh` when you need to install or roll forward the daemon itself on the `bntpool` SSH alias. Keep daemon deploys separate from pool API/Stratum deploys.
+- The daemon build/deploy path resolves branch `pool` from the sibling `../blocknet-core` repo without changing your current checkout. If the needed branch/ref is missing or stale locally, fetch it before deploying. You can still override the branch/ref intentionally with `BLOCKNET_DAEMON_BRANCH` or `--daemon-branch`.
 - Do not manually `scp` individual files or restart pool services for routine deploys unless the user explicitly asks for an emergency hotfix path.
 - Production runs split services: `blocknet-pool-api.service`, `blocknet-pool-stratum.service`, and `blocknet-pool-monitor.service`.
 - Service responsibilities:
