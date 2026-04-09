@@ -197,6 +197,8 @@ pub struct BlockCreditEvent {
     pub block_height: u64,
     pub address: String,
     pub amount: u64,
+    pub paid_amount: u64,
+    pub reversible: bool,
 }
 
 #[derive(Debug, Clone)]
