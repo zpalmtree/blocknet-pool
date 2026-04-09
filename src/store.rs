@@ -17,8 +17,9 @@ use crate::db::{
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::payout::{is_share_payout_eligible, reward_window_end};
 use crate::pgdb::{
-    BalanceSourceSummary, LiveReconciliationBlockers, MinerShareWindowStats, MonitorUptimeSummary,
-    PoolFeeCreditBackfillReport, PostgresStore, VardiffHintDiagnostic, VardiffHintSummary,
+    BalanceSourceSummary, ExistingOrphanBlockReconciliationReport, LiveReconciliationBlockers,
+    MinerShareWindowStats, MonitorUptimeSummary, PoolFeeCreditBackfillReport, PostgresStore,
+    VardiffHintDiagnostic, VardiffHintSummary,
 };
 use crate::protocol::parse_hash_hex;
 use crate::validation::{
@@ -316,6 +317,12 @@ impl PoolStore {
 
     pub fn live_reconciliation_blockers(&self) -> Result<LiveReconciliationBlockers> {
         self.inner.live_reconciliation_blockers()
+    }
+
+    pub fn reconcile_all_existing_orphaned_block_credits(
+        &self,
+    ) -> Result<ExistingOrphanBlockReconciliationReport> {
+        self.inner.reconcile_all_existing_orphaned_block_credits()
     }
 
     pub fn upsert_monitor_heartbeat(&self, heartbeat: &MonitorHeartbeatUpsert) -> Result<()> {
@@ -812,7 +819,7 @@ mod tests {
         let orphaned = store
             .orphan_block_and_reverse_unpaid_credits(height)
             .expect("mark block orphaned");
-        assert!(orphaned.manual_reconciliation_required);
+        assert!(!orphaned.manual_reconciliation_required);
 
         store
             .add_found_block(FoundBlockRecord {

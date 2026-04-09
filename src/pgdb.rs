@@ -103,6 +103,17 @@ pub struct OrphanBlockReconciliation {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
+pub struct ExistingOrphanBlockReconciliationReport {
+    pub blocks_scanned: u64,
+    pub blocks_reconciled: u64,
+    pub blocks_requiring_manual_reconciliation: u64,
+    pub reversed_credit_events: u64,
+    pub reversed_credit_amount: u64,
+    pub reversed_fee_amount: u64,
+    pub canceled_pending_payouts: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
 pub struct PayoutReconciliationBackfillReport {
     pub payouts_linked: u64,
     pub payouts_unreversible: u64,
@@ -1471,115 +1482,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             return Ok(false);
         }
 
-        let archived_at = now_unix();
         let height_i64 = u64_to_i64(block.height)?;
-        tx.execute(
-            "UPDATE payout_credit_allocations
-             SET block_hash = $2
-             WHERE block_height = $1
-               AND block_hash IS NULL",
-            &[&height_i64, &existing.hash],
-        )?;
-        tx.execute(
-            "INSERT INTO archived_blocks (
-                height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed,
-                orphaned, paid_out, effort_pct, archived_at
-             )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-             ON CONFLICT (height, hash) DO UPDATE SET
-                 difficulty = EXCLUDED.difficulty,
-                 finder = EXCLUDED.finder,
-                 finder_worker = EXCLUDED.finder_worker,
-                 reward = EXCLUDED.reward,
-                 timestamp = EXCLUDED.timestamp,
-                 confirmed = EXCLUDED.confirmed,
-                 orphaned = EXCLUDED.orphaned,
-                 paid_out = EXCLUDED.paid_out,
-                 effort_pct = EXCLUDED.effort_pct,
-                 archived_at = EXCLUDED.archived_at",
-            &[
-                &height_i64,
-                &existing.hash,
-                &u64_to_i64(existing.difficulty)?,
-                &existing.finder,
-                &existing.finder_worker,
-                &u64_to_i64(existing.reward)?,
-                &to_unix(existing.timestamp),
-                &existing.confirmed,
-                &existing.orphaned,
-                &existing.paid_out,
-                &existing.effort_pct,
-                &archived_at,
-            ],
-        )?;
-        tx.execute(
-            "INSERT INTO archived_block_credit_events (
-                block_height, block_hash, address, amount, paid_amount, reversible, archived_at
-             )
-             SELECT
-                 block_height,
-                 $2,
-                 address,
-                 amount,
-                 paid_amount,
-                 reversible,
-                 $3
-             FROM block_credit_events
-             WHERE block_height = $1
-             ON CONFLICT (block_height, block_hash, address) DO UPDATE SET
-                 amount = EXCLUDED.amount,
-                 paid_amount = EXCLUDED.paid_amount,
-                 reversible = EXCLUDED.reversible,
-                 archived_at = EXCLUDED.archived_at",
-            &[&height_i64, &existing.hash, &archived_at],
-        )?;
-        tx.execute(
-            "INSERT INTO archived_pool_fee_balance_credits (
-                block_height, block_hash, fee_address, amount, paid_amount, timestamp,
-                credited_at, reversible, archived_at
-             )
-             SELECT
-                 block_height,
-                 $2,
-                 fee_address,
-                 amount,
-                 paid_amount,
-                 timestamp,
-                 credited_at,
-                 reversible,
-                 $3
-             FROM pool_fee_balance_credits
-             WHERE block_height = $1
-             ON CONFLICT (block_height, block_hash) DO UPDATE SET
-                 fee_address = EXCLUDED.fee_address,
-                 amount = EXCLUDED.amount,
-                 paid_amount = EXCLUDED.paid_amount,
-                 timestamp = EXCLUDED.timestamp,
-                 credited_at = EXCLUDED.credited_at,
-                 reversible = EXCLUDED.reversible,
-                 archived_at = EXCLUDED.archived_at",
-            &[&height_i64, &existing.hash, &archived_at],
-        )?;
-        tx.execute(
-            "INSERT INTO archived_pool_fee_events (
-                block_height, block_hash, amount, fee_address, timestamp, archived_at
-             )
-             SELECT
-                 block_height,
-                 $2,
-                 amount,
-                 fee_address,
-                 timestamp,
-                 $3
-             FROM pool_fee_events
-             WHERE block_height = $1
-             ON CONFLICT (block_height, block_hash) DO UPDATE SET
-                 amount = EXCLUDED.amount,
-                 fee_address = EXCLUDED.fee_address,
-                 timestamp = EXCLUDED.timestamp,
-                 archived_at = EXCLUDED.archived_at",
-            &[&height_i64, &existing.hash, &archived_at],
-        )?;
+        Self::archive_block_credit_state(&mut tx, &existing, now_unix())?;
         tx.execute(
             "DELETE FROM block_credit_events WHERE block_height = $1",
             &[&height_i64],
@@ -1621,6 +1525,122 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         )?;
         tx.commit()?;
         Ok(true)
+    }
+
+    fn archive_block_credit_state(
+        tx: &mut Transaction<'_>,
+        block: &DbBlock,
+        archived_at: i64,
+    ) -> Result<()> {
+        let height_i64 = u64_to_i64(block.height)?;
+        tx.execute(
+            "UPDATE payout_credit_allocations
+             SET block_hash = $2
+             WHERE block_height = $1
+               AND block_hash IS NULL",
+            &[&height_i64, &block.hash],
+        )?;
+        tx.execute(
+            "INSERT INTO archived_blocks (
+                height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed,
+                orphaned, paid_out, effort_pct, archived_at
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             ON CONFLICT (height, hash) DO UPDATE SET
+                 difficulty = EXCLUDED.difficulty,
+                 finder = EXCLUDED.finder,
+                 finder_worker = EXCLUDED.finder_worker,
+                 reward = EXCLUDED.reward,
+                 timestamp = EXCLUDED.timestamp,
+                 confirmed = EXCLUDED.confirmed,
+                 orphaned = EXCLUDED.orphaned,
+                 paid_out = EXCLUDED.paid_out,
+                 effort_pct = EXCLUDED.effort_pct,
+                 archived_at = EXCLUDED.archived_at",
+            &[
+                &height_i64,
+                &block.hash,
+                &u64_to_i64(block.difficulty)?,
+                &block.finder,
+                &block.finder_worker,
+                &u64_to_i64(block.reward)?,
+                &to_unix(block.timestamp),
+                &block.confirmed,
+                &block.orphaned,
+                &block.paid_out,
+                &block.effort_pct,
+                &archived_at,
+            ],
+        )?;
+        tx.execute(
+            "INSERT INTO archived_block_credit_events (
+                block_height, block_hash, address, amount, paid_amount, reversible, archived_at
+             )
+             SELECT
+                 block_height,
+                 $2,
+                 address,
+                 amount,
+                 paid_amount,
+                 reversible,
+                 $3
+             FROM block_credit_events
+             WHERE block_height = $1
+             ON CONFLICT (block_height, block_hash, address) DO UPDATE SET
+                 amount = EXCLUDED.amount,
+                 paid_amount = EXCLUDED.paid_amount,
+                 reversible = EXCLUDED.reversible,
+                 archived_at = EXCLUDED.archived_at",
+            &[&height_i64, &block.hash, &archived_at],
+        )?;
+        tx.execute(
+            "INSERT INTO archived_pool_fee_balance_credits (
+                block_height, block_hash, fee_address, amount, paid_amount, timestamp,
+                credited_at, reversible, archived_at
+             )
+             SELECT
+                 block_height,
+                 $2,
+                 fee_address,
+                 amount,
+                 paid_amount,
+                 timestamp,
+                 credited_at,
+                 reversible,
+                 $3
+             FROM pool_fee_balance_credits
+             WHERE block_height = $1
+             ON CONFLICT (block_height, block_hash) DO UPDATE SET
+                 fee_address = EXCLUDED.fee_address,
+                 amount = EXCLUDED.amount,
+                 paid_amount = EXCLUDED.paid_amount,
+                 timestamp = EXCLUDED.timestamp,
+                 credited_at = EXCLUDED.credited_at,
+                 reversible = EXCLUDED.reversible,
+                 archived_at = EXCLUDED.archived_at",
+            &[&height_i64, &block.hash, &archived_at],
+        )?;
+        tx.execute(
+            "INSERT INTO archived_pool_fee_events (
+                block_height, block_hash, amount, fee_address, timestamp, archived_at
+             )
+             SELECT
+                 block_height,
+                 $2,
+                 amount,
+                 fee_address,
+                 timestamp,
+                 $3
+             FROM pool_fee_events
+             WHERE block_height = $1
+             ON CONFLICT (block_height, block_hash) DO UPDATE SET
+                 amount = EXCLUDED.amount,
+                 fee_address = EXCLUDED.fee_address,
+                 timestamp = EXCLUDED.timestamp,
+                 archived_at = EXCLUDED.archived_at",
+            &[&height_i64, &block.hash, &archived_at],
+        )?;
+        Ok(())
     }
 
     pub fn get_block(&self, height: u64) -> Result<Option<DbBlock>> {
@@ -3155,6 +3175,52 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         self.reconcile_block_credit_state(block_height, true)
     }
 
+    pub fn reconcile_all_existing_orphaned_block_credits(
+        &self,
+    ) -> Result<ExistingOrphanBlockReconciliationReport> {
+        let rows = self.conn().lock().query(
+            "SELECT height
+             FROM blocks b
+             WHERE b.orphaned = TRUE
+               AND (
+                   EXISTS (SELECT 1 FROM block_credit_events e WHERE e.block_height = b.height)
+                   OR EXISTS (SELECT 1 FROM pool_fee_balance_credits f WHERE f.block_height = b.height)
+               )
+             ORDER BY b.height ASC",
+            &[],
+        )?;
+
+        let mut report = ExistingOrphanBlockReconciliationReport::default();
+        for row in rows {
+            let height = row.get::<_, i64>(0).max(0) as u64;
+            let result = self.reconcile_existing_orphaned_block_credits(height)?;
+            report.blocks_scanned = report.blocks_scanned.saturating_add(1);
+            if result.manual_reconciliation_required {
+                report.blocks_requiring_manual_reconciliation = report
+                    .blocks_requiring_manual_reconciliation
+                    .saturating_add(1);
+                continue;
+            }
+            if result.orphaned {
+                report.blocks_reconciled = report.blocks_reconciled.saturating_add(1);
+            }
+            report.reversed_credit_events = report
+                .reversed_credit_events
+                .saturating_add(result.reversed_credit_events);
+            report.reversed_credit_amount = report
+                .reversed_credit_amount
+                .saturating_add(result.reversed_credit_amount);
+            report.reversed_fee_amount = report
+                .reversed_fee_amount
+                .saturating_add(result.reversed_fee_amount);
+            report.canceled_pending_payouts = report
+                .canceled_pending_payouts
+                .saturating_add(result.canceled_pending_payouts);
+        }
+
+        Ok(report)
+    }
+
     fn reconcile_block_credit_state(
         &self,
         block_height: u64,
@@ -3163,13 +3229,18 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let mut conn = self.conn().lock();
         let mut tx = conn.transaction()?;
         let Some(block_row) = tx.query_opt(
-            "SELECT orphaned FROM blocks WHERE height = $1 FOR UPDATE",
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp,
+                    confirmed, orphaned, paid_out, effort_pct
+             FROM blocks
+             WHERE height = $1
+             FOR UPDATE",
             &[&u64_to_i64(block_height)?],
         )?
         else {
             return Err(anyhow!("block {block_height} not found"));
         };
-        let block_already_orphaned = block_row.get::<_, bool>(0);
+        let block = row_to_block(&block_row);
+        let block_already_orphaned = block.orphaned;
         if block_already_orphaned && !allow_existing_orphan {
             return Ok(OrphanBlockReconciliation::default());
         }
@@ -3183,7 +3254,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         )?;
         let mut credit_events = Vec::with_capacity(credit_rows.len());
         let mut affected_addresses = Vec::<String>::with_capacity(credit_rows.len() + 1);
-        let mut reversal_blocked = false;
+        let mut has_paid_sources = false;
+        let mut can_auto_reconcile = true;
         for row in credit_rows {
             let address = row.get::<_, String>(0);
             let amount = row.get::<_, i64>(1).max(0) as u64;
@@ -3192,10 +3264,13 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             if amount > 0 && !affected_addresses.contains(&address) {
                 affected_addresses.push(address.clone());
             }
-            if !reversible || paid_amount > 0 {
-                reversal_blocked = true;
+            if paid_amount > 0 {
+                has_paid_sources = true;
             }
-            credit_events.push((address, amount));
+            if !reversible {
+                can_auto_reconcile = false;
+            }
+            credit_events.push((address, amount, paid_amount));
         }
 
         let fee_credit = tx.query_opt(
@@ -3215,8 +3290,11 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             if !fee_address.is_empty() && !affected_addresses.contains(fee_address) {
                 affected_addresses.push(fee_address.clone());
             }
-            if !*reversible || *paid_amount > 0 {
-                reversal_blocked = true;
+            if *paid_amount > 0 {
+                has_paid_sources = true;
+            }
+            if !*reversible {
+                can_auto_reconcile = false;
             }
         }
 
@@ -3232,32 +3310,34 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 )? {
                     let tx_hash = pending_row.get::<_, Option<String>>(0).unwrap_or_default();
                     if !tx_hash.trim().is_empty() {
-                        reversal_blocked = true;
+                        can_auto_reconcile = false;
                     } else {
                         cancelable_pending_addresses.push(address.clone());
                     }
                 }
             }
 
-            if !reversal_blocked {
-                for (address, amount) in &credit_events {
-                    if *amount == 0 || address.trim().is_empty() {
+            if can_auto_reconcile {
+                for (address, amount, paid_amount) in &credit_events {
+                    let unpaid_amount = amount.saturating_sub(*paid_amount);
+                    if unpaid_amount == 0 || address.trim().is_empty() {
                         continue;
                     }
                     let balance = Self::load_balance(&mut tx, address)?;
-                    if balance.pending < *amount {
-                        reversal_blocked = true;
+                    if balance.pending < unpaid_amount {
+                        can_auto_reconcile = false;
                         break;
                     }
                 }
             }
 
-            if !reversal_blocked {
-                if let Some((fee_address, amount, _, _)) = fee_credit.as_ref() {
-                    if *amount > 0 && !fee_address.trim().is_empty() {
+            if can_auto_reconcile {
+                if let Some((fee_address, amount, paid_amount, _)) = fee_credit.as_ref() {
+                    let unpaid_amount = amount.saturating_sub(*paid_amount);
+                    if unpaid_amount > 0 && !fee_address.trim().is_empty() {
                         let balance = Self::load_balance(&mut tx, fee_address)?;
-                        if balance.pending < *amount {
-                            reversal_blocked = true;
+                        if balance.pending < unpaid_amount {
+                            can_auto_reconcile = false;
                         }
                     }
                 }
@@ -3266,12 +3346,22 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
         let mut result = OrphanBlockReconciliation {
             orphaned: true,
-            manual_reconciliation_required: reversal_blocked
+            manual_reconciliation_required: !can_auto_reconcile
                 && (!credit_events.is_empty() || fee_credit.is_some()),
             ..OrphanBlockReconciliation::default()
         };
 
-        if !reversal_blocked {
+        if can_auto_reconcile {
+            let archived_at = now_unix();
+            if has_paid_sources {
+                let archived_block = DbBlock {
+                    confirmed: false,
+                    orphaned: true,
+                    ..block.clone()
+                };
+                Self::archive_block_credit_state(&mut tx, &archived_block, archived_at)?;
+            }
+
             for address in &cancelable_pending_addresses {
                 result.canceled_pending_payouts =
                     result.canceled_pending_payouts.saturating_add(tx.execute(
@@ -3280,14 +3370,15 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     )? as u64);
             }
 
-            for (address, amount) in &credit_events {
-                if *amount == 0 || address.trim().is_empty() {
+            for (address, amount, paid_amount) in &credit_events {
+                let unpaid_amount = amount.saturating_sub(*paid_amount);
+                if unpaid_amount == 0 || address.trim().is_empty() {
                     continue;
                 }
-                Self::debit_pending_balance(&mut tx, address, *amount)?;
+                Self::debit_pending_balance(&mut tx, address, unpaid_amount)?;
                 result.reversed_credit_events = result.reversed_credit_events.saturating_add(1);
                 result.reversed_credit_amount =
-                    result.reversed_credit_amount.saturating_add(*amount);
+                    result.reversed_credit_amount.saturating_add(unpaid_amount);
             }
             if !credit_events.is_empty() {
                 tx.execute(
@@ -3296,13 +3387,20 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 )?;
             }
 
-            if let Some((fee_address, amount, _, _)) = fee_credit.as_ref() {
-                if *amount > 0 && !fee_address.trim().is_empty() {
-                    Self::debit_pending_balance(&mut tx, fee_address, *amount)?;
-                    result.reversed_fee_amount = *amount;
+            if let Some((fee_address, amount, paid_amount, _)) = fee_credit.as_ref() {
+                let unpaid_amount = amount.saturating_sub(*paid_amount);
+                if unpaid_amount > 0 && !fee_address.trim().is_empty() {
+                    Self::debit_pending_balance(&mut tx, fee_address, unpaid_amount)?;
+                    result.reversed_fee_amount = unpaid_amount;
                 }
                 tx.execute(
                     "DELETE FROM pool_fee_balance_credits WHERE block_height = $1",
+                    &[&u64_to_i64(block_height)?],
+                )?;
+            }
+            if has_paid_sources {
+                tx.execute(
+                    "DELETE FROM pool_fee_events WHERE block_height = $1",
                     &[&u64_to_i64(block_height)?],
                 )?;
             }
@@ -3314,7 +3412,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                  confirmed = FALSE,
                  paid_out = CASE WHEN $2 THEN FALSE ELSE paid_out END
              WHERE height = $1",
-            &[&u64_to_i64(block_height)?, &(!reversal_blocked)],
+            &[&u64_to_i64(block_height)?, &(!has_paid_sources)],
         )?;
         tx.commit()?;
         Ok(result)
@@ -6952,7 +7050,11 @@ mod tests {
         let orphaned = store
             .orphan_block_and_reverse_unpaid_credits(height)
             .expect("mark block orphaned");
-        assert!(orphaned.manual_reconciliation_required);
+        assert!(!orphaned.manual_reconciliation_required);
+        assert!(store
+            .get_block_credit_events(height)
+            .expect("credit events after orphan reconcile")
+            .is_empty());
 
         let reverted = store
             .revert_completed_payout_tx("orphan-revert-tx", "missing after recovery")
@@ -6964,11 +7066,10 @@ mod tests {
         let balance = store.get_balance(&addr).expect("balance after revert");
         assert_eq!(balance.pending, 0);
         assert_eq!(balance.paid, 0);
-        let events = store
+        assert!(store
             .get_block_credit_events(height)
-            .expect("credit events after orphan revert");
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].paid_amount, 0);
+            .expect("credit events after orphan revert")
+            .is_empty());
         assert!(store
             .get_recent_payouts(10)
             .expect("recent payouts")
@@ -7211,7 +7312,7 @@ mod tests {
     }
 
     #[test]
-    fn orphan_block_flags_manual_reconciliation_when_credits_already_paid_postgres() {
+    fn orphan_block_archives_paid_credits_and_clears_live_blockers_postgres() {
         let Some(store) = test_store() else {
             eprintln!(
                 "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
@@ -7258,7 +7359,7 @@ mod tests {
             .orphan_block_and_reverse_unpaid_credits(height)
             .expect("reconcile orphan");
         assert!(result.orphaned);
-        assert!(result.manual_reconciliation_required);
+        assert!(!result.manual_reconciliation_required);
         assert_eq!(result.reversed_credit_amount, 0);
 
         let block = store
@@ -7269,12 +7370,93 @@ mod tests {
         assert!(!block.confirmed);
         assert!(block.paid_out);
 
-        let events = store
+        assert!(store
             .get_block_credit_events(height)
-            .expect("events after manual reconcile");
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].paid_amount, 100);
+            .expect("events after orphan reconcile")
+            .is_empty());
         assert_eq!(store.get_balance(&miner).expect("miner balance").paid, 100);
+
+        let issues = store
+            .list_orphaned_block_credit_issues()
+            .expect("load orphaned issues");
+        let issue = issues
+            .iter()
+            .find(|issue| issue.height == height)
+            .expect("archived orphan issue preserved");
+        assert_eq!(issue.paid_credit_amount, 100);
+    }
+
+    #[test]
+    fn orphan_block_debits_unpaid_remainder_after_partial_payout_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let height = 8_371_000u64 + (rand::random::<u16>() as u64);
+        let miner = format!("partial-paid-orphan-miner-{suffix}");
+        let tx_hash = format!("partial-paid-orphan-{suffix}");
+        store
+            .add_block(&DbBlock {
+                height,
+                hash: format!("partial-paid-orphan-block-{suffix}"),
+                difficulty: 1,
+                finder: format!("finder-{suffix}"),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert block");
+        assert!(store
+            .apply_block_credits_and_mark_paid(height, &[(miner.clone(), 100)])
+            .expect("apply credits"));
+        store
+            .create_pending_payout(&miner, 40)
+            .expect("create pending");
+        store
+            .mark_pending_payout_send_started(&miner)
+            .expect("mark send started")
+            .expect("pending exists");
+        store
+            .record_pending_payout_broadcast(&miner, 40, 2, &tx_hash)
+            .expect("record broadcast");
+        store
+            .complete_pending_payout(&miner, 40, 2, &tx_hash)
+            .expect("complete payout");
+
+        let result = store
+            .orphan_block_and_reverse_unpaid_credits(height)
+            .expect("reconcile orphan");
+        assert!(result.orphaned);
+        assert!(!result.manual_reconciliation_required);
+        assert_eq!(result.reversed_credit_events, 1);
+        assert_eq!(result.reversed_credit_amount, 60);
+        assert!(store
+            .get_block_credit_events(height)
+            .expect("events after orphan cleanup")
+            .is_empty());
+
+        let balance = store.get_balance(&miner).expect("balance after orphan");
+        assert_eq!(balance.pending, 0);
+        assert_eq!(balance.paid, 40);
+
+        let reverted = store
+            .revert_completed_payout_tx(&tx_hash, "missing after recovery")
+            .expect("revert partial orphan payout");
+        assert_eq!(reverted.reverted_payout_rows, 1);
+        assert_eq!(reverted.restored_pending_amount, 0);
+        assert_eq!(reverted.dropped_orphaned_amount, 40);
+
+        let balance = store.get_balance(&miner).expect("balance after revert");
+        assert_eq!(balance.pending, 0);
+        assert_eq!(balance.paid, 0);
     }
 
     #[test]

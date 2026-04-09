@@ -309,6 +309,7 @@ impl PayoutProcessor {
         self.confirm_blocks();
         self.distribute_rewards();
         self.reconcile_pending_payouts();
+        self.reconcile_existing_orphaned_block_credits();
         if send_payouts {
             self.send_payouts();
         }
@@ -986,6 +987,42 @@ impl PayoutProcessor {
                         "failed to revert completed payout missing from daemon chain"
                     );
                 }
+            }
+        }
+    }
+
+    fn reconcile_existing_orphaned_block_credits(&self) {
+        match self.store.reconcile_all_existing_orphaned_block_credits() {
+            Ok(report) => {
+                if report.blocks_scanned == 0 {
+                    return;
+                }
+                if report.blocks_requiring_manual_reconciliation > 0 {
+                    tracing::warn!(
+                        blocks_scanned = report.blocks_scanned,
+                        blocks_reconciled = report.blocks_reconciled,
+                        blocks_requiring_manual_reconciliation =
+                            report.blocks_requiring_manual_reconciliation,
+                        reversed_credit_events = report.reversed_credit_events,
+                        reversed_credit_amount = report.reversed_credit_amount,
+                        reversed_fee_amount = report.reversed_fee_amount,
+                        canceled_pending_payouts = report.canceled_pending_payouts,
+                        "reconciled existing orphaned block credits with unresolved leftovers"
+                    );
+                } else {
+                    tracing::info!(
+                        blocks_scanned = report.blocks_scanned,
+                        blocks_reconciled = report.blocks_reconciled,
+                        reversed_credit_events = report.reversed_credit_events,
+                        reversed_credit_amount = report.reversed_credit_amount,
+                        reversed_fee_amount = report.reversed_fee_amount,
+                        canceled_pending_payouts = report.canceled_pending_payouts,
+                        "reconciled existing orphaned block credits"
+                    );
+                }
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "failed reconciling existing orphaned block credits");
             }
         }
     }
