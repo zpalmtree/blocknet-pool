@@ -17,9 +17,10 @@ use crate::db::{
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::payout::{is_share_payout_eligible, reward_window_end};
 use crate::pgdb::{
-    BalanceSourceSummary, ExistingOrphanBlockReconciliationReport, LiveReconciliationBlockers,
-    MinerShareWindowStats, MonitorUptimeSummary, PoolFeeCreditBackfillReport, PostgresStore,
-    VardiffHintDiagnostic, VardiffHintSummary,
+    BalanceSourceSummary, ExistingOrphanBlockReconciliationReport,
+    HistoricalMissingMinerCreditsBlock, LiveReconciliationBlockers, MinerShareWindowStats,
+    MonitorUptimeSummary, PoolFeeCreditBackfillReport, PostgresStore, VardiffHintDiagnostic,
+    VardiffHintSummary,
 };
 use crate::protocol::parse_hash_hex;
 use crate::validation::{
@@ -309,6 +310,22 @@ impl PoolStore {
     ) -> Result<PoolFeeCreditBackfillReport> {
         self.inner
             .backfill_uncredited_pool_fee_balance_credits(expected_fee_address)
+    }
+
+    pub fn list_confirmed_paid_blocks_missing_miner_credits(
+        &self,
+    ) -> Result<Vec<HistoricalMissingMinerCreditsBlock>> {
+        self.inner
+            .list_confirmed_paid_blocks_missing_miner_credits()
+    }
+
+    pub fn backfill_missing_block_credit_events(
+        &self,
+        block_height: u64,
+        credits: &[(String, u64)],
+    ) -> Result<bool> {
+        self.inner
+            .backfill_missing_block_credit_events(block_height, credits)
     }
 
     pub fn list_balance_source_summaries(&self) -> Result<Vec<BalanceSourceSummary>> {

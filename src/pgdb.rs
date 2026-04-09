@@ -92,6 +92,12 @@ pub struct PoolFeeCreditBackfillReport {
     pub skipped_mismatched_destination: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct HistoricalMissingMinerCreditsBlock {
+    pub block: DbBlock,
+    pub recorded_fee_amount: u64,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OrphanBlockReconciliation {
     pub orphaned: bool,
@@ -2406,6 +2412,102 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         }
 
         Ok(report)
+    }
+
+    pub fn list_confirmed_paid_blocks_missing_miner_credits(
+        &self,
+    ) -> Result<Vec<HistoricalMissingMinerCreditsBlock>> {
+        let rows = self.conn().lock().query(
+            "SELECT
+                 b.height,
+                 b.hash,
+                 b.difficulty,
+                 b.finder,
+                 b.finder_worker,
+                 b.reward,
+                 b.timestamp,
+                 b.confirmed,
+                 b.orphaned,
+                 b.paid_out,
+                 b.effort_pct,
+                 COALESCE(c.amount, e.amount, 0)::BIGINT AS recorded_fee_amount
+             FROM blocks b
+             LEFT JOIN pool_fee_balance_credits c ON c.block_height = b.height
+             LEFT JOIN pool_fee_events e ON e.block_height = b.height
+             WHERE b.confirmed = TRUE
+               AND b.orphaned = FALSE
+               AND b.paid_out = TRUE
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM block_credit_events credits
+                   WHERE credits.block_height = b.height
+               )
+             ORDER BY b.height ASC",
+            &[],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| HistoricalMissingMinerCreditsBlock {
+                block: row_to_block(&row),
+                recorded_fee_amount: row.get::<_, i64>(11).max(0) as u64,
+            })
+            .collect())
+    }
+
+    pub fn backfill_missing_block_credit_events(
+        &self,
+        block_height: u64,
+        credits: &[(String, u64)],
+    ) -> Result<bool> {
+        let mut conn = self.conn().lock();
+        let mut tx = conn.transaction()?;
+
+        let block_state = tx.query_opt(
+            "SELECT confirmed, orphaned, paid_out FROM blocks WHERE height = $1 FOR UPDATE",
+            &[&u64_to_i64(block_height)?],
+        )?;
+        let Some(row) = block_state else {
+            return Err(anyhow!("block {block_height} not found"));
+        };
+        let confirmed: bool = row.get(0);
+        let orphaned: bool = row.get(1);
+        let paid_out: bool = row.get(2);
+        if !confirmed || orphaned {
+            return Err(anyhow!(
+                "block {block_height} is not eligible for historical credit backfill"
+            ));
+        }
+        if !paid_out {
+            return Ok(false);
+        }
+        let existing = tx.query_one(
+            "SELECT COUNT(*)::BIGINT FROM block_credit_events WHERE block_height = $1",
+            &[&u64_to_i64(block_height)?],
+        )?;
+        if existing.get::<_, i64>(0) > 0 {
+            return Ok(false);
+        }
+
+        for (address, amount) in credits {
+            let destination = address.trim();
+            if destination.is_empty() || *amount == 0 {
+                continue;
+            }
+
+            Self::credit_pending_balance(&mut tx, destination, *amount)?;
+            tx.execute(
+                "INSERT INTO block_credit_events (block_height, address, amount, paid_amount, reversible)
+                 VALUES ($1, $2, $3, 0, TRUE)",
+                &[
+                    &u64_to_i64(block_height)?,
+                    &destination,
+                    &u64_to_i64(*amount)?,
+                ],
+            )?;
+        }
+
+        tx.commit()?;
+        Ok(true)
     }
 
     pub fn get_all_balances(&self) -> Result<Vec<Balance>> {

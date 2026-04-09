@@ -167,6 +167,17 @@ struct RecoveryPayoutReconciliationState {
     after_payout_id: i64,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct HistoricalMinerCreditBackfillReport {
+    blocks_scanned: u64,
+    blocks_credited: u64,
+    credited_addresses: u64,
+    credited_amount: u64,
+    skipped_empty_windows: u64,
+    skipped_zero_distributable: u64,
+    skipped_distribution_failures: u64,
+}
+
 #[derive(Debug)]
 pub struct PayoutProcessor {
     cfg: Config,
@@ -218,6 +229,7 @@ impl PayoutProcessor {
                 let started_at = Instant::now();
                 let startup = tokio::task::spawn_blocking(move || {
                     this.backfill_legacy_pool_fee_credits();
+                    this.backfill_historical_miner_credits();
                     this.backfill_historical_payout_reconciliation_state();
                     this.recover_pending_payouts();
                     this.tick(true);
@@ -639,6 +651,15 @@ impl PayoutProcessor {
         block: &DbBlock,
         reward: u64,
     ) -> anyhow::Result<HashMap<String, u64>> {
+        self.build_pplns_credits_with_empty_window_finder_fallback(block, reward, true)
+    }
+
+    fn build_pplns_credits_with_empty_window_finder_fallback(
+        &self,
+        block: &DbBlock,
+        reward: u64,
+        allow_empty_window_finder_fallback: bool,
+    ) -> anyhow::Result<HashMap<String, u64>> {
         let now = SystemTime::now();
         let provisional_delay = self.cfg.provisional_share_delay_duration();
         let window_end = reward_window_end(self.store.as_ref(), block)?;
@@ -654,6 +675,12 @@ impl PayoutProcessor {
 
         let mut credits = HashMap::<String, u64>::new();
         if shares.is_empty() {
+            if !allow_empty_window_finder_fallback {
+                anyhow::bail!(
+                    "block {} payout window has no recorded shares",
+                    block.height
+                );
+            }
             add_credit(&mut credits, &block.finder, reward)?;
             return Ok(credits);
         }
@@ -702,6 +729,15 @@ impl PayoutProcessor {
         block: &DbBlock,
         reward: u64,
     ) -> anyhow::Result<HashMap<String, u64>> {
+        self.build_proportional_credits_with_empty_window_finder_fallback(block, reward, true)
+    }
+
+    fn build_proportional_credits_with_empty_window_finder_fallback(
+        &self,
+        block: &DbBlock,
+        reward: u64,
+        allow_empty_window_finder_fallback: bool,
+    ) -> anyhow::Result<HashMap<String, u64>> {
         let now = SystemTime::now();
         let provisional_delay = self.cfg.provisional_share_delay_duration();
         let window_end = reward_window_end(self.store.as_ref(), block)?;
@@ -711,6 +747,12 @@ impl PayoutProcessor {
         let shares = self.store.get_shares_between(since, window_end)?;
         let mut credits = HashMap::<String, u64>::new();
         if shares.is_empty() {
+            if !allow_empty_window_finder_fallback {
+                anyhow::bail!(
+                    "block {} payout window has no recorded shares",
+                    block.height
+                );
+            }
             add_credit(&mut credits, &block.finder, reward)?;
             return Ok(credits);
         }
@@ -752,6 +794,18 @@ impl PayoutProcessor {
 
         self.allocate_weighted_credits(weights, total_weight, distributable, &mut credits)?;
         Ok(credits)
+    }
+
+    fn build_historical_backfill_credits(
+        &self,
+        block: &DbBlock,
+        reward: u64,
+    ) -> anyhow::Result<HashMap<String, u64>> {
+        if self.cfg.payout_scheme.trim().eq_ignore_ascii_case("pplns") {
+            self.build_pplns_credits_with_empty_window_finder_fallback(block, reward, false)
+        } else {
+            self.build_proportional_credits_with_empty_window_finder_fallback(block, reward, false)
+        }
     }
 
     fn weight_shares_for_payout(
@@ -925,6 +979,131 @@ impl PayoutProcessor {
             Err(err) => {
                 tracing::error!(error = %err, "failed backfilling historical pool fee credits");
             }
+        }
+    }
+
+    fn backfill_historical_miner_credits(&self) {
+        let blocks = match self
+            .store
+            .list_confirmed_paid_blocks_missing_miner_credits()
+        {
+            Ok(blocks) => blocks,
+            Err(err) => {
+                tracing::error!(error = %err, "failed loading historical missing miner credits");
+                return;
+            }
+        };
+        if blocks.is_empty() {
+            return;
+        }
+
+        let mut report = HistoricalMinerCreditBackfillReport::default();
+        for candidate in blocks {
+            report.blocks_scanned = report.blocks_scanned.saturating_add(1);
+
+            let distributable = candidate
+                .block
+                .reward
+                .saturating_sub(candidate.recorded_fee_amount);
+            if distributable == 0 {
+                report.skipped_zero_distributable =
+                    report.skipped_zero_distributable.saturating_add(1);
+                tracing::warn!(
+                    height = candidate.block.height,
+                    reward = candidate.block.reward,
+                    fee_amount = candidate.recorded_fee_amount,
+                    "skipping historical miner credit backfill with zero distributable reward"
+                );
+                continue;
+            }
+
+            let credits = match self
+                .build_historical_backfill_credits(&candidate.block, distributable)
+            {
+                Ok(credits) => credits,
+                Err(err) => {
+                    if err.to_string().contains("no recorded shares") {
+                        report.skipped_empty_windows =
+                            report.skipped_empty_windows.saturating_add(1);
+                        tracing::warn!(
+                            height = candidate.block.height,
+                            error = %err,
+                            "skipping historical miner credit backfill without recorded share window"
+                        );
+                    } else {
+                        report.skipped_distribution_failures =
+                            report.skipped_distribution_failures.saturating_add(1);
+                        tracing::warn!(
+                            height = candidate.block.height,
+                            error = %err,
+                            "failed reconstructing historical miner credits"
+                        );
+                    }
+                    continue;
+                }
+            };
+
+            let mut credits_vec = Vec::with_capacity(credits.len());
+            let mut credited_amount = 0u64;
+            for (address, amount) in credits {
+                if amount == 0 {
+                    continue;
+                }
+                credits_vec.push((address, amount));
+                credited_amount = credited_amount.saturating_add(amount);
+            }
+            if credits_vec.is_empty() {
+                report.skipped_distribution_failures =
+                    report.skipped_distribution_failures.saturating_add(1);
+                tracing::warn!(
+                    height = candidate.block.height,
+                    "historical miner credit reconstruction produced no credited addresses"
+                );
+                continue;
+            }
+
+            let applied = match self
+                .store
+                .backfill_missing_block_credit_events(candidate.block.height, &credits_vec)
+            {
+                Ok(applied) => applied,
+                Err(err) => {
+                    report.skipped_distribution_failures =
+                        report.skipped_distribution_failures.saturating_add(1);
+                    tracing::warn!(
+                        height = candidate.block.height,
+                        error = %err,
+                        "failed persisting reconstructed historical miner credits"
+                    );
+                    continue;
+                }
+            };
+            if !applied {
+                continue;
+            }
+
+            report.blocks_credited = report.blocks_credited.saturating_add(1);
+            report.credited_addresses = report
+                .credited_addresses
+                .saturating_add(credits_vec.len() as u64);
+            report.credited_amount = report.credited_amount.saturating_add(credited_amount);
+        }
+
+        if report.blocks_credited > 0
+            || report.skipped_empty_windows > 0
+            || report.skipped_zero_distributable > 0
+            || report.skipped_distribution_failures > 0
+        {
+            tracing::info!(
+                blocks_scanned = report.blocks_scanned,
+                blocks_credited = report.blocks_credited,
+                credited_addresses = report.credited_addresses,
+                credited_amount = report.credited_amount,
+                skipped_empty_windows = report.skipped_empty_windows,
+                skipped_zero_distributable = report.skipped_zero_distributable,
+                skipped_distribution_failures = report.skipped_distribution_failures,
+                "backfilled historical miner credits"
+            );
         }
     }
 
@@ -4085,5 +4264,112 @@ mod tests {
             .expect("mature miner balance");
         assert_eq!(balance.pending, 100);
         assert!(processor.recovery_payout_reconciliation_active());
+    }
+
+    #[test]
+    fn historical_miner_credit_backfill_reconstructs_paid_blocks_missing_credits() {
+        let store = require_test_store!();
+        let height = 9_500_000u64 + (rand::random::<u16>() as u64);
+        let block_time = UNIX_EPOCH + Duration::from_secs(5_500_000);
+        let block = DbBlock {
+            height,
+            hash: format!("historical-backfill-{height}"),
+            difficulty: 1,
+            finder: "finder-historical".to_string(),
+            finder_worker: "rig".to_string(),
+            reward: 100,
+            timestamp: block_time,
+            confirmed: true,
+            orphaned: false,
+            paid_out: true,
+            effort_pct: None,
+        };
+        store.add_block(&block).expect("insert historical block");
+        store
+            .add_share(crate::engine::ShareRecord {
+                job_id: format!("historical-job-a-{height}"),
+                miner: "miner-a".to_string(),
+                worker: "wa".to_string(),
+                difficulty: 3,
+                nonce: 1,
+                status: SHARE_STATUS_VERIFIED,
+                was_sampled: true,
+                block_hash: None,
+                claimed_hash: None,
+                reject_reason: None,
+                created_at: block_time - Duration::from_secs(30 * 60),
+            })
+            .expect("insert miner a share");
+        store
+            .add_share(crate::engine::ShareRecord {
+                job_id: format!("historical-job-b-{height}"),
+                miner: "miner-b".to_string(),
+                worker: "wb".to_string(),
+                difficulty: 1,
+                nonce: 2,
+                status: SHARE_STATUS_VERIFIED,
+                was_sampled: true,
+                block_hash: None,
+                claimed_hash: None,
+                reject_reason: None,
+                created_at: block_time - Duration::from_secs(10 * 60),
+            })
+            .expect("insert miner b share");
+
+        let mut cfg = Config::default();
+        cfg.pool_fee_pct = 0.0;
+        cfg.block_finder_bonus = false;
+        let processor = PayoutProcessor::new(
+            cfg,
+            Arc::clone(&store),
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+        );
+
+        processor.backfill_historical_miner_credits();
+
+        let mut events = store
+            .get_block_credit_events(height)
+            .expect("load backfilled credit events");
+        events.sort_by(|a, b| a.address.cmp(&b.address));
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].address, "miner-a");
+        assert_eq!(events[0].amount, 75);
+        assert_eq!(events[1].address, "miner-b");
+        assert_eq!(events[1].amount, 25);
+        assert_eq!(
+            store
+                .get_balance("miner-a")
+                .expect("miner a balance")
+                .pending,
+            75
+        );
+        assert_eq!(
+            store
+                .get_balance("miner-b")
+                .expect("miner b balance")
+                .pending,
+            25
+        );
+
+        processor.backfill_historical_miner_credits();
+
+        let events = store
+            .get_block_credit_events(height)
+            .expect("load idempotent credit events");
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            store
+                .get_balance("miner-a")
+                .expect("miner a balance")
+                .pending,
+            75
+        );
+        assert_eq!(
+            store
+                .get_balance("miner-b")
+                .expect("miner b balance")
+                .pending,
+            25
+        );
     }
 }
