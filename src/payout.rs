@@ -167,6 +167,7 @@ struct RecoveryPayoutReconciliationState {
     after_payout_id: i64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Default)]
 struct HistoricalMinerCreditBackfillReport {
     blocks_scanned: u64,
@@ -229,7 +230,6 @@ impl PayoutProcessor {
                 let started_at = Instant::now();
                 let startup = tokio::task::spawn_blocking(move || {
                     this.backfill_legacy_pool_fee_credits();
-                    this.backfill_historical_miner_credits();
                     this.backfill_historical_payout_reconciliation_state();
                     this.recover_pending_payouts();
                     this.tick(true);
@@ -796,6 +796,7 @@ impl PayoutProcessor {
         Ok(credits)
     }
 
+    #[allow(dead_code)]
     fn build_historical_backfill_credits(
         &self,
         block: &DbBlock,
@@ -982,6 +983,7 @@ impl PayoutProcessor {
         }
     }
 
+    #[allow(dead_code)]
     fn backfill_historical_miner_credits(&self) {
         let blocks = match self
             .store
