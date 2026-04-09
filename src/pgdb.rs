@@ -2017,6 +2017,30 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(count.max(0) as u64)
     }
 
+    pub fn get_unique_block_identity_counts(&self) -> Result<(u64, u64)> {
+        let row = self.conn().lock().query_one(
+            "SELECT
+                 COUNT(*)::BIGINT,
+                 COALESCE(SUM(CASE WHEN orphaned THEN 1 ELSE 0 END), 0)::BIGINT
+             FROM (
+                 SELECT
+                     height,
+                     hash,
+                     BOOL_OR(orphaned) AS orphaned
+                 FROM (
+                     SELECT height, hash, orphaned FROM blocks
+                     UNION ALL
+                     SELECT height, hash, orphaned FROM archived_blocks
+                 ) combined
+                 GROUP BY height, hash
+             ) unique_blocks",
+            &[],
+        )?;
+        let total: i64 = row.get(0);
+        let orphaned: i64 = row.get(1);
+        Ok((total.max(0) as u64, orphaned.max(0) as u64))
+    }
+
     /// Returns (confirmed_non_orphaned, orphaned, pending_non_orphaned).
     pub fn get_block_status_counts(&self) -> Result<(u64, u64, u64)> {
         let row = self.conn().lock().query_one(
@@ -7613,6 +7637,113 @@ mod tests {
         let balance = store.get_balance(&miner).expect("balance after revert");
         assert_eq!(balance.pending, 0);
         assert_eq!(balance.paid, 0);
+    }
+
+    #[test]
+    fn unique_block_identity_counts_dedup_live_and_archived_rows_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let ts = SystemTime::now();
+        let canonical_height = 8_372_000u64 + (rand::random::<u16>() as u64);
+        let duplicated_orphan_height = canonical_height + 1;
+        let archived_only_orphan_height = canonical_height + 2;
+        let miner = format!("unique-count-miner-{suffix}");
+        let duplicate_payout_tx = format!("dup-orphan-payout-{suffix}");
+
+        store
+            .add_block(&DbBlock {
+                height: canonical_height,
+                hash: format!("canonical-{suffix}"),
+                difficulty: 1,
+                finder: format!("finder-{suffix}"),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: ts,
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert canonical block");
+
+        store
+            .add_block(&DbBlock {
+                height: duplicated_orphan_height,
+                hash: format!("duplicated-orphan-{suffix}"),
+                difficulty: 1,
+                finder: format!("finder-{suffix}"),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: ts,
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert duplicate-prone orphan block");
+        assert!(store
+            .apply_block_credits_and_mark_paid(duplicated_orphan_height, &[(miner.clone(), 100)])
+            .expect("apply duplicate-prone orphan credits"));
+        store
+            .create_pending_payout(&miner, 100)
+            .expect("create duplicate-prone orphan payout");
+        store
+            .mark_pending_payout_send_started(&miner)
+            .expect("mark duplicate-prone payout send started")
+            .expect("duplicate-prone pending payout exists");
+        store
+            .record_pending_payout_broadcast(&miner, 100, 2, &duplicate_payout_tx)
+            .expect("record duplicate-prone payout broadcast");
+        store
+            .complete_pending_payout(&miner, 100, 2, &duplicate_payout_tx)
+            .expect("complete duplicate-prone payout");
+        store
+            .orphan_block_and_reverse_unpaid_credits(duplicated_orphan_height)
+            .expect("reconcile duplicate-prone orphan");
+
+        store
+            .add_block(&DbBlock {
+                height: archived_only_orphan_height,
+                hash: format!("archived-only-orphan-{suffix}"),
+                difficulty: 1,
+                finder: format!("finder-{suffix}"),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: ts,
+                confirmed: false,
+                orphaned: true,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert archived-only orphan block");
+        assert!(store
+            .archive_conflicting_block_and_replace(&DbBlock {
+                height: archived_only_orphan_height,
+                hash: format!("replacement-{suffix}"),
+                difficulty: 1,
+                finder: format!("finder-{suffix}"),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: ts,
+                confirmed: false,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("replace archived-only orphan"));
+
+        let (total_blocks, orphaned_blocks) = store
+            .get_unique_block_identity_counts()
+            .expect("load unique block identity counts");
+
+        assert_eq!(total_blocks, 5);
+        assert_eq!(orphaned_blocks, 2);
     }
 
     #[test]

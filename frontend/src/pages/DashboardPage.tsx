@@ -198,7 +198,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
             <div className="value" id="s-avg-luck">{fmtPct(avgLuck)}</div>
           </div>
           <div className="stat-card">
-            <div className="label">Orphaned Blocks</div>
+            <div className="label">Unique Orphans</div>
             <div className="value" id="s-orphaned-blocks">{stats?.pool?.orphaned_blocks ?? '-'}</div>
           </div>
           <div className="stat-card">

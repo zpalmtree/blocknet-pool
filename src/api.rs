@@ -7132,11 +7132,9 @@ fn compute_chain_aware_block_totals(
     node: &NodeClient,
     daemon_chain_height: u64,
 ) -> anyhow::Result<(u64, u64, u64)> {
-    let live_total_blocks = store.get_block_count()?;
+    let (unique_total_blocks, unique_orphaned_blocks) = store.get_unique_block_identity_counts()?;
     let (live_confirmed_blocks, live_orphaned_blocks, _live_pending_blocks) =
         store.get_block_status_counts()?;
-    let archived_total_blocks = store.get_archived_block_count()?;
-    let archived_orphaned_blocks = store.get_archived_orphaned_block_count()?;
 
     let mut extra_orphaned_blocks = 0u64;
     let mut confirmed_blocks_to_reclassify = 0u64;
@@ -7173,10 +7171,10 @@ fn compute_chain_aware_block_totals(
     }
 
     Ok((
-        live_total_blocks.saturating_add(archived_total_blocks),
+        unique_total_blocks,
         live_confirmed_blocks.saturating_sub(confirmed_blocks_to_reclassify),
-        live_orphaned_blocks
-            .saturating_add(archived_orphaned_blocks)
+        unique_orphaned_blocks
+            .max(live_orphaned_blocks)
             .saturating_add(extra_orphaned_blocks),
     ))
 }
