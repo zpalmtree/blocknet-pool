@@ -18,6 +18,9 @@ import type {
   ActiveVerificationHold,
   AdminBalanceItem,
   AdminBalanceOverviewResponse,
+  AdminMissingCompletedPayoutIssue,
+  AdminOrphanedBlockIssue,
+  AdminReconciliationIssuesResponse,
   AdminShareDiagnosticsResponse,
   AdminShareDiagnosticsWindow,
   AdminTab,
@@ -26,6 +29,7 @@ import type {
   HealthResponse,
   MinerListItem,
   PagerState,
+  ReconciliationPayoutResolutionAction,
   RecoveryInstanceId,
   RecoveryInstanceStatus,
   RecoveryOperationKind,
@@ -108,6 +112,22 @@ function overloadModeLabel(mode: string | null | undefined): string {
     default:
       return 'Normal';
   }
+}
+
+function reconciliationRecommendation(issue: AdminMissingCompletedPayoutIssue): string {
+  if (issue.orphaned_linked_amount > 0 && issue.live_linked_amount === 0 && issue.unlinked_amount === 0) {
+    return 'Known source credits only point at orphaned blocks. Dropping the paid amount is the usual resolution.';
+  }
+  if (issue.live_linked_amount > 0 && issue.orphaned_linked_amount === 0 && issue.unlinked_amount === 0) {
+    return 'Known source credits still point at live blocks. Restoring the amount to pending is the usual resolution.';
+  }
+  if (issue.unlinked_amount > 0) {
+    return 'Part of this payout could not be reconstructed from historical source credits. Choose the operator override that matches the real chain outcome.';
+  }
+  if (issue.orphaned_linked_amount > 0 && issue.live_linked_amount > 0) {
+    return 'This payout mixes live and orphaned known sources. Review before choosing an override.';
+  }
+  return 'Choose the override that matches the current chain state.';
 }
 
 function roundChipClass(tone: 'ok' | 'warn' | 'critical'): string {
@@ -418,8 +438,11 @@ export function AdminPage({
   const [balancesPager, setBalancesPager] = useState<PagerState>({ offset: 0, limit: 50, total: 0 });
 
   const [recoveryStatus, setRecoveryStatus] = useState<RecoveryStatusResponse | null>(null);
+  const [reconciliationIssues, setReconciliationIssues] = useState<AdminReconciliationIssuesResponse | null>(null);
   const [recoveryActionError, setRecoveryActionError] = useState('');
+  const [reconciliationActionError, setReconciliationActionError] = useState('');
   const [recoveryBusy, setRecoveryBusy] = useState<RecoveryOperationKind | null>(null);
+  const [reconciliationBusyKey, setReconciliationBusyKey] = useState<string | null>(null);
   const [holdActionError, setHoldActionError] = useState('');
   const [holdBusyAddress, setHoldBusyAddress] = useState<string | null>(null);
 
@@ -558,6 +581,16 @@ export function AdminPage({
     }
   }, [api, apiKey]);
 
+  const loadReconciliationIssues = useCallback(async () => {
+    if (!apiKey) return;
+    try {
+      const d = await api.getAdminReconciliationIssues();
+      setReconciliationIssues(d);
+    } catch {
+      setReconciliationIssues(null);
+    }
+  }, [api, apiKey]);
+
   const runRecoveryAction = useCallback(
     async (kind: RecoveryOperationKind, fn: () => Promise<unknown>) => {
       setRecoveryActionError('');
@@ -572,6 +605,56 @@ export function AdminPage({
       }
     },
     [loadRecovery]
+  );
+
+  const resolveReconciliationPayoutIssue = useCallback(
+    async (txHash: string, action: ReconciliationPayoutResolutionAction) => {
+      const trimmed = txHash.trim();
+      if (!trimmed) return;
+      const message =
+        action === 'restore_pending'
+          ? `Restore ${trimmed} back to miners' pending balances and remove it from paid history?`
+          : `Drop ${trimmed} from paid history without restoring pending balances?`;
+      if (!window.confirm(message)) {
+        return;
+      }
+
+      setReconciliationActionError('');
+      setReconciliationBusyKey(`payout:${trimmed}:${action}`);
+      try {
+        await api.resolveAdminReconciliationPayout(trimmed, action);
+        await Promise.all([loadReconciliationIssues(), loadBalanceOverview(), loadHealth()]);
+      } catch (err) {
+        setReconciliationActionError(
+          err instanceof Error ? err.message : 'failed resolving reconciliation payout issue'
+        );
+      } finally {
+        setReconciliationBusyKey(null);
+      }
+    },
+    [api, loadBalanceOverview, loadHealth, loadReconciliationIssues]
+  );
+
+  const retryOrphanedBlockCleanup = useCallback(
+    async (blockHeight: number) => {
+      if (!window.confirm(`Retry orphan-credit cleanup for block ${blockHeight}?`)) {
+        return;
+      }
+
+      setReconciliationActionError('');
+      setReconciliationBusyKey(`block:${blockHeight}`);
+      try {
+        await api.retryAdminOrphanedBlockCleanup(blockHeight);
+        await Promise.all([loadReconciliationIssues(), loadBalanceOverview(), loadHealth()]);
+      } catch (err) {
+        setReconciliationActionError(
+          err instanceof Error ? err.message : 'failed retrying orphaned block cleanup'
+        );
+      } finally {
+        setReconciliationBusyKey(null);
+      }
+    },
+    [api, loadBalanceOverview, loadHealth, loadReconciliationIssues]
   );
 
   const clearAddressRiskHistory = useCallback(
@@ -616,13 +699,17 @@ export function AdminPage({
       }
     }
     if (tab === 'balances') void loadBalances();
-    if (tab === 'recovery') void loadRecovery();
+    if (tab === 'recovery') {
+      void loadRecovery();
+      void loadReconciliationIssues();
+    }
   }, [
     active,
     apiKey,
     loadBalances,
     loadBalanceOverview,
     loadHealth,
+    loadReconciliationIssues,
     loadShareDiagnostics,
     loadMiners,
     loadRecovery,
@@ -648,7 +735,10 @@ export function AdminPage({
       }
     }
     if (tab === 'balances') void loadBalances();
-    if (tab === 'recovery') void loadRecovery();
+    if (tab === 'recovery') {
+      void loadRecovery();
+      void loadReconciliationIssues();
+    }
   }, [
     active,
     apiKey,
@@ -657,6 +747,7 @@ export function AdminPage({
     loadBalances,
     loadBalanceOverview,
     loadHealth,
+    loadReconciliationIssues,
     loadShareDiagnostics,
     loadMiners,
     loadRecovery,
@@ -798,10 +889,36 @@ export function AdminPage({
     [activeVerificationHolds]
   );
   const poolActivity = health?.pool_activity ?? null;
-  const unpaidPayoutCount = health?.payouts?.unpaid_count ?? health?.payouts?.pending_count ?? null;
-  const unpaidPayoutAmount = health?.payouts?.unpaid_amount ?? health?.payouts?.pending_amount ?? null;
-  const queuedPayoutCount = health?.payouts?.queued_count ?? health?.payouts?.pending_count ?? null;
-  const queuedPayoutAmount = health?.payouts?.queued_amount ?? health?.payouts?.pending_amount ?? null;
+  const unpaidPayoutCount =
+    balanceOverview?.payouts.unpaid_count ?? health?.payouts?.unpaid_count ?? health?.payouts?.pending_count ?? null;
+  const unpaidPayoutAmount =
+    balanceOverview?.payouts.unpaid_amount ?? health?.payouts?.unpaid_amount ?? health?.payouts?.pending_amount ?? null;
+  const cleanPayableCount = balanceOverview?.payouts.clean_unpaid_count ?? null;
+  const cleanPayableAmount = balanceOverview?.payouts.clean_unpaid_amount ?? null;
+  const orphanBackedPendingAmount = balanceOverview?.payouts.orphan_backed_unpaid_amount ?? null;
+  const balanceSourceDriftAmount = balanceOverview?.payouts.balance_source_drift_amount ?? null;
+  const queuedPayoutCount =
+    balanceOverview?.payouts.queued_count ?? health?.payouts?.queued_count ?? health?.payouts?.pending_count ?? null;
+  const queuedPayoutAmount =
+    balanceOverview?.payouts.queued_amount ?? health?.payouts?.queued_amount ?? health?.payouts?.pending_amount ?? null;
+  const poolFeePendingAmount = balanceOverview?.payouts.pool_fee_unpaid_amount ?? null;
+  const poolFeeCleanPendingAmount = balanceOverview?.payouts.pool_fee_clean_unpaid_amount ?? null;
+  const poolFeeOrphanPendingAmount =
+    balanceOverview?.payouts.pool_fee_orphan_backed_unpaid_amount ?? null;
+  const poolFeeBalanceSourceDriftAmount =
+    balanceOverview?.payouts.pool_fee_balance_source_drift_amount ?? null;
+  const canonicalMinerRewardTotal = balanceOverview
+    ? Math.max(balanceOverview.ledger.net_block_reward_total - balanceOverview.ledger.pool_fee_total, 0)
+    : null;
+  const canonicalBackedPending = balanceOverview && canonicalMinerRewardTotal != null
+    ? Math.max(canonicalMinerRewardTotal - balanceOverview.ledger.miner_paid_total, 0)
+    : null;
+  const ledgerOverhangAmount = balanceOverview && canonicalMinerRewardTotal != null
+    ? Math.max(balanceOverview.ledger.miner_total_credited - canonicalMinerRewardTotal, 0)
+    : null;
+  const ledgerShortfallAmount = balanceOverview && canonicalMinerRewardTotal != null
+    ? Math.max(canonicalMinerRewardTotal - balanceOverview.ledger.miner_total_credited, 0)
+    : null;
   const shareWindows = shareDiagnostics?.windows ?? [];
   const shareWindow5m = useMemo(
     () => shareWindows.find((item) => item.label === '5m') ?? null,
@@ -1382,13 +1499,54 @@ export function AdminPage({
               </div>
             </div>
             <div className="stat-card" onClick={() => setTab('balances')}>
-              <div className="label">Unpaid Balances</div>
-              <div className="value mono">{unpaidPayoutCount ?? '-'}</div>
+              <div className="label">Clean Payable</div>
+              <div className="value mono">{cleanPayableCount ?? unpaidPayoutCount ?? '-'}</div>
               <div className="stat-meta">
-                {unpaidPayoutAmount != null
-                  ? `${formatCoins(unpaidPayoutAmount)} owed`
+                {cleanPayableAmount != null
+                  ? `${formatCoins(cleanPayableAmount)} miner payable`
                   : '-'}
               </div>
+              {unpaidPayoutAmount != null && (
+                <div className="stat-meta">
+                  {`${formatCoins(unpaidPayoutAmount)} recorded miner pending`}
+                </div>
+              )}
+              {orphanBackedPendingAmount != null && orphanBackedPendingAmount > 0 && (
+                <div className="stat-meta" style={{ color: 'var(--warn)' }}>
+                  {`${formatCoins(orphanBackedPendingAmount)} orphan-backed`}
+                </div>
+              )}
+              {balanceSourceDriftAmount != null && balanceSourceDriftAmount > 0 && (
+                <div className="stat-meta" style={{ color: 'var(--warn)' }}>
+                  {`${formatCoins(balanceSourceDriftAmount)} live source drift`}
+                </div>
+              )}
+              {poolFeePendingAmount != null && poolFeePendingAmount > 0 && (
+                <div className="stat-meta">
+                  {poolFeeCleanPendingAmount != null
+                    ? `${formatCoins(poolFeeCleanPendingAmount)} clean pool fee payable`
+                    : `${formatCoins(poolFeePendingAmount)} pool fee pending tracked separately`}
+                </div>
+              )}
+              {poolFeeOrphanPendingAmount != null && poolFeeOrphanPendingAmount > 0 && (
+                <div className="stat-meta" style={{ color: 'var(--warn)' }}>
+                  {`${formatCoins(poolFeeOrphanPendingAmount)} orphan-backed pool fee`}
+                </div>
+              )}
+              {poolFeeBalanceSourceDriftAmount != null && poolFeeBalanceSourceDriftAmount > 0 && (
+                <div className="stat-meta" style={{ color: 'var(--warn)' }}>
+                  {`${formatCoins(poolFeeBalanceSourceDriftAmount)} pool fee source drift`}
+                </div>
+              )}
+              {balanceOverview && !balanceOverview.ledger.miner_rewards_balanced && (
+                <div className="stat-meta" style={{ color: 'var(--warn)' }}>
+                  {ledgerOverhangAmount != null && ledgerOverhangAmount > 0
+                    ? `${formatCoins(ledgerOverhangAmount)} exceeds canonical miner support`
+                    : ledgerShortfallAmount != null && ledgerShortfallAmount > 0
+                      ? `${formatCoins(ledgerShortfallAmount)} below canonical miner support`
+                      : 'includes unreconciled fork-era credits'}
+                </div>
+              )}
               <div className="stat-meta">
                 {queuedPayoutAmount != null
                   ? `${queuedPayoutCount ?? 0} queued · ${formatCoins(queuedPayoutAmount)} in queue`
@@ -1406,7 +1564,13 @@ export function AdminPage({
                   : '-'}
               </div>
               {balanceOverview && !balanceOverview.ledger.miner_rewards_balanced && (
-                <div className="stat-meta" style={{ color: 'var(--warn)' }}>Ledger unbalanced</div>
+                <div className="stat-meta" style={{ color: 'var(--warn)' }}>
+                  {ledgerOverhangAmount != null && ledgerOverhangAmount > 0
+                    ? `${formatCompactCoins(ledgerOverhangAmount)} over canonical miner support`
+                    : ledgerShortfallAmount != null && ledgerShortfallAmount > 0
+                      ? `${formatCompactCoins(ledgerShortfallAmount)} below canonical miner support`
+                      : 'Ledger unbalanced'}
+                </div>
               )}
             </div>
             <div className="stat-card" onClick={() => setTab('miners')}>
@@ -2366,70 +2530,180 @@ export function AdminPage({
 
           <div style={{ display: tab === 'balances' ? '' : 'none' }}>
             {balanceOverview ? (
-              <div className="admin-balance-overview__grid" style={{ marginBottom: 20 }}>
-                <div className="admin-balance-overview__panel">
-                  <h3>Wallet</h3>
-                  <div className="admin-balance-overview__rows">
-                    <div className="admin-balance-overview__row">
-                      <span>Spendable</span>
-                      <span className="mono">{formatCoins(balanceOverview.wallet.spendable)}</span>
+              <>
+                {!balanceOverview.ledger.miner_rewards_balanced && (
+                  <div
+                    className="card"
+                    style={{
+                      marginBottom: 16,
+                      borderColor: 'rgba(247, 180, 75, 0.45)',
+                      background: 'rgba(247, 180, 75, 0.08)',
+                    }}
+                  >
+                    <div style={{ color: 'var(--text)', fontSize: 13 }}>
+                      Pending balances below are recorded miner ledger state, not clean payable liability.{' '}
+                      {ledgerOverhangAmount != null && ledgerOverhangAmount > 0 ? (
+                        <>
+                          The miner ledger currently exceeds canonical miner rewards by{' '}
+                          <span className="mono">{formatCoins(ledgerOverhangAmount)}</span>, so fork-era recovery and
+                          payout reconciliation still need operator review.
+                        </>
+                      ) : ledgerShortfallAmount != null && ledgerShortfallAmount > 0 ? (
+                        <>
+                          The miner ledger currently sits{' '}
+                          <span className="mono">{formatCoins(ledgerShortfallAmount)}</span> below canonical miner
+                          rewards, so some canonical rewards have not been fully reflected in miner balances yet.
+                        </>
+                      ) : (
+                        <>Ledger reconciliation is still in progress.</>
+                      )}
                     </div>
-                    <div className="admin-balance-overview__row">
-                      <span>Locked / confirming</span>
-                      <span className="mono">{formatCoins(balanceOverview.wallet.pending)}</span>
-                    </div>
-                    <div className="admin-balance-overview__row">
-                      <span>Total</span>
-                      <span className="mono">{formatCoins(balanceOverview.wallet.total)}</span>
-                    </div>
-                    <div className="admin-balance-overview__row">
-                      <span>Queued payouts</span>
-                      <span className="mono">
-                        {formatCoins(balanceOverview.payouts.queued_amount)} across{' '}
-                        {formatWholeNumber(balanceOverview.payouts.queued_count)}
-                      </span>
-                    </div>
-                    {balanceOverview.liquidity.queue_shortfall_amount > 0 && (
+                  </div>
+                )}
+
+                <div className="admin-balance-overview__grid" style={{ marginBottom: 20 }}>
+                  <div className="admin-balance-overview__panel">
+                    <h3>Wallet</h3>
+                    <div className="admin-balance-overview__rows">
                       <div className="admin-balance-overview__row">
-                        <span>Shortfall</span>
-                        <span className="mono" style={{ color: 'var(--warn)' }}>
-                          {formatCoins(balanceOverview.liquidity.queue_shortfall_amount)}
+                        <span>Spendable</span>
+                        <span className="mono">{formatCoins(balanceOverview.wallet.spendable)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Locked / confirming</span>
+                        <span className="mono">{formatCoins(balanceOverview.wallet.pending)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Total</span>
+                        <span className="mono">{formatCoins(balanceOverview.wallet.total)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Queued payouts</span>
+                        <span className="mono">
+                          {formatCoins(balanceOverview.payouts.queued_amount)} across{' '}
+                          {formatWholeNumber(balanceOverview.payouts.queued_count)}
                         </span>
                       </div>
-                    )}
-                  </div>
-                </div>
-                <div className="admin-balance-overview__panel">
-                  <h3>Ledger</h3>
-                  <div className="admin-balance-overview__rows">
-                    <div className="admin-balance-overview__row">
-                      <span>Miner paid total</span>
-                      <span className="mono">{formatCoins(balanceOverview.ledger.miner_paid_total)}</span>
-                    </div>
-                    <div className="admin-balance-overview__row">
-                      <span>Net block rewards</span>
-                      <span className="mono">{formatCoins(balanceOverview.ledger.net_block_reward_total)}</span>
-                    </div>
-                    <div className="admin-balance-overview__row">
-                      <span>Pool fees</span>
-                      <span className="mono">{formatCoins(balanceOverview.ledger.pool_fee_total)}</span>
-                    </div>
-                    <div className="admin-balance-overview__row">
-                      <span>Credits balanced</span>
-                      <span
-                        className="mono"
-                        style={
-                          balanceOverview.ledger.miner_rewards_balanced
-                            ? { color: 'var(--good)' }
-                            : { color: 'var(--warn)' }
-                        }
-                      >
-                        {balanceOverview.ledger.miner_rewards_balanced ? 'Yes' : 'No'}
-                      </span>
+                      {balanceOverview.liquidity.queue_shortfall_amount > 0 && (
+                        <div className="admin-balance-overview__row">
+                          <span>Shortfall</span>
+                          <span className="mono" style={{ color: 'var(--warn)' }}>
+                            {formatCoins(balanceOverview.liquidity.queue_shortfall_amount)}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
+                  <div className="admin-balance-overview__panel">
+                    <h3>Ledger</h3>
+                    <div className="admin-balance-overview__rows">
+                      <div className="admin-balance-overview__row">
+                        <span>Miner paid total</span>
+                        <span className="mono">{formatCoins(balanceOverview.ledger.miner_paid_total)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Recorded miner pending</span>
+                        <span className="mono">{formatCoins(balanceOverview.ledger.miner_unpaid_total)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Clean payable miner pending</span>
+                        <span className="mono">{formatCoins(balanceOverview.ledger.miner_clean_unpaid_total)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Orphan-backed miner pending</span>
+                        <span
+                          className="mono"
+                          style={
+                            balanceOverview.ledger.miner_orphan_backed_unpaid_total > 0
+                              ? { color: 'var(--warn)' }
+                              : undefined
+                          }
+                        >
+                          {formatCoins(balanceOverview.ledger.miner_orphan_backed_unpaid_total)}
+                        </span>
+                      </div>
+                      {balanceOverview.ledger.miner_balance_source_drift_total > 0 && (
+                        <div className="admin-balance-overview__row">
+                          <span>Miner balance above live sources</span>
+                          <span className="mono" style={{ color: 'var(--warn)' }}>
+                            {formatCoins(balanceOverview.ledger.miner_balance_source_drift_total)}
+                          </span>
+                        </div>
+                      )}
+                      <div className="admin-balance-overview__row">
+                        <span>Confirmed block rewards</span>
+                        <span className="mono">{formatCoins(balanceOverview.ledger.net_block_reward_total)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Pool fees</span>
+                        <span className="mono">{formatCoins(balanceOverview.ledger.pool_fee_total)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Pool fee balance</span>
+                        <span className="mono">{formatCoins(balanceOverview.ledger.pool_fee_balance_total)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Clean payable pool fee</span>
+                        <span className="mono">{formatCoins(balanceOverview.ledger.pool_fee_clean_unpaid_total)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Orphan-backed pool fee</span>
+                        <span
+                          className="mono"
+                          style={
+                            balanceOverview.ledger.pool_fee_orphan_backed_unpaid_total > 0
+                              ? { color: 'var(--warn)' }
+                              : undefined
+                          }
+                        >
+                          {formatCoins(balanceOverview.ledger.pool_fee_orphan_backed_unpaid_total)}
+                        </span>
+                      </div>
+                      {balanceOverview.ledger.pool_fee_balance_source_drift_total > 0 && (
+                        <div className="admin-balance-overview__row">
+                          <span>Pool fee balance above live sources</span>
+                          <span className="mono" style={{ color: 'var(--warn)' }}>
+                            {formatCoins(balanceOverview.ledger.pool_fee_balance_source_drift_total)}
+                          </span>
+                        </div>
+                      )}
+                      <div className="admin-balance-overview__row">
+                        <span>Canonical-backed miner pending</span>
+                        <span className="mono">{formatCoins(canonicalBackedPending ?? 0)}</span>
+                      </div>
+                      {!balanceOverview.ledger.miner_rewards_balanced && ledgerOverhangAmount != null && ledgerOverhangAmount > 0 && (
+                        <div className="admin-balance-overview__row">
+                          <span>Miner ledger overhang</span>
+                          <span className="mono" style={{ color: 'var(--warn)' }}>
+                            {formatCoins(ledgerOverhangAmount)}
+                          </span>
+                        </div>
+                      )}
+                      {!balanceOverview.ledger.miner_rewards_balanced && ledgerShortfallAmount != null && ledgerShortfallAmount > 0 && (
+                        <div className="admin-balance-overview__row">
+                          <span>Unallocated canonical support</span>
+                          <span className="mono" style={{ color: 'var(--warn)' }}>
+                            {formatCoins(ledgerShortfallAmount)}
+                          </span>
+                        </div>
+                      )}
+                      <div className="admin-balance-overview__row">
+                        <span>Credits balanced</span>
+                        <span
+                          className="mono"
+                          style={
+                            balanceOverview.ledger.miner_rewards_balanced
+                              ? { color: 'var(--good)' }
+                              : { color: 'var(--warn)' }
+                          }
+                        >
+                          {balanceOverview.ledger.miner_rewards_balanced ? 'Yes' : 'No'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              </>
             ) : null}
 
             <div className="filter-bar">
@@ -2445,8 +2719,8 @@ export function AdminPage({
                 }}
               />
               <select value={balancesSort} onChange={(e) => { setBalancesSort(e.target.value); setBalancesPager((p) => ({ ...p, offset: 0 })); }}>
-                <option value="pending_desc">Owed (high first)</option>
-                <option value="pending_asc">Owed (low first)</option>
+                <option value="pending_desc">Pending (high first)</option>
+                <option value="pending_asc">Pending (low first)</option>
                 <option value="paid_desc">Paid (high first)</option>
                 <option value="paid_asc">Paid (low first)</option>
                 <option value="address_asc">Address A-Z</option>
@@ -2463,18 +2737,22 @@ export function AdminPage({
                   <col className="admin-balance-table__address-col" />
                   <col className="admin-balance-table__amount-col" />
                   <col className="admin-balance-table__amount-col" />
+                  <col className="admin-balance-table__amount-col" />
+                  <col className="admin-balance-table__amount-col" />
                 </colgroup>
                 <thead>
                   <tr>
                     <th>Address</th>
-                    <th>Owed</th>
+                    <th>Clean Payable</th>
+                    <th>Orphan-Backed</th>
+                    <th>Recorded Pending</th>
                     <th>Total Paid</th>
                   </tr>
                 </thead>
                 <tbody>
                   {!balancesItems.length ? (
                     <tr>
-                      <td colSpan={3} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                      <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                         No balances
                       </td>
                     </tr>
@@ -2491,6 +2769,16 @@ export function AdminPage({
                           >
                             {shortAddr(b.address)}
                           </a>
+                        </td>
+                        <td className="mono">
+                          {b.clean_payable > 0 ? formatCoins(b.clean_payable) : formatCoins(0)}
+                        </td>
+                        <td className="mono">
+                          {b.orphan_backed > 0 ? (
+                            <span style={{ color: 'var(--warn)' }}>{formatCoins(b.orphan_backed)}</span>
+                          ) : (
+                            formatCoins(0)
+                          )}
                         </td>
                         <td className="mono">
                           {b.pending > 0 ? (
@@ -2528,6 +2816,14 @@ export function AdminPage({
               <div className="card section" style={{ marginBottom: 16, borderColor: 'rgba(214, 88, 88, 0.45)' }}>
                 <p className="section-lead" style={{ margin: 0, color: 'var(--bad)' }}>
                   {recoveryActionError}
+                </p>
+              </div>
+            ) : null}
+
+            {reconciliationActionError ? (
+              <div className="card section" style={{ marginBottom: 16, borderColor: 'rgba(214, 88, 88, 0.45)' }}>
+                <p className="section-lead" style={{ margin: 0, color: 'var(--bad)' }}>
+                  {reconciliationActionError}
                 </p>
               </div>
             ) : null}
@@ -2666,6 +2962,211 @@ export function AdminPage({
                   {recoveryBusy === 'purge_inactive_daemon' ? 'Purging…' : 'Purge Inactive Daemon'}
                 </button>
               </div>
+            </div>
+
+            <div className="card section" style={{ marginBottom: 16 }}>
+              <div className="section-header">
+                <div>
+                  <h3>Accounting Exceptions</h3>
+                  <p className="section-lead">
+                    These are payout/accounting rows that the pool could not safely resolve on its own after chain
+                    recovery. Resolve missing completed payouts here instead of editing balances directly.
+                  </p>
+                </div>
+                <button className="btn btn-secondary" onClick={() => void loadReconciliationIssues()}>
+                  Refresh
+                </button>
+              </div>
+
+              <div className="stats-grid stats-grid-dense" style={{ marginBottom: 16 }}>
+                <div className="stat-card">
+                  <div className="label">Open Issues</div>
+                  <div className="value mono">{reconciliationIssues?.summary.total_open_issues ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Missing Payouts</div>
+                  <div className="value mono">{reconciliationIssues?.summary.missing_payout_issue_count ?? '-'}</div>
+                  <div className="stat-meta">
+                    {reconciliationIssues
+                      ? formatCompactCoins(reconciliationIssues.summary.missing_payout_total_amount)
+                      : '-'}
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Orphaned Credit Blocks</div>
+                  <div className="value mono">{reconciliationIssues?.summary.orphaned_block_issue_count ?? '-'}</div>
+                  <div className="stat-meta">
+                    {reconciliationIssues
+                      ? formatCompactCoins(reconciliationIssues.summary.orphaned_block_total_credit_amount)
+                      : '-'}
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Snapshot</div>
+                  <div className="value mono">
+                    {reconciliationIssues ? timeAgo(reconciliationIssues.generated_at) : '-'}
+                  </div>
+                </div>
+              </div>
+
+              {!reconciliationIssues ? (
+                <p className="section-lead" style={{ marginBottom: 0 }}>
+                  Load the current recovery state to inspect outstanding accounting exceptions.
+                </p>
+              ) : (
+                <>
+                  <div className="card table-scroll" style={{ marginBottom: 16 }}>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Missing Completed Payout</th>
+                          <th>Known Source Mix</th>
+                          <th>Addresses</th>
+                          <th>Completed</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {!reconciliationIssues.missing_payouts.length ? (
+                          <tr>
+                            <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                              No missing completed payouts need operator action
+                            </td>
+                          </tr>
+                        ) : (
+                          reconciliationIssues.missing_payouts.map((issue) => {
+                            const restoreBusy = reconciliationBusyKey === `payout:${issue.tx_hash}:restore_pending`;
+                            const dropBusy = reconciliationBusyKey === `payout:${issue.tx_hash}:drop_paid`;
+                            return (
+                              <tr key={issue.tx_hash}>
+                                <td style={{ minWidth: 260 }}>
+                                  <div className="mono" style={{ fontWeight: 600 }}>
+                                    {issue.tx_hash}
+                                  </div>
+                                  <div style={{ marginTop: 6 }}>
+                                    {formatCoins(issue.total_amount)} across {issue.payout_row_count} payout row
+                                    {issue.payout_row_count === 1 ? '' : 's'}
+                                  </div>
+                                  <div className="stat-meta" style={{ marginTop: 6 }}>
+                                    Fee {formatCoins(issue.total_fee)}
+                                  </div>
+                                </td>
+                                <td style={{ minWidth: 220 }}>
+                                  <div>Live linked: {formatCoins(issue.live_linked_amount)}</div>
+                                  <div>Orphaned linked: {formatCoins(issue.orphaned_linked_amount)}</div>
+                                  <div>Unlinked: {formatCoins(issue.unlinked_amount)}</div>
+                                  <div className="stat-meta" style={{ marginTop: 6 }}>
+                                    {reconciliationRecommendation(issue)}
+                                  </div>
+                                </td>
+                                <td style={{ minWidth: 220 }}>
+                                  <div>
+                                    {issue.addresses.slice(0, 3).map((address) => (
+                                      <div key={address} className="mono">
+                                        {shortAddr(address)}
+                                      </div>
+                                    ))}
+                                  </div>
+                                  {issue.addresses.length > 3 ? (
+                                    <div className="stat-meta" style={{ marginTop: 6 }}>
+                                      +{issue.addresses.length - 3} more
+                                    </div>
+                                  ) : null}
+                                </td>
+                                <td title={new Date(toUnixMs(issue.latest_timestamp)).toLocaleString()}>
+                                  {timeAgo(issue.latest_timestamp)}
+                                </td>
+                                <td style={{ minWidth: 220 }}>
+                                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                    <button
+                                      className="btn btn-secondary"
+                                      disabled={reconciliationBusyKey != null}
+                                      onClick={() =>
+                                        void resolveReconciliationPayoutIssue(issue.tx_hash, 'restore_pending')
+                                      }
+                                    >
+                                      {restoreBusy ? 'Restoring…' : 'Restore Pending'}
+                                    </button>
+                                    <button
+                                      className="btn btn-secondary"
+                                      disabled={reconciliationBusyKey != null}
+                                      onClick={() => void resolveReconciliationPayoutIssue(issue.tx_hash, 'drop_paid')}
+                                    >
+                                      {dropBusy ? 'Dropping…' : 'Drop Paid'}
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="card table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Orphaned Block Credit Cleanup</th>
+                          <th>Remaining Credits</th>
+                          <th>Current Blockers</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {!reconciliationIssues.orphaned_blocks.length ? (
+                          <tr>
+                            <td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                              No orphaned blocks still have lingering credit artifacts
+                            </td>
+                          </tr>
+                        ) : (
+                          reconciliationIssues.orphaned_blocks.map((issue) => {
+                            const retryBusy = reconciliationBusyKey === `block:${issue.height}`;
+                            return (
+                              <tr key={`${issue.height}-${issue.hash}`}>
+                                <td style={{ minWidth: 240 }}>
+                                  <div style={{ fontWeight: 600 }}>#{issue.height}</div>
+                                  <div className="mono" style={{ marginTop: 6 }}>
+                                    {issue.hash.slice(0, 16)}
+                                  </div>
+                                  <div className="stat-meta" style={{ marginTop: 6 }}>
+                                    {issue.credited_address_count} credited address
+                                    {issue.credited_address_count === 1 ? '' : 'es'} · {issue.credit_event_count} credit
+                                    row{issue.credit_event_count === 1 ? '' : 's'}
+                                  </div>
+                                </td>
+                                <td style={{ minWidth: 220 }}>
+                                  <div>Miner credits: {formatCoins(issue.remaining_credit_amount)}</div>
+                                  <div>Paid markers: {formatCoins(issue.paid_credit_amount)}</div>
+                                  <div>Fee credits: {formatCoins(issue.remaining_fee_amount)}</div>
+                                  {issue.paid_fee_amount > 0 ? (
+                                    <div>Fee paid markers: {formatCoins(issue.paid_fee_amount)}</div>
+                                  ) : null}
+                                </td>
+                                <td style={{ minWidth: 180 }}>
+                                  <div>{issue.pending_payout_count} pending payout row{issue.pending_payout_count === 1 ? '' : 's'}</div>
+                                  <div>{issue.broadcast_pending_payout_count} broadcast pending</div>
+                                </td>
+                                <td>
+                                  <button
+                                    className="btn btn-secondary"
+                                    disabled={reconciliationBusyKey != null}
+                                    onClick={() => void retryOrphanedBlockCleanup(issue.height)}
+                                  >
+                                    {retryBusy ? 'Retrying…' : 'Retry Cleanup'}
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="stats-grid" style={{ marginBottom: 16 }}>

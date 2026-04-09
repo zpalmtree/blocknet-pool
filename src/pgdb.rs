@@ -92,6 +92,125 @@ pub struct PoolFeeCreditBackfillReport {
     pub skipped_mismatched_destination: u64,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OrphanBlockReconciliation {
+    pub orphaned: bool,
+    pub reversed_credit_events: u64,
+    pub reversed_credit_amount: u64,
+    pub reversed_fee_amount: u64,
+    pub canceled_pending_payouts: u64,
+    pub manual_reconciliation_required: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PayoutReconciliationBackfillReport {
+    pub payouts_linked: u64,
+    pub payouts_unreversible: u64,
+    pub source_credits_marked_reversible: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CompletedPayoutReconciliation {
+    pub reverted_payout_rows: u64,
+    pub restored_pending_amount: u64,
+    pub dropped_orphaned_amount: u64,
+    pub manual_reconciliation_required: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct OrphanedBlockCreditIssue {
+    pub height: u64,
+    pub hash: String,
+    pub credit_event_count: u64,
+    pub credited_address_count: u64,
+    pub remaining_credit_amount: u64,
+    pub paid_credit_amount: u64,
+    pub remaining_fee_amount: u64,
+    pub paid_fee_amount: u64,
+    pub pending_payout_count: u64,
+    pub broadcast_pending_payout_count: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct BalanceSourceSummary {
+    pub address: String,
+    pub canonical_pending: u64,
+    pub orphan_pending: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LiveReconciliationBlockers {
+    pub orphaned_block_issue_count: u64,
+    pub orphaned_unpaid_amount: u64,
+    pub unresolved_completed_payout_rows: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct UnreconciledCompletedPayoutRow {
+    pub payout_id: i64,
+    pub address: String,
+    pub amount: u64,
+    pub fee: u64,
+    pub tx_hash: String,
+    pub timestamp: SystemTime,
+    pub linked_amount: u64,
+    pub orphaned_linked_amount: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManualCompletedPayoutResolutionKind {
+    RestorePending,
+    DropPaid,
+}
+
+impl ManualCompletedPayoutResolutionKind {
+    fn revert_reason(self) -> &'static str {
+        match self {
+            Self::RestorePending => "admin_restore_pending_missing_from_chain",
+            Self::DropPaid => "admin_drop_paid_missing_from_chain",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BalanceCreditSourceKind {
+    Block,
+    Fee,
+}
+
+impl BalanceCreditSourceKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Block => "block",
+            Self::Fee => "fee",
+        }
+    }
+
+    fn from_db(value: &str) -> Self {
+        match value {
+            "fee" => Self::Fee,
+            _ => Self::Block,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct BalanceCreditSourceState {
+    kind: BalanceCreditSourceKind,
+    block_height: u64,
+    amount: u64,
+    paid_amount: u64,
+}
+
+#[derive(Debug, Clone)]
+struct PayoutCreditAllocation {
+    source_kind: BalanceCreditSourceKind,
+    block_height: u64,
+    block_hash: Option<String>,
+    address: String,
+    amount: u64,
+}
+
 struct ManagedClient {
     client: Client,
     url: String,
@@ -267,7 +386,10 @@ CREATE TABLE IF NOT EXISTS payouts (
     amount BIGINT NOT NULL,
     fee BIGINT NOT NULL DEFAULT 0,
     tx_hash TEXT NOT NULL,
-    timestamp BIGINT NOT NULL
+    timestamp BIGINT NOT NULL,
+    reverted_at BIGINT,
+    revert_reason TEXT,
+    reversible BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE INDEX IF NOT EXISTS idx_payouts_timestamp ON payouts(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_payouts_address_timestamp ON payouts(address, timestamp DESC);
@@ -310,8 +432,10 @@ CREATE TABLE IF NOT EXISTS pool_fee_balance_credits (
     block_height BIGINT PRIMARY KEY,
     fee_address TEXT NOT NULL,
     amount BIGINT NOT NULL,
+    paid_amount BIGINT NOT NULL DEFAULT 0,
     timestamp BIGINT NOT NULL,
-    credited_at BIGINT NOT NULL
+    credited_at BIGINT NOT NULL,
+    reversible BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE INDEX IF NOT EXISTS idx_pool_fee_balance_credits_fee_address
     ON pool_fee_balance_credits(fee_address);
@@ -321,12 +445,88 @@ CREATE TABLE IF NOT EXISTS block_credit_events (
     block_height BIGINT NOT NULL,
     address TEXT NOT NULL,
     amount BIGINT NOT NULL,
+    paid_amount BIGINT NOT NULL DEFAULT 0,
+    reversible BOOLEAN NOT NULL DEFAULT FALSE,
     UNIQUE (block_height, address)
 );
 CREATE INDEX IF NOT EXISTS idx_block_credit_events_block_height
     ON block_credit_events(block_height, amount DESC, address ASC);
 CREATE INDEX IF NOT EXISTS idx_block_credit_events_address
     ON block_credit_events(address, block_height DESC);
+
+CREATE TABLE IF NOT EXISTS payout_credit_allocations (
+    payout_id BIGINT NOT NULL REFERENCES payouts(id) ON DELETE CASCADE,
+    source_kind TEXT NOT NULL,
+    block_height BIGINT NOT NULL,
+    block_hash TEXT,
+    address TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    PRIMARY KEY (payout_id, source_kind, block_height, address)
+);
+CREATE INDEX IF NOT EXISTS idx_payout_credit_allocations_payout_id
+    ON payout_credit_allocations(payout_id);
+CREATE INDEX IF NOT EXISTS idx_payout_credit_allocations_source
+    ON payout_credit_allocations(source_kind, block_height, address);
+
+CREATE TABLE IF NOT EXISTS archived_blocks (
+    height BIGINT NOT NULL,
+    hash TEXT NOT NULL,
+    difficulty BIGINT NOT NULL,
+    finder TEXT NOT NULL,
+    finder_worker TEXT NOT NULL,
+    reward BIGINT NOT NULL,
+    timestamp BIGINT NOT NULL,
+    confirmed BOOLEAN NOT NULL,
+    orphaned BOOLEAN NOT NULL,
+    paid_out BOOLEAN NOT NULL,
+    effort_pct DOUBLE PRECISION,
+    archived_at BIGINT NOT NULL,
+    PRIMARY KEY (height, hash)
+);
+CREATE INDEX IF NOT EXISTS idx_archived_blocks_height
+    ON archived_blocks(height DESC, archived_at DESC);
+
+CREATE TABLE IF NOT EXISTS archived_pool_fee_events (
+    block_height BIGINT NOT NULL,
+    block_hash TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    fee_address TEXT NOT NULL,
+    timestamp BIGINT NOT NULL,
+    archived_at BIGINT NOT NULL,
+    PRIMARY KEY (block_height, block_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_archived_pool_fee_events_fee_address
+    ON archived_pool_fee_events(fee_address, block_height DESC);
+
+CREATE TABLE IF NOT EXISTS archived_pool_fee_balance_credits (
+    block_height BIGINT NOT NULL,
+    block_hash TEXT NOT NULL,
+    fee_address TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    paid_amount BIGINT NOT NULL DEFAULT 0,
+    timestamp BIGINT NOT NULL,
+    credited_at BIGINT NOT NULL,
+    reversible BOOLEAN NOT NULL DEFAULT FALSE,
+    archived_at BIGINT NOT NULL,
+    PRIMARY KEY (block_height, block_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_archived_pool_fee_balance_credits_fee_address
+    ON archived_pool_fee_balance_credits(fee_address, block_height DESC);
+
+CREATE TABLE IF NOT EXISTS archived_block_credit_events (
+    block_height BIGINT NOT NULL,
+    block_hash TEXT NOT NULL,
+    address TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    paid_amount BIGINT NOT NULL DEFAULT 0,
+    reversible BOOLEAN NOT NULL DEFAULT FALSE,
+    archived_at BIGINT NOT NULL,
+    PRIMARY KEY (block_height, block_hash, address)
+);
+CREATE INDEX IF NOT EXISTS idx_archived_block_credit_events_height
+    ON archived_block_credit_events(block_height DESC, amount DESC, address ASC);
+CREATE INDEX IF NOT EXISTS idx_archived_block_credit_events_address
+    ON archived_block_credit_events(address, block_height DESC);
 
 CREATE TABLE IF NOT EXISTS address_risk (
     address TEXT PRIMARY KEY,
@@ -516,6 +716,14 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              ON pending_payouts(batch_id)",
         )
         .context("ensure pending_payouts.batch_id index")?;
+        conn.batch_execute("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS reverted_at BIGINT")
+            .context("ensure payouts.reverted_at column")?;
+        conn.batch_execute("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS revert_reason TEXT")
+            .context("ensure payouts.revert_reason column")?;
+        conn.batch_execute(
+            "ALTER TABLE payouts ADD COLUMN IF NOT EXISTS reversible BOOLEAN NOT NULL DEFAULT FALSE",
+        )
+        .context("ensure payouts.reversible column")?;
         conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS reject_reason TEXT")
             .context("ensure shares.reject_reason column")?;
         conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS claimed_hash TEXT")
@@ -601,6 +809,40 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             "ALTER TABLE monitor_heartbeats ADD COLUMN IF NOT EXISTS oldest_pending_send_age_seconds BIGINT",
         )
         .context("ensure monitor_heartbeats.oldest_pending_send_age_seconds column")?;
+        conn.batch_execute(
+            "ALTER TABLE block_credit_events ADD COLUMN IF NOT EXISTS paid_amount BIGINT NOT NULL DEFAULT 0",
+        )
+        .context("ensure block_credit_events.paid_amount column")?;
+        conn.batch_execute(
+            "ALTER TABLE block_credit_events ADD COLUMN IF NOT EXISTS reversible BOOLEAN NOT NULL DEFAULT FALSE",
+        )
+        .context("ensure block_credit_events.reversible column")?;
+        conn.batch_execute(
+            "ALTER TABLE pool_fee_balance_credits ADD COLUMN IF NOT EXISTS paid_amount BIGINT NOT NULL DEFAULT 0",
+        )
+        .context("ensure pool_fee_balance_credits.paid_amount column")?;
+        conn.batch_execute(
+            "ALTER TABLE pool_fee_balance_credits ADD COLUMN IF NOT EXISTS reversible BOOLEAN NOT NULL DEFAULT FALSE",
+        )
+        .context("ensure pool_fee_balance_credits.reversible column")?;
+        conn.batch_execute(
+            "ALTER TABLE payout_credit_allocations ADD COLUMN IF NOT EXISTS block_hash TEXT",
+        )
+        .context("ensure payout_credit_allocations.block_hash column")?;
+        conn.batch_execute(
+            "CREATE INDEX IF NOT EXISTS idx_payout_credit_allocations_source_hash
+             ON payout_credit_allocations(source_kind, block_height, block_hash, address)",
+        )
+        .context("ensure payout_credit_allocations source_hash index")?;
+        conn.execute(
+            "UPDATE payout_credit_allocations allocation
+             SET block_hash = blocks.hash
+             FROM blocks
+             WHERE allocation.block_hash IS NULL
+               AND allocation.block_height = blocks.height",
+            &[],
+        )
+        .context("backfill payout_credit_allocations.block_hash from live blocks")?;
 
         let mut conns = Vec::with_capacity(pool_size);
         conns.push(Mutex::new(ManagedClient::new(conn, url, schema, "primary")));
@@ -1192,6 +1434,195 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(inserted > 0)
     }
 
+    pub fn archive_conflicting_block_and_replace(&self, block: &DbBlock) -> Result<bool> {
+        let mut conn = self.conn().lock();
+        let mut tx = conn.transaction()?;
+        let existing_row = tx.query_opt(
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+             FROM blocks
+             WHERE height = $1
+             FOR UPDATE",
+            &[&u64_to_i64(block.height)?],
+        )?;
+        let Some(existing_row) = existing_row else {
+            tx.execute(
+                "INSERT INTO blocks (height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                &[
+                    &u64_to_i64(block.height)?,
+                    &block.hash,
+                    &u64_to_i64(block.difficulty)?,
+                    &block.finder,
+                    &block.finder_worker,
+                    &u64_to_i64(block.reward)?,
+                    &to_unix(block.timestamp),
+                    &block.confirmed,
+                    &block.orphaned,
+                    &block.paid_out,
+                    &block.effort_pct,
+                ],
+            )?;
+            tx.commit()?;
+            return Ok(true);
+        };
+
+        let existing = row_to_block(&existing_row);
+        if existing.hash == block.hash {
+            return Ok(false);
+        }
+
+        let archived_at = now_unix();
+        let height_i64 = u64_to_i64(block.height)?;
+        tx.execute(
+            "UPDATE payout_credit_allocations
+             SET block_hash = $2
+             WHERE block_height = $1
+               AND block_hash IS NULL",
+            &[&height_i64, &existing.hash],
+        )?;
+        tx.execute(
+            "INSERT INTO archived_blocks (
+                height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed,
+                orphaned, paid_out, effort_pct, archived_at
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             ON CONFLICT (height, hash) DO UPDATE SET
+                 difficulty = EXCLUDED.difficulty,
+                 finder = EXCLUDED.finder,
+                 finder_worker = EXCLUDED.finder_worker,
+                 reward = EXCLUDED.reward,
+                 timestamp = EXCLUDED.timestamp,
+                 confirmed = EXCLUDED.confirmed,
+                 orphaned = EXCLUDED.orphaned,
+                 paid_out = EXCLUDED.paid_out,
+                 effort_pct = EXCLUDED.effort_pct,
+                 archived_at = EXCLUDED.archived_at",
+            &[
+                &height_i64,
+                &existing.hash,
+                &u64_to_i64(existing.difficulty)?,
+                &existing.finder,
+                &existing.finder_worker,
+                &u64_to_i64(existing.reward)?,
+                &to_unix(existing.timestamp),
+                &existing.confirmed,
+                &existing.orphaned,
+                &existing.paid_out,
+                &existing.effort_pct,
+                &archived_at,
+            ],
+        )?;
+        tx.execute(
+            "INSERT INTO archived_block_credit_events (
+                block_height, block_hash, address, amount, paid_amount, reversible, archived_at
+             )
+             SELECT
+                 block_height,
+                 $2,
+                 address,
+                 amount,
+                 paid_amount,
+                 reversible,
+                 $3
+             FROM block_credit_events
+             WHERE block_height = $1
+             ON CONFLICT (block_height, block_hash, address) DO UPDATE SET
+                 amount = EXCLUDED.amount,
+                 paid_amount = EXCLUDED.paid_amount,
+                 reversible = EXCLUDED.reversible,
+                 archived_at = EXCLUDED.archived_at",
+            &[&height_i64, &existing.hash, &archived_at],
+        )?;
+        tx.execute(
+            "INSERT INTO archived_pool_fee_balance_credits (
+                block_height, block_hash, fee_address, amount, paid_amount, timestamp,
+                credited_at, reversible, archived_at
+             )
+             SELECT
+                 block_height,
+                 $2,
+                 fee_address,
+                 amount,
+                 paid_amount,
+                 timestamp,
+                 credited_at,
+                 reversible,
+                 $3
+             FROM pool_fee_balance_credits
+             WHERE block_height = $1
+             ON CONFLICT (block_height, block_hash) DO UPDATE SET
+                 fee_address = EXCLUDED.fee_address,
+                 amount = EXCLUDED.amount,
+                 paid_amount = EXCLUDED.paid_amount,
+                 timestamp = EXCLUDED.timestamp,
+                 credited_at = EXCLUDED.credited_at,
+                 reversible = EXCLUDED.reversible,
+                 archived_at = EXCLUDED.archived_at",
+            &[&height_i64, &existing.hash, &archived_at],
+        )?;
+        tx.execute(
+            "INSERT INTO archived_pool_fee_events (
+                block_height, block_hash, amount, fee_address, timestamp, archived_at
+             )
+             SELECT
+                 block_height,
+                 $2,
+                 amount,
+                 fee_address,
+                 timestamp,
+                 $3
+             FROM pool_fee_events
+             WHERE block_height = $1
+             ON CONFLICT (block_height, block_hash) DO UPDATE SET
+                 amount = EXCLUDED.amount,
+                 fee_address = EXCLUDED.fee_address,
+                 timestamp = EXCLUDED.timestamp,
+                 archived_at = EXCLUDED.archived_at",
+            &[&height_i64, &existing.hash, &archived_at],
+        )?;
+        tx.execute(
+            "DELETE FROM block_credit_events WHERE block_height = $1",
+            &[&height_i64],
+        )?;
+        tx.execute(
+            "DELETE FROM pool_fee_balance_credits WHERE block_height = $1",
+            &[&height_i64],
+        )?;
+        tx.execute(
+            "DELETE FROM pool_fee_events WHERE block_height = $1",
+            &[&height_i64],
+        )?;
+        tx.execute(
+            "UPDATE blocks
+             SET hash = $2,
+                 difficulty = $3,
+                 finder = $4,
+                 finder_worker = $5,
+                 reward = $6,
+                 timestamp = $7,
+                 confirmed = $8,
+                 orphaned = $9,
+                 paid_out = $10,
+                 effort_pct = $11
+             WHERE height = $1",
+            &[
+                &height_i64,
+                &block.hash,
+                &u64_to_i64(block.difficulty)?,
+                &block.finder,
+                &block.finder_worker,
+                &u64_to_i64(block.reward)?,
+                &to_unix(block.timestamp),
+                &block.confirmed,
+                &block.orphaned,
+                &block.paid_out,
+                &block.effort_pct,
+            ],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     pub fn get_block(&self, height: u64) -> Result<Option<DbBlock>> {
         let row = self.conn().lock().query_opt(
             "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
@@ -1210,6 +1641,18 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
              FROM blocks ORDER BY height DESC LIMIT $1",
             &[&limit],
+        )?;
+        Ok(rows.into_iter().map(|row| row_to_block(&row)).collect())
+    }
+
+    pub fn get_recent_blocks_up_to(&self, limit: i64, max_height: u64) -> Result<Vec<DbBlock>> {
+        let rows = self.conn().lock().query(
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+             FROM blocks
+             WHERE height <= $1
+             ORDER BY height DESC
+             LIMIT $2",
+            &[&u64_to_i64(max_height)?, &limit],
         )?;
         Ok(rows.into_iter().map(|row| row_to_block(&row)).collect())
     }
@@ -1337,6 +1780,18 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(row.get::<_, Option<f64>>(0))
     }
 
+    pub fn avg_effort_pct_up_to(&self, max_height: u64) -> Result<Option<f64>> {
+        let row = self.conn().lock().query_one(
+            "SELECT AVG(effort_pct)
+             FROM blocks
+             WHERE orphaned = FALSE
+               AND effort_pct IS NOT NULL
+               AND height <= $1",
+            &[&u64_to_i64(max_height)?],
+        )?;
+        Ok(row.get::<_, Option<f64>>(0))
+    }
+
     pub fn get_blocks_page(
         &self,
         finder: Option<&str>,
@@ -1353,8 +1808,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
         let order_clause = match sort {
             "height_asc" => "height ASC",
+            "height_desc" => "height DESC",
             "reward_desc" => "reward DESC, height DESC",
             "reward_asc" => "reward ASC, height DESC",
+            "time_desc" => "timestamp DESC, height DESC",
             "time_asc" => "timestamp ASC, height ASC",
             _ => "height DESC",
         };
@@ -1405,6 +1862,81 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok((items, total.max(0) as u64))
     }
 
+    pub fn get_blocks_page_up_to(
+        &self,
+        max_height: u64,
+        finder: Option<&str>,
+        status: Option<&str>,
+        sort: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<DbBlock>, u64)> {
+        let finder_pattern = finder
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(|v| format!("%{}%", v.to_ascii_lowercase()));
+        let status_filter = normalize_block_status_filter(status);
+        let max_height = u64_to_i64(max_height)?;
+
+        let order_clause = match sort {
+            "height_asc" => "height ASC",
+            "height_desc" => "height DESC",
+            "reward_desc" => "reward DESC, height DESC",
+            "reward_asc" => "reward ASC, height DESC",
+            "time_desc" => "timestamp DESC, height DESC",
+            "time_asc" => "timestamp ASC, height ASC",
+            _ => "height DESC",
+        };
+
+        let mut conn = self.conn().lock();
+        let total_row = conn.query_one(
+            "SELECT COUNT(*)
+             FROM blocks
+             WHERE height <= $1
+               AND ($2::text IS NULL OR LOWER(finder) LIKE $2)
+               AND (
+                   $3::text IS NULL
+                   OR ($3 = 'confirmed' AND confirmed = TRUE AND orphaned = FALSE)
+                   OR ($3 = 'orphaned' AND orphaned = TRUE)
+                   OR ($3 = 'pending' AND confirmed = FALSE AND orphaned = FALSE)
+                   OR ($3 = 'paid' AND paid_out = TRUE)
+                   OR ($3 = 'unpaid' AND paid_out = FALSE)
+               )",
+            &[&max_height, &finder_pattern, &status_filter],
+        )?;
+        let total: i64 = total_row.get(0);
+
+        let sql = format!(
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+             FROM blocks
+             WHERE height <= $1
+               AND ($2::text IS NULL OR LOWER(finder) LIKE $2)
+               AND (
+                   $3::text IS NULL
+                   OR ($3 = 'confirmed' AND confirmed = TRUE AND orphaned = FALSE)
+                   OR ($3 = 'orphaned' AND orphaned = TRUE)
+                   OR ($3 = 'pending' AND confirmed = FALSE AND orphaned = FALSE)
+                   OR ($3 = 'paid' AND paid_out = TRUE)
+                   OR ($3 = 'unpaid' AND paid_out = FALSE)
+               )
+             ORDER BY {order_clause}
+             LIMIT $4 OFFSET $5"
+        );
+        let rows = conn.query(
+            &sql,
+            &[
+                &max_height,
+                &finder_pattern,
+                &status_filter,
+                &limit.max(0),
+                &offset.max(0),
+            ],
+        )?;
+        let items = rows.into_iter().map(|row| row_to_block(&row)).collect();
+
+        Ok((items, total.max(0) as u64))
+    }
+
     pub fn get_unconfirmed_blocks(&self) -> Result<Vec<DbBlock>> {
         let rows = self.conn().lock().query(
             "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
@@ -1432,6 +1964,33 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(count.max(0) as u64)
     }
 
+    pub fn get_block_count_up_to(&self, max_height: u64) -> Result<u64> {
+        let row = self.conn().lock().query_one(
+            "SELECT COUNT(*) FROM blocks WHERE height <= $1",
+            &[&u64_to_i64(max_height)?],
+        )?;
+        let count: i64 = row.get(0);
+        Ok(count.max(0) as u64)
+    }
+
+    pub fn get_archived_block_count(&self) -> Result<u64> {
+        let row = self
+            .conn()
+            .lock()
+            .query_one("SELECT COUNT(*) FROM archived_blocks", &[])?;
+        let count: i64 = row.get(0);
+        Ok(count.max(0) as u64)
+    }
+
+    pub fn get_archived_orphaned_block_count(&self) -> Result<u64> {
+        let row = self.conn().lock().query_one(
+            "SELECT COUNT(*) FROM archived_blocks WHERE orphaned = TRUE",
+            &[],
+        )?;
+        let count: i64 = row.get(0);
+        Ok(count.max(0) as u64)
+    }
+
     /// Returns (confirmed_non_orphaned, orphaned, pending_non_orphaned).
     pub fn get_block_status_counts(&self) -> Result<(u64, u64, u64)> {
         let row = self.conn().lock().query_one(
@@ -1441,6 +2000,27 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                  COALESCE(SUM(CASE WHEN confirmed = FALSE AND orphaned = FALSE THEN 1 ELSE 0 END), 0)
              FROM blocks",
             &[],
+        )?;
+        let confirmed: i64 = row.get(0);
+        let orphaned: i64 = row.get(1);
+        let pending: i64 = row.get(2);
+        Ok((
+            confirmed.max(0) as u64,
+            orphaned.max(0) as u64,
+            pending.max(0) as u64,
+        ))
+    }
+
+    /// Returns (confirmed_non_orphaned, orphaned, pending_non_orphaned) up to max_height.
+    pub fn get_block_status_counts_up_to(&self, max_height: u64) -> Result<(u64, u64, u64)> {
+        let row = self.conn().lock().query_one(
+            "SELECT
+                 COALESCE(SUM(CASE WHEN confirmed = TRUE AND orphaned = FALSE THEN 1 ELSE 0 END), 0),
+                 COALESCE(SUM(CASE WHEN orphaned = TRUE THEN 1 ELSE 0 END), 0),
+                 COALESCE(SUM(CASE WHEN confirmed = FALSE AND orphaned = FALSE THEN 1 ELSE 0 END), 0)
+             FROM blocks
+             WHERE height <= $1",
+            &[&u64_to_i64(max_height)?],
         )?;
         let confirmed: i64 = row.get(0);
         let orphaned: i64 = row.get(1);
@@ -1493,11 +2073,45 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             return Ok(());
         }
 
+        let mut bal = Self::load_balance(tx, destination)?;
+        bal.pending = bal
+            .pending
+            .checked_add(amount)
+            .ok_or_else(|| anyhow!("balance overflow"))?;
+
+        Self::upsert_balance(tx, &bal)?;
+        Ok(())
+    }
+
+    fn debit_pending_balance(
+        tx: &mut Transaction<'_>,
+        destination: &str,
+        amount: u64,
+    ) -> Result<()> {
+        if destination.is_empty() || amount == 0 {
+            return Ok(());
+        }
+
+        let mut bal = Self::load_balance(tx, destination)?;
+        if bal.pending < amount {
+            return Err(anyhow!(
+                "insufficient pending balance for {}: have {}, need {}",
+                destination,
+                bal.pending,
+                amount
+            ));
+        }
+        bal.pending -= amount;
+        Self::upsert_balance(tx, &bal)?;
+        Ok(())
+    }
+
+    fn load_balance(tx: &mut Transaction<'_>, destination: &str) -> Result<Balance> {
         let row = tx.query_opt(
             "SELECT address, pending, paid FROM balances WHERE address = $1",
             &[&destination],
         )?;
-        let mut bal = if let Some(row) = row {
+        Ok(if let Some(row) = row {
             Balance {
                 address: row.get::<_, String>(0),
                 pending: row.get::<_, i64>(1).max(0) as u64,
@@ -1509,12 +2123,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 pending: 0,
                 paid: 0,
             }
-        };
-        bal.pending = bal
-            .pending
-            .checked_add(amount)
-            .ok_or_else(|| anyhow!("balance overflow"))?;
+        })
+    }
 
+    fn upsert_balance(tx: &mut Transaction<'_>, bal: &Balance) -> Result<()> {
         tx.execute(
             "INSERT INTO balances (address, pending, paid) VALUES ($1, $2, $3)
              ON CONFLICT(address) DO UPDATE SET pending = EXCLUDED.pending, paid = EXCLUDED.paid",
@@ -1533,6 +2145,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         destination: &str,
         amount: u64,
         timestamp: SystemTime,
+        reversible: bool,
     ) -> Result<bool> {
         if amount == 0 {
             return Ok(false);
@@ -1544,8 +2157,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         }
 
         let inserted = tx.execute(
-            "INSERT INTO pool_fee_balance_credits (block_height, fee_address, amount, timestamp, credited_at)
-             VALUES ($1, $2, $3, $4, $5)
+            "INSERT INTO pool_fee_balance_credits (block_height, fee_address, amount, paid_amount, timestamp, credited_at, reversible)
+             VALUES ($1, $2, $3, 0, $4, $5, $6)
              ON CONFLICT(block_height) DO NOTHING",
             &[
                 &u64_to_i64(block_height)?,
@@ -1553,6 +2166,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 &u64_to_i64(amount)?,
                 &to_unix(timestamp),
                 &now_unix(),
+                &reversible,
             ],
         )?;
         if inserted == 0 {
@@ -1581,7 +2195,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let mut tx = conn.transaction()?;
 
         let block_state = tx.query_opt(
-            "SELECT confirmed, orphaned, paid_out FROM blocks WHERE height = $1",
+            "SELECT confirmed, orphaned, paid_out FROM blocks WHERE height = $1 FOR UPDATE",
             &[&u64_to_i64(block_height)?],
         )?;
         let Some(row) = block_state else {
@@ -1606,8 +2220,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             Self::credit_pending_balance(&mut tx, destination, *amount)?;
 
             tx.execute(
-                "INSERT INTO block_credit_events (block_height, address, amount)
-                 VALUES ($1, $2, $3)
+                "INSERT INTO block_credit_events (block_height, address, amount, paid_amount, reversible)
+                 VALUES ($1, $2, $3, 0, TRUE)
                  ON CONFLICT(block_height, address) DO NOTHING",
                 &[
                     &u64_to_i64(block_height)?,
@@ -1630,6 +2244,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     destination,
                     fee.amount,
                     fee.timestamp,
+                    true,
                 )?;
 
                 tx.execute(
@@ -1725,6 +2340,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 &credit_destination,
                 amount,
                 timestamp,
+                false,
             )? {
                 report.credited_events = report.credited_events.saturating_add(1);
                 report.credited_amount = report.credited_amount.saturating_add(amount);
@@ -1757,6 +2373,100 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .collect())
     }
 
+    pub fn list_balance_source_summaries(&self) -> Result<Vec<BalanceSourceSummary>> {
+        let rows = self.conn().lock().query(
+            "WITH miner_sources AS (
+                 SELECT
+                     e.address AS address,
+                     SUM(CASE WHEN b.orphaned THEN GREATEST(e.amount - e.paid_amount, 0) ELSE 0 END)::BIGINT AS orphan_pending,
+                     SUM(CASE WHEN NOT b.orphaned THEN GREATEST(e.amount - e.paid_amount, 0) ELSE 0 END)::BIGINT AS canonical_pending
+                 FROM block_credit_events e
+                 JOIN blocks b ON b.height = e.block_height
+                 GROUP BY e.address
+             ),
+             fee_sources AS (
+                 SELECT
+                     f.fee_address AS address,
+                     SUM(CASE WHEN b.orphaned THEN GREATEST(f.amount - f.paid_amount, 0) ELSE 0 END)::BIGINT AS orphan_pending,
+                     SUM(CASE WHEN NOT b.orphaned THEN GREATEST(f.amount - f.paid_amount, 0) ELSE 0 END)::BIGINT AS canonical_pending
+                 FROM pool_fee_balance_credits f
+                 JOIN blocks b ON b.height = f.block_height
+                 GROUP BY f.fee_address
+             )
+             SELECT
+                 address,
+                 COALESCE(SUM(canonical_pending)::BIGINT, 0) AS canonical_pending,
+                 COALESCE(SUM(orphan_pending)::BIGINT, 0) AS orphan_pending
+             FROM (
+                 SELECT address, canonical_pending, orphan_pending FROM miner_sources
+                 UNION ALL
+                 SELECT address, canonical_pending, orphan_pending FROM fee_sources
+             ) sources
+             GROUP BY address
+             ORDER BY address ASC",
+            &[],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| BalanceSourceSummary {
+                address: row.get::<_, String>(0),
+                canonical_pending: row.get::<_, i64>(1).max(0) as u64,
+                orphan_pending: row.get::<_, i64>(2).max(0) as u64,
+            })
+            .collect())
+    }
+
+    pub fn live_reconciliation_blockers(&self) -> Result<LiveReconciliationBlockers> {
+        let row = self.conn().lock().query_one(
+            "SELECT
+                 COALESCE((
+                     SELECT COUNT(*)
+                     FROM blocks b
+                     WHERE b.orphaned = TRUE
+                       AND (
+                           EXISTS (SELECT 1 FROM block_credit_events e WHERE e.block_height = b.height)
+                           OR EXISTS (SELECT 1 FROM pool_fee_balance_credits f WHERE f.block_height = b.height)
+                       )
+                 ), 0)::BIGINT AS orphaned_block_issue_count,
+                 COALESCE((
+                     SELECT
+                         COALESCE(SUM(block_unpaid + fee_unpaid)::BIGINT, 0)
+                     FROM (
+                         SELECT
+                             COALESCE((
+                                 SELECT SUM(GREATEST(e.amount - e.paid_amount, 0))::BIGINT
+                                 FROM block_credit_events e
+                                 WHERE e.block_height = b.height
+                             ), 0) AS block_unpaid,
+                             COALESCE((
+                                 SELECT SUM(GREATEST(f.amount - f.paid_amount, 0))::BIGINT
+                                 FROM pool_fee_balance_credits f
+                                 WHERE f.block_height = b.height
+                             ), 0) AS fee_unpaid
+                         FROM blocks b
+                         WHERE b.orphaned = TRUE
+                           AND (
+                               EXISTS (SELECT 1 FROM block_credit_events e WHERE e.block_height = b.height)
+                               OR EXISTS (SELECT 1 FROM pool_fee_balance_credits f WHERE f.block_height = b.height)
+                           )
+                     ) orphaned
+                 ), 0)::BIGINT AS orphaned_unpaid_amount,
+                 COALESCE((
+                     SELECT COUNT(*)
+                     FROM payouts p
+                     WHERE p.reverted_at IS NULL
+                       AND p.reversible = FALSE
+                       AND COALESCE(p.tx_hash, '') <> ''
+                 ), 0)::BIGINT AS unresolved_completed_payout_rows",
+            &[],
+        )?;
+        Ok(LiveReconciliationBlockers {
+            orphaned_block_issue_count: row.get::<_, i64>(0).max(0) as u64,
+            orphaned_unpaid_amount: row.get::<_, i64>(1).max(0) as u64,
+            unresolved_completed_payout_rows: row.get::<_, i64>(2).max(0) as u64,
+        })
+    }
+
     pub fn add_payout(&self, address: &str, amount: u64, fee: u64, tx_hash: &str) -> Result<()> {
         self.add_payout_with_batch(address, amount, fee, tx_hash, None)
     }
@@ -1770,8 +2480,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         batch_id: Option<&str>,
     ) -> Result<()> {
         self.conn().lock().execute(
-            "INSERT INTO payouts (address, amount, fee, tx_hash, timestamp, batch_id)
-             VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO payouts (address, amount, fee, tx_hash, timestamp, batch_id, reverted_at, revert_reason, reversible)
+             VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL, FALSE)",
             &[
                 &address,
                 &u64_to_i64(amount)?,
@@ -1788,6 +2498,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let rows = self.conn().lock().query(
             "SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed, batch_id
              FROM payouts
+             WHERE reverted_at IS NULL
              ORDER BY id DESC
              LIMIT $1",
             &[&limit],
@@ -1800,9 +2511,21 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             "SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed, batch_id
              FROM payouts
              WHERE address = $1
+               AND reverted_at IS NULL
              ORDER BY id DESC
              LIMIT $2",
             &[&address, &limit],
+        )?;
+        rows.into_iter().map(row_to_payout).collect()
+    }
+
+    pub fn get_active_payouts(&self) -> Result<Vec<Payout>> {
+        let rows = self.conn().lock().query(
+            "SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed, batch_id
+             FROM payouts
+             WHERE reverted_at IS NULL
+             ORDER BY timestamp DESC, id DESC",
+            &[],
         )?;
         rows.into_iter().map(row_to_payout).collect()
     }
@@ -1818,6 +2541,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                  SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed, batch_id
                  FROM payouts
                  WHERE address = $1
+                   AND reverted_at IS NULL
                  UNION ALL
                  SELECT
                      0 AS id,
@@ -1870,6 +2594,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              FROM (
                  SELECT address, tx_hash
                  FROM payouts
+                 WHERE reverted_at IS NULL
                  UNION ALL
                  SELECT address, tx_hash
                  FROM pending_payouts
@@ -1887,6 +2612,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              FROM (
                  SELECT id, address, amount, fee, tx_hash, timestamp, 1 AS confirmed, batch_id
                  FROM payouts
+                 WHERE reverted_at IS NULL
                  UNION ALL
                  SELECT
                      0 AS id,
@@ -1944,6 +2670,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     SELECT
                         COALESCE(NULLIF(batch_id, ''), CONCAT('legacy:', (timestamp / 300)::text)) AS batch_key
                     FROM payouts
+                    WHERE reverted_at IS NULL
                     UNION ALL
                     SELECT
                         COALESCE(
@@ -1970,6 +2697,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     1 AS confirmed,
                     COALESCE(NULLIF(batch_id, ''), CONCAT('legacy:', (timestamp / 300)::text)) AS batch_key
                 FROM payouts
+                WHERE reverted_at IS NULL
                 UNION ALL
                 SELECT
                     amount,
@@ -2043,7 +2771,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_total_pool_fees(&self) -> Result<u64> {
         let row = self.conn().lock().query_one(
-            "SELECT COALESCE(SUM(amount)::BIGINT, 0) FROM pool_fee_events",
+            "SELECT COALESCE(SUM(e.amount)::BIGINT, 0)
+             FROM pool_fee_events e
+             LEFT JOIN blocks b ON b.height = e.block_height
+             WHERE b.height IS NULL OR b.orphaned = FALSE",
             &[],
         )?;
         let total: i64 = row.get(0);
@@ -2078,7 +2809,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let rows = self.conn().lock().query(
             "SELECT DISTINCT tx_hash
              FROM payouts
-             WHERE tx_hash = ANY($1)",
+             WHERE tx_hash = ANY($1)
+               AND reverted_at IS NULL",
             &[&tx_hashes],
         )?;
         Ok(rows
@@ -2089,8 +2821,11 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_recent_pool_fees(&self, limit: i64) -> Result<Vec<PoolFeeEvent>> {
         let rows = self.conn().lock().query(
-            "SELECT id, block_height, amount, fee_address, timestamp
-             FROM pool_fee_events ORDER BY id DESC LIMIT $1",
+            "SELECT e.id, e.block_height, e.amount, e.fee_address, e.timestamp
+             FROM pool_fee_events e
+             LEFT JOIN blocks b ON b.height = e.block_height
+             WHERE b.height IS NULL OR b.orphaned = FALSE
+             ORDER BY e.id DESC LIMIT $1",
             &[&limit],
         )?;
         Ok(rows
@@ -2107,9 +2842,11 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_block_pool_fee_event(&self, block_height: u64) -> Result<Option<PoolFeeEvent>> {
         let row = self.conn().lock().query_opt(
-            "SELECT id, block_height, amount, fee_address, timestamp
-             FROM pool_fee_events
-             WHERE block_height = $1",
+            "SELECT e.id, e.block_height, e.amount, e.fee_address, e.timestamp
+             FROM pool_fee_events e
+             LEFT JOIN blocks b ON b.height = e.block_height
+             WHERE e.block_height = $1
+               AND (b.height IS NULL OR b.orphaned = FALSE)",
             &[&u64_to_i64(block_height)?],
         )?;
         Ok(row.map(|row| PoolFeeEvent {
@@ -2123,8 +2860,11 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_all_pool_fees(&self) -> Result<Vec<PoolFeeEvent>> {
         let rows = self.conn().lock().query(
-            "SELECT id, block_height, amount, fee_address, timestamp
-             FROM pool_fee_events ORDER BY id DESC",
+            "SELECT e.id, e.block_height, e.amount, e.fee_address, e.timestamp
+             FROM pool_fee_events e
+             LEFT JOIN blocks b ON b.height = e.block_height
+             WHERE b.height IS NULL OR b.orphaned = FALSE
+             ORDER BY e.id DESC",
             &[],
         )?;
         Ok(rows
@@ -2141,7 +2881,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_block_credit_events(&self, block_height: u64) -> Result<Vec<BlockCreditEvent>> {
         let rows = self.conn().lock().query(
-            "SELECT id, block_height, address, amount
+            "SELECT id, block_height, address, amount, paid_amount, reversible
              FROM block_credit_events
              WHERE block_height = $1
              ORDER BY amount DESC, address ASC",
@@ -2154,8 +2894,430 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 block_height: row.get::<_, i64>(1).max(0) as u64,
                 address: row.get::<_, String>(2),
                 amount: row.get::<_, i64>(3).max(0) as u64,
+                paid_amount: row.get::<_, i64>(4).max(0) as u64,
+                reversible: row.get::<_, bool>(5),
             })
             .collect())
+    }
+
+    pub fn get_latest_non_orphan_block_up_to(&self, max_height: u64) -> Result<Option<DbBlock>> {
+        let row = self.conn().lock().query_opt(
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+             FROM blocks
+             WHERE orphaned = FALSE AND height <= $1
+             ORDER BY height DESC
+             LIMIT 1",
+            &[&u64_to_i64(max_height)?],
+        )?;
+        Ok(row.map(|row| row_to_block(&row)))
+    }
+
+    pub fn get_non_orphan_blocks_up_to(&self, max_height: u64) -> Result<Vec<DbBlock>> {
+        let rows = self.conn().lock().query(
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+             FROM blocks
+             WHERE orphaned = FALSE AND height <= $1
+             ORDER BY height DESC",
+            &[&u64_to_i64(max_height)?],
+        )?;
+        Ok(rows.into_iter().map(|row| row_to_block(&row)).collect())
+    }
+
+    pub fn get_non_orphan_blocks_from_height(&self, min_height: u64) -> Result<Vec<DbBlock>> {
+        let rows = self.conn().lock().query(
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+             FROM blocks
+             WHERE orphaned = FALSE AND height >= $1
+             ORDER BY height ASC",
+            &[&u64_to_i64(min_height)?],
+        )?;
+        Ok(rows.into_iter().map(|row| row_to_block(&row)).collect())
+    }
+
+    pub fn list_orphaned_block_credit_issues(&self) -> Result<Vec<OrphanedBlockCreditIssue>> {
+        let rows = self.conn().lock().query(
+            "SELECT
+                 issue.height,
+                 issue.hash,
+                 issue.credit_event_count,
+                 issue.credited_address_count,
+                 issue.remaining_credit_amount,
+                 issue.paid_credit_amount,
+                 issue.remaining_fee_amount,
+                 issue.paid_fee_amount,
+                 issue.pending_payout_count,
+                 issue.broadcast_pending_payout_count
+             FROM (
+                 SELECT
+                     b.height,
+                     b.hash,
+                     COALESCE((SELECT COUNT(*) FROM block_credit_events e WHERE e.block_height = b.height), 0) AS credit_event_count,
+                     COALESCE((SELECT COUNT(DISTINCT e.address) FROM block_credit_events e WHERE e.block_height = b.height), 0) AS credited_address_count,
+                     COALESCE((SELECT SUM(e.amount)::BIGINT FROM block_credit_events e WHERE e.block_height = b.height), 0) AS remaining_credit_amount,
+                     COALESCE((SELECT SUM(e.paid_amount)::BIGINT FROM block_credit_events e WHERE e.block_height = b.height), 0) AS paid_credit_amount,
+                     COALESCE((SELECT f.amount::BIGINT FROM pool_fee_balance_credits f WHERE f.block_height = b.height), 0) AS remaining_fee_amount,
+                     COALESCE((SELECT f.paid_amount::BIGINT FROM pool_fee_balance_credits f WHERE f.block_height = b.height), 0) AS paid_fee_amount,
+                     COALESCE((
+                         SELECT COUNT(*)
+                         FROM pending_payouts pp
+                         WHERE pp.address IN (
+                             SELECT e.address FROM block_credit_events e WHERE e.block_height = b.height
+                             UNION
+                             SELECT f.fee_address FROM pool_fee_balance_credits f WHERE f.block_height = b.height
+                         )
+                     ), 0) AS pending_payout_count,
+                     COALESCE((
+                         SELECT COUNT(*)
+                         FROM pending_payouts pp
+                         WHERE COALESCE(pp.tx_hash, '') <> ''
+                           AND pp.address IN (
+                               SELECT e.address FROM block_credit_events e WHERE e.block_height = b.height
+                               UNION
+                               SELECT f.fee_address FROM pool_fee_balance_credits f WHERE f.block_height = b.height
+                           )
+                     ), 0) AS broadcast_pending_payout_count
+                 FROM blocks b
+                 WHERE b.orphaned = TRUE
+                   AND (
+                       EXISTS (SELECT 1 FROM block_credit_events e WHERE e.block_height = b.height)
+                       OR EXISTS (SELECT 1 FROM pool_fee_balance_credits f WHERE f.block_height = b.height)
+                   )
+                 UNION ALL
+                 SELECT
+                     b.height,
+                     b.hash,
+                     COALESCE((
+                         SELECT COUNT(*)
+                         FROM archived_block_credit_events e
+                         WHERE e.block_height = b.height
+                           AND e.block_hash = b.hash
+                     ), 0) AS credit_event_count,
+                     COALESCE((
+                         SELECT COUNT(DISTINCT e.address)
+                         FROM archived_block_credit_events e
+                         WHERE e.block_height = b.height
+                           AND e.block_hash = b.hash
+                     ), 0) AS credited_address_count,
+                     COALESCE((
+                         SELECT SUM(e.amount)::BIGINT
+                         FROM archived_block_credit_events e
+                         WHERE e.block_height = b.height
+                           AND e.block_hash = b.hash
+                     ), 0) AS remaining_credit_amount,
+                     COALESCE((
+                         SELECT SUM(e.paid_amount)::BIGINT
+                         FROM archived_block_credit_events e
+                         WHERE e.block_height = b.height
+                           AND e.block_hash = b.hash
+                     ), 0) AS paid_credit_amount,
+                     COALESCE((
+                         SELECT f.amount::BIGINT
+                         FROM archived_pool_fee_balance_credits f
+                         WHERE f.block_height = b.height
+                           AND f.block_hash = b.hash
+                     ), 0) AS remaining_fee_amount,
+                     COALESCE((
+                         SELECT f.paid_amount::BIGINT
+                         FROM archived_pool_fee_balance_credits f
+                         WHERE f.block_height = b.height
+                           AND f.block_hash = b.hash
+                     ), 0) AS paid_fee_amount,
+                     COALESCE((
+                         SELECT COUNT(*)
+                         FROM pending_payouts pp
+                         WHERE pp.address IN (
+                             SELECT e.address
+                             FROM archived_block_credit_events e
+                             WHERE e.block_height = b.height
+                               AND e.block_hash = b.hash
+                             UNION
+                             SELECT f.fee_address
+                             FROM archived_pool_fee_balance_credits f
+                             WHERE f.block_height = b.height
+                               AND f.block_hash = b.hash
+                         )
+                     ), 0) AS pending_payout_count,
+                     COALESCE((
+                         SELECT COUNT(*)
+                         FROM pending_payouts pp
+                         WHERE COALESCE(pp.tx_hash, '') <> ''
+                           AND pp.address IN (
+                               SELECT e.address
+                               FROM archived_block_credit_events e
+                               WHERE e.block_height = b.height
+                                 AND e.block_hash = b.hash
+                               UNION
+                               SELECT f.fee_address
+                               FROM archived_pool_fee_balance_credits f
+                               WHERE f.block_height = b.height
+                                 AND f.block_hash = b.hash
+                           )
+                     ), 0) AS broadcast_pending_payout_count
+                 FROM archived_blocks b
+                 WHERE b.orphaned = TRUE
+                   AND (
+                       EXISTS (
+                           SELECT 1
+                           FROM archived_block_credit_events e
+                           WHERE e.block_height = b.height
+                             AND e.block_hash = b.hash
+                       )
+                       OR EXISTS (
+                           SELECT 1
+                           FROM archived_pool_fee_balance_credits f
+                           WHERE f.block_height = b.height
+                             AND f.block_hash = b.hash
+                       )
+                   )
+             ) issue
+             ORDER BY issue.height DESC, issue.hash DESC",
+            &[],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| OrphanedBlockCreditIssue {
+                height: row.get::<_, i64>(0).max(0) as u64,
+                hash: row.get::<_, String>(1),
+                credit_event_count: row.get::<_, i64>(2).max(0) as u64,
+                credited_address_count: row.get::<_, i64>(3).max(0) as u64,
+                remaining_credit_amount: row.get::<_, i64>(4).max(0) as u64,
+                paid_credit_amount: row.get::<_, i64>(5).max(0) as u64,
+                remaining_fee_amount: row.get::<_, i64>(6).max(0) as u64,
+                paid_fee_amount: row.get::<_, i64>(7).max(0) as u64,
+                pending_payout_count: row.get::<_, i64>(8).max(0) as u64,
+                broadcast_pending_payout_count: row.get::<_, i64>(9).max(0) as u64,
+            })
+            .collect())
+    }
+
+    pub fn list_unreconciled_completed_payout_rows(
+        &self,
+    ) -> Result<Vec<UnreconciledCompletedPayoutRow>> {
+        let rows = self.conn().lock().query(
+            "SELECT
+                 p.id,
+                 p.address,
+                 p.amount,
+                 p.fee,
+                 p.tx_hash,
+                 p.timestamp,
+                 COALESCE((
+                     SELECT SUM(a.amount)::BIGINT
+                     FROM payout_credit_allocations a
+                     WHERE a.payout_id = p.id
+                 ), 0),
+                 COALESCE((
+                     SELECT SUM(a.amount)::BIGINT
+                     FROM payout_credit_allocations a
+                     LEFT JOIN blocks b
+                       ON b.height = a.block_height
+                      AND (a.block_hash IS NULL OR b.hash = a.block_hash)
+                     LEFT JOIN archived_blocks archived
+                       ON archived.height = a.block_height
+                      AND a.block_hash IS NOT NULL
+                      AND archived.hash = a.block_hash
+                     WHERE a.payout_id = p.id
+                       AND COALESCE(b.orphaned, archived.orphaned, FALSE) = TRUE
+                 ), 0)
+             FROM payouts p
+             WHERE p.reverted_at IS NULL
+               AND p.reversible = FALSE
+               AND COALESCE(p.tx_hash, '') <> ''
+             ORDER BY p.timestamp DESC, p.id DESC",
+            &[],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| UnreconciledCompletedPayoutRow {
+                payout_id: row.get::<_, i64>(0),
+                address: row.get::<_, String>(1),
+                amount: row.get::<_, i64>(2).max(0) as u64,
+                fee: row.get::<_, i64>(3).max(0) as u64,
+                tx_hash: row.get::<_, String>(4),
+                timestamp: from_unix(row.get::<_, i64>(5)),
+                linked_amount: row.get::<_, i64>(6).max(0) as u64,
+                orphaned_linked_amount: row.get::<_, i64>(7).max(0) as u64,
+            })
+            .collect())
+    }
+
+    pub fn orphan_block_and_reverse_unpaid_credits(
+        &self,
+        block_height: u64,
+    ) -> Result<OrphanBlockReconciliation> {
+        self.reconcile_block_credit_state(block_height, false)
+    }
+
+    pub fn reconcile_existing_orphaned_block_credits(
+        &self,
+        block_height: u64,
+    ) -> Result<OrphanBlockReconciliation> {
+        self.reconcile_block_credit_state(block_height, true)
+    }
+
+    fn reconcile_block_credit_state(
+        &self,
+        block_height: u64,
+        allow_existing_orphan: bool,
+    ) -> Result<OrphanBlockReconciliation> {
+        let mut conn = self.conn().lock();
+        let mut tx = conn.transaction()?;
+        let Some(block_row) = tx.query_opt(
+            "SELECT orphaned FROM blocks WHERE height = $1 FOR UPDATE",
+            &[&u64_to_i64(block_height)?],
+        )?
+        else {
+            return Err(anyhow!("block {block_height} not found"));
+        };
+        let block_already_orphaned = block_row.get::<_, bool>(0);
+        if block_already_orphaned && !allow_existing_orphan {
+            return Ok(OrphanBlockReconciliation::default());
+        }
+
+        let credit_rows = tx.query(
+            "SELECT address, amount, paid_amount, reversible
+             FROM block_credit_events
+             WHERE block_height = $1
+             ORDER BY address ASC",
+            &[&u64_to_i64(block_height)?],
+        )?;
+        let mut credit_events = Vec::with_capacity(credit_rows.len());
+        let mut affected_addresses = Vec::<String>::with_capacity(credit_rows.len() + 1);
+        let mut reversal_blocked = false;
+        for row in credit_rows {
+            let address = row.get::<_, String>(0);
+            let amount = row.get::<_, i64>(1).max(0) as u64;
+            let paid_amount = row.get::<_, i64>(2).max(0) as u64;
+            let reversible = row.get::<_, bool>(3);
+            if amount > 0 && !affected_addresses.contains(&address) {
+                affected_addresses.push(address.clone());
+            }
+            if !reversible || paid_amount > 0 {
+                reversal_blocked = true;
+            }
+            credit_events.push((address, amount));
+        }
+
+        let fee_credit = tx.query_opt(
+            "SELECT fee_address, amount, paid_amount, reversible
+             FROM pool_fee_balance_credits
+             WHERE block_height = $1",
+            &[&u64_to_i64(block_height)?],
+        )?;
+        let fee_credit = fee_credit.map(|row| {
+            let fee_address = row.get::<_, String>(0);
+            let amount = row.get::<_, i64>(1).max(0) as u64;
+            let paid_amount = row.get::<_, i64>(2).max(0) as u64;
+            let reversible = row.get::<_, bool>(3);
+            (fee_address, amount, paid_amount, reversible)
+        });
+        if let Some((fee_address, _, paid_amount, reversible)) = fee_credit.as_ref() {
+            if !fee_address.is_empty() && !affected_addresses.contains(fee_address) {
+                affected_addresses.push(fee_address.clone());
+            }
+            if !*reversible || *paid_amount > 0 {
+                reversal_blocked = true;
+            }
+        }
+
+        let mut cancelable_pending_addresses = Vec::<String>::new();
+        if !affected_addresses.is_empty() {
+            for address in &affected_addresses {
+                if address.trim().is_empty() {
+                    continue;
+                }
+                if let Some(pending_row) = tx.query_opt(
+                    "SELECT tx_hash FROM pending_payouts WHERE address = $1",
+                    &[&address],
+                )? {
+                    let tx_hash = pending_row.get::<_, Option<String>>(0).unwrap_or_default();
+                    if !tx_hash.trim().is_empty() {
+                        reversal_blocked = true;
+                    } else {
+                        cancelable_pending_addresses.push(address.clone());
+                    }
+                }
+            }
+
+            if !reversal_blocked {
+                for (address, amount) in &credit_events {
+                    if *amount == 0 || address.trim().is_empty() {
+                        continue;
+                    }
+                    let balance = Self::load_balance(&mut tx, address)?;
+                    if balance.pending < *amount {
+                        reversal_blocked = true;
+                        break;
+                    }
+                }
+            }
+
+            if !reversal_blocked {
+                if let Some((fee_address, amount, _, _)) = fee_credit.as_ref() {
+                    if *amount > 0 && !fee_address.trim().is_empty() {
+                        let balance = Self::load_balance(&mut tx, fee_address)?;
+                        if balance.pending < *amount {
+                            reversal_blocked = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut result = OrphanBlockReconciliation {
+            orphaned: true,
+            manual_reconciliation_required: reversal_blocked
+                && (!credit_events.is_empty() || fee_credit.is_some()),
+            ..OrphanBlockReconciliation::default()
+        };
+
+        if !reversal_blocked {
+            for address in &cancelable_pending_addresses {
+                result.canceled_pending_payouts =
+                    result.canceled_pending_payouts.saturating_add(tx.execute(
+                        "DELETE FROM pending_payouts WHERE address = $1",
+                        &[&address],
+                    )? as u64);
+            }
+
+            for (address, amount) in &credit_events {
+                if *amount == 0 || address.trim().is_empty() {
+                    continue;
+                }
+                Self::debit_pending_balance(&mut tx, address, *amount)?;
+                result.reversed_credit_events = result.reversed_credit_events.saturating_add(1);
+                result.reversed_credit_amount =
+                    result.reversed_credit_amount.saturating_add(*amount);
+            }
+            if !credit_events.is_empty() {
+                tx.execute(
+                    "DELETE FROM block_credit_events WHERE block_height = $1",
+                    &[&u64_to_i64(block_height)?],
+                )?;
+            }
+
+            if let Some((fee_address, amount, _, _)) = fee_credit.as_ref() {
+                if *amount > 0 && !fee_address.trim().is_empty() {
+                    Self::debit_pending_balance(&mut tx, fee_address, *amount)?;
+                    result.reversed_fee_amount = *amount;
+                }
+                tx.execute(
+                    "DELETE FROM pool_fee_balance_credits WHERE block_height = $1",
+                    &[&u64_to_i64(block_height)?],
+                )?;
+            }
+        }
+
+        tx.execute(
+            "UPDATE blocks
+             SET orphaned = TRUE,
+                 confirmed = FALSE,
+                 paid_out = CASE WHEN $2 THEN FALSE ELSE paid_out END
+             WHERE height = $1",
+            &[&u64_to_i64(block_height)?, &(!reversal_blocked)],
+        )?;
+        tx.commit()?;
+        Ok(result)
     }
 
     pub fn set_meta(&self, key: &str, value: &[u8]) -> Result<()> {
@@ -3233,6 +4395,132 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(updated)
     }
 
+    fn insert_completed_payout_row(
+        tx: &mut Transaction<'_>,
+        address: &str,
+        amount: u64,
+        fee: u64,
+        tx_hash: &str,
+        timestamp: SystemTime,
+        batch_id: Option<&str>,
+    ) -> Result<i64> {
+        let row = tx.query_one(
+            "INSERT INTO payouts (
+                address, amount, fee, tx_hash, timestamp, batch_id, reverted_at, revert_reason, reversible
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL, FALSE)
+             RETURNING id",
+            &[
+                &address,
+                &u64_to_i64(amount)?,
+                &u64_to_i64(fee)?,
+                &tx_hash,
+                &to_unix(timestamp),
+                &batch_id,
+            ],
+        )?;
+        Ok(row.get::<_, i64>(0))
+    }
+
+    fn insert_payout_credit_allocations(
+        tx: &mut Transaction<'_>,
+        payout_id: i64,
+        allocations: &[PayoutCreditAllocation],
+    ) -> Result<()> {
+        for allocation in allocations {
+            tx.execute(
+                "INSERT INTO payout_credit_allocations (
+                    payout_id, source_kind, block_height, block_hash, address, amount
+                 ) VALUES ($1, $2, $3, $4, $5, $6)
+                 ON CONFLICT(payout_id, source_kind, block_height, address) DO UPDATE
+                 SET block_hash = COALESCE(EXCLUDED.block_hash, payout_credit_allocations.block_hash),
+                     amount = EXCLUDED.amount",
+                &[
+                    &payout_id,
+                    &allocation.source_kind.as_str(),
+                    &u64_to_i64(allocation.block_height)?,
+                    &allocation.block_hash,
+                    &allocation.address,
+                    &u64_to_i64(allocation.amount)?,
+                ],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn backfill_payout_reconciliation_state(
+        &self,
+    ) -> Result<PayoutReconciliationBackfillReport> {
+        const META_KEY: &str = "payout_reconciliation_backfill_v1";
+
+        let mut conn = self.conn().lock();
+        let mut tx = conn.transaction()?;
+        if tx
+            .query_opt("SELECT value FROM meta WHERE key = $1", &[&META_KEY])?
+            .is_some()
+        {
+            return Ok(PayoutReconciliationBackfillReport::default());
+        }
+
+        let source_block_updates = tx.execute(
+            "UPDATE block_credit_events
+             SET paid_amount = 0,
+                 reversible = TRUE
+             WHERE paid_amount <> 0 OR reversible = FALSE",
+            &[],
+        )?;
+        let source_fee_updates = tx.execute(
+            "UPDATE pool_fee_balance_credits
+             SET paid_amount = 0,
+                 reversible = TRUE
+             WHERE paid_amount <> 0 OR reversible = FALSE",
+            &[],
+        )?;
+        tx.execute("DELETE FROM payout_credit_allocations", &[])?;
+
+        let payout_rows = tx.query(
+            "SELECT id, address, amount
+             FROM payouts
+             WHERE reverted_at IS NULL
+             ORDER BY timestamp ASC, id ASC",
+            &[],
+        )?;
+
+        let mut report = PayoutReconciliationBackfillReport {
+            source_credits_marked_reversible: source_block_updates as u64
+                + source_fee_updates as u64,
+            ..PayoutReconciliationBackfillReport::default()
+        };
+        for row in payout_rows {
+            let payout_id = row.get::<_, i64>(0);
+            let address = row.get::<_, String>(1);
+            let amount = row.get::<_, i64>(2).max(0) as u64;
+            let allocations = Self::mark_balance_credit_sources_paid(&mut tx, &address, amount)?;
+            let linked_amount = allocations.iter().fold(0u64, |acc, allocation| {
+                acc.saturating_add(allocation.amount)
+            });
+            Self::insert_payout_credit_allocations(&mut tx, payout_id, &allocations)?;
+            let reversible = linked_amount == amount;
+            tx.execute(
+                "UPDATE payouts SET reversible = $2 WHERE id = $1",
+                &[&payout_id, &reversible],
+            )?;
+            if reversible {
+                report.payouts_linked = report.payouts_linked.saturating_add(1);
+            } else {
+                report.payouts_unreversible = report.payouts_unreversible.saturating_add(1);
+            }
+        }
+
+        tx.execute(
+            "INSERT INTO meta (key, value) VALUES ($1, $2)
+             ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value",
+            &[&META_KEY, &b"done".as_slice()],
+        )?;
+        tx.commit()?;
+        Ok(report)
+    }
+
     pub fn complete_pending_payout(
         &self,
         address: &str,
@@ -3288,24 +4576,9 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 ));
             }
         }
+        let pending_batch_id = pending_row.get::<_, Option<String>>(6);
 
-        let row = tx.query_opt(
-            "SELECT address, pending, paid FROM balances WHERE address = $1",
-            &[&address],
-        )?;
-        let mut bal = if let Some(row) = row {
-            Balance {
-                address: row.get::<_, String>(0),
-                pending: row.get::<_, i64>(1).max(0) as u64,
-                paid: row.get::<_, i64>(2).max(0) as u64,
-            }
-        } else {
-            Balance {
-                address: address.to_string(),
-                pending: 0,
-                paid: 0,
-            }
-        };
+        let mut bal = Self::load_balance(&mut tx, address)?;
         if bal.pending < amount {
             return Err(anyhow!("insufficient balance"));
         }
@@ -3315,27 +4588,25 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .checked_add(amount)
             .ok_or_else(|| anyhow!("paid overflow"))?;
 
-        tx.execute(
-            "INSERT INTO balances (address, pending, paid) VALUES ($1, $2, $3)
-             ON CONFLICT(address) DO UPDATE SET pending = EXCLUDED.pending, paid = EXCLUDED.paid",
-            &[
-                &bal.address,
-                &u64_to_i64(bal.pending)?,
-                &u64_to_i64(bal.paid)?,
-            ],
+        Self::upsert_balance(&mut tx, &bal)?;
+        let payout_timestamp = sent_at.or(send_started_at).unwrap_or(initiated_at);
+        let payout_id = Self::insert_completed_payout_row(
+            &mut tx,
+            address,
+            amount,
+            fee,
+            tx_hash,
+            payout_timestamp,
+            pending_batch_id.as_deref(),
         )?;
-
+        let allocations = Self::mark_balance_credit_sources_paid(&mut tx, address, amount)?;
+        let allocated_amount = allocations.iter().fold(0u64, |acc, allocation| {
+            acc.saturating_add(allocation.amount)
+        });
+        Self::insert_payout_credit_allocations(&mut tx, payout_id, &allocations)?;
         tx.execute(
-            "INSERT INTO payouts (address, amount, fee, tx_hash, timestamp, batch_id)
-             VALUES ($1, $2, $3, $4, $5, $6)",
-            &[
-                &address,
-                &u64_to_i64(amount)?,
-                &u64_to_i64(fee)?,
-                &tx_hash,
-                &to_unix(sent_at.or(send_started_at).unwrap_or(initiated_at)),
-                &pending_row.get::<_, Option<String>>(6),
-            ],
+            "UPDATE payouts SET reversible = $2 WHERE id = $1",
+            &[&payout_id, &(allocated_amount == amount)],
         )?;
 
         tx.execute(
@@ -3385,23 +4656,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 .map(|value| value.max(0) as u64)
                 .unwrap_or_default();
 
-            let balance_row = tx.query_opt(
-                "SELECT address, pending, paid FROM balances WHERE address = $1",
-                &[&address],
-            )?;
-            let mut balance = if let Some(balance_row) = balance_row {
-                Balance {
-                    address: balance_row.get::<_, String>(0),
-                    pending: balance_row.get::<_, i64>(1).max(0) as u64,
-                    paid: balance_row.get::<_, i64>(2).max(0) as u64,
-                }
-            } else {
-                Balance {
-                    address: address.clone(),
-                    pending: 0,
-                    paid: 0,
-                }
-            };
+            let mut balance = Self::load_balance(&mut tx, &address)?;
             if balance.pending < amount {
                 return Err(anyhow!("insufficient balance for {}", address));
             }
@@ -3411,27 +4666,25 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 .checked_add(amount)
                 .ok_or_else(|| anyhow!("paid overflow"))?;
 
-            tx.execute(
-                "INSERT INTO balances (address, pending, paid) VALUES ($1, $2, $3)
-                 ON CONFLICT(address) DO UPDATE SET pending = EXCLUDED.pending, paid = EXCLUDED.paid",
-                &[
-                    &balance.address,
-                    &u64_to_i64(balance.pending)?,
-                    &u64_to_i64(balance.paid)?,
-                ],
+            Self::upsert_balance(&mut tx, &balance)?;
+            let payout_timestamp = sent_at.or(send_started_at).unwrap_or(initiated_at);
+            let payout_id = Self::insert_completed_payout_row(
+                &mut tx,
+                &address,
+                amount,
+                fee,
+                tx_hash,
+                payout_timestamp,
+                Some(batch_id),
             )?;
-
+            let allocations = Self::mark_balance_credit_sources_paid(&mut tx, &address, amount)?;
+            let allocated_amount = allocations.iter().fold(0u64, |acc, allocation| {
+                acc.saturating_add(allocation.amount)
+            });
+            Self::insert_payout_credit_allocations(&mut tx, payout_id, &allocations)?;
             tx.execute(
-                "INSERT INTO payouts (address, amount, fee, tx_hash, timestamp, batch_id)
-                 VALUES ($1, $2, $3, $4, $5, $6)",
-                &[
-                    &address,
-                    &u64_to_i64(amount)?,
-                    &u64_to_i64(fee)?,
-                    &tx_hash,
-                    &to_unix(sent_at.or(send_started_at).unwrap_or(initiated_at)),
-                    &Some(batch_id.to_string()),
-                ],
+                "UPDATE payouts SET reversible = $2 WHERE id = $1",
+                &[&payout_id, &(allocated_amount == amount)],
             )?;
         }
 
@@ -3441,6 +4694,486 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         )?;
         tx.commit()?;
         Ok(())
+    }
+
+    fn mark_balance_credit_sources_paid(
+        tx: &mut Transaction<'_>,
+        address: &str,
+        amount: u64,
+    ) -> Result<Vec<PayoutCreditAllocation>> {
+        if address.trim().is_empty() || amount == 0 {
+            return Ok(Vec::new());
+        }
+
+        let rows = tx.query(
+            "SELECT source_kind, block_height, block_hash, amount, paid_amount
+             FROM (
+                 SELECT
+                     'block'::text AS source_kind,
+                     e.block_height,
+                     b.hash AS block_hash,
+                     e.amount,
+                     e.paid_amount,
+                     e.reversible
+                 FROM block_credit_events e
+                 JOIN blocks b ON b.height = e.block_height
+                 WHERE address = $1
+                   AND e.paid_amount < e.amount
+                 UNION ALL
+                 SELECT
+                     'fee'::text AS source_kind,
+                     f.block_height,
+                     b.hash AS block_hash,
+                     f.amount,
+                     f.paid_amount,
+                     f.reversible
+                 FROM pool_fee_balance_credits f
+                 JOIN blocks b ON b.height = f.block_height
+                 WHERE fee_address = $1
+                   AND f.paid_amount < f.amount
+             ) sources
+             ORDER BY reversible ASC, block_height ASC, source_kind ASC",
+            &[&address],
+        )?;
+
+        let mut remaining = amount;
+        let mut allocations = Vec::<PayoutCreditAllocation>::new();
+        for row in rows {
+            if remaining == 0 {
+                break;
+            }
+            let kind = BalanceCreditSourceKind::from_db(&row.get::<_, String>(0));
+            let block_height = row.get::<_, i64>(1).max(0) as u64;
+            let block_hash = row.get::<_, String>(2);
+            let source = BalanceCreditSourceState {
+                kind,
+                block_height,
+                amount: row.get::<_, i64>(3).max(0) as u64,
+                paid_amount: row.get::<_, i64>(4).max(0) as u64,
+            };
+            let available = source.amount.saturating_sub(source.paid_amount);
+            if available == 0 {
+                continue;
+            }
+            let consume = remaining.min(available);
+            match source.kind {
+                BalanceCreditSourceKind::Block => {
+                    tx.execute(
+                        "UPDATE block_credit_events
+                         SET paid_amount = LEAST(amount, paid_amount + $3)
+                         WHERE block_height = $1 AND address = $2",
+                        &[
+                            &u64_to_i64(source.block_height)?,
+                            &address,
+                            &u64_to_i64(consume)?,
+                        ],
+                    )?;
+                }
+                BalanceCreditSourceKind::Fee => {
+                    tx.execute(
+                        "UPDATE pool_fee_balance_credits
+                         SET paid_amount = LEAST(amount, paid_amount + $2)
+                         WHERE block_height = $1 AND fee_address = $3",
+                        &[
+                            &u64_to_i64(source.block_height)?,
+                            &u64_to_i64(consume)?,
+                            &address,
+                        ],
+                    )?;
+                }
+            }
+            allocations.push(PayoutCreditAllocation {
+                source_kind: source.kind,
+                block_height: source.block_height,
+                block_hash: Some(block_hash),
+                address: address.to_string(),
+                amount: consume,
+            });
+            remaining -= consume;
+        }
+
+        Ok(allocations)
+    }
+
+    pub fn revert_completed_payout_tx(
+        &self,
+        tx_hash: &str,
+        reason: &str,
+    ) -> Result<CompletedPayoutReconciliation> {
+        let tx_hash = tx_hash.trim();
+        if tx_hash.is_empty() {
+            return Ok(CompletedPayoutReconciliation::default());
+        }
+
+        let mut conn = self.conn().lock();
+        let mut tx = conn.transaction()?;
+        let payout_rows = tx.query(
+            "SELECT id, address, amount, reversible
+             FROM payouts
+             WHERE tx_hash = $1
+               AND reverted_at IS NULL
+             ORDER BY id ASC
+             FOR UPDATE",
+            &[&tx_hash],
+        )?;
+        if payout_rows.is_empty() {
+            return Ok(CompletedPayoutReconciliation::default());
+        }
+
+        let mut row_allocations = Vec::with_capacity(payout_rows.len());
+        let mut manual_required = false;
+        for row in &payout_rows {
+            let payout_id = row.get::<_, i64>(0);
+            let amount = row.get::<_, i64>(2).max(0) as u64;
+            let reversible = row.get::<_, bool>(3);
+            let allocation_rows = tx.query(
+                "SELECT source_kind, block_height, block_hash, address, amount
+                 FROM payout_credit_allocations
+                 WHERE payout_id = $1
+                 ORDER BY block_height ASC, source_kind ASC, address ASC",
+                &[&payout_id],
+            )?;
+            let allocations = allocation_rows
+                .into_iter()
+                .map(|allocation| PayoutCreditAllocation {
+                    source_kind: BalanceCreditSourceKind::from_db(&allocation.get::<_, String>(0)),
+                    block_height: allocation.get::<_, i64>(1).max(0) as u64,
+                    block_hash: allocation.get::<_, Option<String>>(2),
+                    address: allocation.get::<_, String>(3),
+                    amount: allocation.get::<_, i64>(4).max(0) as u64,
+                })
+                .collect::<Vec<_>>();
+            let allocated_amount = allocations.iter().fold(0u64, |acc, allocation| {
+                acc.saturating_add(allocation.amount)
+            });
+            if !reversible || allocated_amount != amount {
+                manual_required = true;
+            }
+            row_allocations.push((payout_id, allocations));
+        }
+        if manual_required {
+            return Ok(CompletedPayoutReconciliation {
+                manual_reconciliation_required: true,
+                ..CompletedPayoutReconciliation::default()
+            });
+        }
+
+        let mut result = CompletedPayoutReconciliation::default();
+        for row in payout_rows {
+            let payout_id = row.get::<_, i64>(0);
+            let address = row.get::<_, String>(1);
+            let amount = row.get::<_, i64>(2).max(0) as u64;
+            let allocations = row_allocations
+                .iter()
+                .find(|(id, _)| *id == payout_id)
+                .map(|(_, allocations)| allocations.as_slice())
+                .unwrap_or(&[]);
+
+            let mut balance = Self::load_balance(&mut tx, &address)?;
+            if balance.paid < amount {
+                return Err(anyhow!(
+                    "insufficient paid balance for {} while reverting payout {}",
+                    address,
+                    payout_id
+                ));
+            }
+            balance.paid -= amount;
+            let mut restore_pending = 0u64;
+            let mut drop_amount = 0u64;
+
+            for allocation in allocations {
+                let valid = Self::source_credit_is_currently_valid(
+                    &mut tx,
+                    allocation.source_kind,
+                    allocation.block_height,
+                    allocation.block_hash.as_deref(),
+                )?;
+                let updated = Self::decrement_paid_amount_for_credit_source(
+                    &mut tx,
+                    allocation.source_kind,
+                    allocation.block_height,
+                    allocation.block_hash.as_deref(),
+                    &allocation.address,
+                    allocation.amount,
+                    true,
+                )?;
+                if !updated {
+                    return Err(anyhow!(
+                        "failed to unwind payout source for payout {}",
+                        payout_id
+                    ));
+                }
+
+                if valid {
+                    restore_pending = restore_pending.saturating_add(allocation.amount);
+                } else {
+                    drop_amount = drop_amount.saturating_add(allocation.amount);
+                }
+            }
+
+            balance.pending = balance
+                .pending
+                .checked_add(restore_pending)
+                .ok_or_else(|| anyhow!("pending overflow while reverting payout"))?;
+            Self::upsert_balance(&mut tx, &balance)?;
+            tx.execute(
+                "UPDATE payouts
+                 SET reverted_at = $2,
+                     revert_reason = $3,
+                     reversible = FALSE
+                 WHERE id = $1",
+                &[&payout_id, &now_unix(), &reason],
+            )?;
+
+            result.reverted_payout_rows = result.reverted_payout_rows.saturating_add(1);
+            result.restored_pending_amount = result
+                .restored_pending_amount
+                .saturating_add(restore_pending);
+            result.dropped_orphaned_amount =
+                result.dropped_orphaned_amount.saturating_add(drop_amount);
+        }
+
+        tx.commit()?;
+        Ok(result)
+    }
+
+    pub fn resolve_completed_payout_tx_override(
+        &self,
+        tx_hash: &str,
+        resolution: ManualCompletedPayoutResolutionKind,
+    ) -> Result<CompletedPayoutReconciliation> {
+        let tx_hash = tx_hash.trim();
+        if tx_hash.is_empty() {
+            return Err(anyhow!("tx hash is required"));
+        }
+
+        let mut conn = self.conn().lock();
+        let mut tx = conn.transaction()?;
+        let payout_rows = tx.query(
+            "SELECT id, address, amount
+             FROM payouts
+             WHERE tx_hash = $1
+               AND reverted_at IS NULL
+               AND reversible = FALSE
+             ORDER BY id ASC
+             FOR UPDATE",
+            &[&tx_hash],
+        )?;
+        if payout_rows.is_empty() {
+            return Err(anyhow!(
+                "no unresolved completed payout rows found for tx {}",
+                tx_hash
+            ));
+        }
+
+        let mut result = CompletedPayoutReconciliation::default();
+        for row in payout_rows {
+            let payout_id = row.get::<_, i64>(0);
+            let address = row.get::<_, String>(1);
+            let amount = row.get::<_, i64>(2).max(0) as u64;
+            let allocation_rows = tx.query(
+                "SELECT source_kind, block_height, block_hash, address, amount
+                 FROM payout_credit_allocations
+                 WHERE payout_id = $1
+                 ORDER BY block_height ASC, source_kind ASC, address ASC",
+                &[&payout_id],
+            )?;
+
+            let mut balance = Self::load_balance(&mut tx, &address)?;
+            if balance.paid < amount {
+                return Err(anyhow!(
+                    "insufficient paid balance for {} while resolving payout {}",
+                    address,
+                    payout_id
+                ));
+            }
+            balance.paid -= amount;
+            match resolution {
+                ManualCompletedPayoutResolutionKind::RestorePending => {
+                    balance.pending = balance
+                        .pending
+                        .checked_add(amount)
+                        .ok_or_else(|| anyhow!("pending overflow while restoring payout"))?;
+                    result.restored_pending_amount =
+                        result.restored_pending_amount.saturating_add(amount);
+                }
+                ManualCompletedPayoutResolutionKind::DropPaid => {
+                    result.dropped_orphaned_amount =
+                        result.dropped_orphaned_amount.saturating_add(amount);
+                }
+            }
+            Self::upsert_balance(&mut tx, &balance)?;
+
+            for allocation in allocation_rows {
+                let source_kind = BalanceCreditSourceKind::from_db(&allocation.get::<_, String>(0));
+                let block_height = allocation.get::<_, i64>(1).max(0) as u64;
+                let block_hash = allocation.get::<_, Option<String>>(2);
+                let source_address = allocation.get::<_, String>(3);
+                let allocation_amount = allocation.get::<_, i64>(4).max(0) as u64;
+                if allocation_amount == 0 {
+                    continue;
+                }
+                let _ = Self::decrement_paid_amount_for_credit_source(
+                    &mut tx,
+                    source_kind,
+                    block_height,
+                    block_hash.as_deref(),
+                    &source_address,
+                    allocation_amount,
+                    false,
+                )?;
+            }
+
+            tx.execute(
+                "UPDATE payouts
+                 SET reverted_at = $2,
+                     revert_reason = $3,
+                     reversible = FALSE
+                 WHERE id = $1",
+                &[&payout_id, &now_unix(), &resolution.revert_reason()],
+            )?;
+
+            result.reverted_payout_rows = result.reverted_payout_rows.saturating_add(1);
+        }
+
+        tx.commit()?;
+        Ok(result)
+    }
+
+    fn decrement_paid_amount_for_credit_source(
+        tx: &mut Transaction<'_>,
+        kind: BalanceCreditSourceKind,
+        block_height: u64,
+        block_hash: Option<&str>,
+        address: &str,
+        amount: u64,
+        require_available_paid_amount: bool,
+    ) -> Result<bool> {
+        if amount == 0 {
+            return Ok(true);
+        }
+
+        let height_i64 = u64_to_i64(block_height)?;
+        let amount_i64 = u64_to_i64(amount)?;
+        let block_hash = block_hash.map(str::trim).filter(|value| !value.is_empty());
+        let live_matches_hash = if let Some(block_hash) = block_hash {
+            tx.query_opt(
+                "SELECT 1
+                 FROM blocks
+                 WHERE height = $1 AND hash = $2",
+                &[&height_i64, &block_hash],
+            )?
+            .is_some()
+        } else {
+            tx.query_opt("SELECT 1 FROM blocks WHERE height = $1", &[&height_i64])?
+                .is_some()
+        };
+
+        let updated = match (kind, live_matches_hash) {
+            (BalanceCreditSourceKind::Block, true) => tx.execute(
+                if require_available_paid_amount {
+                    "UPDATE block_credit_events
+                     SET paid_amount = GREATEST(0, paid_amount - $3)
+                     WHERE block_height = $1 AND address = $2 AND paid_amount >= $3"
+                } else {
+                    "UPDATE block_credit_events
+                     SET paid_amount = GREATEST(0, paid_amount - $3)
+                     WHERE block_height = $1 AND address = $2"
+                },
+                &[&height_i64, &address, &amount_i64],
+            )?,
+            (BalanceCreditSourceKind::Fee, true) => tx.execute(
+                if require_available_paid_amount {
+                    "UPDATE pool_fee_balance_credits
+                     SET paid_amount = GREATEST(0, paid_amount - $2)
+                     WHERE block_height = $1 AND fee_address = $3 AND paid_amount >= $2"
+                } else {
+                    "UPDATE pool_fee_balance_credits
+                     SET paid_amount = GREATEST(0, paid_amount - $2)
+                     WHERE block_height = $1 AND fee_address = $3"
+                },
+                &[&height_i64, &amount_i64, &address],
+            )?,
+            (BalanceCreditSourceKind::Block, false) => tx.execute(
+                if require_available_paid_amount {
+                    "UPDATE archived_block_credit_events
+                     SET paid_amount = GREATEST(0, paid_amount - $4)
+                     WHERE block_height = $1
+                       AND block_hash = $2
+                       AND address = $3
+                       AND paid_amount >= $4"
+                } else {
+                    "UPDATE archived_block_credit_events
+                     SET paid_amount = GREATEST(0, paid_amount - $4)
+                     WHERE block_height = $1
+                       AND block_hash = $2
+                       AND address = $3"
+                },
+                &[
+                    &height_i64,
+                    &block_hash.unwrap_or_default(),
+                    &address,
+                    &amount_i64,
+                ],
+            )?,
+            (BalanceCreditSourceKind::Fee, false) => tx.execute(
+                if require_available_paid_amount {
+                    "UPDATE archived_pool_fee_balance_credits
+                     SET paid_amount = GREATEST(0, paid_amount - $3)
+                     WHERE block_height = $1
+                       AND block_hash = $2
+                       AND fee_address = $4
+                       AND paid_amount >= $3"
+                } else {
+                    "UPDATE archived_pool_fee_balance_credits
+                     SET paid_amount = GREATEST(0, paid_amount - $3)
+                     WHERE block_height = $1
+                       AND block_hash = $2
+                       AND fee_address = $4"
+                },
+                &[
+                    &height_i64,
+                    &block_hash.unwrap_or_default(),
+                    &amount_i64,
+                    &address,
+                ],
+            )?,
+        };
+
+        Ok(updated > 0)
+    }
+
+    fn source_credit_is_currently_valid(
+        tx: &mut Transaction<'_>,
+        _kind: BalanceCreditSourceKind,
+        block_height: u64,
+        block_hash: Option<&str>,
+    ) -> Result<bool> {
+        let height_i64 = u64_to_i64(block_height)?;
+        let block_hash = block_hash.map(str::trim).filter(|value| !value.is_empty());
+        let row = if let Some(block_hash) = block_hash {
+            tx.query_opt(
+                "SELECT orphaned
+                 FROM (
+                     SELECT orphaned, 0 AS priority
+                     FROM blocks
+                     WHERE height = $1 AND hash = $2
+                     UNION ALL
+                     SELECT orphaned, 1 AS priority
+                     FROM archived_blocks
+                     WHERE height = $1 AND hash = $2
+                 ) source
+                 ORDER BY priority ASC
+                 LIMIT 1",
+                &[&height_i64, &block_hash],
+            )?
+        } else {
+            tx.query_opt(
+                "SELECT orphaned FROM blocks WHERE height = $1",
+                &[&height_i64],
+            )?
+        };
+        Ok(row.map(|row| !row.get::<_, bool>(0)).unwrap_or(false))
     }
 
     pub fn cancel_pending_payout(&self, address: &str) -> Result<()> {
@@ -3957,6 +5690,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 COUNT(DISTINCT address)::bigint AS unique_recipients
              FROM payouts
              WHERE timestamp < $1
+               AND reverted_at IS NULL
              GROUP BY day_start
              ON CONFLICT(day_start) DO UPDATE SET
                 payout_count = payout_daily_summaries.payout_count + EXCLUDED.payout_count,
@@ -4980,6 +6714,567 @@ mod tests {
                 .fee_address,
             expected
         );
+    }
+
+    #[test]
+    fn complete_pending_payout_marks_reversible_block_credit_sources_as_paid_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let height = 8_350_000u64 + (rand::random::<u16>() as u64);
+        let addr = format!("credit-paid-{suffix}");
+        store
+            .add_block(&DbBlock {
+                height,
+                hash: format!("credit-paid-block-{suffix}"),
+                difficulty: 1,
+                finder: format!("finder-{suffix}"),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert block");
+        assert!(store
+            .apply_block_credits_and_mark_paid(height, &[(addr.clone(), 100)])
+            .expect("apply credits"));
+
+        store
+            .create_pending_payout(&addr, 100)
+            .expect("create pending");
+        store
+            .mark_pending_payout_send_started(&addr)
+            .expect("mark send started")
+            .expect("pending exists");
+        store
+            .record_pending_payout_broadcast(&addr, 100, 3, "paid-source-tx")
+            .expect("record broadcast");
+        store
+            .complete_pending_payout(&addr, 100, 3, "paid-source-tx")
+            .expect("complete payout");
+
+        let events = store
+            .get_block_credit_events(height)
+            .expect("credit events after payout");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].amount, 100);
+        assert_eq!(events[0].paid_amount, 100);
+        assert!(events[0].reversible);
+    }
+
+    #[test]
+    fn backfill_payout_reconciliation_state_reconstructs_legacy_completed_payouts_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let height = 8_355_000u64 + (rand::random::<u16>() as u64);
+        let addr = format!("legacy-paid-{suffix}");
+        store
+            .add_block(&DbBlock {
+                height,
+                hash: format!("legacy-paid-block-{suffix}"),
+                difficulty: 1,
+                finder: format!("finder-{suffix}"),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert block");
+        assert!(store
+            .apply_block_credits_and_mark_paid(height, &[(addr.clone(), 100)])
+            .expect("apply credits"));
+        store
+            .update_balance(&Balance {
+                address: addr.clone(),
+                pending: 0,
+                paid: 100,
+            })
+            .expect("seed legacy balance");
+        store
+            .add_payout(&addr, 100, 2, "legacy-paid-tx")
+            .expect("insert legacy payout");
+
+        let report = store
+            .backfill_payout_reconciliation_state()
+            .expect("backfill payout reconciliation state");
+        assert_eq!(report.payouts_linked, 1);
+        assert_eq!(report.payouts_unreversible, 0);
+
+        let events = store
+            .get_block_credit_events(height)
+            .expect("credit events after backfill");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].paid_amount, 100);
+        assert!(events[0].reversible);
+
+        let reverted = store
+            .revert_completed_payout_tx("legacy-paid-tx", "missing after recovery")
+            .expect("revert legacy payout");
+        assert_eq!(reverted.reverted_payout_rows, 1);
+        assert_eq!(reverted.restored_pending_amount, 100);
+        assert_eq!(reverted.dropped_orphaned_amount, 0);
+        assert!(!reverted.manual_reconciliation_required);
+        let balance = store.get_balance(&addr).expect("balance after revert");
+        assert_eq!(balance.pending, 100);
+        assert_eq!(balance.paid, 0);
+        assert!(store
+            .get_recent_payouts(10)
+            .expect("recent payouts")
+            .is_empty());
+    }
+
+    #[test]
+    fn revert_completed_payout_tx_restores_pending_for_valid_sources_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let height = 8_356_000u64 + (rand::random::<u16>() as u64);
+        let addr = format!("valid-revert-{suffix}");
+        store
+            .add_block(&DbBlock {
+                height,
+                hash: format!("valid-revert-block-{suffix}"),
+                difficulty: 1,
+                finder: format!("finder-{suffix}"),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert block");
+        assert!(store
+            .apply_block_credits_and_mark_paid(height, &[(addr.clone(), 100)])
+            .expect("apply credits"));
+        store
+            .create_pending_payout(&addr, 100)
+            .expect("create pending");
+        store
+            .mark_pending_payout_send_started(&addr)
+            .expect("mark send started")
+            .expect("pending exists");
+        store
+            .record_pending_payout_broadcast(&addr, 100, 3, "valid-revert-tx")
+            .expect("record broadcast");
+        store
+            .complete_pending_payout(&addr, 100, 3, "valid-revert-tx")
+            .expect("complete payout");
+
+        let reverted = store
+            .revert_completed_payout_tx("valid-revert-tx", "missing after recovery")
+            .expect("revert completed payout");
+        assert_eq!(reverted.reverted_payout_rows, 1);
+        assert_eq!(reverted.restored_pending_amount, 100);
+        assert_eq!(reverted.dropped_orphaned_amount, 0);
+        assert!(!reverted.manual_reconciliation_required);
+        let balance = store.get_balance(&addr).expect("balance after revert");
+        assert_eq!(balance.pending, 100);
+        assert_eq!(balance.paid, 0);
+        let events = store
+            .get_block_credit_events(height)
+            .expect("credit events after revert");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].paid_amount, 0);
+        assert!(store
+            .get_recent_payouts(10)
+            .expect("recent payouts")
+            .is_empty());
+    }
+
+    #[test]
+    fn revert_completed_payout_tx_drops_orphaned_sources_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let height = 8_357_000u64 + (rand::random::<u16>() as u64);
+        let addr = format!("orphan-revert-{suffix}");
+        store
+            .add_block(&DbBlock {
+                height,
+                hash: format!("orphan-revert-block-{suffix}"),
+                difficulty: 1,
+                finder: format!("finder-{suffix}"),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert block");
+        assert!(store
+            .apply_block_credits_and_mark_paid(height, &[(addr.clone(), 100)])
+            .expect("apply credits"));
+        store
+            .create_pending_payout(&addr, 100)
+            .expect("create pending");
+        store
+            .mark_pending_payout_send_started(&addr)
+            .expect("mark send started")
+            .expect("pending exists");
+        store
+            .record_pending_payout_broadcast(&addr, 100, 2, "orphan-revert-tx")
+            .expect("record broadcast");
+        store
+            .complete_pending_payout(&addr, 100, 2, "orphan-revert-tx")
+            .expect("complete payout");
+
+        let orphaned = store
+            .orphan_block_and_reverse_unpaid_credits(height)
+            .expect("mark block orphaned");
+        assert!(orphaned.manual_reconciliation_required);
+
+        let reverted = store
+            .revert_completed_payout_tx("orphan-revert-tx", "missing after recovery")
+            .expect("revert orphaned payout");
+        assert_eq!(reverted.reverted_payout_rows, 1);
+        assert_eq!(reverted.restored_pending_amount, 0);
+        assert_eq!(reverted.dropped_orphaned_amount, 100);
+        assert!(!reverted.manual_reconciliation_required);
+        let balance = store.get_balance(&addr).expect("balance after revert");
+        assert_eq!(balance.pending, 0);
+        assert_eq!(balance.paid, 0);
+        let events = store
+            .get_block_credit_events(height)
+            .expect("credit events after orphan revert");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].paid_amount, 0);
+        assert!(store
+            .get_recent_payouts(10)
+            .expect("recent payouts")
+            .is_empty());
+    }
+
+    #[test]
+    fn resolve_completed_payout_tx_override_restores_pending_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let height = 8_358_000u64 + (rand::random::<u16>() as u64);
+        let addr = format!("override-restore-{suffix}");
+        let tx_hash = "override-restore-tx";
+        store
+            .add_block(&DbBlock {
+                height,
+                hash: format!("override-restore-block-{suffix}"),
+                difficulty: 1,
+                finder: format!("finder-{suffix}"),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert block");
+        assert!(store
+            .apply_block_credits_and_mark_paid(height, &[(addr.clone(), 100)])
+            .expect("apply credits"));
+        store
+            .create_pending_payout(&addr, 100)
+            .expect("create pending");
+        store
+            .mark_pending_payout_send_started(&addr)
+            .expect("mark send started")
+            .expect("pending exists");
+        store
+            .record_pending_payout_broadcast(&addr, 100, 2, tx_hash)
+            .expect("record broadcast");
+        store
+            .complete_pending_payout(&addr, 100, 2, tx_hash)
+            .expect("complete payout");
+        store
+            .conn()
+            .lock()
+            .execute(
+                "UPDATE payouts SET reversible = FALSE WHERE tx_hash = $1",
+                &[&tx_hash],
+            )
+            .expect("mark payout unresolved");
+
+        let resolved = store
+            .resolve_completed_payout_tx_override(
+                tx_hash,
+                ManualCompletedPayoutResolutionKind::RestorePending,
+            )
+            .expect("resolve payout override");
+        assert_eq!(resolved.reverted_payout_rows, 1);
+        assert_eq!(resolved.restored_pending_amount, 100);
+        assert_eq!(resolved.dropped_orphaned_amount, 0);
+
+        let balance = store.get_balance(&addr).expect("balance after resolve");
+        assert_eq!(balance.pending, 100);
+        assert_eq!(balance.paid, 0);
+        let events = store
+            .get_block_credit_events(height)
+            .expect("credit events after resolve");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].paid_amount, 0);
+        assert!(store
+            .get_recent_payouts(10)
+            .expect("recent payouts")
+            .is_empty());
+    }
+
+    #[test]
+    fn resolve_completed_payout_tx_override_drops_paid_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let height = 8_359_000u64 + (rand::random::<u16>() as u64);
+        let addr = format!("override-drop-{suffix}");
+        let tx_hash = "override-drop-tx";
+        store
+            .add_block(&DbBlock {
+                height,
+                hash: format!("override-drop-block-{suffix}"),
+                difficulty: 1,
+                finder: format!("finder-{suffix}"),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert block");
+        assert!(store
+            .apply_block_credits_and_mark_paid(height, &[(addr.clone(), 100)])
+            .expect("apply credits"));
+        store
+            .create_pending_payout(&addr, 100)
+            .expect("create pending");
+        store
+            .mark_pending_payout_send_started(&addr)
+            .expect("mark send started")
+            .expect("pending exists");
+        store
+            .record_pending_payout_broadcast(&addr, 100, 2, tx_hash)
+            .expect("record broadcast");
+        store
+            .complete_pending_payout(&addr, 100, 2, tx_hash)
+            .expect("complete payout");
+        store
+            .conn()
+            .lock()
+            .execute(
+                "UPDATE payouts SET reversible = FALSE WHERE tx_hash = $1",
+                &[&tx_hash],
+            )
+            .expect("mark payout unresolved");
+
+        let resolved = store
+            .resolve_completed_payout_tx_override(
+                tx_hash,
+                ManualCompletedPayoutResolutionKind::DropPaid,
+            )
+            .expect("drop unresolved payout");
+        assert_eq!(resolved.reverted_payout_rows, 1);
+        assert_eq!(resolved.restored_pending_amount, 0);
+        assert_eq!(resolved.dropped_orphaned_amount, 100);
+
+        let balance = store.get_balance(&addr).expect("balance after drop");
+        assert_eq!(balance.pending, 0);
+        assert_eq!(balance.paid, 0);
+        let events = store
+            .get_block_credit_events(height)
+            .expect("credit events after drop");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].paid_amount, 0);
+        assert!(store
+            .get_recent_payouts(10)
+            .expect("recent payouts")
+            .is_empty());
+    }
+
+    #[test]
+    fn orphan_block_reverses_unpaid_credits_and_cancels_unbroadcast_pending_payouts_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let height = 8_360_000u64 + (rand::random::<u16>() as u64);
+        let miner = format!("orphan-miner-{suffix}");
+        let fee_address = format!("orphan-fee-{suffix}");
+        store
+            .add_block(&DbBlock {
+                height,
+                hash: format!("orphan-credit-block-{suffix}"),
+                difficulty: 1,
+                finder: format!("finder-{suffix}"),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert block");
+
+        let fee = PoolFeeRecord {
+            amount: 7,
+            fee_address: fee_address.clone(),
+            timestamp: SystemTime::now(),
+        };
+        assert!(store
+            .apply_block_credits_and_mark_paid_with_fee(height, &[(miner.clone(), 93)], Some(&fee),)
+            .expect("apply credits with fee"));
+        store
+            .create_pending_payout(&miner, 93)
+            .expect("create pending payout");
+
+        let result = store
+            .orphan_block_and_reverse_unpaid_credits(height)
+            .expect("reconcile orphan");
+        assert!(result.orphaned);
+        assert_eq!(result.reversed_credit_events, 1);
+        assert_eq!(result.reversed_credit_amount, 93);
+        assert_eq!(result.reversed_fee_amount, 7);
+        assert_eq!(result.canceled_pending_payouts, 1);
+        assert!(!result.manual_reconciliation_required);
+
+        let block = store
+            .get_block(height)
+            .expect("query block")
+            .expect("block exists");
+        assert!(block.orphaned);
+        assert!(!block.confirmed);
+        assert!(!block.paid_out);
+        assert_eq!(store.get_balance(&miner).expect("miner balance").pending, 0);
+        assert_eq!(
+            store
+                .get_balance(&fee_address)
+                .expect("fee balance")
+                .pending,
+            0
+        );
+        assert!(store
+            .get_pending_payout(&miner)
+            .expect("pending payout lookup")
+            .is_none());
+        assert!(store
+            .get_block_credit_events(height)
+            .expect("credit events after orphan")
+            .is_empty());
+        assert_eq!(store.get_total_pool_fees().expect("total pool fees"), 0);
+        assert!(store
+            .get_recent_pool_fees(10)
+            .expect("recent fees")
+            .is_empty());
+    }
+
+    #[test]
+    fn orphan_block_flags_manual_reconciliation_when_credits_already_paid_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let height = 8_370_000u64 + (rand::random::<u16>() as u64);
+        let miner = format!("paid-orphan-miner-{suffix}");
+        store
+            .add_block(&DbBlock {
+                height,
+                hash: format!("paid-orphan-block-{suffix}"),
+                difficulty: 1,
+                finder: format!("finder-{suffix}"),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert block");
+        assert!(store
+            .apply_block_credits_and_mark_paid(height, &[(miner.clone(), 100)])
+            .expect("apply credits"));
+        store
+            .create_pending_payout(&miner, 100)
+            .expect("create pending");
+        store
+            .mark_pending_payout_send_started(&miner)
+            .expect("mark send started")
+            .expect("pending exists");
+        store
+            .record_pending_payout_broadcast(&miner, 100, 2, "already-paid-orphan")
+            .expect("record broadcast");
+        store
+            .complete_pending_payout(&miner, 100, 2, "already-paid-orphan")
+            .expect("complete payout");
+
+        let result = store
+            .orphan_block_and_reverse_unpaid_credits(height)
+            .expect("reconcile orphan");
+        assert!(result.orphaned);
+        assert!(result.manual_reconciliation_required);
+        assert_eq!(result.reversed_credit_amount, 0);
+
+        let block = store
+            .get_block(height)
+            .expect("query block")
+            .expect("block exists");
+        assert!(block.orphaned);
+        assert!(!block.confirmed);
+        assert!(block.paid_out);
+
+        let events = store
+            .get_block_credit_events(height)
+            .expect("events after manual reconcile");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].paid_amount, 100);
+        assert_eq!(store.get_balance(&miner).expect("miner balance").paid, 100);
     }
 
     #[test]

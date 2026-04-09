@@ -17,8 +17,8 @@ use crate::db::{
 use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
 use crate::payout::{is_share_payout_eligible, reward_window_end};
 use crate::pgdb::{
-    MinerShareWindowStats, MonitorUptimeSummary, PoolFeeCreditBackfillReport, PostgresStore,
-    VardiffHintDiagnostic, VardiffHintSummary,
+    BalanceSourceSummary, LiveReconciliationBlockers, MinerShareWindowStats, MonitorUptimeSummary,
+    PoolFeeCreditBackfillReport, PostgresStore, VardiffHintDiagnostic, VardiffHintSummary,
 };
 use crate::protocol::parse_hash_hex;
 use crate::validation::{
@@ -310,6 +310,14 @@ impl PoolStore {
             .backfill_uncredited_pool_fee_balance_credits(expected_fee_address)
     }
 
+    pub fn list_balance_source_summaries(&self) -> Result<Vec<BalanceSourceSummary>> {
+        self.inner.list_balance_source_summaries()
+    }
+
+    pub fn live_reconciliation_blockers(&self) -> Result<LiveReconciliationBlockers> {
+        self.inner.live_reconciliation_blockers()
+    }
+
     pub fn upsert_monitor_heartbeat(&self, heartbeat: &MonitorHeartbeatUpsert) -> Result<()> {
         self.inner.upsert_monitor_heartbeat(heartbeat)
     }
@@ -472,11 +480,38 @@ impl ShareStore for PoolStore {
         }
         if let Some(existing) = self.inner.get_block(candidate.height)? {
             if existing.hash != candidate.hash {
+                let reconciliation = if existing.orphaned {
+                    self.inner
+                        .reconcile_existing_orphaned_block_credits(candidate.height)?
+                } else {
+                    self.inner
+                        .orphan_block_and_reverse_unpaid_credits(candidate.height)?
+                };
+                if reconciliation.manual_reconciliation_required {
+                    warn!(
+                        height = candidate.height,
+                        existing_hash = %existing.hash,
+                        found_hash = %candidate.hash,
+                        "conflicting found block requires manual payout reconciliation before archival"
+                    );
+                }
+                if self
+                    .inner
+                    .archive_conflicting_block_and_replace(&candidate)?
+                {
+                    warn!(
+                        height = candidate.height,
+                        existing_hash = %existing.hash,
+                        found_hash = %candidate.hash,
+                        "replaced conflicting live block record after archiving prior fork state"
+                    );
+                    return Ok(());
+                }
                 warn!(
                     height = candidate.height,
                     existing_hash = %existing.hash,
                     found_hash = %candidate.hash,
-                    "ignoring found-block recovery record with conflicting hash"
+                    "skipped conflicting found block because the live record already matches"
                 );
             }
         }
@@ -729,7 +764,7 @@ mod tests {
     }
 
     #[test]
-    fn found_block_insert_does_not_regress_existing_block_state() {
+    fn found_block_insert_replaces_conflicting_orphaned_height_and_preserves_payout_recovery() {
         let Some(store) = test_store() else {
             eprintln!(
                 "skipping postgres test: set {} to run postgres integration checks",
@@ -738,42 +773,92 @@ mod tests {
             return;
         };
 
+        let suffix = rand::random::<u32>();
+        let height = 77_000 + (suffix as u64 % 10_000);
+        let address = format!("found-block-replace-{suffix}");
+        let old_hash = format!("existing-{suffix}");
+        let payout_tx = format!("found-block-replace-tx-{suffix}");
         store
             .add_block(&DbBlock {
-                height: 77,
-                hash: "existing".to_string(),
+                height,
+                hash: old_hash.clone(),
                 difficulty: 999,
                 finder: "addr-existing".to_string(),
                 finder_worker: "rig-existing".to_string(),
-                reward: 500,
+                reward: 100,
                 timestamp: SystemTime::now(),
                 confirmed: true,
                 orphaned: false,
-                paid_out: true,
+                paid_out: false,
                 effort_pct: None,
             })
             .expect("seed existing block");
+        assert!(store
+            .apply_block_credits_and_mark_paid(height, &[(address.clone(), 100)])
+            .expect("apply credits"));
+        store
+            .create_pending_payout(&address, 100)
+            .expect("create pending payout");
+        store
+            .mark_pending_payout_send_started(&address)
+            .expect("mark send started")
+            .expect("pending payout exists");
+        store
+            .record_pending_payout_broadcast(&address, 100, 2, &payout_tx)
+            .expect("record pending payout broadcast");
+        store
+            .complete_pending_payout(&address, 100, 2, &payout_tx)
+            .expect("complete pending payout");
+        let orphaned = store
+            .orphan_block_and_reverse_unpaid_credits(height)
+            .expect("mark block orphaned");
+        assert!(orphaned.manual_reconciliation_required);
 
         store
             .add_found_block(FoundBlockRecord {
-                height: 77,
-                hash: "conflicting".to_string(),
+                height,
+                hash: format!("conflicting-{suffix}"),
                 difficulty: 1,
                 reward: 1,
                 finder: "addr-new".to_string(),
                 finder_worker: "rig-new".to_string(),
                 timestamp: SystemTime::now(),
             })
-            .expect("conflicting found block should not overwrite");
+            .expect("conflicting found block should replace archived orphan");
 
         let block = store
-            .get_block(77)
+            .get_block(height)
             .expect("query block")
             .expect("block exists");
-        assert_eq!(block.hash, "existing");
-        assert_eq!(block.reward, 500);
-        assert!(block.confirmed);
-        assert!(block.paid_out);
+        assert_eq!(block.hash, format!("conflicting-{suffix}"));
+        assert_eq!(block.reward, 1);
+        assert!(!block.confirmed);
+        assert!(!block.paid_out);
+        assert!(!block.orphaned);
+
+        let issues = store
+            .list_orphaned_block_credit_issues()
+            .expect("load orphaned block credit issues");
+        let issue = issues
+            .iter()
+            .find(|issue| issue.height == height && issue.hash == old_hash)
+            .expect("archived orphaned issue preserved");
+        assert_eq!(issue.credit_event_count, 1);
+        assert_eq!(issue.paid_credit_amount, 100);
+
+        let reverted = store
+            .revert_completed_payout_tx(&payout_tx, "missing after height reuse")
+            .expect("revert completed payout");
+        assert_eq!(reverted.reverted_payout_rows, 1);
+        assert_eq!(reverted.restored_pending_amount, 0);
+        assert_eq!(reverted.dropped_orphaned_amount, 100);
+        assert!(!reverted.manual_reconciliation_required);
+
+        let balance = store
+            .get_balance(&address)
+            .expect("load balance after revert");
+        assert_eq!(balance.pending, 0);
+        assert_eq!(balance.paid, 0);
     }
 
     #[test]

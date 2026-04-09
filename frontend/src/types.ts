@@ -238,6 +238,8 @@ export interface AdminPayoutItem {
 
 export interface AdminBalanceItem {
   address: string;
+  clean_payable: number;
+  orphan_backed: number;
   pending: number;
   paid: number;
 }
@@ -392,6 +394,14 @@ export interface AdminBalanceOverviewResponse {
   payouts: {
     unpaid_count: number;
     unpaid_amount: number;
+    clean_unpaid_count: number;
+    clean_unpaid_amount: number;
+    orphan_backed_unpaid_amount: number;
+    balance_source_drift_amount: number;
+    pool_fee_unpaid_amount: number;
+    pool_fee_clean_unpaid_amount: number;
+    pool_fee_orphan_backed_unpaid_amount: number;
+    pool_fee_balance_source_drift_amount: number;
     queued_count: number;
     queued_amount: number;
   };
@@ -416,8 +426,17 @@ export interface AdminBalanceOverviewResponse {
     miner_paid_total: number;
     miner_unpaid_total: number;
     miner_total_credited: number;
+    miner_clean_unpaid_total: number;
+    miner_orphan_backed_unpaid_total: number;
+    miner_balance_source_drift_total: number;
     net_block_reward_total: number;
     pool_fee_total: number;
+    pool_fee_paid_total: number;
+    pool_fee_unpaid_total: number;
+    pool_fee_clean_unpaid_total: number;
+    pool_fee_orphan_backed_unpaid_total: number;
+    pool_fee_balance_source_drift_total: number;
+    pool_fee_balance_total: number;
     miner_rewards_balanced: boolean;
   };
   liquidity: {
@@ -540,6 +559,65 @@ export interface RecoveryStatusResponse {
   warning?: string | null;
   instances: RecoveryInstanceStatus[];
   operations: RecoveryOperation[];
+}
+
+export type ReconciliationPayoutResolutionAction = "restore_pending" | "drop_paid";
+
+export interface AdminMissingCompletedPayoutIssue {
+  tx_hash: string;
+  payout_row_count: number;
+  total_amount: number;
+  total_fee: number;
+  latest_timestamp: UnixLike;
+  addresses: string[];
+  linked_amount: number;
+  live_linked_amount: number;
+  orphaned_linked_amount: number;
+  unlinked_amount: number;
+}
+
+export interface AdminOrphanedBlockIssue {
+  height: number;
+  hash: string;
+  credit_event_count: number;
+  credited_address_count: number;
+  remaining_credit_amount: number;
+  paid_credit_amount: number;
+  remaining_fee_amount: number;
+  paid_fee_amount: number;
+  pending_payout_count: number;
+  broadcast_pending_payout_count: number;
+}
+
+export interface AdminReconciliationIssuesResponse {
+  generated_at: UnixLike;
+  summary: {
+    total_open_issues: number;
+    missing_payout_issue_count: number;
+    missing_payout_total_amount: number;
+    orphaned_block_issue_count: number;
+    orphaned_block_total_credit_amount: number;
+  };
+  missing_payouts: AdminMissingCompletedPayoutIssue[];
+  orphaned_blocks: AdminOrphanedBlockIssue[];
+}
+
+export interface AdminReconciliationPayoutResolutionResponse {
+  tx_hash: string;
+  action: ReconciliationPayoutResolutionAction;
+  reverted_payout_rows: number;
+  restored_pending_amount: number;
+  dropped_amount: number;
+}
+
+export interface AdminOrphanedBlockCleanupResponse {
+  block_height: number;
+  orphaned: boolean;
+  reversed_credit_events: number;
+  reversed_credit_amount: number;
+  reversed_fee_amount: number;
+  canceled_pending_payouts: number;
+  manual_reconciliation_required: boolean;
 }
 
 export interface AdminDevFeeWindow {

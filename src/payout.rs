@@ -32,6 +32,7 @@ const PAYOUT_TASK_SLOW_LOG_AFTER: Duration = Duration::from_millis(250);
 const DEFAULT_TARGET_RECIPIENTS_PER_TX: usize = 12;
 const MAX_RECIPIENTS_PER_TX: usize = 48;
 const MAX_TXS_PER_SWEEP: usize = 8;
+const CHAIN_RECOVERY_LOOKBACK_BLOCKS: i64 = 1024;
 const MAX_CHANGE_SPLIT: u32 = 4;
 const REBALANCE_SPENDABLE_SHARE_NUMERATOR: u64 = 1;
 const REBALANCE_SPENDABLE_SHARE_DENOMINATOR: u64 = 4;
@@ -152,6 +153,13 @@ pub struct ShareReplayRecovery {
     pub rejected: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReconcileWindow {
+    None,
+    Start(u64),
+    NeedsOlderBlocks(u64),
+}
+
 #[derive(Debug)]
 pub struct PayoutProcessor {
     cfg: Config,
@@ -199,6 +207,7 @@ impl PayoutProcessor {
                 let started_at = Instant::now();
                 let startup = tokio::task::spawn_blocking(move || {
                     this.backfill_legacy_pool_fee_credits();
+                    this.backfill_historical_payout_reconciliation_state();
                     this.recover_pending_payouts();
                     this.tick(true);
                     let now = SystemTime::now();
@@ -293,6 +302,10 @@ impl PayoutProcessor {
             return false;
         }
 
+        let recovery_detected = self.reconcile_chain_recovery(&status);
+        if recovery_detected {
+            self.reconcile_completed_payouts_after_recovery();
+        }
         self.confirm_blocks();
         self.distribute_rewards();
         self.reconcile_pending_payouts();
@@ -300,6 +313,162 @@ impl PayoutProcessor {
             self.send_payouts();
         }
         send_payouts
+    }
+
+    fn reconcile_chain_recovery(&self, status: &NodeStatus) -> bool {
+        let latest_block = match self
+            .store
+            .get_latest_non_orphan_block_up_to(status.chain_height)
+        {
+            Ok(block) => block,
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to load latest non-orphan pool block");
+                return false;
+            }
+        };
+        let Some(latest_block) = latest_block else {
+            return false;
+        };
+
+        let reconcile_from = match self.find_reconcile_start_height(status.chain_height) {
+            Ok(Some(height)) => height,
+            Ok(None) => return false,
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to locate block reconciliation start");
+                return false;
+            }
+        };
+        let blocks = match self.store.get_non_orphan_blocks_from_height(reconcile_from) {
+            Ok(blocks) => blocks,
+            Err(err) => {
+                tracing::warn!(
+                    start_height = reconcile_from,
+                    error = %err,
+                    "failed to load pool blocks for reconciliation"
+                );
+                return false;
+            }
+        };
+        if blocks.is_empty() {
+            return true;
+        }
+
+        tracing::warn!(
+            start_height = reconcile_from,
+            latest_height = latest_block.height,
+            latest_pool_hash = %latest_block.hash,
+            "detected daemon chain divergence window; reconciling pool blocks"
+        );
+
+        for block in blocks {
+            let node_block = match self.node.get_block_by_height_optional(block.height) {
+                Ok(block) => block,
+                Err(err) => {
+                    tracing::warn!(
+                        height = block.height,
+                        error = %err,
+                        "failed to fetch daemon block during reconciliation"
+                    );
+                    return true;
+                }
+            };
+            let Some(node_block) = node_block else {
+                return true;
+            };
+            if node_block.hash == block.hash {
+                continue;
+            }
+
+            match self
+                .store
+                .orphan_block_and_reverse_unpaid_credits(block.height)
+            {
+                Ok(result) => {
+                    if !result.orphaned {
+                        continue;
+                    }
+                    if result.manual_reconciliation_required {
+                        tracing::warn!(
+                            height = block.height,
+                            pool_hash = %block.hash,
+                            daemon_hash = %node_block.hash,
+                            "marked block orphaned, but credited payouts require manual reconciliation"
+                        );
+                    } else {
+                        tracing::info!(
+                            height = block.height,
+                            pool_hash = %block.hash,
+                            daemon_hash = %node_block.hash,
+                            reversed_credit_events = result.reversed_credit_events,
+                            reversed_credit_amount = result.reversed_credit_amount,
+                            reversed_fee_amount = result.reversed_fee_amount,
+                            canceled_pending_payouts = result.canceled_pending_payouts,
+                            "orphaned diverged block and reversed unpaid credits"
+                        );
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        height = block.height,
+                        error = %err,
+                        "failed to orphan diverged block during reconciliation"
+                    );
+                    return true;
+                }
+            }
+        }
+
+        true
+    }
+
+    fn find_reconcile_start_height(&self, current_height: u64) -> anyhow::Result<Option<u64>> {
+        let recent_blocks = self
+            .store
+            .get_recent_blocks_up_to(CHAIN_RECOVERY_LOOKBACK_BLOCKS, current_height)?;
+        match self.find_reconcile_start_height_in_blocks(&recent_blocks)? {
+            ReconcileWindow::None => return Ok(None),
+            ReconcileWindow::Start(height) => return Ok(Some(height)),
+            ReconcileWindow::NeedsOlderBlocks(_) => {}
+        }
+
+        let blocks = self.store.get_non_orphan_blocks_up_to(current_height)?;
+        match self.find_reconcile_start_height_in_blocks(&blocks)? {
+            ReconcileWindow::None => Ok(None),
+            ReconcileWindow::Start(height) | ReconcileWindow::NeedsOlderBlocks(height) => {
+                Ok(Some(height))
+            }
+        }
+    }
+
+    fn find_reconcile_start_height_in_blocks(
+        &self,
+        blocks: &[DbBlock],
+    ) -> anyhow::Result<ReconcileWindow> {
+        if blocks.is_empty() {
+            return Ok(ReconcileWindow::None);
+        }
+
+        let mut first_mismatch = None;
+        for block in blocks {
+            let Some(node_block) = self.node.get_block_by_height_optional(block.height)? else {
+                continue;
+            };
+            if node_block.hash == block.hash {
+                if first_mismatch.is_some() {
+                    return Ok(ReconcileWindow::Start(block.height.saturating_add(1)));
+                }
+                continue;
+            }
+            first_mismatch = Some(block.height);
+        }
+
+        Ok(match first_mismatch {
+            Some(height) if blocks.len() >= CHAIN_RECOVERY_LOOKBACK_BLOCKS as usize => {
+                ReconcileWindow::NeedsOlderBlocks(height)
+            }
+            Some(height) => ReconcileWindow::Start(height),
+            None => ReconcileWindow::None,
+        })
     }
 
     fn confirm_blocks(&self) {
@@ -730,6 +899,97 @@ impl PayoutProcessor {
         }
     }
 
+    fn backfill_historical_payout_reconciliation_state(&self) {
+        match self.store.backfill_payout_reconciliation_state() {
+            Ok(report) => {
+                if report.payouts_linked > 0 || report.payouts_unreversible > 0 {
+                    tracing::info!(
+                        payouts_linked = report.payouts_linked,
+                        payouts_unreversible = report.payouts_unreversible,
+                        source_credits_marked_reversible = report.source_credits_marked_reversible,
+                        "backfilled payout reconciliation state for historical completed payouts"
+                    );
+                }
+            }
+            Err(err) => {
+                tracing::error!(error = %err, "failed backfilling payout reconciliation state");
+            }
+        }
+    }
+
+    fn reconcile_completed_payouts_after_recovery(&self) {
+        let payouts = match self.store.get_active_payouts() {
+            Ok(payouts) => payouts,
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to load completed payouts for recovery reconciliation");
+                return;
+            }
+        };
+        if payouts.is_empty() {
+            return;
+        }
+
+        let mut tx_hashes = payouts
+            .into_iter()
+            .map(|payout| payout.tx_hash)
+            .filter(|tx_hash| !tx_hash.trim().is_empty())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        tx_hashes.sort();
+
+        for tx_hash in tx_hashes {
+            let status = match self.node.get_tx_status_optional(&tx_hash) {
+                Ok(status) => status,
+                Err(err) => {
+                    tracing::warn!(
+                        tx = %tx_hash,
+                        error = %err,
+                        "failed to reconcile completed payout against daemon"
+                    );
+                    continue;
+                }
+            };
+            if status.as_ref().is_some_and(|status| {
+                status.in_mempool || status.confirmations >= PAYOUT_CONFIRMATIONS_REQUIRED
+            }) {
+                continue;
+            }
+            if status.is_some() {
+                continue;
+            }
+
+            match self
+                .store
+                .revert_completed_payout_tx(&tx_hash, "missing from daemon chain after recovery")
+            {
+                Ok(result) => {
+                    if result.manual_reconciliation_required {
+                        tracing::warn!(
+                            tx = %tx_hash,
+                            "completed payout disappeared from the daemon chain but requires manual reconciliation"
+                        );
+                    } else if result.reverted_payout_rows > 0 {
+                        tracing::warn!(
+                            tx = %tx_hash,
+                            reverted_payout_rows = result.reverted_payout_rows,
+                            restored_pending_amount = result.restored_pending_amount,
+                            dropped_orphaned_amount = result.dropped_orphaned_amount,
+                            "reverted completed payout rows that disappeared from the daemon chain"
+                        );
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        tx = %tx_hash,
+                        error = %err,
+                        "failed to revert completed payout missing from daemon chain"
+                    );
+                }
+            }
+        }
+    }
+
     fn send_payouts(&self) {
         if !self.cfg.payouts_enabled {
             tracing::warn!("payouts are disabled by config; skipping payout tick");
@@ -741,6 +1001,28 @@ impl PayoutProcessor {
             return;
         }
         if !self.ensure_wallet_ready() {
+            return;
+        }
+        let reconciliation_blockers = match self.store.live_reconciliation_blockers() {
+            Ok(blockers) => blockers,
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "failed to load live reconciliation blockers; skipping payout tick"
+                );
+                return;
+            }
+        };
+        if reconciliation_blockers.orphaned_block_issue_count > 0
+            || reconciliation_blockers.unresolved_completed_payout_rows > 0
+        {
+            tracing::warn!(
+                orphaned_block_issue_count = reconciliation_blockers.orphaned_block_issue_count,
+                orphaned_unpaid_amount = reconciliation_blockers.orphaned_unpaid_amount,
+                unresolved_completed_payout_rows =
+                    reconciliation_blockers.unresolved_completed_payout_rows,
+                "payouts blocked by unresolved live reconciliation issues"
+            );
             return;
         }
 
@@ -2532,6 +2814,58 @@ mod tests {
         format!("http://{}", addr)
     }
 
+    fn spawn_json_router_server(routes: HashMap<String, String>, max_requests: usize) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind router server");
+        let addr = listener.local_addr().expect("router addr");
+        thread::spawn(move || {
+            for _ in 0..max_requests {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    break;
+                };
+                let mut buf = [0u8; 4096];
+                let read = stream.read(&mut buf).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..read]);
+                let path = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or("/");
+                let (status, body) = match routes.get(path) {
+                    Some(body) => ("HTTP/1.1 200 OK", body.clone()),
+                    None => (
+                        "HTTP/1.1 404 Not Found",
+                        r#"{"error":"not found"}"#.to_string(),
+                    ),
+                };
+                let response = format!(
+                    "{status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("write router response");
+            }
+        });
+        format!("http://{}", addr)
+    }
+
+    fn sample_status(chain_height: u64) -> NodeStatus {
+        NodeStatus {
+            peer_id: "peer".to_string(),
+            peers: 3,
+            chain_height,
+            best_hash: format!("best-{chain_height}"),
+            total_work: chain_height,
+            mempool_size: 0,
+            mempool_bytes: 0,
+            syncing: false,
+            identity_age: "1m".to_string(),
+            current_process_block: None,
+            last_process_block: None,
+        }
+    }
+
     #[test]
     fn provisional_shares_mature_after_delay() {
         let now = SystemTime::now();
@@ -3206,5 +3540,317 @@ mod tests {
             .expect("recent payouts");
         assert_eq!(payouts.len(), 1);
         assert_eq!(payouts[0].tx_hash, "tx-1");
+    }
+
+    #[test]
+    fn chain_reconciliation_orphans_diverged_blocks_and_reverses_unpaid_credits() {
+        let store = require_test_store!();
+        let common_height = 9_100_000u64 + (rand::random::<u16>() as u64);
+        let diverged_height = common_height + 1;
+
+        store
+            .add_block(&DbBlock {
+                height: common_height,
+                hash: format!("common-{common_height}"),
+                difficulty: 1,
+                finder: "finder-common".to_string(),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert common block");
+        store
+            .add_block(&DbBlock {
+                height: diverged_height,
+                hash: format!("pool-diverged-{diverged_height}"),
+                difficulty: 1,
+                finder: "finder-diverged".to_string(),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert diverged block");
+        assert!(store
+            .apply_block_credits_and_mark_paid(
+                diverged_height,
+                &[("miner-diverged".to_string(), 100)],
+            )
+            .expect("apply diverged credits"));
+        store
+            .create_pending_payout("miner-diverged", 100)
+            .expect("create pending payout");
+
+        let base_url = spawn_json_router_server(
+            HashMap::from([
+                (
+                    format!("/api/block/{common_height}"),
+                    format!(
+                        r#"{{"height":{common_height},"hash":"common-{common_height}","reward":100,"difficulty":1,"timestamp":0,"tx_count":1}}"#
+                    ),
+                ),
+                (
+                    format!("/api/block/{diverged_height}"),
+                    format!(
+                        r#"{{"height":{diverged_height},"hash":"daemon-diverged-{diverged_height}","reward":100,"difficulty":1,"timestamp":0,"tx_count":1}}"#
+                    ),
+                ),
+            ]),
+            6,
+        );
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+        );
+
+        processor.reconcile_chain_recovery(&sample_status(diverged_height));
+
+        let common = store
+            .get_block(common_height)
+            .expect("load common block")
+            .expect("common block exists");
+        let diverged = store
+            .get_block(diverged_height)
+            .expect("load diverged block")
+            .expect("diverged block exists");
+        assert!(!common.orphaned);
+        assert!(diverged.orphaned);
+        assert!(!diverged.confirmed);
+        assert!(!diverged.paid_out);
+        assert_eq!(
+            store
+                .get_balance("miner-diverged")
+                .expect("miner balance after reconcile")
+                .pending,
+            0
+        );
+        assert!(store
+            .get_pending_payout("miner-diverged")
+            .expect("pending payout lookup")
+            .is_none());
+        assert!(store
+            .get_block_credit_events(diverged_height)
+            .expect("credit events after reconcile")
+            .is_empty());
+    }
+
+    #[test]
+    fn chain_reconciliation_orphans_historical_diverged_window_below_matching_tip() {
+        let store = require_test_store!();
+        let common_height = 9_150_000u64 + (rand::random::<u16>() as u64);
+        let diverged_height = common_height + 1;
+        let matching_tip_height = diverged_height + 1;
+
+        store
+            .add_block(&DbBlock {
+                height: common_height,
+                hash: format!("common-{common_height}"),
+                difficulty: 1,
+                finder: "finder-common".to_string(),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert common block");
+        store
+            .add_block(&DbBlock {
+                height: diverged_height,
+                hash: format!("pool-diverged-{diverged_height}"),
+                difficulty: 1,
+                finder: "finder-diverged".to_string(),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert diverged block");
+        store
+            .add_block(&DbBlock {
+                height: matching_tip_height,
+                hash: format!("matching-tip-{matching_tip_height}"),
+                difficulty: 1,
+                finder: "finder-tip".to_string(),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert matching tip");
+        assert!(store
+            .apply_block_credits_and_mark_paid(
+                diverged_height,
+                &[("miner-diverged".to_string(), 100)],
+            )
+            .expect("apply diverged credits"));
+        store
+            .create_pending_payout("miner-diverged", 100)
+            .expect("create pending payout");
+
+        let base_url = spawn_json_router_server(
+            HashMap::from([
+                (
+                    format!("/api/block/{common_height}"),
+                    format!(
+                        r#"{{"height":{common_height},"hash":"common-{common_height}","reward":100,"difficulty":1,"timestamp":0,"tx_count":1}}"#
+                    ),
+                ),
+                (
+                    format!("/api/block/{diverged_height}"),
+                    format!(
+                        r#"{{"height":{diverged_height},"hash":"daemon-diverged-{diverged_height}","reward":100,"difficulty":1,"timestamp":0,"tx_count":1}}"#
+                    ),
+                ),
+                (
+                    format!("/api/block/{matching_tip_height}"),
+                    format!(
+                        r#"{{"height":{matching_tip_height},"hash":"matching-tip-{matching_tip_height}","reward":100,"difficulty":1,"timestamp":0,"tx_count":1}}"#
+                    ),
+                ),
+            ]),
+            9,
+        );
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+        );
+
+        assert!(processor.reconcile_chain_recovery(&sample_status(matching_tip_height)));
+
+        let common = store
+            .get_block(common_height)
+            .expect("load common block")
+            .expect("common block exists");
+        let diverged = store
+            .get_block(diverged_height)
+            .expect("load diverged block")
+            .expect("diverged block exists");
+        let matching_tip = store
+            .get_block(matching_tip_height)
+            .expect("load matching tip")
+            .expect("matching tip exists");
+        assert!(!common.orphaned);
+        assert!(diverged.orphaned);
+        assert!(!matching_tip.orphaned);
+        assert_eq!(
+            store
+                .get_balance("miner-diverged")
+                .expect("miner balance after reconcile")
+                .pending,
+            0
+        );
+        assert!(store
+            .get_pending_payout("miner-diverged")
+            .expect("pending payout lookup")
+            .is_none());
+    }
+
+    #[test]
+    fn chain_recovery_reverts_completed_payouts_missing_from_daemon_chain() {
+        let store = require_test_store!();
+        let common_height = 9_200_000u64 + (rand::random::<u16>() as u64);
+        let diverged_height = common_height + 1;
+        let miner = "miner-paid-diverged";
+        let tx_hash = "tx-diverged-missing";
+
+        store
+            .add_block(&DbBlock {
+                height: common_height,
+                hash: format!("common-{common_height}"),
+                difficulty: 1,
+                finder: "finder-common".to_string(),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert common block");
+        store
+            .add_block(&DbBlock {
+                height: diverged_height,
+                hash: format!("pool-diverged-{diverged_height}"),
+                difficulty: 1,
+                finder: miner.to_string(),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert diverged block");
+        assert!(store
+            .apply_block_credits_and_mark_paid(diverged_height, &[(miner.to_string(), 100)])
+            .expect("apply diverged credits"));
+        store
+            .create_pending_payout(miner, 100)
+            .expect("create pending payout");
+        store
+            .record_pending_payout_broadcast(miner, 100, 2, tx_hash)
+            .expect("record broadcast");
+        store
+            .complete_pending_payout(miner, 100, 2, tx_hash)
+            .expect("complete payout");
+
+        let base_url = spawn_json_router_server(
+            HashMap::from([
+                (
+                    format!("/api/block/{common_height}"),
+                    format!(
+                        r#"{{"height":{common_height},"hash":"common-{common_height}","reward":100,"difficulty":1,"timestamp":0,"tx_count":1}}"#
+                    ),
+                ),
+                (
+                    format!("/api/block/{diverged_height}"),
+                    format!(
+                        r#"{{"height":{diverged_height},"hash":"daemon-diverged-{diverged_height}","reward":100,"difficulty":1,"timestamp":0,"tx_count":1}}"#
+                    ),
+                ),
+            ]),
+            8,
+        );
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+        );
+
+        assert!(processor.reconcile_chain_recovery(&sample_status(diverged_height)));
+        processor.reconcile_completed_payouts_after_recovery();
+
+        let balance = store.get_balance(miner).expect("balance after recovery");
+        assert_eq!(balance.pending, 0);
+        assert_eq!(balance.paid, 0);
+        assert!(store
+            .get_active_payouts()
+            .expect("active payouts")
+            .into_iter()
+            .all(|payout| payout.tx_hash != tx_hash));
+        assert!(store
+            .get_recent_payouts_for_address(miner, 5)
+            .expect("visible payouts after recovery")
+            .is_empty());
     }
 }

@@ -43,7 +43,10 @@ use crate::payout::{
     is_share_payout_eligible, recover_share_window_by_replay,
     resolve_pool_fee_destination_from_address, reward_window_end, weight_shares, PayoutTrustPolicy,
 };
-use crate::pgdb::{MonitorUptimeSummary, ShareWindowAddressPreview};
+use crate::pgdb::{
+    BalanceSourceSummary, ManualCompletedPayoutResolutionKind, MonitorUptimeSummary,
+    OrphanedBlockCreditIssue, ShareWindowAddressPreview, UnreconciledCompletedPayoutRow,
+};
 use crate::pool_activity::{assess_pool_activity, POOL_ACTIVITY_SNAPSHOT_STALE_AFTER};
 use crate::recovery::{RecoveryAgentClient, RecoveryInstanceId, RecoveryOperation, RecoveryStatus};
 use crate::service_state::{
@@ -81,6 +84,7 @@ const ROUND_TARGET_SECONDS: f64 = 300.0;
 const INSIGHTS_CACHE_TTL: Duration = Duration::from_secs(30);
 const REJECTION_ANALYTICS_CACHE_TTL: Duration = Duration::from_secs(30);
 const STATS_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(15);
+const CHAIN_AWARE_ORPHAN_LOOKBACK_BLOCKS: i64 = 1024;
 const MINER_BALANCE_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(5);
 const MINER_DETAIL_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(10);
 const MINER_BALANCE_RESPONSE_CACHE_MAX_ENTRIES: usize = 2048;
@@ -97,6 +101,7 @@ const STATUS_HISTORY_META_KEY: &str = "status_history_v1";
 const MINER_PAYOUT_HISTORY_LIMIT: i64 = 50;
 const PROPORTIONAL_WINDOW: Duration = Duration::from_secs(60 * 60);
 const MAX_MINER_HASHRATE_DB_LOOKUPS: usize = 4096;
+const OG_IMAGE_PATH: &str = "/og-image.png";
 pub const DEFAULT_MAX_SSE_SUBSCRIBERS: usize = 256;
 const DEFAULT_DAEMON_LOG_TAIL: usize = 200;
 const MAX_DAEMON_LOG_TAIL: usize = 2000;
@@ -446,6 +451,7 @@ struct DbTotals {
 #[derive(Debug, Default)]
 pub struct DbTotalsCache {
     updated_at: Option<Instant>,
+    chain_height: Option<u64>,
     totals: DbTotals,
 }
 
@@ -964,6 +970,18 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
             "/api/admin/balance-overview",
             get(handle_admin_balance_overview),
         )
+        .route(
+            "/api/admin/reconciliation/issues",
+            get(handle_admin_reconciliation_issues),
+        )
+        .route(
+            "/api/admin/reconciliation/payouts/resolve",
+            post(handle_admin_reconciliation_payout_resolution),
+        )
+        .route(
+            "/api/admin/reconciliation/orphan-blocks/retry-cleanup",
+            post(handle_admin_orphaned_block_cleanup_retry),
+        )
         .route("/api/admin/shares", get(handle_admin_share_diagnostics))
         .route(
             "/api/admin/blocks/:height/reward-breakdown",
@@ -1025,6 +1043,7 @@ pub async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
         .route("/robots.txt", get(handle_robots_txt))
         .route("/sitemap.xml", get(handle_sitemap_xml))
         .route("/favicon.svg", get(handle_favicon_svg))
+        .route(OG_IMAGE_PATH, get(handle_og_image_png))
         .route("/og-image.svg", get(handle_og_image_svg))
         .route("/ui-assets/app.js", get(handle_ui_asset_app_js))
         .route("/ui-assets/app.css", get(handle_ui_asset_app_css))
@@ -1085,6 +1104,8 @@ const UI_ASSET_APP_JS: &str =
     include_str!(concat!(env!("BLOCKNET_POOL_FRONTEND_DIST_DIR"), "/app.js"));
 const UI_ASSET_APP_CSS: &str =
     include_str!(concat!(env!("BLOCKNET_POOL_FRONTEND_DIST_DIR"), "/app.css"));
+const UI_ASSET_OG_IMAGE_SVG: &str = include_str!("ui/assets/og-image.svg");
+const UI_ASSET_OG_IMAGE_PNG: &[u8] = include_bytes!("ui/assets/og-image.png");
 const UI_ASSET_POOL_ENTERED_PNG: &[u8] = include_bytes!("ui/assets/pool-entered.png");
 const UI_ASSET_MINING_TUI_PNG: &[u8] = include_bytes!("ui/assets/mining-tui.png");
 const UI_FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Blocknet Pool"><rect x="4" y="4" width="24" height="24" rx="4" fill="#16a34a"/><rect x="9" y="9" width="14" height="14" rx="2" fill="#fff" opacity=".9"/><rect x="12" y="12" width="8" height="8" rx="1" fill="#16a34a"/></svg>"##;
@@ -1658,6 +1679,7 @@ fn render_recent_payouts_section(batches: &[PublicPayoutBatch], show_view_all: b
 async fn load_ui_seo_context(route: UiRoute, state: &ApiState) -> UiSeoContext {
     let stats_snapshot = state.effective_pool_snapshot().await;
     let current_job = state.jobs.current_job();
+    let daemon_chain_height = state.node.chain_height();
     let need_blocks = matches!(route, UiRoute::Dashboard | UiRoute::Blocks | UiRoute::Luck);
     let need_payouts = matches!(route, UiRoute::Dashboard | UiRoute::Payouts);
     let need_totals = matches!(route, UiRoute::Dashboard | UiRoute::Blocks | UiRoute::Luck);
@@ -1693,13 +1715,17 @@ async fn load_ui_seo_context(route: UiRoute, state: &ApiState) -> UiSeoContext {
 
     if need_blocks || need_payouts {
         let store = Arc::clone(&state.store);
+        let node = Arc::clone(&state.node);
         match tokio::task::spawn_blocking(
             move || -> anyhow::Result<(Vec<DbBlock>, Vec<PublicPayoutBatch>)> {
-                let blocks = if need_blocks {
-                    store.get_recent_blocks(6)?
+                let mut blocks = if need_blocks {
+                    store.get_recent_blocks_up_to(6, daemon_chain_height)?
                 } else {
                     Vec::new()
                 };
+                if need_blocks {
+                    flag_chain_mismatched_blocks(node.as_ref(), daemon_chain_height, &mut blocks);
+                }
                 let payout_batches = if need_payouts {
                     store.get_public_payout_batches_page("time_desc", 6, 0)?.0
                 } else {
@@ -2013,7 +2039,7 @@ fn structured_data(
     last_modified: Option<SystemTime>,
 ) -> serde_json::Value {
     let base_url = pool_base_url(state);
-    let og_image_url = format!("{}/og-image.svg", base_url);
+    let og_image_url = format!("{base_url}{OG_IMAGE_PATH}");
     let logo_url = format!("{}/favicon.svg", base_url);
     let website_id = format!("{base_url}/#website");
     let organization_id = format!("{base_url}/#organization");
@@ -2226,7 +2252,7 @@ async fn build_ui_seo_page(route: UiRoute, state: &ApiState) -> UiSeoPage {
     let canonical_url = format!("{}{}", pool_base_url(state), route.path());
     let title = seo_title(route, state);
     let description = seo_description(route, state);
-    let og_image_url = format!("{}/og-image.svg", pool_base_url(state));
+    let og_image_url = format!("{}{}", pool_base_url(state), OG_IMAGE_PATH);
     let og_image_alt = format!(
         "{} Blocknet mining pool card with stratum, fee, and payout details",
         state.pool_name
@@ -2269,22 +2295,6 @@ async fn render_ui_html(route: UiRoute, state: &ApiState) -> String {
         .replace("__SEO_OG_IMAGE_ALT__", &escape_html(&page.og_image_alt))
         .replace("__SEO_JSON_LD__", &page.json_ld)
         .replace("__SEO_CONTENT__", &page.content_html)
-}
-
-fn render_og_image_svg(state: &ApiState) -> String {
-    let payout_scheme = state.payout_scheme.trim().to_uppercase();
-    let fee = pool_fee_summary_for_state(state);
-    let min_payout = format_bnt(state.min_payout_amount);
-    format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc"><title id="title">{title}</title><desc id="desc">{desc}</desc><defs><linearGradient id="bg-grad" x1="0" x2="1" y1="0" y2="1"><stop offset="0%" stop-color="#071114"/><stop offset="100%" stop-color="#102a1a"/></linearGradient><linearGradient id="panel-grad" x1="0" x2="1" y1="0" y2="1"><stop offset="0%" stop-color="#57d78c"/><stop offset="100%" stop-color="#16a34a"/></linearGradient></defs><rect width="1200" height="630" fill="url(#bg-grad)"/><circle cx="1080" cy="120" r="180" fill="#57d78c" opacity="0.08"/><circle cx="180" cy="560" r="220" fill="#f7b44b" opacity="0.08"/><rect x="72" y="72" width="1056" height="486" rx="36" fill="#0d181d" stroke="#1f3121" stroke-width="2"/><rect x="96" y="96" width="84" height="84" rx="24" fill="url(#panel-grad)"/><rect x="118" y="118" width="40" height="40" rx="10" fill="#f6f8f2" opacity="0.96"/><rect x="130" y="130" width="16" height="16" rx="4" fill="#071114"/><text x="214" y="128" fill="#57d78c" font-family="Manrope, Arial, sans-serif" font-size="28" font-weight="700">Blocknet Mining Pool</text><text x="96" y="214" fill="#9cb0a8" font-family="Manrope, Arial, sans-serif" font-size="28" font-weight="700">Mine Blocknet with transparent blocks, payouts, and status pages</text><text x="96" y="284" fill="#ecf5f0" font-family="Manrope, Arial, sans-serif" font-size="70" font-weight="700">{pool_name}</text><text x="96" y="344" fill="#9cb0a8" font-family="Manrope, Arial, sans-serif" font-size="30">Live hashrate, explorer-backed payouts, and a public onboarding guide</text><rect x="96" y="386" width="560" height="68" rx="24" fill="#132129" stroke="#1f3121" stroke-width="2"/><text x="128" y="428" fill="#57d78c" font-family="JetBrains Mono, monospace" font-size="26">{stratum}</text><rect x="96" y="486" width="204" height="42" rx="21" fill="#57d78c" opacity="0.12"/><text x="128" y="513" fill="#81dfaf" font-family="Manrope, Arial, sans-serif" font-size="20" font-weight="700">{fee}</text><rect x="322" y="486" width="194" height="42" rx="21" fill="#f7b44b" opacity="0.12"/><text x="352" y="513" fill="#f7b44b" font-family="Manrope, Arial, sans-serif" font-size="20" font-weight="700">{payout_scheme} payouts</text><rect x="538" y="486" width="230" height="42" rx="21" fill="#57d78c" opacity="0.12"/><text x="568" y="513" fill="#81dfaf" font-family="Manrope, Arial, sans-serif" font-size="20" font-weight="700">Min payout {min_payout}</text></svg>"##,
-        title = escape_html(&state.pool_name),
-        desc = escape_html("Blocknet mining pool social card with fee and payout details"),
-        pool_name = escape_html(&state.pool_name),
-        stratum = escape_html(&stratum_endpoint(state)),
-        fee = escape_html(&fee),
-        payout_scheme = escape_html(&payout_scheme),
-        min_payout = escape_html(&min_payout),
-    )
 }
 
 async fn handle_ui(uri: Uri, State(state): State<ApiState>) -> Response {
@@ -2343,10 +2353,11 @@ async fn handle_robots_txt(State(state): State<ApiState>) -> impl IntoResponse {
 async fn handle_sitemap_xml(State(state): State<ApiState>) -> impl IntoResponse {
     let base = pool_base_url(&state);
     let store = Arc::clone(&state.store);
+    let daemon_chain_height = state.node.chain_height();
     let (latest_block, latest_payout) = match tokio::task::spawn_blocking(
         move || -> anyhow::Result<(Option<SystemTime>, Option<SystemTime>)> {
             let latest_block = store
-                .get_recent_blocks(1)?
+                .get_recent_blocks_up_to(1, daemon_chain_height)?
                 .into_iter()
                 .next()
                 .map(|block| block.timestamp);
@@ -2469,13 +2480,23 @@ async fn handle_favicon_svg() -> impl IntoResponse {
     )
 }
 
-async fn handle_og_image_svg(State(state): State<ApiState>) -> impl IntoResponse {
+async fn handle_og_image_svg() -> impl IntoResponse {
     (
         [
             (header::CONTENT_TYPE, "image/svg+xml"),
             (header::CACHE_CONTROL, "public, max-age=3600"),
         ],
-        render_og_image_svg(&state),
+        UI_ASSET_OG_IMAGE_SVG,
+    )
+}
+
+async fn handle_og_image_png() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        UI_ASSET_OG_IMAGE_PNG,
     )
 }
 
@@ -3056,6 +3077,14 @@ struct AdminBalanceOverviewWallet {
 struct AdminBalanceOverviewPayouts {
     unpaid_count: usize,
     unpaid_amount: u64,
+    clean_unpaid_count: usize,
+    clean_unpaid_amount: u64,
+    orphan_backed_unpaid_amount: u64,
+    balance_source_drift_amount: u64,
+    pool_fee_unpaid_amount: u64,
+    pool_fee_clean_unpaid_amount: u64,
+    pool_fee_orphan_backed_unpaid_amount: u64,
+    pool_fee_balance_source_drift_amount: u64,
     queued_count: usize,
     queued_amount: u64,
 }
@@ -3084,8 +3113,17 @@ struct AdminBalanceOverviewLedger {
     miner_paid_total: u64,
     miner_unpaid_total: u64,
     miner_total_credited: u64,
+    miner_clean_unpaid_total: u64,
+    miner_orphan_backed_unpaid_total: u64,
+    miner_balance_source_drift_total: u64,
     net_block_reward_total: u64,
     pool_fee_total: u64,
+    pool_fee_paid_total: u64,
+    pool_fee_unpaid_total: u64,
+    pool_fee_clean_unpaid_total: u64,
+    pool_fee_orphan_backed_unpaid_total: u64,
+    pool_fee_balance_source_drift_total: u64,
+    pool_fee_balance_total: u64,
     miner_rewards_balanced: bool,
 }
 
@@ -3093,6 +3131,86 @@ struct AdminBalanceOverviewLedger {
 struct AdminBalanceOverviewLiquidity {
     spendable_minus_queued: i64,
     queue_shortfall_amount: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AdminReconciliationIssuesResponse {
+    generated_at: SystemTime,
+    summary: AdminReconciliationIssuesSummary,
+    missing_payouts: Vec<AdminMissingCompletedPayoutIssueResponse>,
+    orphaned_blocks: Vec<AdminOrphanedBlockIssueResponse>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AdminReconciliationIssuesSummary {
+    total_open_issues: usize,
+    missing_payout_issue_count: usize,
+    missing_payout_total_amount: u64,
+    orphaned_block_issue_count: usize,
+    orphaned_block_total_credit_amount: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AdminMissingCompletedPayoutIssueResponse {
+    tx_hash: String,
+    payout_row_count: usize,
+    total_amount: u64,
+    total_fee: u64,
+    latest_timestamp: SystemTime,
+    addresses: Vec<String>,
+    linked_amount: u64,
+    live_linked_amount: u64,
+    orphaned_linked_amount: u64,
+    unlinked_amount: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AdminOrphanedBlockIssueResponse {
+    height: u64,
+    hash: String,
+    credit_event_count: u64,
+    credited_address_count: u64,
+    remaining_credit_amount: u64,
+    paid_credit_amount: u64,
+    remaining_fee_amount: u64,
+    paid_fee_amount: u64,
+    pending_payout_count: u64,
+    broadcast_pending_payout_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AdminReconciliationPayoutResolutionResponse {
+    tx_hash: String,
+    action: &'static str,
+    reverted_payout_rows: u64,
+    restored_pending_amount: u64,
+    dropped_amount: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AdminOrphanedBlockCleanupResponse {
+    block_height: u64,
+    orphaned: bool,
+    reversed_credit_events: u64,
+    reversed_credit_amount: u64,
+    reversed_fee_amount: u64,
+    canceled_pending_payouts: u64,
+    manual_reconciliation_required: bool,
+}
+
+fn map_orphaned_block_issue(issue: OrphanedBlockCreditIssue) -> AdminOrphanedBlockIssueResponse {
+    AdminOrphanedBlockIssueResponse {
+        height: issue.height,
+        hash: issue.hash,
+        credit_event_count: issue.credit_event_count,
+        credited_address_count: issue.credited_address_count,
+        remaining_credit_amount: issue.remaining_credit_amount,
+        paid_credit_amount: issue.paid_credit_amount,
+        remaining_fee_amount: issue.remaining_fee_amount,
+        paid_fee_amount: issue.paid_fee_amount,
+        pending_payout_count: issue.pending_payout_count,
+        broadcast_pending_payout_count: issue.broadcast_pending_payout_count,
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3270,6 +3388,8 @@ struct PagedResponse<T> {
 #[derive(Debug, Serialize)]
 struct AdminBalanceItem {
     address: String,
+    clean_payable: u64,
+    orphan_backed: u64,
     pending: u64,
     paid: u64,
 }
@@ -4006,6 +4126,11 @@ async fn handle_admin_balances(
 
     match tokio::task::spawn_blocking(move || -> anyhow::Result<PagedResponse<AdminBalanceItem>> {
         let all = store.get_all_balances()?;
+        let source_by_address = store
+            .list_balance_source_summaries()?
+            .into_iter()
+            .map(|source| (source.address.clone(), source))
+            .collect::<HashMap<_, BalanceSourceSummary>>();
         let mut filtered: Vec<_> = if search.is_empty() {
             all
         } else {
@@ -4029,10 +4154,18 @@ async fn handle_admin_balances(
             .into_iter()
             .skip(offset)
             .take(limit)
-            .map(|b| AdminBalanceItem {
-                address: b.address,
-                pending: b.pending,
-                paid: b.paid,
+            .map(|b| {
+                let source = source_by_address
+                    .get(&b.address)
+                    .cloned()
+                    .unwrap_or_default();
+                AdminBalanceItem {
+                    address: b.address,
+                    clean_payable: source.canonical_pending,
+                    orphan_backed: source.orphan_pending,
+                    pending: b.pending,
+                    paid: b.paid,
+                }
             })
             .collect();
         let returned = items.len();
@@ -4063,6 +4196,76 @@ async fn handle_admin_balance_overview(State(state): State<ApiState>) -> impl In
     match state.admin_balance_overview().await {
         Ok(response) => Json(response).into_response(),
         Err(err) => internal_error("failed loading balance overview", err).into_response(),
+    }
+}
+
+async fn handle_admin_reconciliation_issues(State(state): State<ApiState>) -> impl IntoResponse {
+    match state.admin_reconciliation_issues().await {
+        Ok(response) => Json(response).into_response(),
+        Err(err) => internal_error("failed loading reconciliation issues", err).into_response(),
+    }
+}
+
+async fn handle_admin_reconciliation_payout_resolution(
+    State(state): State<ApiState>,
+    Json(request): Json<AdminReconciliationPayoutResolutionRequest>,
+) -> impl IntoResponse {
+    let tx_hash = request.tx_hash.trim();
+    if tx_hash.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error":"tx_hash is required"})),
+        )
+            .into_response();
+    }
+
+    match state
+        .resolve_missing_completed_payout_issue(tx_hash, request.action)
+        .await
+    {
+        Ok(response) => Json(response).into_response(),
+        Err(err) => {
+            internal_error("failed resolving reconciliation payout issue", err).into_response()
+        }
+    }
+}
+
+async fn handle_admin_orphaned_block_cleanup_retry(
+    State(state): State<ApiState>,
+    Json(request): Json<AdminOrphanedBlockCleanupRequest>,
+) -> impl IntoResponse {
+    if request.block_height == 0 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error":"block_height must be positive"})),
+        )
+            .into_response();
+    }
+
+    let store = Arc::clone(&state.store);
+    match tokio::task::spawn_blocking(move || {
+        store.reconcile_existing_orphaned_block_credits(request.block_height)
+    })
+    .await
+    {
+        Ok(Ok(result)) => Json(AdminOrphanedBlockCleanupResponse {
+            block_height: request.block_height,
+            orphaned: result.orphaned,
+            reversed_credit_events: result.reversed_credit_events,
+            reversed_credit_amount: result.reversed_credit_amount,
+            reversed_fee_amount: result.reversed_fee_amount,
+            canceled_pending_payouts: result.canceled_pending_payouts,
+            manual_reconciliation_required: result.manual_reconciliation_required,
+        })
+        .into_response(),
+        Ok(Err(err)) => {
+            internal_error("failed retrying orphaned block cleanup", err).into_response()
+        }
+        Err(err) => internal_error(
+            "failed retrying orphaned block cleanup",
+            anyhow::anyhow!("join error: {err}"),
+        )
+        .into_response(),
     }
 }
 
@@ -4181,6 +4384,40 @@ async fn handle_admin_share_diagnostics(State(state): State<ApiState>) -> impl I
 #[derive(Debug, Deserialize)]
 struct RecoveryCutoverRequest {
     target: RecoveryInstanceId,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AdminReconciliationPayoutResolutionAction {
+    RestorePending,
+    DropPaid,
+}
+
+impl AdminReconciliationPayoutResolutionAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::RestorePending => "restore_pending",
+            Self::DropPaid => "drop_paid",
+        }
+    }
+
+    fn into_store_kind(self) -> ManualCompletedPayoutResolutionKind {
+        match self {
+            Self::RestorePending => ManualCompletedPayoutResolutionKind::RestorePending,
+            Self::DropPaid => ManualCompletedPayoutResolutionKind::DropPaid,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AdminReconciliationPayoutResolutionRequest {
+    tx_hash: String,
+    action: AdminReconciliationPayoutResolutionAction,
+}
+
+#[derive(Debug, Deserialize)]
+struct AdminOrphanedBlockCleanupRequest {
+    block_height: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -4929,10 +5166,21 @@ async fn handle_blocks(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
     let store = Arc::clone(&state.store);
+    let node = Arc::clone(&state.node);
+    let daemon_chain_height = state.node.chain_height();
 
     if query.legacy_mode() {
-        let mut blocks = match tokio::task::spawn_blocking(move || store.get_recent_blocks(100))
-            .await
+        let mut blocks = match tokio::task::spawn_blocking(move || {
+            let mut blocks = store.get_recent_blocks_up_to(100, daemon_chain_height)?;
+            flag_chain_mismatched_blocks(node.as_ref(), daemon_chain_height, &mut blocks);
+            blocks.sort_by(|a, b| {
+                b.timestamp
+                    .cmp(&a.timestamp)
+                    .then_with(|| b.height.cmp(&a.height))
+            });
+            Ok::<_, anyhow::Error>(blocks)
+        })
+        .await
         {
             Ok(Ok(v)) => v,
             Ok(Err(err)) => return internal_error("failed loading blocks", err).into_response(),
@@ -4953,10 +5201,12 @@ async fn handle_blocks(
     let (limit, offset) = page_bounds(query.limit, query.offset);
     let sort = match query.sort.as_deref().map(str::trim) {
         Some("height_asc") => "height_asc",
+        Some("height_desc") => "height_desc",
         Some("reward_desc") => "reward_desc",
         Some("reward_asc") => "reward_asc",
+        Some("time_desc") => "time_desc",
         Some("time_asc") => "time_asc",
-        _ => "height_desc",
+        _ => "time_desc",
     };
     let finder = non_empty(&query.finder).map(str::to_string);
     let status = non_empty(&query.status)
@@ -4969,14 +5219,18 @@ async fn handle_blocks(
         .map(str::to_string);
 
     let store = Arc::clone(&state.store);
+    let node = Arc::clone(&state.node);
     let (mut blocks, total) = match tokio::task::spawn_blocking(move || {
-        store.get_blocks_page(
+        let (mut blocks, total) = store.get_blocks_page_up_to(
+            daemon_chain_height,
             finder.as_deref(),
             status.as_deref(),
             sort,
             limit as i64,
             offset as i64,
-        )
+        )?;
+        flag_chain_mismatched_blocks(node.as_ref(), daemon_chain_height, &mut blocks);
+        Ok::<_, anyhow::Error>((blocks, total))
     })
     .await
     {
@@ -6842,11 +7096,141 @@ fn compute_luck_history(
         });
     }
 
-    rounds.sort_by(|a, b| b.block_height.cmp(&a.block_height));
+    rounds.sort_by(|a, b| {
+        b.block_height
+            .cmp(&a.block_height)
+            .then_with(|| b.timestamp.cmp(&a.timestamp))
+    });
     if let Some(max_items) = max_items {
         rounds.truncate(max_items);
     }
     Ok(rounds)
+}
+
+fn compute_chain_aware_luck_page(
+    store: &PoolStore,
+    node: &NodeClient,
+    max_height: u64,
+    limit: usize,
+    offset: usize,
+) -> anyhow::Result<(Vec<LuckRoundResponse>, usize)> {
+    let block_window = (limit.saturating_add(offset)).saturating_add(1).max(2) as i64;
+    let blocks = store.get_recent_blocks_up_to(block_window, max_height)?;
+    let mut rounds = compute_luck_history(store, blocks, None)?;
+    flag_chain_mismatched_luck_rows(node, max_height, &mut rounds);
+    let total = store.get_block_count_up_to(max_height)?.saturating_sub(1) as usize;
+    let items = rounds
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .collect::<Vec<_>>();
+    Ok((items, total))
+}
+
+fn compute_chain_aware_block_totals(
+    store: &PoolStore,
+    node: &NodeClient,
+    daemon_chain_height: u64,
+) -> anyhow::Result<(u64, u64, u64)> {
+    let live_total_blocks = store.get_block_count()?;
+    let (live_confirmed_blocks, live_orphaned_blocks, _live_pending_blocks) =
+        store.get_block_status_counts()?;
+    let archived_total_blocks = store.get_archived_block_count()?;
+    let archived_orphaned_blocks = store.get_archived_orphaned_block_count()?;
+
+    let mut extra_orphaned_blocks = 0u64;
+    let mut confirmed_blocks_to_reclassify = 0u64;
+    let recent_blocks = store.get_recent_blocks(CHAIN_AWARE_ORPHAN_LOOKBACK_BLOCKS)?;
+    for block in recent_blocks {
+        if block.orphaned {
+            continue;
+        }
+
+        let mismatch = if block.height > daemon_chain_height {
+            true
+        } else {
+            match node.get_block_by_height_optional(block.height) {
+                Ok(Some(node_block)) => node_block.hash != block.hash,
+                Ok(None) => false,
+                Err(err) => {
+                    tracing::warn!(
+                        height = block.height,
+                        error = %err,
+                        "failed to compare pool block against daemon while computing effective totals"
+                    );
+                    false
+                }
+            }
+        };
+        if !mismatch {
+            continue;
+        }
+
+        extra_orphaned_blocks = extra_orphaned_blocks.saturating_add(1);
+        if block.confirmed {
+            confirmed_blocks_to_reclassify = confirmed_blocks_to_reclassify.saturating_add(1);
+        }
+    }
+
+    Ok((
+        live_total_blocks.saturating_add(archived_total_blocks),
+        live_confirmed_blocks.saturating_sub(confirmed_blocks_to_reclassify),
+        live_orphaned_blocks
+            .saturating_add(archived_orphaned_blocks)
+            .saturating_add(extra_orphaned_blocks),
+    ))
+}
+
+fn flag_chain_mismatched_blocks(
+    node: &NodeClient,
+    daemon_chain_height: u64,
+    blocks: &mut [DbBlock],
+) {
+    for block in blocks {
+        if block.orphaned || block.height > daemon_chain_height {
+            continue;
+        }
+        match node.get_block_by_height_optional(block.height) {
+            Ok(Some(node_block)) if node_block.hash != block.hash => {
+                block.confirmed = false;
+                block.orphaned = true;
+            }
+            Ok(_) => {}
+            Err(err) => {
+                tracing::warn!(
+                    height = block.height,
+                    error = %err,
+                    "failed to compare pool block against daemon for public response"
+                );
+            }
+        }
+    }
+}
+
+fn flag_chain_mismatched_luck_rows(
+    node: &NodeClient,
+    daemon_chain_height: u64,
+    rows: &mut [LuckRoundResponse],
+) {
+    for row in rows {
+        if row.orphaned || row.block_height > daemon_chain_height {
+            continue;
+        }
+        match node.get_block_by_height_optional(row.block_height) {
+            Ok(Some(node_block)) if node_block.hash != row.block_hash => {
+                row.confirmed = false;
+                row.orphaned = true;
+            }
+            Ok(_) => {}
+            Err(err) => {
+                tracing::warn!(
+                    height = row.block_height,
+                    error = %err,
+                    "failed to compare luck row against daemon for public response"
+                );
+            }
+        }
+    }
 }
 
 fn luck_round_response_from_db(round: DbLuckRound) -> LuckRoundResponse {
@@ -6904,22 +7288,24 @@ async fn handle_luck_history(
 ) -> impl IntoResponse {
     let (limit, offset) = page_bounds(query.limit, query.offset);
     let store = Arc::clone(&state.store);
+    let node = Arc::clone(&state.node);
+    let daemon_chain_height = state.node.chain_height();
     let started_at = Instant::now();
 
     let (items, total) = match tokio::task::spawn_blocking(move || {
-        store.get_luck_rounds_page(limit as i64, offset as i64)
+        compute_chain_aware_luck_page(
+            store.as_ref(),
+            node.as_ref(),
+            daemon_chain_height,
+            limit,
+            offset,
+        )
     })
     .await
     {
         Ok(Ok((items, total))) => {
             record_api_operation_observation(&state, "luck_page_load", started_at.elapsed(), false);
-            (
-                items
-                    .into_iter()
-                    .map(luck_round_response_from_db)
-                    .collect::<Vec<_>>(),
-                total as usize,
-            )
+            (items, total)
         }
         Ok(Err(err)) => {
             record_api_operation_observation(&state, "luck_page_load", started_at.elapsed(), true);
@@ -7604,6 +7990,7 @@ impl ApiState {
     async fn admin_balance_overview(&self) -> anyhow::Result<AdminBalanceOverviewResponse> {
         let store = Arc::clone(&self.store);
         let node = Arc::clone(&self.node);
+        let fee_address = self.config.pool_wallet_address.trim().to_string();
         tokio::task::spawn_blocking(move || {
             let generated_at = SystemTime::now();
             let wallet_balance = node.get_wallet_balance()?;
@@ -7626,23 +8013,82 @@ impl ApiState {
                 summarize_admin_balance_outputs(&wallet_outputs.outputs, &matched_payout_tx_hashes);
 
             let balances = store.get_all_balances()?;
+            let source_by_address = store
+                .list_balance_source_summaries()?
+                .into_iter()
+                .map(|source| (source.address.clone(), source))
+                .collect::<HashMap<_, BalanceSourceSummary>>();
             let pending_payouts = store.get_pending_payouts()?;
+            let is_pool_fee_balance =
+                |address: &str| !fee_address.is_empty() && address.trim() == fee_address;
+            let pool_fee_paid_total = balances
+                .iter()
+                .filter(|balance| is_pool_fee_balance(&balance.address))
+                .fold(0u64, |acc, balance| acc.saturating_add(balance.paid));
+            let pool_fee_unpaid_total = balances
+                .iter()
+                .filter(|balance| is_pool_fee_balance(&balance.address))
+                .fold(0u64, |acc, balance| acc.saturating_add(balance.pending));
             let miner_paid_total = balances
                 .iter()
+                .filter(|balance| !is_pool_fee_balance(&balance.address))
                 .fold(0u64, |acc, balance| acc.saturating_add(balance.paid));
             let miner_unpaid_total = balances
                 .iter()
+                .filter(|balance| !is_pool_fee_balance(&balance.address))
                 .fold(0u64, |acc, balance| acc.saturating_add(balance.pending));
             let unpaid_count = balances
                 .iter()
-                .filter(|balance| balance.pending > 0)
+                .filter(|balance| balance.pending > 0 && !is_pool_fee_balance(&balance.address))
                 .count();
+            let mut clean_unpaid_count = 0usize;
+            let mut clean_unpaid_amount = 0u64;
+            let mut orphan_backed_unpaid_amount = 0u64;
+            let mut balance_source_drift_amount = 0u64;
+            let mut pool_fee_clean_unpaid_amount = 0u64;
+            let mut pool_fee_orphan_backed_unpaid_amount = 0u64;
+            let mut pool_fee_balance_source_drift_amount = 0u64;
+            for source in source_by_address.values() {
+                if is_pool_fee_balance(&source.address) {
+                    pool_fee_clean_unpaid_amount =
+                        pool_fee_clean_unpaid_amount.saturating_add(source.canonical_pending);
+                    pool_fee_orphan_backed_unpaid_amount =
+                        pool_fee_orphan_backed_unpaid_amount.saturating_add(source.orphan_pending);
+                } else {
+                    if source.canonical_pending > 0 {
+                        clean_unpaid_count = clean_unpaid_count.saturating_add(1);
+                    }
+                    clean_unpaid_amount =
+                        clean_unpaid_amount.saturating_add(source.canonical_pending);
+                    orphan_backed_unpaid_amount =
+                        orphan_backed_unpaid_amount.saturating_add(source.orphan_pending);
+                }
+            }
+            for balance in &balances {
+                let source = source_by_address
+                    .get(&balance.address)
+                    .cloned()
+                    .unwrap_or_default();
+                let source_total = source
+                    .canonical_pending
+                    .saturating_add(source.orphan_pending);
+                let balance_above_sources = balance.pending.saturating_sub(source_total);
+                if is_pool_fee_balance(&balance.address) {
+                    pool_fee_balance_source_drift_amount =
+                        pool_fee_balance_source_drift_amount.saturating_add(balance_above_sources);
+                } else {
+                    balance_source_drift_amount =
+                        balance_source_drift_amount.saturating_add(balance_above_sources);
+                }
+            }
             let queued_amount = pending_payouts
                 .iter()
                 .fold(0u64, |acc, payout| acc.saturating_add(payout.amount));
             let net_block_reward_total = store.get_total_confirmed_block_rewards()?;
             let pool_fee_total = store.get_total_pool_fees()?;
             let miner_total_credited = miner_paid_total.saturating_add(miner_unpaid_total);
+            let canonical_miner_reward_total =
+                net_block_reward_total.saturating_sub(pool_fee_total);
             let spendable_minus_queued =
                 signed_amount_delta(wallet_balance.spendable, queued_amount);
 
@@ -7658,6 +8104,14 @@ impl ApiState {
                 payouts: AdminBalanceOverviewPayouts {
                     unpaid_count,
                     unpaid_amount: miner_unpaid_total,
+                    clean_unpaid_count,
+                    clean_unpaid_amount,
+                    orphan_backed_unpaid_amount,
+                    balance_source_drift_amount,
+                    pool_fee_unpaid_amount: pool_fee_unpaid_total,
+                    pool_fee_clean_unpaid_amount,
+                    pool_fee_orphan_backed_unpaid_amount,
+                    pool_fee_balance_source_drift_amount,
                     queued_count: pending_payouts.len(),
                     queued_amount,
                 },
@@ -7666,9 +8120,19 @@ impl ApiState {
                     miner_paid_total,
                     miner_unpaid_total,
                     miner_total_credited,
+                    miner_clean_unpaid_total: clean_unpaid_amount,
+                    miner_orphan_backed_unpaid_total: orphan_backed_unpaid_amount,
+                    miner_balance_source_drift_total: balance_source_drift_amount,
                     net_block_reward_total,
                     pool_fee_total,
-                    miner_rewards_balanced: miner_total_credited == net_block_reward_total,
+                    pool_fee_paid_total,
+                    pool_fee_unpaid_total,
+                    pool_fee_clean_unpaid_total: pool_fee_clean_unpaid_amount,
+                    pool_fee_orphan_backed_unpaid_total: pool_fee_orphan_backed_unpaid_amount,
+                    pool_fee_balance_source_drift_total: pool_fee_balance_source_drift_amount,
+                    pool_fee_balance_total: pool_fee_paid_total
+                        .saturating_add(pool_fee_unpaid_total),
+                    miner_rewards_balanced: miner_total_credited == canonical_miner_reward_total,
                 },
                 liquidity: AdminBalanceOverviewLiquidity {
                     spendable_minus_queued,
@@ -7678,6 +8142,143 @@ impl ApiState {
         })
         .await
         .map_err(|err| anyhow::anyhow!("join error: {err}"))?
+    }
+
+    async fn admin_reconciliation_issues(
+        &self,
+    ) -> anyhow::Result<AdminReconciliationIssuesResponse> {
+        let store = Arc::clone(&self.store);
+        let (orphaned_blocks, payout_rows) = tokio::task::spawn_blocking(move || {
+            Ok::<_, anyhow::Error>((
+                store.list_orphaned_block_credit_issues()?,
+                store.list_unreconciled_completed_payout_rows()?,
+            ))
+        })
+        .await
+        .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+
+        let mut grouped = HashMap::<String, Vec<UnreconciledCompletedPayoutRow>>::new();
+        for row in payout_rows {
+            grouped.entry(row.tx_hash.clone()).or_default().push(row);
+        }
+
+        let mut tx_rows = grouped.into_iter().collect::<Vec<_>>();
+        tx_rows.sort_by(|(_, a), (_, b)| {
+            let a_latest = a
+                .iter()
+                .map(|row| row.timestamp)
+                .max()
+                .unwrap_or(UNIX_EPOCH);
+            let b_latest = b
+                .iter()
+                .map(|row| row.timestamp)
+                .max()
+                .unwrap_or(UNIX_EPOCH);
+            b_latest.cmp(&a_latest)
+        });
+
+        let mut missing_payouts = Vec::<AdminMissingCompletedPayoutIssueResponse>::new();
+        for (tx_hash, rows) in tx_rows {
+            let status = self.node.get_tx_status_optional(&tx_hash)?;
+            if status.is_some() {
+                continue;
+            }
+
+            let mut addresses = rows
+                .iter()
+                .map(|row| row.address.clone())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            addresses.sort();
+
+            let total_amount = rows
+                .iter()
+                .fold(0u64, |acc, row| acc.saturating_add(row.amount));
+            let total_fee = rows
+                .iter()
+                .fold(0u64, |acc, row| acc.saturating_add(row.fee));
+            let linked_amount = rows
+                .iter()
+                .fold(0u64, |acc, row| acc.saturating_add(row.linked_amount));
+            let orphaned_linked_amount = rows.iter().fold(0u64, |acc, row| {
+                acc.saturating_add(row.orphaned_linked_amount)
+            });
+            let latest_timestamp = rows
+                .iter()
+                .map(|row| row.timestamp)
+                .max()
+                .unwrap_or(UNIX_EPOCH);
+
+            missing_payouts.push(AdminMissingCompletedPayoutIssueResponse {
+                tx_hash,
+                payout_row_count: rows.len(),
+                total_amount,
+                total_fee,
+                latest_timestamp,
+                addresses,
+                linked_amount,
+                live_linked_amount: linked_amount.saturating_sub(orphaned_linked_amount),
+                orphaned_linked_amount,
+                unlinked_amount: total_amount.saturating_sub(linked_amount),
+            });
+        }
+
+        let orphaned_block_total_credit_amount = orphaned_blocks.iter().fold(0u64, |acc, issue| {
+            acc.saturating_add(issue.remaining_credit_amount)
+                .saturating_add(issue.remaining_fee_amount)
+        });
+        let orphaned_blocks = orphaned_blocks
+            .into_iter()
+            .map(map_orphaned_block_issue)
+            .collect::<Vec<_>>();
+        let missing_payout_total_amount = missing_payouts
+            .iter()
+            .fold(0u64, |acc, issue| acc.saturating_add(issue.total_amount));
+
+        Ok(AdminReconciliationIssuesResponse {
+            generated_at: SystemTime::now(),
+            summary: AdminReconciliationIssuesSummary {
+                total_open_issues: missing_payouts.len().saturating_add(orphaned_blocks.len()),
+                missing_payout_issue_count: missing_payouts.len(),
+                missing_payout_total_amount,
+                orphaned_block_issue_count: orphaned_blocks.len(),
+                orphaned_block_total_credit_amount,
+            },
+            missing_payouts,
+            orphaned_blocks,
+        })
+    }
+
+    async fn resolve_missing_completed_payout_issue(
+        &self,
+        tx_hash: &str,
+        action: AdminReconciliationPayoutResolutionAction,
+    ) -> anyhow::Result<AdminReconciliationPayoutResolutionResponse> {
+        if self.node.get_tx_status_optional(tx_hash)?.is_some() {
+            return Err(anyhow::anyhow!(
+                "tx {} still exists on the current daemon chain",
+                tx_hash
+            ));
+        }
+
+        let store = Arc::clone(&self.store);
+        let tx_hash_owned = tx_hash.to_string();
+        let result = tokio::task::spawn_blocking(move || {
+            store.resolve_completed_payout_tx_override(&tx_hash_owned, action.into_store_kind())
+        })
+        .await
+        .map_err(|err| anyhow::anyhow!("join error: {err}"))??;
+
+        self.clear_miner_response_caches();
+
+        Ok(AdminReconciliationPayoutResolutionResponse {
+            tx_hash: tx_hash.to_string(),
+            action: action.as_str(),
+            reverted_payout_rows: result.reverted_payout_rows,
+            restored_pending_amount: result.restored_pending_amount,
+            dropped_amount: result.dropped_orphaned_amount,
+        })
     }
 
     async fn admin_share_diagnostics(&self) -> anyhow::Result<AdminShareDiagnosticsResponse> {
@@ -7700,6 +8301,11 @@ impl ApiState {
             job,
             pool_activity,
         })
+    }
+
+    fn clear_miner_response_caches(&self) {
+        self.miner_balance_response_cache.lock().entries.clear();
+        self.miner_detail_response_cache.lock().entries.clear();
     }
 
     async fn cached_pending_estimate_for_miner(
@@ -8225,16 +8831,20 @@ impl ApiState {
             .as_ref()
             .map(|job| job.network_difficulty.max(1));
         let network_hashrate = self.network_hashrate_for_job(current_job.as_ref()).await;
+        let daemon_chain_height = self.node.chain_height();
 
         let store = Arc::clone(&self.store);
+        let node = Arc::clone(&self.node);
         let now = SystemTime::now();
         let (pool_hashrate, round_start, round_work, mut payout_eta, luck_history, avg_effort_pct) =
             tokio::task::spawn_blocking(move || {
                 let pool_hashrate = db_pool_hashrate(&store);
 
-                let blocks = store.get_recent_blocks(64)?;
+                let mut blocks = store.get_recent_blocks_up_to(64, daemon_chain_height)?;
+                flag_chain_mismatched_blocks(node.as_ref(), daemon_chain_height, &mut blocks);
                 let round_start = blocks
                     .iter()
+                    .filter(|block| !block.orphaned)
                     .max_by(|a, b| a.timestamp.cmp(&b.timestamp))
                     .map(|b| b.timestamp)
                     .or_else(|| now.checked_sub(Duration::from_secs(3600)));
@@ -8248,12 +8858,15 @@ impl ApiState {
                 };
 
                 let payout_eta = compute_payout_eta(&store)?;
-                let luck_history = store
-                    .get_recent_luck_rounds(16)?
-                    .into_iter()
-                    .map(luck_round_response_from_db)
-                    .collect::<Vec<_>>();
-                let avg_effort_pct = store.avg_effort_pct().unwrap_or(None);
+                let luck_history = compute_chain_aware_luck_page(
+                    store.as_ref(),
+                    node.as_ref(),
+                    daemon_chain_height,
+                    16,
+                    0,
+                )?
+                .0;
+                let avg_effort_pct = store.avg_effort_pct_up_to(daemon_chain_height)?;
 
                 Ok::<_, anyhow::Error>((
                     pool_hashrate,
@@ -8567,11 +9180,13 @@ impl ApiState {
     }
 
     async fn db_totals(&self) -> anyhow::Result<DbTotals> {
+        let chain_height = self.node.chain_height();
         {
             let cache = self.db_totals_cache.lock();
             if cache
                 .updated_at
                 .is_some_and(|updated| updated.elapsed() < DB_TOTALS_CACHE_TTL)
+                && cache.chain_height == Some(chain_height)
             {
                 return Ok(cache.totals);
             }
@@ -8581,6 +9196,7 @@ impl ApiState {
         let total_shares_store = Arc::clone(&self.store);
         let rejected_shares_store = Arc::clone(&self.store);
         let block_totals_store = Arc::clone(&self.store);
+        let block_totals_node = Arc::clone(&self.node);
         let pool_fees_store = Arc::clone(&self.store);
         let paid_to_miners_store = Arc::clone(&self.store);
         let total_shares_task =
@@ -8589,13 +9205,11 @@ impl ApiState {
             tokio::task::spawn_blocking(move || rejected_shares_store.total_rejected_share_count());
         let block_totals_task =
             tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, u64, u64)> {
-                let (confirmed_blocks, orphaned_blocks, _pending_blocks) =
-                    block_totals_store.get_block_status_counts()?;
-                Ok((
-                    block_totals_store.get_block_count()?,
-                    confirmed_blocks,
-                    orphaned_blocks,
-                ))
+                compute_chain_aware_block_totals(
+                    block_totals_store.as_ref(),
+                    block_totals_node.as_ref(),
+                    chain_height,
+                )
             });
         let pool_fees_task =
             tokio::task::spawn_blocking(move || pool_fees_store.get_total_pool_fees());
@@ -8659,6 +9273,7 @@ impl ApiState {
 
         let mut cache = self.db_totals_cache.lock();
         cache.totals = totals;
+        cache.chain_height = Some(chain_height);
         cache.updated_at = Some(Instant::now());
         Ok(totals)
     }
@@ -8902,6 +9517,11 @@ fn api_performance_route_name(uri: &Uri) -> Option<&'static str> {
         "/api/admin/perf" => "admin_perf",
         "/api/admin/dev-fee" => "admin_dev_fee",
         "/api/admin/balance-overview" => "admin_balance_overview",
+        "/api/admin/reconciliation/issues" => "admin_reconciliation_issues",
+        "/api/admin/reconciliation/payouts/resolve" => "admin_reconciliation_payout_resolution",
+        "/api/admin/reconciliation/orphan-blocks/retry-cleanup" => {
+            "admin_orphaned_block_cleanup_retry"
+        }
         "/api/admin/shares" => "admin_share_diagnostics",
         _ if path.ends_with("/balance") && path.starts_with("/api/miner/") => {
             if query_includes_pending_estimate(uri) {
@@ -8930,6 +9550,9 @@ fn api_route_slow_threshold_millis(route: &str) -> u64 {
         "miner_detail_pending"
         | "admin_dev_fee"
         | "admin_balance_overview"
+        | "admin_reconciliation_issues"
+        | "admin_reconciliation_payout_resolution"
+        | "admin_orphaned_block_cleanup_retry"
         | "admin_share_diagnostics" => 500,
         _ => 250,
     }
@@ -9665,7 +10288,7 @@ mod tests {
         NetworkHashrateCache, OpenIncident, PayoutEtaResponse, PoolHealthCache, StatusHistory,
         StatusIncident, DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW,
         HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY,
-        STATUS_HISTORY_META_KEY,
+        STATUS_HISTORY_META_KEY, UI_ASSET_OG_IMAGE_PNG, UI_ASSET_OG_IMAGE_SVG,
     };
 
     const TEST_POSTGRES_URL_ENV: &str = "BLOCKNET_POOL_TEST_POSTGRES_URL";
@@ -13138,5 +13761,16 @@ mod tests {
         assert_eq!(payout_eta.wallet_pending, Some(65));
         assert_eq!(payout_eta.queue_shortfall_amount, 65);
         assert!(payout_eta.liquidity_constrained);
+    }
+
+    #[test]
+    fn og_image_png_asset_has_png_signature() {
+        assert_eq!(&UI_ASSET_OG_IMAGE_PNG[..8], b"\x89PNG\r\n\x1a\n");
+    }
+
+    #[test]
+    fn og_image_svg_asset_is_svg_document() {
+        assert!(UI_ASSET_OG_IMAGE_SVG.contains("<svg"));
+        assert!(UI_ASSET_OG_IMAGE_SVG.contains("bntpool.com"));
     }
 }
