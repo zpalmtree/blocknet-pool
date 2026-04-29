@@ -3193,6 +3193,9 @@ fn should_drop_pending_payout(err: &anyhow::Error) -> bool {
 fn is_wallet_send_retryable_error(err: &anyhow::Error) -> bool {
     http_error_body_contains(err, 429, "send busy, retry later")
         || http_error_body_contains(err, 429, "send rate limit exceeded")
+        || http_error_body_contains(err, 409, "key image already spent")
+        || http_error_body_contains(err, 409, "double-spend")
+        || http_error_body_contains(err, 400, "output already spent")
         || err
             .chain()
             .any(|cause| cause.downcast_ref::<reqwest::Error>().is_some())
@@ -4224,6 +4227,23 @@ mod tests {
             body: r#"{"error":"send rate limit exceeded"}"#.to_string(),
         });
         assert!(is_wallet_send_retryable_error(&rate_limited));
+    }
+
+    #[test]
+    fn wallet_double_spend_rejections_are_treated_as_retryable() {
+        let key_image = anyhow::anyhow!(HttpError {
+            path: "/api/wallet/send/advanced".to_string(),
+            status_code: 409,
+            body: r#"{"error":"mempool rejected: validation failed: input 0: key image already spent (double-spend)"}"#.to_string(),
+        });
+        assert!(is_wallet_send_retryable_error(&key_image));
+
+        let spent_output = anyhow::anyhow!(HttpError {
+            path: "/api/wallet/send/advanced".to_string(),
+            status_code: 400,
+            body: r#"{"error":"input 0: output already spent"}"#.to_string(),
+        });
+        assert!(is_wallet_send_retryable_error(&spent_output));
     }
 
     #[test]
