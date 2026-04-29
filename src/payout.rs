@@ -1691,6 +1691,29 @@ impl PayoutProcessor {
                             error = %err,
                             "wallet send failed permanently; dropped payout batch"
                         );
+                    } else if is_wallet_stale_input_error(&err) {
+                        if let Err(reset_err) = self
+                            .store
+                            .reset_pending_payout_batch_send_state(&plan.batch_id)
+                        {
+                            tracing::warn!(
+                                batch_id = %plan.batch_id,
+                                error = %reset_err,
+                                "wallet stale-input retry could not reset payout batch"
+                            );
+                        }
+                        remove_spent_outputs(&mut spendable_outputs, &plan.inputs);
+                        inventory =
+                            build_output_inventory(&spendable_outputs, min_amount, &recent_stats);
+                        tracing::info!(
+                            batch_id = %plan.batch_id,
+                            recipients = plan.recipients.len(),
+                            recipient_total = plan.recipient_total,
+                            rejected_inputs = plan.inputs.len(),
+                            error = %err,
+                            "wallet rejected stale payout inputs; retrying with alternate inputs"
+                        );
+                        continue;
                     } else if is_wallet_send_retryable_error(&err) {
                         if let Err(reset_err) = self
                             .store
@@ -3191,14 +3214,18 @@ fn should_drop_pending_payout(err: &anyhow::Error) -> bool {
 }
 
 fn is_wallet_send_retryable_error(err: &anyhow::Error) -> bool {
-    http_error_body_contains(err, 429, "send busy, retry later")
+    is_wallet_stale_input_error(err)
+        || http_error_body_contains(err, 429, "send busy, retry later")
         || http_error_body_contains(err, 429, "send rate limit exceeded")
-        || http_error_body_contains(err, 409, "key image already spent")
-        || http_error_body_contains(err, 409, "double-spend")
-        || http_error_body_contains(err, 400, "output already spent")
         || err
             .chain()
             .any(|cause| cause.downcast_ref::<reqwest::Error>().is_some())
+}
+
+fn is_wallet_stale_input_error(err: &anyhow::Error) -> bool {
+    http_error_body_contains(err, 409, "key image already spent")
+        || http_error_body_contains(err, 409, "double-spend")
+        || http_error_body_contains(err, 400, "output already spent")
 }
 
 fn is_wallet_liquidity_error(err: &anyhow::Error) -> bool {
