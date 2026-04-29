@@ -1,17 +1,25 @@
 import type {
   AdminBalanceItem,
+  AdminBalanceOverviewResponse,
+  AdminOrphanedBlockCleanupResponse,
   AdminPayoutItem,
+  AdminReconciliationIssuesResponse,
+  AdminReconciliationPayoutResolutionResponse,
+  AdminShareDiagnosticsResponse,
   BlockRewardBreakdownResponse,
   BlockItem,
+  ClearAddressRiskHistoryResponse,
   FeesResponse,
   HashratePoint,
   HealthResponse,
   InfoResponse,
   LuckRound,
+  MinerBalancePayload,
   MinerListItem,
   MinerResponse,
   PagedResponse,
   PayoutItem,
+  ReconciliationPayoutResolutionAction,
   RecoveryInstanceId,
   RecoveryOperation,
   RecoveryStatusResponse,
@@ -47,14 +55,24 @@ export interface ApiClient {
   getStatus(): Promise<StatusResponse>;
   getBlocks(params: QueryParams): Promise<PagedResponse<BlockItem>>;
   getRecentPayouts(params: QueryParams): Promise<PagedResponse<PayoutItem>>;
-  getMiner(address: string): Promise<MinerResponse>;
+  getMiner(address: string, includePendingEstimate?: boolean, shareLimit?: number): Promise<MinerResponse>;
+  getMinerBalance(address: string, includePendingEstimate?: boolean): Promise<MinerBalancePayload>;
   getMinerHashrate(address: string, range: string): Promise<HashratePoint[]>;
   getMiners(params: QueryParams): Promise<PagedResponse<MinerListItem>>;
   getAdminPayouts(params: QueryParams): Promise<PagedResponse<AdminPayoutItem>>;
   getFees(params: QueryParams): Promise<FeesResponse>;
   getAdminBlockRewardBreakdown(height: number): Promise<BlockRewardBreakdownResponse>;
   getHealth(): Promise<HealthResponse>;
+  getAdminBalanceOverview(): Promise<AdminBalanceOverviewResponse>;
+  getAdminShareDiagnostics(): Promise<AdminShareDiagnosticsResponse>;
   getAdminBalances(params: QueryParams): Promise<PagedResponse<AdminBalanceItem>>;
+  getAdminReconciliationIssues(): Promise<AdminReconciliationIssuesResponse>;
+  resolveAdminReconciliationPayout(
+    txHash: string,
+    action: ReconciliationPayoutResolutionAction
+  ): Promise<AdminReconciliationPayoutResolutionResponse>;
+  retryAdminOrphanedBlockCleanup(blockHeight: number): Promise<AdminOrphanedBlockCleanupResponse>;
+  clearAddressRiskHistory(address: string): Promise<ClearAddressRiskHistoryResponse>;
   getRecoveryStatus(): Promise<RecoveryStatusResponse>;
   pauseRecoveryPayouts(): Promise<RecoveryOperation>;
   resumeRecoveryPayouts(): Promise<RecoveryOperation>;
@@ -130,7 +148,17 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
     getStatus: () => fetchJson<StatusResponse>('/api/status'),
     getBlocks: (params) => fetchJson<PagedResponse<BlockItem>>(withQuery('/api/blocks', params)),
     getRecentPayouts: (params) => fetchJson<PagedResponse<PayoutItem>>(withQuery('/api/payouts/recent', params)),
-    getMiner: (address) => fetchJson<MinerResponse>(`/api/miner/${encodeURIComponent(address)}`),
+    getMiner: (address, includePendingEstimate = true, shareLimit) =>
+      fetchJson<MinerResponse>(
+        withQuery(`/api/miner/${encodeURIComponent(address)}`, {
+          include_pending_estimate: includePendingEstimate ? 'true' : 'false',
+          share_limit: shareLimit,
+        })
+      ),
+    getMinerBalance: (address, includePendingEstimate = true) =>
+      fetchJson<MinerBalancePayload>(
+        `/api/miner/${encodeURIComponent(address)}/balance?include_pending_estimate=${includePendingEstimate ? 'true' : 'false'}`
+      ),
     getMinerHashrate: (address, range) =>
       fetchJson<HashratePoint[]>(`/api/miner/${encodeURIComponent(address)}/hashrate?range=${encodeURIComponent(range)}`),
     getMiners: (params) => fetchJson<PagedResponse<MinerListItem>>(withQuery('/api/miners', params), { auth: true }),
@@ -143,8 +171,41 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
         auth: true,
       }),
     getHealth: () => fetchJson<HealthResponse>('/api/health', { auth: true }),
+    getAdminBalanceOverview: () =>
+      fetchJson<AdminBalanceOverviewResponse>('/api/admin/balance-overview', { auth: true }),
+    getAdminReconciliationIssues: () =>
+      fetchJson<AdminReconciliationIssuesResponse>('/api/admin/reconciliation/issues', { auth: true }),
+    getAdminShareDiagnostics: () =>
+      fetchJson<AdminShareDiagnosticsResponse>('/api/admin/shares', { auth: true }),
     getAdminBalances: (params: QueryParams) =>
       fetchJson<PagedResponse<AdminBalanceItem>>(withQuery('/api/admin/balances', params), { auth: true }),
+    resolveAdminReconciliationPayout: (txHash, action) =>
+      fetchJson<AdminReconciliationPayoutResolutionResponse>('/api/admin/reconciliation/payouts/resolve', {
+        auth: true,
+        method: 'POST',
+        body: JSON.stringify({ tx_hash: txHash, action }),
+        headers: {
+          'content-type': 'application/json',
+        },
+      }),
+    retryAdminOrphanedBlockCleanup: (blockHeight) =>
+      fetchJson<AdminOrphanedBlockCleanupResponse>('/api/admin/reconciliation/orphan-blocks/retry-cleanup', {
+        auth: true,
+        method: 'POST',
+        body: JSON.stringify({ block_height: blockHeight }),
+        headers: {
+          'content-type': 'application/json',
+        },
+      }),
+    clearAddressRiskHistory: (address: string) =>
+      fetchJson<ClearAddressRiskHistoryResponse>('/api/admin/addresses/clear-risk-history', {
+        auth: true,
+        method: 'POST',
+        body: JSON.stringify({ address }),
+        headers: {
+          'content-type': 'application/json',
+        },
+      }),
     getRecoveryStatus: () => fetchJson<RecoveryStatusResponse>('/api/admin/recovery/status', { auth: true }),
     pauseRecoveryPayouts: () =>
       fetchJson<RecoveryOperation>('/api/admin/recovery/payouts/pause', { auth: true, method: 'POST' }),

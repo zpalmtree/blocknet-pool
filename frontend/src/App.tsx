@@ -53,6 +53,15 @@ function MoonIcon() {
   );
 }
 
+function LockIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  );
+}
+
 export function App() {
   const [route, setRoute] = useState<Route>(() => routeFromLocation());
   const [errorMsg, setErrorMsg] = useState('');
@@ -62,6 +71,7 @@ export function App() {
   const [liveTick, setLiveTick] = useState(0);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [theme, setTheme] = useState<ThemeMode>(() => getStoredTheme());
+  const [showNavKeyInput, setShowNavKeyInput] = useState(false);
 
   const showError = useCallback((msg: string) => {
     if (!msg) return;
@@ -208,7 +218,6 @@ export function App() {
         apiKeyInput={apiKeyInput}
         setApiKeyInput={setApiKeyInput}
         onSaveApiKey={onSaveApiKey}
-        onClearApiKey={onClearApiKey}
         onJumpToStats={onJumpToStats}
       />
     );
@@ -297,6 +306,59 @@ export function App() {
           </a>
         </div>
         <div className="nav-actions">
+          {route === 'admin' && apiKey ? (
+            showNavKeyInput ? (
+              <div className="nav-key-input">
+                <input
+                  type="password"
+                  placeholder="API key"
+                  value={apiKeyInput}
+                  onChange={(e) => setApiKeyInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      onSaveApiKey();
+                      setShowNavKeyInput(false);
+                    }
+                    if (e.key === 'Escape') setShowNavKeyInput(false);
+                  }}
+                  autoFocus
+                />
+                <button
+                  className="btn btn-primary btn-xs"
+                  onClick={() => {
+                    onSaveApiKey();
+                    setShowNavKeyInput(false);
+                  }}
+                >
+                  Save
+                </button>
+                <button
+                  className="btn btn-secondary btn-xs"
+                  onClick={() => {
+                    onClearApiKey();
+                    setShowNavKeyInput(false);
+                  }}
+                >
+                  Clear
+                </button>
+                <button
+                  className="btn btn-secondary btn-xs"
+                  onClick={() => setShowNavKeyInput(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="nav-key-badge"
+                onClick={() => setShowNavKeyInput(true)}
+                title="Change API key"
+              >
+                <LockIcon />
+              </button>
+            )
+          ) : null}
           <button
             type="button"
             className="theme-toggle"

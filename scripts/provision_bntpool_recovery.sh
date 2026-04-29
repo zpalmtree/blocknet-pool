@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Provision the repeatable daemon recovery topology on bntpool.
+Provision the repeatable daemon recovery topology on the current primary pool host.
 
 Usage:
   scripts/provision_bntpool_recovery.sh
@@ -13,6 +13,7 @@ Environment overrides:
   BNTPOOL_REMOTE_DIR          Remote pool directory (default: /opt/blocknet/blocknet-pool)
   BNTPOOL_POOL_CONFIG         Pool config path on host (default: /etc/blocknet/pool/config.json)
   BNTPOOL_RECOVERY_DIR        Recovery config dir on host (default: /etc/blocknet/recovery)
+  BNTPOOL_ALLOW_RETIRED_HOST  Set to 1 to allow explicit provisioning on oldpool / 5.161.113.120
 EOF
 }
 
@@ -25,6 +26,16 @@ host="${BNTPOOL_HOST:-bntpool}"
 remote_dir="${BNTPOOL_REMOTE_DIR:-/opt/blocknet/blocknet-pool}"
 pool_config="${BNTPOOL_POOL_CONFIG:-/etc/blocknet/pool/config.json}"
 recovery_dir="${BNTPOOL_RECOVERY_DIR:-/etc/blocknet/recovery}"
+allow_retired_host="${BNTPOOL_ALLOW_RETIRED_HOST:-0}"
+
+case "${host}" in
+  oldpool|*5.161.113.120*)
+    if [[ "${allow_retired_host}" != "1" ]]; then
+      echo "refusing to target retired host '${host}'; use bntpool for the primary host or set BNTPOOL_ALLOW_RETIRED_HOST=1 to override" >&2
+      exit 1
+    fi
+    ;;
+esac
 
 remote_nginx_conf="/etc/nginx/conf.d/blocknet-daemon-proxy.conf"
 remote_nginx_active="/etc/nginx/blocknet-daemon-active-upstream.inc"

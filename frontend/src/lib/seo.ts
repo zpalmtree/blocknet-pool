@@ -5,7 +5,7 @@ import type { InfoResponse, Route } from '../types';
 
 const DEFAULT_POOL_NAME = 'Blocknet Pool';
 const DEFAULT_BASE_URL = 'https://bntpool.com';
-const OG_IMAGE_PATH = '/og-image.svg';
+const OG_IMAGE_PATH = '/og-image.png';
 const INDEXABLE_ROBOTS = 'index,follow,max-image-preview:large';
 const PRIVATE_ROBOTS = 'noindex,nofollow,noarchive';
 
@@ -365,7 +365,7 @@ export function applyDocumentSeo(route: Route, poolInfo: InfoResponse | null, th
   });
   ensureMeta('meta[property="og:image:type"]', {
     property: 'og:image:type',
-    content: 'image/svg+xml',
+    content: 'image/png',
   });
   ensureMeta('meta[property="og:image:width"]', {
     property: 'og:image:width',

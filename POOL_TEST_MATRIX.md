@@ -5,9 +5,9 @@
 Run from `/media/Code/blocknet`.
 
 ```bash
-# daemon patch branch
-git -C blocknet rev-parse --abbrev-ref HEAD
-git -C blocknet log --oneline -1
+# daemon branch for pool integrations
+git -C blocknet-core rev-parse --abbrev-ref HEAD
+git -C blocknet-core log --oneline -1
 
 # pool + miner local changes/build sanity
 cargo test --manifest-path blocknet-pool/Cargo.toml
@@ -15,7 +15,7 @@ cargo test --no-run --manifest-path seine/Cargo.toml
 ```
 
 Expected:
-- daemon branch is `mining-template-speed-patch` (or equivalent patched branch)
+- daemon branch is `pool`
 - `blocknet-pool` tests pass
 - `seine` compiles/tests build
 
@@ -141,34 +141,42 @@ Fail:
 
 ---
 
-## 3) Fraud Escalation + Persistent Quarantine
+## 3) Forced Review + Quarantine Backoff
 
-Goal: force full verification and trigger mismatch fraud path, then confirm persistence.
+Goal: confirm repeated bad shares first enter forced validation, and only quarantine after the forced-review window stays bad.
 
 ### Set
 
 ```json
 {
-  "validation_mode": "full",
-  "stratum_submit_v2_required": true,
+  "validation_mode": "probabilistic",
+  "sample_rate": 0.0,
+  "invalid_sample_threshold": 0.1,
+  "invalid_sample_min": 5,
+  "invalid_sample_count_threshold": 2,
+  "forced_validation_quarantine_threshold": 0.2,
   "quarantine_duration": "5m",
   "max_quarantine_duration": "30m",
-  "forced_verify_duration": "10m"
+  "forced_verify_duration": "10m",
+  "invalid_escalation_quarantine_strikes": 1
 }
 ```
 
 ### Trigger
 
-- Use a test client/miner to submit valid `job_id` + nonce with intentionally wrong `claimed_hash`.
+- Submit enough bad fully verified shares to cross the normal invalid threshold.
+- Keep submitting bad shares through the forced-review window until the bad ratio remains above the quarantine threshold.
 
 Pass:
 - Pool logs include `invalid share proof`.
-- Pool logs include `risk escalation for ...` and quarantined/force-verify timestamps.
+- Address enters verified-only/forced-validation mode before quarantine.
+- Pool logs include quarantine timestamps only after the forced-review window fails.
 - Re-login from same address returns `address quarantined`.
 - Restart pool, repeat login check: still `address quarantined` (persistence confirmed).
 
 Fail:
-- No escalation after repeated proof mismatches.
+- Address jumps straight from occasional invalid shares into quarantine.
+- No escalation after sustained bad-share ratio during forced review.
 - Quarantine disappears after pool restart.
 
 ---
@@ -280,7 +288,7 @@ Mark green only if all are true:
 
 - Baseline E2E stable for >= 30 min.
 - v2 requirement gate behaves exactly as configured.
-- Fraud escalation + quarantine persists across restart.
+- Forced review and quarantine backoff persist across restart.
 - Saturation test shows controlled backpressure, no crash.
 - Compact submit API path validated.
 - Provisional metrics behave as expected over time window.

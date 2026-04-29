@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Deploy blocknet-pool to the bntpool server.
+Deploy blocknet-pool to the current primary pool host.
 
 Usage:
   scripts/deploy_bntpool.sh [--skip-build] [--skip-ui-build] [--api-only] [--migrate-split] [--provision-monitoring] [--provision-recovery] [--deploy-cloudflare] [--monitor-only]
@@ -17,6 +17,7 @@ Environment overrides:
   BNTPOOL_RECOVERY_SERVICE Systemd recovery service name (default: blocknet-pool-recoveryd.service)
   BNTPOOL_RECOVERY_SOCKET  Systemd recovery socket name (default: blocknet-pool-recoveryd.socket)
   BNTPOOL_LEGACY_SERVICE   Legacy combined service to disable on split migration (default: blocknet-pool.service)
+  BNTPOOL_ALLOW_RETIRED_HOST  Set to 1 to allow explicit deploys to oldpool / 5.161.113.120
   BNTPOOL_FORCE_RESTART    Set to 1 to force a restart even when binary hashes are unchanged
   BNTPOOL_LOCAL_BUILD_IMAGE  Optional Docker image used for local builds
 EOF
@@ -94,6 +95,7 @@ monitor_service="${BNTPOOL_MONITOR_SERVICE:-blocknet-pool-monitor.service}"
 recovery_service="${BNTPOOL_RECOVERY_SERVICE:-blocknet-pool-recoveryd.service}"
 recovery_socket="${BNTPOOL_RECOVERY_SOCKET:-blocknet-pool-recoveryd.socket}"
 legacy_service="${BNTPOOL_LEGACY_SERVICE:-blocknet-pool.service}"
+allow_retired_host="${BNTPOOL_ALLOW_RETIRED_HOST:-0}"
 force_restart="${BNTPOOL_FORCE_RESTART:-0}"
 local_build_image="${BNTPOOL_LOCAL_BUILD_IMAGE:-}"
 remote_api_bin="${remote_dir}/target/release/blocknet-pool-api"
@@ -111,6 +113,41 @@ local_api_bin="${repo_dir}/target/release/blocknet-pool-api"
 local_stratum_bin="${repo_dir}/target/release/blocknet-pool-stratum"
 local_monitor_bin="${repo_dir}/target/release/blocknet-pool-monitor"
 local_recovery_bin="${repo_dir}/target/release/blocknet-pool-recoveryd"
+source_rsync_args=(
+  -rltzE
+  --delete
+  --omit-dir-times
+  --no-owner
+  --no-group
+)
+binary_rsync_args=(
+  -rtz
+  --omit-dir-times
+  --no-owner
+  --no-group
+  --chmod=F755
+)
+
+guard_retired_host() {
+  case "$1" in
+    oldpool|*5.161.113.120*)
+      if [[ "${allow_retired_host}" != "1" ]]; then
+        echo "refusing to target retired host '$1'; use bntpool for the primary host or set BNTPOOL_ALLOW_RETIRED_HOST=1 to override" >&2
+        exit 1
+      fi
+      ;;
+  esac
+}
+
+ensure_remote_write_access() {
+  if ! ssh "${host}" "set -euo pipefail; mkdir -p '${remote_dir}' '${remote_dir}/target/release'; test -w '${remote_dir}' && test -w '${remote_dir}/target/release'"; then
+    echo "remote deploy user cannot write to ${remote_dir} on ${host}; fix the host alias or primary-host permissions before deploying" >&2
+    exit 1
+  fi
+}
+
+guard_retired_host "${host}"
+ensure_remote_write_access
 
 deploy_api=1
 deploy_stratum=1
@@ -191,7 +228,7 @@ if [[ "${deploy_api}" == "1" && "${skip_ui_build}" -eq 0 ]]; then
 fi
 
 echo "==> syncing source to ${host}:${remote_dir}"
-rsync -az --delete \
+rsync "${source_rsync_args[@]}" \
   --exclude='.git' \
   --exclude='target' \
   --exclude='frontend/node_modules' \
@@ -226,7 +263,7 @@ if [[ "${skip_build}" -eq 0 ]]; then
   build_locally
   echo "==> uploading locally built binaries to ${host}"
   ssh "${host}" "set -euo pipefail; mkdir -p '${remote_dir}/target/release'"
-  rsync_args=( -az )
+  rsync_args=( "${binary_rsync_args[@]}" )
   if [[ "${deploy_api}" == "1" ]]; then
     rsync_args+=( "${local_api_bin}" )
   fi

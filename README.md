@@ -75,7 +75,10 @@ That script installs Prometheus, Alertmanager, node exporter, blackbox exporter,
 
 When you need a fresh `blocknet-core` daemon binary for the pool host, build it
 locally from this repo using the sibling daemon checkout instead of compiling on
-`bntpool`.
+`bntpool`. The build and deploy scripts source the daemon `pool` branch from the
+sibling `../blocknet-core` repo through a temporary git worktree, so they do
+not require switching your current local checkout first. If that branch/ref is
+missing or stale locally, fetch it before building.
 
 From `blocknet-pool/`:
 
@@ -100,8 +103,12 @@ verification:
 ```
 
 By default the build script reads source from `../blocknet-core`, derives the required Go
-version from that repo's `go.mod`, builds through the daemon repo's Dockerfile,
-and uploads to `/opt/blocknet/blocknet-core/blocknet.new`.
+version from that repo's `go.mod`, resolves branch `pool` from the daemon repo,
+builds through the daemon repo's Dockerfile, writes local artifact metadata next
+to the binary, and uploads to `/opt/blocknet/blocknet-core/blocknet.new`. The
+full deploy script names releases with the branch prefix, for example
+`pool-<sha>`, and records `build-info.txt` in each release directory on the
+server.
 
 ## Local Development
 

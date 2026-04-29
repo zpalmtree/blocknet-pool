@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">bntpool.com</title>
+  <desc id="desc">Blocknet mining pool social card with fee and payout details</desc>
+  <defs>
+    <linearGradient id="bg-grad" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#071114"/>
+      <stop offset="100%" stop-color="#102a1a"/>
+    </linearGradient>
+    <linearGradient id="panel-grad" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#57d78c"/>
+      <stop offset="100%" stop-color="#16a34a"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg-grad)"/>
+  <circle cx="1080" cy="120" r="180" fill="#57d78c" opacity="0.08"/>
+  <circle cx="180" cy="560" r="220" fill="#f7b44b" opacity="0.08"/>
+  <rect x="72" y="72" width="1056" height="486" rx="36" fill="#0d181d" stroke="#1f3121" stroke-width="2"/>
+  <rect x="96" y="96" width="84" height="84" rx="24" fill="url(#panel-grad)"/>
+  <rect x="118" y="118" width="40" height="40" rx="10" fill="#f6f8f2" opacity="0.96"/>
+  <rect x="130" y="130" width="16" height="16" rx="4" fill="#071114"/>
+  <text x="214" y="128" fill="#57d78c" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700">Blocknet Mining Pool</text>
+  <text x="96" y="214" fill="#9cb0a8" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700">Mine Blocknet with transparent blocks, payouts, and status pages</text>
+  <text x="96" y="284" fill="#ecf5f0" font-family="Arial, Helvetica, sans-serif" font-size="70" font-weight="700">bntpool.com</text>
+  <text x="96" y="344" fill="#9cb0a8" font-family="Arial, Helvetica, sans-serif" font-size="30">Live hashrate, explorer-backed payouts, and a public onboarding guide</text>
+  <rect x="96" y="386" width="560" height="68" rx="24" fill="#132129" stroke="#1f3121" stroke-width="2"/>
+  <text x="128" y="428" fill="#57d78c" font-family="Courier New, Courier, monospace" font-size="26">stratum+tcp://bntpool.com:3333</text>
+  <rect x="96" y="486" width="204" height="42" rx="21" fill="#57d78c" opacity="0.12"/>
+  <text x="128" y="513" fill="#81dfaf" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700">2.5% fee</text>
+  <rect x="322" y="486" width="194" height="42" rx="21" fill="#f7b44b" opacity="0.12"/>
+  <text x="352" y="513" fill="#f7b44b" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700">PPLNS payouts</text>
+  <rect x="538" y="486" width="230" height="42" rx="21" fill="#57d78c" opacity="0.12"/>
+  <text x="568" y="513" fill="#81dfaf" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700">Min payout 0.1 BNT</text>
+</svg>

@@ -30,12 +30,37 @@ pub struct Config {
     pub validation_mode: String,
     pub max_verifiers: i32,
     pub max_validation_queue: i32,
+    pub candidate_submit_queue: i32,
+    pub regular_submit_queue: i32,
+    pub candidate_submit_workers: i32,
+    pub regular_submit_workers: i32,
+    pub candidate_validation_queue: i32,
+    pub regular_validation_queue: i32,
+    pub audit_validation_queue: i32,
+    pub candidate_verifiers: i32,
+    pub regular_verifiers: i32,
+    pub audit_verifiers: i32,
+    pub validation_wait_timeout: String,
+    pub overload_shed_queue_pct: f64,
+    pub overload_emergency_queue_pct: f64,
+    pub overload_clear_queue_pct: f64,
+    pub overload_shed_oldest_age: String,
+    pub overload_emergency_oldest_age: String,
+    pub overload_clear_oldest_age: String,
+    pub overload_clear_hold: String,
+    pub overload_sample_rate_floor: f64,
+    pub audit_max_addresses_per_tick: i32,
+    pub audit_max_shares_per_address: i32,
+    pub candidate_claim_window: String,
+    pub candidate_claim_max_per_window: i32,
+    pub candidate_claim_max_inflight: i32,
     pub sample_rate: f64,
     pub warmup_shares: i32,
     pub min_sample_every: i32,
     pub invalid_sample_threshold: f64,
     pub invalid_sample_min: i32,
     pub invalid_sample_count_threshold: i32,
+    pub forced_validation_quarantine_threshold: f64,
     pub invalid_escalation_window_duration: String,
     pub forced_verify_duration: String,
     pub quarantine_duration: String,
@@ -48,6 +73,7 @@ pub struct Config {
     pub invalid_escalation_quarantine_strikes: i32,
     pub provisional_share_delay: String,
     pub max_provisional_shares: i32,
+    pub max_provisional_recent_verified_multiplier: f64,
     pub stratum_submit_v2_required: bool,
     pub stratum_idle_timeout: String,
     pub stratum_submit_rate_limit_window: String,
@@ -56,7 +82,9 @@ pub struct Config {
     pub vardiff_target_shares: i32,
     pub vardiff_window: String,
     pub vardiff_retarget_interval: String,
+    pub vardiff_decrease_retarget_interval: String,
     pub vardiff_tolerance: f64,
+    pub vardiff_min_change_pct: f64,
     pub min_share_difficulty: u64,
     pub max_share_difficulty: u64,
 
@@ -108,28 +136,54 @@ impl Default for Config {
             sse_enabled: true,
             refresh_on_same_height: false,
             job_timeout: "5m".to_string(),
-            stale_submit_grace: "5s".to_string(),
+            stale_submit_grace: "8s".to_string(),
             validation_mode: "probabilistic".to_string(),
             max_verifiers: 2,
             max_validation_queue: 2048,
+            candidate_submit_queue: 64,
+            regular_submit_queue: 512,
+            candidate_submit_workers: 1,
+            regular_submit_workers: 4,
+            candidate_validation_queue: 64,
+            regular_validation_queue: 512,
+            audit_validation_queue: 128,
+            candidate_verifiers: 1,
+            regular_verifiers: 2,
+            audit_verifiers: 1,
+            validation_wait_timeout: "10s".to_string(),
+            overload_shed_queue_pct: 0.50,
+            overload_emergency_queue_pct: 0.80,
+            overload_clear_queue_pct: 0.30,
+            overload_shed_oldest_age: "4s".to_string(),
+            overload_emergency_oldest_age: "10s".to_string(),
+            overload_clear_oldest_age: "3s".to_string(),
+            overload_clear_hold: "30s".to_string(),
+            overload_sample_rate_floor: 0.01,
+            audit_max_addresses_per_tick: 4,
+            audit_max_shares_per_address: 8,
+            candidate_claim_window: "60s".to_string(),
+            candidate_claim_max_per_window: 4,
+            candidate_claim_max_inflight: 1,
             sample_rate: 0.10,
             warmup_shares: 20,
             min_sample_every: 10,
-            invalid_sample_threshold: 0.05,
-            invalid_sample_min: 100,
-            invalid_sample_count_threshold: 3,
-            invalid_escalation_window_duration: "6h".to_string(),
-            forced_verify_duration: "2h".to_string(),
-            quarantine_duration: "15m".to_string(),
-            max_quarantine_duration: "2h".to_string(),
+            invalid_sample_threshold: 0.10,
+            invalid_sample_min: 50,
+            invalid_sample_count_threshold: 5,
+            forced_validation_quarantine_threshold: 0.20,
+            invalid_escalation_window_duration: "24h".to_string(),
+            forced_verify_duration: "1h".to_string(),
+            quarantine_duration: "1h".to_string(),
+            max_quarantine_duration: "168h".to_string(),
             suspected_fraud_force_verify_duration: "24h".to_string(),
             suspected_fraud_window_duration: "24h".to_string(),
             suspected_fraud_quarantine_duration: "1h".to_string(),
             suspected_fraud_max_quarantine_duration: "168h".to_string(),
             suspected_fraud_quarantine_strikes: 3,
-            invalid_escalation_quarantine_strikes: 0,
+            invalid_escalation_quarantine_strikes: 1,
             provisional_share_delay: "15m".to_string(),
             max_provisional_shares: 200,
+            max_provisional_recent_verified_multiplier: 8.0,
             stratum_submit_v2_required: true,
             stratum_idle_timeout: "15m".to_string(),
             stratum_submit_rate_limit_window: "10s".to_string(),
@@ -138,7 +192,9 @@ impl Default for Config {
             vardiff_target_shares: 10,
             vardiff_window: "5m".to_string(),
             vardiff_retarget_interval: "5s".to_string(),
+            vardiff_decrease_retarget_interval: "20s".to_string(),
             vardiff_tolerance: 0.25,
+            vardiff_min_change_pct: 0.08,
             min_share_difficulty: 1,
             max_share_difficulty: 1_000_000_000,
             pool_fee_flat: 0.0,
@@ -199,7 +255,53 @@ impl Config {
         if self.max_validation_queue < 1 {
             self.max_validation_queue = 2048;
         }
+        if self.candidate_submit_queue < 1 {
+            self.candidate_submit_queue = 64;
+        }
+        if self.regular_submit_queue < 1 {
+            self.regular_submit_queue = 512;
+        }
+        if self.candidate_submit_workers < 1 {
+            self.candidate_submit_workers = 1;
+        }
+        if self.regular_submit_workers < 1 {
+            self.regular_submit_workers = 1;
+        }
+        if self.candidate_validation_queue < 1 {
+            self.candidate_validation_queue = 64;
+        }
+        if self.regular_validation_queue < 1 {
+            self.regular_validation_queue = 512;
+        }
+        if self.audit_validation_queue < 1 {
+            self.audit_validation_queue = 128;
+        }
+        if self.audit_verifiers < 1 {
+            self.audit_verifiers = 1;
+        }
+        if self.audit_max_addresses_per_tick < 1 {
+            self.audit_max_addresses_per_tick = 4;
+        }
+        if self.audit_max_shares_per_address < 1 {
+            self.audit_max_shares_per_address = 8;
+        }
+        if self.candidate_verifiers < 0 {
+            self.candidate_verifiers = 0;
+        }
+        if self.regular_verifiers < 0 {
+            self.regular_verifiers = 0;
+        }
         self.sample_rate = self.sample_rate.clamp(0.0, 1.0);
+        if !(0.0 < self.overload_shed_queue_pct && self.overload_shed_queue_pct <= 1.0) {
+            self.overload_shed_queue_pct = 0.50;
+        }
+        if !(0.0 < self.overload_emergency_queue_pct && self.overload_emergency_queue_pct <= 1.0) {
+            self.overload_emergency_queue_pct = 0.80;
+        }
+        if !(0.0 < self.overload_clear_queue_pct && self.overload_clear_queue_pct <= 1.0) {
+            self.overload_clear_queue_pct = 0.30;
+        }
+        self.overload_sample_rate_floor = self.overload_sample_rate_floor.clamp(0.0, 1.0);
         if self.warmup_shares < 0 {
             self.warmup_shares = 0;
         }
@@ -213,13 +315,29 @@ impl Config {
             self.invalid_sample_count_threshold = 1;
         }
         if !(0.0 < self.invalid_sample_threshold && self.invalid_sample_threshold <= 1.0) {
-            self.invalid_sample_threshold = 0.05;
+            self.invalid_sample_threshold = 0.10;
+        }
+        if !(0.0 < self.forced_validation_quarantine_threshold
+            && self.forced_validation_quarantine_threshold <= 1.0)
+        {
+            self.forced_validation_quarantine_threshold = 0.20;
         }
         if self.max_provisional_shares < 0 {
             self.max_provisional_shares = 0;
         }
+        if !self.max_provisional_recent_verified_multiplier.is_finite()
+            || self.max_provisional_recent_verified_multiplier < 0.0
+        {
+            self.max_provisional_recent_verified_multiplier = 8.0;
+        }
         if self.stratum_submit_rate_limit_max < 1 {
             self.stratum_submit_rate_limit_max = 1;
+        }
+        if self.candidate_claim_max_per_window < 1 {
+            self.candidate_claim_max_per_window = 1;
+        }
+        if self.candidate_claim_max_inflight < 1 {
+            self.candidate_claim_max_inflight = 1;
         }
         if self.suspected_fraud_quarantine_strikes < 0 {
             self.suspected_fraud_quarantine_strikes = 0;
@@ -243,6 +361,11 @@ impl Config {
             self.vardiff_target_shares = 1;
         }
         self.vardiff_tolerance = self.vardiff_tolerance.clamp(0.01, 0.95);
+        if !self.vardiff_min_change_pct.is_finite() {
+            self.vardiff_min_change_pct = 0.08;
+        } else {
+            self.vardiff_min_change_pct = self.vardiff_min_change_pct.clamp(0.0, 1.0);
+        }
         if !self.block_finder_bonus_pct.is_finite() {
             self.block_finder_bonus_pct = 0.0;
         } else {
@@ -295,8 +418,13 @@ impl Config {
         parse_duration_or(&self.job_timeout, Duration::from_secs(5 * 60))
     }
 
+    pub fn validation_wait_timeout_duration(&self) -> Duration {
+        parse_duration_or(&self.validation_wait_timeout, Duration::from_secs(10))
+            .clamp(Duration::from_secs(1), Duration::from_secs(60))
+    }
+
     pub fn stale_submit_grace_duration(&self) -> Duration {
-        parse_duration_or(&self.stale_submit_grace, Duration::from_secs(5))
+        parse_duration_or(&self.stale_submit_grace, Duration::from_secs(8))
     }
 
     pub fn stratum_idle_timeout_duration(&self) -> Duration {
@@ -310,6 +438,78 @@ impl Config {
             Duration::from_secs(10),
         )
         .clamp(Duration::from_secs(1), Duration::from_secs(5 * 60))
+    }
+
+    pub fn candidate_submit_queue_size(&self) -> usize {
+        self.candidate_submit_queue.max(1) as usize
+    }
+
+    pub fn regular_submit_queue_size(&self) -> usize {
+        self.regular_submit_queue.max(1) as usize
+    }
+
+    pub fn candidate_submit_workers(&self) -> usize {
+        self.candidate_submit_workers.max(1) as usize
+    }
+
+    pub fn regular_submit_workers(&self) -> usize {
+        self.regular_submit_workers.max(1) as usize
+    }
+
+    pub fn candidate_validation_queue_size(&self) -> usize {
+        self.candidate_validation_queue.max(1) as usize
+    }
+
+    pub fn regular_validation_queue_size(&self) -> usize {
+        self.regular_validation_queue.max(1) as usize
+    }
+
+    pub fn audit_validation_queue_size(&self) -> usize {
+        self.audit_validation_queue.max(1) as usize
+    }
+
+    pub fn candidate_verifier_count(&self) -> usize {
+        self.candidate_verifiers.max(1) as usize
+    }
+
+    pub fn regular_verifier_count(&self) -> usize {
+        if self.regular_verifiers > 0 {
+            return self.regular_verifiers as usize;
+        }
+        let total = if self.max_verifiers <= 0 {
+            std::thread::available_parallelism()
+                .map(|n| n.get().max(1) / 2)
+                .unwrap_or(1)
+                .max(1)
+        } else {
+            self.max_verifiers as usize
+        };
+        total.saturating_sub(self.candidate_verifier_count()).max(1)
+    }
+
+    pub fn audit_verifier_count(&self) -> usize {
+        self.audit_verifiers.max(1) as usize
+    }
+
+    pub fn overload_shed_oldest_age_duration(&self) -> Duration {
+        parse_duration_or(&self.overload_shed_oldest_age, Duration::from_secs(2))
+    }
+
+    pub fn overload_emergency_oldest_age_duration(&self) -> Duration {
+        parse_duration_or(&self.overload_emergency_oldest_age, Duration::from_secs(5))
+    }
+
+    pub fn overload_clear_oldest_age_duration(&self) -> Duration {
+        parse_duration_or(&self.overload_clear_oldest_age, Duration::from_secs(1))
+    }
+
+    pub fn overload_clear_hold_duration(&self) -> Duration {
+        parse_duration_or(&self.overload_clear_hold, Duration::from_secs(60))
+    }
+
+    pub fn candidate_claim_window_duration(&self) -> Duration {
+        parse_duration_or(&self.candidate_claim_window, Duration::from_secs(60))
+            .clamp(Duration::from_secs(1), Duration::from_secs(15 * 60))
     }
 
     pub fn forced_verify_duration(&self) -> Duration {
@@ -332,6 +532,10 @@ impl Config {
 
     pub fn provisional_share_delay_duration(&self) -> Duration {
         parse_duration_or(&self.provisional_share_delay, Duration::from_secs(15 * 60))
+    }
+
+    pub fn max_provisional_recent_verified_multiplier(&self) -> f64 {
+        self.max_provisional_recent_verified_multiplier.max(0.0)
     }
 
     pub fn quarantine_duration_duration(&self) -> Duration {
@@ -406,6 +610,13 @@ impl Config {
 
     pub fn vardiff_retarget_interval_duration(&self) -> Duration {
         parse_duration_or(&self.vardiff_retarget_interval, Duration::from_secs(30))
+    }
+
+    pub fn vardiff_decrease_retarget_interval_duration(&self) -> Duration {
+        parse_duration_or(
+            &self.vardiff_decrease_retarget_interval,
+            Duration::from_secs(20),
+        )
     }
 
     pub fn seen_share_gc_interval_duration(&self) -> Duration {
@@ -498,15 +709,32 @@ mod tests {
             validation_mode: "invalid".to_string(),
             max_verifiers: -1,
             max_validation_queue: 0,
+            candidate_submit_queue: 0,
+            regular_submit_queue: 0,
+            candidate_submit_workers: 0,
+            regular_submit_workers: 0,
+            candidate_validation_queue: 0,
+            regular_validation_queue: 0,
+            candidate_verifiers: -1,
+            regular_verifiers: -1,
+            validation_wait_timeout: "".to_string(),
+            overload_shed_queue_pct: 2.0,
+            overload_emergency_queue_pct: 2.0,
+            overload_clear_queue_pct: 2.0,
+            overload_sample_rate_floor: 2.0,
+            candidate_claim_max_per_window: 0,
+            candidate_claim_max_inflight: 0,
             sample_rate: 2.0,
             warmup_shares: -5,
             min_sample_every: -1,
             invalid_sample_min: 0,
             invalid_sample_count_threshold: 0,
             invalid_sample_threshold: 2.0,
+            forced_validation_quarantine_threshold: 2.0,
             suspected_fraud_quarantine_strikes: -3,
             invalid_escalation_quarantine_strikes: -2,
             max_provisional_shares: -1,
+            max_provisional_recent_verified_multiplier: f64::NAN,
             stratum_submit_v2_required: false,
             stratum_submit_rate_limit_max: 0,
             initial_share_difficulty: 0,
@@ -530,15 +758,31 @@ mod tests {
         assert_eq!(cfg.validation_mode, "probabilistic");
         assert_eq!(cfg.max_verifiers, 0);
         assert_eq!(cfg.max_validation_queue, 2048);
+        assert_eq!(cfg.candidate_submit_queue, 64);
+        assert_eq!(cfg.regular_submit_queue, 512);
+        assert_eq!(cfg.candidate_submit_workers, 1);
+        assert_eq!(cfg.regular_submit_workers, 1);
+        assert_eq!(cfg.candidate_validation_queue, 64);
+        assert_eq!(cfg.regular_validation_queue, 512);
+        assert_eq!(cfg.candidate_verifiers, 0);
+        assert_eq!(cfg.regular_verifiers, 0);
+        assert_eq!(cfg.overload_shed_queue_pct, 0.50);
+        assert_eq!(cfg.overload_emergency_queue_pct, 0.80);
+        assert_eq!(cfg.overload_clear_queue_pct, 0.30);
+        assert_eq!(cfg.overload_sample_rate_floor, 1.0);
+        assert_eq!(cfg.candidate_claim_max_per_window, 1);
+        assert_eq!(cfg.candidate_claim_max_inflight, 1);
         assert_eq!(cfg.sample_rate, 1.0);
         assert_eq!(cfg.warmup_shares, 0);
         assert_eq!(cfg.min_sample_every, 0);
         assert_eq!(cfg.invalid_sample_min, 1);
         assert_eq!(cfg.invalid_sample_count_threshold, 1);
-        assert_eq!(cfg.invalid_sample_threshold, 0.05);
+        assert_eq!(cfg.invalid_sample_threshold, 0.10);
+        assert_eq!(cfg.forced_validation_quarantine_threshold, 0.20);
         assert_eq!(cfg.suspected_fraud_quarantine_strikes, 0);
         assert_eq!(cfg.invalid_escalation_quarantine_strikes, 0);
         assert_eq!(cfg.max_provisional_shares, 0);
+        assert_eq!(cfg.max_provisional_recent_verified_multiplier, 8.0);
         assert!(!cfg.stratum_submit_v2_required);
         assert_eq!(cfg.stratum_submit_rate_limit_max, 1);
         assert_eq!(cfg.min_share_difficulty, 10);

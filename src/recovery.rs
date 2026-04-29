@@ -5,7 +5,7 @@ use std::future::Future;
 use std::io::ErrorKind;
 use std::os::fd::FromRawFd;
 use std::os::unix::fs::{symlink, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -26,6 +26,12 @@ const STATUS_WAIT_RETRY: Duration = Duration::from_secs(2);
 const STATUS_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const STATUS_CACHE_TTL: Duration = Duration::from_secs(5);
 const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+const WALLET_AUTOLOAD_RETRY_INTERVAL: Duration = Duration::from_secs(60);
+const MANAGED_PATH_ROOTS: &[&str] = &[
+    "/var/lib/blocknet",
+    "/var/lib/blocknet-primary",
+    "/var/lib/blocknet-standby",
+];
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -165,6 +171,12 @@ impl RecoveryStatus {
 struct RecoverySecret {
     mnemonic: String,
     password: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DaemonWalletLoadResponse {
+    loaded: bool,
+    address: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -314,6 +326,7 @@ pub struct RecoveryAgent {
     http: reqwest::Client,
     state: Mutex<PersistedRecoveryState>,
     status_cache: Mutex<Option<CachedRecoveryStatus>>,
+    wallet_autoload_retry_after: Mutex<[Option<Instant>; 2]>,
 }
 
 #[derive(Debug, Clone)]
@@ -345,6 +358,7 @@ impl RecoveryAgent {
                 .context("build recovery daemon http client")?,
             state: Mutex::new(persisted),
             status_cache: Mutex::new(None),
+            wallet_autoload_retry_after: Mutex::new([None, None]),
         }))
     }
 
@@ -604,15 +618,94 @@ impl RecoveryAgent {
     async fn status_refresh_loop(self: Arc<Self>) {
         if let Err(err) = self.refresh_status_cache().await {
             tracing::warn!(error = %err, "failed warming recovery status cache");
+        } else if let Some(status) = self.cached_status().await {
+            self.maybe_autoload_wallets(&status).await;
         }
         let mut interval = tokio::time::interval(STATUS_REFRESH_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
-            if let Err(err) = self.refresh_status_cache().await {
-                tracing::warn!(error = %err, "failed refreshing recovery status cache");
+            match self.refresh_status_cache().await {
+                Ok(status) => self.maybe_autoload_wallets(&status).await,
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed refreshing recovery status cache");
+                }
             }
         }
+    }
+
+    async fn maybe_autoload_wallets(&self, status: &RecoveryStatus) {
+        for instance in &status.instances {
+            let should_attempt = should_attempt_wallet_autoload(
+                &instance.service_state,
+                instance.reachable,
+                instance.wallet.loaded,
+                status.secret_configured,
+                Path::new(instance.wallet_path.trim()).exists(),
+            );
+
+            if !should_attempt {
+                self.clear_wallet_autoload_retry(instance.instance).await;
+                continue;
+            }
+            if !self.wallet_autoload_retry_elapsed(instance.instance).await {
+                continue;
+            }
+
+            match self.autoload_instance_wallet(instance).await {
+                Ok(true) => {
+                    self.clear_wallet_autoload_retry(instance.instance).await;
+                    self.invalidate_status_cache().await;
+                }
+                Ok(false) => {
+                    self.clear_wallet_autoload_retry(instance.instance).await;
+                }
+                Err(err) => {
+                    self.defer_wallet_autoload_retry(instance.instance).await;
+                    tracing::warn!(
+                        instance = instance.instance.as_str(),
+                        error = %err,
+                        "failed auto-loading daemon wallet"
+                    );
+                }
+            }
+        }
+    }
+
+    async fn autoload_instance_wallet(&self, instance: &RecoveryInstanceStatus) -> Result<bool> {
+        let secret = self.load_secret()?;
+        let cfg = self.cfg.recovery.instance(instance.instance);
+        match self.daemon_load_wallet(cfg, &secret.password).await {
+            Ok(response) => {
+                tracing::info!(
+                    instance = instance.instance.as_str(),
+                    address = %response.address,
+                    "auto-loaded daemon wallet"
+                );
+                Ok(response.loaded)
+            }
+            Err(err) if is_conflict_wallet_loaded_error(&err) => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn wallet_autoload_retry_elapsed(&self, instance: RecoveryInstanceId) -> bool {
+        let retry_after = self.wallet_autoload_retry_after.lock().await;
+        match retry_after[instance_index(instance)] {
+            Some(next) => next <= Instant::now(),
+            None => true,
+        }
+    }
+
+    async fn defer_wallet_autoload_retry(&self, instance: RecoveryInstanceId) {
+        let mut retry_after = self.wallet_autoload_retry_after.lock().await;
+        retry_after[instance_index(instance)] =
+            Some(Instant::now() + WALLET_AUTOLOAD_RETRY_INTERVAL);
+    }
+
+    async fn clear_wallet_autoload_retry(&self, instance: RecoveryInstanceId) {
+        let mut retry_after = self.wallet_autoload_retry_after.lock().await;
+        retry_after[instance_index(instance)] = None;
     }
 
     async fn build_status_snapshot(&self) -> Result<RecoveryStatus> {
@@ -872,16 +965,15 @@ impl RecoveryAgent {
             bail!("target daemon cookie does not exist yet");
         }
 
-        write_proxy_include(
+        apply_cutover_path_transition(
             Path::new(self.cfg.recovery.proxy_include_path.trim()),
-            target_cfg.api.trim(),
-        )?;
-        validate_nginx_config().await?;
-        swap_symlink(
             Path::new(self.cfg.recovery.active_cookie_path.trim()),
+            target_cfg.api.trim(),
             Path::new(target_cfg.cookie_path.trim()),
-        )?;
-        reload_nginx().await?;
+            validate_nginx_config,
+            reload_nginx,
+        )
+        .await?;
         Ok(format!("cut over active daemon to {}", target.as_str()))
     }
 
@@ -1034,6 +1126,19 @@ impl RecoveryAgent {
         cfg: &RecoveryDaemonInstanceConfig,
     ) -> Result<WalletOutputsSummary> {
         self.daemon_get_json(cfg, "/api/wallet/outputs").await
+    }
+
+    async fn daemon_load_wallet(
+        &self,
+        cfg: &RecoveryDaemonInstanceConfig,
+        password: &str,
+    ) -> Result<DaemonWalletLoadResponse> {
+        self.daemon_post_json(
+            cfg,
+            "/api/wallet/load",
+            &serde_json::json!({ "password": password }),
+        )
+        .await
     }
 
     async fn daemon_import_wallet(
@@ -1312,6 +1417,73 @@ fn write_proxy_include(path: &Path, upstream: &str) -> Result<()> {
     write_atomic(path, content.as_bytes())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StoredPathState {
+    Missing,
+    File(Vec<u8>),
+    Symlink(PathBuf),
+}
+
+async fn apply_cutover_path_transition<Validate, ValidateFut, Reload, ReloadFut>(
+    proxy_include_path: &Path,
+    active_cookie_path: &Path,
+    upstream: &str,
+    target_cookie_path: &Path,
+    mut validate: Validate,
+    mut reload: Reload,
+) -> Result<()>
+where
+    Validate: FnMut() -> ValidateFut,
+    ValidateFut: Future<Output = Result<()>>,
+    Reload: FnMut() -> ReloadFut,
+    ReloadFut: Future<Output = Result<()>>,
+{
+    let proxy_backup = capture_path_state(proxy_include_path)?;
+    let cookie_backup = capture_path_state(active_cookie_path)?;
+
+    write_proxy_include(proxy_include_path, upstream)?;
+    if let Err(err) = validate().await {
+        let rollback = restore_path_state(proxy_include_path, &proxy_backup)
+            .err()
+            .into_iter()
+            .collect::<Vec<_>>();
+        return Err(cutover_transition_error(
+            "failed validating nginx config after staging cutover",
+            err,
+            rollback,
+        ));
+    }
+
+    if let Err(err) = swap_symlink(active_cookie_path, target_cookie_path) {
+        let rollback = restore_path_state(proxy_include_path, &proxy_backup)
+            .err()
+            .into_iter()
+            .collect::<Vec<_>>();
+        return Err(cutover_transition_error(
+            "failed switching active daemon cookie",
+            err,
+            rollback,
+        ));
+    }
+
+    if let Err(err) = reload().await {
+        let mut rollback_errors = Vec::new();
+        if let Err(rollback_err) = restore_path_state(active_cookie_path, &cookie_backup) {
+            rollback_errors.push(rollback_err);
+        }
+        if let Err(rollback_err) = restore_path_state(proxy_include_path, &proxy_backup) {
+            rollback_errors.push(rollback_err);
+        }
+        return Err(cutover_transition_error(
+            "failed reloading nginx after cutover",
+            err,
+            rollback_errors,
+        ));
+    }
+
+    Ok(())
+}
+
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path
         .parent()
@@ -1344,6 +1516,49 @@ fn swap_symlink(link: &Path, target: &Path) -> Result<()> {
     Ok(())
 }
 
+fn capture_path_state(path: &Path) -> Result<StoredPathState> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(value) => value,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(StoredPathState::Missing),
+        Err(err) => return Err(err).with_context(|| format!("stat {}", path.display())),
+    };
+
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return fs::read_link(path)
+            .map(StoredPathState::Symlink)
+            .with_context(|| format!("readlink {}", path.display()));
+    }
+    if file_type.is_file() {
+        return fs::read(path)
+            .map(StoredPathState::File)
+            .with_context(|| format!("read {}", path.display()));
+    }
+
+    bail!("unsupported managed path type {}", path.display());
+}
+
+fn restore_path_state(path: &Path, state: &StoredPathState) -> Result<()> {
+    match state {
+        StoredPathState::Missing => remove_path_if_exists(path),
+        StoredPathState::File(bytes) => write_atomic(path, bytes),
+        StoredPathState::Symlink(target) => swap_symlink(path, target),
+    }
+}
+
+fn remove_path_if_exists(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_dir() {
+                bail!("refusing to remove directory {}", path.display());
+            }
+            fs::remove_file(path).with_context(|| format!("remove {}", path.display()))
+        }
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| format!("stat {}", path.display())),
+    }
+}
+
 fn clear_directory(path: &Path) -> Result<()> {
     validate_managed_path(path)?;
     if !path.exists() {
@@ -1368,17 +1583,69 @@ fn clear_directory(path: &Path) -> Result<()> {
 }
 
 fn validate_managed_path(path: impl AsRef<Path>) -> Result<()> {
-    let path = path.as_ref();
-    let path_str = path
-        .to_str()
-        .ok_or_else(|| anyhow!("managed path is not valid utf-8"))?;
-    if !path_str.starts_with("/var/lib/blocknet") {
-        bail!("refusing to modify unmanaged path {path_str}");
+    let normalized = normalize_absolute_path(path.as_ref())?;
+    for root in MANAGED_PATH_ROOTS.iter().map(Path::new) {
+        if normalized == root {
+            bail!(
+                "refusing to modify top-level daemon storage path {}",
+                normalized.display()
+            );
+        }
+        if path_is_within_root(&normalized, root) {
+            return Ok(());
+        }
     }
-    if path_str == "/var/lib/blocknet" {
-        bail!("refusing to modify top-level daemon storage path");
+    bail!("refusing to modify unmanaged path {}", normalized.display());
+}
+
+fn normalize_absolute_path(path: &Path) -> Result<PathBuf> {
+    let mut normalized = PathBuf::new();
+    let mut saw_root = false;
+
+    for component in path.components() {
+        match component {
+            Component::RootDir => {
+                normalized.push(Path::new("/"));
+                saw_root = true;
+            }
+            Component::CurDir => {}
+            Component::Normal(segment) => normalized.push(segment),
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    bail!("managed path escapes filesystem root {}", path.display());
+                }
+            }
+            Component::Prefix(_) => bail!("managed path must be unix-style: {}", path.display()),
+        }
     }
-    Ok(())
+
+    if !saw_root {
+        bail!("managed path must be absolute: {}", path.display());
+    }
+    Ok(normalized)
+}
+
+fn path_is_within_root(path: &Path, root: &Path) -> bool {
+    path.strip_prefix(root)
+        .ok()
+        .is_some_and(|remainder| !remainder.as_os_str().is_empty())
+}
+
+fn cutover_transition_error(
+    context: &str,
+    err: anyhow::Error,
+    rollback_errors: Vec<anyhow::Error>,
+) -> anyhow::Error {
+    if rollback_errors.is_empty() {
+        anyhow!("{context}: {err}")
+    } else {
+        let detail = rollback_errors
+            .into_iter()
+            .map(|rollback_err| rollback_err.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+        anyhow!("{context}: {err}; rollback failed: {detail}")
+    }
 }
 
 fn read_token_from_cookie(path: &Path) -> Result<String> {
@@ -1410,6 +1677,36 @@ fn is_service_unavailable_wallet_error(err: &anyhow::Error) -> bool {
         .contains("no wallet loaded")
 }
 
+fn is_conflict_wallet_loaded_error(err: &anyhow::Error) -> bool {
+    err.to_string()
+        .contains(&format!("HTTP {}", StatusCode::CONFLICT.as_u16()))
+        && err
+            .to_string()
+            .to_ascii_lowercase()
+            .contains("wallet already loaded")
+}
+
+fn should_attempt_wallet_autoload(
+    service_state: &str,
+    reachable: bool,
+    wallet_loaded: bool,
+    secret_configured: bool,
+    wallet_path_exists: bool,
+) -> bool {
+    matches!(service_state, "active" | "activating" | "reloading")
+        && reachable
+        && !wallet_loaded
+        && secret_configured
+        && wallet_path_exists
+}
+
+fn instance_index(instance: RecoveryInstanceId) -> usize {
+    match instance {
+        RecoveryInstanceId::Primary => 0,
+        RecoveryInstanceId::Standby => 1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1425,6 +1722,35 @@ mod tests {
     }
 
     #[test]
+    fn wallet_autoload_only_runs_for_live_unloaded_instances_with_wallets() {
+        assert!(should_attempt_wallet_autoload(
+            "active", true, false, true, true
+        ));
+        assert!(!should_attempt_wallet_autoload(
+            "active", true, true, true, true
+        ));
+        assert!(!should_attempt_wallet_autoload(
+            "active", false, false, true, true
+        ));
+        assert!(!should_attempt_wallet_autoload(
+            "failed", true, false, true, true
+        ));
+        assert!(!should_attempt_wallet_autoload(
+            "active", true, false, false, true
+        ));
+        assert!(!should_attempt_wallet_autoload(
+            "active", true, false, true, false
+        ));
+    }
+
+    #[test]
+    fn conflict_wallet_loaded_error_is_detected() {
+        let err = anyhow!("POST /api/wallet/load failed with HTTP 409: wallet already loaded");
+        assert!(is_conflict_wallet_loaded_error(&err));
+        assert!(!is_service_unavailable_wallet_error(&err));
+    }
+
+    #[test]
     fn managed_path_guard_rejects_root_path() {
         let err = validate_managed_path(Path::new("/var/lib/blocknet"))
             .expect_err("guard should reject root");
@@ -1434,6 +1760,126 @@ mod tests {
     #[test]
     fn managed_path_guard_accepts_instance_path() {
         validate_managed_path(Path::new("/var/lib/blocknet-standby/data")).expect("managed path");
+    }
+
+    #[test]
+    fn managed_path_guard_rejects_sibling_prefix_path() {
+        let err = validate_managed_path(Path::new("/var/lib/blocknet-backup/data"))
+            .expect_err("guard should reject sibling path");
+        assert!(err.to_string().contains("unmanaged"));
+    }
+
+    #[test]
+    fn managed_path_guard_rejects_traversal_outside_managed_root() {
+        let err = validate_managed_path(Path::new("/var/lib/blocknet/../../etc"))
+            .expect_err("guard should reject traversal");
+        assert!(err.to_string().contains("unmanaged"));
+    }
+
+    #[test]
+    fn managed_path_guard_accepts_primary_alias_path() {
+        validate_managed_path(Path::new("/var/lib/blocknet-primary/data")).expect("managed path");
+    }
+
+    #[tokio::test]
+    async fn cutover_path_transition_rolls_back_on_validation_failure() {
+        let dir = tempdir().expect("tempdir");
+        let proxy_include = dir.path().join("upstream.inc");
+        fs::write(&proxy_include, "proxy_pass http://127.0.0.1:18331;\n").expect("write include");
+        let old_cookie = dir.path().join("old.api.cookie");
+        let new_cookie = dir.path().join("new.api.cookie");
+        fs::write(&old_cookie, "old").expect("write old cookie");
+        fs::write(&new_cookie, "new").expect("write new cookie");
+        let active_cookie = dir.path().join("active.api.cookie");
+        symlink(&old_cookie, &active_cookie).expect("seed active cookie");
+
+        let err = apply_cutover_path_transition(
+            &proxy_include,
+            &active_cookie,
+            "http://127.0.0.1:18332",
+            &new_cookie,
+            || async { Err(anyhow!("nginx config invalid")) },
+            || async { Ok(()) },
+        )
+        .await
+        .expect_err("validation should fail");
+
+        assert!(err.to_string().contains("validating nginx config"));
+        assert_eq!(
+            fs::read_to_string(&proxy_include).expect("read include"),
+            "proxy_pass http://127.0.0.1:18331;\n"
+        );
+        assert_eq!(
+            fs::read_link(&active_cookie).expect("read active cookie"),
+            old_cookie
+        );
+    }
+
+    #[tokio::test]
+    async fn cutover_path_transition_rolls_back_on_reload_failure() {
+        let dir = tempdir().expect("tempdir");
+        let proxy_include = dir.path().join("upstream.inc");
+        fs::write(&proxy_include, "proxy_pass http://127.0.0.1:18331;\n").expect("write include");
+        let old_cookie = dir.path().join("old.api.cookie");
+        let new_cookie = dir.path().join("new.api.cookie");
+        fs::write(&old_cookie, "old").expect("write old cookie");
+        fs::write(&new_cookie, "new").expect("write new cookie");
+        let active_cookie = dir.path().join("active.api.cookie");
+        symlink(&old_cookie, &active_cookie).expect("seed active cookie");
+
+        let err = apply_cutover_path_transition(
+            &proxy_include,
+            &active_cookie,
+            "http://127.0.0.1:18332",
+            &new_cookie,
+            || async { Ok(()) },
+            || async { Err(anyhow!("reload failed")) },
+        )
+        .await
+        .expect_err("reload should fail");
+
+        assert!(err.to_string().contains("reloading nginx"));
+        assert_eq!(
+            fs::read_to_string(&proxy_include).expect("read include"),
+            "proxy_pass http://127.0.0.1:18331;\n"
+        );
+        assert_eq!(
+            fs::read_link(&active_cookie).expect("read active cookie"),
+            old_cookie
+        );
+    }
+
+    #[tokio::test]
+    async fn cutover_path_transition_updates_include_and_cookie_on_success() {
+        let dir = tempdir().expect("tempdir");
+        let proxy_include = dir.path().join("upstream.inc");
+        fs::write(&proxy_include, "proxy_pass http://127.0.0.1:18331;\n").expect("write include");
+        let old_cookie = dir.path().join("old.api.cookie");
+        let new_cookie = dir.path().join("new.api.cookie");
+        fs::write(&old_cookie, "old").expect("write old cookie");
+        fs::write(&new_cookie, "new").expect("write new cookie");
+        let active_cookie = dir.path().join("active.api.cookie");
+        symlink(&old_cookie, &active_cookie).expect("seed active cookie");
+
+        apply_cutover_path_transition(
+            &proxy_include,
+            &active_cookie,
+            "http://127.0.0.1:18332",
+            &new_cookie,
+            || async { Ok(()) },
+            || async { Ok(()) },
+        )
+        .await
+        .expect("cutover should succeed");
+
+        assert_eq!(
+            fs::read_to_string(&proxy_include).expect("read include"),
+            "proxy_pass http://127.0.0.1:18332;\n"
+        );
+        assert_eq!(
+            fs::read_link(&active_cookie).expect("read active cookie"),
+            new_cookie
+        );
     }
 
     #[test]
@@ -1450,6 +1896,7 @@ mod tests {
             http: reqwest::Client::new(),
             state: Mutex::new(PersistedRecoveryState::default()),
             status_cache: Mutex::new(None),
+            wallet_autoload_retry_after: Mutex::new([None, None]),
         };
         assert!(!agent.secret_is_configured());
     }
@@ -1472,6 +1919,7 @@ mod tests {
             http: reqwest::Client::new(),
             state: Mutex::new(PersistedRecoveryState::default()),
             status_cache: Mutex::new(None),
+            wallet_autoload_retry_after: Mutex::new([None, None]),
         };
         assert!(agent.secret_is_configured());
     }

@@ -18,4 +18,5 @@ pub mod service_state;
 pub mod stats;
 pub mod store;
 pub mod stratum;
+pub mod telemetry;
 pub mod validation;

@@ -9,6 +9,7 @@ User=blocknet
 Group=blocknet
 WorkingDirectory=/opt/blocknet/blocknet-pool
 EnvironmentFile=/etc/blocknet/pool/.env
+EnvironmentFile=-/etc/blocknet/monitoring.env
 ExecStart=/opt/blocknet/blocknet-pool/target/release/blocknet-pool-monitor --config /etc/blocknet/pool/config.json
 Restart=always
 RestartSec=5

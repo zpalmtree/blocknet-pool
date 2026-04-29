@@ -34,12 +34,37 @@ pub struct Config {
     pub validation_mode: String,
     pub max_verifiers: i32,
     pub max_validation_queue: i32,
+    pub candidate_submit_queue: i32,
+    pub regular_submit_queue: i32,
+    pub candidate_submit_workers: i32,
+    pub regular_submit_workers: i32,
+    pub candidate_validation_queue: i32,
+    pub regular_validation_queue: i32,
+    pub audit_validation_queue: i32,
+    pub candidate_verifiers: i32,
+    pub regular_verifiers: i32,
+    pub audit_verifiers: i32,
+    pub validation_wait_timeout: String,
+    pub overload_shed_queue_pct: f64,
+    pub overload_emergency_queue_pct: f64,
+    pub overload_clear_queue_pct: f64,
+    pub overload_shed_oldest_age: String,
+    pub overload_emergency_oldest_age: String,
+    pub overload_clear_oldest_age: String,
+    pub overload_clear_hold: String,
+    pub overload_sample_rate_floor: f64,
+    pub audit_max_addresses_per_tick: i32,
+    pub audit_max_shares_per_address: i32,
+    pub candidate_claim_window: String,
+    pub candidate_claim_max_per_window: i32,
+    pub candidate_claim_max_inflight: i32,
     pub sample_rate: f64,
     pub warmup_shares: i32,
     pub min_sample_every: i32,
     pub invalid_sample_threshold: f64,
     pub invalid_sample_min: i32,
     pub invalid_sample_count_threshold: i32,
+    pub forced_validation_quarantine_threshold: f64,
     pub invalid_escalation_window_duration: String,
     pub forced_verify_duration: String,
     pub quarantine_duration: String,
@@ -52,6 +77,7 @@ pub struct Config {
     pub invalid_escalation_quarantine_strikes: i32,
     pub provisional_share_delay: String,
     pub max_provisional_shares: i32,
+    pub max_provisional_recent_verified_multiplier: f64,
     pub stratum_submit_v2_required: bool,
     pub stratum_idle_timeout: String,
     pub stratum_submit_rate_limit_window: String,
@@ -60,7 +86,9 @@ pub struct Config {
     pub vardiff_target_shares: i32,
     pub vardiff_window: String,
     pub vardiff_retarget_interval: String,
+    pub vardiff_decrease_retarget_interval: String,
     pub vardiff_tolerance: f64,
+    pub vardiff_min_change_pct: f64,
     pub min_share_difficulty: u64,
     pub max_share_difficulty: u64,
 
@@ -126,12 +154,37 @@ impl Default for Config {
             validation_mode: runtime.validation_mode,
             max_verifiers: runtime.max_verifiers,
             max_validation_queue: runtime.max_validation_queue,
+            candidate_submit_queue: runtime.candidate_submit_queue,
+            regular_submit_queue: runtime.regular_submit_queue,
+            candidate_submit_workers: runtime.candidate_submit_workers,
+            regular_submit_workers: runtime.regular_submit_workers,
+            candidate_validation_queue: runtime.candidate_validation_queue,
+            regular_validation_queue: runtime.regular_validation_queue,
+            audit_validation_queue: runtime.audit_validation_queue,
+            candidate_verifiers: runtime.candidate_verifiers,
+            regular_verifiers: runtime.regular_verifiers,
+            audit_verifiers: runtime.audit_verifiers,
+            validation_wait_timeout: runtime.validation_wait_timeout,
+            overload_shed_queue_pct: runtime.overload_shed_queue_pct,
+            overload_emergency_queue_pct: runtime.overload_emergency_queue_pct,
+            overload_clear_queue_pct: runtime.overload_clear_queue_pct,
+            overload_shed_oldest_age: runtime.overload_shed_oldest_age,
+            overload_emergency_oldest_age: runtime.overload_emergency_oldest_age,
+            overload_clear_oldest_age: runtime.overload_clear_oldest_age,
+            overload_clear_hold: runtime.overload_clear_hold,
+            overload_sample_rate_floor: runtime.overload_sample_rate_floor,
+            audit_max_addresses_per_tick: runtime.audit_max_addresses_per_tick,
+            audit_max_shares_per_address: runtime.audit_max_shares_per_address,
+            candidate_claim_window: runtime.candidate_claim_window,
+            candidate_claim_max_per_window: runtime.candidate_claim_max_per_window,
+            candidate_claim_max_inflight: runtime.candidate_claim_max_inflight,
             sample_rate: runtime.sample_rate,
             warmup_shares: runtime.warmup_shares,
             min_sample_every: runtime.min_sample_every,
             invalid_sample_threshold: runtime.invalid_sample_threshold,
             invalid_sample_min: runtime.invalid_sample_min,
             invalid_sample_count_threshold: runtime.invalid_sample_count_threshold,
+            forced_validation_quarantine_threshold: runtime.forced_validation_quarantine_threshold,
             invalid_escalation_window_duration: runtime.invalid_escalation_window_duration,
             forced_verify_duration: runtime.forced_verify_duration,
             quarantine_duration: runtime.quarantine_duration,
@@ -145,6 +198,8 @@ impl Default for Config {
             invalid_escalation_quarantine_strikes: runtime.invalid_escalation_quarantine_strikes,
             provisional_share_delay: runtime.provisional_share_delay,
             max_provisional_shares: runtime.max_provisional_shares,
+            max_provisional_recent_verified_multiplier: runtime
+                .max_provisional_recent_verified_multiplier,
             stratum_submit_v2_required: runtime.stratum_submit_v2_required,
             stratum_idle_timeout: runtime.stratum_idle_timeout,
             stratum_submit_rate_limit_window: runtime.stratum_submit_rate_limit_window,
@@ -153,7 +208,9 @@ impl Default for Config {
             vardiff_target_shares: runtime.vardiff_target_shares,
             vardiff_window: runtime.vardiff_window,
             vardiff_retarget_interval: runtime.vardiff_retarget_interval,
+            vardiff_decrease_retarget_interval: runtime.vardiff_decrease_retarget_interval,
             vardiff_tolerance: runtime.vardiff_tolerance,
+            vardiff_min_change_pct: runtime.vardiff_min_change_pct,
             min_share_difficulty: runtime.min_share_difficulty,
             max_share_difficulty: runtime.max_share_difficulty,
             pool_fee_flat: runtime.pool_fee_flat,
@@ -236,12 +293,37 @@ impl Config {
             validation_mode: self.validation_mode.clone(),
             max_verifiers: self.max_verifiers,
             max_validation_queue: self.max_validation_queue,
+            candidate_submit_queue: self.candidate_submit_queue,
+            regular_submit_queue: self.regular_submit_queue,
+            candidate_submit_workers: self.candidate_submit_workers,
+            regular_submit_workers: self.regular_submit_workers,
+            candidate_validation_queue: self.candidate_validation_queue,
+            regular_validation_queue: self.regular_validation_queue,
+            audit_validation_queue: self.audit_validation_queue,
+            candidate_verifiers: self.candidate_verifiers,
+            regular_verifiers: self.regular_verifiers,
+            audit_verifiers: self.audit_verifiers,
+            validation_wait_timeout: self.validation_wait_timeout.clone(),
+            overload_shed_queue_pct: self.overload_shed_queue_pct,
+            overload_emergency_queue_pct: self.overload_emergency_queue_pct,
+            overload_clear_queue_pct: self.overload_clear_queue_pct,
+            overload_shed_oldest_age: self.overload_shed_oldest_age.clone(),
+            overload_emergency_oldest_age: self.overload_emergency_oldest_age.clone(),
+            overload_clear_oldest_age: self.overload_clear_oldest_age.clone(),
+            overload_clear_hold: self.overload_clear_hold.clone(),
+            overload_sample_rate_floor: self.overload_sample_rate_floor,
+            audit_max_addresses_per_tick: self.audit_max_addresses_per_tick,
+            audit_max_shares_per_address: self.audit_max_shares_per_address,
+            candidate_claim_window: self.candidate_claim_window.clone(),
+            candidate_claim_max_per_window: self.candidate_claim_max_per_window,
+            candidate_claim_max_inflight: self.candidate_claim_max_inflight,
             sample_rate: self.sample_rate,
             warmup_shares: self.warmup_shares,
             min_sample_every: self.min_sample_every,
             invalid_sample_threshold: self.invalid_sample_threshold,
             invalid_sample_min: self.invalid_sample_min,
             invalid_sample_count_threshold: self.invalid_sample_count_threshold,
+            forced_validation_quarantine_threshold: self.forced_validation_quarantine_threshold,
             invalid_escalation_window_duration: self.invalid_escalation_window_duration.clone(),
             forced_verify_duration: self.forced_verify_duration.clone(),
             quarantine_duration: self.quarantine_duration.clone(),
@@ -258,6 +340,8 @@ impl Config {
             invalid_escalation_quarantine_strikes: self.invalid_escalation_quarantine_strikes,
             provisional_share_delay: self.provisional_share_delay.clone(),
             max_provisional_shares: self.max_provisional_shares,
+            max_provisional_recent_verified_multiplier: self
+                .max_provisional_recent_verified_multiplier,
             stratum_submit_v2_required: self.stratum_submit_v2_required,
             stratum_idle_timeout: self.stratum_idle_timeout.clone(),
             stratum_submit_rate_limit_window: self.stratum_submit_rate_limit_window.clone(),
@@ -266,7 +350,9 @@ impl Config {
             vardiff_target_shares: self.vardiff_target_shares,
             vardiff_window: self.vardiff_window.clone(),
             vardiff_retarget_interval: self.vardiff_retarget_interval.clone(),
+            vardiff_decrease_retarget_interval: self.vardiff_decrease_retarget_interval.clone(),
             vardiff_tolerance: self.vardiff_tolerance,
+            vardiff_min_change_pct: self.vardiff_min_change_pct,
             min_share_difficulty: self.min_share_difficulty,
             max_share_difficulty: self.max_share_difficulty,
             pool_fee_flat: self.pool_fee_flat,
@@ -322,12 +408,38 @@ impl Config {
         self.validation_mode = runtime.validation_mode;
         self.max_verifiers = runtime.max_verifiers;
         self.max_validation_queue = runtime.max_validation_queue;
+        self.candidate_submit_queue = runtime.candidate_submit_queue;
+        self.regular_submit_queue = runtime.regular_submit_queue;
+        self.candidate_submit_workers = runtime.candidate_submit_workers;
+        self.regular_submit_workers = runtime.regular_submit_workers;
+        self.candidate_validation_queue = runtime.candidate_validation_queue;
+        self.regular_validation_queue = runtime.regular_validation_queue;
+        self.audit_validation_queue = runtime.audit_validation_queue;
+        self.candidate_verifiers = runtime.candidate_verifiers;
+        self.regular_verifiers = runtime.regular_verifiers;
+        self.audit_verifiers = runtime.audit_verifiers;
+        self.validation_wait_timeout = runtime.validation_wait_timeout;
+        self.overload_shed_queue_pct = runtime.overload_shed_queue_pct;
+        self.overload_emergency_queue_pct = runtime.overload_emergency_queue_pct;
+        self.overload_clear_queue_pct = runtime.overload_clear_queue_pct;
+        self.overload_shed_oldest_age = runtime.overload_shed_oldest_age;
+        self.overload_emergency_oldest_age = runtime.overload_emergency_oldest_age;
+        self.overload_clear_oldest_age = runtime.overload_clear_oldest_age;
+        self.overload_clear_hold = runtime.overload_clear_hold;
+        self.overload_sample_rate_floor = runtime.overload_sample_rate_floor;
+        self.audit_max_addresses_per_tick = runtime.audit_max_addresses_per_tick;
+        self.audit_max_shares_per_address = runtime.audit_max_shares_per_address;
+        self.candidate_claim_window = runtime.candidate_claim_window;
+        self.candidate_claim_max_per_window = runtime.candidate_claim_max_per_window;
+        self.candidate_claim_max_inflight = runtime.candidate_claim_max_inflight;
         self.sample_rate = runtime.sample_rate;
         self.warmup_shares = runtime.warmup_shares;
         self.min_sample_every = runtime.min_sample_every;
         self.invalid_sample_threshold = runtime.invalid_sample_threshold;
         self.invalid_sample_min = runtime.invalid_sample_min;
         self.invalid_sample_count_threshold = runtime.invalid_sample_count_threshold;
+        self.forced_validation_quarantine_threshold =
+            runtime.forced_validation_quarantine_threshold;
         self.invalid_escalation_window_duration = runtime.invalid_escalation_window_duration;
         self.forced_verify_duration = runtime.forced_verify_duration;
         self.quarantine_duration = runtime.quarantine_duration;
@@ -341,6 +453,8 @@ impl Config {
         self.invalid_escalation_quarantine_strikes = runtime.invalid_escalation_quarantine_strikes;
         self.provisional_share_delay = runtime.provisional_share_delay;
         self.max_provisional_shares = runtime.max_provisional_shares;
+        self.max_provisional_recent_verified_multiplier =
+            runtime.max_provisional_recent_verified_multiplier;
         self.stratum_submit_v2_required = runtime.stratum_submit_v2_required;
         self.stratum_idle_timeout = runtime.stratum_idle_timeout;
         self.stratum_submit_rate_limit_window = runtime.stratum_submit_rate_limit_window;
@@ -349,7 +463,9 @@ impl Config {
         self.vardiff_target_shares = runtime.vardiff_target_shares;
         self.vardiff_window = runtime.vardiff_window;
         self.vardiff_retarget_interval = runtime.vardiff_retarget_interval;
+        self.vardiff_decrease_retarget_interval = runtime.vardiff_decrease_retarget_interval;
         self.vardiff_tolerance = runtime.vardiff_tolerance;
+        self.vardiff_min_change_pct = runtime.vardiff_min_change_pct;
         self.min_share_difficulty = runtime.min_share_difficulty;
         self.max_share_difficulty = runtime.max_share_difficulty;
         self.pool_fee_flat = runtime.pool_fee_flat;
@@ -391,6 +507,10 @@ impl Config {
 
     pub fn provisional_share_delay_duration(&self) -> Duration {
         parse_duration_or(&self.provisional_share_delay, Duration::from_secs(15 * 60))
+    }
+
+    pub fn max_provisional_recent_verified_multiplier(&self) -> f64 {
+        self.max_provisional_recent_verified_multiplier.max(0.0)
     }
 
     pub fn pplns_window_duration_duration(&self) -> Duration {

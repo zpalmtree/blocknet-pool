@@ -13,6 +13,9 @@ use serde_json::Value;
 
 use crate::engine::{BlockSubmitResponse, Job, NodeApi};
 
+const NODE_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const WALLET_SEND_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct BlockTemplate {
     pub block: Value,
@@ -35,6 +38,36 @@ pub struct NodeStatus {
     pub mempool_bytes: i64,
     pub syncing: bool,
     pub identity_age: String,
+    #[serde(default)]
+    pub current_process_block: Option<NodeCurrentProcessBlock>,
+    #[serde(default)]
+    pub last_process_block: Option<NodeLastProcessBlock>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeCurrentProcessBlock {
+    pub height: u64,
+    pub tx_count: u64,
+    pub stage: String,
+    pub started_at_unix_millis: i64,
+    pub stage_started_at_unix_millis: i64,
+    pub elapsed_millis: u64,
+    pub stage_elapsed_millis: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeLastProcessBlock {
+    pub height: u64,
+    pub tx_count: u64,
+    pub completed_at_unix_millis: i64,
+    pub validate_millis: u64,
+    pub commit_millis: u64,
+    pub reorg_millis: u64,
+    pub total_millis: u64,
+    pub accepted: bool,
+    pub main_chain: bool,
+    #[serde(default)]
+    pub error: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -50,8 +83,10 @@ pub struct NodeBlock {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WalletSendResponse {
+    #[serde(default)]
     pub txid: String,
     pub fee: u64,
+    #[serde(default)]
     pub change: u64,
 }
 
@@ -81,6 +116,72 @@ pub struct WalletBalance {
     #[serde(default)]
     pub pending_unconfirmed_eta: u64,
     pub total: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WalletOutputsResponse {
+    #[serde(default)]
+    pub chain_height: u64,
+    #[serde(default)]
+    pub synced_height: u64,
+    #[serde(default)]
+    pub outputs: Vec<WalletOutput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalletOutput {
+    pub txid: String,
+    pub output_index: u32,
+    pub amount: u64,
+    pub status: String,
+    #[serde(default)]
+    pub r#type: String,
+    #[serde(default)]
+    pub confirmations: u64,
+    #[serde(default)]
+    pub block_height: u64,
+    #[serde(default)]
+    pub spent_height: Option<u64>,
+    #[serde(default)]
+    pub one_time_pub: String,
+    #[serde(default)]
+    pub commitment: String,
+}
+
+impl WalletOutput {
+    pub fn is_spendable(&self) -> bool {
+        self.status.eq_ignore_ascii_case("unspent")
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WalletOutputRef {
+    pub txid: String,
+    pub output_index: u32,
+}
+
+impl From<&WalletOutput> for WalletOutputRef {
+    fn from(value: &WalletOutput) -> Self {
+        Self {
+            txid: value.txid.clone(),
+            output_index: value.output_index,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WalletRecipient {
+    pub address: String,
+    pub amount: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WalletAdvancedSendRequest<'a> {
+    recipients: &'a [WalletRecipient],
+    inputs: &'a [WalletOutputRef],
+    dry_run: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    change_split: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -140,6 +241,7 @@ pub fn http_error_body_contains(err: &anyhow::Error, status: u16, needle: &str) 
 pub struct NodeClient {
     base_url: String,
     client: Client,
+    send_client: Client,
     events_client: Client,
     auth_token: Mutex<Option<String>>,
     auth_cookie_path: Option<PathBuf>,
@@ -163,7 +265,18 @@ impl NodeClient {
 
         let client = Client::builder()
             .default_headers(headers)
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(NODE_HTTP_TIMEOUT)
+            .build()
+            .context("build node http client")?;
+        // Large wallet sends can take minutes when coin control selects many inputs.
+        // Use a longer timeout for live sends so the pool records the txid instead of
+        // treating a slow success as a transient transport failure.
+        let send_client = Client::builder()
+            .default_headers(HeaderMap::from_iter([(
+                CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            )]))
+            .timeout(WALLET_SEND_HTTP_TIMEOUT)
             .build()
             .context("build node http client")?;
         let events_client = Client::builder()
@@ -188,6 +301,7 @@ impl NodeClient {
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             client,
+            send_client,
             events_client,
             auth_token: Mutex::new(resolved_token),
             auth_cookie_path,
@@ -254,7 +368,12 @@ impl NodeClient {
                 }
             ],
         });
-        self.post_json_with_headers("/api/wallet/send", &payload, &extra)
+        self.post_json_with_headers_using_client(
+            &self.send_client,
+            "/api/wallet/send",
+            &payload,
+            &extra,
+        )
     }
 
     pub fn wallet_load(&self, password: &str) -> Result<WalletLoadResponse> {
@@ -273,6 +392,42 @@ impl NodeClient {
 
     pub fn get_wallet_balance(&self) -> Result<WalletBalance> {
         self.get_json("/api/wallet/balance")
+    }
+
+    pub fn get_wallet_outputs(&self) -> Result<WalletOutputsResponse> {
+        self.get_json("/api/wallet/outputs")
+    }
+
+    pub fn wallet_send_advanced(
+        &self,
+        recipients: &[WalletRecipient],
+        inputs: &[WalletOutputRef],
+        change_split: u32,
+        idempotency_key: &str,
+        dry_run: bool,
+    ) -> Result<WalletSendResponse> {
+        let mut extra = HashMap::<String, String>::new();
+        if !dry_run && !idempotency_key.is_empty() {
+            extra.insert("Idempotency-Key".to_string(), idempotency_key.to_string());
+        }
+
+        let payload = WalletAdvancedSendRequest {
+            recipients,
+            inputs,
+            dry_run,
+            change_split: (change_split > 1).then_some(change_split),
+        };
+        let client = if dry_run {
+            &self.client
+        } else {
+            &self.send_client
+        };
+        self.post_json_with_headers_using_client(
+            client,
+            "/api/wallet/send/advanced",
+            &payload,
+            &extra,
+        )
     }
 
     pub fn open_events_stream(&self) -> Result<Response> {
@@ -353,11 +508,12 @@ impl NodeClient {
         path: &str,
         payload: &T,
     ) -> Result<R> {
-        self.post_json_with_headers(path, payload, &HashMap::new())
+        self.post_json_with_headers_using_client(&self.client, path, payload, &HashMap::new())
     }
 
-    fn post_json_with_headers<T: Serialize, R: for<'de> Deserialize<'de>>(
+    fn post_json_with_headers_using_client<T: Serialize, R: for<'de> Deserialize<'de>>(
         &self,
+        client: &Client,
         path: &str,
         payload: &T,
         headers: &HashMap<String, String>,
@@ -365,7 +521,7 @@ impl NodeClient {
         let url = format!("{}{}", self.base_url, path);
         let mut attempted_refresh = false;
         loop {
-            let mut req = self.client.post(&url).json(payload);
+            let mut req = client.post(&url).json(payload);
             for (k, v) in headers {
                 req = req.header(k, v);
             }
@@ -992,5 +1148,10 @@ mod tests {
         assert!(binary_name_matches_blocknet("blocknet"));
         assert!(binary_name_matches_blocknet("blocknet-core-amd64-linux"));
         assert!(!binary_name_matches_blocknet("blocknet-wrapper"));
+    }
+
+    #[test]
+    fn wallet_send_timeout_exceeds_default_request_timeout() {
+        assert!(WALLET_SEND_HTTP_TIMEOUT > NODE_HTTP_TIMEOUT);
     }
 }

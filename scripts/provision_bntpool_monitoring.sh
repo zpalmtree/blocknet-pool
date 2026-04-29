@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Provision the dedicated monitoring stack on bntpool.
+Provision the dedicated monitoring stack on the current primary pool host.
 
 Usage:
   scripts/provision_bntpool_monitoring.sh [--skip-packages]
@@ -11,6 +11,7 @@ Usage:
 Environment overrides:
   BNTPOOL_HOST            SSH host alias (default: bntpool)
   BNTPOOL_REMOTE_DIR      Remote pool directory (default: /opt/blocknet/blocknet-pool)
+  BNTPOOL_ALLOW_RETIRED_HOST  Set to 1 to allow explicit provisioning on oldpool / 5.161.113.120
   INSTALL_GRAFANA         Set to 1 to install Grafana provisioning files when Grafana exists
 EOF
 }
@@ -37,16 +38,32 @@ done
 host="${BNTPOOL_HOST:-bntpool}"
 remote_dir="${BNTPOOL_REMOTE_DIR:-/opt/blocknet/blocknet-pool}"
 install_grafana="${INSTALL_GRAFANA:-0}"
+allow_retired_host="${BNTPOOL_ALLOW_RETIRED_HOST:-0}"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_dir="$(cd "${script_dir}/.." && pwd)"
+rsync_args=(
+  -rltzE
+  --omit-dir-times
+  --no-owner
+  --no-group
+)
+
+case "${host}" in
+  oldpool|*5.161.113.120*)
+    if [[ "${allow_retired_host}" != "1" ]]; then
+      echo "refusing to target retired host '${host}'; use bntpool for the primary host or set BNTPOOL_ALLOW_RETIRED_HOST=1 to override" >&2
+      exit 1
+    fi
+    ;;
+esac
 
 echo "==> syncing monitoring assets to ${host}:${remote_dir}"
 ssh "${host}" "set -euo pipefail; mkdir -p '${remote_dir}' '${remote_dir}/scripts'"
-rsync -az \
+rsync "${rsync_args[@]}" \
   "${repo_dir}/deploy" \
   "${host}:${remote_dir}/"
-rsync -az \
+rsync "${rsync_args[@]}" \
   "${repo_dir}/scripts/alertmanager_discord_relay.py" \
   "${host}:${remote_dir}/scripts/"
 
@@ -162,9 +179,10 @@ cat <<'EOF'
 Monitoring stack installed.
 
 Next steps:
-  1. Set DISCORD_WEBHOOK_URL in /etc/blocknet/monitoring.env on bntpool.
-  2. Deploy the pool repo so blocknet-pool-monitor.service and the monitor binary are installed.
-  3. Deploy the Cloudflare monitor worker once the API-side monitor_ingest_secret is in place.
-  4. Reload/restart blocknet-pool-alertmanager-discord-relay.service after the webhook is set.
-  5. Install Grafana separately if desired, then rerun with INSTALL_GRAFANA=1.
+  1. Set DISCORD_WEBHOOK_URL in /etc/blocknet/monitoring.env on the primary host.
+  2. Set DISCORD_BOT_TOKEN there as well if the chain-height divergence bot should page Discord directly.
+  3. Deploy the pool repo so blocknet-pool-monitor.service and the monitor binary are installed.
+  4. Deploy the Cloudflare monitor worker once the API-side monitor_ingest_secret is in place.
+  5. Reload/restart blocknet-pool-alertmanager-discord-relay.service after the webhook is set.
+  6. Install Grafana separately if desired, then rerun with INSTALL_GRAFANA=1.
 EOF

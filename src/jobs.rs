@@ -56,6 +56,12 @@ pub struct JobRuntimeSnapshot {
     pub active_assignments: usize,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum AssignmentRangeMode {
+    Fresh,
+    PreserveCurrent,
+}
+
 #[derive(Debug)]
 struct RewardAddressCache {
     address: Option<String>,
@@ -341,15 +347,26 @@ impl JobManager {
         share_difficulty: u64,
         assigned_miner: &str,
     ) -> Option<MinerJob> {
+        self.build_miner_job_with_range_mode(
+            conn_id,
+            share_difficulty,
+            assigned_miner,
+            AssignmentRangeMode::Fresh,
+        )
+    }
+
+    pub fn build_miner_job_with_range_mode(
+        &self,
+        conn_id: &str,
+        share_difficulty: u64,
+        assigned_miner: &str,
+        range_mode: AssignmentRangeMode,
+    ) -> Option<MinerJob> {
         let job = self.current_job()?;
         let slot_count = nonce_slot_count();
-        let slot = self.nonce_counter.fetch_add(1, Ordering::Relaxed) % slot_count;
-        let start = slot.saturating_mul(NONCE_RANGE_SIZE);
         let assignment_id = generate_job_id();
         let share_difficulty = share_difficulty.max(1);
         let share_target = difficulty_to_target(share_difficulty);
-        let nonce_end = start.saturating_add(NONCE_RANGE_SIZE - 1);
-        debug_assert!(nonce_end <= MAX_DB_NONCE);
         let assigned_miner = assigned_miner.trim().to_string();
         if assigned_miner.is_empty() {
             return None;
@@ -370,6 +387,19 @@ impl JobManager {
                 created_at: now,
                 stale_since: None,
             });
+        let preserved_range = if range_mode == AssignmentRangeMode::PreserveCurrent {
+            state
+                .assignments
+                .values()
+                .find(|assignment| {
+                    assignment.owner_conn_id == conn_id
+                        && assignment.template_job_id == job.id
+                        && assignment.superseded_at.is_none()
+                })
+                .map(|assignment| (assignment.nonce_start, assignment.nonce_end))
+        } else {
+            None
+        };
         for assignment in state.assignments.values_mut() {
             if assignment.owner_conn_id == conn_id
                 && assignment.template_job_id == job.id
@@ -378,6 +408,13 @@ impl JobManager {
                 assignment.superseded_at = Some(now);
             }
         }
+        let (start, nonce_end) = preserved_range.unwrap_or_else(|| {
+            let slot = self.nonce_counter.fetch_add(1, Ordering::Relaxed) % slot_count;
+            let start = slot.saturating_mul(NONCE_RANGE_SIZE);
+            let nonce_end = start.saturating_add(NONCE_RANGE_SIZE - 1);
+            debug_assert!(nonce_end <= MAX_DB_NONCE);
+            (start, nonce_end)
+        });
         state.assignments.insert(
             assignment_id.clone(),
             MinerAssignment {
@@ -710,6 +747,39 @@ impl JobManager {
             }
             thread::sleep(WALLET_LOAD_WAIT_POLL);
         }
+    }
+}
+
+#[cfg(test)]
+impl JobManager {
+    pub(crate) fn install_test_job(&self, job: Job) {
+        let mut state = self.state.write();
+        let now = Instant::now();
+
+        if let Some(prev_id) = state.current.as_ref().map(|current| current.id.clone()) {
+            if prev_id != job.id {
+                if let Some(meta) = state.job_meta.get_mut(&prev_id) {
+                    meta.stale_since = Some(now);
+                }
+            }
+        }
+
+        state.current = Some(job.clone());
+        state.jobs.insert(job.id.clone(), job.clone());
+        state.job_meta.insert(
+            job.id.clone(),
+            JobTemplateMeta {
+                created_at: now,
+                stale_since: None,
+            },
+        );
+        state.order.retain(|id| id != &job.id);
+        state.order.push_back(job.id.clone());
+        self.nonce_counter
+            .store(random_nonce_slot(), Ordering::Relaxed);
+        drop(state);
+        *self.last_refresh.lock() = Some(now);
+        let _ = self.tx.send(job);
     }
 }
 
@@ -1616,6 +1686,45 @@ mod tests {
             err,
             SubmitJobResolveError::AssignmentSuperseded { .. }
         ));
+    }
+
+    #[test]
+    fn preserve_current_range_reuses_nonce_window_for_same_template_retarget() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config::default(),
+        );
+
+        {
+            let mut state = manager.state.write();
+            let template = Job {
+                id: "job1".into(),
+                height: 1,
+                header_base: vec![0xAA; 92],
+                network_target: [0xBB; 32],
+                network_difficulty: 1,
+                template_id: Some("tmpl".into()),
+                full_block: None,
+            };
+            state.current = Some(template.clone());
+            state.jobs.insert(template.id.clone(), template);
+        }
+
+        let first = manager
+            .build_miner_job("conn1", 64, "addr1")
+            .expect("first job");
+        let second = manager
+            .build_miner_job_with_range_mode(
+                "conn1",
+                96,
+                "addr1",
+                AssignmentRangeMode::PreserveCurrent,
+            )
+            .expect("second job");
+
+        assert_ne!(first.job_id, second.job_id);
+        assert_eq!(first.nonce_start, second.nonce_start);
+        assert_eq!(first.nonce_end, second.nonce_end);
     }
 
     #[test]

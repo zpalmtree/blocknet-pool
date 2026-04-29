@@ -3,7 +3,15 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ApiClient } from '../api/client';
 import { HashrateChart } from '../components/HashrateChart';
 import { PayoutTxLinks } from '../components/PayoutTxLinks';
-import { formatCoins, fmtSeconds, humanRate, stratumUrl, timeAgo, toUnixMs } from '../lib/format';
+import {
+  formatCoins,
+  formatCompactCoins,
+  fmtSeconds,
+  humanRate,
+  stratumUrl,
+  timeAgo,
+  toUnixMs,
+} from '../lib/format';
 import type { ThemeMode } from '../lib/theme';
 import type {
   HashratePoint,
@@ -92,10 +100,12 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
 
   useEffect(() => {
     if (!active || liveTick <= 0) return;
-    void refreshStats();
-    void loadInsights();
-    void loadHistory();
     if (liveTick % 2 === 0) {
+      void refreshStats();
+    }
+    if (liveTick % 6 === 0) {
+      void loadInsights();
+      void loadHistory();
       void loadPayouts();
     }
   }, [active, liveTick, loadHistory, loadInsights, loadPayouts, refreshStats]);
@@ -111,7 +121,9 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
 
   const round = insights?.round;
   const payoutEta = insights?.payout_eta;
-  const latestSolvedBlock = insights?.luck_history?.[0];
+  const dashboardLuckHistory = (insights?.luck_history ?? []).filter((row) => !row.orphaned);
+  const hiddenOrphanRounds = Math.max(0, (insights?.luck_history?.length ?? 0) - dashboardLuckHistory.length);
+  const latestSolvedBlock = dashboardLuckHistory[0];
   const nextSweepAt = toUnixMs(payoutEta?.next_sweep_at);
   const nextSweepLabel =
     payoutEta?.next_sweep_in_seconds != null
@@ -119,8 +131,6 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
       : nextSweepAt
         ? new Date(nextSweepAt).toLocaleTimeString()
         : '-';
-  const configuredSweepLabel =
-    payoutEta?.configured_interval_seconds != null ? fmtSeconds(payoutEta.configured_interval_seconds) : '-';
 
   const avgLuck = insights?.avg_effort_pct;
   return (
@@ -188,7 +198,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
             <div className="value" id="s-avg-luck">{fmtPct(avgLuck)}</div>
           </div>
           <div className="stat-card">
-            <div className="label">Orphaned Blocks</div>
+            <div className="label">Unique Orphans</div>
             <div className="value" id="s-orphaned-blocks">{stats?.pool?.orphaned_blocks ?? '-'}</div>
           </div>
           <div className="stat-card">
@@ -240,30 +250,44 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
         </div>
       </div>
 
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div className="label">Pending Payouts</div>
-          <div className="value mono">{payoutEta?.pending_count ?? '-'}</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Pending Amount</div>
-          <div className="value mono">{formatCoins(payoutEta?.pending_total_amount ?? 0)}</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Payout ETA</div>
-          <div className="value mono">{payoutEta?.eta_seconds != null ? fmtSeconds(payoutEta.eta_seconds) : '-'}</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Next Sweep</div>
-          <div className="value mono" title={nextSweepAt ? new Date(nextSweepAt).toLocaleString() : undefined}>
-            {nextSweepLabel}
+      <div className="stats-card-group">
+        <div className="stats-card-group-title">Payouts</div>
+        <div className="stats-card-group-grid">
+          <div
+            className="stat-card"
+            title={
+              payoutEta?.pending_count != null
+                ? `${payoutEta.pending_count} payout recipient${payoutEta.pending_count === 1 ? '' : 's'} currently queued`
+                : undefined
+            }
+          >
+            <div className="label">Payout Queue</div>
+            <div className="value mono">{payoutEta?.pending_count ?? '-'}</div>
+            <div className="stat-meta">
+              {payoutEta?.pending_total_amount ? formatCompactCoins(payoutEta.pending_total_amount) : '0 BNT'} queued
+            </div>
           </div>
-          <div className="stat-meta">Every {configuredSweepLabel}</div>
-        </div>
-        <div className="stat-card">
-          <div className="label">Observed Batch Cadence</div>
-          <div className="value mono">
-            {payoutEta?.typical_interval_seconds ? fmtSeconds(payoutEta.typical_interval_seconds) : '-'}
+          <div
+            className="stat-card"
+            title={
+              stats?.pool?.paid_to_miners_total != null
+                ? `${formatCoins(stats.pool.paid_to_miners_total)} paid to miners`
+                : undefined
+            }
+          >
+            <div className="label">Total BNT Paid</div>
+            <div className="value mono" id="s-total-paid">
+              {stats?.pool?.paid_to_miners_total != null ? formatCompactCoins(stats.pool.paid_to_miners_total) : '-'}
+            </div>
+            <div className="stat-meta">
+              {stats?.pool?.paid_to_miners_total != null ? formatCoins(stats.pool.paid_to_miners_total) : ''}
+            </div>
+          </div>
+          <div className="stat-card">
+            <div className="label">Next Sweep</div>
+            <div className="value mono" title={nextSweepAt ? new Date(nextSweepAt).toLocaleString() : undefined}>
+              {nextSweepLabel}
+            </div>
           </div>
         </div>
       </div>
@@ -311,6 +335,12 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
             View All
           </a>
         </div>
+        {hiddenOrphanRounds > 0 && (
+          <div style={{ marginBottom: 12, color: 'var(--muted)', fontSize: 13 }}>
+            Showing canonical rounds only on the dashboard. {hiddenOrphanRounds} orphaned
+            {hiddenOrphanRounds === 1 ? ' row is' : ' rows are'} hidden here.
+          </div>
+        )}
         <div className="card table-scroll">
           <table>
             <thead>
@@ -323,14 +353,14 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
               </tr>
             </thead>
             <tbody>
-              {!insights?.luck_history?.length ? (
+              {!dashboardLuckHistory.length ? (
                 <tr>
                   <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                     No round history yet
                   </td>
                 </tr>
               ) : (
-                insights.luck_history.map((row) => (
+                dashboardLuckHistory.map((row) => (
                   <tr key={`${row.block_height}-${row.block_hash}`}>
                     <td>
                       <a href={`https://explorer.blocknetcrypto.com/block/${row.block_hash}`} target="_blank" rel="noopener">

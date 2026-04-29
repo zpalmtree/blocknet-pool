@@ -43,7 +43,7 @@ export function LuckPage({ active, api, liveTick }: LuckPageProps) {
   }, [active, loadPage]);
 
   useEffect(() => {
-    if (!active || liveTick <= 0 || liveTick % 2 !== 0) return;
+    if (!active || liveTick <= 0 || liveTick % 12 !== 0) return;
     void loadPage();
   }, [active, liveTick, loadPage]);
 

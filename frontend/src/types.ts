@@ -9,12 +9,10 @@ export type Route =
   | "status";
 export type AdminTab =
   | "miners"
-  | "payouts"
-  | "fees"
-  | "devfee"
-  | "rewards"
-  | "health"
+  | "holds"
   | "balances"
+  | "shares"
+  | "rewards"
   | "recovery"
   | "logs";
 export type Range = "1h" | "24h" | "7d" | "30d";
@@ -34,6 +32,7 @@ export interface StatsResponse {
     blocks_found: number;
     orphaned_blocks: number;
     orphan_rate_pct: number;
+    paid_to_miners_total: number;
   };
   chain: {
     current_job_height?: number | null;
@@ -53,6 +52,7 @@ export interface InfoResponse {
   pplns_window?: number;
   pplns_window_duration?: string;
   provisional_share_delay?: string;
+  max_provisional_recent_verified_multiplier?: number;
   sample_rate?: number;
   warmup_shares?: number;
   min_sample_every?: number;
@@ -158,18 +158,52 @@ export interface MinerVerificationHold {
   quarantined_until?: UnixLike;
   active_risk_strikes?: number;
   active_fraud_strikes?: number;
+  validation_hold_cause?: 'invalid_samples' | 'provisional_backlog' | 'payout_coverage' | null;
+  validation_pending_provisional?: number | null;
+  validation_recent_verified_difficulty?: number | null;
+  validation_recent_provisional_difficulty?: number | null;
+}
+
+export interface MinerBalanceDetails {
+  pending: number;
+  pending_confirmed?: number;
+  pending_queued?: number;
+  pending_unqueued?: number;
+  paid: number;
+}
+
+export interface MinerBalancePayload {
+  address: string;
+  balance: MinerBalanceDetails;
+  pending_estimate?: MinerPendingEstimate;
+  pending_payout?: PendingPayout | null;
+}
+
+export interface ActiveVerificationHold {
+  address: string;
+  strikes: number;
+  suspected_fraud_strikes: number;
+  last_reason?: string | null;
+  reason?: string | null;
+  last_event_at?: UnixLike;
+  quarantined_until?: UnixLike;
+  force_verify_until?: UnixLike;
+  validation_forced_until?: UnixLike;
+  validation_hold_cause?: 'invalid_samples' | 'provisional_backlog' | 'payout_coverage' | null;
+  validation_pending_provisional?: number;
+  validation_recent_verified_difficulty?: number;
+  validation_recent_provisional_difficulty?: number;
+}
+
+export interface ClearAddressRiskHistoryResponse {
+  ok: boolean;
+  address: string;
 }
 
 export interface MinerResponse {
   hashrate: number;
   mining_since?: UnixLike;
-  balance?: {
-    pending: number;
-    pending_confirmed?: number;
-    pending_queued?: number;
-    pending_unqueued?: number;
-    paid: number;
-  };
+  balance?: MinerBalanceDetails;
   workers?: MinerWorker[];
   shares?: MinerShare[];
   blocks_found?: BlockItem[];
@@ -204,6 +238,8 @@ export interface AdminPayoutItem {
 
 export interface AdminBalanceItem {
   address: string;
+  clean_payable: number;
+  orphan_backed: number;
   pending: number;
   paid: number;
 }
@@ -289,6 +325,10 @@ export interface HealthResponse {
     active_assignments?: number;
   };
   payouts?: {
+    unpaid_count?: number;
+    unpaid_amount?: number;
+    queued_count?: number;
+    queued_amount?: number;
     pending_count?: number;
     pending_amount?: number;
     last_payout?: AdminPayoutItem | null;
@@ -304,6 +344,15 @@ export interface HealthResponse {
     in_flight?: number;
     candidate_queue_depth?: number;
     regular_queue_depth?: number;
+    audit_queue_depth?: number;
+    candidate_oldest_age_millis?: number | null;
+    regular_oldest_age_millis?: number | null;
+    audit_oldest_age_millis?: number | null;
+    candidate_wait?: PercentileSummary;
+    regular_wait?: PercentileSummary;
+    audit_wait?: PercentileSummary;
+    validation_duration?: PercentileSummary;
+    audit_duration?: PercentileSummary;
     tracked_addresses?: number;
     forced_verify_addresses?: number;
     total_shares?: number;
@@ -311,7 +360,125 @@ export interface HealthResponse {
     invalid_samples?: number;
     pending_provisional?: number;
     fraud_detections?: number;
+    candidate_false_claims?: number;
+    hot_accepts?: number;
+    sync_full_verifies?: number;
+    audit_enqueued?: number;
+    audit_verified?: number;
+    audit_rejected?: number;
+    audit_deferred?: number;
+    overload_mode?: OverloadMode;
+    effective_sample_rate?: number;
   };
+  pool_activity?: {
+    state?: string;
+    detail?: string;
+    connected_miners?: number;
+    connected_workers?: number;
+    estimated_hashrate?: number;
+    snapshot_age_seconds?: number | null;
+    last_share_age_seconds?: number | null;
+  };
+  active_verification_holds?: ActiveVerificationHold[];
+}
+
+export interface AdminBalanceOverviewResponse {
+  generated_at: UnixLike;
+  wallet: {
+    spendable: number;
+    pending: number;
+    pending_unconfirmed: number;
+    pending_unconfirmed_eta: number;
+    total: number;
+  };
+  payouts: {
+    unpaid_count: number;
+    unpaid_amount: number;
+    clean_unpaid_count: number;
+    clean_unpaid_amount: number;
+    orphan_backed_unpaid_amount: number;
+    balance_source_drift_amount: number;
+    pool_fee_unpaid_amount: number;
+    pool_fee_clean_unpaid_amount: number;
+    pool_fee_orphan_backed_unpaid_amount: number;
+    pool_fee_balance_source_drift_amount: number;
+    queued_count: number;
+    queued_amount: number;
+  };
+  outputs: {
+    live_count: number;
+    spendable_count: number;
+    pending_count: number;
+    spendable_coinbase_count: number;
+    spendable_coinbase_amount: number;
+    spendable_regular_count: number;
+    spendable_regular_amount: number;
+    pending_coinbase_count: number;
+    pending_coinbase_amount: number;
+    pending_regular_count: number;
+    pending_regular_amount: number;
+    pending_regular_matched_payout_count: number;
+    pending_regular_matched_payout_amount: number;
+    pending_regular_unmatched_count: number;
+    pending_regular_unmatched_amount: number;
+  };
+  ledger: {
+    miner_paid_total: number;
+    miner_unpaid_total: number;
+    miner_total_credited: number;
+    miner_clean_unpaid_total: number;
+    miner_orphan_backed_unpaid_total: number;
+    miner_balance_source_drift_total: number;
+    net_block_reward_total: number;
+    pool_fee_total: number;
+    pool_fee_paid_total: number;
+    pool_fee_unpaid_total: number;
+    pool_fee_clean_unpaid_total: number;
+    pool_fee_orphan_backed_unpaid_total: number;
+    pool_fee_balance_source_drift_total: number;
+    pool_fee_balance_total: number;
+    miner_rewards_balanced: boolean;
+  };
+  liquidity: {
+    spendable_minus_queued: number;
+    queue_shortfall_amount: number;
+  };
+}
+
+export interface PercentileSummary {
+  samples?: number;
+  p50_millis?: number | null;
+  p95_millis?: number | null;
+}
+
+export type OverloadMode = 'normal' | 'shed' | 'emergency';
+
+export interface AdminSubmitSummary {
+  candidate_queue_depth?: number;
+  regular_queue_depth?: number;
+  candidate_oldest_age_millis?: number | null;
+  regular_oldest_age_millis?: number | null;
+  candidate_wait?: PercentileSummary;
+  regular_wait?: PercentileSummary;
+}
+
+export interface AdminShareDiagnosticsWindow {
+  label: string;
+  window_seconds: number;
+  accepted: number;
+  rejected: number;
+  total: number;
+  rejection_rate_pct: number;
+  by_reason: RejectionReasonCount[];
+}
+
+export interface AdminShareDiagnosticsResponse {
+  generated_at: UnixLike;
+  windows: AdminShareDiagnosticsWindow[];
+  submit?: AdminSubmitSummary;
+  job?: HealthResponse["job"];
+  validation?: HealthResponse["validation"];
+  pool_activity?: HealthResponse["pool_activity"];
 }
 
 export type RecoveryInstanceId = "primary" | "standby";
@@ -394,6 +561,65 @@ export interface RecoveryStatusResponse {
   operations: RecoveryOperation[];
 }
 
+export type ReconciliationPayoutResolutionAction = "restore_pending" | "drop_paid";
+
+export interface AdminMissingCompletedPayoutIssue {
+  tx_hash: string;
+  payout_row_count: number;
+  total_amount: number;
+  total_fee: number;
+  latest_timestamp: UnixLike;
+  addresses: string[];
+  linked_amount: number;
+  live_linked_amount: number;
+  orphaned_linked_amount: number;
+  unlinked_amount: number;
+}
+
+export interface AdminOrphanedBlockIssue {
+  height: number;
+  hash: string;
+  credit_event_count: number;
+  credited_address_count: number;
+  remaining_credit_amount: number;
+  paid_credit_amount: number;
+  remaining_fee_amount: number;
+  paid_fee_amount: number;
+  pending_payout_count: number;
+  broadcast_pending_payout_count: number;
+}
+
+export interface AdminReconciliationIssuesResponse {
+  generated_at: UnixLike;
+  summary: {
+    total_open_issues: number;
+    missing_payout_issue_count: number;
+    missing_payout_total_amount: number;
+    orphaned_block_issue_count: number;
+    orphaned_block_total_credit_amount: number;
+  };
+  missing_payouts: AdminMissingCompletedPayoutIssue[];
+  orphaned_blocks: AdminOrphanedBlockIssue[];
+}
+
+export interface AdminReconciliationPayoutResolutionResponse {
+  tx_hash: string;
+  action: ReconciliationPayoutResolutionAction;
+  reverted_payout_rows: number;
+  restored_pending_amount: number;
+  dropped_amount: number;
+}
+
+export interface AdminOrphanedBlockCleanupResponse {
+  block_height: number;
+  orphaned: boolean;
+  reversed_credit_events: number;
+  reversed_credit_amount: number;
+  reversed_fee_amount: number;
+  canceled_pending_payouts: number;
+  manual_reconciliation_required: boolean;
+}
+
 export interface AdminDevFeeWindow {
   label: string;
   window_seconds: number;
@@ -471,6 +697,8 @@ export interface PayoutEta {
   next_sweep_in_seconds?: number | null;
   pending_count: number;
   pending_total_amount: number;
+  unpaid_count?: number;
+  unpaid_amount?: number;
   wallet_spendable?: number | null;
   wallet_pending?: number | null;
   queue_shortfall_amount?: number;
@@ -540,6 +768,29 @@ export interface StatusIncident {
   ongoing: boolean;
 }
 
+export interface DaemonCurrentProcessBlock {
+  height: number;
+  tx_count: number;
+  stage: string;
+  started_at_unix_millis: number;
+  stage_started_at_unix_millis: number;
+  elapsed_millis: number;
+  stage_elapsed_millis: number;
+}
+
+export interface DaemonLastProcessBlock {
+  height: number;
+  tx_count: number;
+  completed_at_unix_millis: number;
+  validate_millis: number;
+  commit_millis: number;
+  reorg_millis: number;
+  total_millis: number;
+  accepted: boolean;
+  main_chain: boolean;
+  error?: string | null;
+}
+
 export interface StatusResponse {
   checked_at: UnixLike;
   pool_uptime_seconds: number;
@@ -587,6 +838,8 @@ export interface StatusResponse {
     syncing?: boolean | null;
     mempool_size?: number | null;
     best_hash?: string | null;
+    current_process_block?: DaemonCurrentProcessBlock | null;
+    last_process_block?: DaemonLastProcessBlock | null;
     error?: string | null;
   };
   template: {

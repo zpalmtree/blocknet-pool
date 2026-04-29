@@ -7,32 +7,41 @@ import {
   fmtSeconds,
   formatCoinAmount,
   formatCoins,
-  formatFee,
+  formatCompactCoins,
   humanRate,
   shortAddr,
-  shortTx,
   timeAgo,
+  timeUntil,
   toUnixMs,
 } from '../lib/format';
 import type {
+  ActiveVerificationHold,
   AdminBalanceItem,
-  AdminDevFeeTelemetryResponse,
-  AdminPayoutItem,
+  AdminBalanceOverviewResponse,
+  AdminMissingCompletedPayoutIssue,
+  AdminOrphanedBlockIssue,
+  AdminReconciliationIssuesResponse,
+  AdminShareDiagnosticsResponse,
+  AdminShareDiagnosticsWindow,
   AdminTab,
   BlockRewardBreakdownResponse,
   BlockItem,
-  FeeEvent,
   HealthResponse,
   MinerListItem,
   PagerState,
+  ReconciliationPayoutResolutionAction,
   RecoveryInstanceId,
   RecoveryInstanceStatus,
   RecoveryOperationKind,
   RecoveryStatusResponse,
+  UnixLike,
 } from '../types';
 
 const MAX_DAEMON_LOG_LINES = 1000;
 const DAEMON_LOG_RECONNECT_DELAY_MS = 1500;
+const HOT_PATH_LATENCY_WARN_MILLIS = 1000;
+const HOT_PATH_LATENCY_SPIKE_MILLIS = 5000;
+const ACKNOWLEDGED_LAUNCH_ERA_MINER_SHORTFALL = 1_546_507_661_992;
 
 function rewardStatusLabel(status: string): string {
   switch (status) {
@@ -71,43 +80,6 @@ function rewardStatusTone(status: string): string {
   }
 }
 
-function feeStatusLabel(status: string | undefined): string {
-  switch (status) {
-    case 'pending':
-      return 'Pending';
-    case 'ready':
-      return 'Ready';
-    case 'missing':
-      return 'Missing';
-    default:
-      return 'Collected';
-  }
-}
-
-function feeStatusBadgeClass(status: string | undefined): string {
-  switch (status) {
-    case 'missing':
-      return 'badge-orphaned';
-    case 'pending':
-    case 'ready':
-      return 'badge-pending';
-    default:
-      return 'badge-confirmed';
-  }
-}
-
-function feeStatusNote(item: FeeEvent): string | null {
-  if (item.status === 'pending' && (item.confirmations_remaining ?? 0) > 0) {
-    return `${item.confirmations_remaining} conf`;
-  }
-  if (item.status === 'ready') {
-    return 'awaiting fee sweep';
-  }
-  if (item.status === 'missing') {
-    return 'fee row missing';
-  }
-  return null;
-}
 
 function formatSignedCoins(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '-';
@@ -120,39 +92,162 @@ function pct(value: number | null | undefined): string {
   return `${value.toFixed(2)}%`;
 }
 
-function formatRefreshLag(ms: number | null | undefined): string {
-  if (ms == null || !Number.isFinite(ms)) return '-';
-  if (ms < 1000) return '<1s';
-  return fmtSeconds(Math.max(1, Math.floor(ms / 1000)));
+function ratioPct(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '-';
+  return `${(value * 100).toFixed(2)}%`;
 }
 
-function compactHash(value: string | null | undefined): string {
-  if (!value) return '-';
-  if (value.length <= 18) return value;
-  return `${value.slice(0, 8)}...${value.slice(-8)}`;
+function formatMillis(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '-';
+  if (value >= 10_000) return `${(value / 1000).toFixed(0)}s`;
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}s`;
+  return `${Math.round(value)}ms`;
 }
 
-function devFeeHintBadgeClass(position: string): string {
-  switch (position) {
-    case 'below-floor':
-      return 'badge-orphaned';
-    case 'above-floor':
-      return 'badge-confirmed';
+function overloadModeLabel(mode: string | null | undefined): string {
+  switch (mode) {
+    case 'emergency':
+      return 'Emergency';
+    case 'shed':
+      return 'Shedding';
     default:
-      return 'badge-pending';
+      return 'Normal';
   }
 }
 
-function devFeeHintLabel(position: string): string {
-  switch (position) {
-    case 'below-floor':
-      return 'Below floor';
-    case 'above-floor':
-      return 'Above floor';
+function reconciliationRecommendation(issue: AdminMissingCompletedPayoutIssue): string {
+  if (issue.orphaned_linked_amount > 0 && issue.live_linked_amount === 0 && issue.unlinked_amount === 0) {
+    return 'Known source credits only point at orphaned blocks. Dropping the paid amount is the usual resolution.';
+  }
+  if (issue.live_linked_amount > 0 && issue.orphaned_linked_amount === 0 && issue.unlinked_amount === 0) {
+    return 'Known source credits still point at live blocks. Restoring the amount to pending is the usual resolution.';
+  }
+  if (issue.unlinked_amount > 0) {
+    return 'Part of this payout could not be reconstructed from historical source credits. Choose the operator override that matches the real chain outcome.';
+  }
+  if (issue.orphaned_linked_amount > 0 && issue.live_linked_amount > 0) {
+    return 'This payout mixes live and orphaned known sources. Review before choosing an override.';
+  }
+  return 'Choose the override that matches the current chain state.';
+}
+
+function roundChipClass(tone: 'ok' | 'warn' | 'critical'): string {
+  switch (tone) {
+    case 'critical':
+      return 'round-chip is-critical';
+    case 'warn':
+      return 'round-chip is-warn';
     default:
-      return 'At floor';
+      return 'round-chip is-ok';
   }
 }
+
+
+
+function formatAdminTimestamp(value: UnixLike): string {
+  const ms = toUnixMs(value);
+  return ms ? new Date(ms).toLocaleString() : '-';
+}
+
+function formatWholeNumber(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '0';
+  return Math.round(value).toLocaleString();
+}
+
+function hasActiveUntil(value: UnixLike | null | undefined): boolean {
+  const ms = value ? toUnixMs(value) : 0;
+  return !!ms && ms > Date.now();
+}
+
+function holdUntilLabel(value: UnixLike | null | undefined): string {
+  return hasActiveUntil(value) ? timeUntil(value as UnixLike) : '-';
+}
+
+function holdUntilTitle(value: UnixLike | null | undefined): string | undefined {
+  return hasActiveUntil(value) ? formatAdminTimestamp(value as UnixLike) : undefined;
+}
+
+function verificationHoldBadgeClass(active: boolean, tone: 'warn' | 'good' = 'warn'): string {
+  if (!active) return 'badge-pending';
+  return tone === 'good' ? 'badge-confirmed' : 'badge-orphaned';
+}
+
+function verificationHoldActive(hold: ActiveVerificationHold): boolean {
+  return (
+    hasActiveUntil(hold.quarantined_until) ||
+    hasActiveUntil(hold.force_verify_until) ||
+    hasActiveUntil(hold.validation_forced_until)
+  );
+}
+
+function verificationHoldTone(hold: ActiveVerificationHold): 'warn' | 'good' {
+  return hasActiveUntil(hold.quarantined_until) ? 'warn' : 'good';
+}
+
+function verificationHoldLabel(hold: ActiveVerificationHold): string {
+  if (hasActiveUntil(hold.quarantined_until)) return 'Quarantined';
+  if (hasActiveUntil(hold.force_verify_until) && hasActiveUntil(hold.validation_forced_until)) {
+    return 'Risk + validation';
+  }
+  if (hasActiveUntil(hold.force_verify_until)) return 'Risk forced';
+  if (hasActiveUntil(hold.validation_forced_until)) {
+    switch (hold.validation_hold_cause) {
+      case 'provisional_backlog':
+        return 'Backlog drain';
+      case 'payout_coverage':
+        return 'Payout boost';
+      case 'invalid_samples':
+        return 'Validation review';
+      default:
+        return 'Validation forced';
+    }
+  }
+  return 'Active';
+}
+
+function isTemporaryValidationAssist(hold: ActiveVerificationHold): boolean {
+  return (
+    !hasActiveUntil(hold.quarantined_until) &&
+    !hasActiveUntil(hold.force_verify_until) &&
+    hasActiveUntil(hold.validation_forced_until) &&
+    (hold.validation_hold_cause === 'provisional_backlog' || hold.validation_hold_cause === 'payout_coverage')
+  );
+}
+
+function isRiskVerificationHold(hold: ActiveVerificationHold): boolean {
+  return (
+    hasActiveUntil(hold.quarantined_until) ||
+    hasActiveUntil(hold.force_verify_until) ||
+    hold.validation_hold_cause === 'invalid_samples'
+  );
+}
+
+function validationHoldUntilLabel(hold: ActiveVerificationHold): string {
+  if (!hasActiveUntil(hold.validation_forced_until)) return '-';
+  const label = holdUntilLabel(hold.validation_forced_until);
+  return isTemporaryValidationAssist(hold) ? `up to ${label}` : label;
+}
+
+function validationHoldUntilHint(hold: ActiveVerificationHold): string | null {
+  if (!hasActiveUntil(hold.validation_forced_until)) return null;
+  switch (hold.validation_hold_cause) {
+    case 'provisional_backlog':
+      if (
+        (hold.validation_recent_provisional_difficulty ?? 0) > 0 ||
+        (hold.validation_recent_verified_difficulty ?? 0) > 0
+      ) {
+        return `auto-clears once recent provisional diff ${formatWholeNumber(
+          hold.validation_recent_provisional_difficulty
+        )} settles near verified diff ${formatWholeNumber(hold.validation_recent_verified_difficulty)}`;
+      }
+      return 'auto-clears once backlog drains';
+    case 'payout_coverage':
+      return 'auto-clears once coverage recovers';
+    default:
+      return null;
+  }
+}
+
 
 function rewardBlockOptionLabel(block: BlockItem): string {
   const status = block.orphaned ? 'orphaned' : block.confirmed ? 'confirmed' : 'pending';
@@ -190,6 +285,22 @@ function recoveryStateBadgeClass(state: RecoveryInstanceStatus['state'] | undefi
       return 'badge-pending';
   }
 }
+
+
+function shareWindowReasonCount(window: AdminShareDiagnosticsWindow | null | undefined, reason: string): number {
+  const target = reason.trim().toLowerCase();
+  if (!window?.by_reason?.length || !target) return 0;
+  const match = window.by_reason.find((item) => item.reason.trim().toLowerCase() === target);
+  return match?.count ?? 0;
+}
+
+function shareWindowReasonPct(window: AdminShareDiagnosticsWindow | null | undefined, reason: string): number | null {
+  if (!window) return null;
+  const total = window.total ?? 0;
+  if (total <= 0) return null;
+  return (shareWindowReasonCount(window, reason) / total) * 100;
+}
+
 
 function recoveryInstanceLabel(instance: RecoveryInstanceId | null | undefined): string {
   switch (instance) {
@@ -285,7 +396,6 @@ interface AdminPageProps {
   apiKeyInput: string;
   setApiKeyInput: (value: string) => void;
   onSaveApiKey: () => void;
-  onClearApiKey: () => void;
   onJumpToStats: (address: string) => void;
 }
 
@@ -302,7 +412,6 @@ export function AdminPage({
   apiKeyInput,
   setApiKeyInput,
   onSaveApiKey,
-  onClearApiKey,
   onJumpToStats,
 }: AdminPageProps) {
   const [tab, setTab] = useState<AdminTab>('miners');
@@ -312,16 +421,6 @@ export function AdminPage({
   const [minersItems, setMinersItems] = useState<MinerListItem[]>([]);
   const [minersPager, setMinersPager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
 
-  const [payoutAddress, setPayoutAddress] = useState('');
-  const [payoutTx, setPayoutTx] = useState('');
-  const [payoutItems, setPayoutItems] = useState<AdminPayoutItem[]>([]);
-  const [payoutPager, setPayoutPager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
-
-  const [feesTotal, setFeesTotal] = useState(0);
-  const [feesPendingTotal, setFeesPendingTotal] = useState(0);
-  const [feeItems, setFeeItems] = useState<FeeEvent[]>([]);
-  const [feePager, setFeePager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
-  const [devFeeTelemetry, setDevFeeTelemetry] = useState<AdminDevFeeTelemetryResponse | null>(null);
 
   const [rewardBlockInput, setRewardBlockInput] = useState('');
   const [rewardBlockOptions, setRewardBlockOptions] = useState<BlockItem[]>([]);
@@ -331,6 +430,8 @@ export function AdminPage({
   const [rewardBreakdownLoading, setRewardBreakdownLoading] = useState(false);
 
   const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [balanceOverview, setBalanceOverview] = useState<AdminBalanceOverviewResponse | null>(null);
+  const [shareDiagnostics, setShareDiagnostics] = useState<AdminShareDiagnosticsResponse | null>(null);
 
   const [balancesSearch, setBalancesSearch] = useState('');
   const [balancesSort, setBalancesSort] = useState('pending_desc');
@@ -338,8 +439,13 @@ export function AdminPage({
   const [balancesPager, setBalancesPager] = useState<PagerState>({ offset: 0, limit: 50, total: 0 });
 
   const [recoveryStatus, setRecoveryStatus] = useState<RecoveryStatusResponse | null>(null);
+  const [reconciliationIssues, setReconciliationIssues] = useState<AdminReconciliationIssuesResponse | null>(null);
   const [recoveryActionError, setRecoveryActionError] = useState('');
+  const [reconciliationActionError, setReconciliationActionError] = useState('');
   const [recoveryBusy, setRecoveryBusy] = useState<RecoveryOperationKind | null>(null);
+  const [reconciliationBusyKey, setReconciliationBusyKey] = useState<string | null>(null);
+  const [holdActionError, setHoldActionError] = useState('');
+  const [holdBusyAddress, setHoldBusyAddress] = useState<string | null>(null);
 
   const [daemonLogs, setDaemonLogs] = useState<DaemonLogLine[]>([]);
   const [daemonLogsTail, setDaemonLogsTail] = useState(200);
@@ -369,54 +475,6 @@ export function AdminPage({
     }
   }, [api, apiKey, minersPager.limit, minersPager.offset, minersSearch, minersSort]);
 
-  const loadPayouts = useCallback(async () => {
-    if (!apiKey) return;
-    try {
-      const d = await api.getAdminPayouts({
-        paged: 'true',
-        limit: payoutPager.limit,
-        offset: payoutPager.offset,
-        sort: 'time_desc',
-        address: payoutAddress.trim() || undefined,
-        tx_hash: payoutTx.trim() || undefined,
-      });
-      const items = d.items || [];
-      setPayoutItems(items);
-      setPayoutPager((prev) => ({ ...prev, total: d.page ? d.page.total : items.length }));
-    } catch {
-      setPayoutItems([]);
-    }
-  }, [api, apiKey, payoutAddress, payoutPager.limit, payoutPager.offset, payoutTx]);
-
-  const loadFees = useCallback(async () => {
-    if (!apiKey) return;
-    try {
-      const d = await api.getFees({
-        paged: 'true',
-        limit: feePager.limit,
-        offset: feePager.offset,
-        sort: 'time_desc',
-      });
-      setFeesTotal(d.total_collected || 0);
-      setFeesPendingTotal(d.total_pending || 0);
-      const items = d.recent?.items || [];
-      setFeeItems(items);
-      setFeePager((prev) => ({ ...prev, total: d.recent?.page ? d.recent.page.total : items.length }));
-    } catch {
-      setFeesPendingTotal(0);
-      setFeeItems([]);
-    }
-  }, [api, apiKey, feePager.limit, feePager.offset]);
-
-  const loadDevFeeTelemetry = useCallback(async () => {
-    if (!apiKey) return;
-    try {
-      const d = await api.fetchJson<AdminDevFeeTelemetryResponse>('/api/admin/dev-fee', { auth: true });
-      setDevFeeTelemetry(d);
-    } catch {
-      setDevFeeTelemetry(null);
-    }
-  }, [api, apiKey]);
 
   const loadRewardBreakdown = useCallback(
     async (heightOverride?: number | string) => {
@@ -476,6 +534,26 @@ export function AdminPage({
     }
   }, [api, apiKey]);
 
+  const loadBalanceOverview = useCallback(async () => {
+    if (!apiKey) return;
+    try {
+      const d = await api.getAdminBalanceOverview();
+      setBalanceOverview(d);
+    } catch {
+      setBalanceOverview(null);
+    }
+  }, [api, apiKey]);
+
+  const loadShareDiagnostics = useCallback(async () => {
+    if (!apiKey) return;
+    try {
+      const d = await api.getAdminShareDiagnostics();
+      setShareDiagnostics(d);
+    } catch {
+      setShareDiagnostics(null);
+    }
+  }, [api, apiKey]);
+
   const loadBalances = useCallback(async () => {
     if (!apiKey) return;
     try {
@@ -504,6 +582,16 @@ export function AdminPage({
     }
   }, [api, apiKey]);
 
+  const loadReconciliationIssues = useCallback(async () => {
+    if (!apiKey) return;
+    try {
+      const d = await api.getAdminReconciliationIssues();
+      setReconciliationIssues(d);
+    } catch {
+      setReconciliationIssues(null);
+    }
+  }, [api, apiKey]);
+
   const runRecoveryAction = useCallback(
     async (kind: RecoveryOperationKind, fn: () => Promise<unknown>) => {
       setRecoveryActionError('');
@@ -520,31 +608,111 @@ export function AdminPage({
     [loadRecovery]
   );
 
+  const resolveReconciliationPayoutIssue = useCallback(
+    async (txHash: string, action: ReconciliationPayoutResolutionAction) => {
+      const trimmed = txHash.trim();
+      if (!trimmed) return;
+      const message =
+        action === 'restore_pending'
+          ? `Restore ${trimmed} back to miners' pending balances and remove it from paid history?`
+          : `Drop ${trimmed} from paid history without restoring pending balances?`;
+      if (!window.confirm(message)) {
+        return;
+      }
+
+      setReconciliationActionError('');
+      setReconciliationBusyKey(`payout:${trimmed}:${action}`);
+      try {
+        await api.resolveAdminReconciliationPayout(trimmed, action);
+        await Promise.all([loadReconciliationIssues(), loadBalanceOverview(), loadHealth()]);
+      } catch (err) {
+        setReconciliationActionError(
+          err instanceof Error ? err.message : 'failed resolving reconciliation payout issue'
+        );
+      } finally {
+        setReconciliationBusyKey(null);
+      }
+    },
+    [api, loadBalanceOverview, loadHealth, loadReconciliationIssues]
+  );
+
+  const retryOrphanedBlockCleanup = useCallback(
+    async (blockHeight: number) => {
+      if (!window.confirm(`Retry orphan-credit cleanup for block ${blockHeight}?`)) {
+        return;
+      }
+
+      setReconciliationActionError('');
+      setReconciliationBusyKey(`block:${blockHeight}`);
+      try {
+        await api.retryAdminOrphanedBlockCleanup(blockHeight);
+        await Promise.all([loadReconciliationIssues(), loadBalanceOverview(), loadHealth()]);
+      } catch (err) {
+        setReconciliationActionError(
+          err instanceof Error ? err.message : 'failed retrying orphaned block cleanup'
+        );
+      } finally {
+        setReconciliationBusyKey(null);
+      }
+    },
+    [api, loadBalanceOverview, loadHealth, loadReconciliationIssues]
+  );
+
+  const clearAddressRiskHistory = useCallback(
+    async (address: string) => {
+      const trimmed = address.trim();
+      if (!trimmed) return;
+      if (
+        !window.confirm(
+          `Clear all quarantine, force-verify, fraud, and validation hold history for ${trimmed}?`
+        )
+      ) {
+        return;
+      }
+
+      setHoldActionError('');
+      setHoldBusyAddress(trimmed);
+      try {
+        await api.clearAddressRiskHistory(trimmed);
+        await loadHealth();
+      } catch (err) {
+        setHoldActionError(err instanceof Error ? err.message : 'failed clearing address risk history');
+      } finally {
+        setHoldBusyAddress(null);
+      }
+    },
+    [api, loadHealth]
+  );
+
   useEffect(() => {
     if (!active || !apiKey) return;
 
+    // Always load overview data regardless of tab
+    void loadHealth();
+    void loadBalanceOverview();
+    void loadShareDiagnostics();
+
     if (tab === 'miners') void loadMiners();
-    if (tab === 'payouts') void loadPayouts();
-    if (tab === 'fees') void loadFees();
-    if (tab === 'devfee') void loadDevFeeTelemetry();
     if (tab === 'rewards') {
       void loadRewardBlocks();
       if (rewardBlockInput.trim()) {
         void loadRewardBreakdown(rewardBlockInput);
       }
     }
-    if (tab === 'health') void loadHealth();
     if (tab === 'balances') void loadBalances();
-    if (tab === 'recovery') void loadRecovery();
+    if (tab === 'recovery') {
+      void loadRecovery();
+      void loadReconciliationIssues();
+    }
   }, [
     active,
     apiKey,
     loadBalances,
-    loadFees,
-    loadDevFeeTelemetry,
+    loadBalanceOverview,
     loadHealth,
+    loadReconciliationIssues,
+    loadShareDiagnostics,
     loadMiners,
-    loadPayouts,
     loadRecovery,
     loadRewardBlocks,
     loadRewardBreakdown,
@@ -554,32 +722,35 @@ export function AdminPage({
 
   useEffect(() => {
     if (!active || !apiKey || liveTick <= 0) return;
-    if (liveTick % 2 !== 0) return;
+
+    // Always refresh overview data
+    void loadHealth();
+    void loadBalanceOverview();
+    void loadShareDiagnostics();
 
     if (tab === 'miners') void loadMiners();
-    if (tab === 'payouts') void loadPayouts();
-    if (tab === 'fees') void loadFees();
-    if (tab === 'devfee') void loadDevFeeTelemetry();
     if (tab === 'rewards') {
       void loadRewardBlocks();
       if (rewardBlockInput.trim()) {
         void loadRewardBreakdown(rewardBlockInput);
       }
     }
-    if (tab === 'health') void loadHealth();
     if (tab === 'balances') void loadBalances();
-    if (tab === 'recovery') void loadRecovery();
+    if (tab === 'recovery') {
+      void loadRecovery();
+      void loadReconciliationIssues();
+    }
   }, [
     active,
     apiKey,
     liveTick,
     tab,
     loadBalances,
-    loadFees,
-    loadDevFeeTelemetry,
+    loadBalanceOverview,
     loadHealth,
+    loadReconciliationIssues,
+    loadShareDiagnostics,
     loadMiners,
-    loadPayouts,
     loadRecovery,
     loadRewardBlocks,
     loadRewardBreakdown,
@@ -661,11 +832,7 @@ export function AdminPage({
     viewport.scrollTop = viewport.scrollHeight;
   }, [daemonLogs, daemonLogsAutoScroll, tab]);
 
-  const apiStatus = apiKey ? 'Key set' : 'No key';
-  const devFee24h = useMemo(
-    () => devFeeTelemetry?.windows?.find((row) => row.label === '24h') ?? devFeeTelemetry?.windows?.[0] ?? null,
-    [devFeeTelemetry]
-  );
+
   const daemonLogsStatusText =
     daemonLogsStatus === 'connecting'
       ? 'Connecting'
@@ -711,12 +878,424 @@ export function AdminPage({
     );
   }, [rewardBreakdown]);
   const rewardBreakdownOrphaned = rewardBreakdown?.block.orphaned ?? false;
+  const rewardBreakdownPaidOut = rewardBreakdown?.block.paid_out ?? false;
   const rewardBreakdownProjected = !!rewardBreakdown && !rewardBreakdownOrphaned && !rewardBreakdown.block.paid_out;
-  const rawHealthJson = useMemo(() => (health ? JSON.stringify(health, null, 2) : ''), [health]);
-  const copyHealthJson = useCallback(() => {
-    if (!rawHealthJson || !navigator.clipboard) return;
-    void navigator.clipboard.writeText(rawHealthJson);
-  }, [rawHealthJson]);
+  const activeVerificationHolds = health?.active_verification_holds ?? [];
+  const riskVerificationHolds = useMemo(
+    () => activeVerificationHolds.filter((hold) => isRiskVerificationHold(hold)),
+    [activeVerificationHolds]
+  );
+  const temporaryValidationHolds = useMemo(
+    () => activeVerificationHolds.filter((hold) => isTemporaryValidationAssist(hold)),
+    [activeVerificationHolds]
+  );
+  const poolActivity = health?.pool_activity ?? null;
+  const unpaidPayoutCount =
+    balanceOverview?.payouts.unpaid_count ?? health?.payouts?.unpaid_count ?? health?.payouts?.pending_count ?? null;
+  const unpaidPayoutAmount =
+    balanceOverview?.payouts.unpaid_amount ?? health?.payouts?.unpaid_amount ?? health?.payouts?.pending_amount ?? null;
+  const cleanPayableCount = balanceOverview?.payouts.clean_unpaid_count ?? null;
+  const cleanPayableAmount = balanceOverview?.payouts.clean_unpaid_amount ?? null;
+  const orphanBackedPendingAmount = balanceOverview?.payouts.orphan_backed_unpaid_amount ?? null;
+  const balanceSourceDriftAmount = balanceOverview?.payouts.balance_source_drift_amount ?? null;
+  const queuedPayoutCount =
+    balanceOverview?.payouts.queued_count ?? health?.payouts?.queued_count ?? health?.payouts?.pending_count ?? null;
+  const queuedPayoutAmount =
+    balanceOverview?.payouts.queued_amount ?? health?.payouts?.queued_amount ?? health?.payouts?.pending_amount ?? null;
+  const poolFeePendingAmount = balanceOverview?.payouts.pool_fee_unpaid_amount ?? null;
+  const poolFeeCleanPendingAmount = balanceOverview?.payouts.pool_fee_clean_unpaid_amount ?? null;
+  const poolFeeOrphanPendingAmount =
+    balanceOverview?.payouts.pool_fee_orphan_backed_unpaid_amount ?? null;
+  const poolFeeBalanceSourceDriftAmount =
+    balanceOverview?.payouts.pool_fee_balance_source_drift_amount ?? null;
+  const minerFundingGapAmount = balanceOverview && cleanPayableAmount != null
+    ? Math.max(cleanPayableAmount - balanceOverview.wallet.total, 0)
+    : null;
+  const minerWalletSurplusAmount = balanceOverview && cleanPayableAmount != null
+    ? Math.max(balanceOverview.wallet.total - cleanPayableAmount, 0)
+    : null;
+  const canonicalMinerRewardTotal = balanceOverview
+    ? Math.max(balanceOverview.ledger.net_block_reward_total - balanceOverview.ledger.pool_fee_total, 0)
+    : null;
+  const canonicalBackedPending = balanceOverview && canonicalMinerRewardTotal != null
+    ? Math.max(canonicalMinerRewardTotal - balanceOverview.ledger.miner_paid_total, 0)
+    : null;
+  const ledgerOverhangAmount = balanceOverview && canonicalMinerRewardTotal != null
+    ? Math.max(balanceOverview.ledger.miner_total_credited - canonicalMinerRewardTotal, 0)
+    : null;
+  const ledgerShortfallAmount = balanceOverview && canonicalMinerRewardTotal != null
+    ? Math.max(canonicalMinerRewardTotal - balanceOverview.ledger.miner_total_credited, 0)
+    : null;
+  const acknowledgedHistoricalShortfallAmount = ledgerShortfallAmount != null
+    ? Math.min(ledgerShortfallAmount, ACKNOWLEDGED_LAUNCH_ERA_MINER_SHORTFALL)
+    : null;
+  const unresolvedLedgerShortfallAmount =
+    ledgerShortfallAmount != null && acknowledgedHistoricalShortfallAmount != null
+      ? Math.max(ledgerShortfallAmount - acknowledgedHistoricalShortfallAmount, 0)
+      : null;
+  const hasUnresolvedLedgerMismatch =
+    (ledgerOverhangAmount ?? 0) > 0 || (unresolvedLedgerShortfallAmount ?? 0) > 0;
+  const balanceDiagnosticsCount = [
+    orphanBackedPendingAmount != null && orphanBackedPendingAmount > 0,
+    balanceSourceDriftAmount != null && balanceSourceDriftAmount > 0,
+    poolFeeOrphanPendingAmount != null && poolFeeOrphanPendingAmount > 0,
+    poolFeeBalanceSourceDriftAmount != null && poolFeeBalanceSourceDriftAmount > 0,
+    hasUnresolvedLedgerMismatch,
+  ].filter(Boolean).length;
+  const balanceDiagnosticsSummary = balanceDiagnosticsCount > 0
+    ? `${balanceDiagnosticsCount} diagnostic${balanceDiagnosticsCount === 1 ? '' : 's'} in Balances tab`
+    : null;
+  const shareWindows = shareDiagnostics?.windows ?? [];
+  const shareWindow5m = useMemo(
+    () => shareWindows.find((item) => item.label === '5m') ?? null,
+    [shareWindows]
+  );
+  const shareWindow1h = useMemo(
+    () => shareWindows.find((item) => item.label === '1h') ?? null,
+    [shareWindows]
+  );
+  const shareWindow24h = useMemo(
+    () => shareWindows.find((item) => item.label === '24h') ?? null,
+    [shareWindows]
+  );
+  const shareSubmit = shareDiagnostics?.submit ?? null;
+  const shareValidation = shareDiagnostics?.validation ?? null;
+
+  const shareSubmitQueueDepth =
+    (shareSubmit?.candidate_queue_depth ?? 0) + (shareSubmit?.regular_queue_depth ?? 0);
+  const shareValidationQueueDepth =
+    (shareValidation?.candidate_queue_depth ?? 0) + (shareValidation?.regular_queue_depth ?? 0);
+  const shareAuditQueueDepth = shareValidation?.audit_queue_depth ?? 0;
+  const shareSubmitOldestAge = Math.max(
+    shareSubmit?.candidate_oldest_age_millis ?? 0,
+    shareSubmit?.regular_oldest_age_millis ?? 0
+  );
+  const shareValidationOldestAge = Math.max(
+    shareValidation?.candidate_oldest_age_millis ?? 0,
+    shareValidation?.regular_oldest_age_millis ?? 0
+  );
+  const shareAuditOldestAge = shareValidation?.audit_oldest_age_millis ?? 0;
+  const shareSubmitWaitP95 = Math.max(
+    shareSubmit?.candidate_wait?.p95_millis ?? 0,
+    shareSubmit?.regular_wait?.p95_millis ?? 0
+  );
+  const shareValidationWaitP95 = Math.max(
+    shareValidation?.candidate_wait?.p95_millis ?? 0,
+    shareValidation?.regular_wait?.p95_millis ?? 0
+  );
+  const shareValidationDurationP95 = shareValidation?.validation_duration?.p95_millis ?? 0;
+  const shareAuditWaitP95 = shareValidation?.audit_wait?.p95_millis ?? 0;
+  const shareAuditDurationP95 = shareValidation?.audit_duration?.p95_millis ?? 0;
+  const shareBusy5m = shareWindowReasonPct(shareWindow5m, 'server busy');
+  const shareTimeout5m = shareWindowReasonPct(shareWindow5m, 'validation timeout');
+  const shareBusyCount5m = shareWindowReasonCount(shareWindow5m, 'server busy');
+  const shareTimeoutCount5m = shareWindowReasonCount(shareWindow5m, 'validation timeout');
+  const shareInvalidProof5m = shareWindowReasonPct(shareWindow5m, 'invalid share proof') ?? 0;
+  const shareHotAccepts = shareValidation?.hot_accepts ?? 0;
+  const shareSyncFullVerifies = shareValidation?.sync_full_verifies ?? 0;
+  const shareHotPathBackedUp =
+    shareBusyCount5m + shareTimeoutCount5m > 0 ||
+    shareSubmitQueueDepth > 0 ||
+    shareValidationQueueDepth > 0 ||
+    shareSubmitOldestAge >= 2000 ||
+    shareValidationOldestAge >= 2000;
+  const shareHotPathRecentlySlow =
+    shareSubmitWaitP95 >= HOT_PATH_LATENCY_SPIKE_MILLIS ||
+    shareValidationWaitP95 >= HOT_PATH_LATENCY_SPIKE_MILLIS;
+  const shareActiveTopReject =
+    shareWindow5m?.by_reason?.[0] ?? shareWindow1h?.by_reason?.[0] ?? shareWindow24h?.by_reason?.[0] ?? null;
+  const sharePressureSignal = useMemo(() => {
+    if (!shareDiagnostics) {
+      return {
+        label: 'No data',
+        detail: 'Waiting for runtime diagnostics from the pool.',
+        tone: 'var(--muted)',
+      };
+    }
+    if (shareValidation?.overload_mode === 'emergency' && shareHotPathBackedUp) {
+      return {
+        label: 'Emergency shed',
+        detail: 'Regular shares are being admitted with minimal verification because the regular share pipeline is severely backed up.',
+        tone: 'var(--warn)',
+      };
+    }
+    if (shareValidation?.overload_mode === 'emergency') {
+      return {
+        label: 'Recovered recently',
+        detail: 'The pool recently entered overload protection, but the live submit and validation queues are draining again.',
+        tone: 'var(--warn)',
+      };
+    }
+    if (shareValidation?.overload_mode === 'shed' && shareHotPathBackedUp) {
+      return {
+        label: 'Shedding',
+        detail: 'Sample rate is being reduced because the regular share pipeline is backing up.',
+        tone: 'var(--warn)',
+      };
+    }
+    if (shareValidation?.overload_mode === 'shed') {
+      return {
+        label: 'Recovered recently',
+        detail: 'The pool recently reduced sampling because of queue pressure, but the live queue is clear now.',
+        tone: 'var(--warn)',
+      };
+    }
+    if (shareHotPathBackedUp) {
+      return {
+        label: 'Queue pressure',
+        detail: 'Backlog is visible even though overload shedding has not fully tripped yet.',
+        tone: 'var(--warn)',
+      };
+    }
+    if (shareHotPathRecentlySlow) {
+      return {
+        label: 'Recently slowed',
+        detail: 'The live queue is clear, but recent submit or validation waits were elevated.',
+        tone: 'var(--warn)',
+      };
+    }
+    return {
+      label: 'Normal',
+      detail: 'Submit and validation queues are draining without overload symptoms.',
+      tone: 'var(--good)',
+    };
+  }, [
+    shareBusyCount5m,
+    shareDiagnostics,
+    shareHotPathBackedUp,
+    shareHotPathRecentlySlow,
+    shareValidation?.overload_mode,
+    shareTimeoutCount5m,
+  ]);
+  const shareHotPathFocus = useMemo(() => {
+    if (!shareDiagnostics) {
+      return {
+        tone: 'warn' as const,
+        title: 'Waiting for data',
+        detail: 'Share runtime diagnostics have not loaded yet.',
+      };
+    }
+    if (
+      shareHotPathBackedUp &&
+      (shareValidation?.overload_mode === 'emergency' ||
+        shareBusyCount5m + shareTimeoutCount5m > 0 ||
+        shareSubmitWaitP95 >= HOT_PATH_LATENCY_SPIKE_MILLIS ||
+        shareValidationWaitP95 >= HOT_PATH_LATENCY_SPIKE_MILLIS)
+    ) {
+      return {
+        tone: 'critical' as const,
+        title: 'Hot path is under stress',
+        detail: `Miners are waiting on submit acknowledgements. Submit ${formatMillis(
+          shareSubmitWaitP95
+        )} · validation ${formatMillis(shareValidationWaitP95)}.`,
+      };
+    }
+    if (shareHotPathRecentlySlow) {
+      return {
+        tone: 'warn' as const,
+        title: 'Hot path recently spiked',
+        detail: `Queues have drained, but recent waits were elevated. Submit ${formatMillis(
+          shareSubmitWaitP95
+        )} · validation ${formatMillis(shareValidationWaitP95)}.`,
+      };
+    }
+    if (
+      shareValidation?.overload_mode === 'shed' ||
+      shareHotPathBackedUp ||
+      shareSubmitWaitP95 >= HOT_PATH_LATENCY_WARN_MILLIS ||
+      shareValidationWaitP95 >= HOT_PATH_LATENCY_WARN_MILLIS
+    ) {
+      return {
+        tone: 'warn' as const,
+        title: 'Watch submit latency',
+        detail: `Hot accepts are still moving, but latency is visible. Submit ${formatMillis(
+          shareSubmitWaitP95
+        )} · validation ${formatMillis(shareValidationWaitP95)}.`,
+      };
+    }
+    return {
+      tone: 'ok' as const,
+      title: 'Hot path is healthy',
+      detail: 'New shares are being admitted without queue pressure.',
+    };
+  }, [
+    shareBusyCount5m,
+    shareDiagnostics,
+    shareHotPathBackedUp,
+    shareHotPathRecentlySlow,
+    shareSubmitWaitP95,
+    shareTimeoutCount5m,
+    shareValidation?.overload_mode,
+    shareValidationWaitP95,
+  ]);
+  const shareAuditFocus = useMemo(() => {
+    if (!shareDiagnostics) {
+      return {
+        state: 'waiting' as const,
+        tone: 'warn' as const,
+        title: 'Waiting for data',
+        detail: 'Audit timing has not loaded yet.',
+        badge: 'Loading',
+      };
+    }
+    if (shareValidation?.audit_deferred || shareAuditQueueDepth >= 25 || shareAuditWaitP95 >= 30000) {
+      return {
+        state: 'critical' as const,
+        tone: 'critical' as const,
+        title: 'Audit is falling behind',
+        detail: `Coverage work is lagging. Queue ${shareAuditQueueDepth} · wait ${formatMillis(
+          shareAuditWaitP95
+        )} · deferred ${shareValidation?.audit_deferred ?? 0}.`,
+        badge: 'Lagging',
+      };
+    }
+    if (shareAuditQueueDepth >= 10 || (shareAuditQueueDepth > 0 && shareAuditWaitP95 >= 15000)) {
+      return {
+        state: 'trailing' as const,
+        tone: 'warn' as const,
+        title: 'Audit is trailing',
+        detail: `Background verification is catching up. Queue ${shareAuditQueueDepth} · wait ${formatMillis(
+          shareAuditWaitP95
+        )}.`,
+        badge: 'Trailing',
+      };
+    }
+    if (shareAuditWaitP95 >= 10000) {
+      return {
+        state: 'recent' as const,
+        tone: 'ok' as const,
+        title: 'Audit recently lagged',
+        detail: `The recent p95 wait reached ${formatMillis(
+          shareAuditWaitP95
+        )}, but the queue is drained now.`,
+        badge: 'Recovered',
+      };
+    }
+    return {
+      state: 'ok' as const,
+      tone: 'ok' as const,
+      title: 'Audit is keeping up',
+      detail: 'Background verification is draining normally.',
+      badge: 'Keeping up',
+    };
+  }, [shareAuditQueueDepth, shareAuditWaitP95, shareDiagnostics, shareValidation?.audit_deferred]);
+  const shareRejectFocus = useMemo(() => {
+    const recentRejectPct = shareWindow5m?.rejection_rate_pct ?? 0;
+    const hourlyRejectPct = shareWindow1h?.rejection_rate_pct ?? 0;
+    const dailyRejectPct = shareWindow24h?.rejection_rate_pct ?? 0;
+    const recentRejectCount = shareWindow5m?.rejected ?? 0;
+    const hourlyRejectCount = shareWindow1h?.rejected ?? 0;
+    const dailyRejectCount = shareWindow24h?.rejected ?? 0;
+    const topReason = shareActiveTopReject ? `${shareActiveTopReject.reason} (${shareActiveTopReject.count})` : 'none';
+    if (!shareDiagnostics) {
+      return {
+        tone: 'warn' as const,
+        title: 'Waiting for data',
+        detail: 'Reject telemetry has not loaded yet.',
+      };
+    }
+    if (
+      recentRejectPct >= 5 ||
+      shareInvalidProof5m >= 1 ||
+      shareBusyCount5m + shareTimeoutCount5m >= 5
+    ) {
+      return {
+        tone: 'critical' as const,
+        title: 'Rejects need attention',
+        detail: `5m reject ${pct(recentRejectPct)}. Top reject: ${topReason}.`,
+      };
+    }
+    const meaningfulRecentRejects = recentRejectCount >= 3 || recentRejectPct >= 0.5;
+    const meaningfulHourlyRejects = hourlyRejectCount >= 10 || hourlyRejectPct >= 0.5;
+    const meaningfulDailyRejects = dailyRejectCount >= 50 || dailyRejectPct >= 1.0;
+    if (meaningfulRecentRejects || meaningfulHourlyRejects || meaningfulDailyRejects) {
+      return {
+        tone: 'warn' as const,
+        title: 'Watch rejects',
+        detail: `5m ${pct(recentRejectPct)} · 1h ${pct(hourlyRejectPct)} · 24h ${pct(dailyRejectPct)}. Top reject: ${topReason}.`,
+      };
+    }
+    return {
+      tone: 'ok' as const,
+      title: 'Rejects are clean',
+      detail: `No recent reject spike. 24h reject rate is ${pct(dailyRejectPct)}.`,
+    };
+  }, [
+    shareActiveTopReject,
+    shareBusyCount5m,
+    shareDiagnostics,
+    shareWindow1h?.rejected,
+    shareWindow24h?.rejected,
+    shareWindow5m?.rejected,
+    shareInvalidProof5m,
+    shareTimeoutCount5m,
+    shareWindow1h?.rejection_rate_pct,
+    shareWindow24h?.rejection_rate_pct,
+    shareWindow5m?.rejection_rate_pct,
+  ]);
+  const shareOperatorFocus = useMemo(() => {
+    if (!shareDiagnostics) {
+      return {
+        tone: 'warn' as const,
+        label: 'Loading',
+        title: 'Waiting for share diagnostics',
+        detail: 'The pool has not published the latest share runtime snapshot yet.',
+        next: 'If this persists, check the API and Stratum runtime snapshots.',
+      };
+    }
+    if (shareHotPathFocus.tone === 'critical') {
+      return {
+        tone: 'critical' as const,
+        label: 'Act now',
+        title: 'Protect the hot path',
+        detail: 'Miners are feeling submit or validation latency right now. Fix this before worrying about payout coverage.',
+        next: 'Watch busy/timeout rejects, submit wait p95, and validation wait p95.',
+      };
+    }
+    if (shareRejectFocus.tone === 'critical') {
+      return {
+        tone: 'critical' as const,
+        label: 'Act now',
+        title: 'Investigate the reject spike',
+        detail: 'Recent rejects are elevated enough to affect miners directly.',
+        next: 'Start with the top reject reason and the 5m window.',
+      };
+    }
+    if (shareHotPathFocus.tone === 'warn') {
+      return {
+        tone: 'warn' as const,
+        label: 'Watch',
+        title: 'Submit latency is the main risk',
+        detail: 'The hot path is still working, but it is the first thing that could degrade if load rises.',
+        next: 'Keep submit and validation waits close to zero.',
+      };
+    }
+    if (shareAuditFocus.state === 'critical' || shareAuditFocus.state === 'trailing') {
+      return {
+        tone: 'warn' as const,
+        label: 'Watch',
+        title: 'Background audit is the main follow-up',
+        detail: 'Mining is healthy, but payout coverage work is trailing and may need more headroom.',
+        next: 'Watch audit queue depth and audit wait p95.',
+      };
+    }
+    if (shareRejectFocus.tone === 'warn') {
+      return {
+        tone: 'warn' as const,
+        label: 'Watch',
+        title: 'Mining is healthy, but rejects deserve a look',
+        detail: 'There is no hot-path pressure, but rejects are the main thing worth understanding next.',
+        next: 'Compare 5m, 1h, and 24h windows to see whether this is active or historical.',
+      };
+    }
+    return {
+      tone: 'ok' as const,
+      label: 'Healthy',
+      title: 'Nothing urgent',
+      detail: 'The hot path is healthy, rejects are quiet, and background verification is keeping up.',
+      next: 'Only dig into advanced diagnostics if payouts look unfair or a miner reports lag.',
+    };
+  }, [shareAuditFocus.state, shareDiagnostics, shareHotPathFocus.tone, shareRejectFocus.tone]);
   const recoveryPrimary = useMemo(
     () => recoveryStatus?.instances.find((item) => item.instance === 'primary') ?? null,
     [recoveryStatus]
@@ -863,94 +1442,185 @@ export function AdminPage({
       ? rewardActualBlockTotal - rewardProjectedBlockTotal
       : null;
   const rewardPreviewColumnLabel = rewardBreakdownOrphaned ? 'Preview Estimate' : 'Preview';
-  const rewardPayoutColumnLabel = rewardBreakdownProjected ? 'Projected Payout' : 'Payout';
-  const rewardPayoutWeightLabel = rewardBreakdownProjected ? 'Projected Weight' : 'Payout Weight';
+  const rewardPayoutColumnLabel = rewardBreakdownProjected
+    ? 'Projected Payout'
+    : rewardBreakdownPaidOut
+      ? 'Current Recompute'
+      : 'Payout';
+  const rewardActualColumnLabel = rewardBreakdownPaidOut ? 'Recorded Payout' : 'Actual';
+  const rewardDeltaColumnLabel = rewardBreakdownPaidOut ? 'Delta vs Recompute' : 'Delta';
+  const rewardPayoutWeightLabel = rewardBreakdownProjected
+    ? 'Projected Weight'
+    : rewardBreakdownPaidOut
+      ? 'Current Recompute Weight'
+      : 'Payout Weight';
   const rewardStatusColumnLabel = rewardBreakdownOrphaned
     ? 'Resolution'
-    : rewardBreakdownProjected
+    : rewardBreakdownPaidOut
+      ? 'Notes'
+      : rewardBreakdownProjected
       ? 'Projected Status'
       : 'Status';
-  const rewardAuditIntro = rewardBreakdownOrphaned
-    ? 'Preview shows the estimate miners would have seen before the round was orphaned. The actual payout outcome from an orphaned block is always zero.'
-    : rewardBreakdownProjected
-      ? 'Preview shows the current estimator used on My Stats. Projected payout shows the final split under the pool payout rules if this block reaches payout processing. Actual shows what the payout processor has recorded so far.'
-      : 'Preview shows the unconfirmed estimator used on My Stats. Payout shows the final weighting rules, including verified-share anchors and any provisional cap. Actual shows what the payout processor recorded for this block, when available.';
-  const rewardAuditNotice = rewardBreakdown
-    ? rewardBreakdownOrphaned
-      ? 'This block was orphaned. Preview is shown for reference, but the actual payout outcome from this block was 0.'
-      : rewardBreakdownProjected
-        ? 'This block has not been paid yet. The Projected columns show the current final payout math; Actual remains empty until the payout processor records credits.'
-        : rewardBreakdown.actual_credit_events_available
-        ? ''
-        : rewardBreakdown.block.paid_out
-          ? 'This block was paid before per-block credit audit rows were available, so the Actual column cannot be shown from storage.'
-          : ''
-    : '';
-  const rewardAuditNoticeStyles = rewardBreakdownOrphaned
-    ? {
-        background: 'var(--status-orphaned-bg)',
-        borderColor: 'var(--status-orphaned-border)',
-      }
-    : {
-        background: 'rgba(247, 180, 75, 0.12)',
-        borderColor: 'rgba(247, 180, 75, 0.45)',
-      };
 
   return (
     <div className={active ? 'page active' : 'page'} id="page-admin">
       <h2>Admin</h2>
 
-      <div className="card section">
-        <h3>API Key</h3>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <input
-            type="password"
-            placeholder="Enter API key"
-            style={{ flex: 1, minWidth: 200 }}
-            value={apiKeyInput}
-            onChange={(e) => setApiKeyInput(e.target.value)}
-          />
-          <button className="btn btn-primary" onClick={onSaveApiKey}>
-            Save
-          </button>
-          <button className="btn btn-secondary" onClick={onClearApiKey}>
-            Clear
-          </button>
-          <span style={{ fontSize: 13, color: 'var(--muted)' }}>
-            <span className={`status-dot ${apiKey ? 'dot-green' : 'dot-amber'}`} />
-            {apiStatus}
-          </span>
-        </div>
-      </div>
-
       {!apiKey ? (
         <div className="auth-gate card section">
-          <p>Enter your API key above to access admin features.</p>
+          <p style={{ marginBottom: 12 }}>Enter your API key to access admin features.</p>
+          <div className="admin-key-bar">
+            <input
+              type="password"
+              placeholder="API key"
+              value={apiKeyInput}
+              onChange={(e) => setApiKeyInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') onSaveApiKey();
+              }}
+            />
+            <button className="btn btn-primary" onClick={onSaveApiKey}>
+              Save
+            </button>
+          </div>
         </div>
       ) : (
         <div id="admin-content">
+          <div className="stats-grid stats-grid-dense admin-overview-strip">
+            <div
+              className="stat-card"
+              style={riskVerificationHolds.length > 0 ? { borderColor: 'var(--warn)' } : undefined}
+              onClick={() => setTab('holds')}
+            >
+              <div className="label">Risk Holds</div>
+              <div
+                className="value mono"
+                style={riskVerificationHolds.length > 0 ? { color: 'var(--warn)' } : undefined}
+              >
+                {riskVerificationHolds.length}
+              </div>
+              <div className="stat-meta">
+                {riskVerificationHolds.length > 0 ? 'quarantine or risk review active' : 'no risky miners'}
+              </div>
+              <div className="stat-meta">
+                {temporaryValidationHolds.length > 0
+                  ? `${temporaryValidationHolds.length} temporary validation assist${
+                      temporaryValidationHolds.length === 1 ? '' : 's'
+                    }`
+                  : 'no temporary assists'}
+              </div>
+            </div>
+            <div className="stat-card" onClick={() => setTab('shares')}>
+              <div className="label">5m Reject Rate</div>
+              <div
+                className="value mono"
+                style={
+                  (shareWindow5m?.rejection_rate_pct ?? 0) >= 5 ? { color: 'var(--warn)' } : undefined
+                }
+              >
+                {pct(shareWindow5m?.rejection_rate_pct)}
+              </div>
+              <div className="stat-meta">
+                {shareWindow5m?.rejected ?? 0} rejected of {shareWindow5m?.total ?? 0}
+              </div>
+            </div>
+            <div className="stat-card" onClick={() => setTab('balances')}>
+              <div className="label">Clean Payable</div>
+              <div className="value mono">
+                {cleanPayableAmount != null ? formatCompactCoins(cleanPayableAmount) : '-'}
+              </div>
+              <div className="stat-meta">
+                {cleanPayableCount != null
+                    ? `${cleanPayableCount} miner${cleanPayableCount === 1 ? '' : 's'} with payable balances`
+                    : unpaidPayoutCount != null
+                      ? `${unpaidPayoutCount} miner${unpaidPayoutCount === 1 ? '' : 's'} with payable balances`
+                      : '-'}
+              </div>
+              {minerFundingGapAmount != null && (
+                <div
+                  className="stat-meta"
+                  style={minerFundingGapAmount > 0 ? { color: 'var(--warn)' } : { color: 'var(--good)' }}
+                >
+                  {minerFundingGapAmount > 0
+                    ? `${formatCoins(minerFundingGapAmount)} wallet gap vs clean miner liability`
+                    : 'Wallet total covers clean miner liability'}
+                </div>
+              )}
+              {poolFeePendingAmount != null && poolFeePendingAmount > 0 && (
+                <div className="stat-meta">
+                  {poolFeeCleanPendingAmount != null
+                    ? `${formatCoins(poolFeeCleanPendingAmount)} internal pool fee tracked separately`
+                    : `${formatCoins(poolFeePendingAmount)} internal pool fee tracked separately`}
+                </div>
+              )}
+              {balanceDiagnosticsSummary && (
+                <div className="stat-meta" style={{ color: 'var(--warn)' }}>
+                  {balanceDiagnosticsSummary}
+                </div>
+              )}
+              <div className="stat-meta">
+                {queuedPayoutAmount != null
+                  ? `${queuedPayoutCount ?? 0} queued · ${formatCoins(queuedPayoutAmount)} in queue`
+                  : '-'}
+              </div>
+            </div>
+            <div className="stat-card" onClick={() => setTab('balances')}>
+              <div className="label">Wallet</div>
+              <div className="value mono">
+                {balanceOverview ? formatCompactCoins(balanceOverview.wallet.spendable) : '-'}
+              </div>
+              <div className="stat-meta">
+                {balanceOverview
+                  ? `${formatCompactCoins(balanceOverview.wallet.total)} total`
+                  : '-'}
+              </div>
+              {minerFundingGapAmount != null && minerFundingGapAmount > 0 && (
+                <div className="stat-meta" style={{ color: 'var(--warn)' }}>
+                  {`${formatCompactCoins(minerFundingGapAmount)} still needed for clean miners`}
+                </div>
+              )}
+              {minerFundingGapAmount === 0 && minerWalletSurplusAmount != null && (
+                <div className="stat-meta" style={{ color: 'var(--good)' }}>
+                  {`${formatCompactCoins(minerWalletSurplusAmount)} above clean miner liability`}
+                </div>
+              )}
+              {balanceOverview && hasUnresolvedLedgerMismatch && (
+                <div className="stat-meta" style={{ color: 'var(--warn)' }}>
+                  Ledger diagnostics in Balances tab
+                </div>
+              )}
+              {balanceOverview &&
+                !hasUnresolvedLedgerMismatch &&
+                (acknowledgedHistoricalShortfallAmount ?? 0) > 0 && (
+                  <div className="stat-meta">Launch-era baseline acknowledged</div>
+                )}
+            </div>
+            <div className="stat-card" onClick={() => setTab('miners')}>
+              <div className="label">Connected Miners</div>
+              <div className="value mono">{poolActivity?.connected_miners ?? '-'}</div>
+              <div className="stat-meta">
+                {poolActivity ? humanRate(poolActivity.estimated_hashrate) : '-'}
+              </div>
+            </div>
+          </div>
+
           <div className="sub-tabs" id="admin-tabs">
             <button className={tab === 'miners' ? 'active' : ''} onClick={() => setTab('miners')}>
               Miners
             </button>
-            <button className={tab === 'payouts' ? 'active' : ''} onClick={() => setTab('payouts')}>
-              Payouts
-            </button>
-            <button className={tab === 'fees' ? 'active' : ''} onClick={() => setTab('fees')}>
-              Fees
-            </button>
-            <button className={tab === 'devfee' ? 'active' : ''} onClick={() => setTab('devfee')}>
-              Dev Fee
-            </button>
-            <button className={tab === 'rewards' ? 'active' : ''} onClick={() => setTab('rewards')}>
-              Rewards
-            </button>
-            <button className={tab === 'health' ? 'active' : ''} onClick={() => setTab('health')}>
-              Health
+            <button className={tab === 'holds' ? 'active' : ''} onClick={() => setTab('holds')}>
+              Holds
             </button>
             <button className={tab === 'balances' ? 'active' : ''} onClick={() => setTab('balances')}>
               Balances
             </button>
+            <button className={tab === 'shares' ? 'active' : ''} onClick={() => setTab('shares')}>
+              Shares
+            </button>
+            <button className={tab === 'rewards' ? 'active' : ''} onClick={() => setTab('rewards')}>
+              Rewards
+            </button>
+            <span className="sub-tabs-divider" />
             <button className={tab === 'recovery' ? 'active' : ''} onClick={() => setTab('recovery')}>
               Recovery
             </button>
@@ -1045,305 +1715,6 @@ export function AdminPage({
             </div>
           </div>
 
-          <div style={{ display: tab === 'payouts' ? '' : 'none' }}>
-            <div className="filter-bar">
-              <input
-                type="text"
-                placeholder="Filter by address..."
-                value={payoutAddress}
-                onChange={(e) => setPayoutAddress(e.target.value)}
-              />
-              <input
-                type="text"
-                placeholder="Filter by tx hash..."
-                value={payoutTx}
-                onChange={(e) => setPayoutTx(e.target.value)}
-              />
-              <button className="btn btn-primary" onClick={() => setPayoutPager((p) => ({ ...p, offset: 0 }))}>
-                Search
-              </button>
-            </div>
-
-            <div className="card table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Address</th>
-                    <th>Amount</th>
-                    <th>Fee</th>
-                    <th>TX Hash</th>
-                    <th>Status</th>
-                    <th>Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {!payoutItems.length ? (
-                    <tr>
-                      <td colSpan={6} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                        No payouts
-                      </td>
-                    </tr>
-                  ) : (
-                    payoutItems.map((p, idx) => (
-                      <tr key={`${p.tx_hash}-${idx}`}>
-                        <td title={p.address}>
-                          <a
-                            href="/stats"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              onJumpToStats(p.address);
-                            }}
-                          >
-                            {shortAddr(p.address)}
-                          </a>
-                        </td>
-                        <td>{formatCoins(p.amount)}</td>
-                        <td>{formatFee(p.fee)}</td>
-                        <td>
-                          <a href={`https://explorer.blocknetcrypto.com/tx/${p.tx_hash}`} target="_blank" rel="noopener" title={p.tx_hash}>
-                            {shortTx(p.tx_hash)}
-                          </a>
-                        </td>
-                        <td>
-                          <span className={`badge ${p.confirmed === false ? 'badge-pending' : 'badge-confirmed'}`}>
-                            {p.confirmed === false ? 'unconfirmed' : 'confirmed'}
-                          </span>
-                        </td>
-                        <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-              <Pager
-                offset={payoutPager.offset}
-                limit={payoutPager.limit}
-                total={payoutPager.total}
-                onPrev={() => setPayoutPager((p) => ({ ...p, offset: Math.max(0, p.offset - p.limit) }))}
-                onNext={() => setPayoutPager((p) => ({ ...p, offset: p.offset + p.limit }))}
-              />
-            </div>
-          </div>
-
-          <div style={{ display: tab === 'fees' ? '' : 'none' }}>
-            <p style={{ fontSize: 14, color: 'var(--muted)', marginBottom: 12 }}>
-              Collected: <span className="mono">{formatCoins(feesTotal)}</span>
-              {' · '}
-              Pending estimate: <span className="mono">{formatCoins(feesPendingTotal)}</span>
-            </p>
-
-            <div className="card table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Block</th>
-                    <th>Amount</th>
-                    <th>Status</th>
-                    <th>Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {!feeItems.length ? (
-                    <tr>
-                      <td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                        No fee rows
-                      </td>
-                    </tr>
-                  ) : (
-                    feeItems.map((f, idx) => (
-                      <tr key={`${f.block_height}-${idx}`}>
-                        <td>{f.block_height}</td>
-                        <td>{formatCoins(f.amount)}</td>
-                        <td>
-                          <div className="fee-status-cell">
-                            <span className={`badge ${feeStatusBadgeClass(f.status)}`}>{feeStatusLabel(f.status)}</span>
-                            {feeStatusNote(f) ? <span className="fee-status-cell__meta">{feeStatusNote(f)}</span> : null}
-                          </div>
-                        </td>
-                        <td title={new Date(toUnixMs(f.timestamp)).toLocaleString()}>{timeAgo(f.timestamp)}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-              <Pager
-                offset={feePager.offset}
-                limit={feePager.limit}
-                total={feePager.total}
-                onPrev={() => setFeePager((p) => ({ ...p, offset: Math.max(0, p.offset - p.limit) }))}
-                onNext={() => setFeePager((p) => ({ ...p, offset: p.offset + p.limit }))}
-              />
-            </div>
-          </div>
-
-          <div style={{ display: tab === 'devfee' ? '' : 'none' }}>
-            <div className="card section" style={{ marginBottom: 16 }}>
-              <p className="section-lead" style={{ margin: 0 }}>
-                Credited % tracks the dev fee that actually lands in pool rewards. Gross % includes rejected dev work,
-                which makes pool or miner-side loss visible. The reference target assumes connected hash is mining with
-                Seine on this pool.
-              </p>
-            </div>
-
-            <div className="stats-grid">
-              <div className="stat-card">
-                <div className="label">Reference Target</div>
-                <div className="value mono">{pct(devFeeTelemetry?.reference_target_pct)}</div>
-              </div>
-              <div className="stat-card">
-                <div className="label">24h Credited</div>
-                <div className="value mono">{pct(devFee24h?.accepted_pct)}</div>
-              </div>
-              <div className="stat-card">
-                <div className="label">24h Gross</div>
-                <div className="value mono">{pct(devFee24h?.gross_pct)}</div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Hint Floor</div>
-                <div className="value mono">{devFeeTelemetry?.hint_floor ?? '-'}</div>
-              </div>
-            </div>
-
-            <div className="stats-grid">
-              <div className="stat-card">
-                <div className="label">Tracked Workers</div>
-                <div className="value mono">{devFeeTelemetry?.hints.total_workers ?? '-'}</div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Below Floor</div>
-                <div className="value mono">{devFeeTelemetry?.hints.below_floor_workers ?? '-'}</div>
-              </div>
-              <div className="stat-card">
-                <div className="label">At Floor</div>
-                <div className="value mono">{devFeeTelemetry?.hints.at_floor_workers ?? '-'}</div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Above Floor</div>
-                <div className="value mono">{devFeeTelemetry?.hints.above_floor_workers ?? '-'}</div>
-              </div>
-            </div>
-
-            <div className="section">
-              <div className="section-header">
-                <div>
-                  <h3>Windowed Attribution</h3>
-                  <p className="section-lead">
-                    Compare dev accepted share difficulty to total pool accepted share difficulty over the same window.
-                  </p>
-                </div>
-              </div>
-              <div className="card table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Window</th>
-                      <th>Credited %</th>
-                      <th>Gross %</th>
-                      <th>Reject Rate</th>
-                      <th>Stale Reject %</th>
-                      <th>Accepted Diff</th>
-                      <th>Rejected Diff</th>
-                      <th>Accepted Shares</th>
-                      <th>Rejected Shares</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {!devFeeTelemetry?.windows?.length ? (
-                      <tr>
-                        <td colSpan={9} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                          No dev fee telemetry yet
-                        </td>
-                      </tr>
-                    ) : (
-                      devFeeTelemetry.windows.map((row) => (
-                        <tr key={row.label}>
-                          <td>{row.label}</td>
-                          <td className="mono">{pct(row.accepted_pct)}</td>
-                          <td className="mono">{pct(row.gross_pct)}</td>
-                          <td className="mono">{pct(row.reject_rate_pct)}</td>
-                          <td className="mono">
-                            {pct(row.stale_reject_rate_pct)}
-                            <div style={{ fontSize: 11, color: 'var(--muted)' }}>{row.stale_rejected_shares} stale</div>
-                          </td>
-                          <td className="mono">{row.dev_accepted_difficulty}</td>
-                          <td className="mono">{row.dev_rejected_difficulty}</td>
-                          <td className="mono">{row.accepted_shares}</td>
-                          <td className="mono">{row.rejected_shares}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="section">
-              <div className="section-header">
-                <div>
-                  <h3>Hint Diagnostics</h3>
-                  <p className="section-lead">
-                    Recent dev-worker vardiff hints help confirm whether workers are stuck on the floor or ramping to a
-                    healthier range.
-                  </p>
-                </div>
-              </div>
-
-              <div className="stats-grid stats-grid-3">
-                <div className="stat-card">
-                  <div className="label">Median Hint</div>
-                  <div className="value mono">{devFeeTelemetry?.hints.median_difficulty ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Min / Max</div>
-                  <div className="value mono">
-                    {devFeeTelemetry?.hints.min_difficulty ?? '-'} / {devFeeTelemetry?.hints.max_difficulty ?? '-'}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Latest Hint Update</div>
-                  <div className="value mono" style={{ fontSize: 16 }}>
-                    {devFeeTelemetry?.hints.latest_updated_at ? timeAgo(devFeeTelemetry.hints.latest_updated_at) : '-'}
-                  </div>
-                </div>
-              </div>
-
-              <div className="card table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Worker</th>
-                      <th>Difficulty</th>
-                      <th>Status</th>
-                      <th>Updated</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {!devFeeTelemetry?.recent_hints?.length ? (
-                      <tr>
-                        <td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                          No dev worker hints recorded yet
-                        </td>
-                      </tr>
-                    ) : (
-                      devFeeTelemetry.recent_hints.map((row) => (
-                        <tr key={`${row.worker}-${String(row.updated_at)}`}>
-                          <td title={row.worker}>{row.worker}</td>
-                          <td className="mono">{row.difficulty}</td>
-                          <td>
-                            <span className={`badge ${devFeeHintBadgeClass(row.position)}`}>
-                              {devFeeHintLabel(row.position)}
-                            </span>
-                          </td>
-                          <td title={new Date(toUnixMs(row.updated_at)).toLocaleString()}>{timeAgo(row.updated_at)}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-
           <div style={{ display: tab === 'rewards' ? '' : 'none' }}>
             <div className="filter-bar">
               <select
@@ -1389,7 +1760,7 @@ export function AdminPage({
               <div className="card section">
                 <h3>Reward Breakdown</h3>
                 <p style={{ color: 'var(--muted)', fontSize: 14 }}>
-                  Load a block height to inspect the current preview math, the final payout math, and any recorded
+                  Load a block height to inspect the preview share math, the current payout recompute, and any recorded
                   credited amounts for that block.
                 </p>
               </div>
@@ -1438,7 +1809,9 @@ export function AdminPage({
                         ? 'Estimated payout collapsed to zero when the block orphaned'
                         : rewardBreakdownProjected
                           ? 'Current final split if the block reaches payout processing'
-                        : 'Final reward split after payout gates'}
+                          : rewardBreakdownPaidOut
+                            ? 'Live recompute using current policy and risk state; recorded payout is authoritative'
+                            : 'Final reward split after payout gates'}
                     </div>
                   </div>
                   <div className="stat-card">
@@ -1456,48 +1829,18 @@ export function AdminPage({
                   </div>
                 </div>
 
-                <div className="card" style={{ marginBottom: 20 }}>
-                  <div style={{ display: 'flex', gap: 12, justifyContent: 'space-between', flexWrap: 'wrap' }}>
-                    <div style={{ display: 'grid', gap: 6 }}>
-                      <div style={{ fontSize: 14, fontWeight: 700 }}>
-                        {rewardBreakdown.payout_scheme.toUpperCase()} reward audit for block {rewardBreakdown.block.height}
-                      </div>
-                      <div style={{ fontSize: 13, color: 'var(--muted)' }}>
-                        {rewardAuditIntro}
-                      </div>
-                    </div>
-                    <div style={{ display: 'grid', gap: 6, justifyItems: 'start' }}>
-                      <span
-                        className={
-                          rewardBreakdown.block.orphaned
-                            ? 'badge badge-orphaned'
-                            : rewardBreakdown.block.confirmed
-                              ? 'badge badge-confirmed'
-                              : 'badge badge-pending'
-                        }
-                      >
-                        {rewardBreakdown.block.orphaned
-                          ? 'orphaned'
-                          : rewardBreakdown.block.confirmed
-                            ? 'confirmed'
-                            : 'unconfirmed'}
-                      </span>
-                      <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-                        Window end {new Date(toUnixMs(rewardBreakdown.share_window.end)).toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {rewardAuditNotice ? (
+                {rewardBreakdownPaidOut && !rewardBreakdown.block.orphaned ? (
                   <div
-                    className="card"
-                    style={{
-                      marginBottom: 20,
-                      ...rewardAuditNoticeStyles,
-                    }}
+                    className="card section"
+                    style={{ marginBottom: 20, borderColor: 'var(--warn)', background: 'var(--surface-hover)' }}
                   >
-                    <div style={{ color: 'var(--text)', fontSize: 13 }}>{rewardAuditNotice}</div>
+                    <h3 style={{ marginBottom: 8 }}>Recorded Payout Is Authoritative</h3>
+                    <p style={{ color: 'var(--muted)', fontSize: 13, margin: 0 }}>
+                      This block is already paid out. <span className="mono">Recorded Payout</span> comes from the
+                      historical credit events written at payout time. <span className="mono">Current Recompute</span>{' '}
+                      uses today&apos;s verification, risk, and cap state, so it can differ from the recorded payout if
+                      an address was forced-verify or otherwise treated differently when the block was finalized.
+                    </p>
                   </div>
                 ) : null}
 
@@ -1510,8 +1853,8 @@ export function AdminPage({
                         {rewardBreakdown.block.orphaned ? <th>Actual</th> : <th>Preview Weight</th>}
                         {rewardBreakdown.block.orphaned ? <th>Delta</th> : null}
                         {rewardBreakdown.block.orphaned ? null : <th>{rewardPayoutColumnLabel}</th>}
-                        {rewardBreakdown.block.orphaned ? null : <th>Actual</th>}
-                        {rewardBreakdown.block.orphaned ? null : <th>Delta</th>}
+                        {rewardBreakdown.block.orphaned ? null : <th>{rewardActualColumnLabel}</th>}
+                        {rewardBreakdown.block.orphaned ? null : <th>{rewardDeltaColumnLabel}</th>}
                         {rewardBreakdown.block.orphaned ? null : <th>{rewardPayoutWeightLabel}</th>}
                         <th>Verified Diff</th>
                         <th>Eligible Prov Diff</th>
@@ -1577,7 +1920,9 @@ export function AdminPage({
                                       ? 'var(--muted)'
                                       : row.delta_vs_payout === 0
                                         ? 'var(--good)'
-                                        : 'var(--warn)',
+                                        : rewardBreakdownPaidOut
+                                          ? 'var(--muted)'
+                                          : 'var(--warn)',
                                 }}
                               >
                                 {formatSignedCoins(row.delta_vs_payout)}
@@ -1609,13 +1954,27 @@ export function AdminPage({
                                 </>
                               ) : (
                                 <>
-                                  <div style={{ color: rewardStatusTone(row.payout_status), fontWeight: 600 }}>
-                                    {rewardStatusLabel(row.payout_status)}
-                                  </div>
-                                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                                    Preview: {rewardStatusLabel(row.preview_status)}
-                                    {row.risky ? ' · verification hold' : ''}
-                                  </div>
+                                  {rewardBreakdownPaidOut ? (
+                                    <>
+                                      <div style={{ color: 'var(--muted)', fontWeight: 600 }}>
+                                        Recorded payout finalized
+                                      </div>
+                                      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                                        Current recompute: {rewardStatusLabel(row.payout_status)} · Preview:{' '}
+                                        {rewardStatusLabel(row.preview_status)}
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <div style={{ color: rewardStatusTone(row.payout_status), fontWeight: 600 }}>
+                                        {rewardStatusLabel(row.payout_status)}
+                                      </div>
+                                      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                                        Preview: {rewardStatusLabel(row.preview_status)}
+                                        {row.risky ? ' · verification hold' : ''}
+                                      </div>
+                                    </>
+                                  )}
                                 </>
                               )}
                             </td>
@@ -1702,7 +2061,9 @@ export function AdminPage({
                                   ? 'var(--muted)'
                                   : rewardActualBlockDelta === 0
                                     ? 'var(--good)'
-                                    : 'var(--warn)',
+                                    : rewardBreakdownPaidOut
+                                      ? 'var(--muted)'
+                                      : 'var(--warn)',
                             }}
                           >
                             {formatSignedCoins(rewardActualBlockDelta)}
@@ -1718,14 +2079,24 @@ export function AdminPage({
                                     ? 'var(--muted)'
                                     : rewardActualBlockDelta === 0
                                       ? 'var(--good)'
-                                      : 'var(--warn)',
+                                      : rewardBreakdownPaidOut
+                                        ? 'var(--muted)'
+                                        : 'var(--warn)',
                                 fontWeight: 600,
                               }}
                             >
-                              {rewardActualBlockDelta == null ? 'Pending' : rewardActualBlockDelta === 0 ? 'Balanced' : 'Mismatch'}
+                              {rewardActualBlockDelta == null
+                                ? 'Pending'
+                                : rewardActualBlockDelta === 0
+                                  ? 'Balanced'
+                                  : rewardBreakdownPaidOut
+                                    ? 'Historical differs from recompute'
+                                    : 'Mismatch'}
                             </div>
                             <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                              summary across the full block
+                              {rewardBreakdownPaidOut
+                                ? 'recorded payout vs current recompute across the full block'
+                                : 'summary across the full block'}
                             </div>
                           </td>
                         </tr>
@@ -1742,231 +2113,318 @@ export function AdminPage({
             )}
           </div>
 
-          <div style={{ display: tab === 'health' ? '' : 'none' }}>
+          <div style={{ display: tab === 'shares' ? '' : 'none' }}>
             <div className="stats-card-group">
-              <div className="stats-card-group-title">Runtime</div>
-              <div className="stats-card-group-grid stats-grid-dense">
-                <div className="stat-card">
-                  <div className="label">Uptime</div>
-                  <div className="value mono">{health ? fmtSeconds(health.uptime_seconds || 0) : '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">API Key</div>
-                  <div className="value">
-                    {health == null ? (
-                      '-'
-                    ) : health.api_key_configured ? (
-                      <>
-                        <span className="status-dot dot-green" />Configured
-                      </>
-                    ) : (
-                      <>
-                        <span className="status-dot dot-amber" />Missing
-                      </>
-                    )}
+              <div className="section-header" style={{ marginBottom: 12 }}>
+                <div>
+                  <div className="stats-card-group-title">Shares</div>
+                  <div className="share-focus-title">{shareOperatorFocus.title}</div>
+                  <div className="section-lead" style={{ maxWidth: '72ch' }}>
+                    {shareOperatorFocus.detail}
                   </div>
                 </div>
-                <div className="stat-card">
-                  <div className="label">Daemon Reachability</div>
-                  <div className="value">
-                    {health == null ? (
-                      '-'
-                    ) : health.daemon?.reachable ? (
-                      <>
-                        <span className="status-dot dot-green" />OK
-                      </>
-                    ) : (
-                      <>
-                        <span className="status-dot dot-red" />Down
-                      </>
-                    )}
+                <span className={roundChipClass(shareOperatorFocus.tone)}>{shareOperatorFocus.label}</span>
+              </div>
+              <div className="share-focus-next">Next: {shareOperatorFocus.next}</div>
+              <div className="share-focus-grid">
+                <div className="share-focus-card">
+                  <div className="share-focus-card-head">
+                    <div className="share-focus-card-title">Hot Path</div>
+                    <span className={roundChipClass(shareHotPathFocus.tone)}>
+                      {shareHotPathFocus.tone === 'ok'
+                        ? 'Healthy'
+                        : shareHotPathFocus.tone === 'warn'
+                          ? 'Watch'
+                          : 'Act now'}
+                    </span>
+                  </div>
+                  <div className="share-focus-card-body">{shareHotPathFocus.title}</div>
+                  <div className="stat-meta">
+                    <div>{shareHotPathFocus.detail}</div>
+                    <div>
+                      {shareHotAccepts} hot accepts · {shareSyncFullVerifies} sync verified
+                    </div>
                   </div>
                 </div>
-                <div className="stat-card">
-                  <div className="label">Sync State</div>
-                  <div className="value">
-                    {health?.daemon?.syncing == null ? '-' : health.daemon.syncing ? 'Syncing' : 'Ready'}
+                <div className="share-focus-card">
+                  <div className="share-focus-card-head">
+                    <div className="share-focus-card-title">Background Audit</div>
+                    <span className={roundChipClass(shareAuditFocus.tone)}>{shareAuditFocus.badge}</span>
+                  </div>
+                  <div className="share-focus-card-body">{shareAuditFocus.title}</div>
+                  <div className="stat-meta">
+                    <div>{shareAuditFocus.detail}</div>
+                    <div>
+                      {shareValidation?.audit_verified ?? 0} verified · {shareValidation?.audit_rejected ?? 0} rejected ·{' '}
+                      {shareValidation?.audit_deferred ?? 0} deferred
+                    </div>
+                  </div>
+                </div>
+                <div className="share-focus-card">
+                  <div className="share-focus-card-head">
+                    <div className="share-focus-card-title">Rejects</div>
+                    <span className={roundChipClass(shareRejectFocus.tone)}>
+                      {shareRejectFocus.tone === 'ok'
+                        ? 'Clean'
+                        : shareRejectFocus.tone === 'warn'
+                          ? 'Watch'
+                          : 'Investigate'}
+                    </span>
+                  </div>
+                  <div className="share-focus-card-body">{shareRejectFocus.title}</div>
+                  <div className="stat-meta">
+                    <div>{shareRejectFocus.detail}</div>
+                    <div>
+                      5m {pct(shareWindow5m?.rejection_rate_pct)} · 1h {pct(shareWindow1h?.rejection_rate_pct)} · 24h{' '}
+                      {pct(shareWindow24h?.rejection_rate_pct)}
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
 
             <div className="stats-card-group">
-              <div className="stats-card-group-title">Daemon</div>
+              <div className="stats-card-group-title">Live Pipeline</div>
               <div className="stats-card-group-grid stats-grid-dense">
                 <div className="stat-card">
-                  <div className="label">Chain Height</div>
-                  <div className="value mono">{health?.daemon?.chain_height ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Peers</div>
-                  <div className="value mono">{health?.daemon?.peers ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Mempool Size</div>
-                  <div className="value mono">{health?.daemon?.mempool_size ?? '-'}</div>
-                </div>
-                {health?.daemon?.error ? (
-                  <div className="stat-card">
-                    <div className="label">Error</div>
-                    <div className="value" style={{ fontSize: 14 }}>{health.daemon.error}</div>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="stats-card-group">
-              <div className="stats-card-group-title">Job Template</div>
-              <div className="stats-card-group-grid stats-grid-dense">
-                <div className="stat-card">
-                  <div className="label">Current Height</div>
-                  <div className="value mono">{health?.job?.current_height ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Current Difficulty</div>
-                  <div className="value mono">{health?.job?.current_difficulty ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Refresh Lag</div>
-                  <div className="value mono">{formatRefreshLag(health?.job?.last_refresh_millis)}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Template Age</div>
-                  <div className="value mono">
-                    {health?.job?.template_age_seconds != null ? fmtSeconds(health.job.template_age_seconds) : '-'}
+                  <div className="label">Submit Path</div>
+                  <div className="value mono">{formatMillis(shareSubmitWaitP95)}</div>
+                  <div className="stat-meta">
+                    {shareSubmitQueueDepth} queued · oldest {formatMillis(shareSubmitOldestAge)}
                   </div>
                 </div>
                 <div className="stat-card">
-                  <div className="label">Tracked Templates</div>
-                  <div className="value mono">{health?.job?.tracked_templates ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Active Assignments</div>
-                  <div className="value mono">{health?.job?.active_assignments ?? '-'}</div>
-                </div>
-                <div className="stat-card" title={health?.job?.template_id ?? undefined}>
-                  <div className="label">Template ID</div>
-                  <div className="value mono">{compactHash(health?.job?.template_id)}</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="stats-card-group">
-              <div className="stats-card-group-title">
-                Payouts
-                {health?.payouts?.last_payout ? (
-                  <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, marginLeft: 8, fontSize: 11, color: 'var(--muted)' }}>
-                    Last: {timeAgo(health.payouts.last_payout.timestamp)}
-                    {' \u2022 '}
-                    <span className="mono">{shortTx(health.payouts.last_payout.tx_hash)}</span>
-                    {' \u2022 '}
-                    {formatCoins(health.payouts.last_payout.amount)}
-                  </span>
-                ) : null}
-              </div>
-              <div className="stats-card-group-grid stats-grid-dense">
-                <div className="stat-card">
-                  <div className="label">Pending Payouts</div>
-                  <div className="value mono">{health?.payouts?.pending_count ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Pending Amount</div>
-                  <div className="value mono">
-                    {health?.payouts?.pending_amount != null
-                      ? formatCoins(health.payouts.pending_amount)
-                      : '-'}
+                  <div className="label">Live Validation</div>
+                  <div className="value mono">{formatMillis(shareValidationWaitP95)}</div>
+                  <div className="stat-meta">
+                    {shareValidationQueueDepth} queued · hash {formatMillis(shareValidationDurationP95)}
                   </div>
                 </div>
                 <div className="stat-card">
-                  <div className="label">Last Payout</div>
-                  <div className="value mono">
-                    {health?.payouts?.last_payout?.timestamp ? timeAgo(health.payouts.last_payout.timestamp) : '-'}
+                  <div className="label">Background Audit</div>
+                  <div className="value mono">{formatMillis(shareAuditWaitP95)}</div>
+                  <div className="stat-meta">
+                    {shareAuditQueueDepth} queued · hash {formatMillis(shareAuditDurationP95)}
                   </div>
                 </div>
                 <div className="stat-card">
-                  <div className="label">Wallet Pending</div>
-                  <div className="value mono">
-                    {health?.wallet?.pending != null
-                      ? formatCoins(health.wallet.pending)
-                      : '-'}
+                  <div className="label">Verification Coverage</div>
+                  <div className="value mono">{ratioPct(shareValidation?.effective_sample_rate)}</div>
+                  <div className="stat-meta">
+                    {shareValidation?.sampled_shares ?? 0} sampled · overload {overloadModeLabel(shareValidation?.overload_mode)}
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">5m Busy / Timeout</div>
+                  <div className="value mono">{shareBusyCount5m + shareTimeoutCount5m}</div>
+                  <div className="stat-meta">
+                    {shareBusyCount5m} busy · {shareTimeoutCount5m} timeout
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="stats-card-group">
-              <div className="stats-card-group-title">Wallet</div>
-              <div className="stats-card-group-grid stats-grid-dense">
-                <div className="stat-card">
-                  <div className="label">Wallet Spendable</div>
-                  <div className="value mono">
-                    {health?.wallet?.spendable != null
-                      ? formatCoins(health.wallet.spendable)
-                      : '-'}
+            <details className="card share-advanced">
+              <summary>
+                <span>Advanced diagnostics</span>
+                <span className="share-advanced-summary">
+                  Use this when you need the raw queue timings, counters, and window-by-window reject breakdown.
+                </span>
+              </summary>
+              <div className="share-advanced-body">
+                <div className="stats-card-group" style={{ marginBottom: 16 }}>
+                  <div className="stats-card-group-title">Detailed Runtime Metrics</div>
+                  <div className="stats-card-group-grid stats-grid-dense">
+                    <div className="stat-card">
+                      <div className="label">Submit Queue</div>
+                      <div className="value mono">{shareSubmitQueueDepth}</div>
+                      <div className="stat-meta">
+                        {shareSubmit?.candidate_queue_depth ?? 0} candidate · {shareSubmit?.regular_queue_depth ?? 0} regular
+                      </div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Validation Queue</div>
+                      <div className="value mono">{shareValidationQueueDepth}</div>
+                      <div className="stat-meta">
+                        {shareValidation?.candidate_queue_depth ?? 0} candidate · {shareValidation?.regular_queue_depth ?? 0} regular
+                      </div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Audit Queue</div>
+                      <div className="value mono">{shareAuditQueueDepth}</div>
+                      <div className="stat-meta">oldest {formatMillis(shareAuditOldestAge)}</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Validation Wait P95</div>
+                      <div className="value mono">{formatMillis(shareValidationWaitP95)}</div>
+                      <div className="stat-meta">oldest {formatMillis(shareValidationOldestAge)}</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Audit Wait / Time P95</div>
+                      <div className="value mono">{formatMillis(shareAuditWaitP95)}</div>
+                      <div className="stat-meta">hash {formatMillis(shareAuditDurationP95)}</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Validation Time P95</div>
+                      <div className="value mono">{formatMillis(shareValidationDurationP95)}</div>
+                      <div className="stat-meta">{shareValidation?.in_flight ?? 0} in flight</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Candidate False Claims</div>
+                      <div className="value mono">{shareValidation?.candidate_false_claims ?? 0}</div>
+                      <div className="stat-meta" style={{ color: sharePressureSignal.tone }}>
+                        {sharePressureSignal.label}
+                      </div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Hot Accepts / Sync</div>
+                      <div className="value mono">{shareHotAccepts}</div>
+                      <div className="stat-meta">{shareSyncFullVerifies} sync verified</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Audit Outcomes</div>
+                      <div className="value mono">{shareValidation?.audit_verified ?? 0}</div>
+                      <div className="stat-meta">
+                        {shareValidation?.audit_rejected ?? 0} rejected · {shareValidation?.audit_deferred ?? 0} deferred
+                      </div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Audit Enqueued</div>
+                      <div className="value mono">{shareValidation?.audit_enqueued ?? 0}</div>
+                      <div className="stat-meta">{shareAuditQueueDepth} queued now</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">5m Invalid Proof</div>
+                      <div className="value mono">{pct(shareWindowReasonPct(shareWindow5m, 'invalid share proof'))}</div>
+                      <div className="stat-meta">{shareWindowReasonCount(shareWindow5m, 'invalid share proof')} rejects</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="label">Overload Mode</div>
+                      <div className="value mono">{overloadModeLabel(shareValidation?.overload_mode)}</div>
+                      <div className="stat-meta">{sharePressureSignal.detail}</div>
+                    </div>
                   </div>
                 </div>
-                <div className="stat-card">
-                  <div className="label">Unconfirmed Change</div>
-                  <div className="value mono">
-                    {health?.wallet?.pending_unconfirmed != null
-                      ? formatCoins(health.wallet.pending_unconfirmed)
-                      : '-'}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Change ETA</div>
-                  <div className="value mono">
-                    {health?.wallet?.pending_unconfirmed_eta != null
-                      ? fmtSeconds(health.wallet.pending_unconfirmed_eta)
-                      : '-'}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Wallet Total</div>
-                  <div className="value mono">
-                    {health?.wallet?.total != null
-                      ? formatCoins(health.wallet.total)
-                      : '-'}
-                  </div>
+
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Window</th>
+                        <th>Accepted</th>
+                        <th>Rejected</th>
+                        <th>Reject %</th>
+                        <th>Invalid %</th>
+                        <th>Low Diff %</th>
+                        <th>Stale %</th>
+                        <th>Quarantined %</th>
+                        <th>Busy %</th>
+                        <th>Timeout %</th>
+                        <th>Top Reject</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {!shareWindows.length ? (
+                        <tr>
+                          <td colSpan={11} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                            No share diagnostics available yet
+                          </td>
+                        </tr>
+                      ) : (
+                        shareWindows.map((window) => {
+                          const topReason = window.by_reason?.[0];
+                          const topReasonRejectPct =
+                            topReason && window.rejected > 0 ? (topReason.count / window.rejected) * 100 : 0;
+                          return (
+                            <tr key={window.label}>
+                              <td>
+                                <div style={{ fontWeight: 600 }}>{window.label}</div>
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>{window.total} submits</div>
+                              </td>
+                              <td className="mono">{window.accepted}</td>
+                              <td className="mono">{window.rejected}</td>
+                              <td className="mono">{pct(window.rejection_rate_pct)}</td>
+                              <td className="mono">
+                                {pct(shareWindowReasonPct(window, 'invalid share proof'))}
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                  {shareWindowReasonCount(window, 'invalid share proof')} rejects
+                                </div>
+                              </td>
+                              <td className="mono">
+                                {pct(shareWindowReasonPct(window, 'low difficulty share'))}
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                  {shareWindowReasonCount(window, 'low difficulty share')} rejects
+                                </div>
+                              </td>
+                              <td className="mono">
+                                {pct(shareWindowReasonPct(window, 'stale job'))}
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                  {shareWindowReasonCount(window, 'stale job')} rejects
+                                </div>
+                              </td>
+                              <td className="mono">
+                                {pct(shareWindowReasonPct(window, 'address quarantined'))}
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                  {shareWindowReasonCount(window, 'address quarantined')} rejects
+                                </div>
+                              </td>
+                              <td className="mono">
+                                {pct(shareWindowReasonPct(window, 'server busy'))}
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                  {shareWindowReasonCount(window, 'server busy')} rejects
+                                </div>
+                              </td>
+                              <td className="mono">
+                                {pct(shareWindowReasonPct(window, 'validation timeout'))}
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                  {shareWindowReasonCount(window, 'validation timeout')} rejects
+                                </div>
+                              </td>
+                              <td>
+                                {!topReason ? (
+                                  <span style={{ color: 'var(--muted)' }}>None</span>
+                                ) : (
+                                  <>
+                                    <div style={{ fontWeight: 600 }}>{topReason.reason}</div>
+                                    <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                      {topReason.count} rejects · {pct(topReasonRejectPct)} of rejects
+                                    </div>
+                                  </>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               </div>
-            </div>
+            </details>
+          </div>
 
+          <div style={{ display: tab === 'holds' ? '' : 'none' }}>
             <div className="stats-card-group">
-              <div className="stats-card-group-title">Validation</div>
+              <div className="stats-card-group-title">Verification Holds</div>
               <div className="stats-card-group-grid stats-grid-dense">
                 <div className="stat-card">
-                  <div className="label">In Flight</div>
-                  <div className="value mono">{health?.validation?.in_flight ?? '-'}</div>
+                  <div className="label">Risk Holds</div>
+                  <div className="value mono">{riskVerificationHolds.length}</div>
                 </div>
                 <div className="stat-card">
-                  <div className="label">Candidate Queue</div>
-                  <div className="value mono">{health?.validation?.candidate_queue_depth ?? '-'}</div>
+                  <div className="label">Temporary Assists</div>
+                  <div className="value mono">{temporaryValidationHolds.length}</div>
+                  <div className="stat-meta">coverage or backlog boosts</div>
                 </div>
                 <div className="stat-card">
-                  <div className="label">Regular Queue</div>
-                  <div className="value mono">{health?.validation?.regular_queue_depth ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Tracked Addresses</div>
-                  <div className="value mono">{health?.validation?.tracked_addresses ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Forced Verify</div>
-                  <div className="value mono">{health?.validation?.forced_verify_addresses ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Pending Provisional</div>
-                  <div className="value mono">{health?.validation?.pending_provisional ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Sampled Shares</div>
-                  <div className="value mono">{health?.validation?.sampled_shares ?? '-'}</div>
-                  <div className="stat-meta">of {health?.validation?.total_shares ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Invalid Samples</div>
-                  <div className="value mono">{health?.validation?.invalid_samples ?? '-'}</div>
+                  <div className="label">Risk Forced Verify</div>
+                  <div className="value mono">
+                    {
+                      activeVerificationHolds.filter(
+                        (hold) => hasActiveUntil(hold.force_verify_until) || hold.validation_hold_cause === 'invalid_samples'
+                      ).length
+                    }
+                  </div>
                 </div>
                 <div className="stat-card">
                   <div className="label">Fraud Detections</div>
@@ -1975,27 +2433,409 @@ export function AdminPage({
               </div>
             </div>
 
-            <div className="card section">
+            <div className="card section" style={{ marginTop: 16 }}>
               <div className="section-header">
                 <div>
-                  <h3>Raw Health Data</h3>
+                  <h3>Active Verification Holds</h3>
                   <p className="section-lead">
-                    Keep the full protected health payload available for copy and low-level debugging without making it
-                    the primary UI.
+                    Risk holds and temporary validation assists currently affecting share validation.
                   </p>
                 </div>
-                <button className="btn btn-secondary" onClick={copyHealthJson} disabled={!rawHealthJson}>
-                  Copy JSON
-                </button>
               </div>
-              <details className="health-raw-toggle">
-                <summary>Show raw JSON</summary>
-                <pre className="raw-json">{rawHealthJson || 'Loading...'}</pre>
-              </details>
+              <div style={{ marginTop: 12, fontSize: 13, color: 'var(--muted)' }}>
+                <span className="mono">Backlog drain</span> and <span className="mono">Payout boost</span> are temporary
+                assists, not fraud events. They clear early as soon as verification catches up, even if the countdown
+                still shows time remaining.
+              </div>
+              {holdActionError ? (
+                <div
+                  style={{
+                    marginTop: 12,
+                    padding: '10px 12px',
+                    borderRadius: 12,
+                    background: 'var(--error-bg)',
+                    color: 'var(--error-text)',
+                    fontSize: 13,
+                  }}
+                >
+                  {holdActionError}
+                </div>
+              ) : null}
+              <div className="table-scroll" style={{ marginTop: 12 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Address</th>
+                      <th>Mode</th>
+                      <th>Quarantine Until</th>
+                      <th>Risk Verify Until</th>
+                      <th>Validation Until</th>
+                      <th>Strikes</th>
+                      <th>Reason</th>
+                      <th>Last Event</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {!activeVerificationHolds.length ? (
+                      <tr>
+                        <td colSpan={9} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                          No active verification holds
+                        </td>
+                      </tr>
+                    ) : (
+                      activeVerificationHolds.map((hold) => (
+                        <tr key={hold.address}>
+                          <td title={hold.address}>
+                            <a
+                              href="/stats"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                onJumpToStats(hold.address);
+                              }}
+                            >
+                              {shortAddr(hold.address)}
+                            </a>
+                          </td>
+                          <td>
+                            <span
+                              className={verificationHoldBadgeClass(
+                                verificationHoldActive(hold),
+                                verificationHoldTone(hold)
+                              )}
+                            >
+                              {verificationHoldLabel(hold)}
+                            </span>
+                          </td>
+                          <td className="mono" title={holdUntilTitle(hold.quarantined_until)}>
+                            {holdUntilLabel(hold.quarantined_until)}
+                          </td>
+                          <td className="mono" title={holdUntilTitle(hold.force_verify_until)}>
+                            {holdUntilLabel(hold.force_verify_until)}
+                          </td>
+                          <td className="mono" title={holdUntilTitle(hold.validation_forced_until)}>
+                            <div>{validationHoldUntilLabel(hold)}</div>
+                            {validationHoldUntilHint(hold) ? (
+                              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                                {validationHoldUntilHint(hold)}
+                              </div>
+                            ) : null}
+                          </td>
+                          <td className="mono">
+                            {hold.strikes}
+                            {hold.suspected_fraud_strikes > 0 ? ` / fraud ${hold.suspected_fraud_strikes}` : ''}
+                          </td>
+                          <td title={hold.reason ?? hold.last_reason ?? undefined}>
+                            {hold.reason ?? hold.last_reason ?? '-'}
+                          </td>
+                          <td className="mono" title={hold.last_event_at ? formatAdminTimestamp(hold.last_event_at) : undefined}>
+                            {hold.last_event_at ? timeAgo(hold.last_event_at) : '-'}
+                          </td>
+                          <td>
+                            <button
+                              className="btn btn-secondary"
+                              disabled={holdBusyAddress !== null}
+                              onClick={() => void clearAddressRiskHistory(hold.address)}
+                              title="Delete all admin risk and validation hold history for this address"
+                            >
+                              {holdBusyAddress === hold.address ? 'Clearing…' : 'Clear History'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
 
           <div style={{ display: tab === 'balances' ? '' : 'none' }}>
+            {balanceOverview ? (
+              <>
+                {hasUnresolvedLedgerMismatch && (
+                  <div
+                    className="card"
+                    style={{
+                      marginBottom: 16,
+                      borderColor: 'rgba(247, 180, 75, 0.45)',
+                      background: 'rgba(247, 180, 75, 0.08)',
+                    }}
+                  >
+                    <div style={{ color: 'var(--text)', fontSize: 13 }}>
+                      Pending balances below are recorded miner ledger state, not clean payable liability.{' '}
+                      {ledgerOverhangAmount != null && ledgerOverhangAmount > 0 ? (
+                        <>
+                          The miner ledger currently exceeds canonical miner rewards by{' '}
+                          <span className="mono">{formatCoins(ledgerOverhangAmount)}</span>, so fork-era recovery and
+                          payout reconciliation still need operator review.
+                        </>
+                      ) : unresolvedLedgerShortfallAmount != null && unresolvedLedgerShortfallAmount > 0 ? (
+                        <>
+                          The miner ledger currently sits{' '}
+                          <span className="mono">{formatCoins(unresolvedLedgerShortfallAmount)}</span> below canonical miner
+                          rewards, so some canonical rewards have not been fully reflected in miner balances yet.
+                        </>
+                      ) : (
+                        <>Ledger reconciliation is still in progress.</>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {!hasUnresolvedLedgerMismatch && (acknowledgedHistoricalShortfallAmount ?? 0) > 0 && (
+                  <div
+                    className="card"
+                    style={{
+                      marginBottom: 16,
+                      borderColor: 'rgba(111, 126, 120, 0.35)',
+                      background: 'rgba(111, 126, 120, 0.06)',
+                    }}
+                  >
+                    <div style={{ color: 'var(--text)', fontSize: 13 }}>
+                      The remaining{' '}
+                      <span className="mono">{formatCoins(acknowledgedHistoricalShortfallAmount)}</span> miner
+                      shortfall is the acknowledged launch-era baseline. It is tracked for reference, but not treated
+                      as an active payout or fork-recovery incident.
+                    </div>
+                  </div>
+                )}
+
+                <div className="admin-balance-overview__grid" style={{ marginBottom: 20 }}>
+                  <div
+                    className="admin-balance-overview__panel"
+                    style={{
+                      borderColor:
+                        minerFundingGapAmount != null && minerFundingGapAmount > 0
+                          ? 'rgba(247, 180, 75, 0.4)'
+                          : 'rgba(22, 163, 74, 0.24)',
+                      background:
+                        minerFundingGapAmount != null && minerFundingGapAmount > 0
+                          ? 'rgba(247, 180, 75, 0.06)'
+                          : 'rgba(22, 163, 74, 0.05)',
+                    }}
+                  >
+                    <h3>Operator View</h3>
+                    <div style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 14 }}>
+                      External liability here means clean payable miner balances only. Internal pool fee balances and
+                      ledger diagnostics are shown separately below and do not change this funding-gap number.
+                    </div>
+                    <div className="admin-balance-overview__rows">
+                      <div className="admin-balance-overview__row">
+                        <span>External miner liability</span>
+                        <span className="mono">{formatCoins(balanceOverview.payouts.clean_unpaid_amount)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Wallet total available</span>
+                        <span className="mono">{formatCoins(balanceOverview.wallet.total)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>
+                          {minerFundingGapAmount != null && minerFundingGapAmount > 0
+                            ? 'Estimated miner funding gap'
+                            : 'Wallet surplus over miner liability'}
+                        </span>
+                        <span
+                          className="mono"
+                          style={
+                            minerFundingGapAmount != null && minerFundingGapAmount > 0
+                              ? { color: 'var(--warn)' }
+                              : { color: 'var(--good)' }
+                          }
+                        >
+                          {formatCoins(
+                            minerFundingGapAmount != null && minerFundingGapAmount > 0
+                              ? minerFundingGapAmount
+                              : minerWalletSurplusAmount ?? 0
+                          )}
+                        </span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Immediate queue shortfall</span>
+                        <span
+                          className="mono"
+                          style={
+                            balanceOverview.liquidity.queue_shortfall_amount > 0
+                              ? { color: 'var(--warn)' }
+                              : { color: 'var(--good)' }
+                          }
+                        >
+                          {formatCoins(balanceOverview.liquidity.queue_shortfall_amount)}
+                        </span>
+                      </div>
+                      {balanceOverview.payouts.pool_fee_clean_unpaid_amount > 0 && (
+                        <div className="admin-balance-overview__row">
+                          <span>Internal pool fee tracked separately</span>
+                          <span className="mono" style={{ color: 'var(--muted)' }}>
+                            {formatCoins(balanceOverview.payouts.pool_fee_clean_unpaid_amount)}
+                          </span>
+                        </div>
+                      )}
+                      {balanceOverview.payouts.balance_source_drift_amount > 0 && (
+                        <div className="admin-balance-overview__row">
+                          <span>Miner source drift diagnostic</span>
+                          <span className="mono" style={{ color: 'var(--warn)' }}>
+                            {formatCoins(balanceOverview.payouts.balance_source_drift_amount)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="admin-balance-overview__panel">
+                    <h3>Wallet</h3>
+                    <div className="admin-balance-overview__rows">
+                      <div className="admin-balance-overview__row">
+                        <span>Spendable</span>
+                        <span className="mono">{formatCoins(balanceOverview.wallet.spendable)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Locked / confirming</span>
+                        <span className="mono">{formatCoins(balanceOverview.wallet.pending)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Total</span>
+                        <span className="mono">{formatCoins(balanceOverview.wallet.total)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Queued payouts</span>
+                        <span className="mono">
+                          {formatCoins(balanceOverview.payouts.queued_amount)} across{' '}
+                          {formatWholeNumber(balanceOverview.payouts.queued_count)}
+                        </span>
+                      </div>
+                      {balanceOverview.liquidity.queue_shortfall_amount > 0 && (
+                        <div className="admin-balance-overview__row">
+                          <span>Immediate queue shortfall</span>
+                          <span className="mono" style={{ color: 'var(--warn)' }}>
+                            {formatCoins(balanceOverview.liquidity.queue_shortfall_amount)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="admin-balance-overview__panel">
+                    <h3>Ledger</h3>
+                    <div className="admin-balance-overview__rows">
+                      <div className="admin-balance-overview__row">
+                        <span>Miner paid total</span>
+                        <span className="mono">{formatCoins(balanceOverview.ledger.miner_paid_total)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Recorded miner pending</span>
+                        <span className="mono">{formatCoins(balanceOverview.ledger.miner_unpaid_total)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Clean payable miner pending</span>
+                        <span className="mono">{formatCoins(balanceOverview.ledger.miner_clean_unpaid_total)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Orphan-backed miner pending</span>
+                        <span
+                          className="mono"
+                          style={
+                            balanceOverview.ledger.miner_orphan_backed_unpaid_total > 0
+                              ? { color: 'var(--warn)' }
+                              : undefined
+                          }
+                        >
+                          {formatCoins(balanceOverview.ledger.miner_orphan_backed_unpaid_total)}
+                        </span>
+                      </div>
+                      {balanceOverview.ledger.miner_balance_source_drift_total > 0 && (
+                        <div className="admin-balance-overview__row">
+                          <span>Miner balance above live sources</span>
+                          <span className="mono" style={{ color: 'var(--warn)' }}>
+                            {formatCoins(balanceOverview.ledger.miner_balance_source_drift_total)}
+                          </span>
+                        </div>
+                      )}
+                      <div className="admin-balance-overview__row">
+                        <span>Confirmed block rewards</span>
+                        <span className="mono">{formatCoins(balanceOverview.ledger.net_block_reward_total)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Pool fees</span>
+                        <span className="mono">{formatCoins(balanceOverview.ledger.pool_fee_total)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Internal pool fee balance</span>
+                        <span className="mono">{formatCoins(balanceOverview.ledger.pool_fee_balance_total)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Internal pool fee clean payable</span>
+                        <span className="mono">{formatCoins(balanceOverview.ledger.pool_fee_clean_unpaid_total)}</span>
+                      </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Internal pool fee orphan-backed</span>
+                        <span
+                          className="mono"
+                          style={
+                            balanceOverview.ledger.pool_fee_orphan_backed_unpaid_total > 0
+                              ? { color: 'var(--warn)' }
+                              : undefined
+                          }
+                        >
+                          {formatCoins(balanceOverview.ledger.pool_fee_orphan_backed_unpaid_total)}
+                        </span>
+                      </div>
+                      {balanceOverview.ledger.pool_fee_balance_source_drift_total > 0 && (
+                        <div className="admin-balance-overview__row">
+                          <span>Internal pool fee above live sources</span>
+                          <span className="mono" style={{ color: 'var(--warn)' }}>
+                            {formatCoins(balanceOverview.ledger.pool_fee_balance_source_drift_total)}
+                          </span>
+                        </div>
+                      )}
+                      <div className="admin-balance-overview__row">
+                        <span>Canonical-backed miner pending</span>
+                        <span className="mono">{formatCoins(canonicalBackedPending ?? 0)}</span>
+                      </div>
+                      {ledgerOverhangAmount != null && ledgerOverhangAmount > 0 && (
+                        <div className="admin-balance-overview__row">
+                          <span>Miner ledger overhang</span>
+                          <span className="mono" style={{ color: 'var(--warn)' }}>
+                            {formatCoins(ledgerOverhangAmount)}
+                          </span>
+                        </div>
+                      )}
+                      {acknowledgedHistoricalShortfallAmount != null && acknowledgedHistoricalShortfallAmount > 0 && (
+                        <div className="admin-balance-overview__row">
+                          <span>Acknowledged launch-era baseline</span>
+                          <span className="mono" style={{ color: 'var(--muted)' }}>
+                            {formatCoins(acknowledgedHistoricalShortfallAmount)}
+                          </span>
+                        </div>
+                      )}
+                      {unresolvedLedgerShortfallAmount != null && unresolvedLedgerShortfallAmount > 0 && (
+                        <div className="admin-balance-overview__row">
+                          <span>Unallocated canonical miner rewards</span>
+                          <span className="mono" style={{ color: 'var(--warn)' }}>
+                            {formatCoins(unresolvedLedgerShortfallAmount)}
+                          </span>
+                        </div>
+                      )}
+                      <div className="admin-balance-overview__row">
+                        <span>Credits balanced</span>
+                        <span
+                          className="mono"
+                          style={
+                            balanceOverview.ledger.miner_rewards_balanced || !hasUnresolvedLedgerMismatch
+                              ? { color: 'var(--good)' }
+                              : { color: 'var(--warn)' }
+                          }
+                        >
+                          {balanceOverview.ledger.miner_rewards_balanced
+                            ? 'Yes'
+                            : hasUnresolvedLedgerMismatch
+                              ? 'No'
+                              : 'Baseline accepted'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : null}
+
             <div className="filter-bar">
               <input
                 type="text"
@@ -2009,8 +2849,8 @@ export function AdminPage({
                 }}
               />
               <select value={balancesSort} onChange={(e) => { setBalancesSort(e.target.value); setBalancesPager((p) => ({ ...p, offset: 0 })); }}>
-                <option value="pending_desc">Owed (high first)</option>
-                <option value="pending_asc">Owed (low first)</option>
+                <option value="pending_desc">Pending (high first)</option>
+                <option value="pending_asc">Pending (low first)</option>
                 <option value="paid_desc">Paid (high first)</option>
                 <option value="paid_asc">Paid (low first)</option>
                 <option value="address_asc">Address A-Z</option>
@@ -2027,18 +2867,22 @@ export function AdminPage({
                   <col className="admin-balance-table__address-col" />
                   <col className="admin-balance-table__amount-col" />
                   <col className="admin-balance-table__amount-col" />
+                  <col className="admin-balance-table__amount-col" />
+                  <col className="admin-balance-table__amount-col" />
                 </colgroup>
                 <thead>
                   <tr>
                     <th>Address</th>
-                    <th>Owed</th>
+                    <th>Clean Payable</th>
+                    <th>Orphan-Backed</th>
+                    <th>Recorded Pending</th>
                     <th>Total Paid</th>
                   </tr>
                 </thead>
                 <tbody>
                   {!balancesItems.length ? (
                     <tr>
-                      <td colSpan={3} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                      <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                         No balances
                       </td>
                     </tr>
@@ -2055,6 +2899,16 @@ export function AdminPage({
                           >
                             {shortAddr(b.address)}
                           </a>
+                        </td>
+                        <td className="mono">
+                          {b.clean_payable > 0 ? formatCoins(b.clean_payable) : formatCoins(0)}
+                        </td>
+                        <td className="mono">
+                          {b.orphan_backed > 0 ? (
+                            <span style={{ color: 'var(--warn)' }}>{formatCoins(b.orphan_backed)}</span>
+                          ) : (
+                            formatCoins(0)
+                          )}
                         </td>
                         <td className="mono">
                           {b.pending > 0 ? (
@@ -2092,6 +2946,14 @@ export function AdminPage({
               <div className="card section" style={{ marginBottom: 16, borderColor: 'rgba(214, 88, 88, 0.45)' }}>
                 <p className="section-lead" style={{ margin: 0, color: 'var(--bad)' }}>
                   {recoveryActionError}
+                </p>
+              </div>
+            ) : null}
+
+            {reconciliationActionError ? (
+              <div className="card section" style={{ marginBottom: 16, borderColor: 'rgba(214, 88, 88, 0.45)' }}>
+                <p className="section-lead" style={{ margin: 0, color: 'var(--bad)' }}>
+                  {reconciliationActionError}
                 </p>
               </div>
             ) : null}
@@ -2230,6 +3092,211 @@ export function AdminPage({
                   {recoveryBusy === 'purge_inactive_daemon' ? 'Purging…' : 'Purge Inactive Daemon'}
                 </button>
               </div>
+            </div>
+
+            <div className="card section" style={{ marginBottom: 16 }}>
+              <div className="section-header">
+                <div>
+                  <h3>Accounting Exceptions</h3>
+                  <p className="section-lead">
+                    These are payout/accounting rows that the pool could not safely resolve on its own after chain
+                    recovery. Resolve missing completed payouts here instead of editing balances directly.
+                  </p>
+                </div>
+                <button className="btn btn-secondary" onClick={() => void loadReconciliationIssues()}>
+                  Refresh
+                </button>
+              </div>
+
+              <div className="stats-grid stats-grid-dense" style={{ marginBottom: 16 }}>
+                <div className="stat-card">
+                  <div className="label">Open Issues</div>
+                  <div className="value mono">{reconciliationIssues?.summary.total_open_issues ?? '-'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Missing Payouts</div>
+                  <div className="value mono">{reconciliationIssues?.summary.missing_payout_issue_count ?? '-'}</div>
+                  <div className="stat-meta">
+                    {reconciliationIssues
+                      ? formatCompactCoins(reconciliationIssues.summary.missing_payout_total_amount)
+                      : '-'}
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Orphaned Credit Blocks</div>
+                  <div className="value mono">{reconciliationIssues?.summary.orphaned_block_issue_count ?? '-'}</div>
+                  <div className="stat-meta">
+                    {reconciliationIssues
+                      ? formatCompactCoins(reconciliationIssues.summary.orphaned_block_total_credit_amount)
+                      : '-'}
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="label">Snapshot</div>
+                  <div className="value mono">
+                    {reconciliationIssues ? timeAgo(reconciliationIssues.generated_at) : '-'}
+                  </div>
+                </div>
+              </div>
+
+              {!reconciliationIssues ? (
+                <p className="section-lead" style={{ marginBottom: 0 }}>
+                  Load the current recovery state to inspect outstanding accounting exceptions.
+                </p>
+              ) : (
+                <>
+                  <div className="card table-scroll" style={{ marginBottom: 16 }}>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Missing Completed Payout</th>
+                          <th>Known Source Mix</th>
+                          <th>Addresses</th>
+                          <th>Completed</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {!reconciliationIssues.missing_payouts.length ? (
+                          <tr>
+                            <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                              No missing completed payouts need operator action
+                            </td>
+                          </tr>
+                        ) : (
+                          reconciliationIssues.missing_payouts.map((issue) => {
+                            const restoreBusy = reconciliationBusyKey === `payout:${issue.tx_hash}:restore_pending`;
+                            const dropBusy = reconciliationBusyKey === `payout:${issue.tx_hash}:drop_paid`;
+                            return (
+                              <tr key={issue.tx_hash}>
+                                <td style={{ minWidth: 260 }}>
+                                  <div className="mono" style={{ fontWeight: 600 }}>
+                                    {issue.tx_hash}
+                                  </div>
+                                  <div style={{ marginTop: 6 }}>
+                                    {formatCoins(issue.total_amount)} across {issue.payout_row_count} payout row
+                                    {issue.payout_row_count === 1 ? '' : 's'}
+                                  </div>
+                                  <div className="stat-meta" style={{ marginTop: 6 }}>
+                                    Fee {formatCoins(issue.total_fee)}
+                                  </div>
+                                </td>
+                                <td style={{ minWidth: 220 }}>
+                                  <div>Live linked: {formatCoins(issue.live_linked_amount)}</div>
+                                  <div>Orphaned linked: {formatCoins(issue.orphaned_linked_amount)}</div>
+                                  <div>Unlinked: {formatCoins(issue.unlinked_amount)}</div>
+                                  <div className="stat-meta" style={{ marginTop: 6 }}>
+                                    {reconciliationRecommendation(issue)}
+                                  </div>
+                                </td>
+                                <td style={{ minWidth: 220 }}>
+                                  <div>
+                                    {issue.addresses.slice(0, 3).map((address) => (
+                                      <div key={address} className="mono">
+                                        {shortAddr(address)}
+                                      </div>
+                                    ))}
+                                  </div>
+                                  {issue.addresses.length > 3 ? (
+                                    <div className="stat-meta" style={{ marginTop: 6 }}>
+                                      +{issue.addresses.length - 3} more
+                                    </div>
+                                  ) : null}
+                                </td>
+                                <td title={new Date(toUnixMs(issue.latest_timestamp)).toLocaleString()}>
+                                  {timeAgo(issue.latest_timestamp)}
+                                </td>
+                                <td style={{ minWidth: 220 }}>
+                                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                    <button
+                                      className="btn btn-secondary"
+                                      disabled={reconciliationBusyKey != null}
+                                      onClick={() =>
+                                        void resolveReconciliationPayoutIssue(issue.tx_hash, 'restore_pending')
+                                      }
+                                    >
+                                      {restoreBusy ? 'Restoring…' : 'Restore Pending'}
+                                    </button>
+                                    <button
+                                      className="btn btn-secondary"
+                                      disabled={reconciliationBusyKey != null}
+                                      onClick={() => void resolveReconciliationPayoutIssue(issue.tx_hash, 'drop_paid')}
+                                    >
+                                      {dropBusy ? 'Dropping…' : 'Drop Paid'}
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="card table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Orphaned Block Credit Cleanup</th>
+                          <th>Remaining Credits</th>
+                          <th>Current Blockers</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {!reconciliationIssues.orphaned_blocks.length ? (
+                          <tr>
+                            <td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                              No orphaned blocks still have lingering credit artifacts
+                            </td>
+                          </tr>
+                        ) : (
+                          reconciliationIssues.orphaned_blocks.map((issue) => {
+                            const retryBusy = reconciliationBusyKey === `block:${issue.height}`;
+                            return (
+                              <tr key={`${issue.height}-${issue.hash}`}>
+                                <td style={{ minWidth: 240 }}>
+                                  <div style={{ fontWeight: 600 }}>#{issue.height}</div>
+                                  <div className="mono" style={{ marginTop: 6 }}>
+                                    {issue.hash.slice(0, 16)}
+                                  </div>
+                                  <div className="stat-meta" style={{ marginTop: 6 }}>
+                                    {issue.credited_address_count} credited address
+                                    {issue.credited_address_count === 1 ? '' : 'es'} · {issue.credit_event_count} credit
+                                    row{issue.credit_event_count === 1 ? '' : 's'}
+                                  </div>
+                                </td>
+                                <td style={{ minWidth: 220 }}>
+                                  <div>Miner credits: {formatCoins(issue.remaining_credit_amount)}</div>
+                                  <div>Paid markers: {formatCoins(issue.paid_credit_amount)}</div>
+                                  <div>Fee credits: {formatCoins(issue.remaining_fee_amount)}</div>
+                                  {issue.paid_fee_amount > 0 ? (
+                                    <div>Fee paid markers: {formatCoins(issue.paid_fee_amount)}</div>
+                                  ) : null}
+                                </td>
+                                <td style={{ minWidth: 180 }}>
+                                  <div>{issue.pending_payout_count} pending payout row{issue.pending_payout_count === 1 ? '' : 's'}</div>
+                                  <div>{issue.broadcast_pending_payout_count} broadcast pending</div>
+                                </td>
+                                <td>
+                                  <button
+                                    className="btn btn-secondary"
+                                    disabled={reconciliationBusyKey != null}
+                                    onClick={() => void retryOrphanedBlockCleanup(issue.height)}
+                                  >
+                                    {retryBusy ? 'Retrying…' : 'Retry Cleanup'}
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="stats-grid" style={{ marginBottom: 16 }}>

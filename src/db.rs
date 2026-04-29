@@ -22,6 +22,7 @@ pub struct DbShare {
     pub status: String,
     pub was_sampled: bool,
     pub block_hash: Option<String>,
+    pub claimed_hash: Option<String>,
     pub created_at: SystemTime,
 }
 
@@ -41,6 +42,20 @@ pub struct ShareReplayUpdate {
     pub reject_reason: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct PendingAuditShare {
+    pub share_id: i64,
+    pub job_id: String,
+    pub miner: String,
+    pub worker: String,
+    pub difficulty: u64,
+    pub nonce: u64,
+    pub claimed_hash: Option<[u8; 32]>,
+    pub header_base: Vec<u8>,
+    pub network_target: [u8; 32],
+    pub created_at: SystemTime,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DbBlock {
     pub height: u64,
@@ -56,11 +71,68 @@ pub struct DbBlock {
     pub effort_pct: Option<f64>,
 }
 
+#[derive(Debug, Clone)]
+pub struct DbLuckRound {
+    pub block_height: u64,
+    pub block_hash: String,
+    pub timestamp: SystemTime,
+    pub difficulty: u64,
+    pub round_work: u64,
+    pub duration_seconds: u64,
+    pub orphaned: bool,
+    pub confirmed: bool,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Balance {
     pub address: String,
     pub pending: u64,
     pub paid: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidationHoldCause {
+    InvalidSamples,
+    ProvisionalBacklog,
+    PayoutCoverage,
+}
+
+impl ValidationHoldCause {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidSamples => "invalid_samples",
+            Self::ProvisionalBacklog => "provisional_backlog",
+            Self::PayoutCoverage => "payout_coverage",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ActiveVerificationHold {
+    pub address: String,
+    pub strikes: u64,
+    pub suspected_fraud_strikes: u64,
+    pub last_reason: Option<String>,
+    pub reason: Option<String>,
+    pub last_event_at: Option<SystemTime>,
+    pub quarantined_until: Option<SystemTime>,
+    pub force_verify_until: Option<SystemTime>,
+    pub validation_forced_until: Option<SystemTime>,
+    pub validation_hold_cause: Option<ValidationHoldCause>,
+    pub validation_pending_provisional: u64,
+    pub validation_recent_verified_difficulty: u64,
+    pub validation_recent_provisional_difficulty: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidationHoldState {
+    pub forced_started_at: Option<SystemTime>,
+    pub forced_until: Option<SystemTime>,
+    pub hold_cause: Option<ValidationHoldCause>,
+    pub pending_provisional: u64,
+    pub recent_verified_difficulty: u64,
+    pub recent_provisional_difficulty: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -72,6 +144,8 @@ pub struct Payout {
     pub tx_hash: String,
     pub timestamp: SystemTime,
     pub confirmed: bool,
+    #[serde(skip_serializing)]
+    pub batch_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,6 +171,15 @@ pub struct PendingPayout {
     pub fee: Option<u64>,
     #[serde(skip_serializing)]
     pub sent_at: Option<SystemTime>,
+    #[serde(skip_serializing)]
+    pub batch_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingPayoutBatchMember {
+    pub address: String,
+    pub amount: u64,
+    pub fee: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -114,6 +197,8 @@ pub struct BlockCreditEvent {
     pub block_height: u64,
     pub address: String,
     pub amount: u64,
+    pub paid_amount: u64,
+    pub reversible: bool,
 }
 
 #[derive(Debug, Clone)]

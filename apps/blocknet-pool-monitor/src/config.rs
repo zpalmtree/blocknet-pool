@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     pub api_host: String,
     pub api_port: u16,
+    pub api_key: String,
     pub api_tls_cert_path: String,
     pub api_tls_key_path: String,
     pub daemon_data_dir: String,
@@ -25,6 +26,10 @@ pub struct Config {
     pub monitor_port: u16,
     pub monitor_interval: String,
     pub monitor_spool_path: String,
+    pub seed_status_urls: Vec<String>,
+    pub pool_status_url: String,
+    pub explorer_status_url: String,
+    pub height_divergence_threshold: u64,
     pub payout_interval: String,
 }
 
@@ -33,6 +38,7 @@ impl Default for Config {
         Self {
             api_host: "127.0.0.1".to_string(),
             api_port: 24783,
+            api_key: String::new(),
             api_tls_cert_path: String::new(),
             api_tls_key_path: String::new(),
             daemon_data_dir: "data".to_string(),
@@ -48,6 +54,10 @@ impl Default for Config {
             monitor_port: 24784,
             monitor_interval: "10s".to_string(),
             monitor_spool_path: "/var/lib/blocknet-pool/monitor-spool.jsonl".to_string(),
+            seed_status_urls: default_seed_status_urls(),
+            pool_status_url: "https://bntpool.com/api/status".to_string(),
+            explorer_status_url: "https://explorer.blocknetcrypto.com/status.json".to_string(),
+            height_divergence_threshold: 2,
             payout_interval: "1h".to_string(),
         }
     }
@@ -69,6 +79,9 @@ impl Config {
         if self.api_port == 0 {
             self.api_port = 24783;
         }
+        if self.api_key.trim().is_empty() {
+            self.api_key.clear();
+        }
         if self.daemon_cookie_path.trim().is_empty() {
             self.daemon_cookie_path = "/etc/blocknet/pool/daemon-active.api.cookie".to_string();
         }
@@ -83,6 +96,27 @@ impl Config {
         }
         if self.monitor_spool_path.trim().is_empty() {
             self.monitor_spool_path = "/var/lib/blocknet-pool/monitor-spool.jsonl".to_string();
+        }
+        self.seed_status_urls = self
+            .seed_status_urls
+            .iter()
+            .map(|item| item.trim())
+            .filter(|item| !item.is_empty())
+            .map(str::to_string)
+            .collect();
+        if self.seed_status_urls.is_empty() {
+            self.seed_status_urls = default_seed_status_urls();
+        }
+        if self.pool_status_url.trim().is_empty() {
+            self.pool_status_url = "https://bntpool.com/api/status".to_string();
+        } else {
+            self.pool_status_url = self.pool_status_url.trim().to_string();
+        }
+        if self.explorer_status_url.trim().is_empty() {
+            self.explorer_status_url =
+                "https://explorer.blocknetcrypto.com/status.json".to_string();
+        } else {
+            self.explorer_status_url = self.explorer_status_url.trim().to_string();
         }
         if self.payout_interval.trim().is_empty() {
             self.payout_interval = "1h".to_string();
@@ -108,4 +142,17 @@ impl Config {
 
 fn parse_duration_or(value: &str, fallback: Duration) -> Duration {
     humantime::parse_duration(value).unwrap_or(fallback)
+}
+
+fn default_seed_status_urls() -> Vec<String> {
+    [
+        "bnt-0.blocknetcrypto.com",
+        "bnt-1.blocknetcrypto.com",
+        "bnt-2.blocknetcrypto.com",
+        "bnt-3.blocknetcrypto.com",
+        "bnt-4.blocknetcrypto.com",
+    ]
+    .into_iter()
+    .map(|host| format!("http://{host}:28081/status"))
+    .collect()
 }

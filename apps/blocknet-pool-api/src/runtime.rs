@@ -9,7 +9,9 @@ use pool_recovery::RecoveryAgentClient;
 
 use crate::api::{
     load_persisted_status_history, ApiState, DaemonHealthCache, DbTotalsCache, InsightsCache,
-    NetworkHashrateCache, PoolHealthCache, StatusHistory, DEFAULT_MAX_SSE_SUBSCRIBERS,
+    MinerBalanceResponseCache, MinerDetailResponseCache, NetworkHashrateCache,
+    PendingEstimateSnapshotCache, PoolHealthCache, PublicTelemetryRateLimiter,
+    RejectionAnalyticsCache, StatsResponseCache, StatusHistory, DEFAULT_MAX_SSE_SUBSCRIBERS,
 };
 use crate::config::Config;
 
@@ -20,7 +22,10 @@ pub async fn bootstrap_api_runtime(config_path: &Path) -> Result<(Config, Shared
     pool_runtime::runtime::load_dotenv(config_path);
     let cfg = Config::load(config_path)?;
     warn_api_config(&cfg);
-    let shared = pool_runtime::runtime::bootstrap_shared_runtime_from_config(cfg.to_runtime_config()).await?;
+    let shared = pool_runtime::runtime::bootstrap_shared_runtime_without_validation_from_config(
+        cfg.to_runtime_config(),
+    )
+    .await?;
     Ok((cfg, shared))
 }
 
@@ -45,15 +50,26 @@ pub async fn build_api_state(cfg: &Config, shared: &SharedRuntime) -> Result<Api
         stats: Arc::clone(&shared.stats),
         jobs: Arc::clone(&shared.jobs),
         node: Arc::clone(&shared.node),
-        validation: Arc::clone(&shared.validation),
+        validation: shared.validation.clone(),
         db_totals_cache: Arc::new(Mutex::new(DbTotalsCache::default())),
         daemon_health_cache: Arc::new(Mutex::new(DaemonHealthCache::default())),
         pool_health_cache: Arc::new(Mutex::new(PoolHealthCache::default())),
         network_hashrate_cache: Arc::new(Mutex::new(NetworkHashrateCache::default())),
         insights_cache: Arc::new(Mutex::new(InsightsCache::default())),
-        miner_pending_estimate_cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        rejection_analytics_cache: Arc::new(Mutex::new(RejectionAnalyticsCache::default())),
+        stats_response_cache: Arc::new(Mutex::new(StatsResponseCache::default())),
+        pending_estimate_snapshot_cache: Arc::new(Mutex::new(
+            PendingEstimateSnapshotCache::default(),
+        )),
+        pending_estimate_snapshot_notify: Arc::new(tokio::sync::Notify::new()),
+        miner_balance_response_cache: Arc::new(Mutex::new(MinerBalanceResponseCache::default())),
+        miner_detail_response_cache: Arc::new(Mutex::new(MinerDetailResponseCache::default())),
+        public_telemetry_rate_limiter: Arc::new(Mutex::new(PublicTelemetryRateLimiter::default())),
+        performance: Arc::new(crate::api::ApiPerformanceTracker::default()),
         recovery: Arc::new(RecoveryAgentClient::new(cfg.recovery.socket_path.clone())),
-        live_runtime_snapshot_cache: Arc::new(Mutex::new(crate::api::LiveRuntimeSnapshotCache::default())),
+        live_runtime_snapshot_cache: Arc::new(Mutex::new(
+            crate::api::LiveRuntimeSnapshotCache::default(),
+        )),
         status_history: Arc::new(Mutex::new(persisted_status_history)),
         sse_subscriber_limiter: Arc::new(tokio::sync::Semaphore::new(DEFAULT_MAX_SSE_SUBSCRIBERS)),
         api_key: cfg.api_key.clone(),
@@ -73,7 +89,12 @@ pub async fn build_api_state(cfg: &Config, shared: &SharedRuntime) -> Result<Api
 pub fn api_listen_addr(cfg: &Config) -> Result<SocketAddr> {
     format!("{}:{}", cfg.api_host, cfg.api_port)
         .parse()
-        .with_context(|| format!("invalid api listen address {}:{}", cfg.api_host, cfg.api_port))
+        .with_context(|| {
+            format!(
+                "invalid api listen address {}:{}",
+                cfg.api_host, cfg.api_port
+            )
+        })
 }
 
 pub fn start_api_background_tasks(api_state: ApiState) {

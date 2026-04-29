@@ -38,6 +38,10 @@ pub fn should_persist_login_hint_immediately(address: &str) -> bool {
     is_seine_dev_fee_address(address)
 }
 
+pub fn should_allow_login_difficulty_hint_raise(address: &str) -> bool {
+    is_seine_dev_fee_address(address)
+}
+
 pub fn should_defer_submit_ack_difficulty(address: &str) -> bool {
     is_seine_dev_fee_address(address)
 }
@@ -74,9 +78,13 @@ mod tests {
             SEINE_DEV_FEE_ADDRESS
         ));
         assert!(should_persist_login_hint_immediately(SEINE_DEV_FEE_ADDRESS));
+        assert!(should_allow_login_difficulty_hint_raise(
+            SEINE_DEV_FEE_ADDRESS
+        ));
         assert!(should_defer_submit_ack_difficulty(SEINE_DEV_FEE_ADDRESS));
         assert!(!should_bootstrap_login_from_address_hints("miner-address"));
         assert!(!should_persist_login_hint_immediately("miner-address"));
+        assert!(!should_allow_login_difficulty_hint_raise("miner-address"));
         assert!(!should_defer_submit_ack_difficulty("miner-address"));
     }
 }

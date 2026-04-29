@@ -2,7 +2,7 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result};
 use tracing::{info, warn};
@@ -18,9 +18,11 @@ use crate::service_state::{PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_
 use crate::stats::PoolStats;
 use crate::store::PoolStore;
 use crate::stratum::StratumServer;
+use crate::telemetry::NamedTimedOperationTracker;
 use crate::validation::{ValidationEngine, ValidationStateStore};
 
 const HASHRATE_WARMUP_WINDOW: Duration = Duration::from_secs(5 * 60);
+const RUNTIME_TASK_SLOW_LOG_AFTER: Duration = Duration::from_millis(250);
 
 pub struct SharedRuntime {
     pub cfg: Config,
@@ -28,7 +30,7 @@ pub struct SharedRuntime {
     pub node: Arc<NodeClient>,
     pub expected_address_network: Option<AddressNetwork>,
     pub jobs: Arc<JobManager>,
-    pub validation: Arc<ValidationEngine>,
+    pub validation: Option<Arc<ValidationEngine>>,
     pub stats: Arc<PoolStats>,
 }
 
@@ -40,6 +42,19 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
 }
 
 pub async fn bootstrap_shared_runtime_from_config(cfg: Config) -> Result<SharedRuntime> {
+    bootstrap_shared_runtime_with_validation_from_config(cfg, true).await
+}
+
+pub async fn bootstrap_shared_runtime_without_validation_from_config(
+    cfg: Config,
+) -> Result<SharedRuntime> {
+    bootstrap_shared_runtime_with_validation_from_config(cfg, false).await
+}
+
+async fn bootstrap_shared_runtime_with_validation_from_config(
+    cfg: Config,
+    include_validation: bool,
+) -> Result<SharedRuntime> {
     validate_pool_fee_destination_config(&cfg)?;
     info!(
         "vardiff init={} min={} max={} target_shares={} retarget={}",
@@ -60,7 +75,10 @@ pub async fn bootstrap_shared_runtime_from_config(cfg: Config) -> Result<SharedR
 
     let cfg_for_store = cfg.clone();
     let store = tokio::task::spawn_blocking(move || {
-        PoolStore::open(&cfg_for_store.database_url, cfg_for_store.database_pool_size)
+        PoolStore::open(
+            &cfg_for_store.database_url,
+            cfg_for_store.database_pool_size,
+        )
     })
     .await
     .context("join store initialization task")??;
@@ -92,18 +110,22 @@ pub async fn bootstrap_shared_runtime_from_config(cfg: Config) -> Result<SharedR
     let jobs = JobManager::new(Arc::clone(&node), cfg.clone());
     jobs.start();
 
-    let validation = {
+    let validation = if include_validation {
         let cfg = cfg.clone();
         let store = Arc::clone(&store) as Arc<dyn ValidationStateStore>;
-        tokio::task::spawn_blocking(move || {
-            Arc::new(ValidationEngine::new_with_state_store(
-                cfg,
-                Arc::new(Argon2PowHasher::default()),
-                store,
-            ))
-        })
-        .await
-        .context("join validation engine init task")?
+        Some(
+            tokio::task::spawn_blocking(move || {
+                Arc::new(ValidationEngine::new_with_state_store(
+                    cfg,
+                    Arc::new(Argon2PowHasher::default()),
+                    store,
+                ))
+            })
+            .await
+            .context("join validation engine init task")?,
+        )
+    } else {
+        None
     };
 
     Ok(SharedRuntime {
@@ -120,7 +142,12 @@ pub async fn bootstrap_shared_runtime_from_config(cfg: Config) -> Result<SharedR
 pub async fn build_engine(shared: &SharedRuntime) -> Result<Arc<PoolEngine>> {
     let cfg = shared.cfg.clone();
     let expected_address_network = shared.expected_address_network;
-    let validation = Arc::clone(&shared.validation);
+    let validation = Arc::clone(
+        shared
+            .validation
+            .as_ref()
+            .context("validation engine is not available for pool engine bootstrap")?,
+    );
     let jobs = Arc::clone(&shared.jobs) as Arc<dyn JobRepository>;
     let store = Arc::clone(&shared.store) as Arc<dyn ShareStore>;
     let node = Arc::clone(&shared.node) as Arc<dyn NodeApi>;
@@ -149,9 +176,7 @@ pub fn build_stratum_server(
         engine,
         Arc::clone(&shared.jobs),
         Arc::clone(&shared.stats),
-        shared.cfg.stratum_idle_timeout_duration(),
-        shared.cfg.stratum_submit_rate_limit_window_duration(),
-        shared.cfg.stratum_submit_rate_limit_max.max(1) as usize,
+        shared.cfg.clone(),
     ))
 }
 
@@ -166,27 +191,57 @@ pub fn stratum_listen_addr(cfg: &Config) -> Result<SocketAddr> {
         })
 }
 
-pub fn start_stratum_background_tasks(shared: &SharedRuntime, engine: Arc<PoolEngine>) {
-    start_found_block_recovery(engine);
-    let payout = PayoutProcessor::new(
+pub fn start_stratum_background_tasks(
+    shared: &SharedRuntime,
+    engine: Arc<PoolEngine>,
+    stratum: Arc<StratumServer>,
+) {
+    let validation = Arc::clone(
+        shared
+            .validation
+            .as_ref()
+            .expect("stratum runtime requires a validation engine"),
+    );
+    let task_metrics = Arc::new(NamedTimedOperationTracker::default());
+    start_found_block_recovery(engine, Arc::clone(&task_metrics));
+    let payout = PayoutProcessor::new_with_task_metrics(
         shared.cfg.clone(),
         Arc::clone(&shared.store),
         Arc::clone(&shared.node),
+        Some(Arc::clone(&task_metrics)),
     );
     payout.start();
-    start_seen_share_gc(shared.cfg.clone(), Arc::clone(&shared.store));
-    start_stat_snapshots(Arc::clone(&shared.stats), Arc::clone(&shared.store));
-    start_retention_maintenance(shared.cfg.clone(), Arc::clone(&shared.store));
+    start_seen_share_gc(
+        shared.cfg.clone(),
+        Arc::clone(&shared.store),
+        Arc::clone(&task_metrics),
+    );
+    start_stat_snapshots(
+        Arc::clone(&shared.stats),
+        Arc::clone(&shared.store),
+        Arc::clone(&task_metrics),
+    );
+    start_retention_maintenance(
+        shared.cfg.clone(),
+        Arc::clone(&shared.store),
+        Arc::clone(&task_metrics),
+    );
     start_live_runtime_snapshot_persist(
         Arc::clone(&shared.jobs),
         Arc::clone(&payout),
         Arc::clone(&shared.stats),
-        Arc::clone(&shared.validation),
+        stratum,
+        validation,
         Arc::clone(&shared.store),
+        task_metrics,
     );
 }
 
-fn start_seen_share_gc(cfg: Config, store: Arc<PoolStore>) {
+fn start_seen_share_gc(
+    cfg: Config,
+    store: Arc<PoolStore>,
+    task_metrics: Arc<NamedTimedOperationTracker>,
+) {
     tokio::spawn(async move {
         let interval = cfg
             .seen_share_gc_interval_duration()
@@ -194,29 +249,52 @@ fn start_seen_share_gc(cfg: Config, store: Arc<PoolStore>) {
         let mut ticker = tokio::time::interval(interval);
         loop {
             ticker.tick().await;
+            let started_at = Instant::now();
             let store = Arc::clone(&store);
-            match tokio::task::spawn_blocking(move || store.clean_expired_seen_shares()).await {
+            let failed = match tokio::task::spawn_blocking(move || {
+                store.clean_expired_seen_shares()
+            })
+            .await
+            {
                 Ok(Ok(removed)) if removed > 0 => {
                     tracing::debug!(removed, "cleaned expired seen-share entries");
+                    false
                 }
-                Ok(Ok(_)) => {}
-                Ok(Err(err)) => tracing::warn!(error = %err, "seen-share cleanup failed"),
-                Err(err) => tracing::warn!(error = %err, "seen-share cleanup task join failed"),
-            }
+                Ok(Ok(_)) => false,
+                Ok(Err(err)) => {
+                    tracing::warn!(error = %err, "seen-share cleanup failed");
+                    true
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "seen-share cleanup task join failed");
+                    true
+                }
+            };
+            record_runtime_task_observation(
+                &task_metrics,
+                "seen_share_gc",
+                started_at.elapsed(),
+                failed,
+            );
         }
     });
 }
 
-fn start_stat_snapshots(stats: Arc<PoolStats>, store: Arc<PoolStore>) {
+fn start_stat_snapshots(
+    stats: Arc<PoolStats>,
+    store: Arc<PoolStore>,
+    task_metrics: Arc<NamedTimedOperationTracker>,
+) {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(5 * 60));
         let retain = Duration::from_secs(60 * 24 * 60 * 60);
         let hr_window = Duration::from_secs(60 * 60);
         loop {
             ticker.tick().await;
+            let started_at = Instant::now();
             let snap = stats.snapshot();
             let store = Arc::clone(&store);
-            match tokio::task::spawn_blocking(move || {
+            let failed = match tokio::task::spawn_blocking(move || {
                 let hashrate = db_pool_hashrate(&store, hr_window);
                 store.add_stat_snapshot(
                     SystemTime::now(),
@@ -229,20 +307,36 @@ fn start_stat_snapshots(stats: Arc<PoolStats>, store: Arc<PoolStore>) {
             })
             .await
             {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => tracing::warn!(error = %err, "stat snapshot failed"),
-                Err(err) => tracing::warn!(error = %err, "stat snapshot task join failed"),
-            }
+                Ok(Ok(())) => false,
+                Ok(Err(err)) => {
+                    tracing::warn!(error = %err, "stat snapshot failed");
+                    true
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "stat snapshot task join failed");
+                    true
+                }
+            };
+            record_runtime_task_observation(
+                &task_metrics,
+                "stat_snapshot",
+                started_at.elapsed(),
+                failed,
+            );
         }
     });
 }
 
-fn start_retention_maintenance(cfg: Config, store: Arc<PoolStore>) {
+fn start_retention_maintenance(
+    cfg: Config,
+    store: Arc<PoolStore>,
+    task_metrics: Arc<NamedTimedOperationTracker>,
+) {
     tokio::spawn(async move {
         let interval = cfg
             .retention_interval_duration()
             .max(Duration::from_secs(5 * 60));
-        let mut ticker = tokio::time::interval(interval);
+        let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
         loop {
             ticker.tick().await;
             let now = SystemTime::now();
@@ -256,8 +350,9 @@ fn start_retention_maintenance(cfg: Config, store: Arc<PoolStore>) {
                 continue;
             }
 
+            let started_at = Instant::now();
             let store = Arc::clone(&store);
-            match tokio::task::spawn_blocking(move || {
+            let failed = match tokio::task::spawn_blocking(move || {
                 store.rollup_and_prune_retention(shares_before, payouts_before)
             })
             .await
@@ -270,26 +365,58 @@ fn start_retention_maintenance(cfg: Config, store: Arc<PoolStore>) {
                             "completed retention rollup/prune cycle"
                         );
                     }
+                    false
                 }
-                Ok(Err(err)) => tracing::warn!(error = %err, "retention rollup/prune failed"),
-                Err(err) => tracing::warn!(error = %err, "retention task join failed"),
-            }
+                Ok(Err(err)) => {
+                    tracing::warn!(
+                        error = %err,
+                        error_chain = %format!("{err:#}"),
+                        "retention rollup/prune failed"
+                    );
+                    true
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "retention task join failed");
+                    true
+                }
+            };
+            record_runtime_task_observation(
+                &task_metrics,
+                "retention_maintenance",
+                started_at.elapsed(),
+                failed,
+            );
         }
     });
 }
 
-fn start_found_block_recovery(engine: Arc<PoolEngine>) {
+fn start_found_block_recovery(
+    engine: Arc<PoolEngine>,
+    task_metrics: Arc<NamedTimedOperationTracker>,
+) {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(30));
         loop {
             ticker.tick().await;
+            let started_at = Instant::now();
             let engine = Arc::clone(&engine);
-            match tokio::task::spawn_blocking(move || engine.recover_found_block_outbox()).await {
-                Ok(()) => {}
+            let failed = match tokio::task::spawn_blocking(move || {
+                engine.recover_found_block_outbox()
+            })
+            .await
+            {
+                Ok(()) => false,
                 Err(err) => {
-                    tracing::warn!(error = %err, "found-block recovery task join failed")
+                    tracing::warn!(error = %err, "found-block recovery task join failed");
+                    true
                 }
-            }
+            };
+            record_runtime_task_observation(
+                &task_metrics,
+                "found_block_recovery",
+                started_at.elapsed(),
+                failed,
+            );
         }
     });
 }
@@ -298,37 +425,75 @@ fn start_live_runtime_snapshot_persist(
     jobs: Arc<JobManager>,
     payouts: Arc<PayoutProcessor>,
     stats: Arc<PoolStats>,
+    stratum: Arc<StratumServer>,
     validation: Arc<ValidationEngine>,
     store: Arc<PoolStore>,
+    task_metrics: Arc<NamedTimedOperationTracker>,
 ) {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(5));
         loop {
             ticker.tick().await;
+            let started_at = Instant::now();
             let payload = PersistedRuntimeSnapshot::from_live(
                 stats.snapshot(),
+                stratum.submit_snapshot(),
                 validation.snapshot(),
                 jobs.runtime_snapshot(),
                 payouts.runtime_snapshot(),
+                task_metrics.snapshot(),
             );
             let store = Arc::clone(&store);
-            match tokio::task::spawn_blocking(move || -> Result<()> {
+            let failed = match tokio::task::spawn_blocking(move || -> Result<()> {
                 let bytes = serde_json::to_vec(&payload)?;
                 store.set_meta(LIVE_RUNTIME_SNAPSHOT_META_KEY, &bytes)?;
                 Ok(())
             })
             .await
             {
-                Ok(Ok(())) => {}
+                Ok(Ok(())) => false,
                 Ok(Err(err)) => {
                     tracing::warn!(error = %err, "failed persisting live runtime snapshot");
+                    true
                 }
                 Err(err) => {
                     tracing::warn!(error = %err, "live runtime snapshot task join failed");
+                    true
                 }
-            }
+            };
+            record_runtime_task_observation(
+                &task_metrics,
+                "runtime_snapshot_persist",
+                started_at.elapsed(),
+                failed,
+            );
         }
     });
+}
+
+fn record_runtime_task_observation(
+    task_metrics: &NamedTimedOperationTracker,
+    task: &str,
+    duration: Duration,
+    failed: bool,
+) {
+    let slow = duration >= RUNTIME_TASK_SLOW_LOG_AFTER;
+    task_metrics.record(task, duration, failed, slow);
+    if failed {
+        tracing::warn!(
+            component = "runtime_perf",
+            operation = task,
+            duration_ms = duration.as_millis() as u64,
+            "stratum runtime task failed"
+        );
+    } else if slow {
+        tracing::info!(
+            component = "runtime_perf",
+            operation = task,
+            duration_ms = duration.as_millis() as u64,
+            "stratum runtime task observed"
+        );
+    }
 }
 
 fn db_pool_hashrate(store: &PoolStore, window: Duration) -> f64 {

@@ -16,6 +16,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 axum.workspace = true
 axum-server.workspace = true
+base64.workspace = true
 chrono.workspace = true
 humantime.workspace = true
 parking_lot.workspace = true

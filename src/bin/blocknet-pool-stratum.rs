@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use pool_common::logging::init_logging;
-use pool_runtime::runtime::{
+use blocknet_pool_rs::logging::init_logging;
+use blocknet_pool_rs::runtime::{
     bootstrap_shared_runtime, build_engine, build_stratum_server, start_stratum_background_tasks,
 };
 use tracing::info;
