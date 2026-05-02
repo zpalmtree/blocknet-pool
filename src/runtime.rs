@@ -650,15 +650,15 @@ fn validate_pool_fee_destination_config(cfg: &Config) -> Result<()> {
         return Ok(());
     }
 
-    let destination = cfg.pool_wallet_address.trim();
+    let destination = cfg.pool_fee_wallet_address.trim();
     if destination.is_empty() {
         anyhow::bail!(
-            "pool_wallet_address must be set when pool_fee_pct or pool_fee_flat is non-zero"
+            "pool_fee_wallet_address must be set when pool_fee_pct or pool_fee_flat is non-zero"
         );
     }
 
     validate_miner_address(destination)
-        .map_err(|err| anyhow::anyhow!("pool_wallet_address is invalid: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("pool_fee_wallet_address is invalid: {err}"))?;
     Ok(())
 }
 
@@ -700,7 +700,7 @@ async fn resolve_expected_address_network(
 }
 
 fn configured_expected_address_network(cfg: &Config) -> Option<AddressNetwork> {
-    let configured = cfg.pool_wallet_address.trim();
+    let configured = cfg.pool_fee_wallet_address.trim();
     if configured.is_empty() {
         return None;
     }
@@ -710,7 +710,7 @@ fn configured_expected_address_network(cfg: &Config) -> Option<AddressNetwork> {
         Err(err) => {
             tracing::warn!(
                 error = %err,
-                "pool_wallet_address could not be parsed for pool network detection"
+                "pool_fee_wallet_address could not be parsed for pool network detection"
             );
             None
         }
@@ -735,25 +735,29 @@ mod tests {
             ..Config::default()
         };
         let err = validate_pool_fee_destination_config(&cfg).expect_err("missing destination");
-        assert!(err.to_string().contains("pool_wallet_address must be set"));
+        assert!(err
+            .to_string()
+            .contains("pool_fee_wallet_address must be set"));
     }
 
     #[test]
     fn pool_fee_destination_must_be_a_valid_address() {
         let cfg = Config {
             pool_fee_pct: 1.0,
-            pool_wallet_address: "not-an-address".to_string(),
+            pool_fee_wallet_address: "not-an-address".to_string(),
             ..Config::default()
         };
         let err = validate_pool_fee_destination_config(&cfg).expect_err("invalid destination");
-        assert!(err.to_string().contains("pool_wallet_address is invalid"));
+        assert!(err
+            .to_string()
+            .contains("pool_fee_wallet_address is invalid"));
     }
 
     #[test]
     fn valid_pool_fee_destination_is_accepted() {
         let cfg = Config {
             pool_fee_pct: 1.0,
-            pool_wallet_address: bs58::encode([0x11; 64]).into_string(),
+            pool_fee_wallet_address: bs58::encode([0x11; 64]).into_string(),
             ..Config::default()
         };
         assert!(validate_pool_fee_destination_config(&cfg).is_ok());

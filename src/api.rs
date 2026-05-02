@@ -8288,7 +8288,7 @@ impl ApiState {
     async fn admin_balance_overview(&self) -> anyhow::Result<AdminBalanceOverviewResponse> {
         let store = Arc::clone(&self.store);
         let node = Arc::clone(&self.node);
-        let fee_address = self.config.pool_wallet_address.trim().to_string();
+        let fee_address = self.config.pool_fee_wallet_address.trim().to_string();
         tokio::task::spawn_blocking(move || {
             let generated_at = SystemTime::now();
             let wallet_balance = node.get_wallet_balance()?;
@@ -10279,7 +10279,7 @@ fn build_fee_page(
             block_height: block.height,
             amount,
             fee_address: resolve_pool_fee_destination_from_address(
-                &cfg.pool_wallet_address,
+                &cfg.pool_fee_wallet_address,
                 &block,
             )
             .unwrap_or_default(),
@@ -11145,7 +11145,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.pool_fee_pct = 10.0;
         cfg.blocks_before_payout = 60;
-        cfg.pool_wallet_address = "cold-wallet".to_string();
+        cfg.pool_fee_wallet_address = "cold-wallet".to_string();
 
         let base = UNIX_EPOCH + Duration::from_secs(1_000_000);
         let collected_reward = 100_000_000;
@@ -11172,7 +11172,7 @@ mod tests {
             .record_pool_fee(
                 100,
                 cfg.pool_fee(collected_reward),
-                &cfg.pool_wallet_address,
+                &cfg.pool_fee_wallet_address,
                 base,
             )
             .expect("record collected fee");
@@ -11289,7 +11289,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.pool_fee_pct = 10.0;
         cfg.blocks_before_payout = 60;
-        cfg.pool_wallet_address = "cold-wallet".to_string();
+        cfg.pool_fee_wallet_address = "cold-wallet".to_string();
 
         let base = UNIX_EPOCH + Duration::from_secs(1_000_000);
         let height = 3707;
@@ -12970,7 +12970,7 @@ mod tests {
         cfg.pplns_window_duration = "24h".to_string();
         cfg.pool_fee_pct = 10.0;
         cfg.pool_fee_flat = 0.0;
-        cfg.pool_wallet_address = "pool-fee-destination".to_string();
+        cfg.pool_fee_wallet_address = "pool-fee-destination".to_string();
         cfg.block_finder_bonus = false;
         cfg.provisional_share_delay = "0s".to_string();
 
@@ -13027,7 +13027,7 @@ mod tests {
                 &[("miner-a".to_string(), 450), ("miner-b".to_string(), 450)],
                 Some(&PoolFeeRecord {
                     amount: 100,
-                    fee_address: cfg.pool_wallet_address.clone(),
+                    fee_address: cfg.pool_fee_wallet_address.clone(),
                     timestamp: block_ts,
                 }),
             )

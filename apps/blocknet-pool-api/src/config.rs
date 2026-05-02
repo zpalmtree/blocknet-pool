@@ -23,7 +23,7 @@ pub struct Config {
     pub daemon_api: String,
     pub daemon_token: String,
     pub daemon_cookie_path: String,
-    pub pool_wallet_address: String,
+    pub pool_fee_wallet_address: String,
 
     pub initial_share_difficulty: u64,
     pub block_poll_interval: String,
@@ -144,7 +144,7 @@ impl Default for Config {
             daemon_api: runtime.daemon_api,
             daemon_token: runtime.daemon_token,
             daemon_cookie_path: runtime.daemon_cookie_path,
-            pool_wallet_address: runtime.pool_wallet_address,
+            pool_fee_wallet_address: runtime.pool_fee_wallet_address,
             initial_share_difficulty: runtime.initial_share_difficulty,
             block_poll_interval: runtime.block_poll_interval,
             sse_enabled: runtime.sse_enabled,
@@ -283,7 +283,7 @@ impl Config {
             daemon_api: self.daemon_api.clone(),
             daemon_token: self.daemon_token.clone(),
             daemon_cookie_path: self.daemon_cookie_path.clone(),
-            pool_wallet_address: self.pool_wallet_address.clone(),
+            pool_fee_wallet_address: self.pool_fee_wallet_address.clone(),
             initial_share_difficulty: self.initial_share_difficulty,
             block_poll_interval: self.block_poll_interval.clone(),
             sse_enabled: self.sse_enabled,
@@ -398,7 +398,7 @@ impl Config {
         self.daemon_api = runtime.daemon_api;
         self.daemon_token = runtime.daemon_token;
         self.daemon_cookie_path = runtime.daemon_cookie_path;
-        self.pool_wallet_address = runtime.pool_wallet_address;
+        self.pool_fee_wallet_address = runtime.pool_fee_wallet_address;
         self.initial_share_difficulty = runtime.initial_share_difficulty;
         self.block_poll_interval = runtime.block_poll_interval;
         self.sse_enabled = runtime.sse_enabled;

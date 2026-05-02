@@ -19,7 +19,7 @@ pub struct Config {
     pub daemon_api: String,
     pub daemon_token: String,
     pub daemon_cookie_path: String,
-    pub pool_wallet_address: String,
+    pub pool_fee_wallet_address: String,
 
     pub initial_share_difficulty: u64,
     pub block_poll_interval: String,
@@ -130,7 +130,7 @@ impl Default for Config {
             daemon_api: "http://127.0.0.1:8332".to_string(),
             daemon_token: String::new(),
             daemon_cookie_path: "/etc/blocknet/pool/daemon-active.api.cookie".to_string(),
-            pool_wallet_address: String::new(),
+            pool_fee_wallet_address: String::new(),
             initial_share_difficulty: 60,
             block_poll_interval: "2s".to_string(),
             sse_enabled: true,
@@ -702,6 +702,18 @@ pub fn generate_default_env(path: &Path) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_pool_wallet_address_no_longer_sets_fee_wallet_address() {
+        let cfg: Config = serde_json::from_str(
+            r#"{
+                "pool_wallet_address": "legacy-fee-wallet-address"
+            }"#,
+        )
+        .expect("unknown legacy config field should be ignored");
+
+        assert_eq!(cfg.pool_fee_wallet_address, "");
+    }
 
     #[test]
     fn normalize_clamps_values() {

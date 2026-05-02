@@ -1,9 +1,12 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
@@ -13,8 +16,8 @@ use crate::db::{
     ShareReplayUpdate,
 };
 use crate::node::{
-    http_error_body_contains, is_http_status, NodeClient, NodeStatus, TxStatus, WalletOutput,
-    WalletOutputRef, WalletRecipient,
+    http_error_body_contains, is_http_status, NodeClient, NodeStatus, TxStatus,
+    WalletAddressResponse, WalletOutput, WalletOutputRef, WalletRecipient,
 };
 use crate::pgdb::UnreconciledCompletedPayoutRow;
 use crate::pow::{check_target, difficulty_to_target, Argon2PowHasher, PowHasher};
@@ -141,6 +144,46 @@ struct OutputInventory {
     small_target_count: usize,
     medium_target_count: usize,
     large_target_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct WalletSendIdempotencyJournal {
+    #[serde(default)]
+    entries: HashMap<String, WalletSendIdempotencyEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WalletSendIdempotencyEntry {
+    #[serde(default)]
+    status: u16,
+    #[serde(default)]
+    body_base64: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct WalletSendIdempotencyBody {
+    #[serde(default)]
+    txid: String,
+    #[serde(default)]
+    dry_run: bool,
+    #[serde(default)]
+    fee: u64,
+    #[serde(default)]
+    recipients: Vec<WalletSendIdempotencyRecipient>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WalletSendIdempotencyRecipient {
+    address: String,
+    #[serde(default)]
+    amount: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RecoveredWalletSend {
+    txid: String,
+    fee: u64,
+    recipients: Vec<(String, u64)>,
 }
 
 #[derive(Debug, Clone)]
@@ -896,48 +939,31 @@ impl PayoutProcessor {
         };
 
         let now = SystemTime::now();
-        let mut reset_batches = HashSet::<String>::new();
+        let mut warned_batches = HashSet::<String>::new();
         for entry in pending {
             let queued_age = now.duration_since(entry.initiated_at).unwrap_or_default();
-            if should_reset_stale_prebroadcast_pending_payout(&entry, now) {
+            if has_stale_unknown_broadcast_outcome(&entry, now) {
                 let send_age = pending_send_age(&entry, now);
                 if let Some(batch_id) = entry
                     .batch_id
                     .as_deref()
                     .filter(|value| !value.trim().is_empty())
                 {
-                    if reset_batches.insert(batch_id.to_string()) {
-                        if let Err(err) = self.store.reset_pending_payout_batch_send_state(batch_id)
-                        {
-                            tracing::warn!(
-                                batch_id = %batch_id,
-                                error = %err,
-                                "failed to reset stale pre-broadcast payout batch on startup"
-                            );
-                        } else {
-                            tracing::warn!(
-                                batch_id = %batch_id,
-                                queued_age_secs = queued_age.as_secs(),
-                                send_age_secs = send_age.as_secs(),
-                                "reset stale pre-broadcast payout batch on startup"
-                            );
-                        }
+                    if warned_batches.insert(batch_id.to_string()) {
+                        tracing::warn!(
+                            batch_id = %batch_id,
+                            queued_age_secs = queued_age.as_secs(),
+                            send_age_secs = send_age.as_secs(),
+                            "payout batch has unknown broadcast outcome on startup; leaving queued for reconciliation"
+                        );
                     }
-                } else if let Err(err) = self.store.reset_pending_payout_send_state(&entry.address)
-                {
-                    tracing::warn!(
-                        address = %entry.address,
-                        amount = entry.amount,
-                        error = %err,
-                        "failed to reset stale pre-broadcast pending payout on startup"
-                    );
                 } else {
                     tracing::warn!(
                         address = %entry.address,
                         amount = entry.amount,
                         queued_age_secs = queued_age.as_secs(),
                         send_age_secs = send_age.as_secs(),
-                        "reset stale pre-broadcast pending payout on startup"
+                        "pending payout has unknown broadcast outcome on startup; leaving queued for reconciliation"
                     );
                 }
                 continue;
@@ -964,7 +990,7 @@ impl PayoutProcessor {
     }
 
     fn backfill_legacy_pool_fee_credits(&self) {
-        let expected_fee_address = self.cfg.pool_wallet_address.trim().to_string();
+        let expected_fee_address = self.cfg.pool_fee_wallet_address.trim().to_string();
         if expected_fee_address.is_empty() {
             return;
         }
@@ -1845,9 +1871,26 @@ impl PayoutProcessor {
             }
         };
 
+        let pending_by_batch = pending
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .batch_id
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .map(|batch_id| (batch_id.to_string(), entry.clone()))
+            })
+            .fold(
+                HashMap::<String, Vec<PendingPayout>>::new(),
+                |mut batches, (batch_id, entry)| {
+                    batches.entry(batch_id).or_default().push(entry);
+                    batches
+                },
+            );
+
         let now = SystemTime::now();
         let mut grouped = HashMap::<String, Vec<PendingPayout>>::new();
-        let mut reset_batches = HashSet::<String>::new();
+        let mut warned_batches = HashSet::<String>::new();
         for entry in pending {
             if let Some(tx_hash) = entry
                 .tx_hash
@@ -1863,7 +1906,7 @@ impl PayoutProcessor {
                 continue;
             }
 
-            if !should_reset_stale_prebroadcast_pending_payout(&entry, now) {
+            if !has_stale_unknown_broadcast_outcome(&entry, now) {
                 continue;
             }
 
@@ -1873,37 +1916,44 @@ impl PayoutProcessor {
                 .as_deref()
                 .filter(|value| !value.trim().is_empty())
             {
-                if reset_batches.insert(batch_id.to_string()) {
-                    match self.store.reset_pending_payout_batch_send_state(batch_id) {
-                        Ok(count) => {
-                            tracing::warn!(
-                                batch_id = %batch_id,
-                                recipients = count,
-                                send_age_secs = send_age.as_secs(),
-                                "reset stale pre-broadcast payout batch for retry"
-                            );
-                        }
-                        Err(err) => {
-                            tracing::warn!(
-                                batch_id = %batch_id,
-                                error = %err,
-                                "failed to reset stale pre-broadcast payout batch"
-                            );
+                if warned_batches.insert(batch_id.to_string()) {
+                    if let Some(batch_entries) = pending_by_batch.get(batch_id) {
+                        match self
+                            .recover_pending_batch_from_daemon_idempotency(batch_id, batch_entries)
+                        {
+                            Ok(Some(recorded)) => {
+                                tracing::info!(
+                                    batch_id = %batch_id,
+                                    recipients = recorded.len(),
+                                    send_age_secs = send_age.as_secs(),
+                                    "recovered unknown payout batch from daemon idempotency journal"
+                                );
+                                grouped.insert(batch_id.to_string(), recorded);
+                                continue;
+                            }
+                            Ok(None) => {}
+                            Err(err) => {
+                                tracing::warn!(
+                                    batch_id = %batch_id,
+                                    send_age_secs = send_age.as_secs(),
+                                    error = %err,
+                                    "failed recovering unknown payout batch from daemon idempotency journal"
+                                );
+                            }
                         }
                     }
+                    tracing::warn!(
+                        batch_id = %batch_id,
+                        send_age_secs = send_age.as_secs(),
+                        "stale pre-broadcast payout batch has unknown broadcast outcome; leaving queued for reconciliation"
+                    );
                 }
-            } else if let Err(err) = self.store.reset_pending_payout_send_state(&entry.address) {
-                tracing::warn!(
-                    address = %entry.address,
-                    error = %err,
-                    "failed to reset stale pre-broadcast pending payout"
-                );
             } else {
                 tracing::warn!(
                     address = %entry.address,
                     amount = entry.amount,
                     send_age_secs = send_age.as_secs(),
-                    "reset stale pre-broadcast pending payout for retry"
+                    "stale pre-broadcast pending payout has unknown broadcast outcome; leaving queued for reconciliation"
                 );
             }
         }
@@ -1922,6 +1972,26 @@ impl PayoutProcessor {
                 );
             }
         }
+    }
+
+    fn recover_pending_batch_from_daemon_idempotency(
+        &self,
+        batch_id: &str,
+        entries: &[PendingPayout],
+    ) -> anyhow::Result<Option<Vec<PendingPayout>>> {
+        let idempotency_path = daemon_send_idempotency_path(&self.cfg);
+        let Some(recovered) = load_recovered_wallet_send_for_batch(&idempotency_path, batch_id)?
+        else {
+            return Ok(None);
+        };
+        validate_recovered_wallet_send_matches_pending(&recovered, entries)?;
+        let members = allocate_pending_batch_fees(entries, recovered.fee);
+        let recorded = self.store.record_pending_payout_batch_broadcast(
+            &members,
+            batch_id,
+            &recovered.txid,
+        )?;
+        Ok(Some(recorded))
     }
 
     fn reconcile_pending_batch(&self, entries: &[PendingPayout]) -> anyhow::Result<()> {
@@ -2147,10 +2217,10 @@ impl PayoutProcessor {
         if inventory_is_healthy(inventory) || spendable_outputs.is_empty() {
             return false;
         }
-        let destination = self.cfg.pool_wallet_address.trim();
-        if destination.is_empty() {
-            return false;
-        }
+        let destination = match self.rebalance_destination() {
+            Some(destination) => destination,
+            None => return false,
+        };
 
         let safe_spend_budget = compute_safe_spend_budget(
             wallet_balance.spendable,
@@ -2201,7 +2271,7 @@ impl PayoutProcessor {
 
         let idempotency_key = payout_rebalance_idempotency_key(&input);
         let recipients = vec![WalletRecipient {
-            address: destination.to_string(),
+            address: destination.clone(),
             amount: recipient_amount,
         }];
         let inputs = vec![WalletOutputRef::from(&input)];
@@ -2243,7 +2313,7 @@ impl PayoutProcessor {
                     recipient_amount,
                     fee = sent.fee,
                     change_split,
-                    "broadcast idle wallet rebalance"
+                    "broadcast idle wallet rebalance to daemon wallet"
                 );
                 true
             }
@@ -2252,6 +2322,22 @@ impl PayoutProcessor {
                 false
             }
         }
+    }
+
+    fn rebalance_destination(&self) -> Option<String> {
+        let wallet = match self.node.get_wallet_address() {
+            Ok(wallet) => wallet,
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "failed to resolve daemon wallet address for wallet rebalance"
+                );
+                return None;
+            }
+        };
+
+        resolve_wallet_rebalance_destination(&wallet, &self.cfg.pool_fee_wallet_address)
+            .map(str::to_string)
     }
 
     fn ensure_wallet_ready(&self) -> bool {
@@ -2358,7 +2444,7 @@ fn record_payout_task_observation(
 }
 
 fn configured_payout_address_network(cfg: &Config) -> Option<AddressNetwork> {
-    let configured = cfg.pool_wallet_address.trim();
+    let configured = cfg.pool_fee_wallet_address.trim();
     if configured.is_empty() {
         return None;
     }
@@ -2368,22 +2454,47 @@ fn configured_payout_address_network(cfg: &Config) -> Option<AddressNetwork> {
         Err(err) => {
             tracing::warn!(
                 error = %err,
-                "configured pool_wallet_address is not a valid payout network anchor; falling back to daemon wallet validation"
+                "configured pool_fee_wallet_address is not a valid payout network anchor; falling back to daemon wallet validation"
             );
             None
         }
     }
 }
 
+fn resolve_wallet_rebalance_destination<'a>(
+    wallet: &'a WalletAddressResponse,
+    pool_fee_wallet_address: &str,
+) -> Option<&'a str> {
+    let destination = wallet.address.trim();
+    if destination.is_empty() {
+        tracing::warn!("daemon wallet address is empty; skipping wallet rebalance");
+        return None;
+    }
+    if wallet.view_only {
+        tracing::warn!("daemon wallet is view-only; skipping wallet rebalance");
+        return None;
+    }
+
+    let fee_wallet = pool_fee_wallet_address.trim();
+    if !fee_wallet.is_empty() && destination == fee_wallet {
+        tracing::warn!(
+            "daemon wallet address matches pool fee wallet address; skipping wallet rebalance"
+        );
+        return None;
+    }
+
+    Some(destination)
+}
+
 pub fn resolve_pool_fee_destination(cfg: &Config, block: &DbBlock) -> Option<String> {
-    resolve_pool_fee_destination_from_address(&cfg.pool_wallet_address, block)
+    resolve_pool_fee_destination_from_address(&cfg.pool_fee_wallet_address, block)
 }
 
 pub fn resolve_pool_fee_destination_from_address(
-    pool_wallet_address: &str,
+    pool_fee_wallet_address: &str,
     block: &DbBlock,
 ) -> Option<String> {
-    let configured = pool_wallet_address.trim();
+    let configured = pool_fee_wallet_address.trim();
     if !configured.is_empty() {
         return Some(configured.to_string());
     }
@@ -2555,10 +2666,7 @@ fn pending_send_age(p: &PendingPayout, now: SystemTime) -> Duration {
         .unwrap_or_default()
 }
 
-fn should_reset_stale_prebroadcast_pending_payout(
-    pending: &PendingPayout,
-    now: SystemTime,
-) -> bool {
+fn has_stale_unknown_broadcast_outcome(pending: &PendingPayout, now: SystemTime) -> bool {
     pending
         .tx_hash
         .as_deref()
@@ -2961,7 +3069,7 @@ fn choose_change_split(inventory: &OutputInventory, change_amount: u64, queue_li
 fn select_inputs_for_target(
     outputs: &[WalletOutput],
     target_amount: u64,
-    large_target_amount: u64,
+    _large_target_amount: u64,
     max_locked_amount: u64,
 ) -> Option<Vec<WalletOutput>> {
     let mut available = outputs
@@ -2974,20 +3082,10 @@ fn select_inputs_for_target(
     }
 
     available.sort_by_key(|output| output.amount);
-    let large_count = available
-        .iter()
-        .filter(|output| large_target_amount > 0 && output.amount >= large_target_amount)
-        .count();
 
     if let Some(single) = available
         .iter()
         .filter(|output| output.amount >= target_amount)
-        .filter(|output| {
-            large_target_amount == 0
-                || output.amount < large_target_amount
-                || large_count > 1
-                || target_amount >= large_target_amount
-        })
         .min_by_key(|output| output.amount)
     {
         return Some(vec![single.clone()]);
@@ -3049,6 +3147,149 @@ fn payout_batch_idempotency_key(batch_id: &str) -> String {
     hex::encode(Sha256::digest(
         format!("blocknet-pool:payout-batch:{batch_id}").as_bytes(),
     ))
+}
+
+fn daemon_send_idempotency_path(config: &Config) -> PathBuf {
+    let data_dir = config.daemon_data_dir.trim();
+    if data_dir.is_empty() {
+        return PathBuf::from("data").join("send-idempotency.json");
+    }
+    PathBuf::from(data_dir).join("send-idempotency.json")
+}
+
+fn load_recovered_wallet_send_for_batch(
+    path: &Path,
+    batch_id: &str,
+) -> anyhow::Result<Option<RecoveredWalletSend>> {
+    let idempotency_key = payout_batch_idempotency_key(batch_id);
+    let journal_key = format!("send-advanced:{idempotency_key}");
+    let raw = match fs::read(path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(anyhow::anyhow!(
+                "failed reading daemon idempotency journal {}: {err}",
+                path.display()
+            ));
+        }
+    };
+    let journal: WalletSendIdempotencyJournal = serde_json::from_slice(&raw).map_err(|err| {
+        anyhow::anyhow!(
+            "failed parsing daemon idempotency journal {}: {err}",
+            path.display()
+        )
+    })?;
+    let Some(entry) = journal.entries.get(&journal_key) else {
+        return Ok(None);
+    };
+    if entry.status != 200 {
+        return Ok(None);
+    }
+    let encoded_body = entry.body_base64.trim();
+    if encoded_body.is_empty() {
+        return Ok(None);
+    }
+    let decoded_body = BASE64_STANDARD.decode(encoded_body).map_err(|err| {
+        anyhow::anyhow!(
+            "failed decoding daemon idempotency journal entry {} from {}: {err}",
+            journal_key,
+            path.display()
+        )
+    })?;
+    let body: WalletSendIdempotencyBody = serde_json::from_slice(&decoded_body).map_err(|err| {
+        anyhow::anyhow!(
+            "failed parsing daemon idempotency journal entry {} from {}: {err}",
+            journal_key,
+            path.display()
+        )
+    })?;
+    if body.dry_run {
+        return Ok(None);
+    }
+    let txid = body.txid.trim();
+    if txid.is_empty() {
+        return Ok(None);
+    }
+    let recipients = aggregate_wallet_send_idempotency_recipients(&body.recipients);
+    if recipients.is_empty() {
+        return Err(anyhow::anyhow!(
+            "daemon idempotency journal entry {} has no recipients",
+            journal_key
+        ));
+    }
+    Ok(Some(RecoveredWalletSend {
+        txid: txid.to_string(),
+        fee: body.fee,
+        recipients,
+    }))
+}
+
+fn aggregate_wallet_send_idempotency_recipients(
+    recipients: &[WalletSendIdempotencyRecipient],
+) -> Vec<(String, u64)> {
+    let mut by_address = HashMap::<String, u64>::new();
+    for recipient in recipients {
+        let address = recipient.address.trim();
+        if address.is_empty() || recipient.amount == 0 {
+            continue;
+        }
+        by_address
+            .entry(address.to_string())
+            .and_modify(|amount| *amount = amount.saturating_add(recipient.amount))
+            .or_insert(recipient.amount);
+    }
+    let mut aggregated = by_address.into_iter().collect::<Vec<_>>();
+    aggregated.sort_by(|a, b| a.0.cmp(&b.0));
+    aggregated
+}
+
+fn validate_recovered_wallet_send_matches_pending(
+    recovered: &RecoveredWalletSend,
+    pending: &[PendingPayout],
+) -> anyhow::Result<()> {
+    let mut pending_recipients = pending
+        .iter()
+        .map(|entry| (entry.address.clone(), entry.amount))
+        .collect::<Vec<_>>();
+    pending_recipients.sort_by(|a, b| a.0.cmp(&b.0));
+    if recovered.recipients != pending_recipients {
+        return Err(anyhow::anyhow!(
+            "daemon idempotency recipients do not match pending batch: recovered={:?} pending={:?}",
+            recovered.recipients,
+            pending_recipients
+        ));
+    }
+    Ok(())
+}
+
+fn allocate_pending_batch_fees(
+    pending: &[PendingPayout],
+    total_fee: u64,
+) -> Vec<PendingPayoutBatchMember> {
+    let total_amount = pending
+        .iter()
+        .fold(0u64, |acc, entry| acc.saturating_add(entry.amount))
+        .max(1);
+    let mut remaining_fee = total_fee;
+    pending
+        .iter()
+        .enumerate()
+        .map(|(idx, entry)| {
+            let fee = if idx + 1 == pending.len() {
+                remaining_fee
+            } else {
+                let proportional =
+                    ((total_fee as u128) * (entry.amount as u128) / (total_amount as u128)) as u64;
+                proportional.min(remaining_fee)
+            };
+            remaining_fee = remaining_fee.saturating_sub(fee);
+            PendingPayoutBatchMember {
+                address: entry.address.clone(),
+                amount: entry.amount,
+                fee,
+            }
+        })
+        .collect()
 }
 
 fn payout_rebalance_idempotency_key(input: &WalletOutput) -> String {
@@ -3215,6 +3456,7 @@ fn should_drop_pending_payout(err: &anyhow::Error) -> bool {
 
 fn is_wallet_send_retryable_error(err: &anyhow::Error) -> bool {
     is_wallet_stale_input_error(err)
+        || http_error_body_contains(err, 422, "not a canonical on-chain output")
         || http_error_body_contains(err, 429, "send busy, retry later")
         || http_error_body_contains(err, 429, "send rate limit exceeded")
         || err
@@ -4274,6 +4516,16 @@ mod tests {
     }
 
     #[test]
+    fn wallet_noncanonical_ring_member_rejections_are_treated_as_retryable() {
+        let noncanonical = anyhow::anyhow!(HttpError {
+            path: "/api/wallet/send/advanced".to_string(),
+            status_code: 422,
+            body: r#"{"error":"mempool rejected: validation failed: input 0 ring member 4: not a canonical on-chain output"}"#.to_string(),
+        });
+        assert!(is_wallet_send_retryable_error(&noncanonical));
+    }
+
+    #[test]
     fn wallet_send_transport_errors_are_treated_as_retryable() {
         use anyhow::Context as _;
 
@@ -4291,7 +4543,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_prebroadcast_pending_payouts_reset_after_retry_grace() {
+    fn stale_prebroadcast_pending_payouts_are_held_for_reconciliation_after_retry_grace() {
         let now = SystemTime::now();
         let stale = PendingPayout {
             address: "addr1".to_string(),
@@ -4303,21 +4555,98 @@ mod tests {
             sent_at: None,
             batch_id: None,
         };
-        assert!(should_reset_stale_prebroadcast_pending_payout(&stale, now));
+        assert!(has_stale_unknown_broadcast_outcome(&stale, now));
 
         let fresh = PendingPayout {
             send_started_at: Some(now - Duration::from_secs(5 * 60)),
             ..stale.clone()
         };
-        assert!(!should_reset_stale_prebroadcast_pending_payout(&fresh, now));
+        assert!(!has_stale_unknown_broadcast_outcome(&fresh, now));
 
         let broadcast = PendingPayout {
             tx_hash: Some("tx-1".to_string()),
             ..stale
         };
-        assert!(!should_reset_stale_prebroadcast_pending_payout(
-            &broadcast, now
-        ));
+        assert!(!has_stale_unknown_broadcast_outcome(&broadcast, now));
+    }
+
+    #[test]
+    fn recovered_wallet_send_loads_batch_from_daemon_idempotency_journal() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("send-idempotency.json");
+        let batch_id = "batch-1";
+        let journal_key = format!("send-advanced:{}", payout_batch_idempotency_key(batch_id));
+        let body = serde_json::json!({
+            "txid": "tx-recovered",
+            "dry_run": false,
+            "fee": 17u64,
+            "recipients": [
+                {"address": "addr-b", "amount": 200u64},
+                {"address": "addr-a", "amount": 100u64},
+                {"address": "addr-b", "amount": 50u64}
+            ]
+        });
+        let journal = serde_json::json!({
+            "entries": {
+                journal_key: {
+                    "status": 200,
+                    "body_base64": BASE64_STANDARD.encode(body.to_string())
+                }
+            }
+        });
+        fs::write(&path, journal.to_string()).expect("write idempotency journal");
+
+        let recovered = load_recovered_wallet_send_for_batch(&path, batch_id)
+            .expect("load recovered send")
+            .expect("recovered send");
+
+        assert_eq!(
+            recovered,
+            RecoveredWalletSend {
+                txid: "tx-recovered".to_string(),
+                fee: 17,
+                recipients: vec![("addr-a".to_string(), 100), ("addr-b".to_string(), 250)],
+            }
+        );
+    }
+
+    #[test]
+    fn recovered_wallet_send_must_match_pending_batch() {
+        let recovered = RecoveredWalletSend {
+            txid: "tx-recovered".to_string(),
+            fee: 17,
+            recipients: vec![("addr-a".to_string(), 100), ("addr-b".to_string(), 200)],
+        };
+        let pending = vec![
+            PendingPayout {
+                address: "addr-b".to_string(),
+                amount: 200,
+                initiated_at: SystemTime::now(),
+                send_started_at: None,
+                tx_hash: None,
+                fee: None,
+                sent_at: None,
+                batch_id: Some("batch-1".to_string()),
+            },
+            PendingPayout {
+                address: "addr-a".to_string(),
+                amount: 100,
+                initiated_at: SystemTime::now(),
+                send_started_at: None,
+                tx_hash: None,
+                fee: None,
+                sent_at: None,
+                batch_id: Some("batch-1".to_string()),
+            },
+        ];
+        validate_recovered_wallet_send_matches_pending(&recovered, &pending)
+            .expect("matching recovered send");
+
+        let mismatched = RecoveredWalletSend {
+            recipients: vec![("addr-a".to_string(), 101), ("addr-b".to_string(), 200)],
+            ..recovered
+        };
+        assert!(validate_recovered_wallet_send_matches_pending(&mismatched, &pending).is_err());
     }
 
     #[test]
@@ -4485,6 +4814,45 @@ mod tests {
         .expect("smaller retry budget should still fit the first queued recipient");
         assert_eq!(reduced_plan.recipients.len(), 1);
         assert!(reduced_plan.recipient_total < full_plan.recipient_total);
+    }
+
+    #[test]
+    fn planner_can_spend_single_large_output_when_budget_allows() {
+        let outputs = vec![wallet_output("large-topup", 0, 120_000_000_000)];
+        let base_url = spawn_wallet_send_server(
+            &test_address(96),
+            outputs.clone(),
+            MockAdvancedSendPolicy {
+                preview_recipient_cap: None,
+                live_recipient_cap: None,
+                fee: 1_000,
+                live_busy: false,
+            },
+            8,
+        );
+        let node = NodeClient::new(&base_url, "").expect("node");
+        let inventory = OutputInventory {
+            large_target_amount: 100_000_000_000,
+            ..OutputInventory::default()
+        };
+        let candidates = vec![candidate(
+            "addr-large",
+            10_000_000_000,
+            Duration::from_secs(60),
+        )];
+
+        let plan = plan_payout_batch_with_node(
+            &node,
+            &candidates,
+            &outputs,
+            &inventory,
+            120_000_000_000,
+            true,
+        )
+        .expect("large top-up output should be usable for payouts");
+
+        assert_eq!(plan.inputs.len(), 1);
+        assert_eq!(plan.inputs[0].txid, "large-topup");
     }
 
     #[test]
@@ -4678,12 +5046,51 @@ mod tests {
         );
 
         let cfg = Config {
-            pool_wallet_address: "pool-wallet".to_string(),
+            pool_fee_wallet_address: "pool-wallet".to_string(),
             ..Config::default()
         };
         assert_eq!(
             resolve_pool_fee_destination(&cfg, &block),
             Some("pool-wallet".to_string())
+        );
+    }
+
+    #[test]
+    fn rebalance_destination_uses_daemon_wallet_not_fee_wallet() {
+        let wallet = WalletAddressResponse {
+            address: "daemon-hot-wallet".to_string(),
+            view_only: false,
+        };
+
+        assert_eq!(
+            resolve_wallet_rebalance_destination(&wallet, "pool-fee-wallet"),
+            Some("daemon-hot-wallet")
+        );
+    }
+
+    #[test]
+    fn rebalance_destination_rejects_fee_wallet_match() {
+        let wallet = WalletAddressResponse {
+            address: "same-wallet".to_string(),
+            view_only: false,
+        };
+
+        assert_eq!(
+            resolve_wallet_rebalance_destination(&wallet, "same-wallet"),
+            None
+        );
+    }
+
+    #[test]
+    fn rebalance_destination_rejects_view_only_wallet() {
+        let wallet = WalletAddressResponse {
+            address: "daemon-hot-wallet".to_string(),
+            view_only: true,
+        };
+
+        assert_eq!(
+            resolve_wallet_rebalance_destination(&wallet, "pool-fee-wallet"),
+            None
         );
     }
 

@@ -11,7 +11,7 @@
   "daemon_api": "http://127.0.0.1:8332",
   "daemon_token": "",
   "daemon_cookie_path": "/etc/blocknet/pool/daemon-active.api.cookie",
-  "pool_wallet_address": "",
+  "pool_fee_wallet_address": "",
   "initial_share_difficulty": 60,
   "block_poll_interval": "2s",
   "sse_enabled": true,

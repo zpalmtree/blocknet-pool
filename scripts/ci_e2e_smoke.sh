@@ -86,7 +86,7 @@ cat >"${CONFIG_PATH}" <<JSON
   "api_port": ${API_PORT},
   "daemon_api": "http://127.0.0.1:${DAEMON_PORT}",
   "database_url": "${DATABASE_URL}",
-  "pool_wallet_address": "ci-pool-wallet",
+  "pool_fee_wallet_address": "ci-pool-wallet",
   "sse_enabled": false,
   "enable_vardiff": false,
   "validation_mode": "probabilistic",

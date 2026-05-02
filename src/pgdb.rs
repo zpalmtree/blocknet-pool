@@ -2872,19 +2872,17 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                  WHERE address = $1
                    AND reverted_at IS NULL
                  UNION ALL
-                 SELECT
-                     0 AS id,
-                     address,
-                     amount,
-                     COALESCE(fee, 0) AS fee,
-                     tx_hash,
-                     COALESCE(sent_at, send_started_at, initiated_at) AS timestamp,
-                     0 AS confirmed,
-                     batch_id
-                 FROM pending_payouts
-                 WHERE address = $1
-                   AND tx_hash IS NOT NULL
-                   AND BTRIM(tx_hash) <> ''
+                SELECT
+                    0 AS id,
+                    address,
+                    amount,
+                    COALESCE(fee, 0) AS fee,
+                    COALESCE(tx_hash, '') AS tx_hash,
+                    COALESCE(sent_at, send_started_at, initiated_at) AS timestamp,
+                    0 AS confirmed,
+                    batch_id
+                FROM pending_payouts
+                WHERE address = $1
              ) visible
              ORDER BY timestamp DESC, confirmed ASC, id DESC
              LIMIT $2",
@@ -8451,7 +8449,7 @@ mod tests {
     }
 
     #[test]
-    fn visible_payouts_for_address_include_broadcast_pending_postgres() {
+    fn visible_payouts_for_address_include_pending_postgres() {
         let Some(store) = test_store() else {
             eprintln!(
                 "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
@@ -8479,15 +8477,21 @@ mod tests {
         let broadcast = store
             .record_pending_payout_broadcast(&addr, 25, 2, &pending_tx)
             .expect("record broadcast");
+        store
+            .create_pending_payout(&addr, 30)
+            .expect("create second pending");
 
         let payouts = store
             .get_recent_visible_payouts_for_address(&addr, 10)
             .expect("visible payouts");
-        assert_eq!(payouts.len(), 2);
-        assert_eq!(payouts[0].tx_hash, pending_tx);
-        assert_eq!(payouts[0].timestamp, broadcast.sent_at.expect("sent at"));
+        assert_eq!(payouts.len(), 3);
+        assert_eq!(payouts[0].tx_hash, "");
+        assert_eq!(payouts[0].amount, 30);
         assert!(!payouts[0].confirmed);
-        assert!(payouts[1].confirmed);
+        assert_eq!(payouts[1].tx_hash, pending_tx);
+        assert_eq!(payouts[1].timestamp, broadcast.sent_at.expect("sent at"));
+        assert!(!payouts[1].confirmed);
+        assert!(payouts[2].confirmed);
     }
 
     #[test]

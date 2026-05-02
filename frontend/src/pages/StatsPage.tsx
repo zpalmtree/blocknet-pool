@@ -674,23 +674,31 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
                         </td>
                       </tr>
                     ) : (
-                      minerData.payouts.map((p) => (
-                        <tr key={`${p.id}-${p.tx_hash}-${toUnixMs(p.timestamp)}`}>
-                          <td>{formatCoins(p.amount)}</td>
-                          <td>{formatFee(p.fee || 0)}</td>
-                          <td>
-                            <a href={`https://explorer.blocknetcrypto.com/tx/${p.tx_hash || ''}`} target="_blank" rel="noopener">
-                              {p.tx_hash || '-'}
-                            </a>
-                          </td>
-                          <td>
-                            <span className={`badge ${p.confirmed === false ? 'badge-pending' : 'badge-confirmed'}`}>
-                              {p.confirmed === false ? 'unconfirmed' : 'confirmed'}
-                            </span>
-                          </td>
-                          <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
-                        </tr>
-                      ))
+                      minerData.payouts.map((p) => {
+                        const hasTx = Boolean(p.tx_hash?.trim());
+                        const status = p.confirmed === false ? (hasTx ? 'unconfirmed' : 'queued') : 'confirmed';
+                        return (
+                          <tr key={`${p.id}-${p.tx_hash}-${toUnixMs(p.timestamp)}`}>
+                            <td>{formatCoins(p.amount)}</td>
+                            <td>{formatFee(p.fee || 0)}</td>
+                            <td>
+                              {hasTx ? (
+                                <a href={`https://explorer.blocknetcrypto.com/tx/${p.tx_hash}`} target="_blank" rel="noopener">
+                                  {p.tx_hash}
+                                </a>
+                              ) : (
+                                '-'
+                              )}
+                            </td>
+                            <td>
+                              <span className={`badge ${status === 'confirmed' ? 'badge-confirmed' : 'badge-pending'}`}>
+                                {status}
+                              </span>
+                            </td>
+                            <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
