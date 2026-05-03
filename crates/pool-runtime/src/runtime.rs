@@ -53,10 +53,7 @@ struct RuntimeCore {
 pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntime> {
     load_dotenv(config_path);
     let cfg = Config::load(config_path)?;
-    bootstrap_shared_runtime_from_config(cfg).await
-}
 
-async fn bootstrap_shared_runtime_from_config(cfg: Config) -> Result<SharedRuntime> {
     validate_pool_fee_destination_config(&cfg)?;
     info!(
         "vardiff init={} min={} max={} target_shares={} retarget={}",
