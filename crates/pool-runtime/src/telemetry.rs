@@ -149,7 +149,7 @@ impl NamedTimedOperationTracker {
         let mut entries = self.entries.lock();
         let entry = entries
             .entry(name.to_string())
-            .or_insert_with(default_timed_operation_window);
+            .or_insert_with(|| TimedOperationWindow::new(DEFAULT_SAMPLE_LIMIT));
         entry.record(duration, failed, slow);
     }
 
@@ -252,10 +252,6 @@ impl QueueTracker {
 
 pub(crate) fn default_latency_window() -> LatencyWindow {
     LatencyWindow::new(DEFAULT_SAMPLE_LIMIT)
-}
-
-fn default_timed_operation_window() -> TimedOperationWindow {
-    TimedOperationWindow::new(DEFAULT_SAMPLE_LIMIT)
 }
 
 fn percentile_summary(samples: &VecDeque<u64>) -> PercentileSummary {
