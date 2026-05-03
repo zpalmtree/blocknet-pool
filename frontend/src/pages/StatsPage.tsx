@@ -4,6 +4,7 @@ import type { ApiClient } from '../api/client';
 import { EmptyTableRow } from '../components/EmptyTableRow';
 import { HashrateChart } from '../components/HashrateChart';
 import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
+import { RangeTabs } from '../components/RangeTabs';
 import { StatCard } from '../components/StatCard';
 import { LAST_MINER_LOOKUP_KEY } from '../lib/storage';
 import { formatCoins, formatCompactCoins, formatFee, formatPct, humanRate, ratioPct, timeAgo, timestampTitle, toUnixMs } from '../lib/format';
@@ -547,13 +548,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
           <div className="section">
             <div className="section-header">
               <h2>Hashrate History</h2>
-              <div className="range-tabs">
-                {(['1h', '24h', '7d', '30d'] as Range[]).map((r) => (
-                  <button key={r} className={range === r ? 'active' : ''} onClick={() => setRange(r)}>
-                    {r}
-                  </button>
-                ))}
-              </div>
+              <RangeTabs<Range> options={['1h', '24h', '7d', '30d']} value={range} onChange={setRange} />
             </div>
             <HashrateChart data={history} range={range} theme={theme} />
           </div>
@@ -645,13 +640,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
           <div className="section">
             <div className="section-header">
               <h2>Pool Rejects</h2>
-              <div className="range-tabs">
-                {(['1h', '24h', '7d'] as RejectionWindowRange[]).map((r) => (
-                  <button key={r} className={rejectionRange === r ? 'active' : ''} onClick={() => setRejectionRange(r)}>
-                    {r}
-                  </button>
-                ))}
-              </div>
+              <RangeTabs<RejectionWindowRange> options={['1h', '24h', '7d']} value={rejectionRange} onChange={setRejectionRange} />
             </div>
             <div className="card rejection-card">
               <div className="rejection-overview">

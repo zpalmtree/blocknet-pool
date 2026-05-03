@@ -6,6 +6,7 @@ import { EmptyTableRow } from '../components/EmptyTableRow';
 import { HashrateChart } from '../components/HashrateChart';
 import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
 import { PayoutTxLinks } from '../components/PayoutTxLinks';
+import { RangeTabs } from '../components/RangeTabs';
 import { StatCard } from '../components/StatCard';
 import {
   effortLabel,
@@ -286,13 +287,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
       <div className="section">
         <div className="section-header">
           <h2>Pool Hashrate</h2>
-          <div className="range-tabs" id="hashrate-ranges">
-            {(['1h', '24h', '7d', '30d'] as Range[]).map((r) => (
-              <button key={r} className={range === r ? 'active' : ''} onClick={() => setRange(r)}>
-                {r}
-              </button>
-            ))}
-          </div>
+          <RangeTabs<Range> id="hashrate-ranges" options={['1h', '24h', '7d', '30d']} value={range} onChange={setRange} />
         </div>
         <HashrateChart data={history} range={range} theme={theme} />
       </div>
