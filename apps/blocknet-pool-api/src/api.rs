@@ -844,11 +844,7 @@ async fn handle_ui() -> Response {
 
 async fn handle_app_fallback(method: Method, uri: Uri) -> Response {
     if is_api_request_path(uri.path()) {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error":"not found"})),
-        )
-            .into_response();
+        return error_response(StatusCode::NOT_FOUND, "not found");
     }
 
     if matches!(method, Method::GET | Method::HEAD) {
@@ -1309,7 +1305,7 @@ struct MinerListItem {
 async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
     match state.cached_stats_response().await {
         Ok(response) => Json(response).into_response(),
-        Err(err) => internal_error("failed loading pool stats", err).into_response(),
+        Err(err) => internal_error("failed loading pool stats", err),
     }
 }
 
@@ -1339,7 +1335,7 @@ async fn handle_stats_history(
                 .collect::<Vec<_>>(),
         )
         .into_response(),
-        Err(err) => internal_error("failed loading stat history", err).into_response(),
+        Err(err) => internal_error("failed loading stat history", err),
     }
 }
 
@@ -1354,9 +1350,9 @@ async fn handle_stats_insights(
                 v.rejections = snapshot;
                 Json(v).into_response()
             }
-            Err(err) => internal_error("failed loading rejection analytics", err).into_response(),
+            Err(err) => internal_error("failed loading rejection analytics", err),
         },
-        Err(err) => internal_error("failed loading stats insights", err).into_response(),
+        Err(err) => internal_error("failed loading stats insights", err),
     }
 }
 
@@ -1590,7 +1586,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 async fn handle_status(State(state): State<ApiState>) -> impl IntoResponse {
     match state.build_status_response().await {
         Ok(response) => Json(response).into_response(),
-        Err(err) => internal_error("failed loading status page", err).into_response(),
+        Err(err) => internal_error("failed loading status page", err),
     }
 }
 
@@ -1639,30 +1635,21 @@ async fn handle_monitor_ingest_cloudflare(
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default();
     if !verify_monitor_signature(secret, provided, &body) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({"error":"invalid monitor signature"})),
-        )
-            .into_response();
+        return error_response(StatusCode::UNAUTHORIZED, "invalid monitor signature");
     }
 
     let event: CloudflareIngestEvent = match serde_json::from_slice(&body) {
         Ok(value) => value,
         Err(err) => {
-            return (
+            return error_response(
                 StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": format!("invalid JSON payload: {err}")})),
-            )
-                .into_response();
+                format!("invalid JSON payload: {err}"),
+            );
         }
     };
 
     if !event.service.trim().eq_ignore_ascii_case("public_http") {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error":"unsupported monitor service"})),
-        )
-            .into_response();
+        return error_response(StatusCode::BAD_REQUEST, "unsupported monitor service");
     }
 
     let store = Arc::clone(&state.store);
@@ -1736,7 +1723,7 @@ async fn handle_monitor_ingest_cloudflare(
 
     match action {
         Ok(()) => StatusCode::ACCEPTED.into_response(),
-        Err(err) => internal_error("failed storing cloudflare monitor event", err).into_response(),
+        Err(err) => internal_error("failed storing cloudflare monitor event", err),
     }
 }
 
@@ -1805,21 +1792,21 @@ async fn handle_admin_balances(
     .await
     {
         Ok(resp) => Json(resp).into_response(),
-        Err(err) => internal_error("failed loading balances", err).into_response(),
+        Err(err) => internal_error("failed loading balances", err),
     }
 }
 
 async fn handle_admin_balance_overview(State(state): State<ApiState>) -> impl IntoResponse {
     match state.admin_balance_overview().await {
         Ok(response) => Json(response).into_response(),
-        Err(err) => internal_error("failed loading balance overview", err).into_response(),
+        Err(err) => internal_error("failed loading balance overview", err),
     }
 }
 
 async fn handle_admin_reconciliation_issues(State(state): State<ApiState>) -> impl IntoResponse {
     match state.admin_reconciliation_issues().await {
         Ok(response) => Json(response).into_response(),
-        Err(err) => internal_error("failed loading reconciliation issues", err).into_response(),
+        Err(err) => internal_error("failed loading reconciliation issues", err),
     }
 }
 
@@ -1829,11 +1816,7 @@ async fn handle_admin_reconciliation_payout_resolution(
 ) -> impl IntoResponse {
     let tx_hash = request.tx_hash.trim();
     if tx_hash.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error":"tx_hash is required"})),
-        )
-            .into_response();
+        return error_response(StatusCode::BAD_REQUEST, "tx_hash is required");
     }
 
     match state
@@ -1841,9 +1824,7 @@ async fn handle_admin_reconciliation_payout_resolution(
         .await
     {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(err) => {
-            internal_error("failed resolving reconciliation payout issue", err).into_response()
-        }
+        Err(err) => internal_error("failed resolving reconciliation payout issue", err),
     }
 }
 
@@ -1854,19 +1835,13 @@ async fn handle_admin_reconciliation_payout_import(
     let tx_hashes = match normalize_reconciliation_import_tx_hashes(&request.tx_hashes) {
         Ok(tx_hashes) => tx_hashes,
         Err(err) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": err.to_string() })),
-            )
-                .into_response();
+            return error_response(StatusCode::BAD_REQUEST, err.to_string());
         }
     };
 
     match state.import_confirmed_wallet_payouts(tx_hashes).await {
         Ok(response) => Json(response).into_response(),
-        Err(err) => {
-            internal_error("failed importing confirmed payout txs into ledger", err).into_response()
-        }
+        Err(err) => internal_error("failed importing confirmed payout txs into ledger", err),
     }
 }
 
@@ -1875,7 +1850,7 @@ async fn handle_admin_reconciliation_manual_offset_apply(
 ) -> impl IntoResponse {
     match state.apply_live_manual_payout_offsets().await {
         Ok(response) => Json(response).into_response(),
-        Err(err) => internal_error("failed applying manual payout offsets", err).into_response(),
+        Err(err) => internal_error("failed applying manual payout offsets", err),
     }
 }
 
@@ -1884,11 +1859,7 @@ async fn handle_admin_orphaned_block_cleanup_retry(
     Json(request): Json<AdminOrphanedBlockCleanupRequest>,
 ) -> impl IntoResponse {
     if request.block_height == 0 {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error":"block_height must be positive"})),
-        )
-            .into_response();
+        return error_response(StatusCode::BAD_REQUEST, "block_height must be positive");
     }
 
     let store = Arc::clone(&state.store);
@@ -1898,7 +1869,7 @@ async fn handle_admin_orphaned_block_cleanup_retry(
     .await
     {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
-        Err(err) => internal_error("failed retrying orphaned block cleanup", err).into_response(),
+        Err(err) => internal_error("failed retrying orphaned block cleanup", err),
     }
 }
 
@@ -1917,7 +1888,7 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
     {
         Ok(v) => v,
         Err(err) => {
-            return internal_error("failed loading active verification holds", err).into_response();
+            return internal_error("failed loading active verification holds", err);
         }
     };
 
@@ -1932,7 +1903,7 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
 async fn handle_admin_share_diagnostics(State(state): State<ApiState>) -> impl IntoResponse {
     match state.admin_share_diagnostics().await {
         Ok(response) => Json(response).into_response(),
-        Err(err) => internal_error("failed loading admin share diagnostics", err).into_response(),
+        Err(err) => internal_error("failed loading admin share diagnostics", err),
     }
 }
 
@@ -1987,7 +1958,7 @@ async fn handle_recovery_status(State(state): State<ApiState>) -> impl IntoRespo
     }
     match state.recovery.status().await {
         Ok(status) => Json(status).into_response(),
-        Err(err) => internal_error("failed loading recovery status", err).into_response(),
+        Err(err) => internal_error("failed loading recovery status", err),
     }
 }
 
@@ -2045,11 +2016,7 @@ async fn handle_admin_clear_address_risk_history(
 ) -> impl IntoResponse {
     let address = request.address.trim();
     if address.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error":"address is required"})),
-        )
-            .into_response();
+        return error_response(StatusCode::BAD_REQUEST, "address is required");
     }
 
     let address = address.to_string();
@@ -2061,7 +2028,7 @@ async fn handle_admin_clear_address_risk_history(
     .await
     {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(err) => internal_error("failed clearing address risk history", err).into_response(),
+        Err(err) => internal_error("failed clearing address risk history", err),
     }
 }
 
@@ -2070,11 +2037,10 @@ async fn recovery_operation_response(
     result: anyhow::Result<RecoveryOperation>,
 ) -> std::result::Result<Response, Response> {
     if !state.config.recovery.enabled {
-        return Err((
+        return Err(error_response(
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({"error":"recovery controls are disabled"})),
-        )
-            .into_response());
+            "recovery controls are disabled",
+        ));
     }
     match result {
         Ok(operation) => Ok(Json(operation).into_response()),
@@ -2094,9 +2060,9 @@ async fn recovery_operation_response(
                 StatusCode::INTERNAL_SERVER_ERROR
             };
             if status == StatusCode::INTERNAL_SERVER_ERROR {
-                Err(internal_error("failed starting recovery operation", err).into_response())
+                Err(internal_error("failed starting recovery operation", err))
             } else {
-                Err((status, Json(serde_json::json!({"error": message}))).into_response())
+                Err(error_response(status, message))
             }
         }
     }
@@ -2616,7 +2582,7 @@ async fn handle_miner_balance(
         .await
     {
         Ok(payload) => Json(payload).into_response(),
-        Err(err) => internal_error("failed loading miner balance", err).into_response(),
+        Err(err) => internal_error("failed loading miner balance", err),
     }
 }
 
@@ -2632,7 +2598,7 @@ async fn handle_miner(
                 (StatusCode::NOT_FOUND, Json(payload.body)).into_response()
             }
         }
-        Err(err) => internal_error("failed loading miner data", err).into_response(),
+        Err(err) => internal_error("failed loading miner data", err),
     }
 }
 
@@ -2704,7 +2670,7 @@ async fn handle_miner_hashrate(
 
             Json(points).into_response()
         }
-        Err(err) => internal_error("failed loading miner hashrate history", err).into_response(),
+        Err(err) => internal_error("failed loading miner hashrate history", err),
     }
 }
 
@@ -2739,7 +2705,7 @@ async fn handle_blocks(
     .await
     {
         Ok(v) => v,
-        Err(err) => return internal_error("failed loading blocks", err).into_response(),
+        Err(err) => return internal_error("failed loading blocks", err),
     };
     for block in &mut blocks {
         hydrate_provisional_block_reward(block);
@@ -2774,7 +2740,7 @@ async fn handle_blocks(
                 started_at.elapsed(),
                 true,
             );
-            return internal_error("failed loading block luck details", err).into_response();
+            return internal_error("failed loading block luck details", err);
         }
     };
     let items = blocks
@@ -4205,7 +4171,7 @@ async fn handle_luck_history(
         }
         Err(err) => {
             record_api_operation_observation(&state, "luck_page_load", started_at.elapsed(), true);
-            return internal_error("failed loading luck history", err).into_response();
+            return internal_error("failed loading luck history", err);
         }
     };
     Json(PagedResponse { items, total }).into_response()
@@ -4224,7 +4190,7 @@ async fn handle_public_payouts(
     .await
     {
         Ok(v) => v,
-        Err(err) => return internal_error("failed loading payouts", err).into_response(),
+        Err(err) => return internal_error("failed loading payouts", err),
     };
 
     Json(PagedResponse {
@@ -4247,13 +4213,9 @@ async fn handle_admin_block_reward_breakdown(
         Ok(breakdown) => Json(breakdown).into_response(),
         Err(err) => {
             if err.to_string().contains("not found") {
-                return (
-                    StatusCode::NOT_FOUND,
-                    Json(serde_json::json!({ "error": err.to_string() })),
-                )
-                    .into_response();
+                return error_response(StatusCode::NOT_FOUND, err.to_string());
             }
-            internal_error("failed loading block reward breakdown", err).into_response()
+            internal_error("failed loading block reward breakdown", err)
         }
     }
 }
@@ -5917,11 +5879,7 @@ async fn require_api_key(
         return next.run(req).await.into_response();
     }
 
-    (
-        StatusCode::UNAUTHORIZED,
-        Json(serde_json::json!({"error":"unauthorized"})),
-    )
-        .into_response()
+    error_response(StatusCode::UNAUTHORIZED, "unauthorized")
 }
 
 fn contains_ci(haystack: &str, needle: &str) -> bool {
@@ -5962,12 +5920,13 @@ fn miner_has_activity(
         || payouts_len > 0
 }
 
-fn internal_error(msg: &str, err: anyhow::Error) -> (StatusCode, Json<serde_json::Value>) {
+fn error_response(status: StatusCode, message: impl Into<String>) -> Response {
+    (status, Json(json!({ "error": message.into() }))).into_response()
+}
+
+fn internal_error(msg: &str, err: anyhow::Error) -> Response {
     tracing::warn!(error = %err, "{msg}");
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({"error": msg})),
-    )
+    error_response(StatusCode::INTERNAL_SERVER_ERROR, msg)
 }
 
 #[cfg(test)]
