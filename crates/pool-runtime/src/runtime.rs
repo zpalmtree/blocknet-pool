@@ -498,7 +498,7 @@ pub fn load_dotenv(config_path: &Path) {
 }
 
 fn warn_on_validation_visibility_config(cfg: &Config) {
-    if cfg.validation_mode.trim().eq_ignore_ascii_case("full") {
+    if cfg.validation_mode == "full" {
         return;
     }
 

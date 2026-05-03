@@ -898,7 +898,7 @@ impl ValidationInner {
     }
 
     fn should_fully_verify(&self, address: &str, overload_mode: OverloadMode) -> bool {
-        if self.config.validation_mode.eq_ignore_ascii_case("full") {
+        if self.config.validation_mode == "full" {
             return true;
         }
 
@@ -965,7 +965,7 @@ impl ValidationInner {
     fn plan_regular_submit(&self, address: &str) -> RegularSubmitPlan {
         self.sync_external_clears(self.address_has_live_hold(address));
         let overload_mode = self.evaluate_overload(Instant::now());
-        if self.config.validation_mode.eq_ignore_ascii_case("full") {
+        if self.config.validation_mode == "full" {
             return RegularSubmitPlan {
                 sync_full_verify: true,
                 enqueue_audit: false,
