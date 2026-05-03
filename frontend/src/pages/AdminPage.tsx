@@ -216,30 +216,33 @@ function isRiskVerificationHold(hold: ActiveVerificationHold): boolean {
   );
 }
 
-function validationHoldUntilLabel(hold: ActiveVerificationHold): string {
-  if (!hasActiveUntil(hold.validation_forced_until)) return '-';
-  const label = holdUntilLabel(hold.validation_forced_until);
-  return isTemporaryValidationAssist(hold) ? `up to ${label}` : label;
-}
-
-function validationHoldUntilHint(hold: ActiveVerificationHold): string | null {
-  if (!hasActiveUntil(hold.validation_forced_until)) return null;
+function ValidationHoldUntilCell({ hold }: { hold: ActiveVerificationHold }) {
+  const active = hasActiveUntil(hold.validation_forced_until);
+  const label = active ? holdUntilLabel(hold.validation_forced_until) : '-';
+  let hint: string | null = null;
   switch (hold.validation_hold_cause) {
     case 'provisional_backlog':
       if (
         (hold.validation_recent_provisional_difficulty ?? 0) > 0 ||
         (hold.validation_recent_verified_difficulty ?? 0) > 0
       ) {
-        return `auto-clears once recent provisional diff ${formatWholeNumber(
+        hint = `auto-clears once recent provisional diff ${formatWholeNumber(
           hold.validation_recent_provisional_difficulty
         )} settles near verified diff ${formatWholeNumber(hold.validation_recent_verified_difficulty)}`;
+        break;
       }
-      return 'auto-clears once backlog drains';
+      hint = 'auto-clears once backlog drains';
+      break;
     case 'payout_coverage':
-      return 'auto-clears once coverage recovers';
-    default:
-      return null;
+      hint = 'auto-clears once coverage recovers';
+      break;
   }
+  return (
+    <td className="mono" title={holdUntilTitle(hold.validation_forced_until)}>
+      <div>{active && isTemporaryValidationAssist(hold) ? `up to ${label}` : label}</div>
+      {active && hint ? <div style={SMALL_MUTED_TOP_STYLE}>{hint}</div> : null}
+    </td>
+  );
 }
 
 function RecoveryStateBadge({ state }: { state: RecoveryInstanceStatus['state'] | undefined }) {
@@ -2349,14 +2352,7 @@ export function AdminPage({
                           <td className="mono" title={holdUntilTitle(hold.force_verify_until)}>
                             {holdUntilLabel(hold.force_verify_until)}
                           </td>
-                          <td className="mono" title={holdUntilTitle(hold.validation_forced_until)}>
-                            <div>{validationHoldUntilLabel(hold)}</div>
-                            {validationHoldUntilHint(hold) ? (
-                              <div style={SMALL_MUTED_TOP_STYLE}>
-                                {validationHoldUntilHint(hold)}
-                              </div>
-                            ) : null}
-                          </td>
+                          <ValidationHoldUntilCell hold={hold} />
                           <td className="mono">
                             {hold.strikes}
                           </td>
