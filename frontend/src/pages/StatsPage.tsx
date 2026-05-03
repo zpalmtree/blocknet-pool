@@ -1,6 +1,7 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
+import { EmptyTableRow } from '../components/EmptyTableRow';
 import { HashrateChart } from '../components/HashrateChart';
 import { LAST_MINER_LOOKUP_KEY } from '../lib/storage';
 import { formatCoins, formatCompactCoins, formatFee, formatPct, humanRate, ratioPct, timeAgo, toUnixMs } from '../lib/format';
@@ -594,11 +595,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                   </thead>
                   <tbody>
                     {!minerData.workers.length ? (
-                      <tr>
-                        <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                          No workers
-                        </td>
-                      </tr>
+                      <EmptyTableRow colSpan={5}>No workers</EmptyTableRow>
                     ) : (
                       minerData.workers.map((w) => (
                         <tr key={w.worker}>
@@ -634,11 +631,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                   </thead>
                   <tbody>
                     {!minerData.payouts.length ? (
-                      <tr>
-                        <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                          No payouts yet
-                        </td>
-                      </tr>
+                      <EmptyTableRow colSpan={5}>No payouts yet</EmptyTableRow>
                     ) : (
                       minerData.payouts.map((p, payoutIndex) => {
                         const hasTx = Boolean(p.tx_hash.trim());
@@ -779,11 +772,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                   </thead>
                   <tbody>
                     {!recentShares.length ? (
-                      <tr>
-                        <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                          No shares
-                        </td>
-                      </tr>
+                      <EmptyTableRow colSpan={5}>No shares</EmptyTableRow>
                     ) : (
                       recentShares.map((s, idx) => (
                         <tr key={`${s.job_id}-${idx}`}>

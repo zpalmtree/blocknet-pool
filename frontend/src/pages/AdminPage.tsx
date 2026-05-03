@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
+import { EmptyTableRow } from '../components/EmptyTableRow';
 import { Pager } from '../components/Pager';
 import { parseAnsiLine, type ParsedAnsiSegment } from '../lib/ansi';
 import {
@@ -1640,11 +1641,7 @@ export function AdminPage({
                 </thead>
                 <tbody>
                   {!minersItems.length ? (
-                    <tr>
-                      <td colSpan={7} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                        No miners connected
-                      </td>
-                    </tr>
+                    <EmptyTableRow colSpan={7}>No miners connected</EmptyTableRow>
                   ) : (
                     minersItems.map((m) => (
                       <tr key={m.address}>
@@ -1828,11 +1825,9 @@ export function AdminPage({
                     </thead>
                     <tbody>
                       {!filteredRewardParticipants.length ? (
-                        <tr>
-                          <td colSpan={rewardBreakdown.block.orphaned ? 7 : 10} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                            No participants match the current filter.
-                          </td>
-                        </tr>
+                        <EmptyTableRow colSpan={rewardBreakdown.block.orphaned ? 7 : 10}>
+                          No participants match the current filter.
+                        </EmptyTableRow>
                       ) : (
                         filteredRewardParticipants.map((row) => (
                           <tr key={row.address}>
@@ -2292,11 +2287,7 @@ export function AdminPage({
                     </thead>
                     <tbody>
                       {!shareWindows.length ? (
-                        <tr>
-                          <td colSpan={11} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                            No share diagnostics available yet
-                          </td>
-                        </tr>
+                        <EmptyTableRow colSpan={11}>No share diagnostics available yet</EmptyTableRow>
                       ) : (
                         shareWindows.map((window) => {
                           const topReason = window.by_reason?.[0];
@@ -2447,11 +2438,7 @@ export function AdminPage({
                   </thead>
                   <tbody>
                     {!activeVerificationHolds.length ? (
-                      <tr>
-                        <td colSpan={9} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                          No active verification holds
-                        </td>
-                      </tr>
+                      <EmptyTableRow colSpan={9}>No active verification holds</EmptyTableRow>
                     ) : (
                       activeVerificationHolds.map((hold) => (
                         <tr key={hold.address}>
@@ -2843,11 +2830,7 @@ export function AdminPage({
                 </thead>
                 <tbody>
                   {!balancesItems.length ? (
-                    <tr>
-                      <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                        No balances
-                      </td>
-                    </tr>
+                    <EmptyTableRow colSpan={5}>No balances</EmptyTableRow>
                   ) : (
                     balancesItems.map((b) => (
                       <tr key={b.address}>
@@ -3120,11 +3103,9 @@ export function AdminPage({
                       </thead>
                       <tbody>
                         {!reconciliationIssues.missing_payouts.length ? (
-                          <tr>
-                            <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                              No missing completed payouts need operator action
-                            </td>
-                          </tr>
+                          <EmptyTableRow colSpan={5}>
+                            No missing completed payouts need operator action
+                          </EmptyTableRow>
                         ) : (
                           reconciliationIssues.missing_payouts.map((issue) => {
                             const restoreBusy = reconciliationBusyKey === `payout:${issue.tx_hash}:restore_pending`;
@@ -3208,11 +3189,9 @@ export function AdminPage({
                       </thead>
                       <tbody>
                         {!reconciliationIssues.orphaned_blocks.length ? (
-                          <tr>
-                            <td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                              No orphaned blocks still have lingering credit artifacts
-                            </td>
-                          </tr>
+                          <EmptyTableRow colSpan={4}>
+                            No orphaned blocks still have lingering credit artifacts
+                          </EmptyTableRow>
                         ) : (
                           reconciliationIssues.orphaned_blocks.map((issue) => {
                             const retryBusy = reconciliationBusyKey === `block:${issue.height}`;
@@ -3363,11 +3342,7 @@ export function AdminPage({
                 </thead>
                 <tbody>
                   {!recoveryStatus?.operations?.length ? (
-                    <tr>
-                      <td colSpan={6} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                        No recovery operations yet
-                      </td>
-                    </tr>
+                    <EmptyTableRow colSpan={6}>No recovery operations yet</EmptyTableRow>
                   ) : (
                     recoveryStatus.operations.map((operation) => (
                       <tr key={operation.id}>

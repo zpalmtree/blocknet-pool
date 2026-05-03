@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
+import { EmptyTableRow } from '../components/EmptyTableRow';
 import { HashrateChart } from '../components/HashrateChart';
 import { PayoutTxLinks } from '../components/PayoutTxLinks';
 import {
@@ -345,11 +346,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
             </thead>
             <tbody>
               {!dashboardLuckHistory.length ? (
-                <tr>
-                  <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                    No round history yet
-                  </td>
-                </tr>
+                <EmptyTableRow colSpan={5}>No round history yet</EmptyTableRow>
               ) : (
                 dashboardLuckHistory.map((row) => (
                   <tr key={`${row.block_height}-${row.block_hash}`}>
@@ -400,11 +397,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
             </thead>
             <tbody id="dash-payouts-body">
               {!payouts.length ? (
-                <tr>
-                  <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                    No payouts yet
-                  </td>
-                </tr>
+                <EmptyTableRow colSpan={5}>No payouts yet</EmptyTableRow>
               ) : (
                 payouts.map((p, idx) => (
                   <tr key={`${toUnixMs(p.timestamp)}-${idx}`}>

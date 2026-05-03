@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 
 import type { ApiClient } from '../api/client';
+import { EmptyTableRow } from '../components/EmptyTableRow';
 import { Pager } from '../components/Pager';
 import { PayoutTxLinks } from '../components/PayoutTxLinks';
 import { formatCoins, formatFee, timeAgo, toUnixMs } from '../lib/format';
@@ -44,11 +45,7 @@ export function PayoutsPage({ api, liveTick }: PayoutsPageProps) {
           </thead>
           <tbody>
             {!items.length ? (
-              <tr>
-                <td colSpan={6} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                  No payouts yet
-                </td>
-              </tr>
+              <EmptyTableRow colSpan={6}>No payouts yet</EmptyTableRow>
             ) : (
               items.map((p, idx) => (
                 <tr key={`${toUnixMs(p.timestamp)}-${idx}`}>

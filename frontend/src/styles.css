@@ -749,6 +749,10 @@ tr:hover td {
   background: var(--surface-hover);
 }
 
+.table-empty {
+  color: var(--muted);
+}
+
 .table-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;

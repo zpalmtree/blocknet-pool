@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
 import { BlockStatusBadge } from '../components/BlockStatusBadge';
+import { EmptyTableRow } from '../components/EmptyTableRow';
 import { Pager } from '../components/Pager';
 import { fmtSeconds, formatCoins, formatPct, roundToneClass, timeAgo, toUnixMs } from '../lib/format';
 import { usePagedData } from '../lib/paging';
@@ -55,11 +56,7 @@ export function BlocksPage({ api, liveTick }: BlocksPageProps) {
           </thead>
           <tbody>
             {!items.length ? (
-              <tr>
-                <td colSpan={6} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                  No blocks
-                </td>
-              </tr>
+              <EmptyTableRow colSpan={6}>No blocks</EmptyTableRow>
             ) : (
               items.map((b) => (
                 <tr key={`${b.height}-${b.hash}`}>

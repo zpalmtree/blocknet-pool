@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import type { ApiClient } from "../api/client";
+import { EmptyTableRow } from "../components/EmptyTableRow";
 import { fmtSeconds, formatPct, timeAgo, toUnixMs } from "../lib/format";
 import type { StatusResponse } from "../types";
 
@@ -163,14 +164,7 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
             </thead>
             <tbody>
               {!status?.uptime.length ? (
-                <tr>
-                  <td
-                    colSpan={9}
-                    style={{ textAlign: "center", color: "var(--muted)" }}
-                  >
-                    No status samples yet
-                  </td>
-                </tr>
+                <EmptyTableRow colSpan={9}>No status samples yet</EmptyTableRow>
               ) : (
                 status.uptime.map((row) => (
                   <tr key={row.label}>
@@ -204,14 +198,7 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
             </thead>
             <tbody>
               {!status?.incidents.length ? (
-                <tr>
-                  <td
-                    colSpan={6}
-                    style={{ textAlign: "center", color: "var(--muted)" }}
-                  >
-                    No incidents recorded
-                  </td>
-                </tr>
+                <EmptyTableRow colSpan={6}>No incidents recorded</EmptyTableRow>
               ) : (
                 status.incidents.map((incident) => (
                   <tr

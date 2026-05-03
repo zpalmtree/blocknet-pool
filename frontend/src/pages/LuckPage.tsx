@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 
 import type { ApiClient } from '../api/client';
+import { EmptyTableRow } from '../components/EmptyTableRow';
 import { Pager } from '../components/Pager';
 import { fmtSeconds, formatPct, roundToneClass, timeAgo, toUnixMs } from '../lib/format';
 import { usePagedData } from '../lib/paging';
@@ -38,11 +39,7 @@ export function LuckPage({ api, liveTick }: LuckPageProps) {
           </thead>
           <tbody>
             {!items.length ? (
-              <tr>
-                <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                  No round history yet
-                </td>
-              </tr>
+              <EmptyTableRow colSpan={5}>No round history yet</EmptyTableRow>
             ) : (
               items.map((row) => (
                 <tr key={`${row.block_height}-${row.block_hash}`}>
