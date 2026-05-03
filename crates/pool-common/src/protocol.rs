@@ -77,8 +77,8 @@ pub struct SubmitParams {
     pub claimed_hash: Option<String>,
 }
 
-pub fn normalize_worker_name(worker: Option<&str>) -> String {
-    let trimmed = worker.unwrap_or_default().trim();
+pub fn normalize_worker_name(worker: &str) -> String {
+    let trimmed = worker.trim();
     if trimmed.is_empty() {
         "default".to_string()
     } else {
@@ -196,10 +196,9 @@ mod tests {
 
     #[test]
     fn worker_name_normalizes() {
-        assert_eq!(normalize_worker_name(None), "default");
-        assert_eq!(normalize_worker_name(Some("   ")), "default");
-        assert_eq!(normalize_worker_name(Some(" rig-1 ")), "rig-1");
-        assert_eq!(normalize_worker_name(Some(&"a".repeat(80))), "a".repeat(64));
+        assert_eq!(normalize_worker_name("   "), "default");
+        assert_eq!(normalize_worker_name(" rig-1 "), "rig-1");
+        assert_eq!(normalize_worker_name(&"a".repeat(80)), "a".repeat(64));
     }
 
     #[test]

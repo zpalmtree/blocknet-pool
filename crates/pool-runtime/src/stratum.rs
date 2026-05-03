@@ -593,7 +593,7 @@ impl StratumServer {
                                 login_engine.login_with_hint(
                                     &login_conn_id,
                                     login_address,
-                                    Some(login_worker),
+                                    &login_worker,
                                     login_protocol_version,
                                     login_capabilities,
                                     login_hint,
@@ -604,7 +604,7 @@ impl StratumServer {
                             match login {
                                 Ok(Ok(login_result)) => {
                                     let worker =
-                                        normalize_worker_name(Some(params.worker.as_str()));
+                                        normalize_worker_name(params.worker.as_str());
                                     let address = params.address.trim().to_string();
                                     let difficulty =
                                         self.engine.session_difficulty(&conn_id).unwrap_or(1);
@@ -1729,7 +1729,7 @@ mod tests {
             .login(
                 "conn1",
                 address,
-                None,
+                "",
                 2,
                 vec!["submit_claimed_hash".to_string()],
             )

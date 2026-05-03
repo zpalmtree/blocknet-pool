@@ -497,7 +497,7 @@ impl PoolEngine {
         &self,
         conn_id: &str,
         address: String,
-        worker: Option<String>,
+        worker: &str,
         protocol_version: u32,
         capabilities: Vec<String>,
     ) -> Result<pool_common::protocol::LoginResult> {
@@ -515,7 +515,7 @@ impl PoolEngine {
         &self,
         conn_id: &str,
         address: String,
-        worker: Option<String>,
+        worker: &str,
         protocol_version: u32,
         capabilities: Vec<String>,
         difficulty_hint: Option<u64>,
@@ -529,7 +529,7 @@ impl PoolEngine {
             return Err(anyhow!("invalid address: {err}"));
         }
 
-        let worker = normalize_worker_name(worker.as_deref());
+        let worker = normalize_worker_name(worker);
         let cap_set = capabilities.into_iter().collect::<BTreeSet<_>>();
 
         if protocol_version != STRATUM_PROTOCOL_VERSION_CURRENT {
@@ -2365,7 +2365,7 @@ mod tests {
             .login(
                 "conn1",
                 test_miner_address(),
-                Some("rig01".to_string()),
+                "rig01",
                 2,
                 vec!["submit_claimed_hash".to_string()],
             )
@@ -2392,7 +2392,7 @@ mod tests {
             .login(
                 "conn1",
                 "bench_addr_e2e".to_string(),
-                None,
+                "",
                 2,
                 submit_hash_cap(),
             )
@@ -2429,13 +2429,7 @@ mod tests {
         );
 
         engine
-            .login(
-                "conn1",
-                address,
-                Some("rig01".to_string()),
-                2,
-                submit_hash_cap(),
-            )
+            .login("conn1", address, "rig01", 2, submit_hash_cap())
             .expect("login");
         assert_eq!(engine.session_difficulty("conn1"), Some(222));
     }
@@ -2469,13 +2463,7 @@ mod tests {
         );
 
         engine
-            .login(
-                "conn1",
-                address,
-                Some("rig01".to_string()),
-                2,
-                submit_hash_cap(),
-            )
+            .login("conn1", address, "rig01", 2, submit_hash_cap())
             .expect("login");
         assert_eq!(engine.session_difficulty("conn1"), Some(17));
     }
@@ -2511,13 +2499,7 @@ mod tests {
         );
 
         engine
-            .login(
-                "conn1",
-                address,
-                Some("rig01".to_string()),
-                2,
-                submit_hash_cap(),
-            )
+            .login("conn1", address, "rig01", 2, submit_hash_cap())
             .expect("login");
         let effective = engine
             .session_difficulty("conn1")
@@ -2550,7 +2532,7 @@ mod tests {
             .login_with_hint(
                 "conn1",
                 test_miner_address(),
-                Some("rig01".to_string()),
+                "rig01",
                 2,
                 submit_hash_cap(),
                 Some(10_000),
@@ -2564,7 +2546,7 @@ mod tests {
             .login_with_hint(
                 "conn2",
                 test_miner_address(),
-                Some("rig02".to_string()),
+                "rig02",
                 2,
                 submit_hash_cap(),
                 Some(1),
@@ -2595,7 +2577,7 @@ mod tests {
             .login_with_hint(
                 "conn-dev",
                 crate::dev_fee::SEINE_DEV_FEE_ADDRESS.to_string(),
-                Some("seine-devfee-1".to_string()),
+                "seine-devfee-1",
                 2,
                 submit_hash_cap(),
                 Some(10_000),
@@ -2632,7 +2614,7 @@ mod tests {
             .login_with_hint(
                 "conn-dev",
                 crate::dev_fee::SEINE_DEV_FEE_ADDRESS.to_string(),
-                Some("seine-devfee-1".to_string()),
+                "seine-devfee-1",
                 2,
                 submit_hash_cap(),
                 Some(1),
@@ -2697,7 +2679,7 @@ mod tests {
             .login_with_hint(
                 "conn-dev-boostrapped",
                 crate::dev_fee::SEINE_DEV_FEE_ADDRESS.to_string(),
-                Some("seine-devfee-new".to_string()),
+                "seine-devfee-new",
                 2,
                 submit_hash_cap(),
                 Some(1),
@@ -2733,13 +2715,7 @@ mod tests {
         );
 
         engine
-            .login(
-                "conn1",
-                address.clone(),
-                Some("rig01".to_string()),
-                2,
-                submit_hash_cap(),
-            )
+            .login("conn1", address.clone(), "rig01", 2, submit_hash_cap())
             .expect("login");
         engine.disconnect("conn1");
 
@@ -2763,7 +2739,7 @@ mod tests {
         );
 
         let err = engine
-            .login("conn1", test_miner_address(), None, 1, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 1, submit_hash_cap())
             .expect_err("should reject protocol 1");
         assert!(err.to_string().contains("protocol_version"));
     }
@@ -2782,7 +2758,7 @@ mod tests {
         );
 
         let err = engine
-            .login("conn1", test_miner_address(), None, 2, vec![])
+            .login("conn1", test_miner_address(), "", 2, vec![])
             .expect_err("should require submit_claimed_hash capability");
         assert!(err.to_string().contains("submit_claimed_hash"));
     }
@@ -2822,7 +2798,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
             .expect("login");
 
         let err = engine
@@ -2860,7 +2836,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
             .expect("login");
 
         // In probabilistic mode with sample_rate=0 and no forced full verify, claimed hash drives acceptance.
@@ -2911,7 +2887,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
             .expect("login");
 
         let first_started = Instant::now();
@@ -2980,7 +2956,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
             .expect("login");
 
         let regular = engine
@@ -3029,13 +3005,7 @@ mod tests {
 
         let address = test_miner_address();
         engine
-            .login(
-                "conn1",
-                address.clone(),
-                Some("rig01".to_string()),
-                2,
-                submit_hash_cap(),
-            )
+            .login("conn1", address.clone(), "rig01", 2, submit_hash_cap())
             .expect("login");
 
         let _ack = engine
@@ -3065,7 +3035,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
             .expect("login");
 
         engine
@@ -3116,7 +3086,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
             .expect("login");
 
         let ack = engine
@@ -3154,7 +3124,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
             .expect("login");
         let _ = engine
             .submit("conn1", "job1".to_string(), 100, Some("ff".repeat(32)))
@@ -3201,7 +3171,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
             .expect("login");
         let _ = engine
             .submit("conn1", "job1".to_string(), 200, Some("ff".repeat(32)))
@@ -3260,7 +3230,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
             .expect("login");
         let first = engine
             .submit("conn1", "job1".to_string(), 300, Some("00".repeat(32)))
@@ -3318,7 +3288,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
             .expect("login");
         let first = engine
             .submit("conn1", "job1".to_string(), 400, Some("00".repeat(32)))
@@ -3373,7 +3343,7 @@ mod tests {
             .login(
                 "conn-dev",
                 crate::dev_fee::SEINE_DEV_FEE_ADDRESS.to_string(),
-                None,
+                "",
                 2,
                 submit_hash_cap(),
             )
@@ -3460,7 +3430,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
             .expect("login");
 
         // Fill queue with one submit so next submit sees queue pressure.
@@ -3489,7 +3459,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
             .expect("login");
 
         let err = engine
@@ -3517,7 +3487,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
             .expect("login");
 
         let err = engine
@@ -3571,7 +3541,7 @@ mod tests {
         let address = test_miner_address();
 
         engine
-            .login("conn1", address.clone(), None, 2, submit_hash_cap())
+            .login("conn1", address.clone(), "", 2, submit_hash_cap())
             .expect("initial login");
 
         for nonce in [100u64, 101] {
@@ -3582,7 +3552,7 @@ mod tests {
         }
 
         engine
-            .login("conn2", address.clone(), None, 2, submit_hash_cap())
+            .login("conn2", address.clone(), "", 2, submit_hash_cap())
             .expect("address should remain allowed while only forced review is active");
 
         let third = engine
@@ -3591,7 +3561,7 @@ mod tests {
         assert!(third.to_string().contains("invalid share proof"));
 
         engine
-            .login("conn3", address, None, 2, submit_hash_cap())
+            .login("conn3", address, "", 2, submit_hash_cap())
             .expect("invalid proofs alone should not immediately quarantine the address");
     }
 
@@ -3611,7 +3581,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
             .expect("login");
         engine
             .submit("conn1", "job1".to_string(), 89, Some("ff".repeat(32)))
@@ -3647,7 +3617,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
             .expect("login");
         let ack = engine
             .submit(
@@ -3684,7 +3654,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
             .expect("login");
         let err = engine
             .submit(
@@ -3721,7 +3691,7 @@ mod tests {
         );
 
         engine
-            .login("conn1", test_miner_address(), None, 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
             .expect("login");
         let err = engine
             .submit(
