@@ -14,32 +14,6 @@ import { StatusPage } from './pages/StatusPage';
 import { StatsPage } from './pages/StatsPage';
 import type { InfoResponse, Route } from './types';
 
-function SunIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="4.5" />
-      <path d="M12 2.75v2.5M12 18.75v2.5M4.75 12h-2.5M21.75 12h-2.5M5.96 5.96 4.2 4.2M19.8 19.8l-1.77-1.77M18.03 5.97 19.8 4.2M4.2 19.8l1.77-1.77" />
-    </svg>
-  );
-}
-
-function MoonIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M18.35 14.38A7.85 7.85 0 0 1 9.62 5.65 8.65 8.65 0 1 0 18.35 14.38Z" />
-    </svg>
-  );
-}
-
-function LockIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-    </svg>
-  );
-}
-
 const NAV_ITEMS: { route: Route; label: string }[] = [
   { route: 'dashboard', label: 'Dashboard' },
   { route: 'start', label: 'Get Started' },
@@ -293,7 +267,10 @@ export function App() {
                 onClick={() => setShowNavKeyInput(true)}
                 title="Change API key"
               >
-                <LockIcon />
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
               </button>
             )
           ) : null}
@@ -306,10 +283,15 @@ export function App() {
           >
             <span className="theme-toggle-track" aria-hidden="true">
               <span className="theme-toggle-icon theme-toggle-icon-sun">
-                <SunIcon />
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="4.5" />
+                  <path d="M12 2.75v2.5M12 18.75v2.5M4.75 12h-2.5M21.75 12h-2.5M5.96 5.96 4.2 4.2M19.8 19.8l-1.77-1.77M18.03 5.97 19.8 4.2M4.2 19.8l1.77-1.77" />
+                </svg>
               </span>
               <span className="theme-toggle-icon theme-toggle-icon-moon">
-                <MoonIcon />
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M18.35 14.38A7.85 7.85 0 0 1 9.62 5.65 8.65 8.65 0 1 0 18.35 14.38Z" />
+                </svg>
               </span>
               <span className="theme-toggle-thumb" />
             </span>
