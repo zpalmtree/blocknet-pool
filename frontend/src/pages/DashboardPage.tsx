@@ -40,12 +40,6 @@ interface DashboardPageProps {
   theme: ThemeMode;
 }
 
-function barWidth(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value) || value <= 0) return '0%';
-  const clamped = Math.min(value, 250);
-  return `${(clamped / 250) * 100}%`;
-}
-
 export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageProps) {
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [insights, setInsights] = useState<StatsInsightsResponse | null>(null);
@@ -128,6 +122,10 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
   const payoutLiquidityConstrained = payoutEta != null && payoutEta.pending_total_amount > 0 && payoutShortfall > 0;
 
   const avgLuck = insights?.avg_effort_pct;
+  const roundEffortPct = round?.effort_pct;
+  const roundTone = roundToneClass(roundEffortPct);
+  const cappedRoundEffortPct = Math.min(Math.max(roundEffortPct ?? 0, 0), 250);
+  const roundProgressPct = Number.isFinite(cappedRoundEffortPct) ? (cappedRoundEffortPct / 250) * 100 : 0;
   return (
     <div id="page-dashboard">
       <div className="page-header">
@@ -189,15 +187,15 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
       <div className="section">
         <div className="section-header">
           <h2>Round Progress</h2>
-          <span className={`round-chip ${roundToneClass(round?.effort_pct)}`}>
-            {effortLabel(round?.effort_pct)}
+          <span className={`round-chip ${roundTone}`}>
+            {effortLabel(roundEffortPct)}
           </span>
         </div>
         <div className="card">
           <div className="round-meta">
             <div>
               <span className="label">Round Effort</span>
-              <div className="value mono">{formatPct(round?.effort_pct)}</div>
+              <div className="value mono">{formatPct(roundEffortPct)}</div>
             </div>
             <div>
               <span className="label">Elapsed vs ETA</span>
@@ -215,7 +213,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
 
           <div className="round-progress-wrap">
             <div className="round-progress-track">
-              <div className={`round-progress-fill ${roundToneClass(round?.effort_pct)}`} style={{ width: barWidth(round?.effort_pct) }} />
+              <div className={`round-progress-fill ${roundTone}`} style={{ width: `${roundProgressPct}%` }} />
               <div className="round-marker marker-50">50%</div>
               <div className="round-marker marker-100">100%</div>
               <div className="round-marker marker-200">200%</div>
