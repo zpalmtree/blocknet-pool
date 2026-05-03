@@ -14,8 +14,8 @@ use crate::payout::{is_share_payout_eligible, reward_window_end};
 use crate::pgdb::PostgresStore;
 use crate::rewards::estimated_block_reward;
 use crate::validation::{
-    LoadedValidationState, PersistedValidationAddressState, ValidationClearEvent,
-    ValidationStateStore,
+    is_verified_share_status, LoadedValidationState, PersistedValidationAddressState,
+    ValidationClearEvent, ValidationStateStore,
 };
 use pool_common::db::{
     AddressRiskEscalation, AddressRiskState, DbBlock, DbShare, PendingAuditShare, ShareReplayData,
@@ -100,19 +100,14 @@ impl PoolStore {
         let mut eligible_provisional_difficulty = 0u64;
         let mut replayable = Vec::<DbShare>::new();
         for share in &window_shares {
-            match share.status.as_str() {
-                "" | "verified" => {
-                    verified_difficulty =
-                        verified_difficulty.saturating_add(share.difficulty.max(1));
+            if is_verified_share_status(&share.status) {
+                verified_difficulty = verified_difficulty.saturating_add(share.difficulty.max(1));
+            } else if is_share_payout_eligible(share, now, provisional_delay) {
+                eligible_provisional_difficulty =
+                    eligible_provisional_difficulty.saturating_add(share.difficulty.max(1));
+                if !share.was_sampled {
+                    replayable.push(share.clone());
                 }
-                "provisional" if is_share_payout_eligible(share, now, provisional_delay) => {
-                    eligible_provisional_difficulty =
-                        eligible_provisional_difficulty.saturating_add(share.difficulty.max(1));
-                    if !share.was_sampled {
-                        replayable.push(share.clone());
-                    }
-                }
-                _ => {}
             }
         }
 

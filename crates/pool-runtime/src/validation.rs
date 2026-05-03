@@ -18,6 +18,15 @@ use pool_common::pow::{check_target, PowHasher};
 pub const SHARE_STATUS_VERIFIED: &str = "verified";
 pub const SHARE_STATUS_PROVISIONAL: &str = "provisional";
 pub(crate) const SHARE_STATUS_REJECTED: &str = "rejected";
+
+pub fn is_verified_share_status(status: &str) -> bool {
+    status.is_empty() || status == SHARE_STATUS_VERIFIED
+}
+
+pub fn is_provisional_share_status(status: &str) -> bool {
+    status == SHARE_STATUS_PROVISIONAL
+}
+
 const VALIDATION_STATE_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 const VALIDATION_STATE_MAX_TRACKED: usize = 100_000;
 const VALIDATION_PERSIST_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);

@@ -17,7 +17,12 @@ use crate::node::{
 use crate::pgdb::UnreconciledCompletedPayoutRow;
 use crate::store::PoolStore;
 use crate::telemetry::NamedTimedOperationTracker;
-use crate::validation::{SHARE_STATUS_PROVISIONAL, SHARE_STATUS_REJECTED, SHARE_STATUS_VERIFIED};
+#[cfg(test)]
+use crate::validation::SHARE_STATUS_PROVISIONAL;
+use crate::validation::{
+    is_provisional_share_status, is_verified_share_status, SHARE_STATUS_REJECTED,
+    SHARE_STATUS_VERIFIED,
+};
 use crate::wallet_send_journal::{
     aggregate_wallet_send_recipients, decode_wallet_send_body, WalletSendIdempotencyJournal,
 };
@@ -2935,18 +2940,13 @@ where
     let mut by_address = HashMap::<String, AddressShareWeights>::new();
     for share in shares {
         let entry = by_address.entry(share.miner.clone()).or_default();
-        match share.status.as_str() {
-            "" | SHARE_STATUS_VERIFIED => {
-                entry.verified_shares = entry.verified_shares.saturating_add(1);
-                entry.verified_difficulty =
-                    entry.verified_difficulty.saturating_add(share.difficulty);
-            }
-            SHARE_STATUS_PROVISIONAL if is_share_payout_eligible(share, now, provisional_delay) => {
-                entry.provisional_difficulty = entry
-                    .provisional_difficulty
-                    .saturating_add(share.difficulty);
-            }
-            _ => {}
+        if is_verified_share_status(&share.status) {
+            entry.verified_shares = entry.verified_shares.saturating_add(1);
+            entry.verified_difficulty = entry.verified_difficulty.saturating_add(share.difficulty);
+        } else if is_share_payout_eligible(share, now, provisional_delay) {
+            entry.provisional_difficulty = entry
+                .provisional_difficulty
+                .saturating_add(share.difficulty);
         }
     }
 
@@ -2996,13 +2996,9 @@ pub fn is_share_payout_eligible(
     now: SystemTime,
     provisional_delay: Duration,
 ) -> bool {
-    match share.status.as_str() {
-        "" | SHARE_STATUS_VERIFIED => true,
-        SHARE_STATUS_PROVISIONAL => {
-            now.duration_since(share.created_at).unwrap_or_default() >= provisional_delay
-        }
-        _ => false,
-    }
+    is_verified_share_status(&share.status)
+        || (is_provisional_share_status(&share.status)
+            && now.duration_since(share.created_at).unwrap_or_default() >= provisional_delay)
 }
 
 #[cfg(test)]

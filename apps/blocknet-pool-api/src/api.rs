@@ -58,7 +58,7 @@ use pool_runtime::store::PoolStore;
 use pool_runtime::telemetry::{
     ApiPerformanceSnapshot, NamedCacheCounterTracker, NamedTimedOperationTracker,
 };
-use pool_runtime::validation::{SHARE_STATUS_PROVISIONAL, SHARE_STATUS_VERIFIED};
+use pool_runtime::validation::{is_provisional_share_status, is_verified_share_status};
 use pool_runtime::wallet_send_journal::{
     aggregate_wallet_send_recipients, decode_wallet_send_body, WalletSendIdempotencyJournal,
 };
@@ -2728,23 +2728,19 @@ fn update_window_preview_for_share(
     };
 
     apply(&mut preview.seen_shares, 1);
-    match share.status.as_str() {
-        "" | SHARE_STATUS_VERIFIED => {
-            apply(&mut preview.verified_shares, 1);
-            apply(&mut preview.verified_difficulty, share.difficulty);
+    if is_verified_share_status(&share.status) {
+        apply(&mut preview.verified_shares, 1);
+        apply(&mut preview.verified_difficulty, share.difficulty);
+    } else if is_provisional_share_status(&share.status) {
+        let ready = provisional_ready_cutoff
+            .map(|cutoff| share.created_at <= cutoff)
+            .unwrap_or(false);
+        if ready {
+            apply(&mut preview.provisional_shares_ready, 1);
+            apply(&mut preview.provisional_difficulty_ready, share.difficulty);
+        } else {
+            apply(&mut preview.provisional_shares_delayed, 1);
         }
-        SHARE_STATUS_PROVISIONAL => {
-            let ready = provisional_ready_cutoff
-                .map(|cutoff| share.created_at <= cutoff)
-                .unwrap_or(false);
-            if ready {
-                apply(&mut preview.provisional_shares_ready, 1);
-                apply(&mut preview.provisional_difficulty_ready, share.difficulty);
-            } else {
-                apply(&mut preview.provisional_shares_delayed, 1);
-            }
-        }
-        _ => {}
     }
 }
 
@@ -3258,22 +3254,14 @@ fn collect_reward_window_stats(
     let mut by_address = HashMap::<String, RewardWindowAddressStats>::new();
     for share in shares {
         let entry = by_address.entry(share.miner.clone()).or_default();
-        match share.status.as_str() {
-            "" | SHARE_STATUS_VERIFIED => {
-                entry.verified_shares = entry.verified_shares.saturating_add(1);
-                entry.verified_difficulty =
-                    entry.verified_difficulty.saturating_add(share.difficulty);
-            }
-            SHARE_STATUS_PROVISIONAL => {
-                if is_share_payout_eligible(share, now, provisional_delay) {
-                    entry.provisional_shares_eligible =
-                        entry.provisional_shares_eligible.saturating_add(1);
-                    entry.provisional_difficulty_eligible = entry
-                        .provisional_difficulty_eligible
-                        .saturating_add(share.difficulty);
-                }
-            }
-            _ => {}
+        if is_verified_share_status(&share.status) {
+            entry.verified_shares = entry.verified_shares.saturating_add(1);
+            entry.verified_difficulty = entry.verified_difficulty.saturating_add(share.difficulty);
+        } else if is_share_payout_eligible(share, now, provisional_delay) {
+            entry.provisional_shares_eligible = entry.provisional_shares_eligible.saturating_add(1);
+            entry.provisional_difficulty_eligible = entry
+                .provisional_difficulty_eligible
+                .saturating_add(share.difficulty);
         }
     }
     by_address
