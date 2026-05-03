@@ -14,6 +14,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use parking_lot::{Mutex, RwLock};
 use reqwest::blocking::Client as BlockingClient;
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::json;
 use tokio::net::TcpListener;
@@ -1457,23 +1458,10 @@ fn fetch_public_chain_height(
     source: String,
     url: String,
 ) -> ReferenceHeightSample {
-    let request_url = url.clone();
-    let response = (|| -> Result<ReferenceHeightSample> {
-        let response = client
-            .get(&request_url)
-            .send()
-            .with_context(|| format!("GET {request_url}"))?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(anyhow!("GET {request_url} returned HTTP {status}"));
-        }
-        let payload: PublicChainStatusResponse = response.json()?;
-        Ok(ReferenceHeightSample::ok(
-            source.clone(),
-            payload.chain_height,
-        ))
-    })();
-    response.unwrap_or_else(|err| ReferenceHeightSample::err(source, err.to_string()))
+    match fetch_json::<PublicChainStatusResponse>(client, &url) {
+        Ok(payload) => ReferenceHeightSample::ok(source, payload.chain_height),
+        Err(err) => ReferenceHeightSample::err(source, err.to_string()),
+    }
 }
 
 fn fetch_pool_chain_height(
@@ -1481,24 +1469,31 @@ fn fetch_pool_chain_height(
     source: String,
     url: String,
 ) -> ReferenceHeightSample {
-    let request_url = url.clone();
-    let response = (|| -> Result<ReferenceHeightSample> {
-        let response = client
-            .get(&request_url)
-            .send()
-            .with_context(|| format!("GET {request_url}"))?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(anyhow!("GET {request_url} returned HTTP {status}"));
-        }
-        let payload: PoolStatusResponse = response.json()?;
-        let height = payload
+    let response = fetch_json::<PoolStatusResponse>(client, &url).and_then(|payload| {
+        payload
             .daemon
             .chain_height
-            .ok_or_else(|| anyhow!("GET {request_url} returned no daemon chain height"))?;
-        Ok(ReferenceHeightSample::ok(source.clone(), height))
-    })();
-    response.unwrap_or_else(|err| ReferenceHeightSample::err(source, err.to_string()))
+            .ok_or_else(|| anyhow!("GET {url} returned no daemon chain height"))
+    });
+    match response {
+        Ok(height) => ReferenceHeightSample::ok(source, height),
+        Err(err) => ReferenceHeightSample::err(source, err.to_string()),
+    }
+}
+
+fn fetch_json<T>(client: BlockingClient, url: &str) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    let response = client
+        .get(url)
+        .send()
+        .with_context(|| format!("GET {url}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(anyhow!("GET {url} returned HTTP {status}"));
+    }
+    Ok(response.json()?)
 }
 
 fn source_host_label(url: &str) -> String {
