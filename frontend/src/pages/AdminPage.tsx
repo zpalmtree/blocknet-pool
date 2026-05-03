@@ -903,18 +903,12 @@ export function AdminPage({
     ? `${balanceDiagnosticsCount} diagnostic${balanceDiagnosticsCount === 1 ? '' : 's'} in Balances tab`
     : null;
   const shareWindows = shareDiagnostics?.windows ?? [];
-  const shareWindow5m = useMemo(
-    () => shareWindows.find((item) => item.label === '5m') ?? null,
-    [shareWindows]
-  );
-  const shareWindow1h = useMemo(
-    () => shareWindows.find((item) => item.label === '1h') ?? null,
-    [shareWindows]
-  );
-  const shareWindow24h = useMemo(
-    () => shareWindows.find((item) => item.label === '24h') ?? null,
-    [shareWindows]
-  );
+  const [shareWindow5m, shareWindow1h, shareWindow24h] = useMemo(() => {
+    const byLabel = new Map<string, AdminShareDiagnosticsWindow>(
+      shareWindows.map((item) => [item.label, item])
+    );
+    return [byLabel.get('5m') ?? null, byLabel.get('1h') ?? null, byLabel.get('24h') ?? null];
+  }, [shareWindows]);
   const shareSubmit = shareDiagnostics?.submit ?? null;
   const shareValidation = shareDiagnostics?.validation ?? null;
 
