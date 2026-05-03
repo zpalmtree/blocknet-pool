@@ -1516,18 +1516,6 @@ fn reference_height_divergence_state(
     if spread <= threshold {
         return None;
     }
-    Some((
-        "critical",
-        spread,
-        format_reference_height_detail(samples, spread, threshold),
-    ))
-}
-
-fn format_reference_height_detail(
-    samples: &[ReferenceHeightSample],
-    spread: u64,
-    threshold: u64,
-) -> String {
     let mut observed = samples
         .iter()
         .filter_map(|item| {
@@ -1552,7 +1540,7 @@ fn format_reference_height_detail(
         detail.push_str("; unavailable: ");
         detail.push_str(&unavailable.join(", "));
     }
-    detail
+    Some(("critical", spread, detail))
 }
 
 fn post_chain_divergence_discord(
