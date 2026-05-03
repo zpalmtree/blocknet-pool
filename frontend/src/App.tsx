@@ -63,6 +63,16 @@ function LockIcon() {
   );
 }
 
+const NAV_ITEMS: { route: Route; label: string }[] = [
+  { route: 'dashboard', label: 'Dashboard' },
+  { route: 'start', label: 'Get Started' },
+  { route: 'blocks', label: 'Blocks' },
+  { route: 'payouts', label: 'Payouts' },
+  { route: 'stats', label: 'My Stats' },
+  { route: 'status', label: 'Status' },
+  { route: 'admin', label: 'Admin' },
+];
+
 export function App() {
   const [route, setRoute] = useState<Route>(() => routeFromLocation());
   const [errorMsg, setErrorMsg] = useState('');
@@ -230,62 +240,17 @@ export function App() {
           {poolInfo?.pool_name || 'Blocknet Pool'}
         </a>
         <div id="site-nav-links" className="nav-links">
-          <a
-            href={pathForRoute('dashboard')}
-            data-nav="dashboard"
-            className={route === 'dashboard' ? 'active' : ''}
-            onClick={(event) => onNavLinkClick(event, 'dashboard')}
-          >
-            Dashboard
-          </a>
-          <a
-            href={pathForRoute('start')}
-            data-nav="start"
-            className={route === 'start' ? 'active' : ''}
-            onClick={(event) => onNavLinkClick(event, 'start')}
-          >
-            Get Started
-          </a>
-          <a
-            href={pathForRoute('blocks')}
-            data-nav="blocks"
-            className={route === 'blocks' ? 'active' : ''}
-            onClick={(event) => onNavLinkClick(event, 'blocks')}
-          >
-            Blocks
-          </a>
-          <a
-            href={pathForRoute('payouts')}
-            data-nav="payouts"
-            className={route === 'payouts' ? 'active' : ''}
-            onClick={(event) => onNavLinkClick(event, 'payouts')}
-          >
-            Payouts
-          </a>
-          <a
-            href={pathForRoute('stats')}
-            data-nav="stats"
-            className={route === 'stats' ? 'active' : ''}
-            onClick={(event) => onNavLinkClick(event, 'stats')}
-          >
-            My Stats
-          </a>
-          <a
-            href={pathForRoute('status')}
-            data-nav="status"
-            className={route === 'status' ? 'active' : ''}
-            onClick={(event) => onNavLinkClick(event, 'status')}
-          >
-            Status
-          </a>
-          <a
-            href={pathForRoute('admin')}
-            data-nav="admin"
-            className={route === 'admin' ? 'active' : ''}
-            onClick={(event) => onNavLinkClick(event, 'admin')}
-          >
-            Admin
-          </a>
+          {NAV_ITEMS.map((item) => (
+            <a
+              key={item.route}
+              href={pathForRoute(item.route)}
+              data-nav={item.route}
+              className={route === item.route ? 'active' : ''}
+              onClick={(event) => onNavLinkClick(event, item.route)}
+            >
+              {item.label}
+            </a>
+          ))}
         </div>
         <div className="nav-actions">
           {route === 'admin' && apiKey ? (
