@@ -857,16 +857,14 @@ fn parse_template_into_job(template: &crate::node::BlockTemplate) -> anyhow::Res
         .ok_or_else(|| anyhow::anyhow!("template missing header"))?;
 
     let height = header
-        .get("height")
-        .or_else(|| header.get("Height"))
+        .get("Height")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| anyhow::anyhow!("template header missing height"))?;
+        .ok_or_else(|| anyhow::anyhow!("template header missing Height"))?;
 
     let difficulty = header
-        .get("difficulty")
-        .or_else(|| header.get("Difficulty"))
+        .get("Difficulty")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| anyhow::anyhow!("template header missing difficulty"))?;
+        .ok_or_else(|| anyhow::anyhow!("template header missing Difficulty"))?;
 
     let network_target = hex_decode_32(&template.target)?;
     let header_base = hex_decode(&template.header_base)?;
@@ -907,28 +905,19 @@ fn same_template_identity(current: &Job, parsed: &Job) -> bool {
 }
 
 fn block_prev_hash(header: &Value) -> Option<[u8; 32]> {
-    let prev_hash = header
-        .get("PrevHash")
-        .or_else(|| header.get("prevhash"))
-        .or_else(|| header.get("prevHash"))
-        .or_else(|| header.get("prev_hash"))?;
-
-    if let Some(values) = prev_hash.as_array() {
-        if values.len() != 32 {
+    let values = header.get("PrevHash")?.as_array()?;
+    if values.len() != 32 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (idx, value) in values.iter().enumerate() {
+        let n = value.as_u64()?;
+        if n > u8::MAX as u64 {
             return None;
         }
-        let mut out = [0u8; 32];
-        for (idx, value) in values.iter().enumerate() {
-            let n = value.as_u64()?;
-            if n > u8::MAX as u64 {
-                return None;
-            }
-            out[idx] = n as u8;
-        }
-        return Some(out);
+        out[idx] = n as u8;
     }
-
-    prev_hash.as_str().and_then(|v| hex_decode_32(v).ok())
+    Some(out)
 }
 
 fn parse_new_block_event_payload(payload: &str) -> Option<NewBlockEvent> {

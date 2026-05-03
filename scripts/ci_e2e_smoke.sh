@@ -108,9 +108,9 @@ port = int(sys.argv[1])
 template = {
     "block": {
         "header": {
-            "height": 1,
-            "difficulty": 1,
-            "prevhash": "00" * 32,
+            "Height": 1,
+            "Difficulty": 1,
+            "PrevHash": [0] * 32,
         },
         "reward": 1000000000,
     },
