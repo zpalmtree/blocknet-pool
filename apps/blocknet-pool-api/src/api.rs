@@ -45,9 +45,8 @@ use pool_runtime::payout::{
 };
 use pool_runtime::pgdb::{
     BalanceSourceSummary, ConfirmedPayoutImportRecipient, ConfirmedPayoutImportTx,
-    ManualCompletedPayoutResolutionKind, ManualPayoutOffsetApplication, MonitorUptimeSummary,
-    OrphanedBlockCreditIssue, ShareWindowAddressPreview, UnreconciledCompletedPayoutRow,
-    WorkerHashrateStats,
+    ManualCompletedPayoutResolutionKind, MonitorUptimeSummary, ShareWindowAddressPreview,
+    UnreconciledCompletedPayoutRow, WorkerHashrateStats,
 };
 use pool_runtime::rewards::estimated_block_reward;
 use pool_runtime::service_state::{
@@ -1143,33 +1142,6 @@ struct AdminReconciliationManualOffsetApplicationResponse {
     remaining_offset_amount: u64,
     remaining_balance_pending: u64,
     remaining_canonical_pending: u64,
-}
-
-fn map_orphaned_block_issue(issue: OrphanedBlockCreditIssue) -> AdminOrphanedBlockIssueResponse {
-    AdminOrphanedBlockIssueResponse {
-        height: issue.height,
-        hash: issue.hash,
-        credit_event_count: issue.credit_event_count,
-        credited_address_count: issue.credited_address_count,
-        remaining_credit_amount: issue.remaining_credit_amount,
-        paid_credit_amount: issue.paid_credit_amount,
-        remaining_fee_amount: issue.remaining_fee_amount,
-        paid_fee_amount: issue.paid_fee_amount,
-        pending_payout_count: issue.pending_payout_count,
-        broadcast_pending_payout_count: issue.broadcast_pending_payout_count,
-    }
-}
-
-fn map_manual_payout_offset_application(
-    application: ManualPayoutOffsetApplication,
-) -> AdminReconciliationManualOffsetApplicationResponse {
-    AdminReconciliationManualOffsetApplicationResponse {
-        address: application.address,
-        applied_amount: application.applied_amount,
-        remaining_offset_amount: application.remaining_offset_amount,
-        remaining_balance_pending: application.remaining_balance_pending,
-        remaining_canonical_pending: application.remaining_canonical_pending,
-    }
 }
 
 #[derive(Deserialize)]
@@ -4497,7 +4469,18 @@ impl ApiState {
 
         let orphaned_blocks = orphaned_blocks
             .into_iter()
-            .map(map_orphaned_block_issue)
+            .map(|issue| AdminOrphanedBlockIssueResponse {
+                height: issue.height,
+                hash: issue.hash,
+                credit_event_count: issue.credit_event_count,
+                credited_address_count: issue.credited_address_count,
+                remaining_credit_amount: issue.remaining_credit_amount,
+                paid_credit_amount: issue.paid_credit_amount,
+                remaining_fee_amount: issue.remaining_fee_amount,
+                paid_fee_amount: issue.paid_fee_amount,
+                pending_payout_count: issue.pending_payout_count,
+                broadcast_pending_payout_count: issue.broadcast_pending_payout_count,
+            })
             .collect::<Vec<_>>();
 
         Ok(AdminReconciliationIssuesResponse {
@@ -4620,7 +4603,15 @@ impl ApiState {
             applications: report
                 .applications
                 .into_iter()
-                .map(map_manual_payout_offset_application)
+                .map(
+                    |application| AdminReconciliationManualOffsetApplicationResponse {
+                        address: application.address,
+                        applied_amount: application.applied_amount,
+                        remaining_offset_amount: application.remaining_offset_amount,
+                        remaining_balance_pending: application.remaining_balance_pending,
+                        remaining_canonical_pending: application.remaining_canonical_pending,
+                    },
+                )
                 .collect(),
         })
     }
