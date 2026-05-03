@@ -2177,12 +2177,6 @@ pub fn reward_window_end(store: &PoolStore, block: &DbBlock) -> anyhow::Result<S
         .unwrap_or(block.timestamp))
 }
 
-fn should_replay_share(share: &DbShare, now: SystemTime, provisional_delay: Duration) -> bool {
-    share.status != SHARE_STATUS_REJECTED
-        && !share.was_sampled
-        && is_share_payout_eligible(share, now, provisional_delay)
-}
-
 pub fn recover_share_window_by_replay(
     store: &PoolStore,
     shares: &mut [DbShare],
@@ -2194,7 +2188,10 @@ pub fn recover_share_window_by_replay(
         .iter()
         .enumerate()
         .filter_map(|(idx, share)| {
-            should_replay_share(share, now, provisional_delay).then_some(idx)
+            (share.status != SHARE_STATUS_REJECTED
+                && !share.was_sampled
+                && is_share_payout_eligible(share, now, provisional_delay))
+            .then_some(idx)
         })
         .collect::<Vec<_>>();
     if replay_share_indexes.is_empty() {
