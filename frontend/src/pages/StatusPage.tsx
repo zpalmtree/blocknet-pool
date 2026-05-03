@@ -33,19 +33,6 @@ const UPTIME_COLUMNS: { label: string; value: (row: UptimeRow) => ReactNode }[] 
   { label: "External Samples", value: (row) => row.external_sample_count },
 ];
 
-function serviceState(status: StatusResponse | null, key: StatusServiceKey): string {
-  if (!status) return "-";
-  const service = status.services[key];
-  if (!service.observed) return "Unknown";
-  return service.healthy ? "Online" : "Down";
-}
-
-function fmtRefreshLag(ms: number | null | undefined): string {
-  if (ms == null || !Number.isFinite(ms)) return "-";
-  if (ms < 1000) return "<1s";
-  return fmtSeconds(Math.max(1, Math.floor(ms / 1000)));
-}
-
 export function StatusPage({ api, liveTick }: StatusPageProps) {
   const [status, setStatus] = useState<StatusResponse | null>(null);
 
@@ -75,6 +62,13 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
   const syncStateLabel = !daemon ? "-" : !daemon.reachable ? "Offline" : daemon.syncing ? "Syncing" : "Ready";
   const templateStateLabel = template?.observed ? (template.fresh ? "Fresh" : "Stale") : "Unknown";
   const templateAge = template?.age_seconds != null ? fmtSeconds(template.age_seconds) : "-";
+  const refreshLagMillis = template?.last_refresh_millis;
+  const refreshLagLabel =
+    refreshLagMillis == null || !Number.isFinite(refreshLagMillis)
+      ? "-"
+      : refreshLagMillis < 1000
+        ? "<1s"
+        : fmtSeconds(Math.max(1, Math.floor(refreshLagMillis / 1000)));
 
   return (
     <div id="page-status">
@@ -92,9 +86,11 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
         <div className="stats-card-group-title">Pool Reachability</div>
         <div className="stats-card-group-grid stats-grid-dense">
           <StatCard label="Pool" value={poolStateLabel} />
-          {REACHABILITY_SERVICES.map((service) => (
-            <StatCard key={service.key} label={service.label} value={serviceState(status, service.key)} />
-          ))}
+          {REACHABILITY_SERVICES.map((service) => {
+            const health = status?.services[service.key];
+            const value = !health ? "-" : !health.observed ? "Unknown" : health.healthy ? "Online" : "Down";
+            return <StatCard key={service.key} label={service.label} value={value} />;
+          })}
         </div>
       </div>
 
@@ -102,7 +98,7 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
         <div className="stats-card-group-title">Job Template</div>
         <div className="stats-card-group-grid stats-grid-dense">
           <StatCard label="Template Refresh" value={templateStateLabel} />
-          <StatCard label="Refresh Lag" value={fmtRefreshLag(template?.last_refresh_millis)} mono />
+          <StatCard label="Refresh Lag" value={refreshLagLabel} mono />
           <StatCard label="Current Template Age" value={templateAge} mono />
           <StatCard label="Sync State" value={syncStateLabel} />
           <StatCard label="Chain Height" value={daemon?.chain_height ?? "-"} mono />
