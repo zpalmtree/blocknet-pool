@@ -27,7 +27,6 @@ pub enum AddressNetwork {
 pub struct StratumRequest {
     pub id: u64,
     pub method: String,
-    #[serde(default)]
     pub params: serde_json::Value,
 }
 
@@ -52,20 +51,17 @@ pub struct StratumNotify {
 pub struct LoginParams {
     pub address: String,
     pub worker: String,
-    #[serde(default)]
     pub protocol_version: u32,
-    #[serde(default)]
     pub capabilities: Vec<String>,
-    #[serde(default)]
     pub difficulty_hint: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct LoginResult {
     pub protocol_version: u32,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub required_capabilities: Vec<String>,
 }
 
@@ -73,7 +69,6 @@ pub struct LoginResult {
 pub struct SubmitParams {
     pub job_id: String,
     pub nonce: u64,
-    #[serde(default)]
     pub claimed_hash: Option<String>,
 }
 
