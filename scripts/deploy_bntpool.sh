@@ -19,6 +19,7 @@ Environment overrides:
   BNTPOOL_ALLOW_RETIRED_HOST  Set to 1 to allow explicit deploys to oldpool / 5.161.113.120
   BNTPOOL_FORCE_RESTART    Set to 1 to force a restart even when binary hashes are unchanged
   BNTPOOL_LOCAL_BUILD_IMAGE  Optional Docker image used for local builds
+  DOCKER_DEFAULT_PLATFORM  Use linux/amd64 with BNTPOOL_LOCAL_BUILD_IMAGE when deploying from macOS
 EOF
 }
 
@@ -107,18 +108,17 @@ local_stratum_bin="${repo_dir}/target/release/blocknet-pool-stratum"
 local_monitor_bin="${repo_dir}/target/release/blocknet-pool-monitor"
 local_recovery_bin="${repo_dir}/target/release/blocknet-pool-recoveryd"
 source_rsync_args=(
-  -rltzE
+  -rltz
   --delete
   --omit-dir-times
   --no-owner
   --no-group
 )
 binary_rsync_args=(
-  -rtz
+  -rtzp
   --omit-dir-times
   --no-owner
   --no-group
-  --chmod=F755
 )
 
 guard_retired_host() {
@@ -195,6 +195,10 @@ build_locally() {
       "${local_build_image}" \
       bash -lc "set -euo pipefail; export PATH=/usr/local/cargo/bin:\$PATH; ${build_cmd}; chown -R \"${host_uid}:${host_gid}\" /work/target"
   else
+    if [[ "$(uname -s)" != "Linux" ]]; then
+      echo "refusing to build deploy binaries on non-Linux host without BNTPOOL_LOCAL_BUILD_IMAGE; set BNTPOOL_LOCAL_BUILD_IMAGE and DOCKER_DEFAULT_PLATFORM=linux/amd64 or build on Linux" >&2
+      exit 1
+    fi
     if [[ "${deploy_api}" == "1" ]]; then
       cargo build --release -p blocknet-pool-api-app --bin blocknet-pool-api
     fi
@@ -270,6 +274,20 @@ if [[ "${skip_build}" -eq 0 ]]; then
     rsync_args+=( "${local_recovery_bin}" )
   fi
   rsync "${rsync_args[@]}" "${host}:${remote_dir}/target/release/"
+  chmod_cmd="set -euo pipefail; "
+  if [[ "${deploy_api}" == "1" ]]; then
+    chmod_cmd+="chmod 755 '${remote_api_bin}'; "
+  fi
+  if [[ "${deploy_stratum}" == "1" ]]; then
+    chmod_cmd+="chmod 755 '${remote_stratum_bin}'; "
+  fi
+  if [[ "${deploy_monitor}" == "1" ]]; then
+    chmod_cmd+="chmod 755 '${remote_monitor_bin}'; "
+  fi
+  if [[ "${deploy_recovery}" == "1" ]]; then
+    chmod_cmd+="chmod 755 '${remote_recovery_bin}'; "
+  fi
+  ssh "${host}" "${chmod_cmd}"
 fi
 
 echo "==> reading updated remote binary hashes"
