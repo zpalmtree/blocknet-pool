@@ -1864,7 +1864,16 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
         .checked_sub(state.config.runtime.provisional_share_delay_duration())
         .unwrap_or(UNIX_EPOCH);
     let persisted_runtime = state.persisted_runtime_snapshot().await;
-    let pool_activity = pool_activity_health(persisted_runtime.as_ref());
+    let pool_activity = PoolActivityHealth {
+        connected_miners: persisted_runtime
+            .as_ref()
+            .map(|snapshot| snapshot.connected_miners as u64)
+            .unwrap_or_default(),
+        estimated_hashrate: persisted_runtime
+            .as_ref()
+            .map(|snapshot| snapshot.estimated_hashrate)
+            .unwrap_or_default(),
+    };
 
     let store = Arc::clone(&state.store);
     let active_verification_holds = match spawn_blocking_result(move || {
@@ -3057,19 +3066,6 @@ fn pending_preview_validation_detail(
             "This address is under a verification hold, so only fully verified shares count toward this estimate and payout right now."
                 .to_string()
         }
-    }
-}
-
-fn pool_activity_health(
-    persisted_runtime: Option<&PersistedRuntimeSnapshot>,
-) -> PoolActivityHealth {
-    PoolActivityHealth {
-        connected_miners: persisted_runtime
-            .map(|snapshot| snapshot.connected_miners as u64)
-            .unwrap_or_default(),
-        estimated_hashrate: persisted_runtime
-            .map(|snapshot| snapshot.estimated_hashrate)
-            .unwrap_or_default(),
     }
 }
 
