@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 
 import type { ApiClient } from '../api/client';
+import { BlockStatusBadge } from '../components/BlockStatusBadge';
 import { EmptyTableRow } from '../components/EmptyTableRow';
 import { Pager } from '../components/Pager';
 import { fmtSeconds, formatPct, roundToneClass, timeAgo, toUnixMs } from '../lib/format';
@@ -53,13 +54,7 @@ export function LuckPage({ api, liveTick }: LuckPageProps) {
                   </td>
                   <td>{fmtSeconds(row.duration_seconds)}</td>
                   <td>
-                    {row.orphaned ? (
-                      <span className="badge badge-orphaned">orphaned</span>
-                    ) : row.confirmed ? (
-                      <span className="badge badge-confirmed">confirmed</span>
-                    ) : (
-                      <span className="badge badge-pending">pending</span>
-                    )}
+                    <BlockStatusBadge confirmed={row.confirmed} orphaned={row.orphaned} />
                   </td>
                   <td title={new Date(toUnixMs(row.timestamp)).toLocaleString()}>{timeAgo(row.timestamp)}</td>
                 </tr>
