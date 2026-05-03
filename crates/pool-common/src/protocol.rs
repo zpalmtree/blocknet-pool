@@ -163,20 +163,16 @@ fn parse_address_profile(address: &str) -> Result<AddressProfile, String> {
 
 pub fn parse_hash_hex(v: &str) -> Result<[u8; 32], String> {
     let trimmed = v.trim();
-    let raw = hex_decode(trimmed)?;
+    let raw = hex::decode(trimmed).map_err(|err| match err {
+        hex::FromHexError::OddLength => "hex length must be even".to_string(),
+        _ => "invalid hex".to_string(),
+    })?;
     if raw.len() != 32 {
         return Err(format!("expected 32-byte hash, got {} bytes", raw.len()));
     }
     let mut out = [0u8; 32];
     out.copy_from_slice(&raw);
     Ok(out)
-}
-
-fn hex_decode(input: &str) -> Result<Vec<u8>, String> {
-    hex::decode(input).map_err(|err| match err {
-        hex::FromHexError::OddLength => "hex length must be even".to_string(),
-        _ => "invalid hex".to_string(),
-    })
 }
 
 fn checksum_matches(payload: &[u8], checksum: &[u8], network_id: &str) -> bool {
