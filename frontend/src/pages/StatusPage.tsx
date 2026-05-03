@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import type { ApiClient } from "../api/client";
 import { fmtSeconds, formatPct, timeAgo, toUnixMs } from "../lib/format";
@@ -9,15 +9,34 @@ interface StatusPageProps {
   liveTick: number;
 }
 
+type StatusServiceKey = "public_http" | "api" | "stratum" | "database" | "daemon";
+type UptimeRow = StatusResponse["uptime"][number];
+
+const REACHABILITY_SERVICES: { label: string; key: StatusServiceKey }[] = [
+  { label: "Public HTTP", key: "public_http" },
+  { label: "API", key: "api" },
+  { label: "Stratum", key: "stratum" },
+  { label: "Database", key: "database" },
+  { label: "Daemon", key: "daemon" },
+];
+
+const UPTIME_COLUMNS: { label: string; value: (row: UptimeRow) => ReactNode }[] = [
+  { label: "Public HTTP", value: (row) => formatPct(row.public_http_up_pct, 2) },
+  { label: "API", value: (row) => formatPct(row.api_up_pct, 2) },
+  { label: "Stratum", value: (row) => formatPct(row.stratum_up_pct, 2) },
+  { label: "Pool", value: (row) => formatPct(row.pool_up_pct, 2) },
+  { label: "Database", value: (row) => formatPct(row.database_up_pct, 2) },
+  { label: "Daemon", value: (row) => formatPct(row.daemon_up_pct, 2) },
+  { label: "Local Samples", value: (row) => row.sample_count },
+  { label: "External Samples", value: (row) => row.external_sample_count },
+];
+
 function poolState(status: StatusResponse | null): string {
   if (!status) return "-";
   return status.healthy ? "Healthy" : "Degraded";
 }
 
-function serviceState(
-  status: StatusResponse | null,
-  key: "public_http" | "api" | "stratum" | "database" | "daemon",
-): string {
+function serviceState(status: StatusResponse | null, key: StatusServiceKey): string {
   if (!status) return "-";
   const service = status.services[key];
   if (!service.observed) return "Unknown";
@@ -39,6 +58,15 @@ function fmtRefreshLag(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms)) return "-";
   if (ms < 1000) return "<1s";
   return fmtSeconds(Math.max(1, Math.floor(ms / 1000)));
+}
+
+function StatusStatCard({ label, value, mono = false }: { label: ReactNode; value: ReactNode; mono?: boolean }) {
+  return (
+    <div className="stat-card">
+      <div className="label">{label}</div>
+      <div className={mono ? "value mono" : "value"}>{value}</div>
+    </div>
+  );
 }
 
 export function StatusPage({ api, liveTick }: StatusPageProps) {
@@ -63,6 +91,9 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
   }, [liveTick, loadStatus]);
 
   const primaryUptimeLabel = status?.uptime[0]?.label;
+  const uptimeLabel = (base: string) => (primaryUptimeLabel ? `${base} (${primaryUptimeLabel})` : base);
+  const templateAge =
+    status?.template.age_seconds != null ? fmtSeconds(status.template.age_seconds) : "-";
 
   return (
     <div id="page-status">
@@ -79,96 +110,34 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
       <div className="stats-card-group">
         <div className="stats-card-group-title">Pool Reachability</div>
         <div className="stats-card-group-grid stats-grid-dense">
-          <div className="stat-card">
-            <div className="label">Pool</div>
-            <div className="value">{poolState(status)}</div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Public HTTP</div>
-            <div className="value">{serviceState(status, "public_http")}</div>
-          </div>
-          <div className="stat-card">
-            <div className="label">API</div>
-            <div className="value">{serviceState(status, "api")}</div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Stratum</div>
-            <div className="value">{serviceState(status, "stratum")}</div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Database</div>
-            <div className="value">{serviceState(status, "database")}</div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Daemon</div>
-            <div className="value">{serviceState(status, "daemon")}</div>
-          </div>
+          <StatusStatCard label="Pool" value={poolState(status)} />
+          {REACHABILITY_SERVICES.map((service) => (
+            <StatusStatCard key={service.key} label={service.label} value={serviceState(status, service.key)} />
+          ))}
         </div>
       </div>
 
       <div className="stats-card-group">
         <div className="stats-card-group-title">Job Template</div>
         <div className="stats-card-group-grid stats-grid-dense">
-          <div className="stat-card">
-            <div className="label">Template Refresh</div>
-            <div className="value">{templateState(status)}</div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Refresh Lag</div>
-            <div className="value mono">
-              {fmtRefreshLag(status?.template.last_refresh_millis)}
-            </div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Current Template Age</div>
-            <div className="value mono">
-              {status?.template.age_seconds != null
-                ? fmtSeconds(status.template.age_seconds)
-                : "-"}
-            </div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Sync State</div>
-            <div className="value">{syncState(status)}</div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Chain Height</div>
-            <div className="value mono">
-              {status?.daemon.chain_height ?? "-"}
-            </div>
-          </div>
+          <StatusStatCard label="Template Refresh" value={templateState(status)} />
+          <StatusStatCard label="Refresh Lag" value={fmtRefreshLag(status?.template.last_refresh_millis)} mono />
+          <StatusStatCard label="Current Template Age" value={templateAge} mono />
+          <StatusStatCard label="Sync State" value={syncState(status)} />
+          <StatusStatCard label="Chain Height" value={status?.daemon.chain_height ?? "-"} mono />
         </div>
       </div>
 
       <div className="stats-card-group">
         <div className="stats-card-group-title">Sampling</div>
         <div className="stats-card-group-grid stats-grid-dense">
-          <div className="stat-card">
-            <div className="label">API Uptime</div>
-            <div className="value mono">
-              {status ? fmtSeconds(status.pool_uptime_seconds || 0) : "-"}
-            </div>
-          </div>
-          <div className="stat-card">
-            <div className="label">
-              {primaryUptimeLabel
-                ? `Local Samples (${primaryUptimeLabel})`
-                : "Local Samples"}
-            </div>
-            <div className="value mono">
-              {status?.uptime[0]?.sample_count ?? "-"}
-            </div>
-          </div>
-          <div className="stat-card">
-            <div className="label">
-              {primaryUptimeLabel
-                ? `External Samples (${primaryUptimeLabel})`
-                : "External Samples"}
-            </div>
-            <div className="value mono">
-              {status?.uptime[0]?.external_sample_count ?? "-"}
-            </div>
-          </div>
+          <StatusStatCard label="API Uptime" value={status ? fmtSeconds(status.pool_uptime_seconds || 0) : "-"} mono />
+          <StatusStatCard label={uptimeLabel("Local Samples")} value={status?.uptime[0]?.sample_count ?? "-"} mono />
+          <StatusStatCard
+            label={uptimeLabel("External Samples")}
+            value={status?.uptime[0]?.external_sample_count ?? "-"}
+            mono
+          />
         </div>
       </div>
 
@@ -187,14 +156,9 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
             <thead>
               <tr>
                 <th>Window</th>
-                <th>Public HTTP</th>
-                <th>API</th>
-                <th>Stratum</th>
-                <th>Pool</th>
-                <th>Database</th>
-                <th>Daemon</th>
-                <th>Local Samples</th>
-                <th>External Samples</th>
+                {UPTIME_COLUMNS.map((column) => (
+                  <th key={column.label}>{column.label}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -211,14 +175,9 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
                 status.uptime.map((row) => (
                   <tr key={row.label}>
                     <td>{row.label}</td>
-                    <td>{formatPct(row.public_http_up_pct, 2)}</td>
-                    <td>{formatPct(row.api_up_pct, 2)}</td>
-                    <td>{formatPct(row.stratum_up_pct, 2)}</td>
-                    <td>{formatPct(row.pool_up_pct, 2)}</td>
-                    <td>{formatPct(row.database_up_pct, 2)}</td>
-                    <td>{formatPct(row.daemon_up_pct, 2)}</td>
-                    <td>{row.sample_count}</td>
-                    <td>{row.external_sample_count}</td>
+                    {UPTIME_COLUMNS.map((column) => (
+                      <td key={column.label}>{column.value(row)}</td>
+                    ))}
                   </tr>
                 ))
               )}
