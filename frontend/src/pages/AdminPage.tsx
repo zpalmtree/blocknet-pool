@@ -258,36 +258,30 @@ function rewardBlockOptionLabel(block: BlockItem): string {
   return `#${block.height} • ${status} • ${timeAgo(block.timestamp)}`;
 }
 
-function recoveryStateLabel(state: RecoveryInstanceStatus['state'] | undefined): string {
+function RecoveryStateBadge({ state }: { state: RecoveryInstanceStatus['state'] | undefined }) {
+  let label = 'Stopped';
+  let className = 'badge-pending';
   switch (state) {
     case 'ready':
-      return 'Ready';
+      label = 'Ready';
+      className = 'badge-confirmed';
+      break;
     case 'syncing':
-      return 'Syncing';
+      label = 'Syncing';
+      break;
     case 'starting':
-      return 'Starting';
+      label = 'Starting';
+      break;
     case 'failed':
-      return 'Failed';
+      label = 'Failed';
+      className = 'badge-orphaned';
+      break;
     case 'degraded':
-      return 'Degraded';
-    default:
-      return 'Stopped';
+      label = 'Degraded';
+      className = 'badge-orphaned';
+      break;
   }
-}
-
-function recoveryStateBadgeClass(state: RecoveryInstanceStatus['state'] | undefined): string {
-  switch (state) {
-    case 'ready':
-      return 'badge-confirmed';
-    case 'syncing':
-    case 'starting':
-      return 'badge-pending';
-    case 'failed':
-    case 'degraded':
-      return 'badge-orphaned';
-    default:
-      return 'badge-pending';
-  }
+  return <span className={`badge ${className}`}>{label}</span>;
 }
 
 
@@ -3101,9 +3095,7 @@ export function AdminPage({
                       <h3>{item?.instance ? recoveryInstanceLabel(item.instance) : key === 'primary' ? 'Primary' : 'Standby'}</h3>
                       <p className="section-lead">{item?.service ?? 'No status yet'}</p>
                     </div>
-                    <span className={`badge ${recoveryStateBadgeClass(item?.state)}`}>
-                      {recoveryStateLabel(item?.state)}
-                    </span>
+                    <RecoveryStateBadge state={item?.state} />
                   </div>
 
                   <div className="stats-grid stats-grid-dense">
