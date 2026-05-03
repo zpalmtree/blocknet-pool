@@ -31,7 +31,7 @@ impl Config {
         let data = fs::read(path).with_context(|| format!("read config {}", path.display()))?;
         let mut cfg: Config = serde_json::from_slice(&data)
             .with_context(|| format!("parse config {}", path.display()))?;
-        cfg.normalize();
+        cfg.runtime.normalize();
         cfg.runtime.validate()?;
         cfg.validate()?;
         if cfg.api_key.trim().is_empty() {
@@ -39,10 +39,6 @@ impl Config {
         }
         cfg.api_key = cfg.api_key.trim().to_string();
         Ok(cfg)
-    }
-
-    pub(crate) fn normalize(&mut self) {
-        self.runtime.normalize();
     }
 
     fn validate(&self) -> Result<()> {

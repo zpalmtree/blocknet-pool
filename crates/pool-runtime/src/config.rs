@@ -130,13 +130,9 @@ impl Config {
         let data = fs::read(path).with_context(|| format!("read config {}", path.display()))?;
         let mut cfg: Config = serde_json::from_slice(&data)
             .with_context(|| format!("parse config {}", path.display()))?;
-        cfg.normalize_and_validate()?;
+        cfg.normalize();
+        cfg.validate()?;
         Ok(cfg)
-    }
-
-    pub fn normalize_and_validate(&mut self) -> Result<()> {
-        self.normalize();
-        self.validate()
     }
 
     pub fn normalize(&mut self) {

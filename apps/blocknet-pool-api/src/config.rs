@@ -38,15 +38,11 @@ impl Config {
         let data = fs::read(path).with_context(|| format!("read config {}", path.display()))?;
         let mut cfg: Config = serde_json::from_slice(&data)
             .with_context(|| format!("parse config {}", path.display()))?;
-        cfg.normalize();
+        cfg.runtime.normalize();
         cfg.runtime.validate()?;
         cfg.recovery.validate()?;
         cfg.validate()?;
         Ok(cfg)
-    }
-
-    pub(crate) fn normalize(&mut self) {
-        self.runtime.normalize();
     }
 
     fn validate(&self) -> Result<()> {
@@ -72,7 +68,7 @@ mod tests {
         let mut cfg: Config =
             serde_json::from_str(r#"{"pool_name":"flat","stratum_port":4444,"api_port":1234}"#)
                 .expect("parse config");
-        cfg.normalize();
+        cfg.runtime.normalize();
 
         assert_eq!(cfg.runtime.pool_name, "flat");
         assert_eq!(cfg.runtime.stratum_port, 4444);
