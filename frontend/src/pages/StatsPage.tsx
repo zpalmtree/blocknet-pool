@@ -39,6 +39,9 @@ async function resolveHandle(api: ApiClient, raw: string): Promise<{ address: st
   return { address: data.address, handle: data.handle };
 }
 
+const lookupResult = async <T,>(promise: Promise<T>) =>
+  promise.then((value) => ({ ok: true as const, value })).catch(() => ({ ok: false as const }));
+
 function mergePendingEstimate(
   current: MinerPendingEstimate | undefined,
   next: MinerPendingEstimate,
@@ -187,18 +190,9 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
         const requestKey = `${addr}:${range}`;
         hashrateRequestKeyRef.current = requestKey;
 
-        const balancePromise = api
-          .getMinerBalance(addr, true)
-          .then((value) => ({ ok: true as const, value }))
-          .catch(() => ({ ok: false as const }));
-        const detailPromise = api
-          .getMiner(addr)
-          .then((value) => ({ ok: true as const, value }))
-          .catch(() => ({ ok: false as const }));
-        const hashratePromise = api
-          .getMinerHashrate(addr, range)
-          .then((value) => ({ ok: true as const, value }))
-          .catch(() => ({ ok: false as const }));
+        const balancePromise = lookupResult(api.getMinerBalance(addr, true));
+        const detailPromise = lookupResult(api.getMiner(addr));
+        const hashratePromise = lookupResult(api.getMinerHashrate(addr, range));
 
         const balanceResult = await balancePromise;
         if (requestId !== lookupRequestSeq.current) return;
@@ -523,8 +517,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {previewBlocks.map((b) => {
-                      return (
+                    {previewBlocks.map((b) => (
                       <tr key={`${b.height}-${b.hash}`}>
                         <td>
                           <a href={`https://explorer.blocknetcrypto.com/block/${b.hash || ''}`} target="_blank" rel="noopener">
@@ -541,7 +534,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                         <td>{b.confirmations_remaining}</td>
                         <td title={timestampTitle(b.timestamp)}>{timeAgo(b.timestamp)}</td>
                       </tr>
-                    )})}
+                    ))}
                   </tbody>
                 </table>
                 <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)' }}>
