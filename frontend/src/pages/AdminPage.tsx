@@ -87,6 +87,19 @@ const RECOVERY_OPERATION_STATE_LABELS: Record<string, string> = {
   succeeded: 'Succeeded',
   failed: 'Failed',
 };
+const VALIDATION_HOLD_CAUSE_LABELS: Record<string, string> = {
+  provisional_backlog: 'Backlog drain',
+  payout_coverage: 'Payout boost',
+  invalid_samples: 'Validation review',
+};
+const RECOVERY_STATE_BADGE_FALLBACK = { label: 'Stopped', className: 'badge-pending' };
+const RECOVERY_STATE_BADGE_META: Record<string, { label: string; className: string }> = {
+  ready: { label: 'Ready', className: 'badge-confirmed' },
+  syncing: { label: 'Syncing', className: 'badge-pending' },
+  starting: { label: 'Starting', className: 'badge-pending' },
+  failed: { label: 'Failed', className: 'badge-orphaned' },
+  degraded: { label: 'Degraded', className: 'badge-orphaned' },
+};
 const warnTextStyle = (active: boolean) => (active ? WARN_TEXT_STYLE : undefined);
 const warnGoodTextStyle = (warn: boolean) => (warn ? WARN_TEXT_STYLE : GOOD_TEXT_STYLE);
 const labelFor = (value: string | null | undefined, labels: Record<string, string>, fallback: string) =>
@@ -175,19 +188,7 @@ function VerificationHoldBadge({ hold }: { hold: ActiveVerificationHold }) {
   else if (forceVerified && validationForced) label = 'Risk + validation';
   else if (forceVerified) label = 'Risk forced';
   else if (validationForced) {
-    switch (hold.validation_hold_cause) {
-      case 'provisional_backlog':
-        label = 'Backlog drain';
-        break;
-      case 'payout_coverage':
-        label = 'Payout boost';
-        break;
-      case 'invalid_samples':
-        label = 'Validation review';
-        break;
-      default:
-        label = 'Validation forced';
-    }
+    label = labelFor(hold.validation_hold_cause, VALIDATION_HOLD_CAUSE_LABELS, 'Validation forced');
   }
   const active = quarantined || forceVerified || validationForced;
   const className = !active ? 'badge-pending' : quarantined ? 'badge-orphaned' : 'badge-confirmed';
@@ -229,28 +230,9 @@ function ValidationHoldUntilCell({ hold }: { hold: ActiveVerificationHold }) {
 }
 
 function RecoveryStateBadge({ state }: { state: RecoveryInstanceStatus['state'] | undefined }) {
-  let label = 'Stopped';
-  let className = 'badge-pending';
-  switch (state) {
-    case 'ready':
-      label = 'Ready';
-      className = 'badge-confirmed';
-      break;
-    case 'syncing':
-      label = 'Syncing';
-      break;
-    case 'starting':
-      label = 'Starting';
-      break;
-    case 'failed':
-      label = 'Failed';
-      className = 'badge-orphaned';
-      break;
-    case 'degraded':
-      label = 'Degraded';
-      className = 'badge-orphaned';
-      break;
-  }
+  const { label, className } = state
+    ? RECOVERY_STATE_BADGE_META[state] ?? RECOVERY_STATE_BADGE_FALLBACK
+    : RECOVERY_STATE_BADGE_FALLBACK;
   return <span className={`badge ${className}`}>{label}</span>;
 }
 
