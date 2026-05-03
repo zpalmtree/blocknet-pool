@@ -33,27 +33,11 @@ const UPTIME_COLUMNS: { label: string; value: (row: UptimeRow) => ReactNode }[] 
   { label: "External Samples", value: (row) => row.external_sample_count },
 ];
 
-function poolState(status: StatusResponse | null): string {
-  if (!status) return "-";
-  return status.healthy ? "Healthy" : "Degraded";
-}
-
 function serviceState(status: StatusResponse | null, key: StatusServiceKey): string {
   if (!status) return "-";
   const service = status.services[key];
   if (!service.observed) return "Unknown";
   return service.healthy ? "Online" : "Down";
-}
-
-function syncState(status: StatusResponse | null): string {
-  if (!status) return "-";
-  if (!status.daemon.reachable) return "Offline";
-  return status.daemon.syncing ? "Syncing" : "Ready";
-}
-
-function templateState(status: StatusResponse | null): string {
-  if (!status?.template.observed) return "Unknown";
-  return status.template.fresh ? "Fresh" : "Stale";
 }
 
 function fmtRefreshLag(ms: number | null | undefined): string {
@@ -83,10 +67,14 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
     void loadStatus();
   }, [liveTick, loadStatus]);
 
+  const daemon = status?.daemon;
+  const template = status?.template;
   const primaryUptimeLabel = status?.uptime[0]?.label;
   const uptimeLabel = (base: string) => (primaryUptimeLabel ? `${base} (${primaryUptimeLabel})` : base);
-  const templateAge =
-    status?.template.age_seconds != null ? fmtSeconds(status.template.age_seconds) : "-";
+  const poolStateLabel = status ? (status.healthy ? "Healthy" : "Degraded") : "-";
+  const syncStateLabel = !daemon ? "-" : !daemon.reachable ? "Offline" : daemon.syncing ? "Syncing" : "Ready";
+  const templateStateLabel = template?.observed ? (template.fresh ? "Fresh" : "Stale") : "Unknown";
+  const templateAge = template?.age_seconds != null ? fmtSeconds(template.age_seconds) : "-";
 
   return (
     <div id="page-status">
@@ -103,7 +91,7 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
       <div className="stats-card-group">
         <div className="stats-card-group-title">Pool Reachability</div>
         <div className="stats-card-group-grid stats-grid-dense">
-          <StatCard label="Pool" value={poolState(status)} />
+          <StatCard label="Pool" value={poolStateLabel} />
           {REACHABILITY_SERVICES.map((service) => (
             <StatCard key={service.key} label={service.label} value={serviceState(status, service.key)} />
           ))}
@@ -113,11 +101,11 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
       <div className="stats-card-group">
         <div className="stats-card-group-title">Job Template</div>
         <div className="stats-card-group-grid stats-grid-dense">
-          <StatCard label="Template Refresh" value={templateState(status)} />
-          <StatCard label="Refresh Lag" value={fmtRefreshLag(status?.template.last_refresh_millis)} mono />
+          <StatCard label="Template Refresh" value={templateStateLabel} />
+          <StatCard label="Refresh Lag" value={fmtRefreshLag(template?.last_refresh_millis)} mono />
           <StatCard label="Current Template Age" value={templateAge} mono />
-          <StatCard label="Sync State" value={syncState(status)} />
-          <StatCard label="Chain Height" value={status?.daemon.chain_height ?? "-"} mono />
+          <StatCard label="Sync State" value={syncStateLabel} />
+          <StatCard label="Chain Height" value={daemon?.chain_height ?? "-"} mono />
         </div>
       </div>
 
