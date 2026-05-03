@@ -1732,13 +1732,6 @@ fn format_millis(ms: u64) -> String {
     }
 }
 
-fn system_time_from_unix_millis(unix_millis: i64) -> Option<SystemTime> {
-    if unix_millis <= 0 {
-        return None;
-    }
-    UNIX_EPOCH.checked_add(Duration::from_millis(unix_millis as u64))
-}
-
 fn daemon_slow_block_state(
     now: SystemTime,
     status: Option<&NodeStatus>,
@@ -1771,7 +1764,11 @@ fn daemon_slow_block_state(
     if last.total_millis < DAEMON_SLOW_BLOCK_WARN_AFTER.as_millis() as u64 {
         return None;
     }
-    let completed_at = system_time_from_unix_millis(last.completed_at_unix_millis)?;
+    if last.completed_at_unix_millis <= 0 {
+        return None;
+    }
+    let completed_at =
+        UNIX_EPOCH.checked_add(Duration::from_millis(last.completed_at_unix_millis as u64))?;
     if now.duration_since(completed_at).unwrap_or_default() > DAEMON_SLOW_BLOCK_RECENT_AFTER {
         return None;
     }
