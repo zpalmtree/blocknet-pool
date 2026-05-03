@@ -481,15 +481,15 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
               <div style={{ color: 'var(--text)', fontSize: 13 }}>
                 {verificationHold.mode === 'quarantined'
                   ? `Verification hold active. This address is quarantined until ${
-                      verificationQuarantineUntil ? new Date(verificationQuarantineUntil).toLocaleString() : 'the current hold expires'
+                      timestampTitle(verificationQuarantineUntil) || 'the current hold expires'
                     }, so new submissions from this address are temporarily blocked.`
                   : `Verification hold active until ${
-                      verificationOnlyUntil ? new Date(verificationOnlyUntil).toLocaleString() : 'the current hold expires'
+                      timestampTitle(verificationOnlyUntil) || 'the current hold expires'
                     }. Only fully verified shares count toward unconfirmed estimates and payout while this hold is active.`}
                 {verificationHold.mode === 'quarantined' &&
                   verificationOnlyUntil &&
                   verificationOnlyUntil !== verificationQuarantineUntil && (
-                    <> {`Verified-only credit continues until ${new Date(verificationOnlyUntil).toLocaleString()} after quarantine ends.`}</>
+                    <> {`Verified-only credit continues until ${timestampTitle(verificationOnlyUntil)} after quarantine ends.`}</>
                   )}
                 {verificationHold.validation_hold_cause === 'provisional_backlog' &&
                 verificationPendingProvisional > 0
@@ -497,7 +497,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                       verificationPendingProvisional === 1 ? '' : 's'
                     } are still waiting for full verification.`
                   : ` Reason: ${verificationReason}.`}
-                {verificationStartedAt && <> {`Started ${new Date(verificationStartedAt).toLocaleString()}.`}</>}
+                {verificationStartedAt && <> {`Started ${timestampTitle(verificationStartedAt)}.`}</>}
                 {' Confirmed balance and completed payouts are unaffected.'}
               </div>
             </div>
