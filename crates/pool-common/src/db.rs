@@ -176,6 +176,34 @@ pub fn active_window_strikes(
     }
 }
 
+pub fn allocate_proportional_fees(
+    amounts: impl IntoIterator<Item = u64>,
+    total_fee: u64,
+) -> Vec<u64> {
+    let amounts = amounts.into_iter().collect::<Vec<_>>();
+    let total_amount = amounts
+        .iter()
+        .fold(0u64, |acc, amount| acc.saturating_add(*amount))
+        .max(1);
+    let mut remaining_fee = total_fee;
+    let last_idx = amounts.len().saturating_sub(1);
+    amounts
+        .into_iter()
+        .enumerate()
+        .map(|(idx, amount)| {
+            let fee = if idx == last_idx {
+                remaining_fee
+            } else {
+                let proportional =
+                    ((total_fee as u128) * (amount as u128) / (total_amount as u128)) as u64;
+                proportional.min(remaining_fee)
+            };
+            remaining_fee = remaining_fee.saturating_sub(fee);
+            fee
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ActiveVerificationHold {
     pub address: String,

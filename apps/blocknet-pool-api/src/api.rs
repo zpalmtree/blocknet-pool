@@ -27,8 +27,8 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::config::Config;
 use pool_common::db::{
-    ActiveVerificationHold, AddressRiskState, Balance, DbBlock, DbLuckRound, DbShare,
-    MonitorHeartbeat, MonitorIncident, PendingPayout,
+    allocate_proportional_fees, ActiveVerificationHold, AddressRiskState, Balance, DbBlock,
+    DbLuckRound, DbShare, MonitorHeartbeat, MonitorIncident, PendingPayout,
 };
 use pool_recovery::{RecoveryAgentClient, RecoveryInstanceId, RecoveryOperation, RecoveryStatus};
 use pool_runtime::hashrate::{
@@ -2192,28 +2192,16 @@ fn allocate_imported_payout_fees(
     recipients: &[(String, u64)],
     total_fee: u64,
 ) -> Vec<ConfirmedPayoutImportRecipient> {
-    let total_amount = recipients
-        .iter()
-        .fold(0u64, |acc, (_, amount)| acc.saturating_add(*amount))
-        .max(1);
-    let mut remaining_fee = total_fee;
     recipients
         .iter()
-        .enumerate()
-        .map(|(idx, (address, amount))| {
-            let fee = if idx + 1 == recipients.len() {
-                remaining_fee
-            } else {
-                let proportional =
-                    ((total_fee as u128) * (*amount as u128) / (total_amount as u128)) as u64;
-                proportional.min(remaining_fee)
-            };
-            remaining_fee = remaining_fee.saturating_sub(fee);
-            ConfirmedPayoutImportRecipient {
-                address: address.clone(),
-                amount: *amount,
-                fee,
-            }
+        .zip(allocate_proportional_fees(
+            recipients.iter().map(|(_, amount)| *amount),
+            total_fee,
+        ))
+        .map(|((address, amount), fee)| ConfirmedPayoutImportRecipient {
+            address: address.clone(),
+            amount: *amount,
+            fee,
         })
         .collect()
 }

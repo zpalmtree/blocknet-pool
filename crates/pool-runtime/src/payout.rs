@@ -22,8 +22,8 @@ use crate::wallet_send_journal::{
     aggregate_wallet_send_recipients, decode_wallet_send_body, WalletSendIdempotencyJournal,
 };
 use pool_common::db::{
-    Balance, DbBlock, DbShare, Payout, PendingPayout, PendingPayoutBatchMember, PoolFeeRecord,
-    ShareReplayUpdate,
+    allocate_proportional_fees, Balance, DbBlock, DbShare, Payout, PendingPayout,
+    PendingPayoutBatchMember, PoolFeeRecord, ShareReplayUpdate,
 };
 use pool_common::pow::{check_target, difficulty_to_target, Argon2PowHasher, PowHasher};
 use pool_common::protocol::{address_network, validate_miner_address_for_network, AddressNetwork};
@@ -2882,12 +2882,18 @@ fn allocate_pending_batch_fees(
     pending: &[PendingPayout],
     total_fee: u64,
 ) -> Vec<PendingPayoutBatchMember> {
-    allocate_fee_members(
-        pending,
-        total_fee,
-        |entry| entry.amount,
-        |entry| entry.address.clone(),
-    )
+    pending
+        .iter()
+        .zip(allocate_proportional_fees(
+            pending.iter().map(|entry| entry.amount),
+            total_fee,
+        ))
+        .map(|(entry, fee)| PendingPayoutBatchMember {
+            address: entry.address.clone(),
+            amount: entry.amount,
+            fee,
+        })
+        .collect()
 }
 
 fn payout_rebalance_idempotency_key(input: &WalletOutput) -> String {
@@ -2902,43 +2908,16 @@ fn allocate_batch_fees(
     candidates: &[PayoutCandidate],
     total_fee: u64,
 ) -> Vec<PendingPayoutBatchMember> {
-    allocate_fee_members(
-        candidates,
-        total_fee,
-        |candidate| candidate.pending.amount,
-        |candidate| candidate.balance.address.clone(),
-    )
-}
-
-fn allocate_fee_members<T>(
-    entries: &[T],
-    total_fee: u64,
-    amount_of: impl Fn(&T) -> u64,
-    address_of: impl Fn(&T) -> String,
-) -> Vec<PendingPayoutBatchMember> {
-    let total_amount = entries
+    candidates
         .iter()
-        .fold(0u64, |acc, entry| acc.saturating_add(amount_of(entry)))
-        .max(1);
-    let mut remaining_fee = total_fee;
-    entries
-        .iter()
-        .enumerate()
-        .map(|(idx, entry)| {
-            let amount = amount_of(entry);
-            let fee = if idx + 1 == entries.len() {
-                remaining_fee
-            } else {
-                let proportional =
-                    ((total_fee as u128) * (amount as u128) / (total_amount as u128)) as u64;
-                proportional.min(remaining_fee)
-            };
-            remaining_fee = remaining_fee.saturating_sub(fee);
-            PendingPayoutBatchMember {
-                address: address_of(entry),
-                amount,
-                fee,
-            }
+        .zip(allocate_proportional_fees(
+            candidates.iter().map(|candidate| candidate.pending.amount),
+            total_fee,
+        ))
+        .map(|(candidate, fee)| PendingPayoutBatchMember {
+            address: candidate.balance.address.clone(),
+            amount: candidate.pending.amount,
+            fee,
         })
         .collect()
 }
