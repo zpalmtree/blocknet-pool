@@ -242,12 +242,6 @@ function validationHoldUntilHint(hold: ActiveVerificationHold): string | null {
   }
 }
 
-
-function rewardBlockOptionLabel(block: BlockItem): string {
-  const status = block.orphaned ? 'orphaned' : block.confirmed ? 'confirmed' : 'pending';
-  return `#${block.height} • ${status} • ${timeAgo(block.timestamp)}`;
-}
-
 function RecoveryStateBadge({ state }: { state: RecoveryInstanceStatus['state'] | undefined }) {
   let label = 'Stopped';
   let className = 'badge-pending';
@@ -1672,7 +1666,8 @@ export function AdminPage({
                 </option>
                 {rewardBlockOptions.map((block) => (
                   <option key={`${block.height}-${block.hash}`} value={block.height}>
-                    {rewardBlockOptionLabel(block)}
+                    #{block.height} • {block.orphaned ? 'orphaned' : block.confirmed ? 'confirmed' : 'pending'} •{' '}
+                    {timeAgo(block.timestamp)}
                   </option>
                 ))}
               </select>
