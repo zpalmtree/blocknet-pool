@@ -382,7 +382,6 @@ function recoveryPendingDeltaNote(status: RecoveryStatusResponse | null): string
 }
 
 interface AdminPageProps {
-  active: boolean;
   api: ApiClient;
   liveTick: number;
   apiKey: string;
@@ -398,7 +397,6 @@ interface DaemonLogLine {
 }
 
 export function AdminPage({
-  active,
   api,
   liveTick,
   apiKey,
@@ -664,7 +662,7 @@ export function AdminPage({
   );
 
   const refreshAdminData = useCallback(() => {
-    if (!active || !apiKey) return;
+    if (!apiKey) return;
 
     void loadHealth();
     void loadBalanceOverview();
@@ -683,7 +681,6 @@ export function AdminPage({
       void loadReconciliationIssues();
     }
   }, [
-    active,
     apiKey,
     loadBalances,
     loadBalanceOverview,
@@ -703,12 +700,12 @@ export function AdminPage({
   }, [refreshAdminData]);
 
   useEffect(() => {
-    if (!active || !apiKey || liveTick <= 0) return;
+    if (!apiKey || liveTick <= 0) return;
     refreshAdminData();
-  }, [active, apiKey, liveTick, refreshAdminData]);
+  }, [apiKey, liveTick, refreshAdminData]);
 
   useEffect(() => {
-    if (!active || !apiKey || tab !== 'logs') return;
+    if (!apiKey || tab !== 'logs') return;
 
     const controller = new AbortController();
     let stopped = false;
@@ -773,7 +770,7 @@ export function AdminPage({
       stopped = true;
       controller.abort();
     };
-  }, [active, api, apiKey, daemonLogsTail, daemonLogsConnectSeq, tab]);
+  }, [api, apiKey, daemonLogsTail, daemonLogsConnectSeq, tab]);
 
   useEffect(() => {
     if (!daemonLogsAutoScroll || tab !== 'logs') return;
@@ -1435,7 +1432,7 @@ export function AdminPage({
       : 'Status';
 
   return (
-    <div className={active ? 'page active' : 'page'} id="page-admin">
+    <div id="page-admin">
       <h2>Admin</h2>
 
       {!apiKey ? (

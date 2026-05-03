@@ -15,7 +15,6 @@ import type {
 } from '../types';
 
 interface StatsPageProps {
-  active: boolean;
   api: ApiClient;
   liveTick: number;
   theme: ThemeMode;
@@ -62,7 +61,7 @@ function mergeMinerBalancePayload(
   };
 }
 
-export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
+export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const [minerInput, setMinerInput] = useState(localStorage.getItem(LAST_MINER_LOOKUP_KEY) || '');
   const [minerAddress, setMinerAddress] = useState('');
   const [minerData, setMinerData] = useState<MinerResponse | null>(null);
@@ -246,8 +245,6 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   }, [api, rejectionRange]);
 
   useEffect(() => {
-    if (!active) return;
-
     const stored = localStorage.getItem(LAST_MINER_LOOKUP_KEY) || '';
     if (stored && stored !== minerAddress) {
       if (stored !== minerInput) {
@@ -260,23 +257,22 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
     if (!minerAddress && minerInput.trim()) {
       void loadMinerLookup(minerInput);
     }
-  }, [active, loadMinerLookup, minerAddress, minerInput]);
+  }, [loadMinerLookup, minerAddress, minerInput]);
 
   const currentHashrateKey = minerAddress ? `${minerAddress}:${range}` : '';
 
   useEffect(() => {
-    if (!active || !minerAddress) return;
+    if (!minerAddress) return;
     if (hashrateRequestKeyRef.current === currentHashrateKey) return;
     void loadMinerHashrate();
-  }, [active, currentHashrateKey, loadMinerHashrate, minerAddress]);
+  }, [currentHashrateKey, loadMinerHashrate, minerAddress]);
 
   useEffect(() => {
-    if (!active) return;
     void loadRejections();
-  }, [active, loadRejections]);
+  }, [loadRejections]);
 
   useEffect(() => {
-    if (!active || liveTick <= 0) return;
+    if (liveTick <= 0) return;
     if (minerAddress) {
       if (liveTick % 12 === 0) {
         void refreshMinerBalance(true);
@@ -295,7 +291,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
     if (liveTick % 6 === 0) {
       void loadRejections();
     }
-  }, [active, liveTick, minerAddress, refreshMinerBalance, refreshMinerData, loadMinerHashrate, loadRejections]);
+  }, [liveTick, minerAddress, refreshMinerBalance, refreshMinerData, loadMinerHashrate, loadRejections]);
 
   const lookupDisabled = useMemo(() => {
     const raw = minerInput.trim();
@@ -368,7 +364,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   const hasWindowRejections = (rejectionWindow?.rejected ?? 0) > 0;
 
   return (
-    <div className={active ? 'page active' : 'page'} id="page-stats">
+    <div id="page-stats">
       <h2>My Stats</h2>
       <div className="card" style={{ marginBottom: 24 }}>
         <div className="lookup-form" style={{ display: 'flex', gap: 10, marginBottom: 0, flexWrap: 'wrap' }}>

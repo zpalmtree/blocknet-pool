@@ -183,19 +183,18 @@ export function App() {
 
   let currentPage: JSX.Element;
   if (route === 'start') {
-    currentPage = <StartPage active poolInfo={poolInfo} />;
+    currentPage = <StartPage poolInfo={poolInfo} />;
   } else if (route === 'luck') {
-    currentPage = <LuckPage active api={api} liveTick={liveTick} />;
+    currentPage = <LuckPage api={api} liveTick={liveTick} />;
   } else if (route === 'blocks') {
-    currentPage = <BlocksPage active api={api} liveTick={liveTick} />;
+    currentPage = <BlocksPage api={api} liveTick={liveTick} />;
   } else if (route === 'payouts') {
-    currentPage = <PayoutsPage active api={api} liveTick={liveTick} />;
+    currentPage = <PayoutsPage api={api} liveTick={liveTick} />;
   } else if (route === 'stats') {
-    currentPage = <StatsPage active api={api} liveTick={liveTick} theme={theme} />;
+    currentPage = <StatsPage api={api} liveTick={liveTick} theme={theme} />;
   } else if (route === 'admin') {
     currentPage = (
       <AdminPage
-        active
         api={api}
         liveTick={liveTick}
         apiKey={apiKey}
@@ -206,11 +205,10 @@ export function App() {
       />
     );
   } else if (route === 'status') {
-    currentPage = <StatusPage active api={api} liveTick={liveTick} />;
+    currentPage = <StatusPage api={api} liveTick={liveTick} />;
   } else {
     currentPage = (
       <DashboardPage
-        active
         api={api}
         poolInfo={poolInfo}
         liveTick={liveTick}

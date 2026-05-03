@@ -4,7 +4,6 @@ import { stratumUrl } from '../lib/format';
 import type { InfoResponse } from '../types';
 
 interface StartPageProps {
-  active: boolean;
   poolInfo: InfoResponse | null;
 }
 
@@ -13,7 +12,7 @@ function feeDisplayFor(poolInfo: InfoResponse | null): string {
   return pct != null && pct > 0 ? `${pct}%` : '0% (no fee)';
 }
 
-export function StartPage({ active, poolInfo }: StartPageProps) {
+export function StartPage({ poolInfo }: StartPageProps) {
   const [copiedKey, setCopiedKey] = useState('');
   const poolUrl = stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url);
   const commandExample = `./seine --pool-url ${poolUrl} --address YOUR_BLOCKNET_ADDRESS`;
@@ -111,7 +110,7 @@ export function StartPage({ active, poolInfo }: StartPageProps) {
   );
 
   return (
-    <div className={active ? 'page active' : 'page'} id="page-start">
+    <div id="page-start">
       <div className="page-header">
         <span className="page-kicker">Blocknet Mining Guide</span>
         <h1>How to start mining Blocknet</h1>

@@ -7,12 +7,11 @@ import { fmtSeconds, formatCoins, formatPct, roundToneClass, timeAgo, toUnixMs }
 import type { BlockItem, PagerState } from '../types';
 
 interface BlocksPageProps {
-  active: boolean;
   api: ApiClient;
   liveTick: number;
 }
 
-export function BlocksPage({ active, api, liveTick }: BlocksPageProps) {
+export function BlocksPage({ api, liveTick }: BlocksPageProps) {
   const [filter, setFilter] = useState('');
   const [items, setItems] = useState<BlockItem[]>([]);
   const [pager, setPager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
@@ -28,17 +27,16 @@ export function BlocksPage({ active, api, liveTick }: BlocksPageProps) {
   }, [api, filter, pager.limit, pager.offset]);
 
   useEffect(() => {
-    if (!active) return;
     void loadPage();
-  }, [active, loadPage]);
+  }, [loadPage]);
 
   useEffect(() => {
-    if (!active || liveTick <= 0 || liveTick % 12 !== 0) return;
+    if (liveTick <= 0 || liveTick % 12 !== 0) return;
     void loadPage();
-  }, [active, liveTick, loadPage]);
+  }, [liveTick, loadPage]);
 
   return (
-    <div className={active ? 'page active' : 'page'} id="page-blocks">
+    <div id="page-blocks">
       <div className="page-header">
         <span className="page-kicker">Block Discovery</span>
         <h1>Recently found Blocknet blocks</h1>

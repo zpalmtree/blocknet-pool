@@ -6,12 +6,11 @@ import { fmtSeconds, formatPct, roundToneClass, timeAgo, toUnixMs } from '../lib
 import type { LuckRound, PagerState } from '../types';
 
 interface LuckPageProps {
-  active: boolean;
   api: ApiClient;
   liveTick: number;
 }
 
-export function LuckPage({ active, api, liveTick }: LuckPageProps) {
+export function LuckPage({ api, liveTick }: LuckPageProps) {
   const [items, setItems] = useState<LuckRound[]>([]);
   const [pager, setPager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
 
@@ -26,17 +25,16 @@ export function LuckPage({ active, api, liveTick }: LuckPageProps) {
   }, [api, pager.limit, pager.offset]);
 
   useEffect(() => {
-    if (!active) return;
     void loadPage();
-  }, [active, loadPage]);
+  }, [loadPage]);
 
   useEffect(() => {
-    if (!active || liveTick <= 0 || liveTick % 12 !== 0) return;
+    if (liveTick <= 0 || liveTick % 12 !== 0) return;
     void loadPage();
-  }, [active, liveTick, loadPage]);
+  }, [liveTick, loadPage]);
 
   return (
-    <div className={active ? 'page active' : 'page'} id="page-luck">
+    <div id="page-luck">
       <div className="page-header">
         <span className="page-kicker">Round History</span>
         <h1>Blocknet pool luck history</h1>

@@ -422,14 +422,6 @@ nav {
   max-width: 1500px;
 }
 
-.page {
-  display: none;
-}
-
-.page.active {
-  display: block;
-}
-
 .page-header {
   display: grid;
   gap: 10px;

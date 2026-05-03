@@ -5,7 +5,6 @@ import { fmtSeconds, formatPct, timeAgo, toUnixMs } from "../lib/format";
 import type { StatusResponse } from "../types";
 
 interface StatusPageProps {
-  active: boolean;
   api: ApiClient;
   liveTick: number;
 }
@@ -42,7 +41,7 @@ function fmtRefreshLag(ms: number | null | undefined): string {
   return fmtSeconds(Math.max(1, Math.floor(ms / 1000)));
 }
 
-export function StatusPage({ active, api, liveTick }: StatusPageProps) {
+export function StatusPage({ api, liveTick }: StatusPageProps) {
   const [status, setStatus] = useState<StatusResponse | null>(null);
 
   const loadStatus = useCallback(async () => {
@@ -55,19 +54,18 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
   }, [api]);
 
   useEffect(() => {
-    if (!active) return;
     void loadStatus();
-  }, [active, loadStatus]);
+  }, [loadStatus]);
 
   useEffect(() => {
-    if (!active || liveTick <= 0 || liveTick % 6 !== 0) return;
+    if (liveTick <= 0 || liveTick % 6 !== 0) return;
     void loadStatus();
-  }, [active, liveTick, loadStatus]);
+  }, [liveTick, loadStatus]);
 
   const primaryUptimeLabel = status?.uptime[0]?.label;
 
   return (
-    <div className={active ? "page active" : "page"} id="page-status">
+    <div id="page-status">
       <div className="page-header">
         <span className="page-kicker">Pool Monitoring</span>
         <h1>Blocknet pool status</h1>

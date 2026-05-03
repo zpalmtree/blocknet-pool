@@ -27,7 +27,6 @@ import type {
 } from '../types';
 
 interface DashboardPageProps {
-  active: boolean;
   api: ApiClient;
   poolInfo: InfoResponse | null;
   liveTick: number;
@@ -40,7 +39,7 @@ function barWidth(value: number | null | undefined): string {
   return `${(clamped / 250) * 100}%`;
 }
 
-export function DashboardPage({ active, api, poolInfo, liveTick, theme }: DashboardPageProps) {
+export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageProps) {
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [insights, setInsights] = useState<StatsInsightsResponse | null>(null);
   const [payouts, setPayouts] = useState<PayoutItem[]>([]);
@@ -84,14 +83,13 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
   }, [api, range]);
 
   useEffect(() => {
-    if (!active) return;
     void refreshStats();
     void loadInsights();
     void loadPayouts();
-  }, [active, loadInsights, loadPayouts, refreshStats]);
+  }, [loadInsights, loadPayouts, refreshStats]);
 
   useEffect(() => {
-    if (!active || liveTick <= 0) return;
+    if (liveTick <= 0) return;
     if (liveTick % 2 === 0) {
       void refreshStats();
     }
@@ -100,12 +98,11 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
       void loadHistory();
       void loadPayouts();
     }
-  }, [active, liveTick, loadHistory, loadInsights, loadPayouts, refreshStats]);
+  }, [liveTick, loadHistory, loadInsights, loadPayouts, refreshStats]);
 
   useEffect(() => {
-    if (!active) return;
     void loadHistory();
-  }, [active, loadHistory, range]);
+  }, [loadHistory, range]);
 
   const copyStratum = useCallback(() => {
     void navigator.clipboard.writeText(stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url));
@@ -126,7 +123,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
 
   const avgLuck = insights?.avg_effort_pct;
   return (
-    <div className={active ? 'page active' : 'page'} id="page-dashboard">
+    <div id="page-dashboard">
       <div className="page-header">
         <span className="page-kicker">Blocknet Mining Pool</span>
         <h1>Live Blocknet pool dashboard</h1>
