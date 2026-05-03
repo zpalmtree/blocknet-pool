@@ -294,22 +294,14 @@ struct NetworkHashrateCache {
     hashrate_hps: Option<f64>,
 }
 
-#[derive(Default)]
-struct InsightsCache {
-    updated_at: Option<Instant>,
-    value: Option<StatsInsightsResponse>,
-}
+type InsightsCache = TimedValueCache<StatsInsightsResponse>;
 
 #[derive(Default)]
 struct RejectionAnalyticsCache {
     entries: HashMap<u64, TimedCacheEntry<RejectionAnalyticsSnapshot>>,
 }
 
-#[derive(Default)]
-struct StatsResponseCache {
-    updated_at: Option<Instant>,
-    value: Option<StatsResponse>,
-}
+type StatsResponseCache = TimedValueCache<StatsResponse>;
 
 #[derive(Default)]
 struct PendingEstimateSnapshotCache {
@@ -325,6 +317,30 @@ struct TimedCacheEntry<T> {
     value: T,
 }
 
+struct TimedValueCache<T> {
+    entry: Option<TimedCacheEntry<T>>,
+}
+
+impl<T: Clone> TimedValueCache<T> {
+    fn new() -> Self {
+        Self { entry: None }
+    }
+
+    fn get(&self, ttl: Duration) -> Option<T> {
+        self.entry
+            .as_ref()
+            .filter(|entry| entry.updated_at.elapsed() < ttl)
+            .map(|entry| entry.value.clone())
+    }
+
+    fn set(&mut self, value: T) {
+        self.entry = Some(TimedCacheEntry {
+            updated_at: Instant::now(),
+            value,
+        });
+    }
+}
+
 #[derive(Clone, Serialize)]
 struct MinerBalancePayload {
     address: String,
@@ -332,11 +348,7 @@ struct MinerBalancePayload {
     pending_estimate: MinerPendingEstimate,
 }
 
-#[derive(Default)]
-struct MinerBalanceResponseCache {
-    entries: HashMap<String, TimedCacheEntry<MinerBalancePayload>>,
-    last_cleanup_at: Option<Instant>,
-}
+type MinerBalanceResponseCache = TimedMapCache<MinerBalancePayload>;
 
 #[derive(Clone)]
 struct MinerDetailPayload {
@@ -344,10 +356,53 @@ struct MinerDetailPayload {
     body: MinerDetailResponse,
 }
 
-#[derive(Default)]
-struct MinerDetailResponseCache {
-    entries: HashMap<String, TimedCacheEntry<MinerDetailPayload>>,
+type MinerDetailResponseCache = TimedMapCache<MinerDetailPayload>;
+
+struct TimedMapCache<T> {
+    entries: HashMap<String, TimedCacheEntry<T>>,
     last_cleanup_at: Option<Instant>,
+}
+
+impl<T: Clone> TimedMapCache<T> {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            last_cleanup_at: None,
+        }
+    }
+
+    fn get(&mut self, key: &str, ttl: Duration, max_entries: usize) -> Option<T> {
+        let now = Instant::now();
+        if self
+            .last_cleanup_at
+            .is_none_or(|last| now.duration_since(last) >= ttl)
+        {
+            prune_timed_cache_entries(&mut self.entries, ttl, max_entries, now);
+            self.last_cleanup_at = Some(now);
+        }
+
+        self.entries
+            .get(key)
+            .filter(|entry| now.duration_since(entry.updated_at) < ttl)
+            .map(|entry| entry.value.clone())
+    }
+
+    fn insert(&mut self, key: String, value: T, ttl: Duration, max_entries: usize) {
+        let now = Instant::now();
+        prune_timed_cache_entries(&mut self.entries, ttl, max_entries.saturating_sub(1), now);
+        self.entries.insert(
+            key,
+            TimedCacheEntry {
+                updated_at: now,
+                value,
+            },
+        );
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.last_cleanup_at = None;
+    }
 }
 
 fn prune_timed_cache_entries<T>(
@@ -481,11 +536,7 @@ impl ApiPerformanceTracker {
     }
 }
 
-#[derive(Default)]
-struct LiveRuntimeSnapshotCache {
-    updated_at: Option<Instant>,
-    value: Option<PersistedRuntimeSnapshot>,
-}
+type LiveRuntimeSnapshotCache = TimedValueCache<Option<PersistedRuntimeSnapshot>>;
 
 #[derive(Serialize)]
 struct StatusIncident {
@@ -3939,22 +3990,20 @@ impl ApiState {
             node,
             db_totals_cache: Arc::new(Mutex::new(DbTotalsCache::default())),
             network_hashrate_cache: Arc::new(Mutex::new(NetworkHashrateCache::default())),
-            insights_cache: Arc::new(Mutex::new(InsightsCache::default())),
+            insights_cache: Arc::new(Mutex::new(InsightsCache::new())),
             rejection_analytics_cache: Arc::new(Mutex::new(RejectionAnalyticsCache::default())),
-            stats_response_cache: Arc::new(Mutex::new(StatsResponseCache::default())),
+            stats_response_cache: Arc::new(Mutex::new(StatsResponseCache::new())),
             pending_estimate_snapshot_cache: Arc::new(Mutex::new(
                 PendingEstimateSnapshotCache::default(),
             )),
             pending_estimate_snapshot_notify: Arc::new(Notify::new()),
-            miner_balance_response_cache: Arc::new(
-                Mutex::new(MinerBalanceResponseCache::default()),
-            ),
-            miner_detail_response_cache: Arc::new(Mutex::new(MinerDetailResponseCache::default())),
+            miner_balance_response_cache: Arc::new(Mutex::new(MinerBalanceResponseCache::new())),
+            miner_detail_response_cache: Arc::new(Mutex::new(MinerDetailResponseCache::new())),
             public_telemetry_rate_limiter: Arc::new(Mutex::new(
                 PublicTelemetryRateLimiter::default(),
             )),
             performance: Arc::new(ApiPerformanceTracker::default()),
-            live_runtime_snapshot_cache: Arc::new(Mutex::new(LiveRuntimeSnapshotCache::default())),
+            live_runtime_snapshot_cache: Arc::new(Mutex::new(LiveRuntimeSnapshotCache::new())),
             started_at: Instant::now(),
         }
     }
@@ -3962,11 +4011,8 @@ impl ApiState {
     async fn persisted_runtime_snapshot(&self) -> Option<PersistedRuntimeSnapshot> {
         {
             let cache = self.live_runtime_snapshot_cache.lock();
-            if cache
-                .updated_at
-                .is_some_and(|updated| updated.elapsed() < LIVE_RUNTIME_SNAPSHOT_CACHE_TTL)
-            {
-                return cache.value.clone();
+            if let Some(value) = cache.get(LIVE_RUNTIME_SNAPSHOT_CACHE_TTL) {
+                return value;
             }
         }
 
@@ -4004,30 +4050,23 @@ impl ApiState {
         };
 
         let mut cache = self.live_runtime_snapshot_cache.lock();
-        cache.updated_at = Some(Instant::now());
-        cache.value = loaded.clone();
+        cache.set(loaded.clone());
         loaded
     }
 
     async fn cached_stats_response(&self) -> anyhow::Result<StatsResponse> {
         {
             let cache = self.stats_response_cache.lock();
-            if cache
-                .updated_at
-                .is_some_and(|updated| updated.elapsed() < STATS_RESPONSE_CACHE_TTL)
-            {
-                if let Some(value) = cache.value.clone() {
-                    self.performance.caches.record_hit("stats_response");
-                    return Ok(value);
-                }
+            if let Some(value) = cache.get(STATS_RESPONSE_CACHE_TTL) {
+                self.performance.caches.record_hit("stats_response");
+                return Ok(value);
             }
         }
 
         self.performance.caches.record_miss("stats_response");
         let fresh = self.load_stats_response().await?;
         let mut cache = self.stats_response_cache.lock();
-        cache.updated_at = Some(Instant::now());
-        cache.value = Some(fresh.clone());
+        cache.set(fresh.clone());
         Ok(fresh)
     }
 
@@ -4444,8 +4483,8 @@ impl ApiState {
     }
 
     fn clear_miner_response_caches(&self) {
-        self.miner_balance_response_cache.lock().entries.clear();
-        self.miner_detail_response_cache.lock().entries.clear();
+        self.miner_balance_response_cache.lock().clear();
+        self.miner_detail_response_cache.lock().clear();
     }
 
     async fn cached_pending_estimate_for_miner(
@@ -4579,24 +4618,11 @@ impl ApiState {
         let cache_key = format!("{address}:{include_pending_estimate}");
         if let Some(cached) = {
             let mut cache = self.miner_balance_response_cache.lock();
-            let now = Instant::now();
-            if cache
-                .last_cleanup_at
-                .is_none_or(|last| now.duration_since(last) >= MINER_BALANCE_RESPONSE_CACHE_TTL)
-            {
-                prune_timed_cache_entries(
-                    &mut cache.entries,
-                    MINER_BALANCE_RESPONSE_CACHE_TTL,
-                    MINER_BALANCE_RESPONSE_CACHE_MAX_ENTRIES,
-                    now,
-                );
-                cache.last_cleanup_at = Some(now);
-            }
-            cache
-                .entries
-                .get(&cache_key)
-                .filter(|entry| entry.updated_at.elapsed() < MINER_BALANCE_RESPONSE_CACHE_TTL)
-                .map(|entry| entry.value.clone())
+            cache.get(
+                &cache_key,
+                MINER_BALANCE_RESPONSE_CACHE_TTL,
+                MINER_BALANCE_RESPONSE_CACHE_MAX_ENTRIES,
+            )
         } {
             self.performance.caches.record_hit("miner_balance");
             return Ok(cached);
@@ -4607,18 +4633,11 @@ impl ApiState {
             .load_miner_balance_payload(address, include_pending_estimate)
             .await?;
         let mut cache = self.miner_balance_response_cache.lock();
-        prune_timed_cache_entries(
-            &mut cache.entries,
-            MINER_BALANCE_RESPONSE_CACHE_TTL,
-            MINER_BALANCE_RESPONSE_CACHE_MAX_ENTRIES.saturating_sub(1),
-            Instant::now(),
-        );
-        cache.entries.insert(
+        cache.insert(
             cache_key,
-            TimedCacheEntry {
-                updated_at: Instant::now(),
-                value: fresh.clone(),
-            },
+            fresh.clone(),
+            MINER_BALANCE_RESPONSE_CACHE_TTL,
+            MINER_BALANCE_RESPONSE_CACHE_MAX_ENTRIES,
         );
         Ok(fresh)
     }
@@ -4630,24 +4649,11 @@ impl ApiState {
         let cache_key = address.to_string();
         if let Some(cached) = {
             let mut cache = self.miner_detail_response_cache.lock();
-            let now = Instant::now();
-            if cache
-                .last_cleanup_at
-                .is_none_or(|last| now.duration_since(last) >= MINER_DETAIL_RESPONSE_CACHE_TTL)
-            {
-                prune_timed_cache_entries(
-                    &mut cache.entries,
-                    MINER_DETAIL_RESPONSE_CACHE_TTL,
-                    MINER_DETAIL_RESPONSE_CACHE_MAX_ENTRIES,
-                    now,
-                );
-                cache.last_cleanup_at = Some(now);
-            }
-            cache
-                .entries
-                .get(&cache_key)
-                .filter(|entry| entry.updated_at.elapsed() < MINER_DETAIL_RESPONSE_CACHE_TTL)
-                .map(|entry| entry.value.clone())
+            cache.get(
+                &cache_key,
+                MINER_DETAIL_RESPONSE_CACHE_TTL,
+                MINER_DETAIL_RESPONSE_CACHE_MAX_ENTRIES,
+            )
         } {
             self.performance.caches.record_hit("miner_detail");
             return Ok(cached);
@@ -4656,18 +4662,11 @@ impl ApiState {
         self.performance.caches.record_miss("miner_detail");
         let fresh = self.load_miner_detail_payload(address).await?;
         let mut cache = self.miner_detail_response_cache.lock();
-        prune_timed_cache_entries(
-            &mut cache.entries,
-            MINER_DETAIL_RESPONSE_CACHE_TTL,
-            MINER_DETAIL_RESPONSE_CACHE_MAX_ENTRIES.saturating_sub(1),
-            Instant::now(),
-        );
-        cache.entries.insert(
+        cache.insert(
             cache_key,
-            TimedCacheEntry {
-                updated_at: Instant::now(),
-                value: fresh.clone(),
-            },
+            fresh.clone(),
+            MINER_DETAIL_RESPONSE_CACHE_TTL,
+            MINER_DETAIL_RESPONSE_CACHE_MAX_ENTRIES,
         );
         Ok(fresh)
     }
@@ -4877,13 +4876,8 @@ impl ApiState {
     async fn stats_insights(&self) -> anyhow::Result<StatsInsightsResponse> {
         {
             let cache = self.insights_cache.lock();
-            if cache
-                .updated_at
-                .is_some_and(|updated| updated.elapsed() < INSIGHTS_CACHE_TTL)
-            {
-                if let Some(value) = cache.value.clone() {
-                    return Ok(value);
-                }
+            if let Some(value) = cache.get(INSIGHTS_CACHE_TTL) {
+                return Ok(value);
             }
         }
 
@@ -5000,8 +4994,7 @@ impl ApiState {
         };
 
         let mut cache = self.insights_cache.lock();
-        cache.updated_at = Some(Instant::now());
-        cache.value = Some(response.clone());
+        cache.set(response.clone());
         Ok(response)
     }
 
