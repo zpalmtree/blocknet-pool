@@ -732,6 +732,15 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS batch_id TEXT")
             .context("ensure pending_payouts.batch_id column")?;
         conn.batch_execute(
+            "UPDATE payouts SET batch_id = CONCAT('legacy:', (timestamp / 300)::text)
+             WHERE COALESCE(BTRIM(batch_id), '') = '';
+             UPDATE pending_payouts SET batch_id = CONCAT('legacy:', (COALESCE(sent_at, send_started_at, initiated_at) / 300)::text)
+             WHERE tx_hash IS NOT NULL AND BTRIM(tx_hash) <> ''
+               AND COALESCE(BTRIM(batch_id), '') = ''
+               AND COALESCE(sent_at, send_started_at, initiated_at) IS NOT NULL",
+        )
+        .context("backfill legacy payout batch ids")?;
+        conn.batch_execute(
             "CREATE INDEX IF NOT EXISTS idx_payouts_batch_id
              ON payouts(batch_id)",
         )
@@ -2372,15 +2381,12 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 SELECT batch_key
                 FROM (
                     SELECT
-                        COALESCE(NULLIF(batch_id, ''), CONCAT('legacy:', (timestamp / 300)::text)) AS batch_key
+                        batch_id AS batch_key
                     FROM payouts
                     WHERE reverted_at IS NULL
                     UNION ALL
                     SELECT
-                        COALESCE(
-                            NULLIF(batch_id, ''),
-                            CONCAT('legacy:', (COALESCE(sent_at, send_started_at, initiated_at) / 300)::text)
-                        ) AS batch_key
+                        batch_id AS batch_key
                     FROM pending_payouts
                     WHERE tx_hash IS NOT NULL
                       AND BTRIM(tx_hash) <> ''
@@ -2399,7 +2405,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     tx_hash,
                     timestamp,
                     1 AS confirmed,
-                    COALESCE(NULLIF(batch_id, ''), CONCAT('legacy:', (timestamp / 300)::text)) AS batch_key
+                    batch_id AS batch_key
                 FROM payouts
                 WHERE reverted_at IS NULL
                 UNION ALL
@@ -2409,10 +2415,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     tx_hash,
                     COALESCE(sent_at, send_started_at, initiated_at) AS timestamp,
                     0 AS confirmed,
-                    COALESCE(
-                        NULLIF(batch_id, ''),
-                        CONCAT('legacy:', (COALESCE(sent_at, send_started_at, initiated_at) / 300)::text)
-                    ) AS batch_key
+                    batch_id AS batch_key
                 FROM pending_payouts
                 WHERE tx_hash IS NOT NULL
                   AND BTRIM(tx_hash) <> ''
@@ -7060,18 +7063,22 @@ mod tests {
         let pending_tx = format!("tx-pending-{suffix}");
 
         store
-            .conn()
-            .lock()
-            .execute(
-                "INSERT INTO payouts (address, amount, fee, tx_hash, timestamp) VALUES ($1, $2, $3, $4, $5)",
-                &[&confirmed_addr, &10i64, &1i64, &confirmed_tx, &100i64],
+            .add_payout_with_batch(
+                &confirmed_addr,
+                10,
+                1,
+                &confirmed_tx,
+                Some(&format!("batch-confirmed-{suffix}")),
             )
             .expect("insert confirmed payout");
         store
             .create_pending_payout(&pending_addr, 25)
             .expect("create pending");
         store
-            .mark_pending_payout_send_started(&pending_addr)
+            .mark_pending_payouts_send_started_batch(
+                std::slice::from_ref(&pending_addr),
+                &format!("batch-pending-{suffix}"),
+            )
             .expect("mark started");
         store
             .record_pending_payout_broadcast(&pending_addr, 25, 2, &pending_tx)

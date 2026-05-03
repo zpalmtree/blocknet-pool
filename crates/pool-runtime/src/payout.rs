@@ -2380,12 +2380,10 @@ fn derive_recent_payout_stats(payouts: &[Payout]) -> RecentPayoutStats {
         .filter(|amount| *amount > 0)
         .collect::<Vec<_>>();
     for payout in payouts {
-        let batch_key = payout
-            .batch_id
-            .clone()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| legacy_payout_batch_key(payout.timestamp));
-        let entry = grouped.entry(batch_key).or_insert((0, 0));
+        let Some(batch_id) = &payout.batch_id else {
+            continue;
+        };
+        let entry = grouped.entry(batch_id.clone()).or_insert((0, 0));
         entry.0 = entry.0.saturating_add(payout.amount);
         entry.1 = entry.1.saturating_add(1);
     }
@@ -2410,15 +2408,6 @@ fn derive_recent_payout_stats(payouts: &[Payout]) -> RecentPayoutStats {
         median_recipient_amount: quantile(&recipient_amounts, 1, 2),
         p90_recipient_amount: quantile(&recipient_amounts, 9, 10),
     }
-}
-
-fn legacy_payout_batch_key(timestamp: SystemTime) -> String {
-    let bucket = timestamp
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-        / 300;
-    format!("legacy:{bucket}")
 }
 
 fn quantile<T: Copy + Default>(values: &[T], numerator: usize, denominator: usize) -> T {
