@@ -1506,17 +1506,13 @@ fn source_host_label(url: &str) -> String {
         .unwrap_or_else(|| url.to_string())
 }
 
-fn reference_height_spread(samples: &[ReferenceHeightSample]) -> Option<u64> {
-    let min_height = samples.iter().filter_map(|item| item.height).min()?;
-    let max_height = samples.iter().filter_map(|item| item.height).max()?;
-    Some(max_height.saturating_sub(min_height))
-}
-
 fn reference_height_divergence_state(
     samples: &[ReferenceHeightSample],
     threshold: u64,
 ) -> Option<(&'static str, u64, String)> {
-    let spread = reference_height_spread(samples)?;
+    let min_height = samples.iter().filter_map(|item| item.height).min()?;
+    let max_height = samples.iter().filter_map(|item| item.height).max()?;
+    let spread = max_height.saturating_sub(min_height);
     if spread <= threshold {
         return None;
     }
