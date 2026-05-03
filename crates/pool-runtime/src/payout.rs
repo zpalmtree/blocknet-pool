@@ -1177,8 +1177,14 @@ impl PayoutProcessor {
             .filter(|output| output.status.eq_ignore_ascii_case("unspent"))
             .collect::<Vec<_>>();
         let mut inventory = build_output_inventory(&spendable_outputs, min_amount, &recent_stats);
-        let reserve_target =
-            compute_reserve_target(min_amount, &recent_stats, inventory.medium_target_amount);
+        let min_reserve_floor = min_amount
+            .saturating_mul(4)
+            .max(inventory.medium_target_amount)
+            .max(MIN_PAYOUT_FEE_BUFFER.saturating_mul(16));
+        let reserve_target = recent_stats
+            .median_batch_total
+            .max(min_reserve_floor)
+            .max(recent_stats.p90_recipient_amount);
         let oldest_age = queued
             .first()
             .map(|candidate| payout_wait_age(&candidate.pending, now))
@@ -1225,10 +1231,17 @@ impl PayoutProcessor {
             return;
         }
 
-        let target_recipients_per_tx =
-            adaptive_target_recipients_per_tx(&recent_stats).min(max_recipients_per_tick.max(1));
-        let max_txs_per_sweep =
-            adaptive_max_txs_per_sweep(max_recipients_per_tick, target_recipients_per_tx);
+        let target_recipients_per_tx = recent_stats
+            .p90_recipient_count
+            .max(DEFAULT_TARGET_RECIPIENTS_PER_TX)
+            .clamp(8, MAX_RECIPIENTS_PER_TX)
+            .min(max_recipients_per_tick.max(1));
+        let target_recipients = target_recipients_per_tx.max(1);
+        let max_txs_per_sweep = (max_recipients_per_tick
+            .max(1)
+            .saturating_add(target_recipients - 1)
+            / target_recipients)
+            .clamp(1, MAX_TXS_PER_SWEEP);
         let mut sent_recipients = 0usize;
         let mut sent_total = 0u64;
         let mut sent_txs = 0usize;
@@ -2393,21 +2406,6 @@ fn quantile<T: Copy + Default>(values: &[T], numerator: usize, denominator: usiz
     values[idx]
 }
 
-fn compute_reserve_target(
-    min_amount: u64,
-    recent_stats: &RecentPayoutStats,
-    medium_target_amount: u64,
-) -> u64 {
-    let min_reserve_floor = min_amount
-        .saturating_mul(4)
-        .max(medium_target_amount)
-        .max(MIN_PAYOUT_FEE_BUFFER.saturating_mul(16));
-    recent_stats
-        .median_batch_total
-        .max(min_reserve_floor)
-        .max(recent_stats.p90_recipient_amount)
-}
-
 fn compute_safe_spend_budget(
     spendable: u64,
     reserve_target: u64,
@@ -2423,22 +2421,6 @@ fn compute_safe_spend_budget(
     spendable
         .saturating_sub(reserve_floor)
         .saturating_sub(MIN_PAYOUT_FEE_BUFFER.saturating_mul(4))
-}
-
-fn adaptive_target_recipients_per_tx(recent_stats: &RecentPayoutStats) -> usize {
-    recent_stats
-        .p90_recipient_count
-        .max(DEFAULT_TARGET_RECIPIENTS_PER_TX)
-        .clamp(8, MAX_RECIPIENTS_PER_TX)
-}
-
-fn adaptive_max_txs_per_sweep(
-    max_recipients_per_tick: usize,
-    target_recipients_per_tx: usize,
-) -> usize {
-    let target = target_recipients_per_tx.max(1);
-    let needed = (max_recipients_per_tick.max(1).saturating_add(target - 1)) / target;
-    needed.clamp(1, MAX_TXS_PER_SWEEP)
 }
 
 fn trim_batch_to_total_cap(batch: &mut Vec<PayoutCandidate>, total_cap: u64) {
