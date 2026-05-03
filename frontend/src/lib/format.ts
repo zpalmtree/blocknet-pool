@@ -12,6 +12,14 @@ const COMPACT_COIN_FORMATTER = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 2,
 });
 
+const feeFormatter = (maximumFractionDigits: number) =>
+  new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 4,
+    maximumFractionDigits,
+  });
+const SMALL_FEE_FORMATTER = feeFormatter(8);
+const FEE_FORMATTER = feeFormatter(4);
+
 export function toUnixMs(val: UnixLike): number {
   if (!val) return 0;
   if (typeof val === 'number') return val < 1e12 ? val * 1000 : val;
@@ -105,16 +113,7 @@ export function formatCoinAmount(sats: number | null | undefined): string {
 export function formatFee(sats: number | null | undefined): string {
   if (sats == null || sats === 0) return '0 BNT';
   const v = sats / 1e8;
-  if (v < 0.01) {
-    return `${new Intl.NumberFormat('en-US', {
-      minimumFractionDigits: 4,
-      maximumFractionDigits: 8,
-    }).format(v)} BNT`;
-  }
-  return `${new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: 4,
-    maximumFractionDigits: 4,
-  }).format(v)} BNT`;
+  return `${(v < 0.01 ? SMALL_FEE_FORMATTER : FEE_FORMATTER).format(v)} BNT`;
 }
 
 export function formatPct(value: number | null | undefined, digits = 1): string {
