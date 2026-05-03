@@ -6066,6 +6066,56 @@ mod tests {
         }
     }
 
+    fn test_block(
+        height: u64,
+        hash: &str,
+        finder: &str,
+        finder_worker: &str,
+        reward: u64,
+        timestamp: SystemTime,
+        confirmed: bool,
+        orphaned: bool,
+    ) -> DbBlock {
+        DbBlock {
+            height,
+            hash: hash.to_string(),
+            difficulty: 200,
+            finder: finder.to_string(),
+            finder_worker: finder_worker.to_string(),
+            reward,
+            timestamp,
+            confirmed,
+            orphaned,
+            paid_out: false,
+            effort_pct: None,
+        }
+    }
+
+    fn add_test_block(
+        store: &PoolStore,
+        height: u64,
+        hash: &str,
+        finder: &str,
+        finder_worker: &str,
+        reward: u64,
+        timestamp: SystemTime,
+        confirmed: bool,
+        orphaned: bool,
+    ) {
+        store
+            .add_block(&test_block(
+                height,
+                hash,
+                finder,
+                finder_worker,
+                reward,
+                timestamp,
+                confirmed,
+                orphaned,
+            ))
+            .expect("add block");
+    }
+
     #[test]
     fn api_performance_route_name_classifies_hot_routes() {
         assert_eq!(
@@ -6945,21 +6995,9 @@ mod tests {
                 ),
             ],
         );
-        store
-            .add_block(&DbBlock {
-                height: 99,
-                hash: "blk-99".to_string(),
-                difficulty: 200,
-                finder: "miner-a".to_string(),
-                finder_worker: "wa".to_string(),
-                reward: 1_000,
-                timestamp: block_ts,
-                confirmed: false,
-                orphaned: false,
-                paid_out: false,
-                effort_pct: None,
-            })
-            .expect("add unconfirmed block");
+        add_test_block(
+            &store, 99, "blk-99", "miner-a", "wa", 1_000, block_ts, false, false,
+        );
 
         let estimate = estimate_unconfirmed_pending_for_miner(
             &store,
@@ -7022,21 +7060,9 @@ mod tests {
                 base + Duration::from_secs(100 * 60),
             ),
         ] {
-            store
-                .add_block(&DbBlock {
-                    height,
-                    hash,
-                    difficulty: 200,
-                    finder,
-                    finder_worker: "w".to_string(),
-                    reward: 900,
-                    timestamp,
-                    confirmed: false,
-                    orphaned: false,
-                    paid_out: false,
-                    effort_pct: None,
-                })
-                .expect("add unconfirmed block");
+            add_test_block(
+                &store, height, &hash, &finder, "w", 900, timestamp, false, false,
+            );
         }
 
         let miner_a = estimate_unconfirmed_pending_for_miner(
@@ -7091,21 +7117,9 @@ mod tests {
                 ),
             ],
         );
-        store
-            .add_block(&DbBlock {
-                height: 299,
-                hash: "blk-paid".to_string(),
-                difficulty: 200,
-                finder: "miner-a".to_string(),
-                finder_worker: "wa".to_string(),
-                reward: 1_000,
-                timestamp: block_ts,
-                confirmed: true,
-                orphaned: false,
-                paid_out: false,
-                effort_pct: None,
-            })
-            .expect("add paid block");
+        add_test_block(
+            &store, 299, "blk-paid", "miner-a", "wa", 1_000, block_ts, true, false,
+        );
         store
             .apply_block_credits_and_mark_paid_with_fee(
                 299,
@@ -7182,21 +7196,9 @@ mod tests {
                 ),
             ],
         );
-        store
-            .add_block(&DbBlock {
-                height: 298,
-                hash: "blk-cap".to_string(),
-                difficulty: 200,
-                finder: "miner-b".to_string(),
-                finder_worker: "wb".to_string(),
-                reward: 1_200,
-                timestamp: block_ts,
-                confirmed: false,
-                orphaned: false,
-                paid_out: false,
-                effort_pct: None,
-            })
-            .expect("add block");
+        add_test_block(
+            &store, 298, "blk-cap", "miner-b", "wb", 1_200, block_ts, false, false,
+        );
 
         let breakdown =
             build_block_reward_breakdown(&store, &cfg, 298, block_ts + Duration::from_secs(10))
@@ -7243,21 +7245,17 @@ mod tests {
                 }),
             )
             .expect("add replay share");
-        store
-            .add_block(&DbBlock {
-                height: 297,
-                hash: "blk-replay-view".to_string(),
-                difficulty: 200,
-                finder: "miner-a".to_string(),
-                finder_worker: "wa".to_string(),
-                reward: 1_000,
-                timestamp: block_ts,
-                confirmed: false,
-                orphaned: false,
-                paid_out: false,
-                effort_pct: None,
-            })
-            .expect("add block");
+        add_test_block(
+            &store,
+            297,
+            "blk-replay-view",
+            "miner-a",
+            "wa",
+            1_000,
+            block_ts,
+            false,
+            false,
+        );
 
         let breakdown =
             build_block_reward_breakdown(&store, &cfg, 297, block_ts + Duration::from_secs(10))
@@ -7319,21 +7317,17 @@ mod tests {
                 ),
             ],
         );
-        store
-            .add_block(&DbBlock {
-                height: 199,
-                hash: "blk-preview".to_string(),
-                difficulty: 200,
-                finder: "miner-a".to_string(),
-                finder_worker: "wa".to_string(),
-                reward: 1_000,
-                timestamp: block_ts,
-                confirmed: false,
-                orphaned: false,
-                paid_out: false,
-                effort_pct: None,
-            })
-            .expect("add unconfirmed block");
+        add_test_block(
+            &store,
+            199,
+            "blk-preview",
+            "miner-a",
+            "wa",
+            1_000,
+            block_ts,
+            false,
+            false,
+        );
 
         let estimate = estimate_unconfirmed_pending_for_miner(
             &store,
@@ -7373,64 +7367,52 @@ mod tests {
 
         let base = UNIX_EPOCH + Duration::from_secs(2_050_000);
         let block_ts = base + Duration::from_secs(120);
-        for share in [
-            ShareRecord {
-                job_id: "j-risk-a-verified".to_string(),
-                miner: "miner-a".to_string(),
-                worker: "wa".to_string(),
-                difficulty: 10,
-                nonce: 1,
-                status: "verified",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: base,
-            },
-            ShareRecord {
-                job_id: "j-risk-a-provisional".to_string(),
-                miner: "miner-a".to_string(),
-                worker: "wa".to_string(),
-                difficulty: 90,
-                nonce: 2,
-                status: "provisional",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: base + Duration::from_secs(1),
-            },
-            ShareRecord {
-                job_id: "j-risk-b".to_string(),
-                miner: "miner-b".to_string(),
-                worker: "wb".to_string(),
-                difficulty: 10,
-                nonce: 3,
-                status: "verified",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: base + Duration::from_secs(2),
-            },
-        ] {
-            store.add_share(share).expect("add risk preview share");
-        }
-        store
-            .add_block(&DbBlock {
-                height: 249,
-                hash: "blk-risk-preview".to_string(),
-                difficulty: 200,
-                finder: "miner-a".to_string(),
-                finder_worker: "wa".to_string(),
-                reward: 1_000,
-                timestamp: block_ts,
-                confirmed: false,
-                orphaned: false,
-                paid_out: false,
-                effort_pct: None,
-            })
-            .expect("add unconfirmed block");
+        add_test_shares(
+            &store,
+            &[
+                (
+                    "j-risk-a-verified",
+                    "miner-a",
+                    "wa",
+                    10,
+                    1,
+                    "verified",
+                    true,
+                    base,
+                ),
+                (
+                    "j-risk-a-provisional",
+                    "miner-a",
+                    "wa",
+                    90,
+                    2,
+                    "provisional",
+                    true,
+                    base + Duration::from_secs(1),
+                ),
+                (
+                    "j-risk-b",
+                    "miner-b",
+                    "wb",
+                    10,
+                    3,
+                    "verified",
+                    true,
+                    base + Duration::from_secs(2),
+                ),
+            ],
+        );
+        add_test_block(
+            &store,
+            249,
+            "blk-risk-preview",
+            "miner-a",
+            "wa",
+            1_000,
+            block_ts,
+            false,
+            false,
+        );
 
         let estimate = estimate_unconfirmed_pending_for_miner(
             &store,
@@ -7487,21 +7469,17 @@ mod tests {
                 created_at: base + Duration::from_secs(10),
             })
             .expect("add winning share");
-        store
-            .add_block(&DbBlock {
-                height: 109,
-                hash: "blk-anchor".to_string(),
-                difficulty: 200,
-                finder: "miner-b".to_string(),
-                finder_worker: "wb".to_string(),
-                reward: 1_000,
-                timestamp: block_ts,
-                confirmed: false,
-                orphaned: false,
-                paid_out: false,
-                effort_pct: None,
-            })
-            .expect("add anchor block");
+        add_test_block(
+            &store,
+            109,
+            "blk-anchor",
+            "miner-b",
+            "wb",
+            1_000,
+            block_ts,
+            false,
+            false,
+        );
 
         let estimate = estimate_unconfirmed_pending_for_miner(
             &store,
@@ -7540,21 +7518,17 @@ mod tests {
                 created_at: base,
             })
             .expect("add delayed share");
-        store
-            .add_block(&DbBlock {
-                height: 119,
-                hash: "blk-delay".to_string(),
-                difficulty: 200,
-                finder: "miner-a".to_string(),
-                finder_worker: "wa".to_string(),
-                reward: 1_000,
-                timestamp: block_ts,
-                confirmed: false,
-                orphaned: false,
-                paid_out: false,
-                effort_pct: None,
-            })
-            .expect("add delayed block");
+        add_test_block(
+            &store,
+            119,
+            "blk-delay",
+            "miner-a",
+            "wa",
+            1_000,
+            block_ts,
+            false,
+            false,
+        );
 
         let estimate = estimate_unconfirmed_pending_for_miner(
             &store,
