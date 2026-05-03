@@ -121,11 +121,6 @@ function reconciliationRecommendation(issue: AdminMissingCompletedPayoutIssue): 
   return 'Choose the override that matches the current chain state.';
 }
 
-function formatAdminTimestamp(value: UnixLike): string {
-  const ms = toUnixMs(value);
-  return ms ? new Date(ms).toLocaleString() : '-';
-}
-
 function formatWholeNumber(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '0';
   return Math.round(value).toLocaleString();
@@ -141,7 +136,7 @@ function holdUntilLabel(value: UnixLike | null | undefined): string {
 }
 
 function holdUntilTitle(value: UnixLike | null | undefined): string | undefined {
-  return hasActiveUntil(value) ? formatAdminTimestamp(value as UnixLike) : undefined;
+  return hasActiveUntil(value) ? timestampTitle(value as UnixLike) || undefined : undefined;
 }
 
 function verificationHoldBadgeClass(active: boolean, tone: 'warn' | 'good' = 'warn'): string {
@@ -2443,7 +2438,7 @@ export function AdminPage({
                           <td title={hold.reason ?? hold.last_reason ?? undefined}>
                             {hold.reason ?? hold.last_reason ?? '-'}
                           </td>
-                          <td className="mono" title={hold.last_event_at ? formatAdminTimestamp(hold.last_event_at) : undefined}>
+                          <td className="mono" title={hold.last_event_at ? timestampTitle(hold.last_event_at) || undefined : undefined}>
                             {hold.last_event_at ? timeAgo(hold.last_event_at) : '-'}
                           </td>
                           <td>
