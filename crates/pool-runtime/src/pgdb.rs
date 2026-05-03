@@ -3575,12 +3575,13 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 let validation_recent_verified_difficulty = row.get::<_, i64>(10).max(0) as u64;
                 let validation_recent_provisional_difficulty = row.get::<_, i64>(11).max(0) as u64;
                 let reason = last_reason.clone().or_else(|| {
-                    validation_hold_reason(
-                        validation_hold_cause,
-                        validation_pending_provisional,
-                        validation_recent_verified_difficulty,
-                        validation_recent_provisional_difficulty,
-                    )
+                    validation_hold_cause.map(|cause| {
+                        cause.hold_reason(
+                            validation_pending_provisional,
+                            validation_recent_verified_difficulty,
+                            validation_recent_provisional_difficulty,
+                        )
+                    })
                 });
                 ActiveVerificationHold {
                     address: row.get::<_, String>(0),
@@ -5704,44 +5705,6 @@ fn validation_hold_cause_from_db(value: Option<&str>) -> Option<ValidationHoldCa
 
 fn validation_hold_cause_to_db(value: Option<ValidationHoldCause>) -> Option<&'static str> {
     value.map(ValidationHoldCause::as_str)
-}
-
-fn validation_hold_reason(
-    cause: Option<ValidationHoldCause>,
-    pending_provisional: u64,
-    recent_verified_difficulty: u64,
-    recent_provisional_difficulty: u64,
-) -> Option<String> {
-    match cause {
-        Some(ValidationHoldCause::InvalidSamples) => {
-            Some("recent invalid sampled shares are under review".to_string())
-        }
-        Some(ValidationHoldCause::ProvisionalBacklog) => Some(
-            if recent_provisional_difficulty > 0 || recent_verified_difficulty > 0 {
-                match recent_verified_difficulty {
-                    0 => format!(
-                        "recent provisional diff {} has no recent verified diff yet",
-                        recent_provisional_difficulty
-                    ),
-                    verified => format!(
-                        "recent provisional diff {} vs {} verified",
-                        recent_provisional_difficulty, verified
-                    ),
-                }
-            } else if pending_provisional > 0 {
-                format!(
-                    "{pending_provisional} provisional share{} waiting for full verification",
-                    if pending_provisional == 1 { "" } else { "s" }
-                )
-            } else {
-                "recent provisional backlog is draining".to_string()
-            },
-        ),
-        Some(ValidationHoldCause::PayoutCoverage) => {
-            Some("boosting verified-share coverage so payout weight stays proportional".to_string())
-        }
-        None => None,
-    }
 }
 
 fn quarantine_until_for_strikes(

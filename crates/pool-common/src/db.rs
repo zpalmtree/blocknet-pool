@@ -103,6 +103,41 @@ impl ValidationHoldCause {
             Self::PayoutCoverage => "payout_coverage",
         }
     }
+
+    pub fn hold_reason(
+        self,
+        pending_provisional: u64,
+        recent_verified_difficulty: u64,
+        recent_provisional_difficulty: u64,
+    ) -> String {
+        match self {
+            Self::InvalidSamples => "recent invalid sampled shares are under review".to_string(),
+            Self::ProvisionalBacklog => {
+                if recent_provisional_difficulty > 0 || recent_verified_difficulty > 0 {
+                    match recent_verified_difficulty {
+                        0 => format!(
+                            "recent provisional diff {} has no recent verified diff yet",
+                            recent_provisional_difficulty
+                        ),
+                        verified => format!(
+                            "recent provisional diff {} vs {} verified",
+                            recent_provisional_difficulty, verified
+                        ),
+                    }
+                } else if pending_provisional > 0 {
+                    format!(
+                        "{pending_provisional} provisional share{} waiting for full verification",
+                        if pending_provisional == 1 { "" } else { "s" }
+                    )
+                } else {
+                    "recent provisional backlog is draining".to_string()
+                }
+            }
+            Self::PayoutCoverage => {
+                "boosting verified-share coverage so payout weight stays proportional".to_string()
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

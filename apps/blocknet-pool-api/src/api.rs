@@ -3004,44 +3004,6 @@ fn pending_preview_validation_detail(
     }
 }
 
-fn validation_hold_reason(
-    cause: Option<pool_common::db::ValidationHoldCause>,
-    pending_provisional: u64,
-    recent_verified_difficulty: u64,
-    recent_provisional_difficulty: u64,
-) -> Option<String> {
-    match cause {
-        Some(pool_common::db::ValidationHoldCause::InvalidSamples) => {
-            Some("recent invalid sampled shares are under review".to_string())
-        }
-        Some(pool_common::db::ValidationHoldCause::ProvisionalBacklog) => Some(
-            if recent_provisional_difficulty > 0 || recent_verified_difficulty > 0 {
-                match recent_verified_difficulty {
-                    0 => format!(
-                        "recent provisional diff {} has no recent verified diff yet",
-                        recent_provisional_difficulty
-                    ),
-                    verified => format!(
-                        "recent provisional diff {} vs {} verified",
-                        recent_provisional_difficulty, verified
-                    ),
-                }
-            } else if pending_provisional > 0 {
-                format!(
-                    "{pending_provisional} provisional share{} waiting for full verification",
-                    if pending_provisional == 1 { "" } else { "s" }
-                )
-            } else {
-                "recent provisional backlog is draining".to_string()
-            },
-        ),
-        Some(pool_common::db::ValidationHoldCause::PayoutCoverage) => {
-            Some("boosting verified-share coverage so payout weight stays proportional".to_string())
-        }
-        None => None,
-    }
-}
-
 fn pending_estimate_snapshot_can_serve(cache: &PendingEstimateSnapshotCache, now: Instant) -> bool {
     cache
         .updated_at
@@ -3118,12 +3080,13 @@ fn miner_verification_hold(
             .filter(|reason| !reason.is_empty())
             .map(ToOwned::to_owned)
             .or_else(|| {
-                validation_hold_reason(
-                    validation_hold_cause,
-                    validation_pending_provisional.unwrap_or_default(),
-                    validation_recent_verified_difficulty.unwrap_or_default(),
-                    validation_recent_provisional_difficulty.unwrap_or_default(),
-                )
+                validation_hold_cause.map(|cause| {
+                    cause.hold_reason(
+                        validation_pending_provisional.unwrap_or_default(),
+                        validation_recent_verified_difficulty.unwrap_or_default(),
+                        validation_recent_provisional_difficulty.unwrap_or_default(),
+                    )
+                })
             }),
         started_at: state
             .and_then(|s| s.last_event_at)
