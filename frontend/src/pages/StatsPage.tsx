@@ -35,22 +35,6 @@ function looksLikeHandle(raw: string): boolean {
 const lookupResult = async <T,>(promise: Promise<T>) =>
   promise.then((value) => ({ ok: true as const, value })).catch(() => ({ ok: false as const }));
 
-function mergeMinerBalancePayload(
-  current: MinerBalancePayload | null,
-  next: MinerBalancePayload,
-  preservePendingEstimate: boolean
-): MinerBalancePayload {
-  const sameAddress = current?.address === next.address;
-  const pendingEstimate =
-    preservePendingEstimate && sameAddress
-      ? current?.pending_estimate ?? next.pending_estimate
-      : next.pending_estimate;
-  return {
-    ...next,
-    pending_estimate: pendingEstimate,
-  };
-}
-
 function RejectionMetric({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="rejection-metric">
@@ -101,7 +85,13 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
       const d = await api.getMinerBalance(addr, includePendingEstimate);
       if (minerAddressRef.current !== addr) return;
       startTransition(() => {
-        setMinerBalanceData((current) => mergeMinerBalancePayload(current, d, !includePendingEstimate));
+        setMinerBalanceData((current) => ({
+          ...d,
+          pending_estimate:
+            !includePendingEstimate && current?.address === d.address
+              ? current?.pending_estimate ?? d.pending_estimate
+              : d.pending_estimate,
+        }));
       });
     } catch {
       // handled by api client
