@@ -948,9 +948,10 @@ fn should_refresh_for_new_block_event(
     current_template_height: u64,
     refresh_on_same_height: bool,
 ) -> bool {
-    let Some(normalized_hash) = normalize_tip_hash(hash) else {
+    let normalized_hash = hash.trim().to_ascii_lowercase();
+    if normalized_hash.is_empty() {
         return false;
-    };
+    }
 
     if let Some(height) = event_height {
         if current_template_height != 0 && height.saturating_add(1) < current_template_height {
@@ -982,15 +983,6 @@ fn should_refresh_for_new_block_event(
         height: event_height,
     });
     true
-}
-
-fn normalize_tip_hash(hash: &str) -> Option<String> {
-    let normalized = hash.trim().to_ascii_lowercase();
-    if normalized.is_empty() {
-        None
-    } else {
-        Some(normalized)
-    }
 }
 
 fn prune_expired_assignments_locked(
