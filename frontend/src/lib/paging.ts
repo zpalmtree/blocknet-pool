@@ -6,12 +6,14 @@ export function usePagedData<T>(
   liveTick: number,
   fetchPage: (limit: number, offset: number) => Promise<PagedResponse<T>>,
   initialLimit = 25,
-  refreshModulo = 12
+  refreshModulo = 12,
+  enabled = true
 ) {
   const [items, setItems] = useState<T[]>([]);
   const [pager, setPager] = useState<PagerState>({ offset: 0, limit: initialLimit, total: 0 });
 
   const loadPage = useCallback(async () => {
+    if (!enabled) return;
     try {
       const page = await fetchPage(pager.limit, pager.offset);
       setItems(page.items);
@@ -19,16 +21,16 @@ export function usePagedData<T>(
     } catch {
       setItems([]);
     }
-  }, [fetchPage, pager.limit, pager.offset]);
+  }, [enabled, fetchPage, pager.limit, pager.offset]);
 
   useEffect(() => {
     void loadPage();
   }, [loadPage]);
 
   useEffect(() => {
-    if (liveTick <= 0 || liveTick % refreshModulo !== 0) return;
+    if (!enabled || liveTick <= 0 || liveTick % refreshModulo !== 0) return;
     void loadPage();
-  }, [liveTick, loadPage, refreshModulo]);
+  }, [enabled, liveTick, loadPage, refreshModulo]);
 
   const pagerProps = useMemo(
     () => ({

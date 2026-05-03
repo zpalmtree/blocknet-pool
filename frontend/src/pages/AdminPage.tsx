@@ -19,6 +19,7 @@ import {
   timeUntil,
   toUnixMs,
 } from '../lib/format';
+import { usePagedData } from '../lib/paging';
 import type {
   ActiveVerificationHold,
   AdminBalanceItem,
@@ -32,7 +33,6 @@ import type {
   BlockItem,
   HealthResponse,
   MinerListItem,
-  PagerState,
   ReconciliationPayoutResolutionAction,
   RecoveryInstanceId,
   RecoveryInstanceStatus,
@@ -399,9 +399,6 @@ export function AdminPage({
 
   const [minersSearch, setMinersSearch] = useState('');
   const [minersSort, setMinersSort] = useState('hashrate_desc');
-  const [minersItems, setMinersItems] = useState<MinerListItem[]>([]);
-  const [minersPager, setMinersPager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
-
 
   const [rewardBlockInput, setRewardBlockInput] = useState('');
   const [rewardBlockOptions, setRewardBlockOptions] = useState<BlockItem[]>([]);
@@ -416,8 +413,6 @@ export function AdminPage({
 
   const [balancesSearch, setBalancesSearch] = useState('');
   const [balancesSort, setBalancesSort] = useState('pending_desc');
-  const [balancesItems, setBalancesItems] = useState<AdminBalanceItem[]>([]);
-  const [balancesPager, setBalancesPager] = useState<PagerState>({ offset: 0, limit: 50, total: 0 });
 
   const [recoveryStatus, setRecoveryStatus] = useState<RecoveryStatusResponse | null>(null);
   const [reconciliationIssues, setReconciliationIssues] = useState<AdminReconciliationIssuesResponse | null>(null);
@@ -438,17 +433,16 @@ export function AdminPage({
   const daemonLogSeq = useRef(0);
   const rewardBreakdownRequestSeq = useRef(0);
 
-  const loadMiners = useCallback(async () => {
-    if (!apiKey) return;
-    try {
-      const d = await api.getMiners(minersPager.limit, minersPager.offset, minersSort, minersSearch.trim() || undefined);
-      setMinersItems(d.items);
-      setMinersPager((prev) => ({ ...prev, total: d.total }));
-    } catch {
-      setMinersItems([]);
-    }
-  }, [api, apiKey, minersPager.limit, minersPager.offset, minersSearch, minersSort]);
-
+  const fetchMinersPage = useCallback(
+    (limit: number, offset: number) =>
+      api.getMiners(limit, offset, minersSort, minersSearch.trim() || undefined),
+    [api, minersSearch, minersSort]
+  );
+  const {
+    items: minersItems,
+    setPager: setMinersPager,
+    pagerProps: minersPagerProps,
+  } = usePagedData<MinerListItem>(liveTick, fetchMinersPage, 25, 1, !!apiKey && tab === 'miners');
 
   const loadRewardBreakdown = useCallback(
     async (heightOverride?: number | string) => {
@@ -523,21 +517,16 @@ export function AdminPage({
     }
   }, [api, apiKey]);
 
-  const loadBalances = useCallback(async () => {
-    if (!apiKey) return;
-    try {
-      const d = await api.getAdminBalances(
-        balancesPager.limit,
-        balancesPager.offset,
-        balancesSort,
-        balancesSearch.trim() || undefined
-      );
-      setBalancesItems(d.items);
-      setBalancesPager((prev) => ({ ...prev, total: d.total }));
-    } catch {
-      setBalancesItems([]);
-    }
-  }, [api, apiKey, balancesPager.limit, balancesPager.offset, balancesSearch, balancesSort]);
+  const fetchBalancesPage = useCallback(
+    (limit: number, offset: number) =>
+      api.getAdminBalances(limit, offset, balancesSort, balancesSearch.trim() || undefined),
+    [api, balancesSearch, balancesSort]
+  );
+  const {
+    items: balancesItems,
+    setPager: setBalancesPager,
+    pagerProps: balancesPagerProps,
+  } = usePagedData<AdminBalanceItem>(liveTick, fetchBalancesPage, 50, 1, !!apiKey && tab === 'balances');
 
   const loadRecovery = useCallback(async () => {
     if (!apiKey) return;
@@ -658,26 +647,22 @@ export function AdminPage({
     void loadBalanceOverview();
     void loadShareDiagnostics();
 
-    if (tab === 'miners') void loadMiners();
     if (tab === 'rewards') {
       void loadRewardBlocks();
       if (rewardBlockInput.trim()) {
         void loadRewardBreakdown(rewardBlockInput);
       }
     }
-    if (tab === 'balances') void loadBalances();
     if (tab === 'recovery') {
       void loadRecovery();
       void loadReconciliationIssues();
     }
   }, [
     apiKey,
-    loadBalances,
     loadBalanceOverview,
     loadHealth,
     loadReconciliationIssues,
     loadShareDiagnostics,
-    loadMiners,
     loadRecovery,
     loadRewardBlocks,
     loadRewardBreakdown,
@@ -1594,7 +1579,6 @@ export function AdminPage({
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     setMinersPager((p) => ({ ...p, offset: 0 }));
-                    void loadMiners();
                   }
                 }}
               />
@@ -1657,11 +1641,7 @@ export function AdminPage({
                 </tbody>
               </table>
               <Pager
-                offset={minersPager.offset}
-                limit={minersPager.limit}
-                total={minersPager.total}
-                onPrev={() => setMinersPager((p) => ({ ...p, offset: Math.max(0, p.offset - p.limit) }))}
-                onNext={() => setMinersPager((p) => ({ ...p, offset: p.offset + p.limit }))}
+                {...minersPagerProps}
               />
             </div>
           </div>
@@ -2858,11 +2838,7 @@ export function AdminPage({
                 </tbody>
               </table>
               <Pager
-                offset={balancesPager.offset}
-                limit={balancesPager.limit}
-                total={balancesPager.total}
-                onPrev={() => setBalancesPager((p) => ({ ...p, offset: Math.max(0, p.offset - p.limit) }))}
-                onNext={() => setBalancesPager((p) => ({ ...p, offset: p.offset + p.limit }))}
+                {...balancesPagerProps}
               />
             </div>
           </div>
