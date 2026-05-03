@@ -141,42 +141,6 @@ impl Config {
 
     pub fn normalize(&mut self) {
         self.validation_mode = self.validation_mode.trim().to_ascii_lowercase();
-
-        clamp_i32_min(&mut self.regular_submit_queue, 1);
-        clamp_i32_min(&mut self.regular_validation_queue, 1);
-        clamp_i32_min(&mut self.audit_validation_queue, 1);
-        clamp_i32_min(&mut self.audit_verifiers, 1);
-        clamp_i32_min(&mut self.regular_verifiers, 0);
-        self.sample_rate = self.sample_rate.clamp(0.0, 1.0);
-        clamp_i32_min(&mut self.warmup_shares, 0);
-        clamp_i32_min(&mut self.min_sample_every, 0);
-        clamp_i32_min(&mut self.invalid_sample_min, 1);
-        if !(0.0 < self.invalid_sample_threshold && self.invalid_sample_threshold <= 1.0) {
-            self.invalid_sample_threshold = 0.10;
-        }
-        clamp_i32_min(&mut self.invalid_escalation_quarantine_strikes, 0);
-        self.initial_share_difficulty = self.initial_share_difficulty.max(1);
-        self.min_share_difficulty = self.min_share_difficulty.max(1);
-        if self.max_share_difficulty < self.min_share_difficulty {
-            self.max_share_difficulty = self.min_share_difficulty;
-        }
-        self.initial_share_difficulty = self
-            .initial_share_difficulty
-            .clamp(self.min_share_difficulty, self.max_share_difficulty);
-        clamp_i32_min(&mut self.vardiff_target_shares, 1);
-        self.vardiff_tolerance = self.vardiff_tolerance.clamp(0.01, 0.95);
-        clamp_i32_min(&mut self.payout_min_verified_shares, 0);
-        clamp_f64_min(&mut self.payout_provisional_cap_multiplier, 0.0);
-        clamp_i32_min(&mut self.payout_max_recipients_per_tick, 0);
-        clamp_f64_min(&mut self.payout_max_total_per_tick, 0.0);
-        clamp_f64_min(&mut self.payout_max_per_recipient, 0.0);
-        clamp_i32_min(&mut self.database_pool_size, 1);
-        let max_atomic_amount = (u64::MAX as f64) / 100_000_000.0;
-        if !self.min_payout_amount.is_finite() || self.min_payout_amount < 0.0 {
-            self.min_payout_amount = 0.1;
-        } else {
-            self.min_payout_amount = self.min_payout_amount.clamp(0.0, max_atomic_amount);
-        }
     }
 
     pub(crate) fn job_timeout_duration(&self) -> Duration {
@@ -188,23 +152,23 @@ impl Config {
     }
 
     pub(crate) fn regular_submit_queue_size(&self) -> usize {
-        self.regular_submit_queue.max(1) as usize
+        self.regular_submit_queue as usize
     }
 
     pub fn regular_validation_queue_size(&self) -> usize {
-        self.regular_validation_queue.max(1) as usize
+        self.regular_validation_queue as usize
     }
 
     pub fn audit_validation_queue_size(&self) -> usize {
-        self.audit_validation_queue.max(1) as usize
+        self.audit_validation_queue as usize
     }
 
     pub(crate) fn regular_verifier_count(&self) -> usize {
-        self.regular_verifiers.max(1) as usize
+        self.regular_verifiers as usize
     }
 
     pub(crate) fn audit_verifier_count(&self) -> usize {
-        self.audit_verifiers.max(1) as usize
+        self.audit_verifiers as usize
     }
 
     pub(crate) fn forced_verify_duration(&self) -> Duration {
@@ -291,20 +255,98 @@ impl Config {
         }
         ensure_nonempty("daemon_cookie_path", &self.daemon_cookie_path)?;
         ensure_nonempty("payout_pause_file", &self.payout_pause_file)?;
+        for (field, value, min) in [
+            ("regular_submit_queue", self.regular_submit_queue, 1),
+            ("regular_validation_queue", self.regular_validation_queue, 1),
+            ("audit_validation_queue", self.audit_validation_queue, 1),
+            ("regular_verifiers", self.regular_verifiers, 1),
+            ("audit_verifiers", self.audit_verifiers, 1),
+            ("warmup_shares", self.warmup_shares, 0),
+            ("min_sample_every", self.min_sample_every, 0),
+            ("invalid_sample_min", self.invalid_sample_min, 1),
+            (
+                "invalid_escalation_quarantine_strikes",
+                self.invalid_escalation_quarantine_strikes,
+                0,
+            ),
+            ("vardiff_target_shares", self.vardiff_target_shares, 1),
+            (
+                "payout_min_verified_shares",
+                self.payout_min_verified_shares,
+                0,
+            ),
+            (
+                "payout_max_recipients_per_tick",
+                self.payout_max_recipients_per_tick,
+                0,
+            ),
+            ("database_pool_size", self.database_pool_size, 1),
+        ] {
+            ensure_i32_min(field, value, min)?;
+        }
+        ensure_u64_min("initial_share_difficulty", self.initial_share_difficulty, 1)?;
+        ensure_u64_min("min_share_difficulty", self.min_share_difficulty, 1)?;
+        if self.max_share_difficulty < self.min_share_difficulty {
+            anyhow::bail!("max_share_difficulty must be at least min_share_difficulty");
+        }
+        if self.initial_share_difficulty < self.min_share_difficulty
+            || self.initial_share_difficulty > self.max_share_difficulty
+        {
+            anyhow::bail!(
+                "initial_share_difficulty must be between min_share_difficulty and max_share_difficulty"
+            );
+        }
+        ensure_f64_range("sample_rate", self.sample_rate, 0.0, 1.0)?;
+        ensure_f64_range("vardiff_tolerance", self.vardiff_tolerance, 0.01, 0.95)?;
+        for (field, value) in [
+            (
+                "payout_provisional_cap_multiplier",
+                self.payout_provisional_cap_multiplier,
+            ),
+            ("payout_max_total_per_tick", self.payout_max_total_per_tick),
+            ("payout_max_per_recipient", self.payout_max_per_recipient),
+        ] {
+            ensure_f64_min(field, value, 0.0)?;
+        }
+        ensure_f64_range(
+            "min_payout_amount",
+            self.min_payout_amount,
+            0.0,
+            (u64::MAX as f64) / 100_000_000.0,
+        )?;
+        if !(0.0 < self.invalid_sample_threshold && self.invalid_sample_threshold <= 1.0) {
+            anyhow::bail!("invalid_sample_threshold must be greater than 0 and at most 1");
+        }
         self.validate_duration_fields()
     }
 }
 
-fn clamp_i32_min(value: &mut i32, minimum: i32) {
-    if *value < minimum {
-        *value = minimum;
+fn ensure_i32_min(field: &str, value: i32, minimum: i32) -> Result<()> {
+    if value < minimum {
+        anyhow::bail!("{field} must be at least {minimum}");
     }
+    Ok(())
 }
 
-fn clamp_f64_min(value: &mut f64, minimum: f64) {
-    if !value.is_finite() || *value < minimum {
-        *value = minimum;
+fn ensure_u64_min(field: &str, value: u64, minimum: u64) -> Result<()> {
+    if value < minimum {
+        anyhow::bail!("{field} must be at least {minimum}");
     }
+    Ok(())
+}
+
+fn ensure_f64_min(field: &str, value: f64, minimum: f64) -> Result<()> {
+    if !value.is_finite() || value < minimum {
+        anyhow::bail!("{field} must be finite and at least {minimum}");
+    }
+    Ok(())
+}
+
+fn ensure_f64_range(field: &str, value: f64, minimum: f64, maximum: f64) -> Result<()> {
+    if !value.is_finite() || value < minimum || value > maximum {
+        anyhow::bail!("{field} must be finite and between {minimum} and {maximum}");
+    }
+    Ok(())
 }
 
 fn config_duration(field: &str, value: &str) -> Duration {
@@ -336,60 +378,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalize_clamps_values() {
+    fn normalize_trims_validation_mode() {
         let mut cfg = Config {
             validation_mode: " FULL ".to_string(),
-            regular_submit_queue: 0,
-            regular_validation_queue: 0,
-            audit_validation_queue: 0,
-            regular_verifiers: -1,
-            audit_verifiers: 0,
-            sample_rate: 2.0,
-            warmup_shares: -5,
-            min_sample_every: -1,
-            invalid_sample_min: 0,
-            invalid_sample_threshold: 2.0,
-            invalid_escalation_quarantine_strikes: -2,
-            initial_share_difficulty: 0,
-            min_share_difficulty: 10,
-            max_share_difficulty: 5,
-            vardiff_target_shares: 0,
-            vardiff_tolerance: 2.0,
-            payout_min_verified_shares: -3,
-            payout_provisional_cap_multiplier: f64::NAN,
-            payout_max_recipients_per_tick: -2,
-            payout_max_total_per_tick: -10.0,
-            payout_max_per_recipient: f64::NAN,
-            min_payout_amount: -1.0,
-            database_pool_size: 0,
             ..Config::default()
         };
         cfg.normalize();
 
         assert_eq!(cfg.validation_mode, "full");
-        assert_eq!(cfg.regular_submit_queue, 1);
-        assert_eq!(cfg.regular_validation_queue, 1);
-        assert_eq!(cfg.audit_validation_queue, 1);
-        assert_eq!(cfg.regular_verifiers, 0);
-        assert_eq!(cfg.audit_verifiers, 1);
-        assert_eq!(cfg.sample_rate, 1.0);
-        assert_eq!(cfg.warmup_shares, 0);
-        assert_eq!(cfg.min_sample_every, 0);
-        assert_eq!(cfg.invalid_sample_min, 1);
-        assert_eq!(cfg.invalid_sample_threshold, 0.10);
-        assert_eq!(cfg.invalid_escalation_quarantine_strikes, 0);
-        assert_eq!(cfg.min_share_difficulty, 10);
-        assert_eq!(cfg.max_share_difficulty, 10);
-        assert_eq!(cfg.initial_share_difficulty, 10);
-        assert_eq!(cfg.vardiff_target_shares, 1);
-        assert_eq!(cfg.vardiff_tolerance, 0.95);
-        assert_eq!(cfg.payout_min_verified_shares, 0);
-        assert_eq!(cfg.payout_provisional_cap_multiplier, 0.0);
-        assert_eq!(cfg.payout_max_recipients_per_tick, 0);
-        assert_eq!(cfg.payout_max_total_per_tick, 0.0);
-        assert_eq!(cfg.payout_max_per_recipient, 0.0);
-        assert_eq!(cfg.min_payout_amount, 0.1);
-        assert_eq!(cfg.database_pool_size, 1);
     }
 
     #[test]
@@ -459,6 +455,68 @@ mod tests {
             Err(err) => err,
         };
         assert!(format!("{err:#}").contains("pplns_window_duration"));
+    }
+
+    #[test]
+    fn load_rejects_invalid_numeric_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let assert_invalid = |json: String, expected: &str| {
+            std::fs::write(&path, json).unwrap();
+            let err = match Config::load(&path) {
+                Ok(_) => panic!("{expected} should fail config load"),
+                Err(err) => err,
+            };
+            assert!(format!("{err:#}").contains(expected));
+        };
+
+        for field in [
+            "regular_submit_queue",
+            "regular_validation_queue",
+            "audit_validation_queue",
+            "regular_verifiers",
+            "audit_verifiers",
+            "invalid_sample_min",
+            "initial_share_difficulty",
+            "min_share_difficulty",
+            "vardiff_target_shares",
+            "database_pool_size",
+        ] {
+            assert_invalid(format!(r#"{{"{field}":0}}"#), field);
+        }
+
+        for field in [
+            "warmup_shares",
+            "min_sample_every",
+            "invalid_escalation_quarantine_strikes",
+            "payout_min_verified_shares",
+            "payout_max_recipients_per_tick",
+        ] {
+            assert_invalid(format!(r#"{{"{field}":-1}}"#), field);
+        }
+
+        for field in [
+            "payout_provisional_cap_multiplier",
+            "payout_max_total_per_tick",
+            "payout_max_per_recipient",
+            "min_payout_amount",
+        ] {
+            assert_invalid(format!(r#"{{"{field}":-1.0}}"#), field);
+        }
+
+        assert_invalid(r#"{"sample_rate":2.0}"#.to_string(), "sample_rate");
+        assert_invalid(
+            r#"{"invalid_sample_threshold":0.0}"#.to_string(),
+            "invalid_sample_threshold",
+        );
+        assert_invalid(
+            r#"{"min_share_difficulty":10,"max_share_difficulty":5}"#.to_string(),
+            "max_share_difficulty",
+        );
+        assert_invalid(
+            r#"{"vardiff_tolerance":1.0}"#.to_string(),
+            "vardiff_tolerance",
+        );
     }
 
     #[test]
