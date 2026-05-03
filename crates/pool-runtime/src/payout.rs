@@ -2367,12 +2367,12 @@ fn derive_recent_payout_stats(payouts: &[Payout]) -> RecentPayoutStats {
     recipient_amounts.sort_unstable();
 
     RecentPayoutStats {
-        median_batch_total: quantile_u64(&batch_totals, 1, 2),
-        p90_batch_total: quantile_u64(&batch_totals, 9, 10),
-        p50_recipient_count: quantile_usize(&recipient_counts, 1, 2),
-        p90_recipient_count: quantile_usize(&recipient_counts, 9, 10),
-        median_recipient_amount: quantile_u64(&recipient_amounts, 1, 2),
-        p90_recipient_amount: quantile_u64(&recipient_amounts, 9, 10),
+        median_batch_total: quantile(&batch_totals, 1, 2),
+        p90_batch_total: quantile(&batch_totals, 9, 10),
+        p50_recipient_count: quantile(&recipient_counts, 1, 2),
+        p90_recipient_count: quantile(&recipient_counts, 9, 10),
+        median_recipient_amount: quantile(&recipient_amounts, 1, 2),
+        p90_recipient_amount: quantile(&recipient_amounts, 9, 10),
     }
 }
 
@@ -2385,17 +2385,9 @@ fn legacy_payout_batch_key(timestamp: SystemTime) -> String {
     format!("legacy:{bucket}")
 }
 
-fn quantile_u64(values: &[u64], numerator: usize, denominator: usize) -> u64 {
+fn quantile<T: Copy + Default>(values: &[T], numerator: usize, denominator: usize) -> T {
     if values.is_empty() {
-        return 0;
-    }
-    let idx = ((values.len() - 1) * numerator) / denominator.max(1);
-    values[idx]
-}
-
-fn quantile_usize(values: &[usize], numerator: usize, denominator: usize) -> usize {
-    if values.is_empty() {
-        return 0;
+        return T::default();
     }
     let idx = ((values.len() - 1) * numerator) / denominator.max(1);
     values[idx]
