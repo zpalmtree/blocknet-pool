@@ -9,9 +9,7 @@ const DEFAULT_SAMPLE_LIMIT: usize = 512;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct PercentileSummary {
-    #[serde(default)]
     pub p50_millis: Option<u64>,
-    #[serde(default)]
     pub p95_millis: Option<u64>,
 }
 
@@ -56,7 +54,6 @@ pub struct ApiPerformanceSnapshot {
 pub(crate) struct QueuePressureSnapshot {
     #[serde(default)]
     pub depth: usize,
-    #[serde(default)]
     pub oldest_age_millis: Option<u64>,
     #[serde(default)]
     pub wait: PercentileSummary,

@@ -29,9 +29,7 @@ pub struct NodeStatus {
     pub peers: i64,
     pub chain_height: u64,
     pub syncing: bool,
-    #[serde(default)]
     pub current_process_block: Option<NodeCurrentProcessBlock>,
-    #[serde(default)]
     pub last_process_block: Option<NodeLastProcessBlock>,
 }
 

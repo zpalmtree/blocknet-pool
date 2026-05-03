@@ -19,11 +19,8 @@ pub struct PersistedValidationSummary {
     pub regular_queue_depth: usize,
     #[serde(default)]
     pub audit_queue_depth: usize,
-    #[serde(default)]
     pub candidate_oldest_age_millis: Option<u64>,
-    #[serde(default)]
     pub regular_oldest_age_millis: Option<u64>,
-    #[serde(default)]
     pub audit_oldest_age_millis: Option<u64>,
     #[serde(default)]
     pub candidate_wait: crate::telemetry::PercentileSummary,
@@ -103,9 +100,7 @@ pub struct PersistedSubmitSummary {
     pub candidate_queue_depth: usize,
     #[serde(default)]
     pub regular_queue_depth: usize,
-    #[serde(default)]
     pub candidate_oldest_age_millis: Option<u64>,
-    #[serde(default)]
     pub regular_oldest_age_millis: Option<u64>,
     #[serde(default)]
     pub candidate_wait: crate::telemetry::PercentileSummary,
@@ -132,9 +127,7 @@ pub struct PersistedPayoutRuntime {
     pub payout_interval_seconds: u64,
     #[serde(default)]
     pub maintenance_interval_seconds: u64,
-    #[serde(default)]
     pub next_sweep_at: Option<SystemTime>,
-    #[serde(default)]
     pub last_tick_at: Option<SystemTime>,
     #[serde(default)]
     pub reserve_target_amount: u64,
@@ -188,7 +181,6 @@ pub struct PersistedRuntimeSnapshot {
     pub connected_miners: usize,
     pub connected_workers: usize,
     pub estimated_hashrate: f64,
-    #[serde(default)]
     pub last_share_at: Option<SystemTime>,
     #[serde(default)]
     pub jobs: JobRuntimeSnapshot,
