@@ -5171,10 +5171,9 @@ impl ApiState {
             .await?;
 
         let node = Arc::clone(&self.node);
-        let wallet_balance = tokio::task::spawn_blocking(move || node.get_wallet_balance())
+        let wallet_balance = spawn_blocking_result(move || node.get_wallet_balance())
             .await
-            .ok()
-            .and_then(Result::ok);
+            .ok();
         let persisted_runtime = self.persisted_runtime_snapshot().await;
         if let Some(snapshot) = persisted_runtime.as_ref() {
             payout_eta.next_sweep_at = snapshot.payouts.next_sweep_at;
@@ -5509,12 +5508,11 @@ impl ApiState {
 
         let node = Arc::clone(&self.node);
         let started_at = Instant::now();
-        let sampled = tokio::task::spawn_blocking(move || {
+        let sampled = spawn_blocking_result(move || {
             estimate_explorer_network_hashrate_hps(node.as_ref(), chain_height, difficulty)
         })
         .await
         .ok()
-        .and_then(Result::ok)
         .filter(|value| value.is_finite() && *value >= 0.0);
         record_api_operation_observation(
             self,
