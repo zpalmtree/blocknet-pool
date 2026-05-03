@@ -13,7 +13,6 @@ import type { ThemeMode } from '../lib/theme';
 import type {
   HashratePoint,
   MinerBalancePayload,
-  MinerPendingEstimate,
   MinerResponse,
   Range,
   StatsInsightsResponse,
@@ -44,28 +43,19 @@ async function resolveHandle(api: ApiClient, raw: string): Promise<{ address: st
 const lookupResult = async <T,>(promise: Promise<T>) =>
   promise.then((value) => ({ ok: true as const, value })).catch(() => ({ ok: false as const }));
 
-function mergePendingEstimate(
-  current: MinerPendingEstimate | undefined,
-  next: MinerPendingEstimate,
-  preserveCurrent: boolean
-): MinerPendingEstimate {
-  if (!preserveCurrent) return next;
-  return current ?? next;
-}
-
 function mergeMinerBalancePayload(
   current: MinerBalancePayload | null,
   next: MinerBalancePayload,
   preservePendingEstimate: boolean
 ): MinerBalancePayload {
   const sameAddress = current?.address === next.address;
+  const pendingEstimate =
+    preservePendingEstimate && sameAddress
+      ? current?.pending_estimate ?? next.pending_estimate
+      : next.pending_estimate;
   return {
     ...next,
-    pending_estimate: mergePendingEstimate(
-      sameAddress ? current?.pending_estimate : undefined,
-      next.pending_estimate,
-      preservePendingEstimate
-    ),
+    pending_estimate: pendingEstimate,
   };
 }
 
