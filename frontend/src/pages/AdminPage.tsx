@@ -396,6 +396,11 @@ export function AdminPage({
   onJumpToStats,
 }: AdminPageProps) {
   const [tab, setTab] = useState<AdminTab>('miners');
+  const adminTabButton = (id: AdminTab, label: string) => (
+    <button className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>
+      {label}
+    </button>
+  );
 
   const [minersSearch, setMinersSearch] = useState('');
   const [minersSort, setMinersSort] = useState('hashrate_desc');
@@ -1545,28 +1550,14 @@ export function AdminPage({
           </div>
 
           <div className="sub-tabs" id="admin-tabs">
-            <button className={tab === 'miners' ? 'active' : ''} onClick={() => setTab('miners')}>
-              Miners
-            </button>
-            <button className={tab === 'holds' ? 'active' : ''} onClick={() => setTab('holds')}>
-              Holds
-            </button>
-            <button className={tab === 'balances' ? 'active' : ''} onClick={() => setTab('balances')}>
-              Balances
-            </button>
-            <button className={tab === 'shares' ? 'active' : ''} onClick={() => setTab('shares')}>
-              Shares
-            </button>
-            <button className={tab === 'rewards' ? 'active' : ''} onClick={() => setTab('rewards')}>
-              Rewards
-            </button>
+            {adminTabButton('miners', 'Miners')}
+            {adminTabButton('holds', 'Holds')}
+            {adminTabButton('balances', 'Balances')}
+            {adminTabButton('shares', 'Shares')}
+            {adminTabButton('rewards', 'Rewards')}
             <span className="sub-tabs-divider" />
-            <button className={tab === 'recovery' ? 'active' : ''} onClick={() => setTab('recovery')}>
-              Recovery
-            </button>
-            <button className={tab === 'logs' ? 'active' : ''} onClick={() => setTab('logs')}>
-              Daemon Logs
-            </button>
+            {adminTabButton('recovery', 'Recovery')}
+            {adminTabButton('logs', 'Daemon Logs')}
           </div>
 
           <div style={{ display: tab === 'miners' ? '' : 'none' }}>
