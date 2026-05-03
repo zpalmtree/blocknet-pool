@@ -1698,66 +1698,60 @@ export function AdminPage({
             ) : (
               <>
                 <div className="stats-grid stats-grid-dense" style={{ marginBottom: 20 }}>
-                  <div className="stat-card">
-                    <div className="label">Block</div>
-                    <div className="value">{rewardBreakdown.block.height}</div>
-                    <div className="stat-meta">{timeAgo(rewardBreakdown.block.timestamp)}</div>
-                  </div>
-                  <div className="stat-card">
-                    <div className="label">{rewardBreakdown.block.orphaned ? 'Nominal Reward' : 'Reward'}</div>
-                    <div className="value">{formatCoins(rewardBreakdown.block.reward)}</div>
-                    <div className="stat-meta">
-                      {rewardBreakdown.block.orphaned
+                  <StatCard
+                    label="Block"
+                    value={rewardBreakdown.block.height}
+                    meta={timeAgo(rewardBreakdown.block.timestamp)}
+                  />
+                  <StatCard
+                    label={rewardBreakdown.block.orphaned ? 'Nominal Reward' : 'Reward'}
+                    value={formatCoins(rewardBreakdown.block.reward)}
+                    meta={
+                      rewardBreakdown.block.orphaned
                         ? 'Round was orphaned, so no distributable credits were finalized.'
-                        : `Fee ${formatCoins(rewardBreakdown.fee_amount)} · Net ${formatCoins(
-                            rewardBreakdown.distributable_reward
-                          )}`}
-                    </div>
-                  </div>
-                  <div className="stat-card">
-                    <div className="label">Window</div>
-                    <div className="value">{rewardBreakdown.share_window.label}</div>
-                    <div className="stat-meta">
-                      {rewardBreakdown.share_window.share_count} shares · {rewardBreakdown.share_window.participant_count} miners
-                    </div>
-                  </div>
-                  <div className="stat-card">
-                    <div className="label">Preview Weight</div>
-                    <div className="value mono">{rewardBreakdown.preview_total_weight}</div>
-                    <div className="stat-meta">
-                      {rewardBreakdown.block.orphaned
+                        : `Fee ${formatCoins(rewardBreakdown.fee_amount)} · Net ${formatCoins(rewardBreakdown.distributable_reward)}`
+                    }
+                  />
+                  <StatCard
+                    label="Window"
+                    value={rewardBreakdown.share_window.label}
+                    meta={`${rewardBreakdown.share_window.share_count} shares · ${rewardBreakdown.share_window.participant_count} miners`}
+                  />
+                  <StatCard
+                    label="Preview Weight"
+                    value={rewardBreakdown.preview_total_weight}
+                    meta={
+                      rewardBreakdown.block.orphaned
                         ? 'Share split before the round resolved as orphaned'
-                        : 'Matches the My Stats estimate path'}
-                    </div>
-                  </div>
-                  <div className="stat-card">
-                    <div className="label">{rewardBreakdown.block.orphaned ? 'Resolution' : rewardPayoutWeightLabel}</div>
-                    <div className={rewardBreakdown.block.orphaned ? 'value' : 'value mono'}>
-                      {rewardBreakdown.block.orphaned ? 'Orphaned' : rewardBreakdown.payout_total_weight}
-                    </div>
-                    <div className="stat-meta">
-                      {rewardBreakdown.block.orphaned
+                        : 'Matches the My Stats estimate path'
+                    }
+                    mono
+                  />
+                  <StatCard
+                    label={rewardBreakdown.block.orphaned ? 'Resolution' : rewardPayoutWeightLabel}
+                    value={rewardBreakdown.block.orphaned ? 'Orphaned' : rewardBreakdown.payout_total_weight}
+                    meta={
+                      rewardBreakdown.block.orphaned
                         ? 'Estimated payout collapsed to zero when the block orphaned'
                         : rewardBreakdownProjected
                           ? 'Current final split if the block reaches payout processing'
                           : rewardBreakdownPaidOut
                             ? 'Live recompute using current policy and risk state; recorded payout is authoritative'
-                            : 'Final reward split after payout gates'}
-                    </div>
-                  </div>
-                  <div className="stat-card">
-                    <div className="label">Recorded Credits</div>
-                    <div className="value">
-                      {rewardBreakdown.block.orphaned ? formatCoins(0) : formatCoins(rewardBreakdown.actual_credit_total)}
-                    </div>
-                    <div className="stat-meta">
-                      {rewardBreakdown.block.orphaned
+                            : 'Final reward split after payout gates'
+                    }
+                    mono={!rewardBreakdown.block.orphaned}
+                  />
+                  <StatCard
+                    label="Recorded Credits"
+                    value={rewardBreakdown.block.orphaned ? formatCoins(0) : formatCoins(rewardBreakdown.actual_credit_total)}
+                    meta={
+                      rewardBreakdown.block.orphaned
                         ? 'Orphaned blocks resolve to zero credited payout'
                         : rewardActualCreditEventsAvailable
                           ? 'Audit rows available'
-                          : 'Not recorded yet'}
-                    </div>
-                  </div>
+                          : 'Not recorded yet'
+                    }
+                  />
                 </div>
 
                 {rewardBreakdownPaidOut && !rewardBreakdown.block.orphaned ? (
