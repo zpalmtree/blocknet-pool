@@ -2143,7 +2143,18 @@ fn load_confirmed_payout_import_txs(
             } else {
                 UNIX_EPOCH + Duration::from_nanos(entry.created_at_unix_nano as u64)
             },
-            recipients: allocate_imported_payout_fees(&recipients, body.fee),
+            recipients: recipients
+                .iter()
+                .zip(allocate_proportional_fees(
+                    recipients.iter().map(|(_, amount)| *amount),
+                    body.fee,
+                ))
+                .map(|((address, amount), fee)| ConfirmedPayoutImportRecipient {
+                    address: address.clone(),
+                    amount: *amount,
+                    fee,
+                })
+                .collect(),
         };
         match manifests.get(tx_hash) {
             Some(existing) if existing.timestamp >= manifest.timestamp => {}
@@ -2165,24 +2176,6 @@ fn load_confirmed_payout_import_txs(
         ordered.push(manifest);
     }
     Ok(ordered)
-}
-
-fn allocate_imported_payout_fees(
-    recipients: &[(String, u64)],
-    total_fee: u64,
-) -> Vec<ConfirmedPayoutImportRecipient> {
-    recipients
-        .iter()
-        .zip(allocate_proportional_fees(
-            recipients.iter().map(|(_, amount)| *amount),
-            total_fee,
-        ))
-        .map(|((address, amount), fee)| ConfirmedPayoutImportRecipient {
-            address: address.clone(),
-            amount: *amount,
-            fee,
-        })
-        .collect()
 }
 
 fn daemon_debug_log_path(config: &Config) -> PathBuf {
