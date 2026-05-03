@@ -2466,7 +2466,8 @@ async fn handle_miners(
         .collect::<Vec<MinerListItem>>();
 
     if let Some(search) = non_empty(&query.search) {
-        items.retain(|item| contains_ci(&item.address, search));
+        let search = search.to_ascii_lowercase();
+        items.retain(|item| item.address.to_ascii_lowercase().contains(&search));
     }
 
     match query
@@ -5757,12 +5758,6 @@ async fn require_api_key(
     error_response(StatusCode::UNAUTHORIZED, "unauthorized")
 }
 
-fn contains_ci(haystack: &str, needle: &str) -> bool {
-    haystack
-        .to_ascii_lowercase()
-        .contains(&needle.to_ascii_lowercase())
-}
-
 fn non_empty(value: &Option<String>) -> Option<&str> {
     value.as_deref().map(str::trim).filter(|v| !v.is_empty())
 }
@@ -5857,12 +5852,12 @@ mod tests {
 
     use super::{
         api_performance_route_name, apply_wallet_liquidity_to_payout_eta, block_page_item_response,
-        build_block_reward_breakdown, contains_ci, daemon_debug_log_path,
-        daemon_health_from_heartbeat, daemon_log_commands, daemon_send_idempotency_path,
-        estimate_unconfirmed_pending_for_miner, estimated_block_reward,
-        filter_active_workers_for_miner, handle_admin_clear_address_risk_history,
-        handle_admin_share_diagnostics, handle_app_fallback, handle_health, handle_miner,
-        handle_miners, hashrate_from_stats_with_miner_ramp, hashrate_from_stats_with_warmup,
+        build_block_reward_breakdown, daemon_debug_log_path, daemon_health_from_heartbeat,
+        daemon_log_commands, daemon_send_idempotency_path, estimate_unconfirmed_pending_for_miner,
+        estimated_block_reward, filter_active_workers_for_miner,
+        handle_admin_clear_address_risk_history, handle_admin_share_diagnostics,
+        handle_app_fallback, handle_health, handle_miner, handle_miners,
+        hashrate_from_stats_with_miner_ramp, hashrate_from_stats_with_warmup,
         hydrate_provisional_block_reward, is_api_request_path, load_confirmed_payout_import_txs,
         luck_round_response_from_db, miner_balance_response, miner_has_activity, page_bounds,
         rejection_window_duration, sort_workers_for_miner, system_time_to_unix_secs, trim_log_line,
@@ -7810,13 +7805,6 @@ mod tests {
         let trimmed = trim_log_line(&input);
         assert!(trimmed.len() < input.len());
         assert!(trimmed.contains("...[truncated]"));
-    }
-
-    #[test]
-    fn case_insensitive_contains_matches() {
-        assert!(contains_ci("AlphaMiner", "alpha"));
-        assert!(contains_ci("AlphaMiner", "MINER"));
-        assert!(!contains_ci("AlphaMiner", "beta"));
     }
 
     #[test]
