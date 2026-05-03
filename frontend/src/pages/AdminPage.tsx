@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
 import { EmptyTableRow } from '../components/EmptyTableRow';
@@ -50,6 +50,15 @@ const ACKNOWLEDGED_LAUNCH_ERA_MINER_SHORTFALL = 1_546_507_661_992;
 const WARN_TEXT_STYLE = { color: 'var(--warn)' };
 const GOOD_TEXT_STYLE = { color: 'var(--good)' };
 const MUTED_TEXT_STYLE = { color: 'var(--muted)' };
+const SMALL_MUTED_STYLE: CSSProperties = { fontSize: 11, color: 'var(--muted)' };
+const SMALL_MUTED_TOP_STYLE: CSSProperties = { ...SMALL_MUTED_STYLE, marginTop: 4 };
+const MONO_MUTED_STYLE: CSSProperties = { fontSize: 12, color: 'var(--muted)' };
+const MUTED_SUMMARY_STYLE: CSSProperties = { marginTop: 12, fontSize: 12, color: 'var(--muted)' };
+const SEMIBOLD_STYLE: CSSProperties = { fontWeight: 600 };
+const BAD_SEMIBOLD_STYLE: CSSProperties = { color: 'var(--bad)', fontWeight: 600 };
+const MUTED_SEMIBOLD_STYLE: CSSProperties = { color: 'var(--muted)', fontWeight: 600 };
+const FOOTER_LABEL_CELL_STYLE: CSSProperties = { fontWeight: 700, textAlign: 'left' };
+const TOP_6_STYLE: CSSProperties = { marginTop: 6 };
 const warnTextStyle = (active: boolean) => (active ? WARN_TEXT_STYLE : undefined);
 const warnGoodTextStyle = (warn: boolean) => (warn ? WARN_TEXT_STYLE : GOOD_TEXT_STYLE);
 
@@ -291,6 +300,14 @@ function shareWindowReasonPct(window: AdminShareDiagnosticsWindow | null | undef
   return (shareWindowReasonCount(window, reason) / total) * 100;
 }
 
+function shareWindowReasonCell(window: AdminShareDiagnosticsWindow, reason: string) {
+  return (
+    <td className="mono">
+      {formatPct(shareWindowReasonPct(window, reason), 2)}
+      <div style={SMALL_MUTED_STYLE}>{shareWindowReasonCount(window, reason)} rejects</div>
+    </td>
+  );
+}
 
 function recoveryInstanceLabel(instance: RecoveryInstanceId | null | undefined): string {
   switch (instance) {
@@ -1805,12 +1822,12 @@ export function AdminPage({
                                 {shortAddr(row.address)}
                               </a>
                               {row.finder ? (
-                                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>finder</div>
+                                <div style={SMALL_MUTED_TOP_STYLE}>finder</div>
                               ) : null}
                             </td>
                             <td>
                               <div>{formatCoins(row.preview_credit)}</div>
-                              <div className="mono" style={{ fontSize: 12, color: 'var(--muted)' }}>
+                              <div className="mono" style={MONO_MUTED_STYLE}>
                                 {row.preview_weight} · {row.preview_share_pct.toFixed(3)}%
                               </div>
                             </td>
@@ -1827,7 +1844,7 @@ export function AdminPage({
                             {rewardBreakdown.block.orphaned ? null : (
                               <td>
                                 <div>{formatCoins(row.payout_credit)}</div>
-                                <div className="mono" style={{ fontSize: 12, color: 'var(--muted)' }}>
+                                <div className="mono" style={MONO_MUTED_STYLE}>
                                   {row.payout_weight} · {row.payout_share_pct.toFixed(3)}%
                                 </div>
                               </td>
@@ -1854,23 +1871,23 @@ export function AdminPage({
                             {rewardBreakdown.block.orphaned ? null : <td className="mono">{row.payout_weight}</td>}
                             <td className="mono">
                               {row.verified_difficulty}
-                              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                              <div style={SMALL_MUTED_TOP_STYLE}>
                                 {row.verified_shares} shares
                               </div>
                             </td>
                             <td className="mono">
                               {row.provisional_difficulty_eligible}
-                              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                              <div style={SMALL_MUTED_TOP_STYLE}>
                                 {row.provisional_shares_eligible} eligible
                               </div>
                             </td>
                             <td>
                               {rewardBreakdown.block.orphaned ? (
                                 <>
-                                  <div style={{ color: 'var(--bad)', fontWeight: 600 }}>
+                                  <div style={BAD_SEMIBOLD_STYLE}>
                                     Orphaned
                                   </div>
-                                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                                  <div style={SMALL_MUTED_TOP_STYLE}>
                                     Preview: {rewardStatusLabel(row.preview_status)}
                                     {row.risky ? ' · verification hold' : ''}
                                   </div>
@@ -1879,10 +1896,10 @@ export function AdminPage({
                                 <>
                                   {rewardBreakdownPaidOut ? (
                                     <>
-                                      <div style={{ color: 'var(--muted)', fontWeight: 600 }}>
+                                      <div style={MUTED_SEMIBOLD_STYLE}>
                                         Recorded payout finalized
                                       </div>
-                                      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                                      <div style={SMALL_MUTED_TOP_STYLE}>
                                         Current recompute: {rewardStatusLabel(row.payout_status)} · Preview:{' '}
                                         {rewardStatusLabel(row.preview_status)}
                                       </div>
@@ -1892,7 +1909,7 @@ export function AdminPage({
                                       <div style={{ color: rewardStatusTone(row.payout_status), fontWeight: 600 }}>
                                         {rewardStatusLabel(row.payout_status)}
                                       </div>
-                                      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                                      <div style={SMALL_MUTED_TOP_STYLE}>
                                         Preview: {rewardStatusLabel(row.preview_status)}
                                         {row.risky ? ' · verification hold' : ''}
                                       </div>
@@ -1908,20 +1925,20 @@ export function AdminPage({
                     {!rewardBreakdown.block.orphaned && rewardBreakdownTotals ? (
                       <tfoot>
                         <tr style={{ background: 'var(--surface-hover)' }}>
-                          <td style={{ fontWeight: 700, textAlign: 'left' }}>
+                          <td style={FOOTER_LABEL_CELL_STYLE}>
                             Pool Fee
-                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>not share-weighted</div>
+                            <div style={SMALL_MUTED_TOP_STYLE}>not share-weighted</div>
                           </td>
                           <td>
                             <div>{formatCoins(rewardBreakdown.fee_amount)}</div>
-                            <div className="mono" style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                            <div className="mono" style={SMALL_MUTED_TOP_STYLE}>
                               withheld from reward
                             </div>
                           </td>
                           <td className="mono">-</td>
                           <td>
                             <div>{formatCoins(rewardBreakdown.fee_amount)}</div>
-                            <div className="mono" style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                            <div className="mono" style={SMALL_MUTED_TOP_STYLE}>
                               {formatPct(
                                 rewardBreakdown.block.reward > 0
                                   ? (rewardBreakdown.fee_amount * 100) / rewardBreakdown.block.reward
@@ -1947,8 +1964,8 @@ export function AdminPage({
                           <td className="mono">-</td>
                           <td className="mono">-</td>
                           <td>
-                            <div style={{ color: 'var(--muted)', fontWeight: 600 }}>Pool fee</div>
-                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                            <div style={MUTED_SEMIBOLD_STYLE}>Pool fee</div>
+                            <div style={SMALL_MUTED_TOP_STYLE}>
                               {rewardBreakdown.actual_fee_amount != null
                                 ? 'tracked separately'
                                 : rewardBreakdown.block.paid_out
@@ -1958,22 +1975,22 @@ export function AdminPage({
                           </td>
                         </tr>
                         <tr style={{ background: 'var(--surface-hover)' }}>
-                          <td style={{ fontWeight: 700, textAlign: 'left' }}>
+                          <td style={FOOTER_LABEL_CELL_STYLE}>
                             Block Total
-                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                            <div style={SMALL_MUTED_TOP_STYLE}>
                               all participants + fee
                             </div>
                           </td>
                           <td>
                             <div>{formatCoins(rewardBreakdownTotals.previewCredit + rewardBreakdown.fee_amount)}</div>
-                            <div className="mono" style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                            <div className="mono" style={SMALL_MUTED_TOP_STYLE}>
                               target {formatCoins(rewardBreakdown.block.reward)}
                             </div>
                           </td>
                           <td className="mono">{rewardBreakdown.preview_total_weight}</td>
                           <td>
                             <div>{formatCoins(rewardBreakdownTotals.payoutCredit + rewardBreakdown.fee_amount)}</div>
-                            <div className="mono" style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                            <div className="mono" style={SMALL_MUTED_TOP_STYLE}>
                               target {formatCoins(rewardBreakdown.block.reward)}
                             </div>
                           </td>
@@ -2017,7 +2034,7 @@ export function AdminPage({
                                     ? 'Historical differs from recompute'
                                     : 'Mismatch'}
                             </div>
-                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                            <div style={SMALL_MUTED_TOP_STYLE}>
                               {rewardBreakdownPaidOut
                                 ? 'recorded payout vs current recompute across the full block'
                                 : 'summary across the full block'}
@@ -2028,7 +2045,7 @@ export function AdminPage({
                     ) : null}
                   </table>
                   {rewardAddressFilter.trim() && !rewardBreakdown.block.orphaned ? (
-                    <div style={{ marginTop: 12, fontSize: 12, color: 'var(--muted)' }}>
+                    <div style={MUTED_SUMMARY_STYLE}>
                       Summary rows include all participants for the block, not just the filtered addresses.
                     </div>
                   ) : null}
@@ -2263,57 +2280,27 @@ export function AdminPage({
                           return (
                             <tr key={window.label}>
                               <td>
-                                <div style={{ fontWeight: 600 }}>{window.label}</div>
-                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                <div style={SEMIBOLD_STYLE}>{window.label}</div>
+                                <div style={SMALL_MUTED_STYLE}>
                                   {shareWindowTotal(window)} submits
                                 </div>
                               </td>
                               <td className="mono">{window.accepted}</td>
                               <td className="mono">{window.rejected}</td>
                               <td className="mono">{formatPct(shareWindowRejectPct(window), 2)}</td>
-                              <td className="mono">
-                                {formatPct(shareWindowReasonPct(window, 'invalid share proof'), 2)}
-                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                                  {shareWindowReasonCount(window, 'invalid share proof')} rejects
-                                </div>
-                              </td>
-                              <td className="mono">
-                                {formatPct(shareWindowReasonPct(window, 'low difficulty share'), 2)}
-                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                                  {shareWindowReasonCount(window, 'low difficulty share')} rejects
-                                </div>
-                              </td>
-                              <td className="mono">
-                                {formatPct(shareWindowReasonPct(window, 'stale job'), 2)}
-                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                                  {shareWindowReasonCount(window, 'stale job')} rejects
-                                </div>
-                              </td>
-                              <td className="mono">
-                                {formatPct(shareWindowReasonPct(window, 'address quarantined'), 2)}
-                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                                  {shareWindowReasonCount(window, 'address quarantined')} rejects
-                                </div>
-                              </td>
-                              <td className="mono">
-                                {formatPct(shareWindowReasonPct(window, 'server busy'), 2)}
-                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                                  {shareWindowReasonCount(window, 'server busy')} rejects
-                                </div>
-                              </td>
-                              <td className="mono">
-                                {formatPct(shareWindowReasonPct(window, 'validation timeout'), 2)}
-                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                                  {shareWindowReasonCount(window, 'validation timeout')} rejects
-                                </div>
-                              </td>
+                              {shareWindowReasonCell(window, 'invalid share proof')}
+                              {shareWindowReasonCell(window, 'low difficulty share')}
+                              {shareWindowReasonCell(window, 'stale job')}
+                              {shareWindowReasonCell(window, 'address quarantined')}
+                              {shareWindowReasonCell(window, 'server busy')}
+                              {shareWindowReasonCell(window, 'validation timeout')}
                               <td>
                                 {!topReason ? (
                                   <span style={MUTED_TEXT_STYLE}>None</span>
                                 ) : (
                                   <>
-                                    <div style={{ fontWeight: 600 }}>{topReason.reason}</div>
-                                    <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                    <div style={SEMIBOLD_STYLE}>{topReason.reason}</div>
+                                    <div style={SMALL_MUTED_STYLE}>
                                       {topReason.count} rejects · {formatPct(topReasonRejectPct, 2)} of rejects
                                     </div>
                                   </>
@@ -2433,7 +2420,7 @@ export function AdminPage({
                           <td className="mono" title={holdUntilTitle(hold.validation_forced_until)}>
                             <div>{validationHoldUntilLabel(hold)}</div>
                             {validationHoldUntilHint(hold) ? (
-                              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                              <div style={SMALL_MUTED_TOP_STYLE}>
                                 {validationHoldUntilHint(hold)}
                               </div>
                             ) : null}
@@ -3016,14 +3003,14 @@ export function AdminPage({
                             return (
                               <tr key={issue.tx_hash}>
                                 <td style={{ minWidth: 260 }}>
-                                  <div className="mono" style={{ fontWeight: 600 }}>
+                                  <div className="mono" style={SEMIBOLD_STYLE}>
                                     {issue.tx_hash}
                                   </div>
-                                  <div style={{ marginTop: 6 }}>
+                                  <div style={TOP_6_STYLE}>
                                     {formatCoins(issue.total_amount)} across {issue.payout_row_count} payout row
                                     {issue.payout_row_count === 1 ? '' : 's'}
                                   </div>
-                                  <div className="stat-meta" style={{ marginTop: 6 }}>
+                                  <div className="stat-meta" style={TOP_6_STYLE}>
                                     Fee {formatCoins(issue.total_fee)}
                                   </div>
                                 </td>
@@ -3031,7 +3018,7 @@ export function AdminPage({
                                   <div>Live linked: {formatCoins(issue.live_linked_amount)}</div>
                                   <div>Orphaned linked: {formatCoins(issue.orphaned_linked_amount)}</div>
                                   <div>Unlinked: {formatCoins(issue.unlinked_amount)}</div>
-                                  <div className="stat-meta" style={{ marginTop: 6 }}>
+                                  <div className="stat-meta" style={TOP_6_STYLE}>
                                     {reconciliationRecommendation(issue)}
                                   </div>
                                 </td>
@@ -3044,7 +3031,7 @@ export function AdminPage({
                                     ))}
                                   </div>
                                   {issue.addresses.length > 3 ? (
-                                    <div className="stat-meta" style={{ marginTop: 6 }}>
+                                    <div className="stat-meta" style={TOP_6_STYLE}>
                                       +{issue.addresses.length - 3} more
                                     </div>
                                   ) : null}
@@ -3101,11 +3088,11 @@ export function AdminPage({
                             return (
                               <tr key={`${issue.height}-${issue.hash}`}>
                                 <td style={{ minWidth: 240 }}>
-                                  <div style={{ fontWeight: 600 }}>#{issue.height}</div>
-                                  <div className="mono" style={{ marginTop: 6 }}>
+                                  <div style={SEMIBOLD_STYLE}>#{issue.height}</div>
+                                  <div className="mono" style={TOP_6_STYLE}>
                                     {issue.hash.slice(0, 16)}
                                   </div>
-                                  <div className="stat-meta" style={{ marginTop: 6 }}>
+                                  <div className="stat-meta" style={TOP_6_STYLE}>
                                     {issue.credited_address_count} credited address
                                     {issue.credited_address_count === 1 ? '' : 'es'} · {issue.credit_event_count} credit
                                     row{issue.credit_event_count === 1 ? '' : 's'}
@@ -3175,7 +3162,7 @@ export function AdminPage({
                     />
                     <StatCard label="Wallet Sync" value={formatRecoveryWalletSync(item ?? null)} mono>
                       {recoveryWalletLagLabel(item ?? null) ? (
-                        <div className="label" style={{ marginTop: 6 }}>
+                        <div className="label" style={TOP_6_STYLE}>
                           {recoveryWalletLagLabel(item ?? null)}
                         </div>
                       ) : null}
@@ -3186,7 +3173,7 @@ export function AdminPage({
                       mono
                     >
                       {item?.wallet.pending_unconfirmed != null && item.wallet.pending_unconfirmed > 0 ? (
-                        <div className="label" style={{ marginTop: 6 }}>
+                        <div className="label" style={TOP_6_STYLE}>
                           {formatCoins(item.wallet.pending_unconfirmed)} unconfirmed
                           {item.wallet.pending_unconfirmed_eta != null && item.wallet.pending_unconfirmed_eta > 0
                             ? ` · ~${fmtSeconds(item.wallet.pending_unconfirmed_eta)}`
@@ -3196,7 +3183,7 @@ export function AdminPage({
                     </StatCard>
                     <StatCard label="Wallet Outputs" value={item?.wallet.outputs_total ?? '-'} mono>
                       {item?.wallet.outputs_unspent != null ? (
-                        <div className="label" style={{ marginTop: 6 }}>
+                        <div className="label" style={TOP_6_STYLE}>
                           {item.wallet.outputs_unspent} unspent
                           {item.wallet.outputs_pending != null ? ` · ${item.wallet.outputs_pending} pending` : ''}
                         </div>
@@ -3205,7 +3192,7 @@ export function AdminPage({
                     <StatCard label="Cookie" value={item?.cookie_present ? 'Present' : 'Missing'} />
                   </div>
 
-                  <div style={{ marginTop: 12, fontSize: 12, color: 'var(--muted)' }}>
+                  <div style={MUTED_SUMMARY_STYLE}>
                     <div>API: <span className="mono">{item?.api ?? '-'}</span></div>
                     <div>Wallet: <span className="mono">{item?.wallet_path ?? '-'}</span></div>
                     <div>Data: <span className="mono">{item?.data_dir ?? '-'}</span></div>
