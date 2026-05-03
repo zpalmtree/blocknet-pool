@@ -2418,7 +2418,7 @@ async fn handle_miners(
     let worker_window_start = SystemTime::now()
         .checked_sub(HASHRATE_WINDOW)
         .unwrap_or(UNIX_EPOCH);
-    let (lifetime_counts, worker_counts) = match tokio::task::spawn_blocking(move || {
+    let (lifetime_counts, worker_counts) = match spawn_blocking_result(move || {
         Ok::<_, anyhow::Error>((
             store.miner_lifetime_counts()?,
             store.miner_worker_counts_since(worker_window_start)?,
@@ -2426,13 +2426,9 @@ async fn handle_miners(
     })
     .await
     {
-        Ok(Ok(v)) => v,
-        Ok(Err(err)) => {
-            tracing::warn!(error = %err, "failed loading miner summary counts from db");
-            (HashMap::new(), HashMap::new())
-        }
+        Ok(v) => v,
         Err(err) => {
-            tracing::warn!(error = %err, "failed joining miner summary db task");
+            tracing::warn!(error = %err, "failed loading miner summary counts from db");
             (HashMap::new(), HashMap::new())
         }
     };
@@ -2453,7 +2449,7 @@ async fn handle_miners(
     } else {
         let store = Arc::clone(&state.store);
         let addresses_for_hashrate = addresses.clone();
-        match tokio::task::spawn_blocking(move || {
+        match spawn_blocking_result(move || {
             let mut hr_map = HashMap::with_capacity(addresses_for_hashrate.len());
             for address in &addresses_for_hashrate {
                 hr_map.insert(address.clone(), db_miner_hashrate(&store, address));
@@ -2462,13 +2458,9 @@ async fn handle_miners(
         })
         .await
         {
-            Ok(Ok(v)) => v,
-            Ok(Err(err)) => {
-                tracing::warn!(error = %err, "failed loading miner hashrates from db");
-                HashMap::new()
-            }
+            Ok(v) => v,
             Err(err) => {
-                tracing::warn!(error = %err, "failed joining miner hashrate db task");
+                tracing::warn!(error = %err, "failed loading miner hashrates from db");
                 HashMap::new()
             }
         }
