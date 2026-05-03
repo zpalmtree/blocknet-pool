@@ -117,7 +117,6 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
   const dashboardLuckHistory = (insights?.luck_history ?? []).filter((row) => !row.orphaned);
   const hiddenOrphanRounds = Math.max(0, (insights?.luck_history.length ?? 0) - dashboardLuckHistory.length);
   const latestSolvedBlock = dashboardLuckHistory[0];
-  const nextSweepAt = toUnixMs(payoutEta?.next_sweep_at);
   const nextSweepLabel = payoutEta?.next_sweep_at ? timeUntil(payoutEta.next_sweep_at) : '-';
   const payoutShortfall =
     payoutEta?.wallet_spendable == null
@@ -280,7 +279,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
           </div>
           <div className="stat-card">
             <div className="label">Next Sweep</div>
-            <div className="value mono" title={nextSweepAt ? new Date(nextSweepAt).toLocaleString() : undefined}>
+            <div className="value mono" title={timestampTitle(payoutEta?.next_sweep_at) || undefined}>
               {nextSweepLabel}
             </div>
           </div>
