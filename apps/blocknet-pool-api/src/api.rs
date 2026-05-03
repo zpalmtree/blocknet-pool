@@ -474,26 +474,6 @@ impl ApiPerformanceTracker {
         }
     }
 
-    fn record_route(&self, route: &str, duration: Duration, failed: bool, slow: bool) {
-        self.routes.record(route, duration, failed, slow);
-    }
-
-    fn record_operation(&self, operation: &str, duration: Duration, failed: bool, slow: bool) {
-        self.operations.record(operation, duration, failed, slow);
-    }
-
-    fn record_task(&self, task: &str, duration: Duration, failed: bool, slow: bool) {
-        self.tasks.record(task, duration, failed, slow);
-    }
-
-    fn record_cache_hit(&self, cache: &str) {
-        self.caches.record_hit(cache);
-    }
-
-    fn record_cache_miss(&self, cache: &str) {
-        self.caches.record_miss(cache);
-    }
-
     fn should_sample_success(&self) -> bool {
         self.log_sample_counter
             .fetch_add(1, Ordering::Relaxed)
@@ -4171,13 +4151,13 @@ impl ApiState {
                 .is_some_and(|updated| updated.elapsed() < STATS_RESPONSE_CACHE_TTL)
             {
                 if let Some(value) = cache.value.clone() {
-                    self.performance.record_cache_hit("stats_response");
+                    self.performance.caches.record_hit("stats_response");
                     return Ok(value);
                 }
             }
         }
 
-        self.performance.record_cache_miss("stats_response");
+        self.performance.caches.record_miss("stats_response");
         let fresh = self.load_stats_response().await?;
         let mut cache = self.stats_response_cache.lock();
         cache.updated_at = Some(Instant::now());
@@ -4633,7 +4613,7 @@ impl ApiState {
                 if schedule_refresh {
                     self.spawn_pending_estimate_snapshot_refresh(chain_height);
                 }
-                self.performance.record_cache_hit("pending_estimate");
+                self.performance.caches.record_hit("pending_estimate");
                 return Ok(values.get(address).cloned().unwrap_or_default());
             }
             if wait_for_refresh {
@@ -4642,7 +4622,7 @@ impl ApiState {
             }
 
             debug_assert!(should_load);
-            self.performance.record_cache_miss("pending_estimate");
+            self.performance.caches.record_miss("pending_estimate");
             let values = self.load_pending_estimate_snapshot(chain_height).await?;
             return Ok(values.get(address).cloned().unwrap_or_default());
         }
@@ -4752,11 +4732,11 @@ impl ApiState {
                 .filter(|entry| entry.updated_at.elapsed() < MINER_BALANCE_RESPONSE_CACHE_TTL)
                 .map(|entry| entry.value.clone())
         } {
-            self.performance.record_cache_hit("miner_balance");
+            self.performance.caches.record_hit("miner_balance");
             return Ok(cached);
         }
 
-        self.performance.record_cache_miss("miner_balance");
+        self.performance.caches.record_miss("miner_balance");
         let fresh = self
             .load_miner_balance_payload(address, include_pending_estimate)
             .await?;
@@ -4803,11 +4783,11 @@ impl ApiState {
                 .filter(|entry| entry.updated_at.elapsed() < MINER_DETAIL_RESPONSE_CACHE_TTL)
                 .map(|entry| entry.value.clone())
         } {
-            self.performance.record_cache_hit("miner_detail");
+            self.performance.caches.record_hit("miner_detail");
             return Ok(cached);
         }
 
-        self.performance.record_cache_miss("miner_detail");
+        self.performance.caches.record_miss("miner_detail");
         let fresh = self.load_miner_detail_payload(address).await?;
         let mut cache = self.miner_detail_response_cache.lock();
         prune_timed_cache_entries(
@@ -5168,13 +5148,13 @@ impl ApiState {
             let cache = self.rejection_analytics_cache.lock();
             if let Some(entry) = cache.entries.get(&window_seconds) {
                 if entry.updated_at.elapsed() < REJECTION_ANALYTICS_CACHE_TTL {
-                    self.performance.record_cache_hit("rejection_analytics");
+                    self.performance.caches.record_hit("rejection_analytics");
                     return Ok(entry.value.clone());
                 }
             }
         }
 
-        self.performance.record_cache_miss("rejection_analytics");
+        self.performance.caches.record_miss("rejection_analytics");
         let since = SystemTime::now().checked_sub(window).unwrap_or(UNIX_EPOCH);
         let started_at = Instant::now();
         let outcome_store = Arc::clone(&self.store);
@@ -5621,7 +5601,8 @@ fn record_api_route_observation(
     let slow = duration.as_millis() >= u128::from(api_route_slow_threshold_millis(route));
     state
         .performance
-        .record_route(route, duration, failed, slow);
+        .routes
+        .record(route, duration, failed, slow);
     if failed {
         tracing::warn!(
             component = "api_perf",
@@ -5652,7 +5633,8 @@ fn record_api_operation_observation(
     let slow = duration.as_millis() >= u128::from(api_operation_slow_threshold_millis(operation));
     state
         .performance
-        .record_operation(operation, duration, failed, slow);
+        .operations
+        .record(operation, duration, failed, slow);
     if failed {
         tracing::warn!(
             component = "api_perf",
@@ -5672,7 +5654,7 @@ fn record_api_operation_observation(
 
 fn record_api_task_observation(state: &ApiState, task: &str, duration: Duration, failed: bool) {
     let slow = duration.as_millis() >= u128::from(api_task_slow_threshold_millis(task));
-    state.performance.record_task(task, duration, failed, slow);
+    state.performance.tasks.record(task, duration, failed, slow);
     if failed {
         tracing::warn!(
             component = "api_perf",
