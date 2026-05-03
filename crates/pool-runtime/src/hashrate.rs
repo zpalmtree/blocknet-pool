@@ -16,27 +16,6 @@ pub struct MinerHashrateRamp {
     pub now: SystemTime,
 }
 
-fn from_stats(
-    total_diff: u64,
-    count: u64,
-    oldest: Option<SystemTime>,
-    newest: Option<SystemTime>,
-) -> f64 {
-    if count < 2 {
-        return 0.0;
-    }
-    let (Some(oldest), Some(newest)) = (oldest, newest) else {
-        return 0.0;
-    };
-    let Ok(window) = newest.duration_since(oldest) else {
-        return 0.0;
-    };
-    if window.as_secs_f64() < 1.0 {
-        return 0.0;
-    }
-    total_diff as f64 / window.as_secs_f64()
-}
-
 pub fn from_stats_or_window_floor(
     total_diff: u64,
     count: u64,
@@ -44,9 +23,14 @@ pub fn from_stats_or_window_floor(
     newest: Option<SystemTime>,
     floor_window: Duration,
 ) -> f64 {
-    let from_stats = from_stats(total_diff, count, oldest, newest);
-    if from_stats > 0.0 {
-        return from_stats;
+    if count >= 2 {
+        if let (Some(oldest), Some(newest)) = (oldest, newest) {
+            if let Ok(window) = newest.duration_since(oldest) {
+                if window.as_secs_f64() >= 1.0 {
+                    return total_diff as f64 / window.as_secs_f64();
+                }
+            }
+        }
     }
     if total_diff == 0 {
         return 0.0;
