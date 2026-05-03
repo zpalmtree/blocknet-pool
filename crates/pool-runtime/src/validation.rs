@@ -10,7 +10,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
-use crate::config::Config;
+use crate::config::{Config, CANDIDATE_VALIDATION_QUEUE_SIZE};
 use crate::telemetry::{default_latency_window, LatencyWindow, PercentileSummary, QueueTracker};
 use pool_common::db::{PendingAuditShare, ShareReplayUpdate, ValidationHoldCause};
 use pool_common::pow::{check_target, PowHasher};
@@ -527,7 +527,7 @@ impl ValidationEngine {
         let candidate_workers = CANDIDATE_VALIDATION_WORKERS;
         let regular_workers = config.regular_verifier_count();
         let audit_workers = config.audit_verifier_count();
-        let candidate_queue_size = config.candidate_validation_queue_size();
+        let candidate_queue_size = CANDIDATE_VALIDATION_QUEUE_SIZE;
         let regular_queue_size = config.regular_validation_queue_size();
         let audit_queue_size = config.audit_validation_queue_size();
 

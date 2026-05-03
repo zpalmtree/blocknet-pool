@@ -20,6 +20,7 @@ use tokio::net::TcpListener;
 
 use crate::config::Config;
 use pool_common::db::{MonitorHeartbeatUpsert, MonitorIncidentUpsert};
+use pool_runtime::config::CANDIDATE_VALIDATION_QUEUE_SIZE;
 use pool_runtime::node::{NodeClient, NodeCurrentProcessBlock, NodeLastProcessBlock, NodeStatus};
 use pool_runtime::pool_activity::{assess_pool_activity, POOL_ACTIVITY_SNAPSHOT_STALE_AFTER};
 use pool_runtime::runtime::load_dotenv;
@@ -1823,8 +1824,7 @@ fn validation_backlog_state(
 }
 
 fn validation_queue_capacity(cfg: &Config) -> u64 {
-    cfg.runtime
-        .candidate_validation_queue_size()
+    CANDIDATE_VALIDATION_QUEUE_SIZE
         .saturating_add(cfg.runtime.regular_validation_queue_size())
         .saturating_add(cfg.runtime.audit_validation_queue_size())
         .max(1) as u64

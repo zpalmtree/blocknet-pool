@@ -5,8 +5,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-const CANDIDATE_SUBMIT_QUEUE_SIZE: usize = 64;
-const CANDIDATE_VALIDATION_QUEUE_SIZE: usize = 64;
+pub(crate) const CANDIDATE_SUBMIT_QUEUE_SIZE: usize = 64;
+pub const CANDIDATE_VALIDATION_QUEUE_SIZE: usize = 64;
 
 #[derive(Clone, Deserialize)]
 #[serde(default)]
@@ -194,16 +194,8 @@ impl Config {
         parse_duration_or(&self.stale_submit_grace, Duration::from_secs(8))
     }
 
-    pub(crate) fn candidate_submit_queue_size(&self) -> usize {
-        CANDIDATE_SUBMIT_QUEUE_SIZE
-    }
-
     pub(crate) fn regular_submit_queue_size(&self) -> usize {
         self.regular_submit_queue.max(1) as usize
-    }
-
-    pub fn candidate_validation_queue_size(&self) -> usize {
-        CANDIDATE_VALIDATION_QUEUE_SIZE
     }
 
     pub fn regular_validation_queue_size(&self) -> usize {

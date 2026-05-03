@@ -10,7 +10,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc, Notify};
 
-use crate::config::Config;
+use crate::config::{Config, CANDIDATE_SUBMIT_QUEUE_SIZE};
 use crate::dev_fee::is_seine_dev_fee_address;
 use crate::engine::{canonical_share_reject_reason, PoolEngine, SubmitAck, SubmitQueueRoute};
 use crate::jobs::{AssignmentRangeMode, JobManager};
@@ -208,7 +208,7 @@ impl CandidateClaimPermit {
 impl SubmitDispatcher {
     fn new(engine: Arc<PoolEngine>, cfg: &Config) -> Arc<Self> {
         let (candidate_tx, candidate_rx) =
-            flume::bounded::<SubmitWorkItem>(cfg.candidate_submit_queue_size());
+            flume::bounded::<SubmitWorkItem>(CANDIDATE_SUBMIT_QUEUE_SIZE);
         let (regular_tx, regular_rx) =
             flume::bounded::<SubmitWorkItem>(cfg.regular_submit_queue_size());
         let candidate_queue = Arc::new(QueueTracker::new(512));
