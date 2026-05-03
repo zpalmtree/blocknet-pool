@@ -5989,6 +5989,23 @@ mod tests {
         ApiState::new(cfg, store, jobs, node)
     }
 
+    fn test_runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+    }
+
+    fn response_json(
+        runtime: &tokio::runtime::Runtime,
+        response: axum::response::Response,
+    ) -> serde_json::Value {
+        let body = runtime
+            .block_on(to_bytes(response.into_body(), usize::MAX))
+            .expect("body bytes");
+        serde_json::from_slice(&body).expect("decode json")
+    }
+
     #[test]
     fn api_performance_route_name_classifies_hot_routes() {
         assert_eq!(
@@ -6168,7 +6185,7 @@ mod tests {
 
     #[test]
     fn app_fallback_returns_json_404_for_unknown_api_paths() {
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let runtime = test_runtime();
 
         let response = runtime.block_on(handle_app_fallback(
             Method::GET,
@@ -6183,16 +6200,13 @@ mod tests {
             .unwrap_or_default();
         assert!(content_type.starts_with("application/json"));
 
-        let body = runtime
-            .block_on(to_bytes(response.into_body(), usize::MAX))
-            .expect("body bytes");
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("decode json");
+        let payload = response_json(&runtime, response);
         assert_eq!(payload["error"], "not found");
     }
 
     #[test]
     fn app_fallback_renders_ui_for_unknown_spa_paths() {
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let runtime = test_runtime();
 
         let response = runtime.block_on(handle_app_fallback(
             Method::GET,
@@ -6257,18 +6271,11 @@ mod tests {
             .expect("persist runtime snapshot");
 
         let state = test_api_state(store);
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("runtime");
+        let runtime = test_runtime();
         let response = runtime
             .block_on(handle_health(State(state)))
             .into_response();
-        let bytes = runtime
-            .block_on(to_bytes(response.into_body(), usize::MAX))
-            .expect("body bytes");
-        let payload: serde_json::Value =
-            serde_json::from_slice(&bytes).expect("health response json");
+        let payload = response_json(&runtime, response);
 
         assert_eq!(payload["pool_activity"]["connected_miners"], 0);
     }
@@ -6289,10 +6296,7 @@ mod tests {
             .expect("seed risk state");
 
         let state = test_api_state(Arc::clone(&store));
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("runtime");
+        let runtime = test_runtime();
         let response = runtime
             .block_on(handle_admin_clear_address_risk_history(
                 State(state),
@@ -6343,18 +6347,11 @@ mod tests {
             .expect("persist validation state");
 
         let state = test_api_state(store);
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("runtime");
+        let runtime = test_runtime();
         let response = runtime
             .block_on(handle_health(State(state)))
             .into_response();
-        let bytes = runtime
-            .block_on(to_bytes(response.into_body(), usize::MAX))
-            .expect("body bytes");
-        let payload: serde_json::Value =
-            serde_json::from_slice(&bytes).expect("health response json");
+        let payload = response_json(&runtime, response);
         let holds = payload["active_verification_holds"]
             .as_array()
             .expect("active verification hold array");
@@ -6463,16 +6460,12 @@ mod tests {
             .expect("persist runtime snapshot");
 
         let state = test_api_state(store);
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let runtime = test_runtime();
         let response = runtime
             .block_on(handle_admin_share_diagnostics(State(state)))
             .into_response();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
-        let bytes = runtime
-            .block_on(to_bytes(response.into_body(), usize::MAX))
-            .expect("body bytes");
-        let payload: serde_json::Value =
-            serde_json::from_slice(&bytes).expect("share diagnostics json");
+        let payload = response_json(&runtime, response);
 
         let windows = payload["windows"].as_array().expect("window rows");
         let five_min = windows
@@ -6543,16 +6536,12 @@ mod tests {
             .expect("persist runtime snapshot");
 
         let state = test_api_state(store);
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let runtime = test_runtime();
         let response = runtime
             .block_on(handle_admin_share_diagnostics(State(state)))
             .into_response();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
-        let bytes = runtime
-            .block_on(to_bytes(response.into_body(), usize::MAX))
-            .expect("body bytes");
-        let payload: serde_json::Value =
-            serde_json::from_slice(&bytes).expect("share diagnostics json");
+        let payload = response_json(&runtime, response);
 
         assert_eq!(payload["validation"]["hot_accepts"], 74);
         assert_eq!(payload["validation"]["audit_enqueued"], 13);
@@ -6596,7 +6585,7 @@ mod tests {
             .expect("add rejected share");
 
         let state = test_api_state(store);
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let runtime = test_runtime();
         let response = runtime
             .block_on(handle_miners(
                 Query(SearchPageQuery::default()),
@@ -6604,10 +6593,7 @@ mod tests {
             ))
             .into_response();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
-        let body = runtime
-            .block_on(to_bytes(response.into_body(), usize::MAX))
-            .expect("read body");
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("decode miners json");
+        let payload = response_json(&runtime, response);
 
         let miner = payload["items"]
             .as_array()
@@ -6655,7 +6641,7 @@ mod tests {
         }
 
         let state = test_api_state(store);
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let runtime = test_runtime();
         let response = runtime
             .block_on(handle_miner(
                 Path("miner-workers".to_string()),
@@ -6663,10 +6649,7 @@ mod tests {
             ))
             .into_response();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
-        let body = runtime
-            .block_on(to_bytes(response.into_body(), usize::MAX))
-            .expect("read body");
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("decode miner json");
+        let payload = response_json(&runtime, response);
 
         let workers = payload["workers"].as_array().expect("worker rows");
         assert_eq!(workers.len(), 1);
@@ -6702,15 +6685,12 @@ mod tests {
         }
 
         let state = test_api_state(store);
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let runtime = test_runtime();
         let response = runtime
             .block_on(handle_miner(Path("miner-since".to_string()), State(state)))
             .into_response();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
-        let body = runtime
-            .block_on(to_bytes(response.into_body(), usize::MAX))
-            .expect("read body");
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("decode miner json");
+        let payload = response_json(&runtime, response);
 
         assert_eq!(
             payload["shares"]
@@ -6750,7 +6730,7 @@ mod tests {
             .expect("add stale share");
 
         let state = test_api_state(store);
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let runtime = test_runtime();
         let response = runtime
             .block_on(handle_miners(
                 Query(SearchPageQuery {
@@ -6763,10 +6743,7 @@ mod tests {
             ))
             .into_response();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
-        let body = runtime
-            .block_on(to_bytes(response.into_body(), usize::MAX))
-            .expect("read body");
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("decode miners json");
+        let payload = response_json(&runtime, response);
 
         let stale = payload["items"]
             .as_array()
@@ -6812,15 +6789,12 @@ mod tests {
             .expect("seed hold");
 
         let state = test_api_state(store);
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let runtime = test_runtime();
         let response = runtime
             .block_on(handle_miner(Path("miner-hold".to_string()), State(state)))
             .into_response();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
-        let body = runtime
-            .block_on(to_bytes(response.into_body(), usize::MAX))
-            .expect("read body");
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("decode miner json");
+        let payload = response_json(&runtime, response);
 
         assert_eq!(
             payload["verification_hold"]["mode"].as_str(),
@@ -6874,7 +6848,7 @@ mod tests {
             .expect("persist provisional");
 
         let state = test_api_state(store);
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let runtime = test_runtime();
         let response = runtime
             .block_on(handle_miner(
                 Path("miner-backlog".to_string()),
@@ -6882,10 +6856,7 @@ mod tests {
             ))
             .into_response();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
-        let body = runtime
-            .block_on(to_bytes(response.into_body(), usize::MAX))
-            .expect("read body");
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("decode miner json");
+        let payload = response_json(&runtime, response);
 
         assert_eq!(
             payload["verification_hold"]["validation_hold_cause"].as_str(),
