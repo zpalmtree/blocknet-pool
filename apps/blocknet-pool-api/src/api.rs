@@ -1357,10 +1357,6 @@ fn collect_admin_share_windows(
     Ok(rows)
 }
 
-fn unix_secs_to_system_time(value: u64) -> SystemTime {
-    UNIX_EPOCH + Duration::from_secs(value)
-}
-
 fn service_health_from_local(
     latest: Option<&MonitorHeartbeat>,
     healthy_fn: impl Fn(&MonitorHeartbeat) -> Option<bool>,
@@ -1618,13 +1614,16 @@ async fn handle_monitor_ingest_cloudflare(
 
     let store = Arc::clone(&state.store);
     let action = spawn_blocking_result(move || -> anyhow::Result<()> {
-        let ended_at = unix_secs_to_system_time(
-            event
-                .ended_at
-                .or(event.checked_at)
-                .unwrap_or_else(|| system_time_to_unix_secs(SystemTime::now())),
-        );
-        let started_at = event.started_at.map(unix_secs_to_system_time);
+        let ended_at = UNIX_EPOCH
+            + Duration::from_secs(
+                event
+                    .ended_at
+                    .or(event.checked_at)
+                    .unwrap_or_else(|| system_time_to_unix_secs(SystemTime::now())),
+            );
+        let started_at = event
+            .started_at
+            .map(|timestamp| UNIX_EPOCH + Duration::from_secs(timestamp));
         let status = event.status.trim().to_ascii_lowercase();
         let summary = event
             .summary
