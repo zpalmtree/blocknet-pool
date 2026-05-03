@@ -7543,21 +7543,11 @@ mod tests {
                 base + Duration::from_secs(120),
             ),
         ] {
-            store
-                .add_block(&DbBlock {
-                    height,
-                    hash,
-                    difficulty: 100,
-                    finder: "miner-a".to_string(),
-                    finder_worker: "wa".to_string(),
-                    reward: 1_000,
-                    timestamp,
-                    confirmed: true,
-                    orphaned: false,
-                    paid_out: false,
-                    effort_pct: None,
-                })
-                .expect("add block");
+            let mut block = test_block(
+                height, &hash, "miner-a", "wa", 1_000, timestamp, true, false,
+            );
+            block.difficulty = 100;
+            store.add_block(&block).expect("add block");
         }
 
         let (full, total) = store
@@ -7643,21 +7633,11 @@ mod tests {
                 base + Duration::from_secs(120),
             ),
         ] {
-            store
-                .add_block(&DbBlock {
-                    height,
-                    hash,
-                    difficulty: 100,
-                    finder: "miner-a".to_string(),
-                    finder_worker: "wa".to_string(),
-                    reward: 1_000,
-                    timestamp,
-                    confirmed: true,
-                    orphaned: false,
-                    paid_out: false,
-                    effort_pct: None,
-                })
-                .expect("add block");
+            let mut block = test_block(
+                height, &hash, "miner-a", "wa", 1_000, timestamp, true, false,
+            );
+            block.difficulty = 100;
+            store.add_block(&block).expect("add block");
         }
 
         let details = store
@@ -8108,38 +8088,18 @@ mod tests {
 
     #[test]
     fn hydrate_provisional_reward_fills_pending_zero_reward() {
-        let mut block = DbBlock {
-            height: 3707,
-            hash: "abc".to_string(),
-            difficulty: 1,
-            finder: "addr".to_string(),
-            finder_worker: "rig".to_string(),
-            reward: 0,
-            timestamp: SystemTime::now(),
-            confirmed: false,
-            orphaned: false,
-            paid_out: false,
-            effort_pct: None,
-        };
+        let now = SystemTime::now();
+        let mut block = test_block(3707, "abc", "addr", "rig", 0, now, false, false);
+        block.difficulty = 1;
         hydrate_provisional_block_reward(&mut block);
         assert_eq!(block.reward, estimated_block_reward(3707));
     }
 
     #[test]
     fn hydrate_provisional_reward_does_not_change_confirmed_blocks() {
-        let mut block = DbBlock {
-            height: 3707,
-            hash: "abc".to_string(),
-            difficulty: 1,
-            finder: "addr".to_string(),
-            finder_worker: "rig".to_string(),
-            reward: 123,
-            timestamp: SystemTime::now(),
-            confirmed: true,
-            orphaned: false,
-            paid_out: false,
-            effort_pct: None,
-        };
+        let now = SystemTime::now();
+        let mut block = test_block(3707, "abc", "addr", "rig", 123, now, true, false);
+        block.difficulty = 1;
         hydrate_provisional_block_reward(&mut block);
         assert_eq!(block.reward, 123);
     }
