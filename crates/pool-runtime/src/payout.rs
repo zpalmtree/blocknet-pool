@@ -7,6 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::config::Config;
 use crate::node::{
@@ -2771,8 +2772,6 @@ fn select_inputs_for_target(
 }
 
 fn payout_batch_id(candidates: &[PayoutCandidate]) -> String {
-    use sha2::{Digest, Sha256};
-
     let mut input = format!(
         "blocknet-pool:payout-batch:{}:",
         SystemTime::now()
@@ -2786,15 +2785,11 @@ fn payout_batch_id(candidates: &[PayoutCandidate]) -> String {
         input.push_str(&candidate.pending.amount.to_string());
         input.push('|');
     }
-    hex::encode(Sha256::digest(input.as_bytes()))
+    sha256_hex(input)
 }
 
 fn payout_batch_idempotency_key(batch_id: &str) -> String {
-    use sha2::{Digest, Sha256};
-
-    hex::encode(Sha256::digest(
-        format!("blocknet-pool:payout-batch:{batch_id}").as_bytes(),
-    ))
+    sha256_hex(format!("blocknet-pool:payout-batch:{batch_id}"))
 }
 
 fn daemon_send_idempotency_path(config: &Config) -> PathBuf {
@@ -2914,13 +2909,11 @@ fn allocate_pending_batch_fees(
 }
 
 fn payout_rebalance_idempotency_key(input: &WalletOutput) -> String {
-    use sha2::{Digest, Sha256};
-
     let payload = format!(
         "blocknet-pool:rebalance:{}:{}:{}",
         input.txid, input.output_index, input.amount
     );
-    hex::encode(Sha256::digest(payload.as_bytes()))
+    sha256_hex(payload)
 }
 
 fn allocate_batch_fees(
@@ -3040,16 +3033,17 @@ pub fn is_share_payout_eligible(
 
 #[cfg(test)]
 fn payout_idempotency_key(p: &PendingPayout) -> String {
-    use sha2::{Digest, Sha256};
-
     let attempt_started_at = p.send_started_at.or(p.sent_at).unwrap_or(p.initiated_at);
     let ts = attempt_started_at
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
     let input = format!("blocknet-pool:payout:{}:{}:{}", p.address, p.amount, ts);
-    let digest = Sha256::digest(input.as_bytes());
-    hex::encode(digest)
+    sha256_hex(input)
+}
+
+fn sha256_hex(input: impl AsRef<str>) -> String {
+    hex::encode(Sha256::digest(input.as_ref().as_bytes()))
 }
 
 fn bounded_payout_interval(configured: Duration) -> Duration {
