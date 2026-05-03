@@ -3,6 +3,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use pool_common::protocol::{address_network, AddressNetwork};
 use serde::Deserialize;
 
 pub(crate) const CANDIDATE_SUBMIT_QUEUE_SIZE: usize = 64;
@@ -272,6 +273,14 @@ impl Config {
             return 0;
         }
         ((reward as f64) * self.pool_fee_pct / 100.0).clamp(0.0, reward as f64) as u64
+    }
+
+    pub(crate) fn pool_fee_wallet_address_network(&self) -> Result<Option<AddressNetwork>, String> {
+        let configured = self.pool_fee_wallet_address.trim();
+        if configured.is_empty() {
+            return Ok(None);
+        }
+        address_network(configured)
     }
 }
 

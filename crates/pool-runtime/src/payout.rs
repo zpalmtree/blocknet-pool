@@ -220,7 +220,16 @@ impl PayoutProcessor {
         node: Arc<NodeClient>,
         task_metrics: Option<Arc<NamedTimedOperationTracker>>,
     ) -> Arc<Self> {
-        let configured_address_network = configured_payout_address_network(&cfg);
+        let configured_address_network = match cfg.pool_fee_wallet_address_network() {
+            Ok(network) => network,
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "configured pool_fee_wallet_address is not a valid payout network anchor; falling back to daemon wallet validation"
+                );
+                None
+            }
+        };
         Arc::new(Self {
             cfg,
             configured_address_network,
@@ -2112,24 +2121,6 @@ fn record_payout_task_observation(
             duration_ms = duration.as_millis() as u64,
             "payout runtime task observed"
         );
-    }
-}
-
-fn configured_payout_address_network(cfg: &Config) -> Option<AddressNetwork> {
-    let configured = cfg.pool_fee_wallet_address.trim();
-    if configured.is_empty() {
-        return None;
-    }
-
-    match address_network(configured) {
-        Ok(network) => network,
-        Err(err) => {
-            tracing::warn!(
-                error = %err,
-                "configured pool_fee_wallet_address is not a valid payout network anchor; falling back to daemon wallet validation"
-            );
-            None
-        }
     }
 }
 

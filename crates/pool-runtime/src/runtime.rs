@@ -550,8 +550,15 @@ async fn resolve_expected_address_network(
     cfg: &Config,
     node: Arc<NodeClient>,
 ) -> Option<AddressNetwork> {
-    if let Some(network) = configured_expected_address_network(cfg) {
-        return Some(network);
+    match cfg.pool_fee_wallet_address_network() {
+        Ok(Some(network)) => return Some(network),
+        Ok(None) => {}
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "pool_fee_wallet_address could not be parsed for pool network detection"
+            );
+        }
     }
 
     let node_for_wallet = Arc::clone(&node);
@@ -577,24 +584,6 @@ async fn resolve_expected_address_network(
             tracing::warn!(
                 error = %err,
                 "daemon wallet address could not be parsed for pool network detection"
-            );
-            None
-        }
-    }
-}
-
-fn configured_expected_address_network(cfg: &Config) -> Option<AddressNetwork> {
-    let configured = cfg.pool_fee_wallet_address.trim();
-    if configured.is_empty() {
-        return None;
-    }
-
-    match address_network(configured) {
-        Ok(network) => network,
-        Err(err) => {
-            tracing::warn!(
-                error = %err,
-                "pool_fee_wallet_address could not be parsed for pool network detection"
             );
             None
         }
