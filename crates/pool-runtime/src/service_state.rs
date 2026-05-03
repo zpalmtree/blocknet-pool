@@ -121,60 +121,6 @@ impl From<SubmitRuntimeSnapshot> for PersistedSubmitSummary {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct PersistedPayoutRuntime {
-    #[serde(default)]
-    pub payout_interval_seconds: u64,
-    #[serde(default)]
-    pub maintenance_interval_seconds: u64,
-    pub next_sweep_at: Option<SystemTime>,
-    pub last_tick_at: Option<SystemTime>,
-    #[serde(default)]
-    pub reserve_target_amount: u64,
-    #[serde(default)]
-    pub safe_spend_budget: u64,
-    #[serde(default)]
-    pub spendable_output_count: usize,
-    #[serde(default)]
-    pub small_output_count: usize,
-    #[serde(default)]
-    pub medium_output_count: usize,
-    #[serde(default)]
-    pub large_output_count: usize,
-    #[serde(default)]
-    pub planned_batch_count: usize,
-    #[serde(default)]
-    pub planned_recipient_count: usize,
-    #[serde(default)]
-    pub rebalance_required: bool,
-    #[serde(default)]
-    pub rebalance_active: bool,
-    #[serde(default)]
-    pub inventory_health: String,
-}
-
-impl From<PayoutRuntimeSnapshot> for PersistedPayoutRuntime {
-    fn from(value: PayoutRuntimeSnapshot) -> Self {
-        Self {
-            payout_interval_seconds: value.payout_interval_seconds,
-            maintenance_interval_seconds: value.maintenance_interval_seconds,
-            next_sweep_at: value.next_sweep_at,
-            last_tick_at: value.last_tick_at,
-            reserve_target_amount: value.reserve_target_amount,
-            safe_spend_budget: value.safe_spend_budget,
-            spendable_output_count: value.spendable_output_count,
-            small_output_count: value.small_output_count,
-            medium_output_count: value.medium_output_count,
-            large_output_count: value.large_output_count,
-            planned_batch_count: value.planned_batch_count,
-            planned_recipient_count: value.planned_recipient_count,
-            rebalance_required: value.rebalance_required,
-            rebalance_active: value.rebalance_active,
-            inventory_health: value.inventory_health,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedRuntimeSnapshot {
     pub sampled_at: SystemTime,
@@ -185,7 +131,7 @@ pub struct PersistedRuntimeSnapshot {
     #[serde(default)]
     pub jobs: JobRuntimeSnapshot,
     #[serde(default)]
-    pub payouts: PersistedPayoutRuntime,
+    pub payouts: PayoutRuntimeSnapshot,
     #[serde(default)]
     pub submit: PersistedSubmitSummary,
     pub validation: PersistedValidationSummary,
@@ -209,7 +155,7 @@ impl PersistedRuntimeSnapshot {
             estimated_hashrate: pool.estimated_hashrate,
             last_share_at: pool.last_share_at,
             jobs,
-            payouts: payouts.into(),
+            payouts,
             submit: submit.into(),
             validation: validation.into(),
             runtime_tasks,

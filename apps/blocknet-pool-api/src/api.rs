@@ -5655,9 +5655,8 @@ mod tests {
     use pool_runtime::engine::ShareRecord;
     use pool_runtime::jobs::{JobManager, JobRuntimeSnapshot};
     use pool_runtime::node::{NodeClient, WalletBalance};
-    use pool_runtime::service_state::{
-        PersistedPayoutRuntime, PersistedRuntimeSnapshot, PersistedValidationSummary,
-    };
+    use pool_runtime::payout::PayoutRuntimeSnapshot;
+    use pool_runtime::service_state::{PersistedRuntimeSnapshot, PersistedValidationSummary};
     use pool_runtime::store::PoolStore;
     use pool_runtime::validation::PersistedValidationAddressState;
     use tempfile::tempdir;
@@ -6090,7 +6089,7 @@ mod tests {
             estimated_hashrate: 0.0,
             last_share_at: None,
             jobs: JobRuntimeSnapshot::default(),
-            payouts: PersistedPayoutRuntime::default(),
+            payouts: PayoutRuntimeSnapshot::default(),
             submit: Default::default(),
             validation: PersistedValidationSummary::default(),
             runtime_tasks: BTreeMap::new(),
@@ -6250,7 +6249,7 @@ mod tests {
             estimated_hashrate: 42.5,
             last_share_at: Some(now),
             jobs: JobRuntimeSnapshot::default(),
-            payouts: PersistedPayoutRuntime::default(),
+            payouts: PayoutRuntimeSnapshot::default(),
             submit: Default::default(),
             validation: PersistedValidationSummary {
                 in_flight: 2,
@@ -6324,7 +6323,7 @@ mod tests {
             estimated_hashrate: 12.5,
             last_share_at: Some(now),
             jobs: JobRuntimeSnapshot::default(),
-            payouts: PersistedPayoutRuntime::default(),
+            payouts: PayoutRuntimeSnapshot::default(),
             submit: Default::default(),
             validation: PersistedValidationSummary {
                 hot_accepts: 74,

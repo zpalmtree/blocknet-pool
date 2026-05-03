@@ -57,7 +57,7 @@ struct MissingCompletedPayoutSummary {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub(crate) struct PayoutRuntimeSnapshot {
+pub struct PayoutRuntimeSnapshot {
     #[serde(default)]
     pub payout_interval_seconds: u64,
     #[serde(default)]
