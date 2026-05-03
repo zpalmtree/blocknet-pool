@@ -94,7 +94,7 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
         expected_address_network,
         jobs: core.jobs,
         validation,
-        stats: Arc::new(PoolStats::new()),
+        stats: Arc::new(PoolStats::default()),
     })
 }
 

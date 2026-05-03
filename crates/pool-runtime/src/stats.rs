@@ -49,10 +49,6 @@ pub(crate) struct PoolStats {
 }
 
 impl PoolStats {
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
     pub(crate) fn add_miner(&self, conn_id: &str, address: &str, worker: &str) {
         self.connected_miners.write().insert(
             conn_id.to_string(),
@@ -155,7 +151,7 @@ mod tests {
 
     #[test]
     fn records_shares_and_connected_counts() {
-        let stats = PoolStats::new();
+        let stats = PoolStats::default();
         stats.add_miner("c1", "addr1", "rig1");
         stats.record_accepted_share(10);
         stats.record_accepted_share(20);
@@ -168,7 +164,7 @@ mod tests {
 
     #[test]
     fn connected_counts_track_active_connections() {
-        let stats = PoolStats::new();
+        let stats = PoolStats::default();
         stats.add_miner("c1", "addr1", "rig1");
         stats.add_miner("c2", "addr1", "rig1");
         stats.add_miner("c3", "addr2", "rig9");
@@ -195,7 +191,7 @@ mod tests {
 
     #[test]
     fn accepted_share_history_is_count_bounded() {
-        let stats = PoolStats::new();
+        let stats = PoolStats::default();
         stats.add_miner("c1", "addr1", "rig1");
 
         for _ in 0..(MAX_RECENT_SHARES + 1_000) {
