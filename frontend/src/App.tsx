@@ -14,27 +14,12 @@ import { StatusPage } from './pages/StatusPage';
 import { StatsPage } from './pages/StatsPage';
 import type { InfoResponse, Route } from './types';
 
-function routeFromLocation(): Route {
-  return routeFromPathname(window.location.pathname);
-}
-
 function updateDocumentChrome(route: Route, theme: ThemeMode, poolName?: string) {
   const baseTitle = titleForRoute(route);
   document.title = poolName?.trim() ? `${baseTitle} | ${poolName.trim()}` : baseTitle;
   document
     .querySelector<HTMLMetaElement>('meta[name="theme-color"]')
     ?.setAttribute('content', theme === 'dark' ? '#071114' : '#f6f8f2');
-}
-
-function shouldHandleNavigation(event: MouseEvent<HTMLAnchorElement>): boolean {
-  return !(
-    event.defaultPrevented ||
-    event.button !== 0 ||
-    event.metaKey ||
-    event.ctrlKey ||
-    event.shiftKey ||
-    event.altKey
-  );
 }
 
 function SunIcon() {
@@ -74,7 +59,7 @@ const NAV_ITEMS: { route: Route; label: string }[] = [
 ];
 
 export function App() {
-  const [route, setRoute] = useState<Route>(() => routeFromLocation());
+  const [route, setRoute] = useState<Route>(() => routeFromPathname(window.location.pathname));
   const [errorMsg, setErrorMsg] = useState('');
   const [poolInfo, setPoolInfo] = useState<InfoResponse | null>(null);
   const [apiKey, setApiKey] = useState(localStorage.getItem(API_KEY_STORAGE_KEY) || '');
@@ -112,7 +97,7 @@ export function App() {
   }, [api]);
 
   useEffect(() => {
-    const onPopState = () => setRoute(routeFromLocation());
+    const onPopState = () => setRoute(routeFromPathname(window.location.pathname));
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
@@ -184,7 +169,16 @@ export function App() {
 
   const onNavLinkClick = useCallback(
     (event: MouseEvent<HTMLAnchorElement>, nextRoute: Route) => {
-      if (!shouldHandleNavigation(event)) return;
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
       event.preventDefault();
       navigateToRoute(nextRoute);
     },
