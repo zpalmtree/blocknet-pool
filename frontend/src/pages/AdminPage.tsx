@@ -60,35 +60,44 @@ const MUTED_SEMIBOLD_STYLE: CSSProperties = { color: 'var(--muted)', fontWeight:
 const FOOTER_LABEL_CELL_STYLE: CSSProperties = { fontWeight: 700, textAlign: 'left' };
 const TOP_6_STYLE: CSSProperties = { marginTop: 6 };
 const SHARE_DIAGNOSTIC_REASONS = ['invalid share proof', 'low difficulty share', 'stale job', 'address quarantined', 'server busy', 'validation timeout'];
+const REWARD_STATUS_META: Record<string, { label: string; tone: string }> = {
+  included: { label: 'Included', tone: 'var(--good)' },
+  capped_provisional: { label: 'Included (capped)', tone: 'var(--warn)' },
+  awaiting_verified_shares: { label: 'Needs verified shares', tone: 'var(--warn)' },
+  recorded_only: { label: 'Recorded only', tone: 'var(--muted)' },
+};
+const OVERLOAD_MODE_LABELS: Record<string, string> = {
+  emergency: 'Emergency',
+  shed: 'Shedding',
+};
+const RECOVERY_INSTANCE_LABELS: Record<string, string> = {
+  primary: 'Primary',
+  standby: 'Standby',
+};
+const RECOVERY_OPERATION_LABELS: Record<string, string> = {
+  pause_payouts: 'Pause payouts',
+  resume_payouts: 'Resume payouts',
+  start_standby_sync: 'Start inactive sync',
+  rebuild_standby_wallet: 'Rebuild inactive wallet',
+  cutover: 'Cut over',
+  purge_inactive_daemon: 'Purge inactive daemon',
+};
+const RECOVERY_OPERATION_STATE_LABELS: Record<string, string> = {
+  running: 'Running',
+  succeeded: 'Succeeded',
+  failed: 'Failed',
+};
 const warnTextStyle = (active: boolean) => (active ? WARN_TEXT_STYLE : undefined);
 const warnGoodTextStyle = (warn: boolean) => (warn ? WARN_TEXT_STYLE : GOOD_TEXT_STYLE);
+const labelFor = (value: string | null | undefined, labels: Record<string, string>, fallback: string) =>
+  value ? labels[value] ?? fallback : fallback;
 
 function rewardStatusLabel(status: string): string {
-  switch (status) {
-    case 'included':
-      return 'Included';
-    case 'capped_provisional':
-      return 'Included (capped)';
-    case 'awaiting_verified_shares':
-      return 'Needs verified shares';
-    case 'recorded_only':
-      return 'Recorded only';
-    default:
-      return 'No eligible shares';
-  }
+  return REWARD_STATUS_META[status]?.label ?? 'No eligible shares';
 }
 
 function rewardStatusTone(status: string): string {
-  switch (status) {
-    case 'included':
-      return 'var(--good)';
-    case 'capped_provisional':
-      return 'var(--warn)';
-    case 'recorded_only':
-      return 'var(--muted)';
-    default:
-      return 'var(--warn)';
-  }
+  return REWARD_STATUS_META[status]?.tone ?? 'var(--warn)';
 }
 
 function rewardDeltaStyle(value: number | null | undefined, paidOut = false): CSSProperties {
@@ -120,14 +129,7 @@ function formatMillis(value: number | null | undefined): string {
 }
 
 function overloadModeLabel(mode: string | null | undefined): string {
-  switch (mode) {
-    case 'emergency':
-      return 'Emergency';
-    case 'shed':
-      return 'Shedding';
-    default:
-      return 'Normal';
-  }
+  return labelFor(mode, OVERLOAD_MODE_LABELS, 'Normal');
 }
 
 function reconciliationRecommendation(issue: AdminMissingCompletedPayoutIssue): string {
@@ -288,46 +290,15 @@ function shareWindowReasonCell(window: AdminShareDiagnosticsWindow, reason: stri
 }
 
 function recoveryInstanceLabel(instance: RecoveryInstanceId | null | undefined): string {
-  switch (instance) {
-    case 'primary':
-      return 'Primary';
-    case 'standby':
-      return 'Standby';
-    default:
-      return 'Unknown';
-  }
+  return labelFor(instance, RECOVERY_INSTANCE_LABELS, 'Unknown');
 }
 
 function recoveryOperationLabel(kind: RecoveryOperationKind | null | undefined): string {
-  switch (kind) {
-    case 'pause_payouts':
-      return 'Pause payouts';
-    case 'resume_payouts':
-      return 'Resume payouts';
-    case 'start_standby_sync':
-      return 'Start inactive sync';
-    case 'rebuild_standby_wallet':
-      return 'Rebuild inactive wallet';
-    case 'cutover':
-      return 'Cut over';
-    case 'purge_inactive_daemon':
-      return 'Purge inactive daemon';
-    default:
-      return 'Unknown operation';
-  }
+  return labelFor(kind, RECOVERY_OPERATION_LABELS, 'Unknown operation');
 }
 
 function recoveryOperationStateLabel(state: string | null | undefined): string {
-  switch (state) {
-    case 'running':
-      return 'Running';
-    case 'succeeded':
-      return 'Succeeded';
-    case 'failed':
-      return 'Failed';
-    default:
-      return 'Unknown';
-  }
+  return labelFor(state, RECOVERY_OPERATION_STATE_LABELS, 'Unknown');
 }
 
 function RecoveryWalletSyncCard({ item }: { item: RecoveryInstanceStatus | null }) {
