@@ -2613,7 +2613,7 @@ struct MinerPendingBlockEstimate {
     hash: String,
     estimated_credit: u64,
     credit_withheld: bool,
-    validation_state: String,
+    validation_state: PendingPreviewValidation,
     validation_detail: String,
     confirmations_remaining: u64,
     timestamp: SystemTime,
@@ -2670,10 +2670,12 @@ impl AddressPreviewStats {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 enum PendingPreviewValidation {
     Ready,
     AwaitingDelay,
+    #[serde(rename = "awaiting_shares")]
     AwaitingVerifiedShares,
     ExtraVerification,
 }
@@ -2919,15 +2921,6 @@ fn pending_preview_validation_state(
     PendingPreviewValidation::Ready
 }
 
-fn pending_preview_validation_state_key(state: PendingPreviewValidation) -> &'static str {
-    match state {
-        PendingPreviewValidation::Ready => "ready",
-        PendingPreviewValidation::AwaitingDelay => "awaiting_delay",
-        PendingPreviewValidation::AwaitingVerifiedShares => "awaiting_shares",
-        PendingPreviewValidation::ExtraVerification => "extra_verification",
-    }
-}
-
 fn pending_preview_validation_detail(
     cfg: &Config,
     stats: &AddressPreviewStats,
@@ -3170,8 +3163,7 @@ fn estimate_unconfirmed_pending_snapshot(
                 hash: block.hash.clone(),
                 estimated_credit,
                 credit_withheld: false,
-                validation_state: pending_preview_validation_state_key(validation_state)
-                    .to_string(),
+                validation_state,
                 validation_detail: pending_preview_validation_detail(
                     config,
                     &stats,
@@ -5722,8 +5714,8 @@ mod tests {
     use super::{
         pending_estimate_snapshot_can_serve, pending_estimate_snapshot_needs_refresh,
         public_telemetry_route_kind_for_path, HashrateStatsInput, MinerHashrateRamp,
-        PendingEstimateSnapshotCache, PublicTelemetryRateLimiter, PublicTelemetryRouteKind,
-        RewardParticipantStatus, MINER_PENDING_ESTIMATE_HOT_WINDOW,
+        PendingEstimateSnapshotCache, PendingPreviewValidation, PublicTelemetryRateLimiter,
+        PublicTelemetryRouteKind, RewardParticipantStatus, MINER_PENDING_ESTIMATE_HOT_WINDOW,
         MINER_PENDING_ESTIMATE_REFRESH_AFTER, PUBLIC_TELEMETRY_MINER_RATE_LIMIT,
         PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW, PUBLIC_TELEMETRY_STATS_RATE_LIMIT,
     };
@@ -7141,7 +7133,14 @@ mod tests {
         .expect("estimate");
         assert_eq!(estimate.estimated_pending, 500);
         assert_eq!(estimate.blocks.len(), 1);
-        assert_eq!(estimate.blocks[0].validation_state, "awaiting_shares");
+        assert_eq!(
+            estimate.blocks[0].validation_state,
+            PendingPreviewValidation::AwaitingVerifiedShares
+        );
+        assert_eq!(
+            serde_json::to_value(&estimate.blocks[0]).expect("serialize")["validation_state"],
+            "awaiting_shares"
+        );
         assert!(estimate.blocks[0]
             .validation_detail
             .contains("required verified shares"));
@@ -7230,7 +7229,10 @@ mod tests {
         assert_eq!(estimate.blocks.len(), 1);
         assert_eq!(estimate.blocks[0].estimated_credit, 500);
         assert!(!estimate.blocks[0].credit_withheld);
-        assert_eq!(estimate.blocks[0].validation_state, "extra_verification");
+        assert_eq!(
+            estimate.blocks[0].validation_state,
+            PendingPreviewValidation::ExtraVerification
+        );
         assert!(estimate.blocks[0]
             .validation_detail
             .contains("only fully verified shares count"));
@@ -7291,7 +7293,10 @@ mod tests {
         assert_eq!(estimate.estimated_pending, 500);
         assert_eq!(estimate.blocks.len(), 1);
         assert_eq!(estimate.blocks[0].estimated_credit, 500);
-        assert_eq!(estimate.blocks[0].validation_state, "ready");
+        assert_eq!(
+            estimate.blocks[0].validation_state,
+            PendingPreviewValidation::Ready
+        );
     }
 
     #[test]
@@ -7331,7 +7336,10 @@ mod tests {
         assert_eq!(estimate.estimated_pending, 0);
         assert_eq!(estimate.blocks.len(), 1);
         assert_eq!(estimate.blocks[0].estimated_credit, 0);
-        assert_eq!(estimate.blocks[0].validation_state, "awaiting_delay");
+        assert_eq!(
+            estimate.blocks[0].validation_state,
+            PendingPreviewValidation::AwaitingDelay
+        );
     }
 
     #[test]
