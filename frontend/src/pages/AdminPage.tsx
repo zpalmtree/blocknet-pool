@@ -3160,42 +3160,31 @@ export function AdminPage({
                   </div>
 
                   <div className="stats-grid stats-grid-dense">
-                    <div className="stat-card">
-                      <div className="label">Service</div>
-                      <div className="value mono">{item?.service_state ?? '-'}</div>
-                    </div>
-                    <div className="stat-card">
-                      <div className="label">Chain Height</div>
-                      <div className="value mono">{item?.chain_height ?? '-'}</div>
-                    </div>
-                    <div className="stat-card">
-                      <div className="label">Peers</div>
-                      <div className="value mono">{item?.peers ?? '-'}</div>
-                    </div>
-                    <div className="stat-card">
-                      <div className="label">Wallet</div>
-                      <div className="value">
-                        {item?.wallet.loaded
+                    <StatCard label="Service" value={item?.service_state ?? '-'} mono />
+                    <StatCard label="Chain Height" value={item?.chain_height ?? '-'} mono />
+                    <StatCard label="Peers" value={item?.peers ?? '-'} mono />
+                    <StatCard
+                      label="Wallet"
+                      value={
+                        item?.wallet.loaded
                           ? item.wallet.address
                             ? shortAddr(item.wallet.address)
                             : 'Loaded'
-                          : 'Not loaded'}
-                      </div>
-                    </div>
-                    <div className="stat-card">
-                      <div className="label">Wallet Sync</div>
-                      <div className="value mono">{formatRecoveryWalletSync(item ?? null)}</div>
+                          : 'Not loaded'
+                      }
+                    />
+                    <StatCard label="Wallet Sync" value={formatRecoveryWalletSync(item ?? null)} mono>
                       {recoveryWalletLagLabel(item ?? null) ? (
                         <div className="label" style={{ marginTop: 6 }}>
                           {recoveryWalletLagLabel(item ?? null)}
                         </div>
                       ) : null}
-                    </div>
-                    <div className="stat-card">
-                      <div className="label">Spendable</div>
-                      <div className="value mono">
-                        {item?.wallet.spendable != null ? formatCoins(item.wallet.spendable) : '-'}
-                      </div>
+                    </StatCard>
+                    <StatCard
+                      label="Spendable"
+                      value={item?.wallet.spendable != null ? formatCoins(item.wallet.spendable) : '-'}
+                      mono
+                    >
                       {item?.wallet.pending_unconfirmed != null && item.wallet.pending_unconfirmed > 0 ? (
                         <div className="label" style={{ marginTop: 6 }}>
                           {formatCoins(item.wallet.pending_unconfirmed)} unconfirmed
@@ -3204,21 +3193,16 @@ export function AdminPage({
                             : ''}
                         </div>
                       ) : null}
-                    </div>
-                    <div className="stat-card">
-                      <div className="label">Wallet Outputs</div>
-                      <div className="value mono">{item?.wallet.outputs_total ?? '-'}</div>
+                    </StatCard>
+                    <StatCard label="Wallet Outputs" value={item?.wallet.outputs_total ?? '-'} mono>
                       {item?.wallet.outputs_unspent != null ? (
                         <div className="label" style={{ marginTop: 6 }}>
                           {item.wallet.outputs_unspent} unspent
                           {item.wallet.outputs_pending != null ? ` · ${item.wallet.outputs_pending} pending` : ''}
                         </div>
                       ) : null}
-                    </div>
-                    <div className="stat-card">
-                      <div className="label">Cookie</div>
-                      <div className="value">{item?.cookie_present ? 'Present' : 'Missing'}</div>
-                    </div>
+                    </StatCard>
+                    <StatCard label="Cookie" value={item?.cookie_present ? 'Present' : 'Missing'} />
                   </div>
 
                   <div style={{ marginTop: 12, fontSize: 12, color: 'var(--muted)' }}>
