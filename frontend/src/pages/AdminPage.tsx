@@ -326,22 +326,24 @@ function recoveryOperationStateLabel(state: string | null | undefined): string {
   }
 }
 
-function formatRecoveryWalletSync(item: RecoveryInstanceStatus | null): string {
+function RecoveryWalletSyncCard({ item }: { item: RecoveryInstanceStatus | null }) {
   const syncedHeight = item?.wallet.synced_height;
   const chainHeight = item?.chain_height ?? item?.wallet.chain_height;
-  if (syncedHeight == null && chainHeight == null) return '-';
-  if (syncedHeight == null) return `- / ${chainHeight}`;
-  if (chainHeight == null) return `${syncedHeight}`;
-  return `${syncedHeight} / ${chainHeight}`;
-}
-
-function recoveryWalletLagLabel(item: RecoveryInstanceStatus | null): string | null {
-  const syncedHeight = item?.wallet.synced_height;
-  const chainHeight = item?.chain_height ?? item?.wallet.chain_height;
-  if (syncedHeight == null || chainHeight == null) return null;
-  if (syncedHeight >= chainHeight) return 'caught up';
-  const lag = chainHeight - syncedHeight;
-  return `${lag} blocks behind`;
+  const value =
+    syncedHeight == null && chainHeight == null
+      ? '-'
+      : syncedHeight == null
+        ? `- / ${chainHeight}`
+        : chainHeight == null
+          ? `${syncedHeight}`
+          : `${syncedHeight} / ${chainHeight}`;
+  const lag =
+    syncedHeight == null || chainHeight == null
+      ? null
+      : syncedHeight >= chainHeight
+        ? 'caught up'
+        : `${chainHeight - syncedHeight} blocks behind`;
+  return <StatCard label="Wallet Sync" value={value} mono>{lag ? <div className="label" style={TOP_6_STYLE}>{lag}</div> : null}</StatCard>;
 }
 
 function recoveryPendingDeltaNote(status: RecoveryStatusResponse | null): string | null {
@@ -3071,13 +3073,7 @@ export function AdminPage({
                           : 'Not loaded'
                       }
                     />
-                    <StatCard label="Wallet Sync" value={formatRecoveryWalletSync(item ?? null)} mono>
-                      {recoveryWalletLagLabel(item ?? null) ? (
-                        <div className="label" style={TOP_6_STYLE}>
-                          {recoveryWalletLagLabel(item ?? null)}
-                        </div>
-                      ) : null}
-                    </StatCard>
+                    <RecoveryWalletSyncCard item={item ?? null} />
                     <StatCard
                       label="Spendable"
                       value={item?.wallet.spendable != null ? formatCoins(item.wallet.spendable) : '-'}
