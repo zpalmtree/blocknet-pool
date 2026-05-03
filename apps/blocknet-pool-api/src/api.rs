@@ -1230,14 +1230,8 @@ async fn handle_stats_history(
     Query(query): Query<RangeQuery>,
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
-    let range_secs: u64 = match query.range.as_deref().unwrap_or("24h") {
-        "1h" => 3600,
-        "7d" => 7 * 86400,
-        "30d" => 30 * 86400,
-        _ => 86400, // default 24h
-    };
     let since = SystemTime::now()
-        .checked_sub(Duration::from_secs(range_secs))
+        .checked_sub(history_range_duration(query.range.as_deref()))
         .unwrap_or(UNIX_EPOCH);
 
     let store = Arc::clone(&state.store);
@@ -1281,6 +1275,24 @@ fn rejection_window_duration(input: Option<&str>) -> Duration {
         Duration::from_secs(7 * 24 * 3600)
     } else {
         Duration::from_secs(3600)
+    }
+}
+
+fn history_range_duration(input: Option<&str>) -> Duration {
+    match input.map(str::trim).unwrap_or("24h") {
+        "1h" => Duration::from_secs(3600),
+        "7d" => Duration::from_secs(7 * 86400),
+        "30d" => Duration::from_secs(30 * 86400),
+        _ => Duration::from_secs(86400),
+    }
+}
+
+fn miner_hashrate_range(input: Option<&str>) -> (Duration, i64) {
+    match input.map(str::trim).unwrap_or("24h") {
+        "1h" => (Duration::from_secs(3600), 120),
+        "7d" => (Duration::from_secs(7 * 86400), 3600),
+        "30d" => (Duration::from_secs(30 * 86400), 14400),
+        _ => (Duration::from_secs(86400), 600),
     }
 }
 
@@ -2419,16 +2431,9 @@ async fn handle_miner_hashrate(
     Query(query): Query<RangeQuery>,
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
-    let (range_secs, bucket_secs): (u64, i64) = match query.range.as_deref().unwrap_or("24h") {
-        "1h" => (3600, 120),
-        "7d" => (7 * 86400, 3600),
-        "30d" => (30 * 86400, 14400),
-        _ => (86400, 600), // default 24h
-    };
+    let (range_duration, bucket_secs) = miner_hashrate_range(query.range.as_deref());
     let now = SystemTime::now();
-    let since = now
-        .checked_sub(Duration::from_secs(range_secs))
-        .unwrap_or(UNIX_EPOCH);
+    let since = now.checked_sub(range_duration).unwrap_or(UNIX_EPOCH);
 
     let store = Arc::clone(&state.store);
     match spawn_blocking_result(move || {
@@ -5665,12 +5670,13 @@ mod tests {
         handle_admin_clear_address_risk_history, handle_admin_share_diagnostics,
         handle_app_fallback, handle_health, handle_miner, handle_miners,
         hashrate_from_stats_with_miner_ramp, hashrate_from_stats_with_warmup,
-        hydrate_provisional_block_reward, is_api_request_path, load_confirmed_payout_import_txs,
-        luck_round_response_from_db, miner_balance_response, miner_has_activity, page_bounds,
-        rejection_window_duration, sort_workers_for_miner, system_time_to_unix_secs, trim_log_line,
-        worker_hashrate_by_name, ApiState, ClearAddressRiskHistoryRequest, PayoutEtaResponse,
-        SearchPageQuery, DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW,
-        HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY,
+        history_range_duration, hydrate_provisional_block_reward, is_api_request_path,
+        load_confirmed_payout_import_txs, luck_round_response_from_db, miner_balance_response,
+        miner_has_activity, miner_hashrate_range, page_bounds, rejection_window_duration,
+        sort_workers_for_miner, system_time_to_unix_secs, trim_log_line, worker_hashrate_by_name,
+        ApiState, ClearAddressRiskHistoryRequest, PayoutEtaResponse, SearchPageQuery,
+        DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW,
+        HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY,
     };
 
     const TEST_POSTGRES_URL_ENV: &str = "BLOCKNET_POOL_TEST_POSTGRES_URL";
@@ -7647,6 +7653,29 @@ mod tests {
             24 * 3600
         );
         assert_eq!(rejection_window_duration(Some("bad")).as_secs(), 3600);
+    }
+
+    #[test]
+    fn history_range_helpers_parse_supported_ranges() {
+        for (input, expected) in [
+            (None, Duration::from_secs(86400)),
+            (Some("1h"), Duration::from_secs(3600)),
+            (Some("7d"), Duration::from_secs(7 * 86400)),
+            (Some("30d"), Duration::from_secs(30 * 86400)),
+            (Some(" 30d "), Duration::from_secs(30 * 86400)),
+            (Some("bad"), Duration::from_secs(86400)),
+        ] {
+            assert_eq!(history_range_duration(input), expected);
+        }
+
+        for (input, expected) in [
+            (Some("1h"), (Duration::from_secs(3600), 120)),
+            (Some("7d"), (Duration::from_secs(7 * 86400), 3600)),
+            (Some("30d"), (Duration::from_secs(30 * 86400), 14400)),
+            (Some("bad"), (Duration::from_secs(86400), 600)),
+        ] {
+            assert_eq!(miner_hashrate_range(input), expected);
+        }
     }
 
     #[test]
