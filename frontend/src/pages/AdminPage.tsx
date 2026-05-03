@@ -276,10 +276,13 @@ function shareWindowReasonPct(window: AdminShareDiagnosticsWindow | null | undef
 }
 
 function shareWindowReasonCell(window: AdminShareDiagnosticsWindow, reason: string) {
+  const count = shareWindowReasonCount(window, reason);
+  const total = shareWindowTotal(window);
+  const pct = total > 0 ? (count / total) * 100 : null;
   return (
-    <td className="mono">
-      {formatPct(shareWindowReasonPct(window, reason), 2)}
-      <div style={SMALL_MUTED_STYLE}>{shareWindowReasonCount(window, reason)} rejects</div>
+    <td key={reason} className="mono">
+      {formatPct(pct, 2)}
+      <div style={SMALL_MUTED_STYLE}>{count} rejects</div>
     </td>
   );
 }
