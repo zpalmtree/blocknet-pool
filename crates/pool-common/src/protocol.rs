@@ -23,11 +23,6 @@ pub enum AddressNetwork {
     Testnet,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct AddressProfile {
-    network: Option<AddressNetwork>,
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StratumRequest {
     pub id: u64,
@@ -106,19 +101,18 @@ pub fn build_login_result() -> LoginResult {
 }
 
 pub fn validate_miner_address(address: &str) -> Result<(), String> {
-    parse_address_profile(address).map(|_| ())
+    parse_address_network(address).map(|_| ())
 }
 
 pub fn address_network(address: &str) -> Result<Option<AddressNetwork>, String> {
-    Ok(parse_address_profile(address)?.network)
+    parse_address_network(address)
 }
 
 pub fn validate_miner_address_for_network(
     address: &str,
     expected_network: Option<AddressNetwork>,
 ) -> Result<(), String> {
-    let profile = parse_address_profile(address)?;
-    if let (Some(expected), Some(actual)) = (expected_network, profile.network) {
+    if let (Some(expected), Some(actual)) = (expected_network, parse_address_network(address)?) {
         if expected != actual {
             return Err("invalid address checksum".to_string());
         }
@@ -126,7 +120,7 @@ pub fn validate_miner_address_for_network(
     Ok(())
 }
 
-fn parse_address_profile(address: &str) -> Result<AddressProfile, String> {
+fn parse_address_network(address: &str) -> Result<Option<AddressNetwork>, String> {
     let trimmed = address.trim();
     if trimmed.is_empty() {
         return Err("address is required".to_string());
@@ -148,9 +142,7 @@ fn parse_address_profile(address: &str) -> Result<AddressProfile, String> {
                 None
             };
             if let Some(network) = network {
-                Ok(AddressProfile {
-                    network: Some(network),
-                })
+                Ok(Some(network))
             } else {
                 Err("invalid address checksum".to_string())
             }
