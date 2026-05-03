@@ -6006,6 +6006,66 @@ mod tests {
         serde_json::from_slice(&body).expect("decode json")
     }
 
+    fn test_share(
+        job_id: &str,
+        miner: &str,
+        worker: &str,
+        difficulty: u64,
+        nonce: u64,
+        status: &'static str,
+        created_at: SystemTime,
+    ) -> ShareRecord {
+        ShareRecord {
+            job_id: job_id.to_string(),
+            miner: miner.to_string(),
+            worker: worker.to_string(),
+            difficulty,
+            nonce,
+            status,
+            was_sampled: true,
+            block_hash: None,
+            claimed_hash: None,
+            reject_reason: None,
+            created_at,
+        }
+    }
+
+    fn add_test_share(
+        store: &PoolStore,
+        job_id: &str,
+        miner: &str,
+        worker: &str,
+        difficulty: u64,
+        nonce: u64,
+        status: &'static str,
+        created_at: SystemTime,
+    ) {
+        store
+            .add_share(test_share(
+                job_id, miner, worker, difficulty, nonce, status, created_at,
+            ))
+            .expect("add share");
+    }
+
+    fn add_test_shares(
+        store: &PoolStore,
+        shares: &[(&str, &str, &str, u64, u64, &'static str, bool, SystemTime)],
+    ) {
+        for (job_id, miner, worker, difficulty, nonce, status, was_sampled, created_at) in shares {
+            let mut share = test_share(
+                job_id,
+                miner,
+                worker,
+                *difficulty,
+                *nonce,
+                status,
+                *created_at,
+            );
+            share.was_sampled = *was_sampled;
+            store.add_share(share).expect("add share");
+        }
+    }
+
     #[test]
     fn api_performance_route_name_classifies_hot_routes() {
         assert_eq!(
@@ -6553,36 +6613,27 @@ mod tests {
     fn miners_handler_includes_db_only_miners_after_restart() {
         let store = require_test_store!();
         let now = SystemTime::now();
-        store
-            .add_share(ShareRecord {
-                job_id: "job-verified".to_string(),
-                miner: "miner-db-only".to_string(),
-                worker: "worker-1".to_string(),
-                difficulty: 250,
-                nonce: 9,
-                status: "verified",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: now,
-            })
-            .expect("add verified share");
-        store
-            .add_share(ShareRecord {
-                job_id: "job-rejected".to_string(),
-                miner: "miner-db-only".to_string(),
-                worker: "worker-1".to_string(),
-                difficulty: 250,
-                nonce: 10,
-                status: "rejected",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: Some("bad share".to_string()),
-                created_at: now,
-            })
-            .expect("add rejected share");
+        add_test_share(
+            &store,
+            "job-verified",
+            "miner-db-only",
+            "worker-1",
+            250,
+            9,
+            "verified",
+            now,
+        );
+        let mut rejected = test_share(
+            "job-rejected",
+            "miner-db-only",
+            "worker-1",
+            250,
+            10,
+            "rejected",
+            now,
+        );
+        rejected.reject_reason = Some("bad share".to_string());
+        store.add_share(rejected).expect("add rejected share");
 
         let state = test_api_state(store);
         let runtime = test_runtime();
@@ -6623,21 +6674,16 @@ mod tests {
             ("job-stale", "worker-stale", 1u64, stale_share_at),
             ("job-recent", "worker-recent", 2u64, recent_share_at),
         ] {
-            store
-                .add_share(ShareRecord {
-                    job_id: job_id.to_string(),
-                    miner: "miner-workers".to_string(),
-                    worker: worker.to_string(),
-                    difficulty: 250,
-                    nonce,
-                    status: "verified",
-                    was_sampled: true,
-                    block_hash: None,
-                    claimed_hash: None,
-                    reject_reason: None,
-                    created_at,
-                })
-                .expect("add share");
+            add_test_share(
+                &store,
+                job_id,
+                "miner-workers",
+                worker,
+                250,
+                nonce,
+                "verified",
+                created_at,
+            );
         }
 
         let state = test_api_state(store);
@@ -6667,21 +6713,16 @@ mod tests {
             ("job-oldest", 1u64, first_share_at),
             ("job-newest", 2u64, recent_share_at),
         ] {
-            store
-                .add_share(ShareRecord {
-                    job_id: job_id.to_string(),
-                    miner: "miner-since".to_string(),
-                    worker: "worker-1".to_string(),
-                    difficulty: 250,
-                    nonce,
-                    status: "verified",
-                    was_sampled: true,
-                    block_hash: None,
-                    claimed_hash: None,
-                    reject_reason: None,
-                    created_at,
-                })
-                .expect("add share");
+            add_test_share(
+                &store,
+                job_id,
+                "miner-since",
+                "worker-1",
+                250,
+                nonce,
+                "verified",
+                created_at,
+            );
         }
 
         let state = test_api_state(store);
@@ -6713,21 +6754,16 @@ mod tests {
             .checked_sub(HASHRATE_WINDOW + Duration::from_secs(10 * 60))
             .expect("stale share timestamp");
 
-        store
-            .add_share(ShareRecord {
-                job_id: "job-stale-worker".to_string(),
-                miner: "miner-stale-workers".to_string(),
-                worker: "worker-old".to_string(),
-                difficulty: 250,
-                nonce: 1,
-                status: "verified",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: stale_share_at,
-            })
-            .expect("add stale share");
+        add_test_share(
+            &store,
+            "job-stale-worker",
+            "miner-stale-workers",
+            "worker-old",
+            250,
+            1,
+            "verified",
+            stale_share_at,
+        );
 
         let state = test_api_state(store);
         let runtime = test_runtime();
@@ -6761,21 +6797,16 @@ mod tests {
     fn miner_handler_includes_active_verification_hold_details() {
         let store = require_test_store!();
         let created_at = UNIX_EPOCH + Duration::from_secs(5_000);
-        store
-            .add_share(ShareRecord {
-                job_id: "job-hold".to_string(),
-                miner: "miner-hold".to_string(),
-                worker: "worker-1".to_string(),
-                difficulty: 250,
-                nonce: 1,
-                status: "verified",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at,
-            })
-            .expect("add share");
+        add_test_share(
+            &store,
+            "job-hold",
+            "miner-hold",
+            "worker-1",
+            250,
+            1,
+            "verified",
+            created_at,
+        );
         store
             .escalate_address_risk(AddressRiskEscalation::new(
                 "miner-hold",
@@ -6811,21 +6842,17 @@ mod tests {
     fn miner_handler_reports_validation_backlog_hold_reason() {
         let store = require_test_store!();
         let now = SystemTime::now();
-        store
-            .add_share(ShareRecord {
-                job_id: "job-backlog".to_string(),
-                miner: "miner-backlog".to_string(),
-                worker: "worker-1".to_string(),
-                difficulty: 250,
-                nonce: 1,
-                status: "provisional",
-                was_sampled: false,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: now,
-            })
-            .expect("add share");
+        let mut share = test_share(
+            "job-backlog",
+            "miner-backlog",
+            "worker-1",
+            250,
+            1,
+            "provisional",
+            now,
+        );
+        share.was_sampled = false;
+        store.add_share(share).expect("add share");
         store
             .upsert_validation_state(&PersistedValidationAddressState {
                 address: "miner-backlog".to_string(),
@@ -6902,36 +6929,22 @@ mod tests {
 
         let base = UNIX_EPOCH + Duration::from_secs(1_000_000);
         let block_ts = base + Duration::from_secs(120);
-        store
-            .add_share(ShareRecord {
-                job_id: "j-1".to_string(),
-                miner: "miner-a".to_string(),
-                worker: "wa".to_string(),
-                difficulty: 100,
-                nonce: 1,
-                status: "verified",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: base,
-            })
-            .expect("add share a");
-        store
-            .add_share(ShareRecord {
-                job_id: "j-1".to_string(),
-                miner: "miner-b".to_string(),
-                worker: "wb".to_string(),
-                difficulty: 100,
-                nonce: 2,
-                status: "verified",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: base + Duration::from_secs(10),
-            })
-            .expect("add share b");
+        add_test_shares(
+            &store,
+            &[
+                ("j-1", "miner-a", "wa", 100, 1, "verified", true, base),
+                (
+                    "j-1",
+                    "miner-b",
+                    "wb",
+                    100,
+                    2,
+                    "verified",
+                    true,
+                    base + Duration::from_secs(10),
+                ),
+            ],
+        );
         store
             .add_block(&DbBlock {
                 height: 99,
@@ -6969,49 +6982,32 @@ mod tests {
         let cfg = pplns_test_config("1h");
 
         let base = UNIX_EPOCH + Duration::from_secs(6_000_000);
-        for share in [
-            ShareRecord {
-                job_id: "j-batch-a".to_string(),
-                miner: "miner-a".to_string(),
-                worker: "wa".to_string(),
-                difficulty: 100,
-                nonce: 1,
-                status: "verified",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: base,
-            },
-            ShareRecord {
-                job_id: "j-batch-b".to_string(),
-                miner: "miner-b".to_string(),
-                worker: "wb".to_string(),
-                difficulty: 100,
-                nonce: 2,
-                status: "verified",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: base + Duration::from_secs(50 * 60),
-            },
-            ShareRecord {
-                job_id: "j-batch-c".to_string(),
-                miner: "miner-c".to_string(),
-                worker: "wc".to_string(),
-                difficulty: 100,
-                nonce: 3,
-                status: "verified",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: base + Duration::from_secs(90 * 60),
-            },
-        ] {
-            store.add_share(share).expect("add share");
-        }
+        add_test_shares(
+            &store,
+            &[
+                ("j-batch-a", "miner-a", "wa", 100, 1, "verified", true, base),
+                (
+                    "j-batch-b",
+                    "miner-b",
+                    "wb",
+                    100,
+                    2,
+                    "verified",
+                    true,
+                    base + Duration::from_secs(50 * 60),
+                ),
+                (
+                    "j-batch-c",
+                    "miner-c",
+                    "wc",
+                    100,
+                    3,
+                    "verified",
+                    true,
+                    base + Duration::from_secs(90 * 60),
+                ),
+            ],
+        );
         for (height, hash, finder, timestamp) in [
             (
                 399_u64,
@@ -7079,36 +7075,22 @@ mod tests {
 
         let base = UNIX_EPOCH + Duration::from_secs(3_000_000);
         let block_ts = base + Duration::from_secs(120);
-        for share in [
-            ShareRecord {
-                job_id: "j-a".to_string(),
-                miner: "miner-a".to_string(),
-                worker: "wa".to_string(),
-                difficulty: 100,
-                nonce: 1,
-                status: "verified",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: base,
-            },
-            ShareRecord {
-                job_id: "j-b".to_string(),
-                miner: "miner-b".to_string(),
-                worker: "wb".to_string(),
-                difficulty: 100,
-                nonce: 2,
-                status: "verified",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: base + Duration::from_secs(1),
-            },
-        ] {
-            store.add_share(share).expect("add share");
-        }
+        add_test_shares(
+            &store,
+            &[
+                ("j-a", "miner-a", "wa", 100, 1, "verified", true, base),
+                (
+                    "j-b",
+                    "miner-b",
+                    "wb",
+                    100,
+                    2,
+                    "verified",
+                    true,
+                    base + Duration::from_secs(1),
+                ),
+            ],
+        );
         store
             .add_block(&DbBlock {
                 height: 299,
@@ -7165,49 +7147,41 @@ mod tests {
 
         let base = UNIX_EPOCH + Duration::from_secs(4_000_000);
         let block_ts = base + Duration::from_secs(120);
-        for share in [
-            ShareRecord {
-                job_id: "j-cap-a-verified".to_string(),
-                miner: "miner-a".to_string(),
-                worker: "wa".to_string(),
-                difficulty: 20,
-                nonce: 1,
-                status: "verified",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: base,
-            },
-            ShareRecord {
-                job_id: "j-cap-a-provisional".to_string(),
-                miner: "miner-a".to_string(),
-                worker: "wa".to_string(),
-                difficulty: 100,
-                nonce: 2,
-                status: "provisional",
-                was_sampled: false,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: base + Duration::from_secs(1),
-            },
-            ShareRecord {
-                job_id: "j-cap-b-verified".to_string(),
-                miner: "miner-b".to_string(),
-                worker: "wb".to_string(),
-                difficulty: 20,
-                nonce: 3,
-                status: "verified",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: base + Duration::from_secs(2),
-            },
-        ] {
-            store.add_share(share).expect("add share");
-        }
+        add_test_shares(
+            &store,
+            &[
+                (
+                    "j-cap-a-verified",
+                    "miner-a",
+                    "wa",
+                    20,
+                    1,
+                    "verified",
+                    true,
+                    base,
+                ),
+                (
+                    "j-cap-a-provisional",
+                    "miner-a",
+                    "wa",
+                    100,
+                    2,
+                    "provisional",
+                    false,
+                    base + Duration::from_secs(1),
+                ),
+                (
+                    "j-cap-b-verified",
+                    "miner-b",
+                    "wb",
+                    20,
+                    3,
+                    "verified",
+                    true,
+                    base + Duration::from_secs(2),
+                ),
+            ],
+        );
         store
             .add_block(&DbBlock {
                 height: 298,
@@ -7310,49 +7284,41 @@ mod tests {
 
         let base = UNIX_EPOCH + Duration::from_secs(2_000_000);
         let block_ts = base + Duration::from_secs(120);
-        for share in [
-            ShareRecord {
-                job_id: "j-preview-a-verified".to_string(),
-                miner: "miner-a".to_string(),
-                worker: "wa".to_string(),
-                difficulty: 10,
-                nonce: 1,
-                status: "verified",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: base,
-            },
-            ShareRecord {
-                job_id: "j-preview-a-provisional".to_string(),
-                miner: "miner-a".to_string(),
-                worker: "wa".to_string(),
-                difficulty: 90,
-                nonce: 2,
-                status: "provisional",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: base + Duration::from_secs(1),
-            },
-            ShareRecord {
-                job_id: "j-preview-b".to_string(),
-                miner: "miner-b".to_string(),
-                worker: "wb".to_string(),
-                difficulty: 100,
-                nonce: 3,
-                status: "verified",
-                was_sampled: true,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: None,
-                created_at: base + Duration::from_secs(2),
-            },
-        ] {
-            store.add_share(share).expect("add preview share");
-        }
+        add_test_shares(
+            &store,
+            &[
+                (
+                    "j-preview-a-verified",
+                    "miner-a",
+                    "wa",
+                    10,
+                    1,
+                    "verified",
+                    true,
+                    base,
+                ),
+                (
+                    "j-preview-a-provisional",
+                    "miner-a",
+                    "wa",
+                    90,
+                    2,
+                    "provisional",
+                    true,
+                    base + Duration::from_secs(1),
+                ),
+                (
+                    "j-preview-b",
+                    "miner-b",
+                    "wb",
+                    100,
+                    3,
+                    "verified",
+                    true,
+                    base + Duration::from_secs(2),
+                ),
+            ],
+        );
         store
             .add_block(&DbBlock {
                 height: 199,
