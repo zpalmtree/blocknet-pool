@@ -40,6 +40,7 @@ impl Config {
             .with_context(|| format!("parse config {}", path.display()))?;
         cfg.normalize();
         cfg.runtime.validate()?;
+        cfg.recovery.validate()?;
         cfg.validate()?;
         Ok(cfg)
     }
@@ -101,6 +102,7 @@ mod tests {
             (r#"{"pool_url":""}"#, "pool_url"),
             (r#"{"api_host":"   "}"#, "api_host"),
             (r#"{"api_port":0}"#, "api_port"),
+            (r#"{"recovery":{"socket_path":""}}"#, "recovery.socket_path"),
         ] {
             std::fs::write(&path, json).unwrap();
             let err = match Config::load(&path) {

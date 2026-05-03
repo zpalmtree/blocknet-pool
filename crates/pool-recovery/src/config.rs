@@ -29,15 +29,22 @@ impl Config {
         let data = fs::read(path).with_context(|| format!("read config {}", path.display()))?;
         let mut cfg: Config = serde_json::from_slice(&data)
             .with_context(|| format!("parse config {}", path.display()))?;
-        cfg.normalize();
+        cfg.normalize_and_validate()?;
         Ok(cfg)
     }
 
+    pub fn normalize_and_validate(&mut self) -> Result<()> {
+        self.normalize();
+        self.validate()
+    }
+
     pub fn normalize(&mut self) {
-        if self.payout_pause_file.trim().is_empty() {
-            self.payout_pause_file = DEFAULT_PAYOUT_PAUSE_FILE.to_string();
-        }
         self.recovery.normalize();
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        ensure_nonempty("payout_pause_file", &self.payout_pause_file)?;
+        self.recovery.validate()
     }
 }
 
@@ -83,23 +90,18 @@ impl Default for RecoveryConfig {
 
 impl RecoveryConfig {
     pub fn normalize(&mut self) {
-        if self.socket_path.trim().is_empty() {
-            self.socket_path = Self::default().socket_path;
-        }
-        if self.state_path.trim().is_empty() {
-            self.state_path = Self::default().state_path;
-        }
-        if self.secret_path.trim().is_empty() {
-            self.secret_path = Self::default().secret_path;
-        }
-        if self.proxy_include_path.trim().is_empty() {
-            self.proxy_include_path = Self::default().proxy_include_path;
-        }
-        if self.active_cookie_path.trim().is_empty() {
-            self.active_cookie_path = Self::default().active_cookie_path;
-        }
         self.primary.normalize(RecoveryInstanceId::Primary);
         self.standby.normalize(RecoveryInstanceId::Standby);
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        ensure_nonempty("recovery.socket_path", &self.socket_path)?;
+        ensure_nonempty("recovery.state_path", &self.state_path)?;
+        ensure_nonempty("recovery.secret_path", &self.secret_path)?;
+        ensure_nonempty("recovery.proxy_include_path", &self.proxy_include_path)?;
+        ensure_nonempty("recovery.active_cookie_path", &self.active_cookie_path)?;
+        self.primary.validate("recovery.primary")?;
+        self.standby.validate("recovery.standby")
     }
 
     pub fn instance(&self, id: RecoveryInstanceId) -> &RecoveryDaemonInstanceConfig {
@@ -167,22 +169,37 @@ impl RecoveryDaemonInstanceConfig {
     fn normalize(&mut self, id: RecoveryInstanceId) {
         let defaults = RecoveryConfig::default();
         let default = defaults.instance(id);
-        if self.service.trim().is_empty() {
-            self.service = default.service.clone();
-        }
-        if self.api.trim().is_empty() {
-            self.api = default.api.clone();
-        }
-        if self.wallet_path.trim().is_empty() {
-            self.wallet_path = default.wallet_path.clone();
-        }
-        if self.data_dir.trim().is_empty() {
-            self.data_dir = default.data_dir.clone();
-        }
-        if self.cookie_path.trim().is_empty() {
-            self.cookie_path = default.cookie_path.clone();
-        }
+        *self = RecoveryDaemonInstanceConfig {
+            service: non_empty_or(self.service.as_str(), &default.service),
+            api: non_empty_or(self.api.as_str(), &default.api),
+            wallet_path: non_empty_or(self.wallet_path.as_str(), &default.wallet_path),
+            data_dir: non_empty_or(self.data_dir.as_str(), &default.data_dir),
+            cookie_path: non_empty_or(self.cookie_path.as_str(), &default.cookie_path),
+        };
     }
+
+    fn validate(&self, prefix: &str) -> Result<()> {
+        ensure_nonempty(format!("{prefix}.service"), &self.service)?;
+        ensure_nonempty(format!("{prefix}.api"), &self.api)?;
+        ensure_nonempty(format!("{prefix}.wallet_path"), &self.wallet_path)?;
+        ensure_nonempty(format!("{prefix}.data_dir"), &self.data_dir)?;
+        ensure_nonempty(format!("{prefix}.cookie_path"), &self.cookie_path)
+    }
+}
+
+fn non_empty_or(value: &str, default: &str) -> String {
+    if value.trim().is_empty() {
+        default.to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn ensure_nonempty(field: impl AsRef<str>, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        anyhow::bail!("{} must not be empty", field.as_ref());
+    }
+    Ok(())
 }
 
 fn path_matches(actual: &Path, expected: &Path) -> bool {
@@ -192,5 +209,50 @@ fn path_matches(actual: &Path, expected: &Path) -> bool {
     match (fs::canonicalize(actual), fs::canonicalize(expected)) {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Config, RecoveryConfig};
+
+    #[test]
+    fn load_rejects_empty_top_level_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, r#"{"payout_pause_file":""}"#).unwrap();
+
+        let err = match Config::load(&path) {
+            Ok(_) => panic!("empty payout pause path should fail recovery config load"),
+            Err(err) => err,
+        };
+        assert!(format!("{err:#}").contains("payout_pause_file"));
+    }
+
+    #[test]
+    fn validate_rejects_empty_recovery_paths() {
+        let cfg = RecoveryConfig {
+            socket_path: String::new(),
+            ..RecoveryConfig::default()
+        };
+
+        let err = match cfg.validate() {
+            Ok(_) => panic!("empty recovery socket path should fail validation"),
+            Err(err) => err,
+        };
+        assert!(format!("{err:#}").contains("recovery.socket_path"));
+    }
+
+    #[test]
+    fn load_uses_defaults_when_recovery_config_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, "{}").unwrap();
+
+        let cfg = Config::load(&path).unwrap();
+        assert_eq!(
+            cfg.recovery.socket_path,
+            RecoveryConfig::default().socket_path
+        );
     }
 }
