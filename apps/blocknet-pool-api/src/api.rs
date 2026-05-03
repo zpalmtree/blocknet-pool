@@ -382,13 +382,6 @@ impl PublicTelemetryRouteKind {
             Self::Miner => PUBLIC_TELEMETRY_MINER_RATE_LIMIT,
         }
     }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Stats => "stats",
-            Self::Miner => "miner",
-        }
-    }
 }
 
 struct PublicTelemetryRateBucket {
@@ -415,7 +408,11 @@ impl PublicTelemetryRateLimiter {
             self.last_cleanup_at = Some(now);
         }
 
-        let key = format!("{}:{client_ip}", route.as_str());
+        let route_key = match route {
+            PublicTelemetryRouteKind::Stats => "stats",
+            PublicTelemetryRouteKind::Miner => "miner",
+        };
+        let key = format!("{route_key}:{client_ip}");
         let limit = route.limit();
         let bucket = self
             .buckets
