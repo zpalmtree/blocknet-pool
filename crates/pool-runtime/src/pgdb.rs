@@ -221,7 +221,6 @@ struct BalanceCreditSourceState {
 #[derive(Debug, Clone, Copy, Default)]
 struct LivePendingSourceSummary {
     canonical_pending: u64,
-    _orphan_pending: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -3005,54 +3004,45 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let row = if let Some(excluded_height) = exclude_block_height {
             let excluded_height = u64_to_i64(excluded_height)?;
             tx.query_one(
-                "SELECT
-                     COALESCE(SUM(CASE WHEN orphaned THEN 0 ELSE pending_amount END), 0)::BIGINT,
-                     COALESCE(SUM(CASE WHEN orphaned THEN pending_amount ELSE 0 END), 0)::BIGINT
+                "SELECT COALESCE(SUM(pending_amount), 0)::BIGINT
                  FROM (
-                     SELECT
-                         b.orphaned,
-                         GREATEST(e.amount - e.paid_amount, 0)::BIGINT AS pending_amount
+                     SELECT GREATEST(e.amount - e.paid_amount, 0)::BIGINT AS pending_amount
                      FROM block_credit_events e
                      JOIN blocks b ON b.height = e.block_height
                      WHERE e.address = $1
                        AND e.block_height <> $2
+                       AND NOT b.orphaned
                      UNION ALL
-                     SELECT
-                         b.orphaned,
-                         GREATEST(f.amount - f.paid_amount, 0)::BIGINT AS pending_amount
+                     SELECT GREATEST(f.amount - f.paid_amount, 0)::BIGINT AS pending_amount
                      FROM pool_fee_balance_credits f
                      JOIN blocks b ON b.height = f.block_height
                      WHERE f.fee_address = $1
                        AND f.block_height <> $2
+                       AND NOT b.orphaned
                  ) sources",
                 &[&address, &excluded_height],
             )?
         } else {
             tx.query_one(
-                "SELECT
-                     COALESCE(SUM(CASE WHEN orphaned THEN 0 ELSE pending_amount END), 0)::BIGINT,
-                     COALESCE(SUM(CASE WHEN orphaned THEN pending_amount ELSE 0 END), 0)::BIGINT
+                "SELECT COALESCE(SUM(pending_amount), 0)::BIGINT
                  FROM (
-                     SELECT
-                         b.orphaned,
-                         GREATEST(e.amount - e.paid_amount, 0)::BIGINT AS pending_amount
+                     SELECT GREATEST(e.amount - e.paid_amount, 0)::BIGINT AS pending_amount
                      FROM block_credit_events e
                      JOIN blocks b ON b.height = e.block_height
                      WHERE e.address = $1
+                       AND NOT b.orphaned
                      UNION ALL
-                     SELECT
-                         b.orphaned,
-                         GREATEST(f.amount - f.paid_amount, 0)::BIGINT AS pending_amount
+                     SELECT GREATEST(f.amount - f.paid_amount, 0)::BIGINT AS pending_amount
                      FROM pool_fee_balance_credits f
                      JOIN blocks b ON b.height = f.block_height
                      WHERE f.fee_address = $1
+                       AND NOT b.orphaned
                  ) sources",
                 &[&address],
             )?
         };
         Ok(LivePendingSourceSummary {
             canonical_pending: row.get::<_, i64>(0).max(0) as u64,
-            _orphan_pending: row.get::<_, i64>(1).max(0) as u64,
         })
     }
 
