@@ -2194,7 +2194,11 @@ fn load_confirmed_payout_import_txs(
 
         let manifest = ConfirmedPayoutImportTx {
             tx_hash: tx_hash.to_string(),
-            timestamp: system_time_from_unix_nanos(entry.created_at_unix_nano),
+            timestamp: if entry.created_at_unix_nano <= 0 {
+                UNIX_EPOCH
+            } else {
+                UNIX_EPOCH + Duration::from_nanos(entry.created_at_unix_nano as u64)
+            },
             recipients: allocate_imported_payout_fees(&recipients, body.fee),
         };
         match manifests.get(tx_hash) {
@@ -2247,13 +2251,6 @@ fn allocate_imported_payout_fees(
             }
         })
         .collect()
-}
-
-fn system_time_from_unix_nanos(unix_nanos: i64) -> SystemTime {
-    if unix_nanos <= 0 {
-        return UNIX_EPOCH;
-    }
-    UNIX_EPOCH + Duration::from_nanos(unix_nanos as u64)
 }
 
 fn daemon_debug_log_path(config: &Config) -> PathBuf {
