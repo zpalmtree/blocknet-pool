@@ -1,7 +1,5 @@
 import type { Range, UnixLike } from '../types';
 
-const STRATUM_HOST = 'bntpool.com';
-
 const COIN_FORMATTER = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
@@ -165,7 +163,7 @@ export function shortTx(tx: string): string {
 
 export function stratumUrl(port: number | null | undefined, poolUrl?: string | null): string {
   const fallback =
-    (typeof window !== 'undefined' && window.location.hostname) || STRATUM_HOST;
+    (typeof window !== 'undefined' && window.location.hostname) || 'bntpool.com';
   let host = fallback;
 
   if (poolUrl) {

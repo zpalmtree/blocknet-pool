@@ -45,8 +45,6 @@ interface BlocknetHandleResolution {
   handle: string;
 }
 
-const BLOCKNET_ID_API = 'https://blocknet.id/api/v1/resolve';
-
 function withQuery(path: string, params: QueryParams): string {
   const url = new URL(path, window.location.origin);
   for (const [k, v] of Object.entries(params)) {
@@ -129,7 +127,7 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
     getMinerHashrate: (address: string, range: string) =>
       fetchJson<HashratePoint[]>(`/api/miner/${encodeURIComponent(address)}/hashrate?range=${encodeURIComponent(range)}`),
     resolveBlocknetHandle: (handle: string) =>
-      fetchJson<BlocknetHandleResolution>(`${BLOCKNET_ID_API}/${encodeURIComponent(handle)}`),
+      fetchJson<BlocknetHandleResolution>(`https://blocknet.id/api/v1/resolve/${encodeURIComponent(handle)}`),
     getMiners: (limit: number, offset: number, sort: string, search?: string) =>
       fetchJson<PagedResponse<MinerListItem>>(withQuery('/api/miners', { limit, offset, sort, search }), { auth: true }),
     getAdminBlockRewardBreakdown: (height: number) =>
