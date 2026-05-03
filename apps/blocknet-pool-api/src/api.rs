@@ -50,15 +50,16 @@ use pool_runtime::pgdb::{
 };
 use pool_runtime::rewards::estimated_block_reward;
 use pool_runtime::service_state::{
-    PersistedRuntimeSnapshot, PersistedSubmitSummary, PersistedValidationSummary,
-    LIVE_RUNTIME_SNAPSHOT_META_KEY,
+    PersistedRuntimeSnapshot, SubmitRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY,
 };
 use pool_runtime::stats::{RejectionAnalyticsSnapshot, RejectionReasonCount};
 use pool_runtime::store::PoolStore;
 use pool_runtime::telemetry::{
     ApiPerformanceSnapshot, NamedCacheCounterTracker, NamedTimedOperationTracker,
 };
-use pool_runtime::validation::{is_provisional_share_status, is_verified_share_status};
+use pool_runtime::validation::{
+    is_provisional_share_status, is_verified_share_status, ValidationSnapshot,
+};
 use pool_runtime::wallet_send_journal::{
     aggregate_wallet_send_recipients, decode_wallet_send_body, WalletSendIdempotencyJournal,
 };
@@ -986,8 +987,8 @@ struct PoolActivityHealth {
 #[derive(Serialize)]
 struct AdminShareDiagnosticsResponse {
     windows: Vec<AdminShareWindowResponse>,
-    submit: PersistedSubmitSummary,
-    validation: PersistedValidationSummary,
+    submit: SubmitRuntimeSnapshot,
+    validation: ValidationSnapshot,
 }
 
 #[derive(Serialize)]
@@ -4425,7 +4426,7 @@ impl ApiState {
         let persisted_runtime = self.persisted_runtime_snapshot().await;
         let validation = persisted_runtime
             .as_ref()
-            .map(|snapshot| snapshot.validation.clone())
+            .map(|snapshot| snapshot.validation)
             .unwrap_or_default();
         let submit = persisted_runtime
             .as_ref()
@@ -5656,9 +5657,9 @@ mod tests {
     use pool_runtime::jobs::{JobManager, JobRuntimeSnapshot};
     use pool_runtime::node::{NodeClient, WalletBalance};
     use pool_runtime::payout::PayoutRuntimeSnapshot;
-    use pool_runtime::service_state::{PersistedRuntimeSnapshot, PersistedValidationSummary};
+    use pool_runtime::service_state::PersistedRuntimeSnapshot;
     use pool_runtime::store::PoolStore;
-    use pool_runtime::validation::PersistedValidationAddressState;
+    use pool_runtime::validation::{PersistedValidationAddressState, ValidationSnapshot};
     use tempfile::tempdir;
 
     use super::{
@@ -6091,7 +6092,7 @@ mod tests {
             jobs: JobRuntimeSnapshot::default(),
             payouts: PayoutRuntimeSnapshot::default(),
             submit: Default::default(),
-            validation: PersistedValidationSummary::default(),
+            validation: ValidationSnapshot::default(),
             runtime_tasks: BTreeMap::new(),
         };
         store
@@ -6251,13 +6252,13 @@ mod tests {
             jobs: JobRuntimeSnapshot::default(),
             payouts: PayoutRuntimeSnapshot::default(),
             submit: Default::default(),
-            validation: PersistedValidationSummary {
+            validation: ValidationSnapshot {
                 in_flight: 2,
                 candidate_queue_depth: 5,
                 regular_queue_depth: 9,
                 sampled_shares: 4,
                 fraud_detections: 0,
-                ..PersistedValidationSummary::default()
+                ..ValidationSnapshot::default()
             },
             runtime_tasks: BTreeMap::new(),
         };
@@ -6325,7 +6326,7 @@ mod tests {
             jobs: JobRuntimeSnapshot::default(),
             payouts: PayoutRuntimeSnapshot::default(),
             submit: Default::default(),
-            validation: PersistedValidationSummary {
+            validation: ValidationSnapshot {
                 hot_accepts: 74,
                 audit_enqueued: 13,
                 audit_verified: 13,
@@ -6333,7 +6334,7 @@ mod tests {
                     p50_millis: Some(1404),
                     p95_millis: Some(1502),
                 },
-                ..PersistedValidationSummary::default()
+                ..ValidationSnapshot::default()
             },
             runtime_tasks: BTreeMap::new(),
         };

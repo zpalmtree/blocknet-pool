@@ -2282,12 +2282,11 @@ mod tests {
     use pool_runtime::jobs::JobRuntimeSnapshot;
     use pool_runtime::node::{NodeCurrentProcessBlock, NodeLastProcessBlock, NodeStatus};
     use pool_runtime::pool_activity::assess_pool_activity;
-    use pool_runtime::service_state::{
-        PersistedRuntimeSnapshot, PersistedSubmitSummary, PersistedValidationSummary,
-    };
+    use pool_runtime::service_state::{PersistedRuntimeSnapshot, SubmitRuntimeSnapshot};
     use pool_runtime::telemetry::{
         ApiPerformanceSnapshot, CacheCounterSummary, TimedOperationSummary,
     };
+    use pool_runtime::validation::ValidationSnapshot;
     use std::collections::BTreeMap;
     use std::time::{Duration, SystemTime};
 
@@ -2300,8 +2299,8 @@ mod tests {
             last_share_at: Some(SystemTime::now()),
             jobs: JobRuntimeSnapshot::default(),
             payouts: Default::default(),
-            submit: PersistedSubmitSummary::default(),
-            validation: PersistedValidationSummary::default(),
+            submit: SubmitRuntimeSnapshot::default(),
+            validation: ValidationSnapshot::default(),
             runtime_tasks: BTreeMap::new(),
         }
     }

@@ -392,8 +392,8 @@ impl ValidationAddressState {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct ValidationSnapshot {
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct ValidationSnapshot {
     pub in_flight: i64,
     pub candidate_queue_depth: usize,
     pub regular_queue_depth: usize,

@@ -99,7 +99,7 @@ struct SubmitCompletion {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub(crate) struct SubmitRuntimeSnapshot {
+pub struct SubmitRuntimeSnapshot {
     #[serde(default)]
     pub candidate_queue_depth: usize,
     #[serde(default)]
