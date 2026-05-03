@@ -1227,7 +1227,7 @@ struct StatsInsightsQuery {
 }
 
 #[derive(Deserialize)]
-struct LuckHistoryQuery {
+struct PageQuery {
     limit: Option<usize>,
     offset: Option<usize>,
 }
@@ -1263,12 +1263,6 @@ struct BlocksQuery {
     limit: Option<usize>,
     offset: Option<usize>,
     status: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct PublicPayoutsQuery {
-    limit: Option<usize>,
-    offset: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -4145,7 +4139,7 @@ fn block_page_item_response(
 }
 
 async fn handle_luck_history(
-    Query(query): Query<LuckHistoryQuery>,
+    Query(query): Query<PageQuery>,
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
     let (limit, offset) = page_bounds(query.limit, query.offset);
@@ -4178,7 +4172,7 @@ async fn handle_luck_history(
 }
 
 async fn handle_public_payouts(
-    Query(query): Query<PublicPayoutsQuery>,
+    Query(query): Query<PageQuery>,
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
     let (limit, offset) = page_bounds(query.limit, query.offset);
