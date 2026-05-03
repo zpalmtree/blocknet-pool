@@ -30,7 +30,9 @@ fn main() {
     ] {
         track_path(&path);
     }
-    track_tree(&frontend_src_dir);
+    for path in walk_files(&frontend_src_dir) {
+        track_path(&path);
+    }
     for asset in REQUIRED_UI_ASSETS {
         track_path(&frontend_dist_dir.join(asset));
     }
@@ -40,12 +42,6 @@ fn main() {
 
 fn track_path(path: &Path) {
     println!("cargo:rerun-if-changed={}", path.display());
-}
-
-fn track_tree(root: &Path) {
-    for path in walk_files(root) {
-        track_path(&path);
-    }
 }
 
 fn verify_ui_bundle(frontend_dir: &Path, frontend_src_dir: &Path, frontend_dist_dir: &Path) {
