@@ -54,7 +54,13 @@ where
         )?;
         writer.write_char(' ')?;
 
-        let (level_label, level_style) = level_style(*meta.level());
+        let (level_label, level_style) = match *meta.level() {
+            Level::ERROR => ("ERR", "1;31"),
+            Level::WARN => ("WRN", "1;33"),
+            Level::INFO => ("INF", "1;32"),
+            Level::DEBUG => ("DBG", "1;34"),
+            Level::TRACE => ("TRC", "1;35"),
+        };
         write_colored(&mut writer, ansi, level_style, level_label)?;
         writer.write_char(' ')?;
 
@@ -68,16 +74,6 @@ where
 
         ctx.format_fields(writer.by_ref(), event)?;
         writeln!(writer)
-    }
-}
-
-fn level_style(level: Level) -> (&'static str, &'static str) {
-    match level {
-        Level::ERROR => ("ERR", "1;31"),
-        Level::WARN => ("WRN", "1;33"),
-        Level::INFO => ("INF", "1;32"),
-        Level::DEBUG => ("DBG", "1;34"),
-        Level::TRACE => ("TRC", "1;35"),
     }
 }
 
