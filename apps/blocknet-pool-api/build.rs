@@ -4,6 +4,13 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 const REQUIRED_UI_ASSETS: &[&str] = &["index.html", "app.js", "app.css"];
+const FRONTEND_SOURCE_FILES: &[&str] = &[
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    "vite.config.ts",
+    "index.html",
+];
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("manifest dir"));
@@ -21,14 +28,8 @@ fn main() {
         frontend_dist_dir.display()
     );
 
-    for path in [
-        frontend_dir.join("package.json"),
-        frontend_dir.join("package-lock.json"),
-        frontend_dir.join("tsconfig.json"),
-        frontend_dir.join("vite.config.ts"),
-        frontend_dir.join("index.html"),
-    ] {
-        track_path(&path);
+    for file in FRONTEND_SOURCE_FILES {
+        track_path(&frontend_dir.join(file));
     }
     for path in walk_files(&frontend_src_dir) {
         track_path(&path);
@@ -58,13 +59,10 @@ fn verify_ui_bundle(frontend_dir: &Path, frontend_src_dir: &Path, frontend_dist_
         fail_missing_or_stale(&format!("missing generated assets: {}", missing.join(", ")));
     }
 
-    let mut source_files = vec![
-        frontend_dir.join("package.json"),
-        frontend_dir.join("package-lock.json"),
-        frontend_dir.join("tsconfig.json"),
-        frontend_dir.join("vite.config.ts"),
-        frontend_dir.join("index.html"),
-    ];
+    let mut source_files = FRONTEND_SOURCE_FILES
+        .iter()
+        .map(|file| frontend_dir.join(file))
+        .collect::<Vec<_>>();
     source_files.extend(walk_files(frontend_src_dir));
 
     let newest_source = source_files
