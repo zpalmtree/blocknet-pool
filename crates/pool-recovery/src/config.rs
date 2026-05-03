@@ -27,19 +27,10 @@ impl Default for Config {
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let data = fs::read(path).with_context(|| format!("read config {}", path.display()))?;
-        let mut cfg: Config = serde_json::from_slice(&data)
+        let cfg: Config = serde_json::from_slice(&data)
             .with_context(|| format!("parse config {}", path.display()))?;
-        cfg.normalize_and_validate()?;
+        cfg.validate()?;
         Ok(cfg)
-    }
-
-    pub fn normalize_and_validate(&mut self) -> Result<()> {
-        self.normalize();
-        self.validate()
-    }
-
-    pub fn normalize(&mut self) {
-        self.recovery.normalize();
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -89,11 +80,6 @@ impl Default for RecoveryConfig {
 }
 
 impl RecoveryConfig {
-    pub fn normalize(&mut self) {
-        self.primary.normalize(RecoveryInstanceId::Primary);
-        self.standby.normalize(RecoveryInstanceId::Standby);
-    }
-
     pub fn validate(&self) -> Result<()> {
         ensure_nonempty("recovery.socket_path", &self.socket_path)?;
         ensure_nonempty("recovery.state_path", &self.state_path)?;
@@ -166,32 +152,12 @@ pub struct RecoveryDaemonInstanceConfig {
 }
 
 impl RecoveryDaemonInstanceConfig {
-    fn normalize(&mut self, id: RecoveryInstanceId) {
-        let defaults = RecoveryConfig::default();
-        let default = defaults.instance(id);
-        *self = RecoveryDaemonInstanceConfig {
-            service: non_empty_or(self.service.as_str(), &default.service),
-            api: non_empty_or(self.api.as_str(), &default.api),
-            wallet_path: non_empty_or(self.wallet_path.as_str(), &default.wallet_path),
-            data_dir: non_empty_or(self.data_dir.as_str(), &default.data_dir),
-            cookie_path: non_empty_or(self.cookie_path.as_str(), &default.cookie_path),
-        };
-    }
-
     fn validate(&self, prefix: &str) -> Result<()> {
         ensure_nonempty(format!("{prefix}.service"), &self.service)?;
         ensure_nonempty(format!("{prefix}.api"), &self.api)?;
         ensure_nonempty(format!("{prefix}.wallet_path"), &self.wallet_path)?;
         ensure_nonempty(format!("{prefix}.data_dir"), &self.data_dir)?;
         ensure_nonempty(format!("{prefix}.cookie_path"), &self.cookie_path)
-    }
-}
-
-fn non_empty_or(value: &str, default: &str) -> String {
-    if value.trim().is_empty() {
-        default.to_string()
-    } else {
-        value.to_string()
     }
 }
 
@@ -217,30 +183,25 @@ mod tests {
     use super::{Config, RecoveryConfig};
 
     #[test]
-    fn load_rejects_empty_top_level_paths() {
+    fn load_rejects_empty_paths() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
-        std::fs::write(&path, r#"{"payout_pause_file":""}"#).unwrap();
 
-        let err = match Config::load(&path) {
-            Ok(_) => panic!("empty payout pause path should fail recovery config load"),
-            Err(err) => err,
-        };
-        assert!(format!("{err:#}").contains("payout_pause_file"));
-    }
-
-    #[test]
-    fn validate_rejects_empty_recovery_paths() {
-        let cfg = RecoveryConfig {
-            socket_path: String::new(),
-            ..RecoveryConfig::default()
-        };
-
-        let err = match cfg.validate() {
-            Ok(_) => panic!("empty recovery socket path should fail validation"),
-            Err(err) => err,
-        };
-        assert!(format!("{err:#}").contains("recovery.socket_path"));
+        for (json, expected) in [
+            (r#"{"payout_pause_file":""}"#, "payout_pause_file"),
+            (r#"{"recovery":{"socket_path":""}}"#, "recovery.socket_path"),
+            (
+                r#"{"recovery":{"primary":{"service":""}}}"#,
+                "recovery.primary.service",
+            ),
+        ] {
+            std::fs::write(&path, json).unwrap();
+            let err = match Config::load(&path) {
+                Ok(_) => panic!("{expected} should fail recovery config load"),
+                Err(err) => err,
+            };
+            assert!(format!("{err:#}").contains(expected));
+        }
     }
 
     #[test]

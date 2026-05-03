@@ -47,7 +47,6 @@ impl Config {
 
     pub(crate) fn normalize(&mut self) {
         self.runtime.normalize();
-        self.recovery.normalize();
     }
 
     fn validate(&self) -> Result<()> {
