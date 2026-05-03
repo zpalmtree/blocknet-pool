@@ -1942,7 +1942,10 @@ impl PayoutProcessor {
             return false;
         }
 
-        let idempotency_key = payout_rebalance_idempotency_key(&input);
+        let idempotency_key = sha256_hex(format!(
+            "blocknet-pool:rebalance:{}:{}:{}",
+            input.txid, input.output_index, input.amount
+        ));
         let recipients = vec![WalletRecipient {
             address: destination.clone(),
             amount: recipient_amount,
@@ -2853,14 +2856,6 @@ fn allocate_pending_batch_fees(
             fee,
         })
         .collect()
-}
-
-fn payout_rebalance_idempotency_key(input: &WalletOutput) -> String {
-    let payload = format!(
-        "blocknet-pool:rebalance:{}:{}:{}",
-        input.txid, input.output_index, input.amount
-    );
-    sha256_hex(payload)
 }
 
 fn allocate_batch_fees(
