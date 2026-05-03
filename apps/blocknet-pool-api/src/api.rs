@@ -6006,15 +6006,29 @@ mod tests {
         serde_json::from_slice(&body).expect("decode json")
     }
 
-    fn test_share(
-        job_id: &str,
-        miner: &str,
-        worker: &str,
-        difficulty: u64,
-        nonce: u64,
-        status: &'static str,
-        created_at: SystemTime,
-    ) -> ShareRecord {
+    type TestShareInput<'a> = (
+        &'a str,
+        &'a str,
+        &'a str,
+        u64,
+        u64,
+        &'static str,
+        SystemTime,
+    );
+    type TestShareBatchInput<'a> = (
+        &'a str,
+        &'a str,
+        &'a str,
+        u64,
+        u64,
+        &'static str,
+        bool,
+        SystemTime,
+    );
+    type TestBlockInput<'a> = (u64, &'a str, &'a str, &'a str, u64, SystemTime, bool, bool);
+
+    fn test_share(share: TestShareInput<'_>) -> ShareRecord {
+        let (job_id, miner, worker, difficulty, nonce, status, created_at) = share;
         ShareRecord {
             job_id: job_id.to_string(),
             miner: miner.to_string(),
@@ -6030,52 +6044,23 @@ mod tests {
         }
     }
 
-    fn add_test_share(
-        store: &PoolStore,
-        job_id: &str,
-        miner: &str,
-        worker: &str,
-        difficulty: u64,
-        nonce: u64,
-        status: &'static str,
-        created_at: SystemTime,
-    ) {
-        store
-            .add_share(test_share(
-                job_id, miner, worker, difficulty, nonce, status, created_at,
-            ))
-            .expect("add share");
+    fn add_test_share(store: &PoolStore, share: TestShareInput<'_>) {
+        store.add_share(test_share(share)).expect("add share");
     }
 
-    fn add_test_shares(
-        store: &PoolStore,
-        shares: &[(&str, &str, &str, u64, u64, &'static str, bool, SystemTime)],
-    ) {
-        for (job_id, miner, worker, difficulty, nonce, status, was_sampled, created_at) in shares {
-            let mut share = test_share(
-                job_id,
-                miner,
-                worker,
-                *difficulty,
-                *nonce,
-                status,
-                *created_at,
-            );
-            share.was_sampled = *was_sampled;
+    fn add_test_shares(store: &PoolStore, shares: &[TestShareBatchInput<'_>]) {
+        for (job_id, miner, worker, difficulty, nonce, status, was_sampled, created_at) in
+            shares.iter().copied()
+        {
+            let mut share =
+                test_share((job_id, miner, worker, difficulty, nonce, status, created_at));
+            share.was_sampled = was_sampled;
             store.add_share(share).expect("add share");
         }
     }
 
-    fn test_block(
-        height: u64,
-        hash: &str,
-        finder: &str,
-        finder_worker: &str,
-        reward: u64,
-        timestamp: SystemTime,
-        confirmed: bool,
-        orphaned: bool,
-    ) -> DbBlock {
+    fn test_block(block: TestBlockInput<'_>) -> DbBlock {
+        let (height, hash, finder, finder_worker, reward, timestamp, confirmed, orphaned) = block;
         DbBlock {
             height,
             hash: hash.to_string(),
@@ -6091,29 +6076,8 @@ mod tests {
         }
     }
 
-    fn add_test_block(
-        store: &PoolStore,
-        height: u64,
-        hash: &str,
-        finder: &str,
-        finder_worker: &str,
-        reward: u64,
-        timestamp: SystemTime,
-        confirmed: bool,
-        orphaned: bool,
-    ) {
-        store
-            .add_block(&test_block(
-                height,
-                hash,
-                finder,
-                finder_worker,
-                reward,
-                timestamp,
-                confirmed,
-                orphaned,
-            ))
-            .expect("add block");
+    fn add_test_block(store: &PoolStore, block: TestBlockInput<'_>) {
+        store.add_block(&test_block(block)).expect("add block");
     }
 
     #[test]
@@ -6498,15 +6462,16 @@ mod tests {
         let now = SystemTime::now();
 
         add_test_share(
-            &store, "share-ok", "miner-a", "rig-1", 100, 1, "verified", now,
+            &store,
+            ("share-ok", "miner-a", "rig-1", 100, 1, "verified", now),
         );
         let mut invalid_share =
-            test_share("share-invalid", "miner-a", "rig-1", 100, 2, "rejected", now);
+            test_share(("share-invalid", "miner-a", "rig-1", 100, 2, "rejected", now));
         invalid_share.reject_reason = Some("invalid share proof".to_string());
         store
             .add_share(invalid_share)
             .expect("insert invalid share");
-        let mut quarantined_share = test_share(
+        let mut quarantined_share = test_share((
             "share-quarantine",
             "miner-a",
             "rig-1",
@@ -6514,7 +6479,7 @@ mod tests {
             3,
             "rejected",
             now,
-        );
+        ));
         quarantined_share.reject_reason = Some("address quarantined".to_string());
         store
             .add_share(quarantined_share)
@@ -6642,15 +6607,17 @@ mod tests {
         let now = SystemTime::now();
         add_test_share(
             &store,
-            "job-verified",
-            "miner-db-only",
-            "worker-1",
-            250,
-            9,
-            "verified",
-            now,
+            (
+                "job-verified",
+                "miner-db-only",
+                "worker-1",
+                250,
+                9,
+                "verified",
+                now,
+            ),
         );
-        let mut rejected = test_share(
+        let mut rejected = test_share((
             "job-rejected",
             "miner-db-only",
             "worker-1",
@@ -6658,7 +6625,7 @@ mod tests {
             10,
             "rejected",
             now,
-        );
+        ));
         rejected.reject_reason = Some("bad share".to_string());
         store.add_share(rejected).expect("add rejected share");
 
@@ -6703,13 +6670,15 @@ mod tests {
         ] {
             add_test_share(
                 &store,
-                job_id,
-                "miner-workers",
-                worker,
-                250,
-                nonce,
-                "verified",
-                created_at,
+                (
+                    job_id,
+                    "miner-workers",
+                    worker,
+                    250,
+                    nonce,
+                    "verified",
+                    created_at,
+                ),
             );
         }
 
@@ -6742,13 +6711,15 @@ mod tests {
         ] {
             add_test_share(
                 &store,
-                job_id,
-                "miner-since",
-                "worker-1",
-                250,
-                nonce,
-                "verified",
-                created_at,
+                (
+                    job_id,
+                    "miner-since",
+                    "worker-1",
+                    250,
+                    nonce,
+                    "verified",
+                    created_at,
+                ),
             );
         }
 
@@ -6783,13 +6754,15 @@ mod tests {
 
         add_test_share(
             &store,
-            "job-stale-worker",
-            "miner-stale-workers",
-            "worker-old",
-            250,
-            1,
-            "verified",
-            stale_share_at,
+            (
+                "job-stale-worker",
+                "miner-stale-workers",
+                "worker-old",
+                250,
+                1,
+                "verified",
+                stale_share_at,
+            ),
         );
 
         let state = test_api_state(store);
@@ -6826,13 +6799,15 @@ mod tests {
         let created_at = UNIX_EPOCH + Duration::from_secs(5_000);
         add_test_share(
             &store,
-            "job-hold",
-            "miner-hold",
-            "worker-1",
-            250,
-            1,
-            "verified",
-            created_at,
+            (
+                "job-hold",
+                "miner-hold",
+                "worker-1",
+                250,
+                1,
+                "verified",
+                created_at,
+            ),
         );
         store
             .escalate_address_risk(AddressRiskEscalation::new(
@@ -6869,7 +6844,7 @@ mod tests {
     fn miner_handler_reports_validation_backlog_hold_reason() {
         let store = require_test_store!();
         let now = SystemTime::now();
-        let mut share = test_share(
+        let mut share = test_share((
             "job-backlog",
             "miner-backlog",
             "worker-1",
@@ -6877,7 +6852,7 @@ mod tests {
             1,
             "provisional",
             now,
-        );
+        ));
         share.was_sampled = false;
         store.add_share(share).expect("add share");
         store
@@ -6973,7 +6948,8 @@ mod tests {
             ],
         );
         add_test_block(
-            &store, 99, "blk-99", "miner-a", "wa", 1_000, block_ts, false, false,
+            &store,
+            (99, "blk-99", "miner-a", "wa", 1_000, block_ts, false, false),
         );
 
         let estimate = estimate_unconfirmed_pending_for_miner(
@@ -7038,7 +7014,8 @@ mod tests {
             ),
         ] {
             add_test_block(
-                &store, height, &hash, &finder, "w", 900, timestamp, false, false,
+                &store,
+                (height, &hash, &finder, "w", 900, timestamp, false, false),
             );
         }
 
@@ -7095,7 +7072,10 @@ mod tests {
             ],
         );
         add_test_block(
-            &store, 299, "blk-paid", "miner-a", "wa", 1_000, block_ts, true, false,
+            &store,
+            (
+                299, "blk-paid", "miner-a", "wa", 1_000, block_ts, true, false,
+            ),
         );
         store
             .apply_block_credits_and_mark_paid_with_fee(
@@ -7174,7 +7154,10 @@ mod tests {
             ],
         );
         add_test_block(
-            &store, 298, "blk-cap", "miner-b", "wb", 1_200, block_ts, false, false,
+            &store,
+            (
+                298, "blk-cap", "miner-b", "wb", 1_200, block_ts, false, false,
+            ),
         );
 
         let breakdown =
@@ -7199,7 +7182,8 @@ mod tests {
 
         let base = UNIX_EPOCH + Duration::from_secs(4_100_000);
         let block_ts = base + Duration::from_secs(120);
-        let mut replay_share = test_share("j-replay-a", "miner-a", "wa", 1, 1, "provisional", base);
+        let mut replay_share =
+            test_share(("j-replay-a", "miner-a", "wa", 1, 1, "provisional", base));
         replay_share.was_sampled = false;
         store
             .add_share_with_replay(
@@ -7214,14 +7198,16 @@ mod tests {
             .expect("add replay share");
         add_test_block(
             &store,
-            297,
-            "blk-replay-view",
-            "miner-a",
-            "wa",
-            1_000,
-            block_ts,
-            false,
-            false,
+            (
+                297,
+                "blk-replay-view",
+                "miner-a",
+                "wa",
+                1_000,
+                block_ts,
+                false,
+                false,
+            ),
         );
 
         let breakdown =
@@ -7286,14 +7272,16 @@ mod tests {
         );
         add_test_block(
             &store,
-            199,
-            "blk-preview",
-            "miner-a",
-            "wa",
-            1_000,
-            block_ts,
-            false,
-            false,
+            (
+                199,
+                "blk-preview",
+                "miner-a",
+                "wa",
+                1_000,
+                block_ts,
+                false,
+                false,
+            ),
         );
 
         let estimate = estimate_unconfirmed_pending_for_miner(
@@ -7371,14 +7359,16 @@ mod tests {
         );
         add_test_block(
             &store,
-            249,
-            "blk-risk-preview",
-            "miner-a",
-            "wa",
-            1_000,
-            block_ts,
-            false,
-            false,
+            (
+                249,
+                "blk-risk-preview",
+                "miner-a",
+                "wa",
+                1_000,
+                block_ts,
+                false,
+                false,
+            ),
         );
 
         let estimate = estimate_unconfirmed_pending_for_miner(
@@ -7408,15 +7398,17 @@ mod tests {
         let block_ts = base;
         add_test_share(
             &store,
-            "j-anchor-a",
-            "miner-a",
-            "wa",
-            100,
-            1,
-            "verified",
-            base - Duration::from_secs(10),
+            (
+                "j-anchor-a",
+                "miner-a",
+                "wa",
+                100,
+                1,
+                "verified",
+                base - Duration::from_secs(10),
+            ),
         );
-        let mut winning_share = test_share(
+        let mut winning_share = test_share((
             "j-anchor-b",
             "miner-b",
             "wb",
@@ -7424,19 +7416,21 @@ mod tests {
             2,
             "verified",
             base + Duration::from_secs(10),
-        );
+        ));
         winning_share.block_hash = Some("blk-anchor".to_string());
         store.add_share(winning_share).expect("add winning share");
         add_test_block(
             &store,
-            109,
-            "blk-anchor",
-            "miner-b",
-            "wb",
-            1_000,
-            block_ts,
-            false,
-            false,
+            (
+                109,
+                "blk-anchor",
+                "miner-b",
+                "wb",
+                1_000,
+                block_ts,
+                false,
+                false,
+            ),
         );
 
         let estimate = estimate_unconfirmed_pending_for_miner(
@@ -7462,19 +7456,21 @@ mod tests {
         let base = UNIX_EPOCH + Duration::from_secs(2_200_000);
         let block_ts = base + Duration::from_secs(120);
         let mut delayed_share =
-            test_share("j-delay-a", "miner-a", "wa", 100, 1, "provisional", base);
+            test_share(("j-delay-a", "miner-a", "wa", 100, 1, "provisional", base));
         delayed_share.was_sampled = false;
         store.add_share(delayed_share).expect("add delayed share");
         add_test_block(
             &store,
-            119,
-            "blk-delay",
-            "miner-a",
-            "wa",
-            1_000,
-            block_ts,
-            false,
-            false,
+            (
+                119,
+                "blk-delay",
+                "miner-a",
+                "wa",
+                1_000,
+                block_ts,
+                false,
+                false,
+            ),
         );
 
         let estimate = estimate_unconfirmed_pending_for_miner(
@@ -7526,7 +7522,10 @@ mod tests {
             ),
         ] {
             add_test_share(
-                &store, &job_id, "miner-a", "wa", difficulty, difficulty, "verified", created_at,
+                &store,
+                (
+                    &job_id, "miner-a", "wa", difficulty, difficulty, "verified", created_at,
+                ),
             );
         }
 
@@ -7543,9 +7542,9 @@ mod tests {
                 base + Duration::from_secs(120),
             ),
         ] {
-            let mut block = test_block(
+            let mut block = test_block((
                 height, &hash, "miner-a", "wa", 1_000, timestamp, true, false,
-            );
+            ));
             block.difficulty = 100;
             store.add_block(&block).expect("add block");
         }
@@ -7616,7 +7615,10 @@ mod tests {
             ),
         ] {
             add_test_share(
-                &store, &job_id, "miner-a", "wa", difficulty, difficulty, "verified", created_at,
+                &store,
+                (
+                    &job_id, "miner-a", "wa", difficulty, difficulty, "verified", created_at,
+                ),
             );
         }
 
@@ -7633,9 +7635,9 @@ mod tests {
                 base + Duration::from_secs(120),
             ),
         ] {
-            let mut block = test_block(
+            let mut block = test_block((
                 height, &hash, "miner-a", "wa", 1_000, timestamp, true, false,
-            );
+            ));
             block.difficulty = 100;
             store.add_block(&block).expect("add block");
         }
@@ -7677,13 +7679,15 @@ mod tests {
         let job_id = format!("job-activity-{unique}");
         add_test_share(
             &store,
-            &job_id,
-            &address,
-            "wa",
-            32,
-            32,
-            "verified",
-            UNIX_EPOCH + Duration::from_secs(4_000_000),
+            (
+                &job_id,
+                &address,
+                "wa",
+                32,
+                32,
+                "verified",
+                UNIX_EPOCH + Duration::from_secs(4_000_000),
+            ),
         );
 
         assert!(store
@@ -8089,7 +8093,7 @@ mod tests {
     #[test]
     fn hydrate_provisional_reward_fills_pending_zero_reward() {
         let now = SystemTime::now();
-        let mut block = test_block(3707, "abc", "addr", "rig", 0, now, false, false);
+        let mut block = test_block((3707, "abc", "addr", "rig", 0, now, false, false));
         block.difficulty = 1;
         hydrate_provisional_block_reward(&mut block);
         assert_eq!(block.reward, estimated_block_reward(3707));
@@ -8098,7 +8102,7 @@ mod tests {
     #[test]
     fn hydrate_provisional_reward_does_not_change_confirmed_blocks() {
         let now = SystemTime::now();
-        let mut block = test_block(3707, "abc", "addr", "rig", 123, now, true, false);
+        let mut block = test_block((3707, "abc", "addr", "rig", 123, now, true, false));
         block.difficulty = 1;
         hydrate_provisional_block_reward(&mut block);
         assert_eq!(block.reward, 123);
