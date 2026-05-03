@@ -6,6 +6,7 @@ import { EmptyTableRow } from '../components/EmptyTableRow';
 import { HashrateChart } from '../components/HashrateChart';
 import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
 import { PayoutTxLinks } from '../components/PayoutTxLinks';
+import { StatCard } from '../components/StatCard';
 import {
   effortLabel,
   formatCoins,
@@ -149,54 +150,37 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
       <div className="stats-card-group">
         <div className="stats-card-group-title">Pool</div>
         <div className="stats-card-group-grid">
-          <div className="stat-card">
-            <div className="label">Connected Miners</div>
-            <div className="value" id="s-miners">{stats?.pool?.miners ?? '-'}</div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Pool Hashrate</div>
-            <div className="value" id="s-hashrate">{humanRate(stats?.pool?.hashrate ?? 0)}</div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Network Hashrate</div>
-            <div className="value" id="s-net-hashrate">{stats?.chain.network_hashrate ? humanRate(stats.chain.network_hashrate) : '-'}</div>
-          </div>
+          <StatCard label="Connected Miners" value={stats?.pool?.miners ?? '-'} id="s-miners" />
+          <StatCard label="Pool Hashrate" value={humanRate(stats?.pool?.hashrate ?? 0)} id="s-hashrate" />
+          <StatCard
+            label="Network Hashrate"
+            value={stats?.chain.network_hashrate ? humanRate(stats.chain.network_hashrate) : '-'}
+            id="s-net-hashrate"
+          />
         </div>
       </div>
 
       <div className="stats-card-group">
         <div className="stats-card-group-title">Blocks</div>
         <div className="stats-card-group-grid">
-          <div className="stat-card">
-            <div className="label">Current Block</div>
-            <div className="value mono" id="s-current-block">{stats?.chain.current_job_height ?? '-'}</div>
-          </div>
-          <div className="stat-card" title={latestSolvedBlock ? timestampTitle(latestSolvedBlock.timestamp) : undefined}>
-            <div className="label">Last Solved Block</div>
-            <div className="value mono" id="s-last-solved-block">{latestSolvedBlock?.block_height ?? '-'}</div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Blocks Found</div>
-            <div className="value" id="s-blocks">{stats?.pool?.blocks_found ?? '-'}</div>
-          </div>
+          <StatCard label="Current Block" value={stats?.chain.current_job_height ?? '-'} id="s-current-block" mono />
+          <StatCard
+            label="Last Solved Block"
+            value={latestSolvedBlock?.block_height ?? '-'}
+            id="s-last-solved-block"
+            title={latestSolvedBlock ? timestampTitle(latestSolvedBlock.timestamp) : undefined}
+            mono
+          />
+          <StatCard label="Blocks Found" value={stats?.pool?.blocks_found ?? '-'} id="s-blocks" />
         </div>
       </div>
 
       <div className="stats-card-group">
         <div className="stats-card-group-title">Luck & Health</div>
         <div className="stats-card-group-grid">
-          <div className="stat-card">
-            <div className="label">Average Luck</div>
-            <div className="value" id="s-avg-luck">{formatPct(avgLuck)}</div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Unique Orphans</div>
-            <div className="value" id="s-orphaned-blocks">{stats?.pool?.orphaned_blocks ?? '-'}</div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Orphan Rate</div>
-            <div className="value" id="s-orphan-rate">{formatPct(stats?.pool?.orphan_rate_pct)}</div>
-          </div>
+          <StatCard label="Average Luck" value={formatPct(avgLuck)} id="s-avg-luck" />
+          <StatCard label="Unique Orphans" value={stats?.pool?.orphaned_blocks ?? '-'} id="s-orphaned-blocks" />
+          <StatCard label="Orphan Rate" value={formatPct(stats?.pool?.orphan_rate_pct)} id="s-orphan-rate" />
         </div>
       </div>
 
@@ -245,44 +229,35 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
       <div className="stats-card-group">
         <div className="stats-card-group-title">Payouts</div>
         <div className="stats-card-group-grid">
-          <div
-            className="stat-card"
+          <StatCard
+            label="Payout Queue"
+            value={payoutEta ? formatCompactCoins(payoutEta.pending_total_amount) : '-'}
+            meta={payoutShortfall ? `${formatCompactCoins(payoutShortfall)} short` : 'funded'}
+            mono
             title={
               payoutEta
                 ? `${formatCoins(payoutEta.pending_total_amount)} currently queued`
                 : undefined
             }
-          >
-            <div className="label">Payout Queue</div>
-            <div className="value mono">
-              {payoutEta ? formatCompactCoins(payoutEta.pending_total_amount) : '-'}
-            </div>
-            <div className="stat-meta">
-              {payoutShortfall ? `${formatCompactCoins(payoutShortfall)} short` : 'funded'}
-            </div>
-          </div>
-          <div
-            className="stat-card"
+          />
+          <StatCard
+            label="Total BNT Paid"
+            value={stats?.pool?.paid_to_miners_total != null ? formatCompactCoins(stats.pool.paid_to_miners_total) : '-'}
+            meta={stats?.pool?.paid_to_miners_total != null ? formatCoins(stats.pool.paid_to_miners_total) : ''}
+            id="s-total-paid"
+            mono
             title={
               stats?.pool?.paid_to_miners_total != null
                 ? `${formatCoins(stats.pool.paid_to_miners_total)} paid to miners`
                 : undefined
             }
-          >
-            <div className="label">Total BNT Paid</div>
-            <div className="value mono" id="s-total-paid">
-              {stats?.pool?.paid_to_miners_total != null ? formatCompactCoins(stats.pool.paid_to_miners_total) : '-'}
-            </div>
-            <div className="stat-meta">
-              {stats?.pool?.paid_to_miners_total != null ? formatCoins(stats.pool.paid_to_miners_total) : ''}
-            </div>
-          </div>
-          <div className="stat-card">
-            <div className="label">Next Sweep</div>
-            <div className="value mono" title={timestampTitle(payoutEta?.next_sweep_at) || undefined}>
-              {nextSweepLabel}
-            </div>
-          </div>
+          />
+          <StatCard
+            label="Next Sweep"
+            value={nextSweepLabel}
+            valueTitle={timestampTitle(payoutEta?.next_sweep_at) || undefined}
+            mono
+          />
         </div>
       </div>
 

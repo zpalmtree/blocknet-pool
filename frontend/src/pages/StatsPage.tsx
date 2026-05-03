@@ -4,6 +4,7 @@ import type { ApiClient } from '../api/client';
 import { EmptyTableRow } from '../components/EmptyTableRow';
 import { HashrateChart } from '../components/HashrateChart';
 import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
+import { StatCard } from '../components/StatCard';
 import { LAST_MINER_LOOKUP_KEY } from '../lib/storage';
 import { formatCoins, formatCompactCoins, formatFee, formatPct, humanRate, ratioPct, timeAgo, timestampTitle, toUnixMs } from '../lib/format';
 import type { ThemeMode } from '../lib/theme';
@@ -418,59 +419,43 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
           <div className="stats-card-group" style={{ marginBottom: 16 }}>
             <div className="stats-card-group-title">Balance</div>
             <div className="stats-card-group-grid">
-              <div className="stat-card stat-card--flow" title={formatCoins(pendingEstimated)}>
-                <div className="label">Estimated Rewards</div>
-                <div className="value">{formatCompactCoins(pendingEstimated)}</div>
-                <div className="stat-meta">Recent blocks still confirming</div>
-              </div>
-              <div className="stat-card stat-card--flow" title={formatCoins(pendingConfirmed)}>
-                <div className="label">Confirmed Rewards</div>
-                <div className="value">{formatCompactCoins(pendingConfirmed)}</div>
-                <div className="stat-meta">Matured balance awaiting payout</div>
-              </div>
-              <div className="stat-card" title={formatCoins(livePaid)}>
-                <div className="label">Paid Balance</div>
-                <div className="value">{formatCompactCoins(livePaid)}</div>
-                <div className="stat-meta">Already sent to this address</div>
-              </div>
+              <StatCard
+                label="Estimated Rewards"
+                value={formatCompactCoins(pendingEstimated)}
+                meta="Recent blocks still confirming"
+                className="stat-card--flow"
+                title={formatCoins(pendingEstimated)}
+              />
+              <StatCard
+                label="Confirmed Rewards"
+                value={formatCompactCoins(pendingConfirmed)}
+                meta="Matured balance awaiting payout"
+                className="stat-card--flow"
+                title={formatCoins(pendingConfirmed)}
+              />
+              <StatCard
+                label="Paid Balance"
+                value={formatCompactCoins(livePaid)}
+                meta="Already sent to this address"
+                title={formatCoins(livePaid)}
+              />
             </div>
           </div>
 
           <div className="stats-card-group" style={{ marginBottom: 24 }}>
             <div className="stats-card-group-title">Mining</div>
             <div className="stats-card-group-grid">
-              <div className="stat-card">
-                <div className="label">Hashrate</div>
-                <div className="value">{humanRate(liveHashrate)}</div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Blocks Found</div>
-                <div className="value">{minerData ? minerData.blocks_found : '...'}</div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Mining Since</div>
-                <div className="value">{minerData ? minerOldestShareDate : '...'}</div>
-              </div>
+              <StatCard label="Hashrate" value={humanRate(liveHashrate)} />
+              <StatCard label="Blocks Found" value={minerData ? minerData.blocks_found : '...'} />
+              <StatCard label="Mining Since" value={minerData ? minerOldestShareDate : '...'} />
             </div>
           </div>
 
           <div className="stats-grid" style={{ marginBottom: 24 }}>
-            <div className="stat-card">
-              <div className="label">Shares Accepted</div>
-              <div className="value">{minerData ? minerAccepted : '...'}</div>
-            </div>
-            <div className="stat-card">
-              <div className="label">Shares Rejected</div>
-              <div className="value">{minerData ? minerRejected : '...'}</div>
-            </div>
-            <div className="stat-card">
-              <div className="label">Reject Rate</div>
-              <div className="value">{minerData ? formatPct(minerRejectRate) : '...'}</div>
-            </div>
-            <div className="stat-card">
-              <div className="label">Avg Difficulty</div>
-              <div className="value">{minerData ? minerAvgDiff : '...'}</div>
-            </div>
+            <StatCard label="Shares Accepted" value={minerData ? minerAccepted : '...'} />
+            <StatCard label="Shares Rejected" value={minerData ? minerRejected : '...'} />
+            <StatCard label="Reject Rate" value={minerData ? formatPct(minerRejectRate) : '...'} />
+            <StatCard label="Avg Difficulty" value={minerData ? minerAvgDiff : '...'} />
           </div>
 
           {verificationHold && (

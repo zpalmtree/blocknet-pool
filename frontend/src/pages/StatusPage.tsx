@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import type { ApiClient } from "../api/client";
 import { EmptyTableRow } from "../components/EmptyTableRow";
+import { StatCard } from "../components/StatCard";
 import { fmtSeconds, formatPct, timeAgo, timestampTitle } from "../lib/format";
 import type { StatusResponse } from "../types";
 
@@ -61,15 +62,6 @@ function fmtRefreshLag(ms: number | null | undefined): string {
   return fmtSeconds(Math.max(1, Math.floor(ms / 1000)));
 }
 
-function StatusStatCard({ label, value, mono = false }: { label: ReactNode; value: ReactNode; mono?: boolean }) {
-  return (
-    <div className="stat-card">
-      <div className="label">{label}</div>
-      <div className={mono ? "value mono" : "value"}>{value}</div>
-    </div>
-  );
-}
-
 export function StatusPage({ api, liveTick }: StatusPageProps) {
   const [status, setStatus] = useState<StatusResponse | null>(null);
 
@@ -111,9 +103,9 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
       <div className="stats-card-group">
         <div className="stats-card-group-title">Pool Reachability</div>
         <div className="stats-card-group-grid stats-grid-dense">
-          <StatusStatCard label="Pool" value={poolState(status)} />
+          <StatCard label="Pool" value={poolState(status)} />
           {REACHABILITY_SERVICES.map((service) => (
-            <StatusStatCard key={service.key} label={service.label} value={serviceState(status, service.key)} />
+            <StatCard key={service.key} label={service.label} value={serviceState(status, service.key)} />
           ))}
         </div>
       </div>
@@ -121,20 +113,20 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
       <div className="stats-card-group">
         <div className="stats-card-group-title">Job Template</div>
         <div className="stats-card-group-grid stats-grid-dense">
-          <StatusStatCard label="Template Refresh" value={templateState(status)} />
-          <StatusStatCard label="Refresh Lag" value={fmtRefreshLag(status?.template.last_refresh_millis)} mono />
-          <StatusStatCard label="Current Template Age" value={templateAge} mono />
-          <StatusStatCard label="Sync State" value={syncState(status)} />
-          <StatusStatCard label="Chain Height" value={status?.daemon.chain_height ?? "-"} mono />
+          <StatCard label="Template Refresh" value={templateState(status)} />
+          <StatCard label="Refresh Lag" value={fmtRefreshLag(status?.template.last_refresh_millis)} mono />
+          <StatCard label="Current Template Age" value={templateAge} mono />
+          <StatCard label="Sync State" value={syncState(status)} />
+          <StatCard label="Chain Height" value={status?.daemon.chain_height ?? "-"} mono />
         </div>
       </div>
 
       <div className="stats-card-group">
         <div className="stats-card-group-title">Sampling</div>
         <div className="stats-card-group-grid stats-grid-dense">
-          <StatusStatCard label="API Uptime" value={status ? fmtSeconds(status.pool_uptime_seconds || 0) : "-"} mono />
-          <StatusStatCard label={uptimeLabel("Local Samples")} value={status?.uptime[0]?.sample_count ?? "-"} mono />
-          <StatusStatCard
+          <StatCard label="API Uptime" value={status ? fmtSeconds(status.pool_uptime_seconds || 0) : "-"} mono />
+          <StatCard label={uptimeLabel("Local Samples")} value={status?.uptime[0]?.sample_count ?? "-"} mono />
+          <StatCard
             label={uptimeLabel("External Samples")}
             value={status?.uptime[0]?.external_sample_count ?? "-"}
             mono
