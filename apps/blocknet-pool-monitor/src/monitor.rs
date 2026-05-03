@@ -603,7 +603,10 @@ impl MonitorRuntime {
                     .unwrap_or("critical"),
                 visibility: "private",
                 active: pool_activity_lost.is_some(),
-                threshold: pool_activity_loss_threshold(self.interval),
+                threshold: self
+                    .interval
+                    .saturating_mul(POOL_ACTIVITY_LOSS_THRESHOLD_SAMPLES)
+                    .max(POOL_ACTIVITY_LOSS_MIN_THRESHOLD),
                 detail: pool_activity_lost.map(|(_, detail)| detail),
             },
             now,
@@ -1804,12 +1807,6 @@ fn age_seconds_since(sampled_at: SystemTime, timestamp: Option<SystemTime>) -> O
     timestamp
         .and_then(|ts| sampled_at.duration_since(ts).ok())
         .map(|age| age.as_secs())
-}
-
-fn pool_activity_loss_threshold(interval: Duration) -> Duration {
-    interval
-        .saturating_mul(POOL_ACTIVITY_LOSS_THRESHOLD_SAMPLES)
-        .max(POOL_ACTIVITY_LOSS_MIN_THRESHOLD)
 }
 
 fn validation_backlog_state(
