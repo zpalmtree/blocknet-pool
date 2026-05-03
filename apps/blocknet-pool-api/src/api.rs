@@ -4221,7 +4221,7 @@ impl ApiState {
 
         let store = Arc::clone(&self.store);
         let started_at = Instant::now();
-        let loaded = match tokio::task::spawn_blocking(
+        let loaded = match spawn_blocking_result(
             move || -> anyhow::Result<Option<PersistedRuntimeSnapshot>> {
                 let Some(raw) = store.get_meta(LIVE_RUNTIME_SNAPSHOT_META_KEY)? else {
                     return Ok(None);
@@ -4231,7 +4231,7 @@ impl ApiState {
         )
         .await
         {
-            Ok(Ok(value)) => {
+            Ok(value) => {
                 record_api_operation_observation(
                     self,
                     "persisted_runtime_snapshot_load",
@@ -4240,16 +4240,6 @@ impl ApiState {
                 );
                 value
             }
-            Ok(Err(err)) => {
-                record_api_operation_observation(
-                    self,
-                    "persisted_runtime_snapshot_load",
-                    started_at.elapsed(),
-                    true,
-                );
-                tracing::warn!(error = %err, "failed loading persisted live runtime snapshot");
-                None
-            }
             Err(err) => {
                 record_api_operation_observation(
                     self,
@@ -4257,7 +4247,7 @@ impl ApiState {
                     started_at.elapsed(),
                     true,
                 );
-                tracing::warn!(error = %err, "live runtime snapshot task join failed");
+                tracing::warn!(error = %err, "failed loading persisted live runtime snapshot");
                 None
             }
         };
