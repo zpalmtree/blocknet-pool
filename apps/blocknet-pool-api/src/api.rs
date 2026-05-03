@@ -2313,7 +2313,7 @@ async fn stream_daemon_logs_with_command(
     while stdout_open || stderr_open {
         tokio::select! {
             _ = heartbeat.tick() => {
-                if !send_log_keepalive(tx).await {
+                if tx.send(Ok(vec![b'\n'])).await.is_err() {
                     return Ok(());
                 }
             }
@@ -2370,10 +2370,6 @@ async fn send_log_line(tx: &mpsc::Sender<Result<Vec<u8>, Infallible>>, line: &st
     let mut payload = line.as_bytes().to_vec();
     payload.push(b'\n');
     tx.send(Ok(payload)).await.is_ok()
-}
-
-async fn send_log_keepalive(tx: &mpsc::Sender<Result<Vec<u8>, Infallible>>) -> bool {
-    tx.send(Ok(vec![b'\n'])).await.is_ok()
 }
 
 fn trim_log_line(line: &str) -> String {
