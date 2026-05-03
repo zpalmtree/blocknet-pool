@@ -140,6 +140,42 @@ impl ValidationHoldCause {
     }
 }
 
+pub fn quarantine_until_for_strikes(
+    now: SystemTime,
+    strikes: u64,
+    quarantine_base: Duration,
+    quarantine_max: Duration,
+) -> SystemTime {
+    if strikes == 0 || quarantine_base.is_zero() {
+        return now;
+    }
+
+    let mut duration = quarantine_base;
+    if !quarantine_max.is_zero() && duration > quarantine_max {
+        duration = quarantine_max;
+    }
+    for _ in 1..strikes {
+        duration = duration.saturating_mul(2);
+        if !quarantine_max.is_zero() && duration >= quarantine_max {
+            duration = quarantine_max;
+            break;
+        }
+    }
+    now + duration
+}
+
+pub fn active_window_strikes(
+    strikes: u64,
+    window_until: Option<SystemTime>,
+    now: SystemTime,
+) -> u64 {
+    if window_until.is_some_and(|until| until > now) {
+        strikes
+    } else {
+        0
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ActiveVerificationHold {
     pub address: String,

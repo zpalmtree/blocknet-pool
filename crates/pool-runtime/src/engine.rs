@@ -21,7 +21,8 @@ use crate::validation::{
     SHARE_STATUS_PROVISIONAL, SHARE_STATUS_REJECTED, SHARE_STATUS_VERIFIED,
 };
 use pool_common::db::{
-    AddressRiskEscalation, AddressRiskState, PendingAuditShare, ShareReplayData,
+    active_window_strikes, AddressRiskEscalation, AddressRiskState, PendingAuditShare,
+    ShareReplayData,
 };
 use pool_common::pow::{check_target, difficulty_to_target};
 use pool_common::protocol::{
@@ -1818,38 +1819,6 @@ fn unix_to_system_time(ts: i64) -> SystemTime {
     SystemTime::UNIX_EPOCH + Duration::from_secs(ts as u64)
 }
 
-#[cfg(test)]
-fn quarantine_until_for_strikes(
-    now: SystemTime,
-    strikes: u64,
-    quarantine_base: Duration,
-    quarantine_max: Duration,
-) -> SystemTime {
-    if strikes == 0 || quarantine_base.is_zero() {
-        return now;
-    }
-
-    let mut duration = quarantine_base;
-    if !quarantine_max.is_zero() && duration > quarantine_max {
-        duration = quarantine_max;
-    }
-    for _ in 1..strikes {
-        duration = duration.saturating_mul(2);
-        if !quarantine_max.is_zero() && duration >= quarantine_max {
-            duration = quarantine_max;
-            break;
-        }
-    }
-    now + duration
-}
-
-fn active_window_strikes(strikes: u64, window_until: Option<SystemTime>, now: SystemTime) -> u64 {
-    window_until
-        .filter(|until| *until > now)
-        .map(|_| strikes)
-        .unwrap_or_default()
-}
-
 impl FoundBlockOutboxRecord {
     fn from_found(found: &FoundBlockRecord) -> Self {
         Self {
@@ -2100,7 +2069,7 @@ impl ShareStore for InMemoryStore {
                 .strikes
                 .saturating_sub(quarantine_threshold)
                 .saturating_add(1);
-            let candidate = quarantine_until_for_strikes(
+            let candidate = pool_common::db::quarantine_until_for_strikes(
                 now,
                 quarantine_strikes,
                 quarantine_base,

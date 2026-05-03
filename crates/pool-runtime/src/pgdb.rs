@@ -16,10 +16,11 @@ use crate::validation::{
     PersistedValidationProvisional, ValidationClearEvent,
 };
 use pool_common::db::{
-    ActiveVerificationHold, AddressRiskEscalation, AddressRiskState, Balance, BlockCreditEvent,
-    DbBlock, DbLuckRound, DbShare, MonitorHeartbeat, MonitorHeartbeatUpsert, MonitorIncident,
-    MonitorIncidentUpsert, Payout, PendingPayout, PendingPayoutBatchMember, PoolFeeEvent,
-    PoolFeeRecord, PublicPayoutBatch, ShareReplayData, ShareReplayUpdate, ValidationHoldCause,
+    active_window_strikes, quarantine_until_for_strikes, ActiveVerificationHold,
+    AddressRiskEscalation, AddressRiskState, Balance, BlockCreditEvent, DbBlock, DbLuckRound,
+    DbShare, MonitorHeartbeat, MonitorHeartbeatUpsert, MonitorIncident, MonitorIncidentUpsert,
+    Payout, PendingPayout, PendingPayoutBatchMember, PoolFeeEvent, PoolFeeRecord,
+    PublicPayoutBatch, ShareReplayData, ShareReplayUpdate, ValidationHoldCause,
     ValidationHoldState,
 };
 
@@ -5705,38 +5706,6 @@ fn validation_hold_cause_from_db(value: Option<&str>) -> Option<ValidationHoldCa
 
 fn validation_hold_cause_to_db(value: Option<ValidationHoldCause>) -> Option<&'static str> {
     value.map(ValidationHoldCause::as_str)
-}
-
-fn quarantine_until_for_strikes(
-    now: SystemTime,
-    strikes: u64,
-    quarantine_base: Duration,
-    quarantine_max: Duration,
-) -> SystemTime {
-    if strikes == 0 || quarantine_base.is_zero() {
-        return now;
-    }
-
-    let mut duration = quarantine_base;
-    if !quarantine_max.is_zero() && duration > quarantine_max {
-        duration = quarantine_max;
-    }
-    for _ in 1..strikes {
-        duration = duration.saturating_mul(2);
-        if !quarantine_max.is_zero() && duration >= quarantine_max {
-            duration = quarantine_max;
-            break;
-        }
-    }
-    now + duration
-}
-
-fn active_window_strikes(strikes: u64, window_until: Option<SystemTime>, now: SystemTime) -> u64 {
-    if window_until.is_some_and(|until| until > now) {
-        strikes
-    } else {
-        0
-    }
 }
 
 fn merge_optional_later(
