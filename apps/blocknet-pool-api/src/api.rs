@@ -2780,10 +2780,6 @@ fn collect_address_preview_stats_from_summary(
     }
 }
 
-fn pending_estimate_window_duration(config: &Config) -> Duration {
-    config.runtime.pplns_window_duration()
-}
-
 fn update_window_preview_for_share(
     preview: &mut ShareWindowAddressPreview,
     share: &DbShare,
@@ -2941,7 +2937,7 @@ fn prepare_pending_estimate_blocks(
     prepare_duration_pending_estimate_blocks(
         store,
         blocks,
-        pending_estimate_window_duration(config),
+        config.runtime.pplns_window_duration(),
         now.checked_sub(provisional_delay),
         chain_height,
     )
