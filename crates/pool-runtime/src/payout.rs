@@ -1675,7 +1675,18 @@ impl PayoutProcessor {
             return Ok(None);
         };
         validate_recovered_wallet_send_matches_pending(&recovered, entries)?;
-        let members = allocate_pending_batch_fees(entries, recovered.fee);
+        let members = entries
+            .iter()
+            .zip(allocate_proportional_fees(
+                entries.iter().map(|entry| entry.amount),
+                recovered.fee,
+            ))
+            .map(|(entry, fee)| PendingPayoutBatchMember {
+                address: entry.address.clone(),
+                amount: entry.amount,
+                fee,
+            })
+            .collect::<Vec<_>>();
         let recorded = self.store.record_pending_payout_batch_broadcast(
             &members,
             batch_id,
@@ -2833,24 +2844,6 @@ fn validate_recovered_wallet_send_matches_pending(
         ));
     }
     Ok(())
-}
-
-fn allocate_pending_batch_fees(
-    pending: &[PendingPayout],
-    total_fee: u64,
-) -> Vec<PendingPayoutBatchMember> {
-    pending
-        .iter()
-        .zip(allocate_proportional_fees(
-            pending.iter().map(|entry| entry.amount),
-            total_fee,
-        ))
-        .map(|(entry, fee)| PendingPayoutBatchMember {
-            address: entry.address.clone(),
-            amount: entry.amount,
-            fee,
-        })
-        .collect()
 }
 
 fn allocate_batch_fees(
