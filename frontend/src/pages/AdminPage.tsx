@@ -90,18 +90,10 @@ function rewardStatusTone(status: string): string {
   }
 }
 
-function rewardDeltaTone(value: number | null | undefined, paidOut = false): string {
-  if (value == null) return 'var(--muted)';
-  if (value === 0) return 'var(--good)';
-  return paidOut ? 'var(--muted)' : 'var(--warn)';
-}
-
 function rewardDeltaStyle(value: number | null | undefined, paidOut = false): CSSProperties {
-  return { color: rewardDeltaTone(value, paidOut) };
-}
-
-function rewardDeltaSemiboldStyle(value: number | null | undefined, paidOut = false): CSSProperties {
-  return { ...rewardDeltaStyle(value, paidOut), fontWeight: 600 };
+  if (value == null) return { color: 'var(--muted)' };
+  if (value === 0) return { color: 'var(--good)' };
+  return { color: paidOut ? 'var(--muted)' : 'var(--warn)' };
 }
 
 function formatSignedCoins(value: number | null | undefined): string {
@@ -1967,7 +1959,7 @@ export function AdminPage({
                           <td className="mono">{rewardBreakdownTotals.verifiedDifficulty}</td>
                           <td className="mono">{rewardBreakdownTotals.provisionalEligibleDifficulty}</td>
                           <td>
-                            <div style={rewardDeltaSemiboldStyle(rewardActualBlockDelta, rewardBreakdownPaidOut)}>
+                            <div style={{ ...rewardDeltaStyle(rewardActualBlockDelta, rewardBreakdownPaidOut), fontWeight: 600 }}>
                               {rewardActualBlockDelta == null
                                 ? 'Pending'
                                 : rewardActualBlockDelta === 0
