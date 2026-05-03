@@ -498,7 +498,6 @@ struct StatusIncident {
 type RejectionAnalyticsDbLoad = (
     u64,
     u64,
-    u64,
     Vec<RejectionReasonCount>,
     Vec<RejectionReasonCount>,
 );
@@ -5047,77 +5046,44 @@ impl ApiState {
         let since = SystemTime::now().checked_sub(window).unwrap_or(UNIX_EPOCH);
         let started_at = Instant::now();
         let outcome_store = Arc::clone(&self.store);
-        let total_rejected_store = Arc::clone(&self.store);
         let by_reason_store = Arc::clone(&self.store);
         let totals_by_reason_store = Arc::clone(&self.store);
         let outcome_task =
             tokio::task::spawn_blocking(move || outcome_store.share_outcome_counts_since(since));
-        let total_rejected_task =
-            tokio::task::spawn_blocking(move || total_rejected_store.total_rejected_share_count());
         let by_reason_task = tokio::task::spawn_blocking(move || {
             by_reason_store.rejection_reason_counts_since(since)
         });
         let totals_by_reason_task = tokio::task::spawn_blocking(move || {
             totals_by_reason_store.total_rejection_reason_counts()
         });
-        let (outcome_result, total_rejected_result, by_reason_result, totals_by_reason_result) = tokio::join!(
-            outcome_task,
-            total_rejected_task,
-            by_reason_task,
-            totals_by_reason_task,
-        );
+        let (outcome_result, by_reason_result, totals_by_reason_result) =
+            tokio::join!(outcome_task, by_reason_task, totals_by_reason_task);
         let load_value = || -> anyhow::Result<RejectionAnalyticsDbLoad> {
             let (accepted, rejected) = join_result(outcome_result)?;
-            let total_rejected = join_result(total_rejected_result)?;
             let by_reason = join_result(by_reason_result)?;
             let totals_by_reason = join_result(totals_by_reason_result)?;
-            Ok((
-                accepted,
-                rejected,
-                total_rejected,
-                by_reason,
-                totals_by_reason,
-            ))
+            Ok((accepted, rejected, by_reason, totals_by_reason))
         };
-        let (accepted, rejected, total_rejected, by_reason, mut totals_by_reason) =
-            match load_value() {
-                Ok(value) => {
-                    record_api_operation_observation(
-                        self,
-                        "rejection_analytics_load",
-                        started_at.elapsed(),
-                        false,
-                    );
-                    value
-                }
-                Err(err) => {
-                    record_api_operation_observation(
-                        self,
-                        "rejection_analytics_load",
-                        started_at.elapsed(),
-                        true,
-                    );
-                    return Err(err);
-                }
-            };
-
-        let classified_total: u64 = totals_by_reason.iter().map(|item| item.count).sum();
-        if total_rejected > classified_total {
-            let missing = total_rejected - classified_total;
-            if let Some(item) = totals_by_reason
-                .iter_mut()
-                .find(|item| item.reason == "legacy / unknown")
-            {
-                item.count = item.count.saturating_add(missing);
-            } else {
-                totals_by_reason.push(RejectionReasonCount {
-                    reason: "legacy / unknown".to_string(),
-                    count: missing,
-                });
+        let (accepted, rejected, by_reason, totals_by_reason) = match load_value() {
+            Ok(value) => {
+                record_api_operation_observation(
+                    self,
+                    "rejection_analytics_load",
+                    started_at.elapsed(),
+                    false,
+                );
+                value
             }
-            totals_by_reason
-                .sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.reason.cmp(&b.reason)));
-        }
+            Err(err) => {
+                record_api_operation_observation(
+                    self,
+                    "rejection_analytics_load",
+                    started_at.elapsed(),
+                    true,
+                );
+                return Err(err);
+            }
+        };
         let snapshot = RejectionAnalyticsSnapshot {
             accepted,
             rejected,

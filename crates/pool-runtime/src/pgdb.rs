@@ -760,6 +760,12 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         .context("ensure payouts.reversible column")?;
         conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS reject_reason TEXT")
             .context("ensure shares.reject_reason column")?;
+        conn.batch_execute(
+            "UPDATE shares SET reject_reason = 'legacy / unknown'
+             WHERE status NOT IN ('verified','provisional')
+               AND COALESCE(BTRIM(reject_reason), '') = ''",
+        )
+        .context("backfill legacy share rejection reasons")?;
         conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS claimed_hash TEXT")
             .context("ensure shares.claimed_hash column")?;
         conn.batch_execute(
@@ -1212,21 +1218,6 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok((accepted.max(0) as u64, rejected.max(0) as u64))
     }
 
-    pub fn total_rejected_share_count(&self) -> Result<u64> {
-        let mut conn = self.conn().lock();
-        let live_row = conn.query_one(
-            "SELECT COUNT(*)::bigint FROM shares WHERE status NOT IN ('verified','provisional')",
-            &[],
-        )?;
-        let live_count: i64 = live_row.get(0);
-        let summarized_row = conn.query_one(
-            "SELECT COALESCE(SUM(rejected_count), 0)::bigint FROM share_daily_summaries",
-            &[],
-        )?;
-        let summarized_count: i64 = summarized_row.get(0);
-        Ok((live_count.max(0) as u64).saturating_add(summarized_count.max(0) as u64))
-    }
-
     pub fn rejection_reason_counts_since(
         &self,
         since: SystemTime,
@@ -1234,7 +1225,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let since_ts = to_unix(since);
         let rows = self.conn().lock().query(
             "SELECT
-                COALESCE(NULLIF(BTRIM(reject_reason), ''), 'legacy / unknown') AS reason,
+                reject_reason AS reason,
                 COUNT(*)::bigint AS rejected_count
              FROM shares
              WHERE created_at >= $1
@@ -1255,7 +1246,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     pub fn total_rejection_reason_counts(&self) -> Result<Vec<RejectionReasonCount>> {
         let live_rows = self.conn().lock().query(
             "SELECT
-                COALESCE(NULLIF(BTRIM(reject_reason), ''), 'legacy / unknown') AS reason,
+                reject_reason AS reason,
                 COUNT(*)::bigint AS rejected_count
              FROM shares
              WHERE status NOT IN ('verified','provisional')
@@ -5236,7 +5227,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 (day_start, reason, rejected_count)
              SELECT
                 (created_at / $2) * $2 AS day_start,
-                COALESCE(NULLIF(BTRIM(reject_reason), ''), 'legacy / unknown') AS reason,
+                reject_reason AS reason,
                 COUNT(*)::bigint AS rejected_count
              FROM shares
              WHERE created_at < $1
