@@ -3390,16 +3390,6 @@ fn collect_reward_window_stats(
     by_address
 }
 
-fn provisional_difficulty_cap(verified_difficulty: u64, multiplier: f64) -> Option<u64> {
-    if multiplier <= 0.0 || verified_difficulty == 0 {
-        None
-    } else {
-        Some(
-            ((verified_difficulty as f64) * multiplier.max(0.0)).clamp(0.0, u64::MAX as f64) as u64,
-        )
-    }
-}
-
 fn reward_participant_status(
     stats: Option<&RewardWindowAddressStats>,
     trust_policy: PayoutTrustPolicy,
@@ -3422,10 +3412,10 @@ fn reward_participant_status(
     if eligible == 0 {
         return RewardParticipantStatus::NoEligibleShares;
     }
-    if let Some(provisional_cap) = provisional_difficulty_cap(
-        stats.verified_difficulty,
-        trust_policy.provisional_cap_multiplier,
-    ) {
+    if trust_policy.provisional_cap_multiplier > 0.0 && stats.verified_difficulty > 0 {
+        let provisional_cap = ((stats.verified_difficulty as f64)
+            * trust_policy.provisional_cap_multiplier)
+            .clamp(0.0, u64::MAX as f64) as u64;
         if provisional_difficulty_eligible > provisional_cap {
             return RewardParticipantStatus::CappedProvisional;
         }
