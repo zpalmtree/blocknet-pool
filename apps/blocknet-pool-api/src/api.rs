@@ -4132,16 +4132,12 @@ async fn handle_public_payouts(
     let (limit, offset) = page_bounds(query.limit, query.offset);
 
     let store = Arc::clone(&state.store);
-    let (batches, total) = match spawn_blocking_result(move || {
+    let result = spawn_blocking_result(move || {
         store.get_public_payout_batches_page(limit as i64, offset as i64)
     })
     .await
-    {
-        Ok(v) => v,
-        Err(err) => return internal_error("failed loading payouts", err),
-    };
-
-    Json(PagedResponse::new(batches, total as usize)).into_response()
+    .map(|(batches, total)| PagedResponse::new(batches, total as usize));
+    json_result(result, "failed loading payouts")
 }
 
 async fn handle_admin_block_reward_breakdown(
