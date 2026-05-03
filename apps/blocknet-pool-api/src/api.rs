@@ -495,20 +495,6 @@ struct StatusIncident {
     ongoing: bool,
 }
 
-type RejectionAnalyticsDbLoad = (
-    u64,
-    u64,
-    Vec<RejectionReasonCount>,
-    Vec<RejectionReasonCount>,
-);
-type MonitorUptimeWindowSummary = (String, MonitorUptimeSummary, MonitorUptimeSummary);
-type StatusMonitorDbLoad = (
-    Option<MonitorHeartbeat>,
-    Option<MonitorHeartbeat>,
-    Vec<MonitorIncident>,
-    Vec<MonitorUptimeWindowSummary>,
-);
-
 #[derive(Serialize)]
 struct ServiceHealth {
     observed: bool,
@@ -5058,11 +5044,11 @@ impl ApiState {
         });
         let (outcome_result, by_reason_result, totals_by_reason_result) =
             tokio::join!(outcome_task, by_reason_task, totals_by_reason_task);
-        let load_value = || -> anyhow::Result<RejectionAnalyticsDbLoad> {
+        let load_value = || {
             let (accepted, rejected) = join_result(outcome_result)?;
             let by_reason = join_result(by_reason_result)?;
             let totals_by_reason = join_result(totals_by_reason_result)?;
-            Ok((accepted, rejected, by_reason, totals_by_reason))
+            Ok::<_, anyhow::Error>((accepted, rejected, by_reason, totals_by_reason))
         };
         let (accepted, rejected, by_reason, totals_by_reason) = match load_value() {
             Ok(value) => {
@@ -5113,7 +5099,7 @@ impl ApiState {
         ];
         let store = Arc::clone(&self.store);
         let (latest_local, latest_external, incidents, uptime_summaries) =
-            spawn_blocking_result(move || -> anyhow::Result<StatusMonitorDbLoad> {
+            spawn_blocking_result(move || {
                 let latest_local =
                     store.get_latest_monitor_heartbeat(Some(LOCAL_MONITOR_SOURCE))?;
                 let latest_external =
@@ -5128,7 +5114,7 @@ impl ApiState {
                         store.get_monitor_uptime_summary(since, Some(CLOUDFLARE_MONITOR_SOURCE))?,
                     ));
                 }
-                Ok((latest_local, latest_external, incidents, uptime_summaries))
+                Ok::<_, anyhow::Error>((latest_local, latest_external, incidents, uptime_summaries))
             })
             .await?;
 
