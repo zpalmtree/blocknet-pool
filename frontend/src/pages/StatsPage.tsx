@@ -29,15 +29,7 @@ type RejectionWindowRange = '1h' | '24h' | '7d';
 const HANDLE_RE = /^[$@]?[a-z0-9][a-z0-9_.\-]{0,62}$/i;
 
 function looksLikeHandle(raw: string): boolean {
-  if (raw.startsWith('$') || raw.startsWith('@')) return true;
-  if (raw.length < 25 && HANDLE_RE.test(raw)) return true;
-  return false;
-}
-
-async function resolveHandle(api: ApiClient, raw: string): Promise<{ address: string; handle: string } | null> {
-  const handle = raw.replace(/^[$@]/, '');
-  const data = await api.resolveBlocknetHandle(handle);
-  return { address: data.address, handle: data.handle };
+  return raw.startsWith('$') || raw.startsWith('@') || (raw.length < 25 && HANDLE_RE.test(raw));
 }
 
 const lookupResult = async <T,>(promise: Promise<T>) =>
@@ -150,12 +142,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
           setResolving(true);
           try {
             setResolvedHandle(null);
-            resolved = await resolveHandle(api, addr);
-            if (!resolved) {
-              if (requestId !== lookupRequestSeq.current) return;
-              setResolvedHandle(null);
-              return;
-            }
+            resolved = await api.resolveBlocknetHandle(addr.replace(/^[$@]/, ''));
             addr = resolved.address;
           } catch {
             if (requestId !== lookupRequestSeq.current) return;
