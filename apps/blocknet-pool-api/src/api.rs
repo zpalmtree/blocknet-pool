@@ -1263,6 +1263,17 @@ struct PagedResponse<T> {
     total: usize,
 }
 
+impl<T> PagedResponse<T> {
+    fn new(items: Vec<T>, total: usize) -> Self {
+        Self { items, total }
+    }
+
+    fn from_unpaged(items: Vec<T>, limit: usize, offset: usize) -> Self {
+        let total = items.len();
+        Self::new(items.into_iter().skip(offset).take(limit).collect(), total)
+    }
+}
+
 #[derive(Serialize)]
 struct AdminBalanceItem {
     address: String,
@@ -1769,7 +1780,7 @@ async fn handle_admin_balances(
                     }
                 })
                 .collect();
-            Ok(PagedResponse { items, total })
+            Ok(PagedResponse::new(items, total))
         })
         .await;
     json_result(result, "failed loading balances")
@@ -2509,18 +2520,8 @@ async fn handle_miners(
         }),
     }
 
-    let total = items.len();
     let (limit, offset) = page_bounds(query.limit, query.offset);
-    let page_items = items
-        .into_iter()
-        .skip(offset)
-        .take(limit)
-        .collect::<Vec<_>>();
-    Json(PagedResponse {
-        items: page_items,
-        total,
-    })
-    .into_response()
+    Json(PagedResponse::from_unpaged(items, limit, offset)).into_response()
 }
 
 async fn handle_miner_balance(
@@ -2702,11 +2703,7 @@ async fn handle_blocks(
         })
         .collect::<Vec<_>>();
 
-    Json(PagedResponse {
-        items,
-        total: total as usize,
-    })
-    .into_response()
+    Json(PagedResponse::new(items, total as usize)).into_response()
 }
 
 #[derive(Clone, Serialize)]
@@ -4125,7 +4122,7 @@ async fn handle_luck_history(
             return internal_error("failed loading luck history", err);
         }
     };
-    Json(PagedResponse { items, total }).into_response()
+    Json(PagedResponse::new(items, total)).into_response()
 }
 
 async fn handle_public_payouts(
@@ -4144,11 +4141,7 @@ async fn handle_public_payouts(
         Err(err) => return internal_error("failed loading payouts", err),
     };
 
-    Json(PagedResponse {
-        items: batches,
-        total: total as usize,
-    })
-    .into_response()
+    Json(PagedResponse::new(batches, total as usize)).into_response()
 }
 
 async fn handle_admin_block_reward_breakdown(
