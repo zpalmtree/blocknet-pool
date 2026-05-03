@@ -191,23 +191,6 @@ function VerificationHoldBadge({ hold }: { hold: ActiveVerificationHold }) {
   return <span className={className}>{label}</span>;
 }
 
-function isTemporaryValidationAssist(hold: ActiveVerificationHold): boolean {
-  return (
-    !hasActiveUntil(hold.quarantined_until) &&
-    !hasActiveUntil(hold.force_verify_until) &&
-    hasActiveUntil(hold.validation_forced_until) &&
-    (hold.validation_hold_cause === 'provisional_backlog' || hold.validation_hold_cause === 'payout_coverage')
-  );
-}
-
-function isRiskVerificationHold(hold: ActiveVerificationHold): boolean {
-  return (
-    hasActiveUntil(hold.quarantined_until) ||
-    hasActiveUntil(hold.force_verify_until) ||
-    hold.validation_hold_cause === 'invalid_samples'
-  );
-}
-
 function ValidationHoldUntilCell({ hold }: { hold: ActiveVerificationHold }) {
   const active = hasActiveUntil(hold.validation_forced_until);
   const label = active ? holdUntilLabel(hold.validation_forced_until) : '-';
@@ -229,9 +212,14 @@ function ValidationHoldUntilCell({ hold }: { hold: ActiveVerificationHold }) {
       hint = 'auto-clears once coverage recovers';
       break;
   }
+  const temporaryAssist =
+    active &&
+    !hasActiveUntil(hold.quarantined_until) &&
+    !hasActiveUntil(hold.force_verify_until) &&
+    (hold.validation_hold_cause === 'provisional_backlog' || hold.validation_hold_cause === 'payout_coverage');
   return (
     <td className="mono" title={holdUntilTitle(hold.validation_forced_until)}>
-      <div>{active && isTemporaryValidationAssist(hold) ? `up to ${label}` : label}</div>
+      <div>{temporaryAssist ? `up to ${label}` : label}</div>
       {active && hint ? <div style={SMALL_MUTED_TOP_STYLE}>{hint}</div> : null}
     </td>
   );
@@ -820,14 +808,19 @@ export function AdminPage({
   const rewardActualCreditEventsAvailable =
     rewardBreakdown?.participants.some((row) => row.actual_credit != null) ?? false;
   const activeVerificationHolds = health?.active_verification_holds ?? [];
-  const riskVerificationHolds = useMemo(
-    () => activeVerificationHolds.filter((hold) => isRiskVerificationHold(hold)),
-    [activeVerificationHolds]
-  );
-  const temporaryValidationHolds = useMemo(
-    () => activeVerificationHolds.filter((hold) => isTemporaryValidationAssist(hold)),
-    [activeVerificationHolds]
-  );
+  const riskVerificationHoldCount = activeVerificationHolds.filter(
+    (hold) =>
+      hasActiveUntil(hold.quarantined_until) ||
+      hasActiveUntil(hold.force_verify_until) ||
+      hold.validation_hold_cause === 'invalid_samples'
+  ).length;
+  const temporaryValidationHoldCount = activeVerificationHolds.filter(
+    (hold) =>
+      !hasActiveUntil(hold.quarantined_until) &&
+      !hasActiveUntil(hold.force_verify_until) &&
+      hasActiveUntil(hold.validation_forced_until) &&
+      (hold.validation_hold_cause === 'provisional_backlog' || hold.validation_hold_cause === 'payout_coverage')
+  ).length;
   const poolActivity = health?.pool_activity ?? null;
   const cleanPayableCount = balanceOverview?.payouts.clean_unpaid_count ?? null;
   const cleanPayableAmount = balanceOverview?.ledger.miner_clean_unpaid_total ?? null;
@@ -1452,17 +1445,17 @@ export function AdminPage({
           <div className="stats-grid stats-grid-dense admin-overview-strip">
             <StatCard
               label="Risk Holds"
-              value={riskVerificationHolds.length}
-              meta={riskVerificationHolds.length > 0 ? 'quarantine or risk review active' : 'no risky miners'}
+              value={riskVerificationHoldCount}
+              meta={riskVerificationHoldCount > 0 ? 'quarantine or risk review active' : 'no risky miners'}
               mono
-              style={riskVerificationHolds.length > 0 ? { borderColor: 'var(--warn)' } : undefined}
-              valueStyle={warnTextStyle(riskVerificationHolds.length > 0)}
+              style={riskVerificationHoldCount > 0 ? { borderColor: 'var(--warn)' } : undefined}
+              valueStyle={warnTextStyle(riskVerificationHoldCount > 0)}
               onClick={() => setTab('holds')}
             >
               <div className="stat-meta">
-                {temporaryValidationHolds.length > 0
-                  ? `${temporaryValidationHolds.length} temporary validation assist${
-                      temporaryValidationHolds.length === 1 ? '' : 's'
+                {temporaryValidationHoldCount > 0
+                  ? `${temporaryValidationHoldCount} temporary validation assist${
+                      temporaryValidationHoldCount === 1 ? '' : 's'
                     }`
                   : 'no temporary assists'}
               </div>
@@ -2255,10 +2248,10 @@ export function AdminPage({
             <div className="stats-card-group">
               <div className="stats-card-group-title">Verification Holds</div>
               <div className="stats-card-group-grid stats-grid-dense">
-                <StatCard label="Risk Holds" value={riskVerificationHolds.length} mono />
+                <StatCard label="Risk Holds" value={riskVerificationHoldCount} mono />
                 <StatCard
                   label="Temporary Assists"
-                  value={temporaryValidationHolds.length}
+                  value={temporaryValidationHoldCount}
                   meta="coverage or backlog boosts"
                   mono
                 />
