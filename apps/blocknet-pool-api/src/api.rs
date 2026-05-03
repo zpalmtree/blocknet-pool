@@ -970,7 +970,6 @@ struct BlockRewardBreakdownResponse {
     distributable_reward: u64,
     preview_total_weight: u64,
     payout_total_weight: u64,
-    actual_credit_events_available: bool,
     actual_credit_total: u64,
     actual_fee_amount: Option<u64>,
     participants: Vec<BlockRewardParticipantResponse>,
@@ -3887,7 +3886,6 @@ fn build_block_reward_breakdown(
         distributable_reward,
         preview_total_weight: preview_mode.total_weight,
         payout_total_weight: payout_mode.total_weight,
-        actual_credit_events_available: !actual_events.is_empty(),
         actual_credit_total: actual_events
             .iter()
             .fold(0u64, |sum, event| sum.saturating_add(event.amount)),
@@ -7269,7 +7267,6 @@ mod tests {
         let breakdown =
             build_block_reward_breakdown(&store, &cfg, 299, block_ts + Duration::from_secs(10))
                 .expect("reward breakdown");
-        assert!(breakdown.actual_credit_events_available);
         assert_eq!(breakdown.fee_amount, 100);
         assert_eq!(breakdown.actual_credit_total, 900);
         assert_eq!(breakdown.actual_fee_amount, Some(100));

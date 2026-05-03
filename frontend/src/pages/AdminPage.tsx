@@ -830,6 +830,8 @@ export function AdminPage({
   const rewardBreakdownOrphaned = rewardBreakdown?.block.orphaned ?? false;
   const rewardBreakdownPaidOut = rewardBreakdown?.block.paid_out ?? false;
   const rewardBreakdownProjected = !!rewardBreakdown && !rewardBreakdownOrphaned && !rewardBreakdown.block.paid_out;
+  const rewardActualCreditEventsAvailable =
+    rewardBreakdown?.participants.some((row) => row.actual_credit != null) ?? false;
   const activeVerificationHolds = health?.active_verification_holds ?? [];
   const riskVerificationHolds = useMemo(
     () => activeVerificationHolds.filter((hold) => isRiskVerificationHold(hold)),
@@ -1398,7 +1400,7 @@ export function AdminPage({
     recoveryStatus,
   ]);
   const rewardActualBlockTotal =
-    rewardBreakdown && rewardBreakdown.actual_credit_events_available && rewardBreakdown.actual_fee_amount != null
+    rewardBreakdown && rewardActualCreditEventsAvailable && rewardBreakdown.actual_fee_amount != null
       ? rewardBreakdown.actual_credit_total + rewardBreakdown.actual_fee_amount
       : null;
   const rewardFeeDelta =
@@ -1788,7 +1790,7 @@ export function AdminPage({
                     <div className="stat-meta">
                       {rewardBreakdown.block.orphaned
                         ? 'Orphaned blocks resolve to zero credited payout'
-                        : rewardBreakdown.actual_credit_events_available
+                        : rewardActualCreditEventsAvailable
                           ? 'Audit rows available'
                           : 'Not recorded yet'}
                     </div>
