@@ -162,16 +162,12 @@ export function shortTx(tx: string): string {
 }
 
 export function stratumUrl(port: number | null | undefined, poolUrl?: string | null): string {
-  const fallback =
-    (typeof window !== 'undefined' && window.location.hostname) || 'bntpool.com';
-  let host = fallback;
+  let host = (typeof window !== 'undefined' && window.location.hostname) || 'bntpool.com';
 
   if (poolUrl) {
     try {
-      host = new URL(poolUrl).hostname || fallback;
-    } catch {
-      host = fallback;
-    }
+      host = new URL(poolUrl).hostname || host;
+    } catch {}
   }
 
   return `stratum+tcp://${host}:${port ?? 3333}`;
