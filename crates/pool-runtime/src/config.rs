@@ -128,15 +128,10 @@ impl Default for Config {
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let data = fs::read(path).with_context(|| format!("read config {}", path.display()))?;
-        let mut cfg: Config = serde_json::from_slice(&data)
+        let cfg: Config = serde_json::from_slice(&data)
             .with_context(|| format!("parse config {}", path.display()))?;
-        cfg.normalize();
         cfg.validate()?;
         Ok(cfg)
-    }
-
-    pub fn normalize(&mut self) {
-        self.validation_mode = self.validation_mode.trim().to_ascii_lowercase();
     }
 
     pub(crate) fn job_timeout_duration(&self) -> Duration {
@@ -372,17 +367,6 @@ fn ensure_nonempty(field: &str, value: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn normalize_trims_validation_mode() {
-        let mut cfg = Config {
-            validation_mode: " FULL ".to_string(),
-            ..Config::default()
-        };
-        cfg.normalize();
-
-        assert_eq!(cfg.validation_mode, "full");
-    }
 
     #[test]
     fn fee_applies_pct() {

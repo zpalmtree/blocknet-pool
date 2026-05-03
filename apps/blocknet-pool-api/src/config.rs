@@ -36,9 +36,8 @@ impl Default for Config {
 impl Config {
     pub(crate) fn load(path: &Path) -> Result<Self> {
         let data = fs::read(path).with_context(|| format!("read config {}", path.display()))?;
-        let mut cfg: Config = serde_json::from_slice(&data)
+        let cfg: Config = serde_json::from_slice(&data)
             .with_context(|| format!("parse config {}", path.display()))?;
-        cfg.runtime.normalize();
         cfg.runtime.validate()?;
         cfg.recovery.validate()?;
         cfg.validate()?;
@@ -65,10 +64,9 @@ mod tests {
 
     #[test]
     fn api_config_accepts_flat_runtime_fields() {
-        let mut cfg: Config =
+        let cfg: Config =
             serde_json::from_str(r#"{"pool_name":"flat","stratum_port":4444,"api_port":1234}"#)
                 .expect("parse config");
-        cfg.runtime.normalize();
 
         assert_eq!(cfg.runtime.pool_name, "flat");
         assert_eq!(cfg.runtime.stratum_port, 4444);
