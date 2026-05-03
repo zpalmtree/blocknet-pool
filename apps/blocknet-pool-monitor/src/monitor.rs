@@ -1952,7 +1952,7 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
         ),
         ("blocknet_pool_monitor_wallet_up", snapshot.wallet_up),
     ] {
-        metric_bool_line(&mut out, name, value);
+        metric_line(&mut out, name, u8::from(value.unwrap_or(false)));
     }
 
     metric_line(
@@ -2147,10 +2147,11 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
         &snapshot.stratum_runtime_tasks,
     );
     if let Some(hashrate) = snapshot.estimated_hashrate {
-        out.push_str(&format!(
-            "blocknet_pool_monitor_estimated_hashrate {}\n",
-            hashrate
-        ));
+        metric_line(
+            &mut out,
+            "blocknet_pool_monitor_estimated_hashrate",
+            hashrate,
+        );
     }
     if let Some(updated_at) = snapshot.updated_at {
         let updated = updated_at
@@ -2181,10 +2182,6 @@ where
     buf.push(' ');
     buf.push_str(&value.to_string());
     buf.push('\n');
-}
-
-fn metric_bool_line(buf: &mut String, name: &str, value: Option<bool>) {
-    metric_line(buf, name, u8::from(value.unwrap_or(false)));
 }
 
 fn metric_option_line<T>(buf: &mut String, name: &str, value: Option<T>)
