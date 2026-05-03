@@ -1581,12 +1581,19 @@ impl PayoutProcessor {
                 .as_deref()
                 .filter(|value| !value.trim().is_empty())
             {
-                let key = entry
+                if let Some(batch_id) = entry
                     .batch_id
                     .clone()
                     .filter(|value| !value.trim().is_empty())
-                    .unwrap_or_else(|| format!("tx:{tx_hash}"));
-                grouped.entry(key).or_default().push(entry);
+                {
+                    grouped.entry(batch_id).or_default().push(entry);
+                } else {
+                    tracing::warn!(
+                        address = %entry.address,
+                        tx = %tx_hash,
+                        "broadcast pending payout is missing batch_id; leaving queued for reconciliation"
+                    );
+                }
                 continue;
             }
 
@@ -1642,13 +1649,8 @@ impl PayoutProcessor {
             }
         }
 
-        for entries in grouped.into_values() {
+        for (batch_id, entries) in grouped {
             if let Err(err) = self.reconcile_pending_batch(&entries) {
-                let batch_id = entries
-                    .first()
-                    .and_then(|entry| entry.batch_id.as_deref())
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or("legacy");
                 tracing::warn!(
                     batch_id = %batch_id,
                     error = %err,
@@ -1709,24 +1711,14 @@ impl PayoutProcessor {
         let batch_id = first
             .batch_id
             .as_deref()
-            .filter(|value| !value.trim().is_empty());
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("pending payout batch is missing batch_id"))?;
         let status = self.node.get_tx_status_optional(tx_hash)?;
         match status {
             Some(status) if status.in_mempool => Ok(()),
             Some(status) if status.confirmations >= PAYOUT_CONFIRMATIONS_REQUIRED => {
-                if let Some(batch_id) = batch_id {
-                    self.store
-                        .complete_pending_payout_batch(batch_id, tx_hash)?;
-                } else {
-                    for pending in entries {
-                        self.store.complete_pending_payout(
-                            &pending.address,
-                            pending.amount,
-                            pending.fee.unwrap_or(0),
-                            tx_hash,
-                        )?;
-                    }
-                }
+                self.store
+                    .complete_pending_payout_batch(batch_id, tx_hash)?;
                 let total_amount = entries
                     .iter()
                     .fold(0u64, |acc, entry| acc.saturating_add(entry.amount));
@@ -1734,7 +1726,7 @@ impl PayoutProcessor {
                     acc.saturating_add(entry.fee.unwrap_or(0))
                 });
                 tracing::info!(
-                    batch_id = %batch_id.unwrap_or("legacy"),
+                    batch_id = %batch_id,
                     recipients = entries.len(),
                     amount = total_amount,
                     fee = total_fee,
@@ -1755,27 +1747,14 @@ impl PayoutProcessor {
                 if age < PENDING_PAYOUT_RETRY_GRACE {
                     return Ok(());
                 }
-                if let Some(batch_id) = batch_id {
-                    self.store.reset_pending_payout_batch_send_state(batch_id)?;
-                    tracing::warn!(
-                        batch_id = %batch_id,
-                        recipients = entries.len(),
-                        tx = %tx_hash,
-                        age_secs = age.as_secs(),
-                        "broadcast payout batch disappeared from mempool/chain; reset for retry"
-                    );
-                } else {
-                    for pending in entries {
-                        self.store
-                            .reset_pending_payout_send_state(&pending.address)?;
-                    }
-                    tracing::warn!(
-                        tx = %tx_hash,
-                        recipients = entries.len(),
-                        age_secs = age.as_secs(),
-                        "broadcast payout batch disappeared from mempool/chain; reset legacy rows for retry"
-                    );
-                }
+                self.store.reset_pending_payout_batch_send_state(batch_id)?;
+                tracing::warn!(
+                    batch_id = %batch_id,
+                    recipients = entries.len(),
+                    tx = %tx_hash,
+                    age_secs = age.as_secs(),
+                    "broadcast payout batch disappeared from mempool/chain; reset for retry"
+                );
                 Ok(())
             }
         }

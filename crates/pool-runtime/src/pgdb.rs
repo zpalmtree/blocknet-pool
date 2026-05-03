@@ -3736,7 +3736,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         &self,
         address: &str,
     ) -> Result<Option<PendingPayout>> {
-        let mut rows = self.mark_pending_payouts_send_started_batch(&[address.to_string()], "")?;
+        let mut rows = self.mark_pending_payouts_send_started_batch(
+            &[address.to_string()],
+            &format!("test-batch:{address}"),
+        )?;
         Ok(rows.pop())
     }
 
@@ -3789,7 +3792,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 amount,
                 fee,
             }],
-            "",
+            &format!("test-batch:{address}"),
             tx_hash,
         )?;
         recorded
@@ -3896,6 +3899,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(recorded)
     }
 
+    #[cfg(test)]
     pub(crate) fn reset_pending_payout_send_state(&self, address: &str) -> Result<()> {
         self.conn().lock().execute(
             "UPDATE pending_payouts
@@ -3980,100 +3984,20 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn complete_pending_payout(
         &self,
         address: &str,
-        amount: u64,
-        fee: u64,
+        _amount: u64,
+        _fee: u64,
         tx_hash: &str,
     ) -> Result<()> {
         let batch_id = self
             .get_pending_payout(address)?
-            .and_then(|pending| pending.batch_id);
-        if let Some(batch_id) = batch_id.filter(|value| !value.trim().is_empty()) {
-            return self.complete_pending_payout_batch(&batch_id, tx_hash);
-        }
-        let mut conn = self.conn().lock();
-        let mut tx = conn.transaction()?;
-
-        let pending = tx.query_opt(
-            "SELECT amount, initiated_at, send_started_at, sent_at, tx_hash, fee, batch_id
-             FROM pending_payouts
-             WHERE address = $1",
-            &[&address],
-        )?;
-        let Some(pending_row) = pending else {
-            return Err(anyhow!("no pending payout for {address}"));
-        };
-        let pending_amount = pending_row.get::<_, i64>(0).max(0) as u64;
-        let initiated_at = from_unix(pending_row.get::<_, i64>(1));
-        let send_started_at = pending_row.get::<_, Option<i64>>(2).map(from_unix);
-        let sent_at = pending_row.get::<_, Option<i64>>(3).map(from_unix);
-        if pending_amount != amount {
-            return Err(anyhow!(
-                "pending payout amount mismatch: expected={}, requested={}",
-                pending_amount,
-                amount
-            ));
-        }
-        if let Some(pending_tx_hash) = pending_row.get::<_, Option<String>>(4).as_deref() {
-            if pending_tx_hash != tx_hash {
-                return Err(anyhow!(
-                    "pending payout tx mismatch: expected={}, requested={}",
-                    pending_tx_hash,
-                    tx_hash
-                ));
-            }
-        }
-        if let Some(pending_fee_raw) = pending_row.get::<_, Option<i64>>(5) {
-            let pending_fee = pending_fee_raw.max(0) as u64;
-            if pending_fee != fee {
-                return Err(anyhow!(
-                    "pending payout fee mismatch: expected={}, requested={}",
-                    pending_fee,
-                    fee
-                ));
-            }
-        }
-        let pending_batch_id = pending_row.get::<_, Option<String>>(6);
-
-        let mut bal = Self::load_balance(&mut tx, address)?;
-        if bal.pending < amount {
-            return Err(anyhow!("insufficient balance"));
-        }
-        bal.pending -= amount;
-        bal.paid = bal
-            .paid
-            .checked_add(amount)
-            .ok_or_else(|| anyhow!("paid overflow"))?;
-
-        Self::upsert_balance(&mut tx, &bal)?;
-        let payout_timestamp = sent_at.or(send_started_at).unwrap_or(initiated_at);
-        let payout_id = Self::insert_completed_payout_row(
-            &mut tx,
-            address,
-            amount,
-            fee,
-            tx_hash,
-            payout_timestamp,
-            pending_batch_id.as_deref(),
-        )?;
-        let allocations = Self::mark_balance_credit_sources_paid(&mut tx, address, amount)?;
-        let allocated_amount = allocations.iter().fold(0u64, |acc, allocation| {
-            acc.saturating_add(allocation.amount)
-        });
-        Self::insert_payout_credit_allocations(&mut tx, payout_id, &allocations)?;
-        tx.execute(
-            "UPDATE payouts SET reversible = $2 WHERE id = $1",
-            &[&payout_id, &(allocated_amount == amount)],
-        )?;
-
-        tx.execute(
-            "DELETE FROM pending_payouts WHERE address = $1",
-            &[&address],
-        )?;
-        tx.commit()?;
-        Ok(())
+            .and_then(|pending| pending.batch_id)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| anyhow!("pending payout missing batch_id for {address}"))?;
+        self.complete_pending_payout_batch(&batch_id, tx_hash)
     }
 
     pub(crate) fn complete_pending_payout_batch(
