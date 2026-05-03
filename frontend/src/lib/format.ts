@@ -168,20 +168,20 @@ export function shortTx(tx: string): string {
   return `${tx.slice(0, 6)}…${tx.slice(-6)}`;
 }
 
-function poolHostFromUrl(poolUrl: string | null | undefined): string {
+export function stratumUrl(port: number | null | undefined, poolUrl?: string | null): string {
   const fallback =
     (typeof window !== 'undefined' && window.location.hostname) || STRATUM_HOST;
-  if (!poolUrl) return fallback;
+  let host = fallback;
 
-  try {
-    return new URL(poolUrl).hostname || fallback;
-  } catch {
-    return fallback;
+  if (poolUrl) {
+    try {
+      host = new URL(poolUrl).hostname || fallback;
+    } catch {
+      host = fallback;
+    }
   }
-}
 
-export function stratumUrl(port: number | null | undefined, poolUrl?: string | null): string {
-  return `stratum+tcp://${poolHostFromUrl(poolUrl)}:${port ?? 3333}`;
+  return `stratum+tcp://${host}:${port ?? 3333}`;
 }
 
 export function rangeToDurationMs(range: Range): number {
@@ -191,20 +191,10 @@ export function rangeToDurationMs(range: Range): number {
   return 24 * 3600 * 1000;
 }
 
-function smoothingWindowForRange(range: Range, count: number): number {
-  if (count < 5) return 1;
-  let window = 5;
-  if (range === '24h') window = 7;
-  if (range === '1h') window = 5;
-  if (window >= count) window = count - (count % 2 === 0 ? 1 : 0);
-  if (window < 3) return 1;
-  if (window % 2 === 0) window -= 1;
-  return window;
-}
-
 export function smoothChartPoints(points: { t: number; v: number }[], range: Range) {
-  const window = smoothingWindowForRange(range, points.length);
-  if (window < 3) return points.slice();
+  if (points.length < 5) return points.slice();
+  let window = range === '24h' ? 7 : 5;
+  if (window >= points.length) window = points.length - (points.length % 2 === 0 ? 1 : 0);
   const half = Math.floor(window / 2);
 
   return points.map((point, idx) => {
