@@ -3,6 +3,7 @@ import { useCallback } from 'react';
 import type { ApiClient } from '../api/client';
 import { EmptyTableRow } from '../components/EmptyTableRow';
 import { Pager } from '../components/Pager';
+import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
 import { PayoutTxLinks } from '../components/PayoutTxLinks';
 import { formatCoins, formatFee, timeAgo, toUnixMs } from '../lib/format';
 import { usePagedData } from '../lib/paging';
@@ -56,9 +57,7 @@ export function PayoutsPage({ api, liveTick }: PayoutsPageProps) {
                     <PayoutTxLinks hashes={p.tx_hashes} />
                   </td>
                   <td>
-                    <span className={`badge ${p.confirmed ? 'badge-confirmed' : 'badge-pending'}`}>
-                      {p.confirmed ? 'confirmed' : 'unconfirmed'}
-                    </span>
+                    <PayoutStatusBadge status={p.confirmed ? 'confirmed' : 'unconfirmed'} />
                   </td>
                   <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
                 </tr>

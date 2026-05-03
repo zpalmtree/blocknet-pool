@@ -3,6 +3,7 @@ import { startTransition, useCallback, useEffect, useMemo, useRef, useState } fr
 import type { ApiClient } from '../api/client';
 import { EmptyTableRow } from '../components/EmptyTableRow';
 import { HashrateChart } from '../components/HashrateChart';
+import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
 import { LAST_MINER_LOOKUP_KEY } from '../lib/storage';
 import { formatCoins, formatCompactCoins, formatFee, formatPct, humanRate, ratioPct, timeAgo, toUnixMs } from '../lib/format';
 import type { ThemeMode } from '../lib/theme';
@@ -650,9 +651,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                               )}
                             </td>
                             <td>
-                              <span className={`badge ${status === 'confirmed' ? 'badge-confirmed' : 'badge-pending'}`}>
-                                {status}
-                              </span>
+                              <PayoutStatusBadge status={status} />
                             </td>
                             <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
                           </tr>

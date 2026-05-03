@@ -4,6 +4,7 @@ import type { ApiClient } from '../api/client';
 import { BlockStatusBadge } from '../components/BlockStatusBadge';
 import { EmptyTableRow } from '../components/EmptyTableRow';
 import { HashrateChart } from '../components/HashrateChart';
+import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
 import { PayoutTxLinks } from '../components/PayoutTxLinks';
 import {
   effortLabel,
@@ -402,9 +403,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
                       <PayoutTxLinks hashes={p.tx_hashes} />
                     </td>
                     <td>
-                      <span className={`badge ${p.confirmed ? 'badge-confirmed' : 'badge-pending'}`}>
-                        {p.confirmed ? 'confirmed' : 'unconfirmed'}
-                      </span>
+                      <PayoutStatusBadge status={p.confirmed ? 'confirmed' : 'unconfirmed'} />
                     </td>
                     <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
                   </tr>
