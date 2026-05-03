@@ -1,9 +1,17 @@
-import { useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { shortTx } from '../lib/format';
 
 const PREVIEW_COUNT = 2;
+
+function TxLink({ hash, className, children }: { hash: string; className?: string; children?: ReactNode }) {
+  return (
+    <a className={className} href={`https://explorer.blocknetcrypto.com/tx/${hash}`} target="_blank" rel="noopener" title={hash}>
+      {children ?? shortTx(hash)}
+    </a>
+  );
+}
 
 export function PayoutTxLinks({ hashes }: { hashes: string[] }) {
   const [showDialog, setShowDialog] = useState(false);
@@ -25,11 +33,7 @@ export function PayoutTxLinks({ hashes }: { hashes: string[] }) {
 
   if (hashes.length === 1) {
     const h = hashes[0];
-    return (
-      <a href={`https://explorer.blocknetcrypto.com/tx/${h}`} target="_blank" rel="noopener" title={h}>
-        {shortTx(h)}
-      </a>
-    );
+    return <TxLink hash={h} />;
   }
 
   const visibleHashes = hashes.slice(0, PREVIEW_COUNT);
@@ -42,9 +46,7 @@ export function PayoutTxLinks({ hashes }: { hashes: string[] }) {
           {visibleHashes.map((h, idx) => (
             <span key={h}>
               {idx > 0 ? ', ' : ''}
-              <a href={`https://explorer.blocknetcrypto.com/tx/${h}`} target="_blank" rel="noopener" title={h}>
-                {shortTx(h)}
-              </a>
+              <TxLink hash={h} />
             </span>
           ))}
           {hiddenCount > 0 ? <span className="payout-tx-links__more">{` +${hiddenCount}`}</span> : null}
@@ -76,16 +78,9 @@ export function PayoutTxLinks({ hashes }: { hashes: string[] }) {
                 </div>
                 <div className="payout-tx-dialog__list">
                   {hashes.map((h) => (
-                    <a
-                      key={h}
-                      className="payout-tx-dialog__item"
-                      href={`https://explorer.blocknetcrypto.com/tx/${h}`}
-                      target="_blank"
-                      rel="noopener"
-                      title={h}
-                    >
+                    <TxLink key={h} hash={h} className="payout-tx-dialog__item">
                       {h}
-                    </a>
+                    </TxLink>
                   ))}
                 </div>
               </div>
