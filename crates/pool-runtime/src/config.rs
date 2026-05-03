@@ -131,16 +131,12 @@ impl Config {
         let mut cfg: Config = serde_json::from_slice(&data)
             .with_context(|| format!("parse config {}", path.display()))?;
         cfg.normalize();
-        cfg.validate_duration_fields()?;
+        cfg.validate()?;
         Ok(cfg)
     }
 
     pub fn normalize(&mut self) {
-        let mode = self.validation_mode.trim().to_ascii_lowercase();
-        self.validation_mode = match mode.as_str() {
-            "full" | "probabilistic" => mode,
-            _ => "probabilistic".to_string(),
-        };
+        self.validation_mode = self.validation_mode.trim().to_ascii_lowercase();
 
         clamp_i32_min(&mut self.regular_submit_queue, 1);
         clamp_i32_min(&mut self.regular_validation_queue, 1);
@@ -289,6 +285,14 @@ impl Config {
         config_duration_result("payout_interval", &self.payout_interval)?;
         Ok(())
     }
+
+    fn validate(&self) -> Result<()> {
+        match self.validation_mode.as_str() {
+            "full" | "probabilistic" => {}
+            _ => anyhow::bail!("validation_mode must be either \"full\" or \"probabilistic\""),
+        }
+        self.validate_duration_fields()
+    }
 }
 
 fn clamp_i32_min(value: &mut i32, minimum: i32) {
@@ -327,7 +331,7 @@ mod tests {
     #[test]
     fn normalize_clamps_values() {
         let mut cfg = Config {
-            validation_mode: "invalid".to_string(),
+            validation_mode: " FULL ".to_string(),
             regular_submit_queue: 0,
             regular_validation_queue: 0,
             audit_validation_queue: 0,
@@ -355,7 +359,7 @@ mod tests {
         };
         cfg.normalize();
 
-        assert_eq!(cfg.validation_mode, "probabilistic");
+        assert_eq!(cfg.validation_mode, "full");
         assert_eq!(cfg.regular_submit_queue, 1);
         assert_eq!(cfg.regular_validation_queue, 1);
         assert_eq!(cfg.audit_validation_queue, 1);
@@ -402,6 +406,19 @@ mod tests {
             Err(err) => err,
         };
         assert!(format!("{err:#}").contains("payout_interval"));
+    }
+
+    #[test]
+    fn load_rejects_invalid_validation_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, r#"{"validation_mode":"partial"}"#).unwrap();
+
+        let err = match Config::load(&path) {
+            Ok(_) => panic!("invalid validation mode should fail config load"),
+            Err(err) => err,
+        };
+        assert!(format!("{err:#}").contains("validation_mode"));
     }
 
     #[test]
