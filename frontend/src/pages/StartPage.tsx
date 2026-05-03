@@ -7,13 +7,10 @@ interface StartPageProps {
   poolInfo: InfoResponse | null;
 }
 
-function feeDisplayFor(poolInfo: InfoResponse | null): string {
-  const pct = poolInfo?.pool_fee_pct;
-  return pct != null && pct > 0 ? `${pct}%` : '0% (no fee)';
-}
-
 export function StartPage({ poolInfo }: StartPageProps) {
   const [copiedKey, setCopiedKey] = useState('');
+  const poolFeePct = poolInfo?.pool_fee_pct;
+  const poolFeeLabel = poolFeePct != null && poolFeePct > 0 ? `${poolFeePct}%` : '0% (no fee)';
   const poolUrl = stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url);
   const commandExample = `./seine --pool-url ${poolUrl} --address YOUR_BLOCKNET_ADDRESS`;
   const pplnsWindowLabel = poolInfo?.pplns_window_duration;
@@ -141,7 +138,7 @@ export function StartPage({ poolInfo }: StartPageProps) {
             <tr>
               <td>Fee</td>
               <td>
-                <span className="info-value mono">{feeDisplayFor(poolInfo)}</span>
+                <span className="info-value mono">{poolFeeLabel}</span>
               </td>
             </tr>
             <tr>
