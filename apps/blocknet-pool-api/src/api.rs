@@ -94,6 +94,8 @@ const DEFAULT_DAEMON_LOG_TAIL: usize = 200;
 const MAX_DAEMON_LOG_TAIL: usize = 2000;
 const DAEMON_LOG_LINE_LIMIT: usize = 8192;
 const DAEMON_LOG_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
+const LOCAL_MONITOR_HEALTH_TTL: Duration = Duration::from_secs(30);
+const PUBLIC_MONITOR_HEALTH_TTL: Duration = Duration::from_secs(10 * 60);
 const MINER_PENDING_ESTIMATE_REFRESH_AFTER: Duration = Duration::from_secs(15);
 const MINER_PENDING_ESTIMATE_STALE_TTL: Duration = Duration::from_secs(60);
 const MINER_PENDING_ESTIMATE_HOT_WINDOW: Duration = Duration::from_secs(60);
@@ -1308,8 +1310,9 @@ fn collect_admin_share_windows(
     Ok(rows)
 }
 
-fn service_health_from_local(
+fn service_health_from_heartbeat(
     latest: Option<&MonitorHeartbeat>,
+    fresh_for: Duration,
     healthy_fn: impl Fn(&MonitorHeartbeat) -> Option<bool>,
 ) -> ServiceHealth {
     let Some(row) = latest else {
@@ -1321,28 +1324,11 @@ fn service_health_from_local(
     let fresh = SystemTime::now()
         .duration_since(row.sampled_at)
         .unwrap_or_default()
-        <= Duration::from_secs(30);
+        <= fresh_for;
     let healthy = healthy_fn(row).unwrap_or(false) && fresh;
     ServiceHealth {
         observed: fresh,
         healthy,
-    }
-}
-
-fn service_health_from_public(latest: Option<&MonitorHeartbeat>) -> ServiceHealth {
-    let Some(row) = latest else {
-        return ServiceHealth {
-            observed: false,
-            healthy: false,
-        };
-    };
-    let fresh = SystemTime::now()
-        .duration_since(row.sampled_at)
-        .unwrap_or_default()
-        <= Duration::from_secs(10 * 60);
-    ServiceHealth {
-        observed: fresh,
-        healthy: row.public_http_up.unwrap_or(false) && fresh,
     }
 }
 
@@ -5123,11 +5109,25 @@ impl ApiState {
         let template_age = latest_local.and_then(|row| row.template_age_seconds);
         let template_refresh_millis = latest_local.and_then(|row| row.last_refresh_millis);
         let services = StatusServices {
-            public_http: service_health_from_public(latest_external),
-            api: service_health_from_local(latest_local, |row| row.api_up),
-            stratum: service_health_from_local(latest_local, |row| row.stratum_up),
-            database: service_health_from_local(latest_local, |row| Some(row.db_up)),
-            daemon: service_health_from_local(latest_local, |row| row.daemon_up),
+            public_http: service_health_from_heartbeat(
+                latest_external,
+                PUBLIC_MONITOR_HEALTH_TTL,
+                |row| row.public_http_up,
+            ),
+            api: service_health_from_heartbeat(latest_local, LOCAL_MONITOR_HEALTH_TTL, |row| {
+                row.api_up
+            }),
+            stratum: service_health_from_heartbeat(latest_local, LOCAL_MONITOR_HEALTH_TTL, |row| {
+                row.stratum_up
+            }),
+            database: service_health_from_heartbeat(
+                latest_local,
+                LOCAL_MONITOR_HEALTH_TTL,
+                |row| Some(row.db_up),
+            ),
+            daemon: service_health_from_heartbeat(latest_local, LOCAL_MONITOR_HEALTH_TTL, |row| {
+                row.daemon_up
+            }),
         };
         let healthy = services.api.healthy
             && services.stratum.healthy
