@@ -20,7 +20,6 @@ pub(crate) struct BlockTemplate {
     pub block: Value,
     pub target: String,
     pub header_base: String,
-    #[serde(default)]
     pub template_id: String,
 }
 
@@ -504,12 +503,10 @@ fn read_token_from_cookie_file(cookie_path: &Path) -> Result<String> {
 
 impl NodeApi for NodeClient {
     fn submit_block(&self, job: &Job, nonce: u64) -> Result<BlockSubmitResponse> {
-        let template_id = job
-            .template_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| anyhow!("missing template_id for compact block submit"))?;
+        let template_id = job.template_id.trim();
+        if template_id.is_empty() {
+            return Err(anyhow!("missing template_id for compact block submit"));
+        }
         let payload = serde_json::json!({
             "template_id": template_id,
             "nonce": nonce,
@@ -559,7 +556,7 @@ mod tests {
             header_base: vec![0xAA; 92],
             network_target: [0xBB; 32],
             network_difficulty: 1,
-            template_id: None,
+            template_id: String::new(),
             prev_hash: None,
         };
 

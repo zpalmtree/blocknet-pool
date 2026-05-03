@@ -53,7 +53,7 @@ pub struct Job {
     pub header_base: Vec<u8>,
     pub network_target: [u8; 32],
     pub network_difficulty: u64,
-    pub template_id: Option<String>,
+    pub template_id: String,
     pub prev_hash: Option<[u8; 32]>,
 }
 
@@ -2259,7 +2259,7 @@ mod tests {
             header_base: vec![1, 2, 3],
             network_target: [0x0f; 32],
             network_difficulty: 1,
-            template_id: Some("tmpl1".to_string()),
+            template_id: "tmpl1".to_string(),
             prev_hash: None,
         }
     }

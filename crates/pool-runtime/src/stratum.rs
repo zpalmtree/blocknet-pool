@@ -1287,7 +1287,7 @@ mod tests {
             header_base: vec![0xAB; 92],
             network_target: [0u8; 32],
             network_difficulty: 1,
-            template_id: Some(format!("tmpl-{height}")),
+            template_id: format!("tmpl-{height}"),
             prev_hash: None,
         }
     }

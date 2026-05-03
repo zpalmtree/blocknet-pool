@@ -33,8 +33,7 @@ const SSE_RETRY_DELAY_MAX: Duration = Duration::from_secs(10);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct MinerJob {
     pub job_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub template_id: Option<String>,
+    pub template_id: String,
     pub header_base: String,
     pub target: String,
     pub difficulty: u64,
@@ -876,7 +875,7 @@ fn parse_template_into_job(template: &crate::node::BlockTemplate) -> anyhow::Res
         header_base,
         network_target,
         network_difficulty: difficulty.max(1),
-        template_id: Some(template.template_id.trim().to_string()).filter(|v| !v.is_empty()),
+        template_id: template.template_id.trim().to_string(),
         prev_hash: block_prev_hash(header),
     })
 }
@@ -1061,7 +1060,7 @@ mod tests {
             header_base: vec![0xAA; 92],
             network_target: [0xBB; 32],
             network_difficulty: 1,
-            template_id: Some(format!("tmpl-{id}")),
+            template_id: format!("tmpl-{id}"),
             prev_hash: None,
         }
     }
@@ -1619,7 +1618,7 @@ mod tests {
             header_base: vec![1, 2, 3],
             network_target: [0x11; 32],
             network_difficulty: 1000,
-            template_id: Some("t1".to_string()),
+            template_id: "t1".to_string(),
             prev_hash: Some([0xAA; 32]),
         };
         let mut same = base.clone();
@@ -1627,7 +1626,7 @@ mod tests {
         assert!(same_template_identity(&base, &same));
 
         let mut different_template_id = same.clone();
-        different_template_id.template_id = Some("t2".to_string());
+        different_template_id.template_id = "t2".to_string();
         assert!(same_template_identity(&base, &different_template_id));
 
         let mut different_header = same;
