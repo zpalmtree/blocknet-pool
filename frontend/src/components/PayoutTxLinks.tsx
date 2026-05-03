@@ -1,17 +1,10 @@
-import { type ReactNode, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { ExplorerLink } from './ExplorerLink';
 import { shortTx } from '../lib/format';
 
 const PREVIEW_COUNT = 2;
-
-function TxLink({ hash, className, children }: { hash: string; className?: string; children?: ReactNode }) {
-  return (
-    <a className={className} href={`https://explorer.blocknetcrypto.com/tx/${hash}`} target="_blank" rel="noopener" title={hash}>
-      {children ?? shortTx(hash)}
-    </a>
-  );
-}
 
 export function PayoutTxLinks({ hashes }: { hashes: string[] }) {
   const [showDialog, setShowDialog] = useState(false);
@@ -33,7 +26,7 @@ export function PayoutTxLinks({ hashes }: { hashes: string[] }) {
 
   if (hashes.length === 1) {
     const h = hashes[0];
-    return <TxLink hash={h} />;
+    return <ExplorerLink kind="tx" value={h}>{shortTx(h)}</ExplorerLink>;
   }
 
   const visibleHashes = hashes.slice(0, PREVIEW_COUNT);
@@ -46,7 +39,7 @@ export function PayoutTxLinks({ hashes }: { hashes: string[] }) {
           {visibleHashes.map((h, idx) => (
             <span key={h}>
               {idx > 0 ? ', ' : ''}
-              <TxLink hash={h} />
+              <ExplorerLink kind="tx" value={h}>{shortTx(h)}</ExplorerLink>
             </span>
           ))}
           {hiddenCount > 0 ? <span className="payout-tx-links__more">{` +${hiddenCount}`}</span> : null}
@@ -78,9 +71,9 @@ export function PayoutTxLinks({ hashes }: { hashes: string[] }) {
                 </div>
                 <div className="payout-tx-dialog__list">
                   {hashes.map((h) => (
-                    <TxLink key={h} hash={h} className="payout-tx-dialog__item">
+                    <ExplorerLink key={h} kind="tx" value={h} className="payout-tx-dialog__item">
                       {h}
-                    </TxLink>
+                    </ExplorerLink>
                   ))}
                 </div>
               </div>

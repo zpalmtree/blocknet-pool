@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react';
 import type { ApiClient } from '../api/client';
 import { BlockStatusBadge } from '../components/BlockStatusBadge';
 import { EmptyTableRow } from '../components/EmptyTableRow';
+import { ExplorerLink } from '../components/ExplorerLink';
 import { Pager } from '../components/Pager';
 import { fmtSeconds, formatCoins, formatPct, roundToneClass, timeAgo, timestampTitle } from '../lib/format';
 import { usePagedData } from '../lib/paging';
@@ -61,9 +62,7 @@ export function BlocksPage({ api, liveTick }: BlocksPageProps) {
               items.map((b) => (
                 <tr key={`${b.height}-${b.hash}`}>
                   <td>
-                    <a href={`https://explorer.blocknetcrypto.com/block/${b.hash}`} target="_blank" rel="noopener">
-                      {b.height}
-                    </a>
+                    <ExplorerLink kind="block" value={b.hash}>{b.height}</ExplorerLink>
                   </td>
                   <td>{formatCoins(b.reward)}</td>
                   <td>

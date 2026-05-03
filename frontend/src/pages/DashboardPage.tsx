@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ApiClient } from '../api/client';
 import { BlockStatusBadge } from '../components/BlockStatusBadge';
 import { EmptyTableRow } from '../components/EmptyTableRow';
+import { ExplorerLink } from '../components/ExplorerLink';
 import { HashrateChart } from '../components/HashrateChart';
 import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
 import { PayoutTxLinks } from '../components/PayoutTxLinks';
@@ -323,9 +324,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
                 dashboardLuckHistory.map((row) => (
                   <tr key={`${row.block_height}-${row.block_hash}`}>
                     <td>
-                      <a href={`https://explorer.blocknetcrypto.com/block/${row.block_hash}`} target="_blank" rel="noopener">
-                        {row.block_height}
-                      </a>
+                      <ExplorerLink kind="block" value={row.block_hash}>{row.block_height}</ExplorerLink>
                     </td>
                     <td>
                       <span className={`round-chip ${roundToneClass(row.effort_pct)}`}>{formatPct(row.effort_pct)}</span>

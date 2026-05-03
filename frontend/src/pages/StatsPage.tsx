@@ -2,6 +2,7 @@ import { startTransition, useCallback, useEffect, useMemo, useRef, useState } fr
 
 import type { ApiClient } from '../api/client';
 import { EmptyTableRow } from '../components/EmptyTableRow';
+import { ExplorerLink } from '../components/ExplorerLink';
 import { HashrateChart } from '../components/HashrateChart';
 import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
 import { RangeTabs } from '../components/RangeTabs';
@@ -530,9 +531,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                     {previewBlocks.map((b) => (
                       <tr key={`${b.height}-${b.hash}`}>
                         <td>
-                          <a href={`https://explorer.blocknetcrypto.com/block/${b.hash || ''}`} target="_blank" rel="noopener">
-                            {b.height}
-                          </a>
+                          <ExplorerLink kind="block" value={b.hash || ''}>{b.height}</ExplorerLink>
                         </td>
                         <td title={b.validation_detail || undefined}>
                           {b.credit_withheld
@@ -625,9 +624,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                             <td>{formatFee(p.fee || 0)}</td>
                             <td>
                               {hasTx ? (
-                                <a href={`https://explorer.blocknetcrypto.com/tx/${p.tx_hash}`} target="_blank" rel="noopener">
-                                  {p.tx_hash}
-                                </a>
+                                <ExplorerLink kind="tx" value={p.tx_hash}>{p.tx_hash}</ExplorerLink>
                               ) : (
                                 '-'
                               )}
