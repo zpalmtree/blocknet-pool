@@ -333,17 +333,6 @@ function recoveryInstanceLabel(instance: RecoveryInstanceId | null | undefined):
   }
 }
 
-function otherRecoveryInstance(instance: RecoveryInstanceId | null | undefined): RecoveryInstanceId | null {
-  switch (instance) {
-    case 'primary':
-      return 'standby';
-    case 'standby':
-      return 'primary';
-    default:
-      return null;
-  }
-}
-
 function recoveryOperationLabel(kind: RecoveryOperationKind | null | undefined): string {
   switch (kind) {
     case 'pause_payouts':
@@ -1305,7 +1294,8 @@ export function AdminPage({
     [recoveryStatus]
   );
   const recoveryActiveInstance = recoveryStatus?.active_instance ?? null;
-  const recoveryInactiveInstance = otherRecoveryInstance(recoveryActiveInstance);
+  const recoveryInactiveInstance =
+    recoveryActiveInstance === 'primary' ? 'standby' : recoveryActiveInstance === 'standby' ? 'primary' : null;
   const recoveryInactiveStatus =
     recoveryInactiveInstance === 'primary'
       ? recoveryPrimary
