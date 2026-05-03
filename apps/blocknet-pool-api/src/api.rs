@@ -1809,13 +1809,12 @@ async fn handle_admin_reconciliation_payout_resolution(
         return error_response(StatusCode::BAD_REQUEST, "tx_hash is required");
     }
 
-    match state
-        .resolve_missing_completed_payout_issue(tx_hash, request.action)
-        .await
-    {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(err) => internal_error("failed resolving reconciliation payout issue", err),
-    }
+    no_content_result(
+        state
+            .resolve_missing_completed_payout_issue(tx_hash, request.action)
+            .await,
+        "failed resolving reconciliation payout issue",
+    )
 }
 
 async fn handle_admin_reconciliation_payout_import(
@@ -1853,14 +1852,11 @@ async fn handle_admin_orphaned_block_cleanup_retry(
     }
 
     let store = Arc::clone(&state.store);
-    match spawn_blocking_result(move || {
+    let result = spawn_blocking_result(move || {
         store.reconcile_existing_orphaned_block_credits(request.block_height)
     })
-    .await
-    {
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
-        Err(err) => internal_error("failed retrying orphaned block cleanup", err),
-    }
+    .await;
+    no_content_result(result, "failed retrying orphaned block cleanup")
 }
 
 async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
@@ -1992,15 +1988,8 @@ async fn handle_admin_clear_address_risk_history(
 
     let address = address.to_string();
     let store = Arc::clone(&state.store);
-    match spawn_blocking_result({
-        let address = address.clone();
-        move || store.clear_address_risk_history(&address)
-    })
-    .await
-    {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(err) => internal_error("failed clearing address risk history", err),
-    }
+    let result = spawn_blocking_result(move || store.clear_address_risk_history(&address)).await;
+    no_content_result(result, "failed clearing address risk history")
 }
 
 fn recovery_operation_response(
@@ -5856,6 +5845,13 @@ fn json_result<T: Serialize>(result: anyhow::Result<T>, msg: &str) -> Response {
     result.map_or_else(
         |err| internal_error(msg, err),
         |value| Json(value).into_response(),
+    )
+}
+
+fn no_content_result<T>(result: anyhow::Result<T>, msg: &str) -> Response {
+    result.map_or_else(
+        |err| internal_error(msg, err),
+        |_| StatusCode::NO_CONTENT.into_response(),
     )
 }
 
