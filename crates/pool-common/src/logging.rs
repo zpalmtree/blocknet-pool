@@ -58,7 +58,11 @@ where
         write_colored(&mut writer, ansi, level_style, level_label)?;
         writer.write_char(' ')?;
 
-        let component = pad_or_truncate_ascii(short_target(meta.target()), COMPONENT_COL_WIDTH);
+        let target = meta.target();
+        let component = pad_or_truncate_ascii(
+            target.split("::").next().unwrap_or(target),
+            COMPONENT_COL_WIDTH,
+        );
         write_colored(&mut writer, ansi, "36", &component)?;
         write!(&mut writer, " | ")?;
 
@@ -75,10 +79,6 @@ fn level_style(level: Level) -> (&'static str, &'static str) {
         Level::DEBUG => ("DBG", "1;34"),
         Level::TRACE => ("TRC", "1;35"),
     }
-}
-
-fn short_target(target: &str) -> &str {
-    target.split("::").next().unwrap_or(target)
 }
 
 fn write_colored(writer: &mut Writer<'_>, ansi: bool, style: &str, text: &str) -> fmt::Result {
@@ -102,13 +102,7 @@ fn pad_or_truncate_ascii(value: &str, width: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{pad_or_truncate_ascii, short_target};
-
-    #[test]
-    fn short_target_uses_external_module_prefix() {
-        assert_eq!(short_target("postgres::config"), "postgres");
-        assert_eq!(short_target("tokio_postgres::client"), "tokio_postgres");
-    }
+    use super::pad_or_truncate_ascii;
 
     #[test]
     fn pad_or_truncate_ascii_pads_short_values() {
