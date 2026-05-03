@@ -128,14 +128,6 @@ export function ratioPct(numerator: number | null | undefined, denominator: numb
   return (n / d) * 100;
 }
 
-export function effortTone(effortPct: number | null | undefined): string {
-  if (effortPct != null && Number.isFinite(effortPct)) {
-    if (effortPct >= 200) return 'critical';
-    if (effortPct >= 100) return 'warn';
-  }
-  return 'ok';
-}
-
 export function effortLabel(effortPct: number | null | undefined): string {
   if (effortPct == null || !Number.isFinite(effortPct)) return 'loading';
   if (effortPct >= 200) return 'very overdue';
@@ -144,7 +136,11 @@ export function effortLabel(effortPct: number | null | undefined): string {
 }
 
 export function roundToneClass(tone: string | number | null | undefined): string {
-  if (typeof tone === 'number') tone = effortTone(tone);
+  if (typeof tone === 'number') {
+    if (tone >= 200) return 'is-critical';
+    if (tone >= 100) return 'is-warn';
+    return 'is-ok';
+  }
   if (tone === 'critical') return 'is-critical';
   if (tone === 'warn') return 'is-warn';
   return 'is-ok';
