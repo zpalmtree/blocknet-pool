@@ -202,10 +202,11 @@ impl BalanceCreditSourceKind {
         }
     }
 
-    fn from_db(value: &str) -> Self {
+    fn from_db(value: &str) -> Result<Self> {
         match value {
-            "fee" => Self::Fee,
-            _ => Self::Block,
+            "block" => Ok(Self::Block),
+            "fee" => Ok(Self::Fee),
+            _ => Err(anyhow!("unknown payout credit source kind {value:?}")),
         }
     }
 }
@@ -4319,7 +4320,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             if remaining == 0 {
                 break;
             }
-            let kind = BalanceCreditSourceKind::from_db(&row.get::<_, String>(0));
+            let kind = BalanceCreditSourceKind::from_db(&row.get::<_, String>(0))?;
             let block_height = row.get::<_, i64>(1).max(0) as u64;
             let block_hash = row.get::<_, String>(2);
             let source = BalanceCreditSourceState {
@@ -4412,14 +4413,18 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             )?;
             let allocations = allocation_rows
                 .into_iter()
-                .map(|allocation| PayoutCreditAllocation {
-                    source_kind: BalanceCreditSourceKind::from_db(&allocation.get::<_, String>(0)),
-                    block_height: allocation.get::<_, i64>(1).max(0) as u64,
-                    block_hash: allocation.get::<_, Option<String>>(2),
-                    address: allocation.get::<_, String>(3),
-                    amount: allocation.get::<_, i64>(4).max(0) as u64,
+                .map(|allocation| {
+                    Ok(PayoutCreditAllocation {
+                        source_kind: BalanceCreditSourceKind::from_db(
+                            &allocation.get::<_, String>(0),
+                        )?,
+                        block_height: allocation.get::<_, i64>(1).max(0) as u64,
+                        block_hash: allocation.get::<_, Option<String>>(2),
+                        address: allocation.get::<_, String>(3),
+                        amount: allocation.get::<_, i64>(4).max(0) as u64,
+                    })
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>>>()?;
             let allocated_amount = allocations.iter().fold(0u64, |acc, allocation| {
                 acc.saturating_add(allocation.amount)
             });
@@ -4582,7 +4587,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             Self::upsert_balance(&mut tx, &balance)?;
 
             for allocation in allocation_rows {
-                let source_kind = BalanceCreditSourceKind::from_db(&allocation.get::<_, String>(0));
+                let source_kind =
+                    BalanceCreditSourceKind::from_db(&allocation.get::<_, String>(0))?;
                 let block_height = allocation.get::<_, i64>(1).max(0) as u64;
                 let block_hash = allocation.get::<_, Option<String>>(2);
                 let source_address = allocation.get::<_, String>(3);
