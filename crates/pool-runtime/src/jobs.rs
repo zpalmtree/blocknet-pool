@@ -37,8 +37,7 @@ pub(crate) struct MinerJob {
     pub header_base: String,
     pub target: String,
     pub difficulty: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub network_target: Option<String>,
+    pub network_target: String,
     pub height: u64,
     pub nonce_start: u64,
     pub nonce_end: u64,
@@ -428,7 +427,7 @@ impl JobManager {
             header_base: hex::encode(&job.header_base),
             target: hex::encode(share_target),
             difficulty: share_difficulty,
-            network_target: Some(hex::encode(job.network_target)),
+            network_target: hex::encode(job.network_target),
             height: job.height,
             nonce_start: start,
             nonce_end,
@@ -1084,7 +1083,7 @@ mod tests {
         assert_eq!(job.difficulty, 1);
         assert_eq!(job.nonce_end, job.nonce_start + NONCE_RANGE_SIZE - 1);
         assert!(job.nonce_end <= MAX_DB_NONCE);
-        assert!(job.network_target.is_some());
+        assert_eq!(job.network_target, hex::encode([0xBB; 32]));
         let bound = manager
             .resolve_submit_job(&job.job_id, Instant::now())
             .expect("assignment should resolve");
