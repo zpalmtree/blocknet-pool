@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
 
 import type { ApiClient } from '../api/client';
 import { Pager } from '../components/Pager';
 import { fmtSeconds, formatPct, roundToneClass, timeAgo, toUnixMs } from '../lib/format';
-import type { LuckRound, PagerState } from '../types';
+import { usePagedData } from '../lib/paging';
+import type { LuckRound } from '../types';
 
 interface LuckPageProps {
   api: ApiClient;
@@ -11,27 +12,8 @@ interface LuckPageProps {
 }
 
 export function LuckPage({ api, liveTick }: LuckPageProps) {
-  const [items, setItems] = useState<LuckRound[]>([]);
-  const [pager, setPager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
-
-  const loadPage = useCallback(async () => {
-    try {
-      const d = await api.getLuckHistory(pager.limit, pager.offset);
-      setItems(d.items);
-      setPager((prev) => ({ ...prev, total: d.total }));
-    } catch {
-      setItems([]);
-    }
-  }, [api, pager.limit, pager.offset]);
-
-  useEffect(() => {
-    void loadPage();
-  }, [loadPage]);
-
-  useEffect(() => {
-    if (liveTick <= 0 || liveTick % 12 !== 0) return;
-    void loadPage();
-  }, [liveTick, loadPage]);
+  const fetchLuck = useCallback((limit: number, offset: number) => api.getLuckHistory(limit, offset), [api]);
+  const { items, pagerProps } = usePagedData<LuckRound>(liveTick, fetchLuck);
 
   return (
     <div id="page-luck">
@@ -88,13 +70,7 @@ export function LuckPage({ api, liveTick }: LuckPageProps) {
             )}
           </tbody>
         </table>
-        <Pager
-          offset={pager.offset}
-          limit={pager.limit}
-          total={pager.total}
-          onPrev={() => setPager((prev) => ({ ...prev, offset: Math.max(0, prev.offset - prev.limit) }))}
-          onNext={() => setPager((prev) => ({ ...prev, offset: prev.offset + prev.limit }))}
-        />
+        <Pager {...pagerProps} />
       </div>
 
     </div>

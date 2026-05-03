@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
 import { BlockStatusBadge } from '../components/BlockStatusBadge';
 import { Pager } from '../components/Pager';
 import { fmtSeconds, formatCoins, formatPct, roundToneClass, timeAgo, toUnixMs } from '../lib/format';
-import type { BlockItem, PagerState } from '../types';
+import { usePagedData } from '../lib/paging';
+import type { BlockItem } from '../types';
 
 interface BlocksPageProps {
   api: ApiClient;
@@ -13,27 +14,11 @@ interface BlocksPageProps {
 
 export function BlocksPage({ api, liveTick }: BlocksPageProps) {
   const [filter, setFilter] = useState('');
-  const [items, setItems] = useState<BlockItem[]>([]);
-  const [pager, setPager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
-
-  const loadPage = useCallback(async () => {
-    try {
-      const d = await api.getBlocks(pager.limit, pager.offset, filter || undefined);
-      setItems(d.items);
-      setPager((prev) => ({ ...prev, total: d.total }));
-    } catch {
-      setItems([]);
-    }
-  }, [api, filter, pager.limit, pager.offset]);
-
-  useEffect(() => {
-    void loadPage();
-  }, [loadPage]);
-
-  useEffect(() => {
-    if (liveTick <= 0 || liveTick % 12 !== 0) return;
-    void loadPage();
-  }, [liveTick, loadPage]);
+  const fetchBlocks = useCallback(
+    (limit: number, offset: number) => api.getBlocks(limit, offset, filter || undefined),
+    [api, filter]
+  );
+  const { items, setPager, pagerProps } = usePagedData<BlockItem>(liveTick, fetchBlocks);
 
   return (
     <div id="page-blocks">
@@ -101,13 +86,7 @@ export function BlocksPage({ api, liveTick }: BlocksPageProps) {
             )}
           </tbody>
         </table>
-        <Pager
-          offset={pager.offset}
-          limit={pager.limit}
-          total={pager.total}
-          onPrev={() => setPager((p) => ({ ...p, offset: Math.max(0, p.offset - p.limit) }))}
-          onNext={() => setPager((p) => ({ ...p, offset: p.offset + p.limit }))}
-        />
+        <Pager {...pagerProps} />
       </div>
 
     </div>

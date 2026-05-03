@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
 
 import type { ApiClient } from '../api/client';
 import { Pager } from '../components/Pager';
 import { PayoutTxLinks } from '../components/PayoutTxLinks';
 import { formatCoins, formatFee, timeAgo, toUnixMs } from '../lib/format';
-import type { PagerState, PayoutItem } from '../types';
+import { usePagedData } from '../lib/paging';
+import type { PayoutItem } from '../types';
 
 interface PayoutsPageProps {
   api: ApiClient;
@@ -12,27 +13,8 @@ interface PayoutsPageProps {
 }
 
 export function PayoutsPage({ api, liveTick }: PayoutsPageProps) {
-  const [items, setItems] = useState<PayoutItem[]>([]);
-  const [pager, setPager] = useState<PagerState>({ offset: 0, limit: 25, total: 0 });
-
-  const loadPage = useCallback(async () => {
-    try {
-      const d = await api.getRecentPayouts(pager.limit, pager.offset);
-      setItems(d.items);
-      setPager((prev) => ({ ...prev, total: d.total }));
-    } catch {
-      setItems([]);
-    }
-  }, [api, pager.limit, pager.offset]);
-
-  useEffect(() => {
-    void loadPage();
-  }, [loadPage]);
-
-  useEffect(() => {
-    if (liveTick <= 0 || liveTick % 12 !== 0) return;
-    void loadPage();
-  }, [liveTick, loadPage]);
+  const fetchPayouts = useCallback((limit: number, offset: number) => api.getRecentPayouts(limit, offset), [api]);
+  const { items, pagerProps } = usePagedData<PayoutItem>(liveTick, fetchPayouts);
 
   return (
     <div id="page-payouts">
@@ -87,13 +69,7 @@ export function PayoutsPage({ api, liveTick }: PayoutsPageProps) {
             )}
           </tbody>
         </table>
-        <Pager
-          offset={pager.offset}
-          limit={pager.limit}
-          total={pager.total}
-          onPrev={() => setPager((p) => ({ ...p, offset: Math.max(0, p.offset - p.limit) }))}
-          onNext={() => setPager((p) => ({ ...p, offset: p.offset + p.limit }))}
-        />
+        <Pager {...pagerProps} />
       </div>
 
     </div>
