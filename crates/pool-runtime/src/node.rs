@@ -197,7 +197,7 @@ pub struct NodeClient {
     send_client: Client,
     events_client: Client,
     auth_token: Mutex<Option<String>>,
-    auth_cookie_path: Option<PathBuf>,
+    auth_cookie_path: PathBuf,
     chain_height: AtomicU64,
 }
 
@@ -228,10 +228,19 @@ impl NodeClient {
             .build()
             .context("build node events http client")?;
 
-        let (resolved_token, auth_cookie_path) = resolve_auth_token_and_cookie(daemon_cookie_path);
-        if let Some(path) = auth_cookie_path.as_ref() {
-            tracing::info!(path = %path.display(), "daemon auth cookie source configured");
+        let auth_cookie_path = PathBuf::from(daemon_cookie_path.trim());
+        let auth_cookie_configured = !auth_cookie_path.as_os_str().is_empty();
+        if auth_cookie_configured {
+            tracing::info!(path = %auth_cookie_path.display(), "daemon auth cookie source configured");
         }
+        let resolved_token = if auth_cookie_configured && auth_cookie_path.exists() {
+            Some(
+                read_token_from_cookie_file(&auth_cookie_path)
+                    .context("failed to load daemon token from configured cookie")?,
+            )
+        } else {
+            None
+        };
         if resolved_token.is_some() {
             tracing::info!("daemon auth token loaded");
         }
@@ -452,14 +461,11 @@ impl NodeClient {
     }
 
     fn refresh_token_from_cookie(&self) -> Result<bool> {
-        let Some(cookie_path) = self.auth_cookie_path.as_ref() else {
-            return Ok(false);
-        };
-        if !cookie_path.exists() {
+        if self.auth_cookie_path.as_os_str().is_empty() || !self.auth_cookie_path.exists() {
             return Ok(false);
         }
 
-        let token = read_token_from_cookie_file(cookie_path)
+        let token = read_token_from_cookie_file(&self.auth_cookie_path)
             .context("failed to load daemon token from configured cookie")?;
         let mut guard = self.auth_token.lock();
         if guard.as_deref() == Some(token.as_str()) {
@@ -467,7 +473,7 @@ impl NodeClient {
         }
         *guard = Some(token);
         tracing::info!(
-            path = %cookie_path.display(),
+            path = %self.auth_cookie_path.display(),
             "refreshed daemon API token from cookie"
         );
         Ok(true)
@@ -486,25 +492,6 @@ impl NodeClient {
             }
         }
     }
-}
-
-fn resolve_auth_token_and_cookie(daemon_cookie_path: &str) -> (Option<String>, Option<PathBuf>) {
-    let cookie_path = match daemon_cookie_path.trim() {
-        "" => None,
-        path => Some(PathBuf::from(path)),
-    };
-
-    if let Some(path) = cookie_path.as_ref().filter(|path| path.exists()) {
-        if let Ok(token) = read_token_from_cookie_file(path) {
-            return (Some(token), cookie_path);
-        }
-        tracing::warn!(
-            path = %path.display(),
-            "daemon cookie is configured but token could not be read"
-        );
-    }
-
-    (None, cookie_path)
 }
 
 fn read_token_from_cookie_file(cookie_path: &Path) -> Result<String> {
@@ -559,14 +546,6 @@ impl NodeApi for NodeClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn daemon_auth_uses_only_explicit_cookie_path() {
-        let (token, cookie_path) = resolve_auth_token_and_cookie("/explicit/api.cookie");
-
-        assert!(token.is_none());
-        assert_eq!(cookie_path, Some(PathBuf::from("/explicit/api.cookie")));
-    }
 
     #[test]
     fn wallet_send_timeout_exceeds_default_request_timeout() {
