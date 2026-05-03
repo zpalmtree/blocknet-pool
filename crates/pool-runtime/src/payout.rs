@@ -2291,11 +2291,7 @@ fn compare_payout_candidates(
     match (a_promoted, b_promoted) {
         (true, false) => Ordering::Less,
         (false, true) => Ordering::Greater,
-        (true, true) => b_age
-            .cmp(&a_age)
-            .then_with(|| b.pending.amount.cmp(&a.pending.amount))
-            .then_with(|| a.balance.address.cmp(&b.balance.address)),
-        (false, false) => b_age
+        _ => b_age
             .cmp(&a_age)
             .then_with(|| b.pending.amount.cmp(&a.pending.amount))
             .then_with(|| a.balance.address.cmp(&b.balance.address)),
