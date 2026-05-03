@@ -38,15 +38,31 @@ From the local repo root:
 What it does:
 
 - builds frontend bundle locally (unless `--skip-ui-build`)
-- builds the split release binaries locally
+- builds the split release binaries on Linux:
+  - set `BNTPOOL_REMOTE_BUILD=1` to build on `bntpool` after source sync
+  - or set `BNTPOOL_LOCAL_BUILD_IMAGE` with `DOCKER_DEFAULT_PLATFORM=linux/amd64` to build locally in Docker
 - rsyncs pool source to `bntpool:/opt/blocknet/blocknet-pool`
-- uploads the locally built binaries to the server
+- uploads locally built binaries, or uses host-built binaries when `BNTPOOL_REMOTE_BUILD=1`
+- verifies deployed binary architecture before restarting services
+- writes `/opt/blocknet/blocknet-pool/deploy-info.txt`
 - restarts only the changed service(s):
   - `blocknet-pool-api.service`
   - `blocknet-pool-stratum.service`
   - `blocknet-pool-monitor.service`
 - frontend-only changes still restart `blocknet-pool-api.service` because the UI bundle is embedded into that binary
-- tails recent logs for changed services
+- tails recent logs and runs `scripts/verify_bntpool_deploy.sh`
+
+From macOS, do not run a plain local binary deploy. Use the remote build path:
+
+```bash
+BNTPOOL_REMOTE_BUILD=1 ./scripts/deploy_bntpool.sh
+```
+
+Run the production smoke verifier without deploying:
+
+```bash
+./scripts/verify_bntpool_deploy.sh
+```
 
 ## Monitoring Stack
 

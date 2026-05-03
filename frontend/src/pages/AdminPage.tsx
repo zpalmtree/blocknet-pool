@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
 import { EmptyTableRow } from '../components/EmptyTableRow';
@@ -7,7 +7,6 @@ import { StatCard } from '../components/StatCard';
 import { parseAnsiLine, type ParsedAnsiSegment } from '../lib/ansi';
 import {
   fmtSeconds,
-  formatCoinAmount,
   formatCoins,
   formatCompactCoins,
   formatPct,
@@ -17,15 +16,58 @@ import {
   shortAddr,
   timestampTitle,
   timeAgo,
-  timeUntil,
-  toUnixMs,
 } from '../lib/format';
 import { usePagedData } from '../lib/paging';
+import {
+  ACKNOWLEDGED_LAUNCH_ERA_MINER_SHORTFALL,
+  AdminNoticeCard,
+  DAEMON_LOG_RECONNECT_DELAY_MS,
+  FOOTER_LABEL_CELL_STYLE,
+  formatMillis,
+  formatSignedCoins,
+  formatWholeNumber,
+  GOOD_TEXT_STYLE,
+  hasActiveUntil,
+  holdUntilLabel,
+  holdUntilTitle,
+  HOT_PATH_LATENCY_SPIKE_MILLIS,
+  HOT_PATH_LATENCY_WARN_MILLIS,
+  labelFor,
+  MAX_DAEMON_LOG_LINES,
+  MONO_MUTED_STYLE,
+  MUTED_SEMIBOLD_STYLE,
+  MUTED_SUMMARY_STYLE,
+  MUTED_TEXT_STYLE,
+  overloadModeLabel,
+  RECOVERY_OPERATION_STATE_LABELS,
+  RecoveryStateBadge,
+  RecoveryWalletSyncCard,
+  reconciliationRecommendation,
+  recoveryInstanceLabel,
+  recoveryOperationLabel,
+  recoveryPendingDeltaNote,
+  REWARD_STATUS_META,
+  rewardDeltaStyle,
+  rewardStatusLabel,
+  SEMIBOLD_STYLE,
+  SHARE_DIAGNOSTIC_REASONS,
+  shareWindowReasonCell,
+  shareWindowReasonCount,
+  shareWindowRejectPct,
+  shareWindowTotal,
+  SMALL_MUTED_STYLE,
+  SMALL_MUTED_TOP_STYLE,
+  TOP_6_STYLE,
+  ValidationHoldUntilCell,
+  VerificationHoldBadge,
+  WARN_TEXT_STYLE,
+  warnGoodTextStyle,
+  warnPositiveCoins,
+  warnTextStyle,
+} from './adminDisplay';
 import type {
-  ActiveVerificationHold,
   AdminBalanceItem,
   AdminBalanceOverviewResponse,
-  AdminMissingCompletedPayoutIssue,
   AdminReconciliationIssuesResponse,
   AdminShareDiagnosticsResponse,
   AdminShareDiagnosticsWindow,
@@ -39,273 +81,7 @@ import type {
   RecoveryInstanceStatus,
   RecoveryOperationKind,
   RecoveryStatusResponse,
-  UnixLike,
 } from '../types';
-
-const MAX_DAEMON_LOG_LINES = 1000;
-const DAEMON_LOG_RECONNECT_DELAY_MS = 1500;
-const HOT_PATH_LATENCY_WARN_MILLIS = 1000;
-const HOT_PATH_LATENCY_SPIKE_MILLIS = 5000;
-const ACKNOWLEDGED_LAUNCH_ERA_MINER_SHORTFALL = 1_546_507_661_992;
-const WARN_TEXT_STYLE = { color: 'var(--warn)' };
-const GOOD_TEXT_STYLE = { color: 'var(--good)' };
-const MUTED_TEXT_STYLE = { color: 'var(--muted)' };
-const SMALL_MUTED_STYLE: CSSProperties = { fontSize: 11, color: 'var(--muted)' };
-const SMALL_MUTED_TOP_STYLE: CSSProperties = { ...SMALL_MUTED_STYLE, marginTop: 4 };
-const MONO_MUTED_STYLE: CSSProperties = { fontSize: 12, color: 'var(--muted)' };
-const MUTED_SUMMARY_STYLE: CSSProperties = { marginTop: 12, fontSize: 12, color: 'var(--muted)' };
-const SEMIBOLD_STYLE: CSSProperties = { fontWeight: 600 };
-const MUTED_SEMIBOLD_STYLE: CSSProperties = { color: 'var(--muted)', fontWeight: 600 };
-const FOOTER_LABEL_CELL_STYLE: CSSProperties = { fontWeight: 700, textAlign: 'left' };
-const TOP_6_STYLE: CSSProperties = { marginTop: 6 };
-const SHARE_DIAGNOSTIC_REASONS = ['invalid share proof', 'low difficulty share', 'stale job', 'address quarantined', 'server busy', 'validation timeout'];
-const REWARD_STATUS_META: Record<string, { label: string; tone: string }> = {
-  included: { label: 'Included', tone: 'var(--good)' },
-  capped_provisional: { label: 'Included (capped)', tone: 'var(--warn)' },
-  awaiting_verified_shares: { label: 'Needs verified shares', tone: 'var(--warn)' },
-  recorded_only: { label: 'Recorded only', tone: 'var(--muted)' },
-};
-const OVERLOAD_MODE_LABELS: Record<string, string> = {
-  emergency: 'Emergency',
-  shed: 'Shedding',
-};
-const RECOVERY_INSTANCE_LABELS: Record<string, string> = {
-  primary: 'Primary',
-  standby: 'Standby',
-};
-const RECOVERY_OPERATION_LABELS: Record<string, string> = {
-  pause_payouts: 'Pause payouts',
-  resume_payouts: 'Resume payouts',
-  start_standby_sync: 'Start inactive sync',
-  rebuild_standby_wallet: 'Rebuild inactive wallet',
-  cutover: 'Cut over',
-  purge_inactive_daemon: 'Purge inactive daemon',
-};
-const RECOVERY_OPERATION_STATE_LABELS: Record<string, string> = {
-  running: 'Running',
-  succeeded: 'Succeeded',
-  failed: 'Failed',
-};
-const VALIDATION_HOLD_CAUSE_LABELS: Record<string, string> = {
-  provisional_backlog: 'Backlog drain',
-  payout_coverage: 'Payout boost',
-  invalid_samples: 'Validation review',
-};
-const RECOVERY_STATE_BADGE_FALLBACK = { label: 'Stopped', className: 'badge-pending' };
-const RECOVERY_STATE_BADGE_META: Record<string, { label: string; className: string }> = {
-  ready: { label: 'Ready', className: 'badge-confirmed' },
-  syncing: { label: 'Syncing', className: 'badge-pending' },
-  starting: { label: 'Starting', className: 'badge-pending' },
-  failed: { label: 'Failed', className: 'badge-orphaned' },
-  degraded: { label: 'Degraded', className: 'badge-orphaned' },
-};
-const warnTextStyle = (active: boolean) => (active ? WARN_TEXT_STYLE : undefined);
-const warnGoodTextStyle = (warn: boolean) => (warn ? WARN_TEXT_STYLE : GOOD_TEXT_STYLE);
-const labelFor = (value: string | null | undefined, labels: Record<string, string>, fallback: string) =>
-  value ? labels[value] ?? fallback : fallback;
-
-function rewardStatusLabel(status: string): string {
-  return REWARD_STATUS_META[status]?.label ?? 'No eligible shares';
-}
-
-function rewardDeltaStyle(value: number | null | undefined, paidOut = false): CSSProperties {
-  if (value == null) return { color: 'var(--muted)' };
-  if (value === 0) return { color: 'var(--good)' };
-  return { color: paidOut ? 'var(--muted)' : 'var(--warn)' };
-}
-
-function formatSignedCoins(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return '-';
-  const prefix = value > 0 ? '+' : value < 0 ? '-' : '';
-  return `${prefix}${formatCoinAmount(Math.abs(value))} BNT`;
-}
-
-function warnPositiveCoins(value: number) {
-  return value > 0 ? <span style={WARN_TEXT_STYLE}>{formatCoins(value)}</span> : formatCoins(value);
-}
-
-function formatMillis(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return '-';
-  if (value >= 10_000) return `${(value / 1000).toFixed(0)}s`;
-  if (value >= 1000) return `${(value / 1000).toFixed(1)}s`;
-  return `${Math.round(value)}ms`;
-}
-
-function overloadModeLabel(mode: string | null | undefined): string {
-  return labelFor(mode, OVERLOAD_MODE_LABELS, 'Normal');
-}
-
-function reconciliationRecommendation(issue: AdminMissingCompletedPayoutIssue): string {
-  if (issue.orphaned_linked_amount > 0 && issue.live_linked_amount === 0 && issue.unlinked_amount === 0) {
-    return 'Known source credits only point at orphaned blocks. Dropping the paid amount is the usual resolution.';
-  }
-  if (issue.live_linked_amount > 0 && issue.orphaned_linked_amount === 0 && issue.unlinked_amount === 0) {
-    return 'Known source credits still point at live blocks. Restoring the amount to pending is the usual resolution.';
-  }
-  if (issue.unlinked_amount > 0) {
-    return 'Part of this payout could not be reconstructed from historical source credits. Choose the operator override that matches the real chain outcome.';
-  }
-  if (issue.orphaned_linked_amount > 0 && issue.live_linked_amount > 0) {
-    return 'This payout mixes live and orphaned known sources. Review before choosing an override.';
-  }
-  return 'Choose the override that matches the current chain state.';
-}
-
-function formatWholeNumber(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return '0';
-  return Math.round(value).toLocaleString();
-}
-
-function hasActiveUntil(value: UnixLike | null | undefined): boolean {
-  const ms = value ? toUnixMs(value) : 0;
-  return !!ms && ms > Date.now();
-}
-
-function holdUntilLabel(value: UnixLike | null | undefined): string {
-  return hasActiveUntil(value) ? timeUntil(value as UnixLike) : '-';
-}
-
-function holdUntilTitle(value: UnixLike | null | undefined): string | undefined {
-  return hasActiveUntil(value) ? timestampTitle(value as UnixLike) || undefined : undefined;
-}
-
-function VerificationHoldBadge({ hold }: { hold: ActiveVerificationHold }) {
-  const quarantined = hasActiveUntil(hold.quarantined_until);
-  const forceVerified = hasActiveUntil(hold.force_verify_until);
-  const validationForced = hasActiveUntil(hold.validation_forced_until);
-  let label = 'Active';
-  if (quarantined) label = 'Quarantined';
-  else if (forceVerified && validationForced) label = 'Risk + validation';
-  else if (forceVerified) label = 'Risk forced';
-  else if (validationForced) {
-    label = labelFor(hold.validation_hold_cause, VALIDATION_HOLD_CAUSE_LABELS, 'Validation forced');
-  }
-  const active = quarantined || forceVerified || validationForced;
-  const className = !active ? 'badge-pending' : quarantined ? 'badge-orphaned' : 'badge-confirmed';
-  return <span className={className}>{label}</span>;
-}
-
-function ValidationHoldUntilCell({ hold }: { hold: ActiveVerificationHold }) {
-  const active = hasActiveUntil(hold.validation_forced_until);
-  const label = active ? holdUntilLabel(hold.validation_forced_until) : '-';
-  let hint: string | null = null;
-  switch (hold.validation_hold_cause) {
-    case 'provisional_backlog':
-      if (
-        (hold.validation_recent_provisional_difficulty ?? 0) > 0 ||
-        (hold.validation_recent_verified_difficulty ?? 0) > 0
-      ) {
-        hint = `auto-clears once recent provisional diff ${formatWholeNumber(
-          hold.validation_recent_provisional_difficulty
-        )} settles near verified diff ${formatWholeNumber(hold.validation_recent_verified_difficulty)}`;
-        break;
-      }
-      hint = 'auto-clears once backlog drains';
-      break;
-    case 'payout_coverage':
-      hint = 'auto-clears once coverage recovers';
-      break;
-  }
-  const temporaryAssist =
-    active &&
-    !hasActiveUntil(hold.quarantined_until) &&
-    !hasActiveUntil(hold.force_verify_until) &&
-    (hold.validation_hold_cause === 'provisional_backlog' || hold.validation_hold_cause === 'payout_coverage');
-  return (
-    <td className="mono" title={holdUntilTitle(hold.validation_forced_until)}>
-      <div>{temporaryAssist ? `up to ${label}` : label}</div>
-      {active && hint ? <div style={SMALL_MUTED_TOP_STYLE}>{hint}</div> : null}
-    </td>
-  );
-}
-
-function RecoveryStateBadge({ state }: { state: RecoveryInstanceStatus['state'] | undefined }) {
-  const { label, className } = state
-    ? RECOVERY_STATE_BADGE_META[state] ?? RECOVERY_STATE_BADGE_FALLBACK
-    : RECOVERY_STATE_BADGE_FALLBACK;
-  return <span className={`badge ${className}`}>{label}</span>;
-}
-
-
-function shareWindowReasonCount(window: AdminShareDiagnosticsWindow | null | undefined, reason: string): number {
-  const target = reason.trim().toLowerCase();
-  if (!window?.by_reason?.length || !target) return 0;
-  const match = window.by_reason.find((item) => item.reason.trim().toLowerCase() === target);
-  return match?.count ?? 0;
-}
-
-function shareWindowTotal(window: AdminShareDiagnosticsWindow | null | undefined): number {
-  return (window?.accepted ?? 0) + (window?.rejected ?? 0);
-}
-
-function shareWindowRejectPct(window: AdminShareDiagnosticsWindow | null | undefined): number {
-  return calculateRatioPct(window?.rejected, shareWindowTotal(window));
-}
-
-function shareWindowReasonCell(window: AdminShareDiagnosticsWindow, reason: string) {
-  const count = shareWindowReasonCount(window, reason);
-  const total = shareWindowTotal(window);
-  const pct = total > 0 ? (count / total) * 100 : null;
-  return (
-    <td key={reason} className="mono">
-      {formatPct(pct, 2)}
-      <div style={SMALL_MUTED_STYLE}>{count} rejects</div>
-    </td>
-  );
-}
-
-function recoveryInstanceLabel(instance: RecoveryInstanceId | null | undefined): string {
-  return labelFor(instance, RECOVERY_INSTANCE_LABELS, 'Unknown');
-}
-
-function recoveryOperationLabel(kind: RecoveryOperationKind | null | undefined): string {
-  return labelFor(kind, RECOVERY_OPERATION_LABELS, 'Unknown operation');
-}
-
-function RecoveryWalletSyncCard({ item }: { item: RecoveryInstanceStatus | null }) {
-  const syncedHeight = item?.wallet.synced_height;
-  const chainHeight = item?.chain_height ?? item?.wallet.chain_height;
-  const value =
-    syncedHeight == null && chainHeight == null
-      ? '-'
-      : syncedHeight == null
-        ? `- / ${chainHeight}`
-        : chainHeight == null
-          ? `${syncedHeight}`
-          : `${syncedHeight} / ${chainHeight}`;
-  const lag =
-    syncedHeight == null || chainHeight == null
-      ? null
-      : syncedHeight >= chainHeight
-        ? 'caught up'
-        : `${chainHeight - syncedHeight} blocks behind`;
-  return <StatCard label="Wallet Sync" value={value} mono>{lag ? <div className="label" style={TOP_6_STYLE}>{lag}</div> : null}</StatCard>;
-}
-
-function recoveryPendingDeltaNote(status: RecoveryStatusResponse | null): string | null {
-  const activeInstance = status?.active_instance;
-  if (activeInstance == null) return null;
-  const active = status.instances.find((item) => item.instance === activeInstance) ?? null;
-  const inactive = status.instances.find((item) => item.instance !== activeInstance) ?? null;
-  if (!active?.wallet.loaded || !inactive?.wallet.loaded) return null;
-  if (!active.wallet.address || !inactive.wallet.address) return null;
-  if (active.wallet.address !== inactive.wallet.address) return null;
-  if ((active.wallet.pending_unconfirmed ?? 0) <= 0) return null;
-  return 'Primary and standby share the same wallet seed but keep separate wallet files. Unconfirmed sends only live on the active daemon until they confirm, so temporary spendable deltas are expected.';
-}
-
-function AdminNoticeCard({ children, tone }: { children: ReactNode; tone?: 'warning' | 'error' }) {
-  return (
-    <div className="card section" style={{
-      marginBottom: 16,
-      borderColor: tone === 'warning' ? 'rgba(247, 180, 75, 0.45)' : tone === 'error' ? 'rgba(214, 88, 88, 0.45)' : undefined,
-    }}>
-      <p className="section-lead" style={{ margin: 0, color: tone === 'error' ? 'var(--bad)' : undefined }}>
-        {children}
-      </p>
-    </div>
-  );
-}
 
 interface AdminPageProps {
   api: ApiClient;

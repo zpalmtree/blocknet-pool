@@ -18,7 +18,9 @@ Environment overrides:
   BNTPOOL_RECOVERY_SOCKET  Systemd recovery socket name (default: blocknet-pool-recoveryd.socket)
   BNTPOOL_ALLOW_RETIRED_HOST  Set to 1 to allow explicit deploys to oldpool / 5.161.113.120
   BNTPOOL_FORCE_RESTART    Set to 1 to force a restart even when binary hashes are unchanged
+  BNTPOOL_REMOTE_BUILD     Set to 1 to build release binaries on the target host after source sync
   BNTPOOL_LOCAL_BUILD_IMAGE  Optional Docker image used for local builds
+  BNTPOOL_SKIP_VERIFY      Set to 1 to skip post-deploy smoke verification
   DOCKER_DEFAULT_PLATFORM  Use linux/amd64 with BNTPOOL_LOCAL_BUILD_IMAGE when deploying from macOS
 EOF
 }
@@ -82,6 +84,11 @@ if [[ "${api_only}" == "1" && ("${provision_monitoring}" == "1" || "${provision_
   exit 1
 fi
 
+if [[ "${skip_build}" == "1" && "${BNTPOOL_REMOTE_BUILD:-0}" == "1" ]]; then
+  echo "BNTPOOL_REMOTE_BUILD=1 cannot be combined with --skip-build" >&2
+  exit 1
+fi
+
 host="${BNTPOOL_HOST:-bntpool}"
 remote_dir="${BNTPOOL_REMOTE_DIR:-/opt/blocknet/blocknet-pool}"
 api_service="${BNTPOOL_API_SERVICE:-blocknet-pool-api.service}"
@@ -91,11 +98,14 @@ recovery_service="${BNTPOOL_RECOVERY_SERVICE:-blocknet-pool-recoveryd.service}"
 recovery_socket="${BNTPOOL_RECOVERY_SOCKET:-blocknet-pool-recoveryd.socket}"
 allow_retired_host="${BNTPOOL_ALLOW_RETIRED_HOST:-0}"
 force_restart="${BNTPOOL_FORCE_RESTART:-0}"
+remote_build="${BNTPOOL_REMOTE_BUILD:-0}"
 local_build_image="${BNTPOOL_LOCAL_BUILD_IMAGE:-}"
+skip_verify="${BNTPOOL_SKIP_VERIFY:-0}"
 remote_api_bin="${remote_dir}/target/release/blocknet-pool-api"
 remote_stratum_bin="${remote_dir}/target/release/blocknet-pool-stratum"
 remote_monitor_bin="${remote_dir}/target/release/blocknet-pool-monitor"
 remote_recovery_bin="${remote_dir}/target/release/blocknet-pool-recoveryd"
+remote_deploy_info="${remote_dir}/deploy-info.txt"
 remote_postgres_dropin_dir="/etc/systemd/system/postgresql@.service.d"
 remote_postgres_dropin="${remote_postgres_dropin_dir}/restart-blocknet-pool.conf"
 
@@ -107,6 +117,14 @@ local_api_bin="${repo_dir}/target/release/blocknet-pool-api"
 local_stratum_bin="${repo_dir}/target/release/blocknet-pool-stratum"
 local_monitor_bin="${repo_dir}/target/release/blocknet-pool-monitor"
 local_recovery_bin="${repo_dir}/target/release/blocknet-pool-recoveryd"
+deploy_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+source_revision="$(git -C "${repo_dir}" rev-parse HEAD)"
+source_branch="$(git -C "${repo_dir}" rev-parse --abbrev-ref HEAD)"
+source_describe="$(git -C "${repo_dir}" describe --tags --always HEAD 2>/dev/null || git -C "${repo_dir}" rev-parse --short HEAD)"
+source_dirty="0"
+if [[ -n "$(git -C "${repo_dir}" status --porcelain)" ]]; then
+  source_dirty="1"
+fi
 source_rsync_args=(
   -rltz
   --delete
@@ -165,6 +183,91 @@ fi
 remote_hash() {
   local path="$1"
   ssh "${host}" "set -euo pipefail; if [[ -f '${path}' ]]; then sha256sum '${path}' | awk '{print \$1}'; else echo '__missing__'; fi"
+}
+
+wait_remote_service_active() {
+  local service="$1"
+  ssh "${host}" "set -euo pipefail; \
+    for _ in \$(seq 1 45); do \
+      state=\$(systemctl is-active '${service}' || true); \
+      if [[ \"\${state}\" == 'active' ]]; then exit 0; fi; \
+      sleep 1; \
+    done; \
+    sudo systemctl status '${service}' --no-pager -l || true; \
+    exit 1"
+}
+
+remote_build_release() {
+  local build_cmd
+  build_cmd=""
+  if [[ "${deploy_api}" == "1" ]]; then
+    build_cmd+="cargo build --release -p blocknet-pool-api-app --bin blocknet-pool-api; "
+  fi
+  if [[ "${deploy_stratum}" == "1" ]]; then
+    build_cmd+="cargo build --release -p blocknet-pool-stratum-app --bin blocknet-pool-stratum; "
+  fi
+  if [[ "${deploy_monitor}" == "1" ]]; then
+    build_cmd+="cargo build --release -p blocknet-pool-monitor-app --bin blocknet-pool-monitor; "
+  fi
+  if [[ "${deploy_recovery}" == "1" ]]; then
+    build_cmd+="cargo build --release -p blocknet-pool-recoveryd-app --bin blocknet-pool-recoveryd; "
+  fi
+
+  ssh "${host}" "set -euo pipefail; \
+    if [[ -f \"\$HOME/.cargo/env\" ]]; then . \"\$HOME/.cargo/env\"; fi; \
+    command -v cargo >/dev/null 2>&1 || { echo 'cargo is required on the remote host for BNTPOOL_REMOTE_BUILD=1' >&2; exit 1; }; \
+    cd '${remote_dir}'; \
+    ${build_cmd}"
+}
+
+verify_remote_binary() {
+  local label="$1"
+  local path="$2"
+  ssh "${host}" "set -euo pipefail; \
+    test -x '${path}'; \
+    desc=\$(file -b '${path}'); \
+    case \"\${desc}\" in \
+      *'ELF 64-bit'*'x86-64'*) printf 'verified_binary\t%s\t%s\n' '${label}' \"\${desc}\" ;; \
+      *) echo '${label} is not a Linux x86-64 executable: '\"\${desc}\" >&2; exit 1 ;; \
+    esac"
+}
+
+verify_deploy_binaries() {
+  if [[ "${deploy_api}" == "1" ]]; then
+    verify_remote_binary "blocknet-pool-api" "${remote_api_bin}"
+  fi
+  if [[ "${deploy_stratum}" == "1" ]]; then
+    verify_remote_binary "blocknet-pool-stratum" "${remote_stratum_bin}"
+  fi
+  if [[ "${deploy_monitor}" == "1" ]]; then
+    verify_remote_binary "blocknet-pool-monitor" "${remote_monitor_bin}"
+  fi
+  if [[ "${deploy_recovery}" == "1" ]]; then
+    verify_remote_binary "blocknet-pool-recoveryd" "${remote_recovery_bin}"
+  fi
+}
+
+write_remote_deploy_info() {
+  local tmp
+  tmp="$(mktemp)"
+  {
+    echo "revision=${source_revision}"
+    echo "branch=${source_branch}"
+    echo "describe=${source_describe}"
+    echo "dirty=${source_dirty}"
+    echo "deployed_at=${deploy_started_at}"
+    if [[ "${remote_build}" == "1" ]]; then
+      echo "build_mode=remote"
+    else
+      echo "build_mode=local"
+    fi
+    echo "api_hash=${after_api_hash}"
+    echo "stratum_hash=${after_stratum_hash}"
+    echo "monitor_hash=${after_monitor_hash}"
+    echo "recovery_hash=${after_recovery_hash}"
+  } >"${tmp}"
+  scp "${tmp}" "${host}:${remote_deploy_info}"
+  rm -f "${tmp}"
 }
 
 build_locally() {
@@ -237,6 +340,12 @@ rsync "${source_rsync_args[@]}" \
   --exclude='scripts/__pycache__/' \
   "${repo_dir}/" "${host}:${remote_dir}/"
 
+if [[ "${remote_build}" == "1" && "${deploy_api}" == "1" ]]; then
+  echo "==> syncing generated web ui bundle for remote API build"
+  rsync "${source_rsync_args[@]}" \
+    "${repo_dir}/frontend/dist/" "${host}:${remote_dir}/frontend/dist/"
+fi
+
 echo "==> reading current remote binary hashes"
 before_api_hash="__skipped__"
 before_stratum_hash="__skipped__"
@@ -256,24 +365,30 @@ if [[ "${deploy_recovery}" == "1" ]]; then
 fi
 
 if [[ "${skip_build}" -eq 0 ]]; then
-  echo "==> building release binaries locally"
-  build_locally
-  echo "==> uploading locally built binaries to ${host}"
-  ssh "${host}" "set -euo pipefail; mkdir -p '${remote_dir}/target/release'"
-  rsync_args=( "${binary_rsync_args[@]}" )
-  if [[ "${deploy_api}" == "1" ]]; then
-    rsync_args+=( "${local_api_bin}" )
+  if [[ "${remote_build}" == "1" ]]; then
+    echo "==> building release binaries on ${host}"
+    remote_build_release
+  else
+    echo "==> building release binaries locally"
+    build_locally
+    echo "==> uploading locally built binaries to ${host}"
+    ssh "${host}" "set -euo pipefail; mkdir -p '${remote_dir}/target/release'"
+    rsync_args=( "${binary_rsync_args[@]}" )
+    if [[ "${deploy_api}" == "1" ]]; then
+      rsync_args+=( "${local_api_bin}" )
+    fi
+    if [[ "${deploy_stratum}" == "1" ]]; then
+      rsync_args+=( "${local_stratum_bin}" )
+    fi
+    if [[ "${deploy_monitor}" == "1" ]]; then
+      rsync_args+=( "${local_monitor_bin}" )
+    fi
+    if [[ "${deploy_recovery}" == "1" ]]; then
+      rsync_args+=( "${local_recovery_bin}" )
+    fi
+    rsync "${rsync_args[@]}" "${host}:${remote_dir}/target/release/"
   fi
-  if [[ "${deploy_stratum}" == "1" ]]; then
-    rsync_args+=( "${local_stratum_bin}" )
-  fi
-  if [[ "${deploy_monitor}" == "1" ]]; then
-    rsync_args+=( "${local_monitor_bin}" )
-  fi
-  if [[ "${deploy_recovery}" == "1" ]]; then
-    rsync_args+=( "${local_recovery_bin}" )
-  fi
-  rsync "${rsync_args[@]}" "${host}:${remote_dir}/target/release/"
+
   chmod_cmd="set -euo pipefail; "
   if [[ "${deploy_api}" == "1" ]]; then
     chmod_cmd+="chmod 755 '${remote_api_bin}'; "
@@ -291,22 +406,16 @@ if [[ "${skip_build}" -eq 0 ]]; then
 fi
 
 echo "==> reading updated remote binary hashes"
-after_api_hash="__skipped__"
-after_stratum_hash="__skipped__"
-after_monitor_hash="__skipped__"
-after_recovery_hash="__skipped__"
-if [[ "${deploy_api}" == "1" ]]; then
-  after_api_hash="$(remote_hash "${remote_api_bin}")"
-fi
-if [[ "${deploy_stratum}" == "1" ]]; then
-  after_stratum_hash="$(remote_hash "${remote_stratum_bin}")"
-fi
-if [[ "${deploy_monitor}" == "1" ]]; then
-  after_monitor_hash="$(remote_hash "${remote_monitor_bin}")"
-fi
-if [[ "${deploy_recovery}" == "1" ]]; then
-  after_recovery_hash="$(remote_hash "${remote_recovery_bin}")"
-fi
+after_api_hash="$(remote_hash "${remote_api_bin}")"
+after_stratum_hash="$(remote_hash "${remote_stratum_bin}")"
+after_monitor_hash="$(remote_hash "${remote_monitor_bin}")"
+after_recovery_hash="$(remote_hash "${remote_recovery_bin}")"
+
+echo "==> verifying deployed binary architecture"
+verify_deploy_binaries
+
+echo "==> writing deploy metadata"
+write_remote_deploy_info
 
 echo "==> installing managed systemd assets"
 systemd_cmd="set -euo pipefail; "
@@ -360,31 +469,35 @@ fi
 
 if [[ "${restart_api}" == "1" ]]; then
   echo "==> restarting ${api_service}"
-  ssh "${host}" "set -euo pipefail; sudo systemctl restart '${api_service}'; sudo systemctl is-active '${api_service}'"
+  ssh "${host}" "set -euo pipefail; sudo systemctl restart '${api_service}'"
+  wait_remote_service_active "${api_service}"
 else
   echo "==> ${api_service} unchanged; leaving it running"
-  ssh "${host}" "set -euo pipefail; sudo systemctl is-active '${api_service}'"
+  wait_remote_service_active "${api_service}"
 fi
 
 if [[ "${restart_stratum}" == "1" ]]; then
   echo "==> restarting ${stratum_service}"
-  ssh "${host}" "set -euo pipefail; sudo systemctl restart '${stratum_service}'; sudo systemctl is-active '${stratum_service}'"
+  ssh "${host}" "set -euo pipefail; sudo systemctl restart '${stratum_service}'"
+  wait_remote_service_active "${stratum_service}"
 else
   echo "==> ${stratum_service} unchanged; leaving it running"
-  ssh "${host}" "set -euo pipefail; sudo systemctl is-active '${stratum_service}'"
+  wait_remote_service_active "${stratum_service}"
 fi
 
 if [[ "${restart_monitor}" == "1" ]]; then
   echo "==> restarting ${monitor_service}"
-  ssh "${host}" "set -euo pipefail; sudo systemctl restart '${monitor_service}'; sudo systemctl is-active '${monitor_service}'"
+  ssh "${host}" "set -euo pipefail; sudo systemctl restart '${monitor_service}'"
+  wait_remote_service_active "${monitor_service}"
 else
   echo "==> ${monitor_service} unchanged; leaving it running"
-  ssh "${host}" "set -euo pipefail; sudo systemctl is-active '${monitor_service}'"
+  wait_remote_service_active "${monitor_service}"
 fi
 
 if [[ "${restart_recovery}" == "1" ]]; then
   echo "==> restarting ${recovery_service}"
-  ssh "${host}" "set -euo pipefail; sudo systemctl restart '${recovery_service}' || sudo systemctl start '${recovery_service}'; sudo systemctl is-active '${recovery_service}'"
+  ssh "${host}" "set -euo pipefail; sudo systemctl restart '${recovery_service}' || sudo systemctl start '${recovery_service}'"
+  wait_remote_service_active "${recovery_service}"
 else
   echo "==> ${recovery_service} unchanged; leaving it running"
   ssh "${host}" "set -euo pipefail; sudo systemctl is-active '${recovery_service}' >/dev/null 2>&1 || sudo systemctl is-active '${recovery_socket}'"
@@ -416,6 +529,19 @@ if [[ "${deploy_recovery}" == "0" ]]; then
   ssh "${host}" "set -euo pipefail; sudo systemctl is-active '${recovery_service}' >/dev/null 2>&1 || sudo systemctl is-active '${recovery_socket}'"
 else
   ssh "${host}" "set -euo pipefail; sudo journalctl -u '${recovery_service}' --no-pager -n 30 || true"
+fi
+
+if [[ "${skip_verify}" != "1" ]]; then
+  echo "==> running post-deploy smoke verification"
+  BNTPOOL_HOST="${host}" \
+    BNTPOOL_REMOTE_DIR="${remote_dir}" \
+    BNTPOOL_API_SERVICE="${api_service}" \
+    BNTPOOL_STRATUM_SERVICE="${stratum_service}" \
+    BNTPOOL_MONITOR_SERVICE="${monitor_service}" \
+    BNTPOOL_RECOVERY_SERVICE="${recovery_service}" \
+    BNTPOOL_RECOVERY_SOCKET="${recovery_socket}" \
+    BNTPOOL_VERIFY_SINCE="${deploy_started_at}" \
+    bash "${repo_dir}/scripts/verify_bntpool_deploy.sh"
 fi
 
 if [[ "${deploy_cloudflare}" == "1" ]]; then

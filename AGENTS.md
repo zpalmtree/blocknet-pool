@@ -38,6 +38,9 @@
 - API/UI-only deploys should restart only `blocknet-pool-api.service` and should not restart Stratum when the Stratum binary hash is unchanged.
 - `--skip-ui-build` is safe only if `npm --prefix frontend run build` already ran locally.
 - Do not use `--skip-build` for UI changes. It skips the binary rebuild and upload, so embedded frontend changes will not reach production.
+- From macOS, use `BNTPOOL_REMOTE_BUILD=1 ./scripts/deploy_bntpool.sh` or a Linux Docker build image. The deploy script refuses plain non-Linux local binary builds because those artifacts cannot run on `bntpool`.
+- The deploy script verifies uploaded binary architecture before restarts, writes `/opt/blocknet/blocknet-pool/deploy-info.txt`, waits for services to settle active, and runs `./scripts/verify_bntpool_deploy.sh` unless `BNTPOOL_SKIP_VERIFY=1`.
+- Use `./scripts/verify_bntpool_deploy.sh` for a read-only post-deploy or live-health check without deploying.
 - The retired bridge host should be referenced as `oldpool`, not `bntpool`.
 - The deploy/provision scripts refuse `oldpool` or `5.161.113.120` unless `BNTPOOL_ALLOW_RETIRED_HOST=1` is set explicitly.
 - Keep the SSH deploy user able to write `/opt/blocknet/blocknet-pool` without sudo. Prefer shared group access on the primary host over world-writable directories.
@@ -53,8 +56,8 @@
    `cargo build --release -p blocknet-pool-monitor-app --bin blocknet-pool-monitor`
 3. Provision monitoring when needed: `bash scripts/provision_bntpool_monitoring.sh`
 4. Deploy app services:
-   API/UI-only: `bash scripts/deploy_bntpool.sh --api-only --skip-ui-build`
-   Full pool release: `bash scripts/deploy_bntpool.sh --skip-ui-build`
+   API/UI-only from macOS: `BNTPOOL_REMOTE_BUILD=1 bash scripts/deploy_bntpool.sh --api-only --skip-ui-build`
+   Full pool release from macOS: `BNTPOOL_REMOTE_BUILD=1 bash scripts/deploy_bntpool.sh --skip-ui-build`
 5. Deploy the Cloudflare public probe when needed: `bash scripts/deploy_cloudflare_monitor_worker.sh`
 
 ## Git

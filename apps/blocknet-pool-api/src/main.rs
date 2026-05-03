@@ -5,6 +5,7 @@ use tracing::info;
 mod api;
 mod config;
 mod runtime;
+mod ui;
 
 use api::run_api;
 use runtime::{api_listen_addr, bootstrap_api_runtime, build_api_state};
