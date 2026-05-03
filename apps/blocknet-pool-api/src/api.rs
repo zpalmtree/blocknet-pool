@@ -3778,20 +3778,6 @@ fn miner_balance_response(
     }
 }
 
-fn compute_payout_eta(store: &PoolStore) -> anyhow::Result<PayoutEtaResponse> {
-    let pending = store.get_pending_payouts()?;
-    let pending_total_amount = pending
-        .iter()
-        .fold(0u64, |acc, payout| acc.saturating_add(payout.amount));
-
-    Ok(PayoutEtaResponse {
-        next_sweep_at: None,
-        pending_total_amount,
-        wallet_spendable: None,
-        wallet_pending: None,
-    })
-}
-
 fn apply_wallet_liquidity_to_payout_eta(
     payout_eta: &mut PayoutEtaResponse,
     wallet_balance: Option<&WalletBalance>,
@@ -5113,7 +5099,16 @@ impl ApiState {
                     0
                 };
 
-                let payout_eta = compute_payout_eta(&store)?;
+                let pending_total_amount = store
+                    .get_pending_payouts()?
+                    .iter()
+                    .fold(0u64, |acc, payout| acc.saturating_add(payout.amount));
+                let payout_eta = PayoutEtaResponse {
+                    next_sweep_at: None,
+                    pending_total_amount,
+                    wallet_spendable: None,
+                    wallet_pending: None,
+                };
                 let luck_history = compute_chain_aware_luck_page(
                     store.as_ref(),
                     node.as_ref(),
