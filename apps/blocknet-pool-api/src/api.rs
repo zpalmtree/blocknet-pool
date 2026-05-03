@@ -2815,22 +2815,6 @@ fn update_window_preview_for_share(
     }
 }
 
-fn clone_sorted_share_window_previews(
-    by_address: &HashMap<String, ShareWindowAddressPreview>,
-) -> Vec<ShareWindowAddressPreview> {
-    let mut previews = by_address
-        .iter()
-        .filter(|(_, preview)| preview.seen_shares > 0)
-        .map(|(address, preview)| {
-            let mut preview = preview.clone();
-            preview.address = address.clone();
-            preview
-        })
-        .collect::<Vec<_>>();
-    previews.sort_by(|a, b| a.address.cmp(&b.address));
-    previews
-}
-
 fn prepare_duration_pending_estimate_blocks(
     store: &PoolStore,
     blocks: Vec<DbBlock>,
@@ -2906,7 +2890,17 @@ fn prepare_duration_pending_estimate_blocks(
             }
             left += 1;
         }
-        previews_by_block[window.index] = clone_sorted_share_window_previews(&active);
+        let mut previews = active
+            .iter()
+            .filter(|(_, preview)| preview.seen_shares > 0)
+            .map(|(address, preview)| {
+                let mut preview = preview.clone();
+                preview.address = address.clone();
+                preview
+            })
+            .collect::<Vec<_>>();
+        previews.sort_by(|a, b| a.address.cmp(&b.address));
+        previews_by_block[window.index] = previews;
     }
 
     Ok(blocks
