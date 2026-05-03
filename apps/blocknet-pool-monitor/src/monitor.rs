@@ -470,7 +470,8 @@ impl MonitorRuntime {
                 .as_ref()
                 .map(|(severity, _, _)| *severity),
             wallet_ready: wallet.error.is_none(),
-        });
+        })
+        .to_string();
 
         MonitorSample {
             sampled_at,
@@ -1689,12 +1690,12 @@ fn parse_proc_stat_metrics(
     ))
 }
 
-fn summarize_state(input: SummaryStateInput) -> String {
+fn summarize_state(input: SummaryStateInput) -> &'static str {
     if !input.api_up || !input.stratum_up || !input.db_up || !input.daemon_ready {
-        return "down".to_string();
+        return "down";
     }
     if !input.wallet_ready {
-        return "degraded".to_string();
+        return "degraded";
     }
     if input
         .template_refresh_millis
@@ -1706,9 +1707,9 @@ fn summarize_state(input: SummaryStateInput) -> String {
         || input.share_ingest_severity.is_some()
         || input.reference_height_divergence_severity.is_some()
     {
-        return "degraded".to_string();
+        return "degraded";
     }
-    "healthy".to_string()
+    "healthy"
 }
 
 fn format_millis(ms: u64) -> String {
