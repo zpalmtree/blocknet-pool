@@ -2,13 +2,9 @@ export type ThemeMode = 'light' | 'dark';
 
 export const THEME_STORAGE_KEY = 'pool_theme';
 
-function normalizeTheme(value: string | null | undefined): ThemeMode {
-  return value === 'dark' ? 'dark' : 'light';
-}
-
 export function getStoredTheme(): ThemeMode {
   try {
-    return normalizeTheme(window.localStorage.getItem(THEME_STORAGE_KEY));
+    return window.localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light';
   } catch {
     return 'light';
   }
