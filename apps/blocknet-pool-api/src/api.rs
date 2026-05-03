@@ -1943,28 +1943,20 @@ async fn handle_recovery_status(State(state): State<ApiState>) -> impl IntoRespo
 
 async fn handle_recovery_pause_payouts(State(state): State<ApiState>) -> impl IntoResponse {
     recovery_operation_response(&state, state.recovery.pause_payouts().await)
-        .await
-        .unwrap_or_else(|response| response)
 }
 
 async fn handle_recovery_resume_payouts(State(state): State<ApiState>) -> impl IntoResponse {
     recovery_operation_response(&state, state.recovery.resume_payouts().await)
-        .await
-        .unwrap_or_else(|response| response)
 }
 
 async fn handle_recovery_start_inactive_sync(State(state): State<ApiState>) -> impl IntoResponse {
     recovery_operation_response(&state, state.recovery.start_inactive_sync().await)
-        .await
-        .unwrap_or_else(|response| response)
 }
 
 async fn handle_recovery_rebuild_inactive_wallet(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
     recovery_operation_response(&state, state.recovery.rebuild_inactive_wallet().await)
-        .await
-        .unwrap_or_else(|response| response)
 }
 
 async fn handle_recovery_cutover(
@@ -1972,14 +1964,10 @@ async fn handle_recovery_cutover(
     Json(request): Json<RecoveryCutoverRequest>,
 ) -> impl IntoResponse {
     recovery_operation_response(&state, state.recovery.cutover(request.target).await)
-        .await
-        .unwrap_or_else(|response| response)
 }
 
 async fn handle_recovery_purge_inactive_daemon(State(state): State<ApiState>) -> impl IntoResponse {
     recovery_operation_response(&state, state.recovery.purge_inactive_daemon().await)
-        .await
-        .unwrap_or_else(|response| response)
 }
 
 async fn handle_admin_clear_address_risk_history(
@@ -2004,18 +1992,18 @@ async fn handle_admin_clear_address_risk_history(
     }
 }
 
-async fn recovery_operation_response(
+fn recovery_operation_response(
     state: &ApiState,
     result: anyhow::Result<RecoveryOperation>,
-) -> std::result::Result<Response, Response> {
+) -> Response {
     if !state.config.recovery.enabled {
-        return Err(error_response(
+        return error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "recovery controls are disabled",
-        ));
+        );
     }
     match result {
-        Ok(operation) => Ok(Json(operation).into_response()),
+        Ok(operation) => Json(operation).into_response(),
         Err(err) => {
             let message = err.to_string();
             let status = if message.contains("already running")
@@ -2032,9 +2020,9 @@ async fn recovery_operation_response(
                 StatusCode::INTERNAL_SERVER_ERROR
             };
             if status == StatusCode::INTERNAL_SERVER_ERROR {
-                Err(internal_error("failed starting recovery operation", err))
+                internal_error("failed starting recovery operation", err)
             } else {
-                Err(error_response(status, message))
+                error_response(status, message)
             }
         }
     }
