@@ -5482,13 +5482,6 @@ fn api_operation_slow_threshold_millis(operation: &str) -> u64 {
     }
 }
 
-fn api_task_slow_threshold_millis(task: &str) -> u64 {
-    match task {
-        "pending_estimate_snapshot_refresh" => 500,
-        _ => 250,
-    }
-}
-
 fn record_api_route_observation(
     state: &ApiState,
     route: &str,
@@ -5551,7 +5544,11 @@ fn record_api_operation_observation(
 }
 
 fn record_api_task_observation(state: &ApiState, task: &str, duration: Duration, failed: bool) {
-    let slow = duration.as_millis() >= u128::from(api_task_slow_threshold_millis(task));
+    let slow = duration.as_millis()
+        >= match task {
+            "pending_estimate_snapshot_refresh" => 500,
+            _ => 250,
+        };
     state.performance.tasks.record(task, duration, failed, slow);
     if failed {
         tracing::warn!(
