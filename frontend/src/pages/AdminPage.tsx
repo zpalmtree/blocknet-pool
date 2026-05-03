@@ -55,7 +55,6 @@ const SMALL_MUTED_TOP_STYLE: CSSProperties = { ...SMALL_MUTED_STYLE, marginTop: 
 const MONO_MUTED_STYLE: CSSProperties = { fontSize: 12, color: 'var(--muted)' };
 const MUTED_SUMMARY_STYLE: CSSProperties = { marginTop: 12, fontSize: 12, color: 'var(--muted)' };
 const SEMIBOLD_STYLE: CSSProperties = { fontWeight: 600 };
-const BAD_SEMIBOLD_STYLE: CSSProperties = { color: 'var(--bad)', fontWeight: 600 };
 const MUTED_SEMIBOLD_STYLE: CSSProperties = { color: 'var(--muted)', fontWeight: 600 };
 const FOOTER_LABEL_CELL_STYLE: CSSProperties = { fontWeight: 700, textAlign: 'left' };
 const TOP_6_STYLE: CSSProperties = { marginTop: 6 };
@@ -1780,7 +1779,7 @@ export function AdminPage({
                             <td>
                               {rewardBreakdown.block.orphaned ? (
                                 <>
-                                  <div style={BAD_SEMIBOLD_STYLE}>
+                                  <div style={{ color: 'var(--bad)', fontWeight: 600 }}>
                                     Orphaned
                                   </div>
                                   <div style={SMALL_MUTED_TOP_STYLE}>
