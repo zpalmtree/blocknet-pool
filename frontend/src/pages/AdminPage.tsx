@@ -2959,34 +2959,32 @@ export function AdminPage({
               </div>
 
               <div className="stats-grid stats-grid-dense" style={{ marginBottom: 16 }}>
-                <div className="stat-card">
-                  <div className="label">Open Issues</div>
-                  <div className="value mono">{reconciliationTotalOpenIssues ?? '-'}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Missing Payouts</div>
-                  <div className="value mono">{reconciliationIssues ? reconciliationMissingPayouts.length : '-'}</div>
-                  <div className="stat-meta">
-                    {reconciliationMissingPayoutTotalAmount == null
+                <StatCard label="Open Issues" value={reconciliationTotalOpenIssues ?? '-'} mono />
+                <StatCard
+                  label="Missing Payouts"
+                  value={reconciliationIssues ? reconciliationMissingPayouts.length : '-'}
+                  meta={
+                    reconciliationMissingPayoutTotalAmount == null
                       ? '-'
-                      : formatCompactCoins(reconciliationMissingPayoutTotalAmount)}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Orphaned Credit Blocks</div>
-                  <div className="value mono">{reconciliationIssues ? reconciliationOrphanedBlocks.length : '-'}</div>
-                  <div className="stat-meta">
-                    {reconciliationOrphanedBlockTotalCreditAmount == null
+                      : formatCompactCoins(reconciliationMissingPayoutTotalAmount)
+                  }
+                  mono
+                />
+                <StatCard
+                  label="Orphaned Credit Blocks"
+                  value={reconciliationIssues ? reconciliationOrphanedBlocks.length : '-'}
+                  meta={
+                    reconciliationOrphanedBlockTotalCreditAmount == null
                       ? '-'
-                      : formatCompactCoins(reconciliationOrphanedBlockTotalCreditAmount)}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Snapshot</div>
-                  <div className="value mono">
-                    {reconciliationIssues ? timeAgo(reconciliationIssues.generated_at) : '-'}
-                  </div>
-                </div>
+                      : formatCompactCoins(reconciliationOrphanedBlockTotalCreditAmount)
+                  }
+                  mono
+                />
+                <StatCard
+                  label="Snapshot"
+                  value={reconciliationIssues ? timeAgo(reconciliationIssues.generated_at) : '-'}
+                  mono
+                />
               </div>
 
               {!reconciliationIssues ? (
