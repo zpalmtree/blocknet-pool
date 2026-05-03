@@ -263,10 +263,6 @@ function recoveryOperationLabel(kind: RecoveryOperationKind | null | undefined):
   return labelFor(kind, RECOVERY_OPERATION_LABELS, 'Unknown operation');
 }
 
-function recoveryOperationStateLabel(state: string | null | undefined): string {
-  return labelFor(state, RECOVERY_OPERATION_STATE_LABELS, 'Unknown');
-}
-
 function RecoveryWalletSyncCard({ item }: { item: RecoveryInstanceStatus | null }) {
   const syncedHeight = item?.wallet.synced_height;
   const chainHeight = item?.chain_height ?? item?.wallet.chain_height;
@@ -3078,7 +3074,7 @@ export function AdminPage({
                                   : 'badge-pending'
                             }`}
                           >
-                            {recoveryOperationStateLabel(operation.state)}
+                            {labelFor(operation.state, RECOVERY_OPERATION_STATE_LABELS, 'Unknown')}
                           </span>
                         </td>
                         <td title={timestampTitle(operation.started_at) || undefined}>
@@ -3099,7 +3095,7 @@ export function AdminPage({
               <p style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)' }}>
                 Latest: {recoveryOperationLabel(recoveryLatestOperation.kind)}
                 {' · '}
-                {recoveryOperationStateLabel(recoveryLatestOperation.state)}
+                {labelFor(recoveryLatestOperation.state, RECOVERY_OPERATION_STATE_LABELS, 'Unknown')}
                 {recoveryLatestOperation.message ? ` · ${recoveryLatestOperation.message}` : ''}
               </p>
             ) : null}
