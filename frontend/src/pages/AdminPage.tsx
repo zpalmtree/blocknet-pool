@@ -87,6 +87,10 @@ function formatSignedCoins(value: number | null | undefined): string {
   return `${prefix}${formatCoinAmount(Math.abs(value))} BNT`;
 }
 
+function warnPositiveCoins(value: number) {
+  return value > 0 ? <span style={WARN_TEXT_STYLE}>{formatCoins(value)}</span> : formatCoins(value);
+}
+
 function ratioPct(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '-';
   return `${(value * 100).toFixed(2)}%`;
@@ -858,6 +862,8 @@ export function AdminPage({
   const minerWalletSurplusAmount = balanceOverview && cleanPayableAmount != null
     ? Math.max(balanceOverview.wallet.total - cleanPayableAmount, 0)
     : null;
+  const hasMinerFundingGap = (minerFundingGapAmount ?? 0) > 0;
+  const hasQueuedPayoutShortfall = (queuedPayoutShortfallAmount ?? 0) > 0;
   const canonicalMinerRewardTotal = balanceOverview
     ? Math.max(balanceOverview.ledger.net_block_reward_total - balanceOverview.ledger.pool_fee_total, 0)
     : null;
@@ -876,6 +882,7 @@ export function AdminPage({
   const acknowledgedHistoricalShortfallAmount = ledgerShortfallAmount != null
     ? Math.min(ledgerShortfallAmount, ACKNOWLEDGED_LAUNCH_ERA_MINER_SHORTFALL)
     : null;
+  const hasAcknowledgedHistoricalShortfall = (acknowledgedHistoricalShortfallAmount ?? 0) > 0;
   const unresolvedLedgerShortfallAmount =
     ledgerShortfallAmount != null && acknowledgedHistoricalShortfallAmount != null
       ? Math.max(ledgerShortfallAmount - acknowledgedHistoricalShortfallAmount, 0)
@@ -1497,9 +1504,9 @@ export function AdminPage({
               {minerFundingGapAmount != null && (
                 <div
                   className="stat-meta"
-                  style={warnGoodTextStyle(minerFundingGapAmount > 0)}
+                  style={warnGoodTextStyle(hasMinerFundingGap)}
                 >
-                  {minerFundingGapAmount > 0
+                  {hasMinerFundingGap
                     ? `${formatCoins(minerFundingGapAmount)} wallet gap vs clean miner liability`
                     : 'Wallet total covers clean miner liability'}
                 </div>
@@ -1532,7 +1539,7 @@ export function AdminPage({
                   ? `${formatCompactCoins(balanceOverview.wallet.total)} total`
                   : '-'}
               </div>
-              {minerFundingGapAmount != null && minerFundingGapAmount > 0 && (
+              {hasMinerFundingGap && (
                 <div className="stat-meta" style={WARN_TEXT_STYLE}>
                   {`${formatCompactCoins(minerFundingGapAmount)} still needed for clean miners`}
                 </div>
@@ -1549,7 +1556,7 @@ export function AdminPage({
               )}
               {balanceOverview &&
                 !hasUnresolvedLedgerMismatch &&
-                (acknowledgedHistoricalShortfallAmount ?? 0) > 0 && (
+                hasAcknowledgedHistoricalShortfall && (
                   <div className="stat-meta">Launch-era baseline acknowledged</div>
                 )}
             </div>
@@ -2510,7 +2517,7 @@ export function AdminPage({
                     </div>
                   </div>
                 )}
-                {!hasUnresolvedLedgerMismatch && (acknowledgedHistoricalShortfallAmount ?? 0) > 0 && (
+                {!hasUnresolvedLedgerMismatch && hasAcknowledgedHistoricalShortfall && (
                   <div
                     className="card"
                     style={{
@@ -2533,11 +2540,11 @@ export function AdminPage({
                     className="admin-balance-overview__panel"
                     style={{
                       borderColor:
-                        minerFundingGapAmount != null && minerFundingGapAmount > 0
+                        hasMinerFundingGap
                           ? 'rgba(247, 180, 75, 0.4)'
                           : 'rgba(22, 163, 74, 0.24)',
                       background:
-                        minerFundingGapAmount != null && minerFundingGapAmount > 0
+                        hasMinerFundingGap
                           ? 'rgba(247, 180, 75, 0.06)'
                           : 'rgba(22, 163, 74, 0.05)',
                     }}
@@ -2558,17 +2565,17 @@ export function AdminPage({
                       </div>
                       <div className="admin-balance-overview__row">
                         <span>
-                          {minerFundingGapAmount != null && minerFundingGapAmount > 0
+                          {hasMinerFundingGap
                             ? 'Estimated miner funding gap'
                             : 'Wallet surplus over miner liability'}
                         </span>
                         <span
                           className="mono"
-                          style={warnGoodTextStyle(minerFundingGapAmount != null && minerFundingGapAmount > 0)}
+                          style={warnGoodTextStyle(hasMinerFundingGap)}
                         >
                           {formatCoins(
-                            minerFundingGapAmount != null && minerFundingGapAmount > 0
-                              ? minerFundingGapAmount
+                            hasMinerFundingGap
+                              ? minerFundingGapAmount ?? 0
                               : minerWalletSurplusAmount ?? 0
                           )}
                         </span>
@@ -2577,7 +2584,7 @@ export function AdminPage({
                         <span>Immediate queue shortfall</span>
                         <span
                           className="mono"
-                          style={warnGoodTextStyle((queuedPayoutShortfallAmount ?? 0) > 0)}
+                          style={warnGoodTextStyle(hasQueuedPayoutShortfall)}
                         >
                           {formatCoins(queuedPayoutShortfallAmount ?? 0)}
                         </span>
@@ -2622,7 +2629,7 @@ export function AdminPage({
                           {formatWholeNumber(balanceOverview.payouts.queued_count)}
                         </span>
                       </div>
-                      {(queuedPayoutShortfallAmount ?? 0) > 0 && (
+                      {hasQueuedPayoutShortfall && (
                         <div className="admin-balance-overview__row">
                           <span>Immediate queue shortfall</span>
                           <span className="mono" style={WARN_TEXT_STYLE}>
@@ -2800,23 +2807,9 @@ export function AdminPage({
                             {shortAddr(b.address)}
                           </a>
                         </td>
-                        <td className="mono">
-                          {b.clean_payable > 0 ? formatCoins(b.clean_payable) : formatCoins(0)}
-                        </td>
-                        <td className="mono">
-                          {b.orphan_backed > 0 ? (
-                            <span style={WARN_TEXT_STYLE}>{formatCoins(b.orphan_backed)}</span>
-                          ) : (
-                            formatCoins(0)
-                          )}
-                        </td>
-                        <td className="mono">
-                          {b.pending > 0 ? (
-                            <span style={WARN_TEXT_STYLE}>{formatCoins(b.pending)}</span>
-                          ) : (
-                            formatCoins(b.pending)
-                          )}
-                        </td>
+                        <td className="mono">{formatCoins(Math.max(0, b.clean_payable))}</td>
+                        <td className="mono">{warnPositiveCoins(b.orphan_backed)}</td>
+                        <td className="mono">{warnPositiveCoins(b.pending)}</td>
                         <td className="mono">{formatCoins(b.paid)}</td>
                       </tr>
                     ))
