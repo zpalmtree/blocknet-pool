@@ -1278,10 +1278,16 @@ impl PayoutProcessor {
                 .take(target_recipients_per_tx.min(remaining_recipient_cap))
                 .cloned()
                 .collect::<Vec<_>>();
-            trim_batch_to_total_cap(
-                &mut batch_candidates,
-                max_total_per_tick.saturating_sub(sent_total),
-            );
+            let total_cap = max_total_per_tick.saturating_sub(sent_total);
+            while total_cap != u64::MAX
+                && batch_candidates.iter().fold(0u64, |acc, candidate| {
+                    acc.saturating_add(candidate.pending.amount)
+                }) > total_cap
+            {
+                if batch_candidates.pop().is_none() {
+                    break;
+                }
+            }
             if batch_candidates.is_empty() {
                 break;
             }
@@ -2421,20 +2427,6 @@ fn compute_safe_spend_budget(
     spendable
         .saturating_sub(reserve_floor)
         .saturating_sub(MIN_PAYOUT_FEE_BUFFER.saturating_mul(4))
-}
-
-fn trim_batch_to_total_cap(batch: &mut Vec<PayoutCandidate>, total_cap: u64) {
-    if total_cap == u64::MAX {
-        return;
-    }
-    while batch.iter().fold(0u64, |acc, candidate| {
-        acc.saturating_add(candidate.pending.amount)
-    }) > total_cap
-    {
-        if batch.pop().is_none() {
-            break;
-        }
-    }
 }
 
 fn payout_candidate_with_amount(candidate: &PayoutCandidate, amount: u64) -> PayoutCandidate {
