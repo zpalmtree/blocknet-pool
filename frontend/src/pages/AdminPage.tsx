@@ -90,6 +90,19 @@ function rewardStatusTone(status: string): string {
   }
 }
 
+function rewardDeltaTone(value: number | null | undefined, paidOut = false): string {
+  if (value == null) return 'var(--muted)';
+  if (value === 0) return 'var(--good)';
+  return paidOut ? 'var(--muted)' : 'var(--warn)';
+}
+
+function rewardDeltaStyle(value: number | null | undefined, paidOut = false): CSSProperties {
+  return { color: rewardDeltaTone(value, paidOut) };
+}
+
+function rewardDeltaSemiboldStyle(value: number | null | undefined, paidOut = false): CSSProperties {
+  return { ...rewardDeltaStyle(value, paidOut), fontWeight: 600 };
+}
 
 function formatSignedCoins(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '-';
@@ -1853,18 +1866,7 @@ export function AdminPage({
                               <td>{row.actual_credit != null ? formatCoins(row.actual_credit) : '-'}</td>
                             )}
                             {rewardBreakdown.block.orphaned ? null : (
-                              <td
-                                style={{
-                                  color:
-                                    row.delta_vs_payout == null
-                                      ? 'var(--muted)'
-                                      : row.delta_vs_payout === 0
-                                        ? 'var(--good)'
-                                        : rewardBreakdownPaidOut
-                                          ? 'var(--muted)'
-                                          : 'var(--warn)',
-                                }}
-                              >
+                              <td style={rewardDeltaStyle(row.delta_vs_payout, rewardBreakdownPaidOut)}>
                                 {formatSignedCoins(row.delta_vs_payout)}
                               </td>
                             )}
@@ -1948,16 +1950,7 @@ export function AdminPage({
                             </div>
                           </td>
                           <td>{rewardBreakdown.actual_fee_amount != null ? formatCoins(rewardBreakdown.actual_fee_amount) : '-'}</td>
-                          <td
-                            style={{
-                              color:
-                                rewardFeeDelta == null
-                                  ? 'var(--muted)'
-                                  : rewardFeeDelta === 0
-                                    ? 'var(--good)'
-                                    : 'var(--warn)',
-                            }}
-                          >
+                          <td style={rewardDeltaStyle(rewardFeeDelta)}>
                             {formatSignedCoins(rewardFeeDelta)}
                           </td>
                           <td className="mono">-</td>
@@ -1995,37 +1988,14 @@ export function AdminPage({
                             </div>
                           </td>
                           <td>{rewardActualBlockTotal != null ? formatCoins(rewardActualBlockTotal) : '-'}</td>
-                          <td
-                            style={{
-                              color:
-                                rewardActualBlockDelta == null
-                                  ? 'var(--muted)'
-                                  : rewardActualBlockDelta === 0
-                                    ? 'var(--good)'
-                                    : rewardBreakdownPaidOut
-                                      ? 'var(--muted)'
-                                      : 'var(--warn)',
-                            }}
-                          >
+                          <td style={rewardDeltaStyle(rewardActualBlockDelta, rewardBreakdownPaidOut)}>
                             {formatSignedCoins(rewardActualBlockDelta)}
                           </td>
                           <td className="mono">{rewardBreakdown.payout_total_weight}</td>
                           <td className="mono">{rewardBreakdownTotals.verifiedDifficulty}</td>
                           <td className="mono">{rewardBreakdownTotals.provisionalEligibleDifficulty}</td>
                           <td>
-                            <div
-                              style={{
-                                color:
-                                  rewardActualBlockDelta == null
-                                    ? 'var(--muted)'
-                                    : rewardActualBlockDelta === 0
-                                      ? 'var(--good)'
-                                      : rewardBreakdownPaidOut
-                                        ? 'var(--muted)'
-                                        : 'var(--warn)',
-                                fontWeight: 600,
-                              }}
-                            >
+                            <div style={rewardDeltaSemiboldStyle(rewardActualBlockDelta, rewardBreakdownPaidOut)}>
                               {rewardActualBlockDelta == null
                                 ? 'Pending'
                                 : rewardActualBlockDelta === 0
