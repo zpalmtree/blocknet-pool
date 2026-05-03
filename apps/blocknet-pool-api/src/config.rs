@@ -39,6 +39,7 @@ impl Config {
         let mut cfg: Config = serde_json::from_slice(&data)
             .with_context(|| format!("parse config {}", path.display()))?;
         cfg.normalize();
+        cfg.runtime.validate()?;
         Ok(cfg)
     }
 
@@ -71,5 +72,18 @@ mod tests {
         assert_eq!(cfg.runtime.pool_name, "flat");
         assert_eq!(cfg.runtime.stratum_port, 4444);
         assert_eq!(cfg.api_port, 1234);
+    }
+
+    #[test]
+    fn api_config_load_validates_flat_runtime_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, r#"{"payout_interval":"not-a-duration"}"#).unwrap();
+
+        let err = match Config::load(&path) {
+            Ok(_) => panic!("invalid runtime duration should fail API config load"),
+            Err(err) => err,
+        };
+        assert!(format!("{err:#}").contains("payout_interval"));
     }
 }

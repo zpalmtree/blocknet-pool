@@ -130,9 +130,13 @@ impl Config {
         let data = fs::read(path).with_context(|| format!("read config {}", path.display()))?;
         let mut cfg: Config = serde_json::from_slice(&data)
             .with_context(|| format!("parse config {}", path.display()))?;
-        cfg.normalize();
-        cfg.validate()?;
+        cfg.normalize_and_validate()?;
         Ok(cfg)
+    }
+
+    pub fn normalize_and_validate(&mut self) -> Result<()> {
+        self.normalize();
+        self.validate()
     }
 
     pub fn normalize(&mut self) {
@@ -280,7 +284,7 @@ impl Config {
         Ok(())
     }
 
-    fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         match self.validation_mode.as_str() {
             "full" | "probabilistic" => {}
             _ => anyhow::bail!("validation_mode must be either \"full\" or \"probabilistic\""),
