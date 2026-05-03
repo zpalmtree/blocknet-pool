@@ -3447,17 +3447,22 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              WHERE s.address = $1",
             &[&address, &to_unix(provisional_cutoff)],
         )?;
-        Ok(row.map(|row| ValidationHoldState {
-            forced_started_at: row.get::<_, Option<i64>>(0).map(from_unix),
-            forced_until: row
-                .get::<_, Option<i64>>(1)
-                .map(from_unix)
-                .filter(|until| *until > now),
-            hold_cause: validation_hold_cause_from_db(row.get::<_, Option<String>>(2).as_deref()),
-            pending_provisional: row.get::<_, i64>(3).max(0) as u64,
-            recent_verified_difficulty: row.get::<_, i64>(4).max(0) as u64,
-            recent_provisional_difficulty: row.get::<_, i64>(5).max(0) as u64,
-        }))
+        row.map(|row| {
+            Ok(ValidationHoldState {
+                forced_started_at: row.get::<_, Option<i64>>(0).map(from_unix),
+                forced_until: row
+                    .get::<_, Option<i64>>(1)
+                    .map(from_unix)
+                    .filter(|until| *until > now),
+                hold_cause: validation_hold_cause_from_db(
+                    row.get::<_, Option<String>>(2).as_deref(),
+                )?,
+                pending_provisional: row.get::<_, i64>(3).max(0) as u64,
+                recent_verified_difficulty: row.get::<_, i64>(4).max(0) as u64,
+                recent_provisional_difficulty: row.get::<_, i64>(5).max(0) as u64,
+            })
+        })
+        .transpose()
     }
 
     fn validation_forced_until_after(
@@ -3553,12 +3558,11 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              ORDER BY address ASC",
             &[&now_ts, &to_unix(provisional_cutoff)],
         )?;
-        Ok(rows
-            .iter()
+        rows.iter()
             .map(|row| {
                 let last_reason = row.get::<_, Option<String>>(2);
                 let validation_hold_cause =
-                    validation_hold_cause_from_db(row.get::<_, Option<String>>(8).as_deref());
+                    validation_hold_cause_from_db(row.get::<_, Option<String>>(8).as_deref())?;
                 let validation_pending_provisional = row.get::<_, i64>(9).max(0) as u64;
                 let validation_recent_verified_difficulty = row.get::<_, i64>(10).max(0) as u64;
                 let validation_recent_provisional_difficulty = row.get::<_, i64>(11).max(0) as u64;
@@ -3571,7 +3575,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                         )
                     })
                 });
-                ActiveVerificationHold {
+                Ok(ActiveVerificationHold {
                     address: row.get::<_, String>(0),
                     strikes: row.get::<_, Option<i64>>(1).unwrap_or_default().max(0) as u64,
                     last_reason,
@@ -3593,9 +3597,9 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     validation_pending_provisional,
                     validation_recent_verified_difficulty,
                     validation_recent_provisional_difficulty,
-                }
+                })
             })
-            .collect())
+            .collect()
     }
 
     pub fn escalate_address_risk(
@@ -4905,24 +4909,26 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         )?;
         let states = rows
             .iter()
-            .map(|row| PersistedValidationAddressState {
-                address: row.get::<_, String>(0),
-                total_shares: row.get::<_, i64>(1).max(0) as u64,
-                sampled_shares: row.get::<_, i64>(2).max(0) as u64,
-                invalid_samples: row.get::<_, i64>(3).max(0) as u64,
-                risk_sampled_shares: row.get::<_, i64>(4).max(0) as u64,
-                risk_invalid_samples: row.get::<_, i64>(5).max(0) as u64,
-                forced_started_at: row.get::<_, Option<i64>>(6).map(from_unix),
-                forced_until: row.get::<_, Option<i64>>(7).map(from_unix),
-                forced_sampled_shares: row.get::<_, i64>(8).max(0) as u64,
-                forced_invalid_samples: row.get::<_, i64>(9).max(0) as u64,
-                resume_forced_at: row.get::<_, Option<i64>>(10).map(from_unix),
-                hold_cause: validation_hold_cause_from_db(
-                    row.get::<_, Option<String>>(11).as_deref(),
-                ),
-                last_seen_at: from_unix(row.get::<_, i64>(12)),
+            .map(|row| {
+                Ok(PersistedValidationAddressState {
+                    address: row.get::<_, String>(0),
+                    total_shares: row.get::<_, i64>(1).max(0) as u64,
+                    sampled_shares: row.get::<_, i64>(2).max(0) as u64,
+                    invalid_samples: row.get::<_, i64>(3).max(0) as u64,
+                    risk_sampled_shares: row.get::<_, i64>(4).max(0) as u64,
+                    risk_invalid_samples: row.get::<_, i64>(5).max(0) as u64,
+                    forced_started_at: row.get::<_, Option<i64>>(6).map(from_unix),
+                    forced_until: row.get::<_, Option<i64>>(7).map(from_unix),
+                    forced_sampled_shares: row.get::<_, i64>(8).max(0) as u64,
+                    forced_invalid_samples: row.get::<_, i64>(9).max(0) as u64,
+                    resume_forced_at: row.get::<_, Option<i64>>(10).map(from_unix),
+                    hold_cause: validation_hold_cause_from_db(
+                        row.get::<_, Option<String>>(11).as_deref(),
+                    )?,
+                    last_seen_at: from_unix(row.get::<_, i64>(12)),
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>>>()?;
 
         let provisional_rows = self.conn().lock().query(
             "SELECT address, share_id, created_at
@@ -5611,12 +5617,13 @@ fn from_unix(ts: i64) -> SystemTime {
     UNIX_EPOCH + Duration::from_secs(ts as u64)
 }
 
-fn validation_hold_cause_from_db(value: Option<&str>) -> Option<ValidationHoldCause> {
+fn validation_hold_cause_from_db(value: Option<&str>) -> Result<Option<ValidationHoldCause>> {
     match value.map(str::trim).filter(|value| !value.is_empty()) {
-        Some("invalid_samples") => Some(ValidationHoldCause::InvalidSamples),
-        Some("provisional_backlog") => Some(ValidationHoldCause::ProvisionalBacklog),
-        Some("payout_coverage") => Some(ValidationHoldCause::PayoutCoverage),
-        _ => None,
+        Some("invalid_samples") => Ok(Some(ValidationHoldCause::InvalidSamples)),
+        Some("provisional_backlog") => Ok(Some(ValidationHoldCause::ProvisionalBacklog)),
+        Some("payout_coverage") => Ok(Some(ValidationHoldCause::PayoutCoverage)),
+        Some(value) => Err(anyhow!("unknown validation hold cause {value:?}")),
+        None => Ok(None),
     }
 }
 
@@ -5652,6 +5659,20 @@ mod tests {
 
     fn unique_suffix() -> String {
         format!("{}-{}", std::process::id(), rand::random::<u64>())
+    }
+
+    #[test]
+    fn db_enum_parsers_reject_unknown_values() {
+        assert_eq!(
+            BalanceCreditSourceKind::from_db("block").unwrap(),
+            BalanceCreditSourceKind::Block
+        );
+        assert!(BalanceCreditSourceKind::from_db("legacy").is_err());
+        assert_eq!(
+            validation_hold_cause_from_db(Some("payout_coverage")).unwrap(),
+            Some(ValidationHoldCause::PayoutCoverage)
+        );
+        assert!(validation_hold_cause_from_db(Some("legacy")).is_err());
     }
 
     #[test]
