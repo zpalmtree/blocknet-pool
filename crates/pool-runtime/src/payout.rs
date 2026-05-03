@@ -2140,19 +2140,11 @@ fn resolve_wallet_rebalance_destination<'a>(
     Some(destination)
 }
 
-pub(crate) fn resolve_pool_fee_destination(cfg: &Config, block: &DbBlock) -> Option<String> {
-    resolve_pool_fee_destination_from_address(&cfg.pool_fee_wallet_address, block)
-}
-
-fn resolve_pool_fee_destination_from_address(
-    pool_fee_wallet_address: &str,
-    block: &DbBlock,
-) -> Option<String> {
-    let configured = pool_fee_wallet_address.trim();
+pub(crate) fn resolve_pool_fee_destination(cfg: &Config, _block: &DbBlock) -> Option<String> {
+    let configured = cfg.pool_fee_wallet_address.trim();
     if !configured.is_empty() {
         return Some(configured.to_string());
     }
-    let _ = block;
     None
 }
 
