@@ -978,11 +978,11 @@ struct BlockRewardParticipantResponse {
     preview_weight: u64,
     preview_share_pct: f64,
     preview_credit: u64,
-    preview_status: String,
+    preview_status: RewardParticipantStatus,
     payout_weight: u64,
     payout_share_pct: f64,
     payout_credit: u64,
-    payout_status: String,
+    payout_status: RewardParticipantStatus,
     actual_credit: Option<u64>,
     delta_vs_payout: Option<i64>,
 }
@@ -1137,25 +1137,14 @@ struct RewardWindowAddressStats {
     provisional_difficulty_eligible: u64,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 enum RewardParticipantStatus {
     Included,
     CappedProvisional,
     AwaitingVerifiedShares,
     NoEligibleShares,
     RecordedOnly,
-}
-
-impl RewardParticipantStatus {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Included => "included",
-            Self::CappedProvisional => "capped_provisional",
-            Self::AwaitingVerifiedShares => "awaiting_verified_shares",
-            Self::NoEligibleShares => "no_eligible_shares",
-            Self::RecordedOnly => "recorded_only",
-        }
-    }
 }
 
 #[derive(Default)]
@@ -3643,7 +3632,7 @@ fn build_block_reward_breakdown(
                         / preview_mode.total_weight as f64
                 },
                 preview_credit: preview_mode.credits.get(&address).copied().unwrap_or(0),
-                preview_status: preview_status.as_str().to_string(),
+                preview_status,
                 payout_weight: payout_mode.weights.get(&address).copied().unwrap_or(0),
                 payout_share_pct: if payout_mode.total_weight == 0 {
                     0.0
@@ -3652,7 +3641,7 @@ fn build_block_reward_breakdown(
                         / payout_mode.total_weight as f64
                 },
                 payout_credit,
-                payout_status: payout_status.as_str().to_string(),
+                payout_status,
                 actual_credit,
                 delta_vs_payout: actual_credit.map(|actual| actual as i64 - payout_credit as i64),
                 address,
@@ -5765,9 +5754,9 @@ mod tests {
         pending_estimate_snapshot_can_serve, pending_estimate_snapshot_needs_refresh,
         public_telemetry_route_kind_for_path, HashrateStatsInput, MinerHashrateRamp,
         PendingEstimateSnapshotCache, PublicTelemetryRateLimiter, PublicTelemetryRouteKind,
-        MINER_PENDING_ESTIMATE_HOT_WINDOW, MINER_PENDING_ESTIMATE_REFRESH_AFTER,
-        PUBLIC_TELEMETRY_MINER_RATE_LIMIT, PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW,
-        PUBLIC_TELEMETRY_STATS_RATE_LIMIT,
+        RewardParticipantStatus, MINER_PENDING_ESTIMATE_HOT_WINDOW,
+        MINER_PENDING_ESTIMATE_REFRESH_AFTER, PUBLIC_TELEMETRY_MINER_RATE_LIMIT,
+        PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW, PUBLIC_TELEMETRY_STATS_RATE_LIMIT,
     };
     use crate::config::Config;
     use axum::body::to_bytes;
@@ -7056,7 +7045,10 @@ mod tests {
             .expect("miner-a row");
         assert_eq!(miner_a.preview_weight, 120);
         assert_eq!(miner_a.payout_weight, 40);
-        assert_eq!(miner_a.payout_status, "capped_provisional");
+        assert_eq!(
+            miner_a.payout_status,
+            RewardParticipantStatus::CappedProvisional
+        );
     }
 
     #[test]
@@ -7109,7 +7101,7 @@ mod tests {
         assert_eq!(miner_a.provisional_shares_eligible, 0);
         assert_eq!(miner_a.preview_credit, 1_000);
         assert_eq!(miner_a.payout_credit, 1_000);
-        assert_eq!(miner_a.payout_status, "included");
+        assert_eq!(miner_a.payout_status, RewardParticipantStatus::Included);
     }
 
     #[test]
