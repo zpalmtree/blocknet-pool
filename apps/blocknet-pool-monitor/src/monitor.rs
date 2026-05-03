@@ -1945,95 +1945,56 @@ fn append_spool_entry(path: &Path, heartbeat: &MonitorHeartbeatUpsert) -> Result
 
 fn render_metrics(snapshot: &MonitorSnapshot) -> String {
     let mut out = String::new();
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_api_up",
-        u8::from(snapshot.api_up.unwrap_or(false)),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_stratum_up",
-        u8::from(snapshot.stratum_up.unwrap_or(false)),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_db_up",
-        u8::from(snapshot.db_up.unwrap_or(false)),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_daemon_up",
-        u8::from(snapshot.daemon_up.unwrap_or(false)),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_daemon_syncing",
-        u8::from(snapshot.daemon_syncing.unwrap_or(false)),
-    );
+    for (name, value) in [
+        ("blocknet_pool_monitor_api_up", snapshot.api_up),
+        ("blocknet_pool_monitor_stratum_up", snapshot.stratum_up),
+        ("blocknet_pool_monitor_db_up", snapshot.db_up),
+        ("blocknet_pool_monitor_daemon_up", snapshot.daemon_up),
+        (
+            "blocknet_pool_monitor_daemon_syncing",
+            snapshot.daemon_syncing,
+        ),
+        ("blocknet_pool_monitor_wallet_up", snapshot.wallet_up),
+    ] {
+        metric_bool_line(&mut out, name, value);
+    }
+
     metric_line(
         &mut out,
         "blocknet_pool_monitor_daemon_process_block_active",
         u8::from(snapshot.daemon_current_process_block.is_some()),
     );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_daemon_process_block_elapsed_millis",
-        snapshot
-            .daemon_current_process_block
-            .as_ref()
-            .map(|block| block.elapsed_millis)
-            .unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_daemon_process_block_stage_elapsed_millis",
-        snapshot
-            .daemon_current_process_block
-            .as_ref()
-            .map(|block| block.stage_elapsed_millis)
-            .unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_daemon_last_process_block_total_millis",
-        snapshot
-            .daemon_last_process_block
-            .as_ref()
-            .map(|block| block.total_millis)
-            .unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_daemon_last_process_block_validate_millis",
-        snapshot
-            .daemon_last_process_block
-            .as_ref()
-            .map(|block| block.validate_millis)
-            .unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_daemon_last_process_block_commit_millis",
-        snapshot
-            .daemon_last_process_block
-            .as_ref()
-            .map(|block| block.commit_millis)
-            .unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_daemon_last_process_block_reorg_millis",
-        snapshot
-            .daemon_last_process_block
-            .as_ref()
-            .map(|block| block.reorg_millis)
-            .unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_wallet_up",
-        u8::from(snapshot.wallet_up.unwrap_or(false)),
-    );
+    let current_block = snapshot.daemon_current_process_block.as_ref();
+    let last_block = snapshot.daemon_last_process_block.as_ref();
+    for (name, value) in [
+        (
+            "blocknet_pool_monitor_daemon_process_block_elapsed_millis",
+            current_block.map(|block| block.elapsed_millis),
+        ),
+        (
+            "blocknet_pool_monitor_daemon_process_block_stage_elapsed_millis",
+            current_block.map(|block| block.stage_elapsed_millis),
+        ),
+        (
+            "blocknet_pool_monitor_daemon_last_process_block_total_millis",
+            last_block.map(|block| block.total_millis),
+        ),
+        (
+            "blocknet_pool_monitor_daemon_last_process_block_validate_millis",
+            last_block.map(|block| block.validate_millis),
+        ),
+        (
+            "blocknet_pool_monitor_daemon_last_process_block_commit_millis",
+            last_block.map(|block| block.commit_millis),
+        ),
+        (
+            "blocknet_pool_monitor_daemon_last_process_block_reorg_millis",
+            last_block.map(|block| block.reorg_millis),
+        ),
+    ] {
+        metric_option_line(&mut out, name, value);
+    }
+
     metric_line(
         &mut out,
         "blocknet_pool_monitor_open_public_incidents",
@@ -2044,86 +2005,71 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
         "blocknet_pool_monitor_open_private_incidents",
         snapshot.open_private_incidents,
     );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_chain_height",
-        snapshot.chain_height.unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_reference_height_spread_blocks",
-        snapshot.reference_height_spread.unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_reference_height_min",
-        snapshot.reference_height_min.unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_reference_height_max",
-        snapshot.reference_height_max.unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_template_age_seconds",
-        snapshot.template_age_seconds.unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_last_refresh_millis",
-        snapshot.last_refresh_millis.unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_stratum_snapshot_age_seconds",
-        snapshot.stratum_snapshot_age_seconds.unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_connected_miners",
-        snapshot.connected_miners.unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_connected_workers",
-        snapshot.connected_workers.unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_last_accepted_share_age_seconds",
-        snapshot.last_accepted_share_age_seconds.unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_payout_pending_count",
-        snapshot.payout_pending_count.unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_payout_pending_amount",
-        snapshot.payout_pending_amount.unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_oldest_pending_payout_age_seconds",
-        snapshot.oldest_pending_payout_age_seconds.unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_oldest_pending_send_age_seconds",
-        snapshot.oldest_pending_send_age_seconds.unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_validation_candidate_queue_depth",
-        snapshot.validation_candidate_queue_depth.unwrap_or(0),
-    );
-    metric_line(
-        &mut out,
-        "blocknet_pool_monitor_validation_regular_queue_depth",
-        snapshot.validation_regular_queue_depth.unwrap_or(0),
-    );
+    for (name, value) in [
+        ("blocknet_pool_monitor_chain_height", snapshot.chain_height),
+        (
+            "blocknet_pool_monitor_reference_height_spread_blocks",
+            snapshot.reference_height_spread,
+        ),
+        (
+            "blocknet_pool_monitor_reference_height_min",
+            snapshot.reference_height_min,
+        ),
+        (
+            "blocknet_pool_monitor_reference_height_max",
+            snapshot.reference_height_max,
+        ),
+        (
+            "blocknet_pool_monitor_template_age_seconds",
+            snapshot.template_age_seconds,
+        ),
+        (
+            "blocknet_pool_monitor_last_refresh_millis",
+            snapshot.last_refresh_millis,
+        ),
+        (
+            "blocknet_pool_monitor_stratum_snapshot_age_seconds",
+            snapshot.stratum_snapshot_age_seconds,
+        ),
+        (
+            "blocknet_pool_monitor_connected_miners",
+            snapshot.connected_miners,
+        ),
+        (
+            "blocknet_pool_monitor_connected_workers",
+            snapshot.connected_workers,
+        ),
+        (
+            "blocknet_pool_monitor_last_accepted_share_age_seconds",
+            snapshot.last_accepted_share_age_seconds,
+        ),
+        (
+            "blocknet_pool_monitor_payout_pending_count",
+            snapshot.payout_pending_count,
+        ),
+        (
+            "blocknet_pool_monitor_payout_pending_amount",
+            snapshot.payout_pending_amount,
+        ),
+        (
+            "blocknet_pool_monitor_oldest_pending_payout_age_seconds",
+            snapshot.oldest_pending_payout_age_seconds,
+        ),
+        (
+            "blocknet_pool_monitor_oldest_pending_send_age_seconds",
+            snapshot.oldest_pending_send_age_seconds,
+        ),
+        (
+            "blocknet_pool_monitor_validation_candidate_queue_depth",
+            snapshot.validation_candidate_queue_depth,
+        ),
+        (
+            "blocknet_pool_monitor_validation_regular_queue_depth",
+            snapshot.validation_regular_queue_depth,
+        ),
+    ] {
+        metric_option_line(&mut out, name, value);
+    }
     for (service, metrics) in &snapshot.process_metrics {
         metric_line_labeled(
             &mut out,
@@ -2239,6 +2185,17 @@ where
     buf.push(' ');
     buf.push_str(&value.to_string());
     buf.push('\n');
+}
+
+fn metric_bool_line(buf: &mut String, name: &str, value: Option<bool>) {
+    metric_line(buf, name, u8::from(value.unwrap_or(false)));
+}
+
+fn metric_option_line<T>(buf: &mut String, name: &str, value: Option<T>)
+where
+    T: std::fmt::Display + Default,
+{
+    metric_line(buf, name, value.unwrap_or_default());
 }
 
 fn metric_line_labeled<T>(buf: &mut String, name: &str, labels: &[(&str, &str)], value: T)
