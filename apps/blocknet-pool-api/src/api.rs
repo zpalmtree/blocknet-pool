@@ -5468,9 +5468,7 @@ fn api_performance_route_name(uri: &Uri) -> Option<&'static str> {
 fn api_route_slow_threshold_millis(route: &str) -> u64 {
     match route {
         "stats" | "stats_history" | "health" | "miner_balance" | "payouts_recent" => 100,
-        "status" | "stats_insights" | "blocks" => 250,
         "luck" => 500,
-        "miner_detail" | "other_api" => 250,
         "admin_balance_overview"
         | "admin_reconciliation_issues"
         | "admin_reconciliation_payout_import"
@@ -5491,7 +5489,6 @@ fn api_operation_slow_threshold_millis(operation: &str) -> u64 {
         | "pool_hashrate_load"
         | "luck_page_load"
         | "luck_details_load" => 100,
-        "network_hashrate_load" | "miner_balance_load" | "miner_detail_load" => 250,
         "pending_estimate_snapshot_load" => 500,
         _ => 250,
     }
