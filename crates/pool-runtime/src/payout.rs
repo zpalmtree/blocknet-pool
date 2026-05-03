@@ -1663,7 +1663,13 @@ impl PayoutProcessor {
         batch_id: &str,
         entries: &[PendingPayout],
     ) -> anyhow::Result<Option<Vec<PendingPayout>>> {
-        let idempotency_path = daemon_send_idempotency_path(&self.cfg);
+        let daemon_data_dir = self.cfg.daemon_data_dir.trim();
+        let idempotency_path = PathBuf::from(if daemon_data_dir.is_empty() {
+            "data"
+        } else {
+            daemon_data_dir
+        })
+        .join("send-idempotency.json");
         let Some(recovered) = load_recovered_wallet_send_for_batch(&idempotency_path, batch_id)?
         else {
             return Ok(None);
@@ -2749,14 +2755,6 @@ fn payout_batch_id(candidates: &[PayoutCandidate]) -> String {
 
 fn payout_batch_idempotency_key(batch_id: &str) -> String {
     sha256_hex(format!("blocknet-pool:payout-batch:{batch_id}"))
-}
-
-fn daemon_send_idempotency_path(config: &Config) -> PathBuf {
-    let data_dir = config.daemon_data_dir.trim();
-    if data_dir.is_empty() {
-        return PathBuf::from("data").join("send-idempotency.json");
-    }
-    PathBuf::from(data_dir).join("send-idempotency.json")
 }
 
 fn load_recovered_wallet_send_for_batch(
