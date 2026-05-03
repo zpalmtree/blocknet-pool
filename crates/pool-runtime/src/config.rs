@@ -131,6 +131,7 @@ impl Config {
         let mut cfg: Config = serde_json::from_slice(&data)
             .with_context(|| format!("parse config {}", path.display()))?;
         cfg.normalize();
+        cfg.validate_duration_fields()?;
         Ok(cfg)
     }
 
@@ -164,9 +165,6 @@ impl Config {
             .clamp(self.min_share_difficulty, self.max_share_difficulty);
         clamp_i32_min(&mut self.vardiff_target_shares, 1);
         self.vardiff_tolerance = self.vardiff_tolerance.clamp(0.01, 0.95);
-        if self.pplns_window_duration.trim().is_empty() {
-            self.pplns_window_duration = "6h".to_string();
-        }
         clamp_i32_min(&mut self.payout_min_verified_shares, 0);
         clamp_f64_min(&mut self.payout_provisional_cap_multiplier, 0.0);
         clamp_i32_min(&mut self.payout_max_recipients_per_tick, 0);
@@ -188,11 +186,11 @@ impl Config {
     }
 
     pub(crate) fn job_timeout_duration(&self) -> Duration {
-        parse_duration_or(&self.job_timeout, Duration::from_secs(5 * 60))
+        config_duration("job_timeout", &self.job_timeout)
     }
 
     pub(crate) fn stale_submit_grace_duration(&self) -> Duration {
-        parse_duration_or(&self.stale_submit_grace, Duration::from_secs(8))
+        config_duration("stale_submit_grace", &self.stale_submit_grace)
     }
 
     pub(crate) fn regular_submit_queue_size(&self) -> usize {
@@ -216,56 +214,47 @@ impl Config {
     }
 
     pub(crate) fn forced_verify_duration(&self) -> Duration {
-        parse_duration_or(
-            &self.forced_verify_duration,
-            Duration::from_secs(2 * 60 * 60),
-        )
+        config_duration("forced_verify_duration", &self.forced_verify_duration)
     }
 
     pub(crate) fn invalid_escalation_window_duration(&self) -> Duration {
-        parse_duration_or(
+        config_duration(
+            "invalid_escalation_window_duration",
             &self.invalid_escalation_window_duration,
-            Duration::from_secs(6 * 60 * 60),
         )
     }
 
     pub fn provisional_share_delay_duration(&self) -> Duration {
-        parse_duration_or(&self.provisional_share_delay, Duration::from_secs(15 * 60))
+        config_duration("provisional_share_delay", &self.provisional_share_delay)
     }
 
     pub(crate) fn quarantine_duration(&self) -> Duration {
-        parse_duration_or(&self.quarantine_duration, Duration::from_secs(15 * 60))
+        config_duration("quarantine_duration", &self.quarantine_duration)
     }
 
     pub(crate) fn max_quarantine_duration(&self) -> Duration {
-        parse_duration_or(
-            &self.max_quarantine_duration,
-            Duration::from_secs(2 * 60 * 60),
-        )
+        config_duration("max_quarantine_duration", &self.max_quarantine_duration)
     }
 
     pub fn payout_interval_duration(&self) -> Duration {
-        parse_duration_or(&self.payout_interval, Duration::from_secs(60 * 60))
+        config_duration("payout_interval", &self.payout_interval)
     }
 
     pub(crate) fn vardiff_window_duration(&self) -> Duration {
-        parse_duration_or(&self.vardiff_window, Duration::from_secs(5 * 60))
+        config_duration("vardiff_window", &self.vardiff_window)
     }
 
     pub(crate) fn vardiff_retarget_interval_duration(&self) -> Duration {
-        parse_duration_or(&self.vardiff_retarget_interval, Duration::from_secs(30))
+        config_duration("vardiff_retarget_interval", &self.vardiff_retarget_interval)
     }
 
     pub fn pplns_window_duration(&self) -> Duration {
-        let duration = parse_duration_or(
-            &self.pplns_window_duration,
-            Duration::from_secs(6 * 60 * 60),
+        let duration = config_duration("pplns_window_duration", &self.pplns_window_duration);
+        assert!(
+            !duration.is_zero(),
+            "pplns_window_duration must be greater than 0"
         );
-        if duration.is_zero() {
-            Duration::from_secs(6 * 60 * 60)
-        } else {
-            duration
-        }
+        duration
     }
 
     pub fn pool_fee(&self, reward: u64) -> u64 {
@@ -282,6 +271,24 @@ impl Config {
         }
         address_network(configured)
     }
+
+    fn validate_duration_fields(&self) -> Result<()> {
+        config_duration_result("job_timeout", &self.job_timeout)?;
+        config_duration_result("stale_submit_grace", &self.stale_submit_grace)?;
+        config_duration_result(
+            "invalid_escalation_window_duration",
+            &self.invalid_escalation_window_duration,
+        )?;
+        config_duration_result("forced_verify_duration", &self.forced_verify_duration)?;
+        config_duration_result("quarantine_duration", &self.quarantine_duration)?;
+        config_duration_result("max_quarantine_duration", &self.max_quarantine_duration)?;
+        config_duration_result("provisional_share_delay", &self.provisional_share_delay)?;
+        config_duration_result("vardiff_window", &self.vardiff_window)?;
+        config_duration_result("vardiff_retarget_interval", &self.vardiff_retarget_interval)?;
+        ensure_nonzero_duration("pplns_window_duration", &self.pplns_window_duration)?;
+        config_duration_result("payout_interval", &self.payout_interval)?;
+        Ok(())
+    }
 }
 
 fn clamp_i32_min(value: &mut i32, minimum: i32) {
@@ -296,8 +303,21 @@ fn clamp_f64_min(value: &mut f64, minimum: f64) {
     }
 }
 
-fn parse_duration_or(value: &str, fallback: Duration) -> Duration {
-    humantime::parse_duration(value).unwrap_or(fallback)
+fn config_duration(field: &str, value: &str) -> Duration {
+    config_duration_result(field, value).unwrap_or_else(|err| panic!("{err:#}"))
+}
+
+fn config_duration_result(field: &str, value: &str) -> Result<Duration> {
+    humantime::parse_duration(value.trim())
+        .with_context(|| format!("invalid duration for {field}: {value:?}"))
+}
+
+fn ensure_nonzero_duration(field: &str, value: &str) -> Result<Duration> {
+    let duration = config_duration_result(field, value)?;
+    if duration.is_zero() {
+        anyhow::bail!("{field} must be greater than 0");
+    }
+    Ok(duration)
 }
 
 #[cfg(test)]
@@ -369,5 +389,44 @@ mod tests {
         };
         let reward = 10_000_000_000u64;
         assert_eq!(cfg.pool_fee(reward), 1_000_000_000);
+    }
+
+    #[test]
+    fn load_rejects_invalid_duration() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, r#"{"payout_interval":"not-a-duration"}"#).unwrap();
+
+        let err = match Config::load(&path) {
+            Ok(_) => panic!("invalid duration should fail config load"),
+            Err(err) => err,
+        };
+        assert!(format!("{err:#}").contains("payout_interval"));
+    }
+
+    #[test]
+    fn load_rejects_zero_pplns_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, r#"{"pplns_window_duration":"0s"}"#).unwrap();
+
+        let err = match Config::load(&path) {
+            Ok(_) => panic!("zero PPLNS window should fail config load"),
+            Err(err) => err,
+        };
+        assert!(format!("{err:#}").contains("pplns_window_duration"));
+    }
+
+    #[test]
+    fn load_uses_defaults_for_missing_duration_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, "{}").unwrap();
+
+        let cfg = Config::load(&path).unwrap();
+        assert_eq!(
+            cfg.invalid_escalation_window_duration(),
+            Duration::from_secs(24 * 60 * 60)
+        );
     }
 }
