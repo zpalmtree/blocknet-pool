@@ -1173,7 +1173,7 @@ fn map_manual_payout_offset_application(
 }
 
 #[derive(Deserialize)]
-struct StatsHistoryQuery {
+struct RangeQuery {
     range: Option<String>,
 }
 
@@ -1237,21 +1237,8 @@ struct MinerBalanceQuery {
     include_pending_estimate: Option<bool>,
 }
 
-#[derive(Deserialize)]
-struct MinerHashrateQuery {
-    range: Option<String>,
-}
-
 #[derive(Deserialize, Default)]
-struct MinersQuery {
-    limit: Option<usize>,
-    offset: Option<usize>,
-    search: Option<String>,
-    sort: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct AdminBalancesQuery {
+struct SearchPageQuery {
     search: Option<String>,
     sort: Option<String>,
     limit: Option<usize>,
@@ -1304,7 +1291,7 @@ async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
 }
 
 async fn handle_stats_history(
-    Query(query): Query<StatsHistoryQuery>,
+    Query(query): Query<RangeQuery>,
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
     let range_secs: u64 = match query.range.as_deref().unwrap_or("24h") {
@@ -1726,7 +1713,7 @@ async fn handle_admin_perf(State(state): State<ApiState>) -> impl IntoResponse {
 }
 
 async fn handle_admin_balances(
-    Query(query): Query<AdminBalancesQuery>,
+    Query(query): Query<SearchPageQuery>,
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
     let store = Arc::clone(&state.store);
@@ -2445,7 +2432,7 @@ fn trim_log_line(line: &str) -> String {
 }
 
 async fn handle_miners(
-    Query(query): Query<MinersQuery>,
+    Query(query): Query<SearchPageQuery>,
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
     let store = Arc::clone(&state.store);
@@ -2598,7 +2585,7 @@ async fn handle_miner(
 
 async fn handle_miner_hashrate(
     Path(address): Path<String>,
-    Query(query): Query<MinerHashrateQuery>,
+    Query(query): Query<RangeQuery>,
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
     let (range_secs, bucket_secs): (u64, i64) = match query.range.as_deref().unwrap_or("24h") {
@@ -5971,8 +5958,8 @@ mod tests {
         hydrate_provisional_block_reward, is_api_request_path, load_confirmed_payout_import_txs,
         luck_round_response_from_db, miner_balance_response, miner_has_activity, page_bounds,
         rejection_window_duration, sort_workers_for_miner, system_time_to_unix_secs, trim_log_line,
-        worker_hashrate_by_name, ApiState, ClearAddressRiskHistoryRequest, MinersQuery,
-        PayoutEtaResponse, DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW,
+        worker_hashrate_by_name, ApiState, ClearAddressRiskHistoryRequest, PayoutEtaResponse,
+        SearchPageQuery, DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW,
         HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY,
     };
 
@@ -6653,7 +6640,10 @@ mod tests {
         let state = test_api_state(store);
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         let response = runtime
-            .block_on(handle_miners(Query(MinersQuery::default()), State(state)))
+            .block_on(handle_miners(
+                Query(SearchPageQuery::default()),
+                State(state),
+            ))
             .into_response();
         assert_eq!(response.status(), axum::http::StatusCode::OK);
         let body = runtime
@@ -6805,7 +6795,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         let response = runtime
             .block_on(handle_miners(
-                Query(MinersQuery {
+                Query(SearchPageQuery {
                     limit: Some(25),
                     offset: Some(0),
                     search: None,
