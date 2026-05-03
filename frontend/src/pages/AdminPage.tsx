@@ -59,6 +59,7 @@ const BAD_SEMIBOLD_STYLE: CSSProperties = { color: 'var(--bad)', fontWeight: 600
 const MUTED_SEMIBOLD_STYLE: CSSProperties = { color: 'var(--muted)', fontWeight: 600 };
 const FOOTER_LABEL_CELL_STYLE: CSSProperties = { fontWeight: 700, textAlign: 'left' };
 const TOP_6_STYLE: CSSProperties = { marginTop: 6 };
+const SHARE_DIAGNOSTIC_REASONS = ['invalid share proof', 'low difficulty share', 'stale job', 'address quarantined', 'server busy', 'validation timeout'];
 const warnTextStyle = (active: boolean) => (active ? WARN_TEXT_STYLE : undefined);
 const warnGoodTextStyle = (warn: boolean) => (warn ? WARN_TEXT_STYLE : GOOD_TEXT_STYLE);
 
@@ -2217,12 +2218,7 @@ export function AdminPage({
                               <td className="mono">{window.accepted}</td>
                               <td className="mono">{window.rejected}</td>
                               <td className="mono">{formatPct(shareWindowRejectPct(window), 2)}</td>
-                              {shareWindowReasonCell(window, 'invalid share proof')}
-                              {shareWindowReasonCell(window, 'low difficulty share')}
-                              {shareWindowReasonCell(window, 'stale job')}
-                              {shareWindowReasonCell(window, 'address quarantined')}
-                              {shareWindowReasonCell(window, 'server busy')}
-                              {shareWindowReasonCell(window, 'validation timeout')}
+                              {SHARE_DIAGNOSTIC_REASONS.map((reason) => shareWindowReasonCell(window, reason))}
                               <td>
                                 {!topReason ? (
                                   <span style={MUTED_TEXT_STYLE}>None</span>
