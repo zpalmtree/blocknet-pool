@@ -3,6 +3,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import type { ApiClient } from '../api/client';
 import { EmptyTableRow } from '../components/EmptyTableRow';
 import { Pager } from '../components/Pager';
+import { StatCard } from '../components/StatCard';
 import { parseAnsiLine, type ParsedAnsiSegment } from '../lib/ansi';
 import {
   fmtSeconds,
@@ -1456,21 +1457,15 @@ export function AdminPage({
       ) : (
         <div id="admin-content">
           <div className="stats-grid stats-grid-dense admin-overview-strip">
-            <div
-              className="stat-card"
+            <StatCard
+              label="Risk Holds"
+              value={riskVerificationHolds.length}
+              meta={riskVerificationHolds.length > 0 ? 'quarantine or risk review active' : 'no risky miners'}
+              mono
               style={riskVerificationHolds.length > 0 ? { borderColor: 'var(--warn)' } : undefined}
+              valueStyle={warnTextStyle(riskVerificationHolds.length > 0)}
               onClick={() => setTab('holds')}
             >
-              <div className="label">Risk Holds</div>
-              <div
-                className="value mono"
-                style={warnTextStyle(riskVerificationHolds.length > 0)}
-              >
-                {riskVerificationHolds.length}
-              </div>
-              <div className="stat-meta">
-                {riskVerificationHolds.length > 0 ? 'quarantine or risk review active' : 'no risky miners'}
-              </div>
               <div className="stat-meta">
                 {temporaryValidationHolds.length > 0
                   ? `${temporaryValidationHolds.length} temporary validation assist${
@@ -1478,29 +1473,26 @@ export function AdminPage({
                     }`
                   : 'no temporary assists'}
               </div>
-            </div>
-            <div className="stat-card" onClick={() => setTab('shares')}>
-              <div className="label">5m Reject Rate</div>
-              <div
-                className="value mono"
-                style={warnTextStyle(shareWindowRejectPct(shareWindow5m) >= 5)}
-              >
-                {formatPct(shareWindowRejectPct(shareWindow5m), 2)}
-              </div>
-              <div className="stat-meta">
-                {shareWindow5m?.rejected ?? 0} rejected of {shareWindowTotal(shareWindow5m)}
-              </div>
-            </div>
-            <div className="stat-card" onClick={() => setTab('balances')}>
-              <div className="label">Clean Payable</div>
-              <div className="value mono">
-                {cleanPayableAmount != null ? formatCompactCoins(cleanPayableAmount) : '-'}
-              </div>
-              <div className="stat-meta">
-                {cleanPayableCount != null
+            </StatCard>
+            <StatCard
+              label="5m Reject Rate"
+              value={formatPct(shareWindowRejectPct(shareWindow5m), 2)}
+              meta={`${shareWindow5m?.rejected ?? 0} rejected of ${shareWindowTotal(shareWindow5m)}`}
+              mono
+              valueStyle={warnTextStyle(shareWindowRejectPct(shareWindow5m) >= 5)}
+              onClick={() => setTab('shares')}
+            />
+            <StatCard
+              label="Clean Payable"
+              value={cleanPayableAmount != null ? formatCompactCoins(cleanPayableAmount) : '-'}
+              meta={
+                cleanPayableCount != null
                   ? `${cleanPayableCount} miner${cleanPayableCount === 1 ? '' : 's'} with payable balances`
-                  : '-'}
-              </div>
+                  : '-'
+              }
+              mono
+              onClick={() => setTab('balances')}
+            >
               {minerFundingGapAmount != null && (
                 <div
                   className="stat-meta"
@@ -1528,17 +1520,14 @@ export function AdminPage({
                   ? `${queuedPayoutCount ?? 0} queued · ${formatCoins(queuedPayoutAmount)} in queue`
                   : '-'}
               </div>
-            </div>
-            <div className="stat-card" onClick={() => setTab('balances')}>
-              <div className="label">Wallet</div>
-              <div className="value mono">
-                {balanceOverview ? formatCompactCoins(balanceOverview.wallet.spendable) : '-'}
-              </div>
-              <div className="stat-meta">
-                {balanceOverview
-                  ? `${formatCompactCoins(balanceOverview.wallet.total)} total`
-                  : '-'}
-              </div>
+            </StatCard>
+            <StatCard
+              label="Wallet"
+              value={balanceOverview ? formatCompactCoins(balanceOverview.wallet.spendable) : '-'}
+              meta={balanceOverview ? `${formatCompactCoins(balanceOverview.wallet.total)} total` : '-'}
+              mono
+              onClick={() => setTab('balances')}
+            >
               {hasMinerFundingGap && (
                 <div className="stat-meta" style={WARN_TEXT_STYLE}>
                   {`${formatCompactCoins(minerFundingGapAmount)} still needed for clean miners`}
@@ -1559,14 +1548,14 @@ export function AdminPage({
                 hasAcknowledgedHistoricalShortfall && (
                   <div className="stat-meta">Launch-era baseline acknowledged</div>
                 )}
-            </div>
-            <div className="stat-card" onClick={() => setTab('miners')}>
-              <div className="label">Connected Miners</div>
-              <div className="value mono">{poolActivity?.connected_miners ?? '-'}</div>
-              <div className="stat-meta">
-                {poolActivity ? humanRate(poolActivity.estimated_hashrate) : '-'}
-              </div>
-            </div>
+            </StatCard>
+            <StatCard
+              label="Connected Miners"
+              value={poolActivity?.connected_miners ?? '-'}
+              meta={poolActivity ? humanRate(poolActivity.estimated_hashrate) : '-'}
+              mono
+              onClick={() => setTab('miners')}
+            />
           </div>
 
           <div className="sub-tabs" id="admin-tabs">
