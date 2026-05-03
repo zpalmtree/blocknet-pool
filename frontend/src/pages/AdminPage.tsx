@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
 import { EmptyTableRow } from '../components/EmptyTableRow';
@@ -364,6 +364,19 @@ function recoveryPendingDeltaNote(status: RecoveryStatusResponse | null): string
   if (active.wallet.address !== inactive.wallet.address) return null;
   if ((active.wallet.pending_unconfirmed ?? 0) <= 0) return null;
   return 'Primary and standby share the same wallet seed but keep separate wallet files. Unconfirmed sends only live on the active daemon until they confirm, so temporary spendable deltas are expected.';
+}
+
+function AdminNoticeCard({ children, tone }: { children: ReactNode; tone?: 'warning' | 'error' }) {
+  return (
+    <div className="card section" style={{
+      marginBottom: 16,
+      borderColor: tone === 'warning' ? 'rgba(247, 180, 75, 0.45)' : tone === 'error' ? 'rgba(214, 88, 88, 0.45)' : undefined,
+    }}>
+      <p className="section-lead" style={{ margin: 0, color: tone === 'error' ? 'var(--bad)' : undefined }}>
+        {children}
+      </p>
+    </div>
+  );
 }
 
 interface AdminPageProps {
@@ -2831,35 +2844,19 @@ export function AdminPage({
 
           <div style={{ display: tab === 'recovery' ? '' : 'none' }}>
             {recoveryStatus?.warning ? (
-              <div className="card section" style={{ marginBottom: 16, borderColor: 'rgba(247, 180, 75, 0.45)' }}>
-                <p className="section-lead" style={{ margin: 0 }}>
-                  {recoveryStatus.warning}
-                </p>
-              </div>
+              <AdminNoticeCard tone="warning">{recoveryStatus.warning}</AdminNoticeCard>
             ) : null}
 
             {recoveryActionError ? (
-              <div className="card section" style={{ marginBottom: 16, borderColor: 'rgba(214, 88, 88, 0.45)' }}>
-                <p className="section-lead" style={{ margin: 0, color: 'var(--bad)' }}>
-                  {recoveryActionError}
-                </p>
-              </div>
+              <AdminNoticeCard tone="error">{recoveryActionError}</AdminNoticeCard>
             ) : null}
 
             {reconciliationActionError ? (
-              <div className="card section" style={{ marginBottom: 16, borderColor: 'rgba(214, 88, 88, 0.45)' }}>
-                <p className="section-lead" style={{ margin: 0, color: 'var(--bad)' }}>
-                  {reconciliationActionError}
-                </p>
-              </div>
+              <AdminNoticeCard tone="error">{reconciliationActionError}</AdminNoticeCard>
             ) : null}
 
             {recoveryPendingNote ? (
-              <div className="card section" style={{ marginBottom: 16 }}>
-                <p className="section-lead" style={{ margin: 0 }}>
-                  {recoveryPendingNote}
-                </p>
-              </div>
+              <AdminNoticeCard>{recoveryPendingNote}</AdminNoticeCard>
             ) : null}
 
             <div className="stats-grid" style={{ marginBottom: 16 }}>
