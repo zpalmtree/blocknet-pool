@@ -90,14 +90,8 @@ fn write_colored(writer: &mut Writer<'_>, ansi: bool, style: &str, text: &str) -
 }
 
 fn pad_or_truncate_ascii(value: &str, width: usize) -> String {
-    let mut out = String::with_capacity(width);
-    for ch in value.chars().take(width) {
-        out.push(ch);
-    }
-    if out.len() < width {
-        out.push_str(&" ".repeat(width - out.len()));
-    }
-    out
+    let truncated = value.chars().take(width).collect::<String>();
+    format!("{truncated:<width$}")
 }
 
 #[cfg(test)]
