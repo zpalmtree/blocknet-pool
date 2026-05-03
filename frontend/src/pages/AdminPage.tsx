@@ -129,11 +129,6 @@ function warnPositiveCoins(value: number) {
   return value > 0 ? <span style={WARN_TEXT_STYLE}>{formatCoins(value)}</span> : formatCoins(value);
 }
 
-function ratioPct(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return '-';
-  return `${(value * 100).toFixed(2)}%`;
-}
-
 function formatMillis(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '-';
   if (value >= 10_000) return `${(value / 1000).toFixed(0)}s`;
@@ -2028,7 +2023,7 @@ export function AdminPage({
                 />
                 <StatCard
                   label="Verification Coverage"
-                  value={ratioPct(shareValidation?.effective_sample_rate)}
+                  value={formatPct((shareValidation?.effective_sample_rate ?? Number.NaN) * 100, 2)}
                   meta={`${shareValidation?.sampled_shares ?? 0} sampled · overload ${overloadModeLabel(
                     shareValidation?.overload_mode
                   )}`}
