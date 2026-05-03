@@ -12,6 +12,7 @@ import {
   formatPct,
   humanRate,
   ratioPct as calculateRatioPct,
+  roundToneClass,
   shortAddr,
   timeAgo,
   timeUntil,
@@ -118,19 +119,6 @@ function reconciliationRecommendation(issue: AdminMissingCompletedPayoutIssue): 
   }
   return 'Choose the override that matches the current chain state.';
 }
-
-function roundChipClass(tone: 'ok' | 'warn' | 'critical'): string {
-  switch (tone) {
-    case 'critical':
-      return 'round-chip is-critical';
-    case 'warn':
-      return 'round-chip is-warn';
-    default:
-      return 'round-chip is-ok';
-  }
-}
-
-
 
 function formatAdminTimestamp(value: UnixLike): string {
   const ms = toUnixMs(value);
@@ -2084,14 +2072,14 @@ export function AdminPage({
                     {shareOperatorFocus.detail}
                   </div>
                 </div>
-                <span className={roundChipClass(shareOperatorFocus.tone)}>{shareOperatorFocus.label}</span>
+                <span className={`round-chip ${roundToneClass(shareOperatorFocus.tone)}`}>{shareOperatorFocus.label}</span>
               </div>
               <div className="share-focus-next">Next: {shareOperatorFocus.next}</div>
               <div className="share-focus-grid">
                 <div className="share-focus-card">
                   <div className="share-focus-card-head">
                     <div className="share-focus-card-title">Hot Path</div>
-                    <span className={roundChipClass(shareHotPathFocus.tone)}>
+                    <span className={`round-chip ${roundToneClass(shareHotPathFocus.tone)}`}>
                       {shareHotPathFocus.tone === 'ok'
                         ? 'Healthy'
                         : shareHotPathFocus.tone === 'warn'
@@ -2110,7 +2098,7 @@ export function AdminPage({
                 <div className="share-focus-card">
                   <div className="share-focus-card-head">
                     <div className="share-focus-card-title">Background Audit</div>
-                    <span className={roundChipClass(shareAuditFocus.tone)}>{shareAuditFocus.badge}</span>
+                    <span className={`round-chip ${roundToneClass(shareAuditFocus.tone)}`}>{shareAuditFocus.badge}</span>
                   </div>
                   <div className="share-focus-card-body">{shareAuditFocus.title}</div>
                   <div className="stat-meta">
@@ -2124,7 +2112,7 @@ export function AdminPage({
                 <div className="share-focus-card">
                   <div className="share-focus-card-head">
                     <div className="share-focus-card-title">Rejects</div>
-                    <span className={roundChipClass(shareRejectFocus.tone)}>
+                    <span className={`round-chip ${roundToneClass(shareRejectFocus.tone)}`}>
                       {shareRejectFocus.tone === 'ok'
                         ? 'Clean'
                         : shareRejectFocus.tone === 'warn'
