@@ -1595,22 +1595,17 @@ fn read_token_from_cookie(path: &Path) -> Result<String> {
 }
 
 fn is_service_unavailable_wallet_error(err: &anyhow::Error) -> bool {
-    err.to_string().contains(&format!(
-        "HTTP {}",
-        StatusCode::SERVICE_UNAVAILABLE.as_u16()
-    )) && err
-        .to_string()
-        .to_ascii_lowercase()
-        .contains("no wallet loaded")
+    daemon_http_error_contains(err, StatusCode::SERVICE_UNAVAILABLE, "no wallet loaded")
 }
 
 fn is_conflict_wallet_loaded_error(err: &anyhow::Error) -> bool {
-    err.to_string()
-        .contains(&format!("HTTP {}", StatusCode::CONFLICT.as_u16()))
-        && err
-            .to_string()
-            .to_ascii_lowercase()
-            .contains("wallet already loaded")
+    daemon_http_error_contains(err, StatusCode::CONFLICT, "wallet already loaded")
+}
+
+fn daemon_http_error_contains(err: &anyhow::Error, status: StatusCode, needle: &str) -> bool {
+    let message = err.to_string();
+    message.contains(&format!("HTTP {}", status.as_u16()))
+        && message.to_ascii_lowercase().contains(needle)
 }
 
 fn should_attempt_wallet_autoload(
