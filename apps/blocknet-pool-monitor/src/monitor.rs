@@ -867,25 +867,13 @@ impl MonitorRuntime {
     }
 
     async fn update_metrics(&self, sample: &MonitorSample) {
-        let open_public = if sample.db_probe.error.is_none() {
-            self.run_store_task("load open public monitor incidents", move |store| {
-                store.get_open_monitor_incidents(Some("public"))
-            })
-            .await
-            .map(|items| items.len() as u64)
-            .unwrap_or(0)
+        let (open_public, open_private) = if sample.db_probe.error.is_none() {
+            (
+                self.open_monitor_incident_count("public").await,
+                self.open_monitor_incident_count("private").await,
+            )
         } else {
-            0
-        };
-        let open_private = if sample.db_probe.error.is_none() {
-            self.run_store_task("load open private monitor incidents", move |store| {
-                store.get_open_monitor_incidents(Some("private"))
-            })
-            .await
-            .map(|items| items.len() as u64)
-            .unwrap_or(0)
-        } else {
-            0
+            (0, 0)
         };
         let daemon = sample.daemon_status.value.as_ref();
         let runtime = sample.runtime_snapshot.as_ref();
@@ -968,6 +956,15 @@ impl MonitorRuntime {
         metrics.process_metrics = sample.process_metrics.clone();
         metrics.open_public_incidents = open_public;
         metrics.open_private_incidents = open_private;
+    }
+
+    async fn open_monitor_incident_count(&self, scope: &'static str) -> u64 {
+        self.run_store_task("load open monitor incidents", move |store| {
+            store.get_open_monitor_incidents(Some(scope))
+        })
+        .await
+        .map(|items| items.len() as u64)
+        .unwrap_or(0)
     }
 
     fn sample_to_heartbeat(
