@@ -906,40 +906,33 @@ impl MonitorRuntime {
             runtime.and_then(|snapshot| snapshot.jobs.template_age_seconds);
         metrics.last_refresh_millis =
             runtime.and_then(|snapshot| snapshot.jobs.last_refresh_millis);
-        metrics.stratum_snapshot_age_seconds = runtime.and_then(|snapshot| {
-            sample
-                .sampled_at
-                .duration_since(snapshot.sampled_at)
-                .ok()
-                .map(|age| age.as_secs())
-        });
+        metrics.stratum_snapshot_age_seconds =
+            runtime_snapshot_age(sample.sampled_at, runtime).map(|age| age.as_secs());
         metrics.connected_miners = runtime.map(|snapshot| snapshot.connected_miners as u64);
         metrics.connected_workers = runtime.map(|snapshot| snapshot.connected_workers as u64);
         metrics.estimated_hashrate = runtime.map(|snapshot| snapshot.estimated_hashrate);
         metrics.wallet_up = Some(sample.wallet_probe.error.is_none());
-        metrics.last_accepted_share_age_seconds = runtime.and_then(|snapshot| {
-            snapshot
-                .last_share_at
-                .and_then(|last| sample.sampled_at.duration_since(last).ok())
-                .map(|age| age.as_secs())
-        });
+        metrics.last_accepted_share_age_seconds = age_seconds_since(
+            sample.sampled_at,
+            runtime.and_then(|snapshot| snapshot.last_share_at),
+        );
         metrics.payout_pending_count = sample.payout_summary.as_ref().map(|summary| summary.count);
         metrics.payout_pending_amount =
             sample.payout_summary.as_ref().map(|summary| summary.amount);
-        metrics.oldest_pending_payout_age_seconds =
-            sample.payout_summary.as_ref().and_then(|summary| {
-                summary
-                    .oldest_pending_at
-                    .and_then(|ts| sample.sampled_at.duration_since(ts).ok())
-                    .map(|age| age.as_secs())
-            });
-        metrics.oldest_pending_send_age_seconds =
-            sample.payout_summary.as_ref().and_then(|summary| {
-                summary
-                    .oldest_send_started_at
-                    .and_then(|ts| sample.sampled_at.duration_since(ts).ok())
-                    .map(|age| age.as_secs())
-            });
+        metrics.oldest_pending_payout_age_seconds = age_seconds_since(
+            sample.sampled_at,
+            sample
+                .payout_summary
+                .as_ref()
+                .and_then(|summary| summary.oldest_pending_at),
+        );
+        metrics.oldest_pending_send_age_seconds = age_seconds_since(
+            sample.sampled_at,
+            sample
+                .payout_summary
+                .as_ref()
+                .and_then(|summary| summary.oldest_send_started_at),
+        );
         metrics.validation_candidate_queue_depth =
             runtime.map(|snapshot| snapshot.validation.candidate_queue_depth as u64);
         metrics.validation_regular_queue_depth =
@@ -1000,46 +993,41 @@ impl MonitorRuntime {
             chain_height: daemon.map(|status| status.chain_height),
             template_age_seconds: runtime.and_then(|snapshot| snapshot.jobs.template_age_seconds),
             last_refresh_millis: runtime.and_then(|snapshot| snapshot.jobs.last_refresh_millis),
-            stratum_snapshot_age_seconds: runtime.and_then(|snapshot| {
-                sample
-                    .sampled_at
-                    .duration_since(snapshot.sampled_at)
-                    .ok()
-                    .map(|age| age.as_secs())
-            }),
+            stratum_snapshot_age_seconds: runtime_snapshot_age(sample.sampled_at, runtime)
+                .map(|age| age.as_secs()),
             connected_miners: runtime.map(|snapshot| snapshot.connected_miners as u64),
             connected_workers: runtime.map(|snapshot| snapshot.connected_workers as u64),
             estimated_hashrate: runtime.map(|snapshot| snapshot.estimated_hashrate),
             wallet_up: Some(sample.wallet_probe.error.is_none()),
             last_accepted_share_at: runtime.and_then(|snapshot| snapshot.last_share_at),
-            last_accepted_share_age_seconds: runtime.and_then(|snapshot| {
-                snapshot
-                    .last_share_at
-                    .and_then(|last| sample.sampled_at.duration_since(last).ok())
-                    .map(|age| age.as_secs())
-            }),
+            last_accepted_share_age_seconds: age_seconds_since(
+                sample.sampled_at,
+                runtime.and_then(|snapshot| snapshot.last_share_at),
+            ),
             payout_pending_count: sample.payout_summary.as_ref().map(|summary| summary.count),
             payout_pending_amount: sample.payout_summary.as_ref().map(|summary| summary.amount),
             oldest_pending_payout_at: sample
                 .payout_summary
                 .as_ref()
                 .and_then(|summary| summary.oldest_pending_at),
-            oldest_pending_payout_age_seconds: sample.payout_summary.as_ref().and_then(|summary| {
-                summary
-                    .oldest_pending_at
-                    .and_then(|ts| sample.sampled_at.duration_since(ts).ok())
-                    .map(|age| age.as_secs())
-            }),
+            oldest_pending_payout_age_seconds: age_seconds_since(
+                sample.sampled_at,
+                sample
+                    .payout_summary
+                    .as_ref()
+                    .and_then(|summary| summary.oldest_pending_at),
+            ),
             oldest_pending_send_started_at: sample
                 .payout_summary
                 .as_ref()
                 .and_then(|summary| summary.oldest_send_started_at),
-            oldest_pending_send_age_seconds: sample.payout_summary.as_ref().and_then(|summary| {
-                summary
-                    .oldest_send_started_at
-                    .and_then(|ts| sample.sampled_at.duration_since(ts).ok())
-                    .map(|age| age.as_secs())
-            }),
+            oldest_pending_send_age_seconds: age_seconds_since(
+                sample.sampled_at,
+                sample
+                    .payout_summary
+                    .as_ref()
+                    .and_then(|summary| summary.oldest_send_started_at),
+            ),
             validation_candidate_queue_depth: runtime
                 .map(|snapshot| snapshot.validation.candidate_queue_depth as u64),
             validation_regular_queue_depth: runtime
@@ -1816,6 +1804,12 @@ fn runtime_snapshot_age(
     snapshot: Option<&PersistedRuntimeSnapshot>,
 ) -> Option<Duration> {
     snapshot.and_then(|snapshot| sampled_at.duration_since(snapshot.sampled_at).ok())
+}
+
+fn age_seconds_since(sampled_at: SystemTime, timestamp: Option<SystemTime>) -> Option<u64> {
+    timestamp
+        .and_then(|ts| sampled_at.duration_since(ts).ok())
+        .map(|age| age.as_secs())
 }
 
 fn pool_activity_loss_threshold(interval: Duration) -> Duration {
