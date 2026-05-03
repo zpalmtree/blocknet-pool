@@ -167,12 +167,6 @@ impl Config {
         clamp_f64_min(&mut self.payout_max_total_per_tick, 0.0);
         clamp_f64_min(&mut self.payout_max_per_recipient, 0.0);
         clamp_i32_min(&mut self.database_pool_size, 1);
-        if self.daemon_cookie_path.trim().is_empty() {
-            self.daemon_cookie_path = "/etc/blocknet/pool/daemon-active.api.cookie".to_string();
-        }
-        if self.payout_pause_file.trim().is_empty() {
-            self.payout_pause_file = "/etc/blocknet/pool/payouts.pause".to_string();
-        }
         let max_atomic_amount = (u64::MAX as f64) / 100_000_000.0;
         if !self.min_payout_amount.is_finite() || self.min_payout_amount < 0.0 {
             self.min_payout_amount = 0.1;
@@ -291,6 +285,8 @@ impl Config {
             "full" | "probabilistic" => {}
             _ => anyhow::bail!("validation_mode must be either \"full\" or \"probabilistic\""),
         }
+        ensure_nonempty("daemon_cookie_path", &self.daemon_cookie_path)?;
+        ensure_nonempty("payout_pause_file", &self.payout_pause_file)?;
         self.validate_duration_fields()
     }
 }
@@ -322,6 +318,13 @@ fn ensure_nonzero_duration(field: &str, value: &str) -> Result<Duration> {
         anyhow::bail!("{field} must be greater than 0");
     }
     Ok(duration)
+}
+
+fn ensure_nonempty(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        anyhow::bail!("{field} must not be empty");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -419,6 +422,26 @@ mod tests {
             Err(err) => err,
         };
         assert!(format!("{err:#}").contains("validation_mode"));
+    }
+
+    #[test]
+    fn load_rejects_empty_runtime_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, r#"{"daemon_cookie_path":"   "}"#).unwrap();
+
+        let err = match Config::load(&path) {
+            Ok(_) => panic!("empty daemon cookie path should fail config load"),
+            Err(err) => err,
+        };
+        assert!(format!("{err:#}").contains("daemon_cookie_path"));
+
+        std::fs::write(&path, r#"{"payout_pause_file":""}"#).unwrap();
+        let err = match Config::load(&path) {
+            Ok(_) => panic!("empty payout pause path should fail config load"),
+            Err(err) => err,
+        };
+        assert!(format!("{err:#}").contains("payout_pause_file"));
     }
 
     #[test]
