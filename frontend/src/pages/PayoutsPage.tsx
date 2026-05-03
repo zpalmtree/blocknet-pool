@@ -5,7 +5,7 @@ import { EmptyTableRow } from '../components/EmptyTableRow';
 import { Pager } from '../components/Pager';
 import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
 import { PayoutTxLinks } from '../components/PayoutTxLinks';
-import { formatCoins, formatFee, timeAgo, toUnixMs } from '../lib/format';
+import { formatCoins, formatFee, timeAgo, timestampTitle, toUnixMs } from '../lib/format';
 import { usePagedData } from '../lib/paging';
 import type { PayoutItem } from '../types';
 
@@ -59,7 +59,7 @@ export function PayoutsPage({ api, liveTick }: PayoutsPageProps) {
                   <td>
                     <PayoutStatusBadge status={p.confirmed ? 'confirmed' : 'unconfirmed'} />
                   </td>
-                  <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
+                  <td title={timestampTitle(p.timestamp)}>{timeAgo(p.timestamp)}</td>
                 </tr>
               ))
             )}

@@ -4,7 +4,7 @@ import type { ApiClient } from '../api/client';
 import { BlockStatusBadge } from '../components/BlockStatusBadge';
 import { EmptyTableRow } from '../components/EmptyTableRow';
 import { Pager } from '../components/Pager';
-import { fmtSeconds, formatCoins, formatPct, roundToneClass, timeAgo, toUnixMs } from '../lib/format';
+import { fmtSeconds, formatCoins, formatPct, roundToneClass, timeAgo, timestampTitle } from '../lib/format';
 import { usePagedData } from '../lib/paging';
 import type { BlockItem } from '../types';
 
@@ -77,7 +77,7 @@ export function BlocksPage({ api, liveTick }: BlocksPageProps) {
                   <td>
                     <BlockStatusBadge confirmed={b.confirmed} orphaned={b.orphaned} />
                   </td>
-                  <td title={new Date(toUnixMs(b.timestamp)).toLocaleString()}>{timeAgo(b.timestamp)}</td>
+                  <td title={timestampTitle(b.timestamp)}>{timeAgo(b.timestamp)}</td>
                 </tr>
               ))
             )}

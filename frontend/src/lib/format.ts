@@ -67,6 +67,11 @@ export function timeUntil(val: UnixLike): string {
   return `in ${Math.floor(d / 30)}mo`;
 }
 
+export function timestampTitle(val: UnixLike): string {
+  const ms = toUnixMs(val);
+  return ms ? new Date(ms).toLocaleString() : '';
+}
+
 export function humanRate(hps: number | null | undefined): string {
   if (!hps || !Number.isFinite(hps)) return '0 H/s';
   const units = ['H/s', 'KH/s', 'MH/s', 'GH/s', 'TH/s', 'PH/s'];

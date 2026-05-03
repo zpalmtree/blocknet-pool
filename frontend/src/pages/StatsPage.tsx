@@ -5,7 +5,7 @@ import { EmptyTableRow } from '../components/EmptyTableRow';
 import { HashrateChart } from '../components/HashrateChart';
 import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
 import { LAST_MINER_LOOKUP_KEY } from '../lib/storage';
-import { formatCoins, formatCompactCoins, formatFee, formatPct, humanRate, ratioPct, timeAgo, toUnixMs } from '../lib/format';
+import { formatCoins, formatCompactCoins, formatFee, formatPct, humanRate, ratioPct, timeAgo, timestampTitle, toUnixMs } from '../lib/format';
 import type { ThemeMode } from '../lib/theme';
 import type {
   HashratePoint,
@@ -554,7 +554,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                               : formatCoins(b.estimated_credit)}
                         </td>
                         <td>{b.confirmations_remaining}</td>
-                        <td title={new Date(toUnixMs(b.timestamp)).toLocaleString()}>{timeAgo(b.timestamp)}</td>
+                        <td title={timestampTitle(b.timestamp)}>{timeAgo(b.timestamp)}</td>
                       </tr>
                     )})}
                   </tbody>
@@ -604,7 +604,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                           <td>{humanRate(w.hashrate || 0)}</td>
                           <td>{w.accepted || 0}</td>
                           <td>{w.rejected || 0}</td>
-                          <td title={w.last_share_at ? new Date(toUnixMs(w.last_share_at)).toLocaleString() : ''}>
+                          <td title={timestampTitle(w.last_share_at)}>
                             {timeAgo(w.last_share_at)}
                           </td>
                         </tr>
@@ -653,7 +653,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                             <td>
                               <PayoutStatusBadge status={status} />
                             </td>
-                            <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
+                            <td title={timestampTitle(p.timestamp)}>{timeAgo(p.timestamp)}</td>
                           </tr>
                         );
                       })
@@ -779,7 +779,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                           <td>{s.worker || ''}</td>
                           <td>{s.difficulty}</td>
                           <td>{s.status || ''}</td>
-                          <td title={new Date(toUnixMs(s.created_at)).toLocaleString()}>{timeAgo(s.created_at)}</td>
+                          <td title={timestampTitle(s.created_at)}>{timeAgo(s.created_at)}</td>
                         </tr>
                       ))
                     )}

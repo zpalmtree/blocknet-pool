@@ -14,6 +14,7 @@ import {
   ratioPct as calculateRatioPct,
   roundToneClass,
   shortAddr,
+  timestampTitle,
   timeAgo,
   timeUntil,
   toUnixMs,
@@ -1649,7 +1650,7 @@ export function AdminPage({
                         <td>{m.shares_accepted || 0}</td>
                         <td>{m.shares_rejected || 0}</td>
                         <td>{m.blocks_found || 0}</td>
-                        <td title={new Date(toUnixMs(m.last_share_at)).toLocaleString()}>{timeAgo(m.last_share_at)}</td>
+                        <td title={timestampTitle(m.last_share_at)}>{timeAgo(m.last_share_at)}</td>
                       </tr>
                     ))
                   )}
@@ -3134,7 +3135,7 @@ export function AdminPage({
                                     </div>
                                   ) : null}
                                 </td>
-                                <td title={new Date(toUnixMs(issue.latest_timestamp)).toLocaleString()}>
+                                <td title={timestampTitle(issue.latest_timestamp)}>
                                   {timeAgo(issue.latest_timestamp)}
                                 </td>
                                 <td style={{ minWidth: 220 }}>
@@ -3349,10 +3350,10 @@ export function AdminPage({
                             {recoveryOperationStateLabel(operation.state)}
                           </span>
                         </td>
-                        <td title={operation.started_at ? new Date(toUnixMs(operation.started_at)).toLocaleString() : undefined}>
+                        <td title={timestampTitle(operation.started_at) || undefined}>
                           {operation.started_at ? timeAgo(operation.started_at) : '-'}
                         </td>
-                        <td title={operation.finished_at ? new Date(toUnixMs(operation.finished_at)).toLocaleString() : undefined}>
+                        <td title={timestampTitle(operation.finished_at) || undefined}>
                           {operation.finished_at ? timeAgo(operation.finished_at) : '-'}
                         </td>
                         <td style={{ maxWidth: 360 }}>{operation.message || '-'}</td>

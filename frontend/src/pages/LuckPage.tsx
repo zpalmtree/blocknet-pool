@@ -4,7 +4,7 @@ import type { ApiClient } from '../api/client';
 import { BlockStatusBadge } from '../components/BlockStatusBadge';
 import { EmptyTableRow } from '../components/EmptyTableRow';
 import { Pager } from '../components/Pager';
-import { fmtSeconds, formatPct, roundToneClass, timeAgo, toUnixMs } from '../lib/format';
+import { fmtSeconds, formatPct, roundToneClass, timeAgo, timestampTitle } from '../lib/format';
 import { usePagedData } from '../lib/paging';
 import type { LuckRound } from '../types';
 
@@ -56,7 +56,7 @@ export function LuckPage({ api, liveTick }: LuckPageProps) {
                   <td>
                     <BlockStatusBadge confirmed={row.confirmed} orphaned={row.orphaned} />
                   </td>
-                  <td title={new Date(toUnixMs(row.timestamp)).toLocaleString()}>{timeAgo(row.timestamp)}</td>
+                  <td title={timestampTitle(row.timestamp)}>{timeAgo(row.timestamp)}</td>
                 </tr>
               ))
             )}

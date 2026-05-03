@@ -15,6 +15,7 @@ import {
   humanRate,
   roundToneClass,
   stratumUrl,
+  timestampTitle,
   timeAgo,
   timeUntil,
   toUnixMs,
@@ -171,7 +172,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
             <div className="label">Current Block</div>
             <div className="value mono" id="s-current-block">{stats?.chain.current_job_height ?? '-'}</div>
           </div>
-          <div className="stat-card" title={latestSolvedBlock ? new Date(toUnixMs(latestSolvedBlock.timestamp)).toLocaleString() : undefined}>
+          <div className="stat-card" title={latestSolvedBlock ? timestampTitle(latestSolvedBlock.timestamp) : undefined}>
             <div className="label">Last Solved Block</div>
             <div className="value mono" id="s-last-solved-block">{latestSolvedBlock?.block_height ?? '-'}</div>
           </div>
@@ -364,7 +365,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
                     <td>
                       <BlockStatusBadge confirmed={row.confirmed} orphaned={row.orphaned} />
                     </td>
-                    <td title={new Date(toUnixMs(row.timestamp)).toLocaleString()}>{timeAgo(row.timestamp)}</td>
+                    <td title={timestampTitle(row.timestamp)}>{timeAgo(row.timestamp)}</td>
                   </tr>
                 ))
               )}
@@ -405,7 +406,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
                     <td>
                       <PayoutStatusBadge status={p.confirmed ? 'confirmed' : 'unconfirmed'} />
                     </td>
-                    <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
+                    <td title={timestampTitle(p.timestamp)}>{timeAgo(p.timestamp)}</td>
                   </tr>
                 ))
               )}
