@@ -159,6 +159,7 @@ dependencies = [
  "anyhow",
  "axum",
  "base64",
+ "hex",
  "parking_lot",
  "pool-common",
  "pool-recovery",

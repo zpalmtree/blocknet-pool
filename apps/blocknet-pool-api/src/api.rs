@@ -1490,12 +1490,7 @@ fn hmac_sha256_hex(secret: &[u8], body: &[u8]) -> String {
     outer_hasher.update(inner_digest);
     let digest = outer_hasher.finalize();
 
-    let mut out = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        use std::fmt::Write as _;
-        let _ = write!(&mut out, "{byte:02x}");
-    }
-    out
+    hex::encode(digest)
 }
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
