@@ -26,10 +26,8 @@ interface StatsPageProps {
 
 type RejectionWindowRange = '1h' | '24h' | '7d';
 
-const HANDLE_RE = /^[$@]?[a-z0-9][a-z0-9_.\-]{0,62}$/i;
-
 function looksLikeHandle(raw: string): boolean {
-  return raw.startsWith('$') || raw.startsWith('@') || (raw.length < 25 && HANDLE_RE.test(raw));
+  return raw.startsWith('$') || raw.startsWith('@') || (raw.length < 25 && /^[$@]?[a-z0-9][a-z0-9_.\-]{0,62}$/i.test(raw));
 }
 
 const lookupResult = async <T,>(promise: Promise<T>) =>
