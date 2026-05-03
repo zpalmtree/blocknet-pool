@@ -65,10 +65,14 @@ where
         writer.write_char(' ')?;
 
         let target = meta.target();
-        let component = pad_or_truncate_ascii(
-            target.split("::").next().unwrap_or(target),
-            COMPONENT_COL_WIDTH,
-        );
+        let component = target
+            .split("::")
+            .next()
+            .unwrap_or(target)
+            .chars()
+            .take(COMPONENT_COL_WIDTH)
+            .collect::<String>();
+        let component = format!("{component:<width$}", width = COMPONENT_COL_WIDTH);
         write_colored(&mut writer, ansi, "36", &component)?;
         write!(&mut writer, " | ")?;
 
@@ -82,25 +86,5 @@ fn write_colored(writer: &mut Writer<'_>, ansi: bool, style: &str, text: &str) -
         write!(writer, "\x1b[{style}m{text}\x1b[0m")
     } else {
         writer.write_str(text)
-    }
-}
-
-fn pad_or_truncate_ascii(value: &str, width: usize) -> String {
-    let truncated = value.chars().take(width).collect::<String>();
-    format!("{truncated:<width$}")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::pad_or_truncate_ascii;
-
-    #[test]
-    fn pad_or_truncate_ascii_pads_short_values() {
-        assert_eq!(pad_or_truncate_ascii("api", 8), "api     ");
-    }
-
-    #[test]
-    fn pad_or_truncate_ascii_truncates_long_values() {
-        assert_eq!(pad_or_truncate_ascii("tokio_postgres", 8), "tokio_po");
     }
 }
