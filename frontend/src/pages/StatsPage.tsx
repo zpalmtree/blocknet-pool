@@ -68,6 +68,15 @@ function mergeMinerBalancePayload(
   };
 }
 
+function RejectionMetric({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="rejection-metric">
+      <div className="label">{label}</div>
+      <div className="value mono">{value}</div>
+    </div>
+  );
+}
+
 export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const [minerInput, setMinerInput] = useState(localStorage.getItem(LAST_MINER_LOOKUP_KEY) || '');
   const [minerAddress, setMinerAddress] = useState('');
@@ -644,22 +653,10 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
             </div>
             <div className="card rejection-card">
               <div className="rejection-overview">
-                <div className="rejection-metric">
-                  <div className="label">Checked</div>
-                  <div className="value mono">{rejectionChecked}</div>
-                </div>
-                <div className="rejection-metric">
-                  <div className="label">Rejected</div>
-                  <div className="value mono">{rejectionWindow?.rejected ?? 0}</div>
-                </div>
-                <div className="rejection-metric">
-                  <div className="label">Reject Rate</div>
-                  <div className="value mono">{formatPct(rejectionRatePct)}</div>
-                </div>
-                <div className="rejection-metric">
-                  <div className="label">Top Reason</div>
-                  <div className="value mono">{topWindowReason?.reason || 'none'}</div>
-                </div>
+                <RejectionMetric label="Checked" value={rejectionChecked} />
+                <RejectionMetric label="Rejected" value={rejectionWindow?.rejected ?? 0} />
+                <RejectionMetric label="Reject Rate" value={formatPct(rejectionRatePct)} />
+                <RejectionMetric label="Top Reason" value={topWindowReason?.reason || 'none'} />
               </div>
 
               {!hasWindowRejections ? (
