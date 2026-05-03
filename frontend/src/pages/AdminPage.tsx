@@ -46,6 +46,11 @@ const DAEMON_LOG_RECONNECT_DELAY_MS = 1500;
 const HOT_PATH_LATENCY_WARN_MILLIS = 1000;
 const HOT_PATH_LATENCY_SPIKE_MILLIS = 5000;
 const ACKNOWLEDGED_LAUNCH_ERA_MINER_SHORTFALL = 1_546_507_661_992;
+const WARN_TEXT_STYLE = { color: 'var(--warn)' };
+const GOOD_TEXT_STYLE = { color: 'var(--good)' };
+const MUTED_TEXT_STYLE = { color: 'var(--muted)' };
+const warnTextStyle = (active: boolean) => (active ? WARN_TEXT_STYLE : undefined);
+const warnGoodTextStyle = (warn: boolean) => (warn ? WARN_TEXT_STYLE : GOOD_TEXT_STYLE);
 
 function rewardStatusLabel(status: string): string {
   switch (status) {
@@ -1452,7 +1457,7 @@ export function AdminPage({
               <div className="label">Risk Holds</div>
               <div
                 className="value mono"
-                style={riskVerificationHolds.length > 0 ? { color: 'var(--warn)' } : undefined}
+                style={warnTextStyle(riskVerificationHolds.length > 0)}
               >
                 {riskVerificationHolds.length}
               </div>
@@ -1471,7 +1476,7 @@ export function AdminPage({
               <div className="label">5m Reject Rate</div>
               <div
                 className="value mono"
-                style={shareWindowRejectPct(shareWindow5m) >= 5 ? { color: 'var(--warn)' } : undefined}
+                style={warnTextStyle(shareWindowRejectPct(shareWindow5m) >= 5)}
               >
                 {formatPct(shareWindowRejectPct(shareWindow5m), 2)}
               </div>
@@ -1492,7 +1497,7 @@ export function AdminPage({
               {minerFundingGapAmount != null && (
                 <div
                   className="stat-meta"
-                  style={minerFundingGapAmount > 0 ? { color: 'var(--warn)' } : { color: 'var(--good)' }}
+                  style={warnGoodTextStyle(minerFundingGapAmount > 0)}
                 >
                   {minerFundingGapAmount > 0
                     ? `${formatCoins(minerFundingGapAmount)} wallet gap vs clean miner liability`
@@ -1507,7 +1512,7 @@ export function AdminPage({
                 </div>
               )}
               {balanceDiagnosticsSummary && (
-                <div className="stat-meta" style={{ color: 'var(--warn)' }}>
+                <div className="stat-meta" style={WARN_TEXT_STYLE}>
                   {balanceDiagnosticsSummary}
                 </div>
               )}
@@ -1528,17 +1533,17 @@ export function AdminPage({
                   : '-'}
               </div>
               {minerFundingGapAmount != null && minerFundingGapAmount > 0 && (
-                <div className="stat-meta" style={{ color: 'var(--warn)' }}>
+                <div className="stat-meta" style={WARN_TEXT_STYLE}>
                   {`${formatCompactCoins(minerFundingGapAmount)} still needed for clean miners`}
                 </div>
               )}
               {minerFundingGapAmount === 0 && minerWalletSurplusAmount != null && (
-                <div className="stat-meta" style={{ color: 'var(--good)' }}>
+                <div className="stat-meta" style={GOOD_TEXT_STYLE}>
                   {`${formatCompactCoins(minerWalletSurplusAmount)} above clean miner liability`}
                 </div>
               )}
               {balanceOverview && hasUnresolvedLedgerMismatch && (
-                <div className="stat-meta" style={{ color: 'var(--warn)' }}>
+                <div className="stat-meta" style={WARN_TEXT_STYLE}>
                   Ledger diagnostics in Balances tab
                 </div>
               )}
@@ -2310,7 +2315,7 @@ export function AdminPage({
                               </td>
                               <td>
                                 {!topReason ? (
-                                  <span style={{ color: 'var(--muted)' }}>None</span>
+                                  <span style={MUTED_TEXT_STYLE}>None</span>
                                 ) : (
                                   <>
                                     <div style={{ fontWeight: 600 }}>{topReason.reason}</div>
@@ -2559,11 +2564,7 @@ export function AdminPage({
                         </span>
                         <span
                           className="mono"
-                          style={
-                            minerFundingGapAmount != null && minerFundingGapAmount > 0
-                              ? { color: 'var(--warn)' }
-                              : { color: 'var(--good)' }
-                          }
+                          style={warnGoodTextStyle(minerFundingGapAmount != null && minerFundingGapAmount > 0)}
                         >
                           {formatCoins(
                             minerFundingGapAmount != null && minerFundingGapAmount > 0
@@ -2576,11 +2577,7 @@ export function AdminPage({
                         <span>Immediate queue shortfall</span>
                         <span
                           className="mono"
-                          style={
-                            (queuedPayoutShortfallAmount ?? 0) > 0
-                              ? { color: 'var(--warn)' }
-                              : { color: 'var(--good)' }
-                          }
+                          style={warnGoodTextStyle((queuedPayoutShortfallAmount ?? 0) > 0)}
                         >
                           {formatCoins(queuedPayoutShortfallAmount ?? 0)}
                         </span>
@@ -2588,7 +2585,7 @@ export function AdminPage({
                       {balanceOverview.ledger.pool_fee_clean_unpaid_total > 0 && (
                         <div className="admin-balance-overview__row">
                           <span>Internal pool fee tracked separately</span>
-                          <span className="mono" style={{ color: 'var(--muted)' }}>
+                          <span className="mono" style={MUTED_TEXT_STYLE}>
                             {formatCoins(balanceOverview.ledger.pool_fee_clean_unpaid_total)}
                           </span>
                         </div>
@@ -2596,7 +2593,7 @@ export function AdminPage({
                       {balanceOverview.ledger.miner_balance_source_drift_total > 0 && (
                         <div className="admin-balance-overview__row">
                           <span>Miner source drift diagnostic</span>
-                          <span className="mono" style={{ color: 'var(--warn)' }}>
+                          <span className="mono" style={WARN_TEXT_STYLE}>
                             {formatCoins(balanceOverview.ledger.miner_balance_source_drift_total)}
                           </span>
                         </div>
@@ -2628,7 +2625,7 @@ export function AdminPage({
                       {(queuedPayoutShortfallAmount ?? 0) > 0 && (
                         <div className="admin-balance-overview__row">
                           <span>Immediate queue shortfall</span>
-                          <span className="mono" style={{ color: 'var(--warn)' }}>
+                          <span className="mono" style={WARN_TEXT_STYLE}>
                             {formatCoins(queuedPayoutShortfallAmount ?? 0)}
                           </span>
                         </div>
@@ -2654,11 +2651,7 @@ export function AdminPage({
                         <span>Orphan-backed miner pending</span>
                         <span
                           className="mono"
-                          style={
-                            balanceOverview.ledger.miner_orphan_backed_unpaid_total > 0
-                              ? { color: 'var(--warn)' }
-                              : undefined
-                          }
+                          style={warnTextStyle(balanceOverview.ledger.miner_orphan_backed_unpaid_total > 0)}
                         >
                           {formatCoins(balanceOverview.ledger.miner_orphan_backed_unpaid_total)}
                         </span>
@@ -2666,7 +2659,7 @@ export function AdminPage({
                       {balanceOverview.ledger.miner_balance_source_drift_total > 0 && (
                         <div className="admin-balance-overview__row">
                           <span>Miner balance above live sources</span>
-                          <span className="mono" style={{ color: 'var(--warn)' }}>
+                          <span className="mono" style={WARN_TEXT_STYLE}>
                             {formatCoins(balanceOverview.ledger.miner_balance_source_drift_total)}
                           </span>
                         </div>
@@ -2691,11 +2684,7 @@ export function AdminPage({
                         <span>Internal pool fee orphan-backed</span>
                         <span
                           className="mono"
-                          style={
-                            balanceOverview.ledger.pool_fee_orphan_backed_unpaid_total > 0
-                              ? { color: 'var(--warn)' }
-                              : undefined
-                          }
+                          style={warnTextStyle(balanceOverview.ledger.pool_fee_orphan_backed_unpaid_total > 0)}
                         >
                           {formatCoins(balanceOverview.ledger.pool_fee_orphan_backed_unpaid_total)}
                         </span>
@@ -2703,7 +2692,7 @@ export function AdminPage({
                       {balanceOverview.ledger.pool_fee_balance_source_drift_total > 0 && (
                         <div className="admin-balance-overview__row">
                           <span>Internal pool fee above live sources</span>
-                          <span className="mono" style={{ color: 'var(--warn)' }}>
+                          <span className="mono" style={WARN_TEXT_STYLE}>
                             {formatCoins(balanceOverview.ledger.pool_fee_balance_source_drift_total)}
                           </span>
                         </div>
@@ -2715,7 +2704,7 @@ export function AdminPage({
                       {ledgerOverhangAmount != null && ledgerOverhangAmount > 0 && (
                         <div className="admin-balance-overview__row">
                           <span>Miner ledger overhang</span>
-                          <span className="mono" style={{ color: 'var(--warn)' }}>
+                          <span className="mono" style={WARN_TEXT_STYLE}>
                             {formatCoins(ledgerOverhangAmount)}
                           </span>
                         </div>
@@ -2723,7 +2712,7 @@ export function AdminPage({
                       {acknowledgedHistoricalShortfallAmount != null && acknowledgedHistoricalShortfallAmount > 0 && (
                         <div className="admin-balance-overview__row">
                           <span>Acknowledged launch-era baseline</span>
-                          <span className="mono" style={{ color: 'var(--muted)' }}>
+                          <span className="mono" style={MUTED_TEXT_STYLE}>
                             {formatCoins(acknowledgedHistoricalShortfallAmount)}
                           </span>
                         </div>
@@ -2731,7 +2720,7 @@ export function AdminPage({
                       {unresolvedLedgerShortfallAmount != null && unresolvedLedgerShortfallAmount > 0 && (
                         <div className="admin-balance-overview__row">
                           <span>Unallocated canonical miner rewards</span>
-                          <span className="mono" style={{ color: 'var(--warn)' }}>
+                          <span className="mono" style={WARN_TEXT_STYLE}>
                             {formatCoins(unresolvedLedgerShortfallAmount)}
                           </span>
                         </div>
@@ -2740,9 +2729,7 @@ export function AdminPage({
                         <span>Credits balanced</span>
                         <span
                           className="mono"
-                          style={
-                            !hasUnresolvedLedgerMismatch ? { color: 'var(--good)' } : { color: 'var(--warn)' }
-                          }
+                          style={warnGoodTextStyle(hasUnresolvedLedgerMismatch)}
                         >
                           {hasUnresolvedLedgerMismatch ? 'No' : 'Baseline accepted'}
                         </span>
@@ -2818,14 +2805,14 @@ export function AdminPage({
                         </td>
                         <td className="mono">
                           {b.orphan_backed > 0 ? (
-                            <span style={{ color: 'var(--warn)' }}>{formatCoins(b.orphan_backed)}</span>
+                            <span style={WARN_TEXT_STYLE}>{formatCoins(b.orphan_backed)}</span>
                           ) : (
                             formatCoins(0)
                           )}
                         </td>
                         <td className="mono">
                           {b.pending > 0 ? (
-                            <span style={{ color: 'var(--warn)' }}>{formatCoins(b.pending)}</span>
+                            <span style={WARN_TEXT_STYLE}>{formatCoins(b.pending)}</span>
                           ) : (
                             formatCoins(b.pending)
                           )}
