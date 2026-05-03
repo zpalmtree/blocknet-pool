@@ -1284,10 +1284,10 @@ struct MinerListItem {
 }
 
 async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
-    match state.cached_stats_response().await {
-        Ok(response) => Json(response).into_response(),
-        Err(err) => internal_error("failed loading pool stats", err),
-    }
+    json_result(
+        state.cached_stats_response().await,
+        "failed loading pool stats",
+    )
 }
 
 async fn handle_stats_history(
@@ -1305,19 +1305,18 @@ async fn handle_stats_history(
         .unwrap_or(UNIX_EPOCH);
 
     let store = Arc::clone(&state.store);
-    match spawn_blocking_result(move || store.get_stat_snapshots(since)).await {
-        Ok(snapshots) => Json(
+    let result = spawn_blocking_result(move || store.get_stat_snapshots(since))
+        .await
+        .map(|snapshots| {
             snapshots
                 .into_iter()
                 .map(|snapshot| PoolHashratePointResponse {
                     timestamp: snapshot.timestamp,
                     hashrate: snapshot.hashrate,
                 })
-                .collect::<Vec<_>>(),
-        )
-        .into_response(),
-        Err(err) => internal_error("failed loading stat history", err),
-    }
+                .collect::<Vec<_>>()
+        });
+    json_result(result, "failed loading stat history")
 }
 
 async fn handle_stats_insights(
@@ -1325,15 +1324,16 @@ async fn handle_stats_insights(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
     let rejection_window = rejection_window_duration(query.rejection_window.as_deref());
-    match state.stats_insights().await {
-        Ok(mut v) => match state.rejection_analytics_snapshot(rejection_window).await {
-            Ok(snapshot) => {
-                v.rejections = snapshot;
-                Json(v).into_response()
-            }
-            Err(err) => internal_error("failed loading rejection analytics", err),
-        },
-        Err(err) => internal_error("failed loading stats insights", err),
+    let mut response = match state.stats_insights().await {
+        Ok(value) => value,
+        Err(err) => return internal_error("failed loading stats insights", err),
+    };
+    match state.rejection_analytics_snapshot(rejection_window).await {
+        Ok(snapshot) => {
+            response.rejections = snapshot;
+            Json(response).into_response()
+        }
+        Err(err) => internal_error("failed loading rejection analytics", err),
     }
 }
 
@@ -1565,10 +1565,10 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 async fn handle_status(State(state): State<ApiState>) -> impl IntoResponse {
-    match state.build_status_response().await {
-        Ok(response) => Json(response).into_response(),
-        Err(err) => internal_error("failed loading status page", err),
-    }
+    json_result(
+        state.build_status_response().await,
+        "failed loading status page",
+    )
 }
 
 async fn handle_monitor_public(State(state): State<ApiState>) -> impl IntoResponse {
@@ -1724,71 +1724,69 @@ async fn handle_admin_balances(
         .unwrap_or_else(|| "pending_desc".to_string());
     let (limit, offset) = page_bounds(query.limit, query.offset);
 
-    match spawn_blocking_result(move || -> anyhow::Result<PagedResponse<AdminBalanceItem>> {
-        let all = store.get_all_balances()?;
-        let source_by_address = store
-            .list_balance_source_summaries()?
-            .into_iter()
-            .map(|source| (source.address.clone(), source))
-            .collect::<HashMap<_, BalanceSourceSummary>>();
-        let mut filtered: Vec<_> = if search.is_empty() {
-            all
-        } else {
-            let needle = search.to_lowercase();
-            all.into_iter()
-                .filter(|b| b.address.to_lowercase().contains(&needle))
-                .collect()
-        };
+    let result =
+        spawn_blocking_result(move || -> anyhow::Result<PagedResponse<AdminBalanceItem>> {
+            let all = store.get_all_balances()?;
+            let source_by_address = store
+                .list_balance_source_summaries()?
+                .into_iter()
+                .map(|source| (source.address.clone(), source))
+                .collect::<HashMap<_, BalanceSourceSummary>>();
+            let mut filtered: Vec<_> = if search.is_empty() {
+                all
+            } else {
+                let needle = search.to_lowercase();
+                all.into_iter()
+                    .filter(|b| b.address.to_lowercase().contains(&needle))
+                    .collect()
+            };
 
-        match sort.as_str() {
-            "pending_asc" => filtered.sort_by(|a, b| a.pending.cmp(&b.pending)),
-            "paid_desc" => filtered.sort_by(|a, b| b.paid.cmp(&a.paid)),
-            "paid_asc" => filtered.sort_by(|a, b| a.paid.cmp(&b.paid)),
-            "address_asc" => filtered.sort_by(|a, b| a.address.cmp(&b.address)),
-            "address_desc" => filtered.sort_by(|a, b| b.address.cmp(&a.address)),
-            _ => filtered.sort_by(|a, b| b.pending.cmp(&a.pending)), // pending_desc default
-        }
+            match sort.as_str() {
+                "pending_asc" => filtered.sort_by(|a, b| a.pending.cmp(&b.pending)),
+                "paid_desc" => filtered.sort_by(|a, b| b.paid.cmp(&a.paid)),
+                "paid_asc" => filtered.sort_by(|a, b| a.paid.cmp(&b.paid)),
+                "address_asc" => filtered.sort_by(|a, b| a.address.cmp(&b.address)),
+                "address_desc" => filtered.sort_by(|a, b| b.address.cmp(&a.address)),
+                _ => filtered.sort_by(|a, b| b.pending.cmp(&a.pending)), // pending_desc default
+            }
 
-        let total = filtered.len();
-        let items: Vec<AdminBalanceItem> = filtered
-            .into_iter()
-            .skip(offset)
-            .take(limit)
-            .map(|b| {
-                let source = source_by_address
-                    .get(&b.address)
-                    .cloned()
-                    .unwrap_or_default();
-                AdminBalanceItem {
-                    address: b.address,
-                    clean_payable: source.canonical_pending,
-                    orphan_backed: source.orphan_pending,
-                    pending: b.pending,
-                    paid: b.paid,
-                }
-            })
-            .collect();
-        Ok(PagedResponse { items, total })
-    })
-    .await
-    {
-        Ok(resp) => Json(resp).into_response(),
-        Err(err) => internal_error("failed loading balances", err),
-    }
+            let total = filtered.len();
+            let items: Vec<AdminBalanceItem> = filtered
+                .into_iter()
+                .skip(offset)
+                .take(limit)
+                .map(|b| {
+                    let source = source_by_address
+                        .get(&b.address)
+                        .cloned()
+                        .unwrap_or_default();
+                    AdminBalanceItem {
+                        address: b.address,
+                        clean_payable: source.canonical_pending,
+                        orphan_backed: source.orphan_pending,
+                        pending: b.pending,
+                        paid: b.paid,
+                    }
+                })
+                .collect();
+            Ok(PagedResponse { items, total })
+        })
+        .await;
+    json_result(result, "failed loading balances")
 }
 
 async fn handle_admin_balance_overview(State(state): State<ApiState>) -> impl IntoResponse {
-    match state.admin_balance_overview().await {
-        Ok(response) => Json(response).into_response(),
-        Err(err) => internal_error("failed loading balance overview", err),
-    }
+    json_result(
+        state.admin_balance_overview().await,
+        "failed loading balance overview",
+    )
 }
 
 async fn handle_admin_reconciliation_issues(State(state): State<ApiState>) -> impl IntoResponse {
-    match state.admin_reconciliation_issues().await {
-        Ok(response) => Json(response).into_response(),
-        Err(err) => internal_error("failed loading reconciliation issues", err),
-    }
+    json_result(
+        state.admin_reconciliation_issues().await,
+        "failed loading reconciliation issues",
+    )
 }
 
 async fn handle_admin_reconciliation_payout_resolution(
@@ -1820,19 +1818,19 @@ async fn handle_admin_reconciliation_payout_import(
         }
     };
 
-    match state.import_confirmed_wallet_payouts(tx_hashes).await {
-        Ok(response) => Json(response).into_response(),
-        Err(err) => internal_error("failed importing confirmed payout txs into ledger", err),
-    }
+    json_result(
+        state.import_confirmed_wallet_payouts(tx_hashes).await,
+        "failed importing confirmed payout txs into ledger",
+    )
 }
 
 async fn handle_admin_reconciliation_manual_offset_apply(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
-    match state.apply_live_manual_payout_offsets().await {
-        Ok(response) => Json(response).into_response(),
-        Err(err) => internal_error("failed applying manual payout offsets", err),
-    }
+    json_result(
+        state.apply_live_manual_payout_offsets().await,
+        "failed applying manual payout offsets",
+    )
 }
 
 async fn handle_admin_orphaned_block_cleanup_retry(
@@ -1882,10 +1880,10 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
 }
 
 async fn handle_admin_share_diagnostics(State(state): State<ApiState>) -> impl IntoResponse {
-    match state.admin_share_diagnostics().await {
-        Ok(response) => Json(response).into_response(),
-        Err(err) => internal_error("failed loading admin share diagnostics", err),
-    }
+    json_result(
+        state.admin_share_diagnostics().await,
+        "failed loading admin share diagnostics",
+    )
 }
 
 #[derive(Deserialize)]
@@ -1937,58 +1935,51 @@ async fn handle_recovery_status(State(state): State<ApiState>) -> impl IntoRespo
         ))
         .into_response();
     }
-    match state.recovery.status().await {
-        Ok(status) => Json(status).into_response(),
-        Err(err) => internal_error("failed loading recovery status", err),
-    }
+    json_result(
+        state.recovery.status().await,
+        "failed loading recovery status",
+    )
 }
 
 async fn handle_recovery_pause_payouts(State(state): State<ApiState>) -> impl IntoResponse {
-    match recovery_operation_response(&state, state.recovery.pause_payouts().await).await {
-        Ok(response) => response,
-        Err(response) => response,
-    }
+    recovery_operation_response(&state, state.recovery.pause_payouts().await)
+        .await
+        .unwrap_or_else(|response| response)
 }
 
 async fn handle_recovery_resume_payouts(State(state): State<ApiState>) -> impl IntoResponse {
-    match recovery_operation_response(&state, state.recovery.resume_payouts().await).await {
-        Ok(response) => response,
-        Err(response) => response,
-    }
+    recovery_operation_response(&state, state.recovery.resume_payouts().await)
+        .await
+        .unwrap_or_else(|response| response)
 }
 
 async fn handle_recovery_start_inactive_sync(State(state): State<ApiState>) -> impl IntoResponse {
-    match recovery_operation_response(&state, state.recovery.start_inactive_sync().await).await {
-        Ok(response) => response,
-        Err(response) => response,
-    }
+    recovery_operation_response(&state, state.recovery.start_inactive_sync().await)
+        .await
+        .unwrap_or_else(|response| response)
 }
 
 async fn handle_recovery_rebuild_inactive_wallet(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
-    match recovery_operation_response(&state, state.recovery.rebuild_inactive_wallet().await).await
-    {
-        Ok(response) => response,
-        Err(response) => response,
-    }
+    recovery_operation_response(&state, state.recovery.rebuild_inactive_wallet().await)
+        .await
+        .unwrap_or_else(|response| response)
 }
 
 async fn handle_recovery_cutover(
     State(state): State<ApiState>,
     Json(request): Json<RecoveryCutoverRequest>,
 ) -> impl IntoResponse {
-    match recovery_operation_response(&state, state.recovery.cutover(request.target).await).await {
-        Ok(response) => response,
-        Err(response) => response,
-    }
+    recovery_operation_response(&state, state.recovery.cutover(request.target).await)
+        .await
+        .unwrap_or_else(|response| response)
 }
 
 async fn handle_recovery_purge_inactive_daemon(State(state): State<ApiState>) -> impl IntoResponse {
-    match recovery_operation_response(&state, state.recovery.purge_inactive_daemon().await).await {
-        Ok(response) => response,
-        Err(response) => response,
-    }
+    recovery_operation_response(&state, state.recovery.purge_inactive_daemon().await)
+        .await
+        .unwrap_or_else(|response| response)
 }
 
 async fn handle_admin_clear_address_risk_history(
@@ -2558,13 +2549,12 @@ async fn handle_miner_balance(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
     let include_pending_estimate = query.include_pending_estimate.unwrap_or(true);
-    match state
-        .cached_miner_balance_payload(&address, include_pending_estimate)
-        .await
-    {
-        Ok(payload) => Json(payload).into_response(),
-        Err(err) => internal_error("failed loading miner balance", err),
-    }
+    json_result(
+        state
+            .cached_miner_balance_payload(&address, include_pending_estimate)
+            .await,
+        "failed loading miner balance",
+    )
 }
 
 async fn handle_miner(
@@ -5903,6 +5893,13 @@ fn miner_has_activity(
 
 fn error_response(status: StatusCode, message: impl Into<String>) -> Response {
     (status, Json(json!({ "error": message.into() }))).into_response()
+}
+
+fn json_result<T: Serialize>(result: anyhow::Result<T>, msg: &str) -> Response {
+    result.map_or_else(
+        |err| internal_error(msg, err),
+        |value| Json(value).into_response(),
+    )
 }
 
 fn internal_error(msg: &str, err: anyhow::Error) -> Response {
