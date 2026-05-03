@@ -71,9 +71,15 @@ fn verify_ui_bundle(frontend_dir: &Path, frontend_src_dir: &Path, frontend_dist_
     ];
     source_files.extend(walk_files(frontend_src_dir));
 
-    let newest_source = newest_mtime(&source_files)
+    let newest_source = source_files
+        .iter()
+        .filter_map(|path| file_mtime(path))
+        .max()
         .unwrap_or_else(|| fail_missing_or_stale("frontend source tree is empty"));
-    let oldest_output = oldest_mtime(&required_paths)
+    let oldest_output = required_paths
+        .iter()
+        .filter_map(|path| file_mtime(path))
+        .min()
         .unwrap_or_else(|| fail_missing_or_stale("generated frontend assets are unreadable"));
 
     if oldest_output < newest_source {
@@ -110,14 +116,6 @@ fn walk_files(root: &Path) -> Vec<PathBuf> {
         }
     }
     files
-}
-
-fn newest_mtime(paths: &[PathBuf]) -> Option<SystemTime> {
-    paths.iter().filter_map(|path| file_mtime(path)).max()
-}
-
-fn oldest_mtime(paths: &[PathBuf]) -> Option<SystemTime> {
-    paths.iter().filter_map(|path| file_mtime(path)).min()
 }
 
 fn file_mtime(path: &Path) -> Option<SystemTime> {
