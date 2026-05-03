@@ -62,7 +62,6 @@ pub struct NodeLastProcessBlock {
 pub struct NodeBlock {
     pub hash: String,
     pub reward: u64,
-    #[serde(default)]
     pub timestamp: i64,
 }
 
@@ -83,16 +82,13 @@ pub struct WalletAddressResponse {
 pub struct WalletBalance {
     pub spendable: u64,
     pub pending: u64,
-    #[serde(default)]
     pub pending_unconfirmed: u64,
-    #[serde(default)]
     pub pending_unconfirmed_eta: u64,
     pub total: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct WalletOutputsResponse {
-    #[serde(default)]
     pub outputs: Vec<WalletOutput>,
 }
 
