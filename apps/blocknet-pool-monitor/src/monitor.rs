@@ -1948,32 +1948,32 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
     metric_line(
         &mut out,
         "blocknet_pool_monitor_api_up",
-        bool_gauge(snapshot.api_up.unwrap_or(false)),
+        u8::from(snapshot.api_up.unwrap_or(false)),
     );
     metric_line(
         &mut out,
         "blocknet_pool_monitor_stratum_up",
-        bool_gauge(snapshot.stratum_up.unwrap_or(false)),
+        u8::from(snapshot.stratum_up.unwrap_or(false)),
     );
     metric_line(
         &mut out,
         "blocknet_pool_monitor_db_up",
-        bool_gauge(snapshot.db_up.unwrap_or(false)),
+        u8::from(snapshot.db_up.unwrap_or(false)),
     );
     metric_line(
         &mut out,
         "blocknet_pool_monitor_daemon_up",
-        bool_gauge(snapshot.daemon_up.unwrap_or(false)),
+        u8::from(snapshot.daemon_up.unwrap_or(false)),
     );
     metric_line(
         &mut out,
         "blocknet_pool_monitor_daemon_syncing",
-        bool_gauge(snapshot.daemon_syncing.unwrap_or(false)),
+        u8::from(snapshot.daemon_syncing.unwrap_or(false)),
     );
     metric_line(
         &mut out,
         "blocknet_pool_monitor_daemon_process_block_active",
-        bool_gauge(snapshot.daemon_current_process_block.is_some()),
+        u8::from(snapshot.daemon_current_process_block.is_some()),
     );
     metric_line(
         &mut out,
@@ -2032,7 +2032,7 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
     metric_line(
         &mut out,
         "blocknet_pool_monitor_wallet_up",
-        bool_gauge(snapshot.wallet_up.unwrap_or(false)),
+        u8::from(snapshot.wallet_up.unwrap_or(false)),
     );
     metric_line(
         &mut out,
@@ -2163,7 +2163,7 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
             &mut out,
             "blocknet_pool_monitor_reference_source_up",
             &[("source", source)],
-            bool_gauge(*up),
+            u8::from(*up),
         );
     }
     render_timed_operation_metrics(
@@ -2229,10 +2229,6 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
     };
     metric_line(&mut out, "blocknet_pool_monitor_summary_state", state_value);
     out
-}
-
-fn bool_gauge(value: bool) -> u8 {
-    u8::from(value)
 }
 
 fn metric_line<T>(buf: &mut String, name: &str, value: T)
@@ -2326,7 +2322,7 @@ fn escape_metric_label_value(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        bool_gauge, daemon_slow_block_state, parse_proc_stat_metrics, payout_queue_state,
+        daemon_slow_block_state, parse_proc_stat_metrics, payout_queue_state,
         pool_activity_loss_state, reference_height_divergence_state, render_metrics,
         share_progress_state, summarize_state, validation_backlog_state, MonitorSnapshot,
         PendingPayoutSummary, ProcessMetrics, ReferenceHeightSample, SummaryStateInput,
@@ -2375,12 +2371,6 @@ mod tests {
             reference_height_divergence_severity: None,
             wallet_ready: true,
         }
-    }
-
-    #[test]
-    fn bool_gauge_uses_numeric_values() {
-        assert_eq!(bool_gauge(false), 0);
-        assert_eq!(bool_gauge(true), 1);
     }
 
     #[test]
