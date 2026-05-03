@@ -1844,26 +1844,10 @@ struct RecoveryCutoverRequest {
     target: RecoveryInstanceId,
 }
 
-#[derive(Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum AdminReconciliationPayoutResolutionAction {
-    RestorePending,
-    DropPaid,
-}
-
-impl AdminReconciliationPayoutResolutionAction {
-    fn into_store_kind(self) -> ManualCompletedPayoutResolutionKind {
-        match self {
-            Self::RestorePending => ManualCompletedPayoutResolutionKind::RestorePending,
-            Self::DropPaid => ManualCompletedPayoutResolutionKind::DropPaid,
-        }
-    }
-}
-
 #[derive(Deserialize)]
 struct AdminReconciliationPayoutResolutionRequest {
     tx_hash: String,
-    action: AdminReconciliationPayoutResolutionAction,
+    action: ManualCompletedPayoutResolutionKind,
 }
 
 #[derive(Deserialize)]
@@ -4369,7 +4353,7 @@ impl ApiState {
     async fn resolve_missing_completed_payout_issue(
         &self,
         tx_hash: &str,
-        action: AdminReconciliationPayoutResolutionAction,
+        action: ManualCompletedPayoutResolutionKind,
     ) -> anyhow::Result<()> {
         if self.node.get_tx_status_optional(tx_hash)?.is_some() {
             return Err(anyhow::anyhow!(
@@ -4381,7 +4365,7 @@ impl ApiState {
         let store = Arc::clone(&self.store);
         let tx_hash_owned = tx_hash.to_string();
         spawn_blocking_result(move || {
-            store.resolve_completed_payout_tx_override(&tx_hash_owned, action.into_store_kind())
+            store.resolve_completed_payout_tx_override(&tx_hash_owned, action)
         })
         .await?;
 

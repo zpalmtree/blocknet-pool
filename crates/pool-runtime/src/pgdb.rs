@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
 use postgres::{types::ToSql, Client, Config as PostgresConfig, NoTls, Row, Transaction};
+use serde::Deserialize;
 use tracing::warn;
 
 use crate::engine::ShareRecord;
@@ -171,7 +172,8 @@ pub struct UnreconciledCompletedPayoutRow {
     pub orphaned_linked_amount: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum ManualCompletedPayoutResolutionKind {
     RestorePending,
     DropPaid,
