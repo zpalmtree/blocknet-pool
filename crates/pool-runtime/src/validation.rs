@@ -1723,13 +1723,11 @@ impl ValidationInner {
             .lock()
             .as_ref()
             .map(|queue| queue.snapshot(now));
-        let validation_pct = regular_validation.depth as f64
-            / self.config.regular_validation_queue_size().max(1) as f64;
+        let validation_pct =
+            regular_validation.depth as f64 / self.config.regular_validation_queue_size() as f64;
         let submit_pct = regular_submit
             .as_ref()
-            .map(|snapshot| {
-                snapshot.depth as f64 / self.config.regular_submit_queue_size().max(1) as f64
-            })
+            .map(|snapshot| snapshot.depth as f64 / self.config.regular_submit_queue_size() as f64)
             .unwrap_or_default();
         let queue_pct = validation_pct.max(submit_pct);
         let oldest_age = Duration::from_millis(
