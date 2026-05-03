@@ -40,21 +40,26 @@ impl Config {
             .with_context(|| format!("parse config {}", path.display()))?;
         cfg.normalize();
         cfg.runtime.validate()?;
+        cfg.validate()?;
         Ok(cfg)
     }
 
     pub(crate) fn normalize(&mut self) {
         self.runtime.normalize();
         self.recovery.normalize();
+    }
+
+    fn validate(&self) -> Result<()> {
         if self.pool_url.trim().is_empty() {
-            self.pool_url = "http://localhost:24783".to_string();
+            anyhow::bail!("pool_url must not be empty");
         }
         if self.api_host.trim().is_empty() {
-            self.api_host = "127.0.0.1".to_string();
+            anyhow::bail!("api_host must not be empty");
         }
         if self.api_port == 0 {
-            self.api_port = 24783;
+            anyhow::bail!("api_port must be non-zero");
         }
+        Ok(())
     }
 }
 
@@ -85,5 +90,24 @@ mod tests {
             Err(err) => err,
         };
         assert!(format!("{err:#}").contains("payout_interval"));
+    }
+
+    #[test]
+    fn api_config_load_rejects_empty_app_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+
+        for (json, expected) in [
+            (r#"{"pool_url":""}"#, "pool_url"),
+            (r#"{"api_host":"   "}"#, "api_host"),
+            (r#"{"api_port":0}"#, "api_port"),
+        ] {
+            std::fs::write(&path, json).unwrap();
+            let err = match Config::load(&path) {
+                Ok(_) => panic!("{expected} should fail API config load"),
+                Err(err) => err,
+            };
+            assert!(format!("{err:#}").contains(expected));
+        }
     }
 }
