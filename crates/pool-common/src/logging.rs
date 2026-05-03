@@ -58,7 +58,8 @@ where
         write_colored(&mut writer, ansi, level_style, level_label)?;
         writer.write_char(' ')?;
 
-        write_colored_padded_component(&mut writer, ansi, short_target(meta.target()))?;
+        let component = pad_or_truncate_ascii(short_target(meta.target()), COMPONENT_COL_WIDTH);
+        write_colored(&mut writer, ansi, "36", &component)?;
         write!(&mut writer, " | ")?;
 
         ctx.format_fields(writer.by_ref(), event)?;
@@ -86,15 +87,6 @@ fn write_colored(writer: &mut Writer<'_>, ansi: bool, style: &str, text: &str) -
     } else {
         writer.write_str(text)
     }
-}
-
-fn write_colored_padded_component(
-    writer: &mut Writer<'_>,
-    ansi: bool,
-    component: &str,
-) -> fmt::Result {
-    let display = pad_or_truncate_ascii(component, COMPONENT_COL_WIDTH);
-    write_colored(writer, ansi, "36", &display)
 }
 
 fn pad_or_truncate_ascii(value: &str, width: usize) -> String {
