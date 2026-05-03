@@ -171,42 +171,32 @@ function holdUntilTitle(value: UnixLike | null | undefined): string | undefined 
   return hasActiveUntil(value) ? timestampTitle(value as UnixLike) || undefined : undefined;
 }
 
-function verificationHoldBadgeClass(active: boolean, tone: 'warn' | 'good' = 'warn'): string {
-  if (!active) return 'badge-pending';
-  return tone === 'good' ? 'badge-confirmed' : 'badge-orphaned';
-}
-
-function verificationHoldActive(hold: ActiveVerificationHold): boolean {
-  return (
-    hasActiveUntil(hold.quarantined_until) ||
-    hasActiveUntil(hold.force_verify_until) ||
-    hasActiveUntil(hold.validation_forced_until)
-  );
-}
-
-function verificationHoldTone(hold: ActiveVerificationHold): 'warn' | 'good' {
-  return hasActiveUntil(hold.quarantined_until) ? 'warn' : 'good';
-}
-
-function verificationHoldLabel(hold: ActiveVerificationHold): string {
-  if (hasActiveUntil(hold.quarantined_until)) return 'Quarantined';
-  if (hasActiveUntil(hold.force_verify_until) && hasActiveUntil(hold.validation_forced_until)) {
-    return 'Risk + validation';
-  }
-  if (hasActiveUntil(hold.force_verify_until)) return 'Risk forced';
-  if (hasActiveUntil(hold.validation_forced_until)) {
+function VerificationHoldBadge({ hold }: { hold: ActiveVerificationHold }) {
+  const quarantined = hasActiveUntil(hold.quarantined_until);
+  const forceVerified = hasActiveUntil(hold.force_verify_until);
+  const validationForced = hasActiveUntil(hold.validation_forced_until);
+  let label = 'Active';
+  if (quarantined) label = 'Quarantined';
+  else if (forceVerified && validationForced) label = 'Risk + validation';
+  else if (forceVerified) label = 'Risk forced';
+  else if (validationForced) {
     switch (hold.validation_hold_cause) {
       case 'provisional_backlog':
-        return 'Backlog drain';
+        label = 'Backlog drain';
+        break;
       case 'payout_coverage':
-        return 'Payout boost';
+        label = 'Payout boost';
+        break;
       case 'invalid_samples':
-        return 'Validation review';
+        label = 'Validation review';
+        break;
       default:
-        return 'Validation forced';
+        label = 'Validation forced';
     }
   }
-  return 'Active';
+  const active = quarantined || forceVerified || validationForced;
+  const className = !active ? 'badge-pending' : quarantined ? 'badge-orphaned' : 'badge-confirmed';
+  return <span className={className}>{label}</span>;
 }
 
 function isTemporaryValidationAssist(hold: ActiveVerificationHold): boolean {
@@ -2356,14 +2346,7 @@ export function AdminPage({
                             </a>
                           </td>
                           <td>
-                            <span
-                              className={verificationHoldBadgeClass(
-                                verificationHoldActive(hold),
-                                verificationHoldTone(hold)
-                              )}
-                            >
-                              {verificationHoldLabel(hold)}
-                            </span>
+                            <VerificationHoldBadge hold={hold} />
                           </td>
                           <td className="mono" title={holdUntilTitle(hold.quarantined_until)}>
                             {holdUntilLabel(hold.quarantined_until)}
