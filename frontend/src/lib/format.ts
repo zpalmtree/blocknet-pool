@@ -1,6 +1,6 @@
 import type { Range, UnixLike } from '../types';
 
-export const STRATUM_HOST = 'bntpool.com';
+const STRATUM_HOST = 'bntpool.com';
 
 const COIN_FORMATTER = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
@@ -110,6 +110,40 @@ export function formatFee(sats: number | null | undefined): string {
     minimumFractionDigits: 4,
     maximumFractionDigits: 4,
   }).format(v)} BNT`;
+}
+
+export function formatPct(value: number | null | undefined, digits = 1): string {
+  if (value == null || !Number.isFinite(value)) return '-';
+  return `${value.toFixed(digits)}%`;
+}
+
+export function ratioPct(numerator: number | null | undefined, denominator: number | null | undefined): number {
+  const n = numerator ?? 0;
+  const d = denominator ?? 0;
+  if (!Number.isFinite(n) || !Number.isFinite(d) || d <= 0) return 0;
+  return (n / d) * 100;
+}
+
+export function effortTone(effortPct: number | null | undefined): string {
+  if (effortPct != null && Number.isFinite(effortPct)) {
+    if (effortPct >= 200) return 'critical';
+    if (effortPct >= 100) return 'warn';
+  }
+  return 'ok';
+}
+
+export function effortLabel(effortPct: number | null | undefined): string {
+  if (effortPct == null || !Number.isFinite(effortPct)) return 'loading';
+  if (effortPct >= 200) return 'very overdue';
+  if (effortPct >= 100) return 'overdue';
+  return 'on pace';
+}
+
+export function roundToneClass(tone: string | number | null | undefined): string {
+  if (typeof tone === 'number') tone = effortTone(tone);
+  if (tone === 'critical') return 'is-critical';
+  if (tone === 'warn') return 'is-warn';
+  return 'is-ok';
 }
 
 export function fmtSeconds(s: number): string {

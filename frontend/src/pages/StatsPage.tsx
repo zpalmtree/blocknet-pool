@@ -3,7 +3,7 @@ import { startTransition, useCallback, useEffect, useMemo, useRef, useState } fr
 import type { ApiClient } from '../api/client';
 import { HashrateChart } from '../components/HashrateChart';
 import { LAST_MINER_LOOKUP_KEY } from '../lib/storage';
-import { formatCoins, formatCompactCoins, formatFee, humanRate, timeAgo, toUnixMs } from '../lib/format';
+import { formatCoins, formatCompactCoins, formatFee, formatPct, humanRate, ratioPct, timeAgo, toUnixMs } from '../lib/format';
 import type { ThemeMode } from '../lib/theme';
 import type {
   HashratePoint,
@@ -21,16 +21,9 @@ interface StatsPageProps {
   theme: ThemeMode;
 }
 
-function fmtPct(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return '-';
-  return `${value.toFixed(1)}%`;
-}
-
 type RejectionWindowRange = '1h' | '24h' | '7d';
 
-const RECENT_SHARES_LIMIT = 20;
 const HANDLE_RE = /^[$@]?[a-z0-9][a-z0-9_.\-]{0,62}$/i;
-const BLOCKNET_ID_API = 'https://blocknet.id/api/v1/resolve';
 
 function looksLikeHandle(raw: string): boolean {
   if (raw.startsWith('$') || raw.startsWith('@')) return true;
@@ -40,27 +33,15 @@ function looksLikeHandle(raw: string): boolean {
 
 async function resolveHandle(api: ApiClient, raw: string): Promise<{ address: string; handle: string } | null> {
   const handle = raw.replace(/^[$@]/, '');
-  const data = await api.fetchJson<{ address: string; handle: string }>(
-    `${BLOCKNET_ID_API}/${encodeURIComponent(handle)}`
-  );
+  const data = await api.resolveBlocknetHandle(handle);
   return { address: data.address, handle: data.handle };
-}
-
-function balancePayloadFromMiner(address: string, miner: MinerResponse): MinerBalancePayload | null {
-  if (!miner.balance) return null;
-  return {
-    address,
-    balance: miner.balance,
-    pending_estimate: miner.pending_estimate,
-    pending_payout: miner.pending_payout ?? null,
-  };
 }
 
 function mergePendingEstimate(
   current: MinerPendingEstimate | undefined,
-  next: MinerPendingEstimate | undefined,
+  next: MinerPendingEstimate,
   preserveCurrent: boolean
-): MinerPendingEstimate | undefined {
+): MinerPendingEstimate {
   if (!preserveCurrent) return next;
   return current ?? next;
 }
@@ -78,19 +59,6 @@ function mergeMinerBalancePayload(
       next.pending_estimate,
       preservePendingEstimate
     ),
-  };
-}
-
-function mergeMinerResponse(
-  current: MinerResponse | null,
-  next: MinerResponse,
-  preservePendingEstimate: boolean
-): MinerResponse {
-  if (!preservePendingEstimate) return next;
-  return {
-    ...next,
-    pending_estimate: mergePendingEstimate(current?.pending_estimate, next.pending_estimate, true),
-    pending_note: current?.pending_note ?? next.pending_note,
   };
 }
 
@@ -114,15 +82,14 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
     minerAddressRef.current = minerAddress;
   }, [minerAddress]);
 
-  const refreshMinerData = useCallback(async (includePendingEstimate: boolean) => {
+  const refreshMinerData = useCallback(async () => {
     if (!minerAddress) return;
     const addr = minerAddress;
     try {
-      const d = await api.getMiner(addr, includePendingEstimate, RECENT_SHARES_LIMIT);
+      const d = await api.getMiner(addr);
       if (minerAddressRef.current !== addr) return;
       startTransition(() => {
-        setMinerData((current) => mergeMinerResponse(current, d, !includePendingEstimate));
-        setMinerBalanceData((current) => current?.address === addr ? current : balancePayloadFromMiner(addr, d));
+        setMinerData(d);
       });
     } catch {
       // handled by api client
@@ -153,7 +120,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
       const d = await api.getMinerHashrate(addr, selectedRange);
       if (hashrateRequestKeyRef.current !== requestKey) return;
       startTransition(() => {
-        setHistory(d || []);
+        setHistory(d);
       });
     } catch {
       if (hashrateRequestKeyRef.current === requestKey) {
@@ -223,7 +190,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
           .then((value) => ({ ok: true as const, value }))
           .catch(() => ({ ok: false as const }));
         const detailPromise = api
-          .getMiner(addr, false, RECENT_SHARES_LIMIT)
+          .getMiner(addr)
           .then((value) => ({ ok: true as const, value }))
           .catch(() => ({ ok: false as const }));
         const hashratePromise = api
@@ -248,9 +215,6 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
           startTransition(() => {
             clearPreviousResult();
             setMinerData(detailResult.value);
-            setMinerBalanceData((current) =>
-              current?.address === addr ? current : balancePayloadFromMiner(addr, detailResult.value)
-            );
           });
         }
 
@@ -258,7 +222,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
         if (requestId !== lookupRequestSeq.current) return;
         if (balanceResult.ok || detailResult.ok) {
           startTransition(() => {
-            setHistory(hashrateResult.ok ? (hashrateResult.value || []) : []);
+            setHistory(hashrateResult.ok ? hashrateResult.value : []);
           });
         } else {
           setResolvedHandle(null);
@@ -319,10 +283,8 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
       } else {
         void refreshMinerBalance(false);
       }
-      if (liveTick % 12 === 0) {
-        void refreshMinerData(true);
-      } else if (liveTick % 6 === 0) {
-        void refreshMinerData(false);
+      if (liveTick % 6 === 0) {
+        void refreshMinerData();
       }
     }
     if (liveTick % 2 === 0) {
@@ -343,8 +305,9 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   }, [minerAddress, minerInput]);
 
   const minerAvgDiff = useMemo(() => {
-    const shares = minerData?.shares || [];
-    const totalAccepted = minerData?.total_accepted || 0;
+    if (!minerData) return '-';
+    const shares = minerData.shares;
+    const totalAccepted = minerData.total_accepted;
     if (!shares.length || totalAccepted <= 0) return '-';
     const take = Math.min(shares.length, totalAccepted);
     const sum = shares.slice(0, take).reduce((acc, s) => acc + (s.difficulty || 0), 0);
@@ -353,10 +316,11 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   }, [minerData]);
 
   const minerOldestShareDate = useMemo(() => {
-    const miningSince = toUnixMs(minerData?.mining_since);
+    if (!minerData) return '-';
+    const miningSince = toUnixMs(minerData.mining_since);
     if (miningSince) return new Date(miningSince).toLocaleDateString();
 
-    const shares = minerData?.shares || [];
+    const shares = minerData.shares;
     let oldest = 0;
     for (const s of shares) {
       const t = toUnixMs(s.created_at);
@@ -366,19 +330,23 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
     return oldest ? new Date(oldest).toLocaleDateString() : '-';
   }, [minerData]);
 
-  const liveBalance = minerBalanceData?.balance ?? minerData?.balance;
-  const livePendingPayout = minerBalanceData?.pending_payout ?? minerData?.pending_payout;
-  const livePendingEstimate = minerBalanceData?.pending_estimate ?? minerData?.pending_estimate;
-  const pendingConfirmed = liveBalance?.pending_confirmed ?? liveBalance?.pending ?? 0;
+  const liveBalance = minerBalanceData?.balance;
+  const livePendingEstimate = minerBalanceData?.pending_estimate;
+  const pendingConfirmed = liveBalance?.pending_confirmed ?? 0;
   const pendingEstimated = livePendingEstimate?.estimated_pending ?? 0;
-  const pendingQueued = liveBalance?.pending_queued ?? livePendingPayout?.amount ?? 0;
+  const pendingQueued = liveBalance?.pending_queued ?? 0;
   const payoutEta = insights?.payout_eta ?? null;
-  const rejectionWindow = insights?.rejections?.window ?? null;
-  const minerAccepted = minerData?.total_accepted ?? 0;
-  const minerRejected = minerData?.total_rejected ?? 0;
+  const payoutShortfall =
+    payoutEta?.wallet_spendable == null
+      ? 0
+      : Math.max(0, payoutEta.pending_total_amount - payoutEta.wallet_spendable);
+  const payoutLiquidityConstrained = payoutEta != null && payoutEta.pending_total_amount > 0 && payoutShortfall > 0;
+  const rejectionWindow = insights?.rejections ?? null;
+  const minerAccepted = minerData ? minerData.total_accepted : 0;
+  const minerRejected = minerData ? minerData.total_rejected : 0;
   const minerChecked = minerAccepted + minerRejected;
   const minerRejectRate = minerChecked > 0 ? (minerRejected / minerChecked) * 100 : null;
-  const recentShares = minerData?.shares?.slice(0, RECENT_SHARES_LIMIT) || [];
+  const recentShares = minerData?.shares ?? [];
   const previewBlocks = livePendingEstimate?.blocks ?? [];
   const verificationHold = minerData?.verification_hold ?? null;
   const verificationReason = verificationHold?.reason?.trim() || 'share validation issue';
@@ -387,14 +355,16 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
   const verificationOnlyUntil = toUnixMs(verificationHold?.verified_only_until);
   const verificationQuarantineUntil = toUnixMs(verificationHold?.quarantined_until);
   const latestHashratePoint = history.length > 0 ? history[history.length - 1] : null;
-  const liveHashrate = minerData?.hashrate ?? latestHashratePoint?.hashrate ?? 0;
-  const livePaid = liveBalance?.paid ?? minerData?.balance?.paid ?? 0;
+  const liveHashrate = minerData ? minerData.hashrate : latestHashratePoint?.hashrate ?? 0;
+  const livePaid = liveBalance?.paid ?? 0;
   const showLookupResult = !!minerAddress && (!!minerData || !!minerBalanceData || history.length > 0);
   const minerDetailLoading = lookupLoading && !minerData;
 
   const rejectionChecked = (rejectionWindow?.accepted ?? 0) + (rejectionWindow?.rejected ?? 0);
+  const rejectionRatePct = ratioPct(rejectionWindow?.rejected, rejectionChecked);
   const topWindowReason = rejectionWindow?.by_reason?.[0];
   const topTotalReason = rejectionWindow?.totals_by_reason?.[0];
+  const totalRejected = (rejectionWindow?.totals_by_reason ?? []).reduce((sum, reason) => sum + reason.count, 0);
   const hasWindowRejections = (rejectionWindow?.rejected ?? 0) > 0;
 
   return (
@@ -477,7 +447,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
               </div>
               <div className="stat-card">
                 <div className="label">Blocks Found</div>
-                <div className="value">{minerData ? (minerData.blocks_found || []).length : '...'}</div>
+                <div className="value">{minerData ? minerData.blocks_found : '...'}</div>
               </div>
               <div className="stat-card">
                 <div className="label">Mining Since</div>
@@ -497,7 +467,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
             </div>
             <div className="stat-card">
               <div className="label">Reject Rate</div>
-              <div className="value">{minerData ? fmtPct(minerRejectRate) : '...'}</div>
+              <div className="value">{minerData ? formatPct(minerRejectRate) : '...'}</div>
             </div>
             <div className="stat-card">
               <div className="label">Avg Difficulty</div>
@@ -541,7 +511,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
             </div>
           )}
 
-          {pendingQueued > 0 && !!payoutEta?.liquidity_constrained && (
+          {pendingQueued > 0 && payoutEta && payoutLiquidityConstrained && (
             <div
               className="card"
               style={{ marginBottom: 24, background: 'rgba(247, 180, 75, 0.12)', borderColor: 'rgba(247, 180, 75, 0.45)' }}
@@ -550,7 +520,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
                 Your payout is queued, but pool wallet liquidity is currently tight. Spendable balance:{' '}
                 <span className="mono">{formatCoins(payoutEta.wallet_spendable ?? 0)}</span>. Locked/confirming balance:{' '}
                 <span className="mono">{formatCoins(payoutEta.wallet_pending ?? 0)}</span>. Pool queue:{' '}
-                <span className="mono">{formatCoins(payoutEta.pending_total_amount ?? 0)}</span>. Those locked funds are
+                <span className="mono">{formatCoins(payoutEta.pending_total_amount)}</span>. Those locked funds are
                 already in the pool wallet and should become spendable as blocks mature.
               </div>
             </div>
@@ -627,7 +597,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {!minerData.workers?.length ? (
+                    {!minerData.workers.length ? (
                       <tr>
                         <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                           No workers
@@ -667,18 +637,18 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {!minerData.payouts?.length ? (
+                    {!minerData.payouts.length ? (
                       <tr>
                         <td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted)' }}>
                           No payouts yet
                         </td>
                       </tr>
                     ) : (
-                      minerData.payouts.map((p) => {
-                        const hasTx = Boolean(p.tx_hash?.trim());
-                        const status = p.confirmed === false ? (hasTx ? 'unconfirmed' : 'queued') : 'confirmed';
+                      minerData.payouts.map((p, payoutIndex) => {
+                        const hasTx = Boolean(p.tx_hash.trim());
+                        const status = p.confirmed ? 'confirmed' : hasTx ? 'unconfirmed' : 'queued';
                         return (
-                          <tr key={`${p.id}-${p.tx_hash}-${toUnixMs(p.timestamp)}`}>
+                          <tr key={`${p.tx_hash}-${toUnixMs(p.timestamp)}-${payoutIndex}`}>
                             <td>{formatCoins(p.amount)}</td>
                             <td>{formatFee(p.fee || 0)}</td>
                             <td>
@@ -729,7 +699,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
                 </div>
                 <div className="rejection-metric">
                   <div className="label">Reject Rate</div>
-                  <div className="value mono">{fmtPct(rejectionWindow?.rejection_rate_pct)}</div>
+                  <div className="value mono">{formatPct(rejectionRatePct)}</div>
                 </div>
                 <div className="rejection-metric">
                   <div className="label">Top Reason</div>
@@ -740,7 +710,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
               {!hasWindowRejections ? (
                 <p className="rejection-empty">
                   No rejects recorded in the selected window. All-time rejects:{' '}
-                  <span className="mono">{rejectionWindow?.total_rejected ?? 0}</span>
+                  <span className="mono">{totalRejected}</span>
                   {topTotalReason ? (
                     <>
                       {' '}
@@ -754,7 +724,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
                     Selected window: <span className="mono">{rejectionRange}</span>
                   </div>
                   <div className="rejection-list">
-                    {(rejectionWindow?.by_reason || []).slice(0, 4).map((reason) => {
+                    {(rejectionWindow?.by_reason ?? []).slice(0, 4).map((reason) => {
                       const windowPct =
                         (rejectionWindow?.rejected ?? 0) > 0
                           ? (reason.count / (rejectionWindow?.rejected ?? 0)) * 100
@@ -765,7 +735,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
                           <div>
                             <div className="rejection-row-head">
                               <span>{reason.reason}</span>
-                              <span className="mono">{fmtPct(windowPct)}</span>
+                              <span className="mono">{formatPct(windowPct)}</span>
                             </div>
                             <div className="rejection-row-bar">
                               <div className="rejection-row-fill" style={{ width: `${Math.max(windowPct, 4)}%` }} />
@@ -781,7 +751,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
                     })}
                   </div>
                   <div className="rejection-note">
-                    All-time rejects: <span className="mono">{rejectionWindow?.total_rejected ?? 0}</span>
+                    All-time rejects: <span className="mono">{totalRejected}</span>
                     {topTotalReason ? (
                       <>
                         {' '}
@@ -798,7 +768,7 @@ export function StatsPage({ active, api, liveTick, theme }: StatsPageProps) {
             <div className="section">
               <div className="section-header">
                 <h2>Recent Shares</h2>
-                <span className="section-meta">Latest {RECENT_SHARES_LIMIT}</span>
+                <span className="section-meta">Latest shares</span>
               </div>
               <div className="card table-scroll">
                 <table>

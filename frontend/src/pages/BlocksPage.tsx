@@ -3,24 +3,13 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ApiClient } from '../api/client';
 import { BlockStatusBadge } from '../components/BlockStatusBadge';
 import { Pager } from '../components/Pager';
-import { fmtSeconds, formatCoins, timeAgo, toUnixMs } from '../lib/format';
+import { fmtSeconds, formatCoins, formatPct, roundToneClass, timeAgo, toUnixMs } from '../lib/format';
 import type { BlockItem, PagerState } from '../types';
 
 interface BlocksPageProps {
   active: boolean;
   api: ApiClient;
   liveTick: number;
-}
-
-function fmtPct(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return '-';
-  return `${value.toFixed(1)}%`;
-}
-
-function toneClass(tone: string | undefined): string {
-  if (tone === 'critical') return 'is-critical';
-  if (tone === 'warn') return 'is-warn';
-  return 'is-ok';
 }
 
 export function BlocksPage({ active, api, liveTick }: BlocksPageProps) {
@@ -30,16 +19,9 @@ export function BlocksPage({ active, api, liveTick }: BlocksPageProps) {
 
   const loadPage = useCallback(async () => {
     try {
-      const d = await api.getBlocks({
-        paged: 'true',
-        limit: pager.limit,
-        offset: pager.offset,
-        sort: 'height_desc',
-        status: filter || undefined,
-      });
-      const nextItems = d.items || [];
-      setItems(nextItems);
-      setPager((prev) => ({ ...prev, total: d.page ? d.page.total : nextItems.length }));
+      const d = await api.getBlocks(pager.limit, pager.offset, filter || undefined);
+      setItems(d.items);
+      setPager((prev) => ({ ...prev, total: d.total }));
     } catch {
       setItems([]);
     }
@@ -108,7 +90,7 @@ export function BlocksPage({ active, api, liveTick }: BlocksPageProps) {
                     {b.effort_pct == null ? (
                       '-'
                     ) : (
-                      <span className={`round-chip ${toneClass(b.effort_band?.tone)}`}>{fmtPct(b.effort_pct)}</span>
+                      <span className={`round-chip ${roundToneClass(b.effort_pct)}`}>{formatPct(b.effort_pct)}</span>
                     )}
                   </td>
                   <td>{b.duration_seconds == null ? '-' : fmtSeconds(b.duration_seconds)}</td>
@@ -130,23 +112,6 @@ export function BlocksPage({ active, api, liveTick }: BlocksPageProps) {
         />
       </div>
 
-      <div className="seo-copy-grid">
-        <div className="card seo-copy-card">
-          <h3>Confirmed Rounds</h3>
-          <p>Confirmed blocks cleared the pool confirmation window and are eligible for payout processing.</p>
-        </div>
-        <div className="card seo-copy-card">
-          <h3>Pending Rounds</h3>
-          <p>Pending blocks are fresh finds still moving toward payout eligibility while the chain confirmation count rises.</p>
-        </div>
-        <div className="card seo-copy-card">
-          <h3>Orphan Diagnostics</h3>
-          <p>
-            Orphaned rounds are still part of the pool story because they show how often shares landed on losing
-            branches.
-          </p>
-        </div>
-      </div>
     </div>
   );
 }

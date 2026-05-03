@@ -4,21 +4,16 @@ set -euo pipefail
 usage() {
     cat <<'EOF'
 Usage:
-  scripts/bench_pool_ab.sh \
+  bash scripts/bench_pool_ab.sh \
     --baseline-dir <path> \
     --candidate-dir <path> \
     [--daemon-api <url>] \
-    [--daemon-token <token>] \
     [--pairs <n>] \
     [--duration-secs <n>] \
     [--workers <n>] \
     [--shares-per-worker-per-sec <n>] \
-    [--submit-mode legacy|v2] \
     [--validation-mode full|probabilistic] \
     [--sample-rate <0..1>] \
-    [--max-verifiers <n>] \
-    [--max-validation-queue <n>] \
-    [--stratum-submit-v2-required true|false] \
     [--cooldown-secs <n>] \
     [--profile <cargo-profile>] \
     [--base-stratum-port <n>] \
@@ -29,7 +24,7 @@ Usage:
     [--output-dir <path>]
 
 Example:
-  scripts/bench_pool_ab.sh \
+  bash scripts/bench_pool_ab.sh \
     --baseline-dir ../blocknet-pool-baseline \
     --candidate-dir . \
     --daemon-api http://127.0.0.1:8332 \
@@ -37,10 +32,7 @@ Example:
     --duration-secs 90 \
     --workers 12 \
     --shares-per-worker-per-sec 6 \
-    --submit-mode legacy \
     --validation-mode full \
-    --max-verifiers 8 \
-    --max-validation-queue 512 \
     --cooldown-secs 20
 EOF
 }
@@ -50,17 +42,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 baseline_dir=""
 candidate_dir=""
 daemon_api="http://127.0.0.1:8332"
-daemon_token=""
 pairs=3
 duration_secs=60
 workers=64
 shares_per_worker_per_sec=5
-submit_mode="legacy"
 validation_mode="probabilistic"
 sample_rate=0.05
-max_verifiers=0
-max_validation_queue=1024
-stratum_submit_v2_required="false"
 cooldown_secs=15
 profile="release"
 base_stratum_port=3433
@@ -85,10 +72,6 @@ while (($#)); do
             daemon_api="${2:-}"
             shift 2
             ;;
-        --daemon-token)
-            daemon_token="${2:-}"
-            shift 2
-            ;;
         --pairs)
             pairs="${2:-}"
             shift 2
@@ -105,28 +88,12 @@ while (($#)); do
             shares_per_worker_per_sec="${2:-}"
             shift 2
             ;;
-        --submit-mode)
-            submit_mode="${2:-}"
-            shift 2
-            ;;
         --validation-mode)
             validation_mode="${2:-}"
             shift 2
             ;;
         --sample-rate)
             sample_rate="${2:-}"
-            shift 2
-            ;;
-        --max-verifiers)
-            max_verifiers="${2:-}"
-            shift 2
-            ;;
-        --max-validation-queue)
-            max_validation_queue="${2:-}"
-            shift 2
-            ;;
-        --stratum-submit-v2-required)
-            stratum_submit_v2_required="${2:-}"
             shift 2
             ;;
         --cooldown-secs)
@@ -189,13 +156,8 @@ if ! command -v psql >/dev/null 2>&1; then
     exit 1
 fi
 
-if [[ ! -x "$SCRIPT_DIR/pool_load.py" ]]; then
-    echo "error: missing executable $SCRIPT_DIR/pool_load.py" >&2
-    exit 1
-fi
-
-if [[ "$submit_mode" != "legacy" && "$submit_mode" != "v2" ]]; then
-    echo "error: --submit-mode must be legacy or v2" >&2
+if [[ ! -f "$SCRIPT_DIR/pool_load.py" ]]; then
+    echo "error: missing $SCRIPT_DIR/pool_load.py" >&2
     exit 1
 fi
 
@@ -231,7 +193,7 @@ summary_txt="$output_dir/summary.txt"
 meta_txt="$output_dir/meta.txt"
 
 cat >"$results_tsv" <<'EOF'
-pair	leg	submitted	responses	accepted	rejected	transport_errors	protocol_errors	login_failed	submit_tps	response_tps	accept_tps	latency_avg_ms	latency_p95_ms	latency_p99_ms	latency_max_ms	api_available	api_samples	max_in_flight	max_candidate_q	max_regular_q	delta_pool_accepted	delta_pool_rejected	delta_validation_total	delta_validation_sampled	delta_validation_invalid	delta_validation_fraud
+pair	leg	submitted	responses	accepted	rejected	transport_errors	protocol_errors	login_failed	submit_tps	response_tps	accept_tps	latency_avg_ms	latency_p95_ms	latency_p99_ms	latency_max_ms	api_available	api_samples
 EOF
 
 cat >"$meta_txt" <<EOF
@@ -240,12 +202,8 @@ pairs=$pairs
 duration_secs=$duration_secs
 workers=$workers
 shares_per_worker_per_sec=$shares_per_worker_per_sec
-submit_mode=$submit_mode
 validation_mode=$validation_mode
 sample_rate=$sample_rate
-max_verifiers=$max_verifiers
-max_validation_queue=$max_validation_queue
-stratum_submit_v2_required=$stratum_submit_v2_required
 cooldown_secs=$cooldown_secs
 profile=$profile
 max_conns_per_ip=$max_conns_per_ip
@@ -359,25 +317,21 @@ write_leg_config() {
     local database_url="$5"
 
     python3 - "$source_config" "$out_config" \
-        "$daemon_api" "$daemon_token" \
+        "$daemon_api" \
         "$stratum_port" "$api_port" \
-        "$validation_mode" "$sample_rate" "$max_verifiers" "$max_validation_queue" \
-        "$stratum_submit_v2_required" "$database_url" <<'PY'
+        "$validation_mode" "$sample_rate" \
+        "$database_url" <<'PY'
 import json
 import sys
 
 src = sys.argv[1]
 dst = sys.argv[2]
 daemon_api = sys.argv[3]
-daemon_token = sys.argv[4]
-stratum_port = int(sys.argv[5])
-api_port = int(sys.argv[6])
-validation_mode = sys.argv[7]
-sample_rate = float(sys.argv[8])
-max_verifiers = int(sys.argv[9])
-max_validation_queue = int(sys.argv[10])
-stratum_submit_v2_required = sys.argv[11].strip().lower() in ("1", "true", "yes", "on")
-database_url = sys.argv[12]
+stratum_port = int(sys.argv[4])
+api_port = int(sys.argv[5])
+validation_mode = sys.argv[6]
+sample_rate = float(sys.argv[7])
+database_url = sys.argv[8]
 
 with open(src, "r", encoding="utf-8") as f:
     cfg = json.load(f)
@@ -386,21 +340,14 @@ cfg["stratum_port"] = stratum_port
 cfg["api_port"] = api_port
 cfg["api_host"] = "127.0.0.1"
 cfg["daemon_api"] = daemon_api
-cfg["daemon_token"] = daemon_token
 cfg["validation_mode"] = validation_mode
 cfg["sample_rate"] = sample_rate
-cfg["max_verifiers"] = max_verifiers
-cfg["max_validation_queue"] = max_validation_queue
-cfg["stratum_submit_v2_required"] = stratum_submit_v2_required
-cfg["pool_fee_flat"] = 0.0
 cfg["pool_fee_pct"] = 0.0
 cfg["payout_interval"] = "24h"
 cfg["min_payout_amount"] = 1000000.0
 cfg["blocks_before_payout"] = 1000000
-cfg["block_poll_interval"] = "2s"
 cfg["job_timeout"] = "30s"
 cfg["database_url"] = database_url
-cfg.pop("database_path", None)
 
 with open(dst, "w", encoding="utf-8") as f:
     json.dump(cfg, f, indent=2, sort_keys=False)
@@ -449,7 +396,6 @@ with open(path, "r", encoding="utf-8") as f:
 load = data.get("load", {})
 lat = load.get("latency_ms", {})
 api = data.get("api_stats", {})
-delta = api.get("delta", {}) if isinstance(api, dict) else {}
 
 row = [
     pair,
@@ -470,15 +416,6 @@ row = [
     f'{float(lat.get("max", 0.0)):.6f}',
     "1" if api.get("available") else "0",
     str(api.get("samples", 0)),
-    str(api.get("max_in_flight", 0)),
-    str(api.get("max_candidate_queue_depth", 0)),
-    str(api.get("max_regular_queue_depth", 0)),
-    str(delta.get("pool_shares_accepted", 0)),
-    str(delta.get("pool_shares_rejected", 0)),
-    str(delta.get("validation_total_shares", 0)),
-    str(delta.get("validation_sampled_shares", 0)),
-    str(delta.get("validation_invalid_samples", 0)),
-    str(delta.get("validation_fraud_detections", 0)),
 ]
 
 print("\t".join(row))
@@ -543,14 +480,13 @@ run_leg() {
 
     local load_json="$run_dir/load.json"
     local load_log="$run_dir/load.log"
-    "$SCRIPT_DIR/pool_load.py" \
+    python3 "$SCRIPT_DIR/pool_load.py" \
         --host 127.0.0.1 \
         --stratum-port "$stratum_port" \
         --api-port "$api_port" \
         --workers "$workers" \
         --duration-secs "$duration_secs" \
         --shares-per-worker-per-sec "$shares_per_worker_per_sec" \
-        --submit-mode "$submit_mode" \
         --output "$load_json" \
         >"$load_log" 2>&1
 
@@ -679,11 +615,6 @@ base_resp_tps = collect("baseline", "response_tps")
 cand_resp_tps = collect("candidate", "response_tps")
 base_p95 = collect("baseline", "latency_p95_ms")
 cand_p95 = collect("candidate", "latency_p95_ms")
-base_max_reg_q = collect("baseline", "max_regular_q")
-cand_max_reg_q = collect("candidate", "max_regular_q")
-base_max_inflight = collect("baseline", "max_in_flight")
-cand_max_inflight = collect("candidate", "max_in_flight")
-
 base_accept_avg = avg(base_accept_tps)
 cand_accept_avg = avg(cand_accept_tps)
 base_resp_avg = avg(base_resp_tps)
@@ -710,11 +641,6 @@ print()
 print(f"baseline.latency_p95_ms.avg={fmt(base_p95_avg)}")
 print(f"candidate.latency_p95_ms.avg={fmt(cand_p95_avg)}")
 print(f"delta.latency_p95_ms.pct={fmt(pct_delta(cand_p95_avg, base_p95_avg))}")
-print()
-print(f"baseline.max_regular_q.avg={fmt(avg(base_max_reg_q))}")
-print(f"candidate.max_regular_q.avg={fmt(avg(cand_max_reg_q))}")
-print(f"baseline.max_in_flight.avg={fmt(avg(base_max_inflight))}")
-print(f"candidate.max_in_flight.avg={fmt(avg(cand_max_inflight))}")
 PY
 
 echo "[bench] done"

@@ -1,15 +1,10 @@
 import type {
   AdminBalanceItem,
   AdminBalanceOverviewResponse,
-  AdminOrphanedBlockCleanupResponse,
-  AdminPayoutItem,
   AdminReconciliationIssuesResponse,
-  AdminReconciliationPayoutResolutionResponse,
   AdminShareDiagnosticsResponse,
   BlockRewardBreakdownResponse,
   BlockItem,
-  ClearAddressRiskHistoryResponse,
-  FeesResponse,
   HashratePoint,
   HealthResponse,
   InfoResponse,
@@ -45,43 +40,12 @@ interface DaemonLogStreamOptions {
   onLine: (line: string) => void;
 }
 
-export interface ApiClient {
-  fetchJson<T>(path: string, opts?: FetchOptions): Promise<T>;
-  getInfo(): Promise<InfoResponse>;
-  getStats(): Promise<StatsResponse>;
-  getStatsHistory(range: string): Promise<HashratePoint[]>;
-  getStatsInsights(rejectionWindow?: string): Promise<StatsInsightsResponse>;
-  getLuckHistory(params: QueryParams): Promise<PagedResponse<LuckRound>>;
-  getStatus(): Promise<StatusResponse>;
-  getBlocks(params: QueryParams): Promise<PagedResponse<BlockItem>>;
-  getRecentPayouts(params: QueryParams): Promise<PagedResponse<PayoutItem>>;
-  getMiner(address: string, includePendingEstimate?: boolean, shareLimit?: number): Promise<MinerResponse>;
-  getMinerBalance(address: string, includePendingEstimate?: boolean): Promise<MinerBalancePayload>;
-  getMinerHashrate(address: string, range: string): Promise<HashratePoint[]>;
-  getMiners(params: QueryParams): Promise<PagedResponse<MinerListItem>>;
-  getAdminPayouts(params: QueryParams): Promise<PagedResponse<AdminPayoutItem>>;
-  getFees(params: QueryParams): Promise<FeesResponse>;
-  getAdminBlockRewardBreakdown(height: number): Promise<BlockRewardBreakdownResponse>;
-  getHealth(): Promise<HealthResponse>;
-  getAdminBalanceOverview(): Promise<AdminBalanceOverviewResponse>;
-  getAdminShareDiagnostics(): Promise<AdminShareDiagnosticsResponse>;
-  getAdminBalances(params: QueryParams): Promise<PagedResponse<AdminBalanceItem>>;
-  getAdminReconciliationIssues(): Promise<AdminReconciliationIssuesResponse>;
-  resolveAdminReconciliationPayout(
-    txHash: string,
-    action: ReconciliationPayoutResolutionAction
-  ): Promise<AdminReconciliationPayoutResolutionResponse>;
-  retryAdminOrphanedBlockCleanup(blockHeight: number): Promise<AdminOrphanedBlockCleanupResponse>;
-  clearAddressRiskHistory(address: string): Promise<ClearAddressRiskHistoryResponse>;
-  getRecoveryStatus(): Promise<RecoveryStatusResponse>;
-  pauseRecoveryPayouts(): Promise<RecoveryOperation>;
-  resumeRecoveryPayouts(): Promise<RecoveryOperation>;
-  startInactiveSync(): Promise<RecoveryOperation>;
-  rebuildInactiveWallet(): Promise<RecoveryOperation>;
-  cutoverDaemon(target: RecoveryInstanceId): Promise<RecoveryOperation>;
-  purgeInactiveDaemon(): Promise<RecoveryOperation>;
-  streamDaemonLogs(opts: DaemonLogStreamOptions): Promise<void>;
+interface BlocknetHandleResolution {
+  address: string;
+  handle: string;
 }
+
+const BLOCKNET_ID_API = 'https://blocknet.id/api/v1/resolve';
 
 function withQuery(path: string, params: QueryParams): string {
   const url = new URL(path, window.location.origin);
@@ -93,7 +57,7 @@ function withQuery(path: string, params: QueryParams): string {
   return `${url.pathname}${url.search}`;
 }
 
-export function createApiClient(getApiKey: () => string, showError: (message: string) => void): ApiClient {
+export function createApiClient(getApiKey: () => string, showError: (message: string) => void) {
   const fetchJson = async <T,>(path: string, opts?: FetchOptions): Promise<T> => {
     const headers: Record<string, string> = { ...(opts?.headers ?? {}) };
     if (opts?.auth) {
@@ -132,41 +96,43 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
 
     return body as T;
   };
+  const postJson = <T,>(path: string, body?: unknown): Promise<T> =>
+    fetchJson<T>(path, {
+      auth: true,
+      method: 'POST',
+      body: body == null ? null : JSON.stringify(body),
+      headers: body == null ? undefined : { 'content-type': 'application/json' },
+    });
 
   return {
-    fetchJson,
     getInfo: () => fetchJson<InfoResponse>('/api/info'),
     getStats: () => fetchJson<StatsResponse>('/api/stats'),
-    getStatsHistory: (range) => fetchJson<HashratePoint[]>(`/api/stats/history?range=${encodeURIComponent(range)}`),
-    getStatsInsights: (rejectionWindow) =>
+    getStatsHistory: (range: string) => fetchJson<HashratePoint[]>(`/api/stats/history?range=${encodeURIComponent(range)}`),
+    getStatsInsights: (rejectionWindow?: string) =>
       fetchJson<StatsInsightsResponse>(
         rejectionWindow
           ? `/api/stats/insights?rejection_window=${encodeURIComponent(rejectionWindow)}`
           : '/api/stats/insights'
       ),
-    getLuckHistory: (params) => fetchJson<PagedResponse<LuckRound>>(withQuery('/api/luck', params)),
+    getLuckHistory: (limit: number, offset: number) =>
+      fetchJson<PagedResponse<LuckRound>>(withQuery('/api/luck', { limit, offset })),
     getStatus: () => fetchJson<StatusResponse>('/api/status'),
-    getBlocks: (params) => fetchJson<PagedResponse<BlockItem>>(withQuery('/api/blocks', params)),
-    getRecentPayouts: (params) => fetchJson<PagedResponse<PayoutItem>>(withQuery('/api/payouts/recent', params)),
-    getMiner: (address, includePendingEstimate = true, shareLimit) =>
-      fetchJson<MinerResponse>(
-        withQuery(`/api/miner/${encodeURIComponent(address)}`, {
-          include_pending_estimate: includePendingEstimate ? 'true' : 'false',
-          share_limit: shareLimit,
-        })
-      ),
-    getMinerBalance: (address, includePendingEstimate = true) =>
+    getBlocks: (limit: number, offset: number, status?: string) =>
+      fetchJson<PagedResponse<BlockItem>>(withQuery('/api/blocks', { limit, offset, status })),
+    getRecentPayouts: (limit: number, offset: number) =>
+      fetchJson<PagedResponse<PayoutItem>>(withQuery('/api/payouts/recent', { limit, offset })),
+    getMiner: (address: string) => fetchJson<MinerResponse>(`/api/miner/${encodeURIComponent(address)}`),
+    getMinerBalance: (address: string, includePendingEstimate = true) =>
       fetchJson<MinerBalancePayload>(
         `/api/miner/${encodeURIComponent(address)}/balance?include_pending_estimate=${includePendingEstimate ? 'true' : 'false'}`
       ),
-    getMinerHashrate: (address, range) =>
+    getMinerHashrate: (address: string, range: string) =>
       fetchJson<HashratePoint[]>(`/api/miner/${encodeURIComponent(address)}/hashrate?range=${encodeURIComponent(range)}`),
-    getMiners: (params) => fetchJson<PagedResponse<MinerListItem>>(withQuery('/api/miners', params), { auth: true }),
-    getAdminPayouts: (params) => fetchJson<PagedResponse<AdminPayoutItem>>(withQuery('/api/payouts', params), {
-      auth: true,
-    }),
-    getFees: (params) => fetchJson<FeesResponse>(withQuery('/api/fees', params), { auth: true }),
-    getAdminBlockRewardBreakdown: (height) =>
+    resolveBlocknetHandle: (handle: string) =>
+      fetchJson<BlocknetHandleResolution>(`${BLOCKNET_ID_API}/${encodeURIComponent(handle)}`),
+    getMiners: (limit: number, offset: number, sort: string, search?: string) =>
+      fetchJson<PagedResponse<MinerListItem>>(withQuery('/api/miners', { limit, offset, sort, search }), { auth: true }),
+    getAdminBlockRewardBreakdown: (height: number) =>
       fetchJson<BlockRewardBreakdownResponse>(`/api/admin/blocks/${encodeURIComponent(String(height))}/reward-breakdown`, {
         auth: true,
       }),
@@ -177,59 +143,29 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
       fetchJson<AdminReconciliationIssuesResponse>('/api/admin/reconciliation/issues', { auth: true }),
     getAdminShareDiagnostics: () =>
       fetchJson<AdminShareDiagnosticsResponse>('/api/admin/shares', { auth: true }),
-    getAdminBalances: (params: QueryParams) =>
-      fetchJson<PagedResponse<AdminBalanceItem>>(withQuery('/api/admin/balances', params), { auth: true }),
-    resolveAdminReconciliationPayout: (txHash, action) =>
-      fetchJson<AdminReconciliationPayoutResolutionResponse>('/api/admin/reconciliation/payouts/resolve', {
+    getAdminBalances: (limit: number, offset: number, sort: string, search?: string) =>
+      fetchJson<PagedResponse<AdminBalanceItem>>(withQuery('/api/admin/balances', { limit, offset, sort, search }), {
         auth: true,
-        method: 'POST',
-        body: JSON.stringify({ tx_hash: txHash, action }),
-        headers: {
-          'content-type': 'application/json',
-        },
       }),
-    retryAdminOrphanedBlockCleanup: (blockHeight) =>
-      fetchJson<AdminOrphanedBlockCleanupResponse>('/api/admin/reconciliation/orphan-blocks/retry-cleanup', {
-        auth: true,
-        method: 'POST',
-        body: JSON.stringify({ block_height: blockHeight }),
-        headers: {
-          'content-type': 'application/json',
-        },
+    resolveAdminReconciliationPayout: (txHash: string, action: ReconciliationPayoutResolutionAction) =>
+      postJson<void>('/api/admin/reconciliation/payouts/resolve', {
+        tx_hash: txHash,
+        action,
+      }),
+    retryAdminOrphanedBlockCleanup: (blockHeight: number) =>
+      postJson<void>('/api/admin/reconciliation/orphan-blocks/retry-cleanup', {
+        block_height: blockHeight,
       }),
     clearAddressRiskHistory: (address: string) =>
-      fetchJson<ClearAddressRiskHistoryResponse>('/api/admin/addresses/clear-risk-history', {
-        auth: true,
-        method: 'POST',
-        body: JSON.stringify({ address }),
-        headers: {
-          'content-type': 'application/json',
-        },
-      }),
+      postJson<void>('/api/admin/addresses/clear-risk-history', { address }),
     getRecoveryStatus: () => fetchJson<RecoveryStatusResponse>('/api/admin/recovery/status', { auth: true }),
-    pauseRecoveryPayouts: () =>
-      fetchJson<RecoveryOperation>('/api/admin/recovery/payouts/pause', { auth: true, method: 'POST' }),
-    resumeRecoveryPayouts: () =>
-      fetchJson<RecoveryOperation>('/api/admin/recovery/payouts/resume', { auth: true, method: 'POST' }),
-    startInactiveSync: () =>
-      fetchJson<RecoveryOperation>('/api/admin/recovery/inactive/start-sync', { auth: true, method: 'POST' }),
-    rebuildInactiveWallet: () =>
-      fetchJson<RecoveryOperation>('/api/admin/recovery/inactive/rebuild-wallet', { auth: true, method: 'POST' }),
-    cutoverDaemon: (target: RecoveryInstanceId) =>
-      fetchJson<RecoveryOperation>('/api/admin/recovery/cutover', {
-        auth: true,
-        method: 'POST',
-        body: JSON.stringify({ target }),
-        headers: {
-          'content-type': 'application/json',
-        },
-      }),
-    purgeInactiveDaemon: () =>
-      fetchJson<RecoveryOperation>('/api/admin/recovery/inactive/purge-resync', {
-        auth: true,
-        method: 'POST',
-      }),
-    streamDaemonLogs: async ({ tail, signal, onLine }) => {
+    pauseRecoveryPayouts: () => postJson<RecoveryOperation>('/api/admin/recovery/payouts/pause'),
+    resumeRecoveryPayouts: () => postJson<RecoveryOperation>('/api/admin/recovery/payouts/resume'),
+    startInactiveSync: () => postJson<RecoveryOperation>('/api/admin/recovery/inactive/start-sync'),
+    rebuildInactiveWallet: () => postJson<RecoveryOperation>('/api/admin/recovery/inactive/rebuild-wallet'),
+    cutoverDaemon: (target: RecoveryInstanceId) => postJson<RecoveryOperation>('/api/admin/recovery/cutover', { target }),
+    purgeInactiveDaemon: () => postJson<RecoveryOperation>('/api/admin/recovery/inactive/purge-resync'),
+    streamDaemonLogs: async ({ tail, signal, onLine }: DaemonLogStreamOptions) => {
       const key = getApiKey().trim();
       if (!key) {
         throw new Error('api key required');
@@ -301,3 +237,5 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
     },
   };
 }
+
+export type ApiClient = ReturnType<typeof createApiClient>;

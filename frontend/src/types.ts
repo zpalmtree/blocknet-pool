@@ -27,7 +27,6 @@ export type UnixLike =
 export interface StatsResponse {
   pool: {
     miners: number;
-    workers: number;
     hashrate: number;
     blocks_found: number;
     orphaned_blocks: number;
@@ -35,8 +34,8 @@ export interface StatsResponse {
     paid_to_miners_total: number;
   };
   chain: {
-    current_job_height?: number | null;
-    network_hashrate?: number | null;
+    current_job_height: number | null;
+    network_hashrate: number | null;
   };
 }
 
@@ -44,62 +43,38 @@ export interface InfoResponse {
   pool_name: string;
   pool_url: string;
   stratum_port: number;
-  pool_fee_pct?: number;
-  pool_fee_flat?: number;
-  min_payout_amount?: number;
-  blocks_before_payout?: number;
-  payout_scheme?: string;
-  pplns_window?: number;
-  pplns_window_duration?: string;
-  provisional_share_delay?: string;
-  max_provisional_recent_verified_multiplier?: number;
-  sample_rate?: number;
-  warmup_shares?: number;
-  min_sample_every?: number;
-  payout_min_verified_shares?: number;
-  payout_min_verified_ratio?: number;
-  payout_provisional_cap_multiplier?: number;
+  pool_fee_pct: number;
+  min_payout_amount: number;
+  blocks_before_payout: number;
+  pplns_window_duration: string;
 }
 
 export interface BlockItem {
   height: number;
   hash: string;
-  difficulty: number;
-  finder: string;
-  finder_worker: string;
   reward: number;
   confirmed: boolean;
   orphaned: boolean;
-  paid_out: boolean;
   timestamp: UnixLike;
-  effort_pct?: number | null;
-  duration_seconds?: number | null;
-  timer_effort_pct?: number | null;
-  effort_band?: EffortBand | null;
+  effort_pct: number | null;
+  duration_seconds: number | null;
 }
 
 export interface PayoutItem {
   total_amount: number;
-  total_fee?: number;
+  total_fee: number;
   recipient_count: number;
-  tx_hashes?: string[];
+  tx_hashes: string[];
   timestamp: UnixLike;
-  confirmed?: boolean;
-}
-
-export interface PagedMeta {
-  limit: number;
-  offset: number;
-  returned: number;
-  total: number;
+  confirmed: boolean;
 }
 
 export interface PagedResponse<T> {
   items: T[];
-  page?: PagedMeta;
+  total: number;
 }
 
-export interface MinerWorker {
+interface MinerWorker {
   worker: string;
   hashrate: number;
   accepted: number;
@@ -107,7 +82,7 @@ export interface MinerWorker {
   last_share_at: UnixLike;
 }
 
-export interface MinerShare {
+interface MinerShare {
   job_id: string;
   worker: string;
   difficulty: number;
@@ -115,16 +90,13 @@ export interface MinerShare {
   created_at: UnixLike;
 }
 
-export interface MinerPendingBlockEstimate {
+interface MinerPendingBlockEstimate {
   height: number;
   hash: string;
-  reward: number;
   estimated_credit: number;
-  credit_withheld?: boolean;
-  validation_state?: string;
-  validation_label?: string;
-  validation_tone?: string;
-  validation_detail?: string;
+  credit_withheld: boolean;
+  validation_state: string;
+  validation_detail: string;
   confirmations_remaining: number;
   timestamp: UnixLike;
 }
@@ -134,87 +106,61 @@ export interface MinerPendingEstimate {
   blocks: MinerPendingBlockEstimate[];
 }
 
-export interface MinerPayout {
-  id: number;
-  address: string;
+interface MinerPayout {
   amount: number;
   fee: number;
   tx_hash: string;
   timestamp: UnixLike;
-  confirmed?: boolean;
+  confirmed: boolean;
 }
 
-export interface PendingPayout {
-  address: string;
-  amount: number;
-  initiated_at: UnixLike;
-}
-
-export interface MinerVerificationHold {
+interface MinerVerificationHold {
   mode: 'verified_only' | 'quarantined';
-  reason?: string | null;
-  started_at?: UnixLike;
-  verified_only_until?: UnixLike;
-  quarantined_until?: UnixLike;
-  active_risk_strikes?: number;
-  active_fraud_strikes?: number;
-  validation_hold_cause?: 'invalid_samples' | 'provisional_backlog' | 'payout_coverage' | null;
-  validation_pending_provisional?: number | null;
-  validation_recent_verified_difficulty?: number | null;
-  validation_recent_provisional_difficulty?: number | null;
+  reason: string | null;
+  started_at: UnixLike;
+  verified_only_until: UnixLike;
+  quarantined_until: UnixLike;
+  validation_hold_cause: 'invalid_samples' | 'provisional_backlog' | 'payout_coverage' | null;
+  validation_pending_provisional: number | null;
 }
 
-export interface MinerBalanceDetails {
-  pending: number;
-  pending_confirmed?: number;
-  pending_queued?: number;
-  pending_unqueued?: number;
+interface MinerBalanceDetails {
+  pending_confirmed: number;
+  pending_queued: number;
   paid: number;
 }
 
 export interface MinerBalancePayload {
   address: string;
   balance: MinerBalanceDetails;
-  pending_estimate?: MinerPendingEstimate;
-  pending_payout?: PendingPayout | null;
+  pending_estimate: MinerPendingEstimate;
 }
 
 export interface ActiveVerificationHold {
   address: string;
   strikes: number;
-  suspected_fraud_strikes: number;
-  last_reason?: string | null;
-  reason?: string | null;
-  last_event_at?: UnixLike;
-  quarantined_until?: UnixLike;
-  force_verify_until?: UnixLike;
-  validation_forced_until?: UnixLike;
-  validation_hold_cause?: 'invalid_samples' | 'provisional_backlog' | 'payout_coverage' | null;
-  validation_pending_provisional?: number;
-  validation_recent_verified_difficulty?: number;
-  validation_recent_provisional_difficulty?: number;
-}
-
-export interface ClearAddressRiskHistoryResponse {
-  ok: boolean;
-  address: string;
+  last_reason: string | null;
+  reason: string | null;
+  last_event_at: UnixLike;
+  quarantined_until: UnixLike;
+  force_verify_until: UnixLike;
+  validation_forced_until: UnixLike;
+  validation_hold_cause: 'invalid_samples' | 'provisional_backlog' | 'payout_coverage' | null;
+  validation_pending_provisional: number;
+  validation_recent_verified_difficulty: number;
+  validation_recent_provisional_difficulty: number;
 }
 
 export interface MinerResponse {
   hashrate: number;
-  mining_since?: UnixLike;
-  balance?: MinerBalanceDetails;
-  workers?: MinerWorker[];
-  shares?: MinerShare[];
-  blocks_found?: BlockItem[];
-  payouts?: MinerPayout[];
-  pending_payout?: PendingPayout | null;
-  pending_estimate?: MinerPendingEstimate;
-  pending_note?: string | null;
-  payout_note?: string | null;
-  verification_hold?: MinerVerificationHold | null;
-  total_accepted?: number;
-  total_rejected?: number;
+  mining_since: UnixLike;
+  workers: MinerWorker[];
+  shares: MinerShare[];
+  blocks_found: number;
+  payouts: MinerPayout[];
+  verification_hold: MinerVerificationHold | null;
+  total_accepted: number;
+  total_rejected: number;
 }
 
 export interface MinerListItem {
@@ -227,15 +173,6 @@ export interface MinerListItem {
   last_share_at: UnixLike;
 }
 
-export interface AdminPayoutItem {
-  address: string;
-  amount: number;
-  fee: number;
-  tx_hash: string;
-  timestamp: UnixLike;
-  confirmed?: boolean;
-}
-
 export interface AdminBalanceItem {
   address: string;
   clean_payable: number;
@@ -244,24 +181,21 @@ export interface AdminBalanceItem {
   paid: number;
 }
 
-export interface FeeEvent {
-  block_height: number;
-  amount: number;
-  fee_address: string;
-  timestamp: UnixLike;
-  status?: "collected" | "pending" | "ready" | "missing";
-  confirmations_remaining?: number | null;
-}
-
-export interface RewardWindowSummary {
+interface RewardWindowSummary {
   label: string;
-  start?: UnixLike | null;
-  end: UnixLike;
   share_count: number;
   participant_count: number;
 }
 
-export interface BlockRewardParticipant {
+interface BlockRewardBlock {
+  height: number;
+  reward: number;
+  timestamp: UnixLike;
+  orphaned: boolean;
+  paid_out: boolean;
+}
+
+interface BlockRewardParticipant {
   address: string;
   finder: boolean;
   risky: boolean;
@@ -269,8 +203,6 @@ export interface BlockRewardParticipant {
   verified_difficulty: number;
   provisional_shares_eligible: number;
   provisional_difficulty_eligible: number;
-  provisional_shares_ineligible: number;
-  provisional_difficulty_ineligible: number;
   preview_weight: number;
   preview_share_pct: number;
   preview_credit: number;
@@ -279,13 +211,12 @@ export interface BlockRewardParticipant {
   payout_share_pct: number;
   payout_credit: number;
   payout_status: string;
-  actual_credit?: number | null;
-  delta_vs_payout?: number | null;
+  actual_credit: number | null;
+  delta_vs_payout: number | null;
 }
 
 export interface BlockRewardBreakdownResponse {
-  block: BlockItem;
-  payout_scheme: string;
+  block: BlockRewardBlock;
   share_window: RewardWindowSummary;
   fee_amount: number;
   distributable_reward: number;
@@ -293,208 +224,110 @@ export interface BlockRewardBreakdownResponse {
   payout_total_weight: number;
   actual_credit_events_available: boolean;
   actual_credit_total: number;
-  actual_fee_amount?: number | null;
+  actual_fee_amount: number | null;
   participants: BlockRewardParticipant[];
 }
 
-export interface FeesResponse {
-  total_collected: number;
-  total_pending?: number;
-  recent?: PagedResponse<FeeEvent>;
+interface ValidationSummary {
+  in_flight: number;
+  candidate_queue_depth: number;
+  regular_queue_depth: number;
+  audit_queue_depth: number;
+  candidate_oldest_age_millis: number | null;
+  regular_oldest_age_millis: number | null;
+  audit_oldest_age_millis: number | null;
+  candidate_wait: PercentileSummary;
+  regular_wait: PercentileSummary;
+  audit_wait: PercentileSummary;
+  validation_duration: PercentileSummary;
+  audit_duration: PercentileSummary;
+  sampled_shares: number;
+  fraud_detections: number;
+  candidate_false_claims: number;
+  hot_accepts: number;
+  sync_full_verifies: number;
+  audit_enqueued: number;
+  audit_verified: number;
+  audit_rejected: number;
+  audit_deferred: number;
+  overload_mode: OverloadMode;
+  effective_sample_rate: number;
 }
 
 export interface HealthResponse {
-  uptime_seconds: number;
-  api_key_configured?: boolean;
-  daemon?: {
-    reachable?: boolean;
-    chain_height?: number | null;
-    peers?: number | null;
-    syncing?: boolean | null;
-    mempool_size?: number | null;
-    best_hash?: string | null;
-    error?: string | null;
+  pool_activity: {
+    connected_miners: number;
+    estimated_hashrate: number;
   };
-  job?: {
-    current_height?: number | null;
-    current_difficulty?: number | null;
-    template_id?: string | null;
-    template_age_seconds?: number | null;
-    last_refresh_millis?: number | null;
-    tracked_templates?: number;
-    active_assignments?: number;
-  };
-  payouts?: {
-    unpaid_count?: number;
-    unpaid_amount?: number;
-    queued_count?: number;
-    queued_amount?: number;
-    pending_count?: number;
-    pending_amount?: number;
-    last_payout?: AdminPayoutItem | null;
-  };
-  wallet?: {
-    spendable?: number;
-    pending?: number;
-    pending_unconfirmed?: number;
-    pending_unconfirmed_eta?: number;
-    total?: number;
-  };
-  validation?: {
-    in_flight?: number;
-    candidate_queue_depth?: number;
-    regular_queue_depth?: number;
-    audit_queue_depth?: number;
-    candidate_oldest_age_millis?: number | null;
-    regular_oldest_age_millis?: number | null;
-    audit_oldest_age_millis?: number | null;
-    candidate_wait?: PercentileSummary;
-    regular_wait?: PercentileSummary;
-    audit_wait?: PercentileSummary;
-    validation_duration?: PercentileSummary;
-    audit_duration?: PercentileSummary;
-    tracked_addresses?: number;
-    forced_verify_addresses?: number;
-    total_shares?: number;
-    sampled_shares?: number;
-    invalid_samples?: number;
-    pending_provisional?: number;
-    fraud_detections?: number;
-    candidate_false_claims?: number;
-    hot_accepts?: number;
-    sync_full_verifies?: number;
-    audit_enqueued?: number;
-    audit_verified?: number;
-    audit_rejected?: number;
-    audit_deferred?: number;
-    overload_mode?: OverloadMode;
-    effective_sample_rate?: number;
-  };
-  pool_activity?: {
-    state?: string;
-    detail?: string;
-    connected_miners?: number;
-    connected_workers?: number;
-    estimated_hashrate?: number;
-    snapshot_age_seconds?: number | null;
-    last_share_age_seconds?: number | null;
-  };
-  active_verification_holds?: ActiveVerificationHold[];
+  active_verification_holds: ActiveVerificationHold[];
 }
 
 export interface AdminBalanceOverviewResponse {
-  generated_at: UnixLike;
   wallet: {
     spendable: number;
     pending: number;
-    pending_unconfirmed: number;
-    pending_unconfirmed_eta: number;
     total: number;
   };
   payouts: {
-    unpaid_count: number;
-    unpaid_amount: number;
     clean_unpaid_count: number;
-    clean_unpaid_amount: number;
-    orphan_backed_unpaid_amount: number;
-    balance_source_drift_amount: number;
-    pool_fee_unpaid_amount: number;
-    pool_fee_clean_unpaid_amount: number;
-    pool_fee_orphan_backed_unpaid_amount: number;
-    pool_fee_balance_source_drift_amount: number;
     queued_count: number;
     queued_amount: number;
-  };
-  outputs: {
-    live_count: number;
-    spendable_count: number;
-    pending_count: number;
-    spendable_coinbase_count: number;
-    spendable_coinbase_amount: number;
-    spendable_regular_count: number;
-    spendable_regular_amount: number;
-    pending_coinbase_count: number;
-    pending_coinbase_amount: number;
-    pending_regular_count: number;
-    pending_regular_amount: number;
-    pending_regular_matched_payout_count: number;
-    pending_regular_matched_payout_amount: number;
-    pending_regular_unmatched_count: number;
-    pending_regular_unmatched_amount: number;
   };
   ledger: {
     miner_paid_total: number;
     miner_unpaid_total: number;
-    miner_total_credited: number;
     miner_clean_unpaid_total: number;
     miner_orphan_backed_unpaid_total: number;
     miner_balance_source_drift_total: number;
     net_block_reward_total: number;
     pool_fee_total: number;
-    pool_fee_paid_total: number;
-    pool_fee_unpaid_total: number;
     pool_fee_clean_unpaid_total: number;
     pool_fee_orphan_backed_unpaid_total: number;
     pool_fee_balance_source_drift_total: number;
     pool_fee_balance_total: number;
-    miner_rewards_balanced: boolean;
-  };
-  liquidity: {
-    spendable_minus_queued: number;
-    queue_shortfall_amount: number;
   };
 }
 
-export interface PercentileSummary {
-  samples?: number;
-  p50_millis?: number | null;
-  p95_millis?: number | null;
+interface PercentileSummary {
+  p95_millis: number | null;
 }
 
-export type OverloadMode = 'normal' | 'shed' | 'emergency';
+type OverloadMode = 'normal' | 'shed' | 'emergency';
 
-export interface AdminSubmitSummary {
-  candidate_queue_depth?: number;
-  regular_queue_depth?: number;
-  candidate_oldest_age_millis?: number | null;
-  regular_oldest_age_millis?: number | null;
-  candidate_wait?: PercentileSummary;
-  regular_wait?: PercentileSummary;
+interface AdminSubmitSummary {
+  candidate_queue_depth: number;
+  regular_queue_depth: number;
+  candidate_oldest_age_millis: number | null;
+  regular_oldest_age_millis: number | null;
+  candidate_wait: PercentileSummary;
+  regular_wait: PercentileSummary;
 }
 
 export interface AdminShareDiagnosticsWindow {
   label: string;
-  window_seconds: number;
   accepted: number;
   rejected: number;
-  total: number;
-  rejection_rate_pct: number;
   by_reason: RejectionReasonCount[];
 }
 
 export interface AdminShareDiagnosticsResponse {
-  generated_at: UnixLike;
   windows: AdminShareDiagnosticsWindow[];
-  submit?: AdminSubmitSummary;
-  job?: HealthResponse["job"];
-  validation?: HealthResponse["validation"];
-  pool_activity?: HealthResponse["pool_activity"];
+  submit: AdminSubmitSummary;
+  validation: ValidationSummary;
 }
 
 export type RecoveryInstanceId = "primary" | "standby";
-export type RecoveryInstanceState =
+type RecoveryInstanceState =
   | "stopped"
   | "starting"
   | "syncing"
   | "ready"
   | "degraded"
   | "failed";
-export type RecoveryOperationState =
-  | "queued"
+type RecoveryOperationState =
   | "running"
   | "succeeded"
-  | "failed"
-  | "cancelled";
+  | "failed";
 export type RecoveryOperationKind =
   | "pause_payouts"
   | "resume_payouts"
@@ -503,19 +336,17 @@ export type RecoveryOperationKind =
   | "cutover"
   | "purge_inactive_daemon";
 
-export interface RecoveryWalletStatus {
+interface RecoveryWalletStatus {
   loaded: boolean;
-  address?: string | null;
-  synced_height?: number | null;
-  chain_height?: number | null;
-  outputs_total?: number | null;
-  outputs_unspent?: number | null;
-  outputs_pending?: number | null;
-  spendable?: number | null;
-  pending?: number | null;
-  pending_unconfirmed?: number | null;
-  pending_unconfirmed_eta?: number | null;
-  total?: number | null;
+  address: string | null;
+  synced_height: number | null;
+  chain_height: number | null;
+  outputs_total: number | null;
+  outputs_unspent: number | null;
+  outputs_pending: number | null;
+  spendable: number | null;
+  pending_unconfirmed: number | null;
+  pending_unconfirmed_eta: number | null;
 }
 
 export interface RecoveryInstanceStatus {
@@ -524,39 +355,33 @@ export interface RecoveryInstanceStatus {
   api: string;
   wallet_path: string;
   data_dir: string;
-  cookie_path: string;
   service_state: string;
   state: RecoveryInstanceState;
   reachable: boolean;
   cookie_present: boolean;
-  chain_height?: number | null;
-  peers?: number | null;
-  syncing?: boolean | null;
-  best_hash?: string | null;
+  chain_height: number | null;
+  peers: number | null;
+  syncing: boolean | null;
   wallet: RecoveryWalletStatus;
-  error?: string | null;
+  error: string | null;
 }
 
 export interface RecoveryOperation {
   id: number;
   kind: RecoveryOperationKind;
-  target?: RecoveryInstanceId | null;
+  target: RecoveryInstanceId | null;
   state: RecoveryOperationState;
-  created_at: UnixLike;
-  started_at?: UnixLike;
-  finished_at?: UnixLike;
-  message?: string | null;
+  started_at: UnixLike;
+  finished_at: UnixLike;
+  message: string | null;
 }
 
 export interface RecoveryStatusResponse {
-  enabled: boolean;
   payouts_paused: boolean;
-  payout_pause_file: string;
   secret_configured: boolean;
-  proxy_target?: RecoveryInstanceId | null;
-  active_cookie_target?: RecoveryInstanceId | null;
-  active_instance?: RecoveryInstanceId | null;
-  warning?: string | null;
+  proxy_target: RecoveryInstanceId | null;
+  active_instance: RecoveryInstanceId | null;
+  warning: string | null;
   instances: RecoveryInstanceStatus[];
   operations: RecoveryOperation[];
 }
@@ -570,13 +395,12 @@ export interface AdminMissingCompletedPayoutIssue {
   total_fee: number;
   latest_timestamp: UnixLike;
   addresses: string[];
-  linked_amount: number;
   live_linked_amount: number;
   orphaned_linked_amount: number;
   unlinked_amount: number;
 }
 
-export interface AdminOrphanedBlockIssue {
+interface AdminOrphanedBlockIssue {
   height: number;
   hash: string;
   credit_event_count: number;
@@ -591,77 +415,8 @@ export interface AdminOrphanedBlockIssue {
 
 export interface AdminReconciliationIssuesResponse {
   generated_at: UnixLike;
-  summary: {
-    total_open_issues: number;
-    missing_payout_issue_count: number;
-    missing_payout_total_amount: number;
-    orphaned_block_issue_count: number;
-    orphaned_block_total_credit_amount: number;
-  };
   missing_payouts: AdminMissingCompletedPayoutIssue[];
   orphaned_blocks: AdminOrphanedBlockIssue[];
-}
-
-export interface AdminReconciliationPayoutResolutionResponse {
-  tx_hash: string;
-  action: ReconciliationPayoutResolutionAction;
-  reverted_payout_rows: number;
-  restored_pending_amount: number;
-  dropped_amount: number;
-}
-
-export interface AdminOrphanedBlockCleanupResponse {
-  block_height: number;
-  orphaned: boolean;
-  reversed_credit_events: number;
-  reversed_credit_amount: number;
-  reversed_fee_amount: number;
-  canceled_pending_payouts: number;
-  manual_reconciliation_required: boolean;
-}
-
-export interface AdminDevFeeWindow {
-  label: string;
-  window_seconds: number;
-  pool_accepted_difficulty: number;
-  dev_accepted_difficulty: number;
-  dev_rejected_difficulty: number;
-  dev_gross_difficulty: number;
-  accepted_shares: number;
-  rejected_shares: number;
-  stale_rejected_shares: number;
-  stale_rejected_difficulty: number;
-  accepted_pct: number;
-  gross_pct: number;
-  reject_rate_pct: number;
-  stale_reject_rate_pct: number;
-}
-
-export interface AdminDevFeeHintSummary {
-  total_workers: number;
-  below_floor_workers: number;
-  at_floor_workers: number;
-  above_floor_workers: number;
-  min_difficulty?: number | null;
-  median_difficulty?: number | null;
-  max_difficulty?: number | null;
-  latest_updated_at?: UnixLike | null;
-}
-
-export interface AdminDevFeeHintRow {
-  worker: string;
-  difficulty: number;
-  updated_at: UnixLike;
-  position: "below-floor" | "at-floor" | "above-floor" | string;
-}
-
-export interface AdminDevFeeTelemetryResponse {
-  address: string;
-  reference_target_pct: number;
-  hint_floor: number;
-  windows: AdminDevFeeWindow[];
-  hints: AdminDevFeeHintSummary;
-  recent_hints: AdminDevFeeHintRow[];
 }
 
 export interface HashratePoint {
@@ -669,184 +424,97 @@ export interface HashratePoint {
   hashrate: number;
 }
 
-export interface EffortBand {
-  label: string;
-  tone: "ok" | "warn" | "critical" | string;
-}
-
-export interface RoundProgress {
-  round_start?: UnixLike;
+interface RoundProgress {
   elapsed_seconds: number;
-  round_work: number;
-  expected_work?: number | null;
-  effort_pct?: number | null;
-  expected_block_seconds?: number | null;
-  timer_effort_pct?: number | null;
-  effort_band: EffortBand;
-  timer_band: EffortBand;
-  target_block_seconds: number;
+  effort_pct: number | null;
+  expected_block_seconds: number | null;
+  timer_effort_pct: number | null;
 }
 
-export interface PayoutEta {
-  last_payout_at?: UnixLike;
-  estimated_next_payout_at?: UnixLike;
-  eta_seconds?: number | null;
-  typical_interval_seconds?: number | null;
-  configured_interval_seconds?: number | null;
-  next_sweep_at?: UnixLike;
-  next_sweep_in_seconds?: number | null;
-  pending_count: number;
+interface PayoutEta {
+  next_sweep_at: UnixLike;
   pending_total_amount: number;
-  unpaid_count?: number;
-  unpaid_amount?: number;
-  wallet_spendable?: number | null;
-  wallet_pending?: number | null;
-  queue_shortfall_amount?: number;
-  liquidity_constrained?: boolean;
+  wallet_spendable: number | null;
+  wallet_pending: number | null;
 }
 
 export interface LuckRound {
   block_height: number;
   block_hash: string;
   timestamp: UnixLike;
-  difficulty: number;
-  round_work: number;
   effort_pct: number;
   duration_seconds: number;
-  timer_effort_pct: number;
-  effort_band: EffortBand;
   orphaned: boolean;
   confirmed: boolean;
 }
 
-export interface RejectionReasonCount {
+interface RejectionReasonCount {
   reason: string;
   count: number;
 }
 
-export interface RejectionAnalytics {
-  window_seconds: number;
+interface RejectionAnalytics {
   accepted: number;
   rejected: number;
-  rejection_rate_pct: number;
   by_reason: RejectionReasonCount[];
   totals_by_reason: RejectionReasonCount[];
-  total_rejected: number;
 }
 
 export interface StatsInsightsResponse {
   round: RoundProgress;
   payout_eta: PayoutEta;
-  avg_effort_pct?: number | null;
+  avg_effort_pct: number | null;
   luck_history: LuckRound[];
-  rejections: {
-    window: RejectionAnalytics;
-  };
+  rejections: RejectionAnalytics;
 }
 
-export interface StatusUptimeWindow {
+interface StatusUptimeWindow {
   label: string;
-  window_seconds: number;
   sample_count: number;
-  external_sample_count?: number | null;
-  api_up_pct?: number | null;
-  stratum_up_pct?: number | null;
-  pool_up_pct?: number | null;
-  daemon_up_pct?: number | null;
-  database_up_pct?: number | null;
-  public_http_up_pct?: number | null;
+  external_sample_count: number;
+  api_up_pct: number | null;
+  stratum_up_pct: number | null;
+  pool_up_pct: number | null;
+  daemon_up_pct: number | null;
+  database_up_pct: number | null;
+  public_http_up_pct: number | null;
 }
 
-export interface StatusIncident {
+interface StatusIncident {
   id: number;
   kind: string;
   severity: string;
   started_at: UnixLike;
-  ended_at?: UnixLike;
-  duration_seconds?: number | null;
+  duration_seconds: number | null;
   message: string;
   ongoing: boolean;
 }
 
-export interface DaemonCurrentProcessBlock {
-  height: number;
-  tx_count: number;
-  stage: string;
-  started_at_unix_millis: number;
-  stage_started_at_unix_millis: number;
-  elapsed_millis: number;
-  stage_elapsed_millis: number;
-}
-
-export interface DaemonLastProcessBlock {
-  height: number;
-  tx_count: number;
-  completed_at_unix_millis: number;
-  validate_millis: number;
-  commit_millis: number;
-  reorg_millis: number;
-  total_millis: number;
-  accepted: boolean;
-  main_chain: boolean;
-  error?: string | null;
+interface StatusServiceHealth {
+  observed: boolean;
+  healthy: boolean;
 }
 
 export interface StatusResponse {
-  checked_at: UnixLike;
+  healthy: boolean;
   pool_uptime_seconds: number;
-  pool: {
-    healthy: boolean;
-    database_reachable: boolean;
-    error?: string | null;
-  };
   services: {
-    public_http: {
-      observed: boolean;
-      healthy: boolean;
-      last_sample_at?: UnixLike;
-      message?: string | null;
-    };
-    api: {
-      observed: boolean;
-      healthy: boolean;
-      last_sample_at?: UnixLike;
-      message?: string | null;
-    };
-    stratum: {
-      observed: boolean;
-      healthy: boolean;
-      last_sample_at?: UnixLike;
-      message?: string | null;
-    };
-    database: {
-      observed: boolean;
-      healthy: boolean;
-      last_sample_at?: UnixLike;
-      message?: string | null;
-    };
-    daemon: {
-      observed: boolean;
-      healthy: boolean;
-      last_sample_at?: UnixLike;
-      message?: string | null;
-    };
+    public_http: StatusServiceHealth;
+    api: StatusServiceHealth;
+    stratum: StatusServiceHealth;
+    database: StatusServiceHealth;
+    daemon: StatusServiceHealth;
   };
   daemon: {
     reachable: boolean;
-    chain_height?: number | null;
-    peers?: number | null;
-    syncing?: boolean | null;
-    mempool_size?: number | null;
-    best_hash?: string | null;
-    current_process_block?: DaemonCurrentProcessBlock | null;
-    last_process_block?: DaemonLastProcessBlock | null;
-    error?: string | null;
+    chain_height: number | null;
+    syncing: boolean | null;
   };
   template: {
     observed: boolean;
     fresh: boolean;
-    age_seconds?: number | null;
-    last_refresh_millis?: number | null;
+    age_seconds: number | null;
+    last_refresh_millis: number | null;
   };
   uptime: StatusUptimeWindow[];
   incidents: StatusIncident[];

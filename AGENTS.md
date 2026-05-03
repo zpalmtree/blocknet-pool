@@ -5,13 +5,12 @@
 - `apps/` - Cargo app packages for API, Stratum, monitor, and recoveryd
 - `crates/` - Shared Cargo library packages split by service boundary
 - `frontend/` - React/TypeScript SPA built with Vite
-- `src/` - Shared implementation modules included by the app/library packages
 - `frontend/dist/` - Generated frontend bundle, embedded into the API binary at build time
 - `scripts/deploy_bntpool.sh` - Normal production deploy path for the current primary pool host (`bntpool` SSH alias)
 - `scripts/provision_bntpool_monitoring.sh` - Idempotent provisioning/update path for Prometheus/Alertmanager/exporters and monitoring configs on the current primary pool host
 - `scripts/deploy_cloudflare_monitor_worker.sh` - Deploy the outside-in Cloudflare Worker probe using the local TRMNL Cloudflare credentials
 - `scripts/build_blocknet_daemon.sh` - Local helper for building a server-compatible `blocknet-core` daemon binary from the sibling `../blocknet-core` repo; resolves branch `pool` into a temporary worktree unless intentionally overridden
-- `scripts/deploy_blocknet_daemon_bntpool.sh` - Repeatable host-built daemon deploy path for the current primary pool host that updates `blocknetd.service`, switches the active core release, and records branch/revision metadata in the deployed release
+- `scripts/deploy_blocknet_daemon_bntpool.sh` - Repeatable host-built daemon deploy path for the current primary pool host that updates the managed `blocknetd@.service` topology, switches the active core release, and records branch/revision metadata in the deployed release
 
 ## Deployment
 
@@ -30,14 +29,13 @@
   - Restarting `blocknet-pool-stratum.service` disconnects miners; avoid it unless Stratum-side code, config, or runtime behavior changed.
   - `blocknet-pool-monitor.service` samples API/Stratum/DB/daemon health, persists monitor heartbeats/incidents, and exposes Prometheus metrics.
 - The frontend UI is embedded in the Rust API binary. UI-only changes still require rebuilding and redeploying `blocknet-pool-api`.
-- The deploy script builds `blocknet-pool-api`, `blocknet-pool-stratum`, and `blocknet-pool-monitor` locally, uploads the binaries, and only restarts the service whose binary changed, unless forced or running `--migrate-split`.
+- The deploy script builds `blocknet-pool-api`, `blocknet-pool-stratum`, and `blocknet-pool-monitor` locally, uploads the binaries, and only restarts the service whose binary changed, unless forced.
 - `./scripts/deploy_bntpool.sh --api-only` is the repeatable path for API/UI-only fixes when you need to update `blocknet-pool-api.service` without rebuilding or restarting Stratum, monitor, or recovery.
 - `./scripts/deploy_bntpool.sh --monitor-only` is the repeatable path for monitor-only fixes when you need to update `blocknet-pool-monitor.service` without forcing an unnecessary API or Stratum restart.
 - `./scripts/deploy_bntpool.sh --provision-monitoring` is the repeatable path when a release includes monitoring stack/unit/config changes that must be applied on-host.
 - `./scripts/deploy_bntpool.sh --deploy-cloudflare` is the repeatable path when the Cloudflare Worker assets need to be deployed after the pool-side ingest secret is in place.
 - There is no standalone frontend service in production. "Restart the web UI" means restarting `blocknet-pool-api.service`.
 - API/UI-only deploys should restart only `blocknet-pool-api.service` and should not restart Stratum when the Stratum binary hash is unchanged.
-- Use `./scripts/deploy_bntpool.sh --migrate-split` only when migrating from the legacy combined service or when intentionally reinstalling the split unit files on the current primary host.
 - `--skip-ui-build` is safe only if `npm --prefix frontend run build` already ran locally.
 - Do not use `--skip-build` for UI changes. It skips the binary rebuild and upload, so embedded frontend changes will not reach production.
 - The retired bridge host should be referenced as `oldpool`, not `bntpool`.

@@ -4,12 +4,16 @@ import type { ApiClient } from '../api/client';
 import { HashrateChart } from '../components/HashrateChart';
 import { PayoutTxLinks } from '../components/PayoutTxLinks';
 import {
+  effortLabel,
   formatCoins,
   formatCompactCoins,
+  formatPct,
   fmtSeconds,
   humanRate,
+  roundToneClass,
   stratumUrl,
   timeAgo,
+  timeUntil,
   toUnixMs,
 } from '../lib/format';
 import type { ThemeMode } from '../lib/theme';
@@ -30,21 +34,10 @@ interface DashboardPageProps {
   theme: ThemeMode;
 }
 
-function fmtPct(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return '-';
-  return `${value.toFixed(1)}%`;
-}
-
 function barWidth(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value) || value <= 0) return '0%';
   const clamped = Math.min(value, 250);
   return `${(clamped / 250) * 100}%`;
-}
-
-function toneClass(tone: string | undefined): string {
-  if (tone === 'critical') return 'is-critical';
-  if (tone === 'warn') return 'is-warn';
-  return 'is-ok';
 }
 
 export function DashboardPage({ active, api, poolInfo, liveTick, theme }: DashboardPageProps) {
@@ -74,8 +67,8 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
 
   const loadPayouts = useCallback(async () => {
     try {
-      const d = await api.getRecentPayouts({ limit: 5, offset: 0 });
-      setPayouts(d.items || []);
+      const d = await api.getRecentPayouts(5, 0);
+      setPayouts(d.items);
     } catch {
       setPayouts([]);
     }
@@ -84,7 +77,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
   const loadHistory = useCallback(async () => {
     try {
       const d = await api.getStatsHistory(range);
-      setHistory(d || []);
+      setHistory(d);
     } catch {
       setHistory([]);
     }
@@ -95,8 +88,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
     void refreshStats();
     void loadInsights();
     void loadPayouts();
-    void loadHistory();
-  }, [active, loadHistory, loadInsights, loadPayouts, refreshStats]);
+  }, [active, loadInsights, loadPayouts, refreshStats]);
 
   useEffect(() => {
     if (!active || liveTick <= 0) return;
@@ -122,15 +114,15 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
   const round = insights?.round;
   const payoutEta = insights?.payout_eta;
   const dashboardLuckHistory = (insights?.luck_history ?? []).filter((row) => !row.orphaned);
-  const hiddenOrphanRounds = Math.max(0, (insights?.luck_history?.length ?? 0) - dashboardLuckHistory.length);
+  const hiddenOrphanRounds = Math.max(0, (insights?.luck_history.length ?? 0) - dashboardLuckHistory.length);
   const latestSolvedBlock = dashboardLuckHistory[0];
   const nextSweepAt = toUnixMs(payoutEta?.next_sweep_at);
-  const nextSweepLabel =
-    payoutEta?.next_sweep_in_seconds != null
-      ? fmtSeconds(payoutEta.next_sweep_in_seconds)
-      : nextSweepAt
-        ? new Date(nextSweepAt).toLocaleTimeString()
-        : '-';
+  const nextSweepLabel = payoutEta?.next_sweep_at ? timeUntil(payoutEta.next_sweep_at) : '-';
+  const payoutShortfall =
+    payoutEta?.wallet_spendable == null
+      ? 0
+      : Math.max(0, payoutEta.pending_total_amount - payoutEta.wallet_spendable);
+  const payoutLiquidityConstrained = payoutEta != null && payoutEta.pending_total_amount > 0 && payoutShortfall > 0;
 
   const avgLuck = insights?.avg_effort_pct;
   return (
@@ -167,7 +159,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
           </div>
           <div className="stat-card">
             <div className="label">Network Hashrate</div>
-            <div className="value" id="s-net-hashrate">{stats?.chain?.network_hashrate ? humanRate(stats.chain.network_hashrate) : '-'}</div>
+            <div className="value" id="s-net-hashrate">{stats?.chain.network_hashrate ? humanRate(stats.chain.network_hashrate) : '-'}</div>
           </div>
         </div>
       </div>
@@ -177,7 +169,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
         <div className="stats-card-group-grid">
           <div className="stat-card">
             <div className="label">Current Block</div>
-            <div className="value mono" id="s-current-block">{stats?.chain?.current_job_height ?? '-'}</div>
+            <div className="value mono" id="s-current-block">{stats?.chain.current_job_height ?? '-'}</div>
           </div>
           <div className="stat-card" title={latestSolvedBlock ? new Date(toUnixMs(latestSolvedBlock.timestamp)).toLocaleString() : undefined}>
             <div className="label">Last Solved Block</div>
@@ -195,7 +187,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
         <div className="stats-card-group-grid">
           <div className="stat-card">
             <div className="label">Average Luck</div>
-            <div className="value" id="s-avg-luck">{fmtPct(avgLuck)}</div>
+            <div className="value" id="s-avg-luck">{formatPct(avgLuck)}</div>
           </div>
           <div className="stat-card">
             <div className="label">Unique Orphans</div>
@@ -203,7 +195,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
           </div>
           <div className="stat-card">
             <div className="label">Orphan Rate</div>
-            <div className="value" id="s-orphan-rate">{fmtPct(stats?.pool?.orphan_rate_pct)}</div>
+            <div className="value" id="s-orphan-rate">{formatPct(stats?.pool?.orphan_rate_pct)}</div>
           </div>
         </div>
       </div>
@@ -211,19 +203,19 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
       <div className="section">
         <div className="section-header">
           <h2>Round Progress</h2>
-          <span className={`round-chip ${toneClass(round?.effort_band?.tone)}`}>
-            {round?.effort_band?.label || 'loading'}
+          <span className={`round-chip ${roundToneClass(round?.effort_pct)}`}>
+            {effortLabel(round?.effort_pct)}
           </span>
         </div>
         <div className="card">
           <div className="round-meta">
             <div>
               <span className="label">Round Effort</span>
-              <div className="value mono">{fmtPct(round?.effort_pct)}</div>
+              <div className="value mono">{formatPct(round?.effort_pct)}</div>
             </div>
             <div>
               <span className="label">Elapsed vs ETA</span>
-              <div className="value mono">{fmtPct(round?.timer_effort_pct)}</div>
+              <div className="value mono">{formatPct(round?.timer_effort_pct)}</div>
             </div>
             <div>
               <span className="label">Expected Block Time</span>
@@ -237,7 +229,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
 
           <div className="round-progress-wrap">
             <div className="round-progress-track">
-              <div className={`round-progress-fill ${toneClass(round?.effort_band?.tone)}`} style={{ width: barWidth(round?.effort_pct) }} />
+              <div className={`round-progress-fill ${roundToneClass(round?.effort_pct)}`} style={{ width: barWidth(round?.effort_pct) }} />
               <div className="round-marker marker-50">50%</div>
               <div className="round-marker marker-100">100%</div>
               <div className="round-marker marker-200">200%</div>
@@ -256,15 +248,17 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
           <div
             className="stat-card"
             title={
-              payoutEta?.pending_count != null
-                ? `${payoutEta.pending_count} payout recipient${payoutEta.pending_count === 1 ? '' : 's'} currently queued`
+              payoutEta
+                ? `${formatCoins(payoutEta.pending_total_amount)} currently queued`
                 : undefined
             }
           >
             <div className="label">Payout Queue</div>
-            <div className="value mono">{payoutEta?.pending_count ?? '-'}</div>
+            <div className="value mono">
+              {payoutEta ? formatCompactCoins(payoutEta.pending_total_amount) : '-'}
+            </div>
             <div className="stat-meta">
-              {payoutEta?.pending_total_amount ? formatCompactCoins(payoutEta.pending_total_amount) : '0 BNT'} queued
+              {payoutShortfall ? `${formatCompactCoins(payoutShortfall)} short` : 'funded'}
             </div>
           </div>
           <div
@@ -292,7 +286,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
         </div>
       </div>
 
-      {!!payoutEta?.liquidity_constrained && (
+      {payoutEta && payoutLiquidityConstrained && (
         <div
           className="card"
           style={{
@@ -306,8 +300,8 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
             Pool payouts are currently liquidity constrained. Spendable wallet balance:{' '}
             <span className="mono">{formatCoins(payoutEta.wallet_spendable ?? 0)}</span>. Locked/confirming wallet
             balance: <span className="mono">{formatCoins(payoutEta.wallet_pending ?? 0)}</span>. Queued:{' '}
-            <span className="mono">{formatCoins(payoutEta.pending_total_amount ?? 0)}</span>. Shortfall:{' '}
-            <span className="mono">{formatCoins(payoutEta.queue_shortfall_amount ?? 0)}</span>. Those locked funds are
+            <span className="mono">{formatCoins(payoutEta.pending_total_amount)}</span>. Shortfall:{' '}
+            <span className="mono">{formatCoins(payoutShortfall)}</span>. Those locked funds are
             already in the pool wallet and should become spendable as blocks mature. The ETA above is based on recent
             payout cadence and may slip until liquidity is restored.
           </div>
@@ -368,7 +362,7 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
                       </a>
                     </td>
                     <td>
-                      <span className={`round-chip ${toneClass(row.effort_band?.tone)}`}>{fmtPct(row.effort_pct)}</span>
+                      <span className={`round-chip ${roundToneClass(row.effort_pct)}`}>{formatPct(row.effort_pct)}</span>
                     </td>
                     <td>{fmtSeconds(row.duration_seconds)}</td>
                     <td>
@@ -423,8 +417,8 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
                       <PayoutTxLinks hashes={p.tx_hashes} />
                     </td>
                     <td>
-                      <span className={`badge ${p.confirmed === false ? 'badge-pending' : 'badge-confirmed'}`}>
-                        {p.confirmed === false ? 'unconfirmed' : 'confirmed'}
+                      <span className={`badge ${p.confirmed ? 'badge-confirmed' : 'badge-pending'}`}>
+                        {p.confirmed ? 'confirmed' : 'unconfirmed'}
                       </span>
                     </td>
                     <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
@@ -436,29 +430,6 @@ export function DashboardPage({ active, api, poolInfo, liveTick, theme }: Dashbo
         </div>
       </div>
 
-      <div className="seo-copy-grid">
-        <div className="card seo-copy-card">
-          <h3>Start Mining</h3>
-          <p>
-            <a href="/start">Follow the Seine setup guide</a> to copy the stratum URL and connect a Blocknet wallet
-            address in minutes.
-          </p>
-        </div>
-        <div className="card seo-copy-card">
-          <h3>Check Recent Blocks</h3>
-          <p>
-            <a href="/blocks">Browse confirmed, pending, and orphaned rounds</a> to understand how the pool is
-            performing block to block.
-          </p>
-        </div>
-        <div className="card seo-copy-card">
-          <h3>Verify Payouts</h3>
-          <p>
-            <a href="/payouts">Review recent payout batches and explorer links</a> before you point any hashpower at
-            the pool.
-          </p>
-        </div>
-      </div>
     </div>
   );
 }

@@ -14,7 +14,6 @@ fn main() {
         .to_path_buf();
     let frontend_dir = repo_dir.join("frontend");
     let frontend_src_dir = frontend_dir.join("src");
-    let frontend_public_dir = frontend_dir.join("public");
     let frontend_dist_dir = frontend_dir.join("dist");
 
     println!(
@@ -32,19 +31,11 @@ fn main() {
         track_path(&path);
     }
     track_tree(&frontend_src_dir);
-    if frontend_public_dir.is_dir() {
-        track_tree(&frontend_public_dir);
-    }
     for asset in REQUIRED_UI_ASSETS {
         track_path(&frontend_dist_dir.join(asset));
     }
 
-    verify_ui_bundle(
-        &frontend_dir,
-        &frontend_src_dir,
-        &frontend_public_dir,
-        &frontend_dist_dir,
-    );
+    verify_ui_bundle(&frontend_dir, &frontend_src_dir, &frontend_dist_dir);
 }
 
 fn track_path(path: &Path) {
@@ -52,41 +43,12 @@ fn track_path(path: &Path) {
 }
 
 fn track_tree(root: &Path) {
-    if !root.exists() {
-        return;
-    }
-    if root.is_file() {
-        track_path(root);
-        return;
-    }
-
-    let mut dirs = vec![root.to_path_buf()];
-    while let Some(dir) = dirs.pop() {
-        let entries = match fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(err) => panic!("failed to read {}: {err}", dir.display()),
-        };
-        for entry in entries {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(err) => panic!("failed to read entry in {}: {err}", dir.display()),
-            };
-            let path = entry.path();
-            if path.is_dir() {
-                dirs.push(path);
-            } else if path.is_file() {
-                track_path(&path);
-            }
-        }
+    for path in walk_files(root) {
+        track_path(&path);
     }
 }
 
-fn verify_ui_bundle(
-    frontend_dir: &Path,
-    frontend_src_dir: &Path,
-    frontend_public_dir: &Path,
-    frontend_dist_dir: &Path,
-) {
+fn verify_ui_bundle(frontend_dir: &Path, frontend_src_dir: &Path, frontend_dist_dir: &Path) {
     let required_paths = REQUIRED_UI_ASSETS
         .iter()
         .map(|asset| frontend_dist_dir.join(asset))
@@ -108,9 +70,6 @@ fn verify_ui_bundle(
         frontend_dir.join("index.html"),
     ];
     source_files.extend(walk_files(frontend_src_dir));
-    if frontend_public_dir.is_dir() {
-        source_files.extend(walk_files(frontend_public_dir));
-    }
 
     let newest_source = newest_mtime(&source_files)
         .unwrap_or_else(|| fail_missing_or_stale("frontend source tree is empty"));

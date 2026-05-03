@@ -42,7 +42,7 @@ function drawChartOn(canvas: HTMLCanvasElement, data: HashratePoint[], range: Ra
   const H = rect.height;
   ctx.clearRect(0, 0, W, H);
 
-  const points = (data || [])
+  const points = data
     .map((p) => ({
       t: typeof p.timestamp === 'number' && p.timestamp < 1e12 ? p.timestamp * 1000 : toUnixMs(p.timestamp),
       v: p.hashrate || 0,

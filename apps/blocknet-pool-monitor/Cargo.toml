@@ -3,10 +3,6 @@ name = "blocknet-pool-monitor-app"
 version.workspace = true
 edition.workspace = true
 
-[lib]
-name = "blocknet_pool_monitor_app"
-path = "src/lib.rs"
-
 [[bin]]
 name = "blocknet-pool-monitor"
 path = "src/main.rs"
@@ -14,8 +10,6 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
-dotenvy.workspace = true
-humantime.workspace = true
 libc.workspace = true
 parking_lot.workspace = true
 reqwest.workspace = true

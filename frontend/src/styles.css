@@ -8,15 +8,12 @@
   --accent-strong: #15803d;
   --accent-light: rgba(22, 163, 74, 0.12);
   --accent-contrast: #f8fff9;
-  --secondary: #d97706;
   --text: #1f3121;
   --muted: #6b7c6b;
   --border: rgba(33, 49, 34, 0.12);
   --good: #16a34a;
   --warn: #d97706;
   --bad: #dc2626;
-  --warn-bg: #fef3c7;
-  --bad-bg: #fee2e2;
   --tone-ok-bg: rgba(22, 163, 74, 0.1);
   --tone-ok-border: rgba(22, 163, 74, 0.18);
   --tone-ok-text: #23834c;
@@ -41,8 +38,6 @@
   --shadow: 0 22px 48px rgba(33, 49, 34, 0.08);
   --shadow-soft: 0 12px 26px rgba(33, 49, 34, 0.05);
   --nav-bg: rgba(246, 248, 242, 0.92);
-  --bg-glow-1: rgba(22, 163, 74, 0.08);
-  --bg-glow-2: rgba(217, 119, 6, 0.06);
   --progress-track: linear-gradient(90deg, #ecfdf3, #fefce8 55%, #fef2f2);
   --progress-ok-fill: rgba(22, 163, 74, 0.65);
   --progress-warn-fill: rgba(217, 119, 6, 0.6);
@@ -88,15 +83,12 @@
   --accent-strong: #2cbd70;
   --accent-light: rgba(87, 215, 140, 0.14);
   --accent-contrast: #02120a;
-  --secondary: #f7b44b;
   --text: #ecf5f0;
   --muted: #9cb0a8;
   --border: rgba(130, 160, 145, 0.18);
   --good: #57d78c;
   --warn: #f7b44b;
   --bad: #f87171;
-  --warn-bg: #362710;
-  --bad-bg: #351515;
   --tone-ok-bg: rgba(87, 215, 140, 0.1);
   --tone-ok-border: rgba(87, 215, 140, 0.17);
   --tone-ok-text: #81dfaf;
@@ -121,8 +113,6 @@
   --shadow: 0 30px 80px rgba(0, 0, 0, 0.34);
   --shadow-soft: 0 14px 34px rgba(0, 0, 0, 0.22);
   --nav-bg: rgba(7, 17, 20, 0.94);
-  --bg-glow-1: rgba(87, 215, 140, 0.15);
-  --bg-glow-2: rgba(247, 180, 75, 0.09);
   --progress-track: linear-gradient(90deg, #102818, #35260d 55%, #321414);
   --progress-ok-fill: rgba(74, 222, 128, 0.42);
   --progress-warn-fill: rgba(245, 158, 11, 0.4);
@@ -467,24 +457,6 @@ nav {
   max-width: 68ch;
 }
 
-.seo-copy-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-  margin-top: 24px;
-  margin-bottom: 32px;
-}
-
-.seo-copy-card {
-  display: grid;
-  gap: 10px;
-}
-
-.seo-copy-card p {
-  color: var(--muted);
-  font-size: 14px;
-}
-
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -498,10 +470,6 @@ nav {
   grid-template-columns: repeat(4, 1fr);
   gap: 16px;
   margin-bottom: 24px;
-}
-
-.stats-grid-3 {
-  grid-template-columns: repeat(3, 1fr);
 }
 
 .stats-card-group {
@@ -1020,20 +988,6 @@ tr:hover td {
   color: var(--status-orphaned-text);
 }
 
-.fee-status-cell {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
-}
-
-.fee-status-cell__meta {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  letter-spacing: 0.02em;
-}
-
 .pager {
   display: flex;
   align-items: center;
@@ -1171,10 +1125,6 @@ input:focus {
   box-shadow: 0 0 0 1px var(--accent);
 }
 
-.admin-balance-overview {
-  margin-bottom: 24px;
-}
-
 .admin-balance-overview__grid {
   display: grid;
   gap: 16px;
@@ -1188,7 +1138,7 @@ input:focus {
   padding: 18px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent),
-    var(--surface-2);
+    var(--surface-raised);
 }
 
 .admin-balance-overview__panel h3 {
@@ -1731,35 +1681,6 @@ pre.config-block {
   background: var(--bad);
 }
 
-pre.raw-json {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  padding: 16px;
-  border-radius: var(--radius);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  overflow-x: auto;
-  max-height: 400px;
-  overflow-y: auto;
-  line-height: 1.5;
-}
-
-.health-raw-toggle {
-  margin-top: 12px;
-}
-
-.health-raw-toggle summary {
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  user-select: none;
-}
-
-.health-raw-toggle[open] summary {
-  margin-bottom: 12px;
-}
-
 .log-stream {
   background: var(--log-bg);
   color: var(--log-text);
@@ -1799,19 +1720,11 @@ pre.raw-json {
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .stats-grid.stats-grid-3 {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
   .stats-card-group-grid {
     grid-template-columns: repeat(2, 1fr);
   }
 
   .share-focus-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .seo-copy-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1876,10 +1789,6 @@ pre.raw-json {
 
 @media (max-width: 600px) {
   .stats-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .stats-grid.stats-grid-3 {
     grid-template-columns: 1fr;
   }
 

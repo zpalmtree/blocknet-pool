@@ -84,19 +84,17 @@ cat >"${CONFIG_PATH}" <<JSON
   "stratum_port": ${STRATUM_PORT},
   "api_host": "127.0.0.1",
   "api_port": ${API_PORT},
+  "api_key": "ci-api-key",
+  "monitor_ingest_secret": "ci-monitor-secret",
   "daemon_api": "http://127.0.0.1:${DAEMON_PORT}",
   "database_url": "${DATABASE_URL}",
   "pool_fee_wallet_address": "ci-pool-wallet",
-  "sse_enabled": false,
   "enable_vardiff": false,
   "validation_mode": "probabilistic",
   "sample_rate": 0.0,
   "warmup_shares": 0,
   "min_sample_every": 0,
-  "stratum_submit_v2_required": true,
-  "payouts_enabled": false,
-  "shares_retention": "",
-  "payouts_retention": ""
+  "payouts_enabled": false
 }
 JSON
 
@@ -142,15 +140,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json(
                 200,
                 {
-                    "peer_id": "mock-peer",
                     "peers": 1,
                     "chain_height": 100,
-                    "best_hash": "ab" * 32,
-                    "total_work": 1,
-                    "mempool_size": 0,
-                    "mempool_bytes": 0,
                     "syncing": False,
-                    "identity_age": "1m",
                 },
             )
         if path == "/api/mining/blocktemplate":
@@ -242,6 +234,8 @@ import json
 import socket
 import sys
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 
 stratum_port = int(sys.argv[1])
@@ -307,6 +301,7 @@ send_message({
 login_ok = False
 job_id = None
 nonce_start = None
+claimed_hash = None
 deadline = time.time() + 30.0
 while time.time() < deadline:
     try:
@@ -321,12 +316,15 @@ while time.time() < deadline:
         params = msg.get("params", {})
         job_id = params.get("job_id")
         nonce_start = params.get("nonce_start")
+        claimed_hash = params.get("target")
         break
 
 if not login_ok:
     raise SystemExit("did not receive successful login response")
 if not job_id or nonce_start is None:
     raise SystemExit("did not receive job after login")
+if not isinstance(claimed_hash, str) or len(claimed_hash) != 64:
+    raise SystemExit(f"job did not include a usable target: {claimed_hash}")
 
 send_message({
     "id": 2,
@@ -334,7 +332,7 @@ send_message({
     "params": {
         "job_id": job_id,
         "nonce": int(nonce_start),
-        "claimed_hash": ("00" * 31) + "02"
+        "claimed_hash": claimed_hash
     }
 })
 
@@ -355,15 +353,23 @@ while time.time() < deadline:
 if not submit_ok:
     raise SystemExit("submit did not return ok")
 
-stats = None
+miner = None
+miner_url = f"http://127.0.0.1:{api_port}/api/miner/{urllib.parse.quote(address, safe='')}"
 for _ in range(20):
-    with urllib.request.urlopen(f"http://127.0.0.1:{api_port}/api/stats", timeout=5) as resp:
-        stats = json.loads(resp.read().decode("utf-8"))
-    accepted = int(stats.get("pool", {}).get("shares_accepted", 0))
+    try:
+        with urllib.request.urlopen(miner_url, timeout=5) as resp:
+            miner = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            time.sleep(0.5)
+            continue
+        raise
+    accepted = int(miner.get("total_accepted", 0))
     if accepted >= 1:
         break
-if int(stats.get("pool", {}).get("shares_accepted", 0)) < 1:
-    raise SystemExit(f"expected shares_accepted >= 1, got: {stats}")
+    time.sleep(0.5)
+if int((miner or {}).get("total_accepted", 0)) < 1:
+    raise SystemExit(f"expected total_accepted >= 1, got: {miner}")
 
 print("smoke e2e ok")
 PY

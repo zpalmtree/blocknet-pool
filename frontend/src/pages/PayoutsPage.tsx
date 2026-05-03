@@ -18,10 +18,9 @@ export function PayoutsPage({ active, api, liveTick }: PayoutsPageProps) {
 
   const loadPage = useCallback(async () => {
     try {
-      const d = await api.getRecentPayouts({ limit: pager.limit, offset: pager.offset });
-      const nextItems = d.items || [];
-      setItems(nextItems);
-      setPager((prev) => ({ ...prev, total: d.page ? d.page.total : nextItems.length }));
+      const d = await api.getRecentPayouts(pager.limit, pager.offset);
+      setItems(d.items);
+      setPager((prev) => ({ ...prev, total: d.total }));
     } catch {
       setItems([]);
     }
@@ -80,8 +79,8 @@ export function PayoutsPage({ active, api, liveTick }: PayoutsPageProps) {
                     <PayoutTxLinks hashes={p.tx_hashes} />
                   </td>
                   <td>
-                    <span className={`badge ${p.confirmed === false ? 'badge-pending' : 'badge-confirmed'}`}>
-                      {p.confirmed === false ? 'unconfirmed' : 'confirmed'}
+                    <span className={`badge ${p.confirmed ? 'badge-confirmed' : 'badge-pending'}`}>
+                      {p.confirmed ? 'confirmed' : 'unconfirmed'}
                     </span>
                   </td>
                   <td title={new Date(toUnixMs(p.timestamp)).toLocaleString()}>{timeAgo(p.timestamp)}</td>
@@ -99,23 +98,6 @@ export function PayoutsPage({ active, api, liveTick }: PayoutsPageProps) {
         />
       </div>
 
-      <div className="seo-copy-grid">
-        <div className="card seo-copy-card">
-          <h3>On-Chain Status</h3>
-          <p>Transaction hashes point to the public Blocknet explorer, and fresh sends stay marked unconfirmed until the first confirming block is observed by the pool.</p>
-        </div>
-        <div className="card seo-copy-card">
-          <h3>Batch Visibility</h3>
-          <p>Each payout batch shows how many miners were paid and how much value moved on-chain in that window.</p>
-        </div>
-        <div className="card seo-copy-card">
-          <h3>Payout Cadence</h3>
-          <p>
-            Use the recent payout page together with <a href="/status">status</a> and <a href="/">dashboard</a> data to
-            understand pool rhythm over time.
-          </p>
-        </div>
-      </div>
     </div>
   );
 }

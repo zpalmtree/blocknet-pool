@@ -6,7 +6,7 @@ usage() {
 Deploy blocknet-pool to the current primary pool host.
 
 Usage:
-  scripts/deploy_bntpool.sh [--skip-build] [--skip-ui-build] [--api-only] [--migrate-split] [--provision-monitoring] [--provision-recovery] [--deploy-cloudflare] [--monitor-only]
+  scripts/deploy_bntpool.sh [--skip-build] [--skip-ui-build] [--api-only] [--provision-monitoring] [--provision-recovery] [--deploy-cloudflare] [--monitor-only]
 
 Environment overrides:
   BNTPOOL_HOST             SSH host alias (default: bntpool)
@@ -16,7 +16,6 @@ Environment overrides:
   BNTPOOL_MONITOR_SERVICE  Systemd monitor service name (default: blocknet-pool-monitor.service)
   BNTPOOL_RECOVERY_SERVICE Systemd recovery service name (default: blocknet-pool-recoveryd.service)
   BNTPOOL_RECOVERY_SOCKET  Systemd recovery socket name (default: blocknet-pool-recoveryd.socket)
-  BNTPOOL_LEGACY_SERVICE   Legacy combined service to disable on split migration (default: blocknet-pool.service)
   BNTPOOL_ALLOW_RETIRED_HOST  Set to 1 to allow explicit deploys to oldpool / 5.161.113.120
   BNTPOOL_FORCE_RESTART    Set to 1 to force a restart even when binary hashes are unchanged
   BNTPOOL_LOCAL_BUILD_IMAGE  Optional Docker image used for local builds
@@ -26,7 +25,6 @@ EOF
 skip_build=0
 skip_ui_build=0
 api_only=0
-migrate_split=0
 provision_monitoring=0
 provision_recovery=0
 deploy_cloudflare=0
@@ -43,10 +41,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --api-only)
       api_only=1
-      shift
-      ;;
-    --migrate-split)
-      migrate_split=1
       shift
       ;;
     --provision-monitoring)
@@ -82,8 +76,8 @@ if [[ "${api_only}" == "1" && "${monitor_only}" == "1" ]]; then
   exit 1
 fi
 
-if [[ "${api_only}" == "1" && ("${migrate_split}" == "1" || "${provision_monitoring}" == "1" || "${provision_recovery}" == "1" || "${deploy_cloudflare}" == "1") ]]; then
-  echo "--api-only cannot be combined with provisioning, split migration, or Cloudflare deploy flags" >&2
+if [[ "${api_only}" == "1" && ("${provision_monitoring}" == "1" || "${provision_recovery}" == "1" || "${deploy_cloudflare}" == "1") ]]; then
+  echo "--api-only cannot be combined with provisioning or Cloudflare deploy flags" >&2
   exit 1
 fi
 
@@ -94,7 +88,6 @@ stratum_service="${BNTPOOL_STRATUM_SERVICE:-blocknet-pool-stratum.service}"
 monitor_service="${BNTPOOL_MONITOR_SERVICE:-blocknet-pool-monitor.service}"
 recovery_service="${BNTPOOL_RECOVERY_SERVICE:-blocknet-pool-recoveryd.service}"
 recovery_socket="${BNTPOOL_RECOVERY_SOCKET:-blocknet-pool-recoveryd.socket}"
-legacy_service="${BNTPOOL_LEGACY_SERVICE:-blocknet-pool.service}"
 allow_retired_host="${BNTPOOL_ALLOW_RETIRED_HOST:-0}"
 force_restart="${BNTPOOL_FORCE_RESTART:-0}"
 local_build_image="${BNTPOOL_LOCAL_BUILD_IMAGE:-}"
@@ -330,24 +323,17 @@ if [[ "${provision_recovery}" == "1" ]]; then
     bash "${repo_dir}/scripts/provision_bntpool_recovery.sh"
 fi
 
-if [[ "${migrate_split}" == "1" ]]; then
-  echo "==> enabling split systemd units"
-  ssh "${host}" "set -euo pipefail; \
-    sudo systemctl disable --now '${legacy_service}' >/dev/null 2>&1 || true; \
-    sudo systemctl enable '${api_service}' '${stratum_service}'"
-fi
-
 restart_api=0
 restart_stratum=0
 restart_monitor=0
 restart_recovery=0
-if [[ "${deploy_api}" == "1" && ("${migrate_split}" == "1" || "${force_restart}" == "1" || "${before_api_hash}" != "${after_api_hash}") ]]; then
+if [[ "${deploy_api}" == "1" && ("${force_restart}" == "1" || "${before_api_hash}" != "${after_api_hash}") ]]; then
   restart_api=1
 fi
-if [[ "${deploy_stratum}" == "1" && ("${migrate_split}" == "1" || "${force_restart}" == "1" || "${before_stratum_hash}" != "${after_stratum_hash}") ]]; then
+if [[ "${deploy_stratum}" == "1" && ("${force_restart}" == "1" || "${before_stratum_hash}" != "${after_stratum_hash}") ]]; then
   restart_stratum=1
 fi
-if [[ "${deploy_monitor}" == "1" && ("${migrate_split}" == "1" || "${force_restart}" == "1" || "${before_monitor_hash}" != "${after_monitor_hash}") ]]; then
+if [[ "${deploy_monitor}" == "1" && ("${force_restart}" == "1" || "${before_monitor_hash}" != "${after_monitor_hash}") ]]; then
   restart_monitor=1
 fi
 if [[ "${deploy_recovery}" == "1" && ("${force_restart}" == "1" || "${before_recovery_hash}" != "${after_recovery_hash}" || "${provision_recovery}" == "1") ]]; then

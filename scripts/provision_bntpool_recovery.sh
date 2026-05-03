@@ -39,7 +39,6 @@ esac
 
 remote_nginx_conf="/etc/nginx/conf.d/blocknet-daemon-proxy.conf"
 remote_nginx_active="/etc/nginx/blocknet-daemon-active-upstream.inc"
-remote_nginx_active_legacy="/etc/nginx/conf.d/blocknet-daemon-active-upstream.conf"
 remote_active_cookie="/etc/blocknet/pool/daemon-active.api.cookie"
 remote_secret="/etc/blocknet/recovery/pool-wallet.json"
 remote_recovery_state_dir="/var/lib/blocknet-recovery"
@@ -75,7 +74,6 @@ sudo chmod 0644 '${remote_primary_env}' '${remote_standby_env}'"
 
 echo "==> seeding active daemon proxy and stable cookie path"
 ssh "${host}" "set -euo pipefail; \
-  sudo rm -f '${remote_nginx_active_legacy}'; \
   printf '%s\n' 'proxy_pass http://127.0.0.1:18331;' | sudo tee '${remote_nginx_active}' >/dev/null; \
   sudo ln -sfn '${remote_primary_cookie}' '${remote_active_cookie}'"
 

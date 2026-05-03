@@ -17,7 +17,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 
 def parse_args() -> argparse.Namespace:
@@ -45,12 +45,6 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=5.0,
         help="Share submit rate per worker connection.",
-    )
-    parser.add_argument(
-        "--submit-mode",
-        choices=("legacy", "v2"),
-        default="legacy",
-        help="legacy omits claimed_hash; v2 includes claimed_hash.",
     )
     parser.add_argument(
         "--response-timeout-secs",
@@ -147,7 +141,7 @@ class ApiSampler(threading.Thread):
         self.api_port = api_port
         self.interval_secs = max(0.1, interval_secs)
         self.stop_event = threading.Event()
-        self.samples: List[dict] = []
+        self.sample_count = 0
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -156,14 +150,7 @@ class ApiSampler(threading.Thread):
         while not self.stop_event.is_set():
             snapshot = fetch_api_stats(self.host, self.api_port)
             if snapshot is not None:
-                self.samples.append(
-                    {
-                        "time": time.time(),
-                        "validation": snapshot.get("validation", {}),
-                        "pool": snapshot.get("pool", {}),
-                        "chain": snapshot.get("chain", {}),
-                    }
-                )
+                self.sample_count += 1
             self.stop_event.wait(self.interval_secs)
 
 
@@ -193,7 +180,6 @@ class Worker(threading.Thread):
         port: int,
         address: str,
         worker_name: str,
-        submit_mode: str,
         shares_per_sec: float,
         login_timeout_secs: float,
         response_timeout_secs: float,
@@ -206,7 +192,6 @@ class Worker(threading.Thread):
         self.port = port
         self.address = address
         self.worker_name = worker_name
-        self.submit_mode = submit_mode
         self.shares_per_sec = max(0.0, shares_per_sec)
         self.login_timeout_secs = login_timeout_secs
         self.response_timeout_secs = response_timeout_secs
@@ -217,6 +202,7 @@ class Worker(threading.Thread):
         self._nonce_start = 0
         self._nonce_end = (1 << 64) - 1
         self._job_id: Optional[str] = None
+        self._claimed_hash: Optional[str] = None
 
     def run(self) -> None:
         try:
@@ -275,6 +261,9 @@ class Worker(threading.Thread):
         job_id = params.get("job_id")
         if isinstance(job_id, str) and job_id:
             self._job_id = job_id
+        target = params.get("target")
+        if isinstance(target, str) and len(target) == 64:
+            self._claimed_hash = target
         nonce_start = params.get("nonce_start")
         nonce_end = params.get("nonce_end")
         if isinstance(nonce_start, int) and nonce_start >= 0:
@@ -295,7 +284,7 @@ class Worker(threading.Thread):
                     "address": self.address,
                     "worker": self.worker_name,
                     "protocol_version": 2,
-                    "capabilities": ["submit_claimed_hash", "share_validation_status"],
+                    "capabilities": ["submit_claimed_hash"],
                 },
             },
         )
@@ -358,13 +347,16 @@ class Worker(threading.Thread):
                 self.metrics.protocol_errors += 1
                 self.metrics.add_error_reason("missing active job")
                 break
+            if self._claimed_hash is None:
+                self.metrics.protocol_errors += 1
+                self.metrics.add_error_reason("missing active job target")
+                break
 
             params = {
                 "job_id": self._job_id,
                 "nonce": self._next_nonce(),
+                "claimed_hash": self._claimed_hash,
             }
-            if self.submit_mode == "v2":
-                params["claimed_hash"] = "00" * 32
 
             request = {
                 "id": req_id,
@@ -415,83 +407,16 @@ def merge_error_reasons(metrics: List[WorkerMetrics]) -> Dict[str, int]:
 
 
 def summarize_api_samples(
-    start_snapshot: Optional[dict], end_snapshot: Optional[dict], samples: List[dict]
+    start_snapshot: Optional[dict], end_snapshot: Optional[dict], sample_count: int
 ) -> dict:
-    if start_snapshot is None and end_snapshot is None and not samples:
+    if start_snapshot is None and end_snapshot is None and sample_count == 0:
         return {"available": False}
-
-    max_in_flight = 0
-    max_candidate_queue_depth = 0
-    max_regular_queue_depth = 0
-    max_pending_provisional = 0
-    max_forced_verify_addresses = 0
-
-    for sample in samples:
-        val = sample.get("validation", {})
-        if not isinstance(val, dict):
-            continue
-        max_in_flight = max(max_in_flight, int(val.get("in_flight", 0)))
-        max_candidate_queue_depth = max(
-            max_candidate_queue_depth, int(val.get("candidate_queue_depth", 0))
-        )
-        max_regular_queue_depth = max(
-            max_regular_queue_depth, int(val.get("regular_queue_depth", 0))
-        )
-        max_pending_provisional = max(
-            max_pending_provisional, int(val.get("pending_provisional", 0))
-        )
-        max_forced_verify_addresses = max(
-            max_forced_verify_addresses, int(val.get("forced_verify_addresses", 0))
-        )
-
-    def get_nested(snapshot: Optional[dict], *keys, default=0):
-        cur = snapshot
-        for key in keys:
-            if not isinstance(cur, dict):
-                return default
-            cur = cur.get(key)
-        if cur is None:
-            return default
-        return cur
-
-    delta = {
-        "pool_shares_accepted": int(
-            get_nested(end_snapshot, "pool", "shares_accepted", default=0)
-        )
-        - int(get_nested(start_snapshot, "pool", "shares_accepted", default=0)),
-        "pool_shares_rejected": int(
-            get_nested(end_snapshot, "pool", "shares_rejected", default=0)
-        )
-        - int(get_nested(start_snapshot, "pool", "shares_rejected", default=0)),
-        "validation_total_shares": int(
-            get_nested(end_snapshot, "validation", "total_shares", default=0)
-        )
-        - int(get_nested(start_snapshot, "validation", "total_shares", default=0)),
-        "validation_sampled_shares": int(
-            get_nested(end_snapshot, "validation", "sampled_shares", default=0)
-        )
-        - int(get_nested(start_snapshot, "validation", "sampled_shares", default=0)),
-        "validation_invalid_samples": int(
-            get_nested(end_snapshot, "validation", "invalid_samples", default=0)
-        )
-        - int(get_nested(start_snapshot, "validation", "invalid_samples", default=0)),
-        "validation_fraud_detections": int(
-            get_nested(end_snapshot, "validation", "fraud_detections", default=0)
-        )
-        - int(get_nested(start_snapshot, "validation", "fraud_detections", default=0)),
-    }
 
     return {
         "available": True,
-        "samples": len(samples),
-        "max_in_flight": max_in_flight,
-        "max_candidate_queue_depth": max_candidate_queue_depth,
-        "max_regular_queue_depth": max_regular_queue_depth,
-        "max_pending_provisional": max_pending_provisional,
-        "max_forced_verify_addresses": max_forced_verify_addresses,
+        "samples": sample_count,
         "snapshot_start": start_snapshot or {},
         "snapshot_end": end_snapshot or {},
-        "delta": delta,
     }
 
 
@@ -525,7 +450,6 @@ def main() -> int:
             port=args.stratum_port,
             address=address,
             worker_name=worker_name,
-            submit_mode=args.submit_mode,
             shares_per_sec=args.shares_per_worker_per_sec,
             login_timeout_secs=args.login_timeout_secs,
             response_timeout_secs=args.response_timeout_secs,
@@ -566,7 +490,7 @@ def main() -> int:
 
     error_breakdown = merge_error_reasons(all_metrics)
     api_summary = summarize_api_samples(
-        start_snapshot, end_snapshot, sampler.samples if sampler is not None else []
+        start_snapshot, end_snapshot, sampler.sample_count if sampler is not None else 0
     )
 
     result = {
@@ -577,7 +501,6 @@ def main() -> int:
         "stratum_port": args.stratum_port,
         "api_port": args.api_port,
         "workers": args.workers,
-        "submit_mode": args.submit_mode,
         "shares_per_worker_per_sec": args.shares_per_worker_per_sec,
         "load": {
             "submitted": submitted,

@@ -8,13 +8,11 @@ Deploy a host-built blocknet-core daemon binary to the current primary pool host
 Usage:
   scripts/deploy_blocknet_daemon_bntpool.sh [--skip-build] [--release-id VALUE] [--daemon-branch VALUE]
 
-If the managed recovery topology is provisioned on the host, this script
-restarts `blocknetd@primary.service` and `blocknetd@standby.service` and keeps
-the legacy singleton `blocknetd.service` disabled.
+This script targets the managed recovery topology and restarts
+`blocknetd@primary.service` and `blocknetd@standby.service`.
 
 Environment overrides:
   BNTPOOL_HOST                  SSH host alias (default: bntpool)
-  BNTPOOL_DAEMON_SERVICE        Systemd service name (default: blocknetd.service)
   BNTPOOL_DAEMON_REMOTE_ROOT    Remote daemon root (default: /opt/blocknet/blocknet-core)
   BNTPOOL_DAEMON_LOCAL_BINARY   Local daemon artifact (default: build/blocknet-core-linux-amd64)
   BLOCKNET_DAEMON_REPO          Local blocknet-core repo (default: ../blocknet-core)
@@ -58,14 +56,11 @@ workspace_dir="$(cd "${repo_dir}/.." && pwd)"
 daemon_repo="${BLOCKNET_DAEMON_REPO:-${workspace_dir}/blocknet-core}"
 
 host="${BNTPOOL_HOST:-bntpool}"
-service="${BNTPOOL_DAEMON_SERVICE:-blocknetd.service}"
 remote_root="${BNTPOOL_DAEMON_REMOTE_ROOT:-/opt/blocknet/blocknet-core}"
 remote_releases_dir="${remote_root}/releases"
 remote_current="${remote_root}/current"
 local_binary="${BNTPOOL_DAEMON_LOCAL_BINARY:-${repo_dir}/build/blocknet-core-linux-amd64}"
-unit_file="${repo_dir}/deploy/systemd/blocknetd.service"
 template_unit_file="${repo_dir}/deploy/systemd/blocknetd@.service"
-legacy_service="blocknetd.service"
 allow_retired_host="${BNTPOOL_ALLOW_RETIRED_HOST:-0}"
 resolved_ref=""
 source_revision=""
@@ -150,11 +145,6 @@ if [[ ! -f "${daemon_repo}/go.mod" ]]; then
   exit 1
 fi
 
-if [[ ! -f "${unit_file}" ]]; then
-  echo "managed daemon systemd unit not found at ${unit_file}" >&2
-  exit 1
-fi
-
 if [[ ! -f "${template_unit_file}" ]]; then
   echo "managed daemon template systemd unit not found at ${template_unit_file}" >&2
   exit 1
@@ -206,7 +196,6 @@ fi
 remote_release_dir="${remote_releases_dir}/${release_id}"
 remote_tmp_binary="${remote_release_dir}/blocknet.new"
 remote_binary="${remote_release_dir}/blocknet"
-remote_tmp_unit="/tmp/blocknetd.service.$$"
 remote_tmp_template_unit="/tmp/blocknetd@.service.$$"
 remote_metadata="${remote_release_dir}/build-info.txt"
 
@@ -220,51 +209,38 @@ print_sha256 "${local_binary}"
 echo "==> ensuring remote release directories on ${host}"
 ssh "${host}" "set -euo pipefail; mkdir -p '${remote_release_dir}' '${remote_root}'"
 
+echo "==> verifying managed recovery topology on ${host}"
+ssh "${host}" "set -euo pipefail; test -f /etc/blocknet/recovery/primary.env; test -f /etc/blocknet/recovery/standby.env"
+
 echo "==> uploading daemon binary"
 scp "${local_binary}" "${host}:${remote_tmp_binary}"
 
 echo "==> uploading build metadata"
 scp "${local_metadata}" "${host}:${remote_metadata}"
 
-echo "==> uploading managed systemd unit"
-scp "${unit_file}" "${host}:${remote_tmp_unit}"
+echo "==> uploading managed systemd template"
 scp "${template_unit_file}" "${host}:${remote_tmp_template_unit}"
 
-echo "==> installing release and restarting ${service}"
+echo "==> installing release and restarting managed daemon services"
 ssh "${host}" "set -euo pipefail; \
   install -m 0755 '${remote_tmp_binary}' '${remote_binary}'; \
   rm -f '${remote_tmp_binary}'; \
   ln -sfn '${remote_release_dir}' '${remote_root}/.current.new'; \
   mv -Tf '${remote_root}/.current.new' '${remote_current}'; \
-  sudo install -m 0644 '${remote_tmp_unit}' '/etc/systemd/system/${service}'; \
   sudo install -m 0644 '${remote_tmp_template_unit}' '/etc/systemd/system/blocknetd@.service'; \
-  rm -f '${remote_tmp_unit}'; \
   rm -f '${remote_tmp_template_unit}'; \
   sudo systemctl daemon-reload; \
-  if [[ '${service}' == '${legacy_service}' ]] && [[ -f /etc/blocknet/recovery/primary.env ]] && [[ -f /etc/blocknet/recovery/standby.env ]]; then \
-    echo 'recovery topology detected; restarting blocknetd@primary.service and blocknetd@standby.service'; \
-    sudo systemctl disable --now '${legacy_service}' >/dev/null 2>&1 || true; \
-    sudo systemctl enable 'blocknetd@primary.service' 'blocknetd@standby.service' >/dev/null; \
-    sudo systemctl restart 'blocknetd@primary.service' 'blocknetd@standby.service'; \
-    sudo systemctl is-active 'blocknetd@primary.service'; \
-    sudo systemctl is-active 'blocknetd@standby.service'; \
-  else \
-    sudo systemctl enable '${service}' >/dev/null; \
-    sudo systemctl restart '${service}'; \
-    sudo systemctl is-active '${service}'; \
-  fi"
+  sudo systemctl disable --now 'blocknetd.service' >/dev/null 2>&1 || true; \
+  sudo systemctl enable 'blocknetd@primary.service' 'blocknetd@standby.service' >/dev/null; \
+  sudo systemctl restart 'blocknetd@primary.service' 'blocknetd@standby.service'; \
+  sudo systemctl is-active 'blocknetd@primary.service'; \
+  sudo systemctl is-active 'blocknetd@standby.service'"
 
 echo "==> verifying daemon API"
 ssh "${host}" "set -euo pipefail; \
-  if [[ '${service}' == '${legacy_service}' ]] && [[ -f /etc/blocknet/recovery/primary.env ]] && [[ -f /etc/blocknet/recovery/standby.env ]]; then \
-    token_primary=\$(cat /var/lib/blocknet/data/api.cookie); \
-    token_standby=\$(cat /var/lib/blocknet-standby/data/api.cookie); \
-    curl -fsS -H \"Authorization: Bearer \${token_primary}\" http://127.0.0.1:18331/api/status >/dev/null; \
-    curl -fsS -H \"Authorization: Bearer \${token_standby}\" http://127.0.0.1:18332/api/status >/dev/null; \
-    sudo journalctl -u 'blocknetd@primary.service' --no-pager -n 20; \
-    sudo journalctl -u 'blocknetd@standby.service' --no-pager -n 20; \
-  else \
-    token=\$(cat /var/lib/blocknet/data/api.cookie); \
-    curl -fsS -H \"Authorization: Bearer \${token}\" http://127.0.0.1:8332/api/status >/dev/null; \
-    sudo journalctl -u '${service}' --no-pager -n 30; \
-  fi"
+  token_primary=\$(cat /var/lib/blocknet/data/api.cookie); \
+  token_standby=\$(cat /var/lib/blocknet-standby/data/api.cookie); \
+  curl -fsS -H \"Authorization: Bearer \${token_primary}\" http://127.0.0.1:18331/api/status >/dev/null; \
+  curl -fsS -H \"Authorization: Bearer \${token_standby}\" http://127.0.0.1:18332/api/status >/dev/null; \
+  sudo journalctl -u 'blocknetd@primary.service' --no-pager -n 20; \
+  sudo journalctl -u 'blocknetd@standby.service' --no-pager -n 20"

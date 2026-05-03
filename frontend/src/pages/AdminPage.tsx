@@ -8,7 +8,9 @@ import {
   formatCoinAmount,
   formatCoins,
   formatCompactCoins,
+  formatPct,
   humanRate,
+  ratioPct as calculateRatioPct,
   shortAddr,
   timeAgo,
   timeUntil,
@@ -19,7 +21,6 @@ import type {
   AdminBalanceItem,
   AdminBalanceOverviewResponse,
   AdminMissingCompletedPayoutIssue,
-  AdminOrphanedBlockIssue,
   AdminReconciliationIssuesResponse,
   AdminShareDiagnosticsResponse,
   AdminShareDiagnosticsWindow,
@@ -49,14 +50,8 @@ function rewardStatusLabel(status: string): string {
       return 'Included';
     case 'capped_provisional':
       return 'Included (capped)';
-    case 'finder_fallback':
-      return 'Finder fallback';
-    case 'risky':
-      return 'Verified only';
     case 'awaiting_verified_shares':
       return 'Needs verified shares';
-    case 'awaiting_verified_ratio':
-      return 'Needs verified ratio';
     case 'recorded_only':
       return 'Recorded only';
     default:
@@ -67,11 +62,8 @@ function rewardStatusLabel(status: string): string {
 function rewardStatusTone(status: string): string {
   switch (status) {
     case 'included':
-    case 'finder_fallback':
       return 'var(--good)';
     case 'capped_provisional':
-      return 'var(--warn)';
-    case 'risky':
       return 'var(--warn)';
     case 'recorded_only':
       return 'var(--muted)';
@@ -85,11 +77,6 @@ function formatSignedCoins(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '-';
   const prefix = value > 0 ? '+' : value < 0 ? '-' : '';
   return `${prefix}${formatCoinAmount(Math.abs(value))} BNT`;
-}
-
-function pct(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return '-';
-  return `${value.toFixed(2)}%`;
 }
 
 function ratioPct(value: number | null | undefined): string {
@@ -294,9 +281,17 @@ function shareWindowReasonCount(window: AdminShareDiagnosticsWindow | null | und
   return match?.count ?? 0;
 }
 
+function shareWindowTotal(window: AdminShareDiagnosticsWindow | null | undefined): number {
+  return (window?.accepted ?? 0) + (window?.rejected ?? 0);
+}
+
+function shareWindowRejectPct(window: AdminShareDiagnosticsWindow | null | undefined): number {
+  return calculateRatioPct(window?.rejected, shareWindowTotal(window));
+}
+
 function shareWindowReasonPct(window: AdminShareDiagnosticsWindow | null | undefined, reason: string): number | null {
   if (!window) return null;
-  const total = window.total ?? 0;
+  const total = shareWindowTotal(window);
   if (total <= 0) return null;
   return (shareWindowReasonCount(window, reason) / total) * 100;
 }
@@ -351,10 +346,8 @@ function recoveryOperationStateLabel(state: string | null | undefined): string {
       return 'Succeeded';
     case 'failed':
       return 'Failed';
-    case 'cancelled':
-      return 'Cancelled';
     default:
-      return 'Queued';
+      return 'Unknown';
   }
 }
 
@@ -460,16 +453,9 @@ export function AdminPage({
   const loadMiners = useCallback(async () => {
     if (!apiKey) return;
     try {
-      const d = await api.getMiners({
-        paged: 'true',
-        limit: minersPager.limit,
-        offset: minersPager.offset,
-        sort: minersSort,
-        search: minersSearch.trim() || undefined,
-      });
-      const items = d.items || [];
-      setMinersItems(items);
-      setMinersPager((prev) => ({ ...prev, total: d.page ? d.page.total : items.length }));
+      const d = await api.getMiners(minersPager.limit, minersPager.offset, minersSort, minersSearch.trim() || undefined);
+      setMinersItems(d.items);
+      setMinersPager((prev) => ({ ...prev, total: d.total }));
     } catch {
       setMinersItems([]);
     }
@@ -505,13 +491,8 @@ export function AdminPage({
     if (!apiKey) return;
     setRewardBlockOptionsLoading(true);
     try {
-      const d = await api.getBlocks({
-        paged: 'true',
-        limit: 50,
-        offset: 0,
-        sort: 'height_desc',
-      });
-      const items = d.items || [];
+      const d = await api.getBlocks(50, 0);
+      const { items } = d;
       setRewardBlockOptions(items);
       setRewardBlockInput((prev) => {
         if (prev.trim() || !items.length) return prev;
@@ -557,16 +538,14 @@ export function AdminPage({
   const loadBalances = useCallback(async () => {
     if (!apiKey) return;
     try {
-      const d = await api.getAdminBalances({
-        paged: 'true',
-        limit: balancesPager.limit,
-        offset: balancesPager.offset,
-        sort: balancesSort,
-        search: balancesSearch.trim() || undefined,
-      });
-      const items = d.items || [];
-      setBalancesItems(items);
-      setBalancesPager((prev) => ({ ...prev, total: d.page ? d.page.total : items.length }));
+      const d = await api.getAdminBalances(
+        balancesPager.limit,
+        balancesPager.offset,
+        balancesSort,
+        balancesSearch.trim() || undefined
+      );
+      setBalancesItems(d.items);
+      setBalancesPager((prev) => ({ ...prev, total: d.total }));
     } catch {
       setBalancesItems([]);
     }
@@ -684,10 +663,9 @@ export function AdminPage({
     [api, loadHealth]
   );
 
-  useEffect(() => {
+  const refreshAdminData = useCallback(() => {
     if (!active || !apiKey) return;
 
-    // Always load overview data regardless of tab
     void loadHealth();
     void loadBalanceOverview();
     void loadShareDiagnostics();
@@ -719,43 +697,15 @@ export function AdminPage({
     rewardBlockInput,
     tab,
   ]);
+
+  useEffect(() => {
+    refreshAdminData();
+  }, [refreshAdminData]);
 
   useEffect(() => {
     if (!active || !apiKey || liveTick <= 0) return;
-
-    // Always refresh overview data
-    void loadHealth();
-    void loadBalanceOverview();
-    void loadShareDiagnostics();
-
-    if (tab === 'miners') void loadMiners();
-    if (tab === 'rewards') {
-      void loadRewardBlocks();
-      if (rewardBlockInput.trim()) {
-        void loadRewardBreakdown(rewardBlockInput);
-      }
-    }
-    if (tab === 'balances') void loadBalances();
-    if (tab === 'recovery') {
-      void loadRecovery();
-      void loadReconciliationIssues();
-    }
-  }, [
-    active,
-    apiKey,
-    liveTick,
-    tab,
-    loadBalances,
-    loadBalanceOverview,
-    loadHealth,
-    loadReconciliationIssues,
-    loadShareDiagnostics,
-    loadMiners,
-    loadRecovery,
-    loadRewardBlocks,
-    loadRewardBreakdown,
-    rewardBlockInput,
-  ]);
+    refreshAdminData();
+  }, [active, apiKey, liveTick, refreshAdminData]);
 
   useEffect(() => {
     if (!active || !apiKey || tab !== 'logs') return;
@@ -890,24 +840,26 @@ export function AdminPage({
     [activeVerificationHolds]
   );
   const poolActivity = health?.pool_activity ?? null;
-  const unpaidPayoutCount =
-    balanceOverview?.payouts.unpaid_count ?? health?.payouts?.unpaid_count ?? health?.payouts?.pending_count ?? null;
-  const unpaidPayoutAmount =
-    balanceOverview?.payouts.unpaid_amount ?? health?.payouts?.unpaid_amount ?? health?.payouts?.pending_amount ?? null;
   const cleanPayableCount = balanceOverview?.payouts.clean_unpaid_count ?? null;
-  const cleanPayableAmount = balanceOverview?.payouts.clean_unpaid_amount ?? null;
-  const orphanBackedPendingAmount = balanceOverview?.payouts.orphan_backed_unpaid_amount ?? null;
-  const balanceSourceDriftAmount = balanceOverview?.payouts.balance_source_drift_amount ?? null;
-  const queuedPayoutCount =
-    balanceOverview?.payouts.queued_count ?? health?.payouts?.queued_count ?? health?.payouts?.pending_count ?? null;
-  const queuedPayoutAmount =
-    balanceOverview?.payouts.queued_amount ?? health?.payouts?.queued_amount ?? health?.payouts?.pending_amount ?? null;
-  const poolFeePendingAmount = balanceOverview?.payouts.pool_fee_unpaid_amount ?? null;
-  const poolFeeCleanPendingAmount = balanceOverview?.payouts.pool_fee_clean_unpaid_amount ?? null;
+  const cleanPayableAmount = balanceOverview?.ledger.miner_clean_unpaid_total ?? null;
+  const orphanBackedPendingAmount = balanceOverview?.ledger.miner_orphan_backed_unpaid_total ?? null;
+  const balanceSourceDriftAmount = balanceOverview?.ledger.miner_balance_source_drift_total ?? null;
+  const queuedPayoutCount = balanceOverview?.payouts.queued_count ?? null;
+  const queuedPayoutAmount = balanceOverview?.payouts.queued_amount ?? null;
+  const queuedPayoutShortfallAmount =
+    balanceOverview && queuedPayoutAmount != null
+      ? Math.max(queuedPayoutAmount - balanceOverview.wallet.spendable, 0)
+      : null;
+  const poolFeeCleanPendingAmount = balanceOverview?.ledger.pool_fee_clean_unpaid_total ?? null;
   const poolFeeOrphanPendingAmount =
-    balanceOverview?.payouts.pool_fee_orphan_backed_unpaid_amount ?? null;
+    balanceOverview?.ledger.pool_fee_orphan_backed_unpaid_total ?? null;
   const poolFeeBalanceSourceDriftAmount =
-    balanceOverview?.payouts.pool_fee_balance_source_drift_amount ?? null;
+    balanceOverview?.ledger.pool_fee_balance_source_drift_total ?? null;
+  const poolFeePendingAmount = balanceOverview
+    ? balanceOverview.ledger.pool_fee_clean_unpaid_total +
+      balanceOverview.ledger.pool_fee_orphan_backed_unpaid_total +
+      balanceOverview.ledger.pool_fee_balance_source_drift_total
+    : null;
   const minerFundingGapAmount = balanceOverview && cleanPayableAmount != null
     ? Math.max(cleanPayableAmount - balanceOverview.wallet.total, 0)
     : null;
@@ -917,14 +869,17 @@ export function AdminPage({
   const canonicalMinerRewardTotal = balanceOverview
     ? Math.max(balanceOverview.ledger.net_block_reward_total - balanceOverview.ledger.pool_fee_total, 0)
     : null;
+  const minerTotalCredited = balanceOverview
+    ? balanceOverview.ledger.miner_paid_total + balanceOverview.ledger.miner_unpaid_total
+    : null;
   const canonicalBackedPending = balanceOverview && canonicalMinerRewardTotal != null
     ? Math.max(canonicalMinerRewardTotal - balanceOverview.ledger.miner_paid_total, 0)
     : null;
-  const ledgerOverhangAmount = balanceOverview && canonicalMinerRewardTotal != null
-    ? Math.max(balanceOverview.ledger.miner_total_credited - canonicalMinerRewardTotal, 0)
+  const ledgerOverhangAmount = minerTotalCredited != null && canonicalMinerRewardTotal != null
+    ? Math.max(minerTotalCredited - canonicalMinerRewardTotal, 0)
     : null;
-  const ledgerShortfallAmount = balanceOverview && canonicalMinerRewardTotal != null
-    ? Math.max(canonicalMinerRewardTotal - balanceOverview.ledger.miner_total_credited, 0)
+  const ledgerShortfallAmount = minerTotalCredited != null && canonicalMinerRewardTotal != null
+    ? Math.max(canonicalMinerRewardTotal - minerTotalCredited, 0)
     : null;
   const acknowledgedHistoricalShortfallAmount = ledgerShortfallAmount != null
     ? Math.min(ledgerShortfallAmount, ACKNOWLEDGED_LAUNCH_ERA_MINER_SHORTFALL)
@@ -933,6 +888,20 @@ export function AdminPage({
     ledgerShortfallAmount != null && acknowledgedHistoricalShortfallAmount != null
       ? Math.max(ledgerShortfallAmount - acknowledgedHistoricalShortfallAmount, 0)
       : null;
+  const reconciliationMissingPayouts = reconciliationIssues?.missing_payouts ?? [];
+  const reconciliationOrphanedBlocks = reconciliationIssues?.orphaned_blocks ?? [];
+  const reconciliationTotalOpenIssues = reconciliationIssues
+    ? reconciliationMissingPayouts.length + reconciliationOrphanedBlocks.length
+    : null;
+  const reconciliationMissingPayoutTotalAmount = reconciliationIssues
+    ? reconciliationMissingPayouts.reduce((sum, issue) => sum + issue.total_amount, 0)
+    : null;
+  const reconciliationOrphanedBlockTotalCreditAmount = reconciliationIssues
+    ? reconciliationOrphanedBlocks.reduce(
+        (sum, issue) => sum + issue.remaining_credit_amount + issue.remaining_fee_amount,
+        0
+      )
+    : null;
   const hasUnresolvedLedgerMismatch =
     (ledgerOverhangAmount ?? 0) > 0 || (unresolvedLedgerShortfallAmount ?? 0) > 0;
   const balanceDiagnosticsCount = [
@@ -986,8 +955,6 @@ export function AdminPage({
   const shareValidationDurationP95 = shareValidation?.validation_duration?.p95_millis ?? 0;
   const shareAuditWaitP95 = shareValidation?.audit_wait?.p95_millis ?? 0;
   const shareAuditDurationP95 = shareValidation?.audit_duration?.p95_millis ?? 0;
-  const shareBusy5m = shareWindowReasonPct(shareWindow5m, 'server busy');
-  const shareTimeout5m = shareWindowReasonPct(shareWindow5m, 'validation timeout');
   const shareBusyCount5m = shareWindowReasonCount(shareWindow5m, 'server busy');
   const shareTimeoutCount5m = shareWindowReasonCount(shareWindow5m, 'validation timeout');
   const shareInvalidProof5m = shareWindowReasonPct(shareWindow5m, 'invalid share proof') ?? 0;
@@ -1180,9 +1147,9 @@ export function AdminPage({
     };
   }, [shareAuditQueueDepth, shareAuditWaitP95, shareDiagnostics, shareValidation?.audit_deferred]);
   const shareRejectFocus = useMemo(() => {
-    const recentRejectPct = shareWindow5m?.rejection_rate_pct ?? 0;
-    const hourlyRejectPct = shareWindow1h?.rejection_rate_pct ?? 0;
-    const dailyRejectPct = shareWindow24h?.rejection_rate_pct ?? 0;
+    const recentRejectPct = shareWindowRejectPct(shareWindow5m);
+    const hourlyRejectPct = shareWindowRejectPct(shareWindow1h);
+    const dailyRejectPct = shareWindowRejectPct(shareWindow24h);
     const recentRejectCount = shareWindow5m?.rejected ?? 0;
     const hourlyRejectCount = shareWindow1h?.rejected ?? 0;
     const dailyRejectCount = shareWindow24h?.rejected ?? 0;
@@ -1202,7 +1169,7 @@ export function AdminPage({
       return {
         tone: 'critical' as const,
         title: 'Rejects need attention',
-        detail: `5m reject ${pct(recentRejectPct)}. Top reject: ${topReason}.`,
+        detail: `5m reject ${formatPct(recentRejectPct, 2)}. Top reject: ${topReason}.`,
       };
     }
     const meaningfulRecentRejects = recentRejectCount >= 3 || recentRejectPct >= 0.5;
@@ -1212,13 +1179,13 @@ export function AdminPage({
       return {
         tone: 'warn' as const,
         title: 'Watch rejects',
-        detail: `5m ${pct(recentRejectPct)} · 1h ${pct(hourlyRejectPct)} · 24h ${pct(dailyRejectPct)}. Top reject: ${topReason}.`,
+        detail: `5m ${formatPct(recentRejectPct, 2)} · 1h ${formatPct(hourlyRejectPct, 2)} · 24h ${formatPct(dailyRejectPct, 2)}. Top reject: ${topReason}.`,
       };
     }
     return {
       tone: 'ok' as const,
       title: 'Rejects are clean',
-      detail: `No recent reject spike. 24h reject rate is ${pct(dailyRejectPct)}.`,
+      detail: `No recent reject spike. 24h reject rate is ${formatPct(dailyRejectPct, 2)}.`,
     };
   }, [
     shareActiveTopReject,
@@ -1229,9 +1196,12 @@ export function AdminPage({
     shareWindow5m?.rejected,
     shareInvalidProof5m,
     shareTimeoutCount5m,
-    shareWindow1h?.rejection_rate_pct,
-    shareWindow24h?.rejection_rate_pct,
-    shareWindow5m?.rejection_rate_pct,
+    shareWindow1h?.accepted,
+    shareWindow1h?.rejected,
+    shareWindow24h?.accepted,
+    shareWindow24h?.rejected,
+    shareWindow5m?.accepted,
+    shareWindow5m?.rejected,
   ]);
   const shareOperatorFocus = useMemo(() => {
     if (!shareDiagnostics) {
@@ -1317,7 +1287,7 @@ export function AdminPage({
     recoveryInactiveInstance == null ? 'Inactive' : recoveryInstanceLabel(recoveryInactiveInstance);
   const recoveryLatestOperation = recoveryStatus?.operations?.[0] ?? null;
   const recoveryRunningOperation = useMemo(
-    () => recoveryStatus?.operations.find((item) => item.state === 'queued' || item.state === 'running') ?? null,
+    () => recoveryStatus?.operations.find((item) => item.state === 'running') ?? null,
     [recoveryStatus]
   );
   const recoveryBusyReason = useMemo(() => {
@@ -1514,14 +1484,12 @@ export function AdminPage({
               <div className="label">5m Reject Rate</div>
               <div
                 className="value mono"
-                style={
-                  (shareWindow5m?.rejection_rate_pct ?? 0) >= 5 ? { color: 'var(--warn)' } : undefined
-                }
+                style={shareWindowRejectPct(shareWindow5m) >= 5 ? { color: 'var(--warn)' } : undefined}
               >
-                {pct(shareWindow5m?.rejection_rate_pct)}
+                {formatPct(shareWindowRejectPct(shareWindow5m), 2)}
               </div>
               <div className="stat-meta">
-                {shareWindow5m?.rejected ?? 0} rejected of {shareWindow5m?.total ?? 0}
+                {shareWindow5m?.rejected ?? 0} rejected of {shareWindowTotal(shareWindow5m)}
               </div>
             </div>
             <div className="stat-card" onClick={() => setTab('balances')}>
@@ -1531,10 +1499,8 @@ export function AdminPage({
               </div>
               <div className="stat-meta">
                 {cleanPayableCount != null
-                    ? `${cleanPayableCount} miner${cleanPayableCount === 1 ? '' : 's'} with payable balances`
-                    : unpaidPayoutCount != null
-                      ? `${unpaidPayoutCount} miner${unpaidPayoutCount === 1 ? '' : 's'} with payable balances`
-                      : '-'}
+                  ? `${cleanPayableCount} miner${cleanPayableCount === 1 ? '' : 's'} with payable balances`
+                  : '-'}
               </div>
               {minerFundingGapAmount != null && (
                 <div
@@ -1999,10 +1965,11 @@ export function AdminPage({
                           <td>
                             <div>{formatCoins(rewardBreakdown.fee_amount)}</div>
                             <div className="mono" style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                              {pct(
+                              {formatPct(
                                 rewardBreakdown.block.reward > 0
                                   ? (rewardBreakdown.fee_amount * 100) / rewardBreakdown.block.reward
-                                  : 0
+                                  : 0,
+                                2
                               )}
                             </div>
                           </td>
@@ -2175,8 +2142,9 @@ export function AdminPage({
                   <div className="stat-meta">
                     <div>{shareRejectFocus.detail}</div>
                     <div>
-                      5m {pct(shareWindow5m?.rejection_rate_pct)} · 1h {pct(shareWindow1h?.rejection_rate_pct)} · 24h{' '}
-                      {pct(shareWindow24h?.rejection_rate_pct)}
+                      5m {formatPct(shareWindowRejectPct(shareWindow5m), 2)} · 1h{' '}
+                      {formatPct(shareWindowRejectPct(shareWindow1h), 2)} · 24h{' '}
+                      {formatPct(shareWindowRejectPct(shareWindow24h), 2)}
                     </div>
                   </div>
                 </div>
@@ -2295,7 +2263,7 @@ export function AdminPage({
                     </div>
                     <div className="stat-card">
                       <div className="label">5m Invalid Proof</div>
-                      <div className="value mono">{pct(shareWindowReasonPct(shareWindow5m, 'invalid share proof'))}</div>
+                      <div className="value mono">{formatPct(shareWindowReasonPct(shareWindow5m, 'invalid share proof'), 2)}</div>
                       <div className="stat-meta">{shareWindowReasonCount(shareWindow5m, 'invalid share proof')} rejects</div>
                     </div>
                     <div className="stat-card">
@@ -2339,43 +2307,45 @@ export function AdminPage({
                             <tr key={window.label}>
                               <td>
                                 <div style={{ fontWeight: 600 }}>{window.label}</div>
-                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>{window.total} submits</div>
+                                <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                                  {shareWindowTotal(window)} submits
+                                </div>
                               </td>
                               <td className="mono">{window.accepted}</td>
                               <td className="mono">{window.rejected}</td>
-                              <td className="mono">{pct(window.rejection_rate_pct)}</td>
+                              <td className="mono">{formatPct(shareWindowRejectPct(window), 2)}</td>
                               <td className="mono">
-                                {pct(shareWindowReasonPct(window, 'invalid share proof'))}
+                                {formatPct(shareWindowReasonPct(window, 'invalid share proof'), 2)}
                                 <div style={{ fontSize: 11, color: 'var(--muted)' }}>
                                   {shareWindowReasonCount(window, 'invalid share proof')} rejects
                                 </div>
                               </td>
                               <td className="mono">
-                                {pct(shareWindowReasonPct(window, 'low difficulty share'))}
+                                {formatPct(shareWindowReasonPct(window, 'low difficulty share'), 2)}
                                 <div style={{ fontSize: 11, color: 'var(--muted)' }}>
                                   {shareWindowReasonCount(window, 'low difficulty share')} rejects
                                 </div>
                               </td>
                               <td className="mono">
-                                {pct(shareWindowReasonPct(window, 'stale job'))}
+                                {formatPct(shareWindowReasonPct(window, 'stale job'), 2)}
                                 <div style={{ fontSize: 11, color: 'var(--muted)' }}>
                                   {shareWindowReasonCount(window, 'stale job')} rejects
                                 </div>
                               </td>
                               <td className="mono">
-                                {pct(shareWindowReasonPct(window, 'address quarantined'))}
+                                {formatPct(shareWindowReasonPct(window, 'address quarantined'), 2)}
                                 <div style={{ fontSize: 11, color: 'var(--muted)' }}>
                                   {shareWindowReasonCount(window, 'address quarantined')} rejects
                                 </div>
                               </td>
                               <td className="mono">
-                                {pct(shareWindowReasonPct(window, 'server busy'))}
+                                {formatPct(shareWindowReasonPct(window, 'server busy'), 2)}
                                 <div style={{ fontSize: 11, color: 'var(--muted)' }}>
                                   {shareWindowReasonCount(window, 'server busy')} rejects
                                 </div>
                               </td>
                               <td className="mono">
-                                {pct(shareWindowReasonPct(window, 'validation timeout'))}
+                                {formatPct(shareWindowReasonPct(window, 'validation timeout'), 2)}
                                 <div style={{ fontSize: 11, color: 'var(--muted)' }}>
                                   {shareWindowReasonCount(window, 'validation timeout')} rejects
                                 </div>
@@ -2387,7 +2357,7 @@ export function AdminPage({
                                   <>
                                     <div style={{ fontWeight: 600 }}>{topReason.reason}</div>
                                     <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                                      {topReason.count} rejects · {pct(topReasonRejectPct)} of rejects
+                                      {topReason.count} rejects · {formatPct(topReasonRejectPct, 2)} of rejects
                                     </div>
                                   </>
                                 )}
@@ -2428,7 +2398,7 @@ export function AdminPage({
                 </div>
                 <div className="stat-card">
                   <div className="label">Fraud Detections</div>
-                  <div className="value mono">{health?.validation?.fraud_detections ?? '-'}</div>
+                  <div className="value mono">{shareValidation?.fraud_detections ?? '-'}</div>
                 </div>
               </div>
             </div>
@@ -2523,7 +2493,6 @@ export function AdminPage({
                           </td>
                           <td className="mono">
                             {hold.strikes}
-                            {hold.suspected_fraud_strikes > 0 ? ` / fraud ${hold.suspected_fraud_strikes}` : ''}
                           </td>
                           <td title={hold.reason ?? hold.last_reason ?? undefined}>
                             {hold.reason ?? hold.last_reason ?? '-'}
@@ -2622,7 +2591,7 @@ export function AdminPage({
                     <div className="admin-balance-overview__rows">
                       <div className="admin-balance-overview__row">
                         <span>External miner liability</span>
-                        <span className="mono">{formatCoins(balanceOverview.payouts.clean_unpaid_amount)}</span>
+                        <span className="mono">{formatCoins(balanceOverview.ledger.miner_clean_unpaid_total)}</span>
                       </div>
                       <div className="admin-balance-overview__row">
                         <span>Wallet total available</span>
@@ -2654,27 +2623,27 @@ export function AdminPage({
                         <span
                           className="mono"
                           style={
-                            balanceOverview.liquidity.queue_shortfall_amount > 0
+                            (queuedPayoutShortfallAmount ?? 0) > 0
                               ? { color: 'var(--warn)' }
                               : { color: 'var(--good)' }
                           }
                         >
-                          {formatCoins(balanceOverview.liquidity.queue_shortfall_amount)}
+                          {formatCoins(queuedPayoutShortfallAmount ?? 0)}
                         </span>
                       </div>
-                      {balanceOverview.payouts.pool_fee_clean_unpaid_amount > 0 && (
+                      {balanceOverview.ledger.pool_fee_clean_unpaid_total > 0 && (
                         <div className="admin-balance-overview__row">
                           <span>Internal pool fee tracked separately</span>
                           <span className="mono" style={{ color: 'var(--muted)' }}>
-                            {formatCoins(balanceOverview.payouts.pool_fee_clean_unpaid_amount)}
+                            {formatCoins(balanceOverview.ledger.pool_fee_clean_unpaid_total)}
                           </span>
                         </div>
                       )}
-                      {balanceOverview.payouts.balance_source_drift_amount > 0 && (
+                      {balanceOverview.ledger.miner_balance_source_drift_total > 0 && (
                         <div className="admin-balance-overview__row">
                           <span>Miner source drift diagnostic</span>
                           <span className="mono" style={{ color: 'var(--warn)' }}>
-                            {formatCoins(balanceOverview.payouts.balance_source_drift_amount)}
+                            {formatCoins(balanceOverview.ledger.miner_balance_source_drift_total)}
                           </span>
                         </div>
                       )}
@@ -2702,11 +2671,11 @@ export function AdminPage({
                           {formatWholeNumber(balanceOverview.payouts.queued_count)}
                         </span>
                       </div>
-                      {balanceOverview.liquidity.queue_shortfall_amount > 0 && (
+                      {(queuedPayoutShortfallAmount ?? 0) > 0 && (
                         <div className="admin-balance-overview__row">
                           <span>Immediate queue shortfall</span>
                           <span className="mono" style={{ color: 'var(--warn)' }}>
-                            {formatCoins(balanceOverview.liquidity.queue_shortfall_amount)}
+                            {formatCoins(queuedPayoutShortfallAmount ?? 0)}
                           </span>
                         </div>
                       )}
@@ -2818,16 +2787,10 @@ export function AdminPage({
                         <span
                           className="mono"
                           style={
-                            balanceOverview.ledger.miner_rewards_balanced || !hasUnresolvedLedgerMismatch
-                              ? { color: 'var(--good)' }
-                              : { color: 'var(--warn)' }
+                            !hasUnresolvedLedgerMismatch ? { color: 'var(--good)' } : { color: 'var(--warn)' }
                           }
                         >
-                          {balanceOverview.ledger.miner_rewards_balanced
-                            ? 'Yes'
-                            : hasUnresolvedLedgerMismatch
-                              ? 'No'
-                              : 'Baseline accepted'}
+                          {hasUnresolvedLedgerMismatch ? 'No' : 'Baseline accepted'}
                         </span>
                       </div>
                     </div>
@@ -3111,24 +3074,24 @@ export function AdminPage({
               <div className="stats-grid stats-grid-dense" style={{ marginBottom: 16 }}>
                 <div className="stat-card">
                   <div className="label">Open Issues</div>
-                  <div className="value mono">{reconciliationIssues?.summary.total_open_issues ?? '-'}</div>
+                  <div className="value mono">{reconciliationTotalOpenIssues ?? '-'}</div>
                 </div>
                 <div className="stat-card">
                   <div className="label">Missing Payouts</div>
-                  <div className="value mono">{reconciliationIssues?.summary.missing_payout_issue_count ?? '-'}</div>
+                  <div className="value mono">{reconciliationIssues ? reconciliationMissingPayouts.length : '-'}</div>
                   <div className="stat-meta">
-                    {reconciliationIssues
-                      ? formatCompactCoins(reconciliationIssues.summary.missing_payout_total_amount)
-                      : '-'}
+                    {reconciliationMissingPayoutTotalAmount == null
+                      ? '-'
+                      : formatCompactCoins(reconciliationMissingPayoutTotalAmount)}
                   </div>
                 </div>
                 <div className="stat-card">
                   <div className="label">Orphaned Credit Blocks</div>
-                  <div className="value mono">{reconciliationIssues?.summary.orphaned_block_issue_count ?? '-'}</div>
+                  <div className="value mono">{reconciliationIssues ? reconciliationOrphanedBlocks.length : '-'}</div>
                   <div className="stat-meta">
-                    {reconciliationIssues
-                      ? formatCompactCoins(reconciliationIssues.summary.orphaned_block_total_credit_amount)
-                      : '-'}
+                    {reconciliationOrphanedBlockTotalCreditAmount == null
+                      ? '-'
+                      : formatCompactCoins(reconciliationOrphanedBlockTotalCreditAmount)}
                   </div>
                 </div>
                 <div className="stat-card">

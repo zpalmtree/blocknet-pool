@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type { ApiClient } from "../api/client";
-import { fmtSeconds, timeAgo, toUnixMs } from "../lib/format";
+import { fmtSeconds, formatPct, timeAgo, toUnixMs } from "../lib/format";
 import type { StatusResponse } from "../types";
 
 interface StatusPageProps {
@@ -10,14 +10,9 @@ interface StatusPageProps {
   liveTick: number;
 }
 
-function pct(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return "-";
-  return `${value.toFixed(2)}%`;
-}
-
 function poolState(status: StatusResponse | null): string {
   if (!status) return "-";
-  return status.pool?.healthy ? "Healthy" : "Degraded";
+  return status.healthy ? "Healthy" : "Degraded";
 }
 
 function serviceState(
@@ -25,19 +20,19 @@ function serviceState(
   key: "public_http" | "api" | "stratum" | "database" | "daemon",
 ): string {
   if (!status) return "-";
-  const service = status.services?.[key];
-  if (!service?.observed) return "Unknown";
+  const service = status.services[key];
+  if (!service.observed) return "Unknown";
   return service.healthy ? "Online" : "Down";
 }
 
 function syncState(status: StatusResponse | null): string {
   if (!status) return "-";
-  if (!status.daemon?.reachable) return "Offline";
-  return status.daemon?.syncing ? "Syncing" : "Ready";
+  if (!status.daemon.reachable) return "Offline";
+  return status.daemon.syncing ? "Syncing" : "Ready";
 }
 
 function templateState(status: StatusResponse | null): string {
-  if (!status?.template?.observed) return "Unknown";
+  if (!status?.template.observed) return "Unknown";
   return status.template.fresh ? "Fresh" : "Stale";
 }
 
@@ -69,7 +64,7 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
     void loadStatus();
   }, [active, liveTick, loadStatus]);
 
-  const primaryUptimeLabel = status?.uptime?.[0]?.label;
+  const primaryUptimeLabel = status?.uptime[0]?.label;
 
   return (
     <div className={active ? "page active" : "page"} id="page-status">
@@ -104,16 +99,7 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
           </div>
           <div className="stat-card">
             <div className="label">Database</div>
-            <div
-              className="value"
-              title={
-                !status?.pool?.database_reachable
-                  ? (status?.pool?.error ?? undefined)
-                  : undefined
-              }
-            >
-              {serviceState(status, "database")}
-            </div>
+            <div className="value">{serviceState(status, "database")}</div>
           </div>
           <div className="stat-card">
             <div className="label">Daemon</div>
@@ -132,13 +118,13 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
           <div className="stat-card">
             <div className="label">Refresh Lag</div>
             <div className="value mono">
-              {fmtRefreshLag(status?.template?.last_refresh_millis)}
+              {fmtRefreshLag(status?.template.last_refresh_millis)}
             </div>
           </div>
           <div className="stat-card">
             <div className="label">Current Template Age</div>
             <div className="value mono">
-              {status?.template?.age_seconds != null
+              {status?.template.age_seconds != null
                 ? fmtSeconds(status.template.age_seconds)
                 : "-"}
             </div>
@@ -150,7 +136,7 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
           <div className="stat-card">
             <div className="label">Chain Height</div>
             <div className="value mono">
-              {status?.daemon?.chain_height ?? "-"}
+              {status?.daemon.chain_height ?? "-"}
             </div>
           </div>
         </div>
@@ -172,7 +158,7 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
                 : "Local Samples"}
             </div>
             <div className="value mono">
-              {status?.uptime?.[0]?.sample_count ?? "-"}
+              {status?.uptime[0]?.sample_count ?? "-"}
             </div>
           </div>
           <div className="stat-card">
@@ -182,7 +168,7 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
                 : "External Samples"}
             </div>
             <div className="value mono">
-              {status?.uptime?.[0]?.external_sample_count ?? "-"}
+              {status?.uptime[0]?.external_sample_count ?? "-"}
             </div>
           </div>
         </div>
@@ -214,7 +200,7 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
               </tr>
             </thead>
             <tbody>
-              {!status?.uptime?.length ? (
+              {!status?.uptime.length ? (
                 <tr>
                   <td
                     colSpan={9}
@@ -227,14 +213,14 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
                 status.uptime.map((row) => (
                   <tr key={row.label}>
                     <td>{row.label}</td>
-                    <td>{pct(row.public_http_up_pct)}</td>
-                    <td>{pct(row.api_up_pct)}</td>
-                    <td>{pct(row.stratum_up_pct)}</td>
-                    <td>{pct(row.pool_up_pct)}</td>
-                    <td>{pct(row.database_up_pct)}</td>
-                    <td>{pct(row.daemon_up_pct)}</td>
+                    <td>{formatPct(row.public_http_up_pct, 2)}</td>
+                    <td>{formatPct(row.api_up_pct, 2)}</td>
+                    <td>{formatPct(row.stratum_up_pct, 2)}</td>
+                    <td>{formatPct(row.pool_up_pct, 2)}</td>
+                    <td>{formatPct(row.database_up_pct, 2)}</td>
+                    <td>{formatPct(row.daemon_up_pct, 2)}</td>
                     <td>{row.sample_count}</td>
-                    <td>{row.external_sample_count ?? 0}</td>
+                    <td>{row.external_sample_count}</td>
                   </tr>
                 ))
               )}
@@ -260,7 +246,7 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
               </tr>
             </thead>
             <tbody>
-              {!status?.incidents?.length ? (
+              {!status?.incidents.length ? (
                 <tr>
                   <td
                     colSpan={6}
@@ -311,31 +297,6 @@ export function StatusPage({ active, api, liveTick }: StatusPageProps) {
         </div>
       </div>
 
-      <div className="seo-copy-grid">
-        <div className="card seo-copy-card">
-          <h3>Outside-In Reachability</h3>
-          <p>
-            Track whether the public API is reachable from outside the box, not
-            just whether local processes are up.
-          </p>
-        </div>
-        <div className="card seo-copy-card">
-          <h3>Stratum Freshness</h3>
-          <p>
-            Catch cases where miners stop getting fresh work even though the
-            pool site and daemon still respond.
-          </p>
-        </div>
-        <div className="card seo-copy-card">
-          <h3>Incident Tracking</h3>
-          <p>
-            Compare recent incidents against{" "}
-            <a href="/payouts">payout timing</a> or{" "}
-            <a href="/luck">round history</a> when you need to investigate
-            operational issues.
-          </p>
-        </div>
-      </div>
     </div>
   );
 }

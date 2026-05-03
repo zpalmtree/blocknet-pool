@@ -1,8 +1,9 @@
-pub mod config;
-pub mod node;
-
-#[path = "../../../src/recovery.rs"]
-mod recovery_impl;
+mod config;
+mod recovery;
 
 pub use config::{Config, RecoveryConfig, RecoveryDaemonInstanceConfig};
-pub use recovery_impl::*;
+pub use recovery::{
+    RecoveryAgent, RecoveryAgentClient, RecoveryInstanceId, RecoveryInstanceState,
+    RecoveryInstanceStatus, RecoveryOperation, RecoveryOperationKind, RecoveryOperationState,
+    RecoveryStatus, RecoveryWalletStatus,
+};

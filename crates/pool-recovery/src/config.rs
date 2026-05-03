@@ -2,11 +2,13 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-use crate::recovery_impl::RecoveryInstanceId;
+use crate::recovery::RecoveryInstanceId;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+const DEFAULT_PAYOUT_PAUSE_FILE: &str = "/etc/blocknet/pool/payouts.pause";
+
+#[derive(Clone, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub payout_pause_file: String,
@@ -16,7 +18,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            payout_pause_file: "/etc/blocknet/pool/payouts.pause".to_string(),
+            payout_pause_file: DEFAULT_PAYOUT_PAUSE_FILE.to_string(),
             recovery: RecoveryConfig::default(),
         }
     }
@@ -32,14 +34,14 @@ impl Config {
     }
 
     pub fn normalize(&mut self) {
-        self.recovery.normalize();
         if self.payout_pause_file.trim().is_empty() {
-            self.payout_pause_file = "/etc/blocknet/pool/payouts.pause".to_string();
+            self.payout_pause_file = DEFAULT_PAYOUT_PAUSE_FILE.to_string();
         }
+        self.recovery.normalize();
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(default)]
 pub struct RecoveryConfig {
     pub enabled: bool,
@@ -106,9 +108,52 @@ impl RecoveryConfig {
             RecoveryInstanceId::Standby => &self.standby,
         }
     }
+
+    pub(crate) fn detect_proxy_target(&self) -> Option<RecoveryInstanceId> {
+        let raw = fs::read_to_string(self.proxy_include_path.trim()).ok()?;
+        let primary_api = self.primary.api.trim();
+        let standby_api = self.standby.api.trim();
+        if !primary_api.is_empty() && raw.contains(primary_api) {
+            Some(RecoveryInstanceId::Primary)
+        } else if !standby_api.is_empty() && raw.contains(standby_api) {
+            Some(RecoveryInstanceId::Standby)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn detect_active_cookie_target(&self) -> Option<RecoveryInstanceId> {
+        let target = fs::read_link(Path::new(self.active_cookie_path.trim())).ok()?;
+        if path_matches(&target, Path::new(self.primary.cookie_path.trim())) {
+            Some(RecoveryInstanceId::Primary)
+        } else if path_matches(&target, Path::new(self.standby.cookie_path.trim())) {
+            Some(RecoveryInstanceId::Standby)
+        } else {
+            None
+        }
+    }
+
+    pub fn effective_active_instance(&self) -> Option<RecoveryInstanceId> {
+        Self::effective_active_instance_from_targets(
+            self.detect_proxy_target(),
+            self.detect_active_cookie_target(),
+        )
+    }
+
+    pub(crate) fn effective_active_instance_from_targets(
+        proxy_target: Option<RecoveryInstanceId>,
+        active_cookie_target: Option<RecoveryInstanceId>,
+    ) -> Option<RecoveryInstanceId> {
+        match (proxy_target, active_cookie_target) {
+            (Some(a), Some(b)) if a == b => Some(a),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            _ => None,
+        }
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct RecoveryDaemonInstanceConfig {
     pub service: String,
@@ -116,18 +161,6 @@ pub struct RecoveryDaemonInstanceConfig {
     pub wallet_path: String,
     pub data_dir: String,
     pub cookie_path: String,
-}
-
-impl Default for RecoveryDaemonInstanceConfig {
-    fn default() -> Self {
-        Self {
-            service: String::new(),
-            api: String::new(),
-            wallet_path: String::new(),
-            data_dir: String::new(),
-            cookie_path: String::new(),
-        }
-    }
 }
 
 impl RecoveryDaemonInstanceConfig {
@@ -149,5 +182,15 @@ impl RecoveryDaemonInstanceConfig {
         if self.cookie_path.trim().is_empty() {
             self.cookie_path = default.cookie_path.clone();
         }
+    }
+}
+
+fn path_matches(actual: &Path, expected: &Path) -> bool {
+    if actual == expected {
+        return true;
+    }
+    match (fs::canonicalize(actual), fs::canonicalize(expected)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
     }
 }

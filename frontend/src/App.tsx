@@ -2,9 +2,8 @@ import { type MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useS
 
 import { createApiClient } from './api/client';
 import { API_KEY_STORAGE_KEY, LAST_MINER_LOOKUP_KEY } from './lib/storage';
-import { applyDocumentSeo } from './lib/seo';
 import { applyTheme, getStoredTheme, setStoredTheme, type ThemeMode } from './lib/theme';
-import { pathForRoute, pathFromLegacyHash, routeFromPathname } from './lib/routes';
+import { pathForRoute, routeFromPathname, titleForRoute } from './lib/routes';
 import { AdminPage } from './pages/AdminPage';
 import { BlocksPage } from './pages/BlocksPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -16,13 +15,15 @@ import { StatsPage } from './pages/StatsPage';
 import type { InfoResponse, Route } from './types';
 
 function routeFromLocation(): Route {
-  const legacyPath = pathFromLegacyHash(window.location.hash || '');
-  if (legacyPath) {
-    const nextUrl = `${legacyPath}${window.location.search}`;
-    window.history.replaceState({}, '', nextUrl);
-    return routeFromPathname(legacyPath);
-  }
   return routeFromPathname(window.location.pathname);
+}
+
+function updateDocumentChrome(route: Route, theme: ThemeMode, poolName?: string) {
+  const baseTitle = titleForRoute(route);
+  document.title = poolName?.trim() ? `${baseTitle} | ${poolName.trim()}` : baseTitle;
+  document
+    .querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+    ?.setAttribute('content', theme === 'dark' ? '#071114' : '#f6f8f2');
 }
 
 function shouldHandleNavigation(event: MouseEvent<HTMLAnchorElement>): boolean {
@@ -117,32 +118,15 @@ export function App() {
 
   useEffect(() => {
     let mounted = true;
-    let lastTickAt = Date.now();
-    const source = new EventSource('/api/events');
-    const onTick = () => {
-      if (!mounted) return;
-      lastTickAt = Date.now();
-      setLiveTick((tick) => tick + 1);
-    };
-    source.addEventListener('tick', onTick);
-    source.onerror = () => {
-      // EventSource auto-reconnects.
-    };
-
-    // Fallback refresh for environments where SSE is delayed or blocked.
-    const fallbackTimer = window.setInterval(() => {
+    const timer = window.setInterval(() => {
       if (!mounted) return;
       if (document.visibilityState !== 'visible') return;
-      if (Date.now() - lastTickAt < 15000) return;
-      lastTickAt = Date.now();
       setLiveTick((tick) => tick + 1);
     }, 5000);
 
     return () => {
       mounted = false;
-      window.clearInterval(fallbackTimer);
-      source.removeEventListener('tick', onTick);
-      source.close();
+      window.clearInterval(timer);
     };
   }, []);
 
@@ -152,7 +136,7 @@ export function App() {
   }, [liveTick, loadPoolInfo]);
 
   useEffect(() => {
-    applyDocumentSeo(route, poolInfo, theme);
+    updateDocumentChrome(route, theme, poolInfo?.pool_name);
   }, [poolInfo, route, theme]);
 
   const onSaveApiKey = useCallback(() => {
@@ -199,7 +183,7 @@ export function App() {
 
   let currentPage: JSX.Element;
   if (route === 'start') {
-    currentPage = <StartPage active poolInfo={poolInfo} theme={theme} />;
+    currentPage = <StartPage active poolInfo={poolInfo} />;
   } else if (route === 'luck') {
     currentPage = <LuckPage active api={api} liveTick={liveTick} />;
   } else if (route === 'blocks') {

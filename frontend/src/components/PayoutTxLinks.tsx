@@ -5,20 +5,8 @@ import { shortTx } from '../lib/format';
 
 const PREVIEW_COUNT = 2;
 
-export function PayoutTxLinks({ hashes }: { hashes?: string[] }) {
-  const txHashes = hashes || [];
+export function PayoutTxLinks({ hashes }: { hashes: string[] }) {
   const [showDialog, setShowDialog] = useState(false);
-
-  if (!txHashes.length) return <>-</>;
-
-  if (txHashes.length === 1) {
-    const h = txHashes[0];
-    return (
-      <a href={`https://explorer.blocknetcrypto.com/tx/${h}`} target="_blank" rel="noopener" title={h}>
-        {shortTx(h)}
-      </a>
-    );
-  }
 
   useEffect(() => {
     if (!showDialog) return;
@@ -33,8 +21,19 @@ export function PayoutTxLinks({ hashes }: { hashes?: string[] }) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showDialog]);
 
-  const visibleHashes = txHashes.slice(0, PREVIEW_COUNT);
-  const hiddenCount = Math.max(0, txHashes.length - PREVIEW_COUNT);
+  if (!hashes.length) return <>-</>;
+
+  if (hashes.length === 1) {
+    const h = hashes[0];
+    return (
+      <a href={`https://explorer.blocknetcrypto.com/tx/${h}`} target="_blank" rel="noopener" title={h}>
+        {shortTx(h)}
+      </a>
+    );
+  }
+
+  const visibleHashes = hashes.slice(0, PREVIEW_COUNT);
+  const hiddenCount = Math.max(0, hashes.length - PREVIEW_COUNT);
 
   return (
     <>
@@ -52,7 +51,7 @@ export function PayoutTxLinks({ hashes }: { hashes?: string[] }) {
         </span>
         {hiddenCount > 0 ? (
           <button className="payout-tx-links__toggle" type="button" onClick={() => setShowDialog(true)}>
-            {`Show all ${txHashes.length}`}
+            {`Show all ${hashes.length}`}
           </button>
         ) : null}
       </span>
@@ -63,20 +62,20 @@ export function PayoutTxLinks({ hashes }: { hashes?: string[] }) {
                 className="payout-tx-dialog"
                 role="dialog"
                 aria-modal="true"
-                aria-label={`Payout transaction hashes (${txHashes.length})`}
+                aria-label={`Payout transaction hashes (${hashes.length})`}
                 onClick={(event) => event.stopPropagation()}
               >
                 <div className="payout-tx-dialog__header">
                   <div>
                     <div className="payout-tx-dialog__title">Payout Transactions</div>
-                    <div className="payout-tx-dialog__meta">{`${txHashes.length} transaction hashes`}</div>
+                    <div className="payout-tx-dialog__meta">{`${hashes.length} transaction hashes`}</div>
                   </div>
                   <button className="payout-tx-dialog__close" type="button" onClick={() => setShowDialog(false)}>
                     Close
                   </button>
                 </div>
                 <div className="payout-tx-dialog__list">
-                  {txHashes.map((h) => (
+                  {hashes.map((h) => (
                     <a
                       key={h}
                       className="payout-tx-dialog__item"

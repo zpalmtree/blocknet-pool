@@ -35,12 +35,6 @@ From the local repo root:
 ./scripts/deploy_bntpool.sh
 ```
 
-Use split-service migration only when moving from the legacy combined service or when you intentionally need to reinstall the systemd unit files:
-
-```bash
-./scripts/deploy_bntpool.sh --migrate-split
-```
-
 What it does:
 
 - builds frontend bundle locally (unless `--skip-ui-build`)
@@ -52,13 +46,14 @@ What it does:
   - `blocknet-pool-stratum.service`
   - `blocknet-pool-monitor.service`
 - frontend-only changes still restart `blocknet-pool-api.service` because the UI bundle is embedded into that binary
-- tails recent logs for both services
+- tails recent logs for changed services
 
 ## Monitoring Stack
 
 The pool now ships a dedicated on-host monitor and repo-managed monitoring assets:
 
 - `blocknet-pool-monitor.service`: probes API, Stratum, Postgres, daemon, wallet, share freshness, and payout queue state every `10s`
+- The monitor uses the same `api_key` as protected API routes when it samples API performance telemetry.
 - DB-backed heartbeats and incidents drive `/api/status`
 - Prometheus + Alertmanager + node exporter + blackbox exporter configs live under `deploy/monitoring/`
 - Cloudflare Worker assets for outside-in public HTTP probes live under `deploy/cloudflare/monitor-worker/`
@@ -94,9 +89,9 @@ To stage it on the server without restarting the daemon yet:
 ./scripts/build_blocknet_daemon.sh --upload bntpool
 ```
 
-For the full repeatable deploy path, including the managed `blocknetd.service`
-unit, release directory rotation, symlink switch, restart, and `/api/status`
-verification:
+For the full repeatable deploy path, including the managed `blocknetd@primary`
+and `blocknetd@standby` units, release directory rotation, symlink switch,
+restart, and `/api/status` verification:
 
 ```bash
 ./scripts/deploy_blocknet_daemon_bntpool.sh
@@ -119,13 +114,14 @@ cargo build --release -p blocknet-pool-api-app --bin blocknet-pool-api
 cargo build --release -p blocknet-pool-stratum-app --bin blocknet-pool-stratum
 cargo build --release -p blocknet-pool-monitor-app --bin blocknet-pool-monitor
 cargo build --release -p blocknet-pool-recoveryd-app --bin blocknet-pool-recoveryd
+cp config.example.json config.json
+# edit config.json and set database_url, api_key, monitor_ingest_secret, daemon_cookie_path, and pool addresses
+# optional: create .env next to config.json with BLOCKNET_WALLET_PASSWORD=...
 cargo run --release -p blocknet-pool-api-app --bin blocknet-pool-api
 cargo run --release -p blocknet-pool-stratum-app --bin blocknet-pool-stratum
 cargo run --release -p blocknet-pool-monitor-app --bin blocknet-pool-monitor
 # run the API and Stratum binaries in separate terminals
 # run the monitor binary in a third terminal if you want the DB-backed status page/metrics loop
-# if missing, config.json and .env are created automatically
-# edit .env and set BLOCKNET_WALLET_PASSWORD
 ```
 
 Custom config:
@@ -161,7 +157,7 @@ Build output is written to `frontend/dist/` and embedded into the API binary dur
 
 The embedded assets are served at:
 
-- `GET /` / `GET /ui` (index)
+- `GET /` (index)
 - `GET /ui-assets/app.js`
 - `GET /ui-assets/app.css`
 
@@ -169,13 +165,8 @@ Because the UI bundle is embedded into the API binary, frontend-only changes sti
 
 ## Daemon API Auth
 
-The pool can authenticate to the daemon with either:
-
-- `daemon_token` in `config.json`
-- `daemon_cookie_path` in `config.json`
-- auto-discovery of `api.cookie` via `daemon_data_dir`, Blocknet wrapper config under `~/.config/bnt`, wrapper pidfiles, and running `blocknet` / `blocknet-core-*` process metadata
-
-When a daemon request returns `401 unauthorized`, the pool will refresh the token from cookie once and retry.
+The pool authenticates to the daemon with `daemon_cookie_path` in `config.json`.
+When a daemon request returns `401 unauthorized`, the pool refreshes the token from the configured cookie path once and retries.
 
 ## Database Backend
 
@@ -190,31 +181,10 @@ The pool uses Postgres. Set `database_url` in `config.json`, for example:
 `database_url` is required. `database_pool_size` controls Postgres connection fan-out
 (default `4`).
 
-### Production SQLite -> Postgres Migration
-
-Use the included migration script to preserve existing pool history:
-
-```bash
-scripts/migrate_sqlite_to_postgres.sh \
-  --sqlite /var/lib/blocknet-pool/pool.db \
-  --postgres 'postgres://blocknet:REPLACE_ME@127.0.0.1:5432/blocknet_pool'
-```
-
-Recommended order:
-
-1. Stop the running pool service(s).
-2. Run the migration script.
-3. Set `database_url` in `/etc/blocknet/pool/config.json`.
-4. Start the pool service(s).
-5. Verify `/api/stats` and admin endpoints.
-
 ## Transport Security
 
 - Stratum now defaults to loopback bind (`stratum_host=127.0.0.1`). Set `stratum_host` explicitly to expose it.
-- API TLS is supported via:
-  - `api_tls_cert_path`
-  - `api_tls_key_path`
-- If only one TLS path is set, startup logs a warning and serves HTTP.
+- The API server is plaintext HTTP and should stay bound to loopback behind nginx or another TLS terminator.
 - If Stratum is exposed publicly, place it behind a TLS terminator.
 
 ## Runtime Components
@@ -225,7 +195,7 @@ Recommended order:
 - Validation engine (bounded queues)
 - Persistent storage (Postgres)
 - Payout processor
-- DB/meta-backed live snapshot bridge for split-service API fallbacks
+- DB/meta-backed live runtime snapshot for split-service API status
 
 ## API Surface
 
@@ -237,7 +207,6 @@ Public endpoints (no API key required):
 - `GET /api/stats/insights`
 - `GET /api/luck`
 - `GET /api/status`
-- `GET /api/events`
 - `GET /api/blocks`
 - `GET /api/payouts/recent`
 - `GET /api/miner/{address}`
@@ -247,81 +216,65 @@ Public endpoints (no API key required):
 Protected endpoints (API key required):
 
 - `GET /api/miners`
-- `GET /api/payouts`
-- `GET /api/fees`
 - `GET /api/health`
 - `GET /api/daemon/logs/stream`
 
-When `api_key` is unset, protected endpoints return `503 api key not configured`.
+`api_key` is required at API and monitor startup. `monitor_ingest_secret` is required for the signed Cloudflare monitor ingest endpoint.
 
-Accepted headers:
+Accepted header:
 
 - `x-api-key: <api_key>`
-- `Authorization: Bearer <api_key>`
 
-Paged/filterable list mode:
+Paged/filterable list endpoints:
 
-- `paged=true` enables paged response shape (`items` + `page`).
 - Shared query params: `limit`, `offset`.
 - `GET /api/miners`: `search`, `sort`.
-- `GET /api/blocks`: `finder`, `status`, `sort`.
-- `GET /api/payouts`: `address`, `tx_hash`, `sort`.
-- `GET /api/fees`: `fee_address`, `sort`.
+- `GET /api/blocks`: `status`.
 
 Daemon log stream details:
 
 - Admin UI includes a live daemon log viewer tab.
 - Stream endpoint: `GET /api/daemon/logs/stream?tail=200`.
 - Log source fallback order:
-  - `journalctl -a -u blocknetd.service`
+  - `journalctl` for the active recovery daemon, then the managed primary and standby units
   - `tail -F <daemon_data_dir>/debug.log`
 
 ## Web UI
 
 - `GET /` (dashboard)
-- `GET /ui` (alias)
 - Multi-tab WebUI includes:
   - pool + onboarding info (`/api/info`)
   - API key auth UX for protected routes
   - miner lookup
-  - miners/blocks/payouts/fees tables with filter + pagination
+  - public blocks, payouts, luck, and status pages
+  - admin miners, balances, shares, rewards, recovery, and logs tabs
   - live trend charts
   - operator health panel (`/api/health`)
   - live daemon logs panel (`/api/daemon/logs/stream`)
 
 ## Stratum Notes
 
-- Login supports protocol negotiation (`protocol_version`, `capabilities`)
+- Login requires protocol v2 with declared capabilities.
 - Login rejects malformed payout addresses early (base58 + checksum-compatible Blocknet stealth address validation)
-- `stratum_submit_v2_required=true` (default): requires protocol v2 + `submit_claimed_hash`
-- `stratum_submit_v2_required=false`: allows legacy submits without `claimed_hash` (full verification path)
-- Per-connection submit rate limiting is enabled (`stratum_submit_rate_limit_window`, `stratum_submit_rate_limit_max`)
+- Login requires protocol v2 + `submit_claimed_hash`; submits without `claimed_hash` are rejected.
+- Per-connection submit rate limiting is enabled.
 - Queue pressure returns `server busy, retry` (no inline bypass)
 - Per-connection vardiff retargeting is enabled by default to target a small number of shares per window (`vardiff_*` config keys)
 - Vardiff difficulty is cached per `address+worker` and reused on reconnect/restart when the hint is fresh (1h TTL), reducing post-restart ramp-up.
 - Default vardiff profile assumes a weak baseline miner and aims for ~10 shares / 5 minutes (`initial_share_difficulty=60`, `vardiff_target_shares=10`)
 - Template refresh identity uses stable tip fields (`height`, `network_target`, `prev_hash`) to avoid daemon template churn while still refreshing on meaningful tip/template transitions.
-- Assignment submits on a previous template are accepted only inside a short grace window (`stale_submit_grace`, default `5s`) based on when the share was received.
-- Daemon SSE tip events (`/api/events`) are enabled by default (`sse_enabled=true`) and mark templates stale from `new_block` `hash` + `height`.
+- Assignment submits on a previous template are accepted only inside a short grace window (`stale_submit_grace`, default `8s`) based on when the share was received.
+- Daemon SSE tip events mark templates stale from `new_block` `hash` + `height`.
 - Timestamp-only `new_block` changes do not trigger refreshes; only hash/height changes can trigger staleness.
 - Same-height hash-change refresh is disabled by default (`refresh_on_same_height=false`) to avoid replay churn; enable it only if you want immediate same-height reorg reaction.
-
-## Review Follow-Ups (2026-03-03)
-
-- Risk escalation persistence now uses an atomic update path per address.
-- Accepted-share hashrate tracking keeps a 1-hour window with a hard in-memory cap.
-- Template refresh matching now uses stable identity fields to catch meaningful same-height updates.
-- API key comparison is currently direct string equality by design for this pool deployment model; this is accepted for now and is not treated as a blocker.
 
 ## Payout Safeguards
 
 - `payouts_enabled` toggles payout sending globally.
 - `payout_pause_file` pauses payouts when the file exists.
 - `pplns_window_duration` controls the time-based PPLNS lookback window (default `6h`).
-- `payout_wait_priority_threshold` promotes queued payouts to longest-waiting-first after they have waited at least the configured duration (default `6h`).
-- `payout_min_verified_ratio` is a hard verified-difficulty gate. Keeping it near the sampler coverage can exclude honest miners due to sampling variance and vardiff.
-- `payout_provisional_cap_multiplier` caps aged provisional difficulty relative to verified difficulty. Prefer a cap over a hard ratio cutoff when you want reduced credit instead of zero credit.
-- Keep `sample_rate` and `min_sample_every` comfortably above the payout policy's effective verified-share target so honest miners do not flap around the cutoff.
+- `payout_provisional_cap_multiplier` caps aged provisional difficulty relative to verified difficulty so undersampled miners receive reduced provisional credit instead of being fully excluded.
+- Keep `sample_rate` and `min_sample_every` comfortably above the payout policy's full-credit target so honest miners do not sit under the cap for long.
 - Optional caps:
   - `payout_max_recipients_per_tick`
   - `payout_max_total_per_tick`
@@ -329,13 +282,10 @@ Daemon log stream details:
 
 ## Retention & Summary Rollups
 
-- Retention worker runs on `retention_interval`.
+- Retention worker runs hourly, keeping detailed shares for 90 days and payout rows for 365 days.
 - Old rows are rolled up into summary tables before prune:
   - `share_daily_summaries`
   - `payout_daily_summaries`
-- Retention controls:
-  - `shares_retention`
-  - `payouts_retention`
 - `get_total_share_count` and total rejected share metrics include rolled-up share summaries.
 
 ## CI Coverage
