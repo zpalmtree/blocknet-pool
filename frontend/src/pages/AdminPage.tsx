@@ -109,10 +109,6 @@ function rewardStatusLabel(status: string): string {
   return REWARD_STATUS_META[status]?.label ?? 'No eligible shares';
 }
 
-function rewardStatusTone(status: string): string {
-  return REWARD_STATUS_META[status]?.tone ?? 'var(--warn)';
-}
-
 function rewardDeltaStyle(value: number | null | undefined, paidOut = false): CSSProperties {
   if (value == null) return { color: 'var(--muted)' };
   if (value === 0) return { color: 'var(--good)' };
@@ -245,13 +241,6 @@ function shareWindowTotal(window: AdminShareDiagnosticsWindow | null | undefined
 
 function shareWindowRejectPct(window: AdminShareDiagnosticsWindow | null | undefined): number {
   return calculateRatioPct(window?.rejected, shareWindowTotal(window));
-}
-
-function shareWindowReasonPct(window: AdminShareDiagnosticsWindow | null | undefined, reason: string): number | null {
-  if (!window) return null;
-  const total = shareWindowTotal(window);
-  if (total <= 0) return null;
-  return (shareWindowReasonCount(window, reason) / total) * 100;
 }
 
 function shareWindowReasonCell(window: AdminShareDiagnosticsWindow, reason: string) {
@@ -890,7 +879,11 @@ export function AdminPage({
   const shareAuditDurationP95 = shareValidation?.audit_duration?.p95_millis ?? 0;
   const shareBusyCount5m = shareWindowReasonCount(shareWindow5m, 'server busy');
   const shareTimeoutCount5m = shareWindowReasonCount(shareWindow5m, 'validation timeout');
-  const shareInvalidProof5m = shareWindowReasonPct(shareWindow5m, 'invalid share proof') ?? 0;
+  const shareInvalidProofPct5m = calculateRatioPct(
+    shareWindowReasonCount(shareWindow5m, 'invalid share proof'),
+    shareWindowTotal(shareWindow5m)
+  );
+  const shareInvalidProof5m = shareInvalidProofPct5m ?? 0;
   const shareHotAccepts = shareValidation?.hot_accepts ?? 0;
   const shareSyncFullVerifies = shareValidation?.sync_full_verifies ?? 0;
   const shareHotPathBackedUp =
@@ -1813,7 +1806,12 @@ export function AdminPage({
                                     </>
                                   ) : (
                                     <>
-                                      <div style={{ color: rewardStatusTone(row.payout_status), fontWeight: 600 }}>
+                                      <div
+                                        style={{
+                                          color: REWARD_STATUS_META[row.payout_status]?.tone ?? 'var(--warn)',
+                                          fontWeight: 600,
+                                        }}
+                                      >
                                         {rewardStatusLabel(row.payout_status)}
                                       </div>
                                       <div style={SMALL_MUTED_TOP_STYLE}>
@@ -2114,7 +2112,7 @@ export function AdminPage({
                     />
                     <StatCard
                       label="5m Invalid Proof"
-                      value={formatPct(shareWindowReasonPct(shareWindow5m, 'invalid share proof'), 2)}
+                      value={formatPct(shareInvalidProofPct5m, 2)}
                       meta={`${shareWindowReasonCount(shareWindow5m, 'invalid share proof')} rejects`}
                       mono
                     />
