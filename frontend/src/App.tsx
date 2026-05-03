@@ -14,14 +14,6 @@ import { StatusPage } from './pages/StatusPage';
 import { StatsPage } from './pages/StatsPage';
 import type { InfoResponse, Route } from './types';
 
-function updateDocumentChrome(route: Route, theme: ThemeMode, poolName?: string) {
-  const baseTitle = titleForRoute(route);
-  document.title = poolName?.trim() ? `${baseTitle} | ${poolName.trim()}` : baseTitle;
-  document
-    .querySelector<HTMLMetaElement>('meta[name="theme-color"]')
-    ?.setAttribute('content', theme === 'dark' ? '#071114' : '#f6f8f2');
-}
-
 function SunIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -131,7 +123,12 @@ export function App() {
   }, [liveTick, loadPoolInfo]);
 
   useEffect(() => {
-    updateDocumentChrome(route, theme, poolInfo?.pool_name);
+    const baseTitle = titleForRoute(route);
+    const poolName = poolInfo?.pool_name.trim();
+    document.title = poolName ? `${baseTitle} | ${poolName}` : baseTitle;
+    document
+      .querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+      ?.setAttribute('content', theme === 'dark' ? '#071114' : '#f6f8f2');
   }, [poolInfo, route, theme]);
 
   const onSaveApiKey = useCallback(() => {
