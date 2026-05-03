@@ -6,6 +6,7 @@ interface StatCardProps {
   id?: string;
   label: ReactNode;
   meta?: ReactNode;
+  metaStyle?: CSSProperties;
   mono?: boolean;
   onClick?: () => void;
   style?: CSSProperties;
@@ -21,6 +22,7 @@ export function StatCard({
   id,
   label,
   meta,
+  metaStyle,
   mono,
   onClick,
   style,
@@ -35,7 +37,7 @@ export function StatCard({
       <div className={mono ? 'value mono' : 'value'} id={id} style={valueStyle} title={valueTitle}>
         {value}
       </div>
-      {meta != null && <div className="stat-meta">{meta}</div>}
+      {meta != null && <div className="stat-meta" style={metaStyle}>{meta}</div>}
       {children}
     </div>
   );

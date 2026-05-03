@@ -2111,41 +2111,38 @@ export function AdminPage({
             <div className="stats-card-group">
               <div className="stats-card-group-title">Live Pipeline</div>
               <div className="stats-card-group-grid stats-grid-dense">
-                <div className="stat-card">
-                  <div className="label">Submit Path</div>
-                  <div className="value mono">{formatMillis(shareSubmitWaitP95)}</div>
-                  <div className="stat-meta">
-                    {shareSubmitQueueDepth} queued · oldest {formatMillis(shareSubmitOldestAge)}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Live Validation</div>
-                  <div className="value mono">{formatMillis(shareValidationWaitP95)}</div>
-                  <div className="stat-meta">
-                    {shareValidationQueueDepth} queued · hash {formatMillis(shareValidationDurationP95)}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Background Audit</div>
-                  <div className="value mono">{formatMillis(shareAuditWaitP95)}</div>
-                  <div className="stat-meta">
-                    {shareAuditQueueDepth} queued · hash {formatMillis(shareAuditDurationP95)}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Verification Coverage</div>
-                  <div className="value mono">{ratioPct(shareValidation?.effective_sample_rate)}</div>
-                  <div className="stat-meta">
-                    {shareValidation?.sampled_shares ?? 0} sampled · overload {overloadModeLabel(shareValidation?.overload_mode)}
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">5m Busy / Timeout</div>
-                  <div className="value mono">{shareBusyCount5m + shareTimeoutCount5m}</div>
-                  <div className="stat-meta">
-                    {shareBusyCount5m} busy · {shareTimeoutCount5m} timeout
-                  </div>
-                </div>
+                <StatCard
+                  label="Submit Path"
+                  value={formatMillis(shareSubmitWaitP95)}
+                  meta={`${shareSubmitQueueDepth} queued · oldest ${formatMillis(shareSubmitOldestAge)}`}
+                  mono
+                />
+                <StatCard
+                  label="Live Validation"
+                  value={formatMillis(shareValidationWaitP95)}
+                  meta={`${shareValidationQueueDepth} queued · hash ${formatMillis(shareValidationDurationP95)}`}
+                  mono
+                />
+                <StatCard
+                  label="Background Audit"
+                  value={formatMillis(shareAuditWaitP95)}
+                  meta={`${shareAuditQueueDepth} queued · hash ${formatMillis(shareAuditDurationP95)}`}
+                  mono
+                />
+                <StatCard
+                  label="Verification Coverage"
+                  value={ratioPct(shareValidation?.effective_sample_rate)}
+                  meta={`${shareValidation?.sampled_shares ?? 0} sampled · overload ${overloadModeLabel(
+                    shareValidation?.overload_mode
+                  )}`}
+                  mono
+                />
+                <StatCard
+                  label="5m Busy / Timeout"
+                  value={shareBusyCount5m + shareTimeoutCount5m}
+                  meta={`${shareBusyCount5m} busy · ${shareTimeoutCount5m} timeout`}
+                  mono
+                />
               </div>
             </div>
 
@@ -2160,74 +2157,81 @@ export function AdminPage({
                 <div className="stats-card-group" style={{ marginBottom: 16 }}>
                   <div className="stats-card-group-title">Detailed Runtime Metrics</div>
                   <div className="stats-card-group-grid stats-grid-dense">
-                    <div className="stat-card">
-                      <div className="label">Submit Queue</div>
-                      <div className="value mono">{shareSubmitQueueDepth}</div>
-                      <div className="stat-meta">
-                        {shareSubmit?.candidate_queue_depth ?? 0} candidate · {shareSubmit?.regular_queue_depth ?? 0} regular
-                      </div>
-                    </div>
-                    <div className="stat-card">
-                      <div className="label">Validation Queue</div>
-                      <div className="value mono">{shareValidationQueueDepth}</div>
-                      <div className="stat-meta">
-                        {shareValidation?.candidate_queue_depth ?? 0} candidate · {shareValidation?.regular_queue_depth ?? 0} regular
-                      </div>
-                    </div>
-                    <div className="stat-card">
-                      <div className="label">Audit Queue</div>
-                      <div className="value mono">{shareAuditQueueDepth}</div>
-                      <div className="stat-meta">oldest {formatMillis(shareAuditOldestAge)}</div>
-                    </div>
-                    <div className="stat-card">
-                      <div className="label">Validation Wait P95</div>
-                      <div className="value mono">{formatMillis(shareValidationWaitP95)}</div>
-                      <div className="stat-meta">oldest {formatMillis(shareValidationOldestAge)}</div>
-                    </div>
-                    <div className="stat-card">
-                      <div className="label">Audit Wait / Time P95</div>
-                      <div className="value mono">{formatMillis(shareAuditWaitP95)}</div>
-                      <div className="stat-meta">hash {formatMillis(shareAuditDurationP95)}</div>
-                    </div>
-                    <div className="stat-card">
-                      <div className="label">Validation Time P95</div>
-                      <div className="value mono">{formatMillis(shareValidationDurationP95)}</div>
-                      <div className="stat-meta">{shareValidation?.in_flight ?? 0} in flight</div>
-                    </div>
-                    <div className="stat-card">
-                      <div className="label">Candidate False Claims</div>
-                      <div className="value mono">{shareValidation?.candidate_false_claims ?? 0}</div>
-                      <div className="stat-meta" style={{ color: sharePressureSignal.tone }}>
-                        {sharePressureSignal.label}
-                      </div>
-                    </div>
-                    <div className="stat-card">
-                      <div className="label">Hot Accepts / Sync</div>
-                      <div className="value mono">{shareHotAccepts}</div>
-                      <div className="stat-meta">{shareSyncFullVerifies} sync verified</div>
-                    </div>
-                    <div className="stat-card">
-                      <div className="label">Audit Outcomes</div>
-                      <div className="value mono">{shareValidation?.audit_verified ?? 0}</div>
-                      <div className="stat-meta">
-                        {shareValidation?.audit_rejected ?? 0} rejected · {shareValidation?.audit_deferred ?? 0} deferred
-                      </div>
-                    </div>
-                    <div className="stat-card">
-                      <div className="label">Audit Enqueued</div>
-                      <div className="value mono">{shareValidation?.audit_enqueued ?? 0}</div>
-                      <div className="stat-meta">{shareAuditQueueDepth} queued now</div>
-                    </div>
-                    <div className="stat-card">
-                      <div className="label">5m Invalid Proof</div>
-                      <div className="value mono">{formatPct(shareWindowReasonPct(shareWindow5m, 'invalid share proof'), 2)}</div>
-                      <div className="stat-meta">{shareWindowReasonCount(shareWindow5m, 'invalid share proof')} rejects</div>
-                    </div>
-                    <div className="stat-card">
-                      <div className="label">Overload Mode</div>
-                      <div className="value mono">{overloadModeLabel(shareValidation?.overload_mode)}</div>
-                      <div className="stat-meta">{sharePressureSignal.detail}</div>
-                    </div>
+                    <StatCard
+                      label="Submit Queue"
+                      value={shareSubmitQueueDepth}
+                      meta={`${shareSubmit?.candidate_queue_depth ?? 0} candidate · ${shareSubmit?.regular_queue_depth ?? 0} regular`}
+                      mono
+                    />
+                    <StatCard
+                      label="Validation Queue"
+                      value={shareValidationQueueDepth}
+                      meta={`${shareValidation?.candidate_queue_depth ?? 0} candidate · ${
+                        shareValidation?.regular_queue_depth ?? 0
+                      } regular`}
+                      mono
+                    />
+                    <StatCard
+                      label="Audit Queue"
+                      value={shareAuditQueueDepth}
+                      meta={`oldest ${formatMillis(shareAuditOldestAge)}`}
+                      mono
+                    />
+                    <StatCard
+                      label="Validation Wait P95"
+                      value={formatMillis(shareValidationWaitP95)}
+                      meta={`oldest ${formatMillis(shareValidationOldestAge)}`}
+                      mono
+                    />
+                    <StatCard
+                      label="Audit Wait / Time P95"
+                      value={formatMillis(shareAuditWaitP95)}
+                      meta={`hash ${formatMillis(shareAuditDurationP95)}`}
+                      mono
+                    />
+                    <StatCard
+                      label="Validation Time P95"
+                      value={formatMillis(shareValidationDurationP95)}
+                      meta={`${shareValidation?.in_flight ?? 0} in flight`}
+                      mono
+                    />
+                    <StatCard
+                      label="Candidate False Claims"
+                      value={shareValidation?.candidate_false_claims ?? 0}
+                      meta={sharePressureSignal.label}
+                      metaStyle={{ color: sharePressureSignal.tone }}
+                      mono
+                    />
+                    <StatCard
+                      label="Hot Accepts / Sync"
+                      value={shareHotAccepts}
+                      meta={`${shareSyncFullVerifies} sync verified`}
+                      mono
+                    />
+                    <StatCard
+                      label="Audit Outcomes"
+                      value={shareValidation?.audit_verified ?? 0}
+                      meta={`${shareValidation?.audit_rejected ?? 0} rejected · ${shareValidation?.audit_deferred ?? 0} deferred`}
+                      mono
+                    />
+                    <StatCard
+                      label="Audit Enqueued"
+                      value={shareValidation?.audit_enqueued ?? 0}
+                      meta={`${shareAuditQueueDepth} queued now`}
+                      mono
+                    />
+                    <StatCard
+                      label="5m Invalid Proof"
+                      value={formatPct(shareWindowReasonPct(shareWindow5m, 'invalid share proof'), 2)}
+                      meta={`${shareWindowReasonCount(shareWindow5m, 'invalid share proof')} rejects`}
+                      mono
+                    />
+                    <StatCard
+                      label="Overload Mode"
+                      value={overloadModeLabel(shareValidation?.overload_mode)}
+                      meta={sharePressureSignal.detail}
+                      mono
+                    />
                   </div>
                 </div>
 
@@ -2330,29 +2334,23 @@ export function AdminPage({
             <div className="stats-card-group">
               <div className="stats-card-group-title">Verification Holds</div>
               <div className="stats-card-group-grid stats-grid-dense">
-                <div className="stat-card">
-                  <div className="label">Risk Holds</div>
-                  <div className="value mono">{riskVerificationHolds.length}</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Temporary Assists</div>
-                  <div className="value mono">{temporaryValidationHolds.length}</div>
-                  <div className="stat-meta">coverage or backlog boosts</div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Risk Forced Verify</div>
-                  <div className="value mono">
-                    {
-                      activeVerificationHolds.filter(
-                        (hold) => hasActiveUntil(hold.force_verify_until) || hold.validation_hold_cause === 'invalid_samples'
-                      ).length
-                    }
-                  </div>
-                </div>
-                <div className="stat-card">
-                  <div className="label">Fraud Detections</div>
-                  <div className="value mono">{shareValidation?.fraud_detections ?? '-'}</div>
-                </div>
+                <StatCard label="Risk Holds" value={riskVerificationHolds.length} mono />
+                <StatCard
+                  label="Temporary Assists"
+                  value={temporaryValidationHolds.length}
+                  meta="coverage or backlog boosts"
+                  mono
+                />
+                <StatCard
+                  label="Risk Forced Verify"
+                  value={
+                    activeVerificationHolds.filter(
+                      (hold) => hasActiveUntil(hold.force_verify_until) || hold.validation_hold_cause === 'invalid_samples'
+                    ).length
+                  }
+                  mono
+                />
+                <StatCard label="Fraud Detections" value={shareValidation?.fraud_detections ?? '-'} mono />
               </div>
             </div>
 
@@ -2823,22 +2821,18 @@ export function AdminPage({
             ) : null}
 
             <div className="stats-grid" style={{ marginBottom: 16 }}>
-              <div className="stat-card">
-                <div className="label">Active Daemon</div>
-                <div className="value">
-                  {recoveryStatus ? recoveryInstanceLabel(recoveryStatus.active_instance) : '-'}
-                </div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Proxy Target</div>
-                <div className="value">
-                  {recoveryStatus ? recoveryInstanceLabel(recoveryStatus.proxy_target) : '-'}
-                </div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Payouts</div>
-                <div className="value">
-                  {recoveryStatus == null ? (
+              <StatCard
+                label="Active Daemon"
+                value={recoveryStatus ? recoveryInstanceLabel(recoveryStatus.active_instance) : '-'}
+              />
+              <StatCard
+                label="Proxy Target"
+                value={recoveryStatus ? recoveryInstanceLabel(recoveryStatus.proxy_target) : '-'}
+              />
+              <StatCard
+                label="Payouts"
+                value={
+                  recoveryStatus == null ? (
                     '-'
                   ) : recoveryStatus.payouts_paused ? (
                     <>
@@ -2848,13 +2842,13 @@ export function AdminPage({
                     <>
                       <span className="status-dot dot-green" />Live
                     </>
-                  )}
-                </div>
-              </div>
-              <div className="stat-card">
-                <div className="label">Wallet Secret</div>
-                <div className="value">
-                  {recoveryStatus == null ? (
+                  )
+                }
+              />
+              <StatCard
+                label="Wallet Secret"
+                value={
+                  recoveryStatus == null ? (
                     '-'
                   ) : recoveryStatus.secret_configured ? (
                     <>
@@ -2864,9 +2858,9 @@ export function AdminPage({
                     <>
                       <span className="status-dot dot-red" />Missing
                     </>
-                  )}
-                </div>
-              </div>
+                  )
+                }
+              />
             </div>
 
             <div className="card section" style={{ marginBottom: 16 }}>
