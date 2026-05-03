@@ -2,7 +2,7 @@ import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import type { ApiClient } from "../api/client";
 import { EmptyTableRow } from "../components/EmptyTableRow";
-import { fmtSeconds, formatPct, timeAgo, toUnixMs } from "../lib/format";
+import { fmtSeconds, formatPct, timeAgo, timestampTitle } from "../lib/format";
 import type { StatusResponse } from "../types";
 
 interface StatusPageProps {
@@ -212,11 +212,7 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
                         {incident.severity}
                       </span>
                     </td>
-                    <td
-                      title={new Date(
-                        toUnixMs(incident.started_at),
-                      ).toLocaleString()}
-                    >
+                    <td title={timestampTitle(incident.started_at)}>
                       {timeAgo(incident.started_at)}
                     </td>
                     <td>
