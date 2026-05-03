@@ -5448,35 +5448,6 @@ fn api_performance_route_name(uri: &Uri) -> Option<&'static str> {
     })
 }
 
-fn api_route_slow_threshold_millis(route: &str) -> u64 {
-    match route {
-        "stats" | "stats_history" | "health" | "miner_balance" | "payouts_recent" => 100,
-        "luck" => 500,
-        "admin_balance_overview"
-        | "admin_reconciliation_issues"
-        | "admin_reconciliation_payout_import"
-        | "admin_reconciliation_manual_offset_apply"
-        | "admin_reconciliation_payout_resolution"
-        | "admin_orphaned_block_cleanup_retry"
-        | "admin_share_diagnostics" => 500,
-        _ => 250,
-    }
-}
-
-fn api_operation_slow_threshold_millis(operation: &str) -> u64 {
-    match operation {
-        "persisted_runtime_snapshot_load"
-        | "stats_load"
-        | "db_totals_load"
-        | "rejection_analytics_load"
-        | "pool_hashrate_load"
-        | "luck_page_load"
-        | "luck_details_load" => 100,
-        "pending_estimate_snapshot_load" => 500,
-        _ => 250,
-    }
-}
-
 fn record_api_route_observation(
     state: &ApiState,
     route: &str,
@@ -5484,7 +5455,19 @@ fn record_api_route_observation(
     duration: Duration,
 ) {
     let failed = status.as_u16() >= 400;
-    let slow = duration.as_millis() >= u128::from(api_route_slow_threshold_millis(route));
+    let slow = duration.as_millis()
+        >= match route {
+            "stats" | "stats_history" | "health" | "miner_balance" | "payouts_recent" => 100,
+            "luck" => 500,
+            "admin_balance_overview"
+            | "admin_reconciliation_issues"
+            | "admin_reconciliation_payout_import"
+            | "admin_reconciliation_manual_offset_apply"
+            | "admin_reconciliation_payout_resolution"
+            | "admin_orphaned_block_cleanup_retry"
+            | "admin_share_diagnostics" => 500,
+            _ => 250,
+        };
     state
         .performance
         .routes
@@ -5516,7 +5499,18 @@ fn record_api_operation_observation(
     duration: Duration,
     failed: bool,
 ) {
-    let slow = duration.as_millis() >= u128::from(api_operation_slow_threshold_millis(operation));
+    let slow = duration.as_millis()
+        >= match operation {
+            "persisted_runtime_snapshot_load"
+            | "stats_load"
+            | "db_totals_load"
+            | "rejection_analytics_load"
+            | "pool_hashrate_load"
+            | "luck_page_load"
+            | "luck_details_load" => 100,
+            "pending_estimate_snapshot_load" => 500,
+            _ => 250,
+        };
     state
         .performance
         .operations
