@@ -23,6 +23,7 @@ pub struct Config {
     pub daemon_api: String,
     pub daemon_token: String,
     pub daemon_cookie_path: String,
+    #[serde(alias = "pool_fee_wallet_address")]
     pub pool_wallet_address: String,
 
     pub initial_share_difficulty: u64,
