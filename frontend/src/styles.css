@@ -1583,16 +1583,22 @@ pre.config-block {
 }
 
 .inline-code {
+  display: inline-flex;
+  align-items: center;
   background: var(--bg-elevated);
   padding: 2px 7px;
   border-radius: 8px;
   font-size: 13px;
+  line-height: 1.2;
+  vertical-align: middle;
 }
 
 .quickstart-label {
   font-size: 13px;
   color: var(--muted);
+  margin-top: 14px;
   margin-bottom: 8px;
+  line-height: 1.6;
 }
 
 .quickstart-grid {

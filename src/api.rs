@@ -84,7 +84,9 @@ const ROUND_TARGET_SECONDS: f64 = 300.0;
 const INSIGHTS_CACHE_TTL: Duration = Duration::from_secs(30);
 const REJECTION_ANALYTICS_CACHE_TTL: Duration = Duration::from_secs(30);
 const STATS_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(15);
-const CHAIN_AWARE_ORPHAN_LOOKBACK_BLOCKS: i64 = 1024;
+// Public chain-awareness only needs a short reorg window. Keeping this small
+// avoids expensive daemon lookups on hot API routes.
+const CHAIN_AWARE_ORPHAN_LOOKBACK_BLOCKS: i64 = 64;
 const MINER_BALANCE_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(5);
 const MINER_DETAIL_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(10);
 const MINER_BALANCE_RESPONSE_CACHE_MAX_ENTRIES: usize = 2048;
@@ -1679,7 +1681,7 @@ fn render_recent_payouts_section(batches: &[PublicPayoutBatch], show_view_all: b
 async fn load_ui_seo_context(route: UiRoute, state: &ApiState) -> UiSeoContext {
     let stats_snapshot = state.effective_pool_snapshot().await;
     let current_job = state.jobs.current_job();
-    let daemon_chain_height = state.node.chain_height();
+    let daemon_chain_height = state.effective_chain_height().await;
     let need_blocks = matches!(route, UiRoute::Dashboard | UiRoute::Blocks | UiRoute::Luck);
     let need_payouts = matches!(route, UiRoute::Dashboard | UiRoute::Payouts);
     let need_totals = matches!(route, UiRoute::Dashboard | UiRoute::Blocks | UiRoute::Luck);
@@ -2353,7 +2355,7 @@ async fn handle_robots_txt(State(state): State<ApiState>) -> impl IntoResponse {
 async fn handle_sitemap_xml(State(state): State<ApiState>) -> impl IntoResponse {
     let base = pool_base_url(&state);
     let store = Arc::clone(&state.store);
-    let daemon_chain_height = state.node.chain_height();
+    let daemon_chain_height = state.effective_chain_height().await;
     let (latest_block, latest_payout) = match tokio::task::spawn_blocking(
         move || -> anyhow::Result<(Option<SystemTime>, Option<SystemTime>)> {
             let latest_block = store
@@ -5167,7 +5169,7 @@ async fn handle_blocks(
 ) -> impl IntoResponse {
     let store = Arc::clone(&state.store);
     let node = Arc::clone(&state.node);
-    let daemon_chain_height = state.node.chain_height();
+    let daemon_chain_height = state.effective_chain_height().await;
 
     if query.legacy_mode() {
         let mut blocks = match tokio::task::spawn_blocking(move || {
@@ -7188,6 +7190,11 @@ fn flag_chain_mismatched_blocks(
         if block.orphaned || block.height > daemon_chain_height {
             continue;
         }
+        if daemon_chain_height.saturating_sub(block.height)
+            > CHAIN_AWARE_ORPHAN_LOOKBACK_BLOCKS as u64
+        {
+            continue;
+        }
         match node.get_block_by_height_optional(block.height) {
             Ok(Some(node_block)) if node_block.hash != block.hash => {
                 block.confirmed = false;
@@ -7212,6 +7219,11 @@ fn flag_chain_mismatched_luck_rows(
 ) {
     for row in rows {
         if row.orphaned || row.block_height > daemon_chain_height {
+            continue;
+        }
+        if daemon_chain_height.saturating_sub(row.block_height)
+            > CHAIN_AWARE_ORPHAN_LOOKBACK_BLOCKS as u64
+        {
             continue;
         }
         match node.get_block_by_height_optional(row.block_height) {
@@ -7287,7 +7299,7 @@ async fn handle_luck_history(
     let (limit, offset) = page_bounds(query.limit, query.offset);
     let store = Arc::clone(&state.store);
     let node = Arc::clone(&state.node);
-    let daemon_chain_height = state.node.chain_height();
+    let daemon_chain_height = state.effective_chain_height().await;
     let started_at = Instant::now();
 
     let (items, total) = match tokio::task::spawn_blocking(move || {
@@ -7501,7 +7513,7 @@ async fn handle_fees(
 
     let store = Arc::clone(&state.store);
     let cfg = state.config.clone();
-    let current_height = state.node.chain_height();
+    let current_height = state.effective_chain_height().await;
     let FeePageData {
         total_collected,
         total_pending,
@@ -7786,6 +7798,54 @@ impl ApiState {
         loaded
     }
 
+    async fn effective_chain_height(&self) -> u64 {
+        let live_height = self.node.chain_height();
+        if live_height > 0 {
+            return live_height;
+        }
+
+        if let Some(height) = self.jobs.current_job().map(|job| job.height) {
+            if height > 0 {
+                return height;
+            }
+        }
+
+        if let Some(height) = self
+            .persisted_runtime_snapshot()
+            .await
+            .and_then(|snapshot| snapshot.jobs.current_height)
+        {
+            if height > 0 {
+                return height;
+            }
+        }
+
+        let store = Arc::clone(&self.store);
+        match tokio::task::spawn_blocking(move || -> anyhow::Result<u64> {
+            Ok(store
+                .get_recent_blocks(1)?
+                .into_iter()
+                .next()
+                .map(|block| block.height)
+                .unwrap_or(0))
+        })
+        .await
+        {
+            Ok(Ok(height)) => height,
+            Ok(Err(err)) => {
+                tracing::warn!(error = %err, "failed loading fallback chain height from blocks");
+                0
+            }
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "fallback chain height task join failed while loading blocks"
+                );
+                0
+            }
+        }
+    }
+
     async fn effective_pool_snapshot(&self) -> PoolSnapshot {
         let mut live = self.stats.snapshot();
         if pool_snapshot_has_live_data(&live) {
@@ -7852,6 +7912,7 @@ impl ApiState {
         let started_at = Instant::now();
         let snap = self.effective_pool_snapshot().await;
         let validation = self.effective_validation_summary().await;
+        let daemon_chain_height = self.effective_chain_height().await;
         let totals = self.db_totals().await?;
         let current_job = self.jobs.current_job();
         let current_job_height = current_job.as_ref().map(|j| j.height);
@@ -7896,7 +7957,7 @@ impl ApiState {
             chain: ChainSummary {
                 current_job_height,
                 network_hashrate,
-                daemon_chain_height: self.node.chain_height(),
+                daemon_chain_height,
                 daemon_syncing: self.node.syncing(),
             },
             validation,
@@ -8554,7 +8615,7 @@ impl ApiState {
         include_pending_estimate: bool,
     ) -> anyhow::Result<MinerBalancePayload> {
         let started_at = Instant::now();
-        let chain_height = self.node.chain_height();
+        let chain_height = self.effective_chain_height().await;
         let addr = address.to_string();
         let store = Arc::clone(&self.store);
         let db_result = tokio::task::spawn_blocking(
@@ -8631,7 +8692,7 @@ impl ApiState {
     ) -> anyhow::Result<MinerDetailPayload> {
         let started_at = Instant::now();
         let store = Arc::clone(&self.store);
-        let chain_height = self.node.chain_height();
+        let chain_height = self.effective_chain_height().await;
         let provisional_cutoff = SystemTime::now()
             .checked_sub(self.config.provisional_share_delay_duration())
             .unwrap_or(UNIX_EPOCH);
@@ -8829,7 +8890,7 @@ impl ApiState {
             .as_ref()
             .map(|job| job.network_difficulty.max(1));
         let network_hashrate = self.network_hashrate_for_job(current_job.as_ref()).await;
-        let daemon_chain_height = self.node.chain_height();
+        let daemon_chain_height = self.effective_chain_height().await;
 
         let store = Arc::clone(&self.store);
         let node = Arc::clone(&self.node);
@@ -9178,7 +9239,7 @@ impl ApiState {
     }
 
     async fn db_totals(&self) -> anyhow::Result<DbTotals> {
-        let chain_height = self.node.chain_height();
+        let chain_height = self.effective_chain_height().await;
         {
             let cache = self.db_totals_cache.lock();
             if cache
@@ -10251,7 +10312,8 @@ mod tests {
     use crate::node::{NodeClient, WalletBalance, WalletOutput};
     use crate::recovery::RecoveryAgentClient;
     use crate::service_state::{
-        PersistedPayoutRuntime, PersistedRuntimeSnapshot, PersistedValidationSummary,
+        PersistedPayoutRuntime, PersistedRuntimeSnapshot, PersistedSubmitSummary,
+        PersistedValidationSummary,
     };
     use crate::stats::PoolStats;
     use crate::store::PoolStore;
@@ -11795,6 +11857,56 @@ mod tests {
         assert_eq!(payload["pool"]["shares_accepted"], 1);
         assert_eq!(payload["pool"]["shares_rejected"], 1);
         assert_eq!(payload["pool"]["total_shares"], 2);
+    }
+
+    #[test]
+    fn effective_chain_height_falls_back_to_cached_runtime_snapshot_height() {
+        let store = require_test_store!();
+        let state = test_api_state(store);
+        state.live_runtime_snapshot_cache.lock().updated_at = Some(Instant::now());
+        state.live_runtime_snapshot_cache.lock().value = Some(PersistedRuntimeSnapshot {
+            sampled_at: SystemTime::now(),
+            total_shares_accepted: 0,
+            connected_miners: 0,
+            connected_workers: 0,
+            estimated_hashrate: 0.0,
+            last_share_at: None,
+            jobs: JobRuntimeSnapshot {
+                current_height: Some(777),
+                ..JobRuntimeSnapshot::default()
+            },
+            payouts: PersistedPayoutRuntime::default(),
+            submit: PersistedSubmitSummary::default(),
+            validation: PersistedValidationSummary::default(),
+            runtime_tasks: BTreeMap::new(),
+        });
+
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        assert_eq!(runtime.block_on(state.effective_chain_height()), 777);
+    }
+
+    #[test]
+    fn effective_chain_height_falls_back_to_latest_recorded_block_height() {
+        let store = require_test_store!();
+        store
+            .add_block(&DbBlock {
+                height: 9_000_001,
+                hash: "fallback-height-block".to_string(),
+                difficulty: 10,
+                finder: "miner-height".to_string(),
+                finder_worker: "worker-height".to_string(),
+                reward: 1,
+                timestamp: SystemTime::now(),
+                confirmed: false,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("add fallback height block");
+
+        let state = test_api_state(store);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        assert_eq!(runtime.block_on(state.effective_chain_height()), 9_000_001);
     }
 
     #[test]
