@@ -46,6 +46,7 @@ pub struct MinerJob {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct JobRuntimeSnapshot {
     pub current_height: Option<u64>,
     pub current_difficulty: Option<u64>,
