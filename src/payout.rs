@@ -14,7 +14,7 @@ use crate::db::{
 };
 use crate::node::{
     http_error_body_contains, is_http_status, NodeClient, NodeStatus, WalletOutput,
-    WalletOutputRef, WalletRecipient,
+    WalletOutputRef, WalletRecipient, WalletSendHistoryEntry,
 };
 use crate::pow::{check_target, difficulty_to_target, Argon2PowHasher, PowHasher};
 use crate::protocol::{address_network, validate_miner_address_for_network, AddressNetwork};
@@ -26,6 +26,8 @@ const MIN_PAYOUT_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_PAYOUT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30);
 const MIN_PAYOUT_FEE_BUFFER: u64 = 1_000;
 const PENDING_PAYOUT_RETRY_GRACE: Duration = Duration::from_secs(15 * 60);
+const WALLET_SEND_HISTORY_PAGE_SIZE: usize = 500;
+const WALLET_SEND_MATCH_TIME_SLACK: Duration = Duration::from_secs(5 * 60);
 const PAYOUT_CONFIRMATIONS_REQUIRED: u64 = 1;
 const MIN_WALLET_SEND_SPACING: Duration = Duration::from_millis(2_100);
 const PAYOUT_TASK_SLOW_LOG_AFTER: Duration = Duration::from_millis(250);
@@ -1853,7 +1855,13 @@ impl PayoutProcessor {
         };
 
         match status.state.as_str() {
-            "accepted" | "in_progress" => Ok(()),
+            "accepted" | "in_progress" | "not_found" => self
+                .recover_prebroadcast_batch_from_wallet_sends(
+                    entries,
+                    batch_id,
+                    now,
+                    status.state.as_str(),
+                ),
             "completed" => {
                 let Some(result) = status.result else {
                     anyhow::bail!("send status completed without result payload");
@@ -1885,10 +1893,6 @@ impl PayoutProcessor {
                 );
                 Ok(())
             }
-            "not_found" => {
-                maybe_reset_stale_prebroadcast_batch(&self.store, entries, batch_id, now)?;
-                Ok(())
-            }
             other => {
                 tracing::warn!(
                     batch_id = %batch_id,
@@ -1896,6 +1900,105 @@ impl PayoutProcessor {
                     "unknown daemon send status state"
                 );
                 Ok(())
+            }
+        }
+    }
+
+    fn recover_prebroadcast_batch_from_wallet_sends(
+        &self,
+        entries: &[PendingPayout],
+        batch_id: &str,
+        now: SystemTime,
+        status_state: &str,
+    ) -> anyhow::Result<()> {
+        let matching_send = match self.find_matching_wallet_send_for_pending_batch(entries, now) {
+            Ok(send) => send,
+            Err(err) if is_http_status(&err, 404) => {
+                tracing::warn!(
+                    batch_id = %batch_id,
+                    state = %status_state,
+                    error = %err,
+                    "daemon does not expose wallet send history; leaving payout batch frozen for manual recovery"
+                );
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        };
+
+        if let Some(send) = matching_send {
+            let fee_members = allocate_pending_batch_fees(entries, send.fee);
+            self.store
+                .record_pending_payout_batch_broadcast(&fee_members, batch_id, &send.txid)?;
+            tracing::info!(
+                batch_id = %batch_id,
+                state = %status_state,
+                recipients = entries.len(),
+                tx = %send.txid,
+                fee = send.fee,
+                chain_state = %send.chain_state,
+                confirmations = send.confirmations,
+                in_mempool = send.in_mempool,
+                "recovered payout batch broadcast from wallet send history"
+            );
+            return Ok(());
+        }
+
+        maybe_reset_stale_prebroadcast_batch(
+            &self.store,
+            entries,
+            batch_id,
+            now,
+            "daemon send status unresolved and no matching wallet send history",
+        )?;
+        Ok(())
+    }
+
+    fn find_matching_wallet_send_for_pending_batch(
+        &self,
+        entries: &[PendingPayout],
+        now: SystemTime,
+    ) -> anyhow::Result<Option<WalletSendHistoryEntry>> {
+        let expected_total = pending_batch_total_amount(entries);
+        let expected_recipients = pending_batch_recipient_signature(entries);
+        if expected_total == 0 || expected_recipients.is_empty() {
+            return Ok(None);
+        }
+
+        let (earliest_timestamp, latest_timestamp) = pending_batch_send_time_window(entries, now);
+        let mut offset = 0usize;
+        loop {
+            let page = self
+                .node
+                .get_wallet_sends(WALLET_SEND_HISTORY_PAGE_SIZE, offset)?;
+            let page_len = page.sends.len();
+            if page_len == 0 {
+                return Ok(None);
+            }
+
+            let mut reached_older_than_attempt = false;
+            for send in page.sends {
+                if send.timestamp < earliest_timestamp {
+                    reached_older_than_attempt = true;
+                    break;
+                }
+                if wallet_send_matches_pending_batch(
+                    &send,
+                    expected_total,
+                    &expected_recipients,
+                    earliest_timestamp,
+                    latest_timestamp,
+                ) {
+                    return Ok(Some(send));
+                }
+            }
+
+            if reached_older_than_attempt {
+                return Ok(None);
+            }
+
+            offset = offset.saturating_add(page_len);
+            if offset >= page.total {
+                return Ok(None);
             }
         }
     }
@@ -2548,6 +2651,14 @@ fn pending_send_age(p: &PendingPayout, now: SystemTime) -> Duration {
         .unwrap_or_default()
 }
 
+fn max_pending_send_age(entries: &[PendingPayout], now: SystemTime) -> Duration {
+    entries
+        .iter()
+        .map(|entry| pending_send_age(entry, now))
+        .max()
+        .unwrap_or_default()
+}
+
 fn should_reset_stale_prebroadcast_pending_payout(
     pending: &PendingPayout,
     now: SystemTime,
@@ -2565,12 +2676,9 @@ fn maybe_reset_stale_prebroadcast_batch(
     entries: &[PendingPayout],
     batch_id: &str,
     now: SystemTime,
+    reason: &str,
 ) -> anyhow::Result<()> {
-    let send_age = entries
-        .iter()
-        .map(|entry| pending_send_age(entry, now))
-        .max()
-        .unwrap_or_default();
+    let send_age = max_pending_send_age(entries, now);
     if send_age < PENDING_PAYOUT_RETRY_GRACE {
         return Ok(());
     }
@@ -2579,9 +2687,69 @@ fn maybe_reset_stale_prebroadcast_batch(
         batch_id = %batch_id,
         recipients = count,
         send_age_secs = send_age.as_secs(),
+        reason = %reason,
         "reset stale pre-broadcast payout batch for retry"
     );
     Ok(())
+}
+
+fn pending_batch_total_amount(entries: &[PendingPayout]) -> u64 {
+    entries
+        .iter()
+        .fold(0u64, |acc, entry| acc.saturating_add(entry.amount))
+}
+
+fn pending_batch_recipient_signature(entries: &[PendingPayout]) -> Vec<(String, u64)> {
+    let mut recipients = entries
+        .iter()
+        .map(|entry| (entry.address.trim().to_string(), entry.amount))
+        .collect::<Vec<_>>();
+    recipients.sort_unstable();
+    recipients
+}
+
+fn wallet_send_recipient_signature(send: &WalletSendHistoryEntry) -> Vec<(String, u64)> {
+    let mut recipients = send
+        .recipients
+        .iter()
+        .map(|recipient| (recipient.address.trim().to_string(), recipient.amount))
+        .collect::<Vec<_>>();
+    recipients.sort_unstable();
+    recipients
+}
+
+fn wallet_send_matches_pending_batch(
+    send: &WalletSendHistoryEntry,
+    expected_total: u64,
+    expected_recipients: &[(String, u64)],
+    earliest_timestamp: i64,
+    latest_timestamp: i64,
+) -> bool {
+    !send.txid.trim().is_empty()
+        && send.total_amount == expected_total
+        && send.timestamp >= earliest_timestamp
+        && send.timestamp <= latest_timestamp
+        && wallet_send_recipient_signature(send) == expected_recipients
+}
+
+fn pending_batch_send_time_window(entries: &[PendingPayout], now: SystemTime) -> (i64, i64) {
+    let now_timestamp = system_time_unix_seconds(now);
+    let earliest_send_started_at = entries
+        .iter()
+        .map(|entry| system_time_unix_seconds(entry.send_started_at.unwrap_or(entry.initiated_at)))
+        .min()
+        .unwrap_or(now_timestamp);
+    let slack = WALLET_SEND_MATCH_TIME_SLACK.as_secs().min(i64::MAX as u64) as i64;
+    (
+        earliest_send_started_at.saturating_sub(slack),
+        now_timestamp.saturating_add(slack),
+    )
+}
+
+fn system_time_unix_seconds(ts: SystemTime) -> i64 {
+    ts.duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
+        .unwrap_or_default()
 }
 
 fn sum_output_amounts(outputs: &[WalletOutput]) -> u64 {
@@ -4037,6 +4205,115 @@ mod tests {
         assert_eq!(pending.tx_hash.as_deref(), Some("tx-1"));
         assert_eq!(pending.fee, Some(2));
         assert!(pending.sent_at.is_some());
+    }
+
+    #[test]
+    fn accepted_send_status_recovers_prebroadcast_batch_from_wallet_sends() {
+        let store = require_test_store!();
+        store
+            .update_balance(&Balance {
+                address: "addr1".to_string(),
+                pending: 100,
+                paid: 0,
+            })
+            .expect("seed balance");
+        store
+            .create_pending_payout("addr1", 100)
+            .expect("create pending payout");
+        store
+            .mark_pending_payouts_send_started_batch(&["addr1".to_string()], "batch-1")
+            .expect("freeze pending payout");
+
+        let idem = payout_batch_idempotency_key("batch-1");
+        let status_route = format!("/api/wallet/send/advanced/status?idempotency_key={idem}");
+        let sends_route = "/api/wallet/sends?limit=500&offset=0&order=desc".to_string();
+        let send_timestamp = system_time_unix_seconds(SystemTime::now());
+        let sends_body = format!(
+            r#"{{"total":1,"sends":[{{"txid":"tx-history","timestamp":{send_timestamp},"chain_state":"confirmed","confirmations":1,"in_mempool":false,"fee":4,"total_amount":100,"recipients":[{{"address":"addr1","amount":100}}]}}]}}"#
+        );
+        let base_url = spawn_json_router_server(
+            HashMap::from([
+                (
+                    status_route,
+                    r#"{"idempotency_key":"ignored","state":"accepted","original_status":202,"result":null}"#
+                        .to_string(),
+                ),
+                (sends_route, sends_body),
+            ]),
+            2,
+        );
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+        );
+
+        processor.reconcile_pending_payouts();
+
+        let pending = store
+            .get_pending_payout("addr1")
+            .expect("lookup pending payout")
+            .expect("pending payout exists");
+        assert_eq!(pending.tx_hash.as_deref(), Some("tx-history"));
+        assert_eq!(pending.fee, Some(4));
+        assert!(pending.sent_at.is_some());
+    }
+
+    #[test]
+    fn accepted_send_status_without_wallet_send_resets_stale_batch_for_retry() {
+        let store = require_test_store!();
+        store
+            .update_balance(&Balance {
+                address: "addr1".to_string(),
+                pending: 100,
+                paid: 0,
+            })
+            .expect("seed balance");
+        store
+            .create_pending_payout("addr1", 100)
+            .expect("create pending payout");
+        store
+            .mark_pending_payouts_send_started_batch(&["addr1".to_string()], "batch-1")
+            .expect("freeze pending payout");
+
+        let mut pending = store
+            .get_pending_payout("addr1")
+            .expect("lookup pending payout")
+            .expect("pending payout exists");
+        pending.send_started_at =
+            Some(SystemTime::now() - PENDING_PAYOUT_RETRY_GRACE - Duration::from_secs(1));
+
+        let idem = payout_batch_idempotency_key("batch-1");
+        let status_route = format!("/api/wallet/send/advanced/status?idempotency_key={idem}");
+        let sends_route = "/api/wallet/sends?limit=500&offset=0&order=desc".to_string();
+        let base_url = spawn_json_router_server(
+            HashMap::from([
+                (
+                    status_route,
+                    r#"{"idempotency_key":"ignored","state":"accepted","original_status":202,"result":null}"#
+                        .to_string(),
+                ),
+                (sends_route, r#"{"total":0,"sends":[]}"#.to_string()),
+            ]),
+            2,
+        );
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+        );
+
+        processor
+            .reconcile_prebroadcast_pending_batch(&[pending], SystemTime::now())
+            .expect("reconcile accepted stale batch");
+
+        let reset = store
+            .get_pending_payout("addr1")
+            .expect("lookup pending payout")
+            .expect("pending payout remains");
+        assert!(reset.send_started_at.is_none());
+        assert!(reset.batch_id.is_none());
+        assert!(reset.tx_hash.is_none());
     }
 
     #[test]

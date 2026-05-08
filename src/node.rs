@@ -99,6 +99,42 @@ pub struct WalletSendStatusResponse {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct WalletSendsResponse {
+    #[serde(default)]
+    pub total: usize,
+    #[serde(default)]
+    pub sends: Vec<WalletSendHistoryEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WalletSendHistoryEntry {
+    #[serde(default)]
+    pub txid: String,
+    #[serde(default)]
+    pub timestamp: i64,
+    #[serde(default)]
+    pub chain_state: String,
+    #[serde(default)]
+    pub confirmations: u64,
+    #[serde(default)]
+    pub in_mempool: bool,
+    #[serde(default)]
+    pub fee: u64,
+    #[serde(default)]
+    pub total_amount: u64,
+    #[serde(default)]
+    pub recipients: Vec<WalletSendHistoryRecipient>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WalletSendHistoryRecipient {
+    #[serde(default)]
+    pub address: String,
+    #[serde(default)]
+    pub amount: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct WalletLoadResponse {
     pub loaded: bool,
     pub address: String,
@@ -416,6 +452,11 @@ impl NodeClient {
     ) -> Result<WalletSendStatusResponse> {
         let mut path = "/api/wallet/send/advanced/status?idempotency_key=".to_string();
         path.push_str(&urlencoding::encode(idempotency_key));
+        self.get_json(&path)
+    }
+
+    pub fn get_wallet_sends(&self, limit: usize, offset: usize) -> Result<WalletSendsResponse> {
+        let path = format!("/api/wallet/sends?limit={limit}&offset={offset}&order=desc");
         self.get_json(&path)
     }
 
