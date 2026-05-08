@@ -88,6 +88,17 @@ pub struct WalletSendResponse {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct WalletSendStatusResponse {
+    pub state: String,
+    #[serde(default)]
+    pub original_status: u16,
+    #[serde(default)]
+    pub result: Option<WalletSendResponse>,
+    #[serde(default)]
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct WalletLoadResponse {
     pub loaded: bool,
     pub address: String,
@@ -397,6 +408,15 @@ impl NodeClient {
             change_split: (change_split > 1).then_some(change_split),
         };
         self.post_json_with_headers("/api/wallet/send/advanced", &payload, &extra)
+    }
+
+    pub fn get_wallet_send_advanced_status(
+        &self,
+        idempotency_key: &str,
+    ) -> Result<WalletSendStatusResponse> {
+        let mut path = "/api/wallet/send/advanced/status?idempotency_key=".to_string();
+        path.push_str(&urlencoding::encode(idempotency_key));
+        self.get_json(&path)
     }
 
     pub fn open_events_stream(&self) -> Result<Response> {

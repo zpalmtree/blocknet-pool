@@ -875,33 +875,20 @@ impl PayoutProcessor {
         };
 
         let now = SystemTime::now();
-        let mut reset_batches = HashSet::<String>::new();
+        let mut prebroadcast_grouped = HashMap::<String, Vec<PendingPayout>>::new();
         for entry in pending {
             let queued_age = now.duration_since(entry.initiated_at).unwrap_or_default();
             if should_reset_stale_prebroadcast_pending_payout(&entry, now) {
                 let send_age = pending_send_age(&entry, now);
                 if let Some(batch_id) = entry
                     .batch_id
-                    .as_deref()
+                    .clone()
                     .filter(|value| !value.trim().is_empty())
                 {
-                    if reset_batches.insert(batch_id.to_string()) {
-                        if let Err(err) = self.store.reset_pending_payout_batch_send_state(batch_id)
-                        {
-                            tracing::warn!(
-                                batch_id = %batch_id,
-                                error = %err,
-                                "failed to reset stale pre-broadcast payout batch on startup"
-                            );
-                        } else {
-                            tracing::warn!(
-                                batch_id = %batch_id,
-                                queued_age_secs = queued_age.as_secs(),
-                                send_age_secs = send_age.as_secs(),
-                                "reset stale pre-broadcast payout batch on startup"
-                            );
-                        }
-                    }
+                    prebroadcast_grouped
+                        .entry(batch_id)
+                        .or_default()
+                        .push(entry);
                 } else if let Err(err) = self.store.reset_pending_payout_send_state(&entry.address)
                 {
                     tracing::warn!(
@@ -922,6 +909,24 @@ impl PayoutProcessor {
                 continue;
             }
 
+            if entry
+                .tx_hash
+                .as_deref()
+                .is_none_or(|tx| tx.trim().is_empty())
+            {
+                if let Some(batch_id) = entry
+                    .batch_id
+                    .clone()
+                    .filter(|value| !value.trim().is_empty())
+                {
+                    prebroadcast_grouped
+                        .entry(batch_id)
+                        .or_default()
+                        .push(entry);
+                    continue;
+                }
+            }
+
             if queued_age > Duration::from_secs(60 * 60) {
                 if entry.send_started_at.is_some() {
                     tracing::warn!(
@@ -938,6 +943,21 @@ impl PayoutProcessor {
                         "stale queued payout has not reached its first send attempt yet"
                     );
                 }
+            }
+        }
+
+        for entries in prebroadcast_grouped.into_values() {
+            if let Err(err) = self.reconcile_prebroadcast_pending_batch(&entries, now) {
+                let batch_id = entries
+                    .first()
+                    .and_then(|entry| entry.batch_id.as_deref())
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or("legacy");
+                tracing::warn!(
+                    batch_id = %batch_id,
+                    error = %err,
+                    "failed to recover pre-broadcast payout batch on startup"
+                );
             }
         }
     }
@@ -1722,7 +1742,7 @@ impl PayoutProcessor {
 
         let now = SystemTime::now();
         let mut grouped = HashMap::<String, Vec<PendingPayout>>::new();
-        let mut reset_batches = HashSet::<String>::new();
+        let mut prebroadcast_grouped = HashMap::<String, Vec<PendingPayout>>::new();
         for entry in pending {
             if let Some(tx_hash) = entry
                 .tx_hash
@@ -1738,36 +1758,24 @@ impl PayoutProcessor {
                 continue;
             }
 
+            if let Some(batch_id) = entry
+                .batch_id
+                .clone()
+                .filter(|value| !value.trim().is_empty())
+            {
+                prebroadcast_grouped
+                    .entry(batch_id)
+                    .or_default()
+                    .push(entry);
+                continue;
+            }
+
             if !should_reset_stale_prebroadcast_pending_payout(&entry, now) {
                 continue;
             }
 
             let send_age = pending_send_age(&entry, now);
-            if let Some(batch_id) = entry
-                .batch_id
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-            {
-                if reset_batches.insert(batch_id.to_string()) {
-                    match self.store.reset_pending_payout_batch_send_state(batch_id) {
-                        Ok(count) => {
-                            tracing::warn!(
-                                batch_id = %batch_id,
-                                recipients = count,
-                                send_age_secs = send_age.as_secs(),
-                                "reset stale pre-broadcast payout batch for retry"
-                            );
-                        }
-                        Err(err) => {
-                            tracing::warn!(
-                                batch_id = %batch_id,
-                                error = %err,
-                                "failed to reset stale pre-broadcast payout batch"
-                            );
-                        }
-                    }
-                }
-            } else if let Err(err) = self.store.reset_pending_payout_send_state(&entry.address) {
+            if let Err(err) = self.store.reset_pending_payout_send_state(&entry.address) {
                 tracing::warn!(
                     address = %entry.address,
                     error = %err,
@@ -1779,6 +1787,21 @@ impl PayoutProcessor {
                     amount = entry.amount,
                     send_age_secs = send_age.as_secs(),
                     "reset stale pre-broadcast pending payout for retry"
+                );
+            }
+        }
+
+        for entries in prebroadcast_grouped.into_values() {
+            if let Err(err) = self.reconcile_prebroadcast_pending_batch(&entries, now) {
+                let batch_id = entries
+                    .first()
+                    .and_then(|entry| entry.batch_id.as_deref())
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or("legacy");
+                tracing::warn!(
+                    batch_id = %batch_id,
+                    error = %err,
+                    "failed to recover pre-broadcast payout batch"
                 );
             }
         }
@@ -1795,6 +1818,84 @@ impl PayoutProcessor {
                     error = %err,
                     "failed to reconcile pending payout batch"
                 );
+            }
+        }
+    }
+
+    fn reconcile_prebroadcast_pending_batch(
+        &self,
+        entries: &[PendingPayout],
+        now: SystemTime,
+    ) -> anyhow::Result<()> {
+        let Some(first) = entries.first() else {
+            return Ok(());
+        };
+        let Some(batch_id) = first
+            .batch_id
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        else {
+            return Ok(());
+        };
+
+        let idempotency_key = payout_batch_idempotency_key(batch_id);
+        let status = match self.node.get_wallet_send_advanced_status(&idempotency_key) {
+            Ok(status) => status,
+            Err(err) if is_http_status(&err, 404) => {
+                tracing::warn!(
+                    batch_id = %batch_id,
+                    error = %err,
+                    "daemon does not expose wallet send status; leaving payout batch frozen for manual recovery"
+                );
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        };
+
+        match status.state.as_str() {
+            "accepted" | "in_progress" => Ok(()),
+            "completed" => {
+                let Some(result) = status.result else {
+                    anyhow::bail!("send status completed without result payload");
+                };
+                let txid = result.txid.trim();
+                if txid.is_empty() {
+                    anyhow::bail!("send status completed without txid");
+                }
+                let fee_members = allocate_pending_batch_fees(entries, result.fee);
+                self.store
+                    .record_pending_payout_batch_broadcast(&fee_members, batch_id, txid)?;
+                tracing::info!(
+                    batch_id = %batch_id,
+                    recipients = entries.len(),
+                    tx = %txid,
+                    fee = result.fee,
+                    "recovered payout batch broadcast from daemon send status"
+                );
+                Ok(())
+            }
+            "failed" => {
+                let reset = self.store.reset_pending_payout_batch_send_state(batch_id)?;
+                tracing::warn!(
+                    batch_id = %batch_id,
+                    recipients = reset,
+                    original_status = status.original_status,
+                    error = %status.error,
+                    "daemon reported terminal payout send failure; reset batch for retry"
+                );
+                Ok(())
+            }
+            "not_found" => {
+                maybe_reset_stale_prebroadcast_batch(&self.store, entries, batch_id, now)?;
+                Ok(())
+            }
+            other => {
+                tracing::warn!(
+                    batch_id = %batch_id,
+                    state = %other,
+                    "unknown daemon send status state"
+                );
+                Ok(())
             }
         }
     }
@@ -2459,6 +2560,30 @@ fn should_reset_stale_prebroadcast_pending_payout(
         && pending_send_age(pending, now) >= PENDING_PAYOUT_RETRY_GRACE
 }
 
+fn maybe_reset_stale_prebroadcast_batch(
+    store: &PoolStore,
+    entries: &[PendingPayout],
+    batch_id: &str,
+    now: SystemTime,
+) -> anyhow::Result<()> {
+    let send_age = entries
+        .iter()
+        .map(|entry| pending_send_age(entry, now))
+        .max()
+        .unwrap_or_default();
+    if send_age < PENDING_PAYOUT_RETRY_GRACE {
+        return Ok(());
+    }
+    let count = store.reset_pending_payout_batch_send_state(batch_id)?;
+    tracing::warn!(
+        batch_id = %batch_id,
+        recipients = count,
+        send_age_secs = send_age.as_secs(),
+        "reset stale pre-broadcast payout batch for retry"
+    );
+    Ok(())
+}
+
 fn sum_output_amounts(outputs: &[WalletOutput]) -> u64 {
     outputs
         .iter()
@@ -2820,6 +2945,36 @@ fn allocate_batch_fees(
             PendingPayoutBatchMember {
                 address: candidate.balance.address.clone(),
                 amount: candidate.pending.amount,
+                fee,
+            }
+        })
+        .collect()
+}
+
+fn allocate_pending_batch_fees(
+    entries: &[PendingPayout],
+    total_fee: u64,
+) -> Vec<PendingPayoutBatchMember> {
+    let total_amount = entries
+        .iter()
+        .fold(0u64, |acc, entry| acc.saturating_add(entry.amount))
+        .max(1);
+    let mut remaining_fee = total_fee;
+    entries
+        .iter()
+        .enumerate()
+        .map(|(idx, entry)| {
+            let fee = if idx + 1 == entries.len() {
+                remaining_fee
+            } else {
+                let proportional =
+                    ((total_fee as u128) * (entry.amount as u128) / (total_amount as u128)) as u64;
+                proportional.min(remaining_fee)
+            };
+            remaining_fee = remaining_fee.saturating_sub(fee);
+            PendingPayoutBatchMember {
+                address: entry.address.clone(),
+                amount: entry.amount,
                 fee,
             }
         })
@@ -3839,6 +3994,136 @@ mod tests {
             .expect("recent payouts");
         assert_eq!(payouts.len(), 1);
         assert_eq!(payouts[0].tx_hash, "tx-1");
+    }
+
+    #[test]
+    fn completed_send_status_recovers_prebroadcast_batch_tx_hash() {
+        let store = require_test_store!();
+        store
+            .update_balance(&Balance {
+                address: "addr1".to_string(),
+                pending: 100,
+                paid: 0,
+            })
+            .expect("seed balance");
+        store
+            .create_pending_payout("addr1", 100)
+            .expect("create pending payout");
+        store
+            .mark_pending_payouts_send_started_batch(&["addr1".to_string()], "batch-1")
+            .expect("freeze pending payout");
+
+        let idem = payout_batch_idempotency_key("batch-1");
+        let route = format!("/api/wallet/send/advanced/status?idempotency_key={idem}");
+        let base_url = spawn_json_router_server(
+            HashMap::from([(
+                route,
+                r#"{"idempotency_key":"ignored","state":"completed","original_status":200,"result":{"txid":"tx-1","fee":2,"change":0,"change_split":1,"input_total":102,"input_count":1,"dry_run":false,"recipients":[{"address":"addr1","amount":100}]}}"#.to_string(),
+            )]),
+            2,
+        );
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+        );
+
+        processor.reconcile_pending_payouts();
+
+        let pending = store
+            .get_pending_payout("addr1")
+            .expect("lookup pending payout")
+            .expect("pending payout exists");
+        assert_eq!(pending.tx_hash.as_deref(), Some("tx-1"));
+        assert_eq!(pending.fee, Some(2));
+        assert!(pending.sent_at.is_some());
+    }
+
+    #[test]
+    fn startup_recovery_uses_send_status_before_retry_reset() {
+        let store = require_test_store!();
+        store
+            .update_balance(&Balance {
+                address: "addr1".to_string(),
+                pending: 100,
+                paid: 0,
+            })
+            .expect("seed balance");
+        store
+            .create_pending_payout("addr1", 100)
+            .expect("create pending payout");
+        store
+            .mark_pending_payouts_send_started_batch(&["addr1".to_string()], "batch-1")
+            .expect("freeze pending payout");
+
+        let idem = payout_batch_idempotency_key("batch-1");
+        let route = format!("/api/wallet/send/advanced/status?idempotency_key={idem}");
+        let base_url = spawn_json_router_server(
+			HashMap::from([(
+				route,
+				r#"{"idempotency_key":"ignored","state":"completed","original_status":200,"result":{"txid":"tx-startup","fee":3,"change":0,"change_split":1,"input_total":103,"input_count":1,"dry_run":false,"recipients":[{"address":"addr1","amount":100}]}}"#.to_string(),
+			)]),
+			1,
+		);
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+        );
+
+        processor.recover_pending_payouts();
+
+        let pending = store
+            .get_pending_payout("addr1")
+            .expect("lookup pending payout")
+            .expect("pending payout exists");
+        assert_eq!(pending.tx_hash.as_deref(), Some("tx-startup"));
+        assert_eq!(pending.fee, Some(3));
+        assert!(pending.sent_at.is_some());
+    }
+
+    #[test]
+    fn missing_send_status_endpoint_leaves_prebroadcast_batch_frozen() {
+        let store = require_test_store!();
+        store
+            .update_balance(&Balance {
+                address: "addr1".to_string(),
+                pending: 100,
+                paid: 0,
+            })
+            .expect("seed balance");
+        store
+            .create_pending_payout("addr1", 100)
+            .expect("create pending payout");
+        store
+            .mark_pending_payouts_send_started_batch(&["addr1".to_string()], "batch-1")
+            .expect("freeze pending payout");
+
+        let mut pending = store
+            .get_pending_payout("addr1")
+            .expect("lookup pending payout")
+            .expect("pending payout exists");
+        pending.send_started_at =
+            Some(SystemTime::now() - PENDING_PAYOUT_RETRY_GRACE - Duration::from_secs(1));
+
+        let base_url = spawn_json_router_server(HashMap::new(), 1);
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+        );
+
+        processor
+            .reconcile_prebroadcast_pending_batch(&[pending], SystemTime::now())
+            .expect("reconcile missing status endpoint");
+
+        let still_pending = store
+            .get_pending_payout("addr1")
+            .expect("lookup pending payout")
+            .expect("pending payout remains");
+        assert!(still_pending.send_started_at.is_some());
+        assert_eq!(still_pending.batch_id.as_deref(), Some("batch-1"));
+        assert!(still_pending.tx_hash.is_none());
     }
 
     #[test]
