@@ -255,16 +255,33 @@ ssh "${host}" "set -euo pipefail; \
   fi"
 
 echo "==> verifying daemon API"
-ssh "${host}" "set -euo pipefail; \
-  if [[ '${service}' == '${legacy_service}' ]] && [[ -f /etc/blocknet/recovery/primary.env ]] && [[ -f /etc/blocknet/recovery/standby.env ]]; then \
-    token_primary=\$(cat /var/lib/blocknet/data/api.cookie); \
-    token_standby=\$(cat /var/lib/blocknet-standby/data/api.cookie); \
-    curl -fsS -H \"Authorization: Bearer \${token_primary}\" http://127.0.0.1:18331/api/status >/dev/null; \
-    curl -fsS -H \"Authorization: Bearer \${token_standby}\" http://127.0.0.1:18332/api/status >/dev/null; \
-    sudo journalctl -u 'blocknetd@primary.service' --no-pager -n 20; \
-    sudo journalctl -u 'blocknetd@standby.service' --no-pager -n 20; \
-  else \
-    token=\$(cat /var/lib/blocknet/data/api.cookie); \
-    curl -fsS -H \"Authorization: Bearer \${token}\" http://127.0.0.1:8332/api/status >/dev/null; \
-    sudo journalctl -u '${service}' --no-pager -n 30; \
-  fi"
+ssh "${host}" "SERVICE='${service}' LEGACY_SERVICE='${legacy_service}' bash -s" <<'REMOTE'
+set -euo pipefail
+
+read_cookie() {
+  local path="$1"
+  local i
+  for i in $(seq 1 30); do
+    if sudo test -s "${path}"; then
+      sudo cat "${path}"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "api cookie not available at ${path}" >&2
+  return 1
+}
+
+if [[ "${SERVICE}" == "${LEGACY_SERVICE}" ]] && [[ -f /etc/blocknet/recovery/primary.env ]] && [[ -f /etc/blocknet/recovery/standby.env ]]; then
+  token_primary="$(read_cookie /var/lib/blocknet/data/api.cookie)"
+  token_standby="$(read_cookie /var/lib/blocknet-standby/data/api.cookie)"
+  curl -fsS -H "Authorization: Bearer ${token_primary}" http://127.0.0.1:18331/api/status >/dev/null
+  curl -fsS -H "Authorization: Bearer ${token_standby}" http://127.0.0.1:18332/api/status >/dev/null
+  sudo journalctl -u 'blocknetd@primary.service' --no-pager -n 20
+  sudo journalctl -u 'blocknetd@standby.service' --no-pager -n 20
+else
+  token="$(read_cookie /var/lib/blocknet/data/api.cookie)"
+  curl -fsS -H "Authorization: Bearer ${token}" http://127.0.0.1:8332/api/status >/dev/null
+  sudo journalctl -u "${SERVICE}" --no-pager -n 30
+fi
+REMOTE
