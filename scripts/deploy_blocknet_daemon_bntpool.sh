@@ -167,7 +167,7 @@ release_suffix="$(git -C "${daemon_repo}" rev-parse --short "${resolved_ref}")"
 
 if [[ "${skip_build}" != "1" ]]; then
   echo "==> building blocknet-core daemon locally"
-  "${repo_dir}/scripts/build_blocknet_daemon.sh" \
+  bash "${repo_dir}/scripts/build_blocknet_daemon.sh" \
     --daemon-repo "${daemon_repo}" \
     --daemon-branch "${required_branch}" \
     --output "${local_binary}"
