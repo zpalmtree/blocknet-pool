@@ -1781,7 +1781,11 @@ fn runtime_snapshot_age(
     sampled_at: SystemTime,
     snapshot: Option<&PersistedRuntimeSnapshot>,
 ) -> Option<Duration> {
-    snapshot.and_then(|snapshot| sampled_at.duration_since(snapshot.sampled_at).ok())
+    snapshot.map(|snapshot| {
+        sampled_at
+            .duration_since(snapshot.sampled_at)
+            .unwrap_or_default()
+    })
 }
 
 fn age_seconds_since(sampled_at: SystemTime, timestamp: Option<SystemTime>) -> Option<u64> {
@@ -2274,9 +2278,9 @@ mod tests {
     use super::{
         daemon_slow_block_state, parse_proc_stat_metrics, payout_queue_state,
         pool_activity_loss_state, reference_height_divergence_state, render_metrics,
-        share_progress_state, summarize_state, validation_backlog_state, MonitorSnapshot,
-        PendingPayoutSummary, ProcessMetrics, ReferenceHeightSample, SummaryStateInput,
-        STRATUM_SNAPSHOT_STALE_AFTER,
+        runtime_snapshot_age, share_progress_state, summarize_state, validation_backlog_state,
+        MonitorSnapshot, PendingPayoutSummary, ProcessMetrics, ReferenceHeightSample,
+        SummaryStateInput, STRATUM_SNAPSHOT_STALE_AFTER,
     };
     use crate::config::Config;
     use pool_runtime::jobs::JobRuntimeSnapshot;
@@ -2545,6 +2549,18 @@ mod tests {
         snapshot.last_share_at = Some(now - Duration::from_secs(10));
         assert!(
             pool_activity_loss_state(now, Some(&snapshot), STRATUM_SNAPSHOT_STALE_AFTER).is_none()
+        );
+    }
+
+    #[test]
+    fn runtime_snapshot_age_treats_future_snapshot_as_fresh() {
+        let now = SystemTime::now();
+        let mut snapshot = sample_runtime_snapshot();
+        snapshot.sampled_at = now + Duration::from_secs(2);
+
+        assert_eq!(
+            runtime_snapshot_age(now, Some(&snapshot)),
+            Some(Duration::ZERO)
         );
     }
 
