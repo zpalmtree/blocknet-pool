@@ -73,6 +73,47 @@ pub(crate) struct WalletSendResponse {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub(crate) struct WalletSendStatusResponse {
+    pub state: String,
+    #[serde(default)]
+    pub original_status: u16,
+    #[serde(default)]
+    pub result: Option<WalletSendResponse>,
+    #[serde(default)]
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct WalletSendsResponse {
+    #[serde(default)]
+    pub total: usize,
+    #[serde(default)]
+    pub sends: Vec<WalletSendHistoryEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct WalletSendHistoryEntry {
+    #[serde(default)]
+    pub txid: String,
+    #[serde(default)]
+    pub timestamp: i64,
+    #[serde(default)]
+    pub fee: u64,
+    #[serde(default)]
+    pub total_amount: u64,
+    #[serde(default)]
+    pub recipients: Vec<WalletSendHistoryRecipient>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct WalletSendHistoryRecipient {
+    #[serde(default)]
+    pub address: String,
+    #[serde(default)]
+    pub amount: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct WalletAddressResponse {
     pub address: String,
     pub view_only: bool,
@@ -335,6 +376,24 @@ impl NodeClient {
             (!dry_run && !idempotency_key.is_empty())
                 .then_some(("Idempotency-Key", idempotency_key)),
         )
+    }
+
+    pub(crate) fn get_wallet_send_advanced_status(
+        &self,
+        idempotency_key: &str,
+    ) -> Result<WalletSendStatusResponse> {
+        let mut path = "/api/wallet/send/advanced/status?idempotency_key=".to_string();
+        path.push_str(&urlencoding::encode(idempotency_key));
+        self.get_json(&path)
+    }
+
+    pub(crate) fn get_wallet_sends(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<WalletSendsResponse> {
+        let path = format!("/api/wallet/sends?limit={limit}&offset={offset}&order=desc");
+        self.get_json(&path)
     }
 
     pub(crate) fn open_events_stream(&self) -> Result<Response> {
