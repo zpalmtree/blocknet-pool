@@ -1299,9 +1299,7 @@ impl PayoutProcessor {
                 return;
             }
         };
-        if reconciliation_blockers.orphaned_block_issue_count > 0
-            || reconciliation_blockers.unresolved_completed_payout_rows > 0
-        {
+        if reconciliation_blockers.orphaned_block_issue_count > 0 {
             tracing::warn!(
                 orphaned_block_issue_count = reconciliation_blockers.orphaned_block_issue_count,
                 orphaned_unpaid_amount = reconciliation_blockers.orphaned_unpaid_amount,
@@ -1310,6 +1308,33 @@ impl PayoutProcessor {
                 "payouts blocked by unresolved live reconciliation issues"
             );
             return;
+        }
+        if reconciliation_blockers.unresolved_completed_payout_rows > 0 {
+            let missing_completed_payouts = match self.unreconciled_completed_payouts_missing() {
+                Ok(missing) => missing,
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        unresolved_completed_payout_rows =
+                            reconciliation_blockers.unresolved_completed_payout_rows,
+                        "failed to check unresolved completed payouts against daemon; skipping payout tick"
+                    );
+                    return;
+                }
+            };
+            if missing_completed_payouts {
+                tracing::warn!(
+                    unresolved_completed_payout_rows =
+                        reconciliation_blockers.unresolved_completed_payout_rows,
+                    "payouts blocked by completed payouts missing from daemon chain"
+                );
+                return;
+            }
+            tracing::warn!(
+                unresolved_completed_payout_rows =
+                    reconciliation_blockers.unresolved_completed_payout_rows,
+                "historical unreconciled completed payout rows are still present on daemon chain; allowing payout tick"
+            );
         }
 
         let now = SystemTime::now();
@@ -2001,6 +2026,21 @@ impl PayoutProcessor {
                 return Ok(None);
             }
         }
+    }
+
+    fn unreconciled_completed_payouts_missing(&self) -> anyhow::Result<bool> {
+        let rows = self.store.list_unreconciled_completed_payout_rows()?;
+        let mut tx_hashes = HashSet::<String>::new();
+        for row in rows {
+            let tx_hash = row.tx_hash.trim();
+            if tx_hash.is_empty() || !tx_hashes.insert(tx_hash.to_string()) {
+                continue;
+            }
+            if self.node.get_tx_status_optional(tx_hash)?.is_none() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn reconcile_pending_batch(&self, entries: &[PendingPayout]) -> anyhow::Result<()> {
@@ -4401,6 +4441,50 @@ mod tests {
         assert!(still_pending.send_started_at.is_some());
         assert_eq!(still_pending.batch_id.as_deref(), Some("batch-1"));
         assert!(still_pending.tx_hash.is_none());
+    }
+
+    #[test]
+    fn on_chain_unreconciled_completed_payouts_do_not_pause_new_payouts() {
+        let store = require_test_store!();
+        store
+            .add_payout("addr1", 100, 1, "tx-on-chain")
+            .expect("seed unreconciled payout");
+
+        let base_url = spawn_json_router_server(
+            HashMap::from([(
+                "/api/tx/tx-on-chain".to_string(),
+                r#"{"confirmations":1,"in_mempool":false}"#.to_string(),
+            )]),
+            1,
+        );
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+        );
+
+        assert!(!processor
+            .unreconciled_completed_payouts_missing()
+            .expect("check unresolved payout"));
+    }
+
+    #[test]
+    fn missing_unreconciled_completed_payouts_pause_new_payouts() {
+        let store = require_test_store!();
+        store
+            .add_payout("addr1", 100, 1, "tx-missing")
+            .expect("seed unreconciled payout");
+
+        let base_url = spawn_json_router_server(HashMap::new(), 1);
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+        );
+
+        assert!(processor
+            .unreconciled_completed_payouts_missing()
+            .expect("check unresolved payout"));
     }
 
     #[test]
