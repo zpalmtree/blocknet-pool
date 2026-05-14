@@ -474,6 +474,9 @@ impl JobManager {
                 return;
             }
         };
+        if let Some(chain_height) = parsed.height.checked_sub(1) {
+            self.node.observe_chain_height(chain_height);
+        }
 
         let mut state = self.state.write();
         let now = Instant::now();

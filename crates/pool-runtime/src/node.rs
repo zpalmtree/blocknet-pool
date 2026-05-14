@@ -428,6 +428,10 @@ impl NodeClient {
         self.chain_height.load(Ordering::Relaxed)
     }
 
+    pub(crate) fn observe_chain_height(&self, height: u64) {
+        self.chain_height.store(height, Ordering::Relaxed);
+    }
+
     fn get_json<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);
         let mut attempted_refresh = false;
