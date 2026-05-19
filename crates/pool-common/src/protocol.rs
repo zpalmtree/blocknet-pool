@@ -1,3 +1,4 @@
+use curve25519_dalek::ristretto::CompressedRistretto;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 
@@ -137,6 +138,7 @@ fn parse_address_network(address: &str) -> Result<Option<AddressNetwork>, String
                 None
             };
             if let Some(network) = network {
+                validate_stealth_public_keys(payload)?;
                 Ok(Some(network))
             } else {
                 Err("invalid address checksum".to_string())
@@ -146,6 +148,30 @@ fn parse_address_network(address: &str) -> Result<Option<AddressNetwork>, String
             "invalid address length: expected 68 bytes, got {len}"
         )),
     }
+}
+
+fn validate_stealth_public_keys(payload: &[u8]) -> Result<(), String> {
+    if payload.len() != 64 {
+        return Err("invalid address length".to_string());
+    }
+
+    let spend_ok = CompressedRistretto::from_slice(&payload[..32])
+        .map_err(|_| "invalid address spend public key".to_string())?
+        .decompress()
+        .is_some();
+    if !spend_ok {
+        return Err("invalid address spend public key".to_string());
+    }
+
+    let view_ok = CompressedRistretto::from_slice(&payload[32..64])
+        .map_err(|_| "invalid address view public key".to_string())?
+        .decompress()
+        .is_some();
+    if !view_ok {
+        return Err("invalid address view public key".to_string());
+    }
+
+    Ok(())
 }
 
 pub fn parse_hash_hex(v: &str) -> Result<[u8; 32], String> {
@@ -181,9 +207,23 @@ fn address_checksum(payload: &[u8], network_id: &str) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
+    use curve25519_dalek::scalar::Scalar;
+
+    fn test_address_payload(seed: u8) -> [u8; 64] {
+        let spend_scalar = Scalar::from_bytes_mod_order([seed.max(1); 32]);
+        let view_scalar = Scalar::from_bytes_mod_order([seed.wrapping_add(1).max(1); 32]);
+        let spend_pub = (&spend_scalar * RISTRETTO_BASEPOINT_TABLE).compress();
+        let view_pub = (&view_scalar * RISTRETTO_BASEPOINT_TABLE).compress();
+
+        let mut payload = [0u8; 64];
+        payload[..32].copy_from_slice(spend_pub.as_bytes());
+        payload[32..].copy_from_slice(view_pub.as_bytes());
+        payload
+    }
 
     fn test_miner_address(seed: u8) -> String {
-        let payload = [seed; 64];
+        let payload = test_address_payload(seed);
         let mut encoded = payload.to_vec();
         encoded.extend_from_slice(&address_checksum(&payload, NETWORK_ID_MAINNET)[..4]);
         bs58::encode(encoded).into_string()
@@ -239,7 +279,7 @@ mod tests {
             Some(AddressNetwork::Mainnet)
         );
 
-        let payload = [0x22; 64];
+        let payload = test_address_payload(0x23);
         let mut testnet = payload.to_vec();
         testnet.extend_from_slice(&address_checksum(&payload, NETWORK_ID_TESTNET)[..4]);
         let testnet_addr = bs58::encode(testnet).into_string();
@@ -252,7 +292,7 @@ mod tests {
 
     #[test]
     fn network_specific_validation_rejects_cross_network_checksum() {
-        let payload = [0x55; 64];
+        let payload = test_address_payload(0x55);
         let mut encoded = payload.to_vec();
         encoded.extend_from_slice(&address_checksum(&payload, NETWORK_ID_TESTNET)[..4]);
         let address = bs58::encode(encoded).into_string();
@@ -277,7 +317,7 @@ mod tests {
 
     #[test]
     fn miner_address_rejects_bad_checksum() {
-        let payload = [0x44; 64];
+        let payload = test_address_payload(0x44);
         let mut encoded = payload.to_vec();
         encoded.extend_from_slice(&address_checksum(&payload, NETWORK_ID_MAINNET)[..4]);
         let last = encoded
@@ -287,5 +327,12 @@ mod tests {
         let address = bs58::encode(encoded).into_string();
         let err = validate_miner_address(&address).expect_err("must reject");
         assert!(err.contains("checksum"));
+    }
+
+    #[test]
+    fn miner_address_rejects_checksummed_invalid_ristretto_keys() {
+        let address = "S7YPHt98NDKrUNmFaHa9GQu4XJvRPkTR51bxdE4122UFxfB4cqdFP5R2pkJSrNTQGwmFVmKzKodu7F8XmHjTTx9PNx3i";
+        let err = validate_miner_address(address).expect_err("must reject");
+        assert!(err.contains("public key"));
     }
 }
