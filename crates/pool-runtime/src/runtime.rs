@@ -594,6 +594,7 @@ async fn resolve_expected_address_network(
 mod tests {
     use super::validate_pool_fee_destination_config;
     use crate::config::Config;
+    use crate::test_support::test_miner_address;
 
     #[test]
     fn pool_fee_destination_is_optional_when_fee_is_disabled() {
@@ -630,7 +631,7 @@ mod tests {
     fn valid_pool_fee_destination_is_accepted() {
         let cfg = Config {
             pool_fee_pct: 1.0,
-            pool_fee_wallet_address: "3EWAEECjhATNX9CHB9ZUSN6jT9FkhhUF22mQruRtAroUpsvegu5XVeJub2t5hRqufQjkc4QNQcPK1cTnco3DdrvWuEX3W".to_string(),
+            pool_fee_wallet_address: test_miner_address(0x41),
             ..Config::default()
         };
         assert!(validate_pool_fee_destination_config(&cfg).is_ok());

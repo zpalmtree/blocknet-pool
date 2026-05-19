@@ -1308,14 +1308,7 @@ mod tests {
     }
 
     fn test_miner_address(seed: u8) -> String {
-        match seed {
-            0x55 => "CAWo991gTpGrbhyPsjoNBpVfFiGmWVMD69q4JX9QrJ1Q8PdFSVPdUDYXwAQQV9DYK3gm2J1r33vZ44Jw5yC6BJcf7wT9w",
-            0x61 => "DjvnqBWSFE1MSH3wmFizcYgXgzLMma2ugzqhcgrrjc6v1FDi3Ud4QZ4EU1Vkrrdq1ojeGoiDyFFiMYkfXEdYA2gHHTCEx",
-            0x62 => "DsYd923qEB9jAzUVRP3xpGs6tmAzTVbDaEbFj319PiShzegkG4PgKR1sgFFhizvMQY5DYWrRTvs9JAxUZLkVVFrDr2R49",
-            0x71 => "Fqp7kaAmxSKMDhpgHGxVrBbgwMkUnLwqpnrZNF9TFMZbqigKWnvxzLQVqocth9CDHV8pc9yPtB2bRY1e6vYoTfRt5jGPt",
-            _ => panic!("missing test address for seed {seed:#x}"),
-        }
-        .to_string()
+        crate::test_support::test_miner_address(seed)
     }
 
     async fn build_tcp_test_server(cfg: Config) -> (Arc<StratumServer>, Arc<JobManager>) {
@@ -1724,7 +1717,7 @@ mod tests {
             Arc::new(RuntimeStartingStore),
             Arc::new(InMemoryNode::default()),
         ));
-        let address = "9w1duuowmepV5Zn7hbEtkTPvoa21onsy584eSciXgSCvJWhbkbK6yaEdM8XKniNdedx1REcUdSYF3Sr9UB9sYSh4iuSvT".to_string();
+        let address = test_miner_address(0x72);
         engine
             .login(
                 "conn1",

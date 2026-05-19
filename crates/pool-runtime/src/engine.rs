@@ -2237,6 +2237,7 @@ impl NodeApi for InMemoryNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::test_miner_address as generated_test_miner_address;
     use pool_common::pow::{difficulty_to_target, DeterministicTestHasher, PowHasher};
 
     fn cfg() -> Config {
@@ -2269,11 +2270,11 @@ mod tests {
     }
 
     fn test_miner_address() -> String {
-        "3EWAEECjhATNX9CHB9ZUSN6jT9FkhhUF22mQruRtAroUpsvegu5XVeJub2t5hRqufQjkc4QNQcPK1cTnco3DdrvWuEX3W".to_string()
+        generated_test_miner_address(0x31)
     }
 
     fn other_miner_address() -> String {
-        "5U1KTTQUPKuk3HPZMJ7wsjCTuHWWQPwV34XpiormLibxekrJNoA3zHcpB4mAPrgpKpUWD7ojpDmd2DvaEb5SGir81hpWR".to_string()
+        generated_test_miner_address(0x32)
     }
 
     #[test]
