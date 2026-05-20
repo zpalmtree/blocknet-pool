@@ -975,6 +975,7 @@ struct AdminBalanceOverviewPayouts {
     clean_unpaid_count: usize,
     queued_count: usize,
     queued_amount: u64,
+    next_sweep_at: Option<SystemTime>,
 }
 
 #[derive(Serialize)]
@@ -1161,6 +1162,7 @@ impl<T> PagedResponse<T> {
 struct AdminBalanceItem {
     address: String,
     clean_payable: u64,
+    queued_payout: u64,
     orphan_backed: u64,
     pending: u64,
     paid: u64,
@@ -1616,6 +1618,11 @@ async fn handle_admin_balances(
                 .into_iter()
                 .map(|source| (source.address.clone(), source))
                 .collect::<HashMap<_, BalanceSourceSummary>>();
+            let queued_by_address = store
+                .get_pending_payouts()?
+                .into_iter()
+                .map(|payout| (payout.address, payout.amount))
+                .collect::<HashMap<_, _>>();
             let mut filtered: Vec<_> = if search.is_empty() {
                 all
             } else {
@@ -1644,9 +1651,14 @@ async fn handle_admin_balances(
                         .get(&b.address)
                         .cloned()
                         .unwrap_or_default();
+                    let queued_payout = queued_by_address
+                        .get(&b.address)
+                        .copied()
+                        .unwrap_or_default();
                     AdminBalanceItem {
                         address: b.address,
                         clean_payable: source.canonical_pending,
+                        queued_payout,
                         orphan_backed: source.orphan_pending,
                         pending: b.pending,
                         paid: b.paid,
@@ -4030,6 +4042,10 @@ impl ApiState {
     async fn admin_balance_overview(&self) -> anyhow::Result<AdminBalanceOverviewResponse> {
         let store = Arc::clone(&self.store);
         let node = Arc::clone(&self.node);
+        let next_sweep_at = self
+            .persisted_runtime_snapshot()
+            .await
+            .and_then(|snapshot| snapshot.payouts.next_sweep_at);
         let fee_address = self
             .config
             .runtime
@@ -4119,6 +4135,7 @@ impl ApiState {
                     clean_unpaid_count,
                     queued_count: pending_payouts.len(),
                     queued_amount,
+                    next_sweep_at,
                 },
                 ledger: AdminBalanceOverviewLedger {
                     miner_paid_total,

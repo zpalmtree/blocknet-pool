@@ -16,6 +16,7 @@ import {
   shortAddr,
   timestampTitle,
   timeAgo,
+  timeUntil,
 } from '../lib/format';
 import { usePagedData } from '../lib/paging';
 import {
@@ -542,6 +543,7 @@ export function AdminPage({
   const balanceSourceDriftAmount = balanceOverview?.ledger.miner_balance_source_drift_total ?? null;
   const queuedPayoutCount = balanceOverview?.payouts.queued_count ?? null;
   const queuedPayoutAmount = balanceOverview?.payouts.queued_amount ?? null;
+  const nextPayoutSweepAt = balanceOverview?.payouts.next_sweep_at ?? null;
   const queuedPayoutShortfallAmount =
     balanceOverview && queuedPayoutAmount != null
       ? Math.max(queuedPayoutAmount - balanceOverview.wallet.spendable, 0)
@@ -1181,11 +1183,11 @@ export function AdminPage({
               onClick={() => setTab('shares')}
             />
             <StatCard
-              label="Clean Payable"
+              label="Clean Liability"
               value={cleanPayableAmount != null ? formatCompactCoins(cleanPayableAmount) : '-'}
               meta={
                 cleanPayableCount != null
-                  ? `${cleanPayableCount} miner${cleanPayableCount === 1 ? '' : 's'} with payable balances`
+                  ? `${cleanPayableCount} miner${cleanPayableCount === 1 ? '' : 's'} with clean ledger balances`
                   : '-'
               }
               mono
@@ -1217,6 +1219,9 @@ export function AdminPage({
                 {queuedPayoutAmount != null
                   ? `${queuedPayoutCount ?? 0} queued · ${formatCoins(queuedPayoutAmount)} in queue`
                   : '-'}
+              </div>
+              <div className="stat-meta" title={timestampTitle(nextPayoutSweepAt) || undefined}>
+                {nextPayoutSweepAt ? `Next sweep ${timeUntil(nextPayoutSweepAt)}` : 'Next sweep unavailable'}
               </div>
             </StatCard>
             <StatCard
@@ -2222,6 +2227,15 @@ export function AdminPage({
                           {formatWholeNumber(balanceOverview.payouts.queued_count)}
                         </span>
                       </div>
+                      <div className="admin-balance-overview__row">
+                        <span>Next payout sweep</span>
+                        <span
+                          className="mono"
+                          title={timestampTitle(balanceOverview.payouts.next_sweep_at) || undefined}
+                        >
+                          {timeUntil(balanceOverview.payouts.next_sweep_at)}
+                        </span>
+                      </div>
                       {hasQueuedPayoutShortfall && (
                         <div className="admin-balance-overview__row">
                           <span>Immediate queue shortfall</span>
@@ -2373,19 +2387,21 @@ export function AdminPage({
                   <col className="admin-balance-table__amount-col" />
                   <col className="admin-balance-table__amount-col" />
                   <col className="admin-balance-table__amount-col" />
+                  <col className="admin-balance-table__amount-col" />
                 </colgroup>
                 <thead>
                   <tr>
                     <th>Address</th>
-                    <th>Clean Payable</th>
+                    <th>Clean Liability</th>
+                    <th>Payout Queue</th>
                     <th>Orphan-Backed</th>
-                    <th>Recorded Pending</th>
+                    <th>Ledger Pending</th>
                     <th>Total Paid</th>
                   </tr>
                 </thead>
                 <tbody>
                   {!balancesItems.length ? (
-                    <EmptyTableRow colSpan={5}>No balances</EmptyTableRow>
+                    <EmptyTableRow colSpan={6}>No balances</EmptyTableRow>
                   ) : (
                     balancesItems.map((b) => (
                       <tr key={b.address}>
@@ -2401,6 +2417,7 @@ export function AdminPage({
                           </a>
                         </td>
                         <td className="mono">{formatCoins(Math.max(0, b.clean_payable))}</td>
+                        <td className="mono">{warnPositiveCoins(b.queued_payout)}</td>
                         <td className="mono">{warnPositiveCoins(b.orphan_backed)}</td>
                         <td className="mono">{warnPositiveCoins(b.pending)}</td>
                         <td className="mono">{formatCoins(b.paid)}</td>

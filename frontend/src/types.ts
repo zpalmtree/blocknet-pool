@@ -176,6 +176,7 @@ export interface MinerListItem {
 export interface AdminBalanceItem {
   address: string;
   clean_payable: number;
+  queued_payout: number;
   orphan_backed: number;
   pending: number;
   paid: number;
@@ -271,6 +272,7 @@ export interface AdminBalanceOverviewResponse {
     clean_unpaid_count: number;
     queued_count: number;
     queued_amount: number;
+    next_sweep_at: UnixLike;
   };
   ledger: {
     miner_paid_total: number;
