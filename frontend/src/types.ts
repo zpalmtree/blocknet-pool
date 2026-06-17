@@ -1,6 +1,7 @@
 export type Route =
   | "dashboard"
   | "start"
+  | "checkpoints"
   | "luck"
   | "blocks"
   | "payouts"
@@ -47,6 +48,17 @@ export interface InfoResponse {
   min_payout_amount: number;
   blocks_before_payout: number;
   pplns_window_duration: string;
+}
+
+export interface CheckpointsResponse {
+  available: boolean;
+  url: string;
+  entries: number;
+  latest_height: number | null;
+  latest_hash: string | null;
+  bytes: number | null;
+  sha256: string | null;
+  updated_at: UnixLike;
 }
 
 export interface BlockItem {

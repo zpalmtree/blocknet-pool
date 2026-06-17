@@ -4,6 +4,7 @@ import type {
   AdminReconciliationIssuesResponse,
   AdminShareDiagnosticsResponse,
   BlockRewardBreakdownResponse,
+  CheckpointsResponse,
   BlockItem,
   HashratePoint,
   HealthResponse,
@@ -104,6 +105,7 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
 
   return {
     getInfo: () => fetchJson<InfoResponse>('/api/info'),
+    getCheckpoints: () => fetchJson<CheckpointsResponse>('/api/checkpoints'),
     getStats: () => fetchJson<StatsResponse>('/api/stats'),
     getStatsHistory: (range: string) => fetchJson<HashratePoint[]>(`/api/stats/history?range=${encodeURIComponent(range)}`),
     getStatsInsights: (rejectionWindow?: string) =>

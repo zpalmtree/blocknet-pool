@@ -3,6 +3,7 @@ import type { Route } from '../types';
 const ROUTES = {
   dashboard: ['/', 'Blocknet Mining Pool'],
   start: ['/start', 'Mine Blocknet With Seine'],
+  checkpoints: ['/checkpoints', 'Blocknet Checkpoints'],
   luck: ['/luck', 'Blocknet Pool Luck'],
   blocks: ['/blocks', 'Recent Blocknet Blocks'],
   payouts: ['/payouts', 'Blocknet Pool Payouts'],

@@ -6,6 +6,7 @@ import { applyTheme, getStoredTheme, setStoredTheme, type ThemeMode } from './li
 import { pathForRoute, routeFromPathname, titleForRoute } from './lib/routes';
 import { AdminPage } from './pages/AdminPage';
 import { BlocksPage } from './pages/BlocksPage';
+import { CheckpointsPage } from './pages/CheckpointsPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { LuckPage } from './pages/LuckPage';
 import { PayoutsPage } from './pages/PayoutsPage';
@@ -21,6 +22,7 @@ const NAV_ITEMS: { route: Route; label: string }[] = [
   { route: 'payouts', label: 'Payouts' },
   { route: 'stats', label: 'My Stats' },
   { route: 'status', label: 'Status' },
+  { route: 'checkpoints', label: 'Checkpoints' },
   { route: 'admin', label: 'Admin' },
 ];
 
@@ -159,6 +161,8 @@ export function App() {
   let currentPage: JSX.Element;
   if (route === 'start') {
     currentPage = <StartPage poolInfo={poolInfo} />;
+  } else if (route === 'checkpoints') {
+    currentPage = <CheckpointsPage api={api} liveTick={liveTick} />;
   } else if (route === 'luck') {
     currentPage = <LuckPage api={api} liveTick={liveTick} />;
   } else if (route === 'blocks') {

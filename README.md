@@ -218,6 +218,8 @@ The pool uses Postgres. Set `database_url` in `config.json`, for example:
 Public endpoints (no API key required):
 
 - `GET /api/info`
+- `GET /api/checkpoints`
+- `GET /checkpoints.dat`
 - `GET /api/stats`
 - `GET /api/stats/history`
 - `GET /api/stats/insights`
@@ -228,6 +230,10 @@ Public endpoints (no API key required):
 - `GET /api/miner/{address}`
 - `GET /api/miner/{address}/balance`
 - `GET /api/miner/{address}/hashrate`
+
+`/checkpoints.dat` serves the latest daemon-generated checkpoint file. By
+default the API reads `<daemon_data_dir>/checkpoints.dat`; set
+`checkpoints_path` in `config.json` to override that path.
 
 Protected endpoints (API key required):
 

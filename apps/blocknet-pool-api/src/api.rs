@@ -11,7 +11,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query, State};
 use axum::http::header;
-use axum::http::{HeaderMap, Request, StatusCode, Uri};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -104,6 +104,9 @@ const MINER_PENDING_ESTIMATE_HOT_WINDOW: Duration = Duration::from_secs(60);
 const LOCAL_MONITOR_SOURCE: &str = "local";
 const CLOUDFLARE_MONITOR_SOURCE: &str = "cloudflare";
 const PERF_SUCCESS_LOG_SAMPLE_RATE: u64 = 128;
+const CHECKPOINTS_FILENAME: &str = "checkpoints.dat";
+const MAX_CHECKPOINTS_FILE_BYTES: u64 = 32 << 20;
+const CHECKPOINTS_CACHE_CONTROL: &str = "public, max-age=60";
 
 fn db_miner_hashrate(store: &PoolStore, address: &str) -> f64 {
     let since = SystemTime::now()
@@ -708,6 +711,32 @@ struct StatsInsightsResponse {
     rejections: RejectionAnalyticsSnapshot,
 }
 
+#[derive(Clone, Serialize)]
+struct CheckpointsMetadataResponse {
+    available: bool,
+    url: String,
+    entries: usize,
+    latest_height: Option<u64>,
+    latest_hash: Option<String>,
+    bytes: Option<u64>,
+    sha256: Option<String>,
+    updated_at: Option<u64>,
+}
+
+struct CheckpointFileSnapshot {
+    body: Bytes,
+    metadata: CheckpointsMetadataResponse,
+}
+
+#[derive(Debug)]
+enum CheckpointFileError {
+    NotFound,
+    TooLarge(u64),
+    Invalid(String),
+    Io(std::io::Error),
+    Internal(String),
+}
+
 async fn spawn_blocking_result<F, R>(operation: F) -> anyhow::Result<R>
 where
     F: FnOnce() -> anyhow::Result<R> + Send + 'static,
@@ -804,9 +833,11 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
 
     let app = Router::new()
         .route("/", get(handle_ui))
+        .route("/checkpoints.dat", get(handle_checkpoints_file))
         .route("/favicon.svg", get(handle_favicon_svg))
         .route("/ui-assets/:name", get(handle_ui_asset))
         .route("/api/info", get(handle_info))
+        .route("/api/checkpoints", get(handle_checkpoints_metadata))
         .route("/api/stats/history", get(handle_stats_history))
         .route("/api/stats/insights", get(handle_stats_insights))
         .route("/api/luck", get(handle_luck_history))
@@ -855,6 +886,39 @@ async fn handle_info(State(state): State<ApiState>) -> impl IntoResponse {
         blocks_before_payout: state.config.runtime.blocks_before_payout,
         pplns_window_duration: state.config.runtime.pplns_window_duration.clone(),
     })
+}
+
+async fn handle_checkpoints_metadata(State(state): State<ApiState>) -> Response {
+    match load_checkpoint_file_snapshot(&state.config).await {
+        Ok(snapshot) => Json(snapshot.metadata).into_response(),
+        Err(CheckpointFileError::NotFound) => {
+            Json(unavailable_checkpoints_metadata(&state.config)).into_response()
+        }
+        Err(err) => checkpoint_file_error_response(err),
+    }
+}
+
+async fn handle_checkpoints_file(headers: HeaderMap, State(state): State<ApiState>) -> Response {
+    let snapshot = match load_checkpoint_file_snapshot(&state.config).await {
+        Ok(snapshot) => snapshot,
+        Err(err) => return checkpoint_file_error_response(err),
+    };
+
+    let etag = snapshot
+        .metadata
+        .sha256
+        .as_deref()
+        .map(checkpoint_etag)
+        .unwrap_or_default();
+    if !etag.is_empty() && if_none_match_contains(headers.get(header::IF_NONE_MATCH), &etag) {
+        let mut response = StatusCode::NOT_MODIFIED.into_response();
+        apply_checkpoint_response_headers(response.headers_mut(), &snapshot.metadata, &etag);
+        return response;
+    }
+
+    let mut response = Body::from(snapshot.body).into_response();
+    apply_checkpoint_response_headers(response.headers_mut(), &snapshot.metadata, &etag);
+    response
 }
 
 #[derive(Clone, Serialize)]
@@ -5288,6 +5352,7 @@ fn api_performance_route_name(uri: &Uri) -> Option<&'static str> {
 
     Some(match path {
         "/api/stats" => "stats",
+        "/api/checkpoints" => "checkpoints",
         "/api/stats/history" => "stats_history",
         "/api/stats/insights" => "stats_insights",
         "/api/luck" => "luck",
@@ -5491,6 +5556,220 @@ fn non_empty(value: &Option<String>) -> Option<&str> {
     value.as_deref().map(str::trim).filter(|v| !v.is_empty())
 }
 
+fn checkpoints_path(config: &Config) -> PathBuf {
+    let configured = config.checkpoints_path.trim();
+    if !configured.is_empty() {
+        return PathBuf::from(configured);
+    }
+    PathBuf::from(config.runtime.daemon_data_dir.trim()).join(CHECKPOINTS_FILENAME)
+}
+
+fn checkpoints_public_url(config: &Config) -> String {
+    format!(
+        "{}/{}",
+        config.pool_url.trim().trim_end_matches('/'),
+        CHECKPOINTS_FILENAME
+    )
+}
+
+fn unavailable_checkpoints_metadata(config: &Config) -> CheckpointsMetadataResponse {
+    CheckpointsMetadataResponse {
+        available: false,
+        url: checkpoints_public_url(config),
+        entries: 0,
+        latest_height: None,
+        latest_hash: None,
+        bytes: None,
+        sha256: None,
+        updated_at: None,
+    }
+}
+
+async fn load_checkpoint_file_snapshot(
+    config: &Config,
+) -> Result<CheckpointFileSnapshot, CheckpointFileError> {
+    let config = config.clone();
+    tokio::task::spawn_blocking(move || load_checkpoint_file_snapshot_blocking(&config))
+        .await
+        .map_err(|err| CheckpointFileError::Internal(format!("checkpoint loader failed: {err}")))?
+}
+
+fn load_checkpoint_file_snapshot_blocking(
+    config: &Config,
+) -> Result<CheckpointFileSnapshot, CheckpointFileError> {
+    let path = checkpoints_path(config);
+    let metadata = match fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(CheckpointFileError::NotFound);
+        }
+        Err(err) => return Err(CheckpointFileError::Io(err)),
+    };
+    if !metadata.is_file() {
+        return Err(CheckpointFileError::Invalid(
+            "not a regular file".to_string(),
+        ));
+    }
+    if metadata.len() > MAX_CHECKPOINTS_FILE_BYTES {
+        return Err(CheckpointFileError::TooLarge(metadata.len()));
+    }
+
+    let body = fs::read(&path).map_err(CheckpointFileError::Io)?;
+    if u64::try_from(body.len()).unwrap_or(u64::MAX) > MAX_CHECKPOINTS_FILE_BYTES {
+        return Err(CheckpointFileError::TooLarge(
+            u64::try_from(body.len()).unwrap_or(u64::MAX),
+        ));
+    }
+
+    let (entries, latest_height, latest_hash) = parse_checkpoint_file(&body)?;
+    let sha256 = hex::encode(Sha256::digest(&body));
+    let updated_at = metadata.modified().ok().map(system_time_to_unix_secs);
+    let bytes = u64::try_from(body.len()).unwrap_or(u64::MAX);
+
+    Ok(CheckpointFileSnapshot {
+        body: Bytes::from(body),
+        metadata: CheckpointsMetadataResponse {
+            available: true,
+            url: checkpoints_public_url(config),
+            entries,
+            latest_height: Some(latest_height),
+            latest_hash: Some(latest_hash),
+            bytes: Some(bytes),
+            sha256: Some(sha256),
+            updated_at,
+        },
+    })
+}
+
+fn parse_checkpoint_file(body: &[u8]) -> Result<(usize, u64, String), CheckpointFileError> {
+    let text = std::str::from_utf8(body)
+        .map_err(|err| CheckpointFileError::Invalid(format!("invalid UTF-8: {err}")))?;
+
+    let mut entries = 0usize;
+    let mut latest_height = 0u64;
+    let mut latest_hash = String::new();
+
+    for (index, raw_line) in text.lines().enumerate() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let line_no = index + 1;
+        let (height_raw, hash_raw) = line.split_once(':').ok_or_else(|| {
+            CheckpointFileError::Invalid(format!("line {line_no}: expected height:hash"))
+        })?;
+        let height = height_raw.trim().parse::<u64>().map_err(|err| {
+            CheckpointFileError::Invalid(format!("line {line_no}: invalid height: {err}"))
+        })?;
+        if height == 0 {
+            return Err(CheckpointFileError::Invalid(format!(
+                "line {line_no}: height must be non-zero"
+            )));
+        }
+
+        let hash = hash_raw.trim().trim_start_matches("0x");
+        if hash.len() != 64 || hex::decode(hash).is_err() {
+            return Err(CheckpointFileError::Invalid(format!(
+                "line {line_no}: invalid 32-byte hash"
+            )));
+        }
+
+        entries += 1;
+        if height >= latest_height {
+            latest_height = height;
+            latest_hash = hash.to_ascii_uppercase();
+        }
+    }
+
+    if entries == 0 {
+        return Err(CheckpointFileError::Invalid(
+            "no checkpoint entries found".to_string(),
+        ));
+    }
+
+    Ok((entries, latest_height, latest_hash))
+}
+
+fn checkpoint_etag(sha256: &str) -> String {
+    format!("\"sha256:{sha256}\"")
+}
+
+fn if_none_match_contains(value: Option<&HeaderValue>, etag: &str) -> bool {
+    value
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .any(|candidate| candidate == "*" || candidate == etag)
+        })
+        .unwrap_or(false)
+}
+
+fn apply_checkpoint_response_headers(
+    headers: &mut HeaderMap,
+    metadata: &CheckpointsMetadataResponse,
+    etag: &str,
+) {
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(CHECKPOINTS_CACHE_CONTROL),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static("attachment; filename=\"checkpoints.dat\""),
+    );
+    if !etag.is_empty() {
+        if let Ok(value) = HeaderValue::from_str(etag) {
+            headers.insert(header::ETAG, value);
+        }
+    }
+    if let Some(bytes) = metadata.bytes {
+        if let Ok(value) = HeaderValue::from_str(&bytes.to_string()) {
+            headers.insert(header::CONTENT_LENGTH, value);
+        }
+    }
+    if let Some(height) = metadata.latest_height {
+        if let Ok(value) = HeaderValue::from_str(&height.to_string()) {
+            headers.insert(HeaderName::from_static("x-checkpoint-height"), value);
+        }
+    }
+    if let Some(sha256) = metadata.sha256.as_deref() {
+        if let Ok(value) = HeaderValue::from_str(sha256) {
+            headers.insert(HeaderName::from_static("x-checkpoint-sha256"), value);
+        }
+    }
+}
+
+fn checkpoint_file_error_response(err: CheckpointFileError) -> Response {
+    match err {
+        CheckpointFileError::NotFound => {
+            error_response(StatusCode::NOT_FOUND, "checkpoints unavailable")
+        }
+        CheckpointFileError::TooLarge(bytes) => {
+            tracing::warn!(bytes, "checkpoint file too large to serve");
+            error_response(StatusCode::SERVICE_UNAVAILABLE, "checkpoints unavailable")
+        }
+        CheckpointFileError::Invalid(message) => {
+            tracing::warn!(error = %message, "checkpoint file invalid");
+            error_response(StatusCode::SERVICE_UNAVAILABLE, "checkpoints unavailable")
+        }
+        CheckpointFileError::Io(err) => internal_error("failed loading checkpoints", err.into()),
+        CheckpointFileError::Internal(message) => {
+            tracing::warn!(error = %message, "failed loading checkpoints");
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed loading checkpoints",
+            )
+        }
+    }
+}
+
 fn page_bounds(limit: Option<usize>, offset: Option<usize>) -> (usize, usize) {
     let limit = limit.unwrap_or(DEFAULT_PAGE_LIMIT).clamp(1, MAX_PAGE_LIMIT);
     let offset = offset.unwrap_or(0).min(1_000_000);
@@ -5551,16 +5830,17 @@ mod tests {
 
     use super::{
         pending_estimate_snapshot_can_serve, pending_estimate_snapshot_needs_refresh,
-        public_telemetry_route_kind_for_path, HashrateStatsInput, MinerHashrateRamp,
-        PendingEstimateSnapshotCache, PendingPreviewValidation, PublicTelemetryRateLimiter,
-        PublicTelemetryRouteKind, RewardParticipantStatus, MINER_PENDING_ESTIMATE_HOT_WINDOW,
-        MINER_PENDING_ESTIMATE_REFRESH_AFTER, PUBLIC_TELEMETRY_MINER_RATE_LIMIT,
-        PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW, PUBLIC_TELEMETRY_STATS_RATE_LIMIT,
+        public_telemetry_route_kind_for_path, CheckpointFileError, HashrateStatsInput,
+        MinerHashrateRamp, PendingEstimateSnapshotCache, PendingPreviewValidation,
+        PublicTelemetryRateLimiter, PublicTelemetryRouteKind, RewardParticipantStatus,
+        MINER_PENDING_ESTIMATE_HOT_WINDOW, MINER_PENDING_ESTIMATE_REFRESH_AFTER,
+        PUBLIC_TELEMETRY_MINER_RATE_LIMIT, PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW,
+        PUBLIC_TELEMETRY_STATS_RATE_LIMIT,
     };
     use crate::config::Config;
     use axum::body::to_bytes;
     use axum::extract::{Path, Query, State};
-    use axum::http::{header, Method, StatusCode, Uri};
+    use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
     use axum::response::IntoResponse;
     use axum::Json;
     use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -5582,18 +5862,20 @@ mod tests {
 
     use super::{
         api_performance_route_name, apply_wallet_liquidity_to_payout_eta, block_page_item_response,
-        build_block_reward_breakdown, daemon_debug_log_path, daemon_health_from_heartbeat,
-        daemon_log_commands, daemon_send_idempotency_path, estimate_unconfirmed_pending_for_miner,
+        build_block_reward_breakdown, checkpoint_etag, checkpoints_path, checkpoints_public_url,
+        daemon_debug_log_path, daemon_health_from_heartbeat, daemon_log_commands,
+        daemon_send_idempotency_path, estimate_unconfirmed_pending_for_miner,
         estimated_block_reward, filter_active_workers_for_miner,
         handle_admin_clear_address_risk_history, handle_admin_share_diagnostics, handle_health,
         handle_miner, handle_miners, hashrate_from_stats_with_miner_ramp,
         hashrate_from_stats_with_warmup, history_range_duration, hydrate_provisional_block_reward,
-        load_confirmed_payout_import_txs, luck_round_response_from_db, miner_balance_response,
-        miner_has_activity, miner_hashrate_range, page_bounds, rejection_window_duration,
-        sort_workers_for_miner, system_time_to_unix_secs, trim_log_line, worker_hashrate_by_name,
-        ApiState, ClearAddressRiskHistoryRequest, PayoutEtaResponse, SearchPageQuery,
-        DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW,
-        HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY,
+        if_none_match_contains, load_confirmed_payout_import_txs, luck_round_response_from_db,
+        miner_balance_response, miner_has_activity, miner_hashrate_range, page_bounds,
+        parse_checkpoint_file, rejection_window_duration, sort_workers_for_miner,
+        system_time_to_unix_secs, trim_log_line, worker_hashrate_by_name, ApiState,
+        ClearAddressRiskHistoryRequest, PayoutEtaResponse, SearchPageQuery, DAEMON_LOG_LINE_LIMIT,
+        HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
+        LIVE_RUNTIME_SNAPSHOT_META_KEY,
     };
 
     const TEST_POSTGRES_URL_ENV: &str = "BLOCKNET_POOL_TEST_POSTGRES_URL";
@@ -5644,6 +5926,84 @@ mod tests {
             },
             ..Config::default()
         }
+    }
+
+    #[test]
+    fn checkpoints_path_defaults_to_daemon_data_dir_and_can_be_overridden() {
+        let mut cfg = daemon_data_dir_config();
+        assert_eq!(
+            checkpoints_path(&cfg),
+            std::path::PathBuf::from("/var/lib/blocknet/data/checkpoints.dat")
+        );
+
+        cfg.checkpoints_path = "/srv/blocknet/checkpoints.dat".to_string();
+        assert_eq!(
+            checkpoints_path(&cfg),
+            std::path::PathBuf::from("/srv/blocknet/checkpoints.dat")
+        );
+    }
+
+    #[test]
+    fn checkpoints_public_url_uses_pool_url() {
+        let mut cfg = Config {
+            pool_url: "https://bntpool.com/".to_string(),
+            ..Config::default()
+        };
+        assert_eq!(
+            checkpoints_public_url(&cfg),
+            "https://bntpool.com/checkpoints.dat"
+        );
+
+        cfg.pool_url = "https://bntpool.com".to_string();
+        assert_eq!(
+            checkpoints_public_url(&cfg),
+            "https://bntpool.com/checkpoints.dat"
+        );
+    }
+
+    #[test]
+    fn parse_checkpoint_file_extracts_latest_valid_entry() {
+        let first_hash = "A".repeat(64);
+        let latest_hash = "b".repeat(64);
+        let body = format!("# generated by daemon\n100:{first_hash}\n200:0x{latest_hash}\n");
+
+        let (entries, latest_height, latest_hash) =
+            parse_checkpoint_file(body.as_bytes()).expect("valid checkpoints");
+
+        assert_eq!(entries, 2);
+        assert_eq!(latest_height, 200);
+        assert_eq!(latest_hash, "B".repeat(64));
+    }
+
+    #[test]
+    fn parse_checkpoint_file_rejects_malformed_content() {
+        for body in [
+            String::new(),
+            "# comment only\n".to_string(),
+            "100\n".to_string(),
+            format!("0:{}", "A".repeat(64)),
+            "100:not-hex".to_string(),
+        ] {
+            assert!(matches!(
+                parse_checkpoint_file(body.as_bytes()),
+                Err(CheckpointFileError::Invalid(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn if_none_match_accepts_strong_etag_and_wildcard() {
+        let etag = checkpoint_etag("abc123");
+        let header = HeaderValue::from_str(&format!("\"old\", {etag}")).unwrap();
+        assert!(if_none_match_contains(Some(&header), &etag));
+        assert!(if_none_match_contains(
+            Some(&HeaderValue::from_static("*")),
+            &etag
+        ));
+        assert!(!if_none_match_contains(
+            Some(&HeaderValue::from_static("\"other\"")),
+            &etag
+        ));
     }
 
     fn recovery_proxy_config(proxy_include: &std::path::Path) -> Config {
@@ -5760,6 +6120,10 @@ mod tests {
         assert_eq!(
             api_performance_route_name(&Uri::from_static("/api/stats")),
             Some("stats")
+        );
+        assert_eq!(
+            api_performance_route_name(&Uri::from_static("/api/checkpoints")),
+            Some("checkpoints")
         );
         assert_eq!(
             api_performance_route_name(&Uri::from_static("/api/miner/test/balance")),
@@ -5938,6 +6302,7 @@ mod tests {
 
         let response = runtime.block_on(handle_app_fallback(
             Method::GET,
+            HeaderMap::new(),
             "/api/does-not-exist".parse().expect("uri"),
         ));
 
@@ -5959,6 +6324,7 @@ mod tests {
 
         let response = runtime.block_on(handle_app_fallback(
             Method::GET,
+            HeaderMap::new(),
             "/admin".parse().expect("uri"),
         ));
 
@@ -5967,7 +6333,8 @@ mod tests {
             .block_on(to_bytes(response.into_body(), usize::MAX))
             .expect("body bytes");
         let html = String::from_utf8(body.to_vec()).expect("utf8 html");
-        assert!(html.contains("Blocknet Pool"));
+        assert!(html.contains("<title>Pool Admin Dashboard</title>"));
+        assert!(html.contains(r#"<meta property="og:image""#));
         assert!(html.contains(r#"<div id="root"></div>"#));
     }
 

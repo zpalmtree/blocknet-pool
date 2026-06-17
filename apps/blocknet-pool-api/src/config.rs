@@ -12,6 +12,7 @@ pub(crate) struct Config {
     #[serde(flatten)]
     pub(crate) runtime: RuntimeConfig,
     pub(crate) pool_url: String,
+    pub(crate) checkpoints_path: String,
     pub(crate) api_port: u16,
     pub(crate) api_host: String,
     pub(crate) api_key: String,
@@ -24,6 +25,7 @@ impl Default for Config {
         Self {
             runtime: RuntimeConfig::default(),
             pool_url: "http://localhost:24783".to_string(),
+            checkpoints_path: String::new(),
             api_port: 24783,
             api_host: "127.0.0.1".to_string(),
             api_key: String::new(),
