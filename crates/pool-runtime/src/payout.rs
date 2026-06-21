@@ -3231,6 +3231,7 @@ mod tests {
     use super::*;
     use crate::node::HttpError;
     use crate::store::PoolStore;
+    use crate::test_support::test_miner_address;
     use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
     use base64::Engine as _;
     use pool_common::db::{DbShare, ShareReplayData};
@@ -3386,9 +3387,7 @@ mod tests {
     }
 
     fn test_address(seed: u8) -> String {
-        let mut payload = [seed.max(1); 64];
-        payload[0] = seed.max(1);
-        bs58::encode(payload).into_string()
+        test_miner_address(seed)
     }
 
     fn wallet_output(txid: &str, output_index: u32, amount: u64) -> WalletOutput {
