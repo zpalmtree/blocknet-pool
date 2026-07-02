@@ -101,6 +101,8 @@ const PUBLIC_MONITOR_HEALTH_TTL: Duration = Duration::from_secs(10 * 60);
 const MINER_PENDING_ESTIMATE_REFRESH_AFTER: Duration = Duration::from_secs(15);
 const MINER_PENDING_ESTIMATE_STALE_TTL: Duration = Duration::from_secs(60);
 const MINER_PENDING_ESTIMATE_HOT_WINDOW: Duration = Duration::from_secs(60);
+const PENDING_ESTIMATE_SNAPSHOT_WAIT_TIMEOUT: Duration = Duration::from_secs(15);
+const PENDING_ESTIMATE_SNAPSHOT_MAX_WAIT_ATTEMPTS: u32 = 3;
 const LOCAL_MONITOR_SOURCE: &str = "local";
 const CLOUDFLARE_MONITOR_SOURCE: &str = "cloudflare";
 const PERF_SUCCESS_LOG_SAMPLE_RATE: u64 = 128;
@@ -4479,11 +4481,15 @@ impl ApiState {
         address: &str,
         chain_height: u64,
     ) -> anyhow::Result<MinerPendingEstimate> {
+        // The snapshot load must only ever run in a detached task: if it ran
+        // inline here and the client disconnected, the request future would be
+        // dropped mid-load and `refresh_in_flight` would stay true forever,
+        // hanging every later balance request on `notified()`.
+        let mut wait_attempts = 0u32;
         loop {
             let now = Instant::now();
             let mut schedule_refresh = false;
             let mut cached_values = None;
-            let mut wait_for_refresh = false;
             let mut should_load = false;
             {
                 let mut cache = self.pending_estimate_snapshot_cache.lock();
@@ -4494,9 +4500,7 @@ impl ApiState {
                         schedule_refresh = true;
                     }
                     cached_values = Some(cache.values.clone());
-                } else if cache.refresh_in_flight {
-                    wait_for_refresh = true;
-                } else {
+                } else if !cache.refresh_in_flight {
                     cache.refresh_in_flight = true;
                     should_load = true;
                 }
@@ -4508,15 +4512,27 @@ impl ApiState {
                 self.performance.caches.record_hit("pending_estimate");
                 return Ok(values.get(address).cloned().unwrap_or_default());
             }
-            if wait_for_refresh {
-                self.pending_estimate_snapshot_notify.notified().await;
-                continue;
+            if should_load {
+                self.performance.caches.record_miss("pending_estimate");
+                self.spawn_pending_estimate_snapshot_refresh(chain_height);
             }
-
-            debug_assert!(should_load);
-            self.performance.caches.record_miss("pending_estimate");
-            let values = self.load_pending_estimate_snapshot(chain_height).await?;
-            return Ok(values.get(address).cloned().unwrap_or_default());
+            wait_attempts += 1;
+            if wait_attempts > PENDING_ESTIMATE_SNAPSHOT_MAX_WAIT_ATTEMPTS {
+                return Ok(MinerPendingEstimate::default());
+            }
+            // `Notify::notify_waiters` only wakes tasks already parked in
+            // `notified()`, so a waiter can race the wakeup; the timeout also
+            // keeps a slow or failed refresh from holding requests past
+            // nginx's proxy timeout. Degrade to an empty estimate instead.
+            if tokio::time::timeout(
+                PENDING_ESTIMATE_SNAPSHOT_WAIT_TIMEOUT,
+                self.pending_estimate_snapshot_notify.notified(),
+            )
+            .await
+            .is_err()
+            {
+                return Ok(MinerPendingEstimate::default());
+            }
         }
     }
 
