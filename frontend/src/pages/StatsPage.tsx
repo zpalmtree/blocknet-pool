@@ -47,6 +47,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const [minerAddress, setMinerAddress] = useState('');
   const [minerData, setMinerData] = useState<MinerResponse | null>(null);
   const [minerBalanceData, setMinerBalanceData] = useState<MinerBalancePayload | null>(null);
+  const [balanceUnavailable, setBalanceUnavailable] = useState(false);
   const [range, setRange] = useState<Range>('1h');
   const [history, setHistory] = useState<HashratePoint[]>([]);
   const [rejectionRange, setRejectionRange] = useState<RejectionWindowRange>('1h');
@@ -83,6 +84,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
       const d = await api.getMinerBalance(addr, includePendingEstimate);
       if (minerAddressRef.current !== addr) return;
       startTransition(() => {
+        setBalanceUnavailable(false);
         setMinerBalanceData((current) => ({
           ...d,
           pending_estimate:
@@ -92,7 +94,11 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
         }));
       });
     } catch {
-      // handled by api client
+      if (minerAddressRef.current === addr) {
+        startTransition(() => {
+          setBalanceUnavailable(true);
+        });
+      }
     }
   }, [api, minerAddress]);
 
@@ -172,6 +178,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
 
         const balanceResult = await balancePromise;
         if (requestId !== lookupRequestSeq.current) return;
+        setBalanceUnavailable(!balanceResult.ok);
         if (balanceResult.ok) {
           commitLookup();
           startTransition(() => {
@@ -369,6 +376,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
               setMinerAddress('');
               setMinerData(null);
               setMinerBalanceData(null);
+              setBalanceUnavailable(false);
               setHistory([]);
               setResolvedHandle(null);
               localStorage.removeItem(LAST_MINER_LOOKUP_KEY);
@@ -386,29 +394,47 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
 
       {showLookupResult && (
         <div id="lookup-result">
+          {balanceUnavailable && (
+            <div
+              className="card"
+              style={{ marginBottom: 16, background: 'rgba(247, 180, 75, 0.12)', borderColor: 'rgba(247, 180, 75, 0.45)' }}
+            >
+              <div style={{ color: 'var(--text)', fontSize: 13 }}>
+                {minerBalanceData
+                  ? 'Balance lookups are failing right now, so the values below may be out of date. Your shares and rewards are unaffected; this page retries automatically.'
+                  : 'Balance lookups are failing right now. Your shares and rewards are unaffected; this page retries automatically.'}
+              </div>
+            </div>
+          )}
           <div className="stats-card-group" style={{ marginBottom: 16 }}>
             <div className="stats-card-group-title">Balance</div>
             <div className="stats-card-group-grid">
               <StatCard
                 label="Estimated Rewards"
-                value={formatCompactCoins(pendingEstimated)}
-                meta="Recent blocks still confirming"
+                value={minerBalanceData ? formatCompactCoins(pendingEstimated) : '—'}
+                meta="Your share of unmatured blocks"
                 className="stat-card--flow"
-                title={formatCoins(pendingEstimated)}
+                title={minerBalanceData ? formatCoins(pendingEstimated) : undefined}
               />
               <StatCard
                 label="Confirmed Rewards"
-                value={formatCompactCoins(pendingConfirmed)}
+                value={minerBalanceData ? formatCompactCoins(pendingConfirmed) : '—'}
                 meta="Matured balance awaiting payout"
                 className="stat-card--flow"
-                title={formatCoins(pendingConfirmed)}
+                title={minerBalanceData ? formatCoins(pendingConfirmed) : undefined}
               />
               <StatCard
                 label="Paid Balance"
-                value={formatCompactCoins(livePaid)}
+                value={minerBalanceData ? formatCompactCoins(livePaid) : '—'}
                 meta="Already sent to this address"
-                title={formatCoins(livePaid)}
+                title={minerBalanceData ? formatCoins(livePaid) : undefined}
               />
+            </div>
+            <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)' }}>
+              Estimated Rewards appear after the pool finds a block while your shares are in the payout
+              window — for a new miner this can take a few rounds of mining. Found blocks then mature for
+              several hours of confirmations before moving to Confirmed Rewards and being paid out
+              automatically.
             </div>
           </div>
 
