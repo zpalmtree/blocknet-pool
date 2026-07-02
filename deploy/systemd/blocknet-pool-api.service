@@ -9,6 +9,9 @@ User=blocknet
 Group=blocknet
 WorkingDirectory=/opt/blocknet/blocknet-pool
 EnvironmentFile=/etc/blocknet/pool/.env
+# Cap glibc malloc arenas: with ~90 threads the default (8 x cores) fragments
+# to double-digit-GB RSS under the API's bulk share scans.
+Environment=MALLOC_ARENA_MAX=2
 ExecStartPre=/usr/bin/pg_isready -h 127.0.0.1 -p 5432 -t 5
 ExecStart=/opt/blocknet/blocknet-pool/target/release/blocknet-pool-api --config /etc/blocknet/pool/config.json
 Restart=always
