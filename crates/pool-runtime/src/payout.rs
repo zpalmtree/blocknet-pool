@@ -1341,6 +1341,11 @@ impl PayoutProcessor {
                             batch_candidates = vec![resized];
                             continue;
                         }
+                        tracing::warn!(
+                            address = %candidate.balance.address,
+                            amount = candidate.pending.amount,
+                            "payout batch planning failed for oldest queued payout; skipping it this tick"
+                        );
                         queued.remove(0);
                         break None;
                     }

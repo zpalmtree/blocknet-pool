@@ -16,6 +16,7 @@ edition = "2021"
 
 [workspace.dependencies]
 anyhow = "1.0"
+curve25519-dalek = "4.1"
 argon2 = "0.5"
 axum = "0.7"
 base64 = "0.22"

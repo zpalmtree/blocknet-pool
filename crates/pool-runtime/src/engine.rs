@@ -2269,11 +2269,11 @@ mod tests {
     }
 
     fn test_miner_address() -> String {
-        "3EWAEECjhATNX9CHB9ZUSN6jT9FkhhUF22mQruRtAroUpsvegu5XVeJub2t5hRqufQjkc4QNQcPK1cTnco3DdrvWuEX3W".to_string()
+        "Kffdvk1q1YPCGKz8gzJoymedZucxqJtxsw5ZUMJrWrVUK4jCXChXmTBrMADRh9EzeMNNPunXrz3dyg9nMwdZPaNc7FB7v".to_string()
     }
 
     fn other_miner_address() -> String {
-        "5U1KTTQUPKuk3HPZMJ7wsjCTuHWWQPwV34XpiormLibxekrJNoA3zHcpB4mAPrgpKpUWD7ojpDmd2DvaEb5SGir81hpWR".to_string()
+        "Eua26cFpFEd25h5G6basTRjVX61CVLwvM6SFaB5XxQKEftoAkGVWjkw2sp4GjfsBf8D44tr2SkVGn9CnFn2gP2NxBP6KV".to_string()
     }
 
     #[test]

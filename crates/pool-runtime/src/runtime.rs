@@ -630,7 +630,7 @@ mod tests {
     fn valid_pool_fee_destination_is_accepted() {
         let cfg = Config {
             pool_fee_pct: 1.0,
-            pool_fee_wallet_address: "3EWAEECjhATNX9CHB9ZUSN6jT9FkhhUF22mQruRtAroUpsvegu5XVeJub2t5hRqufQjkc4QNQcPK1cTnco3DdrvWuEX3W".to_string(),
+            pool_fee_wallet_address: "Kffdvk1q1YPCGKz8gzJoymedZucxqJtxsw5ZUMJrWrVUK4jCXChXmTBrMADRh9EzeMNNPunXrz3dyg9nMwdZPaNc7FB7v".to_string(),
             ..Config::default()
         };
         assert!(validate_pool_fee_destination_config(&cfg).is_ok());

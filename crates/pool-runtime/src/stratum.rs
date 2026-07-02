@@ -1309,10 +1309,10 @@ mod tests {
 
     fn test_miner_address(seed: u8) -> String {
         match seed {
-            0x55 => "CAWo991gTpGrbhyPsjoNBpVfFiGmWVMD69q4JX9QrJ1Q8PdFSVPdUDYXwAQQV9DYK3gm2J1r33vZ44Jw5yC6BJcf7wT9w",
-            0x61 => "DjvnqBWSFE1MSH3wmFizcYgXgzLMma2ugzqhcgrrjc6v1FDi3Ud4QZ4EU1Vkrrdq1ojeGoiDyFFiMYkfXEdYA2gHHTCEx",
-            0x62 => "DsYd923qEB9jAzUVRP3xpGs6tmAzTVbDaEbFj319PiShzegkG4PgKR1sgFFhizvMQY5DYWrRTvs9JAxUZLkVVFrDr2R49",
-            0x71 => "Fqp7kaAmxSKMDhpgHGxVrBbgwMkUnLwqpnrZNF9TFMZbqigKWnvxzLQVqocth9CDHV8pc9yPtB2bRY1e6vYoTfRt5jGPt",
+            0x55 => "RwkNt8jJNWifsxuWSKta9smTLm9mnAv1gWyk46fWSxk6xDWrAahevSTVbFUfYdFr9z4vNJWCziBh7fmJMhyB5BfxM4YYM",
+            0x61 => "3DLBLxPGExg7rM7P9uEUDf7x8uFQaeVjEgWB8BpysUnw7j1f87AqGdTM7tXq6bRA21ZhkCam4Woz6kGWyCdsWgFA2FVVV",
+            0x62 => "9xxFbTd1p8iwLJLY8vvE78kKKU8G2SUZ4TeDnaCy23xbhYaTESbfkHLWmFSnh42ywsvaGT4tgJbNonU6rUyQApzGu94iM",
+            0x71 => "PZmWbHdrRd2vTEJda2KZDyzsJCPdoLXMpB5Cg5zU9Xg7V5JnvEwryZ1yv86GhyJQr5fXcErhh57xZQMVA8gGxMGGEHQFX",
             _ => panic!("missing test address for seed {seed:#x}"),
         }
         .to_string()
@@ -1724,7 +1724,7 @@ mod tests {
             Arc::new(RuntimeStartingStore),
             Arc::new(InMemoryNode::default()),
         ));
-        let address = "9w1duuowmepV5Zn7hbEtkTPvoa21onsy584eSciXgSCvJWhbkbK6yaEdM8XKniNdedx1REcUdSYF3Sr9UB9sYSh4iuSvT".to_string();
+        let address = "Kffdvk1q1YPCGKz8gzJoymedZucxqJtxsw5ZUMJrWrVUK4jCXChXmTBrMADRh9EzeMNNPunXrz3dyg9nMwdZPaNc7FB7v".to_string();
         engine
             .login(
                 "conn1",

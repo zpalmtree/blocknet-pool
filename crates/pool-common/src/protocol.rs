@@ -137,6 +137,7 @@ fn parse_address_network(address: &str) -> Result<Option<AddressNetwork>, String
                 None
             };
             if let Some(network) = network {
+                validate_address_public_keys(payload)?;
                 Ok(Some(network))
             } else {
                 Err("invalid address checksum".to_string())
@@ -162,6 +163,23 @@ pub fn parse_hash_hex(v: &str) -> Result<[u8; 32], String> {
     Ok(out)
 }
 
+// The daemon refuses to pay addresses whose embedded keys are not canonical
+// Ristretto points (blocknet-core parseValidatedAddress), so an address that
+// fails this check can never receive a payout. Mirroring the check here lets
+// stratum reject such miners at login and lets the payout loop cancel their
+// queued payouts instead of retrying forever.
+fn validate_address_public_keys(payload: &[u8]) -> Result<(), String> {
+    for (label, key) in [("spend", &payload[..32]), ("view", &payload[32..64])] {
+        let valid = curve25519_dalek::ristretto::CompressedRistretto::from_slice(key)
+            .map(|compressed| compressed.decompress().is_some())
+            .unwrap_or(false);
+        if !valid {
+            return Err(format!("invalid address {label} public key"));
+        }
+    }
+    Ok(())
+}
+
 fn checksum_matches(payload: &[u8], checksum: &[u8], network_id: &str) -> bool {
     if checksum.len() != 4 || payload.len() != 64 {
         return false;
@@ -182,8 +200,18 @@ fn address_checksum(payload: &[u8], network_id: &str) -> [u8; 32] {
 mod tests {
     use super::*;
 
+    fn valid_point_payload(seed: u8) -> [u8; 64] {
+        use curve25519_dalek::{RistrettoPoint, Scalar};
+        let spend = RistrettoPoint::mul_base(&Scalar::from(u64::from(seed) * 2 + 1));
+        let view = RistrettoPoint::mul_base(&Scalar::from(u64::from(seed) * 2 + 2));
+        let mut payload = [0u8; 64];
+        payload[..32].copy_from_slice(spend.compress().as_bytes());
+        payload[32..].copy_from_slice(view.compress().as_bytes());
+        payload
+    }
+
     fn test_miner_address(seed: u8) -> String {
-        let payload = [seed; 64];
+        let payload = valid_point_payload(seed);
         let mut encoded = payload.to_vec();
         encoded.extend_from_slice(&address_checksum(&payload, NETWORK_ID_MAINNET)[..4]);
         bs58::encode(encoded).into_string()
@@ -239,7 +267,7 @@ mod tests {
             Some(AddressNetwork::Mainnet)
         );
 
-        let payload = [0x22; 64];
+        let payload = valid_point_payload(0x22);
         let mut testnet = payload.to_vec();
         testnet.extend_from_slice(&address_checksum(&payload, NETWORK_ID_TESTNET)[..4]);
         let testnet_addr = bs58::encode(testnet).into_string();
@@ -252,7 +280,7 @@ mod tests {
 
     #[test]
     fn network_specific_validation_rejects_cross_network_checksum() {
-        let payload = [0x55; 64];
+        let payload = valid_point_payload(0x55);
         let mut encoded = payload.to_vec();
         encoded.extend_from_slice(&address_checksum(&payload, NETWORK_ID_TESTNET)[..4]);
         let address = bs58::encode(encoded).into_string();
@@ -273,6 +301,20 @@ mod tests {
         let address = bs58::encode([0x33; 16]).into_string();
         let err = validate_miner_address(&address).expect_err("must reject");
         assert!(err.contains("length"));
+    }
+
+    #[test]
+    fn miner_address_rejects_invalid_public_keys() {
+        // Valid checksum wrapped around bytes that are not canonical
+        // Ristretto encodings (0xFF x 32 exceeds the field prime) - the
+        // production case behind a permanently unpayable pending payout on
+        // 2026-07-02.
+        let payload = [0xFFu8; 64];
+        let mut encoded = payload.to_vec();
+        encoded.extend_from_slice(&address_checksum(&payload, NETWORK_ID_MAINNET)[..4]);
+        let address = bs58::encode(encoded).into_string();
+        let err = validate_miner_address(&address).expect_err("must reject");
+        assert!(err.contains("public key"), "unexpected error: {err}");
     }
 
     #[test]
