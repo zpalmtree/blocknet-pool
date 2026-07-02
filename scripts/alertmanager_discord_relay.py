@@ -4,7 +4,7 @@ import json
 import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib import request
+from urllib import parse, request
 
 
 MAX_CONTENT_LEN = 1800
@@ -19,6 +19,21 @@ def clamp(text: str, limit: int = MAX_CONTENT_LEN) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 3] + "..."
+
+
+def embeddable_url(url: str) -> str | None:
+    # Discord rejects the whole embed (HTTP 400) when embed.url is not a
+    # public-looking http(s) URL, e.g. Alertmanager's default externalURL
+    # of http://<bare-hostname>:9093.
+    try:
+        parsed = parse.urlsplit(str(url))
+    except ValueError:
+        return None
+    if parsed.scheme not in ("http", "https"):
+        return None
+    if not parsed.hostname or "." not in parsed.hostname:
+        return None
+    return str(url)
 
 
 def color_for(status: str, severity: str) -> int:
@@ -79,8 +94,8 @@ def format_alert(payload: dict) -> dict:
     }
     if description_parts:
         embed["description"] = clamp("\n\n".join(description_parts), MAX_EMBED_DESCRIPTION_LEN)
-    if external:
-        embed["url"] = str(external)
+    if external and (link := embeddable_url(external)):
+        embed["url"] = link
     if alerts:
         embed["fields"].append(
             {

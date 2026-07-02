@@ -62,24 +62,33 @@ groups:
           description: The daemon is reachable but still reports syncing.
 
       - alert: BlocknetPoolTemplateStale
-        expr: blocknet_pool_monitor_template_age_seconds > 45
+        # Template age legitimately grows for the length of a round (an hour or
+        # more observed) because the pool ignores timestamp-only template
+        # changes. Refresh is only actually broken when the chain tip advanced
+        # but the template did not follow it.
+        expr: >-
+          blocknet_pool_monitor_template_age_seconds > 240
+          and changes(blocknet_pool_monitor_chain_height[10m]) > 0
+          and resets(blocknet_pool_monitor_template_age_seconds[10m]) == 0
         for: 2m
         labels:
           severity: warning
           visibility: public
         annotations:
-          summary: Pool job template is stale
-          description: The latest job template is older than 45 seconds.
+          summary: Pool job template is not following the chain tip
+          description: The chain tip advanced within the last 10 minutes but the job template has not refreshed and is older than 4 minutes.
 
       - alert: BlocknetPoolTemplateCriticallyStale
-        expr: blocknet_pool_monitor_template_age_seconds > 120
-        for: 2m
+        # Absolute backstop that also covers a fully halted chain, where the
+        # tip-following alert above can never fire.
+        expr: blocknet_pool_monitor_template_age_seconds > 3600
+        for: 5m
         labels:
           severity: critical
           visibility: public
         annotations:
           summary: Pool job template is critically stale
-          description: The latest job template is older than 120 seconds.
+          description: The job template has not refreshed for over an hour; template refresh or the chain itself is stuck.
 
       - alert: BlocknetPoolWalletUnavailable
         expr: blocknet_pool_monitor_wallet_up == 0
