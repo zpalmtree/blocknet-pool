@@ -155,7 +155,11 @@ groups:
           description: Miners remain connected but the pool has not accepted a share for more than 30 minutes.
 
       - alert: BlocknetPoolPayoutQueueStalled
-        expr: blocknet_pool_monitor_payout_pending_count > 0 and (blocknet_pool_monitor_oldest_pending_payout_age_seconds > 7200 or blocknet_pool_monitor_oldest_pending_send_age_seconds > 1800)
+        # Mid-send age covers waiting for the payout tx's first confirmation.
+        # The pool now finds well under 100% of network blocks, so 30-40 min
+        # confirmation waits occur during normal luck streaks; only page past
+        # an hour.
+        expr: blocknet_pool_monitor_payout_pending_count > 0 and (blocknet_pool_monitor_oldest_pending_payout_age_seconds > 7200 or blocknet_pool_monitor_oldest_pending_send_age_seconds > 3600)
         for: 5m
         labels:
           severity: warning

@@ -180,7 +180,12 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
         <div className="stats-card-group-grid">
           <StatCard label="Average Luck" value={formatPct(avgLuck)} id="s-avg-luck" />
           <StatCard label="Unique Orphans" value={stats?.pool?.orphaned_blocks ?? '-'} id="s-orphaned-blocks" />
-          <StatCard label="Orphan Rate" value={formatPct(stats?.pool?.orphan_rate_pct)} id="s-orphan-rate" />
+          <StatCard
+            label="Orphan Rate (30d)"
+            value={formatPct(stats?.pool?.orphan_rate_30d_pct)}
+            title={`Lifetime: ${formatPct(stats?.pool?.orphan_rate_pct)} — dominated by the Apr 2026 desync event`}
+            id="s-orphan-rate"
+          />
         </div>
       </div>
 

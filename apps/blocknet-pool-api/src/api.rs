@@ -275,6 +275,8 @@ struct DbTotals {
     total_blocks: u64,
     confirmed_blocks: u64,
     orphaned_blocks: u64,
+    blocks_30d: u64,
+    orphaned_blocks_30d: u64,
     paid_to_miners_total: u64,
 }
 
@@ -936,6 +938,7 @@ struct PoolSummary {
     blocks_found: u64,
     orphaned_blocks: u64,
     orphan_rate_pct: f64,
+    orphan_rate_30d_pct: f64,
     paid_to_miners_total: u64,
 }
 
@@ -4094,6 +4097,11 @@ impl ApiState {
                         (totals.orphaned_blocks as f64 / resolved as f64) * 100.0
                     }
                 },
+                orphan_rate_30d_pct: if totals.blocks_30d == 0 {
+                    0.0
+                } else {
+                    (totals.orphaned_blocks_30d as f64 / totals.blocks_30d as f64) * 100.0
+                },
                 paid_to_miners_total: totals.paid_to_miners_total,
             },
             chain: ChainSummary {
@@ -5196,16 +5204,28 @@ impl ApiState {
             });
         let paid_to_miners_task =
             tokio::task::spawn_blocking(move || paid_to_miners_store.get_total_paid_to_miners());
-        let (block_totals_result, paid_to_miners_result) =
-            tokio::join!(block_totals_task, paid_to_miners_task);
+        let windowed_blocks_store = Arc::clone(&self.store);
+        let windowed_blocks_task = tokio::task::spawn_blocking(move || {
+            let cutoff = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|now| now.as_secs() as i64)
+                .unwrap_or_default()
+                - 30 * 24 * 3600;
+            windowed_blocks_store.get_block_counts_since(cutoff)
+        });
+        let (block_totals_result, paid_to_miners_result, windowed_blocks_result) =
+            tokio::join!(block_totals_task, paid_to_miners_task, windowed_blocks_task);
         let load_value = || -> anyhow::Result<DbTotals> {
             let (total_blocks, confirmed_blocks, orphaned_blocks) =
                 join_result(block_totals_result)?;
             let paid_to_miners_total = join_result(paid_to_miners_result)?;
+            let (blocks_30d, orphaned_blocks_30d) = join_result(windowed_blocks_result)?;
             Ok(DbTotals {
                 total_blocks,
                 confirmed_blocks,
                 orphaned_blocks,
+                blocks_30d,
+                orphaned_blocks_30d,
                 paid_to_miners_total,
             })
         };

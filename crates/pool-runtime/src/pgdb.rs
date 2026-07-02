@@ -1750,6 +1750,20 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(count.max(0) as u64)
     }
 
+    pub fn get_block_counts_since(&self, since_epoch: i64) -> Result<(u64, u64)> {
+        let row = self.conn().lock().query_one(
+            "SELECT
+                 COUNT(*)::BIGINT,
+                 COALESCE(SUM(CASE WHEN orphaned THEN 1 ELSE 0 END), 0)::BIGINT
+             FROM blocks
+             WHERE \"timestamp\" >= $1",
+            &[&since_epoch],
+        )?;
+        let total: i64 = row.get(0);
+        let orphaned: i64 = row.get(1);
+        Ok((total.max(0) as u64, orphaned.max(0) as u64))
+    }
+
     pub fn get_unique_block_identity_counts(&self) -> Result<(u64, u64)> {
         let row = self.conn().lock().query_one(
             "SELECT
