@@ -39,9 +39,6 @@ const AUDIT_MAX_SHARES_PER_ADDRESS: usize = 8;
 const OVERLOAD_SHED_QUEUE_PCT: f64 = 0.50;
 const OVERLOAD_EMERGENCY_QUEUE_PCT: f64 = 0.80;
 const OVERLOAD_CLEAR_QUEUE_PCT: f64 = 0.30;
-const OVERLOAD_SHED_OLDEST_AGE: Duration = Duration::from_secs(4);
-const OVERLOAD_EMERGENCY_OLDEST_AGE: Duration = Duration::from_secs(10);
-const OVERLOAD_CLEAR_OLDEST_AGE: Duration = Duration::from_secs(3);
 const OVERLOAD_CLEAR_HOLD: Duration = Duration::from_secs(30);
 const OVERLOAD_SAMPLE_RATE_FLOOR: f64 = 0.01;
 const INVALID_SAMPLE_COUNT_THRESHOLD: u64 = 5;
@@ -1742,10 +1739,11 @@ impl ValidationInner {
                 ),
         );
         let emergency = queue_pct >= OVERLOAD_EMERGENCY_QUEUE_PCT
-            || oldest_age >= OVERLOAD_EMERGENCY_OLDEST_AGE;
-        let shed = queue_pct >= OVERLOAD_SHED_QUEUE_PCT || oldest_age >= OVERLOAD_SHED_OLDEST_AGE;
-        let below_clear =
-            queue_pct <= OVERLOAD_CLEAR_QUEUE_PCT && oldest_age <= OVERLOAD_CLEAR_OLDEST_AGE;
+            || oldest_age >= self.config.overload_emergency_oldest_age_duration();
+        let shed = queue_pct >= OVERLOAD_SHED_QUEUE_PCT
+            || oldest_age >= self.config.overload_shed_oldest_age_duration();
+        let below_clear = queue_pct <= OVERLOAD_CLEAR_QUEUE_PCT
+            && oldest_age <= self.config.overload_clear_oldest_age_duration();
 
         let mut state = self.overload.lock();
         let previous_mode = state.mode;

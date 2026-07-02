@@ -26,6 +26,9 @@ pub struct Config {
     pub refresh_on_same_height: bool,
     pub job_timeout: String,
     pub stale_submit_grace: String,
+    pub overload_shed_oldest_age: String,
+    pub overload_emergency_oldest_age: String,
+    pub overload_clear_oldest_age: String,
     pub validation_mode: String,
     pub regular_submit_queue: i32,
     pub regular_validation_queue: i32,
@@ -83,6 +86,9 @@ impl Default for Config {
             refresh_on_same_height: false,
             job_timeout: "5m".to_string(),
             stale_submit_grace: "8s".to_string(),
+            overload_shed_oldest_age: "4s".to_string(),
+            overload_emergency_oldest_age: "10s".to_string(),
+            overload_clear_oldest_age: "3s".to_string(),
             validation_mode: "probabilistic".to_string(),
             regular_submit_queue: 512,
             regular_validation_queue: 512,
@@ -140,6 +146,21 @@ impl Config {
 
     pub(crate) fn stale_submit_grace_duration(&self) -> Duration {
         config_duration("stale_submit_grace", &self.stale_submit_grace)
+    }
+
+    pub(crate) fn overload_shed_oldest_age_duration(&self) -> Duration {
+        config_duration("overload_shed_oldest_age", &self.overload_shed_oldest_age)
+    }
+
+    pub(crate) fn overload_emergency_oldest_age_duration(&self) -> Duration {
+        config_duration(
+            "overload_emergency_oldest_age",
+            &self.overload_emergency_oldest_age,
+        )
+    }
+
+    pub(crate) fn overload_clear_oldest_age_duration(&self) -> Duration {
+        config_duration("overload_clear_oldest_age", &self.overload_clear_oldest_age)
     }
 
     pub(crate) fn regular_submit_queue_size(&self) -> usize {
@@ -224,6 +245,12 @@ impl Config {
     fn validate_duration_fields(&self) -> Result<()> {
         config_duration_result("job_timeout", &self.job_timeout)?;
         config_duration_result("stale_submit_grace", &self.stale_submit_grace)?;
+        ensure_nonzero_duration("overload_shed_oldest_age", &self.overload_shed_oldest_age)?;
+        ensure_nonzero_duration(
+            "overload_emergency_oldest_age",
+            &self.overload_emergency_oldest_age,
+        )?;
+        ensure_nonzero_duration("overload_clear_oldest_age", &self.overload_clear_oldest_age)?;
         config_duration_result(
             "invalid_escalation_window_duration",
             &self.invalid_escalation_window_duration,
