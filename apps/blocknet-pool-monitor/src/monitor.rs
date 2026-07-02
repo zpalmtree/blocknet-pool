@@ -58,6 +58,9 @@ const DAEMON_SLOW_BLOCK_WARN_AFTER: Duration = Duration::from_secs(5);
 const DAEMON_SLOW_BLOCK_CRITICAL_AFTER: Duration = Duration::from_secs(15);
 const DAEMON_SLOW_BLOCK_RECENT_AFTER: Duration = Duration::from_secs(60);
 const POOL_ACTIVITY_LOSS_MIN_THRESHOLD: Duration = Duration::from_secs(60);
+// Longer than the API's degraded pending-estimate wait, shorter than the
+// nginx proxy timeout, so the probe fails before users see 504s.
+const MINER_BALANCE_PROBE_TIMEOUT: Duration = Duration::from_secs(45);
 const POOL_ACTIVITY_LOSS_THRESHOLD_SAMPLES: u32 = 6;
 
 #[derive(Clone, Default)]
@@ -79,6 +82,8 @@ struct MonitorSnapshot {
     connected_workers: Option<u64>,
     estimated_hashrate: Option<f64>,
     wallet_up: Option<bool>,
+    miner_balance_probe_up: Option<bool>,
+    miner_balance_probe_millis: Option<u64>,
     last_accepted_share_age_seconds: Option<u64>,
     payout_pending_count: Option<u64>,
     payout_pending_amount: Option<u64>,
@@ -277,6 +282,7 @@ struct MonitorSample {
     db_probe: ProbeOutcome<()>,
     daemon_status: ProbeOutcome<NodeStatus>,
     wallet_probe: ProbeOutcome<()>,
+    miner_balance_probe: Option<ProbeOutcome<u64>>,
     runtime_snapshot: Option<PersistedRuntimeSnapshot>,
     api_performance: Option<ApiPerformanceSnapshot>,
     process_metrics: BTreeMap<String, ProcessMetrics>,
@@ -422,6 +428,7 @@ impl MonitorRuntime {
         } else {
             ProbeOutcome::default()
         };
+        let miner_balance = self.probe_miner_balance().await;
         let reference_heights = self.probe_reference_heights().await;
 
         let mut runtime_snapshot = None;
@@ -482,6 +489,7 @@ impl MonitorRuntime {
             db_probe: db,
             daemon_status: daemon,
             wallet_probe: wallet,
+            miner_balance_probe: miner_balance,
             runtime_snapshot,
             api_performance,
             process_metrics,
@@ -896,6 +904,14 @@ impl MonitorRuntime {
         metrics.daemon_last_process_block =
             daemon.and_then(|status| status.last_process_block.clone());
         metrics.chain_height = daemon.map(|status| status.chain_height);
+        metrics.miner_balance_probe_up = sample
+            .miner_balance_probe
+            .as_ref()
+            .map(|probe| probe.error.is_none());
+        metrics.miner_balance_probe_millis = sample
+            .miner_balance_probe
+            .as_ref()
+            .and_then(|probe| probe.value);
         metrics.template_age_seconds =
             runtime.and_then(|snapshot| snapshot.jobs.template_age_seconds);
         metrics.last_refresh_millis =
@@ -1190,6 +1206,39 @@ impl MonitorRuntime {
             Ok(Err(err)) => ProbeOutcome::err(err.to_string()),
             Err(err) => ProbeOutcome::err(format!("join error: {err}")),
         }
+    }
+
+    // End-to-end probe of the miner-facing balance endpoint, including the
+    // pending-estimate path. The cheap /api/info probe stayed green through a
+    // six-hour balance outage on 2026-07-02; this one is meant to catch that.
+    async fn probe_miner_balance(&self) -> Option<ProbeOutcome<u64>> {
+        let address = self.cfg.balance_probe_address.trim().to_string();
+        if address.is_empty() {
+            return None;
+        }
+        let url = self.local_api_url(&format!(
+            "/api/miner/{address}/balance?include_pending_estimate=true"
+        ));
+        let client = self.api_client.clone();
+        let outcome = match tokio::task::spawn_blocking(move || -> Result<u64> {
+            let started = std::time::Instant::now();
+            let response = client
+                .get(&url)
+                .timeout(MINER_BALANCE_PROBE_TIMEOUT)
+                .send()
+                .with_context(|| format!("GET {url}"))?;
+            if !response.status().is_success() {
+                return Err(anyhow!("GET {url} returned HTTP {}", response.status()));
+            }
+            Ok(started.elapsed().as_millis() as u64)
+        })
+        .await
+        {
+            Ok(Ok(millis)) => ProbeOutcome::ok(millis),
+            Ok(Err(err)) => ProbeOutcome::err(err.to_string()),
+            Err(err) => ProbeOutcome::err(format!("join error: {err}")),
+        };
+        Some(outcome)
     }
 
     async fn load_api_performance(&self) -> Option<ApiPerformanceSnapshot> {
@@ -1957,6 +2006,23 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
         ("blocknet_pool_monitor_wallet_up", snapshot.wallet_up),
     ] {
         metric_line(&mut out, name, u8::from(value.unwrap_or(false)));
+    }
+
+    // Absent (not zero) when the balance probe is unconfigured so alerts on
+    // == 0 cannot fire on hosts that opted out.
+    if let Some(up) = snapshot.miner_balance_probe_up {
+        metric_line(
+            &mut out,
+            "blocknet_pool_monitor_miner_balance_probe_up",
+            u8::from(up),
+        );
+    }
+    if let Some(millis) = snapshot.miner_balance_probe_millis {
+        metric_line(
+            &mut out,
+            "blocknet_pool_monitor_miner_balance_probe_millis",
+            millis,
+        );
     }
 
     metric_line(

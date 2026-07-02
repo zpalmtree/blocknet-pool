@@ -13,6 +13,10 @@ pub(crate) struct Config {
     pub(crate) api_host: String,
     pub(crate) api_port: u16,
     pub(crate) api_key: String,
+    // Miner address for the end-to-end balance probe. Must be an address with
+    // historical pool activity so the API exercises the pending-estimate path;
+    // empty disables the probe.
+    pub(crate) balance_probe_address: String,
 }
 
 impl Default for Config {
@@ -22,6 +26,7 @@ impl Default for Config {
             api_host: "127.0.0.1".to_string(),
             api_port: 24783,
             api_key: String::new(),
+            balance_probe_address: String::new(),
         }
     }
 }

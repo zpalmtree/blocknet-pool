@@ -90,6 +90,20 @@ groups:
           summary: Pool job template is critically stale
           description: The job template has not refreshed for over an hour; template refresh or the chain itself is stuck.
 
+      - alert: BlocknetPoolMinerBalanceProbeFailing
+        # End-to-end probe of /api/miner/<addr>/balance including the
+        # pending-estimate path; the metric is absent when the probe address
+        # is unconfigured. A 2026-07-02 cache wedge took this endpoint down
+        # for six hours while every other health check stayed green.
+        expr: blocknet_pool_monitor_miner_balance_probe_up == 0
+        for: 3m
+        labels:
+          severity: critical
+          visibility: public
+        annotations:
+          summary: Miner balance API probe is failing
+          description: The monitor cannot fetch a miner balance with pending estimate; miner-facing stats pages are likely broken or hanging.
+
       - alert: BlocknetPoolWalletUnavailable
         expr: blocknet_pool_monitor_wallet_up == 0
         for: 10m
