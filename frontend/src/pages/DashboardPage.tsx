@@ -186,6 +186,12 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
             title={`Lifetime: ${formatPct(stats?.pool?.orphan_rate_pct)} — dominated by the Apr 2026 desync event`}
             id="s-orphan-rate"
           />
+          <StatCard
+            label="Block Share (24h)"
+            value={formatPct(stats?.pool?.block_share_24h_pct ?? undefined)}
+            title="Share of network blocks found by this pool over the last 24 hours"
+            id="s-block-share"
+          />
         </div>
       </div>
 
