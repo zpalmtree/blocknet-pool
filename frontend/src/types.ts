@@ -33,7 +33,6 @@ export interface StatsResponse {
     orphaned_blocks: number;
     orphan_rate_pct: number;
     orphan_rate_30d_pct?: number;
-    block_share_24h_pct?: number | null;
     paid_to_miners_total: number;
   };
   chain: {

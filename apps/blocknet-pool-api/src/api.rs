@@ -263,7 +263,6 @@ pub(crate) struct ApiState {
     node: Arc<NodeClient>,
     db_totals_cache: Arc<Mutex<DbTotalsCache>>,
     network_hashrate_cache: Arc<Mutex<NetworkHashrateCache>>,
-    network_blocks_24h_cache: Arc<Mutex<NetworkBlocks24hCache>>,
     insights_cache: Arc<Mutex<InsightsCache>>,
     rejection_analytics_cache: Arc<Mutex<RejectionAnalyticsCache>>,
     stats_response_cache: Arc<Mutex<StatsResponseCache>>,
@@ -286,8 +285,6 @@ struct DbTotals {
     orphaned_blocks: u64,
     blocks_30d: u64,
     orphaned_blocks_30d: u64,
-    blocks_24h: u64,
-    orphaned_blocks_24h: u64,
     paid_to_miners_total: u64,
 }
 
@@ -313,51 +310,6 @@ struct NetworkHashrateCache {
     hashrate_hps: Option<f64>,
 }
 
-#[derive(Default)]
-struct NetworkBlocks24hCache {
-    updated_at: Option<Instant>,
-    network_blocks: Option<u64>,
-}
-
-const NETWORK_BLOCKS_24H_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
-
-// Count chain blocks (all miners, not just the pool) whose timestamp falls in
-// the last 24 hours by binary-searching daemon block timestamps.
-fn network_blocks_last_24h(node: &NodeClient, chain_height: u64) -> anyhow::Result<Option<u64>> {
-    let Some(tip) = node.get_block_by_height_optional(chain_height)? else {
-        return Ok(None);
-    };
-    let cutoff = tip.timestamp - 24 * 3600;
-
-    let mut span = 512u64;
-    let mut lo = loop {
-        let candidate = chain_height.saturating_sub(span);
-        let Some(block) = node.get_block_by_height_optional(candidate)? else {
-            return Ok(None);
-        };
-        if candidate == 0 || block.timestamp < cutoff {
-            break candidate;
-        }
-        if span > 1_000_000 {
-            return Ok(None);
-        }
-        span *= 2;
-    };
-
-    let mut hi = chain_height;
-    while lo + 1 < hi {
-        let mid = lo + (hi - lo) / 2;
-        let Some(block) = node.get_block_by_height_optional(mid)? else {
-            return Ok(None);
-        };
-        if block.timestamp >= cutoff {
-            hi = mid;
-        } else {
-            lo = mid;
-        }
-    }
-    Ok(Some(chain_height.saturating_sub(hi).saturating_add(1)))
-}
 
 type InsightsCache = TimedValueCache<StatsInsightsResponse>;
 
@@ -996,7 +948,6 @@ struct PoolSummary {
     orphaned_blocks: u64,
     orphan_rate_pct: f64,
     orphan_rate_30d_pct: f64,
-    block_share_24h_pct: Option<f64>,
     paid_to_miners_total: u64,
 }
 
@@ -4095,7 +4046,6 @@ impl ApiState {
             node,
             db_totals_cache: Arc::new(Mutex::new(DbTotalsCache::default())),
             network_hashrate_cache: Arc::new(Mutex::new(NetworkHashrateCache::default())),
-            network_blocks_24h_cache: Arc::new(Mutex::new(NetworkBlocks24hCache::default())),
             insights_cache: Arc::new(Mutex::new(InsightsCache::new())),
             rejection_analytics_cache: Arc::new(Mutex::new(RejectionAnalyticsCache::default())),
             stats_response_cache: Arc::new(Mutex::new(StatsResponseCache::new())),
@@ -4201,7 +4151,6 @@ impl ApiState {
             false,
         );
 
-        let block_share_24h_pct = self.pool_block_share_24h_pct(&totals).await;
         let response = StatsResponse {
             pool: PoolSummary {
                 miners: connected_miners,
@@ -4223,7 +4172,6 @@ impl ApiState {
                 } else {
                     (totals.orphaned_blocks_30d as f64 / totals.blocks_30d as f64) * 100.0
                 },
-                block_share_24h_pct,
                 paid_to_miners_total: totals.paid_to_miners_total,
             },
             chain: ChainSummary {
@@ -5335,13 +5283,12 @@ impl ApiState {
             tokio::task::spawn_blocking(move || paid_to_miners_store.get_total_paid_to_miners());
         let windowed_blocks_store = Arc::clone(&self.store);
         let windowed_blocks_task = tokio::task::spawn_blocking(move || {
-            let now_epoch = SystemTime::now()
+            let cutoff = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .map(|now| now.as_secs() as i64)
-                .unwrap_or_default();
-            let month = windowed_blocks_store.get_block_counts_since(now_epoch - 30 * 24 * 3600)?;
-            let day = windowed_blocks_store.get_block_counts_since(now_epoch - 24 * 3600)?;
-            Ok::<_, anyhow::Error>((month, day))
+                .unwrap_or_default()
+                - 30 * 24 * 3600;
+            windowed_blocks_store.get_block_counts_since(cutoff)
         });
         let (block_totals_result, paid_to_miners_result, windowed_blocks_result) =
             tokio::join!(block_totals_task, paid_to_miners_task, windowed_blocks_task);
@@ -5349,16 +5296,13 @@ impl ApiState {
             let (total_blocks, confirmed_blocks, orphaned_blocks) =
                 join_result(block_totals_result)?;
             let paid_to_miners_total = join_result(paid_to_miners_result)?;
-            let ((blocks_30d, orphaned_blocks_30d), (blocks_24h, orphaned_blocks_24h)) =
-                join_result(windowed_blocks_result)?;
+            let (blocks_30d, orphaned_blocks_30d) = join_result(windowed_blocks_result)?;
             Ok(DbTotals {
                 total_blocks,
                 confirmed_blocks,
                 orphaned_blocks,
                 blocks_30d,
                 orphaned_blocks_30d,
-                blocks_24h,
-                orphaned_blocks_24h,
                 paid_to_miners_total,
             })
         };
@@ -5388,46 +5332,6 @@ impl ApiState {
         cache.chain_height = Some(chain_height);
         cache.updated_at = Some(Instant::now());
         Ok(totals)
-    }
-
-    async fn pool_block_share_24h_pct(&self, totals: &DbTotals) -> Option<f64> {
-        fn share(network_blocks: Option<u64>, totals: &DbTotals) -> Option<f64> {
-            let network = network_blocks.filter(|count| *count > 0)?;
-            let pool = totals.blocks_24h.saturating_sub(totals.orphaned_blocks_24h);
-            Some(((pool as f64 / network as f64) * 100.0).min(100.0))
-        }
-
-        let chain_height = self.node.chain_height();
-        {
-            let cache = self.network_blocks_24h_cache.lock();
-            if cache
-                .updated_at
-                .is_some_and(|at| at.elapsed() < NETWORK_BLOCKS_24H_CACHE_TTL)
-            {
-                return share(cache.network_blocks, totals);
-            }
-        }
-
-        let node = Arc::clone(&self.node);
-        let started_at = Instant::now();
-        let network = spawn_blocking_result(move || {
-            network_blocks_last_24h(node.as_ref(), chain_height)
-        })
-        .await
-        .ok()
-        .flatten();
-        record_api_operation_observation(
-            self,
-            "network_blocks_24h_load",
-            started_at.elapsed(),
-            network.is_none(),
-        );
-        {
-            let mut cache = self.network_blocks_24h_cache.lock();
-            cache.updated_at = Some(Instant::now());
-            cache.network_blocks = network;
-        }
-        share(network, totals)
     }
 
     async fn network_hashrate_for_job(
