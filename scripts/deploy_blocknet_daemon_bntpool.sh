@@ -237,10 +237,18 @@ ssh "${host}" "set -euo pipefail; \
   sudo systemctl is-active 'blocknetd@standby.service'"
 
 echo "==> verifying daemon API"
+# The daemons rewrite their api.cookie files during startup, so retry instead
+# of sampling once right after the restart.
 ssh "${host}" "set -euo pipefail; \
-  token_primary=\$(cat /var/lib/blocknet/data/api.cookie); \
-  token_standby=\$(cat /var/lib/blocknet-standby/data/api.cookie); \
-  curl -fsS -H \"Authorization: Bearer \${token_primary}\" http://127.0.0.1:18331/api/status >/dev/null; \
-  curl -fsS -H \"Authorization: Bearer \${token_standby}\" http://127.0.0.1:18332/api/status >/dev/null; \
+  for attempt in \$(seq 1 18); do \
+    if token_primary=\$(cat /var/lib/blocknet/data/api.cookie 2>/dev/null) \
+      && token_standby=\$(cat /var/lib/blocknet-standby/data/api.cookie 2>/dev/null) \
+      && curl -fsS -H \"Authorization: Bearer \${token_primary}\" http://127.0.0.1:18331/api/status >/dev/null 2>&1 \
+      && curl -fsS -H \"Authorization: Bearer \${token_standby}\" http://127.0.0.1:18332/api/status >/dev/null 2>&1; then \
+      echo \"daemon API verified on both instances\"; break; \
+    fi; \
+    if [ \"\${attempt}\" -eq 18 ]; then echo \"daemon API verification timed out after 90s\" >&2; exit 1; fi; \
+    sleep 5; \
+  done; \
   sudo journalctl -u 'blocknetd@primary.service' --no-pager -n 20; \
   sudo journalctl -u 'blocknetd@standby.service' --no-pager -n 20"
