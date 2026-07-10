@@ -90,6 +90,53 @@ groups:
           summary: Pool job template is critically stale
           description: The job template has not refreshed for over an hour; template refresh or the chain itself is stuck.
 
+      - alert: BlocknetPoolTemplateLeaseRefreshDelayed
+        expr: blocknet_pool_monitor_last_refresh_success_millis > 45000
+        for: 1m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Pool template lease refresh is delayed
+          description: The pool has not fetched or renewed its current daemon template successfully for more than 45 seconds.
+
+      - alert: BlocknetPoolTemplateLeaseRefreshCritical
+        expr: blocknet_pool_monitor_last_refresh_success_millis > 120000
+        for: 1m
+        labels:
+          severity: critical
+          visibility: private
+        annotations:
+          summary: Pool template lease refresh is critically delayed
+          description: The pool has not fetched or renewed its current daemon template successfully for more than two minutes.
+
+      - alert: BlocknetPoolTemplateLeaseRenewalFailed
+        expr: increase(blocknet_pool_monitor_template_renewal_failures_total[5m]) > 0
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Pool template lease renewal failed
+          description: At least one daemon template renewal failed in the last five minutes; the pool should have fetched a replacement automatically.
+
+      - alert: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
+        expr: increase(blocknet_pool_monitor_template_renewal_expired_responses_total[15m]) > 0
+        labels:
+          severity: critical
+          visibility: private
+        annotations:
+          summary: Pool template expired before renewal
+          description: The daemon reported an unknown or expired template during renewal in the last 15 minutes.
+
+      - alert: BlocknetPoolTemplateExpiredAtBlockSubmit
+        expr: increase(blocknet_pool_monitor_template_submit_expired_responses_total[15m]) > 0
+        labels:
+          severity: critical
+          visibility: private
+        annotations:
+          summary: Pool block submission used an expired template
+          description: A block candidate reached the daemon after its compact template ID was unknown or expired.
+
       - alert: BlocknetPoolMinerBalanceProbeFailing
         # End-to-end probe of /api/miner/<addr>/balance including the
         # pending-estimate path; the metric is absent when the probe address

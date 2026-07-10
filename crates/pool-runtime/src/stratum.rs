@@ -1289,6 +1289,7 @@ mod tests {
             network_difficulty: 1,
             template_id: format!("tmpl-{height}"),
             prev_hash: None,
+            template_created_at: Instant::now(),
         }
     }
 

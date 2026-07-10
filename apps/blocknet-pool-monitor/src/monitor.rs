@@ -81,6 +81,13 @@ struct MonitorSnapshot {
     last_refresh_success_millis: Option<u64>,
     last_status_poll_attempt_millis: Option<u64>,
     last_status_poll_success_millis: Option<u64>,
+    template_renewal_failures_total: Option<u64>,
+    template_renewal_expired_responses_total: Option<u64>,
+    template_submit_expired_responses_total: Option<u64>,
+    block_submit_attempts_total: Option<u64>,
+    last_block_submit_template_age_seconds: Option<u64>,
+    max_accepted_block_template_age_seconds: Option<u64>,
+    accepted_blocks_after_ten_minutes_total: Option<u64>,
     stratum_snapshot_age_seconds: Option<u64>,
     connected_miners: Option<u64>,
     connected_workers: Option<u64>,
@@ -928,6 +935,20 @@ impl MonitorRuntime {
             runtime.and_then(|snapshot| snapshot.jobs.last_status_poll_attempt_millis);
         metrics.last_status_poll_success_millis =
             runtime.and_then(|snapshot| snapshot.jobs.last_status_poll_success_millis);
+        metrics.template_renewal_failures_total =
+            runtime.map(|snapshot| snapshot.jobs.template_renewal_failures_total);
+        metrics.template_renewal_expired_responses_total =
+            runtime.map(|snapshot| snapshot.jobs.template_renewal_expired_responses_total);
+        metrics.template_submit_expired_responses_total =
+            runtime.map(|snapshot| snapshot.jobs.template_submit_expired_responses_total);
+        metrics.block_submit_attempts_total =
+            runtime.map(|snapshot| snapshot.jobs.block_submit_attempts_total);
+        metrics.last_block_submit_template_age_seconds =
+            runtime.map(|snapshot| snapshot.jobs.last_block_submit_template_age_seconds);
+        metrics.max_accepted_block_template_age_seconds =
+            runtime.map(|snapshot| snapshot.jobs.max_accepted_block_template_age_seconds);
+        metrics.accepted_blocks_after_ten_minutes_total =
+            runtime.map(|snapshot| snapshot.jobs.accepted_blocks_after_ten_minutes_total);
         metrics.stratum_snapshot_age_seconds =
             runtime_snapshot_age(sample.sampled_at, runtime).map(|age| age.as_secs());
         metrics.connected_miners = runtime.map(|snapshot| snapshot.connected_miners as u64);
@@ -2122,6 +2143,34 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
             snapshot.last_status_poll_success_millis,
         ),
         (
+            "blocknet_pool_monitor_template_renewal_failures_total",
+            snapshot.template_renewal_failures_total,
+        ),
+        (
+            "blocknet_pool_monitor_template_renewal_expired_responses_total",
+            snapshot.template_renewal_expired_responses_total,
+        ),
+        (
+            "blocknet_pool_monitor_template_submit_expired_responses_total",
+            snapshot.template_submit_expired_responses_total,
+        ),
+        (
+            "blocknet_pool_monitor_block_submit_attempts_total",
+            snapshot.block_submit_attempts_total,
+        ),
+        (
+            "blocknet_pool_monitor_last_block_submit_template_age_seconds",
+            snapshot.last_block_submit_template_age_seconds,
+        ),
+        (
+            "blocknet_pool_monitor_max_accepted_block_template_age_seconds",
+            snapshot.max_accepted_block_template_age_seconds,
+        ),
+        (
+            "blocknet_pool_monitor_accepted_blocks_after_ten_minutes_total",
+            snapshot.accepted_blocks_after_ten_minutes_total,
+        ),
+        (
             "blocknet_pool_monitor_stratum_snapshot_age_seconds",
             snapshot.stratum_snapshot_age_seconds,
         ),
@@ -2430,6 +2479,13 @@ mod tests {
             last_refresh_success_millis: Some(250),
             last_status_poll_attempt_millis: Some(375),
             last_status_poll_success_millis: Some(500),
+            template_renewal_failures_total: Some(2),
+            template_renewal_expired_responses_total: Some(1),
+            template_submit_expired_responses_total: Some(3),
+            block_submit_attempts_total: Some(4),
+            last_block_submit_template_age_seconds: Some(605),
+            max_accepted_block_template_age_seconds: Some(605),
+            accepted_blocks_after_ten_minutes_total: Some(1),
             daemon_current_process_block: Some(NodeCurrentProcessBlock {
                 height: 5,
                 tx_count: 1,
@@ -2461,6 +2517,23 @@ mod tests {
         assert!(rendered.contains("blocknet_pool_monitor_last_refresh_success_millis 250"));
         assert!(rendered.contains("blocknet_pool_monitor_last_status_poll_attempt_millis 375"));
         assert!(rendered.contains("blocknet_pool_monitor_last_status_poll_success_millis 500"));
+        assert!(rendered.contains("blocknet_pool_monitor_template_renewal_failures_total 2"));
+        assert!(
+            rendered.contains("blocknet_pool_monitor_template_renewal_expired_responses_total 1")
+        );
+        assert!(
+            rendered.contains("blocknet_pool_monitor_template_submit_expired_responses_total 3")
+        );
+        assert!(rendered.contains("blocknet_pool_monitor_block_submit_attempts_total 4"));
+        assert!(
+            rendered.contains("blocknet_pool_monitor_last_block_submit_template_age_seconds 605")
+        );
+        assert!(
+            rendered.contains("blocknet_pool_monitor_max_accepted_block_template_age_seconds 605")
+        );
+        assert!(
+            rendered.contains("blocknet_pool_monitor_accepted_blocks_after_ten_minutes_total 1")
+        );
         assert!(
             rendered.contains("blocknet_pool_monitor_daemon_last_process_block_total_millis 4750")
         );

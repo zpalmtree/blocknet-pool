@@ -14,6 +14,7 @@ use crate::engine::{BlockSubmitResponse, Job, NodeApi};
 
 const NODE_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 const WALLET_SEND_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+const ORIGINAL_TEMPLATE_LEASE_SECONDS: u64 = 10 * 60;
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct BlockTemplate {
@@ -234,6 +235,24 @@ pub(crate) fn http_error_body_contains(err: &anyhow::Error, status: u16, needle:
         .contains(&needle.to_ascii_lowercase())
 }
 
+fn is_unknown_or_expired_template_id_error(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<HttpError>().is_some_and(|http_err| {
+        let body = http_err.body.to_ascii_lowercase();
+        body.contains("unknown or expired template_id") || body.contains("mining_template_expired")
+    })
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct TemplateLeaseTelemetrySnapshot {
+    pub renewal_failures_total: u64,
+    pub renewal_expired_responses_total: u64,
+    pub submit_expired_responses_total: u64,
+    pub block_submit_attempts_total: u64,
+    pub last_block_submit_template_age_seconds: u64,
+    pub max_accepted_block_template_age_seconds: u64,
+    pub accepted_blocks_after_ten_minutes_total: u64,
+}
+
 #[derive(Debug)]
 pub struct NodeClient {
     base_url: String,
@@ -243,6 +262,13 @@ pub struct NodeClient {
     auth_token: Mutex<Option<String>>,
     auth_cookie_path: PathBuf,
     chain_height: AtomicU64,
+    template_renewal_failures: AtomicU64,
+    template_renewal_expired_responses: AtomicU64,
+    template_submit_expired_responses: AtomicU64,
+    block_submit_attempts: AtomicU64,
+    last_block_submit_template_age_seconds: AtomicU64,
+    max_accepted_block_template_age_seconds: AtomicU64,
+    accepted_blocks_after_ten_minutes: AtomicU64,
 }
 
 impl NodeClient {
@@ -297,6 +323,13 @@ impl NodeClient {
             auth_token: Mutex::new(resolved_token),
             auth_cookie_path,
             chain_height: AtomicU64::new(0),
+            template_renewal_failures: AtomicU64::new(0),
+            template_renewal_expired_responses: AtomicU64::new(0),
+            template_submit_expired_responses: AtomicU64::new(0),
+            block_submit_attempts: AtomicU64::new(0),
+            last_block_submit_template_age_seconds: AtomicU64::new(0),
+            max_accepted_block_template_age_seconds: AtomicU64::new(0),
+            accepted_blocks_after_ten_minutes: AtomicU64::new(0),
         })
     }
 
@@ -318,7 +351,51 @@ impl NodeClient {
 
     pub(crate) fn renew_block_template(&self, template_id: &str) -> Result<RenewTemplateResponse> {
         let payload = serde_json::json!({ "template_id": template_id });
-        self.post_json("/api/mining/renewtemplate", &payload)
+        let result = self.post_json("/api/mining/renewtemplate", &payload);
+        if let Err(err) = &result {
+            self.record_template_renewal_failure();
+            if is_unknown_or_expired_template_id_error(err) {
+                self.template_renewal_expired_responses
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        result
+    }
+
+    pub(crate) fn record_template_renewal_failure(&self) {
+        self.template_renewal_failures
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn template_lease_telemetry(&self) -> TemplateLeaseTelemetrySnapshot {
+        TemplateLeaseTelemetrySnapshot {
+            renewal_failures_total: self.template_renewal_failures.load(Ordering::Relaxed),
+            renewal_expired_responses_total: self
+                .template_renewal_expired_responses
+                .load(Ordering::Relaxed),
+            submit_expired_responses_total: self
+                .template_submit_expired_responses
+                .load(Ordering::Relaxed),
+            block_submit_attempts_total: self.block_submit_attempts.load(Ordering::Relaxed),
+            last_block_submit_template_age_seconds: self
+                .last_block_submit_template_age_seconds
+                .load(Ordering::Relaxed),
+            max_accepted_block_template_age_seconds: self
+                .max_accepted_block_template_age_seconds
+                .load(Ordering::Relaxed),
+            accepted_blocks_after_ten_minutes_total: self
+                .accepted_blocks_after_ten_minutes
+                .load(Ordering::Relaxed),
+        }
+    }
+
+    fn record_accepted_block_template_age(&self, template_age_seconds: u64) {
+        self.max_accepted_block_template_age_seconds
+            .fetch_max(template_age_seconds, Ordering::Relaxed);
+        if template_age_seconds >= ORIGINAL_TEMPLATE_LEASE_SECONDS {
+            self.accepted_blocks_after_ten_minutes
+                .fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     pub fn get_block(&self, id: &str) -> Result<NodeBlock> {
@@ -585,7 +662,24 @@ impl NodeApi for NodeClient {
             "template_id": template_id,
             "nonce": nonce,
         });
-        let resp: SubmitBlockRawResponse = self.post_json("/api/mining/submitblock", &payload)?;
+        let template_age_seconds = job.template_created_at.elapsed().as_secs();
+        self.block_submit_attempts.fetch_add(1, Ordering::Relaxed);
+        self.last_block_submit_template_age_seconds
+            .store(template_age_seconds, Ordering::Relaxed);
+        let resp: SubmitBlockRawResponse = match self.post_json("/api/mining/submitblock", &payload)
+        {
+            Ok(resp) => resp,
+            Err(err) => {
+                if is_unknown_or_expired_template_id_error(&err) {
+                    self.template_submit_expired_responses
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+                return Err(err);
+            }
+        };
+        if resp.accepted {
+            self.record_accepted_block_template_age(template_age_seconds);
+        }
         Ok(BlockSubmitResponse {
             accepted: resp.accepted,
             hash: if resp.hash.is_empty() {
@@ -665,11 +759,57 @@ mod tests {
             network_difficulty: 1,
             template_id: String::new(),
             prev_hash: None,
+            template_created_at: std::time::Instant::now(),
         };
 
         let err = client
             .submit_block(&job, 42)
             .expect_err("missing template_id should fail before network submit");
         assert!(err.to_string().contains("missing template_id"));
+    }
+
+    #[test]
+    fn unknown_or_expired_template_errors_are_classified() {
+        let expired = anyhow!(HttpError {
+            path: "/api/mining/submitblock".to_string(),
+            status_code: 400,
+            body: r#"{"error":"unknown or expired template_id"}"#.to_string(),
+        });
+        assert!(is_unknown_or_expired_template_id_error(&expired));
+
+        let coded = anyhow!(HttpError {
+            path: "/api/mining/submitblock".to_string(),
+            status_code: 400,
+            body: r#"{"code":"mining_template_expired","error":"template unavailable"}"#
+                .to_string(),
+        });
+        assert!(is_unknown_or_expired_template_id_error(&coded));
+
+        let stale = anyhow!(HttpError {
+            path: "/api/mining/submitblock".to_string(),
+            status_code: 400,
+            body: r#"{"error":"block rejected as stale"}"#.to_string(),
+        });
+        assert!(!is_unknown_or_expired_template_id_error(&stale));
+    }
+
+    #[test]
+    fn accepted_block_template_age_telemetry_crosses_original_lease_boundary() {
+        let client = NodeClient::new("http://127.0.0.1:1", "").expect("node client");
+        client.record_accepted_block_template_age(ORIGINAL_TEMPLATE_LEASE_SECONDS - 1);
+        let before = client.template_lease_telemetry();
+        assert_eq!(
+            before.max_accepted_block_template_age_seconds,
+            ORIGINAL_TEMPLATE_LEASE_SECONDS - 1
+        );
+        assert_eq!(before.accepted_blocks_after_ten_minutes_total, 0);
+
+        client.record_accepted_block_template_age(ORIGINAL_TEMPLATE_LEASE_SECONDS);
+        let after = client.template_lease_telemetry();
+        assert_eq!(
+            after.max_accepted_block_template_age_seconds,
+            ORIGINAL_TEMPLATE_LEASE_SECONDS
+        );
+        assert_eq!(after.accepted_blocks_after_ten_minutes_total, 1);
     }
 }

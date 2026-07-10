@@ -55,6 +55,7 @@ pub struct Job {
     pub network_difficulty: u64,
     pub template_id: String,
     pub prev_hash: Option<[u8; 32]>,
+    pub template_created_at: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -903,6 +904,7 @@ impl PoolEngine {
                             worker = %session.worker,
                             difficulty = job.network_difficulty,
                             nonce,
+                            template_age_seconds = job.template_created_at.elapsed().as_secs(),
                             "POOL BLOCK FOUND"
                         );
                         self.persist_found_block(&staged_found, persisted_found);
@@ -2261,6 +2263,7 @@ mod tests {
             network_difficulty: 1,
             template_id: "tmpl1".to_string(),
             prev_hash: None,
+            template_created_at: Instant::now(),
         }
     }
 

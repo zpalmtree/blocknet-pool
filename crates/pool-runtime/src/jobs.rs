@@ -58,6 +58,20 @@ pub struct JobRuntimeSnapshot {
     pub last_status_poll_attempt_millis: Option<u64>,
     #[serde(default)]
     pub last_status_poll_success_millis: Option<u64>,
+    #[serde(default)]
+    pub template_renewal_failures_total: u64,
+    #[serde(default)]
+    pub template_renewal_expired_responses_total: u64,
+    #[serde(default)]
+    pub template_submit_expired_responses_total: u64,
+    #[serde(default)]
+    pub block_submit_attempts_total: u64,
+    #[serde(default)]
+    pub last_block_submit_template_age_seconds: u64,
+    #[serde(default)]
+    pub max_accepted_block_template_age_seconds: u64,
+    #[serde(default)]
+    pub accepted_blocks_after_ten_minutes_total: u64,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -487,6 +501,7 @@ impl JobManager {
         let last_success_millis = refresh
             .last_success
             .map(|last| last.elapsed().as_millis() as u64);
+        let lease_telemetry = self.node.template_lease_telemetry();
         JobRuntimeSnapshot {
             template_age_seconds: current
                 .and_then(|job| state.job_meta.get(&job.id))
@@ -502,6 +517,17 @@ impl JobManager {
             last_status_poll_success_millis: refresh
                 .last_status_poll_success
                 .map(|last| last.elapsed().as_millis() as u64),
+            template_renewal_failures_total: lease_telemetry.renewal_failures_total,
+            template_renewal_expired_responses_total: lease_telemetry
+                .renewal_expired_responses_total,
+            template_submit_expired_responses_total: lease_telemetry.submit_expired_responses_total,
+            block_submit_attempts_total: lease_telemetry.block_submit_attempts_total,
+            last_block_submit_template_age_seconds: lease_telemetry
+                .last_block_submit_template_age_seconds,
+            max_accepted_block_template_age_seconds: lease_telemetry
+                .max_accepted_block_template_age_seconds,
+            accepted_blocks_after_ten_minutes_total: lease_telemetry
+                .accepted_blocks_after_ten_minutes_total,
         }
     }
 
@@ -769,6 +795,7 @@ impl JobManager {
             }
         };
         if response.template_id.trim() != template_id {
+            self.node.record_template_renewal_failure();
             tracing::warn!(
                 requested_template_id = template_id,
                 returned_template_id = %response.template_id,
@@ -783,6 +810,7 @@ impl JobManager {
             SystemTime::now(),
             now,
         ) else {
+            self.node.record_template_renewal_failure();
             tracing::warn!(
                 template_id,
                 expires_at_unix_ms = response.template_expires_at_unix_ms,
@@ -1321,6 +1349,7 @@ fn parse_template_into_job(template: &crate::node::BlockTemplate) -> anyhow::Res
         network_difficulty: difficulty.max(1),
         template_id: template.template_id.trim().to_string(),
         prev_hash: block_prev_hash(header),
+        template_created_at: Instant::now(),
     })
 }
 
@@ -1687,6 +1716,7 @@ mod tests {
             network_difficulty: 1,
             template_id: format!("tmpl-{id}"),
             prev_hash: None,
+            template_created_at: Instant::now(),
         }
     }
 
@@ -2694,6 +2724,7 @@ mod tests {
             network_difficulty: 1000,
             template_id: "t1".to_string(),
             prev_hash: Some([0xAA; 32]),
+            template_created_at: Instant::now(),
         };
         let mut same = base.clone();
         same.id = "j2".to_string();
