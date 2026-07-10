@@ -17,6 +17,7 @@ Environment overrides:
   BNTPOOL_RECOVERY_SERVICE Systemd recovery service name (default: blocknet-pool-recoveryd.service)
   BNTPOOL_RECOVERY_SOCKET  Systemd recovery socket name (default: blocknet-pool-recoveryd.socket)
   BNTPOOL_VERIFY_SINCE     journalctl --since value (default: 15 minutes ago)
+  BNTPOOL_VERIFY_READY_ATTEMPTS  API readiness attempts at 5-second intervals (default: 24)
   BNTPOOL_ALLOW_RETIRED_HOST  Set to 1 to allow explicit checks against oldpool / 5.161.113.120
 EOF
 }
@@ -34,7 +35,13 @@ monitor_service="${BNTPOOL_MONITOR_SERVICE:-blocknet-pool-monitor.service}"
 recovery_service="${BNTPOOL_RECOVERY_SERVICE:-blocknet-pool-recoveryd.service}"
 recovery_socket="${BNTPOOL_RECOVERY_SOCKET:-blocknet-pool-recoveryd.socket}"
 since="${BNTPOOL_VERIFY_SINCE:-15 minutes ago}"
+ready_attempts="${BNTPOOL_VERIFY_READY_ATTEMPTS:-24}"
 allow_retired_host="${BNTPOOL_ALLOW_RETIRED_HOST:-0}"
+
+if [[ ! "${ready_attempts}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "BNTPOOL_VERIFY_READY_ATTEMPTS must be a positive integer" >&2
+  exit 1
+fi
 
 case "${host}" in
   oldpool|*5.161.113.120*)
@@ -53,6 +60,7 @@ ssh "${host}" "set -euo pipefail; \
   recovery_service='${recovery_service}'; \
   recovery_socket='${recovery_socket}'; \
   since='${since}'; \
+  ready_attempts='${ready_attempts}'; \
   echo '==> deploy metadata'; \
   if [[ -f \"\${remote_dir}/deploy-info.txt\" ]]; then cat \"\${remote_dir}/deploy-info.txt\"; else echo 'deploy-info.txt missing'; fi; \
   echo '==> service active checks'; \
@@ -83,6 +91,22 @@ ssh "${host}" "set -euo pipefail; \
       *) echo \"\${bin} has incompatible binary format: \${desc}\" >&2; exit 1 ;; \
     esac; \
   done; \
+  echo '==> API readiness'; \
+  api_ready=0; \
+  for attempt in \$(seq 1 \"\${ready_attempts}\"); do \
+    if curl -fsS --max-time 2 http://127.0.0.1:24783/api/info >/dev/null 2>&1; then \
+      api_ready=1; \
+      break; \
+    fi; \
+    if [[ \"\${attempt}\" -eq \"\${ready_attempts}\" ]]; then break; fi; \
+    echo \"API not ready: attempt \${attempt}/\${ready_attempts}; retrying in 5s\"; \
+    sleep 5; \
+  done; \
+  if [[ \"\${api_ready}\" != \"1\" ]]; then \
+    echo \"API did not become ready after \${ready_attempts} attempts\" >&2; \
+    sudo systemctl status \"\${api_service}\" --no-pager -l || true; \
+    exit 1; \
+  fi; \
   echo '==> listener state'; \
   ss -ltnp 2>/dev/null | awk 'NR==1 || /:24783|:3333/' || true; \
   ss -ltn | awk 'NR > 1 { if (\$4 ~ /:24783$/) api = 1; if (\$4 ~ /:3333$/) stratum = 1 } END { if (!api) { print \"missing API listener on :24783\"; exit 1 } if (!stratum) { print \"missing Stratum listener on :3333\"; exit 1 } }'; \
