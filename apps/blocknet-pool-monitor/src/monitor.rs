@@ -79,6 +79,8 @@ struct MonitorSnapshot {
     last_refresh_millis: Option<u64>,
     last_refresh_attempt_millis: Option<u64>,
     last_refresh_success_millis: Option<u64>,
+    last_status_poll_attempt_millis: Option<u64>,
+    last_status_poll_success_millis: Option<u64>,
     stratum_snapshot_age_seconds: Option<u64>,
     connected_miners: Option<u64>,
     connected_workers: Option<u64>,
@@ -922,6 +924,10 @@ impl MonitorRuntime {
             runtime.and_then(|snapshot| snapshot.jobs.last_refresh_attempt_millis);
         metrics.last_refresh_success_millis =
             runtime.and_then(|snapshot| snapshot.jobs.last_refresh_success_millis);
+        metrics.last_status_poll_attempt_millis =
+            runtime.and_then(|snapshot| snapshot.jobs.last_status_poll_attempt_millis);
+        metrics.last_status_poll_success_millis =
+            runtime.and_then(|snapshot| snapshot.jobs.last_status_poll_success_millis);
         metrics.stratum_snapshot_age_seconds =
             runtime_snapshot_age(sample.sampled_at, runtime).map(|age| age.as_secs());
         metrics.connected_miners = runtime.map(|snapshot| snapshot.connected_miners as u64);
@@ -2108,6 +2114,14 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
             snapshot.last_refresh_success_millis,
         ),
         (
+            "blocknet_pool_monitor_last_status_poll_attempt_millis",
+            snapshot.last_status_poll_attempt_millis,
+        ),
+        (
+            "blocknet_pool_monitor_last_status_poll_success_millis",
+            snapshot.last_status_poll_success_millis,
+        ),
+        (
             "blocknet_pool_monitor_stratum_snapshot_age_seconds",
             snapshot.stratum_snapshot_age_seconds,
         ),
@@ -2414,6 +2428,8 @@ mod tests {
             wallet_up: Some(false),
             last_refresh_attempt_millis: Some(125),
             last_refresh_success_millis: Some(250),
+            last_status_poll_attempt_millis: Some(375),
+            last_status_poll_success_millis: Some(500),
             daemon_current_process_block: Some(NodeCurrentProcessBlock {
                 height: 5,
                 tx_count: 1,
@@ -2443,6 +2459,8 @@ mod tests {
         assert!(rendered.contains("blocknet_pool_monitor_daemon_process_block_active 1"));
         assert!(rendered.contains("blocknet_pool_monitor_last_refresh_attempt_millis 125"));
         assert!(rendered.contains("blocknet_pool_monitor_last_refresh_success_millis 250"));
+        assert!(rendered.contains("blocknet_pool_monitor_last_status_poll_attempt_millis 375"));
+        assert!(rendered.contains("blocknet_pool_monitor_last_status_poll_success_millis 500"));
         assert!(
             rendered.contains("blocknet_pool_monitor_daemon_last_process_block_total_millis 4750")
         );

@@ -20,7 +20,7 @@ const NONCE_RANGE_SIZE: u64 = 1_000_000;
 const MAX_DB_NONCE: u64 = i64::MAX as u64;
 const BLOCK_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const ASSIGNMENT_PRUNE_INTERVAL: Duration = Duration::from_secs(30);
-const LEGACY_TEMPLATE_ROTATION_INTERVAL: Duration = Duration::from_secs(8 * 60);
+const TEMPLATE_LIVENESS_PROBE_INTERVAL: Duration = Duration::from_secs(30);
 const REWARD_ADDR_CACHE_TTL: Duration = Duration::from_secs(30);
 const TEMPLATE_WALLET_RECOVERY_COOLDOWN: Duration = Duration::from_secs(10);
 const MISSING_WALLET_PASSWORD_LOG_COOLDOWN: Duration = Duration::from_secs(60);
@@ -30,6 +30,7 @@ const MAX_ACTIVE_ASSIGNMENTS: usize = 65_536;
 const MAX_ASSIGNMENT_AGE: Duration = Duration::from_secs(10 * 60);
 const SSE_RETRY_DELAY_MIN: Duration = Duration::from_millis(100);
 const SSE_RETRY_DELAY_MAX: Duration = Duration::from_secs(10);
+const SSE_HEALTHY_CONNECTION_MIN_DURATION: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct MinerJob {
@@ -53,6 +54,10 @@ pub struct JobRuntimeSnapshot {
     pub last_refresh_attempt_millis: Option<u64>,
     #[serde(default)]
     pub last_refresh_success_millis: Option<u64>,
+    #[serde(default)]
+    pub last_status_poll_attempt_millis: Option<u64>,
+    #[serde(default)]
+    pub last_status_poll_success_millis: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -70,6 +75,8 @@ struct RewardAddressCache {
 #[derive(Debug, Default)]
 struct TipEventState {
     last_new_block: Option<LastTipEvent>,
+    pending_generation: Option<u64>,
+    next_generation: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +115,7 @@ pub struct JobManager {
     last_template_wallet_recovery: Mutex<Option<Instant>>,
     last_missing_wallet_password_log: Mutex<Option<Instant>>,
     tip_events: Mutex<TipEventState>,
+    last_tip_stream_rotation: Mutex<Option<Instant>>,
 
     tx: broadcast::Sender<Job>,
 }
@@ -137,6 +145,8 @@ struct RefreshCoordinatorState {
     force_rotation_requested: bool,
     last_attempt: Option<Instant>,
     last_success: Option<Instant>,
+    last_status_poll_attempt: Option<Instant>,
+    last_status_poll_success: Option<Instant>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -149,6 +159,8 @@ struct RefreshWork {
 struct RefreshRuntimeState {
     last_attempt: Option<Instant>,
     last_success: Option<Instant>,
+    last_status_poll_attempt: Option<Instant>,
+    last_status_poll_success: Option<Instant>,
 }
 
 impl RefreshCoordinator {
@@ -182,10 +194,18 @@ impl RefreshCoordinator {
         self.state.lock().last_success = Some(Instant::now());
     }
 
-    /// Finishes one fetch. If a newer request arrived, the result is deliberately not installed
-    /// and the returned generation must be fetched immediately. The coordinator lock remains held
-    /// while `install` runs, making the generation check and installation one atomic operation with
-    /// respect to new refresh requests.
+    fn record_status_poll_attempt(&self) {
+        self.state.lock().last_status_poll_attempt = Some(Instant::now());
+    }
+
+    fn record_status_poll_success(&self) {
+        self.state.lock().last_status_poll_success = Some(Instant::now());
+    }
+
+    /// Finishes one fetch. A successful result is installed even when a newer request arrived, so
+    /// a failed duplicate cannot erase the newest usable template. The returned generation is then
+    /// fetched immediately and may supersede it. The coordinator lock makes installation atomic
+    /// with respect to new refresh requests.
     fn finish_attempt(
         &self,
         work: RefreshWork,
@@ -194,17 +214,20 @@ impl RefreshCoordinator {
     ) -> Option<RefreshWork> {
         let mut state = self.state.lock();
         debug_assert!(state.in_flight);
-        if state.requested_generation > work.generation {
-            return Some(RefreshWork {
-                generation: state.requested_generation,
-                force_rotation: state.force_rotation_requested,
-            });
-        }
+        let follow_up = (state.requested_generation > work.generation).then_some(RefreshWork {
+            generation: state.requested_generation,
+            force_rotation: state.force_rotation_requested,
+        });
 
         if successful {
             install();
             state.last_success = Some(Instant::now());
-            state.force_rotation_requested = false;
+            if follow_up.is_none() {
+                state.force_rotation_requested = false;
+            }
+        }
+        if let Some(follow_up) = follow_up {
+            return Some(follow_up);
         }
         state.in_flight = false;
         None
@@ -215,6 +238,8 @@ impl RefreshCoordinator {
         RefreshRuntimeState {
             last_attempt: state.last_attempt,
             last_success: state.last_success,
+            last_status_poll_attempt: state.last_status_poll_attempt,
+            last_status_poll_success: state.last_status_poll_success,
         }
     }
 
@@ -237,11 +262,12 @@ struct JobTemplateMeta {
     created_at: Instant,
     stale_since: Option<Instant>,
     lease: Option<TemplateLease>,
-    legacy_rotate_at: Option<Instant>,
+    legacy_probe_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct TemplateLease {
+    probe_at: Instant,
     renew_at: Instant,
     expires_at: Instant,
 }
@@ -281,6 +307,7 @@ impl JobManager {
             last_template_wallet_recovery: Mutex::new(None),
             last_missing_wallet_password_log: Mutex::new(None),
             tip_events: Mutex::new(TipEventState::default()),
+            last_tip_stream_rotation: Mutex::new(None),
             tx,
         })
     }
@@ -321,9 +348,13 @@ impl JobManager {
         loop {
             match self.node.open_events_stream() {
                 Ok(resp) => {
-                    reconnect_delay = SSE_RETRY_DELAY_MIN;
+                    self.on_tip_stream_connected();
+                    let stream_started_at = Instant::now();
                     if let Err(err) = self.stream_tip_events(resp) {
                         tracing::warn!(error = %err, "tip events stream ended; reconnecting");
+                    }
+                    if stream_started_at.elapsed() >= SSE_HEALTHY_CONNECTION_MIN_DURATION {
+                        reconnect_delay = SSE_RETRY_DELAY_MIN;
                     }
                 }
                 Err(err) => {
@@ -334,6 +365,19 @@ impl JobManager {
             thread::sleep(reconnect_delay);
             reconnect_delay = (reconnect_delay.saturating_mul(2)).min(SSE_RETRY_DELAY_MAX);
         }
+    }
+
+    fn on_tip_stream_connected(&self) {
+        // Template IDs are process-local to the daemon. A successful SSE reconnect is therefore
+        // also a liveness boundary: rotate even when height/hash did not change, because the
+        // upstream process or active host may have changed underneath the same canonical tip.
+        // Debounce before doing network work so a proxy returning 200 + immediate EOF cannot
+        // continuously rotate miner jobs while the reconnect loop backs off.
+        let now = Instant::now();
+        if !claim_tip_stream_rotation(&mut self.last_tip_stream_rotation.lock(), now) {
+            return;
+        }
+        self.refresh_template_forced();
     }
 
     fn stream_tip_events(&self, resp: reqwest::blocking::Response) -> anyhow::Result<()> {
@@ -418,6 +462,18 @@ impl JobManager {
         self.refresh_template();
     }
 
+    fn pending_tip_refresh_generation(&self) -> Option<u64> {
+        self.tip_events.lock().pending_generation
+    }
+
+    fn acknowledge_tip_refresh(&self, generation: Option<u64>) {
+        let Some(generation) = generation else {
+            return;
+        };
+        let mut tip_events = self.tip_events.lock();
+        acknowledge_tip_refresh_generation(&mut tip_events, Some(generation));
+    }
+
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<Job> {
         self.tx.subscribe()
     }
@@ -440,6 +496,12 @@ impl JobManager {
                 .last_attempt
                 .map(|last| last.elapsed().as_millis() as u64),
             last_refresh_success_millis: last_success_millis,
+            last_status_poll_attempt_millis: refresh
+                .last_status_poll_attempt
+                .map(|last| last.elapsed().as_millis() as u64),
+            last_status_poll_success_millis: refresh
+                .last_status_poll_success
+                .map(|last| last.elapsed().as_millis() as u64),
         }
     }
 
@@ -496,7 +558,7 @@ impl JobManager {
                 created_at: now,
                 stale_since: None,
                 lease: None,
-                legacy_rotate_at: now.checked_add(LEGACY_TEMPLATE_ROTATION_INTERVAL),
+                legacy_probe_at: now.checked_add(TEMPLATE_LIVENESS_PROBE_INTERVAL),
             });
         let active_assignment_id = state
             .active_assignments_by_template
@@ -587,14 +649,17 @@ impl JobManager {
         }
 
         let now = Instant::now();
-        let action = {
+        let tip_refresh_pending = self.pending_tip_refresh_generation().is_some();
+        let action = if tip_refresh_pending {
+            MaintenanceAction::Refresh
+        } else {
             let state = self.state.read();
             match state.current.as_ref() {
                 None => MaintenanceAction::Refresh,
                 Some(current) => {
                     let meta = state.job_meta.get(&current.id);
                     if let Some(lease) = meta.and_then(|meta| meta.lease) {
-                        if now >= lease.renew_at {
+                        if now >= lease.probe_at || now >= lease.renew_at {
                             MaintenanceAction::Renew {
                                 job_id: current.id.clone(),
                                 template_id: current.template_id.clone(),
@@ -608,8 +673,8 @@ impl JobManager {
                             }
                         }
                     } else if meta
-                        .and_then(|meta| meta.legacy_rotate_at)
-                        .is_some_and(|rotate_at| now >= rotate_at)
+                        .and_then(|meta| meta.legacy_probe_at)
+                        .is_some_and(|probe_at| now >= probe_at)
                     {
                         MaintenanceAction::ForceRefresh
                     } else {
@@ -635,25 +700,23 @@ impl JobManager {
                 expected_chain_height,
                 expected_best_hash,
             } => {
-                self.refresh.record_maintenance_attempt();
+                self.refresh.record_status_poll_attempt();
                 match self.node.get_status() {
-                    Ok(status)
+                    Ok(status) => {
+                        self.refresh.record_status_poll_success();
                         if status.chain_height != expected_chain_height
-                            || best_hash_changed(
-                                expected_best_hash.as_deref(),
-                                &status.best_hash,
-                            ) =>
-                    {
-                        tracing::debug!(
-                            expected_chain_height,
-                            observed_chain_height = status.chain_height,
-                            expected_best_hash,
-                            observed_best_hash = %status.best_hash,
-                            "daemon status poll detected a tip change"
-                        );
-                        self.refresh_template();
+                            || best_hash_changed(expected_best_hash.as_deref(), &status.best_hash)
+                        {
+                            tracing::debug!(
+                                expected_chain_height,
+                                observed_chain_height = status.chain_height,
+                                expected_best_hash,
+                                observed_best_hash = %status.best_hash,
+                                "daemon status poll detected a tip change"
+                            );
+                            self.refresh_template();
+                        }
                     }
-                    Ok(_) => self.refresh.record_maintenance_success(),
                     Err(err) => tracing::warn!(error = %err, "failed polling daemon tip status"),
                 }
             }
@@ -738,7 +801,7 @@ impl JobManager {
         }
         if let Some(meta) = state.job_meta.get_mut(job_id) {
             meta.lease = Some(lease);
-            meta.legacy_rotate_at = None;
+            meta.legacy_probe_at = None;
         }
         drop(state);
         self.refresh.record_maintenance_success();
@@ -759,11 +822,13 @@ impl JobManager {
 
         loop {
             self.refresh.begin_attempt();
+            let pending_tip_generation = self.pending_tip_refresh_generation();
             let mut fetched = self.fetch_template_job();
             let successful = fetched.is_some();
             let next_work = self.refresh.finish_attempt(work, successful, || {
                 if let Some(fetched) = fetched.take() {
                     self.install_refreshed_template(fetched, work.force_rotation);
+                    self.acknowledge_tip_refresh(pending_tip_generation);
                 }
             });
 
@@ -773,7 +838,7 @@ impl JobManager {
             tracing::debug!(
                 generation = work.generation,
                 next_generation = next_work.generation,
-                discarded_successful = successful,
+                installed_successful = successful,
                 "template refresh request arrived in flight; fetching latest generation"
             );
             work = next_work;
@@ -845,9 +910,9 @@ impl JobManager {
                 if current.template_id == parsed.template_id {
                     if let Some(meta) = state.job_meta.get_mut(&current_id) {
                         meta.lease = lease;
-                        meta.legacy_rotate_at = lease
+                        meta.legacy_probe_at = lease
                             .is_none()
-                            .then(|| now + LEGACY_TEMPLATE_ROTATION_INTERVAL);
+                            .then(|| now + TEMPLATE_LIVENESS_PROBE_INTERVAL);
                     }
                 }
                 maybe_prune_assignments_locked(
@@ -873,7 +938,7 @@ impl JobManager {
                         created_at: now,
                         stale_since: Some(now),
                         lease: None,
-                        legacy_rotate_at: None,
+                        legacy_probe_at: None,
                     },
                 );
             }
@@ -887,9 +952,9 @@ impl JobManager {
                 created_at: now,
                 stale_since: None,
                 lease,
-                legacy_rotate_at: lease
+                legacy_probe_at: lease
                     .is_none()
-                    .then(|| now + LEGACY_TEMPLATE_ROTATION_INTERVAL),
+                    .then(|| now + TEMPLATE_LIVENESS_PROBE_INTERVAL),
             },
         );
         state.order.retain(|id| id != &parsed.id);
@@ -1116,7 +1181,7 @@ impl JobManager {
                 created_at: now,
                 stale_since: None,
                 lease: None,
-                legacy_rotate_at: now.checked_add(LEGACY_TEMPLATE_ROTATION_INTERVAL),
+                legacy_probe_at: now.checked_add(TEMPLATE_LIVENESS_PROBE_INTERVAL),
             },
         );
         state.order.retain(|id| id != &job.id);
@@ -1327,6 +1392,9 @@ fn should_refresh_for_new_block_event(
     }
 
     if let Some(last) = state.last_new_block.as_ref() {
+        if last.hash == normalized_hash && last.height == event_height {
+            return state.pending_generation.is_some();
+        }
         let same_height = matches!(
             (last.height, event_height),
             (Some(last_height), Some(height)) if last_height == height
@@ -1337,11 +1405,11 @@ fn should_refresh_for_new_block_event(
                 hash: normalized_hash,
                 height: event_height,
             });
-            return refresh_on_same_height && hash_changed;
-        }
-
-        if last.hash == normalized_hash && last.height == event_height {
-            return false;
+            if refresh_on_same_height && hash_changed {
+                mark_tip_refresh_pending(state);
+                return true;
+            }
+            return state.pending_generation.is_some();
         }
     }
 
@@ -1349,7 +1417,30 @@ fn should_refresh_for_new_block_event(
         hash: normalized_hash,
         height: event_height,
     });
+    mark_tip_refresh_pending(state);
     true
+}
+
+fn mark_tip_refresh_pending(state: &mut TipEventState) -> u64 {
+    state.next_generation = state.next_generation.saturating_add(1);
+    state.pending_generation = Some(state.next_generation);
+    state.next_generation
+}
+
+fn claim_tip_stream_rotation(last_rotation: &mut Option<Instant>, now: Instant) -> bool {
+    if last_rotation
+        .is_some_and(|last| now.saturating_duration_since(last) < TEMPLATE_LIVENESS_PROBE_INTERVAL)
+    {
+        return false;
+    }
+    *last_rotation = Some(now);
+    true
+}
+
+fn acknowledge_tip_refresh_generation(state: &mut TipEventState, generation: Option<u64>) {
+    if generation.is_some() && state.pending_generation == generation {
+        state.pending_generation = None;
+    }
 }
 
 fn template_lease_from_unix_ms(
@@ -1367,8 +1458,11 @@ fn template_lease_from_unix_ms(
         return None;
     }
     let remaining = Duration::from_millis(remaining_millis as u64);
+    let renew_after = remaining / 2;
+    let probe_after = TEMPLATE_LIVENESS_PROBE_INTERVAL.min(renew_after);
     Some(TemplateLease {
-        renew_at: instant_now.checked_add(remaining / 2)?,
+        probe_at: instant_now.checked_add(probe_after)?,
+        renew_at: instant_now.checked_add(renew_after)?,
         expires_at: instant_now.checked_add(remaining)?,
     })
 }
@@ -1562,6 +1656,8 @@ fn hex_decode_32(input: &str) -> anyhow::Result<[u8; 32]> {
 mod tests {
     use super::*;
     use crate::node::HttpError;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
 
     fn test_assignment(
         owner_conn_id: &str,
@@ -1594,6 +1690,53 @@ mod tests {
         }
     }
 
+    fn spawn_template_server(template_id: &str) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind template test server");
+        let address = listener.local_addr().expect("template server address");
+        let template_id = template_id.to_string();
+        let expires_at_unix_ms = (SystemTime::now() + Duration::from_secs(600))
+            .duration_since(UNIX_EPOCH)
+            .expect("future expiry")
+            .as_millis() as i64;
+        let handle = thread::spawn(move || {
+            for _ in 0..1 {
+                let (mut stream, _) = listener.accept().expect("accept daemon request");
+                let mut request = [0u8; 4096];
+                let read = stream.read(&mut request).expect("read daemon request");
+                let request = String::from_utf8_lossy(&request[..read]);
+                let (status, body) = if request.starts_with("GET /api/mining/blocktemplate ") {
+                    (
+                        "200 OK",
+                        serde_json::json!({
+                            "block": {
+                                "header": {
+                                    "Height": 10,
+                                    "Difficulty": 1,
+                                    "PrevHash": vec![0x11_u8; 32]
+                                }
+                            },
+                            "target": hex::encode([0xBB; 32]),
+                            "header_base": hex::encode([0xAA; 92]),
+                            "template_id": template_id,
+                            "template_expires_at_unix_ms": expires_at_unix_ms
+                        })
+                        .to_string(),
+                    )
+                } else {
+                    panic!("unexpected daemon request: {request}");
+                };
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("write daemon response");
+            }
+        });
+        (format!("http://{address}"), handle)
+    }
+
     fn assert_assignment_indexes(state: &JobState) {
         for (assignment_id, assignment) in &state.assignments {
             assert!(state
@@ -1624,7 +1767,7 @@ mod tests {
     }
 
     #[test]
-    fn refresh_coordinator_queues_follow_up_and_discards_stale_result() {
+    fn refresh_coordinator_installs_success_before_running_follow_up() {
         let coordinator = RefreshCoordinator::default();
         let first_work = coordinator.request(false).expect("first request leads");
         coordinator.begin_attempt();
@@ -1634,7 +1777,7 @@ mod tests {
         let follow_up = coordinator
             .finish_attempt(first_work, true, || installed.push(first_work.generation))
             .expect("queued request requires a follow-up");
-        assert!(installed.is_empty(), "stale result must not be installed");
+        assert_eq!(installed, vec![first_work.generation]);
         assert!(coordinator.is_in_flight());
         assert!(follow_up.force_rotation);
 
@@ -1642,11 +1785,65 @@ mod tests {
         assert!(coordinator
             .finish_attempt(follow_up, true, || installed.push(follow_up.generation))
             .is_none());
-        assert_eq!(installed, vec![follow_up.generation]);
+        assert_eq!(installed, vec![first_work.generation, follow_up.generation]);
         assert!(!coordinator.is_in_flight());
         let runtime = coordinator.runtime_state();
         assert!(runtime.last_attempt.is_some());
         assert!(runtime.last_success.is_some());
+    }
+
+    #[test]
+    fn refresh_coordinator_preserves_success_when_queued_duplicate_fails() {
+        let coordinator = RefreshCoordinator::default();
+        let first_work = coordinator.request(false).expect("first request leads");
+        coordinator.begin_attempt();
+        assert!(coordinator.request(false).is_none());
+
+        let mut installed = Vec::new();
+        let follow_up = coordinator
+            .finish_attempt(first_work, true, || installed.push(first_work.generation))
+            .expect("duplicate request requires a follow-up");
+        coordinator.begin_attempt();
+        assert!(coordinator
+            .finish_attempt(follow_up, false, || installed.push(follow_up.generation))
+            .is_none());
+
+        assert_eq!(installed, vec![first_work.generation]);
+        assert!(!coordinator.is_in_flight());
+        assert!(coordinator.runtime_state().last_success.is_some());
+    }
+
+    #[test]
+    fn status_poll_success_does_not_mask_template_refresh_failure() {
+        let coordinator = RefreshCoordinator::default();
+        coordinator.record_status_poll_attempt();
+        coordinator.record_status_poll_success();
+
+        let runtime = coordinator.runtime_state();
+        assert!(runtime.last_attempt.is_none());
+        assert!(runtime.last_success.is_none());
+        assert!(runtime.last_status_poll_attempt.is_some());
+        assert!(runtime.last_status_poll_success.is_some());
+    }
+
+    #[test]
+    fn immediate_sse_eof_reconnects_cannot_storm_template_rotations() {
+        let started_at = Instant::now();
+        let mut last_rotation = None;
+        let rotations = (0..100)
+            .filter(|attempt| {
+                claim_tip_stream_rotation(
+                    &mut last_rotation,
+                    started_at + Duration::from_millis(*attempt * 100),
+                )
+            })
+            .count();
+
+        assert_eq!(rotations, 1);
+        assert!(claim_tip_stream_rotation(
+            &mut last_rotation,
+            started_at + TEMPLATE_LIVENESS_PROBE_INTERVAL
+        ));
     }
 
     #[test]
@@ -1794,7 +1991,7 @@ mod tests {
                 created_at: now - Duration::from_secs(60),
                 stale_since: Some(now - Duration::from_secs(2)),
                 lease: None,
-                legacy_rotate_at: None,
+                legacy_probe_at: None,
             },
         );
         state.assignments.insert(
@@ -1845,7 +2042,7 @@ mod tests {
                     created_at: now - Duration::from_secs(60),
                     stale_since: Some(now - Duration::from_secs(2)),
                     lease: None,
-                    legacy_rotate_at: None,
+                    legacy_probe_at: None,
                 },
             );
             state.assignments.insert(
@@ -1914,7 +2111,7 @@ mod tests {
                     created_at: now - Duration::from_secs(3),
                     stale_since: Some(now - Duration::from_secs(2)),
                     lease: None,
-                    legacy_rotate_at: None,
+                    legacy_probe_at: None,
                 },
             );
         }
@@ -1958,7 +2155,7 @@ mod tests {
                     created_at: now - Duration::from_secs(60),
                     stale_since: Some(now - Duration::from_secs(2)),
                     lease: None,
-                    legacy_rotate_at: None,
+                    legacy_probe_at: None,
                 },
             );
         }
@@ -1996,7 +2193,7 @@ mod tests {
                     created_at: now - Duration::from_secs(60),
                     stale_since: Some(now - Duration::from_secs(10)),
                     lease: None,
-                    legacy_rotate_at: None,
+                    legacy_probe_at: None,
                 },
             );
         }
@@ -2042,7 +2239,7 @@ mod tests {
                     created_at: now - Duration::from_secs(60),
                     stale_since: Some(now - Duration::from_secs(6)),
                     lease: None,
-                    legacy_rotate_at: None,
+                    legacy_probe_at: None,
                 },
             );
         }
@@ -2219,7 +2416,7 @@ mod tests {
                     created_at: now - Duration::from_secs(60),
                     stale_since: Some(now - Duration::from_secs(10)),
                     lease: None,
-                    legacy_rotate_at: None,
+                    legacy_probe_at: None,
                 },
             );
             let mut assignment =
@@ -2256,7 +2453,7 @@ mod tests {
                 created_at: now - Duration::from_secs(180),
                 stale_since: Some(now - Duration::from_secs(30)),
                 lease: None,
-                legacy_rotate_at: None,
+                legacy_probe_at: None,
             },
         );
         let assignment = test_assignment("conn1", "job-old", now - Duration::from_secs(120), 0);
@@ -2378,7 +2575,7 @@ mod tests {
     }
 
     #[test]
-    fn template_lease_renews_at_half_life_and_rejects_expired_values() {
+    fn template_lease_probes_promptly_and_renews_by_half_life() {
         let system_now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let instant_now = Instant::now();
         let now_unix_ms = system_now
@@ -2392,6 +2589,10 @@ mod tests {
             instant_now,
         )
         .expect("future expiry should produce a lease");
+        assert_eq!(
+            lease.probe_at.duration_since(instant_now),
+            TEMPLATE_LIVENESS_PROBE_INTERVAL
+        );
         assert_eq!(
             lease.renew_at.duration_since(instant_now),
             Duration::from_secs(300)
@@ -2455,11 +2656,32 @@ mod tests {
         assert_eq!(current.id, "job-replacement");
         assert_eq!(current.template_id, "tmpl-replacement");
         let state = manager.state.read();
-        assert!(state
+        let probe_at = state
             .job_meta
             .get(&current.id)
-            .and_then(|meta| meta.legacy_rotate_at)
-            .is_some());
+            .and_then(|meta| meta.legacy_probe_at)
+            .expect("legacy liveness probe");
+        assert!(
+            probe_at.saturating_duration_since(Instant::now()) <= TEMPLATE_LIVENESS_PROBE_INTERVAL
+        );
+    }
+
+    #[test]
+    fn sse_reconnect_replaces_same_tip_template_after_daemon_cache_reset() {
+        let (daemon_url, server) = spawn_template_server("tmpl-after-restart");
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new(&daemon_url, "").expect("node")),
+            Config::default(),
+        );
+        manager.reward_cache.lock().checked_at = Some(Instant::now());
+        manager.install_test_job(test_job("before-restart", 10));
+
+        manager.on_tip_stream_connected();
+
+        let current = manager.current_job().expect("replacement template");
+        assert_eq!(current.template_id, "tmpl-after-restart");
+        assert_ne!(current.id, "before-restart");
+        server.join().expect("template server should finish");
     }
 
     #[test]
@@ -2511,7 +2733,7 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_new_block_events_are_coalesced() {
+    fn duplicate_new_block_event_retries_until_refresh_is_acknowledged() {
         let mut state = TipEventState::default();
         assert!(should_refresh_for_new_block_event(
             &mut state,
@@ -2520,12 +2742,68 @@ mod tests {
             0,
             false
         ));
+        let pending_generation = state.pending_generation;
+        assert!(should_refresh_for_new_block_event(
+            &mut state,
+            "abc",
+            Some(100),
+            0,
+            false
+        ));
+        acknowledge_tip_refresh_generation(&mut state, pending_generation);
         assert!(!should_refresh_for_new_block_event(
             &mut state,
             "abc",
             Some(100),
             0,
             false
+        ));
+    }
+
+    #[test]
+    fn newer_tip_demand_survives_acknowledging_an_older_fetch() {
+        let mut state = TipEventState::default();
+        assert!(should_refresh_for_new_block_event(
+            &mut state,
+            "aaa",
+            Some(100),
+            0,
+            true
+        ));
+        let first_generation = state.pending_generation;
+        assert!(should_refresh_for_new_block_event(
+            &mut state,
+            "bbb",
+            Some(101),
+            0,
+            true
+        ));
+        let newer_generation = state.pending_generation;
+
+        acknowledge_tip_refresh_generation(&mut state, first_generation);
+        assert_eq!(state.pending_generation, newer_generation);
+    }
+
+    #[test]
+    fn hashless_status_cannot_clear_latched_tip_refresh_after_failure() {
+        let mut state = TipEventState::default();
+        assert!(should_refresh_for_new_block_event(
+            &mut state,
+            "aaa",
+            Some(100),
+            0,
+            true
+        ));
+        let pending_generation = state.pending_generation;
+
+        assert!(!best_hash_changed(Some("aaaaaaaaaaaaaaaa"), ""));
+        assert_eq!(state.pending_generation, pending_generation);
+        assert!(should_refresh_for_new_block_event(
+            &mut state,
+            "aaa",
+            Some(100),
+            0,
+            true
         ));
     }
 
@@ -2541,6 +2819,8 @@ mod tests {
             0,
             false
         ));
+        let generation = coalesced.pending_generation;
+        acknowledge_tip_refresh_generation(&mut coalesced, generation);
         assert!(!should_refresh_for_new_block_event(
             &mut coalesced,
             "bbb",
@@ -2557,6 +2837,8 @@ mod tests {
             0,
             true
         ));
+        let generation = enabled.pending_generation;
+        acknowledge_tip_refresh_generation(&mut enabled, generation);
         assert!(should_refresh_for_new_block_event(
             &mut enabled,
             "bbb",
@@ -2599,6 +2881,8 @@ mod tests {
             0,
             false
         ));
+        let generation = state.pending_generation;
+        acknowledge_tip_refresh_generation(&mut state, generation);
 
         let event_b =
             parse_new_block_event_payload(r#"{"hash":"abc","height":500,"timestamp":1001}"#)
