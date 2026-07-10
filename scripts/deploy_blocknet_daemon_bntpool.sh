@@ -241,8 +241,8 @@ echo "==> verifying daemon API"
 # of sampling once right after the restart.
 ssh "${host}" "set -euo pipefail; \
   for attempt in \$(seq 1 18); do \
-    if token_primary=\$(cat /var/lib/blocknet/data/api.cookie 2>/dev/null) \
-      && token_standby=\$(cat /var/lib/blocknet-standby/data/api.cookie 2>/dev/null) \
+    if token_primary=\$(sudo -n cat /var/lib/blocknet/data/api.cookie 2>/dev/null) \
+      && token_standby=\$(sudo -n cat /var/lib/blocknet-standby/data/api.cookie 2>/dev/null) \
       && curl -fsS -H \"Authorization: Bearer \${token_primary}\" http://127.0.0.1:18331/api/status >/dev/null 2>&1 \
       && curl -fsS -H \"Authorization: Bearer \${token_standby}\" http://127.0.0.1:18332/api/status >/dev/null 2>&1; then \
       echo \"daemon API verified on both instances\"; break; \
