@@ -212,6 +212,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "blocknet-pow-kernel"
+version = "0.1.0"
+source = "git+https://github.com/zpalmtree/seine.git?rev=8f9b5a9eb24d5f9cc55439e73b5d3298841a56bd#8f9b5a9eb24d5f9cc55439e73b5d3298841a56bd"
+dependencies = [
+ "blake2",
+]
+
+[[package]]
 name = "bs58"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1088,6 +1096,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "argon2",
+ "blocknet-pow-kernel",
  "bs58",
  "chrono",
  "curve25519-dalek",

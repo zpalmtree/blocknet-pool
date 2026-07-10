@@ -1,41 +1,220 @@
+use std::fmt;
+use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+
 use anyhow::{anyhow, Result};
-use argon2::{Algorithm, Argon2, Params, Version};
+use blocknet_pow_kernel::{FixedArgon2id, PowBlock};
 
 const POW_MEMORY_KIB: u32 = 2 * 1024 * 1024;
-const POW_ITERATIONS: u32 = 1;
-const POW_PARALLELISM: u32 = 1;
+
+/// The default validator has one candidate worker, two regular workers, and one audit worker.
+/// Retaining more arenas than that would keep additional 2 GiB buffers resident after a burst.
+pub const DEFAULT_POW_ARENA_CACHE_LIMIT: usize = 4;
 
 pub trait PowHasher: Send + Sync + 'static {
     fn hash(&self, header_base: &[u8], nonce: u64) -> Result<[u8; 32]>;
 }
 
-#[derive(Debug, Clone, Copy)]
+/// Snapshot of the reusable PoW arena cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PowArenaPoolStats {
+    pub allocations: u64,
+    pub cache_hits: u64,
+    pub discarded: u64,
+    pub cached_arenas: usize,
+    pub retained_limit: usize,
+}
+
+/// Consensus-compatible Argon2id PoW backed by reusable 2 GiB memory arenas.
+///
+/// Clones share the same arena pool. Concurrent hashes allocate independent arenas, but at most
+/// [`DEFAULT_POW_ARENA_CACHE_LIMIT`] are retained after those hashes finish.
+#[derive(Clone)]
 pub struct Argon2PowHasher {
-    memory_kib: u32,
-    iterations: u32,
-    parallelism: u32,
+    kernel: Arc<PowKernel>,
+}
+
+impl fmt::Debug for Argon2PowHasher {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Argon2PowHasher")
+            .field("memory_kib", &self.kernel.memory_kib)
+            .field("isa", &self.kernel.hasher.isa_label())
+            .field("arena_pool", &self.arena_pool_stats())
+            .finish()
+    }
 }
 
 impl Default for Argon2PowHasher {
     fn default() -> Self {
+        Self::new(POW_MEMORY_KIB, DEFAULT_POW_ARENA_CACHE_LIMIT)
+    }
+}
+
+impl Argon2PowHasher {
+    fn new(memory_kib: u32, retained_limit: usize) -> Self {
         Self {
-            memory_kib: POW_MEMORY_KIB,
-            iterations: POW_ITERATIONS,
-            parallelism: POW_PARALLELISM,
+            kernel: Arc::new(PowKernel::new(memory_kib, retained_limit)),
         }
+    }
+
+    /// Returns allocation and cache counters for operational diagnostics.
+    pub fn arena_pool_stats(&self) -> PowArenaPoolStats {
+        self.kernel.arenas.stats()
     }
 }
 
 impl PowHasher for Argon2PowHasher {
     fn hash(&self, header_base: &[u8], nonce: u64) -> Result<[u8; 32]> {
-        let params = Params::new(self.memory_kib, self.iterations, self.parallelism, Some(32))
-            .map_err(|err| anyhow!("invalid argon2 params: {err}"))?;
-        let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-        let mut out = [0u8; 32];
-        argon2
-            .hash_password_into(&nonce.to_le_bytes(), header_base, &mut out)
-            .map_err(|err| anyhow!("argon2 hash failure: {err}"))?;
-        Ok(out)
+        self.kernel.hash(header_base, nonce)
+    }
+}
+
+struct PowKernel {
+    memory_kib: u32,
+    hasher: FixedArgon2id,
+    arenas: PowArenaPool,
+}
+
+impl PowKernel {
+    fn new(memory_kib: u32, retained_limit: usize) -> Self {
+        Self {
+            memory_kib,
+            hasher: FixedArgon2id::new(memory_kib),
+            arenas: PowArenaPool::new(retained_limit),
+        }
+    }
+
+    fn hash(&self, header_base: &[u8], nonce: u64) -> Result<[u8; 32]> {
+        let mut arena = self.arenas.checkout(self.hasher.block_count())?;
+        let mut output = [0u8; 32];
+        self.hasher
+            .hash_password_into_with_memory(
+                &nonce.to_le_bytes(),
+                header_base,
+                &mut output,
+                arena.deref_mut(),
+            )
+            .map_err(|err| anyhow!("argon2 hash failure: {err:?}"))?;
+        Ok(output)
+    }
+}
+
+struct PowArenaPool {
+    available: Mutex<Vec<Vec<PowBlock>>>,
+    retained_limit: usize,
+    allocations: AtomicU64,
+    cache_hits: AtomicU64,
+    discarded: AtomicU64,
+}
+
+impl PowArenaPool {
+    fn new(retained_limit: usize) -> Self {
+        Self {
+            available: Mutex::new(Vec::with_capacity(retained_limit)),
+            retained_limit,
+            allocations: AtomicU64::new(0),
+            cache_hits: AtomicU64::new(0),
+            discarded: AtomicU64::new(0),
+        }
+    }
+
+    fn checkout(&self, block_count: usize) -> Result<PowArenaGuard<'_>> {
+        let cached = {
+            let mut available = self
+                .available
+                .lock()
+                .map_err(|_| anyhow!("PoW arena cache lock poisoned"))?;
+            available.pop()
+        };
+
+        let arena = if let Some(arena) = cached {
+            self.cache_hits.fetch_add(1, Ordering::Relaxed);
+            arena
+        } else {
+            // A 2 GiB allocation can be slow. Keep it outside the cache lock so another hash can
+            // return or check out an arena concurrently.
+            let arena = allocate_arena(block_count)?;
+            self.allocations.fetch_add(1, Ordering::Relaxed);
+            arena
+        };
+
+        Ok(PowArenaGuard {
+            pool: self,
+            arena: Some(arena),
+        })
+    }
+
+    fn stats(&self) -> PowArenaPoolStats {
+        let cached_arenas = self
+            .available
+            .lock()
+            .map(|arenas| arenas.len())
+            .unwrap_or_default();
+        PowArenaPoolStats {
+            allocations: self.allocations.load(Ordering::Relaxed),
+            cache_hits: self.cache_hits.load(Ordering::Relaxed),
+            discarded: self.discarded.load(Ordering::Relaxed),
+            cached_arenas,
+            retained_limit: self.retained_limit,
+        }
+    }
+}
+
+fn allocate_arena(block_count: usize) -> Result<Vec<PowBlock>> {
+    let mut arena = Vec::new();
+    arena
+        .try_reserve_exact(block_count)
+        .map_err(|err| anyhow!("failed reserving PoW arena with {block_count} blocks: {err}"))?;
+    arena.resize(block_count, PowBlock::default());
+    Ok(arena)
+}
+
+struct PowArenaGuard<'a> {
+    pool: &'a PowArenaPool,
+    arena: Option<Vec<PowBlock>>,
+}
+
+impl Deref for PowArenaGuard<'_> {
+    type Target = [PowBlock];
+
+    fn deref(&self) -> &Self::Target {
+        self.arena
+            .as_deref()
+            .expect("PoW arena guard must always hold an arena")
+    }
+}
+
+impl DerefMut for PowArenaGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.arena
+            .as_deref_mut()
+            .expect("PoW arena guard must always hold an arena")
+    }
+}
+
+impl Drop for PowArenaGuard<'_> {
+    fn drop(&mut self) {
+        let Some(arena) = self.arena.take() else {
+            return;
+        };
+        let mut arena = Some(arena);
+        let cached = match self.pool.available.lock() {
+            Ok(mut available) if available.len() < self.pool.retained_limit => {
+                available.push(
+                    arena
+                        .take()
+                        .expect("arena must be present until returned to cache"),
+                );
+                true
+            }
+            _ => false,
+        };
+        if !cached {
+            self.pool.discarded.fetch_add(1, Ordering::Relaxed);
+        }
+        // If the cache is full (or poisoned), the arena is freed here after releasing its lock.
+        drop(arena);
     }
 }
 
@@ -104,7 +283,125 @@ pub fn difficulty_to_target(difficulty: u64) -> [u8; 32] {
 
 #[cfg(test)]
 mod tests {
+    use argon2::{Algorithm, Argon2, Params, Version};
+
     use super::*;
+
+    fn reference_pow_hash(header: &[u8], nonce: u64, memory_kib: u32) -> [u8; 32] {
+        let params = Params::new(memory_kib, 1, 1, Some(32))
+            .expect("reference Argon2 parameters should be valid");
+        let reference = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+        let mut memory = vec![argon2::Block::default(); reference.params().block_count()];
+        let mut output = [0u8; 32];
+        reference
+            .hash_password_into_with_memory(&nonce.to_le_bytes(), header, &mut output, &mut memory)
+            .expect("reference hash should succeed");
+        output
+    }
+
+    #[test]
+    fn fixed_kernel_matches_reference_for_small_memory() {
+        let headers = [
+            b"12345678".as_slice(),
+            b"test_block_header_data".as_slice(),
+            b"headerbase0123456789abcdefghijklmnop".as_slice(),
+        ];
+        let nonces = [0u64, 42u64, 1_000_003u64];
+
+        for memory_kib in [8u32, 32u32, 4096u32] {
+            let hasher = Argon2PowHasher::new(memory_kib, 1);
+            for header in headers {
+                for nonce in nonces {
+                    let expected = reference_pow_hash(header, nonce, memory_kib);
+                    let actual = hasher
+                        .hash(header, nonce)
+                        .expect("fixed hash should succeed");
+                    assert_eq!(
+                        actual, expected,
+                        "mismatch for memory_kib={memory_kib} nonce={nonce}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn arena_is_reused_across_hashes() {
+        let hasher = Argon2PowHasher::new(32, 1);
+        let header = b"reusable-arena-header";
+
+        hasher.hash(header, 1).expect("first hash");
+        assert_eq!(
+            hasher.arena_pool_stats(),
+            PowArenaPoolStats {
+                allocations: 1,
+                cache_hits: 0,
+                discarded: 0,
+                cached_arenas: 1,
+                retained_limit: 1,
+            }
+        );
+
+        hasher.hash(header, 2).expect("second hash");
+        assert_eq!(
+            hasher.arena_pool_stats(),
+            PowArenaPoolStats {
+                allocations: 1,
+                cache_hits: 1,
+                discarded: 0,
+                cached_arenas: 1,
+                retained_limit: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn cache_discards_arenas_beyond_its_retained_limit() {
+        let hasher = Argon2PowHasher::new(8, 2);
+        let first = hasher
+            .kernel
+            .arenas
+            .checkout(hasher.kernel.hasher.block_count())
+            .expect("first arena");
+        let second = hasher
+            .kernel
+            .arenas
+            .checkout(hasher.kernel.hasher.block_count())
+            .expect("second arena");
+        let third = hasher
+            .kernel
+            .arenas
+            .checkout(hasher.kernel.hasher.block_count())
+            .expect("third arena");
+
+        drop(first);
+        drop(second);
+        drop(third);
+
+        assert_eq!(
+            hasher.arena_pool_stats(),
+            PowArenaPoolStats {
+                allocations: 3,
+                cache_hits: 0,
+                discarded: 1,
+                cached_arenas: 2,
+                retained_limit: 2,
+            }
+        );
+    }
+
+    #[test]
+    #[ignore = "explicit production-profile test; runs two sequential 2 GiB Argon2 hashes"]
+    fn production_profile_matches_argon2_reference() {
+        let header = b"blocknet-pool-production-vector-v1";
+        let nonce = 0x0102_0304_0506_0708;
+        let expected = reference_pow_hash(header, nonce, POW_MEMORY_KIB);
+        let hasher = Argon2PowHasher::new(POW_MEMORY_KIB, 0);
+        let actual = hasher
+            .hash(header, nonce)
+            .expect("production fixed hash should succeed");
+        assert_eq!(actual, expected);
+    }
 
     #[test]
     fn check_target_orders_big_endian() {
