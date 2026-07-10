@@ -10,7 +10,7 @@
   "daemon_cookie_path": "/etc/blocknet/pool/daemon-active.api.cookie",
   "pool_fee_wallet_address": "",
   "initial_share_difficulty": 60,
-  "refresh_on_same_height": false,
+  "refresh_on_same_height": true,
   "job_timeout": "5m",
   "stale_submit_grace": "8s",
   "validation_mode": "probabilistic",

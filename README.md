@@ -288,7 +288,9 @@ Daemon log stream details:
 - Assignment submits on a previous template are accepted only inside a short grace window (`stale_submit_grace`, default `8s`) based on when the share was received.
 - Daemon SSE tip events mark templates stale from `new_block` `hash` + `height`.
 - Timestamp-only `new_block` changes do not trigger refreshes; only hash/height changes can trigger staleness.
-- Same-height hash-change refresh is disabled by default (`refresh_on_same_height=false`) to avoid replay churn; enable it only if you want immediate same-height reorg reaction.
+- Same-height hash-change refresh is enabled by default (`refresh_on_same_height=true`) so the pool reacts immediately to same-height reorgs. Set it to `false` only if an operator intentionally wants to coalesce those events.
+- Daemons that advertise `template_expires_at_unix_ms` are renewed at half-life without replacing miner work. A rejected or malformed renewal queues a forced template replacement.
+- Against older daemons, the pool polls chain height and forces a same-tip template rotation before the daemon's historical ten-minute template lifetime.
 
 ## Payout Safeguards
 

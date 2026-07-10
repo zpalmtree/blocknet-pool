@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
@@ -18,8 +18,9 @@ use pool_common::pow::difficulty_to_target;
 
 const NONCE_RANGE_SIZE: u64 = 1_000_000;
 const MAX_DB_NONCE: u64 = i64::MAX as u64;
-const JOB_REFRESH_MIN_INTERVAL: Duration = Duration::from_secs(1);
 const BLOCK_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const ASSIGNMENT_PRUNE_INTERVAL: Duration = Duration::from_secs(30);
+const LEGACY_TEMPLATE_ROTATION_INTERVAL: Duration = Duration::from_secs(8 * 60);
 const REWARD_ADDR_CACHE_TTL: Duration = Duration::from_secs(30);
 const TEMPLATE_WALLET_RECOVERY_COOLDOWN: Duration = Duration::from_secs(10);
 const MISSING_WALLET_PASSWORD_LOG_COOLDOWN: Duration = Duration::from_secs(60);
@@ -46,7 +47,12 @@ pub(crate) struct MinerJob {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct JobRuntimeSnapshot {
     pub template_age_seconds: Option<u64>,
+    /// Backward-compatible alias for the age of the last successful refresh.
     pub last_refresh_millis: Option<u64>,
+    #[serde(default)]
+    pub last_refresh_attempt_millis: Option<u64>,
+    #[serde(default)]
+    pub last_refresh_success_millis: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -97,7 +103,7 @@ pub struct JobManager {
 
     state: RwLock<JobState>,
     nonce_counter: AtomicU64,
-    last_refresh: Mutex<Option<Instant>>,
+    refresh: RefreshCoordinator,
     reward_cache: Mutex<RewardAddressCache>,
     last_template_wallet_recovery: Mutex<Option<Instant>>,
     last_missing_wallet_password_log: Mutex<Option<Instant>>,
@@ -114,12 +120,136 @@ struct JobState {
     order: VecDeque<String>,
     assignments: HashMap<String, MinerAssignment>,
     assignment_order: VecDeque<String>,
+    active_assignments_by_template: HashMap<String, HashMap<String, String>>,
+    assignment_ids_by_template: HashMap<String, HashSet<String>>,
+    last_assignment_prune: Option<Instant>,
+}
+
+#[derive(Debug, Default)]
+struct RefreshCoordinator {
+    state: Mutex<RefreshCoordinatorState>,
+}
+
+#[derive(Debug, Default)]
+struct RefreshCoordinatorState {
+    requested_generation: u64,
+    in_flight: bool,
+    force_rotation_requested: bool,
+    last_attempt: Option<Instant>,
+    last_success: Option<Instant>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct RefreshWork {
+    generation: u64,
+    force_rotation: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RefreshRuntimeState {
+    last_attempt: Option<Instant>,
+    last_success: Option<Instant>,
+}
+
+impl RefreshCoordinator {
+    /// Registers a refresh request. Exactly one caller becomes the leader; requests that arrive
+    /// while it is fetching advance the generation so the leader must perform a follow-up.
+    fn request(&self, force_rotation: bool) -> Option<RefreshWork> {
+        let mut state = self.state.lock();
+        state.requested_generation = state.requested_generation.saturating_add(1);
+        state.force_rotation_requested |= force_rotation;
+        if state.in_flight {
+            return None;
+        }
+        state.in_flight = true;
+        Some(RefreshWork {
+            generation: state.requested_generation,
+            force_rotation: state.force_rotation_requested,
+        })
+    }
+
+    fn begin_attempt(&self) {
+        let mut state = self.state.lock();
+        debug_assert!(state.in_flight);
+        state.last_attempt = Some(Instant::now());
+    }
+
+    fn record_maintenance_attempt(&self) {
+        self.state.lock().last_attempt = Some(Instant::now());
+    }
+
+    fn record_maintenance_success(&self) {
+        self.state.lock().last_success = Some(Instant::now());
+    }
+
+    /// Finishes one fetch. If a newer request arrived, the result is deliberately not installed
+    /// and the returned generation must be fetched immediately. The coordinator lock remains held
+    /// while `install` runs, making the generation check and installation one atomic operation with
+    /// respect to new refresh requests.
+    fn finish_attempt(
+        &self,
+        work: RefreshWork,
+        successful: bool,
+        install: impl FnOnce(),
+    ) -> Option<RefreshWork> {
+        let mut state = self.state.lock();
+        debug_assert!(state.in_flight);
+        if state.requested_generation > work.generation {
+            return Some(RefreshWork {
+                generation: state.requested_generation,
+                force_rotation: state.force_rotation_requested,
+            });
+        }
+
+        if successful {
+            install();
+            state.last_success = Some(Instant::now());
+            state.force_rotation_requested = false;
+        }
+        state.in_flight = false;
+        None
+    }
+
+    fn runtime_state(&self) -> RefreshRuntimeState {
+        let state = self.state.lock();
+        RefreshRuntimeState {
+            last_attempt: state.last_attempt,
+            last_success: state.last_success,
+        }
+    }
+
+    #[cfg(test)]
+    fn is_in_flight(&self) -> bool {
+        self.state.lock().in_flight
+    }
+
+    #[cfg(test)]
+    fn record_success(&self) {
+        let now = Instant::now();
+        let mut state = self.state.lock();
+        state.last_attempt = Some(now);
+        state.last_success = Some(now);
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
 struct JobTemplateMeta {
     created_at: Instant,
     stale_since: Option<Instant>,
+    lease: Option<TemplateLease>,
+    legacy_rotate_at: Option<Instant>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TemplateLease {
+    renew_at: Instant,
+    expires_at: Instant,
+}
+
+#[derive(Debug)]
+struct FetchedTemplate {
+    job: Job,
+    lease: Option<TemplateLease>,
 }
 
 #[derive(Debug, Clone)]
@@ -143,7 +273,7 @@ impl JobManager {
             cfg,
             state: RwLock::new(JobState::default()),
             nonce_counter: AtomicU64::new(random_nonce_slot()),
-            last_refresh: Mutex::new(None),
+            refresh: RefreshCoordinator::default(),
             reward_cache: Mutex::new(RewardAddressCache {
                 address: None,
                 checked_at: None,
@@ -169,7 +299,7 @@ impl JobManager {
             {
                 let this = Arc::clone(&this);
                 let _ = tokio::task::spawn_blocking(move || {
-                    this.refresh_template();
+                    this.maintain_template();
                 })
                 .await;
             }
@@ -179,7 +309,7 @@ impl JobManager {
                 ticker.tick().await;
                 let this = Arc::clone(&this);
                 let _ = tokio::task::spawn_blocking(move || {
-                    this.refresh_template();
+                    this.maintain_template();
                 })
                 .await;
             }
@@ -293,14 +423,23 @@ impl JobManager {
     }
 
     pub(crate) fn runtime_snapshot(&self) -> JobRuntimeSnapshot {
+        // Keep this lock order aligned with refresh installation, which takes the coordinator
+        // before the job state lock.
+        let refresh = self.refresh.runtime_state();
         let state = self.state.read();
         let current = state.current.as_ref();
+        let last_success_millis = refresh
+            .last_success
+            .map(|last| last.elapsed().as_millis() as u64);
         JobRuntimeSnapshot {
             template_age_seconds: current
                 .and_then(|job| state.job_meta.get(&job.id))
                 .map(|meta| meta.created_at.elapsed().as_secs()),
-            last_refresh_millis: (*self.last_refresh.lock())
+            last_refresh_millis: last_success_millis,
+            last_refresh_attempt_millis: refresh
+                .last_attempt
                 .map(|last| last.elapsed().as_millis() as u64),
+            last_refresh_success_millis: last_success_millis,
         }
     }
 
@@ -329,7 +468,6 @@ impl JobManager {
         assigned_miner: &str,
         range_mode: AssignmentRangeMode,
     ) -> Option<MinerJob> {
-        let job = self.current_job()?;
         let slot_count = nonce_slot_count();
         let assignment_id = generate_job_id();
         let share_difficulty = share_difficulty.max(1);
@@ -342,6 +480,10 @@ impl JobManager {
             superseded_assignment_grace(&assigned_miner, self.cfg.stale_submit_grace_duration());
 
         let mut state = self.state.write();
+        // Select the current job under the same write lock used to install the assignment. This
+        // linearizes assignment creation with template transitions so a transition cannot prune
+        // first and then have stale work inserted behind it.
+        let job = state.current.clone()?;
         let now = Instant::now();
         state
             .jobs
@@ -353,25 +495,24 @@ impl JobManager {
             .or_insert(JobTemplateMeta {
                 created_at: now,
                 stale_since: None,
+                lease: None,
+                legacy_rotate_at: now.checked_add(LEGACY_TEMPLATE_ROTATION_INTERVAL),
             });
+        let active_assignment_id = state
+            .active_assignments_by_template
+            .get(&job.id)
+            .and_then(|by_connection| by_connection.get(conn_id))
+            .cloned();
         let preserved_range = if range_mode == AssignmentRangeMode::PreserveCurrent {
-            state
-                .assignments
-                .values()
-                .find(|assignment| {
-                    assignment.owner_conn_id == conn_id
-                        && assignment.template_job_id == job.id
-                        && assignment.superseded_at.is_none()
-                })
+            active_assignment_id
+                .as_ref()
+                .and_then(|assignment_id| state.assignments.get(assignment_id))
                 .map(|assignment| (assignment.nonce_start, assignment.nonce_end))
         } else {
             None
         };
-        for assignment in state.assignments.values_mut() {
-            if assignment.owner_conn_id == conn_id
-                && assignment.template_job_id == job.id
-                && assignment.superseded_at.is_none()
-            {
+        if let Some(active_assignment_id) = active_assignment_id {
+            if let Some(assignment) = state.assignments.get_mut(&active_assignment_id) {
                 assignment.superseded_at = Some(now);
             }
         }
@@ -382,7 +523,8 @@ impl JobManager {
             debug_assert!(nonce_end <= MAX_DB_NONCE);
             (start, nonce_end)
         });
-        state.assignments.insert(
+        insert_assignment_locked(
+            &mut state,
             assignment_id.clone(),
             MinerAssignment {
                 owner_conn_id: conn_id.to_string(),
@@ -396,20 +538,14 @@ impl JobManager {
                 superseded_grace,
             },
         );
-        state.assignment_order.push_back(assignment_id.clone());
-        let current_template_job_id = state.current.as_ref().map(|current| current.id.clone());
-        prune_expired_assignments_locked(
-            &mut state,
-            self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE),
-            self.cfg.stale_submit_grace_duration(),
-            current_template_job_id.as_deref(),
-        );
         let mut cap_evicted = 0usize;
-        while state.assignment_order.len() > MAX_ACTIVE_ASSIGNMENTS {
+        while state.assignments.len() > MAX_ACTIVE_ASSIGNMENTS {
             if let Some(oldest) = state.assignment_order.pop_front() {
-                if state.assignments.remove(&oldest).is_some() {
+                if remove_assignment_locked(&mut state, &oldest) {
                     cap_evicted = cap_evicted.saturating_add(1);
                 }
+            } else {
+                break;
             }
         }
         if cap_evicted > 0 {
@@ -434,17 +570,217 @@ impl JobManager {
         })
     }
 
-    fn refresh_template(&self) {
-        {
-            let mut guard = self.last_refresh.lock();
-            if let Some(last) = *guard {
-                if last.elapsed() < JOB_REFRESH_MIN_INTERVAL {
-                    return;
-                }
-            }
-            *guard = Some(Instant::now());
+    fn maintain_template(&self) {
+        self.prune_assignments_if_due();
+
+        enum MaintenanceAction {
+            Refresh,
+            ForceRefresh,
+            Renew {
+                job_id: String,
+                template_id: String,
+            },
+            Poll {
+                expected_chain_height: u64,
+                expected_best_hash: Option<String>,
+            },
         }
 
+        let now = Instant::now();
+        let action = {
+            let state = self.state.read();
+            match state.current.as_ref() {
+                None => MaintenanceAction::Refresh,
+                Some(current) => {
+                    let meta = state.job_meta.get(&current.id);
+                    if let Some(lease) = meta.and_then(|meta| meta.lease) {
+                        if now >= lease.renew_at {
+                            MaintenanceAction::Renew {
+                                job_id: current.id.clone(),
+                                template_id: current.template_id.clone(),
+                            }
+                        } else {
+                            MaintenanceAction::Poll {
+                                expected_chain_height: current.height.saturating_sub(1),
+                                expected_best_hash: current
+                                    .prev_hash
+                                    .map(|hash| hex::encode(&hash[..8])),
+                            }
+                        }
+                    } else if meta
+                        .and_then(|meta| meta.legacy_rotate_at)
+                        .is_some_and(|rotate_at| now >= rotate_at)
+                    {
+                        MaintenanceAction::ForceRefresh
+                    } else {
+                        MaintenanceAction::Poll {
+                            expected_chain_height: current.height.saturating_sub(1),
+                            expected_best_hash: current
+                                .prev_hash
+                                .map(|hash| hex::encode(&hash[..8])),
+                        }
+                    }
+                }
+            }
+        };
+
+        match action {
+            MaintenanceAction::Refresh => self.refresh_template(),
+            MaintenanceAction::ForceRefresh => self.refresh_template_forced(),
+            MaintenanceAction::Renew {
+                job_id,
+                template_id,
+            } => self.renew_current_template(&job_id, &template_id),
+            MaintenanceAction::Poll {
+                expected_chain_height,
+                expected_best_hash,
+            } => {
+                self.refresh.record_maintenance_attempt();
+                match self.node.get_status() {
+                    Ok(status)
+                        if status.chain_height != expected_chain_height
+                            || best_hash_changed(
+                                expected_best_hash.as_deref(),
+                                &status.best_hash,
+                            ) =>
+                    {
+                        tracing::debug!(
+                            expected_chain_height,
+                            observed_chain_height = status.chain_height,
+                            expected_best_hash,
+                            observed_best_hash = %status.best_hash,
+                            "daemon status poll detected a tip change"
+                        );
+                        self.refresh_template();
+                    }
+                    Ok(_) => self.refresh.record_maintenance_success(),
+                    Err(err) => tracing::warn!(error = %err, "failed polling daemon tip status"),
+                }
+            }
+        }
+    }
+
+    fn prune_assignments_if_due(&self) {
+        let mut state = self.state.write();
+        let removed = maybe_prune_assignments_locked(
+            &mut state,
+            Instant::now(),
+            false,
+            self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE),
+            self.cfg.stale_submit_grace_duration(),
+        );
+        if removed > 0 {
+            tracing::debug!(
+                assignments_removed = removed,
+                active_assignments = state.assignments.len(),
+                "pruned expired miner assignments"
+            );
+        }
+    }
+
+    fn renew_current_template(&self, job_id: &str, template_id: &str) {
+        self.refresh.record_maintenance_attempt();
+        let response = match self.node.renew_block_template(template_id) {
+            Ok(response) => response,
+            Err(err) => {
+                let lease_remaining_millis = self
+                    .state
+                    .read()
+                    .job_meta
+                    .get(job_id)
+                    .and_then(|meta| meta.lease)
+                    .map(|lease| {
+                        lease
+                            .expires_at
+                            .saturating_duration_since(Instant::now())
+                            .as_millis() as u64
+                    });
+                tracing::warn!(
+                    error = %err,
+                    template_id,
+                    lease_remaining_millis,
+                    "failed renewing daemon template lease; fetching a replacement"
+                );
+                self.refresh_template_forced();
+                return;
+            }
+        };
+        if response.template_id.trim() != template_id {
+            tracing::warn!(
+                requested_template_id = template_id,
+                returned_template_id = %response.template_id,
+                "daemon template renewal returned a mismatched template id"
+            );
+            self.refresh_template_forced();
+            return;
+        }
+        let now = Instant::now();
+        let Some(lease) = template_lease_from_unix_ms(
+            response.template_expires_at_unix_ms,
+            SystemTime::now(),
+            now,
+        ) else {
+            tracing::warn!(
+                template_id,
+                expires_at_unix_ms = response.template_expires_at_unix_ms,
+                "daemon template renewal returned an expired lease"
+            );
+            self.refresh_template_forced();
+            return;
+        };
+
+        let mut state = self.state.write();
+        let still_current = state.current.as_ref().is_some_and(|current| {
+            current.id == job_id && current.template_id.trim() == template_id
+        });
+        if !still_current {
+            return;
+        }
+        if let Some(meta) = state.job_meta.get_mut(job_id) {
+            meta.lease = Some(lease);
+            meta.legacy_rotate_at = None;
+        }
+        drop(state);
+        self.refresh.record_maintenance_success();
+    }
+
+    fn refresh_template(&self) {
+        self.request_template_refresh(false);
+    }
+
+    fn refresh_template_forced(&self) {
+        self.request_template_refresh(true);
+    }
+
+    fn request_template_refresh(&self, force_rotation: bool) {
+        let Some(mut work) = self.refresh.request(force_rotation) else {
+            return;
+        };
+
+        loop {
+            self.refresh.begin_attempt();
+            let mut fetched = self.fetch_template_job();
+            let successful = fetched.is_some();
+            let next_work = self.refresh.finish_attempt(work, successful, || {
+                if let Some(fetched) = fetched.take() {
+                    self.install_refreshed_template(fetched, work.force_rotation);
+                }
+            });
+
+            let Some(next_work) = next_work else {
+                return;
+            };
+            tracing::debug!(
+                generation = work.generation,
+                next_generation = next_work.generation,
+                discarded_successful = successful,
+                "template refresh request arrived in flight; fetching latest generation"
+            );
+            work = next_work;
+        }
+    }
+
+    fn fetch_template_job(&self) -> Option<FetchedTemplate> {
         let reward_address = self.resolve_reward_address();
         let template = match self.node.get_block_template(reward_address.as_deref()) {
             Ok(t) => t,
@@ -457,23 +793,46 @@ impl JobManager {
                                 error = %retry_err,
                                 "failed to fetch block template after wallet recovery"
                             );
-                            return;
+                            return None;
                         }
                     }
                 } else {
                     tracing::warn!(error = %err, "failed to fetch block template");
-                    return;
+                    return None;
                 }
             }
         };
 
-        let parsed = match parse_template_into_job(&template) {
-            Ok(v) => v,
+        let job = match parse_template_into_job(&template) {
+            Ok(parsed) => parsed,
             Err(err) => {
                 tracing::warn!(error = %err, "failed to parse block template");
-                return;
+                return None;
             }
         };
+        let lease = match template.template_expires_at_unix_ms {
+            Some(expires_at_unix_ms) => {
+                let Some(lease) = template_lease_from_unix_ms(
+                    expires_at_unix_ms,
+                    SystemTime::now(),
+                    Instant::now(),
+                ) else {
+                    tracing::warn!(
+                        template_id = %template.template_id,
+                        expires_at_unix_ms,
+                        "daemon returned an already-expired template lease"
+                    );
+                    return None;
+                };
+                Some(lease)
+            }
+            None => None,
+        };
+        Some(FetchedTemplate { job, lease })
+    }
+
+    fn install_refreshed_template(&self, fetched: FetchedTemplate, force_rotation: bool) {
+        let FetchedTemplate { job: parsed, lease } = fetched;
         if let Some(chain_height) = parsed.height.checked_sub(1) {
             self.node.observe_chain_height(chain_height);
         }
@@ -481,7 +840,23 @@ impl JobManager {
         let mut state = self.state.write();
         let now = Instant::now();
         if let Some(current) = state.current.as_ref() {
-            if same_template_identity(current, &parsed) {
+            if same_template_identity(current, &parsed) && !force_rotation {
+                let current_id = current.id.clone();
+                if current.template_id == parsed.template_id {
+                    if let Some(meta) = state.job_meta.get_mut(&current_id) {
+                        meta.lease = lease;
+                        meta.legacy_rotate_at = lease
+                            .is_none()
+                            .then(|| now + LEGACY_TEMPLATE_ROTATION_INTERVAL);
+                    }
+                }
+                maybe_prune_assignments_locked(
+                    &mut state,
+                    now,
+                    false,
+                    self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE),
+                    self.cfg.stale_submit_grace_duration(),
+                );
                 return;
             }
         }
@@ -497,6 +872,8 @@ impl JobManager {
                     JobTemplateMeta {
                         created_at: now,
                         stale_since: Some(now),
+                        lease: None,
+                        legacy_rotate_at: None,
                     },
                 );
             }
@@ -509,6 +886,10 @@ impl JobManager {
             JobTemplateMeta {
                 created_at: now,
                 stale_since: None,
+                lease,
+                legacy_rotate_at: lease
+                    .is_none()
+                    .then(|| now + LEGACY_TEMPLATE_ROTATION_INTERVAL),
             },
         );
         state.order.retain(|id| id != &parsed.id);
@@ -534,13 +915,7 @@ impl JobManager {
         }
         if !removed_jobs.is_empty() {
             let assignments_before = state.assignments.len();
-            state
-                .assignments
-                .retain(|_, assignment| !removed_jobs.contains(&assignment.template_job_id));
-            let valid_assignment_ids = state.assignments.keys().cloned().collect::<HashSet<_>>();
-            state
-                .assignment_order
-                .retain(|assignment_id| valid_assignment_ids.contains(assignment_id));
+            remove_assignments_for_templates_locked(&mut state, &removed_jobs);
             let assignments_removed = assignments_before.saturating_sub(state.assignments.len());
             if assignments_removed > 0 {
                 tracing::info!(
@@ -551,12 +926,12 @@ impl JobManager {
                 );
             }
         }
-        let current_template_job_id = state.current.as_ref().map(|current| current.id.clone());
-        prune_expired_assignments_locked(
+        maybe_prune_assignments_locked(
             &mut state,
+            now,
+            true,
             self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE),
             self.cfg.stale_submit_grace_duration(),
-            current_template_job_id.as_deref(),
         );
 
         let _ = self.tx.send(parsed);
@@ -740,6 +1115,8 @@ impl JobManager {
             JobTemplateMeta {
                 created_at: now,
                 stale_since: None,
+                lease: None,
+                legacy_rotate_at: now.checked_add(LEGACY_TEMPLATE_ROTATION_INTERVAL),
             },
         );
         state.order.retain(|id| id != &job.id);
@@ -747,7 +1124,7 @@ impl JobManager {
         self.nonce_counter
             .store(random_nonce_slot(), Ordering::Relaxed);
         drop(state);
-        *self.last_refresh.lock() = Some(now);
+        self.refresh.record_success();
         let _ = self.tx.send(job);
     }
 }
@@ -975,43 +1352,193 @@ fn should_refresh_for_new_block_event(
     true
 }
 
+fn template_lease_from_unix_ms(
+    expires_at_unix_ms: i64,
+    system_now: SystemTime,
+    instant_now: Instant,
+) -> Option<TemplateLease> {
+    let now_unix_ms = system_now
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis()
+        .min(i64::MAX as u128) as i64;
+    let remaining_millis = expires_at_unix_ms.checked_sub(now_unix_ms)?;
+    if remaining_millis <= 0 {
+        return None;
+    }
+    let remaining = Duration::from_millis(remaining_millis as u64);
+    Some(TemplateLease {
+        renew_at: instant_now.checked_add(remaining / 2)?,
+        expires_at: instant_now.checked_add(remaining)?,
+    })
+}
+
+fn best_hash_changed(expected: Option<&str>, observed: &str) -> bool {
+    let Some(expected) = expected.map(str::trim).filter(|hash| !hash.is_empty()) else {
+        return false;
+    };
+    let observed = observed.trim();
+    if observed.is_empty() {
+        // Older daemons may omit best_hash. Height polling still provides the fallback there.
+        return false;
+    }
+    observed
+        .get(..expected.len())
+        .is_none_or(|prefix| !prefix.eq_ignore_ascii_case(expected))
+}
+
+fn insert_assignment_locked(
+    state: &mut JobState,
+    assignment_id: String,
+    assignment: MinerAssignment,
+) {
+    state
+        .active_assignments_by_template
+        .entry(assignment.template_job_id.clone())
+        .or_default()
+        .insert(assignment.owner_conn_id.clone(), assignment_id.clone());
+    state
+        .assignment_ids_by_template
+        .entry(assignment.template_job_id.clone())
+        .or_default()
+        .insert(assignment_id.clone());
+    state.assignment_order.push_back(assignment_id.clone());
+    let previous = state.assignments.insert(assignment_id, assignment);
+    debug_assert!(previous.is_none());
+}
+
+fn remove_assignment_locked(state: &mut JobState, assignment_id: &str) -> bool {
+    let Some(assignment) = state.assignments.remove(assignment_id) else {
+        return false;
+    };
+
+    let remove_active_template = if let Some(by_connection) = state
+        .active_assignments_by_template
+        .get_mut(&assignment.template_job_id)
+    {
+        if by_connection
+            .get(&assignment.owner_conn_id)
+            .is_some_and(|active_id| active_id == assignment_id)
+        {
+            by_connection.remove(&assignment.owner_conn_id);
+        }
+        by_connection.is_empty()
+    } else {
+        false
+    };
+    if remove_active_template {
+        state
+            .active_assignments_by_template
+            .remove(&assignment.template_job_id);
+    }
+
+    let remove_template_ids = if let Some(ids) = state
+        .assignment_ids_by_template
+        .get_mut(&assignment.template_job_id)
+    {
+        ids.remove(assignment_id);
+        ids.is_empty()
+    } else {
+        false
+    };
+    if remove_template_ids {
+        state
+            .assignment_ids_by_template
+            .remove(&assignment.template_job_id);
+    }
+    true
+}
+
+fn remove_assignments_for_templates_locked(state: &mut JobState, template_ids: &[String]) {
+    let mut removed_assignment_ids = HashSet::new();
+    for template_id in template_ids {
+        if let Some(assignment_ids) = state.assignment_ids_by_template.remove(template_id) {
+            for assignment_id in assignment_ids {
+                state.assignments.remove(&assignment_id);
+                removed_assignment_ids.insert(assignment_id);
+            }
+        }
+        state.active_assignments_by_template.remove(template_id);
+    }
+    if !removed_assignment_ids.is_empty() {
+        state
+            .assignment_order
+            .retain(|assignment_id| !removed_assignment_ids.contains(assignment_id));
+    }
+}
+
+fn maybe_prune_assignments_locked(
+    state: &mut JobState,
+    now: Instant,
+    force: bool,
+    max_age: Duration,
+    stale_grace: Duration,
+) -> usize {
+    if !force
+        && state
+            .last_assignment_prune
+            .is_some_and(|last| now.saturating_duration_since(last) < ASSIGNMENT_PRUNE_INTERVAL)
+    {
+        return 0;
+    }
+    state.last_assignment_prune = Some(now);
+    let current_template_job_id = state.current.as_ref().map(|current| current.id.clone());
+    prune_expired_assignments_locked(
+        state,
+        now,
+        max_age,
+        stale_grace,
+        current_template_job_id.as_deref(),
+    )
+}
+
 fn prune_expired_assignments_locked(
     state: &mut JobState,
+    now: Instant,
     max_age: Duration,
     stale_grace: Duration,
     current_template_job_id: Option<&str>,
-) {
+) -> usize {
     if max_age.is_zero() {
-        return;
+        return 0;
     }
-    let now = Instant::now();
-    state.assignments.retain(|_, assignment| {
-        if current_template_job_id.is_some_and(|current| assignment.template_job_id == current) {
-            return true;
-        }
-        let age = now.saturating_duration_since(assignment.created_at);
-        if age <= max_age {
-            return true;
-        }
-        if assignment.superseded_at.is_some_and(|superseded_at| {
-            let grace = assignment.superseded_grace;
-            !grace.is_zero() && now.saturating_duration_since(superseded_at) <= grace
-        }) {
-            return true;
-        }
-        if stale_grace.is_zero() {
-            return false;
-        }
+    let expired_assignment_ids = state
+        .assignments
+        .iter()
+        .filter_map(|(assignment_id, assignment)| {
+            let retain = if current_template_job_id
+                .is_some_and(|current| assignment.template_job_id == current)
+            {
+                true
+            } else {
+                let age = now.saturating_duration_since(assignment.created_at);
+                age <= max_age
+                    || assignment.superseded_at.is_some_and(|superseded_at| {
+                        let grace = assignment.superseded_grace;
+                        !grace.is_zero() && now.saturating_duration_since(superseded_at) <= grace
+                    })
+                    || (!stale_grace.is_zero()
+                        && state
+                            .job_meta
+                            .get(&assignment.template_job_id)
+                            .and_then(|meta| meta.stale_since)
+                            .is_some_and(|stale_since| {
+                                now.saturating_duration_since(stale_since) <= stale_grace
+                            }))
+            };
+            (!retain).then(|| assignment_id.clone())
+        })
+        .collect::<HashSet<_>>();
+
+    for assignment_id in &expired_assignment_ids {
+        remove_assignment_locked(state, assignment_id);
+    }
+    if !expired_assignment_ids.is_empty() {
         state
-            .job_meta
-            .get(&assignment.template_job_id)
-            .and_then(|meta| meta.stale_since)
-            .is_some_and(|stale_since| now.saturating_duration_since(stale_since) <= stale_grace)
-    });
-    let valid_assignment_ids = state.assignments.keys().cloned().collect::<HashSet<_>>();
-    state
-        .assignment_order
-        .retain(|assignment_id| valid_assignment_ids.contains(assignment_id));
+            .assignment_order
+            .retain(|assignment_id| !expired_assignment_ids.contains(assignment_id));
+    }
+    expired_assignment_ids.len()
 }
 
 fn hex_decode(input: &str) -> anyhow::Result<Vec<u8>> {
@@ -1065,6 +1592,90 @@ mod tests {
             template_id: format!("tmpl-{id}"),
             prev_hash: None,
         }
+    }
+
+    fn assert_assignment_indexes(state: &JobState) {
+        for (assignment_id, assignment) in &state.assignments {
+            assert!(state
+                .assignment_ids_by_template
+                .get(&assignment.template_job_id)
+                .is_some_and(|ids| ids.contains(assignment_id)));
+            if assignment.superseded_at.is_none() {
+                assert_eq!(
+                    state
+                        .active_assignments_by_template
+                        .get(&assignment.template_job_id)
+                        .and_then(|by_connection| by_connection.get(&assignment.owner_conn_id)),
+                    Some(assignment_id)
+                );
+            }
+        }
+        for (template_id, by_connection) in &state.active_assignments_by_template {
+            for (connection_id, assignment_id) in by_connection {
+                let assignment = state
+                    .assignments
+                    .get(assignment_id)
+                    .expect("active index must point to an assignment");
+                assert_eq!(&assignment.template_job_id, template_id);
+                assert_eq!(&assignment.owner_conn_id, connection_id);
+                assert!(assignment.superseded_at.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn refresh_coordinator_queues_follow_up_and_discards_stale_result() {
+        let coordinator = RefreshCoordinator::default();
+        let first_work = coordinator.request(false).expect("first request leads");
+        coordinator.begin_attempt();
+
+        assert!(coordinator.request(true).is_none());
+        let mut installed = Vec::new();
+        let follow_up = coordinator
+            .finish_attempt(first_work, true, || installed.push(first_work.generation))
+            .expect("queued request requires a follow-up");
+        assert!(installed.is_empty(), "stale result must not be installed");
+        assert!(coordinator.is_in_flight());
+        assert!(follow_up.force_rotation);
+
+        coordinator.begin_attempt();
+        assert!(coordinator
+            .finish_attempt(follow_up, true, || installed.push(follow_up.generation))
+            .is_none());
+        assert_eq!(installed, vec![follow_up.generation]);
+        assert!(!coordinator.is_in_flight());
+        let runtime = coordinator.runtime_state();
+        assert!(runtime.last_attempt.is_some());
+        assert!(runtime.last_success.is_some());
+    }
+
+    #[test]
+    fn refresh_coordinator_coalesces_concurrent_requests_without_dropping_follow_up() {
+        const REQUESTS: usize = 128;
+        let coordinator = Arc::new(RefreshCoordinator::default());
+        let first_work = coordinator.request(false).expect("first request leads");
+        coordinator.begin_attempt();
+
+        let threads = (0..REQUESTS)
+            .map(|_| {
+                let coordinator = Arc::clone(&coordinator);
+                thread::spawn(move || assert!(coordinator.request(false).is_none()))
+            })
+            .collect::<Vec<_>>();
+        for thread in threads {
+            thread.join().expect("refresh requester should finish");
+        }
+
+        let follow_up = coordinator
+            .finish_attempt(first_work, false, || {})
+            .expect("concurrent requests require one follow-up");
+        assert_eq!(
+            follow_up.generation,
+            first_work.generation + REQUESTS as u64
+        );
+        coordinator.begin_attempt();
+        assert!(coordinator.finish_attempt(follow_up, true, || {}).is_none());
+        assert!(!coordinator.is_in_flight());
     }
 
     #[test]
@@ -1126,6 +1737,7 @@ mod tests {
 
     #[test]
     fn prune_expired_assignments_keeps_current_template_assignments() {
+        let now = Instant::now();
         let mut state = JobState {
             current: Some(test_job("job-current", 10)),
             ..JobState::default()
@@ -1133,19 +1745,14 @@ mod tests {
 
         state.assignments.insert(
             "assign-current".to_string(),
-            test_assignment(
-                "conn1",
-                "job-current",
-                Instant::now() - Duration::from_secs(30),
-                0,
-            ),
+            test_assignment("conn1", "job-current", now - Duration::from_secs(30), 0),
         );
         state.assignments.insert(
             "assign-old".to_string(),
             test_assignment(
                 "conn1",
                 "job-old",
-                Instant::now() - Duration::from_secs(30),
+                now - Duration::from_secs(30),
                 NONCE_RANGE_SIZE,
             ),
         );
@@ -1157,6 +1764,7 @@ mod tests {
         let current = state.current.as_ref().map(|job| job.id.clone());
         prune_expired_assignments_locked(
             &mut state,
+            now,
             Duration::from_secs(1),
             Duration::ZERO,
             current.as_deref(),
@@ -1185,6 +1793,8 @@ mod tests {
             JobTemplateMeta {
                 created_at: now - Duration::from_secs(60),
                 stale_since: Some(now - Duration::from_secs(2)),
+                lease: None,
+                legacy_rotate_at: None,
             },
         );
         state.assignments.insert(
@@ -1196,6 +1806,7 @@ mod tests {
         let current = state.current.as_ref().map(|job| job.id.clone());
         prune_expired_assignments_locked(
             &mut state,
+            now,
             Duration::from_secs(1),
             Duration::from_secs(5),
             current.as_deref(),
@@ -1233,6 +1844,8 @@ mod tests {
                 JobTemplateMeta {
                     created_at: now - Duration::from_secs(60),
                     stale_since: Some(now - Duration::from_secs(2)),
+                    lease: None,
+                    legacy_rotate_at: None,
                 },
             );
             state.assignments.insert(
@@ -1244,6 +1857,7 @@ mod tests {
             let current = state.current.as_ref().map(|job| job.id.clone());
             prune_expired_assignments_locked(
                 &mut state,
+                now,
                 Duration::from_secs(1),
                 Duration::from_secs(5),
                 current.as_deref(),
@@ -1299,6 +1913,8 @@ mod tests {
                 JobTemplateMeta {
                     created_at: now - Duration::from_secs(3),
                     stale_since: Some(now - Duration::from_secs(2)),
+                    lease: None,
+                    legacy_rotate_at: None,
                 },
             );
         }
@@ -1341,6 +1957,8 @@ mod tests {
                 JobTemplateMeta {
                     created_at: now - Duration::from_secs(60),
                     stale_since: Some(now - Duration::from_secs(2)),
+                    lease: None,
+                    legacy_rotate_at: None,
                 },
             );
         }
@@ -1377,6 +1995,8 @@ mod tests {
                 JobTemplateMeta {
                     created_at: now - Duration::from_secs(60),
                     stale_since: Some(now - Duration::from_secs(10)),
+                    lease: None,
+                    legacy_rotate_at: None,
                 },
             );
         }
@@ -1421,6 +2041,8 @@ mod tests {
                 JobTemplateMeta {
                     created_at: now - Duration::from_secs(60),
                     stale_since: Some(now - Duration::from_secs(6)),
+                    lease: None,
+                    legacy_rotate_at: None,
                 },
             );
         }
@@ -1510,6 +2132,149 @@ mod tests {
         assert_ne!(first.job_id, second.job_id);
         assert_eq!(first.nonce_start, second.nonce_start);
         assert_eq!(first.nonce_end, second.nonce_end);
+    }
+
+    #[test]
+    fn assignment_indexes_scale_across_four_thousand_connections_and_rebinds() {
+        const CONNECTIONS: usize = 4_000;
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config::default(),
+        );
+        {
+            let mut state = manager.state.write();
+            let template = test_job("job-load", 1);
+            state.current = Some(template.clone());
+            state.jobs.insert(template.id.clone(), template);
+        }
+
+        let mut first_jobs = Vec::with_capacity(CONNECTIONS);
+        for connection in 0..CONNECTIONS {
+            first_jobs.push(
+                manager
+                    .build_miner_job(&format!("conn-{connection}"), 64, "addr1")
+                    .expect("initial assignment"),
+            );
+        }
+        for connection in 0..CONNECTIONS {
+            manager
+                .build_miner_job_with_range_mode(
+                    &format!("conn-{connection}"),
+                    96,
+                    "addr1",
+                    AssignmentRangeMode::PreserveCurrent,
+                )
+                .expect("rebound assignment");
+        }
+
+        let state = manager.state.read();
+        assert_eq!(state.assignments.len(), CONNECTIONS * 2);
+        assert_eq!(
+            state
+                .active_assignments_by_template
+                .get("job-load")
+                .map(HashMap::len),
+            Some(CONNECTIONS)
+        );
+        assert_eq!(
+            state
+                .assignment_ids_by_template
+                .get("job-load")
+                .map(HashSet::len),
+            Some(CONNECTIONS * 2)
+        );
+        assert!(
+            state.last_assignment_prune.is_none(),
+            "building miner jobs must not run the global prune scan"
+        );
+        assert!(first_jobs.iter().all(|job| state
+            .assignments
+            .get(&job.job_id)
+            .is_some_and(|assignment| assignment.superseded_at.is_some())));
+        assert_assignment_indexes(&state);
+    }
+
+    #[test]
+    fn prune_retains_superseded_binding_for_received_time_queue_semantics() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config {
+                job_timeout: "60s".to_string(),
+                stale_submit_grace: "5s".to_string(),
+                ..Config::default()
+            },
+        );
+        let now = Instant::now();
+        let received_at = now - Duration::from_secs(9);
+        {
+            let mut state = manager.state.write();
+            let current = test_job("job-current", 11);
+            let old = test_job("job-old", 10);
+            state.current = Some(current.clone());
+            state.jobs.insert(current.id.clone(), current);
+            state.jobs.insert(old.id.clone(), old);
+            state.job_meta.insert(
+                "job-old".to_string(),
+                JobTemplateMeta {
+                    created_at: now - Duration::from_secs(60),
+                    stale_since: Some(now - Duration::from_secs(10)),
+                    lease: None,
+                    legacy_rotate_at: None,
+                },
+            );
+            let mut assignment =
+                test_assignment("conn1", "job-old", now - Duration::from_secs(30), 0);
+            assignment.superseded_at = Some(now - Duration::from_secs(10));
+            assignment.superseded_grace = Duration::from_secs(5);
+            insert_assignment_locked(&mut state, "assign-old".to_string(), assignment);
+
+            let removed = maybe_prune_assignments_locked(
+                &mut state,
+                now,
+                false,
+                Duration::from_secs(60),
+                Duration::from_secs(5),
+            );
+            assert_eq!(removed, 0);
+        }
+
+        assert!(manager
+            .resolve_submit_job("assign-old", received_at)
+            .is_some());
+    }
+
+    #[test]
+    fn periodic_prune_removes_expired_stale_assignment_from_all_indexes() {
+        let now = Instant::now();
+        let mut state = JobState {
+            current: Some(test_job("job-current", 10)),
+            ..JobState::default()
+        };
+        state.job_meta.insert(
+            "job-old".to_string(),
+            JobTemplateMeta {
+                created_at: now - Duration::from_secs(180),
+                stale_since: Some(now - Duration::from_secs(30)),
+                lease: None,
+                legacy_rotate_at: None,
+            },
+        );
+        let assignment = test_assignment("conn1", "job-old", now - Duration::from_secs(120), 0);
+        insert_assignment_locked(&mut state, "assign-old".to_string(), assignment);
+
+        let removed = maybe_prune_assignments_locked(
+            &mut state,
+            now,
+            false,
+            Duration::from_secs(60),
+            Duration::from_secs(5),
+        );
+
+        assert_eq!(removed, 1);
+        assert!(state.assignments.is_empty());
+        assert!(state.assignment_order.is_empty());
+        assert!(state.active_assignments_by_template.is_empty());
+        assert!(state.assignment_ids_by_template.is_empty());
     }
 
     #[test]
@@ -1613,6 +2378,91 @@ mod tests {
     }
 
     #[test]
+    fn template_lease_renews_at_half_life_and_rejects_expired_values() {
+        let system_now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let instant_now = Instant::now();
+        let now_unix_ms = system_now
+            .duration_since(UNIX_EPOCH)
+            .expect("time after epoch")
+            .as_millis() as i64;
+
+        let lease = template_lease_from_unix_ms(
+            now_unix_ms + Duration::from_secs(600).as_millis() as i64,
+            system_now,
+            instant_now,
+        )
+        .expect("future expiry should produce a lease");
+        assert_eq!(
+            lease.renew_at.duration_since(instant_now),
+            Duration::from_secs(300)
+        );
+        assert_eq!(
+            lease.expires_at.duration_since(instant_now),
+            Duration::from_secs(600)
+        );
+        assert!(template_lease_from_unix_ms(now_unix_ms, system_now, instant_now).is_none());
+    }
+
+    #[test]
+    fn best_hash_poll_detects_same_height_tip_replacement_when_available() {
+        assert!(!best_hash_changed(Some("aabbccddeeff0011"), ""));
+        assert!(!best_hash_changed(
+            Some("aabbccddeeff0011"),
+            "AABBCCDDEEFF0011"
+        ));
+        assert!(!best_hash_changed(
+            Some("aabbccddeeff0011"),
+            "aabbccddeeff00112233445566778899"
+        ));
+        assert!(best_hash_changed(
+            Some("aabbccddeeff0011"),
+            "deadbeefdeadbeef"
+        ));
+    }
+
+    #[test]
+    fn forced_same_tip_refresh_rotates_legacy_template_id() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config::default(),
+        );
+        let original = test_job("job-original", 10);
+        manager.install_test_job(original.clone());
+
+        let mut replacement = original.clone();
+        replacement.id = "job-replacement".to_string();
+        replacement.template_id = "tmpl-replacement".to_string();
+        manager.install_refreshed_template(
+            FetchedTemplate {
+                job: replacement.clone(),
+                lease: None,
+            },
+            false,
+        );
+        assert_eq!(
+            manager.current_job().as_ref().map(|job| job.id.as_str()),
+            Some("job-original")
+        );
+
+        manager.install_refreshed_template(
+            FetchedTemplate {
+                job: replacement,
+                lease: None,
+            },
+            true,
+        );
+        let current = manager.current_job().expect("replacement should install");
+        assert_eq!(current.id, "job-replacement");
+        assert_eq!(current.template_id, "tmpl-replacement");
+        let state = manager.state.read();
+        assert!(state
+            .job_meta
+            .get(&current.id)
+            .and_then(|meta| meta.legacy_rotate_at)
+            .is_some());
+    }
+
+    #[test]
     fn template_identity_ignores_template_churn_fields() {
         let base = Job {
             id: "j1".to_string(),
@@ -1681,6 +2531,8 @@ mod tests {
 
     #[test]
     fn same_height_hash_change_respects_refresh_setting() {
+        assert!(Config::default().refresh_on_same_height);
+
         let mut coalesced = TipEventState::default();
         assert!(should_refresh_for_new_block_event(
             &mut coalesced,

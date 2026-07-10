@@ -21,12 +21,22 @@ pub(crate) struct BlockTemplate {
     pub target: String,
     pub header_base: String,
     pub template_id: String,
+    #[serde(default)]
+    pub template_expires_at_unix_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct RenewTemplateResponse {
+    pub template_id: String,
+    pub template_expires_at_unix_ms: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct NodeStatus {
     pub peers: i64,
     pub chain_height: u64,
+    #[serde(default)]
+    pub best_hash: String,
     pub syncing: bool,
     pub current_process_block: Option<NodeCurrentProcessBlock>,
     pub last_process_block: Option<NodeLastProcessBlock>,
@@ -304,6 +314,11 @@ impl NodeClient {
             path.push_str(&urlencoding::encode(address));
         }
         self.get_json(&path)
+    }
+
+    pub(crate) fn renew_block_template(&self, template_id: &str) -> Result<RenewTemplateResponse> {
+        let payload = serde_json::json!({ "template_id": template_id });
+        self.post_json("/api/mining/renewtemplate", &payload)
     }
 
     pub fn get_block(&self, id: &str) -> Result<NodeBlock> {
@@ -604,6 +619,39 @@ mod tests {
     #[test]
     fn wallet_send_timeout_exceeds_default_request_timeout() {
         assert!(WALLET_SEND_HTTP_TIMEOUT > NODE_HTTP_TIMEOUT);
+    }
+
+    #[test]
+    fn block_template_lease_is_backward_compatible_and_renewal_response_parses() {
+        let legacy: BlockTemplate = serde_json::from_value(serde_json::json!({
+            "block": {},
+            "target": "00",
+            "header_base": "00",
+            "template_id": "legacy"
+        }))
+        .expect("legacy response should parse");
+        assert_eq!(legacy.template_expires_at_unix_ms, None);
+
+        let leased: BlockTemplate = serde_json::from_value(serde_json::json!({
+            "block": {},
+            "target": "00",
+            "header_base": "00",
+            "template_id": "leased",
+            "template_expires_at_unix_ms": 1_750_000_000_000_i64
+        }))
+        .expect("leased response should parse");
+        assert_eq!(
+            leased.template_expires_at_unix_ms,
+            Some(1_750_000_000_000_i64)
+        );
+
+        let renewed: RenewTemplateResponse = serde_json::from_value(serde_json::json!({
+            "template_id": "leased",
+            "template_expires_at_unix_ms": 1_750_000_600_000_i64
+        }))
+        .expect("renewal response should parse");
+        assert_eq!(renewed.template_id, "leased");
+        assert_eq!(renewed.template_expires_at_unix_ms, 1_750_000_600_000_i64);
     }
 
     #[test]

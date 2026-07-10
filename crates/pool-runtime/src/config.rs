@@ -83,7 +83,7 @@ impl Default for Config {
             daemon_cookie_path: "/etc/blocknet/pool/daemon-active.api.cookie".to_string(),
             pool_fee_wallet_address: String::new(),
             initial_share_difficulty: 60,
-            refresh_on_same_height: false,
+            refresh_on_same_height: true,
             job_timeout: "5m".to_string(),
             stale_submit_grace: "8s".to_string(),
             overload_shed_oldest_age: "4s".to_string(),

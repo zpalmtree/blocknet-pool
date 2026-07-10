@@ -77,6 +77,8 @@ struct MonitorSnapshot {
     chain_height: Option<u64>,
     template_age_seconds: Option<u64>,
     last_refresh_millis: Option<u64>,
+    last_refresh_attempt_millis: Option<u64>,
+    last_refresh_success_millis: Option<u64>,
     stratum_snapshot_age_seconds: Option<u64>,
     connected_miners: Option<u64>,
     connected_workers: Option<u64>,
@@ -916,6 +918,10 @@ impl MonitorRuntime {
             runtime.and_then(|snapshot| snapshot.jobs.template_age_seconds);
         metrics.last_refresh_millis =
             runtime.and_then(|snapshot| snapshot.jobs.last_refresh_millis);
+        metrics.last_refresh_attempt_millis =
+            runtime.and_then(|snapshot| snapshot.jobs.last_refresh_attempt_millis);
+        metrics.last_refresh_success_millis =
+            runtime.and_then(|snapshot| snapshot.jobs.last_refresh_success_millis);
         metrics.stratum_snapshot_age_seconds =
             runtime_snapshot_age(sample.sampled_at, runtime).map(|age| age.as_secs());
         metrics.connected_miners = runtime.map(|snapshot| snapshot.connected_miners as u64);
@@ -2094,6 +2100,14 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
             snapshot.last_refresh_millis,
         ),
         (
+            "blocknet_pool_monitor_last_refresh_attempt_millis",
+            snapshot.last_refresh_attempt_millis,
+        ),
+        (
+            "blocknet_pool_monitor_last_refresh_success_millis",
+            snapshot.last_refresh_success_millis,
+        ),
+        (
             "blocknet_pool_monitor_stratum_snapshot_age_seconds",
             snapshot.stratum_snapshot_age_seconds,
         ),
@@ -2398,6 +2412,8 @@ mod tests {
             summary_state: "healthy".to_string(),
             api_up: Some(true),
             wallet_up: Some(false),
+            last_refresh_attempt_millis: Some(125),
+            last_refresh_success_millis: Some(250),
             daemon_current_process_block: Some(NodeCurrentProcessBlock {
                 height: 5,
                 tx_count: 1,
@@ -2425,6 +2441,8 @@ mod tests {
         assert!(rendered.contains("blocknet_pool_monitor_api_up 1"));
         assert!(rendered.contains("blocknet_pool_monitor_wallet_up 0"));
         assert!(rendered.contains("blocknet_pool_monitor_daemon_process_block_active 1"));
+        assert!(rendered.contains("blocknet_pool_monitor_last_refresh_attempt_millis 125"));
+        assert!(rendered.contains("blocknet_pool_monitor_last_refresh_success_millis 250"));
         assert!(
             rendered.contains("blocknet_pool_monitor_daemon_last_process_block_total_millis 4750")
         );
@@ -2664,6 +2682,7 @@ mod tests {
         let status = NodeStatus {
             peers: 2,
             chain_height: 42,
+            best_hash: String::new(),
             syncing: false,
             current_process_block: Some(NodeCurrentProcessBlock {
                 height: 43,
@@ -2693,6 +2712,7 @@ mod tests {
         let status = NodeStatus {
             peers: 2,
             chain_height: 42,
+            best_hash: String::new(),
             syncing: false,
             current_process_block: None,
             last_process_block: Some(NodeLastProcessBlock {

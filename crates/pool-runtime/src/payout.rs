@@ -3562,6 +3562,7 @@ mod tests {
         NodeStatus {
             peers: 3,
             chain_height,
+            best_hash: String::new(),
             syncing: false,
             current_process_block: None,
             last_process_block: None,
@@ -4081,6 +4082,7 @@ mod tests {
         let status = NodeStatus {
             peers: 1,
             chain_height: 100,
+            best_hash: String::new(),
             syncing: true,
             current_process_block: None,
             last_process_block: None,
