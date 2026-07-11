@@ -22,7 +22,7 @@ const BLOCK_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const ASSIGNMENT_PRUNE_INTERVAL: Duration = Duration::from_secs(30);
 const TEMPLATE_LIVENESS_PROBE_INTERVAL: Duration = Duration::from_secs(30);
 const MEMPOOL_REFRESH_DEBOUNCE: Duration = Duration::from_secs(10);
-const LEGACY_MEMPOOL_CONTENT_REFRESH_INTERVAL: Duration = Duration::from_secs(2 * 60);
+const MAX_TEMPLATE_CONTENT_AGE: Duration = Duration::from_secs(2 * 60);
 const REWARD_ADDR_CACHE_TTL: Duration = Duration::from_secs(30);
 const TEMPLATE_WALLET_RECOVERY_COOLDOWN: Duration = Duration::from_secs(10);
 const MISSING_WALLET_PASSWORD_LOG_COOLDOWN: Duration = Duration::from_secs(60);
@@ -696,7 +696,9 @@ impl JobManager {
                 None => MaintenanceAction::Refresh,
                 Some(current) => {
                     let meta = state.job_meta.get(&current.id);
-                    if let Some(lease) = meta.and_then(|meta| meta.lease) {
+                    if meta.is_some_and(|meta| template_content_expired(meta.created_at, now)) {
+                        MaintenanceAction::ForceRefresh
+                    } else if let Some(lease) = meta.and_then(|meta| meta.lease) {
                         if now >= lease.probe_at || now >= lease.renew_at {
                             MaintenanceAction::Renew {
                                 job_id: current.id.clone(),
@@ -777,15 +779,12 @@ impl JobManager {
             return false;
         };
         let template_generation = meta.mempool_generation;
-        let template_created_at = meta.created_at;
         drop(state);
 
         should_rotate_for_mempool(
             &mut self.mempool_refresh.lock(),
             template_generation,
-            template_created_at,
             status.mempool_generation,
-            status.mempool_size,
             now,
         )
     }
@@ -1566,9 +1565,7 @@ fn best_hash_changed(expected: Option<&str>, observed: &str) -> bool {
 fn should_rotate_for_mempool(
     state: &mut MempoolRefreshState,
     template_generation: Option<u64>,
-    template_created_at: Instant,
     observed_generation: Option<u64>,
-    mempool_size: u64,
     now: Instant,
 ) -> bool {
     match (template_generation, observed_generation) {
@@ -1590,13 +1587,13 @@ fn should_rotate_for_mempool(
         }
         _ => {
             state.pending_since = None;
-            // Compatibility fallback for older daemons: avoid reviving the old two-second
-            // churn, but do not let a non-empty mempool sit behind one template forever.
-            mempool_size > 0
-                && now.saturating_duration_since(template_created_at)
-                    >= LEGACY_MEMPOOL_CONTENT_REFRESH_INTERVAL
+            false
         }
     }
+}
+
+fn template_content_expired(created_at: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(created_at) >= MAX_TEMPLATE_CONTENT_AGE
 }
 
 fn insert_assignment_locked(
@@ -2740,17 +2737,13 @@ mod tests {
         assert!(!should_rotate_for_mempool(
             &mut state,
             Some(4),
-            now,
             Some(4),
-            0,
             now,
         ));
         assert!(!should_rotate_for_mempool(
             &mut state,
             Some(4),
-            now,
             Some(5),
-            1,
             now,
         ));
         // A second transaction changes the observed generation but does not restart
@@ -2758,17 +2751,13 @@ mod tests {
         assert!(!should_rotate_for_mempool(
             &mut state,
             Some(4),
-            now,
             Some(6),
-            2,
             now + MEMPOOL_REFRESH_DEBOUNCE - Duration::from_millis(1),
         ));
         assert!(should_rotate_for_mempool(
             &mut state,
             Some(4),
-            now,
             Some(6),
-            2,
             now + MEMPOOL_REFRESH_DEBOUNCE,
         ));
 
@@ -2776,41 +2765,21 @@ mod tests {
         assert!(!should_rotate_for_mempool(
             &mut state,
             Some(6),
-            now + MEMPOOL_REFRESH_DEBOUNCE,
             Some(6),
-            2,
             now + MEMPOOL_REFRESH_DEBOUNCE,
         ));
         assert!(state.pending_since.is_none());
     }
 
     #[test]
-    fn generation_unaware_daemon_uses_bounded_nonempty_mempool_fallback() {
+    fn template_content_age_is_bounded_at_two_minutes() {
         let now = Instant::now();
-        let mut state = MempoolRefreshState::default();
-
-        assert!(!should_rotate_for_mempool(
-            &mut state,
-            None,
-            now - LEGACY_MEMPOOL_CONTENT_REFRESH_INTERVAL,
-            None,
-            0,
+        assert!(!template_content_expired(
+            now - MAX_TEMPLATE_CONTENT_AGE + Duration::from_millis(1),
             now,
         ));
-        assert!(!should_rotate_for_mempool(
-            &mut state,
-            None,
-            now - LEGACY_MEMPOOL_CONTENT_REFRESH_INTERVAL + Duration::from_millis(1),
-            None,
-            1,
-            now,
-        ));
-        assert!(should_rotate_for_mempool(
-            &mut state,
-            None,
-            now - LEGACY_MEMPOOL_CONTENT_REFRESH_INTERVAL,
-            None,
-            1,
+        assert!(template_content_expired(
+            now - MAX_TEMPLATE_CONTENT_AGE,
             now,
         ));
     }
@@ -2820,20 +2789,11 @@ mod tests {
         let now = Instant::now();
         let mut state = MempoolRefreshState::default();
 
-        assert!(!should_rotate_for_mempool(
-            &mut state,
-            None,
-            now,
-            Some(9),
-            3,
-            now,
-        ));
+        assert!(!should_rotate_for_mempool(&mut state, None, Some(9), now));
         assert!(should_rotate_for_mempool(
             &mut state,
             None,
-            now,
             Some(9),
-            3,
             now + MEMPOOL_REFRESH_DEBOUNCE,
         ));
     }
