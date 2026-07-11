@@ -21,6 +21,8 @@ const MAX_DB_NONCE: u64 = i64::MAX as u64;
 const BLOCK_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const ASSIGNMENT_PRUNE_INTERVAL: Duration = Duration::from_secs(30);
 const TEMPLATE_LIVENESS_PROBE_INTERVAL: Duration = Duration::from_secs(30);
+const MEMPOOL_REFRESH_DEBOUNCE: Duration = Duration::from_secs(10);
+const LEGACY_MEMPOOL_CONTENT_REFRESH_INTERVAL: Duration = Duration::from_secs(2 * 60);
 const REWARD_ADDR_CACHE_TTL: Duration = Duration::from_secs(30);
 const TEMPLATE_WALLET_RECOVERY_COOLDOWN: Duration = Duration::from_secs(10);
 const MISSING_WALLET_PASSWORD_LOG_COOLDOWN: Duration = Duration::from_secs(60);
@@ -129,6 +131,7 @@ pub struct JobManager {
     last_template_wallet_recovery: Mutex<Option<Instant>>,
     last_missing_wallet_password_log: Mutex<Option<Instant>>,
     tip_events: Mutex<TipEventState>,
+    mempool_refresh: Mutex<MempoolRefreshState>,
     last_tip_stream_rotation: Mutex<Option<Instant>>,
 
     tx: broadcast::Sender<Job>,
@@ -161,6 +164,11 @@ struct RefreshCoordinatorState {
     last_success: Option<Instant>,
     last_status_poll_attempt: Option<Instant>,
     last_status_poll_success: Option<Instant>,
+}
+
+#[derive(Debug, Default)]
+struct MempoolRefreshState {
+    pending_since: Option<Instant>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -275,6 +283,7 @@ impl RefreshCoordinator {
 struct JobTemplateMeta {
     created_at: Instant,
     stale_since: Option<Instant>,
+    mempool_generation: Option<u64>,
     lease: Option<TemplateLease>,
     legacy_probe_at: Option<Instant>,
 }
@@ -289,6 +298,7 @@ struct TemplateLease {
 #[derive(Debug)]
 struct FetchedTemplate {
     job: Job,
+    mempool_generation: Option<u64>,
     lease: Option<TemplateLease>,
 }
 
@@ -321,6 +331,7 @@ impl JobManager {
             last_template_wallet_recovery: Mutex::new(None),
             last_missing_wallet_password_log: Mutex::new(None),
             tip_events: Mutex::new(TipEventState::default()),
+            mempool_refresh: Mutex::new(MempoolRefreshState::default()),
             last_tip_stream_rotation: Mutex::new(None),
             tx,
         })
@@ -583,6 +594,7 @@ impl JobManager {
             .or_insert(JobTemplateMeta {
                 created_at: now,
                 stale_since: None,
+                mempool_generation: None,
                 lease: None,
                 legacy_probe_at: now.checked_add(TEMPLATE_LIVENESS_PROBE_INTERVAL),
             });
@@ -741,12 +753,41 @@ impl JobManager {
                                 "daemon status poll detected a tip change"
                             );
                             self.refresh_template();
+                        } else if self.should_refresh_for_mempool(&status, Instant::now()) {
+                            tracing::info!(
+                                observed_mempool_generation = status.mempool_generation,
+                                mempool_size = status.mempool_size,
+                                "daemon mempool changed; rotating mining template content"
+                            );
+                            self.refresh_template_forced();
                         }
                     }
                     Err(err) => tracing::warn!(error = %err, "failed polling daemon tip status"),
                 }
             }
         }
+    }
+
+    fn should_refresh_for_mempool(&self, status: &crate::node::NodeStatus, now: Instant) -> bool {
+        let state = self.state.read();
+        let Some(current) = state.current.as_ref() else {
+            return false;
+        };
+        let Some(meta) = state.job_meta.get(&current.id) else {
+            return false;
+        };
+        let template_generation = meta.mempool_generation;
+        let template_created_at = meta.created_at;
+        drop(state);
+
+        should_rotate_for_mempool(
+            &mut self.mempool_refresh.lock(),
+            template_generation,
+            template_created_at,
+            status.mempool_generation,
+            status.mempool_size,
+            now,
+        )
     }
 
     fn prune_assignments_if_due(&self) {
@@ -921,11 +962,19 @@ impl JobManager {
             }
             None => None,
         };
-        Some(FetchedTemplate { job, lease })
+        Some(FetchedTemplate {
+            job,
+            mempool_generation: template.mempool_generation,
+            lease,
+        })
     }
 
     fn install_refreshed_template(&self, fetched: FetchedTemplate, force_rotation: bool) {
-        let FetchedTemplate { job: parsed, lease } = fetched;
+        let FetchedTemplate {
+            job: parsed,
+            mempool_generation,
+            lease,
+        } = fetched;
         if let Some(chain_height) = parsed.height.checked_sub(1) {
             self.node.observe_chain_height(chain_height);
         }
@@ -938,6 +987,7 @@ impl JobManager {
                 if current.template_id == parsed.template_id {
                     if let Some(meta) = state.job_meta.get_mut(&current_id) {
                         meta.lease = lease;
+                        meta.mempool_generation = mempool_generation;
                         meta.legacy_probe_at = lease
                             .is_none()
                             .then(|| now + TEMPLATE_LIVENESS_PROBE_INTERVAL);
@@ -965,6 +1015,7 @@ impl JobManager {
                     JobTemplateMeta {
                         created_at: now,
                         stale_since: Some(now),
+                        mempool_generation: None,
                         lease: None,
                         legacy_probe_at: None,
                     },
@@ -979,6 +1030,7 @@ impl JobManager {
             JobTemplateMeta {
                 created_at: now,
                 stale_since: None,
+                mempool_generation,
                 lease,
                 legacy_probe_at: lease
                     .is_none()
@@ -1208,6 +1260,7 @@ impl JobManager {
             JobTemplateMeta {
                 created_at: now,
                 stale_since: None,
+                mempool_generation: None,
                 lease: None,
                 legacy_probe_at: now.checked_add(TEMPLATE_LIVENESS_PROBE_INTERVAL),
             },
@@ -1510,6 +1563,42 @@ fn best_hash_changed(expected: Option<&str>, observed: &str) -> bool {
         .is_none_or(|prefix| !prefix.eq_ignore_ascii_case(expected))
 }
 
+fn should_rotate_for_mempool(
+    state: &mut MempoolRefreshState,
+    template_generation: Option<u64>,
+    template_created_at: Instant,
+    observed_generation: Option<u64>,
+    mempool_size: u64,
+    now: Instant,
+) -> bool {
+    match (template_generation, observed_generation) {
+        (Some(template_generation), Some(observed_generation)) => {
+            if template_generation == observed_generation {
+                state.pending_since = None;
+                return false;
+            }
+
+            let pending_since = state.pending_since.get_or_insert(now);
+            now.saturating_duration_since(*pending_since) >= MEMPOOL_REFRESH_DEBOUNCE
+        }
+        (None, Some(_)) => {
+            // A daemon was upgraded or failed over while the current template came from
+            // a generation-unaware endpoint. Rotate once after the normal debounce so the
+            // template and status observations become comparable.
+            let pending_since = state.pending_since.get_or_insert(now);
+            now.saturating_duration_since(*pending_since) >= MEMPOOL_REFRESH_DEBOUNCE
+        }
+        _ => {
+            state.pending_since = None;
+            // Compatibility fallback for older daemons: avoid reviving the old two-second
+            // churn, but do not let a non-empty mempool sit behind one template forever.
+            mempool_size > 0
+                && now.saturating_duration_since(template_created_at)
+                    >= LEGACY_MEMPOOL_CONTENT_REFRESH_INTERVAL
+        }
+    }
+}
+
 fn insert_assignment_locked(
     state: &mut JobState,
     assignment_id: String,
@@ -1748,7 +1837,8 @@ mod tests {
                             "target": hex::encode([0xBB; 32]),
                             "header_base": hex::encode([0xAA; 92]),
                             "template_id": template_id,
-                            "template_expires_at_unix_ms": expires_at_unix_ms
+                            "template_expires_at_unix_ms": expires_at_unix_ms,
+                            "mempool_generation": 7
                         })
                         .to_string(),
                     )
@@ -2020,6 +2110,7 @@ mod tests {
             JobTemplateMeta {
                 created_at: now - Duration::from_secs(60),
                 stale_since: Some(now - Duration::from_secs(2)),
+                mempool_generation: None,
                 lease: None,
                 legacy_probe_at: None,
             },
@@ -2071,6 +2162,7 @@ mod tests {
                 JobTemplateMeta {
                     created_at: now - Duration::from_secs(60),
                     stale_since: Some(now - Duration::from_secs(2)),
+                    mempool_generation: None,
                     lease: None,
                     legacy_probe_at: None,
                 },
@@ -2140,6 +2232,7 @@ mod tests {
                 JobTemplateMeta {
                     created_at: now - Duration::from_secs(3),
                     stale_since: Some(now - Duration::from_secs(2)),
+                    mempool_generation: None,
                     lease: None,
                     legacy_probe_at: None,
                 },
@@ -2184,6 +2277,7 @@ mod tests {
                 JobTemplateMeta {
                     created_at: now - Duration::from_secs(60),
                     stale_since: Some(now - Duration::from_secs(2)),
+                    mempool_generation: None,
                     lease: None,
                     legacy_probe_at: None,
                 },
@@ -2222,6 +2316,7 @@ mod tests {
                 JobTemplateMeta {
                     created_at: now - Duration::from_secs(60),
                     stale_since: Some(now - Duration::from_secs(10)),
+                    mempool_generation: None,
                     lease: None,
                     legacy_probe_at: None,
                 },
@@ -2268,6 +2363,7 @@ mod tests {
                 JobTemplateMeta {
                     created_at: now - Duration::from_secs(60),
                     stale_since: Some(now - Duration::from_secs(6)),
+                    mempool_generation: None,
                     lease: None,
                     legacy_probe_at: None,
                 },
@@ -2445,6 +2541,7 @@ mod tests {
                 JobTemplateMeta {
                     created_at: now - Duration::from_secs(60),
                     stale_since: Some(now - Duration::from_secs(10)),
+                    mempool_generation: None,
                     lease: None,
                     legacy_probe_at: None,
                 },
@@ -2482,6 +2579,7 @@ mod tests {
             JobTemplateMeta {
                 created_at: now - Duration::from_secs(180),
                 stale_since: Some(now - Duration::from_secs(30)),
+                mempool_generation: None,
                 lease: None,
                 legacy_probe_at: None,
             },
@@ -2635,6 +2733,155 @@ mod tests {
     }
 
     #[test]
+    fn mempool_generation_change_is_debounced_without_starving_busy_updates() {
+        let now = Instant::now();
+        let mut state = MempoolRefreshState::default();
+
+        assert!(!should_rotate_for_mempool(
+            &mut state,
+            Some(4),
+            now,
+            Some(4),
+            0,
+            now,
+        ));
+        assert!(!should_rotate_for_mempool(
+            &mut state,
+            Some(4),
+            now,
+            Some(5),
+            1,
+            now,
+        ));
+        // A second transaction changes the observed generation but does not restart
+        // the debounce window, so a steady stream cannot starve template rotation.
+        assert!(!should_rotate_for_mempool(
+            &mut state,
+            Some(4),
+            now,
+            Some(6),
+            2,
+            now + MEMPOOL_REFRESH_DEBOUNCE - Duration::from_millis(1),
+        ));
+        assert!(should_rotate_for_mempool(
+            &mut state,
+            Some(4),
+            now,
+            Some(6),
+            2,
+            now + MEMPOOL_REFRESH_DEBOUNCE,
+        ));
+
+        // Installing a template for the observed generation clears pending state.
+        assert!(!should_rotate_for_mempool(
+            &mut state,
+            Some(6),
+            now + MEMPOOL_REFRESH_DEBOUNCE,
+            Some(6),
+            2,
+            now + MEMPOOL_REFRESH_DEBOUNCE,
+        ));
+        assert!(state.pending_since.is_none());
+    }
+
+    #[test]
+    fn generation_unaware_daemon_uses_bounded_nonempty_mempool_fallback() {
+        let now = Instant::now();
+        let mut state = MempoolRefreshState::default();
+
+        assert!(!should_rotate_for_mempool(
+            &mut state,
+            None,
+            now - LEGACY_MEMPOOL_CONTENT_REFRESH_INTERVAL,
+            None,
+            0,
+            now,
+        ));
+        assert!(!should_rotate_for_mempool(
+            &mut state,
+            None,
+            now - LEGACY_MEMPOOL_CONTENT_REFRESH_INTERVAL + Duration::from_millis(1),
+            None,
+            1,
+            now,
+        ));
+        assert!(should_rotate_for_mempool(
+            &mut state,
+            None,
+            now - LEGACY_MEMPOOL_CONTENT_REFRESH_INTERVAL,
+            None,
+            1,
+            now,
+        ));
+    }
+
+    #[test]
+    fn daemon_upgrade_from_generation_unaware_template_rotates_after_debounce() {
+        let now = Instant::now();
+        let mut state = MempoolRefreshState::default();
+
+        assert!(!should_rotate_for_mempool(
+            &mut state,
+            None,
+            now,
+            Some(9),
+            3,
+            now,
+        ));
+        assert!(should_rotate_for_mempool(
+            &mut state,
+            None,
+            now,
+            Some(9),
+            3,
+            now + MEMPOOL_REFRESH_DEBOUNCE,
+        ));
+    }
+
+    #[test]
+    fn manager_compares_status_generation_with_installed_template_generation() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config::default(),
+        );
+        manager.install_test_job(test_job("generation-4", 10));
+        let original_id = manager.current_job().expect("current job").id;
+        manager
+            .state
+            .write()
+            .job_meta
+            .get_mut(&original_id)
+            .expect("current job metadata")
+            .mempool_generation = Some(4);
+        manager.mempool_refresh.lock().pending_since =
+            Some(Instant::now() - MEMPOOL_REFRESH_DEBOUNCE);
+
+        let status = crate::node::NodeStatus {
+            peers: 1,
+            chain_height: 9,
+            best_hash: String::new(),
+            mempool_size: 1,
+            mempool_generation: Some(5),
+            syncing: false,
+            current_process_block: None,
+            last_process_block: None,
+        };
+        assert!(manager.should_refresh_for_mempool(&status, Instant::now()));
+
+        let mut replacement = test_job("generation-5", 10);
+        replacement.header_base[0] ^= 0xff;
+        manager.install_refreshed_template(
+            FetchedTemplate {
+                job: replacement,
+                mempool_generation: Some(5),
+                lease: None,
+            },
+            true,
+        );
+        assert!(!manager.should_refresh_for_mempool(&status, Instant::now()));
+    }
+
+    #[test]
     fn best_hash_poll_detects_same_height_tip_replacement_when_available() {
         assert!(!best_hash_changed(Some("aabbccddeeff0011"), ""));
         assert!(!best_hash_changed(
@@ -2666,6 +2913,7 @@ mod tests {
         manager.install_refreshed_template(
             FetchedTemplate {
                 job: replacement.clone(),
+                mempool_generation: None,
                 lease: None,
             },
             false,
@@ -2678,6 +2926,7 @@ mod tests {
         manager.install_refreshed_template(
             FetchedTemplate {
                 job: replacement,
+                mempool_generation: None,
                 lease: None,
             },
             true,
@@ -2711,6 +2960,15 @@ mod tests {
         let current = manager.current_job().expect("replacement template");
         assert_eq!(current.template_id, "tmpl-after-restart");
         assert_ne!(current.id, "before-restart");
+        assert_eq!(
+            manager
+                .state
+                .read()
+                .job_meta
+                .get(&current.id)
+                .and_then(|meta| meta.mempool_generation),
+            Some(7)
+        );
         server.join().expect("template server should finish");
     }
 

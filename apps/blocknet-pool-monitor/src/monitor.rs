@@ -2774,6 +2774,8 @@ mod tests {
             peers: 2,
             chain_height: 42,
             best_hash: String::new(),
+            mempool_size: 0,
+            mempool_generation: None,
             syncing: false,
             current_process_block: Some(NodeCurrentProcessBlock {
                 height: 43,
@@ -2804,6 +2806,8 @@ mod tests {
             peers: 2,
             chain_height: 42,
             best_hash: String::new(),
+            mempool_size: 0,
+            mempool_generation: None,
             syncing: false,
             current_process_block: None,
             last_process_block: Some(NodeLastProcessBlock {

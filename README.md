@@ -290,6 +290,8 @@ Daemon log stream details:
 - Timestamp-only `new_block` changes do not trigger refreshes; only hash/height changes can trigger staleness.
 - Same-height hash-change refresh is enabled by default (`refresh_on_same_height=true`) so the pool reacts immediately to same-height reorgs. Set it to `false` only if an operator intentionally wants to coalesce those events.
 - Daemons that advertise `template_expires_at_unix_ms` receive a cheap liveness renewal every 30 seconds (and never later than half-life) without replacing miner work. A rejected or malformed renewal queues a forced template replacement.
+- Generation-aware daemons attach `mempool_generation` to status and block-template responses. A same-tip generation change is debounced for 10 seconds and then forces one content refresh so newly arrived transactions enter miner work without restoring constant template churn.
+- Against generation-unaware daemons, a non-empty mempool forces a same-tip content refresh after two minutes as a compatibility fallback.
 - A successful SSE connection/reconnect forces a same-tip template rotation because daemon template IDs are process-local. Against older daemons without renewal support, the pool bounds polling-only restart detection with the same 30-second rotation cadence.
 
 ## Payout Safeguards

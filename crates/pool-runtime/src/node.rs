@@ -24,6 +24,8 @@ pub(crate) struct BlockTemplate {
     pub template_id: String,
     #[serde(default)]
     pub template_expires_at_unix_ms: Option<i64>,
+    #[serde(default)]
+    pub mempool_generation: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -38,6 +40,10 @@ pub struct NodeStatus {
     pub chain_height: u64,
     #[serde(default)]
     pub best_hash: String,
+    #[serde(default)]
+    pub mempool_size: u64,
+    #[serde(default)]
+    pub mempool_generation: Option<u64>,
     pub syncing: bool,
     pub current_process_block: Option<NodeCurrentProcessBlock>,
     pub last_process_block: Option<NodeLastProcessBlock>,
@@ -725,19 +731,22 @@ mod tests {
         }))
         .expect("legacy response should parse");
         assert_eq!(legacy.template_expires_at_unix_ms, None);
+        assert_eq!(legacy.mempool_generation, None);
 
         let leased: BlockTemplate = serde_json::from_value(serde_json::json!({
             "block": {},
             "target": "00",
             "header_base": "00",
             "template_id": "leased",
-            "template_expires_at_unix_ms": 1_750_000_000_000_i64
+            "template_expires_at_unix_ms": 1_750_000_000_000_i64,
+            "mempool_generation": 17
         }))
         .expect("leased response should parse");
         assert_eq!(
             leased.template_expires_at_unix_ms,
             Some(1_750_000_000_000_i64)
         );
+        assert_eq!(leased.mempool_generation, Some(17));
 
         let renewed: RenewTemplateResponse = serde_json::from_value(serde_json::json!({
             "template_id": "leased",
@@ -746,6 +755,33 @@ mod tests {
         .expect("renewal response should parse");
         assert_eq!(renewed.template_id, "leased");
         assert_eq!(renewed.template_expires_at_unix_ms, 1_750_000_600_000_i64);
+    }
+
+    #[test]
+    fn node_status_mempool_generation_is_backward_compatible() {
+        let legacy: NodeStatus = serde_json::from_value(serde_json::json!({
+            "peers": 1,
+            "chain_height": 9,
+            "syncing": false,
+            "current_process_block": null,
+            "last_process_block": null
+        }))
+        .expect("legacy status should parse");
+        assert_eq!(legacy.mempool_size, 0);
+        assert_eq!(legacy.mempool_generation, None);
+
+        let current: NodeStatus = serde_json::from_value(serde_json::json!({
+            "peers": 1,
+            "chain_height": 9,
+            "mempool_size": 3,
+            "mempool_generation": 17,
+            "syncing": false,
+            "current_process_block": null,
+            "last_process_block": null
+        }))
+        .expect("generation-aware status should parse");
+        assert_eq!(current.mempool_size, 3);
+        assert_eq!(current.mempool_generation, Some(17));
     }
 
     #[test]
