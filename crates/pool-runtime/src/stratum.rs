@@ -1290,6 +1290,7 @@ mod tests {
             template_id: format!("tmpl-{height}"),
             prev_hash: None,
             template_created_at: Instant::now(),
+            template_block: None,
         }
     }
 

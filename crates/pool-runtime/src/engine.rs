@@ -56,6 +56,10 @@ pub struct Job {
     pub template_id: String,
     pub prev_hash: Option<[u8; 32]>,
     pub template_created_at: Instant,
+    /// Full daemon template block, retained so a solved block can still be
+    /// submitted if the daemon has discarded the compact template ID (for
+    /// example after a restart cleared its in-memory lease cache).
+    pub template_block: Option<std::sync::Arc<serde_json::Value>>,
 }
 
 #[derive(Debug, Clone)]
@@ -2264,6 +2268,7 @@ mod tests {
             template_id: "tmpl1".to_string(),
             prev_hash: None,
             template_created_at: Instant::now(),
+            template_block: None,
         }
     }
 

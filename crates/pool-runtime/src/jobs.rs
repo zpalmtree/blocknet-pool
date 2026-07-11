@@ -69,6 +69,10 @@ pub struct JobRuntimeSnapshot {
     #[serde(default)]
     pub block_submit_attempts_total: u64,
     #[serde(default)]
+    pub block_submit_full_fallback_attempts_total: u64,
+    #[serde(default)]
+    pub block_submit_full_fallback_accepted_total: u64,
+    #[serde(default)]
     pub last_block_submit_template_age_seconds: u64,
     #[serde(default)]
     pub max_accepted_block_template_age_seconds: u64,
@@ -533,6 +537,10 @@ impl JobManager {
                 .renewal_expired_responses_total,
             template_submit_expired_responses_total: lease_telemetry.submit_expired_responses_total,
             block_submit_attempts_total: lease_telemetry.block_submit_attempts_total,
+            block_submit_full_fallback_attempts_total: lease_telemetry
+                .block_submit_full_fallback_attempts_total,
+            block_submit_full_fallback_accepted_total: lease_telemetry
+                .block_submit_full_fallback_accepted_total,
             last_block_submit_template_age_seconds: lease_telemetry
                 .last_block_submit_template_age_seconds,
             max_accepted_block_template_age_seconds: lease_telemetry
@@ -1402,6 +1410,7 @@ fn parse_template_into_job(template: &crate::node::BlockTemplate) -> anyhow::Res
         template_id: template.template_id.trim().to_string(),
         prev_hash: block_prev_hash(header),
         template_created_at: Instant::now(),
+        template_block: Some(std::sync::Arc::new(template.block.clone())),
     })
 }
 
@@ -1803,6 +1812,7 @@ mod tests {
             template_id: format!("tmpl-{id}"),
             prev_hash: None,
             template_created_at: Instant::now(),
+            template_block: None,
         }
     }
 
@@ -2943,6 +2953,7 @@ mod tests {
             template_id: "t1".to_string(),
             prev_hash: Some([0xAA; 32]),
             template_created_at: Instant::now(),
+            template_block: None,
         };
         let mut same = base.clone();
         same.id = "j2".to_string();

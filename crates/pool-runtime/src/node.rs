@@ -248,12 +248,31 @@ fn is_unknown_or_expired_template_id_error(err: &anyhow::Error) -> bool {
     })
 }
 
+/// Patch the solved nonce into a retained full template block. The daemon
+/// serializes `BlockHeader` without JSON tags, so the live key is `Nonce`;
+/// the lowercase variant is handled defensively in case that ever changes.
+fn set_full_block_nonce(block: &mut Value, nonce: u64) -> Result<()> {
+    let header = block
+        .get_mut("header")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| anyhow!("retained template block is missing a header object"))?;
+    let key = if header.contains_key("nonce") && !header.contains_key("Nonce") {
+        "nonce"
+    } else {
+        "Nonce"
+    };
+    header.insert(key.to_string(), Value::from(nonce));
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct TemplateLeaseTelemetrySnapshot {
     pub renewal_failures_total: u64,
     pub renewal_expired_responses_total: u64,
     pub submit_expired_responses_total: u64,
     pub block_submit_attempts_total: u64,
+    pub block_submit_full_fallback_attempts_total: u64,
+    pub block_submit_full_fallback_accepted_total: u64,
     pub last_block_submit_template_age_seconds: u64,
     pub max_accepted_block_template_age_seconds: u64,
     pub accepted_blocks_after_ten_minutes_total: u64,
@@ -272,6 +291,8 @@ pub struct NodeClient {
     template_renewal_expired_responses: AtomicU64,
     template_submit_expired_responses: AtomicU64,
     block_submit_attempts: AtomicU64,
+    block_submit_full_fallback_attempts: AtomicU64,
+    block_submit_full_fallback_accepted: AtomicU64,
     last_block_submit_template_age_seconds: AtomicU64,
     max_accepted_block_template_age_seconds: AtomicU64,
     accepted_blocks_after_ten_minutes: AtomicU64,
@@ -333,6 +354,8 @@ impl NodeClient {
             template_renewal_expired_responses: AtomicU64::new(0),
             template_submit_expired_responses: AtomicU64::new(0),
             block_submit_attempts: AtomicU64::new(0),
+            block_submit_full_fallback_attempts: AtomicU64::new(0),
+            block_submit_full_fallback_accepted: AtomicU64::new(0),
             last_block_submit_template_age_seconds: AtomicU64::new(0),
             max_accepted_block_template_age_seconds: AtomicU64::new(0),
             accepted_blocks_after_ten_minutes: AtomicU64::new(0),
@@ -383,6 +406,12 @@ impl NodeClient {
                 .template_submit_expired_responses
                 .load(Ordering::Relaxed),
             block_submit_attempts_total: self.block_submit_attempts.load(Ordering::Relaxed),
+            block_submit_full_fallback_attempts_total: self
+                .block_submit_full_fallback_attempts
+                .load(Ordering::Relaxed),
+            block_submit_full_fallback_accepted_total: self
+                .block_submit_full_fallback_accepted
+                .load(Ordering::Relaxed),
             last_block_submit_template_age_seconds: self
                 .last_block_submit_template_age_seconds
                 .load(Ordering::Relaxed),
@@ -402,6 +431,56 @@ impl NodeClient {
             self.accepted_blocks_after_ten_minutes
                 .fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    /// Last-resort submission path: the daemon no longer knows the compact
+    /// template ID (typically a restart cleared its lease cache), so submit
+    /// the retained full template block with the solved nonce patched in.
+    /// Returns `Ok(None)` when no full block was retained for this job.
+    fn submit_retained_full_block(
+        &self,
+        job: &Job,
+        nonce: u64,
+        template_age_seconds: u64,
+        compact_err: &anyhow::Error,
+    ) -> Result<Option<BlockSubmitResponse>> {
+        let Some(template_block) = job.template_block.as_ref() else {
+            return Ok(None);
+        };
+        let mut block = Value::clone(template_block);
+        set_full_block_nonce(&mut block, nonce)
+            .context("prepare retained full block for fallback submit")?;
+        self.block_submit_full_fallback_attempts
+            .fetch_add(1, Ordering::Relaxed);
+        tracing::warn!(
+            job_id = %job.id,
+            template_id = %job.template_id,
+            height = job.height,
+            template_age_seconds,
+            compact_error = %compact_err,
+            "compact template ID unknown or expired; submitting retained full block"
+        );
+        let resp: SubmitBlockRawResponse = self
+            .post_json("/api/mining/submitblock", &block)
+            .context("full-block fallback submit after unknown/expired template ID")?;
+        if resp.accepted {
+            self.block_submit_full_fallback_accepted
+                .fetch_add(1, Ordering::Relaxed);
+            self.record_accepted_block_template_age(template_age_seconds);
+        }
+        Ok(Some(BlockSubmitResponse {
+            accepted: resp.accepted,
+            hash: if resp.hash.is_empty() {
+                None
+            } else {
+                Some(resp.hash)
+            },
+            height: if resp.height == 0 {
+                None
+            } else {
+                Some(resp.height)
+            },
+        }))
     }
 
     pub fn get_block(&self, id: &str) -> Result<NodeBlock> {
@@ -679,6 +758,11 @@ impl NodeApi for NodeClient {
                 if is_unknown_or_expired_template_id_error(&err) {
                     self.template_submit_expired_responses
                         .fetch_add(1, Ordering::Relaxed);
+                    if let Some(resp) =
+                        self.submit_retained_full_block(job, nonce, template_age_seconds, &err)?
+                    {
+                        return Ok(resp);
+                    }
                 }
                 return Err(err);
             }
@@ -796,6 +880,7 @@ mod tests {
             template_id: String::new(),
             prev_hash: None,
             template_created_at: std::time::Instant::now(),
+            template_block: None,
         };
 
         let err = client
@@ -827,6 +912,187 @@ mod tests {
             body: r#"{"error":"block rejected as stale"}"#.to_string(),
         });
         assert!(!is_unknown_or_expired_template_id_error(&stale));
+    }
+
+    #[test]
+    fn set_full_block_nonce_prefers_live_daemon_key_casing() {
+        let mut capitalized = serde_json::json!({
+            "header": {"Height": 5, "Difficulty": 9, "Nonce": 0}
+        });
+        set_full_block_nonce(&mut capitalized, 42).expect("patch capitalized nonce");
+        assert_eq!(capitalized["header"]["Nonce"].as_u64(), Some(42));
+        assert!(capitalized["header"].get("nonce").is_none());
+
+        let mut lowercase = serde_json::json!({
+            "header": {"height": 5, "nonce": 0}
+        });
+        set_full_block_nonce(&mut lowercase, 7).expect("patch lowercase nonce");
+        assert_eq!(lowercase["header"]["nonce"].as_u64(), Some(7));
+        assert!(lowercase["header"].get("Nonce").is_none());
+
+        let mut missing_key = serde_json::json!({
+            "header": {"Height": 5}
+        });
+        set_full_block_nonce(&mut missing_key, 9).expect("insert nonce key");
+        assert_eq!(missing_key["header"]["Nonce"].as_u64(), Some(9));
+
+        let mut no_header = serde_json::json!({"txns": []});
+        let err = set_full_block_nonce(&mut no_header, 1).expect_err("missing header should fail");
+        assert!(err.to_string().contains("missing a header object"));
+    }
+
+    fn read_http_request(stream: &mut std::net::TcpStream) -> String {
+        use std::io::Read;
+
+        let mut raw = Vec::new();
+        let mut buffer = [0u8; 4096];
+        loop {
+            let read = stream.read(&mut buffer).expect("read daemon request");
+            if read == 0 {
+                break;
+            }
+            raw.extend_from_slice(&buffer[..read]);
+            let text = String::from_utf8_lossy(&raw);
+            if let Some(header_end) = text.find("\r\n\r\n") {
+                let content_length = text
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                if raw.len() >= header_end + 4 + content_length {
+                    break;
+                }
+            }
+        }
+        String::from_utf8_lossy(&raw).into_owned()
+    }
+
+    #[test]
+    fn submit_block_falls_back_to_retained_full_block_when_template_id_unknown() {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind submit test server");
+        let address = listener.local_addr().expect("submit server address");
+        let (request_tx, request_rx) = std::sync::mpsc::channel::<String>();
+        let server = std::thread::spawn(move || {
+            let responses = [
+                (
+                    "400 Bad Request",
+                    r#"{"error":"unknown or expired template_id"}"#.to_string(),
+                ),
+                (
+                    "200 OK",
+                    r#"{"accepted":true,"hash":"beef","height":11}"#.to_string(),
+                ),
+            ];
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().expect("accept daemon request");
+                let request = read_http_request(&mut stream);
+                request_tx.send(request).expect("record daemon request");
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("write daemon response");
+            }
+        });
+
+        let client = NodeClient::new(&format!("http://{address}"), "").expect("node client");
+        let prev_hash = vec![0u8; 32];
+        let template_block = serde_json::json!({
+            "header": {"Height": 11, "Difficulty": 3, "Nonce": 0, "PrevHash": prev_hash},
+            "txns": []
+        });
+        let job = Job {
+            id: "job1".to_string(),
+            height: 11,
+            header_base: vec![0xAA; 92],
+            network_target: [0xBB; 32],
+            network_difficulty: 3,
+            template_id: "tmpl-lost".to_string(),
+            prev_hash: None,
+            template_created_at: std::time::Instant::now(),
+            template_block: Some(std::sync::Arc::new(template_block)),
+        };
+
+        let response = client
+            .submit_block(&job, 42)
+            .expect("fallback submit should succeed");
+        assert!(response.accepted);
+        assert_eq!(response.hash.as_deref(), Some("beef"));
+        assert_eq!(response.height, Some(11));
+
+        let compact_request = request_rx.recv().expect("compact request recorded");
+        assert!(compact_request.contains("\"template_id\":\"tmpl-lost\""));
+        let full_request = request_rx.recv().expect("full request recorded");
+        let full_body = full_request
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body)
+            .unwrap_or_default();
+        let full_payload: serde_json::Value =
+            serde_json::from_str(full_body).expect("full request body is JSON");
+        assert!(full_payload.get("template_id").is_none());
+        assert_eq!(full_payload["header"]["Nonce"].as_u64(), Some(42));
+        assert_eq!(full_payload["header"]["Height"].as_u64(), Some(11));
+
+        let telemetry = client.template_lease_telemetry();
+        assert_eq!(telemetry.block_submit_attempts_total, 1);
+        assert_eq!(telemetry.submit_expired_responses_total, 1);
+        assert_eq!(telemetry.block_submit_full_fallback_attempts_total, 1);
+        assert_eq!(telemetry.block_submit_full_fallback_accepted_total, 1);
+
+        server.join().expect("submit test server thread");
+    }
+
+    #[test]
+    fn submit_block_without_retained_block_surfaces_compact_error() {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind submit test server");
+        let address = listener.local_addr().expect("submit server address");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept daemon request");
+            let _ = read_http_request(&mut stream);
+            let body = r#"{"error":"unknown or expired template_id"}"#;
+            let response = format!(
+                "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write daemon response");
+        });
+
+        let client = NodeClient::new(&format!("http://{address}"), "").expect("node client");
+        let job = Job {
+            id: "job1".to_string(),
+            height: 11,
+            header_base: vec![0xAA; 92],
+            network_target: [0xBB; 32],
+            network_difficulty: 3,
+            template_id: "tmpl-lost".to_string(),
+            prev_hash: None,
+            template_created_at: std::time::Instant::now(),
+            template_block: None,
+        };
+
+        let err = client
+            .submit_block(&job, 42)
+            .expect_err("compact error should surface without retained block");
+        assert!(is_unknown_or_expired_template_id_error(&err));
+
+        let telemetry = client.template_lease_telemetry();
+        assert_eq!(telemetry.submit_expired_responses_total, 1);
+        assert_eq!(telemetry.block_submit_full_fallback_attempts_total, 0);
+
+        server.join().expect("submit test server thread");
     }
 
     #[test]

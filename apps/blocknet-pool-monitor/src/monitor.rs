@@ -85,6 +85,8 @@ struct MonitorSnapshot {
     template_renewal_expired_responses_total: Option<u64>,
     template_submit_expired_responses_total: Option<u64>,
     block_submit_attempts_total: Option<u64>,
+    block_submit_full_fallback_attempts_total: Option<u64>,
+    block_submit_full_fallback_accepted_total: Option<u64>,
     last_block_submit_template_age_seconds: Option<u64>,
     max_accepted_block_template_age_seconds: Option<u64>,
     accepted_blocks_after_ten_minutes_total: Option<u64>,
@@ -943,6 +945,10 @@ impl MonitorRuntime {
             runtime.map(|snapshot| snapshot.jobs.template_submit_expired_responses_total);
         metrics.block_submit_attempts_total =
             runtime.map(|snapshot| snapshot.jobs.block_submit_attempts_total);
+        metrics.block_submit_full_fallback_attempts_total =
+            runtime.map(|snapshot| snapshot.jobs.block_submit_full_fallback_attempts_total);
+        metrics.block_submit_full_fallback_accepted_total =
+            runtime.map(|snapshot| snapshot.jobs.block_submit_full_fallback_accepted_total);
         metrics.last_block_submit_template_age_seconds =
             runtime.map(|snapshot| snapshot.jobs.last_block_submit_template_age_seconds);
         metrics.max_accepted_block_template_age_seconds =
@@ -2159,6 +2165,14 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
             snapshot.block_submit_attempts_total,
         ),
         (
+            "blocknet_pool_monitor_block_submit_full_fallback_attempts_total",
+            snapshot.block_submit_full_fallback_attempts_total,
+        ),
+        (
+            "blocknet_pool_monitor_block_submit_full_fallback_accepted_total",
+            snapshot.block_submit_full_fallback_accepted_total,
+        ),
+        (
             "blocknet_pool_monitor_last_block_submit_template_age_seconds",
             snapshot.last_block_submit_template_age_seconds,
         ),
@@ -2483,6 +2497,8 @@ mod tests {
             template_renewal_expired_responses_total: Some(1),
             template_submit_expired_responses_total: Some(3),
             block_submit_attempts_total: Some(4),
+            block_submit_full_fallback_attempts_total: Some(2),
+            block_submit_full_fallback_accepted_total: Some(1),
             last_block_submit_template_age_seconds: Some(605),
             max_accepted_block_template_age_seconds: Some(605),
             accepted_blocks_after_ten_minutes_total: Some(1),
@@ -2525,6 +2541,12 @@ mod tests {
             rendered.contains("blocknet_pool_monitor_template_submit_expired_responses_total 3")
         );
         assert!(rendered.contains("blocknet_pool_monitor_block_submit_attempts_total 4"));
+        assert!(
+            rendered.contains("blocknet_pool_monitor_block_submit_full_fallback_attempts_total 2")
+        );
+        assert!(
+            rendered.contains("blocknet_pool_monitor_block_submit_full_fallback_accepted_total 1")
+        );
         assert!(
             rendered.contains("blocknet_pool_monitor_last_block_submit_template_age_seconds 605")
         );
