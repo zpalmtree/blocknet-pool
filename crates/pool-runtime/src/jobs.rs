@@ -1050,21 +1050,7 @@ impl JobManager {
             .store(random_nonce_slot(), Ordering::Relaxed);
 
         // Keep recent jobs bounded.
-        let mut removed_jobs = Vec::new();
-        while state.order.len() > 16 {
-            if let Some(oldest) = state.order.pop_front() {
-                if state
-                    .current
-                    .as_ref()
-                    .is_some_and(|current| current.id == oldest)
-                {
-                    continue;
-                }
-                state.jobs.remove(&oldest);
-                state.job_meta.remove(&oldest);
-                removed_jobs.push(oldest);
-            }
-        }
+        let removed_jobs = trim_recent_jobs_locked(&mut state);
         if !removed_jobs.is_empty() {
             let assignments_before = state.assignments.len();
             remove_assignments_for_templates_locked(&mut state, &removed_jobs);
@@ -1319,6 +1305,20 @@ impl JobRepository for JobManager {
         };
         let current_job_id = state.current.as_ref().map(|job| job.id.as_str());
         let is_current_template = Some(assignment.template_job_id.as_str()) == current_job_id;
+        // A content-only rotation (mempool refresh, lease churn) replaces the
+        // job ID without moving the chain position. Work against a replaced
+        // job at the current height on the current parent is exactly as
+        // valid as work against the current job, so it bypasses template
+        // staleness entirely; legacy clients that only switch jobs on height
+        // changes would otherwise burn every share between rotations.
+        let same_position_as_current = !is_current_template
+            && match (
+                state.current.as_ref(),
+                state.jobs.get(&assignment.template_job_id),
+            ) {
+                (Some(current), Some(assigned)) => job_matches_current_position(current, assigned),
+                _ => false,
+            };
         let assignment_ttl = self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE);
         let assignment_age = submitted_at.saturating_duration_since(assignment.created_at);
         let mut within_superseded_grace = false;
@@ -1335,7 +1335,7 @@ impl JobRepository for JobManager {
         }
 
         let mut stale_template = None;
-        if !is_current_template {
+        if !is_current_template && !same_position_as_current {
             let meta = state.job_meta.get(&assignment.template_job_id).copied();
             let stale_since = meta.and_then(|value| value.stale_since).unwrap_or_else(|| {
                 meta.map(|value| value.created_at)
@@ -1426,6 +1426,73 @@ fn nonce_slot_count() -> u64 {
 
 fn random_nonce_slot() -> u64 {
     rand::random::<u64>() % nonce_slot_count()
+}
+
+/// Plain recent-job retention: the newest jobs kept regardless of position.
+const RECENT_JOB_RETENTION: usize = 16;
+/// Total job retention when older entries still mine the current chain
+/// position (content-only rotations). Legacy clients that only switch jobs
+/// on height changes keep submitting against rotated-out jobs for a whole
+/// round, so those jobs stay resolvable — but hard-capped to bound memory
+/// during pathological mempool churn.
+const SAME_POSITION_JOB_RETENTION: usize = 64;
+
+/// Trims `state.order`/`state.jobs`/`state.job_meta` to the retention policy
+/// and returns the removed job IDs. The current job is always retained; jobs
+/// at the current chain position are retained up to
+/// [`SAME_POSITION_JOB_RETENTION`] total entries; everything else is bounded
+/// by [`RECENT_JOB_RETENTION`].
+fn trim_recent_jobs_locked(state: &mut JobState) -> Vec<String> {
+    let mut removed_jobs = Vec::new();
+    let total = state.order.len();
+    if total <= RECENT_JOB_RETENTION {
+        return removed_jobs;
+    }
+    let current = state.current.clone();
+    let order = std::mem::take(&mut state.order);
+    let mut retained_tail = VecDeque::with_capacity(RECENT_JOB_RETENTION + 1);
+    let mut same_position_overflow = Vec::new();
+    for (index, id) in order.into_iter().enumerate() {
+        let in_tail = total - index <= RECENT_JOB_RETENTION;
+        let is_current = current.as_ref().is_some_and(|job| job.id == id);
+        let same_position = !is_current
+            && match (current.as_ref(), state.jobs.get(&id)) {
+                (Some(current), Some(job)) => job_matches_current_position(current, job),
+                _ => false,
+            };
+        if in_tail || is_current {
+            retained_tail.push_back(id);
+        } else if same_position {
+            same_position_overflow.push(id);
+        } else {
+            state.jobs.remove(&id);
+            state.job_meta.remove(&id);
+            removed_jobs.push(id);
+        }
+    }
+    let overflow_budget = SAME_POSITION_JOB_RETENTION.saturating_sub(RECENT_JOB_RETENTION);
+    let evict = same_position_overflow.len().saturating_sub(overflow_budget);
+    for id in same_position_overflow.drain(..evict) {
+        state.jobs.remove(&id);
+        state.job_meta.remove(&id);
+        removed_jobs.push(id);
+    }
+    for id in same_position_overflow.into_iter().rev() {
+        retained_tail.push_front(id);
+    }
+    state.order = retained_tail;
+    removed_jobs
+}
+
+/// True when `other` mines the same chain position as `current`: identical
+/// height on the identical parent. Unknown parents compare as different so
+/// reorg edges never widen acceptance.
+fn job_matches_current_position(current: &Job, other: &Job) -> bool {
+    current.height == other.height
+        && match (current.prev_hash, other.prev_hash) {
+            (Some(current_prev), Some(other_prev)) => current_prev == other_prev,
+            _ => false,
+        }
 }
 
 fn same_template_identity(current: &Job, parsed: &Job) -> bool {
@@ -1720,12 +1787,27 @@ fn prune_expired_assignments_locked(
     if max_age.is_zero() {
         return 0;
     }
+    // Assignments for jobs still mining the current chain position stay
+    // resolvable for as long as their job is retained (content-only
+    // rotations must not age out real work mid-round).
+    let same_position_templates: HashSet<String> = match state.current.as_ref() {
+        Some(current) => state
+            .jobs
+            .iter()
+            .filter(|(id, job)| {
+                id.as_str() != current.id && job_matches_current_position(current, job)
+            })
+            .map(|(id, _)| id.clone())
+            .collect(),
+        None => HashSet::new(),
+    };
     let expired_assignment_ids = state
         .assignments
         .iter()
         .filter_map(|(assignment_id, assignment)| {
             let retain = if current_template_job_id
                 .is_some_and(|current| assignment.template_job_id == current)
+                || same_position_templates.contains(&assignment.template_job_id)
             {
                 true
             } else {
@@ -2386,6 +2468,172 @@ mod tests {
         assert!(manager
             .resolve_submit_job("assign-old", processed_too_late)
             .is_none());
+    }
+
+    fn positioned_job(id: &str, height: u64, prev: u8) -> Job {
+        let mut job = test_job(id, height);
+        job.prev_hash = Some([prev; 32]);
+        job
+    }
+
+    #[test]
+    fn content_rotation_keeps_prior_jobs_submittable_indefinitely() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config {
+                job_timeout: "5m".to_string(),
+                stale_submit_grace: "5s".to_string(),
+                ..Config::default()
+            },
+        );
+
+        // Same height, same parent: a mempool-driven content rotation.
+        let old_job = positioned_job("job-old", 10, 0xAA);
+        let new_job = positioned_job("job-new", 10, 0xAA);
+
+        let now = Instant::now();
+        {
+            let mut state = manager.state.write();
+            state.current = Some(new_job.clone());
+            state.jobs.insert(old_job.id.clone(), old_job.clone());
+            state.jobs.insert(new_job.id.clone(), new_job);
+            state.assignments.insert(
+                "assign-old".to_string(),
+                test_assignment("conn1", &old_job.id, now - Duration::from_secs(120), 0),
+            );
+            state.job_meta.insert(
+                old_job.id.clone(),
+                JobTemplateMeta {
+                    created_at: now - Duration::from_secs(180),
+                    // Marked stale two minutes ago — far beyond the 5 s grace.
+                    stale_since: Some(now - Duration::from_secs(120)),
+                    mempool_generation: None,
+                    lease: None,
+                    legacy_probe_at: None,
+                },
+            );
+        }
+
+        let resolved = manager
+            .resolve_submit_job_with_reason("assign-old", now)
+            .expect("same-position share must stay submittable beyond grace");
+        assert_eq!(resolved.job.id, "job-old");
+
+        // A real height change ends the exemption: shares fall back to grace.
+        {
+            let mut state = manager.state.write();
+            state.current = Some(positioned_job("job-next-height", 11, 0xBB));
+        }
+        let err = manager
+            .resolve_submit_job_with_reason("assign-old", now)
+            .expect_err("height change must restore staleness rejection");
+        assert!(matches!(
+            err,
+            SubmitJobResolveError::TemplateStaleBeyondGrace { .. }
+        ));
+    }
+
+    #[test]
+    fn pruning_retains_same_position_assignments() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config {
+                job_timeout: "5m".to_string(),
+                stale_submit_grace: "5s".to_string(),
+                ..Config::default()
+            },
+        );
+        let old_job = positioned_job("job-old", 10, 0xAA);
+        let other_height_job = positioned_job("job-past", 9, 0x99);
+        let new_job = positioned_job("job-new", 10, 0xAA);
+
+        let now = Instant::now();
+        let stale_age = now - Duration::from_secs(15 * 60);
+        {
+            let mut state = manager.state.write();
+            state.current = Some(new_job.clone());
+            state.jobs.insert(old_job.id.clone(), old_job.clone());
+            state
+                .jobs
+                .insert(other_height_job.id.clone(), other_height_job.clone());
+            state.jobs.insert(new_job.id.clone(), new_job);
+            state.assignments.insert(
+                "assign-same-position".to_string(),
+                test_assignment("conn1", &old_job.id, stale_age, 0),
+            );
+            state.assignments.insert(
+                "assign-old-height".to_string(),
+                test_assignment("conn2", &other_height_job.id, stale_age, 1),
+            );
+        }
+
+        {
+            let mut state = manager.state.write();
+            maybe_prune_assignments_locked(
+                &mut state,
+                now,
+                true,
+                Duration::from_secs(300),
+                Duration::from_secs(5),
+            );
+        }
+
+        let state = manager.state.read();
+        assert!(
+            state.assignments.contains_key("assign-same-position"),
+            "same-position assignment must survive pruning"
+        );
+        assert!(
+            !state.assignments.contains_key("assign-old-height"),
+            "old-height assignment must still be pruned"
+        );
+    }
+
+    #[test]
+    fn trim_retains_same_position_jobs_up_to_cap() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config::default(),
+        );
+        let mut state = manager.state.write();
+        let current = positioned_job("job-current", 10, 0xAA);
+
+        // 80 same-position rotations plus 5 old-height jobs, oldest first.
+        for i in 0..5 {
+            let job = positioned_job(&format!("job-past-{i}"), 9, 0x99);
+            state.order.push_back(job.id.clone());
+            state.jobs.insert(job.id.clone(), job);
+        }
+        for i in 0..80 {
+            let job = positioned_job(&format!("job-rot-{i}"), 10, 0xAA);
+            state.order.push_back(job.id.clone());
+            state.jobs.insert(job.id.clone(), job);
+        }
+        state.order.push_back(current.id.clone());
+        state.jobs.insert(current.id.clone(), current.clone());
+        state.current = Some(current);
+
+        let removed = trim_recent_jobs_locked(&mut state);
+
+        assert!(
+            state.order.len() <= SAME_POSITION_JOB_RETENTION,
+            "total retention must respect the same-position cap, got {}",
+            state.order.len()
+        );
+        // Old-height jobs beyond the recent tail are gone.
+        for i in 0..5 {
+            assert!(!state.jobs.contains_key(&format!("job-past-{i}")));
+        }
+        // The newest same-position rotations are retained, the oldest evicted.
+        assert!(state.jobs.contains_key("job-rot-79"));
+        assert!(!state.jobs.contains_key("job-rot-0"));
+        assert!(state.jobs.contains_key("job-current"));
+        assert!(!removed.is_empty());
+        // Every removed id is genuinely absent.
+        for id in &removed {
+            assert!(!state.jobs.contains_key(id));
+            assert!(!state.job_meta.contains_key(id));
+        }
     }
 
     #[test]
