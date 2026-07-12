@@ -83,6 +83,13 @@ pub(crate) struct SubmitMetadata {
     pub backend: Option<String>,
 }
 
+#[derive(Debug, Default)]
+struct RejectedShareEvidence<'a> {
+    claimed_hash_hex: Option<&'a str>,
+    replay: Option<ShareReplayData>,
+    reject_reason: Option<&'a str>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct BlockSubmitResponse {
     pub accepted: bool,
@@ -466,19 +473,37 @@ impl PoolEngine {
         conn_id: &str,
         job_id: &str,
         nonce: u64,
+        claimed_hash_hex: Option<&str>,
         received_at: Instant,
         reason: &str,
     ) {
         let Some(session) = self.sessions.lock().get(conn_id).cloned() else {
             return;
         };
-        let share_difficulty = self
-            .jobs
-            .resolve_submit_job(job_id, received_at)
+        let binding = self.jobs.resolve_submit_job(job_id, received_at);
+        let share_difficulty = binding
+            .as_ref()
             .and_then(|binding| binding.share_difficulty)
             .unwrap_or(session.difficulty)
             .max(1);
-        self.persist_rejected_share_for_error(&session, job_id, nonce, share_difficulty, reason);
+        let created_at = SystemTime::now();
+        let replay = binding.map(|binding| ShareReplayData {
+            job_id: job_id.to_string(),
+            header_base: binding.job.header_base,
+            network_target: binding.job.network_target,
+            created_at,
+        });
+        self.persist_rejected_share_with_evidence(
+            &session,
+            job_id,
+            nonce,
+            share_difficulty,
+            RejectedShareEvidence {
+                claimed_hash_hex,
+                replay,
+                reject_reason: Some(reason),
+            },
+        );
     }
 
     #[cfg(test)]
@@ -879,12 +904,23 @@ impl PoolEngine {
                 let validation = match self.validate_task(task, candidate_claim) {
                     Ok(v) => v,
                     Err(err) => {
-                        self.persist_rejected_share_for_error(
+                        release_claim_on_error = false;
+                        let created_at = SystemTime::now();
+                        self.persist_rejected_share_with_evidence(
                             &session,
                             &job_id_for_share,
                             nonce,
                             share_difficulty,
-                            &err.to_string(),
+                            RejectedShareEvidence {
+                                claimed_hash_hex: claimed_hash_hex.as_deref(),
+                                replay: Some(ShareReplayData {
+                                    job_id: job_id_for_share.clone(),
+                                    header_base: job.header_base.clone(),
+                                    network_target: job.network_target,
+                                    created_at,
+                                }),
+                                reject_reason: Some(&err.to_string()),
+                            },
                         );
                         return Err(err);
                     }
@@ -893,12 +929,22 @@ impl PoolEngine {
                 if !validation.accepted {
                     release_claim_on_error = false;
                     let reason = validation.reject_reason.unwrap_or("invalid share");
-                    self.persist_rejected_share(
+                    let created_at = SystemTime::now();
+                    self.persist_rejected_share_with_evidence(
                         &session,
                         &job_id_for_share,
                         nonce,
                         share_difficulty,
-                        Some(reason),
+                        RejectedShareEvidence {
+                            claimed_hash_hex: claimed_hash_hex.as_deref(),
+                            replay: Some(ShareReplayData {
+                                job_id: job_id_for_share.clone(),
+                                header_base: job.header_base.clone(),
+                                network_target: job.network_target,
+                                created_at,
+                            }),
+                            reject_reason: Some(reason),
+                        },
                     );
                     if validation.followup_action == ValidationFollowupAction::Quarantine {
                         self.trigger_forced_validation_quarantine(
@@ -926,9 +972,52 @@ impl PoolEngine {
                         finder_worker: session.worker.clone(),
                         timestamp: SystemTime::now(),
                     };
-                    self.stage_found_block_submission(&staged_found)?;
+                    if let Err(err) = self.stage_found_block_submission(&staged_found) {
+                        release_claim_on_error = false;
+                        let created_at = SystemTime::now();
+                        self.persist_rejected_share_with_evidence(
+                            &session,
+                            &job_id_for_share,
+                            nonce,
+                            share_difficulty,
+                            RejectedShareEvidence {
+                                claimed_hash_hex: claimed_hash_hex.as_deref(),
+                                replay: Some(ShareReplayData {
+                                    job_id: job_id_for_share.clone(),
+                                    header_base: job.header_base.clone(),
+                                    network_target: job.network_target,
+                                    created_at,
+                                }),
+                                reject_reason: Some(&err.to_string()),
+                            },
+                        );
+                        return Err(err);
+                    }
 
-                    let submit = self.node.submit_block(&job, nonce)?;
+                    let submit = match self.node.submit_block(&job, nonce) {
+                        Ok(submit) => submit,
+                        Err(err) => {
+                            release_claim_on_error = false;
+                            let created_at = SystemTime::now();
+                            self.persist_rejected_share_with_evidence(
+                                &session,
+                                &job_id_for_share,
+                                nonce,
+                                share_difficulty,
+                                RejectedShareEvidence {
+                                    claimed_hash_hex: claimed_hash_hex.as_deref(),
+                                    replay: Some(ShareReplayData {
+                                        job_id: job_id_for_share.clone(),
+                                        header_base: job.header_base.clone(),
+                                        network_target: job.network_target,
+                                        created_at,
+                                    }),
+                                    reject_reason: Some(&err.to_string()),
+                                },
+                            );
+                            return Err(err);
+                        }
+                    };
                     block_accepted = submit.accepted;
                     if let Some(network_hash) = submit.hash.clone() {
                         block_hash = Some(network_hash);
@@ -1164,20 +1253,48 @@ impl PoolEngine {
         difficulty: u64,
         reject_reason: Option<&str>,
     ) {
-        if let Err(err) = self.store.add_share(ShareRecord {
-            job_id: job_id.to_string(),
-            miner: session.address.clone(),
-            worker: session.worker.clone(),
-            difficulty: difficulty.max(1),
+        self.persist_rejected_share_with_evidence(
+            session,
+            job_id,
             nonce,
-            status: SHARE_STATUS_REJECTED,
-            was_sampled: false,
-            block_hash: None,
-            claimed_hash: None,
-            reject_reason: reject_reason
-                .map(|value| canonical_share_reject_reason(value).to_string()),
-            created_at: SystemTime::now(),
-        }) {
+            difficulty,
+            RejectedShareEvidence {
+                reject_reason,
+                ..RejectedShareEvidence::default()
+            },
+        );
+    }
+
+    fn persist_rejected_share_with_evidence(
+        &self,
+        session: &MinerSession,
+        job_id: &str,
+        nonce: u64,
+        difficulty: u64,
+        evidence: RejectedShareEvidence<'_>,
+    ) {
+        let claimed_hash = evidence
+            .claimed_hash_hex
+            .and_then(|value| parse_hash_hex(value).ok())
+            .map(hex::encode);
+        if let Err(err) = self.store.add_share_with_replay(
+            ShareRecord {
+                job_id: job_id.to_string(),
+                miner: session.address.clone(),
+                worker: session.worker.clone(),
+                difficulty: difficulty.max(1),
+                nonce,
+                status: SHARE_STATUS_REJECTED,
+                was_sampled: false,
+                block_hash: None,
+                claimed_hash,
+                reject_reason: evidence
+                    .reject_reason
+                    .map(|value| canonical_share_reject_reason(value).to_string()),
+                created_at: SystemTime::now(),
+            },
+            evidence.replay,
+        ) {
             tracing::warn!(
                 address = %session.address,
                 worker = %session.worker,
@@ -2425,6 +2542,57 @@ mod tests {
 
         assert_eq!(result.protocol_version, 2);
         assert!(engine.session_supports_capability("conn1", "submit_claimed_hash"));
+    }
+
+    #[test]
+    fn prequeue_rejection_preserves_valid_claimed_hash() {
+        let cfg = cfg();
+        let validation = Arc::new(ValidationEngine::new(
+            cfg.clone(),
+            Arc::new(DeterministicTestHasher),
+        ));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        jobs.insert_assignment(
+            "assignment1",
+            "job1",
+            60,
+            Some(test_miner_address()),
+            0,
+            u64::MAX,
+        );
+        let store = Arc::new(InMemoryStore::default());
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode::default()),
+        );
+        engine
+            .login("conn1", test_miner_address(), "rig01", 2, submit_hash_cap())
+            .expect("login");
+
+        let claimed_hash = hex::encode([0x01; 32]);
+        engine.record_prequeue_reject(
+            "conn1",
+            "assignment1",
+            7,
+            Some(&claimed_hash),
+            Instant::now(),
+            "candidate claim busy, retry",
+        );
+
+        let shares = store.shares();
+        assert_eq!(shares.len(), 1);
+        assert_eq!(
+            shares[0].claimed_hash.as_deref(),
+            Some(claimed_hash.as_str())
+        );
+        assert_eq!(
+            shares[0].reject_reason.as_deref(),
+            Some("candidate claim busy")
+        );
     }
 
     #[test]

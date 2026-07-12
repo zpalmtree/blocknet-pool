@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -103,6 +104,28 @@ struct SubmitCompletion {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SubmitRuntimeSnapshot {
     #[serde(default)]
+    pub submits_received_total: u64,
+    #[serde(default)]
+    pub candidate_classified_total: u64,
+    #[serde(default)]
+    pub candidate_permit_acquired_total: u64,
+    #[serde(default)]
+    pub candidate_permit_rejected_total: u64,
+    #[serde(default)]
+    pub candidate_enqueued_total: u64,
+    #[serde(default)]
+    pub candidate_enqueue_rejected_total: u64,
+    #[serde(default)]
+    pub candidate_worker_started_total: u64,
+    #[serde(default)]
+    pub candidate_persisted_total: u64,
+    #[serde(default)]
+    pub candidate_rejected_total: u64,
+    #[serde(default)]
+    pub candidate_block_accepted_total: u64,
+    #[serde(default)]
+    pub candidate_worker_failure_total: u64,
+    #[serde(default)]
     pub candidate_queue_depth: usize,
     #[serde(default)]
     pub regular_queue_depth: usize,
@@ -153,6 +176,17 @@ struct SubmitDispatcher {
     candidate_queue: Arc<QueueTracker>,
     regular_queue: Arc<QueueTracker>,
     candidate_tracker: Arc<CandidateClaimTracker>,
+    submits_received: AtomicU64,
+    candidate_classified: AtomicU64,
+    candidate_permit_acquired: AtomicU64,
+    candidate_permit_rejected: AtomicU64,
+    candidate_enqueued: AtomicU64,
+    candidate_enqueue_rejected: AtomicU64,
+    candidate_worker_started: AtomicU64,
+    candidate_persisted: AtomicU64,
+    candidate_rejected: AtomicU64,
+    candidate_block_accepted: AtomicU64,
+    candidate_worker_failure: AtomicU64,
 }
 
 impl CandidateClaimTracker {
@@ -226,6 +260,17 @@ impl SubmitDispatcher {
                 CANDIDATE_CLAIM_MAX_PER_WINDOW,
                 CANDIDATE_CLAIM_MAX_INFLIGHT,
             ),
+            submits_received: AtomicU64::new(0),
+            candidate_classified: AtomicU64::new(0),
+            candidate_permit_acquired: AtomicU64::new(0),
+            candidate_permit_rejected: AtomicU64::new(0),
+            candidate_enqueued: AtomicU64::new(0),
+            candidate_enqueue_rejected: AtomicU64::new(0),
+            candidate_worker_started: AtomicU64::new(0),
+            candidate_persisted: AtomicU64::new(0),
+            candidate_rejected: AtomicU64::new(0),
+            candidate_block_accepted: AtomicU64::new(0),
+            candidate_worker_failure: AtomicU64::new(0),
         });
 
         for _ in 0..CANDIDATE_SUBMIT_WORKERS {
@@ -256,7 +301,26 @@ impl SubmitDispatcher {
         now: Instant,
     ) -> Result<CandidateClaimPermit> {
         let key = format!("{}|{}", address.trim(), peer.ip());
-        self.candidate_tracker.try_acquire(key, now)
+        match self.candidate_tracker.try_acquire(key, now) {
+            Ok(permit) => {
+                self.candidate_permit_acquired
+                    .fetch_add(1, Ordering::Relaxed);
+                Ok(permit)
+            }
+            Err(err) => {
+                self.candidate_permit_rejected
+                    .fetch_add(1, Ordering::Relaxed);
+                Err(err)
+            }
+        }
+    }
+
+    fn record_submit_received(&self) {
+        self.submits_received.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_candidate_classified(&self) {
+        self.candidate_classified.fetch_add(1, Ordering::Relaxed);
     }
 
     fn try_enqueue(&self, item: SubmitWorkItem, route: SubmitQueueRoute) -> Result<()> {
@@ -270,7 +334,12 @@ impl SubmitDispatcher {
             SubmitQueueRoute::Regular => self.regular_tx.try_send(item),
         };
         match result {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                if route == SubmitQueueRoute::Candidate {
+                    self.candidate_enqueued.fetch_add(1, Ordering::Relaxed);
+                }
+                Ok(())
+            }
             Err(flume::TrySendError::Full(item)) | Err(flume::TrySendError::Disconnected(item)) => {
                 match route {
                     SubmitQueueRoute::Candidate => self.candidate_queue.remove(tracker_id),
@@ -278,6 +347,10 @@ impl SubmitDispatcher {
                 }
                 if let Some(permit) = item.candidate_permit {
                     permit.release();
+                }
+                if route == SubmitQueueRoute::Candidate {
+                    self.candidate_enqueue_rejected
+                        .fetch_add(1, Ordering::Relaxed);
                 }
                 Err(anyhow!("server busy, retry"))
             }
@@ -289,6 +362,19 @@ impl SubmitDispatcher {
         let candidate = self.candidate_queue.snapshot(now);
         let regular = self.regular_queue.snapshot(now);
         SubmitRuntimeSnapshot {
+            submits_received_total: self.submits_received.load(Ordering::Relaxed),
+            candidate_classified_total: self.candidate_classified.load(Ordering::Relaxed),
+            candidate_permit_acquired_total: self.candidate_permit_acquired.load(Ordering::Relaxed),
+            candidate_permit_rejected_total: self.candidate_permit_rejected.load(Ordering::Relaxed),
+            candidate_enqueued_total: self.candidate_enqueued.load(Ordering::Relaxed),
+            candidate_enqueue_rejected_total: self
+                .candidate_enqueue_rejected
+                .load(Ordering::Relaxed),
+            candidate_worker_started_total: self.candidate_worker_started.load(Ordering::Relaxed),
+            candidate_persisted_total: self.candidate_persisted.load(Ordering::Relaxed),
+            candidate_rejected_total: self.candidate_rejected.load(Ordering::Relaxed),
+            candidate_block_accepted_total: self.candidate_block_accepted.load(Ordering::Relaxed),
+            candidate_worker_failure_total: self.candidate_worker_failure.load(Ordering::Relaxed),
             candidate_queue_depth: candidate.depth,
             regular_queue_depth: regular.depth,
             candidate_oldest_age_millis: candidate.oldest_age_millis,
@@ -668,6 +754,7 @@ impl StratumServer {
                                     continue;
                                 }
                             };
+                            self.submit_dispatcher.record_submit_received();
                             let now = Instant::now();
                             let cutoff = now.checked_sub(submit_rate_limit_window).unwrap_or(now);
                             while submit_timestamps
@@ -689,13 +776,21 @@ impl StratumServer {
                             let received_at = Instant::now();
                             let submit_job_id = params.job_id.clone();
                             let submit_nonce = params.nonce;
+                            let submit_claimed_hash = params.claimed_hash.clone();
                             let route = match self
                                 .engine
                                 .preclassify_submit_route(&params.job_id, params.claimed_hash.as_deref(), received_at)
                             {
                                 Ok(route) => route,
                                 Err(err) => {
-                                    self.persist_prequeue_reject_async(&conn_id, &params.job_id, params.nonce, received_at, &err.to_string());
+                                    self.persist_prequeue_reject_async(
+                                        &conn_id,
+                                        &params.job_id,
+                                        params.nonce,
+                                        params.claimed_hash.as_deref(),
+                                        received_at,
+                                        &err.to_string(),
+                                    );
                                     if let Err(queue_err) = queue_error(&outbound, req.id, &err.to_string()) {
                                         run_result = Err(queue_err);
                                         break;
@@ -703,6 +798,9 @@ impl StratumServer {
                                     continue;
                                 }
                             };
+                            if route == SubmitQueueRoute::Candidate {
+                                self.submit_dispatcher.record_candidate_classified();
+                            }
                             let candidate_permit = if route == SubmitQueueRoute::Candidate {
                                 let Some((address, _, _)) = logged_in.as_ref() else {
                                     if let Err(err) = queue_error(&outbound, req.id, "not logged in") {
@@ -717,7 +815,14 @@ impl StratumServer {
                                 {
                                     Ok(permit) => Some(permit),
                                     Err(err) => {
-                                        self.persist_prequeue_reject_async(&conn_id, &params.job_id, params.nonce, received_at, &err.to_string());
+                                        self.persist_prequeue_reject_async(
+                                            &conn_id,
+                                            &params.job_id,
+                                            params.nonce,
+                                            params.claimed_hash.as_deref(),
+                                            received_at,
+                                            &err.to_string(),
+                                        );
                                         if let Err(queue_err) = queue_error(&outbound, req.id, &err.to_string()) {
                                             run_result = Err(queue_err);
                                             break;
@@ -746,7 +851,14 @@ impl StratumServer {
                                         "submit queue saturated"
                                     );
                                 }
-                                self.persist_prequeue_reject_async(&conn_id, &submit_job_id, submit_nonce, received_at, &err.to_string());
+                                self.persist_prequeue_reject_async(
+                                    &conn_id,
+                                    &submit_job_id,
+                                    submit_nonce,
+                                    submit_claimed_hash.as_deref(),
+                                    received_at,
+                                    &err.to_string(),
+                                );
                                 if let Err(queue_err) = queue_error(&outbound, req.id, &err.to_string()) {
                                     run_result = Err(queue_err);
                                     break;
@@ -961,16 +1073,25 @@ impl StratumServer {
         conn_id: &str,
         job_id: &str,
         nonce: u64,
+        claimed_hash: Option<&str>,
         received_at: Instant,
         reason: &str,
     ) {
         let engine = Arc::clone(&self.engine);
         let conn_id = conn_id.to_string();
         let job_id = job_id.to_string();
+        let claimed_hash = claimed_hash.map(str::to_string);
         let reason = reason.to_string();
         tokio::spawn(async move {
             let _ = tokio::task::spawn_blocking(move || {
-                engine.record_prequeue_reject(&conn_id, &job_id, nonce, received_at, &reason);
+                engine.record_prequeue_reject(
+                    &conn_id,
+                    &job_id,
+                    nonce,
+                    claimed_hash.as_deref(),
+                    received_at,
+                    &reason,
+                );
             })
             .await;
         });
@@ -987,6 +1108,9 @@ async fn run_submit_worker(
         let started_at = Instant::now();
         if candidate_lane {
             dispatcher.candidate_queue.pop_and_record_wait(started_at);
+            dispatcher
+                .candidate_worker_started
+                .fetch_add(1, Ordering::Relaxed);
         } else {
             dispatcher.regular_queue.pop_and_record_wait(started_at);
         }
@@ -1027,6 +1151,30 @@ async fn run_submit_worker(
             Ok(result) => SubmitCompletionOutcome::Finished(result),
             Err(err) => SubmitCompletionOutcome::WorkerFailure(err.to_string()),
         };
+        if candidate_lane {
+            match &outcome {
+                SubmitCompletionOutcome::Finished(Ok(ack)) => {
+                    dispatcher
+                        .candidate_persisted
+                        .fetch_add(1, Ordering::Relaxed);
+                    if ack.block_accepted {
+                        dispatcher
+                            .candidate_block_accepted
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+                SubmitCompletionOutcome::Finished(Err(_)) => {
+                    dispatcher
+                        .candidate_rejected
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+                SubmitCompletionOutcome::WorkerFailure(_) => {
+                    dispatcher
+                        .candidate_worker_failure
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
         if let Some(permit) = candidate_permit {
             permit.release();
         }
@@ -1962,6 +2110,17 @@ mod tests {
             "candidate submit should finish before the deeper queued regular submit"
         );
         assert_eq!(responses[&20]["status"].as_str(), Some("ok"));
+        let snapshot = server.submit_snapshot();
+        assert_eq!(snapshot.submits_received_total, 4);
+        assert_eq!(snapshot.candidate_classified_total, 1);
+        assert_eq!(snapshot.candidate_permit_acquired_total, 1);
+        assert_eq!(snapshot.candidate_permit_rejected_total, 0);
+        assert_eq!(snapshot.candidate_enqueued_total, 1);
+        assert_eq!(snapshot.candidate_enqueue_rejected_total, 0);
+        assert_eq!(snapshot.candidate_worker_started_total, 1);
+        assert_eq!(snapshot.candidate_persisted_total, 1);
+        assert_eq!(snapshot.candidate_rejected_total, 0);
+        assert_eq!(snapshot.candidate_worker_failure_total, 0);
 
         drop(writer_a);
         drop(reader_a);

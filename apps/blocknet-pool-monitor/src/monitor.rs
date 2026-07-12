@@ -90,6 +90,17 @@ struct MonitorSnapshot {
     last_block_submit_template_age_seconds: Option<u64>,
     max_accepted_block_template_age_seconds: Option<u64>,
     accepted_blocks_after_ten_minutes_total: Option<u64>,
+    stratum_submits_received_total: Option<u64>,
+    candidate_classified_total: Option<u64>,
+    candidate_permit_acquired_total: Option<u64>,
+    candidate_permit_rejected_total: Option<u64>,
+    candidate_enqueued_total: Option<u64>,
+    candidate_enqueue_rejected_total: Option<u64>,
+    candidate_worker_started_total: Option<u64>,
+    candidate_persisted_total: Option<u64>,
+    candidate_rejected_total: Option<u64>,
+    candidate_block_accepted_total: Option<u64>,
+    candidate_worker_failure_total: Option<u64>,
     stratum_snapshot_age_seconds: Option<u64>,
     connected_miners: Option<u64>,
     connected_workers: Option<u64>,
@@ -955,6 +966,28 @@ impl MonitorRuntime {
             runtime.map(|snapshot| snapshot.jobs.max_accepted_block_template_age_seconds);
         metrics.accepted_blocks_after_ten_minutes_total =
             runtime.map(|snapshot| snapshot.jobs.accepted_blocks_after_ten_minutes_total);
+        metrics.stratum_submits_received_total =
+            runtime.map(|snapshot| snapshot.submit.submits_received_total);
+        metrics.candidate_classified_total =
+            runtime.map(|snapshot| snapshot.submit.candidate_classified_total);
+        metrics.candidate_permit_acquired_total =
+            runtime.map(|snapshot| snapshot.submit.candidate_permit_acquired_total);
+        metrics.candidate_permit_rejected_total =
+            runtime.map(|snapshot| snapshot.submit.candidate_permit_rejected_total);
+        metrics.candidate_enqueued_total =
+            runtime.map(|snapshot| snapshot.submit.candidate_enqueued_total);
+        metrics.candidate_enqueue_rejected_total =
+            runtime.map(|snapshot| snapshot.submit.candidate_enqueue_rejected_total);
+        metrics.candidate_worker_started_total =
+            runtime.map(|snapshot| snapshot.submit.candidate_worker_started_total);
+        metrics.candidate_persisted_total =
+            runtime.map(|snapshot| snapshot.submit.candidate_persisted_total);
+        metrics.candidate_rejected_total =
+            runtime.map(|snapshot| snapshot.submit.candidate_rejected_total);
+        metrics.candidate_block_accepted_total =
+            runtime.map(|snapshot| snapshot.submit.candidate_block_accepted_total);
+        metrics.candidate_worker_failure_total =
+            runtime.map(|snapshot| snapshot.submit.candidate_worker_failure_total);
         metrics.stratum_snapshot_age_seconds =
             runtime_snapshot_age(sample.sampled_at, runtime).map(|age| age.as_secs());
         metrics.connected_miners = runtime.map(|snapshot| snapshot.connected_miners as u64);
@@ -2185,6 +2218,50 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
             snapshot.accepted_blocks_after_ten_minutes_total,
         ),
         (
+            "blocknet_pool_monitor_stratum_submits_received_total",
+            snapshot.stratum_submits_received_total,
+        ),
+        (
+            "blocknet_pool_monitor_candidate_classified_total",
+            snapshot.candidate_classified_total,
+        ),
+        (
+            "blocknet_pool_monitor_candidate_permit_acquired_total",
+            snapshot.candidate_permit_acquired_total,
+        ),
+        (
+            "blocknet_pool_monitor_candidate_permit_rejected_total",
+            snapshot.candidate_permit_rejected_total,
+        ),
+        (
+            "blocknet_pool_monitor_candidate_enqueued_total",
+            snapshot.candidate_enqueued_total,
+        ),
+        (
+            "blocknet_pool_monitor_candidate_enqueue_rejected_total",
+            snapshot.candidate_enqueue_rejected_total,
+        ),
+        (
+            "blocknet_pool_monitor_candidate_worker_started_total",
+            snapshot.candidate_worker_started_total,
+        ),
+        (
+            "blocknet_pool_monitor_candidate_persisted_total",
+            snapshot.candidate_persisted_total,
+        ),
+        (
+            "blocknet_pool_monitor_candidate_rejected_total",
+            snapshot.candidate_rejected_total,
+        ),
+        (
+            "blocknet_pool_monitor_candidate_block_accepted_total",
+            snapshot.candidate_block_accepted_total,
+        ),
+        (
+            "blocknet_pool_monitor_candidate_worker_failure_total",
+            snapshot.candidate_worker_failure_total,
+        ),
+        (
             "blocknet_pool_monitor_stratum_snapshot_age_seconds",
             snapshot.stratum_snapshot_age_seconds,
         ),
@@ -2502,6 +2579,17 @@ mod tests {
             last_block_submit_template_age_seconds: Some(605),
             max_accepted_block_template_age_seconds: Some(605),
             accepted_blocks_after_ten_minutes_total: Some(1),
+            stratum_submits_received_total: Some(100),
+            candidate_classified_total: Some(11),
+            candidate_permit_acquired_total: Some(10),
+            candidate_permit_rejected_total: Some(1),
+            candidate_enqueued_total: Some(9),
+            candidate_enqueue_rejected_total: Some(1),
+            candidate_worker_started_total: Some(9),
+            candidate_persisted_total: Some(7),
+            candidate_rejected_total: Some(2),
+            candidate_block_accepted_total: Some(6),
+            candidate_worker_failure_total: Some(0),
             daemon_current_process_block: Some(NodeCurrentProcessBlock {
                 height: 5,
                 tx_count: 1,
@@ -2556,6 +2644,17 @@ mod tests {
         assert!(
             rendered.contains("blocknet_pool_monitor_accepted_blocks_after_ten_minutes_total 1")
         );
+        assert!(rendered.contains("blocknet_pool_monitor_stratum_submits_received_total 100"));
+        assert!(rendered.contains("blocknet_pool_monitor_candidate_classified_total 11"));
+        assert!(rendered.contains("blocknet_pool_monitor_candidate_permit_acquired_total 10"));
+        assert!(rendered.contains("blocknet_pool_monitor_candidate_permit_rejected_total 1"));
+        assert!(rendered.contains("blocknet_pool_monitor_candidate_enqueued_total 9"));
+        assert!(rendered.contains("blocknet_pool_monitor_candidate_enqueue_rejected_total 1"));
+        assert!(rendered.contains("blocknet_pool_monitor_candidate_worker_started_total 9"));
+        assert!(rendered.contains("blocknet_pool_monitor_candidate_persisted_total 7"));
+        assert!(rendered.contains("blocknet_pool_monitor_candidate_rejected_total 2"));
+        assert!(rendered.contains("blocknet_pool_monitor_candidate_block_accepted_total 6"));
+        assert!(rendered.contains("blocknet_pool_monitor_candidate_worker_failure_total 0"));
         assert!(
             rendered.contains("blocknet_pool_monitor_daemon_last_process_block_total_millis 4750")
         );
