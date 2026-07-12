@@ -116,6 +116,8 @@ const PERF_SUCCESS_LOG_SAMPLE_RATE: u64 = 128;
 const CHECKPOINTS_FILENAME: &str = "checkpoints.dat";
 const MAX_CHECKPOINTS_FILE_BYTES: u64 = 32 << 20;
 const CHECKPOINTS_CACHE_CONTROL: &str = "public, max-age=60";
+const POOL_YIELD_WINDOW: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+const MIN_POOL_YIELD_SAMPLE_SIZE: u64 = 30;
 
 fn db_miner_hashrate(store: &PoolStore, address: &str) -> f64 {
     let since = SystemTime::now()
@@ -943,7 +945,12 @@ struct StatsResponse {
 #[derive(Clone, Serialize)]
 struct PoolSummary {
     miners: usize,
+    /// Credited share work per second over the live hashrate window.
     hashrate: f64,
+    raw_hashrate: f64,
+    effective_hashrate: Option<f64>,
+    block_yield_efficiency_pct: Option<f64>,
+    block_yield_sample_size: u64,
     blocks_found: u64,
     orphaned_blocks: u64,
     orphan_rate_pct: f64,
@@ -4141,9 +4148,18 @@ impl ApiState {
 
         let store = Arc::clone(&self.store);
         let pool_hashrate_started_at = Instant::now();
-        let pool_hashrate = tokio::task::spawn_blocking(move || db_pool_hashrate(&store))
+        let (pool_hashrate, avg_effort_pct, effort_sample_size) =
+            tokio::task::spawn_blocking(move || {
+                let hashrate = db_pool_hashrate(&store);
+                let since = SystemTime::now()
+                    .checked_sub(POOL_YIELD_WINDOW)
+                    .unwrap_or(UNIX_EPOCH);
+                let (avg_effort_pct, sample_size) =
+                    store.avg_effort_pct_since(since).unwrap_or((None, 0));
+                (hashrate, avg_effort_pct, sample_size)
+            })
             .await
-            .unwrap_or(0.0);
+            .unwrap_or((0.0, None, 0));
         record_api_operation_observation(
             self,
             "pool_hashrate_load",
@@ -4155,6 +4171,22 @@ impl ApiState {
             pool: PoolSummary {
                 miners: connected_miners,
                 hashrate: pool_hashrate,
+                raw_hashrate: pool_hashrate,
+                effective_hashrate: avg_effort_pct
+                    .filter(|effort| {
+                        effort_sample_size >= MIN_POOL_YIELD_SAMPLE_SIZE
+                            && effort.is_finite()
+                            && *effort > 0.0
+                    })
+                    .map(|effort| pool_hashrate * 100.0 / effort),
+                block_yield_efficiency_pct: avg_effort_pct
+                    .filter(|effort| {
+                        effort_sample_size >= MIN_POOL_YIELD_SAMPLE_SIZE
+                            && effort.is_finite()
+                            && *effort > 0.0
+                    })
+                    .map(|effort| 10_000.0 / effort),
+                block_yield_sample_size: effort_sample_size,
                 blocks_found: totals.total_blocks,
                 orphaned_blocks: totals.orphaned_blocks,
                 orphan_rate_pct: {
@@ -5388,36 +5420,41 @@ fn estimate_explorer_network_hashrate_hps(
     chain_height: u64,
     difficulty: u64,
 ) -> anyhow::Result<f64> {
-    // Match explorer.go: hashrate = NextDifficulty / avg(last 10 positive block-time deltas).
+    // Match the daemon explorer: observed work / observed time over the most
+    // recent positive block intervals.
     if chain_height < 2 {
         return Ok(0.0);
     }
 
     let mut total_time = 0i64;
+    let mut total_work = 0u64;
     let mut count = 0usize;
-    let mut current_ts = node
-        .get_block_by_height_optional(chain_height)?
-        .map(|block| block.timestamp);
+    let mut current = node.get_block_by_height_optional(chain_height)?;
     let mut height = chain_height;
 
     while height > 0 && count < EXPLORER_HASHRATE_SAMPLE_COUNT {
-        let prev_ts = node
-            .get_block_by_height_optional(height - 1)?
-            .map(|block| block.timestamp);
-        if let (Some(block_ts), Some(prev_block_ts)) = (current_ts, prev_ts) {
-            let block_time = block_ts - prev_block_ts;
+        let previous = node.get_block_by_height_optional(height - 1)?;
+        if let (Some(block), Some(prev_block)) = (&current, &previous) {
+            let block_time = block.timestamp - prev_block.timestamp;
             if block_time > 0 {
                 total_time += block_time;
+                // Keep compatibility with older daemon responses that did not
+                // expose per-block difficulty, while preferring exact work
+                // whenever it is available.
+                total_work = total_work.saturating_add(if block.difficulty > 0 {
+                    block.difficulty
+                } else {
+                    difficulty
+                });
                 count += 1;
             }
         }
-        current_ts = prev_ts;
+        current = previous;
         height -= 1;
     }
 
     if count > 0 && total_time > 0 {
-        let avg_block_time = total_time as f64 / count as f64;
-        return Ok(difficulty as f64 / avg_block_time);
+        return Ok(total_work as f64 / total_time as f64);
     }
 
     Ok(0.0)

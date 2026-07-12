@@ -361,6 +361,8 @@ CREATE TABLE IF NOT EXISTS shares (
     was_sampled BOOLEAN NOT NULL,
     block_hash TEXT,
     claimed_hash TEXT,
+    miner_version TEXT,
+    backend TEXT,
     reject_reason TEXT,
     created_at BIGINT NOT NULL
 );
@@ -768,6 +770,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         .context("backfill legacy share rejection reasons")?;
         conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS claimed_hash TEXT")
             .context("ensure shares.claimed_hash column")?;
+        conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS miner_version TEXT")
+            .context("ensure shares.miner_version column")?;
+        conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS backend TEXT")
+            .context("ensure shares.backend column")?;
         conn.batch_execute(
             "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS effort_pct DOUBLE PRECISION",
         )
@@ -898,6 +904,16 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         share: ShareRecord,
         replay: Option<ShareReplayData>,
     ) -> Result<i64> {
+        self.add_share_with_replay_metadata_and_id(share, replay, None, None)
+    }
+
+    pub(crate) fn add_share_with_replay_metadata_and_id(
+        &self,
+        share: ShareRecord,
+        replay: Option<ShareReplayData>,
+        miner_version: Option<&str>,
+        backend: Option<&str>,
+    ) -> Result<i64> {
         let created = to_unix(share.created_at);
         let mut conn = self.conn().lock();
         let mut tx = conn.transaction()?;
@@ -921,8 +937,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         }
 
         let row = tx.query_one(
-            "INSERT INTO shares (job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, claimed_hash, reject_reason, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            "INSERT INTO shares (job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, claimed_hash, reject_reason, created_at, miner_version, backend)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
              RETURNING id",
             &[
                 &share.job_id,
@@ -936,6 +952,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 &share.claimed_hash,
                 &share.reject_reason,
                 &created,
+                &miner_version,
+                &backend,
             ],
         )?;
         tx.commit()?;
@@ -1678,6 +1696,20 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             &[&u64_to_i64(max_height)?],
         )?;
         Ok(row.get::<_, Option<f64>>(0))
+    }
+
+    pub fn avg_effort_pct_since(&self, since: SystemTime) -> Result<(Option<f64>, u64)> {
+        let since_ts = to_unix(since);
+        let row = self.conn().lock().query_one(
+            "SELECT AVG(effort_pct), COUNT(*)::bigint
+             FROM blocks
+             WHERE orphaned = FALSE
+               AND effort_pct IS NOT NULL
+               AND timestamp >= $1",
+            &[&since_ts],
+        )?;
+        let count: i64 = row.get(1);
+        Ok((row.get::<_, Option<f64>>(0), count.max(0) as u64))
     }
 
     pub fn get_blocks_page_up_to(

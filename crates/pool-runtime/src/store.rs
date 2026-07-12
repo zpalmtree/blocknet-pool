@@ -9,7 +9,7 @@ use anyhow::{anyhow, Result};
 use tracing::warn;
 
 use crate::config::Config;
-use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore};
+use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore, SubmitMetadata};
 use crate::payout::{is_share_payout_eligible, reward_window_end};
 use crate::pgdb::PostgresStore;
 use crate::rewards::estimated_block_reward;
@@ -262,6 +262,36 @@ impl ShareStore for PoolStore {
         replay: Option<ShareReplayData>,
     ) -> Result<i64> {
         self.inner.add_share_with_replay_and_id(share, replay)
+    }
+
+    fn add_share_with_replay_metadata_and_id(
+        &self,
+        share: ShareRecord,
+        replay: Option<ShareReplayData>,
+        metadata: &SubmitMetadata,
+    ) -> Result<i64> {
+        self.inner.add_share_with_replay_metadata_and_id(
+            share,
+            replay,
+            metadata.miner_version.as_deref(),
+            metadata.backend.as_deref(),
+        )
+    }
+
+    fn add_share_with_replay_metadata(
+        &self,
+        share: ShareRecord,
+        replay: Option<ShareReplayData>,
+        metadata: &SubmitMetadata,
+    ) -> Result<()> {
+        self.inner
+            .add_share_with_replay_metadata_and_id(
+                share,
+                replay,
+                metadata.miner_version.as_deref(),
+                metadata.backend.as_deref(),
+            )
+            .map(|_| ())
     }
 
     fn add_found_block(&self, block: FoundBlockRecord) -> Result<()> {

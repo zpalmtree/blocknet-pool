@@ -12,7 +12,9 @@ use tokio::sync::{broadcast, mpsc, Notify};
 
 use crate::config::{Config, CANDIDATE_SUBMIT_QUEUE_SIZE};
 use crate::dev_fee::is_seine_dev_fee_address;
-use crate::engine::{canonical_share_reject_reason, PoolEngine, SubmitAck, SubmitQueueRoute};
+use crate::engine::{
+    canonical_share_reject_reason, PoolEngine, SubmitAck, SubmitMetadata, SubmitQueueRoute,
+};
 use crate::jobs::{AssignmentRangeMode, JobManager};
 use crate::stats::PoolStats;
 use crate::telemetry::{PercentileSummary, QueueTracker};
@@ -994,17 +996,30 @@ async fn run_submit_worker(
         let submit_job_id = job_id.clone();
         let nonce = queued.params.nonce;
         let claimed_hash = queued.params.claimed_hash.clone();
+        let metadata = SubmitMetadata {
+            miner_version: queued
+                .params
+                .miner_version
+                .as_deref()
+                .and_then(nonempty_submit_metadata),
+            backend: queued
+                .params
+                .backend
+                .as_deref()
+                .and_then(nonempty_submit_metadata),
+        };
         let completion_tx = queued.completion_tx.clone();
         let req_id = queued.req_id;
         let received_at = queued.received_at;
         let candidate_permit = queued.candidate_permit;
         let outcome = match tokio::task::spawn_blocking(move || {
-            engine.submit_with_received_at(
+            engine.submit_with_received_at_and_metadata(
                 &conn_id,
                 submit_job_id,
                 nonce,
                 claimed_hash,
                 received_at,
+                metadata,
             )
         })
         .await
@@ -1027,6 +1042,20 @@ async fn run_submit_worker(
             continue;
         }
     }
+}
+
+fn sanitize_submit_metadata(value: &str) -> String {
+    value
+        .trim()
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .take(64)
+        .collect()
+}
+
+fn nonempty_submit_metadata(value: &str) -> Option<String> {
+    let value = sanitize_submit_metadata(value);
+    (!value.is_empty()).then_some(value)
 }
 
 async fn retarget_on_job_tick(
@@ -1212,9 +1241,9 @@ fn log_rejection_at_info(reason_code: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        client_submit_ack_difficulty, log_rejection_at_info, queue_job_json, queue_json,
-        retarget_on_job_tick, run_tcp_outbound_writer, CandidateClaimTracker, OutboundHandle,
-        StratumResponse, StratumServer,
+        client_submit_ack_difficulty, log_rejection_at_info, nonempty_submit_metadata,
+        queue_job_json, queue_json, retarget_on_job_tick, run_tcp_outbound_writer,
+        CandidateClaimTracker, OutboundHandle, StratumResponse, StratumServer,
     };
     use crate::config::Config;
     use crate::engine::canonical_share_reject_reason;
@@ -1238,6 +1267,21 @@ mod tests {
     };
 
     const TEST_SUBMIT_DELAY: Duration = Duration::from_millis(200);
+
+    #[test]
+    fn submit_metadata_is_trimmed_bounded_and_control_free() {
+        assert_eq!(
+            nonempty_submit_metadata("  nvidia\n#1  ").as_deref(),
+            Some("nvidia#1")
+        );
+        assert_eq!(nonempty_submit_metadata(" \n\t "), None);
+        assert_eq!(
+            nonempty_submit_metadata(&"x".repeat(80))
+                .expect("metadata")
+                .len(),
+            64
+        );
+    }
 
     #[derive(Debug, Clone, Copy)]
     struct SleepyQueueHasher;

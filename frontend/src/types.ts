@@ -29,6 +29,10 @@ export interface StatsResponse {
   pool: {
     miners: number;
     hashrate: number;
+    raw_hashrate?: number;
+    effective_hashrate?: number | null;
+    block_yield_efficiency_pct?: number | null;
+    block_yield_sample_size?: number;
     blocks_found: number;
     orphaned_blocks: number;
     orphan_rate_pct: number;

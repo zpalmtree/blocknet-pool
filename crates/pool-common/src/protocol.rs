@@ -70,6 +70,10 @@ pub struct SubmitParams {
     pub job_id: String,
     pub nonce: u64,
     pub claimed_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub miner_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
 }
 
 pub fn normalize_worker_name(worker: &str) -> String {

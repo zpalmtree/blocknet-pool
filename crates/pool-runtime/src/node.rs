@@ -80,6 +80,8 @@ pub struct NodeBlock {
     pub hash: String,
     pub reward: u64,
     pub timestamp: i64,
+    #[serde(default)]
+    pub difficulty: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]

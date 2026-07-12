@@ -78,6 +78,12 @@ pub struct ShareRecord {
 }
 
 #[derive(Debug, Clone, Default)]
+pub(crate) struct SubmitMetadata {
+    pub miner_version: Option<String>,
+    pub backend: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
 pub(crate) struct BlockSubmitResponse {
     pub accepted: bool,
     pub hash: Option<String>,
@@ -312,6 +318,22 @@ pub(crate) trait ShareStore: Send + Sync + 'static {
         Err(anyhow!(
             "share store does not support returning inserted share ids with replay data"
         ))
+    }
+    fn add_share_with_replay_metadata_and_id(
+        &self,
+        share: ShareRecord,
+        replay: Option<ShareReplayData>,
+        _metadata: &SubmitMetadata,
+    ) -> Result<i64> {
+        self.add_share_with_replay_and_id(share, replay)
+    }
+    fn add_share_with_replay_metadata(
+        &self,
+        share: ShareRecord,
+        replay: Option<ShareReplayData>,
+        _metadata: &SubmitMetadata,
+    ) -> Result<()> {
+        self.add_share_with_replay(share, replay)
     }
     fn add_found_block(&self, _block: FoundBlockRecord) -> Result<()> {
         Ok(())
@@ -657,6 +679,7 @@ impl PoolEngine {
         self.submit_with_received_at(conn_id, job_id, nonce, claimed_hash_hex, Instant::now())
     }
 
+    #[cfg(test)]
     pub(crate) fn submit_with_received_at(
         &self,
         conn_id: &str,
@@ -664,6 +687,25 @@ impl PoolEngine {
         nonce: u64,
         claimed_hash_hex: Option<String>,
         received_at: Instant,
+    ) -> Result<SubmitAck> {
+        self.submit_with_received_at_and_metadata(
+            conn_id,
+            job_id,
+            nonce,
+            claimed_hash_hex,
+            received_at,
+            SubmitMetadata::default(),
+        )
+    }
+
+    pub(crate) fn submit_with_received_at_and_metadata(
+        &self,
+        conn_id: &str,
+        job_id: String,
+        nonce: u64,
+        claimed_hash_hex: Option<String>,
+        received_at: Instant,
+        metadata: SubmitMetadata,
     ) -> Result<SubmitAck> {
         let session = {
             let sessions = self.sessions.lock();
@@ -924,7 +966,7 @@ impl PoolEngine {
                 }
 
                 let created_at = SystemTime::now();
-                self.store.add_share_with_replay(
+                self.store.add_share_with_replay_metadata(
                     ShareRecord {
                         job_id: job_id_for_share.clone(),
                         miner: session.address.clone(),
@@ -944,6 +986,7 @@ impl PoolEngine {
                         network_target: job.network_target,
                         created_at,
                     }),
+                    &metadata,
                 )?;
                 if let Err(err) = self.store.release_share_claim(&job_id_for_share, nonce) {
                     tracing::warn!(
@@ -997,7 +1040,7 @@ impl PoolEngine {
             }
 
             let created_at = SystemTime::now();
-            let share_id = self.store.add_share_with_replay_and_id(
+            let share_id = self.store.add_share_with_replay_metadata_and_id(
                 ShareRecord {
                     job_id: job_id_for_share.clone(),
                     miner: session.address.clone(),
@@ -1017,6 +1060,7 @@ impl PoolEngine {
                     network_target: job.network_target,
                     created_at,
                 }),
+                &metadata,
             )?;
             if let Err(err) = self.store.release_share_claim(&job_id_for_share, nonce) {
                 tracing::warn!(
