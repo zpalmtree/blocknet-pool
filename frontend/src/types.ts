@@ -91,12 +91,17 @@ export interface PagedResponse<T> {
   total: number;
 }
 
+export type WorkerVersionStatus = 'current' | 'outdated' | 'unknown';
+
 interface MinerWorker {
   worker: string;
   hashrate: number;
   accepted: number;
   rejected: number;
   last_share_at: UnixLike;
+  miner_version: string | null;
+  backend: string | null;
+  version_status: WorkerVersionStatus;
 }
 
 interface MinerShare {
@@ -178,6 +183,7 @@ export interface MinerResponse {
   verification_hold: MinerVerificationHold | null;
   total_accepted: number;
   total_rejected: number;
+  latest_miner_version: string;
 }
 
 export interface MinerListItem {

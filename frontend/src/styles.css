@@ -984,6 +984,20 @@ tr:hover td {
   color: var(--status-orphaned-text);
 }
 
+.worker-version-badge {
+  margin-left: 8px;
+  white-space: nowrap;
+}
+
+a.worker-version-badge {
+  color: var(--status-pending-text);
+}
+
+a.worker-version-badge:hover {
+  text-decoration: none;
+  border-color: var(--status-pending-text);
+}
+
 .pager {
   display: flex;
   align-items: center;

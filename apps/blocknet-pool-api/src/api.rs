@@ -212,6 +212,48 @@ fn filter_active_workers_for_miner(
         .collect()
 }
 
+const WORKER_VERSION_CURRENT: &str = "current";
+const WORKER_VERSION_OUTDATED: &str = "outdated";
+const WORKER_VERSION_UNKNOWN: &str = "unknown";
+
+fn parse_version_triple(raw: &str) -> Option<(u64, u64, u64)> {
+    let trimmed = raw.trim().trim_start_matches('v');
+    let core = trimmed
+        .split_once(|c| c == '-' || c == '+')
+        .map(|(core, _)| core)
+        .unwrap_or(trimmed);
+    let mut parts = core.split('.');
+    let major = parts.next()?.trim().parse().ok()?;
+    let minor = parts.next()?.trim().parse().ok()?;
+    let patch = parts.next()?.trim().parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
+}
+
+/// Derives a worker's miner-version status against the configured latest
+/// release:
+/// - no reported version → "unknown" (seine older than 0.2.14 or a non-seine
+///   client; the two are indistinguishable, so never claim a specific client)
+/// - reported but unparseable → "outdated" (something answered, but not with a
+///   version we can compare, so still worth a nudge)
+/// - reported and >= latest → "current"
+/// - if the configured latest version itself does not parse, everything is
+///   "unknown" rather than nudging against a broken baseline
+fn worker_version_status(reported: Option<&str>, latest: &str) -> &'static str {
+    let Some(latest) = parse_version_triple(latest) else {
+        return WORKER_VERSION_UNKNOWN;
+    };
+    match reported {
+        None => WORKER_VERSION_UNKNOWN,
+        Some(raw) => match parse_version_triple(raw) {
+            Some(version) if version >= latest => WORKER_VERSION_CURRENT,
+            _ => WORKER_VERSION_OUTDATED,
+        },
+    }
+}
+
 fn sort_workers_for_miner(
     mut workers: Vec<(String, u64, u64, u64, i64)>,
     hashrate_by_name: &HashMap<String, f64>,
@@ -677,6 +719,9 @@ struct MinerWorkerResponse {
     accepted: u64,
     rejected: u64,
     last_share_at: i64,
+    miner_version: Option<String>,
+    backend: Option<String>,
+    version_status: &'static str,
 }
 
 #[derive(Clone, Serialize)]
@@ -690,6 +735,7 @@ struct MinerDetailResponse {
     blocks_found: u64,
     total_accepted: u64,
     total_rejected: u64,
+    latest_miner_version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
@@ -4877,6 +4923,7 @@ impl ApiState {
             let workers_raw = store.worker_stats_for_miner(&addr, since_24h)?;
             let worker_hashrate_raw =
                 store.worker_hashrate_stats_for_miner(&addr, since_hr_window)?;
+            let worker_versions_raw = store.worker_versions_for_miner(&addr, since_24h)?;
             let blocks_found = store.get_block_count_for_miner(&addr)?;
             let risk_state = store.get_address_risk(&addr)?;
             let validation_state = store.validation_hold_state(&addr, provisional_cutoff)?;
@@ -4888,6 +4935,7 @@ impl ApiState {
                 hr,
                 workers_raw,
                 worker_hashrate_raw,
+                worker_versions_raw,
                 blocks_found,
                 risk_state,
                 validation_state,
@@ -4914,6 +4962,7 @@ impl ApiState {
             hashrate,
             workers_raw,
             worker_hashrate_raw,
+            worker_versions_raw,
             blocks_found,
             risk_state,
             validation_state,
@@ -4938,16 +4987,30 @@ impl ApiState {
             HASHRATE_WINDOW,
         );
 
+        let latest_miner_version = self.config.latest_miner_version.clone();
+        let worker_versions: HashMap<String, (String, Option<String>)> = worker_versions_raw
+            .into_iter()
+            .map(|(worker, version, backend)| (worker, (version, backend)))
+            .collect();
         let worker_rows = workers_sorted
             .iter()
             .map(|(worker, accepted, rejected, _total_diff, last_share_ts)| {
                 let worker_hr = worker_hashrate_by_name.get(worker).copied().unwrap_or(0.0);
+                let (miner_version, backend) = worker_versions
+                    .get(worker)
+                    .map(|(version, backend)| (Some(version.clone()), backend.clone()))
+                    .unwrap_or((None, None));
+                let version_status =
+                    worker_version_status(miner_version.as_deref(), &latest_miner_version);
                 MinerWorkerResponse {
                     worker: worker.clone(),
                     hashrate: worker_hr,
                     accepted: *accepted,
                     rejected: *rejected,
                     last_share_at: *last_share_ts,
+                    miner_version,
+                    backend,
+                    version_status,
                 }
             })
             .collect();
@@ -4982,6 +5045,7 @@ impl ApiState {
             blocks_found,
             total_accepted,
             total_rejected,
+            latest_miner_version,
             error: (!has_any_activity).then(|| "miner not found".to_string()),
         };
 
@@ -6021,11 +6085,11 @@ mod tests {
         hashrate_from_stats_with_warmup, history_range_duration, hydrate_provisional_block_reward,
         if_none_match_contains, load_confirmed_payout_import_txs, luck_round_response_from_db,
         miner_balance_response, miner_has_activity, miner_hashrate_range, page_bounds,
-        parse_checkpoint_file, rejection_window_duration, sort_workers_for_miner,
-        system_time_to_unix_secs, trim_log_line, worker_hashrate_by_name, ApiState,
-        ClearAddressRiskHistoryRequest, PayoutEtaResponse, SearchPageQuery, DAEMON_LOG_LINE_LIMIT,
-        HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW,
-        LIVE_RUNTIME_SNAPSHOT_META_KEY,
+        parse_checkpoint_file, parse_version_triple, rejection_window_duration,
+        sort_workers_for_miner, system_time_to_unix_secs, trim_log_line, worker_hashrate_by_name,
+        worker_version_status, ApiState, ClearAddressRiskHistoryRequest, PayoutEtaResponse,
+        SearchPageQuery, DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW,
+        HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY,
     };
 
     const TEST_POSTGRES_URL_ENV: &str = "BLOCKNET_POOL_TEST_POSTGRES_URL";
@@ -8272,6 +8336,46 @@ mod tests {
             .collect();
 
         assert_eq!(names, vec!["active"]);
+    }
+
+    #[test]
+    fn parse_version_triple_handles_common_forms() {
+        assert_eq!(parse_version_triple("0.2.15"), Some((0, 2, 15)));
+        assert_eq!(parse_version_triple("v1.10.3"), Some((1, 10, 3)));
+        assert_eq!(parse_version_triple(" 0.2.15 "), Some((0, 2, 15)));
+        assert_eq!(parse_version_triple("0.3.0-rc.1"), Some((0, 3, 0)));
+        assert_eq!(parse_version_triple("0.3.0+build5"), Some((0, 3, 0)));
+        assert_eq!(parse_version_triple("0.2"), None);
+        assert_eq!(parse_version_triple("0.2.15.1"), None);
+        assert_eq!(parse_version_triple("garbage"), None);
+        assert_eq!(parse_version_triple(""), None);
+    }
+
+    #[test]
+    fn worker_version_status_derivation_covers_edge_cases() {
+        // Matching the latest release is current, as is running ahead of it.
+        assert_eq!(worker_version_status(Some("0.2.15"), "0.2.15"), "current");
+        assert_eq!(worker_version_status(Some("0.2.16"), "0.2.15"), "current");
+        assert_eq!(worker_version_status(Some("0.3.0"), "0.2.15"), "current");
+
+        // Older reported versions are outdated.
+        assert_eq!(worker_version_status(Some("0.2.14"), "0.2.15"), "outdated");
+        assert_eq!(worker_version_status(Some("0.1.20"), "0.2.15"), "outdated");
+
+        // A reported-but-unparseable version still earns a nudge.
+        assert_eq!(worker_version_status(Some("garbage"), "0.2.15"), "outdated");
+
+        // No reported version means an older seine or a non-seine client;
+        // we cannot tell which, so the status is unknown.
+        assert_eq!(worker_version_status(None, "0.2.15"), "unknown");
+
+        // A misconfigured latest version must not nudge against a broken
+        // baseline.
+        assert_eq!(
+            worker_version_status(Some("0.2.15"), "not-a-version"),
+            "unknown"
+        );
+        assert_eq!(worker_version_status(None, ""), "unknown");
     }
 
     #[test]

@@ -41,6 +41,7 @@ pub struct ShareWindowAddressPreview {
 
 pub type WorkerStats = Vec<(String, u64, u64, u64, i64)>;
 pub type WorkerHashrateStats = Vec<(String, u64, u64, Option<SystemTime>, Option<SystemTime>)>;
+pub type WorkerVersions = Vec<(String, String, Option<String>)>;
 pub type MinerLifetimeCounts = HashMap<String, (u64, u64, u64, Option<i64>)>;
 
 #[derive(Debug, Clone, Default)]
@@ -5359,6 +5360,33 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .collect())
     }
 
+    /// Returns the most recent reported miner version per worker:
+    /// Vec<(worker, miner_version, backend)>. Workers whose shares in the
+    /// window never reported a version are omitted. The scan is bounded by
+    /// `since` and served by idx_shares_miner_created (miner, created_at DESC).
+    pub fn worker_versions_for_miner(
+        &self,
+        address: &str,
+        since: SystemTime,
+    ) -> Result<WorkerVersions> {
+        let rows = self.conn().lock().query(
+            "SELECT DISTINCT ON (worker) worker, miner_version, backend
+             FROM shares
+             WHERE miner = $1 AND created_at >= $2 AND miner_version IS NOT NULL
+             ORDER BY worker, created_at DESC",
+            &[&address, &to_unix(since)],
+        )?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                let worker: String = row.get(0);
+                let miner_version: String = row.get(1);
+                let backend: Option<String> = row.get(2);
+                (worker, miner_version, backend)
+            })
+            .collect())
+    }
+
     pub fn get_block_count_for_miner(&self, address: &str) -> Result<u64> {
         let row = self.conn().lock().query_one(
             "SELECT COUNT(*)::bigint FROM blocks WHERE finder = $1",
@@ -5835,6 +5863,78 @@ mod tests {
         assert_eq!(miner_b_summary.provisional_shares_ready, 0);
         assert_eq!(miner_b_summary.provisional_difficulty_ready, 0);
         assert_eq!(miner_b_summary.provisional_shares_delayed, 0);
+    }
+
+    #[test]
+    fn worker_versions_for_miner_returns_latest_reported_version_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let miner = format!("miner-versions-{suffix}");
+        let base = UNIX_EPOCH + Duration::from_secs(20_000_000);
+
+        let share = |job: &str, worker: &str, nonce: u64, offset: u64| ShareRecord {
+            job_id: format!("{job}-{suffix}"),
+            miner: miner.clone(),
+            worker: worker.to_string(),
+            difficulty: 10,
+            nonce,
+            status: "verified",
+            was_sampled: true,
+            block_hash: None,
+            claimed_hash: None,
+            reject_reason: None,
+            created_at: base + Duration::from_secs(offset),
+        };
+
+        // rig-new reports versions; the newest share's version should win.
+        store
+            .add_share_with_replay_metadata_and_id(
+                share("job-v1", "rig-new", 1, 0),
+                None,
+                Some("0.2.14"),
+                Some("cpu"),
+            )
+            .expect("add versioned share");
+        store
+            .add_share_with_replay_metadata_and_id(
+                share("job-v2", "rig-new", 2, 10),
+                None,
+                Some("0.2.15"),
+                Some("gpu"),
+            )
+            .expect("add newer versioned share");
+        // rig-old never reports a version and must be omitted.
+        store
+            .add_share(share("job-v3", "rig-old", 3, 20))
+            .expect("add unversioned share");
+        // Versions reported before the window must not leak in.
+        store
+            .add_share_with_replay_metadata_and_id(
+                share("job-v4", "rig-stale", 4, 0),
+                None,
+                Some("0.2.13"),
+                None,
+            )
+            .expect("add stale versioned share");
+
+        let versions = store
+            .worker_versions_for_miner(&miner, base + Duration::from_secs(5))
+            .expect("worker versions for miner");
+
+        assert_eq!(
+            versions,
+            vec![(
+                "rig-new".to_string(),
+                "0.2.15".to_string(),
+                Some("gpu".to_string())
+            )]
+        );
     }
 
     #[test]

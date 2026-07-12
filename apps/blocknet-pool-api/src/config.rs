@@ -17,6 +17,9 @@ pub(crate) struct Config {
     pub(crate) api_host: String,
     pub(crate) api_key: String,
     pub(crate) monitor_ingest_secret: String,
+    /// Latest released miner version, surfaced to the UI so it can nudge
+    /// workers reporting an older (or no) version. Bumped per seine release.
+    pub(crate) latest_miner_version: String,
     pub(crate) recovery: RecoveryConfig,
 }
 
@@ -30,6 +33,7 @@ impl Default for Config {
             api_host: "127.0.0.1".to_string(),
             api_key: String::new(),
             monitor_ingest_secret: String::new(),
+            latest_miner_version: "0.2.15".to_string(),
             recovery: RecoveryConfig::default(),
         }
     }

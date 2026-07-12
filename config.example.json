@@ -53,6 +53,7 @@
   "database_pool_size": 4,
   "api_key": "replace-with-a-long-random-secret",
   "monitor_ingest_secret": "replace-with-a-long-random-secret",
+  "latest_miner_version": "0.2.15",
   "recovery": {
     "enabled": true,
     "socket_path": "/run/blocknet-recoveryd.sock",
