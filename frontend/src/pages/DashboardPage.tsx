@@ -152,18 +152,20 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
         <div className="stats-card-group-grid">
           <StatCard label="Connected Miners" value={stats?.pool?.miners ?? '-'} id="s-miners" />
           <StatCard
-            label="Pool Hashrate (shares)"
-            value={humanRate(stats?.pool?.raw_hashrate ?? stats?.pool?.hashrate ?? 0)}
-            title="Raw hashrate estimated from credited share work"
-            id="s-hashrate"
-          />
-          <StatCard
-            label="Effective Hashrate (30d)"
-            value={stats?.pool?.effective_hashrate ? humanRate(stats.pool.effective_hashrate) : '-'}
+            label="Pool Hashrate"
+            value={
+              <>
+                <span>{humanRate(stats?.pool?.raw_hashrate ?? stats?.pool?.hashrate ?? 0)}</span>
+                <span className="stat-inline-secondary">
+                  30d eff. {stats?.pool?.effective_hashrate ? humanRate(stats.pool.effective_hashrate) : '-'}
+                </span>
+              </>
+            }
             title={stats?.pool?.block_yield_efficiency_pct != null
-              ? `${formatPct(stats.pool.block_yield_efficiency_pct)} block yield across ${stats.pool.block_yield_sample_size ?? 0} solved blocks`
-              : 'Needs solved-block history before it can be estimated'}
-            id="s-effective-hashrate"
+              ? `Primary value is estimated from credited share work. 30d effective hashrate reflects ${formatPct(stats.pool.block_yield_efficiency_pct)} block yield across ${stats.pool.block_yield_sample_size ?? 0} solved blocks.`
+              : 'Primary value is estimated from credited share work. Effective hashrate needs solved-block history before it can be estimated.'}
+            id="s-hashrate"
+            className="stat-card--combined-hashrate"
           />
           <StatCard
             label="Network Hashrate"
