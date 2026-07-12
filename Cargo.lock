@@ -1101,6 +1101,7 @@ dependencies = [
  "chrono",
  "curve25519-dalek",
  "hex",
+ "libc",
  "serde",
  "serde_json",
  "sha3",
