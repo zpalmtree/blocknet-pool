@@ -131,11 +131,72 @@ groups:
       - alert: BlocknetPoolTemplateExpiredAtBlockSubmit
         expr: increase(blocknet_pool_monitor_template_submit_expired_responses_total[15m]) > 0
         labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Pool block submission required the full-block fallback
+          description: A block candidate reached the daemon after its compact template ID was unknown or expired; the pool attempted to rescue it with the retained full block.
+
+      - alert: BlocknetPoolFullBlockFallbackFailed
+        expr: >-
+          increase(blocknet_pool_monitor_block_submit_full_fallback_attempts_total[15m]) > 0
+          and
+          increase(blocknet_pool_monitor_block_submit_full_fallback_attempts_total[15m])
+          > increase(blocknet_pool_monitor_block_submit_full_fallback_accepted_total[15m])
+        for: 1m
+        labels:
           severity: critical
           visibility: private
         annotations:
-          summary: Pool block submission used an expired template
-          description: A block candidate reached the daemon after its compact template ID was unknown or expired.
+          summary: Pool full-block submission fallback failed
+          description: At least one candidate needed the retained full-block fallback in the last 15 minutes but was not accepted by the daemon.
+
+      - alert: BlocknetPoolCandidatePipelineDropped
+        expr: >-
+          increase(blocknet_pool_monitor_candidate_permit_rejected_total[15m]) > 0
+          or increase(blocknet_pool_monitor_candidate_enqueue_rejected_total[15m]) > 0
+          or increase(blocknet_pool_monitor_candidate_rejected_total[15m]) > 0
+          or increase(blocknet_pool_monitor_candidate_worker_failure_total[15m]) > 0
+        labels:
+          severity: critical
+          visibility: private
+        annotations:
+          summary: Pool dropped a candidate before completing validation
+          description: A network-target candidate was rejected by admission control, the queue, full validation/submission, or a submit-worker failure in the last 15 minutes.
+
+      - alert: BlocknetPoolCandidatePipelineDiverged
+        expr: >-
+          (
+            blocknet_pool_monitor_candidate_classified_total
+            != blocknet_pool_monitor_candidate_permit_acquired_total
+              + blocknet_pool_monitor_candidate_permit_rejected_total
+          )
+          or
+          (
+            blocknet_pool_monitor_candidate_permit_acquired_total
+            != blocknet_pool_monitor_candidate_enqueued_total
+              + blocknet_pool_monitor_candidate_enqueue_rejected_total
+          )
+          or
+          (
+            blocknet_pool_monitor_candidate_enqueued_total
+            != blocknet_pool_monitor_candidate_worker_started_total
+              + blocknet_pool_monitor_candidate_submit_queue_depth
+          )
+          or
+          (
+            blocknet_pool_monitor_candidate_worker_started_total
+            != blocknet_pool_monitor_candidate_persisted_total
+              + blocknet_pool_monitor_candidate_rejected_total
+              + blocknet_pool_monitor_candidate_worker_failure_total
+          )
+        for: 2m
+        labels:
+          severity: critical
+          visibility: private
+        annotations:
+          summary: Pool candidate pipeline counters diverged
+          description: A candidate has remained unaccounted for between classification, admission, queueing, worker execution, and persistence for more than two minutes.
 
       - alert: BlocknetPoolMinerBalanceProbeFailing
         # End-to-end probe of /api/miner/<addr>/balance including the

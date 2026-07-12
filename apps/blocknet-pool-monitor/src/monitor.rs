@@ -101,6 +101,7 @@ struct MonitorSnapshot {
     candidate_rejected_total: Option<u64>,
     candidate_block_accepted_total: Option<u64>,
     candidate_worker_failure_total: Option<u64>,
+    candidate_submit_queue_depth: Option<u64>,
     stratum_snapshot_age_seconds: Option<u64>,
     connected_miners: Option<u64>,
     connected_workers: Option<u64>,
@@ -988,6 +989,8 @@ impl MonitorRuntime {
             runtime.map(|snapshot| snapshot.submit.candidate_block_accepted_total);
         metrics.candidate_worker_failure_total =
             runtime.map(|snapshot| snapshot.submit.candidate_worker_failure_total);
+        metrics.candidate_submit_queue_depth =
+            runtime.map(|snapshot| snapshot.submit.candidate_queue_depth as u64);
         metrics.stratum_snapshot_age_seconds =
             runtime_snapshot_age(sample.sampled_at, runtime).map(|age| age.as_secs());
         metrics.connected_miners = runtime.map(|snapshot| snapshot.connected_miners as u64);
@@ -2262,6 +2265,10 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
             snapshot.candidate_worker_failure_total,
         ),
         (
+            "blocknet_pool_monitor_candidate_submit_queue_depth",
+            snapshot.candidate_submit_queue_depth,
+        ),
+        (
             "blocknet_pool_monitor_stratum_snapshot_age_seconds",
             snapshot.stratum_snapshot_age_seconds,
         ),
@@ -2590,6 +2597,7 @@ mod tests {
             candidate_rejected_total: Some(2),
             candidate_block_accepted_total: Some(6),
             candidate_worker_failure_total: Some(0),
+            candidate_submit_queue_depth: Some(1),
             daemon_current_process_block: Some(NodeCurrentProcessBlock {
                 height: 5,
                 tx_count: 1,
@@ -2655,6 +2663,7 @@ mod tests {
         assert!(rendered.contains("blocknet_pool_monitor_candidate_rejected_total 2"));
         assert!(rendered.contains("blocknet_pool_monitor_candidate_block_accepted_total 6"));
         assert!(rendered.contains("blocknet_pool_monitor_candidate_worker_failure_total 0"));
+        assert!(rendered.contains("blocknet_pool_monitor_candidate_submit_queue_depth 1"));
         assert!(
             rendered.contains("blocknet_pool_monitor_daemon_last_process_block_total_millis 4750")
         );
