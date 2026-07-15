@@ -811,11 +811,6 @@ fn join_result<R>(result: Result<anyhow::Result<R>, tokio::task::JoinError>) -> 
 }
 
 pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
-    {
-        let store = Arc::clone(&state.store);
-        spawn_blocking_result(move || backfill_block_effort(&store)).await?;
-    }
-
     let app_state = state.clone();
     let protected = Router::new()
         .route("/api/miners", get(handle_miners))
@@ -922,6 +917,22 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(addr = %addr, "api listening");
+    let backfill_store = Arc::clone(&state.store);
+    let _block_effort_backfill = tokio::task::spawn_blocking(move || {
+        let started_at = Instant::now();
+        match backfill_block_effort(&backfill_store) {
+            Ok(updated) => tracing::info!(
+                updated,
+                duration_ms = started_at.elapsed().as_millis() as u64,
+                "block effort backfill completed"
+            ),
+            Err(err) => tracing::warn!(
+                error = %err,
+                duration_ms = started_at.elapsed().as_millis() as u64,
+                "block effort backfill failed"
+            ),
+        }
+    });
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -3772,30 +3783,49 @@ fn apply_wallet_liquidity_to_payout_eta(
     );
 }
 
-fn backfill_block_effort(store: &PoolStore) -> anyhow::Result<()> {
-    let blocks = store.get_all_blocks()?;
-    if blocks.len() < 2 {
-        return Ok(());
-    }
-    let needs_backfill = blocks.iter().any(|b| b.effort_pct.is_none());
-    if !needs_backfill {
-        return Ok(());
-    }
-    let rounds = compute_luck_history(store, blocks, None)?;
-    let mut updated = 0u64;
-    for round in &rounds {
-        if let Some(mut block) = store.get_block(round.block_height)? {
-            if block.effort_pct.is_none() {
-                block.effort_pct = Some(round.effort_pct);
-                store.add_block(&block)?;
-                updated += 1;
-            }
+fn missing_block_effort_rounds(mut blocks: Vec<DbBlock>) -> Vec<(SystemTime, DbBlock)> {
+    blocks.sort_by_key(|block| block.timestamp);
+    let mut blocks = blocks.into_iter();
+    let Some(mut previous) = blocks.next() else {
+        return Vec::new();
+    };
+
+    let mut missing = Vec::new();
+    for current in blocks {
+        if current.effort_pct.is_none() {
+            missing.push((previous.timestamp, current.clone()));
         }
+        previous = current;
     }
-    if updated > 0 {
-        tracing::info!(updated, "backfilled block effort_pct");
+    missing
+}
+
+fn backfill_block_effort(store: &PoolStore) -> anyhow::Result<u64> {
+    let missing = missing_block_effort_rounds(store.get_all_blocks()?);
+    let mut updated = 0u64;
+    for (round_start, mut block) in missing {
+        let round_work = store
+            .get_shares_between(round_start, block.timestamp)?
+            .into_iter()
+            .filter(|share| share.status == "verified" || share.status == "provisional")
+            .fold(0u64, |acc, share| acc.saturating_add(share.difficulty));
+        block.effort_pct = Some(if block.difficulty > 0 {
+            (round_work as f64 / block.difficulty as f64) * 100.0
+        } else {
+            0.0
+        });
+        store.add_block(&block)?;
+        updated += 1;
     }
-    Ok(())
+    Ok(updated)
+}
+
+#[cfg(test)]
+fn backfill_round_heights(blocks: Vec<DbBlock>) -> Vec<(SystemTime, u64)> {
+    missing_block_effort_rounds(blocks)
+        .into_iter()
+        .map(|(round_start, block)| (round_start, block.height))
+        .collect()
 }
 
 fn compute_luck_history(
@@ -6075,10 +6105,10 @@ mod tests {
     use crate::ui::{handle_app_fallback, is_api_request_path};
 
     use super::{
-        api_performance_route_name, apply_wallet_liquidity_to_payout_eta, block_page_item_response,
-        build_block_reward_breakdown, checkpoint_etag, checkpoints_path, checkpoints_public_url,
-        daemon_debug_log_path, daemon_health_from_heartbeat, daemon_log_commands,
-        daemon_send_idempotency_path, estimate_unconfirmed_pending_for_miner,
+        api_performance_route_name, apply_wallet_liquidity_to_payout_eta, backfill_round_heights,
+        block_page_item_response, build_block_reward_breakdown, checkpoint_etag, checkpoints_path,
+        checkpoints_public_url, daemon_debug_log_path, daemon_health_from_heartbeat,
+        daemon_log_commands, daemon_send_idempotency_path, estimate_unconfirmed_pending_for_miner,
         estimated_block_reward, filter_active_workers_for_miner,
         handle_admin_clear_address_risk_history, handle_admin_share_diagnostics, handle_health,
         handle_miner, handle_miners, hashrate_from_stats_with_miner_ramp,
@@ -6327,6 +6357,42 @@ mod tests {
 
     fn add_test_block(store: &PoolStore, block: TestBlockInput<'_>) {
         store.add_block(&test_block(block)).expect("add block");
+    }
+
+    #[test]
+    fn effort_backfill_skips_first_block_and_only_selects_missing_rounds() {
+        let base = UNIX_EPOCH + Duration::from_secs(10_000);
+        let first = test_block((1, "first", "miner", "w", 1, base, true, false));
+        let mut second = test_block((
+            2,
+            "second",
+            "miner",
+            "w",
+            1,
+            base + Duration::from_secs(60),
+            true,
+            false,
+        ));
+        second.effort_pct = Some(50.0);
+        let third = test_block((
+            3,
+            "third",
+            "miner",
+            "w",
+            1,
+            base + Duration::from_secs(120),
+            true,
+            false,
+        ));
+
+        assert_eq!(
+            backfill_round_heights(vec![third.clone(), first.clone(), second.clone()]),
+            vec![(second.timestamp, third.height)]
+        );
+
+        let mut filled_third = third;
+        filled_third.effort_pct = Some(25.0);
+        assert!(backfill_round_heights(vec![filled_third, first, second]).is_empty());
     }
 
     #[test]
