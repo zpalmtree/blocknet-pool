@@ -129,40 +129,41 @@ groups:
           description: The daemon reported an unknown or expired template during renewal in the last 15 minutes.
 
       - alert: BlocknetPoolTemplateExpiredAtBlockSubmit
-        expr: increase(blocknet_pool_monitor_template_submit_expired_responses_total[15m]) > 0
+        expr: >-
+          increase(blocknet_pool_monitor_template_submit_expired_responses_total[15m])
+          > increase(blocknet_pool_monitor_block_submit_full_fallback_stale_total[15m])
         labels:
           severity: warning
           visibility: private
         annotations:
-          summary: Pool block submission required the full-block fallback
-          description: A block candidate reached the daemon after its compact template ID was unknown or expired; the pool attempted to rescue it with the retained full block.
+          summary: Pool block submission required a non-stale full-block fallback
+          description: A block candidate reached the daemon after its compact template ID was unknown or expired, and the fallback outcome was not an expected stale tip race.
 
       - alert: BlocknetPoolFullBlockFallbackFailed
-        expr: >-
-          increase(blocknet_pool_monitor_block_submit_full_fallback_attempts_total[15m]) > 0
-          and
-          increase(blocknet_pool_monitor_block_submit_full_fallback_attempts_total[15m])
-          > increase(blocknet_pool_monitor_block_submit_full_fallback_accepted_total[15m])
+        expr: increase(blocknet_pool_monitor_block_submit_full_fallback_errors_total[15m]) > 0
         for: 1m
         labels:
           severity: critical
           visibility: private
         annotations:
           summary: Pool full-block submission fallback failed
-          description: At least one candidate needed the retained full-block fallback in the last 15 minutes but was not accepted by the daemon.
+          description: At least one retained full-block fallback encountered a transport error, unexpected daemon rejection, or negative success response in the last 15 minutes. Stale tip races are excluded.
 
       - alert: BlocknetPoolCandidatePipelineDropped
         expr: >-
           increase(blocknet_pool_monitor_candidate_permit_rejected_total[15m]) > 0
           or increase(blocknet_pool_monitor_candidate_enqueue_rejected_total[15m]) > 0
-          or increase(blocknet_pool_monitor_candidate_rejected_total[15m]) > 0
+          or (
+            increase(blocknet_pool_monitor_candidate_rejected_total[15m])
+            > increase(blocknet_pool_monitor_candidate_stale_block_total[15m])
+          )
           or increase(blocknet_pool_monitor_candidate_worker_failure_total[15m]) > 0
         labels:
           severity: critical
           visibility: private
         annotations:
           summary: Pool dropped a candidate before completing validation
-          description: A network-target candidate was rejected by admission control, the queue, full validation/submission, or a submit-worker failure in the last 15 minutes.
+          description: A network-target candidate was rejected by admission control, the queue, full validation/submission, or a submit-worker failure in the last 15 minutes. Expected stale tip races are excluded.
 
       - alert: BlocknetPoolCandidatePipelineDiverged
         expr: >-

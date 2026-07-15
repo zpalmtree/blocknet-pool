@@ -87,6 +87,8 @@ struct MonitorSnapshot {
     block_submit_attempts_total: Option<u64>,
     block_submit_full_fallback_attempts_total: Option<u64>,
     block_submit_full_fallback_accepted_total: Option<u64>,
+    block_submit_full_fallback_stale_total: Option<u64>,
+    block_submit_full_fallback_errors_total: Option<u64>,
     last_block_submit_template_age_seconds: Option<u64>,
     max_accepted_block_template_age_seconds: Option<u64>,
     accepted_blocks_after_ten_minutes_total: Option<u64>,
@@ -99,6 +101,7 @@ struct MonitorSnapshot {
     candidate_worker_started_total: Option<u64>,
     candidate_persisted_total: Option<u64>,
     candidate_rejected_total: Option<u64>,
+    candidate_stale_block_total: Option<u64>,
     candidate_block_accepted_total: Option<u64>,
     candidate_worker_failure_total: Option<u64>,
     candidate_submit_queue_depth: Option<u64>,
@@ -961,6 +964,10 @@ impl MonitorRuntime {
             runtime.map(|snapshot| snapshot.jobs.block_submit_full_fallback_attempts_total);
         metrics.block_submit_full_fallback_accepted_total =
             runtime.map(|snapshot| snapshot.jobs.block_submit_full_fallback_accepted_total);
+        metrics.block_submit_full_fallback_stale_total =
+            runtime.map(|snapshot| snapshot.jobs.block_submit_full_fallback_stale_total);
+        metrics.block_submit_full_fallback_errors_total =
+            runtime.map(|snapshot| snapshot.jobs.block_submit_full_fallback_errors_total);
         metrics.last_block_submit_template_age_seconds =
             runtime.map(|snapshot| snapshot.jobs.last_block_submit_template_age_seconds);
         metrics.max_accepted_block_template_age_seconds =
@@ -985,6 +992,8 @@ impl MonitorRuntime {
             runtime.map(|snapshot| snapshot.submit.candidate_persisted_total);
         metrics.candidate_rejected_total =
             runtime.map(|snapshot| snapshot.submit.candidate_rejected_total);
+        metrics.candidate_stale_block_total =
+            runtime.map(|snapshot| snapshot.submit.candidate_stale_block_total);
         metrics.candidate_block_accepted_total =
             runtime.map(|snapshot| snapshot.submit.candidate_block_accepted_total);
         metrics.candidate_worker_failure_total =
@@ -2209,6 +2218,14 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
             snapshot.block_submit_full_fallback_accepted_total,
         ),
         (
+            "blocknet_pool_monitor_block_submit_full_fallback_stale_total",
+            snapshot.block_submit_full_fallback_stale_total,
+        ),
+        (
+            "blocknet_pool_monitor_block_submit_full_fallback_errors_total",
+            snapshot.block_submit_full_fallback_errors_total,
+        ),
+        (
             "blocknet_pool_monitor_last_block_submit_template_age_seconds",
             snapshot.last_block_submit_template_age_seconds,
         ),
@@ -2255,6 +2272,10 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
         (
             "blocknet_pool_monitor_candidate_rejected_total",
             snapshot.candidate_rejected_total,
+        ),
+        (
+            "blocknet_pool_monitor_candidate_stale_block_total",
+            snapshot.candidate_stale_block_total,
         ),
         (
             "blocknet_pool_monitor_candidate_block_accepted_total",
@@ -2583,6 +2604,8 @@ mod tests {
             block_submit_attempts_total: Some(4),
             block_submit_full_fallback_attempts_total: Some(2),
             block_submit_full_fallback_accepted_total: Some(1),
+            block_submit_full_fallback_stale_total: Some(1),
+            block_submit_full_fallback_errors_total: Some(0),
             last_block_submit_template_age_seconds: Some(605),
             max_accepted_block_template_age_seconds: Some(605),
             accepted_blocks_after_ten_minutes_total: Some(1),
@@ -2595,6 +2618,7 @@ mod tests {
             candidate_worker_started_total: Some(9),
             candidate_persisted_total: Some(7),
             candidate_rejected_total: Some(2),
+            candidate_stale_block_total: Some(1),
             candidate_block_accepted_total: Some(6),
             candidate_worker_failure_total: Some(0),
             candidate_submit_queue_depth: Some(1),
@@ -2643,6 +2667,10 @@ mod tests {
         assert!(
             rendered.contains("blocknet_pool_monitor_block_submit_full_fallback_accepted_total 1")
         );
+        assert!(rendered.contains("blocknet_pool_monitor_block_submit_full_fallback_stale_total 1"));
+        assert!(
+            rendered.contains("blocknet_pool_monitor_block_submit_full_fallback_errors_total 0")
+        );
         assert!(
             rendered.contains("blocknet_pool_monitor_last_block_submit_template_age_seconds 605")
         );
@@ -2661,6 +2689,7 @@ mod tests {
         assert!(rendered.contains("blocknet_pool_monitor_candidate_worker_started_total 9"));
         assert!(rendered.contains("blocknet_pool_monitor_candidate_persisted_total 7"));
         assert!(rendered.contains("blocknet_pool_monitor_candidate_rejected_total 2"));
+        assert!(rendered.contains("blocknet_pool_monitor_candidate_stale_block_total 1"));
         assert!(rendered.contains("blocknet_pool_monitor_candidate_block_accepted_total 6"));
         assert!(rendered.contains("blocknet_pool_monitor_candidate_worker_failure_total 0"));
         assert!(rendered.contains("blocknet_pool_monitor_candidate_submit_queue_depth 1"));

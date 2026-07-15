@@ -252,6 +252,9 @@ pub(crate) fn canonical_share_reject_reason(error: &str) -> &'static str {
     if trimmed.starts_with("stale job:") || trimmed == "stale job" {
         return "stale job";
     }
+    if trimmed.contains("block rejected as stale") {
+        return "stale block";
+    }
     if trimmed.starts_with("duplicate share") {
         return "duplicate share";
     }
@@ -2405,6 +2408,18 @@ impl NodeApi for InMemoryNode {
 mod tests {
     use super::*;
     use pool_common::pow::{difficulty_to_target, DeterministicTestHasher, PowHasher};
+
+    #[test]
+    fn canonical_reject_reason_distinguishes_stale_blocks_from_stale_jobs() {
+        assert_eq!(canonical_share_reject_reason("stale job"), "stale job");
+        assert_eq!(
+            canonical_share_reject_reason(
+                "full-block fallback submit: /api/mining/submitblock 400: \
+                 {\"error\":\"block rejected as stale\"}"
+            ),
+            "stale block"
+        );
+    }
 
     fn cfg() -> Config {
         Config {

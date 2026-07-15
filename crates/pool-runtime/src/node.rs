@@ -250,6 +250,10 @@ fn is_unknown_or_expired_template_id_error(err: &anyhow::Error) -> bool {
     })
 }
 
+fn is_stale_block_submit_error(err: &anyhow::Error) -> bool {
+    http_error_body_contains(err, 400, "block rejected as stale")
+}
+
 /// Patch the solved nonce into a retained full template block. The daemon
 /// serializes `BlockHeader` without JSON tags, so the live key is `Nonce`;
 /// the lowercase variant is handled defensively in case that ever changes.
@@ -275,6 +279,8 @@ pub(crate) struct TemplateLeaseTelemetrySnapshot {
     pub block_submit_attempts_total: u64,
     pub block_submit_full_fallback_attempts_total: u64,
     pub block_submit_full_fallback_accepted_total: u64,
+    pub block_submit_full_fallback_stale_total: u64,
+    pub block_submit_full_fallback_errors_total: u64,
     pub last_block_submit_template_age_seconds: u64,
     pub max_accepted_block_template_age_seconds: u64,
     pub accepted_blocks_after_ten_minutes_total: u64,
@@ -295,6 +301,8 @@ pub struct NodeClient {
     block_submit_attempts: AtomicU64,
     block_submit_full_fallback_attempts: AtomicU64,
     block_submit_full_fallback_accepted: AtomicU64,
+    block_submit_full_fallback_stale: AtomicU64,
+    block_submit_full_fallback_errors: AtomicU64,
     last_block_submit_template_age_seconds: AtomicU64,
     max_accepted_block_template_age_seconds: AtomicU64,
     accepted_blocks_after_ten_minutes: AtomicU64,
@@ -358,6 +366,8 @@ impl NodeClient {
             block_submit_attempts: AtomicU64::new(0),
             block_submit_full_fallback_attempts: AtomicU64::new(0),
             block_submit_full_fallback_accepted: AtomicU64::new(0),
+            block_submit_full_fallback_stale: AtomicU64::new(0),
+            block_submit_full_fallback_errors: AtomicU64::new(0),
             last_block_submit_template_age_seconds: AtomicU64::new(0),
             max_accepted_block_template_age_seconds: AtomicU64::new(0),
             accepted_blocks_after_ten_minutes: AtomicU64::new(0),
@@ -414,6 +424,12 @@ impl NodeClient {
             block_submit_full_fallback_accepted_total: self
                 .block_submit_full_fallback_accepted
                 .load(Ordering::Relaxed),
+            block_submit_full_fallback_stale_total: self
+                .block_submit_full_fallback_stale
+                .load(Ordering::Relaxed),
+            block_submit_full_fallback_errors_total: self
+                .block_submit_full_fallback_errors
+                .load(Ordering::Relaxed),
             last_block_submit_template_age_seconds: self
                 .last_block_submit_template_age_seconds
                 .load(Ordering::Relaxed),
@@ -462,13 +478,35 @@ impl NodeClient {
             compact_error = %compact_err,
             "compact template ID unknown or expired; submitting retained full block"
         );
-        let resp: SubmitBlockRawResponse = self
-            .post_json("/api/mining/submitblock", &block)
-            .context("full-block fallback submit after unknown/expired template ID")?;
+        let resp: SubmitBlockRawResponse = match self.post_json("/api/mining/submitblock", &block) {
+            Ok(resp) => resp,
+            Err(err) => {
+                if is_stale_block_submit_error(&err) {
+                    self.block_submit_full_fallback_stale
+                        .fetch_add(1, Ordering::Relaxed);
+                    tracing::info!(
+                        job_id = %job.id,
+                        template_id = %job.template_id,
+                        height = job.height,
+                        template_age_seconds,
+                        "retained full block rejected as stale after chain tip advanced"
+                    );
+                } else {
+                    self.block_submit_full_fallback_errors
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+                let context =
+                    format!("full-block fallback submit after unknown/expired template ID: {err}");
+                return Err(err).context(context);
+            }
+        };
         if resp.accepted {
             self.block_submit_full_fallback_accepted
                 .fetch_add(1, Ordering::Relaxed);
             self.record_accepted_block_template_age(template_age_seconds);
+        } else {
+            self.block_submit_full_fallback_errors
+                .fetch_add(1, Ordering::Relaxed);
         }
         Ok(Some(BlockSubmitResponse {
             accepted: resp.accepted,
@@ -1048,6 +1086,129 @@ mod tests {
         assert_eq!(telemetry.submit_expired_responses_total, 1);
         assert_eq!(telemetry.block_submit_full_fallback_attempts_total, 1);
         assert_eq!(telemetry.block_submit_full_fallback_accepted_total, 1);
+        assert_eq!(telemetry.block_submit_full_fallback_stale_total, 0);
+        assert_eq!(telemetry.block_submit_full_fallback_errors_total, 0);
+
+        server.join().expect("submit test server thread");
+    }
+
+    #[test]
+    fn submit_block_classifies_stale_full_block_fallback_as_tip_race() {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind submit test server");
+        let address = listener.local_addr().expect("submit server address");
+        let server = std::thread::spawn(move || {
+            let responses = [
+                (
+                    "400 Bad Request",
+                    r#"{"error":"unknown or expired template_id"}"#,
+                ),
+                ("400 Bad Request", r#"{"error":"block rejected as stale"}"#),
+            ];
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().expect("accept daemon request");
+                let _ = read_http_request(&mut stream);
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("write daemon response");
+            }
+        });
+
+        let client = NodeClient::new(&format!("http://{address}"), "").expect("node client");
+        let job = Job {
+            id: "job-stale".to_string(),
+            height: 11,
+            header_base: vec![0xAA; 92],
+            network_target: [0xBB; 32],
+            network_difficulty: 3,
+            template_id: "tmpl-stale".to_string(),
+            prev_hash: None,
+            template_created_at: std::time::Instant::now(),
+            template_block: Some(std::sync::Arc::new(serde_json::json!({
+                "header": {"Height": 11, "Difficulty": 3, "Nonce": 0},
+                "txns": []
+            }))),
+        };
+
+        let err = client
+            .submit_block(&job, 42)
+            .expect_err("stale fallback should remain a rejected candidate");
+        assert!(err.to_string().contains("block rejected as stale"));
+
+        let telemetry = client.template_lease_telemetry();
+        assert_eq!(telemetry.submit_expired_responses_total, 1);
+        assert_eq!(telemetry.block_submit_full_fallback_attempts_total, 1);
+        assert_eq!(telemetry.block_submit_full_fallback_accepted_total, 0);
+        assert_eq!(telemetry.block_submit_full_fallback_stale_total, 1);
+        assert_eq!(telemetry.block_submit_full_fallback_errors_total, 0);
+
+        server.join().expect("submit test server thread");
+    }
+
+    #[test]
+    fn submit_block_counts_unexpected_full_block_fallback_error() {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind submit test server");
+        let address = listener.local_addr().expect("submit server address");
+        let server = std::thread::spawn(move || {
+            let responses = [
+                (
+                    "400 Bad Request",
+                    r#"{"error":"unknown or expired template_id"}"#,
+                ),
+                (
+                    "500 Internal Server Error",
+                    r#"{"error":"submit unavailable"}"#,
+                ),
+            ];
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().expect("accept daemon request");
+                let _ = read_http_request(&mut stream);
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("write daemon response");
+            }
+        });
+
+        let client = NodeClient::new(&format!("http://{address}"), "").expect("node client");
+        let job = Job {
+            id: "job-error".to_string(),
+            height: 11,
+            header_base: vec![0xAA; 92],
+            network_target: [0xBB; 32],
+            network_difficulty: 3,
+            template_id: "tmpl-error".to_string(),
+            prev_hash: None,
+            template_created_at: std::time::Instant::now(),
+            template_block: Some(std::sync::Arc::new(serde_json::json!({
+                "header": {"Height": 11, "Difficulty": 3, "Nonce": 0},
+                "txns": []
+            }))),
+        };
+
+        let err = client
+            .submit_block(&job, 42)
+            .expect_err("unexpected fallback error should surface");
+        assert!(err.to_string().contains("submit unavailable"));
+
+        let telemetry = client.template_lease_telemetry();
+        assert_eq!(telemetry.submit_expired_responses_total, 1);
+        assert_eq!(telemetry.block_submit_full_fallback_attempts_total, 1);
+        assert_eq!(telemetry.block_submit_full_fallback_accepted_total, 0);
+        assert_eq!(telemetry.block_submit_full_fallback_stale_total, 0);
+        assert_eq!(telemetry.block_submit_full_fallback_errors_total, 1);
 
         server.join().expect("submit test server thread");
     }

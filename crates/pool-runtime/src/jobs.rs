@@ -73,6 +73,10 @@ pub struct JobRuntimeSnapshot {
     #[serde(default)]
     pub block_submit_full_fallback_accepted_total: u64,
     #[serde(default)]
+    pub block_submit_full_fallback_stale_total: u64,
+    #[serde(default)]
+    pub block_submit_full_fallback_errors_total: u64,
+    #[serde(default)]
     pub last_block_submit_template_age_seconds: u64,
     #[serde(default)]
     pub max_accepted_block_template_age_seconds: u64,
@@ -541,6 +545,10 @@ impl JobManager {
                 .block_submit_full_fallback_attempts_total,
             block_submit_full_fallback_accepted_total: lease_telemetry
                 .block_submit_full_fallback_accepted_total,
+            block_submit_full_fallback_stale_total: lease_telemetry
+                .block_submit_full_fallback_stale_total,
+            block_submit_full_fallback_errors_total: lease_telemetry
+                .block_submit_full_fallback_errors_total,
             last_block_submit_template_age_seconds: lease_telemetry
                 .last_block_submit_template_age_seconds,
             max_accepted_block_template_age_seconds: lease_telemetry

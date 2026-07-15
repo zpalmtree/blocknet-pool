@@ -122,6 +122,8 @@ pub struct SubmitRuntimeSnapshot {
     #[serde(default)]
     pub candidate_rejected_total: u64,
     #[serde(default)]
+    pub candidate_stale_block_total: u64,
+    #[serde(default)]
     pub candidate_block_accepted_total: u64,
     #[serde(default)]
     pub candidate_worker_failure_total: u64,
@@ -185,6 +187,7 @@ struct SubmitDispatcher {
     candidate_worker_started: AtomicU64,
     candidate_persisted: AtomicU64,
     candidate_rejected: AtomicU64,
+    candidate_stale_block: AtomicU64,
     candidate_block_accepted: AtomicU64,
     candidate_worker_failure: AtomicU64,
 }
@@ -269,6 +272,7 @@ impl SubmitDispatcher {
             candidate_worker_started: AtomicU64::new(0),
             candidate_persisted: AtomicU64::new(0),
             candidate_rejected: AtomicU64::new(0),
+            candidate_stale_block: AtomicU64::new(0),
             candidate_block_accepted: AtomicU64::new(0),
             candidate_worker_failure: AtomicU64::new(0),
         });
@@ -373,6 +377,7 @@ impl SubmitDispatcher {
             candidate_worker_started_total: self.candidate_worker_started.load(Ordering::Relaxed),
             candidate_persisted_total: self.candidate_persisted.load(Ordering::Relaxed),
             candidate_rejected_total: self.candidate_rejected.load(Ordering::Relaxed),
+            candidate_stale_block_total: self.candidate_stale_block.load(Ordering::Relaxed),
             candidate_block_accepted_total: self.candidate_block_accepted.load(Ordering::Relaxed),
             candidate_worker_failure_total: self.candidate_worker_failure.load(Ordering::Relaxed),
             candidate_queue_depth: candidate.depth,
@@ -1163,10 +1168,15 @@ async fn run_submit_worker(
                             .fetch_add(1, Ordering::Relaxed);
                     }
                 }
-                SubmitCompletionOutcome::Finished(Err(_)) => {
+                SubmitCompletionOutcome::Finished(Err(err)) => {
                     dispatcher
                         .candidate_rejected
                         .fetch_add(1, Ordering::Relaxed);
+                    if canonical_share_reject_reason(&err.to_string()) == "stale block" {
+                        dispatcher
+                            .candidate_stale_block
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
                 }
                 SubmitCompletionOutcome::WorkerFailure(_) => {
                     dispatcher
