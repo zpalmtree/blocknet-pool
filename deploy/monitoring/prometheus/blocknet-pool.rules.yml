@@ -156,6 +156,7 @@ groups:
           or (
             increase(blocknet_pool_monitor_candidate_rejected_total[15m])
             > increase(blocknet_pool_monitor_candidate_stale_block_total[15m])
+              + increase(blocknet_pool_monitor_candidate_disproven_claims_total[15m])
           )
           or increase(blocknet_pool_monitor_candidate_worker_failure_total[15m]) > 0
         labels:
@@ -163,7 +164,7 @@ groups:
           visibility: private
         annotations:
           summary: Pool dropped a candidate before completing validation
-          description: A network-target candidate was rejected by admission control, the queue, full validation/submission, or a submit-worker failure in the last 15 minutes. Expected stale tip races are excluded.
+          description: A network-target candidate was rejected by admission control, the queue, full validation/submission, or a submit-worker failure in the last 15 minutes. Expected stale tip races and cryptographically disproven candidate claims are excluded.
 
       - alert: BlocknetPoolCandidatePipelineDiverged
         expr: >-
