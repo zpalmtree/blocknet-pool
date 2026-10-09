@@ -6379,6 +6379,48 @@ mod tests {
         ApiState::new(cfg, store, jobs, node)
     }
 
+    #[test]
+    fn cache_refresh_coalesces_miner_requests_postgres() {
+        let store = require_test_store!();
+        // Retain state outside the runtime: synchronous Postgres clients must
+        // also be dropped outside a Tokio worker.
+        let state = test_api_state(store);
+        let runtime = test_runtime();
+        for expected_loads in 1..=2 {
+            // Simulate expiration so both rounds exercise concurrent misses.
+            state.clear_miner_response_caches();
+            runtime.block_on(async {
+                let mut requests = Vec::new();
+                for _ in 0..32 {
+                    let state = state.clone();
+                    requests.push(tokio::spawn(async move {
+                        let balance = state
+                            .cached_miner_balance_payload("cache-test-miner", false)
+                            .await
+                            .unwrap();
+                        assert_eq!(balance.address, "cache-test-miner");
+                        let detail = state
+                            .cached_miner_detail_payload("cache-test-miner")
+                            .await
+                            .unwrap();
+                        assert!(!detail.found);
+                    }));
+                }
+                for request in requests {
+                    request.await.unwrap();
+                }
+            });
+            let perf = state.performance.snapshot();
+            for name in ["miner_balance_load", "miner_detail_load"] {
+                assert_eq!(perf.operations[name].count, expected_loads);
+            }
+            for name in ["miner_balance", "miner_detail"] {
+                assert_eq!(perf.caches[name].misses, expected_loads);
+                assert_eq!(perf.caches[name].hits, expected_loads * 31);
+            }
+        }
+    }
+
     fn test_runtime() -> tokio::runtime::Runtime {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
