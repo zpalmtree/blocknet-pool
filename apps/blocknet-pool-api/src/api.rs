@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use std::path::{Path as FsPath, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::{Body, Bytes};
@@ -310,6 +310,7 @@ pub(crate) struct ApiState {
     insights_cache: Arc<Mutex<InsightsCache>>,
     rejection_analytics_cache: Arc<Mutex<RejectionAnalyticsCache>>,
     stats_response_cache: Arc<Mutex<StatsResponseCache>>,
+    cache_refresh_locks: Arc<CacheRefreshLocks>,
     pending_estimate_snapshot_cache: Arc<Mutex<PendingEstimateSnapshotCache>>,
     pending_estimate_share_cache: Arc<Mutex<PendingEstimateShareCache>>,
     pending_estimate_snapshot_notify: Arc<Notify>,
@@ -353,7 +354,6 @@ struct NetworkHashrateCache {
     difficulty: Option<u64>,
     hashrate_hps: Option<f64>,
 }
-
 
 type InsightsCache = TimedValueCache<StatsInsightsResponse>;
 
@@ -418,6 +418,33 @@ struct MinerDetailPayload {
 }
 
 type MinerDetailResponseCache = TimedMapCache<MinerDetailPayload>;
+
+// Serialize cache checks and refreshes per key. Waiting requests recheck the
+// cache after the first loader completes, instead of queuing duplicate database
+// work on the blocking executor. Different miners remain independent.
+#[derive(Default)]
+struct CacheRefreshLocks {
+    entries: Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>,
+}
+
+impl CacheRefreshLocks {
+    async fn lock(&self, key: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock = {
+            let mut entries = self.entries.lock();
+            if let Some(lock) = entries.get(key).and_then(Weak::upgrade) {
+                lock
+            } else {
+                // Completed/canceled requests must not leave an ever-growing
+                // map of miner addresses. Live waiters retain their lock.
+                entries.retain(|_, lock| lock.strong_count() > 0);
+                let lock = Arc::new(tokio::sync::Mutex::new(()));
+                entries.insert(key.to_string(), Arc::downgrade(&lock));
+                lock
+            }
+        };
+        lock.lock_owned().await
+    }
+}
 
 struct TimedMapCache<T> {
     entries: HashMap<String, TimedCacheEntry<T>>,
@@ -4132,7 +4159,10 @@ impl ApiState {
             insights_cache: Arc::new(Mutex::new(InsightsCache::new())),
             rejection_analytics_cache: Arc::new(Mutex::new(RejectionAnalyticsCache::default())),
             stats_response_cache: Arc::new(Mutex::new(StatsResponseCache::new())),
-            pending_estimate_share_cache: Arc::new(Mutex::new(PendingEstimateShareCache::default())),
+            cache_refresh_locks: Arc::new(CacheRefreshLocks::default()),
+            pending_estimate_share_cache: Arc::new(
+                Mutex::new(PendingEstimateShareCache::default()),
+            ),
             pending_estimate_snapshot_cache: Arc::new(Mutex::new(
                 PendingEstimateSnapshotCache::default(),
             )),
@@ -4149,6 +4179,7 @@ impl ApiState {
     }
 
     async fn persisted_runtime_snapshot(&self) -> Option<PersistedRuntimeSnapshot> {
+        let _refresh = self.cache_refresh_locks.lock("runtime_snapshot").await;
         {
             let cache = self.live_runtime_snapshot_cache.lock();
             if let Some(value) = cache.get(LIVE_RUNTIME_SNAPSHOT_CACHE_TTL) {
@@ -4195,6 +4226,7 @@ impl ApiState {
     }
 
     async fn cached_stats_response(&self) -> anyhow::Result<StatsResponse> {
+        let _refresh = self.cache_refresh_locks.lock("stats").await;
         {
             let cache = self.stats_response_cache.lock();
             if let Some(value) = cache.get(STATS_RESPONSE_CACHE_TTL) {
@@ -4812,6 +4844,10 @@ impl ApiState {
         include_pending_estimate: bool,
     ) -> anyhow::Result<MinerBalancePayload> {
         let cache_key = format!("{address}:{include_pending_estimate}");
+        let _refresh = self
+            .cache_refresh_locks
+            .lock(&format!("balance:{cache_key}"))
+            .await;
         if let Some(cached) = {
             let mut cache = self.miner_balance_response_cache.lock();
             cache.get(
@@ -4843,6 +4879,10 @@ impl ApiState {
         address: &str,
     ) -> anyhow::Result<MinerDetailPayload> {
         let cache_key = address.to_string();
+        let _refresh = self
+            .cache_refresh_locks
+            .lock(&format!("detail:{cache_key}"))
+            .await;
         if let Some(cached) = {
             let mut cache = self.miner_detail_response_cache.lock();
             cache.get(
@@ -5088,6 +5128,7 @@ impl ApiState {
     }
 
     async fn stats_insights(&self) -> anyhow::Result<StatsInsightsResponse> {
+        let _refresh = self.cache_refresh_locks.lock("insights").await;
         {
             let cache = self.insights_cache.lock();
             if let Some(value) = cache.get(INSIGHTS_CACHE_TTL) {
@@ -5217,6 +5258,10 @@ impl ApiState {
         window: Duration,
     ) -> anyhow::Result<RejectionAnalyticsSnapshot> {
         let window_seconds = window.as_secs().max(1);
+        let _refresh = self
+            .cache_refresh_locks
+            .lock(&format!("rejections:{window_seconds}"))
+            .await;
         {
             let cache = self.rejection_analytics_cache.lock();
             if let Some(entry) = cache.entries.get(&window_seconds) {
@@ -6067,6 +6112,72 @@ fn internal_error(msg: &str, err: anyhow::Error) -> Response {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn cache_refresh_coalesces_concurrent_misses() {
+        let locks = std::sync::Arc::new(super::CacheRefreshLocks::default());
+        let loads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cached = std::sync::Arc::new(super::Mutex::new(None));
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(32));
+        let mut requests = Vec::new();
+        for _ in 0..32 {
+            let (locks, loads, cached, barrier) = (
+                locks.clone(),
+                loads.clone(),
+                cached.clone(),
+                barrier.clone(),
+            );
+            requests.push(tokio::spawn(async move {
+                barrier.wait().await;
+                let _refresh = locks.lock("detail:miner").await;
+                if let Some(value) = *cached.lock() {
+                    return value;
+                }
+                loads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                tokio::task::yield_now().await;
+                *cached.lock() = Some(42);
+                42
+            }));
+        }
+        for request in requests {
+            assert_eq!(request.await.unwrap(), 42);
+        }
+        assert_eq!(loads.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn cache_refresh_keys_are_independent_and_unused_keys_are_pruned() {
+        let locks = super::CacheRefreshLocks::default();
+        let first = locks.lock("detail:first").await;
+        let second = tokio::time::timeout(Duration::from_secs(1), locks.lock("detail:second"))
+            .await
+            .expect("different miners must not block each other");
+        drop(first);
+        drop(second);
+        let _third = locks.lock("balance:first").await;
+        assert_eq!(locks.entries.lock().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn cache_refresh_cancellation_releases_waiters() {
+        let locks = std::sync::Arc::new(super::CacheRefreshLocks::default());
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let owner_locks = locks.clone();
+        let owner = tokio::spawn(async move {
+            let _refresh = owner_locks.lock("stats").await;
+            ready_tx.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        ready_rx.await.unwrap();
+        let waiter_locks = locks.clone();
+        let waiter = tokio::spawn(async move { waiter_locks.lock("stats").await });
+        owner.abort();
+        let _ = owner.await;
+        let _guard = tokio::time::timeout(Duration::from_secs(1), waiter)
+            .await
+            .expect("canceled loader must release the key")
+            .unwrap();
+    }
+
     use std::collections::{BTreeMap, HashMap};
     use std::env;
     use std::sync::Arc;
