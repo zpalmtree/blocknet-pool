@@ -43,3 +43,39 @@ stops after a stage with an error or response over one second. Its default is
 64 requests, with pauses between stages. Run from the server for application
 latency or with `--base-url https://bntpool.com` for network-inclusive latency.
 Success at this bounded workload is not a guarantee under arbitrary overload.
+
+## Release adoption observations
+
+`scripts/observe_miner_release.py --version 0.2.17 --output <directory>` takes
+read-only samples every five minutes. It waits up to seven days for the first
+worker reporting that version, then records a full 24-hour observation window.
+It stops automatically and writes `summary.json` and `samples.jsonl`; it sends
+no notifications and changes no running pool service. `--once` captures one
+sample and can resume the same output directory later.
+
+The job needs access to the local API config, API journal, and PostgreSQL via
+`runuser -u postgres`. SQL is read-only with a two-second timeout. Version
+counts describe workers submitting shares in the last five minutes, not all
+connected miners. No addresses, IPs, credentials, or raw log messages are saved.
+HTTP 429/503 counts come from journal entries in disjoint time windows; samples
+also record the API start time so a routine restart can be identified. P99 is
+the API's rolling successful-request percentile, not a 24-hour histogram.
+Sampling errors are recorded explicitly. Summary totals cover the whole watch;
+use the timestamped samples and `first_adoption_epoch` to compare before/after.
+
+A bounded service can be started after syncing the script through the normal
+`deploy_bntpool.sh --api-only --skip-build --skip-ui-build` path (unchanged
+binary hashes preserve the running services):
+
+```sh
+sudo systemd-run --unit=seine-release-observation-0-2-17 \
+  --property=Nice=10 --property=CPUQuota=10% --property=MemoryMax=128M \
+  --property=RuntimeMaxSec=8d --property=Restart=on-failure --property=RestartSec=30s \
+  /usr/bin/python3 /opt/blocknet/blocknet-pool/scripts/observe_miner_release.py \
+  --version 0.2.17 --output /var/lib/blocknet/release-observations/seine-0.2.17
+```
+
+The transient service survives process failures but not a host reboot; rerun
+it with the same output directory to resume. It never restarts the API to test
+startup behavior. On completion, inspect the final summary and timestamped
+samples before deciding whether more tuning is warranted.
