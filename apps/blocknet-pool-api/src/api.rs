@@ -3750,11 +3750,7 @@ fn backfill_block_effort(store: &PoolStore) -> anyhow::Result<u64> {
     let missing = missing_block_effort_rounds(store.get_all_blocks()?);
     let mut updated = 0u64;
     for (round_start, mut block) in missing {
-        let round_work = store
-            .get_shares_between(round_start, block.timestamp)?
-            .into_iter()
-            .filter(|share| share.status == "verified" || share.status == "provisional")
-            .fold(0u64, |acc, share| acc.saturating_add(share.difficulty));
+        let round_work = store.accepted_work_between(round_start, block.timestamp)?;
         block.effort_pct = Some(if block.difficulty > 0 {
             (round_work as f64 / block.difficulty as f64) * 100.0
         } else {
@@ -6196,21 +6192,22 @@ mod tests {
     use crate::ui::{handle_app_fallback, is_api_request_path};
 
     use super::{
-        api_performance_route_name, apply_wallet_liquidity_to_payout_eta, backfill_round_heights,
-        block_page_item_response, build_block_reward_breakdown, checkpoint_etag, checkpoints_path,
-        checkpoints_public_url, daemon_debug_log_path, daemon_health_from_heartbeat,
-        daemon_log_commands, daemon_send_idempotency_path, estimate_unconfirmed_pending_for_miner,
-        estimated_block_reward, filter_active_workers_for_miner,
-        handle_admin_clear_address_risk_history, handle_admin_share_diagnostics, handle_health,
-        handle_miner, handle_miners, hashrate_from_stats_with_miner_ramp,
-        hashrate_from_stats_with_warmup, history_range_duration, hydrate_provisional_block_reward,
-        if_none_match_contains, load_confirmed_payout_import_txs, luck_round_response_from_db,
-        miner_balance_response, miner_has_activity, miner_hashrate_range, page_bounds,
-        parse_checkpoint_file, parse_version_triple, rejection_window_duration,
-        sort_workers_for_miner, system_time_to_unix_secs, trim_log_line, worker_hashrate_by_name,
-        worker_version_status, ApiState, ClearAddressRiskHistoryRequest, PayoutEtaResponse,
-        SearchPageQuery, DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW,
-        HASHRATE_WARMUP_WINDOW, HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY,
+        api_performance_route_name, apply_wallet_liquidity_to_payout_eta, backfill_block_effort,
+        backfill_round_heights, block_page_item_response, build_block_reward_breakdown,
+        checkpoint_etag, checkpoints_path, checkpoints_public_url, daemon_debug_log_path,
+        daemon_health_from_heartbeat, daemon_log_commands, daemon_send_idempotency_path,
+        estimate_unconfirmed_pending_for_miner, estimated_block_reward,
+        filter_active_workers_for_miner, handle_admin_clear_address_risk_history,
+        handle_admin_share_diagnostics, handle_health, handle_miner, handle_miners,
+        hashrate_from_stats_with_miner_ramp, hashrate_from_stats_with_warmup,
+        history_range_duration, hydrate_provisional_block_reward, if_none_match_contains,
+        load_confirmed_payout_import_txs, luck_round_response_from_db, miner_balance_response,
+        miner_has_activity, miner_hashrate_range, page_bounds, parse_checkpoint_file,
+        parse_version_triple, rejection_window_duration, sort_workers_for_miner,
+        system_time_to_unix_secs, trim_log_line, worker_hashrate_by_name, worker_version_status,
+        ApiState, ClearAddressRiskHistoryRequest, PayoutEtaResponse, SearchPageQuery,
+        DAEMON_LOG_LINE_LIMIT, HASHRATE_BRAND_NEW_MIN_WINDOW, HASHRATE_WARMUP_WINDOW,
+        HASHRATE_WINDOW, LIVE_RUNTIME_SNAPSHOT_META_KEY,
     };
 
     const TEST_POSTGRES_URL_ENV: &str = "BLOCKNET_POOL_TEST_POSTGRES_URL";
@@ -6522,6 +6519,57 @@ mod tests {
 
     fn add_test_block(store: &PoolStore, block: TestBlockInput<'_>) {
         store.add_block(&test_block(block)).expect("add block");
+    }
+
+    #[test]
+    fn effort_backfill_uses_exact_accepted_work_at_round_boundaries() {
+        let store = require_test_store!();
+        let start = UNIX_EPOCH + Duration::from_secs(600);
+        let end = UNIX_EPOCH + Duration::from_secs(900);
+        add_test_block(
+            &store,
+            (
+                910001,
+                "backfill-first",
+                "miner",
+                "rig",
+                100,
+                start,
+                true,
+                false,
+            ),
+        );
+        add_test_block(
+            &store,
+            (
+                910002,
+                "backfill-second",
+                "miner",
+                "rig",
+                100,
+                end,
+                true,
+                false,
+            ),
+        );
+        for (nonce, status, at) in [
+            (1, "verified", start),
+            (2, "provisional", end),
+            (3, "rejected", end),
+            (4, "", start),
+            (5, "verified", end + Duration::from_secs(1)),
+        ] {
+            add_test_share(&store, ("backfill", "miner", "rig", 10, nonce, status, at));
+        }
+        assert_eq!(store.accepted_work_between(start, end).unwrap(), 20);
+        assert_eq!(backfill_block_effort(&store).unwrap(), 1);
+        assert!(store
+            .get_block(910002)
+            .unwrap()
+            .unwrap()
+            .effort_pct
+            .is_some());
+        assert_eq!(backfill_block_effort(&store).unwrap(), 0);
     }
 
     #[test]

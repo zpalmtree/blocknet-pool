@@ -1389,6 +1389,14 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         ))
     }
 
+    pub fn accepted_work_between(&self, start: SystemTime, end: SystemTime) -> Result<u64> {
+        let row = self.conn().query_one(
+            "SELECT work FROM share_read_window($1,$2)",
+            &[&to_unix(start), &to_unix(end)],
+        )?;
+        Ok(row.get::<_, i64>(0).max(0) as u64)
+    }
+
     pub fn share_outcome_counts_since(&self, since: SystemTime) -> Result<(u64, u64)> {
         let since_ts = to_unix(since);
         let row = self.conn().query_one(
