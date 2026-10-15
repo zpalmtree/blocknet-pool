@@ -2568,29 +2568,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         offset: i64,
     ) -> Result<(Vec<PublicPayoutBatch>, u64)> {
         let mut conn = self.conn();
-        let total_row = conn.query_one(
-            "SELECT COUNT(*) FROM (
-                SELECT batch_key
-                FROM (
-                    SELECT
-                        batch_id AS batch_key
-                    FROM payouts
-                    WHERE reverted_at IS NULL
-                    UNION ALL
-                    SELECT
-                        batch_id AS batch_key
-                    FROM pending_payouts
-                    WHERE tx_hash IS NOT NULL
-                      AND BTRIM(tx_hash) <> ''
-                ) visible
-                GROUP BY batch_key
-            ) grouped",
-            &[],
-        )?;
-        let total: i64 = total_row.get(0);
-
         let rows = conn.query(
-            "WITH page_batches AS MATERIALIZED (
+            "WITH batches AS MATERIALIZED (
                 SELECT batch_key, MAX(timestamp) AS batch_ts
                 FROM (
                     SELECT batch_id AS batch_key, timestamp FROM payouts
@@ -2602,8 +2581,9 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     WHERE tx_hash IS NOT NULL AND BTRIM(tx_hash) <> ''
                 ) visible_keys
                 GROUP BY batch_key
-                ORDER BY batch_ts DESC, batch_key
-                LIMIT $1 OFFSET $2
+             ), page_batches AS MATERIALIZED (
+                SELECT batch_key,batch_ts FROM batches
+                ORDER BY batch_ts DESC,batch_key LIMIT $1 OFFSET $2
              ), visible AS (
                 SELECT
                     amount,
@@ -2612,12 +2592,13 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     timestamp,
                     1 AS confirmed,
                     batch_id AS batch_key
-                FROM payouts
+                FROM page_batches page JOIN payouts ON payouts.batch_id = page.batch_key
                 WHERE reverted_at IS NULL
-                  AND (batch_id IN (SELECT batch_key FROM page_batches)
-                       OR (batch_id IS NULL AND EXISTS (
-                           SELECT 1 FROM page_batches WHERE batch_key IS NULL
-                       )))
+                UNION ALL
+                SELECT amount,fee,tx_hash,timestamp,1 AS confirmed,batch_id AS batch_key
+                FROM payouts
+                WHERE reverted_at IS NULL AND batch_id IS NULL
+                  AND EXISTS (SELECT 1 FROM page_batches WHERE batch_key IS NULL)
                 UNION ALL
                 SELECT
                     amount,
@@ -2646,13 +2627,16 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 FROM visible
                 GROUP BY batch_key
              )
-             SELECT total_amount, total_fee, recipient_count, tx_hashes, batch_ts, confirmed
-             FROM grouped
+             SELECT total_amount, total_fee, recipient_count, tx_hashes, batch_ts, confirmed, totals.n
+             FROM (SELECT COUNT(*) AS n FROM batches) totals
+             LEFT JOIN grouped ON TRUE
              ORDER BY batch_ts DESC, batch_key",
             &[&limit.max(0), &offset.max(0)],
         )?;
+        let total: i64 = rows.first().map(|row| row.get(6)).unwrap_or(0);
         let items = rows
             .into_iter()
+            .filter(|row| row.get::<_, Option<i64>>(2).is_some())
             .map(row_to_public_payout_batch)
             .collect::<Result<Vec<_>>>()?;
 
@@ -6140,8 +6124,11 @@ mod tests {
         assert!(rows[1].confirmed);
         let (first, _) = store.get_public_payout_batches_page(1, 0).unwrap();
         assert_eq!(first[0].total_amount, 40);
-        let (empty, _) = store.get_public_payout_batches_page(0, 0).unwrap();
-        assert!(empty.is_empty());
+        for (limit, offset) in [(0, 0), (200, 100)] {
+            let (empty, total) = store.get_public_payout_batches_page(limit, offset).unwrap();
+            assert!(empty.is_empty());
+            assert_eq!(total, 4);
+        }
     }
 
     #[test]
@@ -8106,7 +8093,15 @@ mod tests {
             )
             .expect("mark started");
         store
-            .record_pending_payout_broadcast(&pending_addr, 25, 2, &pending_tx)
+            .record_pending_payout_batch_broadcast(
+                &[PendingPayoutBatchMember {
+                    address: pending_addr.clone(),
+                    amount: 25,
+                    fee: 2,
+                }],
+                &format!("batch-pending-{suffix}"),
+                &pending_tx,
+            )
             .expect("record broadcast");
 
         let (items, total) = store
