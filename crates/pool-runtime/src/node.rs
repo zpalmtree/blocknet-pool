@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -585,6 +585,35 @@ impl NodeClient {
         Ok(result)
     }
 
+    /// Errors abort the whole read; an unavailable daemon must never be treated
+    /// as evidence that a payout transaction is missing.
+    pub fn get_existing_transactions(&self, txids: &[String]) -> Result<HashSet<String>> {
+        std::thread::scope(|scope| {
+            let tasks = txids
+                .chunks(txids.len().div_ceil(16).max(1))
+                .map(|part| {
+                    scope.spawn(move || -> Result<Vec<String>> {
+                        let mut found = Vec::new();
+                        for txid in part {
+                            if self.get_tx_status_optional(txid)?.is_some() {
+                                found.push(txid.clone());
+                            }
+                        }
+                        Ok(found)
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut found = HashSet::new();
+            for task in tasks {
+                found.extend(
+                    task.join()
+                        .map_err(|_| anyhow!("transaction lookup worker panicked"))??,
+                );
+            }
+            Ok(found)
+        })
+    }
+
     pub fn get_tx_status_optional(&self, txid: &str) -> Result<Option<TxStatus>> {
         match self.get_json(&format!("/api/tx/{txid}")) {
             Ok(status) => Ok(Some(status)),
@@ -1058,6 +1087,42 @@ mod tests {
             }
         }
         String::from_utf8_lossy(&raw).into_owned()
+    }
+
+    #[test]
+    fn transaction_presence_distinguishes_missing_from_daemon_errors() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        for unavailable in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                for _ in 0..3 {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    let request = read_http_request(&mut stream);
+                    let (status, body) = if request.starts_with("GET /api/tx/found ") {
+                        ("200 OK", r#"{"confirmations":1,"in_mempool":false}"#)
+                    } else if request.starts_with("GET /api/tx/unknown ") && unavailable {
+                        ("503 Service Unavailable", "{}")
+                    } else {
+                        ("404 Not Found", "{}")
+                    };
+                    write!(stream,"HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+                }
+            });
+            let client = NodeClient::new(&format!("http://{address}"), "").unwrap();
+            let result = client.get_existing_transactions(&[
+                "found".into(),
+                "missing".into(),
+                "unknown".into(),
+            ]);
+            if unavailable {
+                assert!(result.is_err());
+            } else {
+                assert_eq!(result.unwrap(), HashSet::from(["found".to_string()]));
+            }
+            server.join().unwrap();
+        }
     }
 
     #[test]

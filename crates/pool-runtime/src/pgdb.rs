@@ -827,10 +827,20 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         conn.batch_execute(include_str!("../sql/share_read_minutes.sql"))
             .context("ensure exact minute share read summaries")?;
         conn.batch_execute(
-            "CREATE INDEX IF NOT EXISTS idx_shares_preview_time
-             ON shares(created_at) INCLUDE (miner,status,difficulty)",
+            "CREATE INDEX IF NOT EXISTS idx_shares_worker_window
+             ON shares(created_at) INCLUDE (miner,worker,status,difficulty)",
         )
         .context("ensure share preview boundary index")?;
+        // Install concurrently with scripts/index_remaining_read_windows.sql first.
+        conn.batch_execute(
+            "CREATE INDEX IF NOT EXISTS idx_block_credit_unpaid
+             ON block_credit_events(block_height,address) INCLUDE(amount,paid_amount)
+             WHERE amount > paid_amount;
+             CREATE INDEX IF NOT EXISTS idx_pool_fee_credit_unpaid
+             ON pool_fee_balance_credits(block_height,fee_address) INCLUDE(amount,paid_amount)
+             WHERE amount > paid_amount",
+        )
+        .context("ensure unpaid balance source indexes")?;
         conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS reject_reason TEXT")
             .context("ensure shares.reject_reason column")?;
         conn.batch_execute(
@@ -2325,14 +2335,23 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     }
 
     pub fn list_balance_source_summaries(&self) -> Result<Vec<BalanceSourceSummary>> {
-        let rows = self.conn().query(
-            "WITH miner_sources AS (
+        self.balance_source_summaries(false)
+    }
+
+    /// Only unsettled credit sources are needed by the balance screens.
+    pub fn list_pending_balance_source_summaries(&self) -> Result<Vec<BalanceSourceSummary>> {
+        self.balance_source_summaries(true)
+    }
+
+    fn balance_source_summaries(&self, pending_only: bool) -> Result<Vec<BalanceSourceSummary>> {
+        let sql = "WITH miner_sources AS (
                  SELECT
                      e.address AS address,
                      SUM(CASE WHEN b.orphaned THEN GREATEST(e.amount - e.paid_amount, 0) ELSE 0 END)::BIGINT AS orphan_pending,
                      SUM(CASE WHEN NOT b.orphaned THEN GREATEST(e.amount - e.paid_amount, 0) ELSE 0 END)::BIGINT AS canonical_pending
                  FROM block_credit_events e
                  JOIN blocks b ON b.height = e.block_height
+                 {miner_filter}
                  GROUP BY e.address
              ),
              fee_sources AS (
@@ -2342,6 +2361,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                      SUM(CASE WHEN NOT b.orphaned THEN GREATEST(f.amount - f.paid_amount, 0) ELSE 0 END)::BIGINT AS canonical_pending
                  FROM pool_fee_balance_credits f
                  JOIN blocks b ON b.height = f.block_height
+                 {fee_filter}
                  GROUP BY f.fee_address
              )
              SELECT
@@ -2354,9 +2374,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                  SELECT address, canonical_pending, orphan_pending FROM fee_sources
              ) sources
              GROUP BY address
-             ORDER BY address ASC",
-            &[],
-        )?;
+             ORDER BY address ASC"
+            .replace("{miner_filter}", if pending_only { "WHERE e.amount > e.paid_amount" } else { "" })
+            .replace("{fee_filter}", if pending_only { "WHERE f.amount > f.paid_amount" } else { "" });
+        let rows = self.conn().query(&sql, &[])?;
         Ok(rows
             .into_iter()
             .map(|row| BalanceSourceSummary {
@@ -6121,6 +6142,40 @@ mod tests {
         assert_eq!(first[0].total_amount, 40);
         let (empty, _) = store.get_public_payout_batches_page(0, 0).unwrap();
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn pending_balance_sources_match_complete_accounting_postgres() {
+        let Some(store) = test_store() else { return };
+        store.conn().client.batch_execute(
+            "INSERT INTO blocks(height,hash,difficulty,finder,finder_worker,reward,timestamp,confirmed,orphaned,paid_out)
+             VALUES (9912001,'pending-canonical',1,'finder','rig',100,1,TRUE,FALSE,TRUE),
+                    (9912002,'pending-orphan',1,'finder','rig',100,2,TRUE,TRUE,TRUE);
+             INSERT INTO block_credit_events(block_height,address,amount,paid_amount) VALUES
+                (9912001,'partial',100,30),(9912001,'paid',10,10),(9912001,'overpaid',10,15),
+                (9912002,'partial',50,10),(9912002,'orphan-only',90,0),
+                (9912003,'missing-block',20,0);
+             INSERT INTO pool_fee_balance_credits(block_height,fee_address,amount,paid_amount,timestamp,credited_at)
+             VALUES (9912001,'partial',10,2,1,1),(9912002,'fee-paid',10,10,2,2);"
+        ).unwrap();
+        let full = store
+            .list_balance_source_summaries()
+            .unwrap()
+            .into_iter()
+            .filter(|v| v.canonical_pending > 0 || v.orphan_pending > 0)
+            .map(|v| (v.address, v.canonical_pending, v.orphan_pending))
+            .collect::<Vec<_>>();
+        let pending = store
+            .list_pending_balance_source_summaries()
+            .unwrap()
+            .into_iter()
+            .map(|v| (v.address, v.canonical_pending, v.orphan_pending))
+            .collect::<Vec<_>>();
+        assert_eq!(pending, full);
+        assert_eq!(
+            pending,
+            vec![("orphan-only".into(), 0, 90), ("partial".into(), 78, 40)]
+        );
     }
 
     #[test]

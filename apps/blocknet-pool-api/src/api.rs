@@ -1828,7 +1828,7 @@ async fn handle_admin_balances(
         spawn_blocking_result(move || -> anyhow::Result<PagedResponse<AdminBalanceItem>> {
             let all = store.get_all_balances()?;
             let source_by_address = store
-                .list_balance_source_summaries()?
+                .list_pending_balance_source_summaries()?
                 .into_iter()
                 .map(|source| (source.address.clone(), source))
                 .collect::<HashMap<_, BalanceSourceSummary>>();
@@ -4229,7 +4229,7 @@ impl ApiState {
                 let wallet = scope.spawn(|| node.get_wallet_balance());
                 let balances = store.get_all_balances()?;
                 let source_by_address = store
-                    .list_balance_source_summaries()?
+                    .list_pending_balance_source_summaries()?
                     .into_iter()
                     .map(|source| (source.address.clone(), source))
                     .collect::<HashMap<_, BalanceSourceSummary>>();
@@ -4362,10 +4362,14 @@ impl ApiState {
                 b_latest.cmp(&a_latest)
             });
 
+            let txids = tx_rows
+                .iter()
+                .map(|(hash, _)| hash.clone())
+                .collect::<Vec<_>>();
+            let existing = node.get_existing_transactions(&txids)?;
             let mut missing_payouts = Vec::<AdminMissingCompletedPayoutIssueResponse>::new();
             for (tx_hash, rows) in tx_rows {
-                let status = node.get_tx_status_optional(&tx_hash)?;
-                if status.is_some() {
+                if existing.contains(&tx_hash) {
                     continue;
                 }
 
