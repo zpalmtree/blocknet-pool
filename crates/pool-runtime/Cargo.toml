@@ -14,6 +14,7 @@ parking_lot.workspace = true
 postgres.workspace = true
 rand.workspace = true
 reqwest.workspace = true
+ring = "0.17"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

@@ -22,6 +22,8 @@ pub mod rewards;
 
 pub mod service_state;
 
+mod shortname;
+
 pub mod stats;
 
 pub mod store;

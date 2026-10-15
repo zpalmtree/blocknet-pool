@@ -351,7 +351,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
         <div className="lookup-form" style={{ display: 'flex', gap: 10, marginBottom: 0, flexWrap: 'wrap' }}>
           <input
             type="text"
-            placeholder="Wallet address or $name"
+            placeholder="Wallet address, @name or $name"
             style={{ flex: 1, minWidth: 200 }}
             value={minerInput}
             onChange={(e) => setMinerInput(e.target.value)}

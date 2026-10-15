@@ -35,7 +35,7 @@ export function StartPage({ poolInfo }: StartPageProps) {
         <div>
           <h3>Quick Start</h3>
           <p className="section-lead">
-            Download Seine, point it at the pool, and track payouts with your wallet address.
+            Mine and track payouts with your wallet address or Blocknet ID shortname.
           </p>
         </div>
       </div>
@@ -45,7 +45,7 @@ export function StartPage({ poolInfo }: StartPageProps) {
           <span className="quickstart-step">1</span>
           <strong>Download Seine</strong>
           <p>
-            Grab the latest release from{' '}
+            Get Seine v0.2.16 or newer for shortname support from{' '}
             <a href="https://github.com/zpalmtree/seine/releases" target="_blank" rel="noopener">
               github.com/zpalmtree/seine
             </a>
@@ -57,8 +57,9 @@ export function StartPage({ poolInfo }: StartPageProps) {
           <span className="quickstart-step">2</span>
           <strong>Run it once</strong>
           <p>
-            Start with <code className="mono inline-code">./seine</code> and enter your wallet address plus the pool
-            URL.
+            Start with <code className="mono inline-code">./seine</code> and enter your wallet address or{' '}
+            <code className="mono inline-code">@name</code> / <code className="mono inline-code">$name</code>,
+            then the pool URL.
           </p>
           <div className="quickstart-inline">
             <span className="quickstart-inline-label">Pool URL</span>
@@ -85,7 +86,9 @@ export function StartPage({ poolInfo }: StartPageProps) {
       </div>
 
       <p className="quickstart-label">
-        Quick start command. Replace only <code className="mono inline-code">YOUR_BLOCKNET_ADDRESS</code>.
+        Replace <code className="mono inline-code">YOUR_BLOCKNET_ADDRESS</code> with your wallet address or{' '}
+        <code className="mono inline-code">'@yourname'</code> / <code className="mono inline-code">'$yourname'</code>.
+        Keep the quotes around shortnames so your shell passes them correctly.
       </p>
       <div className="command-copy">
         <pre className="config-block">{commandExample}</pre>
@@ -95,6 +98,11 @@ export function StartPage({ poolInfo }: StartPageProps) {
       </div>
 
       <div className="quickstart-notes">
+        <p>
+          Register a shortname at <a href="https://blocknet.id" target="_blank" rel="noopener">blocknet.id</a>.
+          Seine shows the resolved wallet address before mining and keeps it fixed until you restart mining.
+          You can also use either shortname form in <a href="/stats">My Stats</a>.
+        </p>
         <p>
           Saved config: <code className="mono inline-code">seine-data/seine.config.json</code>
         </p>

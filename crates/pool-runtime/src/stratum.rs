@@ -391,6 +391,7 @@ impl SubmitDispatcher {
 }
 
 pub struct StratumServer {
+    shortname_resolver: Arc<crate::shortname::ShortnameResolver>,
     listen_addr: SocketAddr,
     engine: Arc<PoolEngine>,
     jobs: Arc<JobManager>,
@@ -414,6 +415,7 @@ impl StratumServer {
         let (notifications, _) = broadcast::channel(NOTIFICATION_CHANNEL_CAPACITY);
         let submit_dispatcher = SubmitDispatcher::new(Arc::clone(&engine), &cfg);
         Arc::new(Self {
+            shortname_resolver: Arc::new(crate::shortname::ShortnameResolver::default()),
             listen_addr,
             engine,
             jobs,
@@ -676,6 +678,7 @@ impl StratumServer {
                             };
 
                             let login_engine = Arc::clone(&self.engine);
+                            let shortname_resolver = Arc::clone(&self.shortname_resolver);
                             let login_conn_id = conn_id.clone();
                             let login_address = params.address.trim().to_string();
                             let login_worker = params.worker.clone();
@@ -683,22 +686,23 @@ impl StratumServer {
                             let login_capabilities = params.capabilities.clone();
                             let login_hint = params.difficulty_hint;
                             let login = tokio::task::spawn_blocking(move || {
-                                login_engine.login_with_hint(
+                                let login_address = shortname_resolver.resolve(&login_address)?;
+                                let result = login_engine.login_with_hint(
                                     &login_conn_id,
-                                    login_address,
+                                    login_address.clone(),
                                     &login_worker,
                                     login_protocol_version,
                                     login_capabilities,
                                     login_hint,
-                                )
+                                )?;
+                                Ok::<_, anyhow::Error>((result, login_address))
                             })
                             .await;
 
                             match login {
-                                Ok(Ok(login_result)) => {
+                                Ok(Ok((login_result, address))) => {
                                     let worker =
                                         normalize_worker_name(params.worker.as_str());
-                                    let address = params.address.trim().to_string();
                                     let difficulty =
                                         self.engine.session_difficulty(&conn_id).unwrap_or(1);
 
@@ -733,7 +737,7 @@ impl StratumServer {
                                     }
                                 }
                                 Ok(Err(err)) => {
-                                    let _ = queue_error(&outbound, req.id, &err.to_string());
+                                    let _ = queue_error(&outbound, req.id, &format!("{err:#}"));
                                     break;
                                 }
                                 Err(err) => {
@@ -1520,6 +1524,48 @@ mod tests {
             _ => panic!("missing test address for seed {seed:#x}"),
         }
         .to_string()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tcp_shortname_login_uses_canonical_address_for_jobs_stats_and_shares() {
+        use crate::engine::JobRepository;
+        use crate::shortname::tests::{mock_resolver, ADDRESS};
+        let (mut server, jobs) = build_tcp_test_server(stratum_test_cfg()).await;
+        let (resolver, resolver_task) = mock_resolver(ADDRESS);
+        Arc::get_mut(&mut server).unwrap().shortname_resolver = Arc::new(resolver);
+        let (addr, listener_task) = start_test_tcp_listener(Arc::clone(&server)).await;
+        let (mut reader, mut writer) = connect_test_client(addr).await;
+        let job =
+            login_test_client(&mut reader, &mut writer, 1, "@ALICE", "shortname-worker").await;
+        resolver_task.join().unwrap();
+        let binding = jobs
+            .resolve_submit_job(&job.job_id, Instant::now())
+            .unwrap();
+        assert_eq!(binding.assigned_miner.as_deref(), Some(ADDRESS));
+
+        let (mut raw_reader, mut raw_writer) = connect_test_client(addr).await;
+        login_test_client(&mut raw_reader, &mut raw_writer, 2, ADDRESS, "raw-worker").await;
+        let snapshot = server.stats.snapshot();
+        assert_eq!(
+            snapshot.connected_miners, 1,
+            "shortname and address share one identity"
+        );
+        assert_eq!(snapshot.connected_workers, 2);
+
+        let nonce = nonce_with_parity(&job, false, 0);
+        send_submit(
+            &mut writer,
+            3,
+            &job.job_id,
+            nonce,
+            SleepyQueueHasher::claimed_hash_hex(nonce),
+        )
+        .await;
+        let response = read_json_line(&mut reader).await;
+        assert_eq!(response["id"], 3);
+        assert_eq!(response["status"], "ok");
+        drop((reader, writer, raw_reader, raw_writer));
+        shutdown_test_listener(listener_task, server, jobs).await;
     }
 
     async fn build_tcp_test_server(cfg: Config) -> (Arc<StratumServer>, Arc<JobManager>) {

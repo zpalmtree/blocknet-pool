@@ -277,6 +277,7 @@ Daemon log stream details:
 ## Stratum Notes
 
 - Login requires protocol v2 with declared capabilities.
+- The login `address` also accepts Blocknet ID shortnames (`@name` or `$name`, case-insensitive). Stratum verifies the signed mapping from `https://blocknet.id`, then applies normal address/network validation. Jobs, shares, balances, and payouts use the resolved full address, fixed for that connection. A new login resolves the name again; a name change never redirects an existing balance. Resolver failures reject login. Full addresses require no resolver access. The stats page also supports shortname lookups.
 - Login rejects malformed payout addresses early (base58 + checksum-compatible Blocknet stealth address validation)
 - Login requires protocol v2 + `submit_claimed_hash`; submits without `claimed_hash` are rejected.
 - Per-connection submit rate limiting is enabled.
