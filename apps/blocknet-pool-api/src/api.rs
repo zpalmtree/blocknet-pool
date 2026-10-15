@@ -3886,65 +3886,6 @@ fn backfill_round_heights(blocks: Vec<DbBlock>) -> Vec<(SystemTime, u64)> {
         .collect()
 }
 
-fn compute_luck_history(
-    store: &PoolStore,
-    mut blocks: Vec<pool_common::db::DbBlock>,
-    max_items: Option<usize>,
-) -> anyhow::Result<Vec<LuckRoundResponse>> {
-    if blocks.len() < 2 {
-        return Ok(Vec::new());
-    }
-
-    blocks.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-
-    let mut rounds = Vec::<LuckRoundResponse>::new();
-    for pair in blocks.windows(2) {
-        let prev = &pair[0];
-        let current = &pair[1];
-        let shares = store.get_shares_between(prev.timestamp, current.timestamp)?;
-        let round_work = shares
-            .into_iter()
-            .filter(|share| share.status == "verified" || share.status == "provisional")
-            .fold(0u64, |acc, share| acc.saturating_add(share.difficulty));
-
-        let duration_seconds = current
-            .timestamp
-            .duration_since(prev.timestamp)
-            .unwrap_or_default()
-            .as_secs();
-        let effort_pct = if current.difficulty > 0 {
-            (round_work as f64 / current.difficulty as f64) * 100.0
-        } else {
-            0.0
-        };
-        if current.effort_pct.is_none() {
-            let mut updated = current.clone();
-            updated.effort_pct = Some(effort_pct);
-            let _ = store.add_block(&updated);
-        }
-
-        rounds.push(LuckRoundResponse {
-            block_height: current.height,
-            block_hash: current.hash.clone(),
-            timestamp: current.timestamp,
-            effort_pct,
-            duration_seconds,
-            orphaned: current.orphaned,
-            confirmed: current.confirmed,
-        });
-    }
-
-    rounds.sort_by(|a, b| {
-        b.block_height
-            .cmp(&a.block_height)
-            .then_with(|| b.timestamp.cmp(&a.timestamp))
-    });
-    if let Some(max_items) = max_items {
-        rounds.truncate(max_items);
-    }
-    Ok(rounds)
-}
-
 fn compute_chain_aware_luck_page(
     store: &PoolStore,
     node: &NodeClient,
@@ -3952,17 +3893,16 @@ fn compute_chain_aware_luck_page(
     limit: usize,
     offset: usize,
 ) -> anyhow::Result<(Vec<LuckRoundResponse>, usize)> {
-    let block_window = (limit.saturating_add(offset)).saturating_add(1).max(2) as i64;
-    let blocks = store.get_recent_blocks_up_to(block_window, max_height)?;
-    let mut rounds = compute_luck_history(store, blocks, None)?;
-    flag_chain_mismatched_luck_rows(node, max_height, &mut rounds);
-    let total = store.get_block_count_up_to(max_height)?.saturating_sub(1) as usize;
-    let items = rounds
+    // Aggregate in Postgres; do not load and decode every share in every round
+    // or calculate skipped pages when the caller requests a later page.
+    let (rows, total) =
+        store.get_luck_rounds_page_up_to(limit as i64, offset as i64, max_height)?;
+    let mut rounds = rows
         .into_iter()
-        .skip(offset)
-        .take(limit)
+        .map(luck_round_response_from_db)
         .collect::<Vec<_>>();
-    Ok((items, total))
+    flag_chain_mismatched_luck_rows(node, max_height, &mut rounds);
+    Ok((rounds, total as usize))
 }
 
 fn compute_chain_aware_block_totals(
@@ -3974,39 +3914,13 @@ fn compute_chain_aware_block_totals(
     let (live_confirmed_blocks, live_orphaned_blocks, _live_pending_blocks) =
         store.get_block_status_counts()?;
 
-    let mut extra_orphaned_blocks = 0u64;
-    let mut confirmed_blocks_to_reclassify = 0u64;
     let recent_blocks = store.get_recent_blocks(CHAIN_AWARE_ORPHAN_LOOKBACK_BLOCKS)?;
-    for block in recent_blocks {
-        if block.orphaned {
-            continue;
-        }
-
-        let mismatch = if block.height > daemon_chain_height {
-            true
-        } else {
-            match node.get_block_by_height_optional(block.height) {
-                Ok(Some(node_block)) => node_block.hash != block.hash,
-                Ok(None) => false,
-                Err(err) => {
-                    tracing::warn!(
-                        height = block.height,
-                        error = %err,
-                        "failed to compare pool block against daemon while computing effective totals"
-                    );
-                    false
-                }
-            }
-        };
-        if !mismatch {
-            continue;
-        }
-
-        extra_orphaned_blocks = extra_orphaned_blocks.saturating_add(1);
-        if block.confirmed {
-            confirmed_blocks_to_reclassify = confirmed_blocks_to_reclassify.saturating_add(1);
-        }
-    }
+    let (extra_orphaned_blocks, confirmed_blocks_to_reclassify) =
+        count_chain_reclassifications(&recent_blocks, daemon_chain_height, &|height| {
+            Ok(node
+                .get_block_by_height_optional(height)?
+                .map(|block| block.hash))
+        })?;
 
     Ok((
         unique_total_blocks,
@@ -4015,6 +3929,55 @@ fn compute_chain_aware_block_totals(
             .max(live_orphaned_blocks)
             .saturating_add(extra_orphaned_blocks),
     ))
+}
+
+// The daemon has a single-block lookup endpoint. Bound parallel reads rather
+// than issuing up to 1024 serial HTTP requests every time the stats cache expires.
+fn count_chain_reclassifications<F>(
+    blocks: &[DbBlock],
+    chain_height: u64,
+    lookup: &F,
+) -> anyhow::Result<(u64, u64)>
+where
+    F: Fn(u64) -> anyhow::Result<Option<String>> + Sync,
+{
+    std::thread::scope(|scope| {
+        let chunk_size = blocks.len().div_ceil(8).max(1);
+        let tasks = blocks.chunks(chunk_size).map(|chunk| scope.spawn(move || {
+            let mut extra = 0u64;
+            let mut confirmed = 0u64;
+            for block in chunk {
+                if block.orphaned { continue; }
+                let mismatch = if block.height > chain_height {
+                    true
+                } else {
+                    match lookup(block.height) {
+                        Ok(Some(hash)) => hash != block.hash,
+                        Ok(None) => false,
+                        Err(err) => {
+                            tracing::warn!(height = block.height, error = %err,
+                                "failed to compare pool block against daemon while computing effective totals");
+                            false
+                        }
+                    }
+                };
+                if mismatch {
+                    extra += 1;
+                    confirmed += u64::from(block.confirmed);
+                }
+            }
+            (extra, confirmed)
+        })).collect::<Vec<_>>();
+        let mut totals = (0u64, 0u64);
+        for task in tasks {
+            let (extra, confirmed) = task
+                .join()
+                .map_err(|_| anyhow::anyhow!("chain comparison worker panicked"))?;
+            totals.0 += extra;
+            totals.1 += confirmed;
+        }
+        Ok(totals)
+    })
 }
 
 fn flag_chain_mismatched_blocks(
@@ -5460,6 +5423,7 @@ impl ApiState {
     }
 
     async fn db_totals(&self) -> anyhow::Result<DbTotals> {
+        let _refresh = self.cache_refresh_locks.lock("db_totals").await;
         let chain_height = self.node.chain_height();
         {
             let cache = self.db_totals_cache.lock();
@@ -6155,6 +6119,45 @@ fn internal_error(msg: &str, err: anyhow::Error) -> Response {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parallel_chain_checks_preserve_reclassification_rules() {
+        let blocks = (1..=6)
+            .map(|height| pool_common::db::DbBlock {
+                height,
+                hash: format!("hash-{height}"),
+                difficulty: 1,
+                finder: String::new(),
+                finder_worker: String::new(),
+                reward: 0,
+                timestamp: std::time::UNIX_EPOCH,
+                confirmed: height != 2,
+                orphaned: height == 5,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .collect::<Vec<_>>();
+        let looked_up = std::sync::Mutex::new(Vec::new());
+        let counts = super::count_chain_reclassifications(&blocks, 4, &|height| {
+            looked_up.lock().unwrap().push(height);
+            match height {
+                1 => Ok(Some("hash-1".into())),
+                2 => Ok(Some("replacement".into())),
+                3 => Ok(None),
+                4 => Err(anyhow::anyhow!("temporary daemon failure")),
+                _ => panic!("orphaned and above-tip blocks must not need a daemon lookup"),
+            }
+        })
+        .unwrap();
+        assert_eq!(counts, (2, 1));
+        let mut looked_up = looked_up.into_inner().unwrap();
+        looked_up.sort();
+        assert_eq!(looked_up, vec![1, 2, 3, 4]);
+        assert_eq!(
+            super::count_chain_reclassifications(&[], 0, &|_| Ok(None)).unwrap(),
+            (0, 0)
+        );
+    }
+
     #[tokio::test]
     async fn canceled_request_retains_blocking_query_budget_until_work_finishes() {
         let budget = std::sync::Arc::new(tokio::sync::Semaphore::new(1));

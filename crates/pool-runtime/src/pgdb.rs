@@ -406,6 +406,8 @@ CREATE INDEX IF NOT EXISTS idx_blocks_timestamp ON blocks(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_blocks_finder ON blocks(finder);
 CREATE INDEX IF NOT EXISTS idx_blocks_finder_height ON blocks(finder, height DESC);
 CREATE INDEX IF NOT EXISTS idx_blocks_unconfirmed ON blocks(confirmed, orphaned, height ASC);
+CREATE INDEX IF NOT EXISTS idx_blocks_hash ON blocks(hash);
+CREATE INDEX IF NOT EXISTS idx_blocks_timestamp_height ON blocks(timestamp DESC, height DESC);
 
 CREATE TABLE IF NOT EXISTS balances (
     address TEXT PRIMARY KEY,
@@ -769,6 +771,16 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             "ALTER TABLE payouts ADD COLUMN IF NOT EXISTS reversible BOOLEAN NOT NULL DEFAULT FALSE",
         )
         .context("ensure payouts.reversible column")?;
+        // Existing databases must first apply scripts/index_read_latency.sql
+        // concurrently. These declarations also provision empty test/new pools.
+        conn.batch_execute(
+            "CREATE INDEX IF NOT EXISTS idx_payouts_visible_batch_timestamp
+             ON payouts(batch_id, timestamp DESC) WHERE reverted_at IS NULL;
+             CREATE INDEX IF NOT EXISTS idx_shares_accepted_time_difficulty
+             ON shares(created_at) INCLUDE (difficulty)
+             WHERE status IN ('verified', 'provisional')",
+        )
+        .context("ensure API read indexes")?;
         conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS reject_reason TEXT")
             .context("ensure shares.reject_reason column")?;
         conn.batch_execute(
@@ -1594,53 +1606,53 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     }
 
     pub fn get_luck_rounds_page(&self, limit: i64, offset: i64) -> Result<(Vec<DbLuckRound>, u64)> {
+        self.get_luck_rounds_page_up_to(limit, offset, i64::MAX as u64)
+    }
+
+    pub fn get_luck_rounds_page_up_to(
+        &self,
+        limit: i64,
+        offset: i64,
+        max_height: u64,
+    ) -> Result<(Vec<DbLuckRound>, u64)> {
         let mut conn = self.conn();
-        let total_row =
-            conn.query_one("SELECT GREATEST(COUNT(*) - 1, 0)::bigint FROM blocks", &[])?;
-        let total: i64 = total_row.get(0);
+        let max_height = u64_to_i64(max_height)?;
+        let total: i64 = conn
+            .query_one(
+                "SELECT GREATEST(COUNT(*) - 1, 0)::bigint FROM blocks WHERE height <= $1",
+                &[&max_height],
+            )?
+            .get(0);
         let rows = conn.query(
-            "WITH ordered_blocks AS (
-                SELECT
-                    height,
-                    hash,
-                    difficulty,
-                    timestamp,
-                    confirmed,
-                    orphaned,
-                    lag(timestamp) OVER (ORDER BY timestamp ASC) AS prev_timestamp
+            "WITH paged_blocks AS MATERIALIZED (
+                SELECT height, hash, difficulty, timestamp, confirmed, orphaned
                 FROM blocks
-             ),
-             paged_blocks AS (
-                SELECT *
-                FROM ordered_blocks
-                WHERE prev_timestamp IS NOT NULL
-                ORDER BY height DESC
-                LIMIT $1 OFFSET $2
+                WHERE height <= $3
+                  AND (timestamp, height) > (
+                    SELECT timestamp, height FROM blocks WHERE height <= $3
+                    ORDER BY timestamp, height LIMIT 1
+                  )
+                ORDER BY height DESC LIMIT $1 OFFSET $2
              )
-             SELECT
-                pb.height,
-                pb.hash,
-                pb.difficulty,
-                pb.timestamp,
-                pb.confirmed,
-                pb.orphaned,
-                COALESCE(sw.round_work, 0)::bigint AS round_work,
-                GREATEST(pb.timestamp - pb.prev_timestamp, 0)::bigint AS duration_seconds
-             FROM paged_blocks pb
+             SELECT b.height, b.hash, b.difficulty, b.timestamp, b.confirmed, b.orphaned,
+                    COALESCE(sw.round_work, 0)::bigint,
+                    GREATEST(b.timestamp - prev.timestamp, 0)::bigint
+             FROM paged_blocks b
+             JOIN LATERAL (
+                SELECT timestamp FROM blocks
+                WHERE (timestamp, height) < (b.timestamp, b.height) AND height <= $3
+                ORDER BY timestamp DESC, height DESC LIMIT 1
+             ) prev ON TRUE
              LEFT JOIN LATERAL (
-                SELECT COALESCE(SUM(difficulty), 0)::bigint AS round_work
-                FROM shares
-                WHERE created_at >= pb.prev_timestamp
-                  AND created_at <= pb.timestamp
+                SELECT SUM(difficulty)::bigint AS round_work FROM shares
+                WHERE created_at >= prev.timestamp AND created_at <= b.timestamp
                   AND status IN ('verified', 'provisional')
              ) sw ON TRUE
-             ORDER BY pb.height DESC",
-            &[&limit.max(1), &offset.max(0)],
+             ORDER BY b.height DESC",
+            &[&limit.max(1), &offset.max(0), &max_height],
         )?;
         Ok((
-            rows.into_iter()
-                .map(|row| row_to_luck_round(&row))
-                .collect(),
+            rows.iter().map(row_to_luck_round).collect(),
             total.max(0) as u64,
         ))
     }
@@ -1652,44 +1664,28 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         if hashes.is_empty() {
             return Ok(HashMap::new());
         }
-
         let rows = self.conn().query(
-            "WITH ordered_blocks AS (
-                SELECT
-                    height,
-                    hash,
-                    difficulty,
-                    timestamp,
-                    confirmed,
-                    orphaned,
-                    lag(timestamp) OVER (ORDER BY timestamp ASC) AS prev_timestamp
-                FROM blocks
-             )
-             SELECT
-                ob.height,
-                ob.hash,
-                ob.difficulty,
-                ob.timestamp,
-                ob.confirmed,
-                ob.orphaned,
-                COALESCE(sw.round_work, 0)::bigint AS round_work,
-                GREATEST(ob.timestamp - ob.prev_timestamp, 0)::bigint AS duration_seconds
-             FROM ordered_blocks ob
+            "SELECT b.height, b.hash, b.difficulty, b.timestamp, b.confirmed, b.orphaned,
+                    COALESCE(sw.round_work, 0)::bigint,
+                    GREATEST(b.timestamp - prev.timestamp, 0)::bigint
+             FROM blocks b
+             JOIN LATERAL (
+                SELECT timestamp FROM blocks
+                WHERE (timestamp, height) < (b.timestamp, b.height)
+                ORDER BY timestamp DESC, height DESC LIMIT 1
+             ) prev ON TRUE
              LEFT JOIN LATERAL (
-                SELECT COALESCE(SUM(difficulty), 0)::bigint AS round_work
-                FROM shares
-                WHERE created_at >= ob.prev_timestamp
-                  AND created_at <= ob.timestamp
+                SELECT SUM(difficulty)::bigint AS round_work FROM shares
+                WHERE created_at >= prev.timestamp AND created_at <= b.timestamp
                   AND status IN ('verified', 'provisional')
              ) sw ON TRUE
-             WHERE ob.prev_timestamp IS NOT NULL
-               AND ob.hash = ANY($1)",
+             WHERE b.hash = ANY($1)",
             &[&hashes],
         )?;
         Ok(rows
-            .into_iter()
+            .iter()
             .map(|row| {
-                let round = row_to_luck_round(&row);
+                let round = row_to_luck_round(row);
                 (round.block_hash.clone(), round)
             })
             .collect())
@@ -2444,7 +2440,21 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let total: i64 = total_row.get(0);
 
         let rows = conn.query(
-            "WITH visible AS (
+            "WITH page_batches AS MATERIALIZED (
+                SELECT batch_key, MAX(timestamp) AS batch_ts
+                FROM (
+                    SELECT batch_id AS batch_key, timestamp FROM payouts
+                    WHERE reverted_at IS NULL
+                    UNION ALL
+                    SELECT batch_id AS batch_key,
+                           COALESCE(sent_at, send_started_at, initiated_at) AS timestamp
+                    FROM pending_payouts
+                    WHERE tx_hash IS NOT NULL AND BTRIM(tx_hash) <> ''
+                ) visible_keys
+                GROUP BY batch_key
+                ORDER BY batch_ts DESC, batch_key
+                LIMIT $1 OFFSET $2
+             ), visible AS (
                 SELECT
                     amount,
                     fee,
@@ -2454,6 +2464,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                     batch_id AS batch_key
                 FROM payouts
                 WHERE reverted_at IS NULL
+                  AND (batch_id IN (SELECT batch_key FROM page_batches)
+                       OR (batch_id IS NULL AND EXISTS (
+                           SELECT 1 FROM page_batches WHERE batch_key IS NULL
+                       )))
                 UNION ALL
                 SELECT
                     amount,
@@ -2465,6 +2479,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 FROM pending_payouts
                 WHERE tx_hash IS NOT NULL
                   AND BTRIM(tx_hash) <> ''
+                  AND (batch_id IN (SELECT batch_key FROM page_batches)
+                       OR (batch_id IS NULL AND EXISTS (
+                           SELECT 1 FROM page_batches WHERE batch_key IS NULL
+                       )))
              ),
              grouped AS (
                 SELECT
@@ -2480,8 +2498,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              )
              SELECT total_amount, total_fee, recipient_count, tx_hashes, batch_ts, confirmed
              FROM grouped
-             ORDER BY batch_ts DESC
-             LIMIT $1 OFFSET $2",
+             ORDER BY batch_ts DESC, batch_key",
             &[&limit.max(0), &offset.max(0)],
         )?;
         let items = rows
@@ -5739,6 +5756,68 @@ mod tests {
 
     fn unique_suffix() -> String {
         format!("{}-{}", std::process::id(), rand::random::<u64>())
+    }
+
+    #[test]
+    fn payout_page_selects_complete_mixed_batches_before_aggregation_postgres() {
+        let Some(store) = test_store() else { return };
+        // Run in an isolated database: this tests global pagination and counts.
+        store.conn().client.batch_execute(
+            "INSERT INTO payouts(address,amount,fee,tx_hash,timestamp,batch_id,reverted_at) VALUES
+                ('page-a1',100,10,'tx-a',100,'page-a',NULL),
+                ('page-a2',200,20,'tx-a',101,'page-a',NULL),
+                ('page-b',300,30,'tx-b',200,'page-b',NULL),
+                ('page-reverted',1000,100,'tx-old',500,'page-old',1),
+                ('page-null',40,4,'tx-null',400,NULL,NULL);
+             INSERT INTO pending_payouts(address,amount,fee,tx_hash,initiated_at,sent_at,batch_id) VALUES
+                ('page-a3',50,5,'tx-pending-a',250,300,'page-a'),
+                ('page-d',70,7,'tx-pending-d',150,150,'page-d'),
+                ('page-unsent',999,9,'',999,NULL,'page-unsent');"
+        ).unwrap();
+        let (rows, total) = store.get_public_payout_batches_page(2, 1).unwrap();
+        assert_eq!(total, 4);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].total_amount, 350);
+        assert_eq!(rows[0].total_fee, 35);
+        assert_eq!(rows[0].recipient_count, 3);
+        assert!(!rows[0].confirmed);
+        assert_eq!(rows[0].tx_hashes.len(), 2);
+        assert_eq!(rows[1].total_amount, 300);
+        assert!(rows[1].confirmed);
+        let (first, _) = store.get_public_payout_batches_page(1, 0).unwrap();
+        assert_eq!(first[0].total_amount, 40);
+        let (empty, _) = store.get_public_payout_batches_page(0, 0).unwrap();
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn luck_page_respects_tip_and_inclusive_share_boundaries_postgres() {
+        let Some(store) = test_store() else { return };
+        store.conn().client.batch_execute(
+            "INSERT INTO blocks(height,hash,difficulty,finder,finder_worker,reward,timestamp,confirmed,orphaned,paid_out)
+             VALUES (1,'luck-start',100,'test','rig',1,100,TRUE,FALSE,FALSE),
+                    (2,'luck-middle',100,'test','rig',1,200,TRUE,FALSE,FALSE),
+                    (3,'luck-end',100,'test','rig',1,300,TRUE,FALSE,FALSE);
+             INSERT INTO shares(job_id,miner,worker,difficulty,nonce,status,was_sampled,created_at)
+             VALUES ('luck-test','test','rig',10,1,'verified',FALSE,100),
+                    ('luck-test','test','rig',20,2,'provisional',FALSE,200),
+                    ('luck-test','test','rig',99,3,'rejected',FALSE,150),
+                    ('luck-test','test','rig',30,4,'verified',FALSE,300);"
+        ).unwrap();
+        let (rows, total) = store.get_luck_rounds_page_up_to(25, 0, 2).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].block_height, 2);
+        assert_eq!(rows[0].round_work, 30);
+        assert_eq!(rows[0].duration_seconds, 100);
+        let (page, total) = store.get_luck_rounds_page_up_to(1, 1, 3).unwrap();
+        assert_eq!(total, 2);
+        assert_eq!(page[0].block_height, 2);
+        let hashes = store
+            .get_luck_rounds_for_hashes(&["luck-start".into(), "luck-end".into()])
+            .unwrap();
+        assert_eq!(hashes.len(), 1);
+        assert_eq!(hashes["luck-end"].round_work, 50);
     }
 
     #[test]
