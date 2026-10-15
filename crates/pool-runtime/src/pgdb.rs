@@ -5424,14 +5424,38 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         since: SystemTime,
         bucket_secs: i64,
     ) -> Result<Vec<(i64, u64, u64)>> {
-        let rows = self.conn().query(
-            "SELECT (created_at / $3) * $3 AS bucket, SUM(difficulty)::bigint, COUNT(*)::bigint
+        let mut conn = self.conn();
+        let ready: bool = conn
+            .query_one("SELECT ready FROM share_read_state WHERE singleton", &[])?
+            .get(0);
+        let since_ts = to_unix(since);
+        let rows = if ready && bucket_secs > 0 && bucket_secs % 60 == 0 && since_ts < i64::MAX - 60
+        {
+            let full_start = since_ts / 60 * 60 + if since_ts % 60 > 0 { 60 } else { 0 };
+            conn.query(
+                "SELECT bucket,SUM(work)::bigint,SUM(n)::bigint FROM (
+                    SELECT (minute/$3)*$3 AS bucket,work,shares AS n FROM share_read_miners
+                    WHERE miner=$1 AND minute >= $4 AND status IN ('verified','provisional')
+                    UNION ALL
+                    SELECT (minute/$3)*$3,work,shares FROM share_read_deltas
+                    WHERE miner=$1 AND minute >= $4 AND status IN ('verified','provisional')
+                    UNION ALL
+                    SELECT (created_at/$3)*$3,difficulty,1 FROM shares
+                    WHERE miner=$1 AND created_at >= $2 AND created_at < $4
+                      AND status IN ('verified','provisional')
+                 ) samples GROUP BY bucket HAVING SUM(n)>0 ORDER BY bucket",
+                &[&address, &since_ts, &bucket_secs, &full_start],
+            )?
+        } else {
+            conn.query(
+                "SELECT (created_at / $3) * $3 AS bucket, SUM(difficulty)::bigint, COUNT(*)::bigint
              FROM shares
              WHERE miner = $1 AND created_at >= $2
                AND status IN ('verified','provisional')
              GROUP BY bucket ORDER BY bucket",
-            &[&address, &to_unix(since), &bucket_secs],
-        )?;
+                &[&address, &since_ts, &bucket_secs],
+            )?
+        };
         Ok(rows
             .iter()
             .map(|row| {
@@ -5778,14 +5802,16 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     ) -> Result<HashMap<String, MinerWindowStats>> {
         let mut conn = self.conn();
         let rows = conn.query(
-            "SELECT miner, COUNT(DISTINCT worker)::bigint,
-                    COALESCE(SUM(difficulty) FILTER (WHERE status IN ('verified','provisional')),0)::bigint,
-                    COUNT(*) FILTER (WHERE status IN ('verified','provisional')),
-                    MIN(created_at) FILTER (WHERE status IN ('verified','provisional')),
-                    MAX(created_at) FILTER (WHERE status IN ('verified','provisional'))
-             FROM shares
-             WHERE created_at >= $1
-             GROUP BY miner",
+            "WITH workers AS (
+                SELECT miner,worker,
+                    COALESCE(SUM(difficulty) FILTER (WHERE status IN ('verified','provisional')),0)::bigint AS work,
+                    COUNT(*) FILTER (WHERE status IN ('verified','provisional')) AS n,
+                    MIN(created_at) FILTER (WHERE status IN ('verified','provisional')) AS first_share,
+                    MAX(created_at) FILTER (WHERE status IN ('verified','provisional')) AS last_share
+                FROM shares WHERE created_at >= $1 GROUP BY miner,worker
+             )
+             SELECT miner,COUNT(*)::bigint,SUM(work)::bigint,SUM(n)::bigint,MIN(first_share),MAX(last_share)
+             FROM workers GROUP BY miner",
             &[&to_unix(since)],
         )?;
         let mut map = std::collections::HashMap::new();
@@ -6095,6 +6121,42 @@ mod tests {
         assert_eq!(first[0].total_amount, 40);
         let (empty, _) = store.get_public_payout_batches_page(0, 0).unwrap();
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn projected_miner_history_matches_raw_partial_buckets_and_updates_postgres() {
+        let Some(store) = test_store() else { return };
+        store.conn().client.batch_execute(
+            "INSERT INTO shares(job_id,miner,worker,difficulty,nonce,status,was_sampled,created_at)
+             SELECT 'history','history-miner','rig',n+1,n,
+                    CASE n % 3 WHEN 0 THEN 'verified' WHEN 1 THEN 'provisional' ELSE 'rejected' END,
+                    FALSE,n FROM generate_series(0,600) n;"
+        ).unwrap();
+        for phase in 0..3 {
+            if phase == 1 {
+                store.compact_share_read_minutes().unwrap();
+            }
+            if phase == 2 {
+                store.conn().client.batch_execute("UPDATE shares SET status='invalid' WHERE nonce % 7=0; DELETE FROM shares WHERE created_at<120;").unwrap();
+            }
+            for since in [0i64, 59, 60, 61, 119, 121, 700] {
+                for bucket in [7i64, 120, 600, 3600] {
+                    let raw = store.conn().query(
+                        "SELECT (created_at/$2)*$2 AS bucket,SUM(difficulty)::bigint,COUNT(*)::bigint
+                         FROM shares WHERE miner='history-miner' AND created_at >= $1
+                           AND status IN ('verified','provisional') GROUP BY bucket ORDER BY bucket",
+                        &[&since,&bucket]
+                    ).unwrap().into_iter().map(|row|(row.get::<_,i64>(0),row.get::<_,i64>(1) as u64,row.get::<_,i64>(2) as u64)).collect::<Vec<_>>();
+                    assert_eq!(
+                        store
+                            .hashrate_history_for_miner("history-miner", from_unix(since), bucket)
+                            .unwrap(),
+                        raw,
+                        "phase {phase}, since {since}, bucket {bucket}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

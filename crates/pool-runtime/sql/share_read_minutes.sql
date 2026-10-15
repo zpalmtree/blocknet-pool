@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS share_read_minutes (
     minute BIGINT PRIMARY KEY,
     accepted BIGINT NOT NULL, rejected BIGINT NOT NULL, work BIGINT NOT NULL
 );
+-- Apply scripts/index_share_summary_reads.sql concurrently on existing pools.
+CREATE INDEX IF NOT EXISTS idx_share_read_miners_address_time
+    ON share_read_miners(miner,minute) INCLUDE (status,shares,work);
 CREATE TABLE IF NOT EXISTS share_read_deltas (
     id BIGSERIAL PRIMARY KEY,
     minute BIGINT NOT NULL, miner TEXT NOT NULL, status TEXT NOT NULL,

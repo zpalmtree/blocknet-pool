@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -535,6 +536,55 @@ impl NodeClient {
         }
     }
 
+    /// Fetch canonical identities without transferring full blocks. The fallback
+    /// keeps pool deployments compatible with daemons during a rolling upgrade.
+    pub fn get_block_hashes(&self, heights: &[u64]) -> Result<HashMap<u64, String>> {
+        #[derive(Deserialize)]
+        struct Hashes {
+            hashes: HashMap<u64, String>,
+        }
+        let mut result = HashMap::new();
+        for chunk in heights.chunks(1024) {
+            let query = chunk
+                .iter()
+                .map(u64::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            match self.get_json::<Hashes>(&format!("/api/block-hashes?heights={query}")) {
+                Ok(response) => result.extend(response.hashes),
+                Err(err) if is_http_status(&err, 404) => {
+                    std::thread::scope(|scope| -> Result<()> {
+                        let tasks = chunk
+                            .chunks(chunk.len().div_ceil(16).max(1))
+                            .map(|part| {
+                                scope.spawn(move || -> Result<Vec<(u64, String)>> {
+                                    let mut rows = Vec::new();
+                                    for height in part {
+                                        if let Some(block) =
+                                            self.get_block_by_height_optional(*height)?
+                                        {
+                                            rows.push((*height, block.hash));
+                                        }
+                                    }
+                                    Ok(rows)
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        for task in tasks {
+                            result.extend(
+                                task.join()
+                                    .map_err(|_| anyhow!("block lookup worker panicked"))??,
+                            );
+                        }
+                        Ok(())
+                    })?;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(result)
+    }
+
     pub fn get_tx_status_optional(&self, txid: &str) -> Result<Option<TxStatus>> {
         match self.get_json(&format!("/api/tx/{txid}")) {
             Ok(status) => Ok(Some(status)),
@@ -1008,6 +1058,40 @@ mod tests {
             }
         }
         String::from_utf8_lossy(&raw).into_owned()
+    }
+
+    #[test]
+    fn block_hash_batch_and_legacy_fallback_preserve_missing_heights() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        for legacy in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                for _ in 0..if legacy { 3 } else { 1 } {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    let request = read_http_request(&mut stream);
+                    let (status, body) = if request.starts_with("GET /api/block-hashes?") {
+                        if legacy {
+                            ("404 Not Found", "{}")
+                        } else {
+                            ("200 OK", r#"{"chain_height":7,"hashes":{"7":"abcd"}}"#)
+                        }
+                    } else if request.starts_with("GET /api/block/7 ") {
+                        ("200 OK", r#"{"hash":"abcd","reward":0,"timestamp":0}"#)
+                    } else {
+                        assert!(request.starts_with("GET /api/block/8 "));
+                        ("404 Not Found", "{}")
+                    };
+                    write!(stream,"HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                }
+            });
+            let client = NodeClient::new(&format!("http://{address}"), "").unwrap();
+            assert!(client.get_block_hashes(&[]).unwrap().is_empty());
+            let hashes = client.get_block_hashes(&[7, 8]).unwrap();
+            assert_eq!(hashes, HashMap::from([(7, "abcd".to_string())]));
+            server.join().unwrap();
+        }
     }
 
     #[test]

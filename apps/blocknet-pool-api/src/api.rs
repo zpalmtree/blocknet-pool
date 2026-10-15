@@ -41,8 +41,7 @@ use pool_runtime::hashrate::{
 use pool_runtime::jobs::JobManager;
 use pool_runtime::node::{NodeClient, WalletBalance};
 use pool_runtime::payout::{
-    is_share_payout_eligible, recover_share_window_by_replay, reward_window_end, weight_shares,
-    PayoutTrustPolicy,
+    is_share_payout_eligible, recover_share_window_by_replay, reward_window_end, PayoutTrustPolicy,
 };
 use pool_runtime::pgdb::{
     BalanceSourceSummary, ConfirmedPayoutImportRecipient, ConfirmedPayoutImportTx,
@@ -1316,8 +1315,6 @@ struct RewardModeComputation {
 struct RewardModeContext<'a> {
     distributable_reward: u64,
     risky_by_address: &'a HashMap<String, bool>,
-    now: SystemTime,
-    provisional_delay: Duration,
 }
 
 #[derive(Deserialize)]
@@ -3345,24 +3342,32 @@ fn reward_participant_status(
 }
 
 fn compute_reward_mode(
-    shares: &[DbShare],
     trust_policy: PayoutTrustPolicy,
     context: &RewardModeContext<'_>,
     stats_by_address: &HashMap<String, RewardWindowAddressStats>,
 ) -> anyhow::Result<RewardModeComputation> {
-    let (weights, total_weight) = weight_shares(
-        shares,
-        context.now,
-        context.provisional_delay,
-        trust_policy,
-        |address| {
-            Ok(context
+    let mut weights = HashMap::new();
+    let mut total_weight = 0u64;
+    for (address, stats) in stats_by_address {
+        let preview = ShareWindowAddressPreview {
+            verified_shares: stats.verified_shares,
+            verified_difficulty: stats.verified_difficulty,
+            provisional_difficulty_ready: stats.provisional_difficulty_eligible,
+            ..ShareWindowAddressPreview::default()
+        };
+        if let Some(weight) = preview_weight(
+            &preview,
+            context
                 .risky_by_address
                 .get(address)
                 .copied()
-                .unwrap_or(false))
-        },
-    )?;
+                .unwrap_or(false),
+            trust_policy,
+        ) {
+            weights.insert(address.clone(), weight);
+            total_weight = total_weight.saturating_add(weight);
+        }
+    }
 
     let mut statuses = HashMap::<String, RewardParticipantStatus>::new();
     for (address, stats) in stats_by_address {
@@ -3409,18 +3414,52 @@ fn load_block_reward_window(
     store: &PoolStore,
     config: &Config,
     block: &DbBlock,
-) -> anyhow::Result<(Vec<DbShare>, RewardWindowSummary)> {
+    now: SystemTime,
+    provisional_delay: Duration,
+) -> anyhow::Result<(
+    HashMap<String, RewardWindowAddressStats>,
+    RewardWindowSummary,
+)> {
     let end = reward_window_end(store, block)?;
-    let duration = config.runtime.pplns_window_duration();
-    let start = end.checked_sub(duration).unwrap_or(UNIX_EPOCH);
-    let shares = store.get_shares_between(start, end)?;
-    let share_count = shares.len();
+    let start = end
+        .checked_sub(config.runtime.pplns_window_duration())
+        .unwrap_or(UNIX_EPOCH);
+    // Match the original raw query's second-resolution inclusive lower bound.
+    let start = UNIX_EPOCH + Duration::from_secs(system_time_to_unix_secs(start));
+    let cutoff = if provisional_delay.is_zero() {
+        Some(end.max(now))
+    } else {
+        now.checked_sub(provisional_delay)
+    };
+    let previews = store
+        .summarize_share_windows(&[(start, end)], cutoff)?
+        .pop()
+        .unwrap_or_default();
+    let share_count = previews
+        .iter()
+        .map(|preview| preview.seen_shares as usize)
+        .sum();
+    let stats = previews
+        .into_iter()
+        .map(|preview| {
+            (
+                preview.address,
+                RewardWindowAddressStats {
+                    verified_shares: preview.verified_shares,
+                    verified_difficulty: preview.verified_difficulty,
+                    provisional_shares_eligible: preview.provisional_shares_ready,
+                    provisional_difficulty_eligible: preview.provisional_difficulty_ready,
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let participant_count = stats.len();
     Ok((
-        shares,
+        stats,
         RewardWindowSummary {
             label: format!("PPLNS · {}", config.runtime.pplns_window_duration.trim()),
             share_count,
-            participant_count: 0,
+            participant_count,
         },
     ))
 }
@@ -3440,9 +3479,8 @@ fn build_block_reward_breakdown(
     let distributable_reward = block.reward.saturating_sub(fee_amount);
     let provisional_delay = config.runtime.provisional_share_delay_duration();
 
-    let (shares, mut share_window) = load_block_reward_window(store, config, &block)?;
-    let recorded_stats_by_address = collect_reward_window_stats(&shares, now, provisional_delay);
-    share_window.participant_count = recorded_stats_by_address.len();
+    let (recorded_stats_by_address, share_window) =
+        load_block_reward_window(store, config, &block, now, provisional_delay)?;
 
     let mut risky_by_address = HashMap::<String, bool>::new();
     let mut addresses_for_risk = recorded_stats_by_address
@@ -3482,26 +3520,28 @@ fn build_block_reward_breakdown(
     let reward_context = RewardModeContext {
         distributable_reward,
         risky_by_address: &risky_by_address,
-        now,
-        provisional_delay,
     };
-    let mut display_shares = shares.clone();
     let mut display_stats_by_address = recorded_stats_by_address.clone();
 
     let mut preview_mode = compute_reward_mode(
-        &display_shares,
         preview_trust_policy,
         &reward_context,
         &display_stats_by_address,
     )?;
 
     let mut payout_mode = compute_reward_mode(
-        &display_shares,
         payout_trust_policy,
         &reward_context,
         &display_stats_by_address,
     )?;
-    if !display_shares.is_empty() && payout_mode.total_weight == 0 {
+    if share_window.share_count > 0 && payout_mode.total_weight == 0 {
+        // Preserve explicit replay recovery for zero-weight windows. Ordinary
+        // breakdowns use summaries; replay alone needs the original share rows.
+        let end = reward_window_end(store, &block)?;
+        let start = end
+            .checked_sub(config.runtime.pplns_window_duration())
+            .unwrap_or(UNIX_EPOCH);
+        let mut display_shares = store.get_shares_between(start, end)?;
         match recover_share_window_by_replay(
             store,
             &mut display_shares,
@@ -3513,13 +3553,11 @@ fn build_block_reward_breakdown(
                 display_stats_by_address =
                     collect_reward_window_stats(&display_shares, now, provisional_delay);
                 preview_mode = compute_reward_mode(
-                    &display_shares,
                     preview_trust_policy,
                     &reward_context,
                     &display_stats_by_address,
                 )?;
                 payout_mode = compute_reward_mode(
-                    &display_shares,
                     payout_trust_policy,
                     &reward_context,
                     &display_stats_by_address,
@@ -3765,11 +3803,18 @@ fn compute_chain_aware_block_totals(
         store.get_block_status_counts()?;
 
     let recent_blocks = store.get_recent_blocks(CHAIN_AWARE_ORPHAN_LOOKBACK_BLOCKS)?;
+    let heights = recent_blocks
+        .iter()
+        .filter(|b| !b.orphaned && b.height <= daemon_chain_height)
+        .map(|b| b.height)
+        .collect::<Vec<_>>();
+    let hashes = node.get_block_hashes(&heights).unwrap_or_else(|err| {
+        tracing::warn!(error = %err, "failed to read canonical block identities for totals");
+        HashMap::new()
+    });
     let (extra_orphaned_blocks, confirmed_blocks_to_reclassify) =
         count_chain_reclassifications(&recent_blocks, daemon_chain_height, &|height| {
-            Ok(node
-                .get_block_by_height_optional(height)?
-                .map(|block| block.hash))
+            Ok(hashes.get(&height).cloned())
         })?;
 
     Ok((
@@ -3781,8 +3826,7 @@ fn compute_chain_aware_block_totals(
     ))
 }
 
-// The daemon has a single-block lookup endpoint. Bound parallel reads rather
-// than issuing up to 1024 serial HTTP requests every time the stats cache expires.
+// Compare against a single canonical snapshot fetched by the caller.
 fn count_chain_reclassifications<F>(
     blocks: &[DbBlock],
     chain_height: u64,
@@ -3830,39 +3874,30 @@ where
     })
 }
 
-fn parallel_chain_reads<T: Send>(items: &mut [T], check: &(impl Fn(&mut T) + Sync)) {
-    let chunk_size = items.len().div_ceil(MAX_CONCURRENT_CHAIN_READS).max(1);
-    std::thread::scope(|scope| {
-        for chunk in items.chunks_mut(chunk_size) {
-            scope.spawn(move || chunk.iter_mut().for_each(check));
-        }
-    });
-}
-
 fn flag_chain_mismatched_blocks(
     node: &NodeClient,
     daemon_chain_height: u64,
     blocks: &mut [DbBlock],
 ) {
-    parallel_chain_reads(blocks, &|block| {
-        if block.orphaned || block.height > daemon_chain_height {
-            return;
-        }
-        match node.get_block_by_height_optional(block.height) {
-            Ok(Some(node_block)) if node_block.hash != block.hash => {
-                block.confirmed = false;
-                block.orphaned = true;
+    let heights = blocks
+        .iter()
+        .filter(|b| !b.orphaned && b.height <= daemon_chain_height)
+        .map(|b| b.height)
+        .collect::<Vec<_>>();
+    match node.get_block_hashes(&heights) {
+        Ok(hashes) => {
+            for block in blocks {
+                if hashes
+                    .get(&block.height)
+                    .is_some_and(|hash| hash != &block.hash)
+                {
+                    block.confirmed = false;
+                    block.orphaned = true;
+                }
             }
-            Ok(_) => {}
-            Err(err) => {
-                tracing::warn!(
-                    height = block.height,
-                    error = %err,
-                    "failed to compare pool block against daemon for public response"
-                );
-            }
         }
-    });
+        Err(err) => tracing::warn!(error = %err, "failed to compare pool blocks against daemon"),
+    }
 }
 
 fn flag_chain_mismatched_luck_rows(
@@ -3870,25 +3905,25 @@ fn flag_chain_mismatched_luck_rows(
     daemon_chain_height: u64,
     rows: &mut [LuckRoundResponse],
 ) {
-    parallel_chain_reads(rows, &|row| {
-        if row.orphaned || row.block_height > daemon_chain_height {
-            return;
-        }
-        match node.get_block_by_height_optional(row.block_height) {
-            Ok(Some(node_block)) if node_block.hash != row.block_hash => {
-                row.confirmed = false;
-                row.orphaned = true;
+    let heights = rows
+        .iter()
+        .filter(|r| !r.orphaned && r.block_height <= daemon_chain_height)
+        .map(|r| r.block_height)
+        .collect::<Vec<_>>();
+    match node.get_block_hashes(&heights) {
+        Ok(hashes) => {
+            for row in rows {
+                if hashes
+                    .get(&row.block_height)
+                    .is_some_and(|hash| hash != &row.block_hash)
+                {
+                    row.confirmed = false;
+                    row.orphaned = true;
+                }
             }
-            Ok(_) => {}
-            Err(err) => {
-                tracing::warn!(
-                    height = row.block_height,
-                    error = %err,
-                    "failed to compare luck row against daemon for public response"
-                );
-            }
         }
-    });
+        Err(err) => tracing::warn!(error = %err, "failed to compare luck rows against daemon"),
+    }
 }
 
 fn luck_round_response_from_db(round: DbLuckRound) -> LuckRoundResponse {
@@ -4190,104 +4225,109 @@ impl ApiState {
             .trim()
             .to_string();
         spawn_blocking_result(move || {
-            let wallet_balance = node.get_wallet_balance()?;
-            let balances = store.get_all_balances()?;
-            let source_by_address = store
-                .list_balance_source_summaries()?
-                .into_iter()
-                .map(|source| (source.address.clone(), source))
-                .collect::<HashMap<_, BalanceSourceSummary>>();
-            let pending_payouts = store.get_pending_payouts()?;
-            let is_pool_fee_balance =
-                |address: &str| !fee_address.is_empty() && address.trim() == fee_address;
-            let pool_fee_paid_total = balances
-                .iter()
-                .filter(|balance| is_pool_fee_balance(&balance.address))
-                .fold(0u64, |acc, balance| acc.saturating_add(balance.paid));
-            let pool_fee_unpaid_total = balances
-                .iter()
-                .filter(|balance| is_pool_fee_balance(&balance.address))
-                .fold(0u64, |acc, balance| acc.saturating_add(balance.pending));
-            let miner_paid_total = balances
-                .iter()
-                .filter(|balance| !is_pool_fee_balance(&balance.address))
-                .fold(0u64, |acc, balance| acc.saturating_add(balance.paid));
-            let miner_unpaid_total = balances
-                .iter()
-                .filter(|balance| !is_pool_fee_balance(&balance.address))
-                .fold(0u64, |acc, balance| acc.saturating_add(balance.pending));
-            let mut clean_unpaid_count = 0usize;
-            let mut clean_unpaid_amount = 0u64;
-            let mut orphan_backed_unpaid_amount = 0u64;
-            let mut balance_source_drift_amount = 0u64;
-            let mut pool_fee_clean_unpaid_amount = 0u64;
-            let mut pool_fee_orphan_backed_unpaid_amount = 0u64;
-            let mut pool_fee_balance_source_drift_amount = 0u64;
-            for source in source_by_address.values() {
-                if is_pool_fee_balance(&source.address) {
-                    pool_fee_clean_unpaid_amount =
-                        pool_fee_clean_unpaid_amount.saturating_add(source.canonical_pending);
-                    pool_fee_orphan_backed_unpaid_amount =
-                        pool_fee_orphan_backed_unpaid_amount.saturating_add(source.orphan_pending);
-                } else {
-                    if source.canonical_pending > 0 {
-                        clean_unpaid_count = clean_unpaid_count.saturating_add(1);
+            std::thread::scope(|scope| {
+                let wallet = scope.spawn(|| node.get_wallet_balance());
+                let balances = store.get_all_balances()?;
+                let source_by_address = store
+                    .list_balance_source_summaries()?
+                    .into_iter()
+                    .map(|source| (source.address.clone(), source))
+                    .collect::<HashMap<_, BalanceSourceSummary>>();
+                let pending_payouts = store.get_pending_payouts()?;
+                let is_pool_fee_balance =
+                    |address: &str| !fee_address.is_empty() && address.trim() == fee_address;
+                let pool_fee_paid_total = balances
+                    .iter()
+                    .filter(|balance| is_pool_fee_balance(&balance.address))
+                    .fold(0u64, |acc, balance| acc.saturating_add(balance.paid));
+                let pool_fee_unpaid_total = balances
+                    .iter()
+                    .filter(|balance| is_pool_fee_balance(&balance.address))
+                    .fold(0u64, |acc, balance| acc.saturating_add(balance.pending));
+                let miner_paid_total = balances
+                    .iter()
+                    .filter(|balance| !is_pool_fee_balance(&balance.address))
+                    .fold(0u64, |acc, balance| acc.saturating_add(balance.paid));
+                let miner_unpaid_total = balances
+                    .iter()
+                    .filter(|balance| !is_pool_fee_balance(&balance.address))
+                    .fold(0u64, |acc, balance| acc.saturating_add(balance.pending));
+                let mut clean_unpaid_count = 0usize;
+                let mut clean_unpaid_amount = 0u64;
+                let mut orphan_backed_unpaid_amount = 0u64;
+                let mut balance_source_drift_amount = 0u64;
+                let mut pool_fee_clean_unpaid_amount = 0u64;
+                let mut pool_fee_orphan_backed_unpaid_amount = 0u64;
+                let mut pool_fee_balance_source_drift_amount = 0u64;
+                for source in source_by_address.values() {
+                    if is_pool_fee_balance(&source.address) {
+                        pool_fee_clean_unpaid_amount =
+                            pool_fee_clean_unpaid_amount.saturating_add(source.canonical_pending);
+                        pool_fee_orphan_backed_unpaid_amount = pool_fee_orphan_backed_unpaid_amount
+                            .saturating_add(source.orphan_pending);
+                    } else {
+                        if source.canonical_pending > 0 {
+                            clean_unpaid_count = clean_unpaid_count.saturating_add(1);
+                        }
+                        clean_unpaid_amount =
+                            clean_unpaid_amount.saturating_add(source.canonical_pending);
+                        orphan_backed_unpaid_amount =
+                            orphan_backed_unpaid_amount.saturating_add(source.orphan_pending);
                     }
-                    clean_unpaid_amount =
-                        clean_unpaid_amount.saturating_add(source.canonical_pending);
-                    orphan_backed_unpaid_amount =
-                        orphan_backed_unpaid_amount.saturating_add(source.orphan_pending);
                 }
-            }
-            for balance in &balances {
-                let source = source_by_address
-                    .get(&balance.address)
-                    .cloned()
-                    .unwrap_or_default();
-                let source_total = source
-                    .canonical_pending
-                    .saturating_add(source.orphan_pending);
-                let balance_above_sources = balance.pending.saturating_sub(source_total);
-                if is_pool_fee_balance(&balance.address) {
-                    pool_fee_balance_source_drift_amount =
-                        pool_fee_balance_source_drift_amount.saturating_add(balance_above_sources);
-                } else {
-                    balance_source_drift_amount =
-                        balance_source_drift_amount.saturating_add(balance_above_sources);
+                for balance in &balances {
+                    let source = source_by_address
+                        .get(&balance.address)
+                        .cloned()
+                        .unwrap_or_default();
+                    let source_total = source
+                        .canonical_pending
+                        .saturating_add(source.orphan_pending);
+                    let balance_above_sources = balance.pending.saturating_sub(source_total);
+                    if is_pool_fee_balance(&balance.address) {
+                        pool_fee_balance_source_drift_amount = pool_fee_balance_source_drift_amount
+                            .saturating_add(balance_above_sources);
+                    } else {
+                        balance_source_drift_amount =
+                            balance_source_drift_amount.saturating_add(balance_above_sources);
+                    }
                 }
-            }
-            let queued_amount = pending_payouts
-                .iter()
-                .fold(0u64, |acc, payout| acc.saturating_add(payout.amount));
-            let net_block_reward_total = store.get_total_confirmed_block_rewards()?;
-            let pool_fee_total = store.get_total_pool_fees()?;
+                let queued_amount = pending_payouts
+                    .iter()
+                    .fold(0u64, |acc, payout| acc.saturating_add(payout.amount));
+                let net_block_reward_total = store.get_total_confirmed_block_rewards()?;
+                let pool_fee_total = store.get_total_pool_fees()?;
 
-            Ok::<_, anyhow::Error>(AdminBalanceOverviewResponse {
-                wallet: AdminBalanceOverviewWallet {
-                    spendable: wallet_balance.spendable,
-                    pending: wallet_balance.pending,
-                    total: wallet_balance.total,
-                },
-                payouts: AdminBalanceOverviewPayouts {
-                    clean_unpaid_count,
-                    queued_count: pending_payouts.len(),
-                    queued_amount,
-                    next_sweep_at,
-                },
-                ledger: AdminBalanceOverviewLedger {
-                    miner_paid_total,
-                    miner_unpaid_total,
-                    miner_clean_unpaid_total: clean_unpaid_amount,
-                    miner_orphan_backed_unpaid_total: orphan_backed_unpaid_amount,
-                    miner_balance_source_drift_total: balance_source_drift_amount,
-                    net_block_reward_total,
-                    pool_fee_total,
-                    pool_fee_clean_unpaid_total: pool_fee_clean_unpaid_amount,
-                    pool_fee_orphan_backed_unpaid_total: pool_fee_orphan_backed_unpaid_amount,
-                    pool_fee_balance_source_drift_total: pool_fee_balance_source_drift_amount,
-                    pool_fee_balance_total: pool_fee_paid_total
-                        .saturating_add(pool_fee_unpaid_total),
-                },
+                let wallet_balance = wallet
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("wallet balance worker panicked"))??;
+                Ok::<_, anyhow::Error>(AdminBalanceOverviewResponse {
+                    wallet: AdminBalanceOverviewWallet {
+                        spendable: wallet_balance.spendable,
+                        pending: wallet_balance.pending,
+                        total: wallet_balance.total,
+                    },
+                    payouts: AdminBalanceOverviewPayouts {
+                        clean_unpaid_count,
+                        queued_count: pending_payouts.len(),
+                        queued_amount,
+                        next_sweep_at,
+                    },
+                    ledger: AdminBalanceOverviewLedger {
+                        miner_paid_total,
+                        miner_unpaid_total,
+                        miner_clean_unpaid_total: clean_unpaid_amount,
+                        miner_orphan_backed_unpaid_total: orphan_backed_unpaid_amount,
+                        miner_balance_source_drift_total: balance_source_drift_amount,
+                        net_block_reward_total,
+                        pool_fee_total,
+                        pool_fee_clean_unpaid_total: pool_fee_clean_unpaid_amount,
+                        pool_fee_orphan_backed_unpaid_total: pool_fee_orphan_backed_unpaid_amount,
+                        pool_fee_balance_source_drift_total: pool_fee_balance_source_drift_amount,
+                        pool_fee_balance_total: pool_fee_paid_total
+                            .saturating_add(pool_fee_unpaid_total),
+                    },
+                })
             })
         })
         .await
@@ -4297,101 +4337,100 @@ impl ApiState {
         &self,
     ) -> anyhow::Result<AdminReconciliationIssuesResponse> {
         let store = Arc::clone(&self.store);
-        let (orphaned_blocks, payout_rows) = spawn_blocking_result(move || {
-            Ok::<_, anyhow::Error>((
-                store.list_orphaned_block_credit_issues()?,
-                store.list_unreconciled_completed_payout_rows()?,
-            ))
-        })
-        .await?;
+        let node = Arc::clone(&self.node);
+        spawn_blocking_result(move || {
+            let orphaned_blocks = store.list_orphaned_block_credit_issues()?;
+            let payout_rows = store.list_unreconciled_completed_payout_rows()?;
 
-        let mut grouped = HashMap::<String, Vec<UnreconciledCompletedPayoutRow>>::new();
-        for row in payout_rows {
-            grouped.entry(row.tx_hash.clone()).or_default().push(row);
-        }
-
-        let mut tx_rows = grouped.into_iter().collect::<Vec<_>>();
-        tx_rows.sort_by(|(_, a), (_, b)| {
-            let a_latest = a
-                .iter()
-                .map(|row| row.timestamp)
-                .max()
-                .unwrap_or(UNIX_EPOCH);
-            let b_latest = b
-                .iter()
-                .map(|row| row.timestamp)
-                .max()
-                .unwrap_or(UNIX_EPOCH);
-            b_latest.cmp(&a_latest)
-        });
-
-        let mut missing_payouts = Vec::<AdminMissingCompletedPayoutIssueResponse>::new();
-        for (tx_hash, rows) in tx_rows {
-            let status = self.node.get_tx_status_optional(&tx_hash)?;
-            if status.is_some() {
-                continue;
+            let mut grouped = HashMap::<String, Vec<UnreconciledCompletedPayoutRow>>::new();
+            for row in payout_rows {
+                grouped.entry(row.tx_hash.clone()).or_default().push(row);
             }
 
-            let mut addresses = rows
-                .iter()
-                .map(|row| row.address.clone())
-                .collect::<HashSet<_>>()
+            let mut tx_rows = grouped.into_iter().collect::<Vec<_>>();
+            tx_rows.sort_by(|(_, a), (_, b)| {
+                let a_latest = a
+                    .iter()
+                    .map(|row| row.timestamp)
+                    .max()
+                    .unwrap_or(UNIX_EPOCH);
+                let b_latest = b
+                    .iter()
+                    .map(|row| row.timestamp)
+                    .max()
+                    .unwrap_or(UNIX_EPOCH);
+                b_latest.cmp(&a_latest)
+            });
+
+            let mut missing_payouts = Vec::<AdminMissingCompletedPayoutIssueResponse>::new();
+            for (tx_hash, rows) in tx_rows {
+                let status = node.get_tx_status_optional(&tx_hash)?;
+                if status.is_some() {
+                    continue;
+                }
+
+                let mut addresses = rows
+                    .iter()
+                    .map(|row| row.address.clone())
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                addresses.sort();
+
+                let total_amount = rows
+                    .iter()
+                    .fold(0u64, |acc, row| acc.saturating_add(row.amount));
+                let total_fee = rows
+                    .iter()
+                    .fold(0u64, |acc, row| acc.saturating_add(row.fee));
+                let linked_amount = rows
+                    .iter()
+                    .fold(0u64, |acc, row| acc.saturating_add(row.linked_amount));
+                let orphaned_linked_amount = rows.iter().fold(0u64, |acc, row| {
+                    acc.saturating_add(row.orphaned_linked_amount)
+                });
+                let latest_timestamp = rows
+                    .iter()
+                    .map(|row| row.timestamp)
+                    .max()
+                    .unwrap_or(UNIX_EPOCH);
+
+                missing_payouts.push(AdminMissingCompletedPayoutIssueResponse {
+                    tx_hash,
+                    payout_row_count: rows.len(),
+                    total_amount,
+                    total_fee,
+                    latest_timestamp,
+                    addresses,
+                    live_linked_amount: linked_amount.saturating_sub(orphaned_linked_amount),
+                    orphaned_linked_amount,
+                    unlinked_amount: total_amount.saturating_sub(linked_amount),
+                });
+            }
+
+            let orphaned_blocks = orphaned_blocks
                 .into_iter()
+                .map(|issue| AdminOrphanedBlockIssueResponse {
+                    height: issue.height,
+                    hash: issue.hash,
+                    credit_event_count: issue.credit_event_count,
+                    credited_address_count: issue.credited_address_count,
+                    remaining_credit_amount: issue.remaining_credit_amount,
+                    paid_credit_amount: issue.paid_credit_amount,
+                    remaining_fee_amount: issue.remaining_fee_amount,
+                    paid_fee_amount: issue.paid_fee_amount,
+                    pending_payout_count: issue.pending_payout_count,
+                    broadcast_pending_payout_count: issue.broadcast_pending_payout_count,
+                })
                 .collect::<Vec<_>>();
-            addresses.sort();
 
-            let total_amount = rows
-                .iter()
-                .fold(0u64, |acc, row| acc.saturating_add(row.amount));
-            let total_fee = rows
-                .iter()
-                .fold(0u64, |acc, row| acc.saturating_add(row.fee));
-            let linked_amount = rows
-                .iter()
-                .fold(0u64, |acc, row| acc.saturating_add(row.linked_amount));
-            let orphaned_linked_amount = rows.iter().fold(0u64, |acc, row| {
-                acc.saturating_add(row.orphaned_linked_amount)
-            });
-            let latest_timestamp = rows
-                .iter()
-                .map(|row| row.timestamp)
-                .max()
-                .unwrap_or(UNIX_EPOCH);
-
-            missing_payouts.push(AdminMissingCompletedPayoutIssueResponse {
-                tx_hash,
-                payout_row_count: rows.len(),
-                total_amount,
-                total_fee,
-                latest_timestamp,
-                addresses,
-                live_linked_amount: linked_amount.saturating_sub(orphaned_linked_amount),
-                orphaned_linked_amount,
-                unlinked_amount: total_amount.saturating_sub(linked_amount),
-            });
-        }
-
-        let orphaned_blocks = orphaned_blocks
-            .into_iter()
-            .map(|issue| AdminOrphanedBlockIssueResponse {
-                height: issue.height,
-                hash: issue.hash,
-                credit_event_count: issue.credit_event_count,
-                credited_address_count: issue.credited_address_count,
-                remaining_credit_amount: issue.remaining_credit_amount,
-                paid_credit_amount: issue.paid_credit_amount,
-                remaining_fee_amount: issue.remaining_fee_amount,
-                paid_fee_amount: issue.paid_fee_amount,
-                pending_payout_count: issue.pending_payout_count,
-                broadcast_pending_payout_count: issue.broadcast_pending_payout_count,
+            Ok(AdminReconciliationIssuesResponse {
+                generated_at: SystemTime::now(),
+                missing_payouts,
+                orphaned_blocks,
             })
-            .collect::<Vec<_>>();
-
-        Ok(AdminReconciliationIssuesResponse {
-            generated_at: SystemTime::now(),
-            missing_payouts,
-            orphaned_blocks,
         })
+        .await
     }
 
     async fn resolve_missing_completed_payout_issue(
@@ -7631,7 +7670,7 @@ mod tests {
                 replay_share,
                 Some(ShareReplayData {
                     job_id: "j-replay-a".to_string(),
-                    header_base: vec![1, 2, 3, 4],
+                    header_base: vec![1, 2, 3, 4, 5, 6, 7, 8],
                     network_target: [0xff; 32],
                     created_at: base,
                 }),
