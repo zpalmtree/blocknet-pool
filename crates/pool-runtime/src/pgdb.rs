@@ -824,6 +824,13 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         .context("ensure API read indexes")?;
         conn.batch_execute(include_str!("../sql/share_read_counts.sql"))
             .context("ensure exact miner share read counts")?;
+        conn.batch_execute(include_str!("../sql/share_read_minutes.sql"))
+            .context("ensure exact minute share read summaries")?;
+        conn.batch_execute(
+            "CREATE INDEX IF NOT EXISTS idx_shares_preview_time
+             ON shares(created_at) INCLUDE (miner,status,difficulty)",
+        )
+        .context("ensure share preview boundary index")?;
         conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS reject_reason TEXT")
             .context("ensure shares.reject_reason column")?;
         conn.batch_execute(
@@ -1162,6 +1169,85 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(rows.into_iter().map(row_to_share).collect())
     }
 
+    /// Summarize overlapping PPLNS windows without materializing raw shares or
+    /// rescanning their overlap. Split at every window/delay boundary, then add
+    /// each exact segment to the windows containing it.
+    pub fn summarize_share_windows(
+        &self,
+        windows: &[(SystemTime, SystemTime)],
+        provisional_ready_cutoff: Option<SystemTime>,
+    ) -> Result<Vec<Vec<ShareWindowAddressPreview>>> {
+        if windows.is_empty() {
+            return Ok(Vec::new());
+        }
+        let starts = windows
+            .iter()
+            .map(|(start, _)| {
+                let seconds = to_unix(*start);
+                if start
+                    .duration_since(UNIX_EPOCH)
+                    .is_ok_and(|value| value.subsec_nanos() > 0)
+                {
+                    seconds
+                        .checked_add(1)
+                        .context("share window start overflow")
+                } else {
+                    Ok(seconds)
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let ends = windows
+            .iter()
+            .map(|(_, end)| {
+                to_unix(*end)
+                    .checked_add(1)
+                    .context("share window end overflow")
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let cutoff = provisional_ready_cutoff.map(to_unix);
+        let rows = self.conn().query(
+            "WITH windows AS (
+                SELECT (ordinality-1)::bigint AS idx,start_at,end_at
+                FROM unnest($1::bigint[],$2::bigint[]) WITH ORDINALITY AS w(start_at,end_at,ordinality)
+             ), boundaries AS (
+                SELECT start_at AS t FROM windows UNION SELECT end_at FROM windows
+                UNION SELECT $3::bigint+1 WHERE $3::bigint IS NOT NULL
+                    AND $3::bigint >= (SELECT MIN(start_at) FROM windows)
+                    AND $3::bigint < (SELECT MAX(end_at) FROM windows)-1
+             ), segments AS (
+                SELECT t AS start_at,LEAD(t) OVER (ORDER BY t) AS end_at FROM boundaries
+             ), summaries AS MATERIALIZED (
+                SELECT s.start_at,s.end_at,p.* FROM segments s
+                CROSS JOIN LATERAL share_read_address_window(s.start_at,s.end_at-1) p
+                WHERE s.end_at > s.start_at AND EXISTS (
+                    SELECT 1 FROM windows w WHERE s.start_at >= w.start_at AND s.end_at <= w.end_at
+                )
+             )
+             SELECT w.idx,p.address,SUM(p.share_count)::bigint,
+                    COALESCE(SUM(p.share_count) FILTER (WHERE p.share_status IN ('','verified')),0)::bigint,
+                    COALESCE(SUM(p.share_work) FILTER (WHERE p.share_status IN ('','verified')),0)::bigint,
+                    COALESCE(SUM(p.share_count) FILTER (WHERE p.share_status='provisional' AND p.end_at-1 <= $3),0)::bigint,
+                    COALESCE(SUM(p.share_work) FILTER (WHERE p.share_status='provisional' AND p.end_at-1 <= $3),0)::bigint,
+                    COALESCE(SUM(p.share_count) FILTER (WHERE p.share_status='provisional' AND ($3 IS NULL OR p.start_at > $3)),0)::bigint
+             FROM windows w JOIN summaries p ON p.start_at >= w.start_at AND p.end_at <= w.end_at
+             GROUP BY w.idx,p.address ORDER BY w.idx,p.address",
+            &[&starts,&ends,&cutoff],
+        )?;
+        let mut results = vec![Vec::new(); windows.len()];
+        for row in rows {
+            results[row.get::<_, i64>(0) as usize].push(ShareWindowAddressPreview {
+                address: row.get(1),
+                seen_shares: row.get::<_, i64>(2).max(0) as u64,
+                verified_shares: row.get::<_, i64>(3).max(0) as u64,
+                verified_difficulty: row.get::<_, i64>(4).max(0) as u64,
+                provisional_shares_ready: row.get::<_, i64>(5).max(0) as u64,
+                provisional_difficulty_ready: row.get::<_, i64>(6).max(0) as u64,
+                provisional_shares_delayed: row.get::<_, i64>(7).max(0) as u64,
+            });
+        }
+        Ok(results)
+    }
+
     #[cfg(test)]
     fn summarize_shares_between(
         &self,
@@ -1275,10 +1361,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     ) -> Result<(u64, u64, Option<SystemTime>, Option<SystemTime>)> {
         let since_ts = to_unix(since);
         let row = self.conn().query_one(
-            "SELECT COALESCE(SUM(difficulty),0)::bigint, COUNT(*)::bigint, MIN(created_at), MAX(created_at)
-             FROM shares
-             WHERE created_at >= $1
-               AND status IN ('verified','provisional')",
+            "SELECT w.work,w.accepted,
+                (SELECT MIN(created_at) FROM shares WHERE created_at >= $1 AND status IN ('verified','provisional')),
+                (SELECT MAX(created_at) FROM shares WHERE created_at >= $1 AND status IN ('verified','provisional'))
+             FROM share_read_window($1,9223372036854775807) w",
             &[&since_ts],
         )?;
         let total_diff: i64 = row.get(0);
@@ -1296,11 +1382,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     pub fn share_outcome_counts_since(&self, since: SystemTime) -> Result<(u64, u64)> {
         let since_ts = to_unix(since);
         let row = self.conn().query_one(
-            "SELECT
-                (SELECT COUNT(*) FROM shares WHERE created_at >= $1
-                 AND status IN ('verified','provisional')),
-                (SELECT COUNT(*) FROM shares WHERE created_at >= $1
-                 AND status NOT IN ('verified','provisional'))",
+            "SELECT accepted,rejected FROM share_read_window($1,9223372036854775807)",
             &[&since_ts],
         )?;
         let accepted: i64 = row.get(0);
@@ -1695,9 +1777,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 ORDER BY timestamp DESC, height DESC LIMIT 1
              ) prev ON TRUE
              LEFT JOIN LATERAL (
-                SELECT SUM(difficulty)::bigint AS round_work FROM shares
-                WHERE created_at >= prev.timestamp AND created_at <= b.timestamp
-                  AND status IN ('verified', 'provisional')
+                SELECT work AS round_work FROM share_read_window(prev.timestamp,b.timestamp)
              ) sw ON TRUE
              ORDER BY b.height DESC",
             &[&limit.max(1), &offset.max(0), &max_height],
@@ -1726,9 +1806,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 ORDER BY timestamp DESC, height DESC LIMIT 1
              ) prev ON TRUE
              LEFT JOIN LATERAL (
-                SELECT SUM(difficulty)::bigint AS round_work FROM shares
-                WHERE created_at >= prev.timestamp AND created_at <= b.timestamp
-                  AND status IN ('verified', 'provisional')
+                SELECT work AS round_work FROM share_read_window(prev.timestamp,b.timestamp)
              ) sw ON TRUE
              WHERE b.hash = ANY($1)",
             &[&hashes],
@@ -5652,6 +5730,48 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         )
     }
 
+    pub fn compact_share_read_minutes(&self) -> Result<u64> {
+        let updated = self.conn().execute(
+            "WITH taken AS (
+                DELETE FROM share_read_deltas WHERE id IN (
+                    SELECT id FROM share_read_deltas
+                    WHERE EXISTS (SELECT 1 FROM share_read_state WHERE singleton AND ready)
+                    ORDER BY id LIMIT 5000 FOR UPDATE SKIP LOCKED
+                ) RETURNING minute,miner,status,shares,work
+             ), by_miner AS (
+                SELECT minute,miner,status,SUM(shares)::bigint AS shares,SUM(work)::bigint AS work
+                FROM taken GROUP BY minute,miner,status
+             ), applied AS (
+                INSERT INTO share_read_miners(minute,miner,status,shares,work)
+                SELECT minute,miner,status,shares,work FROM by_miner ORDER BY minute,miner,status
+                ON CONFLICT (minute,miner,status) DO UPDATE SET
+                    shares=share_read_miners.shares+EXCLUDED.shares,
+                    work=share_read_miners.work+EXCLUDED.work
+                RETURNING 1
+             )
+             INSERT INTO share_read_minutes(minute,accepted,rejected,work)
+             SELECT minute,
+                    COALESCE(SUM(shares) FILTER (WHERE status IN ('verified','provisional')),0)::bigint,
+                    COALESCE(SUM(shares) FILTER (WHERE status NOT IN ('verified','provisional')),0)::bigint,
+                    COALESCE(SUM(work) FILTER (WHERE status IN ('verified','provisional')),0)::bigint
+             FROM taken WHERE (SELECT COUNT(*) FROM applied) >= 0
+             GROUP BY minute ORDER BY minute
+             ON CONFLICT (minute) DO UPDATE SET
+                accepted=share_read_minutes.accepted+EXCLUDED.accepted,
+                rejected=share_read_minutes.rejected+EXCLUDED.rejected,
+                work=share_read_minutes.work+EXCLUDED.work", &[]
+        )?;
+        self.conn().execute(
+            "DELETE FROM share_read_miners WHERE (minute,miner,status) IN (
+                SELECT minute,miner,status FROM share_read_miners WHERE shares=0 AND work=0 LIMIT 5000
+             ) AND shares=0 AND work=0", &[])?;
+        self.conn().execute(
+            "DELETE FROM share_read_minutes WHERE minute IN (
+                SELECT minute FROM share_read_minutes WHERE accepted=0 AND rejected=0 AND work=0 LIMIT 5000
+             ) AND accepted=0 AND rejected=0 AND work=0", &[])?;
+        Ok(updated)
+    }
+
     pub fn miner_window_stats_since(
         &self,
         since: SystemTime,
@@ -5975,6 +6095,189 @@ mod tests {
         assert_eq!(first[0].total_amount, 40);
         let (empty, _) = store.get_public_payout_batches_page(0, 0).unwrap();
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn batched_share_windows_match_raw_previews_and_legacy_status_postgres() {
+        let Some(store) = test_store() else { return };
+        store.conn().client.batch_execute(
+            "INSERT INTO shares(job_id,miner,worker,difficulty,nonce,status,was_sampled,created_at)
+             SELECT 'preview','miner-'||(n % 3),'rig',n+1,n,
+                    CASE n % 4 WHEN 0 THEN '' WHEN 1 THEN 'verified' WHEN 2 THEN 'provisional' ELSE 'invalid' END,
+                    FALSE,n FROM generate_series(0,600) n;"
+        ).unwrap();
+        let windows = [
+            (0, 120),
+            (60, 300),
+            (120, 180),
+            (119, 121),
+            (300, 299),
+            (600, 600),
+            (60, 300),
+        ]
+        .map(|(start, end)| (from_unix(start), from_unix(end)));
+        for phase in 0..3 {
+            if phase == 1 {
+                store.compact_share_read_minutes().unwrap();
+            }
+            if phase == 2 {
+                store.conn().client.batch_execute(
+                    "UPDATE shares SET status='rejected',difficulty=difficulty+5 WHERE nonce % 7=0;
+                     UPDATE shares SET miner='changed',created_at=created_at+60 WHERE nonce % 11=0;
+                     DELETE FROM shares WHERE created_at < 10;"
+                ).unwrap();
+            }
+            for cutoff in [
+                None,
+                Some(from_unix(0)),
+                Some(from_unix(119)),
+                Some(from_unix(120)),
+                Some(from_unix(999)),
+            ] {
+                let summaries = store.summarize_share_windows(&windows, cutoff).unwrap();
+                for (index, (start, end)) in windows.iter().enumerate() {
+                    assert_eq!(
+                        summaries[index],
+                        store
+                            .summarize_shares_between(*start, *end, cutoff)
+                            .unwrap(),
+                        "phase {phase}, window {index}, cutoff {cutoff:?}"
+                    );
+                }
+            }
+        }
+        assert!(store.summarize_share_windows(&[], None).unwrap().is_empty());
+        let fractional = store
+            .summarize_share_windows(
+                &[(from_unix(59) + Duration::from_millis(500), from_unix(60))],
+                Some(from_unix(60)),
+            )
+            .unwrap();
+        // Share 60 is legacy verified; mutation moved rejected share 0 to 60.
+        // The fractional lower bound excludes share 59.
+        assert_eq!(fractional[0].iter().map(|p| p.seen_shares).sum::<u64>(), 2);
+        assert_eq!(
+            fractional[0]
+                .iter()
+                .map(|p| p.verified_difficulty)
+                .sum::<u64>(),
+            61
+        );
+    }
+
+    #[test]
+    fn minute_read_windows_match_raw_shares_before_and_after_mutations_postgres() {
+        let Some(store) = test_store() else { return };
+        store.conn().client.batch_execute(
+            "INSERT INTO shares(job_id,miner,worker,difficulty,nonce,status,was_sampled,created_at)
+             SELECT 'minutes','minute-miner','rig',n+1,n,
+                    CASE n % 3 WHEN 0 THEN 'verified' WHEN 1 THEN 'provisional' ELSE 'invalid' END,
+                    FALSE,n FROM generate_series(0,300) n;"
+        ).unwrap();
+        let check = || {
+            for start in [0i64, 1, 59, 60, 61, 119, 120, 121, 300, 301] {
+                for end in [
+                    start - 1,
+                    start,
+                    start + 1,
+                    start + 59,
+                    start + 60,
+                    start + 180,
+                    400,
+                ] {
+                    let row = store.conn().query_one(
+                        "SELECT w.accepted,w.rejected,w.work,r.a,r.r,r.w
+                         FROM share_read_window($1,$2) w CROSS JOIN LATERAL (
+                            SELECT COUNT(*) FILTER (WHERE status IN ('verified','provisional')) AS a,
+                                COUNT(*) FILTER (WHERE status NOT IN ('verified','provisional')) AS r,
+                                COALESCE(SUM(difficulty) FILTER (WHERE status IN ('verified','provisional')),0)::bigint AS w
+                            FROM shares WHERE created_at >= $1 AND created_at <= $2
+                         ) r", &[&start,&end]
+                    ).unwrap();
+                    for column in 0..3 {
+                        assert_eq!(
+                            row.get::<_, i64>(column),
+                            row.get::<_, i64>(column + 3),
+                            "window {start}..{end}, column {column}"
+                        );
+                    }
+                }
+            }
+        };
+        check();
+        store.compact_share_read_minutes().unwrap();
+        check();
+        store
+            .conn()
+            .client
+            .batch_execute(
+                "UPDATE shares SET status='rejected',difficulty=difficulty+10 WHERE nonce % 5=0;
+             UPDATE shares SET miner='moved',created_at=created_at+60 WHERE nonce % 7=0;
+             DELETE FROM shares WHERE created_at < 60;",
+            )
+            .unwrap();
+        check();
+        store.compact_share_read_minutes().unwrap();
+        store.compact_share_read_minutes().unwrap();
+        check();
+        store
+            .conn()
+            .client
+            .batch_execute("BEGIN; UPDATE shares SET status='verified'; ROLLBACK;")
+            .unwrap();
+        check();
+        store
+            .conn()
+            .client
+            .batch_execute("TRUNCATE shares")
+            .unwrap();
+        check();
+    }
+
+    #[test]
+    fn minute_read_backfill_preserves_late_commits_postgres() {
+        let Some(store) = test_store() else { return };
+        store
+            .conn()
+            .client
+            .batch_execute(
+                "UPDATE share_read_state SET ready=FALSE;
+             INSERT INTO shares(job_id,miner,worker,difficulty,nonce,status,was_sampled,created_at)
+             VALUES ('base','base','rig',10,1,'verified',FALSE,120);",
+            )
+            .unwrap();
+        {
+            let mut writer = store.conns[0].lock();
+            let mut write_tx = writer.transaction().unwrap();
+            write_tx.batch_execute(
+                "INSERT INTO shares(job_id,miner,worker,difficulty,nonce,status,was_sampled,created_at)
+                 VALUES ('late','late','rig',20,2,'provisional',FALSE,130);"
+            ).unwrap();
+            let mut reader = store.conns[1].lock();
+            let mut tx = reader.transaction().unwrap();
+            tx.batch_execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ; SELECT ready FROM share_read_state WHERE singleton FOR UPDATE;").unwrap();
+            let migration = include_str!("../../../scripts/backfill_share_read_minutes.sql");
+            let backfill = migration
+                .split("\\else\n")
+                .nth(1)
+                .unwrap()
+                .split("-- The same snapshot")
+                .next()
+                .unwrap();
+            tx.batch_execute(backfill).unwrap();
+            write_tx.commit().unwrap();
+            tx.batch_execute("DELETE FROM share_read_deltas; UPDATE share_read_state SET ready=TRUE WHERE singleton;").unwrap();
+            tx.commit().unwrap();
+        }
+        for _ in 0..2 {
+            let row = store
+                .conn()
+                .query_one("SELECT accepted,work FROM share_read_window(120,179)", &[])
+                .unwrap();
+            assert_eq!(row.get::<_, i64>(0), 2);
+            assert_eq!(row.get::<_, i64>(1), 30);
+            store.compact_share_read_minutes().unwrap();
+        }
     }
 
     #[test]

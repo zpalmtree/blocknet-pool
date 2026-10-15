@@ -58,9 +58,7 @@ use pool_runtime::store::PoolStore;
 use pool_runtime::telemetry::{
     ApiPerformanceSnapshot, NamedCacheCounterTracker, NamedTimedOperationTracker,
 };
-use pool_runtime::validation::{
-    is_provisional_share_status, is_verified_share_status, ValidationSnapshot,
-};
+use pool_runtime::validation::{is_verified_share_status, ValidationSnapshot};
 use pool_runtime::wallet_send_journal::{
     aggregate_wallet_send_recipients, decode_wallet_send_body, WalletSendIdempotencyJournal,
 };
@@ -79,6 +77,7 @@ const INSIGHTS_CACHE_TTL: Duration = Duration::from_secs(30);
 const REJECTION_ANALYTICS_CACHE_TTL: Duration = Duration::from_secs(30);
 const STATS_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(15);
 const CHAIN_AWARE_ORPHAN_LOOKBACK_BLOCKS: i64 = 1024;
+const MAX_CONCURRENT_CHAIN_READS: usize = 16;
 const MINER_BALANCE_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(5);
 const MINER_DETAIL_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(10);
 const MINER_BALANCE_RESPONSE_CACHE_MAX_ENTRIES: usize = 2048;
@@ -104,13 +103,6 @@ const MINER_PENDING_ESTIMATE_STALE_TTL: Duration = Duration::from_secs(60);
 const MINER_PENDING_ESTIMATE_HOT_WINDOW: Duration = Duration::from_secs(60);
 const PENDING_ESTIMATE_SNAPSHOT_WAIT_TIMEOUT: Duration = Duration::from_secs(15);
 const PENDING_ESTIMATE_SNAPSHOT_MAX_WAIT_ATTEMPTS: u32 = 3;
-// The snapshot re-reads the full PPLNS share window (hundreds of thousands of
-// rows) on every refresh. Cached rows older than the tail overlap are treated
-// as immutable; the tail is refetched because share statuses can still change
-// shortly after submission (audits, provisional promotion), and a periodic
-// full reload bounds any residual status staleness.
-const PENDING_ESTIMATE_SHARE_CACHE_FULL_RELOAD_AFTER: Duration = Duration::from_secs(15 * 60);
-const PENDING_ESTIMATE_SHARE_CACHE_TAIL_OVERLAP: Duration = Duration::from_secs(60 * 60);
 const LOCAL_MONITOR_SOURCE: &str = "local";
 const CLOUDFLARE_MONITOR_SOURCE: &str = "cloudflare";
 const PERF_SUCCESS_LOG_SAMPLE_RATE: u64 = 128;
@@ -313,7 +305,6 @@ pub(crate) struct ApiState {
     stats_response_cache: Arc<Mutex<StatsResponseCache>>,
     cache_refresh_locks: Arc<CacheRefreshLocks>,
     pending_estimate_snapshot_cache: Arc<Mutex<PendingEstimateSnapshotCache>>,
-    pending_estimate_share_cache: Arc<Mutex<PendingEstimateShareCache>>,
     pending_estimate_snapshot_notify: Arc<Notify>,
     miner_balance_response_cache: Arc<Mutex<MinerBalanceResponseCache>>,
     miner_detail_response_cache: Arc<Mutex<MinerDetailResponseCache>>,
@@ -983,8 +974,11 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
             interval.tick().await;
             let store = Arc::clone(&count_state.store);
             let started = Instant::now();
-            let result =
-                spawn_blocking_result(move || store.compact_miner_share_count_deltas()).await;
+            let result = spawn_blocking_result(move || {
+                store.compact_miner_share_count_deltas()?;
+                store.compact_share_read_minutes()
+            })
+            .await;
             count_state.performance.tasks.record(
                 "share_count_compaction",
                 started.elapsed(),
@@ -2833,12 +2827,6 @@ struct PreparedPendingEstimateBlock {
     previews: Vec<ShareWindowAddressPreview>,
 }
 
-struct PendingEstimateDurationWindow {
-    index: usize,
-    start: SystemTime,
-    end: SystemTime,
-}
-
 fn collect_address_preview_stats_from_summary(
     preview: Option<&ShareWindowAddressPreview>,
     risky: bool,
@@ -2860,179 +2848,37 @@ fn collect_address_preview_stats_from_summary(
     }
 }
 
-fn update_window_preview_for_share(
-    preview: &mut ShareWindowAddressPreview,
-    share: &DbShare,
-    provisional_ready_cutoff: Option<SystemTime>,
-    add: bool,
-) {
-    let apply = |value: &mut u64, delta: u64| {
-        if add {
-            *value = value.saturating_add(delta);
-        } else {
-            *value = value.saturating_sub(delta);
-        }
-    };
-
-    apply(&mut preview.seen_shares, 1);
-    if is_verified_share_status(&share.status) {
-        apply(&mut preview.verified_shares, 1);
-        apply(&mut preview.verified_difficulty, share.difficulty);
-    } else if is_provisional_share_status(&share.status) {
-        let ready = provisional_ready_cutoff
-            .map(|cutoff| share.created_at <= cutoff)
-            .unwrap_or(false);
-        if ready {
-            apply(&mut preview.provisional_shares_ready, 1);
-            apply(&mut preview.provisional_difficulty_ready, share.difficulty);
-        } else {
-            apply(&mut preview.provisional_shares_delayed, 1);
-        }
-    }
-}
-
-#[derive(Default)]
-struct PendingEstimateShareCache {
-    loaded_at: Option<Instant>,
-    span_start: Option<SystemTime>,
-    span_end: Option<SystemTime>,
-    shares: Vec<DbShare>,
-}
-
-fn load_estimate_shares_cached(
-    store: &PoolStore,
-    cache: Option<&Mutex<PendingEstimateShareCache>>,
-    min_start: SystemTime,
-    max_end: SystemTime,
-) -> anyhow::Result<Vec<DbShare>> {
-    let Some(cache) = cache else {
-        return store.get_shares_between(min_start, max_end);
-    };
-
-    let mut guard = cache.lock();
-    let now = Instant::now();
-    let reusable = guard
-        .loaded_at
-        .is_some_and(|at| now.duration_since(at) < PENDING_ESTIMATE_SHARE_CACHE_FULL_RELOAD_AFTER)
-        && guard.span_start.is_some_and(|start| start <= min_start)
-        && guard.span_end.is_some();
-
-    if !reusable {
-        let shares = store.get_shares_between(min_start, max_end)?;
-        guard.loaded_at = Some(now);
-        guard.span_start = Some(min_start);
-        guard.span_end = Some(max_end);
-        guard.shares = shares.clone();
-        return Ok(shares);
-    }
-
-    let span_end = guard.span_end.expect("checked above");
-    let tail_start = span_end
-        .checked_sub(PENDING_ESTIMATE_SHARE_CACHE_TAIL_OVERLAP)
-        .unwrap_or(UNIX_EPOCH)
-        .max(min_start);
-    let fetched = store.get_shares_between(tail_start, max_end)?;
-    guard
-        .shares
-        .retain(|share| share.created_at >= min_start && share.created_at < tail_start);
-    guard.shares.extend(fetched);
-    guard.span_start = Some(min_start);
-    guard.span_end = Some(max_end);
-    Ok(guard.shares.clone())
-}
-
 fn prepare_duration_pending_estimate_blocks(
     store: &PoolStore,
     blocks: Vec<DbBlock>,
     window_duration: Duration,
     provisional_ready_cutoff: Option<SystemTime>,
     chain_height: u64,
-    share_cache: Option<&Mutex<PendingEstimateShareCache>>,
 ) -> anyhow::Result<Vec<PreparedPendingEstimateBlock>> {
     if blocks.is_empty() {
         return Ok(Vec::new());
     }
-
     let latest_share_timestamps = store.latest_share_timestamps_for_block_hashes(
-        &blocks.iter().map(|b| b.hash.clone()).collect::<Vec<_>>(),
-    )?;
-    let mut windows = Vec::<PendingEstimateDurationWindow>::with_capacity(blocks.len());
-    let mut min_start: Option<SystemTime> = None;
-    let mut max_end: Option<SystemTime> = None;
-
-    for (index, block) in blocks.iter().enumerate() {
-        let end = latest_share_timestamps
-            .get(&block.hash)
-            .copied()
-            .map(|share_time| share_time.max(block.timestamp))
-            .unwrap_or(block.timestamp);
-        let start = end.checked_sub(window_duration).unwrap_or(UNIX_EPOCH);
-        min_start = Some(
-            min_start
-                .map(|existing| existing.min(start))
-                .unwrap_or(start),
-        );
-        max_end = Some(max_end.map(|existing| existing.max(end)).unwrap_or(end));
-        windows.push(PendingEstimateDurationWindow { index, start, end });
-    }
-
-    let (Some(min_start), Some(max_end)) = (min_start, max_end) else {
-        return Ok(Vec::new());
-    };
-    let mut shares = load_estimate_shares_cached(store, share_cache, min_start, max_end)?;
-    shares.sort_by(|a, b| {
-        a.created_at
-            .cmp(&b.created_at)
-            .then_with(|| a.id.cmp(&b.id))
-    });
-    windows.sort_by(|a, b| a.end.cmp(&b.end).then_with(|| a.index.cmp(&b.index)));
-
-    let mut previews_by_block = vec![Vec::<ShareWindowAddressPreview>::new(); blocks.len()];
-    let mut active = HashMap::<String, ShareWindowAddressPreview>::new();
-    let mut left = 0usize;
-    let mut right = 0usize;
-
-    for window in windows {
-        while right < shares.len() && shares[right].created_at <= window.end {
-            let share = &shares[right];
-            let preview =
-                active
-                    .entry(share.miner.clone())
-                    .or_insert_with(|| ShareWindowAddressPreview {
-                        address: share.miner.clone(),
-                        ..ShareWindowAddressPreview::default()
-                    });
-            update_window_preview_for_share(preview, share, provisional_ready_cutoff, true);
-            right += 1;
-        }
-        while left < right && shares[left].created_at < window.start {
-            let share = &shares[left];
-            let mut remove_address = false;
-            if let Some(preview) = active.get_mut(&share.miner) {
-                update_window_preview_for_share(preview, share, provisional_ready_cutoff, false);
-                remove_address = preview.seen_shares == 0;
-            }
-            if remove_address {
-                active.remove(&share.miner);
-            }
-            left += 1;
-        }
-        let mut previews = active
+        &blocks
             .iter()
-            .filter(|(_, preview)| preview.seen_shares > 0)
-            .map(|(address, preview)| {
-                let mut preview = preview.clone();
-                preview.address = address.clone();
-                preview
-            })
-            .collect::<Vec<_>>();
-        previews.sort_by(|a, b| a.address.cmp(&b.address));
-        previews_by_block[window.index] = previews;
-    }
-
+            .map(|block| block.hash.clone())
+            .collect::<Vec<_>>(),
+    )?;
+    let windows = blocks
+        .iter()
+        .map(|block| {
+            let end = latest_share_timestamps
+                .get(&block.hash)
+                .copied()
+                .map(|share_time| share_time.max(block.timestamp))
+                .unwrap_or(block.timestamp);
+            (end.checked_sub(window_duration).unwrap_or(UNIX_EPOCH), end)
+        })
+        .collect::<Vec<_>>();
+    let previews = store.summarize_share_windows(&windows, provisional_ready_cutoff)?;
     Ok(blocks
         .into_iter()
-        .zip(previews_by_block)
+        .zip(previews)
         .map(|(block, previews)| PreparedPendingEstimateBlock {
             confirmations: chain_height.saturating_sub(block.height),
             block,
@@ -3047,7 +2893,6 @@ fn prepare_pending_estimate_blocks(
     now: SystemTime,
     provisional_delay: Duration,
     chain_height: u64,
-    share_cache: Option<&Mutex<PendingEstimateShareCache>>,
 ) -> anyhow::Result<Vec<PreparedPendingEstimateBlock>> {
     let mut blocks = store.get_unconfirmed_blocks()?;
     blocks.retain(|block| !block.orphaned);
@@ -3062,7 +2907,6 @@ fn prepare_pending_estimate_blocks(
         config.runtime.pplns_window_duration(),
         now.checked_sub(provisional_delay),
         chain_height,
-        share_cache,
     )
 }
 
@@ -3250,7 +3094,6 @@ fn estimate_unconfirmed_pending_snapshot(
     config: &Config,
     now: SystemTime,
     chain_height: u64,
-    share_cache: Option<&Mutex<PendingEstimateShareCache>>,
 ) -> anyhow::Result<HashMap<String, MinerPendingEstimate>> {
     let provisional_delay = config.runtime.provisional_share_delay_duration();
     let required_confirmations = config.runtime.blocks_before_payout.max(0) as u64;
@@ -3263,14 +3106,8 @@ fn estimate_unconfirmed_pending_snapshot(
         provisional_cap_multiplier: 0.0,
     };
 
-    let prepared_blocks = prepare_pending_estimate_blocks(
-        store,
-        config,
-        now,
-        provisional_delay,
-        chain_height,
-        share_cache,
-    )?;
+    let prepared_blocks =
+        prepare_pending_estimate_blocks(store, config, now, provisional_delay, chain_height)?;
     let mut addresses_for_risk = HashSet::<String>::new();
     for prepared in &prepared_blocks {
         let block = &prepared.block;
@@ -3395,7 +3232,7 @@ fn estimate_unconfirmed_pending_for_miner(
     chain_height: u64,
 ) -> anyhow::Result<MinerPendingEstimate> {
     Ok(
-        estimate_unconfirmed_pending_snapshot(store, config, now, chain_height, None)?
+        estimate_unconfirmed_pending_snapshot(store, config, now, chain_height)?
             .remove(address)
             .unwrap_or_default(),
     )
@@ -3955,7 +3792,7 @@ where
     F: Fn(u64) -> anyhow::Result<Option<String>> + Sync,
 {
     std::thread::scope(|scope| {
-        let chunk_size = blocks.len().div_ceil(8).max(1);
+        let chunk_size = blocks.len().div_ceil(MAX_CONCURRENT_CHAIN_READS).max(1);
         let tasks = blocks.chunks(chunk_size).map(|chunk| scope.spawn(move || {
             let mut extra = 0u64;
             let mut confirmed = 0u64;
@@ -3993,14 +3830,23 @@ where
     })
 }
 
+fn parallel_chain_reads<T: Send>(items: &mut [T], check: &(impl Fn(&mut T) + Sync)) {
+    let chunk_size = items.len().div_ceil(MAX_CONCURRENT_CHAIN_READS).max(1);
+    std::thread::scope(|scope| {
+        for chunk in items.chunks_mut(chunk_size) {
+            scope.spawn(move || chunk.iter_mut().for_each(check));
+        }
+    });
+}
+
 fn flag_chain_mismatched_blocks(
     node: &NodeClient,
     daemon_chain_height: u64,
     blocks: &mut [DbBlock],
 ) {
-    for block in blocks {
+    parallel_chain_reads(blocks, &|block| {
         if block.orphaned || block.height > daemon_chain_height {
-            continue;
+            return;
         }
         match node.get_block_by_height_optional(block.height) {
             Ok(Some(node_block)) if node_block.hash != block.hash => {
@@ -4016,7 +3862,7 @@ fn flag_chain_mismatched_blocks(
                 );
             }
         }
-    }
+    });
 }
 
 fn flag_chain_mismatched_luck_rows(
@@ -4024,9 +3870,9 @@ fn flag_chain_mismatched_luck_rows(
     daemon_chain_height: u64,
     rows: &mut [LuckRoundResponse],
 ) {
-    for row in rows {
+    parallel_chain_reads(rows, &|row| {
         if row.orphaned || row.block_height > daemon_chain_height {
-            continue;
+            return;
         }
         match node.get_block_by_height_optional(row.block_height) {
             Ok(Some(node_block)) if node_block.hash != row.block_hash => {
@@ -4042,7 +3888,7 @@ fn flag_chain_mismatched_luck_rows(
                 );
             }
         }
-    }
+    });
 }
 
 fn luck_round_response_from_db(round: DbLuckRound) -> LuckRoundResponse {
@@ -4169,9 +4015,6 @@ impl ApiState {
             rejection_analytics_cache: Arc::new(Mutex::new(RejectionAnalyticsCache::default())),
             stats_response_cache: Arc::new(Mutex::new(StatsResponseCache::new())),
             cache_refresh_locks: Arc::new(CacheRefreshLocks::default()),
-            pending_estimate_share_cache: Arc::new(
-                Mutex::new(PendingEstimateShareCache::default()),
-            ),
             pending_estimate_snapshot_cache: Arc::new(Mutex::new(
                 PendingEstimateSnapshotCache::default(),
             )),
@@ -4779,15 +4622,8 @@ impl ApiState {
         let cfg = self.config.clone();
         let now = SystemTime::now();
         let started_at = Instant::now();
-        let share_cache = Arc::clone(&self.pending_estimate_share_cache);
         let result = spawn_blocking_result(move || {
-            estimate_unconfirmed_pending_snapshot(
-                &store,
-                &cfg,
-                now,
-                chain_height,
-                Some(share_cache.as_ref()),
-            )
+            estimate_unconfirmed_pending_snapshot(&store, &cfg, now, chain_height)
         })
         .await;
 
