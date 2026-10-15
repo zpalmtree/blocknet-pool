@@ -175,3 +175,43 @@ BEGIN
     ) x GROUP BY x.a,x.s HAVING SUM(x.n) > 0;
 END
 $address_window$;
+
+-- Luck and effort need only accepted work. Keep partial-minute reads on the
+-- small accepted-share covering index instead of counting every share status.
+CREATE OR REPLACE FUNCTION share_read_work(p_start BIGINT,p_end BIGINT)
+RETURNS BIGINT LANGUAGE plpgsql STABLE AS $work$
+DECLARE
+    full_start BIGINT;
+    full_end BIGINT;
+    result BIGINT;
+BEGIN
+    IF p_start < 0 OR p_start > 9223372036854775740
+       OR NOT COALESCE((SELECT ready FROM share_read_state WHERE singleton),FALSE) THEN
+        SELECT COALESCE(SUM(difficulty),0)::bigint INTO result FROM shares
+        WHERE created_at >= p_start AND created_at <= p_end
+          AND status IN ('verified','provisional');
+        RETURN result;
+    END IF;
+    full_start := p_start / 60 * 60 + CASE WHEN p_start % 60 > 0 THEN 60 ELSE 0 END;
+    full_end := p_end / 60 * 60 + CASE WHEN p_end % 60 = 59 THEN 60 ELSE 0 END;
+    IF full_start >= full_end THEN
+        SELECT COALESCE(SUM(difficulty),0)::bigint INTO result FROM shares
+        WHERE created_at >= p_start AND created_at <= p_end
+          AND status IN ('verified','provisional');
+        RETURN result;
+    END IF;
+    SELECT COALESCE(SUM(w),0)::bigint INTO result FROM (
+        SELECT work AS w FROM share_read_minutes WHERE minute >= full_start AND minute < full_end
+        UNION ALL
+        SELECT work FROM share_read_deltas WHERE minute >= full_start AND minute < full_end
+          AND status IN ('verified','provisional')
+        UNION ALL
+        SELECT difficulty FROM shares WHERE created_at >= p_start AND created_at < full_start
+          AND status IN ('verified','provisional')
+        UNION ALL
+        SELECT difficulty FROM shares WHERE created_at >= full_end AND created_at <= p_end
+          AND status IN ('verified','provisional')
+    ) x;
+    RETURN result;
+END
+$work$;

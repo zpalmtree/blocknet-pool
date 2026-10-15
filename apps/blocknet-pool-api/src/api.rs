@@ -25,6 +25,7 @@ use tokio::process::Command;
 use tokio::sync::{mpsc, Notify, Semaphore};
 use tokio_stream::wrappers::ReceiverStream;
 
+use crate::background_read::{BackgroundReads, ReadResult};
 use crate::config::Config;
 use crate::ui::{handle_app_fallback, handle_favicon_svg, handle_ui, handle_ui_asset};
 use pool_common::db::{
@@ -83,6 +84,8 @@ const MINER_BALANCE_RESPONSE_CACHE_MAX_ENTRIES: usize = 2048;
 const MINER_DETAIL_RESPONSE_CACHE_MAX_ENTRIES: usize = 1024;
 // Reserve database capacity for balances, stats, health, and background work.
 const MAX_CONCURRENT_MINER_DETAIL_LOADS: usize = 2;
+// Absorb short cold-cache bursts without admitting more simultaneous DB work.
+const MINER_DETAIL_ADMISSION_WAIT: Duration = Duration::from_millis(50);
 const PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(5);
 const PUBLIC_TELEMETRY_STATS_RATE_LIMIT: u32 = 12;
 const PUBLIC_TELEMETRY_MINER_RATE_LIMIT: u32 = 12;
@@ -308,6 +311,7 @@ pub(crate) struct ApiState {
     miner_balance_response_cache: Arc<Mutex<MinerBalanceResponseCache>>,
     miner_detail_response_cache: Arc<Mutex<MinerDetailResponseCache>>,
     miner_detail_loads: Arc<Semaphore>,
+    reward_breakdown_reads: Arc<BackgroundReads>,
     public_telemetry_rate_limiter: Arc<Mutex<PublicTelemetryRateLimiter>>,
     performance: Arc<ApiPerformanceTracker>,
     recovery: Arc<RecoveryAgentClient>,
@@ -842,8 +846,9 @@ where
     F: FnOnce() -> anyhow::Result<R> + Send + 'static,
     R: Send + 'static,
 {
-    let permit = budget
-        .try_acquire_owned()
+    let permit = tokio::time::timeout(MINER_DETAIL_ADMISSION_WAIT, budget.acquire_owned())
+        .await
+        .map_err(|_| TelemetryOverloaded)?
         .map_err(|_| TelemetryOverloaded)?;
     spawn_blocking_result(move || {
         // A canceled HTTP request cannot cancel synchronous Postgres work.
@@ -4010,16 +4015,50 @@ async fn handle_admin_block_reward_breakdown(
     let store = Arc::clone(&state.store);
     let cfg = state.config.clone();
     let now = SystemTime::now();
-    match spawn_blocking_result(move || build_block_reward_breakdown(&store, &cfg, height, now))
+    let task_state = state.clone();
+    match state
+        .reward_breakdown_reads
+        .read(height, move || {
+            let started = Instant::now();
+            let result = build_block_reward_breakdown(&store, &cfg, height, now)
+                .and_then(|value| serde_json::to_value(value).map_err(Into::into));
+            record_api_task_observation(
+                &task_state,
+                "reward_breakdown_compute",
+                started.elapsed(),
+                result.is_err(),
+            );
+            result
+        })
         .await
     {
-        Ok(breakdown) => Json(breakdown).into_response(),
-        Err(err) => {
-            if err.to_string().contains("not found") {
-                return error_response(StatusCode::NOT_FOUND, err.to_string());
+        ReadResult::Ready(result) => match result.as_ref() {
+            Ok(breakdown) => Json(breakdown.clone()).into_response(),
+            Err(err) => {
+                if err.contains("not found") {
+                    return error_response(StatusCode::NOT_FOUND, err.clone());
+                }
+                internal_error(
+                    "failed loading block reward breakdown",
+                    anyhow::anyhow!(err.clone()),
+                )
             }
-            internal_error("failed loading block reward breakdown", err)
-        }
+        },
+        ReadResult::Pending => (
+            StatusCode::ACCEPTED,
+            [
+                (header::RETRY_AFTER, "1"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            Json(json!({"status": "pending"})),
+        )
+            .into_response(),
+        ReadResult::Busy => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::RETRY_AFTER, "1")],
+            Json(json!({"error": "reward breakdown busy; retry shortly"})),
+        )
+            .into_response(),
     }
 }
 
@@ -4053,6 +4092,7 @@ impl ApiState {
             miner_balance_response_cache: Arc::new(Mutex::new(MinerBalanceResponseCache::new())),
             miner_detail_response_cache: Arc::new(Mutex::new(MinerDetailResponseCache::new())),
             miner_detail_loads: Arc::new(Semaphore::new(detail_concurrency)),
+            reward_breakdown_reads: Arc::new(BackgroundReads::default()),
             public_telemetry_rate_limiter: Arc::new(Mutex::new(
                 PublicTelemetryRateLimiter::default(),
             )),
@@ -6048,6 +6088,17 @@ mod tests {
             super::count_chain_reclassifications(&[], 0, &|_| Ok(None)).unwrap(),
             (0, 0)
         );
+    }
+
+    #[tokio::test]
+    async fn brief_detail_burst_waits_for_capacity() {
+        let budget = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+        let occupied = budget.clone().acquire_owned().await.unwrap();
+        let waiting = tokio::spawn(super::limited_blocking_result(budget, || Ok(42)));
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished());
+        drop(occupied);
+        assert_eq!(waiting.await.unwrap().unwrap(), 42);
     }
 
     #[tokio::test]

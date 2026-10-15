@@ -1391,7 +1391,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn accepted_work_between(&self, start: SystemTime, end: SystemTime) -> Result<u64> {
         let row = self.conn().query_one(
-            "SELECT work FROM share_read_window($1,$2)",
+            "SELECT share_read_work($1,$2)",
             &[&to_unix(start), &to_unix(end)],
         )?;
         Ok(row.get::<_, i64>(0).max(0) as u64)
@@ -1795,7 +1795,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 ORDER BY timestamp DESC, height DESC LIMIT 1
              ) prev ON TRUE
              LEFT JOIN LATERAL (
-                SELECT work AS round_work FROM share_read_window(prev.timestamp,b.timestamp)
+                SELECT share_read_work(prev.timestamp,b.timestamp) AS round_work
              ) sw ON TRUE
              ORDER BY b.height DESC",
             &[&limit.max(1), &offset.max(0), &max_height],
@@ -1824,7 +1824,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 ORDER BY timestamp DESC, height DESC LIMIT 1
              ) prev ON TRUE
              LEFT JOIN LATERAL (
-                SELECT work AS round_work FROM share_read_window(prev.timestamp,b.timestamp)
+                SELECT share_read_work(prev.timestamp,b.timestamp) AS round_work
              ) sw ON TRUE
              WHERE b.hash = ANY($1)",
             &[&hashes],
@@ -6287,7 +6287,7 @@ mod tests {
                     FALSE,n FROM generate_series(0,300) n;"
         ).unwrap();
         let check = || {
-            for start in [0i64, 1, 59, 60, 61, 119, 120, 121, 300, 301] {
+            for start in [-1i64, 0, 1, 59, 60, 61, 119, 120, 121, 300, 301] {
                 for end in [
                     start - 1,
                     start,
@@ -6306,6 +6306,10 @@ mod tests {
                             FROM shares WHERE created_at >= $1 AND created_at <= $2
                          ) r", &[&start,&end]
                     ).unwrap();
+                    let work: i64 = store.conn()
+                        .query_one("SELECT share_read_work($1,$2)", &[&start, &end])
+                        .unwrap().get(0);
+                    assert_eq!(work, row.get::<_, i64>(5), "accepted work {start}..{end}");
                     for column in 0..3 {
                         assert_eq!(
                             row.get::<_, i64>(column),
@@ -6317,6 +6321,9 @@ mod tests {
             }
         };
         check();
+        store.conn().client.batch_execute("UPDATE share_read_state SET ready=FALSE").unwrap();
+        check();
+        store.conn().client.batch_execute("UPDATE share_read_state SET ready=TRUE").unwrap();
         store.compact_share_read_minutes().unwrap();
         check();
         store

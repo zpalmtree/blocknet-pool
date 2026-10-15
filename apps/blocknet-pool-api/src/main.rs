@@ -3,6 +3,7 @@ use pool_common::{cli::parse_config_path, logging::init_logging};
 use tracing::info;
 
 mod api;
+mod background_read;
 mod config;
 mod runtime;
 mod ui;
