@@ -93,7 +93,6 @@ const PUBLIC_TELEMETRY_RATE_LIMIT_RETRY_AFTER_SECS: u64 = 5;
 const PUBLIC_TELEMETRY_RATE_LIMIT_MAX_BUCKETS: usize = 4096;
 const MINER_DETAIL_SHARE_LIMIT: i64 = 20;
 const MINER_PAYOUT_HISTORY_LIMIT: i64 = 50;
-const MAX_MINER_HASHRATE_DB_LOOKUPS: usize = 4096;
 const DEFAULT_DAEMON_LOG_TAIL: usize = 200;
 const MAX_DAEMON_LOG_TAIL: usize = 2000;
 const DAEMON_LOG_LINE_LIMIT: usize = 8192;
@@ -976,6 +975,27 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(addr = %addr, "api listening");
+    let count_state = state.clone();
+    let _share_count_compaction = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let store = Arc::clone(&count_state.store);
+            let started = Instant::now();
+            let result =
+                spawn_blocking_result(move || store.compact_miner_share_count_deltas()).await;
+            count_state.performance.tasks.record(
+                "share_count_compaction",
+                started.elapsed(),
+                result.is_err(),
+                started.elapsed() >= Duration::from_millis(200),
+            );
+            if let Err(error) = result {
+                tracing::warn!(%error, "miner share count compaction failed");
+            }
+        }
+    });
     let backfill_store = Arc::clone(&state.store);
     let _block_effort_backfill = tokio::task::spawn_blocking(move || {
         let started_at = Instant::now();
@@ -2473,58 +2493,48 @@ async fn handle_miners(
     let worker_window_start = SystemTime::now()
         .checked_sub(HASHRATE_WINDOW)
         .unwrap_or(UNIX_EPOCH);
-    let (lifetime_counts, worker_counts) = match spawn_blocking_result(move || {
+    let now = SystemTime::now();
+    let (lifetime_counts, window_stats) = match spawn_blocking_result(move || {
         Ok::<_, anyhow::Error>((
             store.miner_lifetime_counts()?,
-            store.miner_worker_counts_since(worker_window_start)?,
+            store.miner_window_stats_since(worker_window_start)?,
         ))
     })
     .await
     {
         Ok(v) => v,
-        Err(err) => {
-            tracing::warn!(error = %err, "failed loading miner summary counts from db");
-            (HashMap::new(), HashMap::new())
-        }
+        Err(err) => return internal_error("failed loading miner summary counts", err),
     };
 
     let mut address_set = HashSet::new();
     address_set.extend(lifetime_counts.keys().cloned());
-    address_set.extend(worker_counts.keys().cloned());
+    address_set.extend(window_stats.keys().cloned());
     let mut addresses = address_set.into_iter().collect::<Vec<_>>();
     addresses.sort();
 
-    let hashrates = if addresses.len() > MAX_MINER_HASHRATE_DB_LOOKUPS {
-        tracing::warn!(
-            miner_count = addresses.len(),
-            lookup_cap = MAX_MINER_HASHRATE_DB_LOOKUPS,
-            "miner hashrate DB lookup skipped for large miner set"
-        );
-        HashMap::new()
-    } else {
-        let store = Arc::clone(&state.store);
-        let addresses_for_hashrate = addresses.clone();
-        match spawn_blocking_result(move || {
-            let mut hr_map = HashMap::with_capacity(addresses_for_hashrate.len());
-            for address in &addresses_for_hashrate {
-                hr_map.insert(address.clone(), db_miner_hashrate(&store, address));
-            }
-            Ok::<_, anyhow::Error>(hr_map)
-        })
-        .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                tracing::warn!(error = %err, "failed loading miner hashrates from db");
-                HashMap::new()
-            }
-        }
-    };
     let mut items = addresses
         .into_iter()
         .map(|address| {
-            let worker_count = worker_counts.get(&address).copied().unwrap_or(0);
-            let hashrate = hashrates.get(&address).copied().unwrap_or(0.0);
+            let window = window_stats.get(&address);
+            let worker_count = window.map(|stats| stats.worker_count).unwrap_or(0);
+            let hashrate = window
+                .map(|stats| {
+                    hashrate_from_stats_with_miner_ramp(
+                        HashrateStatsInput {
+                            total_diff: stats.total_difficulty,
+                            count: stats.accepted_count,
+                            oldest: stats.oldest,
+                            newest: stats.newest,
+                        },
+                        MinerHashrateRamp {
+                            smoothing_window: HASHRATE_WINDOW,
+                            warmup_window: HASHRATE_WARMUP_WINDOW,
+                            brand_new_min_window: HASHRATE_BRAND_NEW_MIN_WINDOW,
+                            now,
+                        },
+                    )
+                })
+                .unwrap_or(0.0);
             let (accepted, rejected, blocks, db_last_share) = lifetime_counts
                 .get(&address)
                 .copied()
@@ -4990,10 +5000,7 @@ impl ApiState {
             let since_24h = SystemTime::now()
                 .checked_sub(Duration::from_secs(86400))
                 .unwrap_or(UNIX_EPOCH);
-            let workers_raw = store.worker_stats_for_miner(&addr, since_24h)?;
-            let worker_hashrate_raw =
-                store.worker_hashrate_stats_for_miner(&addr, since_hr_window)?;
-            let worker_versions_raw = store.worker_versions_for_miner(&addr, since_24h)?;
+            let workers = store.miner_worker_snapshot(&addr, since_24h, since_hr_window)?;
             let blocks_found = store.get_block_count_for_miner(&addr)?;
             let risk_state = store.get_address_risk(&addr)?;
             let validation_state = store.validation_hold_state(&addr, provisional_cutoff)?;
@@ -5003,9 +5010,9 @@ impl ApiState {
                 mining_since,
                 payouts,
                 hr,
-                workers_raw,
-                worker_hashrate_raw,
-                worker_versions_raw,
+                workers.totals,
+                workers.hashrate,
+                workers.versions,
                 blocks_found,
                 risk_state,
                 validation_state,
@@ -7224,7 +7231,7 @@ mod tests {
         rejected.reject_reason = Some("bad share".to_string());
         store.add_share(rejected).expect("add rejected share");
 
-        let state = test_api_state(store);
+        let state = test_api_state(Arc::clone(&store));
         let runtime = test_runtime();
         let response = runtime
             .block_on(handle_miners(
@@ -7360,7 +7367,7 @@ mod tests {
             ),
         );
 
-        let state = test_api_state(store);
+        let state = test_api_state(Arc::clone(&store));
         let runtime = test_runtime();
         let response = runtime
             .block_on(handle_miners(

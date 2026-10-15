@@ -61,7 +61,20 @@ pub struct ShareWindowAddressPreview {
 pub type WorkerStats = Vec<(String, u64, u64, u64, i64)>;
 pub type WorkerHashrateStats = Vec<(String, u64, u64, Option<SystemTime>, Option<SystemTime>)>;
 pub type WorkerVersions = Vec<(String, String, Option<String>)>;
+pub struct MinerWorkerSnapshot {
+    pub totals: WorkerStats,
+    pub hashrate: WorkerHashrateStats,
+    pub versions: WorkerVersions,
+}
 pub type MinerLifetimeCounts = HashMap<String, (u64, u64, u64, Option<i64>)>;
+
+pub struct MinerWindowStats {
+    pub worker_count: usize,
+    pub total_difficulty: u64,
+    pub accepted_count: u64,
+    pub oldest: Option<SystemTime>,
+    pub newest: Option<SystemTime>,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct MonitorUptimeSummary {
@@ -809,6 +822,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              WHERE status IN ('verified', 'provisional')",
         )
         .context("ensure API read indexes")?;
+        conn.batch_execute(include_str!("../sql/share_read_counts.sql"))
+            .context("ensure exact miner share read counts")?;
         conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS reject_reason TEXT")
             .context("ensure shares.reject_reason column")?;
         conn.batch_execute(
@@ -823,6 +838,14 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .context("ensure shares.miner_version column")?;
         conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS backend TEXT")
             .context("ensure shares.backend column")?;
+        // Apply scripts/index_worker_reads.sql concurrently before upgrading an
+        // existing database. Keep worker history reads out of the share heap.
+        conn.batch_execute(
+            "CREATE INDEX IF NOT EXISTS idx_shares_miner_read_window
+             ON shares(miner, created_at DESC)
+             INCLUDE (worker, status, difficulty, miner_version, backend)",
+        )
+        .context("ensure covering miner read index")?;
         conn.batch_execute(
             "ALTER TABLE blocks ADD COLUMN IF NOT EXISTS effort_pct DOUBLE PRECISION",
         )
@@ -5342,6 +5365,77 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .collect())
     }
 
+    /// Read the detail page's worker windows and latest reported versions in a
+    /// single covering scan. Aggregate timestamps before looking up versions;
+    /// DISTINCT ON would sort every share (and spill for large miners).
+    pub fn miner_worker_snapshot(
+        &self,
+        address: &str,
+        since: SystemTime,
+        hashrate_since: SystemTime,
+    ) -> Result<MinerWorkerSnapshot> {
+        let rows = self.conn().query(
+            "WITH groups AS (
+                SELECT worker,status,created_at >= $3 AS recent,
+                    COUNT(*)::bigint AS n,SUM(difficulty)::bigint AS work,
+                    MIN(created_at) AS first_share,MAX(created_at) AS last_share,
+                    MAX(created_at) FILTER (WHERE miner_version IS NOT NULL) AS version_at
+                FROM shares WHERE miner = $1 AND created_at >= $2
+                GROUP BY worker,status,recent
+             ), workers AS (
+                SELECT worker,
+                    COALESCE(SUM(n) FILTER (WHERE status IN ('verified','provisional')),0)::bigint AS accepted,
+                    COALESCE(SUM(n) FILTER (WHERE status NOT IN ('verified','provisional')),0)::bigint AS rejected,
+                    COALESCE(SUM(work) FILTER (WHERE status IN ('verified','provisional')),0)::bigint AS work,
+                    MAX(last_share) AS last_share,
+                    COALESCE(SUM(work) FILTER (WHERE status IN ('verified','provisional') AND recent),0)::bigint AS hr_work,
+                    COALESCE(SUM(n) FILTER (WHERE status IN ('verified','provisional') AND recent),0)::bigint AS hr_count,
+                    MIN(first_share) FILTER (WHERE status IN ('verified','provisional') AND recent) AS hr_oldest,
+                    MAX(last_share) FILTER (WHERE status IN ('verified','provisional') AND recent) AS hr_newest,
+                    MAX(version_at) AS version_at
+                FROM groups GROUP BY worker
+             )
+             SELECT w.worker,w.accepted,w.rejected,w.work,w.last_share,
+                    w.hr_work,w.hr_count,w.hr_oldest,w.hr_newest,v.miner_version,v.backend
+             FROM workers w
+             LEFT JOIN LATERAL (
+                SELECT miner_version,backend FROM shares
+                WHERE miner = $1 AND created_at = w.version_at AND worker = w.worker
+                  AND miner_version IS NOT NULL LIMIT 1
+             ) v ON TRUE ORDER BY w.worker",
+            &[&address, &to_unix(since), &to_unix(hashrate_since)],
+        )?;
+        let mut snapshot = MinerWorkerSnapshot {
+            totals: Vec::with_capacity(rows.len()),
+            hashrate: Vec::with_capacity(rows.len()),
+            versions: Vec::with_capacity(rows.len()),
+        };
+        for row in rows {
+            let worker: String = row.get(0);
+            snapshot.totals.push((
+                worker.clone(),
+                row.get::<_, i64>(1).max(0) as u64,
+                row.get::<_, i64>(2).max(0) as u64,
+                row.get::<_, i64>(3).max(0) as u64,
+                row.get(4),
+            ));
+            if row.get::<_, i64>(4) >= to_unix(hashrate_since) {
+                snapshot.hashrate.push((
+                    worker.clone(),
+                    row.get::<_, i64>(5).max(0) as u64,
+                    row.get::<_, i64>(6).max(0) as u64,
+                    row.get::<_, Option<i64>>(7).map(from_unix),
+                    row.get::<_, Option<i64>>(8).map(from_unix),
+                ));
+            }
+            if let Some(version) = row.get::<_, Option<String>>(9) {
+                snapshot.versions.push((worker, version, row.get(10)));
+            }
+        }
+        Ok(snapshot)
+    }
+
+    #[cfg(test)]
     /// Returns per-worker stats: Vec<(worker, accepted, rejected, total_diff, last_share_at)>
     pub fn worker_stats_for_miner(&self, address: &str, since: SystemTime) -> Result<WorkerStats> {
         let rows = self.conn().query(
@@ -5376,6 +5470,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     /// Returns per-worker hashrate stats:
     /// Vec<(worker, total_diff, accepted_count, oldest_accepted_ts, newest_accepted_ts)>
+    #[cfg(test)]
     pub fn worker_hashrate_stats_for_miner(
         &self,
         address: &str,
@@ -5415,6 +5510,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     /// Vec<(worker, miner_version, backend)>. Workers whose shares in the
     /// window never reported a version are omitted. The scan is bounded by
     /// `since` and served by idx_shares_miner_created (miner, created_at DESC).
+    #[cfg(test)]
     pub fn worker_versions_for_miner(
         &self,
         address: &str,
@@ -5468,14 +5564,41 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     /// Bulk per-miner lifetime counts from the DB: (accepted, rejected, blocks_found, last_share_unix).
     pub fn miner_lifetime_counts(&self) -> Result<MinerLifetimeCounts> {
         let mut conn = self.conn();
-        let share_rows = conn.query(
+        let ready: bool = conn
+            .query_one(
+                "SELECT ready FROM miner_share_count_state WHERE singleton",
+                &[],
+            )?
+            .get(0);
+        let share_rows = if ready {
+            conn.query(
+                "WITH counts AS (
+                    SELECT miner, SUM(accepted)::bigint AS accepted, SUM(rejected)::bigint AS rejected
+                    FROM (
+                        SELECT miner,accepted,rejected FROM miner_share_counts
+                        UNION ALL
+                        SELECT miner,accepted,rejected FROM miner_share_count_deltas
+                    ) combined GROUP BY miner
+                )
+                SELECT c.miner,c.accepted,c.rejected,s.created_at
+                FROM counts c
+                LEFT JOIN LATERAL (
+                    SELECT created_at FROM shares WHERE miner = c.miner
+                    ORDER BY created_at DESC LIMIT 1
+                ) s ON TRUE
+                WHERE c.accepted + c.rejected > 0", &[]
+            )?
+        } else {
+            // Existing databases remain correct until the online backfill runs.
+            conn.query(
             "SELECT miner,
                     SUM(CASE WHEN status IN ('verified','provisional') THEN 1 ELSE 0 END)::bigint,
                     SUM(CASE WHEN status NOT IN ('verified','provisional') THEN 1 ELSE 0 END)::bigint,
                     MAX(created_at)::bigint
              FROM shares GROUP BY miner",
             &[],
-        )?;
+            )?
+        };
         let mut map = std::collections::HashMap::new();
         for row in &share_rows {
             let miner: String = row.get(0);
@@ -5506,13 +5629,40 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(map)
     }
 
-    pub fn miner_worker_counts_since(
+    /// Fold a bounded batch atomically. Concurrent readers see either the old
+    /// counters plus these deltas, or the new counters without these deltas.
+    pub fn compact_miner_share_count_deltas(&self) -> Result<u64> {
+        self.conn().execute(
+            "WITH taken AS (
+                DELETE FROM miner_share_count_deltas WHERE id IN (
+                    SELECT id FROM miner_share_count_deltas
+                    WHERE EXISTS (SELECT 1 FROM miner_share_count_state WHERE singleton AND ready)
+                    ORDER BY id LIMIT 5000 FOR UPDATE SKIP LOCKED
+                ) RETURNING miner,accepted,rejected
+             ), grouped AS (
+                SELECT miner,SUM(accepted)::bigint AS accepted,SUM(rejected)::bigint AS rejected
+                FROM taken GROUP BY miner
+             )
+             INSERT INTO miner_share_counts(miner,accepted,rejected)
+             SELECT miner,accepted,rejected FROM grouped ORDER BY miner
+             ON CONFLICT (miner) DO UPDATE SET
+                accepted = miner_share_counts.accepted + EXCLUDED.accepted,
+                rejected = miner_share_counts.rejected + EXCLUDED.rejected",
+            &[],
+        )
+    }
+
+    pub fn miner_window_stats_since(
         &self,
         since: SystemTime,
-    ) -> Result<std::collections::HashMap<String, usize>> {
+    ) -> Result<HashMap<String, MinerWindowStats>> {
         let mut conn = self.conn();
         let rows = conn.query(
-            "SELECT miner, COUNT(DISTINCT worker)::bigint
+            "SELECT miner, COUNT(DISTINCT worker)::bigint,
+                    COALESCE(SUM(difficulty) FILTER (WHERE status IN ('verified','provisional')),0)::bigint,
+                    COUNT(*) FILTER (WHERE status IN ('verified','provisional')),
+                    MIN(created_at) FILTER (WHERE status IN ('verified','provisional')),
+                    MAX(created_at) FILTER (WHERE status IN ('verified','provisional'))
              FROM shares
              WHERE created_at >= $1
              GROUP BY miner",
@@ -5522,7 +5672,16 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         for row in &rows {
             let miner: String = row.get(0);
             let worker_count: i64 = row.get(1);
-            map.insert(miner, worker_count.max(0) as usize);
+            map.insert(
+                miner,
+                MinerWindowStats {
+                    worker_count: worker_count.max(0) as usize,
+                    total_difficulty: row.get::<_, i64>(2).max(0) as u64,
+                    accepted_count: row.get::<_, i64>(3).max(0) as u64,
+                    oldest: row.get::<_, Option<i64>>(4).map(from_unix),
+                    newest: row.get::<_, Option<i64>>(5).map(from_unix),
+                },
+            );
         }
         Ok(map)
     }
@@ -5816,6 +5975,170 @@ mod tests {
         assert_eq!(first[0].total_amount, 40);
         let (empty, _) = store.get_public_payout_batches_page(0, 0).unwrap();
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn bulk_miner_window_matches_individual_hashrate_and_worker_semantics_postgres() {
+        let Some(store) = test_store() else { return };
+        store.conn().client.batch_execute(
+            "INSERT INTO shares(job_id,miner,worker,difficulty,nonce,status,was_sampled,created_at)
+             VALUES ('window','window-a','old',1000,1,'verified',FALSE,99),
+                    ('window','window-a','one',10,2,'verified',FALSE,100),
+                    ('window','window-a','one',20,3,'provisional',FALSE,150),
+                    ('window','window-a','two',999,4,'rejected',FALSE,200),
+                    ('window','window-b','rejected-only',999,5,'rejected',FALSE,200);"
+        ).unwrap();
+        let windows = store.miner_window_stats_since(from_unix(100)).unwrap();
+        let a = &windows["window-a"];
+        assert_eq!(a.worker_count, 2);
+        assert_eq!(
+            (a.total_difficulty, a.accepted_count, a.oldest, a.newest),
+            store
+                .hashrate_stats_for_miner("window-a", from_unix(100))
+                .unwrap()
+        );
+        let b = &windows["window-b"];
+        assert_eq!(b.worker_count, 1);
+        assert_eq!(
+            (b.total_difficulty, b.accepted_count, b.oldest, b.newest),
+            (0, 0, None, None)
+        );
+        for miner in ["window-a", "window-b"] {
+            let combined = store
+                .miner_worker_snapshot(miner, from_unix(100), from_unix(150))
+                .unwrap();
+            assert_eq!(
+                combined.totals,
+                store.worker_stats_for_miner(miner, from_unix(100)).unwrap()
+            );
+            assert_eq!(
+                combined.hashrate,
+                store
+                    .worker_hashrate_stats_for_miner(miner, from_unix(150))
+                    .unwrap()
+            );
+            assert!(combined.versions.is_empty());
+        }
+    }
+
+    #[test]
+    fn miner_counts_include_uncompacted_updates_deletes_and_rollback_postgres() {
+        let Some(store) = test_store() else { return };
+        store.conn().client.batch_execute(
+            "INSERT INTO shares(job_id,miner,worker,difficulty,nonce,status,was_sampled,created_at)
+             VALUES ('counts','count-a','rig',10,1,'verified',FALSE,100),
+                    ('counts','count-a','rig',20,2,'provisional',FALSE,200),
+                    ('counts','count-b','rig',99,3,'rejected',FALSE,300);"
+        ).unwrap();
+        let initial = store.miner_lifetime_counts().unwrap();
+        assert_eq!(initial["count-a"], (2, 0, 0, Some(200)));
+        assert_eq!(initial["count-b"], (0, 1, 0, Some(300)));
+        store.compact_miner_share_count_deltas().unwrap();
+        assert_eq!(store.miner_lifetime_counts().unwrap(), initial);
+        store
+            .conn()
+            .client
+            .batch_execute(
+                "UPDATE shares SET status='invalid' WHERE miner='count-a' AND nonce=2;
+             UPDATE shares SET miner='count-a',status='verified' WHERE miner='count-b';
+             DELETE FROM shares WHERE miner='count-a' AND nonce=3;",
+            )
+            .unwrap();
+        store
+            .conn()
+            .client
+            .batch_execute("BEGIN; DELETE FROM shares; ROLLBACK;")
+            .unwrap();
+        let changed = store.miner_lifetime_counts().unwrap();
+        assert_eq!(changed["count-a"], (1, 1, 0, Some(200)));
+        assert!(!changed.contains_key("count-b"));
+        store.compact_miner_share_count_deltas().unwrap();
+        store.compact_miner_share_count_deltas().unwrap();
+        assert_eq!(store.miner_lifetime_counts().unwrap(), changed);
+        store
+            .conn()
+            .client
+            .batch_execute("DELETE FROM shares")
+            .unwrap();
+        assert!(store.miner_lifetime_counts().unwrap().is_empty());
+        store.compact_miner_share_count_deltas().unwrap();
+        assert!(store.miner_lifetime_counts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn miner_count_backfill_keeps_transactions_committed_after_snapshot_postgres() {
+        let Some(store) = test_store() else { return };
+        store
+            .conn()
+            .client
+            .batch_execute(
+                "UPDATE miner_share_count_state SET ready=FALSE;
+             INSERT INTO shares(job_id,miner,worker,difficulty,nonce,status,was_sampled,created_at)
+             VALUES ('base','base-miner','rig',10,1,'verified',FALSE,100);",
+            )
+            .unwrap();
+        {
+            let mut writer = store.conns[0].lock();
+            let mut write_tx = writer.transaction().unwrap();
+            write_tx.batch_execute(
+                "INSERT INTO shares(job_id,miner,worker,difficulty,nonce,status,was_sampled,created_at)
+                 VALUES ('late','late-miner','rig',10,2,'rejected',FALSE,200);"
+            ).unwrap();
+            let mut backfill = store.conns[1].lock();
+            let mut tx = backfill.transaction().unwrap();
+            tx.batch_execute(
+                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+                 SELECT ready FROM miner_share_count_state WHERE singleton FOR UPDATE;
+                 INSERT INTO miner_share_counts(miner,accepted,rejected)
+                 SELECT miner,COUNT(*) FILTER (WHERE status IN ('verified','provisional')),
+                     COUNT(*) FILTER (WHERE status NOT IN ('verified','provisional'))
+                 FROM shares GROUP BY miner;",
+            )
+            .unwrap();
+            write_tx.commit().unwrap();
+            tx.batch_execute(
+                "DELETE FROM miner_share_count_deltas;
+                 UPDATE miner_share_count_state SET ready=TRUE WHERE singleton;",
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        let counts = store.miner_lifetime_counts().unwrap();
+        assert_eq!(counts["base-miner"], (1, 0, 0, Some(100)));
+        assert_eq!(counts["late-miner"], (0, 1, 0, Some(200)));
+        store.compact_miner_share_count_deltas().unwrap();
+        assert_eq!(store.miner_lifetime_counts().unwrap(), counts);
+        store
+            .conn()
+            .client
+            .batch_execute("TRUNCATE shares")
+            .unwrap();
+        assert!(store.miner_lifetime_counts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn miner_count_compaction_is_bounded_without_losing_unapplied_rows_postgres() {
+        let Some(store) = test_store() else { return };
+        store.conn().client.batch_execute(
+            "INSERT INTO shares(job_id,miner,worker,difficulty,nonce,status,was_sampled,created_at)
+             SELECT 'batch','batch-miner','rig',1,n,'verified',FALSE,n FROM generate_series(1,5001) n;"
+        ).unwrap();
+        store.compact_miner_share_count_deltas().unwrap();
+        let remaining: i64 = store
+            .conn()
+            .query_one("SELECT COUNT(*) FROM miner_share_count_deltas", &[])
+            .unwrap()
+            .get(0);
+        assert_eq!(remaining, 1);
+        assert_eq!(
+            store.miner_lifetime_counts().unwrap()["batch-miner"],
+            (5001, 0, 0, Some(5001))
+        );
+        store.compact_miner_share_count_deltas().unwrap();
+        assert_eq!(
+            store.miner_lifetime_counts().unwrap()["batch-miner"],
+            (5001, 0, 0, Some(5001))
+        );
     }
 
     #[test]
@@ -6122,6 +6445,26 @@ mod tests {
                 "0.2.15".to_string(),
                 Some("gpu".to_string())
             )]
+        );
+        let combined = store
+            .miner_worker_snapshot(
+                &miner,
+                base + Duration::from_secs(5),
+                base + Duration::from_secs(15),
+            )
+            .unwrap();
+        assert_eq!(combined.versions, versions);
+        assert_eq!(
+            combined.totals,
+            store
+                .worker_stats_for_miner(&miner, base + Duration::from_secs(5))
+                .unwrap()
+        );
+        assert_eq!(
+            combined.hashrate,
+            store
+                .worker_hashrate_stats_for_miner(&miner, base + Duration::from_secs(15))
+                .unwrap()
         );
     }
 
