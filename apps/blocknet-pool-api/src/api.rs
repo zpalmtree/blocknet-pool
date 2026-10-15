@@ -4868,35 +4868,42 @@ impl ApiState {
             .unwrap_or(UNIX_EPOCH);
         let addr = address.to_string();
         let db_result = limited_blocking_result(Arc::clone(&self.miner_detail_loads), move || {
-            let shares = store.get_shares_for_miner(&addr, MINER_DETAIL_SHARE_LIMIT)?;
-            let mining_since = store.first_share_at_for_miner(&addr)?;
-            let payouts =
-                store.get_recent_visible_payouts_for_address(&addr, MINER_PAYOUT_HISTORY_LIMIT)?;
-            let hr = db_miner_hashrate(&store, &addr);
-            let since_hr_window = SystemTime::now()
-                .checked_sub(HASHRATE_WINDOW)
-                .unwrap_or(UNIX_EPOCH);
-            let since_24h = SystemTime::now()
-                .checked_sub(Duration::from_secs(86400))
-                .unwrap_or(UNIX_EPOCH);
-            let workers = store.miner_worker_snapshot(&addr, since_24h, since_hr_window)?;
-            let blocks_found = store.get_block_count_for_miner(&addr)?;
-            let risk_state = store.get_address_risk(&addr)?;
-            let validation_state = store.validation_hold_state(&addr, provisional_cutoff)?;
-            let has_any_activity = store.miner_has_any_activity(&addr)?;
-            Ok::<_, anyhow::Error>((
-                shares,
-                mining_since,
-                payouts,
-                hr,
-                workers.totals,
-                workers.hashrate,
-                workers.versions,
-                blocks_found,
-                risk_state,
-                validation_state,
-                has_any_activity,
-            ))
+            std::thread::scope(|scope| {
+                let worker_snapshot = scope.spawn(|| {
+                    let now = SystemTime::now();
+                    store.miner_worker_snapshot(
+                        &addr,
+                        now.checked_sub(Duration::from_secs(86400))
+                            .unwrap_or(UNIX_EPOCH),
+                        now.checked_sub(HASHRATE_WINDOW).unwrap_or(UNIX_EPOCH),
+                    )
+                });
+                let shares = store.get_shares_for_miner(&addr, MINER_DETAIL_SHARE_LIMIT)?;
+                let mining_since = store.first_share_at_for_miner(&addr)?;
+                let payouts = store
+                    .get_recent_visible_payouts_for_address(&addr, MINER_PAYOUT_HISTORY_LIMIT)?;
+                let hr = db_miner_hashrate(&store, &addr);
+                let blocks_found = store.get_block_count_for_miner(&addr)?;
+                let risk_state = store.get_address_risk(&addr)?;
+                let validation_state = store.validation_hold_state(&addr, provisional_cutoff)?;
+                let has_any_activity = store.miner_has_any_activity(&addr)?;
+                let workers = worker_snapshot
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("worker snapshot reader panicked"))??;
+                Ok::<_, anyhow::Error>((
+                    shares,
+                    mining_since,
+                    payouts,
+                    hr,
+                    workers.totals,
+                    workers.hashrate,
+                    workers.versions,
+                    blocks_found,
+                    risk_state,
+                    validation_state,
+                    has_any_activity,
+                ))
+            })
         })
         .await;
         let db_result = match db_result {
@@ -7163,7 +7170,7 @@ mod tests {
             );
         }
 
-        let state = test_api_state(store);
+        let state = test_api_state(Arc::clone(&store));
         let runtime = test_runtime();
         let response = runtime
             .block_on(handle_miner(
@@ -7204,7 +7211,7 @@ mod tests {
             );
         }
 
-        let state = test_api_state(store);
+        let state = test_api_state(Arc::clone(&store));
         let runtime = test_runtime();
         let response = runtime
             .block_on(handle_miner(Path("miner-since".to_string()), State(state)))

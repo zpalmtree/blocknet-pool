@@ -6,7 +6,7 @@ usage() {
 Deploy blocknet-pool to the current primary pool host.
 
 Usage:
-  scripts/deploy_bntpool.sh [--skip-build] [--skip-ui-build] [--api-only] [--provision-monitoring] [--provision-recovery] [--deploy-cloudflare] [--monitor-only]
+  scripts/deploy_bntpool.sh [--skip-build] [--skip-ui-build] [--api-only] [--provision-monitoring] [--provision-recovery] [--deploy-cloudflare] [--monitor-only] [--recovery-only]
 
 Environment overrides:
   BNTPOOL_HOST             SSH host alias (default: bntpool)
@@ -32,6 +32,7 @@ provision_monitoring=0
 provision_recovery=0
 deploy_cloudflare=0
 monitor_only=0
+recovery_only=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-build)
@@ -58,6 +59,10 @@ while [[ $# -gt 0 ]]; do
       deploy_cloudflare=1
       shift
       ;;
+    --recovery-only)
+      recovery_only=1
+      shift
+      ;;
     --monitor-only)
       monitor_only=1
       shift
@@ -74,13 +79,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "${api_only}" == "1" && "${monitor_only}" == "1" ]]; then
-  echo "--api-only and --monitor-only cannot be combined" >&2
+if (( api_only + monitor_only + recovery_only > 1 )); then
+  echo "--api-only, --monitor-only, and --recovery-only cannot be combined" >&2
   exit 1
 fi
 
-if [[ "${api_only}" == "1" && ("${provision_monitoring}" == "1" || "${provision_recovery}" == "1" || "${deploy_cloudflare}" == "1") ]]; then
-  echo "--api-only cannot be combined with provisioning or Cloudflare deploy flags" >&2
+if [[ ("${api_only}" == "1" || "${recovery_only}" == "1") && ("${provision_monitoring}" == "1" || "${provision_recovery}" == "1" || "${deploy_cloudflare}" == "1") ]]; then
+  echo "--api-only/--recovery-only cannot be combined with provisioning or Cloudflare deploy flags" >&2
   exit 1
 fi
 
@@ -168,6 +173,10 @@ if [[ "${api_only}" == "1" ]]; then
   deploy_stratum=0
   deploy_monitor=0
   deploy_recovery=0
+elif [[ "${recovery_only}" == "1" ]]; then
+  deploy_api=0
+  deploy_stratum=0
+  deploy_monitor=0
 elif [[ "${monitor_only}" == "1" ]]; then
   deploy_api=0
   deploy_stratum=0

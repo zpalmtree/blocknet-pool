@@ -25,7 +25,9 @@ const SYSTEMD_SOCKET_FD: i32 = 3;
 const STATUS_WAIT_RETRY: Duration = Duration::from_secs(2);
 const STATUS_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const STATUS_CACHE_TTL: Duration = Duration::from_secs(5);
-const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+// Finish refreshing before the five-second freshness limit expires. Matching
+// the TTL left a gap where status requests paid the full daemon-probe latency.
+const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const WALLET_AUTOLOAD_RETRY_INTERVAL: Duration = Duration::from_secs(60);
 const MANAGED_PATH_ROOTS: &[&str] = &[
     "/var/lib/blocknet",
