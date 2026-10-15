@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
 use parking_lot::{Mutex, MutexGuard};
@@ -27,6 +27,25 @@ use pool_common::db::{
 
 const SHARE_CLAIM_EXPIRY_SECS: i64 = 2 * 60;
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
+
+static READ_PERFORMANCE: OnceLock<crate::telemetry::NamedTimedOperationTracker> = OnceLock::new();
+
+#[track_caller]
+fn observe_read<T>(operation: impl FnOnce() -> Result<T>) -> Result<T> {
+    // Source locations are bounded by the compiled queries. Never record SQL
+    // parameters, addresses, credentials, or dynamically constructed SQL.
+    let caller = std::panic::Location::caller();
+    let started = Instant::now();
+    let result = operation();
+    let duration = started.elapsed();
+    READ_PERFORMANCE.get_or_init(Default::default).record(
+        &format!("{}:{}", caller.file(), caller.line()),
+        duration,
+        result.is_err(),
+        duration >= Duration::from_millis(200),
+    );
+    result
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ShareWindowAddressPreview {
@@ -295,16 +314,19 @@ impl ManagedClient {
         self.with_retry("execute", |client| Ok(client.execute(query, params)?))
     }
 
+    #[track_caller]
     fn query(&mut self, query: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Vec<Row>> {
-        self.with_retry("query", |client| Ok(client.query(query, params)?))
+        observe_read(|| self.with_retry("query", |client| Ok(client.query(query, params)?)))
     }
 
+    #[track_caller]
     fn query_one(&mut self, query: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Row> {
-        self.with_retry("query_one", |client| Ok(client.query_one(query, params)?))
+        observe_read(|| self.with_retry("query_one", |client| Ok(client.query_one(query, params)?)))
     }
 
+    #[track_caller]
     fn query_opt(&mut self, query: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Option<Row>> {
-        self.with_retry("query_opt", |client| Ok(client.query_opt(query, params)?))
+        observe_read(|| self.with_retry("query_opt", |client| Ok(client.query_opt(query, params)?)))
     }
 
     fn transaction(&mut self) -> Result<Transaction<'_>> {
@@ -319,6 +341,12 @@ pub struct PostgresStore {
 }
 
 impl PostgresStore {
+    pub fn read_performance(
+        &self,
+    ) -> std::collections::BTreeMap<String, crate::telemetry::TimedOperationSummary> {
+        READ_PERFORMANCE.get_or_init(Default::default).snapshot()
+    }
+
     fn conn(&self) -> MutexGuard<'_, ManagedClient> {
         let pool_len = self.conns.len();
         assert!(pool_len > 0, "postgres store connection unavailable");
@@ -1246,10 +1274,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let since_ts = to_unix(since);
         let row = self.conn().query_one(
             "SELECT
-                COALESCE(SUM(CASE WHEN status IN ('verified','provisional') THEN 1 ELSE 0 END), 0)::bigint,
-                COALESCE(SUM(CASE WHEN status NOT IN ('verified','provisional') THEN 1 ELSE 0 END), 0)::bigint
-             FROM shares
-             WHERE created_at >= $1",
+                (SELECT COUNT(*) FROM shares WHERE created_at >= $1
+                 AND status IN ('verified','provisional')),
+                (SELECT COUNT(*) FROM shares WHERE created_at >= $1
+                 AND status NOT IN ('verified','provisional'))",
             &[&since_ts],
         )?;
         let accepted: i64 = row.get(0);
@@ -5788,6 +5816,30 @@ mod tests {
         assert_eq!(first[0].total_amount, 40);
         let (empty, _) = store.get_public_payout_batches_page(0, 0).unwrap();
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn outcome_counts_include_boundary_and_all_rejection_states_postgres() {
+        let Some(store) = test_store() else { return };
+        store.conn().client.batch_execute(
+            "INSERT INTO shares(job_id,miner,worker,difficulty,nonce,status,was_sampled,created_at)
+             VALUES ('outcomes','test','rig',10,1,'verified',FALSE,100),
+                    ('outcomes','test','rig',20,2,'provisional',FALSE,200),
+                    ('outcomes','test','rig',99,3,'rejected',FALSE,200),
+                    ('outcomes','test','rig',30,4,'invalid',FALSE,300);"
+        ).unwrap();
+        assert_eq!(
+            store.share_outcome_counts_since(from_unix(200)).unwrap(),
+            (1, 2)
+        );
+        assert_eq!(
+            store.share_outcome_counts_since(from_unix(301)).unwrap(),
+            (0, 0)
+        );
+        let performance = store.read_performance();
+        assert!(performance
+            .iter()
+            .any(|(name, timing)| name.contains("pgdb.rs:") && timing.count >= 2));
     }
 
     #[test]

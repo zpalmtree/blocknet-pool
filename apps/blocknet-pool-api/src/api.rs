@@ -617,6 +617,7 @@ impl ApiPerformanceTracker {
             operations: self.operations.snapshot(),
             tasks: self.tasks.snapshot(),
             caches: self.caches.snapshot(),
+            database_reads: Default::default(),
         }
     }
 
@@ -1795,7 +1796,9 @@ async fn handle_monitor_ingest_cloudflare(
 }
 
 async fn handle_admin_perf(State(state): State<ApiState>) -> impl IntoResponse {
-    Json(state.performance.snapshot()).into_response()
+    let mut snapshot = state.performance.snapshot();
+    snapshot.database_reads = state.store.read_performance();
+    Json(snapshot).into_response()
 }
 
 async fn handle_admin_balances(

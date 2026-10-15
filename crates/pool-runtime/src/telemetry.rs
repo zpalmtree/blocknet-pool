@@ -52,6 +52,8 @@ pub struct ApiPerformanceSnapshot {
     pub tasks: BTreeMap<String, TimedOperationSummary>,
     #[serde(default)]
     pub caches: BTreeMap<String, CacheCounterSummary>,
+    #[serde(default)]
+    pub database_reads: BTreeMap<String, TimedOperationSummary>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
