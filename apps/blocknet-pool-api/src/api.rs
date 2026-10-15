@@ -22,7 +22,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{mpsc, Notify, Semaphore};
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::config::Config;
@@ -83,6 +83,8 @@ const MINER_BALANCE_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(5);
 const MINER_DETAIL_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(10);
 const MINER_BALANCE_RESPONSE_CACHE_MAX_ENTRIES: usize = 2048;
 const MINER_DETAIL_RESPONSE_CACHE_MAX_ENTRIES: usize = 1024;
+// Reserve database capacity for balances, stats, health, and background work.
+const MAX_CONCURRENT_MINER_DETAIL_LOADS: usize = 2;
 const PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(5);
 const PUBLIC_TELEMETRY_STATS_RATE_LIMIT: u32 = 12;
 const PUBLIC_TELEMETRY_MINER_RATE_LIMIT: u32 = 12;
@@ -316,6 +318,7 @@ pub(crate) struct ApiState {
     pending_estimate_snapshot_notify: Arc<Notify>,
     miner_balance_response_cache: Arc<Mutex<MinerBalanceResponseCache>>,
     miner_detail_response_cache: Arc<Mutex<MinerDetailResponseCache>>,
+    miner_detail_loads: Arc<Semaphore>,
     public_telemetry_rate_limiter: Arc<Mutex<PublicTelemetryRateLimiter>>,
     performance: Arc<ApiPerformanceTracker>,
     recovery: Arc<RecoveryAgentClient>,
@@ -831,6 +834,34 @@ where
     R: Send + 'static,
 {
     join_result(tokio::task::spawn_blocking(operation).await)
+}
+
+#[derive(Debug)]
+struct TelemetryOverloaded;
+
+impl std::fmt::Display for TelemetryOverloaded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("miner telemetry is busy; retry shortly")
+    }
+}
+
+impl std::error::Error for TelemetryOverloaded {}
+
+async fn limited_blocking_result<F, R>(budget: Arc<Semaphore>, operation: F) -> anyhow::Result<R>
+where
+    F: FnOnce() -> anyhow::Result<R> + Send + 'static,
+    R: Send + 'static,
+{
+    let permit = budget
+        .try_acquire_owned()
+        .map_err(|_| TelemetryOverloaded)?;
+    spawn_blocking_result(move || {
+        // A canceled HTTP request cannot cancel synchronous Postgres work.
+        // Keep its slot occupied until the blocking work actually finishes.
+        let _permit = permit;
+        operation()
+    })
+    .await
 }
 
 fn join_result<R>(result: Result<anyhow::Result<R>, tokio::task::JoinError>) -> anyhow::Result<R> {
@@ -4146,6 +4177,8 @@ impl ApiState {
         jobs: Arc<JobManager>,
         node: Arc<NodeClient>,
     ) -> Self {
+        let detail_concurrency = (config.runtime.database_pool_size.max(2) as usize / 2)
+            .clamp(1, MAX_CONCURRENT_MINER_DETAIL_LOADS);
         Self {
             recovery: Arc::new(RecoveryAgentClient::new(
                 config.recovery.socket_path.clone(),
@@ -4169,6 +4202,7 @@ impl ApiState {
             pending_estimate_snapshot_notify: Arc::new(Notify::new()),
             miner_balance_response_cache: Arc::new(Mutex::new(MinerBalanceResponseCache::new())),
             miner_detail_response_cache: Arc::new(Mutex::new(MinerDetailResponseCache::new())),
+            miner_detail_loads: Arc::new(Semaphore::new(detail_concurrency)),
             public_telemetry_rate_limiter: Arc::new(Mutex::new(
                 PublicTelemetryRateLimiter::default(),
             )),
@@ -4978,7 +5012,7 @@ impl ApiState {
             .checked_sub(self.config.runtime.provisional_share_delay_duration())
             .unwrap_or(UNIX_EPOCH);
         let addr = address.to_string();
-        let db_result = spawn_blocking_result(move || {
+        let db_result = limited_blocking_result(Arc::clone(&self.miner_detail_loads), move || {
             let shares = store.get_shares_for_miner(&addr, MINER_DETAIL_SHARE_LIMIT)?;
             let mining_since = store.first_share_at_for_miner(&addr)?;
             let payouts =
@@ -5646,6 +5680,7 @@ fn api_performance_route_name(uri: &Uri) -> Option<&'static str> {
         "/api/stats/insights" => "stats_insights",
         "/api/luck" => "luck",
         "/api/status" => "status",
+        "/api/monitor/public" => "monitor_public",
         "/api/blocks" => "blocks",
         "/api/payouts/recent" => "payouts_recent",
         "/api/health" => "health",
@@ -6106,12 +6141,58 @@ fn no_content_result<T>(result: anyhow::Result<T>, msg: &str) -> Response {
 }
 
 fn internal_error(msg: &str, err: anyhow::Error) -> Response {
+    if err.is::<TelemetryOverloaded>() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::RETRY_AFTER, "5")],
+            Json(json!({"error": err.to_string()})),
+        )
+            .into_response();
+    }
     tracing::warn!(error = %err, "{msg}");
     error_response(StatusCode::INTERNAL_SERVER_ERROR, msg)
 }
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn canceled_request_retains_blocking_query_budget_until_work_finishes() {
+        let budget = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let task_budget = budget.clone();
+        let request = tokio::spawn(async move {
+            super::limited_blocking_result(task_budget, move || {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Ok(())
+            })
+            .await
+        });
+        started_rx.await.unwrap();
+        request.abort();
+        assert!(request.await.unwrap_err().is_cancelled());
+        let error = super::limited_blocking_result(budget.clone(), || Ok(()))
+            .await
+            .unwrap_err();
+        assert!(error.is::<super::TelemetryOverloaded>());
+        let response = super::internal_error("test", error);
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(response.headers()[axum::http::header::RETRY_AFTER], "5");
+        release_tx.send(()).unwrap();
+        let permit = tokio::time::timeout(std::time::Duration::from_secs(2), budget.acquire())
+            .await
+            .unwrap()
+            .unwrap();
+        drop(permit);
+        assert!(super::limited_blocking_result(budget, || Ok(()))
+            .await
+            .is_ok());
+    }
+
     #[tokio::test]
     async fn cache_refresh_coalesces_concurrent_misses() {
         let locks = std::sync::Arc::new(super::CacheRefreshLocks::default());
@@ -6426,6 +6507,38 @@ mod tests {
             .enable_all()
             .build()
             .expect("runtime")
+    }
+
+    #[test]
+    fn detail_overload_preserves_cache_hits_and_balance_access_postgres() {
+        let state = test_api_state(require_test_store!());
+        let runtime = test_runtime();
+        runtime.block_on(async {
+            state
+                .cached_miner_detail_payload("budget-cached-miner")
+                .await
+                .unwrap();
+            let permits = state.miner_detail_loads.available_permits() as u32;
+            let _busy = state
+                .miner_detail_loads
+                .acquire_many(permits)
+                .await
+                .unwrap();
+            assert!(state
+                .cached_miner_detail_payload("budget-cached-miner")
+                .await
+                .is_ok());
+            let err = state
+                .cached_miner_detail_payload("budget-uncached-miner")
+                .await
+                .err()
+                .expect("uncached detail must reject when budget is full");
+            assert!(err.is::<super::TelemetryOverloaded>());
+            assert!(state
+                .cached_miner_balance_payload("budget-cached-miner", false)
+                .await
+                .is_ok());
+        });
     }
 
     fn response_json(
@@ -7050,6 +7163,7 @@ mod tests {
                 audit_duration: pool_runtime::telemetry::PercentileSummary {
                     p50_millis: Some(1404),
                     p95_millis: Some(1502),
+                    ..Default::default()
                 },
                 ..ValidationSnapshot::default()
             },

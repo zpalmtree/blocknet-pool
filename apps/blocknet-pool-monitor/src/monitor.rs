@@ -61,6 +61,7 @@ const POOL_ACTIVITY_LOSS_MIN_THRESHOLD: Duration = Duration::from_secs(60);
 // Longer than the API's degraded pending-estimate wait, shorter than the
 // nginx proxy timeout, so the probe fails before users see 504s.
 const MINER_BALANCE_PROBE_TIMEOUT: Duration = Duration::from_secs(45);
+const MINER_BALANCE_PROBE_MAX_AGE: Duration = Duration::from_secs(65);
 const POOL_ACTIVITY_LOSS_THRESHOLD_SAMPLES: u32 = 6;
 
 #[derive(Clone, Default)]
@@ -247,6 +248,39 @@ impl<T> ProbeOutcome<T> {
     }
 }
 
+// The slow end-to-end probe must never delay the ten-second health sample.
+#[derive(Default)]
+struct BalanceProbeCache {
+    completed: Option<(std::time::Instant, ProbeOutcome<u64>)>,
+}
+
+impl BalanceProbeCache {
+    fn snapshot(&self, now: std::time::Instant) -> ProbeOutcome<u64> {
+        match &self.completed {
+            Some((completed_at, result))
+                if now.saturating_duration_since(*completed_at) <= MINER_BALANCE_PROBE_MAX_AGE =>
+            {
+                result.clone()
+            }
+            _ => ProbeOutcome::err("balance probe has no recent completed result"),
+        }
+    }
+}
+
+async fn run_balance_probe_loop<F, Fut>(cache: Arc<RwLock<BalanceProbeCache>>, mut probe: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Option<ProbeOutcome<u64>>>,
+{
+    let mut ticker = tokio::time::interval(MONITOR_INTERVAL);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        ticker.tick().await;
+        let Some(result) = probe().await else { return };
+        cache.write().completed = Some((std::time::Instant::now(), result));
+    }
+}
+
 #[derive(Clone, Default)]
 struct ConditionState {
     failing_since: Option<SystemTime>,
@@ -370,6 +404,13 @@ pub(crate) async fn run_monitor(config_path: &Path) -> Result<()> {
         spool_path: PathBuf::from(MONITOR_SPOOL_PATH),
         interval: MONITOR_INTERVAL,
         last_housekeeping_at: Arc::new(Mutex::new(None)),
+        balance_probe: Arc::new(RwLock::new(BalanceProbeCache::default())),
+    });
+
+    let balance_monitor = Arc::clone(&monitor);
+    let balance_cache = Arc::clone(&monitor.balance_probe);
+    tokio::spawn(async move {
+        run_balance_probe_loop(balance_cache, || balance_monitor.probe_miner_balance()).await;
     });
 
     let loop_monitor = Arc::clone(&monitor);
@@ -409,6 +450,7 @@ struct MonitorRuntime {
     spool_path: PathBuf,
     interval: Duration,
     last_housekeeping_at: Arc<Mutex<Option<SystemTime>>>,
+    balance_probe: Arc<RwLock<BalanceProbeCache>>,
 }
 
 impl MonitorRuntime {
@@ -431,6 +473,7 @@ impl MonitorRuntime {
 
     async fn monitor_loop(self: Arc<Self>) -> Result<()> {
         let mut ticker = tokio::time::interval(self.interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticker.tick().await;
             let sampled_at = SystemTime::now();
@@ -457,7 +500,15 @@ impl MonitorRuntime {
         } else {
             ProbeOutcome::default()
         };
-        let miner_balance = self.probe_miner_balance().await;
+        let miner_balance = if self.cfg.balance_probe_address.trim().is_empty() {
+            None
+        } else {
+            Some(
+                self.balance_probe
+                    .read()
+                    .snapshot(std::time::Instant::now()),
+            )
+        };
         let reference_heights = self.probe_reference_heights().await;
 
         let mut runtime_snapshot = None;
@@ -2532,6 +2583,15 @@ fn render_timed_operation_metrics(
             &labels,
             stats.duration.p95_millis.unwrap_or(0),
         );
+        metric_line_labeled(
+            out,
+            &format!("{prefix}_p99_millis"),
+            &labels,
+            stats.duration.p99_millis.unwrap_or(0),
+        );
+        if let Some(p99) = stats.success_duration.p99_millis {
+            metric_line_labeled(out, &format!("{prefix}_success_p99_millis"), &labels, p99);
+        }
     }
 }
 
@@ -2544,6 +2604,46 @@ fn escape_metric_label_value(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn pending_balance_probe_does_not_block_reading_health_sample() {
+        let cache = std::sync::Arc::new(super::RwLock::new(super::BalanceProbeCache::default()));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
+        let mut channels = Some((started_tx, finish_rx));
+        let worker_cache = cache.clone();
+        let worker = tokio::spawn(super::run_balance_probe_loop(worker_cache, move || {
+            let channels = channels.take();
+            async move {
+                let (started, finish) = channels?;
+                started.send(()).unwrap();
+                finish.await.unwrap();
+                Some(super::ProbeOutcome::ok(123))
+            }
+        }));
+        started_rx.await.unwrap();
+        assert!(cache
+            .read()
+            .snapshot(std::time::Instant::now())
+            .error
+            .is_some());
+        finish_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if cache.read().snapshot(std::time::Instant::now()).value == Some(123) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let stale_at =
+            std::time::Instant::now() + super::MINER_BALANCE_PROBE_MAX_AGE + Duration::from_secs(1);
+        assert!(cache.read().snapshot(stale_at).error.is_some());
+        worker.abort();
+        let _ = worker.await;
+    }
+
     use super::{
         daemon_slow_block_state, parse_proc_stat_metrics, payout_queue_state,
         pool_activity_loss_state, reference_height_divergence_state, render_metrics,
@@ -2734,7 +2834,14 @@ mod tests {
                     slow_count: 2,
                     total_millis: 600,
                     max_millis: 250,
-                    duration: Default::default(),
+                    duration: pool_runtime::telemetry::PercentileSummary {
+                        p99_millis: Some(250),
+                        ..Default::default()
+                    },
+                    success_duration: pool_runtime::telemetry::PercentileSummary {
+                        p99_millis: Some(200),
+                        ..Default::default()
+                    },
                 },
             )]),
             operations: BTreeMap::new(),
@@ -2753,6 +2860,7 @@ mod tests {
                 total_millis: 240,
                 max_millis: 120,
                 duration: Default::default(),
+                success_duration: Default::default(),
             },
         );
 
@@ -2760,6 +2868,11 @@ mod tests {
         assert!(rendered
             .contains("blocknet_pool_monitor_process_user_cpu_seconds{service=\"api\"} 12.5"));
         assert!(rendered.contains("blocknet_pool_monitor_api_route_count{route=\"stats\"} 5"));
+        assert!(
+            rendered.contains("blocknet_pool_monitor_api_route_p99_millis{route=\"stats\"} 250")
+        );
+        assert!(rendered
+            .contains("blocknet_pool_monitor_api_route_success_p99_millis{route=\"stats\"} 200"));
         assert!(
             rendered.contains("blocknet_pool_monitor_api_cache_hits{cache=\"stats_response\"} 7")
         );
