@@ -393,15 +393,23 @@ impl NodeClient {
 
     pub(crate) fn renew_block_template(&self, template_id: &str) -> Result<RenewTemplateResponse> {
         let payload = serde_json::json!({ "template_id": template_id });
-        let result = self.post_json("/api/mining/renewtemplate", &payload);
-        if let Err(err) = &result {
-            self.record_template_renewal_failure();
-            if is_unknown_or_expired_template_id_error(err) {
-                self.template_renewal_expired_responses
-                    .fetch_add(1, Ordering::Relaxed);
-            }
+        // The job manager has the lease and parent needed to distinguish a
+        // normal tip invalidation from a lost/expired current-tip template.
+        self.post_json("/api/mining/renewtemplate", &payload)
+    }
+
+    pub(crate) fn get_template_recovery_status(&self) -> Result<NodeStatus> {
+        // Diagnostic failure must not hold up replacement work for the normal
+        // 30-second API timeout. An unavailable status preserves the alert.
+        self.get_json_with_timeout("/api/status", std::time::Duration::from_secs(2))
+    }
+
+    pub(crate) fn record_template_renewal_error(&self, err: &anyhow::Error) {
+        self.record_template_renewal_failure();
+        if is_http_status(err, 404) && is_unknown_or_expired_template_id_error(err) {
+            self.template_renewal_expired_responses
+                .fetch_add(1, Ordering::Relaxed);
         }
-        result
     }
 
     pub(crate) fn record_template_renewal_failure(&self) {
@@ -729,10 +737,18 @@ impl NodeClient {
     }
 
     fn get_json<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T> {
+        self.get_json_with_timeout(path, NODE_HTTP_TIMEOUT)
+    }
+
+    fn get_json_with_timeout<T: for<'de> Deserialize<'de>>(
+        &self,
+        path: &str,
+        timeout: std::time::Duration,
+    ) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);
         let mut attempted_refresh = false;
         loop {
-            let req = self.apply_auth(self.client.get(&url));
+            let req = self.apply_auth(self.client.get(&url).timeout(timeout));
             let resp = req.send().with_context(|| format!("GET {path}"))?;
             let status = resp.status();
             let body = resp.text().unwrap_or_default();

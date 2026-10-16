@@ -60,14 +60,14 @@ psql "${BASE_POSTGRES_URL}" -v ON_ERROR_STOP=1 \
   -c "CREATE SCHEMA IF NOT EXISTS ${POSTGRES_SCHEMA}" >/dev/null
 DATABASE_URL="$(python3 - "${BASE_POSTGRES_URL}" "${POSTGRES_SCHEMA}" <<'PY'
 import sys
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 base = sys.argv[1]
 schema = sys.argv[2]
 parts = urlsplit(base)
 query = parse_qsl(parts.query, keep_blank_values=True)
 query.append(("options", f"-c search_path={schema}"))
-print(urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)))
+print(urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query, quote_via=quote), parts.fragment)))
 PY
 )"
 
@@ -199,17 +199,12 @@ if ! wait_for_port "${DAEMON_PORT}" "mock daemon"; then
 fi
 
 (
-  cd "${ROOT_DIR}"
-  cargo run --quiet -p blocknet-pool-stratum-app --bin blocknet-pool-stratum -- --config "${CONFIG_PATH}"
+  cd "${TMP_DIR}"
+  cargo run --quiet --manifest-path "${ROOT_DIR}/Cargo.toml" -p blocknet-pool-stratum-app --bin blocknet-pool-stratum -- --config "${CONFIG_PATH}"
 ) >"${STRATUM_LOG}" 2>&1 &
 STRATUM_PID="$!"
 
-(
-  cd "${ROOT_DIR}"
-  cargo run --quiet -p blocknet-pool-api-app --bin blocknet-pool-api -- --config "${CONFIG_PATH}"
-) >"${API_LOG}" 2>&1 &
-API_PID="$!"
-
+# Let Stratum initialize the fresh schema before API startup runs migrations.
 if ! wait_for_port "${STRATUM_PORT}" "stratum"; then
   echo "--- stratum log ---" >&2
   cat "${STRATUM_LOG}" >&2 || true
@@ -219,6 +214,12 @@ if ! wait_for_port "${STRATUM_PORT}" "stratum"; then
   cat "${DAEMON_LOG}" >&2 || true
   exit 1
 fi
+(
+  cd "${TMP_DIR}"
+  cargo run --quiet --manifest-path "${ROOT_DIR}/Cargo.toml" -p blocknet-pool-api-app --bin blocknet-pool-api -- --config "${CONFIG_PATH}"
+) >"${API_LOG}" 2>&1 &
+API_PID="$!"
+
 if ! wait_for_port "${API_PORT}" "api"; then
   echo "--- api log ---" >&2
   cat "${API_LOG}" >&2 || true
@@ -241,23 +242,8 @@ import urllib.request
 stratum_port = int(sys.argv[1])
 api_port = int(sys.argv[2])
 
-ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-
-def b58encode(raw: bytes) -> str:
-    n = int.from_bytes(raw, "big")
-    out = []
-    while n > 0:
-        n, rem = divmod(n, 58)
-        out.append(ALPHABET[rem])
-    zeros = 0
-    for b in raw:
-        if b == 0:
-            zeros += 1
-        else:
-            break
-    return ("1" * zeros) + ("".join(reversed(out)) if out else "")
-
-address = b58encode(bytes([0x11] * 64))
+# Checksummed mainnet address with valid Ristretto keys, shared with Stratum tests.
+address = "RwkNt8jJNWifsxuWSKta9smTLm9mnAv1gWyk46fWSxk6xDWrAahevSTVbFUfYdFr9z4vNJWCziBh7fmJMhyB5BfxM4YYM"
 s = socket.create_connection(("127.0.0.1", stratum_port), timeout=10)
 s.settimeout(10.0)
 

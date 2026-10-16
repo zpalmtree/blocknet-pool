@@ -2845,6 +2845,7 @@ mod tests {
                 },
             )]),
             operations: BTreeMap::new(),
+            database_reads: BTreeMap::new(),
             tasks: BTreeMap::new(),
             caches: BTreeMap::from([(
                 "stats_response".to_string(),
