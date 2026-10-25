@@ -21,6 +21,9 @@ pub(crate) const SUBMIT_PRESSURE_HOLD: Duration = Duration::from_secs(30);
 pub(crate) enum UnprocessedReason {
     /// The regular submit queue was full.
     SubmitQueueFull,
+    /// The regular submit queue was near full and this source held more than
+    /// its share of the queued work.
+    FairShed,
     /// The connection exceeded the per-connection submit rate limit.
     RateLimited,
     /// A share that must be verified before credit found the validation
@@ -37,7 +40,7 @@ impl UnprocessedReason {
     /// The dispatcher itself is saturated (as opposed to one session or one
     /// verification path).
     pub(crate) fn is_submit_pressure(self) -> bool {
-        matches!(self, Self::SubmitQueueFull)
+        matches!(self, Self::SubmitQueueFull | Self::FairShed)
     }
 }
 
@@ -114,6 +117,7 @@ impl AdmissionState {
     pub(crate) fn record(&self, reason: UnprocessedReason, now: Instant) {
         let counter = match reason {
             UnprocessedReason::SubmitQueueFull => &self.submit_queue_full,
+            UnprocessedReason::FairShed => &self.fair_shed,
             UnprocessedReason::RateLimited => &self.rate_limited,
             UnprocessedReason::ValidationQueueFull => &self.validation_queue_full,
             UnprocessedReason::SyncVerifyBusy => &self.sync_verify_busy,

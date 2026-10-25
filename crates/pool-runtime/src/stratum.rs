@@ -11,7 +11,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc, Notify};
 
-use crate::admission::{UnprocessedReason, UnprocessedSubmitSnapshot};
+use crate::admission::{AdmissionState, UnprocessedReason, UnprocessedSubmitSnapshot};
 use crate::config::{Config, CANDIDATE_SUBMIT_QUEUE_SIZE};
 use crate::dev_fee::is_seine_dev_fee_address;
 use crate::engine::{
@@ -170,6 +170,62 @@ struct SubmitWorkItem {
     received_at: Instant,
     completion_tx: mpsc::UnboundedSender<SubmitCompletion>,
     candidate_permit: Option<CandidateClaimPermit>,
+    /// Who the work is queued for, on the regular lane (fair shedding).
+    source: Option<QueuedSource>,
+}
+
+#[derive(Debug, Clone)]
+struct QueuedSource {
+    address: String,
+    ip_group: String,
+}
+
+/// Regular-lane occupancy from which submits are shed per source.
+const FAIR_SHED_START_NUM: usize = 3;
+const FAIR_SHED_START_DEN: usize = 4;
+
+/// Regular-lane work currently queued per address and per IP group. When the
+/// lane is nearly full, a source holding more than the average share of the
+/// queued work is shed first, so one farm's flood turns into busy answers for
+/// the farm rather than for every other miner. O(1) per submit.
+#[derive(Debug, Default)]
+struct QueuedSources {
+    total: usize,
+    by_address: HashMap<String, usize>,
+    by_ip_group: HashMap<String, usize>,
+}
+
+impl QueuedSources {
+    /// Whether `source` holds more than the average queued work per
+    /// address, or per IP group. A lone source is never over its share, and
+    /// neither is a source with a single queued submit.
+    fn over_share(&self, source: &QueuedSource) -> bool {
+        let over = |held: usize, sources: usize| held.saturating_mul(sources) > self.total;
+        let address = self.by_address.get(&source.address).copied().unwrap_or(0);
+        let ip_group = self.by_ip_group.get(&source.ip_group).copied().unwrap_or(0);
+        over(address, self.by_address.len()) || over(ip_group, self.by_ip_group.len())
+    }
+
+    fn add(&mut self, source: &QueuedSource) {
+        self.total += 1;
+        *self.by_address.entry(source.address.clone()).or_default() += 1;
+        *self.by_ip_group.entry(source.ip_group.clone()).or_default() += 1;
+    }
+
+    fn remove(&mut self, source: &QueuedSource) {
+        self.total = self.total.saturating_sub(1);
+        for (map, key) in [
+            (&mut self.by_address, &source.address),
+            (&mut self.by_ip_group, &source.ip_group),
+        ] {
+            if let Some(count) = map.get_mut(key) {
+                *count -= 1;
+                if *count == 0 {
+                    map.remove(key);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -209,6 +265,7 @@ struct CandidateClaimPermit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EnqueueRejection {
     QueueFull,
+    FairShed,
 }
 
 impl EnqueueRejection {
@@ -219,6 +276,7 @@ impl EnqueueRejection {
     fn reason(self) -> UnprocessedReason {
         match self {
             Self::QueueFull => UnprocessedReason::SubmitQueueFull,
+            Self::FairShed => UnprocessedReason::FairShed,
         }
     }
 }
@@ -235,6 +293,9 @@ struct SubmitDispatcher {
     candidate_tx: flume::Sender<SubmitWorkItem>,
     priority_candidate_tx: flume::Sender<SubmitWorkItem>,
     regular_tx: flume::Sender<SubmitWorkItem>,
+    regular_capacity: usize,
+    regular_sources: Mutex<QueuedSources>,
+    admission: Arc<AdmissionState>,
     candidate_queue: Arc<QueueTracker>,
     priority_candidate_queue: Arc<QueueTracker>,
     regular_queue: Arc<QueueTracker>,
@@ -400,6 +461,9 @@ impl SubmitDispatcher {
             candidate_tx,
             priority_candidate_tx,
             regular_tx,
+            regular_capacity: cfg.regular_submit_queue_size().max(1),
+            regular_sources: Mutex::new(QueuedSources::default()),
+            admission: engine.admission_handle(),
             candidate_queue,
             priority_candidate_queue,
             regular_queue,
@@ -524,9 +588,12 @@ impl SubmitDispatcher {
         lane: SubmitLane,
     ) -> std::result::Result<(), EnqueueRejection> {
         let queued_at = Instant::now();
+        if lane == SubmitLane::Regular {
+            return self.try_enqueue_regular(item, queued_at);
+        }
         let tracker_id = self.lane_queue(lane).push(queued_at);
         let result = match lane {
-            SubmitLane::Regular => self.regular_tx.try_send(item),
+            SubmitLane::Regular => unreachable!("regular lane handled above"),
             SubmitLane::Candidate => self.candidate_tx.try_send(item),
             SubmitLane::PriorityCandidate => self.priority_candidate_tx.try_send(item),
         };
@@ -556,6 +623,48 @@ impl SubmitDispatcher {
                 }
                 Err(EnqueueRejection::QueueFull)
             }
+        }
+    }
+
+    fn try_enqueue_regular(
+        &self,
+        item: SubmitWorkItem,
+        queued_at: Instant,
+    ) -> std::result::Result<(), EnqueueRejection> {
+        let mut sources = self.regular_sources.lock();
+        let depth = self.regular_tx.len();
+        if depth * FAIR_SHED_START_DEN >= self.regular_capacity * FAIR_SHED_START_NUM {
+            // Nearly full: vardiff must not read anyone's missing shares as
+            // a hashrate drop, and the heaviest sources go first.
+            self.admission.mark_pressure(queued_at);
+            if item
+                .source
+                .as_ref()
+                .is_some_and(|source| sources.over_share(source))
+            {
+                return Err(EnqueueRejection::FairShed);
+            }
+        }
+        let tracker_id = self.regular_queue.push(queued_at);
+        let source = item.source.clone();
+        match self.regular_tx.try_send(item) {
+            Ok(()) => {
+                if let Some(source) = source.as_ref() {
+                    sources.add(source);
+                }
+                Ok(())
+            }
+            Err(flume::TrySendError::Full(_)) | Err(flume::TrySendError::Disconnected(_)) => {
+                self.regular_queue.remove(tracker_id);
+                Err(EnqueueRejection::QueueFull)
+            }
+        }
+    }
+
+    /// The worker took `item` off the regular lane.
+    fn release_regular_source(&self, item: &SubmitWorkItem) {
+        if let Some(source) = item.source.as_ref() {
+            self.regular_sources.lock().remove(source);
         }
     }
 
@@ -1082,6 +1191,13 @@ impl StratumServer {
                             } else {
                                 None
                             };
+                            let source = (lane == SubmitLane::Regular).then(|| QueuedSource {
+                                address: logged_in
+                                    .as_ref()
+                                    .map(|(address, _, _)| address.clone())
+                                    .unwrap_or_else(|| format!("conn|{conn_id}")),
+                                ip_group: ip_group_key(peer.ip()),
+                            });
                             let work = SubmitWorkItem {
                                 conn_id: conn_id.clone(),
                                 req_id: req.id,
@@ -1089,6 +1205,7 @@ impl StratumServer {
                                 received_at,
                                 completion_tx: submit_result_tx.clone(),
                                 candidate_permit,
+                                source,
                             };
                             if let Err(rejection) = self.submit_dispatcher.try_enqueue(work, lane) {
                                 if let Some((address, _, _)) = logged_in.as_ref() {
@@ -1454,6 +1571,9 @@ async fn run_submit_worker(
     while let Ok(queued) = submit_rx.recv_async().await {
         let started_at = Instant::now();
         dispatcher.lane_queue(lane).pop_and_record_wait(started_at);
+        if lane == SubmitLane::Regular {
+            dispatcher.release_regular_source(&queued);
+        }
         if candidate_lane {
             dispatcher
                 .candidate_worker_started
@@ -1742,7 +1862,8 @@ mod tests {
     use super::{
         client_submit_ack_difficulty, log_rejection_at_info, nonempty_submit_metadata,
         queue_job_json, queue_json, retarget_on_job_tick, run_tcp_outbound_writer,
-        CandidateClaimTracker, OutboundHandle, StratumResponse, StratumServer,
+        CandidateClaimTracker, OutboundHandle, QueuedSource, QueuedSources, StratumResponse,
+        StratumServer,
     };
     use crate::config::Config;
     use crate::engine::canonical_share_reject_reason;
@@ -2236,6 +2357,67 @@ mod tests {
         assert_eq!(messages[0]["method"], "job");
         assert_eq!(messages[0]["params"]["job_id"], "new");
         assert_eq!(messages[1]["id"], 7);
+    }
+
+    #[test]
+    fn fair_shed_targets_sources_holding_more_than_their_share() {
+        let farm = QueuedSource {
+            address: "farm".to_string(),
+            ip_group: "150.5.154.10".to_string(),
+        };
+        let farm_other_ip = QueuedSource {
+            address: "farm".to_string(),
+            ip_group: "150.5.155.20".to_string(),
+        };
+        let miner = |i: usize| QueuedSource {
+            address: format!("miner-{i}"),
+            ip_group: format!("10.0.0.{i}"),
+        };
+        let mut sources = QueuedSources::default();
+        for _ in 0..200 {
+            sources.add(&farm);
+            sources.add(&farm_other_ip);
+        }
+        for i in 0..50 {
+            sources.add(&miner(i));
+        }
+        assert!(sources.over_share(&farm), "one address across many IPs");
+        assert!(sources.over_share(&farm_other_ip));
+        assert!(
+            !sources.over_share(&miner(3)),
+            "a miner with one queued share"
+        );
+        assert!(!sources.over_share(&miner(99)), "a newcomer");
+
+        let sybil = |i: usize| QueuedSource {
+            address: format!("throwaway-{i}"),
+            ip_group: "203.0.113.7".to_string(),
+        };
+        let mut sources = QueuedSources::default();
+        for i in 0..100 {
+            sources.add(&sybil(i));
+        }
+        for i in 0..50 {
+            sources.add(&miner(i));
+        }
+        assert!(
+            sources.over_share(&sybil(500)),
+            "many addresses, one IP group"
+        );
+
+        let mut alone = QueuedSources::default();
+        for _ in 0..10 {
+            alone.add(&farm);
+        }
+        assert!(
+            !alone.over_share(&farm),
+            "a lone source is not over its share"
+        );
+        for _ in 0..10 {
+            alone.remove(&farm);
+        }
+        assert_eq!(alone.total, 0);
+        assert!(alone.by_address.is_empty() && alone.by_ip_group.is_empty());
     }
 
     #[test]

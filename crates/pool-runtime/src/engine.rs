@@ -2194,6 +2194,10 @@ impl PoolEngine {
         &self.admission
     }
 
+    pub(crate) fn admission_handle(&self) -> Arc<AdmissionState> {
+        Arc::clone(&self.admission)
+    }
+
     /// Records a submit the pool answered without judging it: queue full,
     /// shed, rate limited, or no verification capacity. It is still evidence
     /// that the miner found a share, so it counts toward vardiff's share-rate
