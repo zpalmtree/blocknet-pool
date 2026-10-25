@@ -8,6 +8,11 @@ What it does:
 - tracks state in Workers KV so it can detect transitions
 - posts signed incident transitions to `INGEST_URL`
 - sends Discord notifications for public HTTP down/recovery events
+- runs only on its cron trigger: `workers_dev = false` leaves it without a
+  public URL, and `fetch` (if a route is ever added) returns the last stored
+  status without probing or posting anything
+- signs `checked_at` into every ingest body; the pool rejects events more than
+  5 minutes from its clock or not newer than the last accepted one
 
 Required setup:
 

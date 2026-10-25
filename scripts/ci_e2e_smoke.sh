@@ -84,7 +84,7 @@ cat >"${CONFIG_PATH}" <<JSON
   "stratum_port": ${STRATUM_PORT},
   "api_host": "127.0.0.1",
   "api_port": ${API_PORT},
-  "api_key": "ci-api-key",
+  "api_key": "ci-api-key-0123456789abcdef0123456789abcdef",
   "monitor_ingest_secret": "ci-monitor-secret",
   "daemon_api": "http://127.0.0.1:${DAEMON_PORT}",
   "database_url": "${DATABASE_URL}",

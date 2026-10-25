@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::fs;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::path::{Path as FsPath, PathBuf};
 use std::process::Stdio;
@@ -9,8 +10,9 @@ use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::{Body, Bytes};
-use axum::extract::{Path, Query, State};
+use axum::extract::{ConnectInfo, FromRequestParts, Path, Query, State};
 use axum::http::header;
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -27,9 +29,10 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::background_read::{BackgroundReads, ReadResult};
 use crate::config::Config;
+use crate::protect::{client_key, CacheLookup, ClientIpPolicy, PublicReadCache, WindowedCounter};
 use crate::ui::{
-    handle_app_fallback, handle_favicon_svg, handle_robots_txt, handle_sitemap_xml, handle_ui,
-    handle_ui_asset,
+    apply_security_headers, handle_app_fallback, handle_favicon_svg, handle_robots_txt,
+    handle_sitemap_xml, handle_ui, handle_ui_asset,
 };
 use pool_common::db::{
     allocate_proportional_fees, ActiveVerificationHold, AddressRiskState, Balance, DbBlock,
@@ -48,9 +51,9 @@ use pool_runtime::payout::{
     is_share_payout_eligible, recover_share_window_by_replay, reward_window_end, PayoutTrustPolicy,
 };
 use pool_runtime::pgdb::{
-    BalanceSourceSummary, ConfirmedPayoutImportRecipient, ConfirmedPayoutImportTx,
-    ManualCompletedPayoutResolutionKind, MonitorUptimeSummary, ShareWindowAddressPreview,
-    UnreconciledCompletedPayoutRow, WorkerHashrateStats,
+    with_statement_timeout, BalanceSourceSummary, ConfirmedPayoutImportRecipient,
+    ConfirmedPayoutImportTx, ManualCompletedPayoutResolutionKind, MonitorUptimeSummary,
+    ShareWindowAddressPreview, UnreconciledCompletedPayoutRow, WorkerHashrateStats,
 };
 use pool_runtime::rewards::estimated_block_reward;
 use pool_runtime::service_state::{
@@ -92,9 +95,35 @@ const MINER_DETAIL_ADMISSION_WAIT: Duration = Duration::from_millis(50);
 const PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(5);
 const PUBLIC_TELEMETRY_STATS_RATE_LIMIT: u32 = 12;
 const PUBLIC_TELEMETRY_MINER_RATE_LIMIT: u32 = 12;
-const PUBLIC_TELEMETRY_RATE_LIMIT_RETENTION: Duration = Duration::from_secs(60);
 const PUBLIC_TELEMETRY_RATE_LIMIT_RETRY_AFTER_SECS: u64 = 5;
-const PUBLIC_TELEMETRY_RATE_LIMIT_MAX_BUCKETS: usize = 4096;
+// Expensive public reads (history, status, blocks, luck, payouts) are served
+// from a shared response cache. Only requests that would reach the database
+// count against this per-client budget; cache hits are never limited.
+const PUBLIC_READ_MISS_RATE_LIMIT: u32 = 20;
+const PUBLIC_READ_CACHE_MAX_ENTRIES: usize = 8192;
+const PUBLIC_READ_CACHE_MAX_BYTES: usize = 32 << 20;
+// Past their TTL, entries remain available as a fallback when a client is
+// rate limited, the read budget is saturated, or the database read fails.
+const PUBLIC_READ_STALE_TTL: Duration = Duration::from_secs(5 * 60);
+const MAX_CONCURRENT_PUBLIC_READ_LOADS: usize = 2;
+const PUBLIC_READ_ADMISSION_WAIT: Duration = Duration::from_secs(2);
+const PUBLIC_READ_COALESCE_WAIT: Duration = Duration::from_secs(20);
+const PUBLIC_STATUS_CACHE_TTL: Duration = Duration::from_secs(15);
+const PUBLIC_BLOCKS_CACHE_TTL: Duration = Duration::from_secs(15);
+const PUBLIC_LUCK_CACHE_TTL: Duration = Duration::from_secs(15);
+const PUBLIC_PAYOUTS_CACHE_TTL: Duration = Duration::from_secs(15);
+const PUBLIC_STATS_HISTORY_CACHE_TTL: Duration = Duration::from_secs(30);
+// Wrong admin keys per client before protected routes answer 429 until the
+// window ends. Requests without a key do not count, and a correct key clears
+// the client's failures, so the operator is never locked out for long.
+const ADMIN_AUTH_FAILURE_LIMIT: u32 = 20;
+const ADMIN_AUTH_FAILURE_WINDOW: Duration = Duration::from_secs(5 * 60);
+const ADMIN_AUTH_FAILURE_MAX_CLIENTS: usize = 16_384;
+// Signed monitor events must carry a `checked_at` within this distance of our
+// clock and newer than the last accepted event, so captured requests cannot
+// be replayed.
+const MONITOR_INGEST_MAX_CLOCK_SKEW_SECS: u64 = 5 * 60;
+const PUBLIC_TELEMETRY_RATE_LIMIT_MAX_BUCKETS: usize = 16_384;
 const MINER_DETAIL_SHARE_LIMIT: i64 = 20;
 const MINER_PAYOUT_HISTORY_LIMIT: i64 = 50;
 const DEFAULT_DAEMON_LOG_TAIL: usize = 200;
@@ -316,6 +345,14 @@ pub(crate) struct ApiState {
     miner_detail_loads: Arc<Semaphore>,
     reward_breakdown_reads: Arc<BackgroundReads>,
     public_telemetry_rate_limiter: Arc<Mutex<PublicTelemetryRateLimiter>>,
+    client_ip_policy: Arc<ClientIpPolicy>,
+    public_read_cache: Arc<Mutex<PublicReadCache>>,
+    public_read_loads: Arc<Semaphore>,
+    checkpoint_file_cache: Arc<CheckpointFileCache>,
+    admin_auth_failures: Arc<Mutex<WindowedCounter>>,
+    /// Newest accepted Cloudflare `checked_at` (only the `public_http` probe
+    /// exists). `None` until seeded from the latest stored heartbeat.
+    monitor_ingest_last_checked_at: Arc<tokio::sync::Mutex<Option<u64>>>,
     performance: Arc<ApiPerformanceTracker>,
     recovery: Arc<RecoveryAgentClient>,
     live_runtime_snapshot_cache: Arc<Mutex<LiveRuntimeSnapshotCache>>,
@@ -443,6 +480,23 @@ impl CacheRefreshLocks {
         };
         lock.lock_owned().await
     }
+
+    /// Like [`Self::lock`] but returns `None` instead of waiting when another
+    /// request is already refreshing `key`.
+    fn try_lock(&self, key: &str) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        let lock = {
+            let mut entries = self.entries.lock();
+            if let Some(lock) = entries.get(key).and_then(Weak::upgrade) {
+                lock
+            } else {
+                entries.retain(|_, lock| lock.strong_count() > 0);
+                let lock = Arc::new(tokio::sync::Mutex::new(()));
+                entries.insert(key.to_string(), Arc::downgrade(&lock));
+                lock
+            }
+        };
+        lock.try_lock_owned().ok()
+    }
 }
 
 struct TimedMapCache<T> {
@@ -518,6 +572,8 @@ fn prune_timed_cache_entries<T>(
 enum PublicTelemetryRouteKind {
     Stats,
     Miner,
+    /// Cache misses on expensive public reads.
+    PublicRead,
 }
 
 impl PublicTelemetryRouteKind {
@@ -525,74 +581,66 @@ impl PublicTelemetryRouteKind {
         match self {
             Self::Stats => PUBLIC_TELEMETRY_STATS_RATE_LIMIT,
             Self::Miner => PUBLIC_TELEMETRY_MINER_RATE_LIMIT,
+            Self::PublicRead => PUBLIC_READ_MISS_RATE_LIMIT,
         }
     }
 }
 
-struct PublicTelemetryRateBucket {
-    window_started_at: Instant,
-    request_count: u32,
-    last_seen_at: Instant,
+impl PublicTelemetryRouteKind {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Stats => "stats",
+            Self::Miner => "miner",
+            Self::PublicRead => "read",
+        }
+    }
 }
 
-#[derive(Default)]
+/// Per-client fixed-window limiter (see [`WindowedCounter`]): O(1) per
+/// request, with the table dropped once per window.
 struct PublicTelemetryRateLimiter {
-    buckets: HashMap<String, PublicTelemetryRateBucket>,
-    last_cleanup_at: Option<Instant>,
+    counter: WindowedCounter,
+}
+
+impl Default for PublicTelemetryRateLimiter {
+    fn default() -> Self {
+        Self {
+            counter: WindowedCounter::new(
+                PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW,
+                PUBLIC_TELEMETRY_RATE_LIMIT_MAX_BUCKETS,
+            ),
+        }
+    }
 }
 
 impl PublicTelemetryRateLimiter {
-    fn allow(&mut self, client_ip: &str, route: PublicTelemetryRouteKind, now: Instant) -> bool {
-        if self
-            .last_cleanup_at
-            .is_none_or(|last| now.duration_since(last) >= PUBLIC_TELEMETRY_RATE_LIMIT_RETENTION)
-        {
-            self.buckets.retain(|_, bucket| {
-                now.duration_since(bucket.last_seen_at) < PUBLIC_TELEMETRY_RATE_LIMIT_RETENTION
-            });
-            self.last_cleanup_at = Some(now);
-        }
+    fn allow(&mut self, client_key: &str, route: PublicTelemetryRouteKind, now: Instant) -> bool {
+        let key = format!("{}:{client_key}", route.key());
+        self.counter.try_acquire(&key, route.limit(), now)
+    }
+}
 
-        let route_key = match route {
-            PublicTelemetryRouteKind::Stats => "stats",
-            PublicTelemetryRouteKind::Miner => "miner",
-        };
-        let key = format!("{route_key}:{client_ip}");
-        let limit = route.limit();
-        let bucket = self
-            .buckets
-            .entry(key)
-            .or_insert_with(|| PublicTelemetryRateBucket {
-                window_started_at: now,
-                request_count: 0,
-                last_seen_at: now,
-            });
+/// Rate-limit key of the requesting client, resolved by [`ClientIpPolicy`].
+/// `None` when the client cannot be identified (trusted proxy without
+/// forwarding headers); per-client limits are then skipped.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ClientIp(Option<String>);
 
-        if now.duration_since(bucket.window_started_at) >= PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW {
-            bucket.window_started_at = now;
-            bucket.request_count = 0;
-        }
+impl ClientIp {
+    fn key(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+}
 
-        bucket.last_seen_at = now;
-        if bucket.request_count >= limit {
-            return false;
-        }
-        bucket.request_count = bucket.request_count.saturating_add(1);
-        if self.buckets.len() > PUBLIC_TELEMETRY_RATE_LIMIT_MAX_BUCKETS {
-            let mut oldest = self
-                .buckets
-                .iter()
-                .map(|(key, bucket)| (key.clone(), bucket.last_seen_at))
-                .collect::<Vec<_>>();
-            oldest.sort_by_key(|(_, last_seen_at)| *last_seen_at);
-            let remove_count = oldest
-                .len()
-                .saturating_sub(PUBLIC_TELEMETRY_RATE_LIMIT_MAX_BUCKETS);
-            for (key, _) in oldest.into_iter().take(remove_count) {
-                self.buckets.remove(&key);
-            }
-        }
-        true
+#[axum::async_trait]
+impl FromRequestParts<ApiState> for ClientIp {
+    type Rejection = Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &ApiState,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(state.client_ip(&parts.headers, &parts.extensions))
     }
 }
 
@@ -971,6 +1019,7 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
             observe_api_request_performance,
         ))
         .fallback(handle_app_fallback)
+        .layer(middleware::from_fn(apply_security_headers))
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -1015,7 +1064,13 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
             ),
         }
     });
-    axum::serve(listener, app).await?;
+    // Peer addresses let the client-IP policy distinguish our proxy from
+    // direct callers whose forwarding headers must not be trusted.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -1043,8 +1098,8 @@ async fn handle_info(State(state): State<ApiState>) -> impl IntoResponse {
 }
 
 async fn handle_checkpoints_metadata(State(state): State<ApiState>) -> Response {
-    match load_checkpoint_file_snapshot(&state.config).await {
-        Ok(snapshot) => Json(snapshot.metadata).into_response(),
+    match load_checkpoint_file_snapshot(&state).await {
+        Ok(snapshot) => Json(snapshot.metadata.clone()).into_response(),
         Err(CheckpointFileError::NotFound) => {
             Json(unavailable_checkpoints_metadata(&state.config)).into_response()
         }
@@ -1053,7 +1108,7 @@ async fn handle_checkpoints_metadata(State(state): State<ApiState>) -> Response 
 }
 
 async fn handle_checkpoints_file(headers: HeaderMap, State(state): State<ApiState>) -> Response {
-    let snapshot = match load_checkpoint_file_snapshot(&state.config).await {
+    let snapshot = match load_checkpoint_file_snapshot(&state).await {
         Ok(snapshot) => snapshot,
         Err(err) => return checkpoint_file_error_response(err),
     };
@@ -1070,7 +1125,7 @@ async fn handle_checkpoints_file(headers: HeaderMap, State(state): State<ApiStat
         return response;
     }
 
-    let mut response = Body::from(snapshot.body).into_response();
+    let mut response = Body::from(snapshot.body.clone()).into_response();
     apply_checkpoint_response_headers(response.headers_mut(), &snapshot.metadata, &etag);
     response
 }
@@ -1410,25 +1465,38 @@ async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
 
 async fn handle_stats_history(
     Query(query): Query<RangeQuery>,
+    client: ClientIp,
     State(state): State<ApiState>,
-) -> impl IntoResponse {
-    let since = SystemTime::now()
-        .checked_sub(history_range_duration(query.range.as_deref()))
-        .unwrap_or(UNIX_EPOCH);
-
-    let store = Arc::clone(&state.store);
-    let result = spawn_blocking_result(move || store.get_stat_snapshots(since))
+) -> Response {
+    let label = normalized_range_label(query.range.as_deref());
+    let task_state = state.clone();
+    state
+        .serve_public_read(
+            &client,
+            "stats_history",
+            format!("stats_history:{label}"),
+            PUBLIC_STATS_HISTORY_CACHE_TTL,
+            "failed loading stat history",
+            async move {
+                let since = SystemTime::now()
+                    .checked_sub(history_range_duration(Some(label)))
+                    .unwrap_or(UNIX_EPOCH);
+                let store = Arc::clone(&task_state.store);
+                let snapshots = task_state
+                    .public_blocking(move || store.get_stat_snapshots(since))
+                    .await?;
+                json_bytes(
+                    &snapshots
+                        .into_iter()
+                        .map(|snapshot| PoolHashratePointResponse {
+                            timestamp: snapshot.timestamp,
+                            hashrate: snapshot.hashrate,
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            },
+        )
         .await
-        .map(|snapshots| {
-            snapshots
-                .into_iter()
-                .map(|snapshot| PoolHashratePointResponse {
-                    timestamp: snapshot.timestamp,
-                    hashrate: snapshot.hashrate,
-                })
-                .collect::<Vec<_>>()
-        });
-    json_result(result, "failed loading stat history")
 }
 
 async fn handle_stats_insights(
@@ -1457,6 +1525,25 @@ fn rejection_window_duration(input: Option<&str>) -> Duration {
         Duration::from_secs(7 * 24 * 3600)
     } else {
         Duration::from_secs(3600)
+    }
+}
+
+/// Canonical range label shared by the history endpoints (unknown -> 24h), so
+/// cache keys cannot be multiplied with arbitrary query strings.
+fn normalized_range_label(input: Option<&str>) -> &'static str {
+    match input.map(str::trim).unwrap_or("24h") {
+        "1h" => "1h",
+        "7d" => "7d",
+        "30d" => "30d",
+        _ => "24h",
+    }
+}
+
+fn miner_hashrate_cache_ttl(label: &str) -> Duration {
+    match label {
+        "1h" => Duration::from_secs(10),
+        "24h" => Duration::from_secs(30),
+        _ => Duration::from_secs(60),
     }
 }
 
@@ -1669,11 +1756,18 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-async fn handle_status(State(state): State<ApiState>) -> impl IntoResponse {
-    json_result(
-        state.build_status_response().await,
-        "failed loading status page",
-    )
+async fn handle_status(client: ClientIp, State(state): State<ApiState>) -> Response {
+    let task_state = state.clone();
+    state
+        .serve_public_read(
+            &client,
+            "status",
+            "status".to_string(),
+            PUBLIC_STATUS_CACHE_TTL,
+            "failed loading status page",
+            async move { json_bytes(&task_state.build_status_response().await?) },
+        )
+        .await
 }
 
 async fn handle_monitor_public(State(state): State<ApiState>) -> impl IntoResponse {
@@ -1710,6 +1804,34 @@ struct CloudflareIngestEvent {
     detail: Option<String>,
 }
 
+/// Replay protection for signed monitor events: `checked_at` (and `ended_at`
+/// when present) must be within [`MONITOR_INGEST_MAX_CLOCK_SKEW_SECS`] of now,
+/// and `checked_at` must be newer than the last accepted event.
+fn check_monitor_event_freshness(
+    event: &CloudflareIngestEvent,
+    now_secs: u64,
+    last_accepted: u64,
+) -> Result<u64, (StatusCode, &'static str)> {
+    let Some(checked_at) = event.checked_at else {
+        return Err((StatusCode::BAD_REQUEST, "monitor event missing checked_at"));
+    };
+    let outside_window =
+        |timestamp: u64| timestamp.abs_diff(now_secs) > MONITOR_INGEST_MAX_CLOCK_SKEW_SECS;
+    if outside_window(checked_at) || event.ended_at.is_some_and(outside_window) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "monitor event timestamp outside the accepted window",
+        ));
+    }
+    if checked_at <= last_accepted {
+        return Err((
+            StatusCode::CONFLICT,
+            "monitor event is not newer than the last accepted event",
+        ));
+    }
+    Ok(checked_at)
+}
+
 async fn handle_monitor_ingest_cloudflare(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -1736,6 +1858,41 @@ async fn handle_monitor_ingest_cloudflare(
 
     if !event.service.trim().eq_ignore_ascii_case("public_http") {
         return error_response(StatusCode::BAD_REQUEST, "unsupported monitor service");
+    }
+
+    // Held until the event is stored so concurrent replays cannot both pass.
+    let mut last_checked_at = state.monitor_ingest_last_checked_at.lock().await;
+    let last = match *last_checked_at {
+        Some(value) => value,
+        None => {
+            let store = Arc::clone(&state.store);
+            match spawn_blocking_result(move || {
+                store.get_latest_monitor_heartbeat(Some(CLOUDFLARE_MONITOR_SOURCE))
+            })
+            .await
+            {
+                Ok(latest) => latest
+                    .map(|row| system_time_to_unix_secs(row.sampled_at))
+                    .unwrap_or(0),
+                Err(err) => {
+                    return internal_error("failed loading last cloudflare monitor event", err)
+                }
+            }
+        }
+    };
+    let now_secs = system_time_to_unix_secs(SystemTime::now());
+    match check_monitor_event_freshness(&event, now_secs, last) {
+        Ok(checked_at) => *last_checked_at = Some(checked_at),
+        Err((status, message)) => {
+            *last_checked_at = Some(last);
+            tracing::warn!(
+                checked_at = ?event.checked_at,
+                last_accepted = last,
+                now = now_secs,
+                "rejected cloudflare monitor event: {message}"
+            );
+            return error_response(status, message);
+        }
     }
 
     let store = Arc::clone(&state.store);
@@ -2613,74 +2770,91 @@ async fn handle_miner(
 async fn handle_miner_hashrate(
     Path(address): Path<String>,
     Query(query): Query<RangeQuery>,
+    client: ClientIp,
     State(state): State<ApiState>,
-) -> impl IntoResponse {
-    let (range_duration, bucket_secs) = miner_hashrate_range(query.range.as_deref());
-    let now = SystemTime::now();
+) -> Response {
+    let label = normalized_range_label(query.range.as_deref());
+    let key = format!("miner_hashrate:{label}:{address}");
+    let task_state = state.clone();
+    state
+        .serve_public_read(
+            &client,
+            "miner_hashrate",
+            key,
+            miner_hashrate_cache_ttl(label),
+            "failed loading miner hashrate history",
+            async move {
+                let store = Arc::clone(&task_state.store);
+                let points = task_state
+                    .public_blocking(move || {
+                        miner_hashrate_points(&store, &address, label, SystemTime::now())
+                    })
+                    .await?;
+                json_bytes(&points)
+            },
+        )
+        .await
+}
+
+fn miner_hashrate_points(
+    store: &PoolStore,
+    address: &str,
+    range_label: &str,
+    now: SystemTime,
+) -> anyhow::Result<Vec<MinerHashratePointResponse>> {
+    let (range_duration, bucket_secs) = miner_hashrate_range(Some(range_label));
     let since = now.checked_sub(range_duration).unwrap_or(UNIX_EPOCH);
-
-    let store = Arc::clone(&state.store);
-    match spawn_blocking_result(move || {
-        store.hashrate_history_for_miner(&address, since, bucket_secs)
-    })
-    .await
-    {
-        Ok(buckets) => {
-            // Zero-fill missing buckets to avoid visual inflation from sparse submissions,
-            // then smooth with EWMA so the curve is less jumpy.
-            let step = bucket_secs.max(1);
-            let mut by_bucket = HashMap::<i64, f64>::with_capacity(buckets.len());
-            for (ts, total_diff, _count) in buckets {
-                let hr = total_diff as f64 / step as f64;
-                by_bucket.insert(ts, hr);
-            }
-
-            let since_unix = match since.duration_since(UNIX_EPOCH) {
-                Ok(v) => i64::try_from(v.as_secs()).unwrap_or(i64::MAX),
-                Err(_) => 0,
-            };
-            let now_unix = match now.duration_since(UNIX_EPOCH) {
-                Ok(v) => i64::try_from(v.as_secs()).unwrap_or(i64::MAX),
-                Err(_) => 0,
-            };
-            let start_bucket = since_unix.div_euclid(step) * step;
-            let end_bucket = now_unix.div_euclid(step) * step;
-
-            let mut points = Vec::<MinerHashratePointResponse>::new();
-            if end_bucket >= start_bucket {
-                let alpha = 0.35_f64;
-                let mut smoothed_prev = 0.0_f64;
-                let mut first = true;
-                let mut ts = start_bucket;
-                while ts <= end_bucket {
-                    let raw = by_bucket.get(&ts).copied().unwrap_or(0.0);
-                    let smoothed = if first {
-                        first = false;
-                        raw
-                    } else {
-                        alpha * raw + (1.0 - alpha) * smoothed_prev
-                    };
-                    smoothed_prev = smoothed;
-                    points.push(MinerHashratePointResponse {
-                        timestamp: ts,
-                        hashrate: smoothed,
-                    });
-                    ts = ts.saturating_add(step);
-                }
-            }
-
-            Json(points).into_response()
-        }
-        Err(err) => internal_error("failed loading miner hashrate history", err),
+    let buckets = store.hashrate_history_for_miner(address, since, bucket_secs)?;
+    // Zero-fill missing buckets to avoid visual inflation from sparse submissions,
+    // then smooth with EWMA so the curve is less jumpy.
+    let step = bucket_secs.max(1);
+    let mut by_bucket = HashMap::<i64, f64>::with_capacity(buckets.len());
+    for (ts, total_diff, _count) in buckets {
+        let hr = total_diff as f64 / step as f64;
+        by_bucket.insert(ts, hr);
     }
+
+    let since_unix = match since.duration_since(UNIX_EPOCH) {
+        Ok(v) => i64::try_from(v.as_secs()).unwrap_or(i64::MAX),
+        Err(_) => 0,
+    };
+    let now_unix = match now.duration_since(UNIX_EPOCH) {
+        Ok(v) => i64::try_from(v.as_secs()).unwrap_or(i64::MAX),
+        Err(_) => 0,
+    };
+    let start_bucket = since_unix.div_euclid(step) * step;
+    let end_bucket = now_unix.div_euclid(step) * step;
+
+    let mut points = Vec::<MinerHashratePointResponse>::new();
+    if end_bucket >= start_bucket {
+        let alpha = 0.35_f64;
+        let mut smoothed_prev = 0.0_f64;
+        let mut first = true;
+        let mut ts = start_bucket;
+        while ts <= end_bucket {
+            let raw = by_bucket.get(&ts).copied().unwrap_or(0.0);
+            let smoothed = if first {
+                first = false;
+                raw
+            } else {
+                alpha * raw + (1.0 - alpha) * smoothed_prev
+            };
+            smoothed_prev = smoothed;
+            points.push(MinerHashratePointResponse {
+                timestamp: ts,
+                hashrate: smoothed,
+            });
+            ts = ts.saturating_add(step);
+        }
+    }
+    Ok(points)
 }
 
 async fn handle_blocks(
     Query(query): Query<BlocksQuery>,
+    client: ClientIp,
     State(state): State<ApiState>,
-) -> impl IntoResponse {
-    let daemon_chain_height = state.node.chain_height();
-
+) -> Response {
     let (limit, offset) = page_bounds(query.limit, query.offset);
     let status = non_empty(&query.status)
         .filter(|value| {
@@ -2690,24 +2864,44 @@ async fn handle_blocks(
             )
         })
         .map(str::to_ascii_lowercase);
+    let key = format!(
+        "blocks:{limit}:{offset}:{}",
+        status.as_deref().unwrap_or("all")
+    );
+    let task_state = state.clone();
+    state
+        .serve_public_read(
+            &client,
+            "blocks",
+            key,
+            PUBLIC_BLOCKS_CACHE_TTL,
+            "failed loading blocks",
+            async move { json_bytes(&load_blocks_page(task_state, limit, offset, status).await?) },
+        )
+        .await
+}
 
+async fn load_blocks_page(
+    state: ApiState,
+    limit: usize,
+    offset: usize,
+    status: Option<String>,
+) -> anyhow::Result<PagedResponse<BlockPageItemResponse>> {
+    let daemon_chain_height = state.node.chain_height();
     let store = Arc::clone(&state.store);
     let node = Arc::clone(&state.node);
-    let (mut blocks, total) = match spawn_blocking_result(move || {
-        let (mut blocks, total) = store.get_blocks_page_up_to(
-            daemon_chain_height,
-            status.as_deref(),
-            limit as i64,
-            offset as i64,
-        )?;
-        flag_chain_mismatched_blocks(node.as_ref(), daemon_chain_height, &mut blocks);
-        Ok::<_, anyhow::Error>((blocks, total))
-    })
-    .await
-    {
-        Ok(v) => v,
-        Err(err) => return internal_error("failed loading blocks", err),
-    };
+    let (mut blocks, total) = state
+        .public_blocking(move || {
+            let (mut blocks, total) = store.get_blocks_page_up_to(
+                daemon_chain_height,
+                status.as_deref(),
+                limit as i64,
+                offset as i64,
+            )?;
+            flag_chain_mismatched_blocks(node.as_ref(), daemon_chain_height, &mut blocks);
+            Ok::<_, anyhow::Error>((blocks, total))
+        })
+        .await?;
     for block in &mut blocks {
         hydrate_provisional_block_reward(block);
     }
@@ -2717,33 +2911,23 @@ async fn handle_blocks(
         .collect::<HashSet<_>>();
     let store = Arc::clone(&state.store);
     let started_at = Instant::now();
-    let luck_by_hash = match spawn_blocking_result(move || {
-        let hashes = target_hashes.into_iter().collect::<Vec<_>>();
-        store.get_luck_rounds_for_hashes(&hashes)
-    })
-    .await
-    {
-        Ok(v) => {
-            record_api_operation_observation(
-                &state,
-                "luck_details_load",
-                started_at.elapsed(),
-                false,
-            );
-            v.into_iter()
-                .map(|(hash, round)| (hash, luck_round_response_from_db(round)))
-                .collect::<HashMap<_, _>>()
-        }
-        Err(err) => {
-            record_api_operation_observation(
-                &state,
-                "luck_details_load",
-                started_at.elapsed(),
-                true,
-            );
-            return internal_error("failed loading block luck details", err);
-        }
-    };
+    let luck_by_hash = state
+        .public_blocking(move || {
+            let hashes = target_hashes.into_iter().collect::<Vec<_>>();
+            store.get_luck_rounds_for_hashes(&hashes)
+        })
+        .await;
+    record_api_operation_observation(
+        &state,
+        "luck_details_load",
+        started_at.elapsed(),
+        luck_by_hash.is_err(),
+    );
+    let luck_by_hash = luck_by_hash
+        .map_err(|err| err.context("failed loading block luck details"))?
+        .into_iter()
+        .map(|(hash, round)| (hash, luck_round_response_from_db(round)))
+        .collect::<HashMap<_, _>>();
     let items = blocks
         .into_iter()
         .map(|block| {
@@ -2752,7 +2936,7 @@ async fn handle_blocks(
         })
         .collect::<Vec<_>>();
 
-    Json(PagedResponse::new(items, total as usize)).into_response()
+    Ok(PagedResponse::new(items, total as usize))
 }
 
 #[derive(Clone, Serialize)]
@@ -3967,50 +4151,72 @@ fn block_page_item_response(
 
 async fn handle_luck_history(
     Query(query): Query<PageQuery>,
+    client: ClientIp,
     State(state): State<ApiState>,
-) -> impl IntoResponse {
+) -> Response {
     let (limit, offset) = page_bounds(query.limit, query.offset);
-    let store = Arc::clone(&state.store);
-    let node = Arc::clone(&state.node);
-    let daemon_chain_height = state.node.chain_height();
-    let started_at = Instant::now();
-
-    let (items, total) = match spawn_blocking_result(move || {
-        compute_chain_aware_luck_page(
-            store.as_ref(),
-            node.as_ref(),
-            daemon_chain_height,
-            limit,
-            offset,
+    let task_state = state.clone();
+    state
+        .serve_public_read(
+            &client,
+            "luck",
+            format!("luck:{limit}:{offset}"),
+            PUBLIC_LUCK_CACHE_TTL,
+            "failed loading luck history",
+            async move {
+                let store = Arc::clone(&task_state.store);
+                let node = Arc::clone(&task_state.node);
+                let daemon_chain_height = task_state.node.chain_height();
+                let started_at = Instant::now();
+                let result = task_state
+                    .public_blocking(move || {
+                        compute_chain_aware_luck_page(
+                            store.as_ref(),
+                            node.as_ref(),
+                            daemon_chain_height,
+                            limit,
+                            offset,
+                        )
+                    })
+                    .await;
+                record_api_operation_observation(
+                    &task_state,
+                    "luck_page_load",
+                    started_at.elapsed(),
+                    result.is_err(),
+                );
+                let (items, total) = result?;
+                json_bytes(&PagedResponse::new(items, total))
+            },
         )
-    })
-    .await
-    {
-        Ok((items, total)) => {
-            record_api_operation_observation(&state, "luck_page_load", started_at.elapsed(), false);
-            (items, total)
-        }
-        Err(err) => {
-            record_api_operation_observation(&state, "luck_page_load", started_at.elapsed(), true);
-            return internal_error("failed loading luck history", err);
-        }
-    };
-    Json(PagedResponse::new(items, total)).into_response()
+        .await
 }
 
 async fn handle_public_payouts(
     Query(query): Query<PageQuery>,
+    client: ClientIp,
     State(state): State<ApiState>,
-) -> impl IntoResponse {
+) -> Response {
     let (limit, offset) = page_bounds(query.limit, query.offset);
-
-    let store = Arc::clone(&state.store);
-    let result = spawn_blocking_result(move || {
-        store.get_public_payout_batches_page(limit as i64, offset as i64)
-    })
-    .await
-    .map(|(batches, total)| PagedResponse::new(batches, total as usize));
-    json_result(result, "failed loading payouts")
+    let task_state = state.clone();
+    state
+        .serve_public_read(
+            &client,
+            "payouts_recent",
+            format!("payouts_recent:{limit}:{offset}"),
+            PUBLIC_PAYOUTS_CACHE_TTL,
+            "failed loading payouts",
+            async move {
+                let store = Arc::clone(&task_state.store);
+                let (batches, total) = task_state
+                    .public_blocking(move || {
+                        store.get_public_payout_batches_page(limit as i64, offset as i64)
+                    })
+                    .await?;
+                json_bytes(&PagedResponse::new(batches, total as usize))
+            },
+        )
+        .await
 }
 
 async fn handle_admin_block_reward_breakdown(
@@ -4076,6 +4282,14 @@ impl ApiState {
     ) -> Self {
         let detail_concurrency = (config.runtime.database_pool_size.max(2) as usize / 2)
             .clamp(1, MAX_CONCURRENT_MINER_DETAIL_LOADS);
+        // Leave most of a small DB pool for balances, stats, and background
+        // work; cached public reads rarely miss.
+        let public_read_concurrency = ((config.runtime.database_pool_size.max(1) as usize - 1) / 2)
+            .clamp(1, MAX_CONCURRENT_PUBLIC_READ_LOADS);
+        let client_ip_policy = Arc::new(ClientIpPolicy::new(
+            &config.api_client_ip_header,
+            &config.api_trusted_proxies,
+        ));
         Self {
             recovery: Arc::new(RecoveryAgentClient::new(
                 config.recovery.socket_path.clone(),
@@ -4101,6 +4315,19 @@ impl ApiState {
             public_telemetry_rate_limiter: Arc::new(Mutex::new(
                 PublicTelemetryRateLimiter::default(),
             )),
+            client_ip_policy,
+            public_read_cache: Arc::new(Mutex::new(PublicReadCache::new(
+                PUBLIC_READ_CACHE_MAX_ENTRIES,
+                PUBLIC_READ_CACHE_MAX_BYTES,
+                PUBLIC_READ_STALE_TTL,
+            ))),
+            public_read_loads: Arc::new(Semaphore::new(public_read_concurrency)),
+            checkpoint_file_cache: Arc::new(Mutex::new(None)),
+            monitor_ingest_last_checked_at: Arc::new(tokio::sync::Mutex::new(None)),
+            admin_auth_failures: Arc::new(Mutex::new(WindowedCounter::new(
+                ADMIN_AUTH_FAILURE_WINDOW,
+                ADMIN_AUTH_FAILURE_MAX_CLIENTS,
+            ))),
             performance: Arc::new(ApiPerformanceTracker::default()),
             live_runtime_snapshot_cache: Arc::new(Mutex::new(LiveRuntimeSnapshotCache::new())),
             started_at: Instant::now(),
@@ -5276,8 +5503,8 @@ impl ApiState {
             ("7d", Duration::from_secs(7 * 24 * 3600)),
         ];
         let store = Arc::clone(&self.store);
-        let (latest_local, latest_external, incidents, uptime_summaries) =
-            spawn_blocking_result(move || {
+        let (latest_local, latest_external, incidents, uptime_summaries) = self
+            .public_blocking(move || {
                 let latest_local =
                     store.get_latest_monitor_heartbeat(Some(LOCAL_MONITOR_SOURCE))?;
                 let latest_external =
@@ -5550,24 +5777,6 @@ fn public_telemetry_route_kind_for_path(path: &str) -> Option<PublicTelemetryRou
     }
 }
 
-fn forwarded_client_ip(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(',').next())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            headers
-                .get("x-real-ip")
-                .and_then(|value| value.to_str().ok())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-        })
-}
-
 fn api_performance_route_name(uri: &Uri) -> Option<&'static str> {
     let path = uri.path();
     if !path.starts_with("/api/") {
@@ -5733,11 +5942,11 @@ async fn limit_public_telemetry_requests(
     next: Next,
 ) -> Response {
     let route = public_telemetry_route_kind_for_path(req.uri().path());
-    let client_ip = forwarded_client_ip(req.headers());
-    if let (Some(route), Some(client_ip)) = (route, client_ip) {
+    let client_ip = state.client_ip(req.headers(), req.extensions());
+    if let (Some(route), Some(client_ip)) = (route, client_ip.key()) {
         let allowed = {
             let mut limiter = state.public_telemetry_rate_limiter.lock();
-            limiter.allow(&client_ip, route, Instant::now())
+            limiter.allow(client_ip, route, Instant::now())
         };
         if !allowed {
             return (
@@ -5758,23 +5967,260 @@ async fn limit_public_telemetry_requests(
     next.run(req).await
 }
 
+impl ApiState {
+    pub(crate) fn public_base_url(&self) -> String {
+        crate::ui::public_base_url(&self.config.pool_url)
+    }
+
+    fn client_ip(&self, headers: &HeaderMap, extensions: &axum::http::Extensions) -> ClientIp {
+        let peer = extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|info| info.0.ip());
+        ClientIp(self.client_ip_policy.resolve(headers, peer).map(client_key))
+    }
+
+    fn public_db_statement_timeout(&self) -> Option<Duration> {
+        match self.config.api_public_db_statement_timeout_ms {
+            0 => None,
+            millis => Some(Duration::from_millis(millis)),
+        }
+    }
+
+    /// Run a blocking store read for a public request under the public
+    /// `statement_timeout`.
+    async fn public_blocking<F, R>(&self, operation: F) -> anyhow::Result<R>
+    where
+        F: FnOnce() -> anyhow::Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        let timeout = self.public_db_statement_timeout();
+        spawn_blocking_result(move || with_statement_timeout(timeout, operation)).await
+    }
+
+    /// Serve an expensive public read through the shared response cache.
+    ///
+    /// Fresh hits are returned without limits. A miss is single-flighted per
+    /// key, counts against the client's [`PUBLIC_READ_MISS_RATE_LIMIT`], and
+    /// needs one of the few `public_read_loads` permits. When any of those
+    /// would refuse the request, or the load fails, a stale copy is served if
+    /// one exists; otherwise 429/503/500. Loads run detached so a dropped
+    /// request still completes and caches its result.
+    async fn serve_public_read<Fut>(
+        &self,
+        client: &ClientIp,
+        cache_name: &'static str,
+        key: String,
+        ttl: Duration,
+        error_message: &'static str,
+        load: Fut,
+    ) -> Response
+    where
+        Fut: Future<Output = anyhow::Result<Bytes>> + Send + 'static,
+    {
+        let lookup = self
+            .public_read_cache
+            .lock()
+            .lookup(&key, ttl, Instant::now());
+        let stale = match lookup {
+            CacheLookup::Fresh(body) => {
+                self.performance.caches.record_hit(cache_name);
+                return cached_json_response(body, "hit");
+            }
+            CacheLookup::Stale(body) => Some(body),
+            CacheLookup::Miss => None,
+        };
+
+        if let Some(client_key) = client.key() {
+            let allowed = self.public_telemetry_rate_limiter.lock().allow(
+                client_key,
+                PublicTelemetryRouteKind::PublicRead,
+                Instant::now(),
+            );
+            if !allowed {
+                return match stale {
+                    Some(body) => cached_json_response(body, "stale"),
+                    None => public_rate_limited_response(),
+                };
+            }
+        }
+
+        let refresh = match &stale {
+            // Someone is already refreshing: the stale copy is good enough.
+            Some(body) => match self.cache_refresh_locks.try_lock(&key) {
+                Some(guard) => guard,
+                None => return cached_json_response(body.clone(), "stale"),
+            },
+            None => match tokio::time::timeout(
+                PUBLIC_READ_COALESCE_WAIT,
+                self.cache_refresh_locks.lock(&key),
+            )
+            .await
+            {
+                Ok(guard) => guard,
+                Err(_) => return public_read_overloaded_response(),
+            },
+        };
+        if let CacheLookup::Fresh(body) =
+            self.public_read_cache
+                .lock()
+                .lookup(&key, ttl, Instant::now())
+        {
+            self.performance.caches.record_hit(cache_name);
+            return cached_json_response(body, "hit");
+        }
+        self.performance.caches.record_miss(cache_name);
+
+        let permit = match tokio::time::timeout(
+            PUBLIC_READ_ADMISSION_WAIT,
+            Arc::clone(&self.public_read_loads).acquire_owned(),
+        )
+        .await
+        {
+            Ok(Ok(permit)) => permit,
+            _ => {
+                return match stale {
+                    Some(body) => cached_json_response(body, "stale"),
+                    None => public_read_overloaded_response(),
+                };
+            }
+        };
+
+        let cache = Arc::clone(&self.public_read_cache);
+        let task = tokio::spawn(async move {
+            let _permit = permit;
+            let _refresh = refresh;
+            let result = load.await;
+            if let Ok(body) = &result {
+                cache.lock().insert(key, body.clone(), Instant::now());
+            }
+            result
+        });
+        let result = task
+            .await
+            .map_err(|err| anyhow::anyhow!("public read task failed: {err}"))
+            .and_then(|result| result);
+        match (result, stale) {
+            (Ok(body), _) => cached_json_response(body, "miss"),
+            (Err(err), Some(body)) => {
+                tracing::warn!(error = %err, cache = cache_name, "{error_message}; serving stale copy");
+                cached_json_response(body, "stale")
+            }
+            (Err(err), None) => internal_error(error_message, err),
+        }
+    }
+}
+
+fn json_bytes<T: Serialize>(value: &T) -> anyhow::Result<Bytes> {
+    Ok(Bytes::from(serde_json::to_vec(value)?))
+}
+
+fn cached_json_response(body: Bytes, cache_state: &'static str) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "application/json"),
+            (HeaderName::from_static("x-cache"), cache_state),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+fn public_rate_limited_response() -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [(
+            header::RETRY_AFTER,
+            PUBLIC_TELEMETRY_RATE_LIMIT_RETRY_AFTER_SECS.to_string(),
+        )],
+        Json(serde_json::json!({
+            "error": "rate limit exceeded",
+            "detail": "too many uncached requests; back off and retry"
+        })),
+    )
+        .into_response()
+}
+
+fn public_read_overloaded_response() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, "5")],
+        Json(json!({"error": "pool API is busy; retry shortly"})),
+    )
+        .into_response()
+}
+
 async fn require_api_key(
     State(state): State<ApiState>,
     req: Request<Body>,
     next: Next,
-) -> impl IntoResponse {
-    let expected = state.config.api_key.trim();
-    let api_key = req
+) -> Response {
+    let client = state.client_ip(req.headers(), req.extensions());
+    let client_key = client.key().unwrap_or("unknown").to_string();
+    let provided = req
         .headers()
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
         .map(str::trim)
         .filter(|v| !v.is_empty());
-    if api_key == Some(expected) {
-        return next.run(req).await.into_response();
+    match check_admin_key(
+        &state.admin_auth_failures,
+        state.config.api_key.trim(),
+        &client_key,
+        provided,
+        Instant::now(),
+    ) {
+        AdminAuth::Allowed => next.run(req).await,
+        AdminAuth::Unauthorized => error_response(StatusCode::UNAUTHORIZED, "unauthorized"),
+        AdminAuth::Throttled { retry_after_secs } => {
+            tracing::warn!(client = %client_key, "admin authentication throttled after repeated failures");
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(header::RETRY_AFTER, retry_after_secs.to_string())],
+                Json(json!({"error": "too many failed authentication attempts; retry later"})),
+            )
+                .into_response()
+        }
     }
+}
 
-    error_response(StatusCode::UNAUTHORIZED, "unauthorized")
+#[derive(Debug, PartialEq, Eq)]
+enum AdminAuth {
+    Allowed,
+    Unauthorized,
+    Throttled { retry_after_secs: u64 },
+}
+
+fn check_admin_key(
+    failures: &Mutex<WindowedCounter>,
+    expected: &str,
+    client_key: &str,
+    provided: Option<&str>,
+    now: Instant,
+) -> AdminAuth {
+    let mut failures = failures.lock();
+    // A throttled client is refused even with the right key so the response
+    // cannot be used as an oracle.
+    if failures.count(client_key, now) >= ADMIN_AUTH_FAILURE_LIMIT {
+        return AdminAuth::Throttled {
+            retry_after_secs: failures.retry_after_secs(now),
+        };
+    }
+    let Some(provided) = provided else {
+        return AdminAuth::Unauthorized;
+    };
+    // Compare fixed-length digests so neither content nor length leaks.
+    let matches = !expected.is_empty()
+        && constant_time_eq(
+            &Sha256::digest(provided.as_bytes()),
+            &Sha256::digest(expected.as_bytes()),
+        );
+    if matches {
+        failures.remove(client_key);
+        AdminAuth::Allowed
+    } else {
+        failures.record(client_key, now);
+        AdminAuth::Unauthorized
+    }
 }
 
 fn non_empty(value: &Option<String>) -> Option<&str> {
@@ -5810,22 +6256,61 @@ fn unavailable_checkpoints_metadata(config: &Config) -> CheckpointsMetadataRespo
     }
 }
 
+/// File identity used to reuse a parsed/hashed checkpoint file until it changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CheckpointFingerprint {
+    len: u64,
+    modified: Option<SystemTime>,
+    inode: u64,
+}
+
+impl CheckpointFingerprint {
+    fn of(metadata: &fs::Metadata) -> Self {
+        #[cfg(unix)]
+        let inode = std::os::unix::fs::MetadataExt::ino(metadata);
+        #[cfg(not(unix))]
+        let inode = 0;
+        Self {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+            inode,
+        }
+    }
+}
+
+struct CachedCheckpointFile {
+    path: PathBuf,
+    fingerprint: CheckpointFingerprint,
+    /// Parsed snapshot, or the validation error for an invalid file.
+    result: Result<Arc<CheckpointFileSnapshot>, String>,
+}
+
+/// Last loaded checkpoint file. Requests only `stat` the file; it is re-read
+/// and re-hashed (up to 32 MiB) only when its size, mtime, or inode changes.
+type CheckpointFileCache = Mutex<Option<CachedCheckpointFile>>;
+
 async fn load_checkpoint_file_snapshot(
-    config: &Config,
-) -> Result<CheckpointFileSnapshot, CheckpointFileError> {
-    let config = config.clone();
-    tokio::task::spawn_blocking(move || load_checkpoint_file_snapshot_blocking(&config))
+    state: &ApiState,
+) -> Result<Arc<CheckpointFileSnapshot>, CheckpointFileError> {
+    let config = state.config.clone();
+    let cache = Arc::clone(&state.checkpoint_file_cache);
+    tokio::task::spawn_blocking(move || load_checkpoint_file_snapshot_blocking(&config, &cache))
         .await
         .map_err(|err| CheckpointFileError::Internal(format!("checkpoint loader failed: {err}")))?
 }
 
 fn load_checkpoint_file_snapshot_blocking(
     config: &Config,
-) -> Result<CheckpointFileSnapshot, CheckpointFileError> {
+    cache: &CheckpointFileCache,
+) -> Result<Arc<CheckpointFileSnapshot>, CheckpointFileError> {
     let path = checkpoints_path(config);
+    // Held across a reload on purpose: concurrent misses (on blocking threads)
+    // wait for one read instead of each reading and hashing the file.
+    let mut cached = cache.lock();
     let metadata = match fs::metadata(&path) {
         Ok(metadata) => metadata,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            *cached = None;
             return Err(CheckpointFileError::NotFound);
         }
         Err(err) => return Err(CheckpointFileError::Io(err)),
@@ -5838,6 +6323,12 @@ fn load_checkpoint_file_snapshot_blocking(
     if metadata.len() > MAX_CHECKPOINTS_FILE_BYTES {
         return Err(CheckpointFileError::TooLarge(metadata.len()));
     }
+    let fingerprint = CheckpointFingerprint::of(&metadata);
+    if let Some(entry) = cached.as_ref() {
+        if entry.path == path && entry.fingerprint == fingerprint {
+            return entry.result.clone().map_err(CheckpointFileError::Invalid);
+        }
+    }
 
     let body = fs::read(&path).map_err(CheckpointFileError::Io)?;
     if u64::try_from(body.len()).unwrap_or(u64::MAX) > MAX_CHECKPOINTS_FILE_BYTES {
@@ -5845,7 +6336,31 @@ fn load_checkpoint_file_snapshot_blocking(
             u64::try_from(body.len()).unwrap_or(u64::MAX),
         ));
     }
+    let result = parse_checkpoint_snapshot(config, body, &metadata);
+    // Only remember the result if the file did not change while being read.
+    let unchanged = fs::metadata(&path)
+        .map(|after| CheckpointFingerprint::of(&after) == fingerprint)
+        .unwrap_or(false);
+    let result = match result {
+        Ok(snapshot) => Ok(Arc::new(snapshot)),
+        Err(CheckpointFileError::Invalid(message)) => Err(message),
+        Err(other) => return Err(other),
+    };
+    if unchanged {
+        *cached = Some(CachedCheckpointFile {
+            path,
+            fingerprint,
+            result: result.clone(),
+        });
+    }
+    result.map_err(CheckpointFileError::Invalid)
+}
 
+fn parse_checkpoint_snapshot(
+    config: &Config,
+    body: Vec<u8>,
+    metadata: &fs::Metadata,
+) -> Result<CheckpointFileSnapshot, CheckpointFileError> {
     let (entries, latest_height, latest_hash) = parse_checkpoint_file(&body)?;
     let sha256 = hex::encode(Sha256::digest(&body));
     let updated_at = metadata.modified().ok().map(system_time_to_unix_secs);
@@ -6227,7 +6742,7 @@ mod tests {
     use crate::config::Config;
     use axum::body::to_bytes;
     use axum::extract::{Path, Query, State};
-    use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
+    use axum::http::{header, HeaderValue, Method, StatusCode, Uri};
     use axum::response::IntoResponse;
     use axum::Json;
     use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -6245,7 +6760,7 @@ mod tests {
     use pool_runtime::validation::{PersistedValidationAddressState, ValidationSnapshot};
     use tempfile::tempdir;
 
-    use crate::ui::{handle_app_fallback, is_api_request_path};
+    use crate::ui::{app_fallback_response, is_api_request_path};
 
     use super::{
         api_performance_route_name, apply_wallet_liquidity_to_payout_eta, backfill_block_effort,
@@ -6380,6 +6895,152 @@ mod tests {
     }
 
     #[test]
+    fn admin_key_check_throttles_repeated_failures_per_client() {
+        use super::{
+            check_admin_key, AdminAuth, ADMIN_AUTH_FAILURE_LIMIT, ADMIN_AUTH_FAILURE_WINDOW,
+        };
+        let failures =
+            super::Mutex::new(super::WindowedCounter::new(ADMIN_AUTH_FAILURE_WINDOW, 64));
+        let key = "k".repeat(64);
+        let start = Instant::now();
+        assert_eq!(
+            check_admin_key(&failures, &key, "a", Some(&key), start),
+            AdminAuth::Allowed
+        );
+        // Missing keys are not guesses and never count.
+        for _ in 0..(ADMIN_AUTH_FAILURE_LIMIT * 2) {
+            assert_eq!(
+                check_admin_key(&failures, &key, "a", None, start),
+                AdminAuth::Unauthorized
+            );
+        }
+        // Prefixes and different lengths are rejected.
+        assert_eq!(
+            check_admin_key(&failures, &key, "a", Some(&key[..63]), start),
+            AdminAuth::Unauthorized
+        );
+        // A correct key clears earlier failures.
+        assert_eq!(
+            check_admin_key(&failures, &key, "a", Some(&key), start),
+            AdminAuth::Allowed
+        );
+        for _ in 0..ADMIN_AUTH_FAILURE_LIMIT {
+            assert_eq!(
+                check_admin_key(&failures, &key, "a", Some("wrong"), start),
+                AdminAuth::Unauthorized
+            );
+        }
+        let throttled = check_admin_key(&failures, &key, "a", Some(&key), start);
+        assert!(
+            matches!(throttled, AdminAuth::Throttled { retry_after_secs } if retry_after_secs > 0)
+        );
+        // Other clients are unaffected; the throttle lifts after the window.
+        assert_eq!(
+            check_admin_key(&failures, &key, "b", Some(&key), start),
+            AdminAuth::Allowed
+        );
+        assert_eq!(
+            check_admin_key(
+                &failures,
+                &key,
+                "a",
+                Some(&key),
+                start + ADMIN_AUTH_FAILURE_WINDOW
+            ),
+            AdminAuth::Allowed
+        );
+        // An empty configured key never authorizes.
+        assert_eq!(
+            check_admin_key(&failures, "", "c", Some("anything"), start),
+            AdminAuth::Unauthorized
+        );
+    }
+
+    #[test]
+    fn monitor_ingest_rejects_stale_future_missing_and_replayed_events() {
+        use super::{check_monitor_event_freshness, CloudflareIngestEvent};
+        let event = |checked_at: Option<u64>, ended_at: Option<u64>| CloudflareIngestEvent {
+            service: "public_http".into(),
+            status: "up".into(),
+            started_at: None,
+            ended_at,
+            checked_at,
+            summary: None,
+            detail: None,
+        };
+        let now = 1_800_000_000;
+        assert_eq!(
+            check_monitor_event_freshness(&event(Some(now), None), now, now - 60),
+            Ok(now)
+        );
+        assert_eq!(
+            check_monitor_event_freshness(&event(Some(now - 300), Some(now - 300)), now, 0),
+            Ok(now - 300)
+        );
+        for rejected in [
+            event(None, None),
+            event(Some(now - 301), None),
+            event(Some(now + 301), None),
+            event(Some(now), Some(now - 3600)),
+        ] {
+            assert_eq!(
+                check_monitor_event_freshness(&rejected, now, 0)
+                    .unwrap_err()
+                    .0,
+                StatusCode::BAD_REQUEST
+            );
+        }
+        for last in [now, now + 1] {
+            assert_eq!(
+                check_monitor_event_freshness(&event(Some(now), None), now, last)
+                    .unwrap_err()
+                    .0,
+                StatusCode::CONFLICT
+            );
+        }
+    }
+
+    #[test]
+    fn checkpoint_file_is_reparsed_only_when_it_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("checkpoints.dat");
+        let hash = "ab".repeat(32);
+        std::fs::write(&path, format!("1:{hash}\n")).unwrap();
+        let cfg = Config {
+            checkpoints_path: path.display().to_string(),
+            ..Config::default()
+        };
+        let cache = super::Mutex::new(None);
+        let first = super::load_checkpoint_file_snapshot_blocking(&cfg, &cache).unwrap();
+        let second = super::load_checkpoint_file_snapshot_blocking(&cfg, &cache).unwrap();
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "unchanged file must be reused"
+        );
+        assert_eq!(first.metadata.latest_height, Some(1));
+
+        std::fs::write(&path, format!("1:{hash}\n2:{hash}\n")).unwrap();
+        let third = super::load_checkpoint_file_snapshot_blocking(&cfg, &cache).unwrap();
+        assert!(!Arc::ptr_eq(&first, &third));
+        assert_eq!(third.metadata.latest_height, Some(2));
+
+        std::fs::write(&path, "garbage\n").unwrap();
+        assert!(matches!(
+            super::load_checkpoint_file_snapshot_blocking(&cfg, &cache),
+            Err(CheckpointFileError::Invalid(_))
+        ));
+        assert!(matches!(
+            super::load_checkpoint_file_snapshot_blocking(&cfg, &cache),
+            Err(CheckpointFileError::Invalid(_))
+        ));
+        std::fs::remove_file(&path).unwrap();
+        assert!(matches!(
+            super::load_checkpoint_file_snapshot_blocking(&cfg, &cache),
+            Err(CheckpointFileError::NotFound)
+        ));
+    }
+
+    #[test]
     fn if_none_match_accepts_strong_etag_and_wildcard() {
         let etag = checkpoint_etag("abc123");
         let header = HeaderValue::from_str(&format!("\"old\", {etag}")).unwrap();
@@ -6452,6 +7113,127 @@ mod tests {
                 assert_eq!(perf.caches[name].hits, expected_loads * 31);
             }
         }
+    }
+
+    #[test]
+    fn public_read_cache_coalesces_limits_and_degrades_to_stale_postgres() {
+        use axum::body::Bytes;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let state = test_api_state(require_test_store!());
+        let runtime = test_runtime();
+        let ttl = Duration::from_secs(60);
+        let cache_state = |response: &axum::response::Response| {
+            response.headers()["x-cache"].to_str().unwrap().to_string()
+        };
+        runtime.block_on(async {
+            // A burst on one key performs a single load.
+            let loads = Arc::new(AtomicUsize::new(0));
+            let mut requests = Vec::new();
+            for _ in 0..16 {
+                let (state, loads) = (state.clone(), loads.clone());
+                requests.push(tokio::spawn(async move {
+                    let response = state
+                        .serve_public_read(
+                            &super::ClientIp::default(),
+                            "test",
+                            "test:burst".to_string(),
+                            ttl,
+                            "test load failed",
+                            async move {
+                                loads.fetch_add(1, Ordering::SeqCst);
+                                tokio::time::sleep(Duration::from_millis(20)).await;
+                                Ok(Bytes::from_static(b"[1]"))
+                            },
+                        )
+                        .await;
+                    assert_eq!(response.status(), StatusCode::OK);
+                }));
+            }
+            for request in requests {
+                request.await.unwrap();
+            }
+            assert_eq!(loads.load(Ordering::SeqCst), 1);
+
+            // Plant a stale entry to exercise degradation paths.
+            let old = Instant::now()
+                .checked_sub(Duration::from_secs(120))
+                .expect("monotonic clock older than two minutes");
+            state.public_read_cache.lock().insert(
+                "test:stale".to_string(),
+                Bytes::from_static(b"\"stale\""),
+                old,
+            );
+
+            // Misses count against the client's budget; hits do not.
+            let client = super::ClientIp(Some("203.0.113.70".to_string()));
+            for idx in 0..super::PUBLIC_READ_MISS_RATE_LIMIT {
+                let response = state
+                    .serve_public_read(
+                        &client,
+                        "test",
+                        format!("test:distinct:{idx}"),
+                        ttl,
+                        "test load failed",
+                        async { Ok(Bytes::from_static(b"[]")) },
+                    )
+                    .await;
+                assert_eq!(response.status(), StatusCode::OK);
+            }
+            let hit = state
+                .serve_public_read(&client, "test", "test:burst".into(), ttl, "x", async {
+                    panic!("fresh entries must not reload")
+                })
+                .await;
+            assert_eq!(cache_state(&hit), "hit");
+            let limited = state
+                .serve_public_read(&client, "test", "test:new".into(), ttl, "x", async {
+                    panic!("rate limited requests must not load")
+                })
+                .await;
+            assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert!(limited.headers().contains_key(header::RETRY_AFTER));
+            let degraded = state
+                .serve_public_read(&client, "test", "test:stale".into(), ttl, "x", async {
+                    panic!("rate limited requests must not load")
+                })
+                .await;
+            assert_eq!(degraded.status(), StatusCode::OK);
+            assert_eq!(cache_state(&degraded), "stale");
+
+            // Saturated read budget: stale copy if any, else 503.
+            let permits = state.public_read_loads.available_permits() as u32;
+            let busy = state.public_read_loads.acquire_many(permits).await.unwrap();
+            let anonymous = super::ClientIp::default();
+            let overloaded = state
+                .serve_public_read(&anonymous, "test", "test:cold".into(), ttl, "x", async {
+                    panic!("no permit available")
+                })
+                .await;
+            assert_eq!(overloaded.status(), StatusCode::SERVICE_UNAVAILABLE);
+            let stale = state
+                .serve_public_read(&anonymous, "test", "test:stale".into(), ttl, "x", async {
+                    panic!("no permit available")
+                })
+                .await;
+            assert_eq!(cache_state(&stale), "stale");
+            drop(busy);
+
+            // Failed loads fall back to stale data, or report an error.
+            let failed = state
+                .serve_public_read(&anonymous, "test", "test:stale".into(), ttl, "x", async {
+                    anyhow::bail!("database unavailable")
+                })
+                .await;
+            assert_eq!(failed.status(), StatusCode::OK);
+            assert_eq!(cache_state(&failed), "stale");
+            let failed = state
+                .serve_public_read(&anonymous, "test", "test:none".into(), ttl, "x", async {
+                    anyhow::bail!("database unavailable")
+                })
+                .await;
+            assert_eq!(failed.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        });
     }
 
     fn test_runtime() -> tokio::runtime::Runtime {
@@ -6849,11 +7631,11 @@ mod tests {
     fn app_fallback_returns_json_404_for_unknown_api_paths() {
         let runtime = test_runtime();
 
-        let response = runtime.block_on(handle_app_fallback(
+        let response = app_fallback_response(
             Method::GET,
-            HeaderMap::new(),
-            "/api/does-not-exist".parse().expect("uri"),
-        ));
+            &"/api/does-not-exist".parse().expect("uri"),
+            "https://bntpool.com",
+        );
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let content_type = response
@@ -6871,11 +7653,11 @@ mod tests {
     fn app_fallback_renders_ui_for_unknown_spa_paths() {
         let runtime = test_runtime();
 
-        let response = runtime.block_on(handle_app_fallback(
+        let response = app_fallback_response(
             Method::GET,
-            HeaderMap::new(),
-            "/admin".parse().expect("uri"),
-        ));
+            &"/admin".parse().expect("uri"),
+            "https://bntpool.com",
+        );
 
         assert_eq!(response.status(), StatusCode::OK);
         let body = runtime

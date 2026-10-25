@@ -6,6 +6,20 @@ not consume a slot. Cancellation retains the slot until blocking work finishes.
 Per-IP telemetry rate limits remain enforced; HTTP 429 also carries Retry-After.
 Browser reads coalesce overlapping requests and honor these cooldowns.
 
+Public history/status reads (`/api/status`, `/api/stats/history`, `/api/blocks`,
+`/api/luck`, `/api/payouts/recent`, `/api/miner/:address/hashrate`) are served
+from a shared response cache (TTL 15 s; history 30 s; miner hashrate 10/30/60 s
+for 1h/24h/longer ranges). A miss is single-flighted per route+parameters and
+loads under one database read slot (two when `database_pool_size` > 4) with a
+2 s admission wait and `api_public_db_statement_timeout_ms` (default 15000).
+Only misses count against the per-client budget of 20 per 5 s; cache hits are
+never limited. When a miss is rate limited, the read slot is busy, or the load
+fails, a copy up to five minutes old is served (`X-Cache: stale`); without one
+the response is 429 or 503 with `Retry-After`, or 500 for a failed load.
+Client addresses come from `X-Real-IP` (`api_client_ip_header`) when the TCP
+peer is loopback or in `api_trusted_proxies`, else the rightmost untrusted
+`X-Forwarded-For` hop.
+
 `GET /api/admin/blocks/:height/reward-breakdown` runs one background computation
 at a time. A result ready within 150 ms returns the existing HTTP 200 JSON shape.
 Otherwise it returns HTTP 202, `Retry-After: 1`, and `{"status":"pending"}`.

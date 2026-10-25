@@ -1,6 +1,8 @@
 name = "blocknet-pool-monitor"
 main = "worker.js"
 compatibility_date = "2026-03-08"
+# Cron-only worker: no public *.workers.dev URL (preview URLs follow this).
+workers_dev = false
 
 [triggers]
 crons = ["* * * * *"]

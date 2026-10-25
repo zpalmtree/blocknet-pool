@@ -1,9 +1,10 @@
 use axum::body::Body;
-use axum::extract::Path;
-use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
+use axum::extract::{Path, Request, State};
+use axum::http::{header, HeaderName, HeaderValue, Method, StatusCode, Uri};
+use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Response};
 
-use crate::api::error_response;
+use crate::api::{error_response, ApiState};
 
 const UI_INDEX_HTML: &str = include_str!(concat!(
     env!("BLOCKNET_POOL_FRONTEND_DIST_DIR"),
@@ -132,22 +133,16 @@ fn html_escape(input: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// Canonical public origin (e.g. `https://bntpool.com`) derived from the proxy
-/// headers nginx/Cloudflare set, falling back to the production host.
-fn request_base_url(headers: &HeaderMap) -> String {
-    let host = headers
-        .get("x-forwarded-host")
-        .or_else(|| headers.get(header::HOST))
-        .and_then(|value| value.to_str().ok())
-        .map(|value| value.split(',').next().unwrap_or(value).trim())
-        .filter(|value| !value.is_empty())
-        .unwrap_or("bntpool.com");
-    let scheme = if host.starts_with("localhost") || host.starts_with("127.0.0.1") {
-        "http"
+/// Canonical public origin for page metadata, from the configured `pool_url`.
+/// Request `Host`/`X-Forwarded-Host` headers are client-controlled and must not
+/// end up in og:url/og:image of a cacheable page.
+pub(crate) fn public_base_url(pool_url: &str) -> String {
+    let base = pool_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        "https://bntpool.com".to_string()
     } else {
-        "https"
-    };
-    format!("{scheme}://{host}")
+        base.to_string()
+    }
 }
 
 fn host_label(base_url: &str) -> &str {
@@ -201,26 +196,33 @@ fn og_image_bytes(name: &str) -> Option<&'static [u8]> {
         .map(|(_, bytes)| *bytes)
 }
 
-fn ui_response(headers: &HeaderMap, path: &str) -> Response {
-    let base_url = request_base_url(headers);
-    let mut response = Html(render_index_html(path, &base_url)).into_response();
+fn ui_response(base_url: &str, path: &str) -> Response {
+    let mut response = Html(render_index_html(path, base_url)).into_response();
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     response
 }
 
-pub(crate) async fn handle_ui(headers: HeaderMap) -> Response {
-    ui_response(&headers, "/")
+pub(crate) async fn handle_ui(State(state): State<ApiState>) -> Response {
+    ui_response(&state.public_base_url(), "/")
 }
 
-pub(crate) async fn handle_app_fallback(method: Method, headers: HeaderMap, uri: Uri) -> Response {
+pub(crate) async fn handle_app_fallback(
+    State(state): State<ApiState>,
+    method: Method,
+    uri: Uri,
+) -> Response {
+    app_fallback_response(method, &uri, &state.public_base_url())
+}
+
+pub(crate) fn app_fallback_response(method: Method, uri: &Uri, base_url: &str) -> Response {
     if is_api_request_path(uri.path()) {
         return error_response(StatusCode::NOT_FOUND, "not found");
     }
 
     if matches!(method, Method::GET | Method::HEAD) {
-        let mut response = ui_response(&headers, uri.path());
+        let mut response = ui_response(base_url, uri.path());
         if method == Method::HEAD {
             *response.body_mut() = Body::empty();
         }
@@ -228,6 +230,43 @@ pub(crate) async fn handle_app_fallback(method: Method, headers: HeaderMap, uri:
     }
 
     StatusCode::NOT_FOUND.into_response()
+}
+
+/// Content-Security-Policy for the embedded SPA. Everything is served from
+/// this origin except Google Fonts (stylesheet + font files) and the
+/// blocknet.id handle lookup the stats page performs with `fetch`. React
+/// `style` props go through CSSOM and need no `'unsafe-inline'`.
+pub(crate) const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
+script-src 'self'; \
+style-src 'self' https://fonts.googleapis.com; \
+font-src 'self' https://fonts.gstatic.com; \
+img-src 'self' data:; \
+connect-src 'self' https://blocknet.id; \
+object-src 'none'; \
+base-uri 'none'; \
+form-action 'self'; \
+frame-ancestors 'none'";
+
+/// Defense-in-depth headers on every response (HTML, assets, and JSON).
+/// Values a handler already set are left alone.
+pub(crate) async fn apply_security_headers(req: Request, next: Next) -> Response {
+    let mut response = next.run(req).await;
+    let headers = response.headers_mut();
+    for (name, value) in [
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (header::REFERRER_POLICY, "strict-origin-when-cross-origin"),
+        (header::X_FRAME_OPTIONS, "DENY"),
+        (header::CONTENT_SECURITY_POLICY, CONTENT_SECURITY_POLICY),
+        (
+            HeaderName::from_static("cross-origin-opener-policy"),
+            "same-origin",
+        ),
+    ] {
+        headers
+            .entry(name)
+            .or_insert(HeaderValue::from_static(value));
+    }
+    response
 }
 
 pub(crate) fn is_api_request_path(path: &str) -> bool {
@@ -239,8 +278,8 @@ const SITEMAP_PATHS: &[&str] = &[
     "/", "/start", "/blocks", "/payouts", "/stats", "/luck", "/status", "/checkpoints",
 ];
 
-pub(crate) async fn handle_robots_txt(headers: HeaderMap) -> impl IntoResponse {
-    let base_url = request_base_url(&headers);
+pub(crate) async fn handle_robots_txt(State(state): State<ApiState>) -> impl IntoResponse {
+    let base_url = state.public_base_url();
     (
         [
             (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
@@ -250,8 +289,8 @@ pub(crate) async fn handle_robots_txt(headers: HeaderMap) -> impl IntoResponse {
     )
 }
 
-pub(crate) async fn handle_sitemap_xml(headers: HeaderMap) -> impl IntoResponse {
-    let base_url = request_base_url(&headers);
+pub(crate) async fn handle_sitemap_xml(State(state): State<ApiState>) -> impl IntoResponse {
+    let base_url = state.public_base_url();
     let urls: String = SITEMAP_PATHS
         .iter()
         .map(|path| format!("  <url><loc>{}{path}</loc></url>\n", html_escape(&base_url)))
@@ -377,14 +416,58 @@ mod tests {
     }
 
     #[test]
-    fn base_url_prefers_forwarded_host_and_https() {
-        let mut headers = HeaderMap::new();
-        headers.insert(header::HOST, HeaderValue::from_static("bntpool.com"));
-        assert_eq!(request_base_url(&headers), "https://bntpool.com");
+    fn base_url_comes_from_configured_pool_url() {
+        assert_eq!(public_base_url("https://bntpool.com/"), "https://bntpool.com");
+        assert_eq!(public_base_url(" http://localhost:24783 "), "http://localhost:24783");
+        assert_eq!(public_base_url(""), "https://bntpool.com");
+    }
 
-        let mut local = HeaderMap::new();
-        local.insert(header::HOST, HeaderValue::from_static("localhost:24783"));
-        assert_eq!(request_base_url(&local), "http://localhost:24783");
+    #[test]
+    fn spoofed_host_headers_do_not_reach_page_metadata() {
+        let uri: Uri = "/blocks".parse().unwrap();
+        let response = app_fallback_response(Method::GET, &uri, &public_base_url("https://bntpool.com"));
+        let body = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(axum::body::to_bytes(response.into_body(), usize::MAX))
+            .unwrap();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains(r#"<meta property="og:url" content="https://bntpool.com/blocks" />"#));
+        assert!(!html.contains("evil.example"));
+    }
+
+    #[test]
+    fn security_headers_are_added_without_overriding_handlers() {
+        use axum::routing::get;
+        use axum::Router;
+        use tower::ServiceExt;
+
+        let app = Router::new()
+            .route("/", get(|| async { "ok" }))
+            .route(
+                "/framed",
+                get(|| async { ([(header::X_FRAME_OPTIONS, "SAMEORIGIN")], "ok") }),
+            )
+            .layer(axum::middleware::from_fn(apply_security_headers));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let response = runtime
+            .block_on(app.clone().oneshot(Request::builder().uri("/").body(Body::empty()).unwrap()))
+            .unwrap();
+        let headers = response.headers();
+        assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+        assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY");
+        assert_eq!(headers[header::REFERRER_POLICY], "strict-origin-when-cross-origin");
+        assert!(headers[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap()
+            .contains("frame-ancestors 'none'"));
+        assert_eq!(headers.get_all(header::X_CONTENT_TYPE_OPTIONS).iter().count(), 1);
+        let framed = runtime
+            .block_on(app.oneshot(Request::builder().uri("/framed").body(Body::empty()).unwrap()))
+            .unwrap();
+        assert_eq!(framed.headers()[header::X_FRAME_OPTIONS], "SAMEORIGIN");
     }
 
     #[test]

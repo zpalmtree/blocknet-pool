@@ -156,8 +156,13 @@ public_monitor_url = sys.argv[5]
 ingest_url = sys.argv[6]
 
 lines = []
+saw_workers_dev = False
 for line in template.splitlines():
-    if line.startswith("name = "):
+    if line.startswith("workers_dev"):
+        # Cron-only worker: never expose a public *.workers.dev URL.
+        lines.append("workers_dev = false")
+        saw_workers_dev = True
+    elif line.startswith("name = "):
         lines.append(f'name = "{worker_name}"')
     elif line.startswith('id = "REPLACE_WITH_KV_NAMESPACE_ID"'):
         lines.append(f'id = "{namespace_id}"')
@@ -167,8 +172,20 @@ for line in template.splitlines():
         lines.append(f'INGEST_URL = "{ingest_url}"')
     else:
         lines.append(line)
+if not saw_workers_dev:
+    # Top-level keys must precede the first [table] header.
+    first_table = next(
+        (idx for idx, line in enumerate(lines) if line.lstrip().startswith("[")),
+        len(lines),
+    )
+    lines.insert(first_table, "workers_dev = false")
 output.write_text("\n".join(lines) + "\n")
 PY
+
+if ! grep -qx 'workers_dev = false' "${tmp_config}"; then
+  echo "generated wrangler config does not disable workers.dev; refusing to deploy" >&2
+  exit 1
+fi
 
 echo "==> deploying Cloudflare worker ${worker_name}"
 (cd "${worker_dir}" && \
