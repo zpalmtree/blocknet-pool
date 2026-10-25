@@ -267,7 +267,12 @@ export function AdminPage({
   }, [api, apiKey]);
 
   const runRecoveryAction = useCallback(
-    async (kind: RecoveryOperationKind, fn: () => Promise<unknown>) => {
+    async (kind: RecoveryOperationKind, fn: () => Promise<unknown>, confirmMessage?: string) => {
+      // Recovery actions change live payout/daemon state; confirm like the
+      // reconciliation actions do.
+      if (confirmMessage && !window.confirm(confirmMessage)) {
+        return;
+      }
       setRecoveryActionError('');
       setRecoveryBusy(kind);
       try {
@@ -2510,7 +2515,13 @@ export function AdminPage({
                   className="btn btn-secondary"
                   disabled={recoveryActionState.pause.disabled}
                   title={recoveryActionState.pause.title}
-                  onClick={() => void runRecoveryAction('pause_payouts', () => api.pauseRecoveryPayouts())}
+                  onClick={() =>
+                    void runRecoveryAction(
+                      'pause_payouts',
+                      () => api.pauseRecoveryPayouts(),
+                      'Pause payouts? No payout sends will run until payouts are resumed.'
+                    )
+                  }
                 >
                   {recoveryBusy === 'pause_payouts' ? 'Pausing…' : 'Pause Payouts'}
                 </button>
@@ -2518,7 +2529,13 @@ export function AdminPage({
                   className="btn btn-secondary"
                   disabled={recoveryActionState.resume.disabled}
                   title={recoveryActionState.resume.title}
-                  onClick={() => void runRecoveryAction('resume_payouts', () => api.resumeRecoveryPayouts())}
+                  onClick={() =>
+                    void runRecoveryAction(
+                      'resume_payouts',
+                      () => api.resumeRecoveryPayouts(),
+                      'Resume payouts? Pending payouts will start sending from the active wallet.'
+                    )
+                  }
                 >
                   {recoveryBusy === 'resume_payouts' ? 'Resuming…' : 'Resume Payouts'}
                 </button>
@@ -2538,7 +2555,13 @@ export function AdminPage({
                   className="btn btn-secondary"
                   disabled={recoveryActionState.rebuildInactiveWallet.disabled}
                   title={recoveryActionState.rebuildInactiveWallet.title}
-                  onClick={() => void runRecoveryAction('rebuild_standby_wallet', () => api.rebuildInactiveWallet())}
+                  onClick={() =>
+                    void runRecoveryAction(
+                      'rebuild_standby_wallet',
+                      () => api.rebuildInactiveWallet(),
+                      `Rebuild the ${recoveryInactiveLabel} wallet? Its wallet state will be rescanned from the chain.`
+                    )
+                  }
                 >
                   {recoveryBusy === 'rebuild_standby_wallet'
                     ? 'Rebuilding…'
@@ -2550,7 +2573,13 @@ export function AdminPage({
                   className="btn btn-primary"
                   disabled={recoveryActionState.cutoverStandby.disabled}
                   title={recoveryActionState.cutoverStandby.title}
-                  onClick={() => void runRecoveryAction('cutover', () => api.cutoverDaemon('standby'))}
+                  onClick={() =>
+                    void runRecoveryAction(
+                      'cutover',
+                      () => api.cutoverDaemon('standby'),
+                      'Cut over to the standby daemon? The pool, Stratum templates, and payouts will switch to standby.'
+                    )
+                  }
                 >
                   {recoveryBusy === 'cutover' ? 'Cutting Over…' : 'Cut Over To Standby'}
                 </button>
@@ -2558,7 +2587,13 @@ export function AdminPage({
                   className="btn btn-secondary"
                   disabled={recoveryActionState.cutoverPrimary.disabled}
                   title={recoveryActionState.cutoverPrimary.title}
-                  onClick={() => void runRecoveryAction('cutover', () => api.cutoverDaemon('primary'))}
+                  onClick={() =>
+                    void runRecoveryAction(
+                      'cutover',
+                      () => api.cutoverDaemon('primary'),
+                      'Cut over to the primary daemon? The pool, Stratum templates, and payouts will switch to primary.'
+                    )
+                  }
                 >
                   {recoveryBusy === 'cutover' ? 'Cutting Over…' : 'Cut Over To Primary'}
                 </button>
@@ -2566,7 +2601,13 @@ export function AdminPage({
                   className="btn btn-secondary"
                   disabled={recoveryActionState.purgeInactiveDaemon.disabled}
                   title={recoveryActionState.purgeInactiveDaemon.title}
-                  onClick={() => void runRecoveryAction('purge_inactive_daemon', () => api.purgeInactiveDaemon())}
+                  onClick={() =>
+                    void runRecoveryAction(
+                      'purge_inactive_daemon',
+                      () => api.purgeInactiveDaemon(),
+                      `Purge the ${recoveryInactiveLabel} daemon and resync it from scratch? Its chain data will be deleted.`
+                    )
+                  }
                 >
                   {recoveryBusy === 'purge_inactive_daemon' ? 'Purging…' : 'Purge Inactive Daemon'}
                 </button>
