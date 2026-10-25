@@ -44,3 +44,11 @@ Blocknet, bntpool.com and seine, nothing negative, nothing false) and use its
    review is not a publishing gate (owner decision, 2026-10-25).
 7. `npm --prefix frontend run build`, then rebuild and deploy the API (`./scripts/deploy_bntpool.sh
    --api-only`, which doesn't restart Stratum). Blog pages are embedded in the API binary.
+
+## Article images
+
+Every published post needs a cover assigned in `scripts/blog-covers.mjs`. Use a real product
+screenshot in `blog/images/` or a language-neutral editorial diagram. The build generates
+responsive WebP covers and a per-article JPEG social image, embeds them with the blog, and
+fails if a published post has no cover. The index uses a featured guide and image cards;
+article headers use the same cover. Document screenshot provenance in `images/README.md`.

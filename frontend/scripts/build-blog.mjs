@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { Marked } from 'marked';
+import { buildCovers } from './blog-covers.mjs';
 import {
   BASE_URL, BLOG_DIR, LOCALES, TRANSLATED, blogPath, listSlugs, readPost, readingMinutes, t,
 } from './blog-lib.mjs';
@@ -57,7 +58,7 @@ function renderMarkdown(body, locale) {
   return marked.parse(withCta);
 }
 
-function page({ locale, slug = '', title, description, ogType = 'website', schema = [], head = '', body }) {
+function page({ locale, slug = '', title, description, image = OG_IMAGE, ogType = 'website', schema = [], head = '', body }) {
   const l = def(locale);
   const canonical = BASE_URL + blogPath(locale, slug);
   const alternates = LOCALES.map((x) => `<link rel="alternate" hreflang="${x.htmlLang}" href="${BASE_URL}${blogPath(x.code, slug)}">`).join('\n')
@@ -87,11 +88,11 @@ ${alternates}
 <meta property="og:description" content="${esc(description)}">
 <meta property="og:url" content="${canonical}">
 <meta property="og:locale" content="${l.ogLocale}">
-<meta property="og:image" content="${OG_IMAGE}">
+<meta property="og:image" content="${image}">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="${esc(title)}">
 <meta name="twitter:description" content="${esc(description)}">
-<meta name="twitter:image" content="${OG_IMAGE}">
+<meta name="twitter:image" content="${image}">
 <link rel="alternate" type="application/rss+xml" title="${esc(t(locale, 'rssTitle'))}" href="${blogPath(locale)}rss.xml">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -133,7 +134,7 @@ function loadPosts(locale) {
     return {
       slug, locale, title: d.title, seoTitle: d.seoTitle, description: d.description, tags: d.tags ?? [], faq: d.faq ?? [],
       date: src.data.date, updated: src.data.updated ?? src.data.date, related: src.data.related ?? [],
-      body: entry.body, url: BASE_URL + blogPath(locale, slug), path: blogPath(locale, slug),
+      cover: covers.get(slug), body: entry.body, url: BASE_URL + blogPath(locale, slug), path: blogPath(locale, slug),
     };
   }).filter(Boolean).sort((a, b) => new Date(b.date) - new Date(a.date));
 }
@@ -149,7 +150,7 @@ function postPage(p, bySlug) {
   const related = rel.length ? `<nav class="related" aria-label="${esc(t(p.locale, 'related'))}"><h2>${esc(t(p.locale, 'related'))}</h2><ul>${rel.map((r) => `<li><a href="${r.path}">${esc(r.title)}</a></li>`).join('')}</ul></nav>` : '';
   const schema = [
     { '@context': 'https://schema.org', '@type': 'BlogPosting', headline: p.title, description: p.description, datePublished: iso(p.date),
-      dateModified: iso(p.updated), image: OG_IMAGE, inLanguage: lang, mainEntityOfPage: { '@type': 'WebPage', '@id': p.url },
+      dateModified: iso(p.updated), image: BASE_URL + p.cover.social, inLanguage: lang, mainEntityOfPage: { '@type': 'WebPage', '@id': p.url },
       author: ORG, publisher: ORG, ...(p.tags.length ? { keywords: p.tags.join(', ') } : {}) },
     { '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: [
       { '@type': 'ListItem', position: 1, name: 'bntpool.com', item: `${BASE_URL}/` },
@@ -160,12 +161,16 @@ function postPage(p, bySlug) {
     mainEntity: p.faq.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })) });
   const head = `<meta property="article:published_time" content="${iso(p.date)}">\n<meta property="article:modified_time" content="${iso(p.updated)}">\n`;
   return page({
-    locale: p.locale, slug: p.slug, title: p.seoTitle ?? `${p.title} · bntpool.com`, description: p.description, ogType: 'article', schema, head,
+    locale: p.locale, slug: p.slug, title: p.seoTitle ?? `${p.title} · bntpool.com`, description: p.description, image: BASE_URL + p.cover.social, ogType: 'article', schema, head,
     body: `<main class="wrap">
-<header class="page-head">
+<header class="page-head article-head">
+  <div class="article-heading">
   <nav class="crumbs" aria-label="${esc(t(p.locale, 'breadcrumb'))}"><a href="/">bntpool.com</a> / <a href="${blog}">${esc(t(p.locale, 'blogTitle'))}</a></nav>
   <h1>${esc(p.title)}</h1>
+  <p class="lead">${esc(p.description)}</p>
   <div class="meta">${meta.join(' · ')}</div>
+  </div>
+  ${coverImage(p, true)}
 </header>
 <article class="prose">
 ${renderMarkdown(p.body, p.locale)}
@@ -175,11 +180,22 @@ ${faq}${related}
   });
 }
 
+function coverImage(post, eager = false, decorative = false) {
+  return `<img class="post-cover" src="${post.cover.src}" srcset="${post.cover.small} 600w, ${post.cover.src} 1200w" sizes="(max-width: 640px) calc(100vw - 40px), ${eager ? '(max-width: 900px) calc(100vw - 40px), 600px' : '(max-width: 900px) calc((100vw - 64px) / 2), 344px'}" width="1200" height="675" alt="${decorative ? '' : esc(post.title)}" ${eager ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async">`;
+}
+
 function indexPage(locale, posts) {
   const lang = def(locale).htmlLang;
   const url = BASE_URL + blogPath(locale);
-  const items = posts.map((p) => `<li><a href="${p.path}"><time datetime="${iso(p.date)}">${nice(p.date, lang)}</time><h2>${esc(p.title)}</h2><p>${esc(p.description)}</p></a></li>`).join('\n')
-    || `<li><p>${esc(t(locale, 'blogEmpty'))}</p></li>`;
+  // Lead with the practical starting point; the remaining guides keep their date order.
+  const featured = posts.find((p) => p.slug === 'mine-blocknet-on-bntpool');
+  const ordered = featured ? [featured, ...posts.filter((p) => p !== featured)] : posts;
+  const items = ordered.map((p, i) => `<li${i === 0 ? ' class="featured"' : ''}><a href="${p.path}">
+    ${coverImage(p, i === 0, true)}
+    <div class="post-copy"><div class="post-meta"><span>${esc(p.tags[0] ?? '')}</span><span>${esc(t(locale, 'minutes', { n: readingMinutes(p.body) }))}</span></div>
+    <h2>${esc(p.title)}</h2><p>${esc(p.description)}</p>
+    <time datetime="${iso(p.date)}">${nice(p.date, lang)}</time></div>
+  </a></li>`).join('\n') || `<li class="empty-posts"><p>${esc(t(locale, 'blogEmpty'))}</p></li>`;
   const schema = [{ '@context': 'https://schema.org', '@type': 'Blog', '@id': `${url}#blog`, name: t(locale, 'rssTitle'), url, inLanguage: lang, publisher: ORG,
     blogPost: posts.map((p) => ({ '@type': 'BlogPosting', headline: p.title, url: p.url, datePublished: iso(p.date) })) }];
   return page({
@@ -214,6 +230,7 @@ copyFileSync(new URL('blog.css', BLOG_DIR), new URL('blog.css', DIST));
 copyFileSync(new URL('theme.js', BLOG_DIR), new URL('theme.js', DIST));
 copyFileSync(new URL('lang.js', BLOG_DIR), new URL('lang.js', DIST));
 copyFileSync(new URL('seine-icon.png', BLOG_DIR), new URL('seine-icon.png', DIST));
+const covers = await buildCovers(listSlugs().filter((slug) => !readPost(slug, 'index.md').data.draft), new URL('covers/', DIST));
 const sitemapPaths = [];
 for (const l of LOCALES) {
   const posts = loadPosts(l.code);

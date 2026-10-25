@@ -8,6 +8,16 @@
   document.addEventListener('click', function (e) {
     var a = e.target.closest && e.target.closest('.langs a[hreflang]');
     if (a) remember(a.getAttribute('hreflang'));
+    document.querySelectorAll('.langs[open]').forEach(function (menu) {
+      if (!menu.contains(e.target)) menu.open = false;
+    });
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    document.querySelectorAll('.langs[open]').forEach(function (menu) {
+      if (menu.contains(document.activeElement)) menu.querySelector('summary').focus();
+      menu.open = false;
+    });
   });
   var data = document.getElementById('blog-lang-offers');
   if (!data) return; // Translated pages keep their language.
