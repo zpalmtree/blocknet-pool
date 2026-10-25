@@ -23,13 +23,16 @@ Blocknet, bntpool.com and seine, nothing negative, nothing false) and use its
 2. Write `content/<slug>/index.md` with `draft: true`, in the same front-matter format and with
    the same `<Answer>`, `<Note>` and `<Warning>` blocks as the seineminer.com blog. Posts are
    Markdown (`.md`), not MDX.
-3. Link to pool pages as `/start`, `/stats`, `/blocks`, `/payouts`, `/luck`, `/status`,
+3. End the body with exactly one call to action written for the post (the check requires it):
+   `<CTA target="pool" title="…" text="…" />` sends readers to `/start`; `target="seine"` to the
+   seine download. Translations translate `title` and `text`. Avoid ASCII double quotes inside them.
+4. Link to pool pages as `/start`, `/stats`, `/blocks`, `/payouts`, `/luck`, `/status`,
    `/checkpoints`, to other posts as `/blog/<slug>/`, and to seineminer.com with full URLs.
    Translations prefix blog links with their locale (`/blog/zh-hans/<slug>/`) but keep app
    links unprefixed, because the pool app is English-only.
-4. `node scripts/check-blog.mjs <slug> --strict` and `node scripts/check-blog.mjs --overlap <slug>`
+5. `node scripts/check-blog.mjs <slug> --strict` and `node scripts/check-blog.mjs --overlap <slug>`
    from `frontend/`.
-5. Translate (`node scripts/check-blog.mjs --hash <slug>` gives the `sourceHash`), review in a
+6. Translate (`node scripts/check-blog.mjs --hash <slug>` gives the `sourceHash`), review in a
    separate pass, set `translation: reviewed`, remove `draft: true`, add the keyword-map row.
-6. `npm --prefix frontend run build`, then rebuild and deploy the API (`./scripts/deploy_bntpool.sh
+7. `npm --prefix frontend run build`, then rebuild and deploy the API (`./scripts/deploy_bntpool.sh
    --api-only`, which doesn't restart Stratum). Blog pages are embedded in the API binary.
