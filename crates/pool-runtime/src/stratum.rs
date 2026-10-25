@@ -646,7 +646,9 @@ impl StratumServer {
     async fn run_tcp_listener(self: Arc<Self>, listener: TcpListener) -> Result<()> {
         loop {
             let (stream, peer) = listener.accept().await?;
-            let ip = peer.ip().to_string();
+            // Per-IP cap groups IPv6 by /64 (one host allocation), so a single
+            // machine cannot multiply its connection budget across addresses.
+            let ip = ip_group_key(peer.ip());
             if !self.try_track_conn(&ip) {
                 tracing::warn!(ip = %ip, "rejecting stratum connection due to limits");
                 continue;
@@ -836,6 +838,14 @@ impl StratumServer {
                     };
 
                     match req.method.as_str() {
+                        METHOD_LOGIN if logged_in.is_some() => {
+                            // One login per connection: re-logins would mint new
+                            // sessions and assignments without a new socket.
+                            if let Err(err) = queue_error(&outbound, req.id, "already logged in") {
+                                run_result = Err(err);
+                                break;
+                            }
+                        }
                         METHOD_LOGIN => {
                             let params: LoginParams = match serde_json::from_value(req.params.clone()) {
                                 Ok(v) => v,
@@ -1610,6 +1620,7 @@ fn log_rejection_at_info(reason_code: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::ip_group_key;
     use super::{
         client_submit_ack_difficulty, log_rejection_at_info, nonempty_submit_metadata,
         queue_job_json, queue_json, retarget_on_job_tick, run_tcp_outbound_writer,
@@ -2655,6 +2666,72 @@ mod tests {
 
         drop((reader, writer, reader2, writer2));
         shutdown_test_listener(listener_task, server, jobs).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn tcp_second_login_on_a_connection_is_refused() {
+        let (server, jobs) = build_tcp_test_server(stratum_test_cfg()).await;
+        let (addr, listener_task) = start_test_tcp_listener(Arc::clone(&server)).await;
+        let (mut reader, mut writer) = connect_test_client(addr).await;
+        let job = login_test_client(
+            &mut reader,
+            &mut writer,
+            1,
+            &test_miner_address(0x55),
+            "rig",
+        )
+        .await;
+        write_json_line(
+            &mut writer,
+            &StratumRequest {
+                id: 2,
+                method: pool_common::protocol::METHOD_LOGIN.to_string(),
+                params: json!({
+                    "address": test_miner_address(0x62),
+                    "worker": "other",
+                    "protocol_version": 2,
+                    "capabilities": ["submit_claimed_hash"],
+                }),
+            },
+        )
+        .await;
+        let response = read_json_line(&mut reader).await;
+        assert_eq!(response["id"], 2);
+        assert_eq!(response["error"].as_str(), Some("already logged in"));
+
+        // The original session keeps working on the same connection.
+        let nonce = nonce_with_parity(&job, false, 0);
+        send_submit(
+            &mut writer,
+            3,
+            &job.job_id,
+            nonce,
+            SleepyQueueHasher::claimed_hash_hex(nonce),
+        )
+        .await;
+        let response = read_json_line(&mut reader).await;
+        assert_eq!(response["status"].as_str(), Some("ok"), "{response}");
+        drop((reader, writer));
+        shutdown_test_listener(listener_task, server, jobs).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn ipv6_connection_cap_is_shared_per_slash_64() {
+        let (server, jobs) = build_tcp_test_server(stratum_test_cfg()).await;
+        let host_a = ip_group_key("2001:db8:7:9::1".parse().unwrap());
+        let host_b = ip_group_key("2001:db8:7:9:ffff::2".parse().unwrap());
+        let other_net = ip_group_key("2001:db8:7:a::1".parse().unwrap());
+        for _ in 0..super::MAX_CONNS_PER_IP {
+            assert!(server.try_track_conn(&host_a));
+        }
+        assert!(!server.try_track_conn(&host_b), "same /64 shares the cap");
+        assert!(server.try_track_conn(&other_net));
+        tokio::task::spawn_blocking(move || {
+            drop(server);
+            drop(jobs);
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

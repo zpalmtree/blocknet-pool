@@ -76,8 +76,14 @@ pub struct SubmitParams {
     pub backend: Option<String>,
 }
 
+/// Worker names are logged and shown in the UI, so control characters
+/// (newlines, escapes) are stripped before trimming and truncating.
 pub fn normalize_worker_name(worker: &str) -> String {
-    let trimmed = worker.trim();
+    let cleaned = worker
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .collect::<String>();
+    let trimmed = cleaned.trim();
     if trimmed.is_empty() {
         "default".to_string()
     } else {
@@ -226,6 +232,8 @@ mod tests {
         assert_eq!(normalize_worker_name("   "), "default");
         assert_eq!(normalize_worker_name(" rig-1 "), "rig-1");
         assert_eq!(normalize_worker_name(&"a".repeat(80)), "a".repeat(64));
+        assert_eq!(normalize_worker_name("rig\n-2\u{1b}[31m"), "rig-2[31m");
+        assert_eq!(normalize_worker_name("\r\n\t"), "default");
     }
 
     #[test]
