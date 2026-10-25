@@ -57,6 +57,10 @@ pub(crate) struct ValidationTask {
     pub claimed_hash: Option<[u8; 32]>,
     pub candidate_claim: bool,
     pub force_full_verify: bool,
+    /// The caller attributes failures of this task to a network source and
+    /// penalizes that source directly, so a failure must not count toward
+    /// address-level risk (addresses are public; see `source_risk`).
+    pub attributed: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -103,6 +107,29 @@ struct AddressStateUpdate<'a> {
     invalid_sample: bool,
     provisional_accepted: bool,
     overload_mode: OverloadMode,
+    attributed: bool,
+}
+
+/// Engine-side hook for audit outcomes. Audits run on validation worker
+/// threads, which may block on the store.
+pub(crate) trait AuditFeedback: Send + Sync + 'static {
+    /// Called once per completed audit of a still-provisional share.
+    /// `proven_fake` means the recomputed hash differs from the claimed hash.
+    fn on_audit_result(&self, share_id: i64, address: &str, proven_fake: bool) -> AuditAttribution;
+
+    /// Address-level escalation for evidence that could not be attributed to
+    /// a source. Returns the quarantine end, if one is now active.
+    fn quarantine_unattributed(&self, _address: &str, _reason: &str) -> Option<SystemTime> {
+        None
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct AuditAttribution {
+    /// The share's source is known and was credited/penalized directly.
+    pub attributed: bool,
+    /// Shares revoked as a consequence, grouped by address.
+    pub revoked: Vec<(String, Vec<i64>)>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -197,7 +224,10 @@ pub(crate) trait ValidationStateStore: Send + Sync + 'static {
 
     fn load_validation_clear_events_since(&self, cursor: i64) -> Result<Vec<ValidationClearEvent>>;
 
-    fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<()>;
+    /// Applies an audit verdict to a share that is still provisional. Returns
+    /// false (and changes nothing) if the share was settled meanwhile, e.g.
+    /// revoked by a source strike, so a passing audit cannot resurrect it.
+    fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<bool>;
 
     fn load_recent_provisional_audit_shares(
         &self,
@@ -264,8 +294,8 @@ impl ValidationStateStore for NullValidationStateStore {
         Ok(Vec::new())
     }
 
-    fn complete_validation_audit(&self, _update: &ShareReplayUpdate) -> Result<()> {
-        Ok(())
+    fn complete_validation_audit(&self, _update: &ShareReplayUpdate) -> Result<bool> {
+        Ok(true)
     }
 
     fn load_recent_provisional_audit_shares(
@@ -497,6 +527,7 @@ struct ValidationInner {
     validation_duration: Mutex<LatencyWindow>,
     audit_duration: Mutex<LatencyWindow>,
     overload: Mutex<OverloadState>,
+    audit_feedback: Mutex<Option<Arc<dyn AuditFeedback>>>,
 }
 
 pub(crate) struct ValidationEngine {
@@ -569,6 +600,7 @@ impl ValidationEngine {
             validation_duration: Mutex::new(default_latency_window()),
             audit_duration: Mutex::new(default_latency_window()),
             overload: Mutex::new(OverloadState::default()),
+            audit_feedback: Mutex::new(None),
         });
 
         let mut candidate_handles = Vec::with_capacity(candidate_workers);
@@ -745,6 +777,15 @@ impl ValidationEngine {
         {
             self.inner.enqueue_live_audit(share, source);
         }
+    }
+
+    pub(crate) fn attach_audit_feedback(&self, feedback: Arc<dyn AuditFeedback>) {
+        *self.inner.audit_feedback.lock() = Some(feedback);
+    }
+
+    /// Drops revoked shares from in-memory coverage/backlog accounting.
+    pub(crate) fn forget_revoked_shares(&self, address: &str, share_ids: &[i64]) {
+        self.inner.forget_revoked_shares(address, share_ids);
     }
 
     pub(crate) fn attach_submit_regular_queue(&self, queue: Arc<QueueTracker>) {
@@ -1071,6 +1112,7 @@ impl ValidationInner {
             invalid_sample,
             provisional_accepted,
             overload_mode: computed.overload_mode,
+            attributed: task.attributed,
         });
 
         ValidationResult {
@@ -1118,11 +1160,16 @@ impl ValidationInner {
                 created_at: update.created_at,
             });
         }
+        // An attributed failure is penalized at its source; counting it here
+        // would let anyone push a public address into forced review.
+        let address_risk_sample = update.sampled && !(update.attributed && update.invalid_sample);
         if update.sampled {
             st.sampled_shares = st.sampled_shares.saturating_add(1);
             if update.invalid_sample {
                 st.invalid_samples = st.invalid_samples.saturating_add(1);
             }
+        }
+        if address_risk_sample {
             if st.forced_started_at.is_some() {
                 st.forced_sampled_shares = st.forced_sampled_shares.saturating_add(1);
                 if update.invalid_sample {
@@ -1140,7 +1187,7 @@ impl ValidationInner {
             st,
             now,
             update.overload_mode,
-            update.sampled,
+            address_risk_sample,
             update.invalid_sample,
         );
 
@@ -1431,6 +1478,7 @@ impl ValidationInner {
             claimed_hash: queued.share.claimed_hash,
             candidate_claim: false,
             force_full_verify: true,
+            attributed: false,
         };
         let computed = self.compute_task(
             &task,
@@ -1457,26 +1505,74 @@ impl ValidationInner {
                 .map(canonical_audit_reject_reason)
                 .map(str::to_string),
         };
-        if let Err(err) = self.state_store.complete_validation_audit(&update) {
-            self.audit_deferred.fetch_add(1, Ordering::Relaxed);
-            tracing::warn!(
-                address = %queued.share.miner,
-                share_id = queued.share.share_id,
-                source = ?queued.source,
-                error = %err,
-                "failed to persist validation audit result"
-            );
-            return;
+        match self.state_store.complete_validation_audit(&update) {
+            Ok(true) => {}
+            Ok(false) => {
+                // Settled meanwhile (typically revoked by a source strike).
+                tracing::debug!(
+                    address = %queued.share.miner,
+                    share_id = queued.share.share_id,
+                    source = ?queued.source,
+                    "validation audit skipped for share that is no longer provisional"
+                );
+                return;
+            }
+            Err(err) => {
+                self.audit_deferred.fetch_add(1, Ordering::Relaxed);
+                tracing::warn!(
+                    address = %queued.share.miner,
+                    share_id = queued.share.share_id,
+                    source = ?queued.source,
+                    error = %err,
+                    "failed to persist validation audit result"
+                );
+                return;
+            }
         }
 
-        self.apply_audit_result(
+        let proven_fake =
+            !computed.accepted && computed.reject_reason == Some("invalid share proof");
+        let attribution = self
+            .audit_feedback()
+            .map(|feedback| {
+                feedback.on_audit_result(queued.share.share_id, &queued.share.miner, proven_fake)
+            })
+            .unwrap_or_default();
+        for (address, share_ids) in &attribution.revoked {
+            self.forget_revoked_shares(address, share_ids);
+        }
+
+        let followup = self.apply_audit_result(
             &queued.share.miner,
             queued.share.share_id,
             queued.share.created_at,
             queued.share.difficulty,
             computed.accepted,
-            computed.reject_reason,
+            !attribution.attributed,
         );
+        if followup == ValidationFollowupAction::Quarantine {
+            let quarantined_until = self.audit_feedback().and_then(|feedback| {
+                feedback.quarantine_unattributed(
+                    &queued.share.miner,
+                    "bad share ratio during forced validation",
+                )
+            });
+            match quarantined_until {
+                Some(until) => {
+                    self.schedule_forced_review_after(&queued.share.miner, until);
+                    tracing::warn!(
+                        address = %queued.share.miner,
+                        share_id = queued.share.share_id,
+                        "async validation audit quarantined address on unattributable evidence"
+                    );
+                }
+                None => tracing::warn!(
+                    address = %queued.share.miner,
+                    share_id = queued.share.share_id,
+                    "async validation audit reached the quarantine threshold but no quarantine was applied; future shares remain in forced review"
+                ),
+            }
+        }
         if computed.accepted {
             self.audit_verified.fetch_add(1, Ordering::Relaxed);
         } else {
@@ -1498,8 +1594,8 @@ impl ValidationInner {
         created_at: SystemTime,
         difficulty: u64,
         accepted: bool,
-        reject_reason: Option<&'static str>,
-    ) {
+        count_toward_address_risk: bool,
+    ) -> ValidationFollowupAction {
         let now = SystemTime::now();
         let mut state = self.state.lock();
         let entry = get_or_insert_state(&mut state, address);
@@ -1538,38 +1634,41 @@ impl ValidationInner {
         }
 
         let invalid_sample = !accepted;
-        let _ = reject_reason;
         entry.sampled_shares = entry.sampled_shares.saturating_add(1);
         if invalid_sample {
             entry.invalid_samples = entry.invalid_samples.saturating_add(1);
         }
-        if entry.forced_started_at.is_some() {
-            entry.forced_sampled_shares = entry.forced_sampled_shares.saturating_add(1);
-            if invalid_sample {
-                entry.forced_invalid_samples = entry.forced_invalid_samples.saturating_add(1);
-            }
-        } else {
-            entry.risk_sampled_shares = entry.risk_sampled_shares.saturating_add(1);
-            if invalid_sample {
-                entry.risk_invalid_samples = entry.risk_invalid_samples.saturating_add(1);
+        // Attributed failures were penalized at their source (see
+        // AuditFeedback); only unattributable evidence escalates the address.
+        let address_risk_sample = count_toward_address_risk || accepted;
+        if address_risk_sample {
+            if entry.forced_started_at.is_some() {
+                entry.forced_sampled_shares = entry.forced_sampled_shares.saturating_add(1);
+                if invalid_sample {
+                    entry.forced_invalid_samples = entry.forced_invalid_samples.saturating_add(1);
+                }
+            } else {
+                entry.risk_sampled_shares = entry.risk_sampled_shares.saturating_add(1);
+                if invalid_sample {
+                    entry.risk_invalid_samples = entry.risk_invalid_samples.saturating_add(1);
+                }
             }
         }
 
-        let followup =
-            self.evaluate_post_sample_state(entry, now, OverloadMode::Normal, true, invalid_sample);
-        if followup == ValidationFollowupAction::Quarantine {
-            tracing::warn!(
-                address = %address,
-                share_id,
-                "async validation sample would have triggered forced-validation quarantine; future shares will remain in forced review"
-            );
-        }
+        let followup = self.evaluate_post_sample_state(
+            entry,
+            now,
+            OverloadMode::Normal,
+            address_risk_sample,
+            invalid_sample,
+        );
         let persisted = persisted_validation_state(address, entry);
         if state.len() > VALIDATION_STATE_MAX_TRACKED {
             self.prune_stale_state_locked(&mut state, now);
         }
         drop(state);
         self.persist_validation_state(&persisted, None, now);
+        followup
     }
 
     fn schedule_background_audits(&self, now: SystemTime) {
@@ -1984,7 +2083,31 @@ impl ValidationInner {
             invalid_sample: false,
             provisional_accepted: true,
             overload_mode,
+            attributed: false,
         });
+    }
+
+    fn forget_revoked_shares(&self, address: &str, share_ids: &[i64]) {
+        if share_ids.is_empty() {
+            return;
+        }
+        let revoked = share_ids.iter().copied().collect::<HashSet<_>>();
+        let mut state = self.state.lock();
+        if let Some(st) = state.get_mut(address) {
+            st.provisional_at
+                .retain(|share| !share.share_id.is_some_and(|id| revoked.contains(&id)));
+            st.accepted_window
+                .retain(|share| share.verified || !revoked.contains(&share.share_id));
+        }
+        drop(state);
+        let mut pending = self.audit_pending_shares.lock();
+        for id in share_ids {
+            pending.remove(id);
+        }
+    }
+
+    fn audit_feedback(&self) -> Option<Arc<dyn AuditFeedback>> {
+        self.audit_feedback.lock().clone()
     }
 }
 
@@ -2436,9 +2559,8 @@ mod tests {
             Ok(Vec::new())
         }
 
-        fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<()> {
-            self.completed.lock().insert(update.share_id);
-            Ok(())
+        fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<bool> {
+            Ok(self.completed.lock().insert(update.share_id))
         }
 
         fn load_recent_provisional_audit_shares(
@@ -2486,6 +2608,7 @@ mod tests {
             claimed_hash: Some([0x01; 32]),
             force_full_verify: false,
             candidate_claim: false,
+            attributed: false,
         }
     }
 
@@ -2504,6 +2627,7 @@ mod tests {
             claimed_hash: Some(claimed_hash),
             force_full_verify: false,
             candidate_claim: false,
+            attributed: false,
         }
     }
 

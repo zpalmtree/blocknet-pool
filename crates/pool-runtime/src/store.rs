@@ -370,6 +370,10 @@ impl ShareStore for PoolStore {
         Ok(())
     }
 
+    fn revoke_provisional_shares(&self, share_ids: &[i64], reason: &str) -> Result<u64> {
+        self.inner.revoke_provisional_shares(share_ids, reason)
+    }
+
     fn get_vardiff_hint(&self, address: &str, worker: &str) -> Result<Option<(u64, SystemTime)>> {
         self.inner.get_vardiff_hint(address, worker)
     }
@@ -442,7 +446,7 @@ impl ValidationStateStore for PoolStore {
         self.inner.load_validation_clear_events_since(cursor)
     }
 
-    fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<()> {
+    fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<bool> {
         self.inner.complete_validation_audit(update)
     }
 

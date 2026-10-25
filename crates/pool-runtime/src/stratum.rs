@@ -796,10 +796,12 @@ impl StratumServer {
                             let login_protocol_version = params.protocol_version;
                             let login_capabilities = params.capabilities.clone();
                             let login_hint = params.difficulty_hint;
+                            let login_peer_ip = peer.ip();
                             let login = tokio::task::spawn_blocking(move || {
                                 let login_address = shortname_resolver.resolve(&login_address)?;
-                                let result = login_engine.login_with_hint(
+                                let result = login_engine.login_from_peer(
                                     &login_conn_id,
+                                    Some(login_peer_ip),
                                     login_address.clone(),
                                     &login_worker,
                                     login_protocol_version,
@@ -1138,6 +1140,9 @@ impl StratumServer {
             SubmitCompletionOutcome::Finished(Err(err)) => {
                 let err_text = err.to_string();
                 let reason_code = canonical_share_reject_reason(&err_text);
+                // A struck or banned source is disconnected after it is told why.
+                let disconnect =
+                    reason_code == "source banned" || self.engine.source_blocked(conn_id);
                 if let Some((address, _, _)) = logged_in.as_ref() {
                     if log_rejection_at_info(reason_code) {
                         tracing::info!(
@@ -1163,6 +1168,17 @@ impl StratumServer {
                 }
                 if let Some(outbound) = outbound {
                     queue_error(outbound, completion.req_id, &err_text)?;
+                }
+                if disconnect {
+                    if let Some((address, _, _)) = logged_in.as_ref() {
+                        tracing::warn!(
+                            peer = %peer,
+                            address = %address,
+                            error = %err_text,
+                            "disconnecting struck stratum source"
+                        );
+                    }
+                    return Err(anyhow!("source banned"));
                 }
             }
             SubmitCompletionOutcome::WorkerFailure(err_text) => {

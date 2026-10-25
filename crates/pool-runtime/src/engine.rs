@@ -1,8 +1,11 @@
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+#[cfg(test)]
+use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::env;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -16,10 +19,11 @@ use crate::dev_fee::{
     is_seine_dev_fee_address, login_difficulty_floor, DEV_VARDIFF_BOOTSTRAP_HINT_LIMIT,
 };
 use crate::share_dedupe::{template_share_key, NonceLedger};
+use crate::source_risk::{ip_group_key, SourcePolicy, SourceRef, SourceRiskTracker};
 use crate::telemetry::QueueTracker;
 use crate::validation::{
-    ValidationEngine, ValidationFollowupAction, ValidationResult, ValidationTask,
-    SHARE_STATUS_PROVISIONAL, SHARE_STATUS_REJECTED, SHARE_STATUS_VERIFIED,
+    AuditAttribution, AuditFeedback, ValidationEngine, ValidationFollowupAction, ValidationResult,
+    ValidationTask, SHARE_STATUS_PROVISIONAL, SHARE_STATUS_REJECTED, SHARE_STATUS_VERIFIED,
 };
 use pool_common::db::{
     active_window_strikes, AddressRiskEscalation, AddressRiskState, PendingAuditShare,
@@ -46,6 +50,9 @@ const FOUND_BLOCK_OUTBOX_ENV: &str = "BLOCKNET_POOL_FOUND_BLOCK_OUTBOX";
 const FOUND_BLOCK_OUTBOX_DEFAULT_PATH: &str = "data/found-block-recovery.jsonl";
 const FOUND_BLOCK_PERSIST_MAX_RETRIES: usize = 3;
 const VALIDATION_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Stored reject reason for provisional shares revoked by a source strike.
+pub(crate) const SOURCE_REVOKED_REJECT_REASON: &str = "source revoked";
+const PROVEN_FAKE_REJECT_REASON: &str = "invalid share proof";
 
 #[derive(Debug, Clone)]
 pub struct Job {
@@ -291,6 +298,12 @@ pub(crate) fn canonical_share_reject_reason(error: &str) -> &'static str {
     if trimmed.starts_with("address quarantined") {
         return "address quarantined";
     }
+    if trimmed.starts_with("source banned") {
+        return "source banned";
+    }
+    if trimmed.starts_with("source revoked") {
+        return "source revoked";
+    }
     if trimmed.starts_with("low difficulty share") {
         return "low difficulty share";
     }
@@ -384,6 +397,10 @@ pub(crate) trait ShareStore: Send + Sync + 'static {
     fn escalate_address_risk(&self, _escalation: AddressRiskEscalation<'_>) -> Result<()> {
         Ok(())
     }
+    /// Marks still-provisional shares as rejected with `reason`.
+    fn revoke_provisional_shares(&self, _share_ids: &[i64], _reason: &str) -> Result<u64> {
+        Ok(0)
+    }
     fn get_vardiff_hint(&self, _address: &str, _worker: &str) -> Result<Option<(u64, SystemTime)>> {
         Ok(None)
     }
@@ -454,6 +471,7 @@ struct MinerSession {
     last_accepted_share_at: Option<Instant>,
     last_difficulty_adjustment: Option<Instant>,
     last_difficulty_hint_write: Option<Instant>,
+    source: SourceRef,
 }
 
 pub struct PoolEngine {
@@ -466,7 +484,131 @@ pub struct PoolEngine {
 
     sessions: Mutex<HashMap<String, MinerSession>>,
     seen_in_memory: NonceLedger,
+    source_risk: Arc<SourceRiskTracker>,
     found_block_outbox_lock: Mutex<()>,
+}
+
+/// Applies a strike to `source` and revokes its unverified credit.
+fn strike_source(
+    tracker: &SourceRiskTracker,
+    store: &dyn ShareStore,
+    validation: Option<&ValidationEngine>,
+    source: &SourceRef,
+    reason: &str,
+) -> AuditAttribution {
+    let outcome = tracker.strike(source, reason);
+    let mut revoked_rows = 0u64;
+    for (address, share_ids) in &outcome.revoked {
+        match store.revoke_provisional_shares(share_ids, SOURCE_REVOKED_REJECT_REASON) {
+            Ok(rows) => revoked_rows = revoked_rows.saturating_add(rows),
+            Err(err) => tracing::warn!(
+                address = %address,
+                shares = share_ids.len(),
+                error = %err,
+                "failed to revoke provisional shares after source strike"
+            ),
+        }
+        if let Some(validation) = validation {
+            validation.forget_revoked_shares(address, share_ids);
+        }
+    }
+    tracing::warn!(
+        address = %source.address,
+        ip_group = %source.ip_group,
+        session = source.session_id,
+        reason,
+        pair_strikes = outcome.pair_strikes,
+        pair_banned_secs = outcome.pair_banned_for.as_secs(),
+        ip_banned_secs = outcome.ip_banned_for.map(|ban| ban.as_secs()),
+        revoked_shares = outcome.revoked_share_count(),
+        revoked_rows,
+        "source struck for proven fake share"
+    );
+    AuditAttribution {
+        attributed: true,
+        revoked: outcome.revoked,
+    }
+}
+
+/// Routes audit outcomes back to per-source tracking.
+struct EngineAuditFeedback {
+    cfg: Config,
+    tracker: Arc<SourceRiskTracker>,
+    store: Arc<dyn ShareStore>,
+}
+
+impl AuditFeedback for EngineAuditFeedback {
+    fn on_audit_result(&self, share_id: i64, address: &str, proven_fake: bool) -> AuditAttribution {
+        let Some(source) = self.tracker.source_for_share(share_id) else {
+            return AuditAttribution::default();
+        };
+        if source.address.as_ref() != address {
+            return AuditAttribution::default();
+        }
+        if !proven_fake {
+            self.tracker.record_audit_ok(share_id);
+            return AuditAttribution {
+                attributed: true,
+                revoked: Vec::new(),
+            };
+        }
+        // The caller forgets revoked shares in validation state itself.
+        strike_source(
+            &self.tracker,
+            self.store.as_ref(),
+            None,
+            &source,
+            PROVEN_FAKE_REJECT_REASON,
+        )
+    }
+
+    fn quarantine_unattributed(&self, address: &str, reason: &str) -> Option<SystemTime> {
+        escalate_forced_validation_quarantine(&self.cfg, self.store.as_ref(), address, reason)
+    }
+}
+
+fn escalate_forced_validation_quarantine(
+    cfg: &Config,
+    store: &dyn ShareStore,
+    address: &str,
+    reason: &str,
+) -> Option<SystemTime> {
+    if let Err(err) = store.escalate_address_risk(AddressRiskEscalation::new(
+        address,
+        reason,
+        cfg.invalid_escalation_window_duration(),
+        cfg.invalid_escalation_quarantine_strikes.max(0) as u64,
+        cfg.quarantine_duration(),
+        cfg.max_quarantine_duration(),
+        Duration::from_secs(0),
+    )) {
+        tracing::warn!(
+            address = %address,
+            error = %err,
+            "failed to persist forced-validation quarantine"
+        );
+        return None;
+    }
+    match store.address_risk_state(address) {
+        Ok(state) => state
+            .and_then(|state| state.quarantined_until)
+            .filter(|until| *until > SystemTime::now()),
+        Err(err) => {
+            tracing::warn!(
+                address = %address,
+                error = %err,
+                "failed to load quarantine state after forced-validation quarantine"
+            );
+            None
+        }
+    }
+}
+
+fn source_ip_group(conn_id: &str, peer_ip: Option<IpAddr>) -> String {
+    match peer_ip {
+        Some(ip) => ip_group_key(ip),
+        None => format!("conn:{conn_id}"),
+    }
 }
 
 impl PoolEngine {
@@ -555,6 +697,12 @@ impl PoolEngine {
         store: Arc<dyn ShareStore>,
         node: Arc<dyn NodeApi>,
     ) -> Self {
+        let source_risk = Arc::new(SourceRiskTracker::new(SourcePolicy::from_config(&cfg)));
+        validation.attach_audit_feedback(Arc::new(EngineAuditFeedback {
+            cfg: cfg.clone(),
+            tracker: Arc::clone(&source_risk),
+            store: Arc::clone(&store),
+        }));
         let engine = Self {
             cfg,
             expected_address_network,
@@ -564,6 +712,7 @@ impl PoolEngine {
             node,
             sessions: Mutex::new(HashMap::new()),
             seen_in_memory: NonceLedger::default(),
+            source_risk,
             found_block_outbox_lock: Mutex::new(()),
         };
         engine.recover_found_block_outbox();
@@ -593,9 +742,37 @@ impl PoolEngine {
         )
     }
 
+    /// Test helper: derives the peer IP from a `ip:port` connection id.
+    #[cfg(test)]
     pub(crate) fn login_with_hint(
         &self,
         conn_id: &str,
+        address: String,
+        worker: &str,
+        protocol_version: u32,
+        capabilities: Vec<String>,
+        difficulty_hint: Option<u64>,
+    ) -> Result<pool_common::protocol::LoginResult> {
+        let peer_ip = conn_id
+            .parse::<std::net::SocketAddr>()
+            .ok()
+            .map(|addr| addr.ip());
+        self.login_from_peer(
+            conn_id,
+            peer_ip,
+            address,
+            worker,
+            protocol_version,
+            capabilities,
+            difficulty_hint,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn login_from_peer(
+        &self,
+        conn_id: &str,
+        peer_ip: Option<IpAddr>,
         address: String,
         worker: &str,
         protocol_version: u32,
@@ -620,9 +797,14 @@ impl PoolEngine {
         if !cap_set.contains(CAP_SUBMIT_CLAIMED_HASH) {
             return Err(anyhow!("pool requires submit_claimed_hash capability"));
         }
+        let ip_group = source_ip_group(conn_id, peer_ip);
         let now_wall = SystemTime::now();
-        if let Some(state) = active_quarantine_state(self.store.as_ref(), address, now_wall)? {
-            return Err(anyhow!(quarantine_error_message(Some(&state), now_wall)));
+        // Address quarantine comes from address-level evidence; a source with
+        // its own clean verified history on this address is not locked out.
+        if !self.source_risk.is_established(address, &ip_group) {
+            if let Some(state) = active_quarantine_state(self.store.as_ref(), address, now_wall)? {
+                return Err(anyhow!(quarantine_error_message(Some(&state), now_wall)));
+            }
         }
         let min_diff = self.cfg.min_share_difficulty.max(1);
         let max_diff = self.cfg.max_share_difficulty.max(min_diff);
@@ -671,8 +853,12 @@ impl PoolEngine {
         }
         difficulty = difficulty.max(login_difficulty_floor(address, initial_difficulty));
 
+        let source = self
+            .source_risk
+            .open_session(address, &ip_group)
+            .map_err(|message| anyhow!(message))?;
         let mut sessions = self.sessions.lock();
-        sessions.insert(
+        let replaced = sessions.insert(
             conn_id.to_string(),
             MinerSession {
                 address: address.to_string(),
@@ -683,9 +869,13 @@ impl PoolEngine {
                 last_accepted_share_at: None,
                 last_difficulty_adjustment: None,
                 last_difficulty_hint_write: None,
+                source,
             },
         );
         drop(sessions);
+        if let Some(replaced) = replaced {
+            self.source_risk.close_session(replaced.source.session_id);
+        }
 
         if self.cfg.enable_vardiff && is_seine_dev_fee_address(address) {
             if let Err(err) = self
@@ -707,6 +897,7 @@ impl PoolEngine {
     pub(crate) fn disconnect(&self, conn_id: &str) {
         let session = self.sessions.lock().remove(conn_id);
         if let Some(session) = session {
+            self.source_risk.close_session(session.source.session_id);
             if let Err(err) = self.store.upsert_vardiff_hint(
                 &session.address,
                 &session.worker,
@@ -769,6 +960,11 @@ impl PoolEngine {
                 .cloned()
                 .ok_or_else(|| anyhow!("not logged in"))?
         };
+        // Struck or banned sources are cut off before any store work; the
+        // Stratum layer disconnects them on this error.
+        if let Err(message) = self.source_risk.check_session(&session.source) {
+            return Err(anyhow!(message));
+        }
         let fallback_difficulty = session.difficulty.max(1);
 
         let submit_job = match self
@@ -899,11 +1095,15 @@ impl PoolEngine {
         let job_id_for_share = job_id.clone();
         let mut release_claim_on_error = true;
 
+        let source_established = self.source_risk.pair_established(&session.source);
         let result = (|| -> Result<SubmitAck> {
             let now_wall = SystemTime::now();
-            if let Some(state) =
+            let quarantine = if source_established {
+                None
+            } else {
                 active_quarantine_state(self.store.as_ref(), &session.address, now_wall)?
-            {
+            };
+            if let Some(state) = quarantine {
                 let message = quarantine_error_message(Some(&state), now_wall);
                 release_claim_on_error = false;
                 self.persist_rejected_share_for_error(
@@ -937,6 +1137,7 @@ impl PoolEngine {
                     claimed_hash,
                     candidate_claim,
                     force_full_verify: true,
+                    attributed: true,
                 };
 
                 let validation = match self.validate_task(task, candidate_claim) {
@@ -972,6 +1173,19 @@ impl PoolEngine {
                     let reason = validation.reject_reason.unwrap_or("invalid share");
                     release_claim_on_error =
                         is_retryable_reject_reason(canonical_share_reject_reason(reason));
+                    if reason == PROVEN_FAKE_REJECT_REASON {
+                        strike_source(
+                            &self.source_risk,
+                            self.store.as_ref(),
+                            Some(&self.validation),
+                            &session.source,
+                            if candidate_claim {
+                                "false block candidate claim"
+                            } else {
+                                PROVEN_FAKE_REJECT_REASON
+                            },
+                        );
+                    }
                     let created_at = SystemTime::now();
                     self.persist_rejected_share_with_evidence(
                         &session,
@@ -1001,6 +1215,7 @@ impl PoolEngine {
                     ));
                 }
 
+                self.source_risk.record_verified(&session.source);
                 let mut block_hash = None;
                 let mut block_accepted = false;
                 if validation.is_block_candidate {
@@ -1186,6 +1401,8 @@ impl PoolEngine {
                 }),
                 &metadata,
             )?;
+            self.source_risk
+                .record_provisional(&session.source, share_id, created_at);
 
             self.validation.record_hot_accept(
                 &session.address,
@@ -1237,42 +1454,23 @@ impl PoolEngine {
     }
 
     fn trigger_forced_validation_quarantine(&self, address: &str, reason: &str) {
-        if let Err(err) = self.store.escalate_address_risk(AddressRiskEscalation::new(
-            address,
-            reason,
-            self.cfg.invalid_escalation_window_duration(),
-            self.cfg.invalid_escalation_quarantine_strikes.max(0) as u64,
-            self.cfg.quarantine_duration(),
-            self.cfg.max_quarantine_duration(),
-            Duration::from_secs(0),
-        )) {
-            tracing::warn!(
-                address = %address,
-                error = %err,
-                "failed to persist forced-validation quarantine"
-            );
-            return;
+        if let Some(quarantined_until) =
+            escalate_forced_validation_quarantine(&self.cfg, self.store.as_ref(), address, reason)
+        {
+            self.validation
+                .schedule_forced_review_after(address, quarantined_until);
         }
+    }
 
-        match self.store.address_risk_state(address) {
-            Ok(Some(state)) => {
-                if let Some(quarantined_until) = state
-                    .quarantined_until
-                    .filter(|until| *until > SystemTime::now())
-                {
-                    self.validation
-                        .schedule_forced_review_after(address, quarantined_until);
-                }
-            }
-            Ok(None) => {}
-            Err(err) => {
-                tracing::warn!(
-                    address = %address,
-                    error = %err,
-                    "failed to load quarantine state after forced-validation quarantine"
-                );
-            }
-        }
+    /// Whether this connection's source has been cut off (struck session,
+    /// or banned pair / IP group). The Stratum layer disconnects on true.
+    pub(crate) fn source_blocked(&self, conn_id: &str) -> bool {
+        let source = self
+            .sessions
+            .lock()
+            .get(conn_id)
+            .map(|session| session.source.clone());
+        source.is_some_and(|source| self.source_risk.session_blocked(&source))
     }
 
     fn persist_rejected_share(
@@ -2204,6 +2402,27 @@ impl ShareStore for InMemoryStore {
         Ok(())
     }
 
+    fn revoke_provisional_shares(&self, share_ids: &[i64], reason: &str) -> Result<u64> {
+        // Ids are 1-based insertion positions (see add_share_with_replay_and_id).
+        let mut shares = self.shares.lock();
+        let mut revoked = 0u64;
+        for id in share_ids {
+            let Some(share) = usize::try_from(*id)
+                .ok()
+                .and_then(|id| id.checked_sub(1))
+                .and_then(|idx| shares.get_mut(idx))
+            else {
+                continue;
+            };
+            if share.status == SHARE_STATUS_PROVISIONAL {
+                share.status = SHARE_STATUS_REJECTED;
+                share.reject_reason = Some(reason.to_string());
+                revoked += 1;
+            }
+        }
+        Ok(revoked)
+    }
+
     fn address_risk_state(&self, address: &str) -> Result<Option<AddressRiskState>> {
         Ok(self.address_risk.lock().get(address).cloned())
     }
@@ -2473,6 +2692,288 @@ mod tests {
 
     fn submit_hash_cap() -> Vec<String> {
         vec!["submit_claimed_hash".to_string()]
+    }
+
+    /// Always hashes to ff..ff, so "ff" claims are genuine regular shares.
+    struct FfHasher;
+    impl PowHasher for FfHasher {
+        fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
+            Ok([0xff; 32])
+        }
+    }
+
+    /// Hashes to f0..|nonce: above job()'s network target, meets difficulty 1.
+    struct NonceHasher;
+    impl NonceHasher {
+        fn hash_for(nonce: u64) -> [u8; 32] {
+            let mut out = [0xf0; 32];
+            out[24..].copy_from_slice(&nonce.to_be_bytes());
+            out
+        }
+        fn honest(nonce: u64) -> Option<String> {
+            Some(hex::encode(Self::hash_for(nonce)))
+        }
+    }
+    impl PowHasher for NonceHasher {
+        fn hash(&self, _header_base: &[u8], nonce: u64) -> anyhow::Result<[u8; 32]> {
+            Ok(Self::hash_for(nonce))
+        }
+    }
+
+    /// A claimed hash that meets difficulty 1 but is not the real hash.
+    fn fake_claim() -> Option<String> {
+        Some("ee".repeat(32))
+    }
+
+    /// A claimed hash below job()'s network target: forces a candidate check.
+    fn fake_candidate_claim() -> Option<String> {
+        Some("00".repeat(32))
+    }
+
+    fn source_test_engine(
+        cfg: Config,
+        hasher: Arc<dyn PowHasher>,
+    ) -> (PoolEngine, Arc<InMemoryStore>, Arc<ValidationEngine>) {
+        let validation = Arc::new(ValidationEngine::new(cfg.clone(), hasher));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let store = Arc::new(InMemoryStore::default());
+        let engine = PoolEngine::new(
+            cfg,
+            Arc::clone(&validation),
+            jobs,
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode {
+                accepted: true,
+                ..InMemoryNode::default()
+            }),
+        );
+        (engine, store, validation)
+    }
+
+    fn statuses(store: &InMemoryStore, nonces: std::ops::RangeInclusive<u64>) -> Vec<&'static str> {
+        let shares = store.shares();
+        nonces
+            .map(|nonce| {
+                shares
+                    .iter()
+                    .find(|share| share.nonce == nonce)
+                    .map(|share| share.status)
+                    .unwrap_or("missing")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn failed_sample_revokes_same_source_credit_but_not_other_sources_on_the_address() {
+        let (engine, store, _validation) = source_test_engine(cfg(), Arc::new(NonceHasher));
+        let victim = test_miner_address();
+        let victim_conn = "203.0.113.1:4000";
+        let attacker_conn = "198.51.100.9:5000";
+        let attacker_reconnect = "198.51.100.9:5001";
+
+        engine
+            .login(victim_conn, victim.clone(), "rig", 2, submit_hash_cap())
+            .expect("victim login");
+        for nonce in 1..=3 {
+            engine
+                .submit(
+                    victim_conn,
+                    "job1".to_string(),
+                    nonce,
+                    NonceHasher::honest(nonce),
+                )
+                .expect("victim share");
+        }
+
+        // The attacker logs in as the victim's public address and farms
+        // unverified credit across two sessions from one host.
+        engine
+            .login(attacker_conn, victim.clone(), "x", 2, submit_hash_cap())
+            .expect("attacker login");
+        engine
+            .login(
+                attacker_reconnect,
+                victim.clone(),
+                "y",
+                2,
+                submit_hash_cap(),
+            )
+            .expect("attacker second session");
+        for nonce in 10..=12 {
+            engine
+                .submit(attacker_conn, "job1".to_string(), nonce, fake_claim())
+                .expect("unsampled fake is provisionally accepted");
+        }
+        engine
+            .submit(attacker_reconnect, "job1".to_string(), 13, fake_claim())
+            .expect("unsampled fake on second session");
+
+        // One sampled fake (a false block claim forces a full hash) proves it.
+        let err = engine
+            .submit(
+                attacker_conn,
+                "job1".to_string(),
+                14,
+                fake_candidate_claim(),
+            )
+            .expect_err("false block claim is rejected");
+        assert!(err.to_string().contains("invalid share proof"));
+
+        assert_eq!(
+            statuses(&store, 10..=14),
+            vec![SHARE_STATUS_REJECTED; 5],
+            "every unverified share from the struck source is revoked"
+        );
+        assert_eq!(
+            statuses(&store, 1..=3),
+            vec![SHARE_STATUS_PROVISIONAL; 3],
+            "the victim's own rig keeps its credit"
+        );
+        assert!(store
+            .shares()
+            .iter()
+            .filter(|share| (10..=13).contains(&share.nonce))
+            .all(|share| share.reject_reason.as_deref() == Some(SOURCE_REVOKED_REJECT_REASON)));
+
+        assert!(engine.source_blocked(attacker_conn));
+        assert!(engine.source_blocked(attacker_reconnect));
+        assert!(!engine.source_blocked(victim_conn));
+        engine
+            .submit(victim_conn, "job1".to_string(), 4, NonceHasher::honest(4))
+            .expect("victim keeps mining");
+        assert!(engine
+            .login(
+                "198.51.100.9:5002",
+                victim.clone(),
+                "z",
+                2,
+                submit_hash_cap()
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn many_attacker_sources_cannot_push_a_public_address_into_forced_review() {
+        let mut cfg = cfg();
+        // Old behaviour: 5 invalid samples over a 10% ratio forced a 24h
+        // review of the whole address (zeroing its unverified credit).
+        cfg.invalid_sample_min = 1;
+        cfg.invalid_sample_threshold = 0.1;
+        let (engine, store, validation) = source_test_engine(cfg, Arc::new(NonceHasher));
+        let victim = test_miner_address();
+
+        for idx in 0..8u64 {
+            let conn = format!("198.51.{idx}.9:6000");
+            engine
+                .login(&conn, victim.clone(), "x", 2, submit_hash_cap())
+                .expect("attacker login");
+            let err = engine
+                .submit(&conn, "job1".to_string(), 100 + idx, fake_candidate_claim())
+                .expect_err("fake rejected");
+            assert!(err.to_string().contains("invalid share proof"));
+        }
+
+        let plan = validation.plan_regular_submit(&victim);
+        assert!(
+            !plan.sync_full_verify,
+            "attributed failures must not start an address-level forced review"
+        );
+        assert!(!store.should_force_verify_address(&victim).unwrap());
+        engine
+            .login(
+                "203.0.113.1:4000",
+                victim.clone(),
+                "rig",
+                2,
+                submit_hash_cap(),
+            )
+            .expect("victim login");
+        let ack = engine
+            .submit(
+                "203.0.113.1:4000",
+                "job1".to_string(),
+                1,
+                NonceHasher::honest(1),
+            )
+            .expect("victim share accepted");
+        assert_eq!(ack.status, SHARE_STATUS_PROVISIONAL);
+    }
+
+    #[test]
+    fn live_audit_failure_strikes_its_source_and_spares_the_address() {
+        let mut cfg = cfg();
+        cfg.sample_rate = 1.0;
+        cfg.invalid_sample_min = 1;
+        cfg.invalid_sample_threshold = 0.1;
+        let (engine, store, validation) = source_test_engine(cfg, Arc::new(NonceHasher));
+        let victim = test_miner_address();
+        let attacker_conn = "198.51.100.9:5000";
+        engine
+            .login(attacker_conn, victim.clone(), "x", 2, submit_hash_cap())
+            .expect("attacker login");
+        engine
+            .submit(attacker_conn, "job1".to_string(), 10, fake_claim())
+            .expect("hot accept before the async audit");
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !engine.source_blocked(attacker_conn) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            engine.source_blocked(attacker_conn),
+            "audit failure strikes the source"
+        );
+        assert_eq!(statuses(&store, 10..=10), vec![SHARE_STATUS_REJECTED]);
+        assert!(!validation.plan_regular_submit(&victim).sync_full_verify);
+        engine
+            .login("203.0.113.1:4000", victim, "rig", 2, submit_hash_cap())
+            .expect("other sources are unaffected");
+    }
+
+    #[test]
+    fn established_source_is_not_locked_out_by_an_address_quarantine() {
+        let mut cfg = cfg();
+        cfg.validation_mode = "full".to_string();
+        let (engine, store, _validation) = source_test_engine(cfg, Arc::new(NonceHasher));
+        let address = test_miner_address();
+        let rig = "203.0.113.1:4000";
+        engine
+            .login(rig, address.clone(), "rig", 2, submit_hash_cap())
+            .expect("login");
+        for nonce in 1..=crate::source_risk::SOURCE_ESTABLISHED_MIN_VERIFIED {
+            engine
+                .submit(rig, "job1".to_string(), nonce, NonceHasher::honest(nonce))
+                .expect("verified share");
+        }
+        store
+            .escalate_address_risk(AddressRiskEscalation::new(
+                &address,
+                "bad share ratio during forced validation",
+                Duration::from_secs(60),
+                1,
+                Duration::from_secs(600),
+                Duration::from_secs(600),
+                Duration::from_secs(0),
+            ))
+            .expect("quarantine address");
+
+        engine
+            .submit(rig, "job1".to_string(), 50, NonceHasher::honest(50))
+            .expect("established source keeps mining through the quarantine");
+        engine
+            .login(
+                "203.0.113.1:4001",
+                address.clone(),
+                "rig2",
+                2,
+                submit_hash_cap(),
+            )
+            .expect("established pair can reconnect");
+        let err = engine
+            .login("198.51.100.9:5000", address, "x", 2, submit_hash_cap())
+            .expect_err("unknown sources still see the quarantine");
+        assert!(err.to_string().starts_with("address quarantined"));
     }
 
     fn test_miner_address() -> String {
@@ -3369,7 +3870,7 @@ mod tests {
         cfg.vardiff_retarget_interval = "1s".to_string();
         cfg.validation_mode = "probabilistic".to_string();
 
-        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(FfHasher));
         let validation = Arc::new(validation);
         let jobs = Arc::new(InMemoryJobs::default());
         jobs.insert(job());
@@ -3416,7 +3917,7 @@ mod tests {
         cfg.vardiff_retarget_interval = "1s".to_string();
         cfg.validation_mode = "probabilistic".to_string();
 
-        let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
+        let validation = ValidationEngine::new(cfg.clone(), Arc::new(FfHasher));
         let validation = Arc::new(validation);
         let jobs = Arc::new(InMemoryJobs::default());
         jobs.insert(job());
@@ -3756,8 +4257,17 @@ mod tests {
             .seen_in_memory
             .contains(&template_share_key(&job().header_base), 88));
 
-        let second = engine
+        // The struck session is cut off; another source replaying the same
+        // work is a duplicate.
+        let banned = engine
             .submit("conn1", "job1".to_string(), 88, Some("ff".repeat(32)))
+            .expect_err("struck session is cut off");
+        assert!(banned.to_string().contains("source banned"), "{banned}");
+        engine
+            .login("conn2", test_miner_address(), "", 2, submit_hash_cap())
+            .expect("other source login");
+        let second = engine
+            .submit("conn2", "job1".to_string(), 88, Some("ff".repeat(32)))
             .expect_err("replay should be treated as duplicate");
         assert!(second.to_string().contains("duplicate"));
     }
@@ -3782,7 +4292,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_proof_burst_does_not_quarantine_immediately() {
+    fn invalid_proof_strikes_the_source_without_quarantining_the_address() {
         let mut cfg = cfg();
         cfg.validation_mode = "full".to_string();
 
@@ -3795,34 +4305,64 @@ mod tests {
             cfg,
             validation,
             jobs,
-            store,
+            Arc::clone(&store) as Arc<dyn ShareStore>,
             Arc::new(InMemoryNode::default()),
         );
         let address = test_miner_address();
 
         engine
-            .login("conn1", address.clone(), "", 2, submit_hash_cap())
+            .login(
+                "198.51.100.9:1000",
+                address.clone(),
+                "",
+                2,
+                submit_hash_cap(),
+            )
             .expect("initial login");
+        let err = engine
+            .submit(
+                "198.51.100.9:1000",
+                "job1".to_string(),
+                100,
+                Some("ff".repeat(32)),
+            )
+            .expect_err("invalid proof should be rejected");
+        assert!(err.to_string().contains("invalid share proof"));
+        assert!(engine.source_blocked("198.51.100.9:1000"));
+        let again = engine
+            .submit(
+                "198.51.100.9:1000",
+                "job1".to_string(),
+                101,
+                Some("ff".repeat(32)),
+            )
+            .expect_err("struck session is cut off");
+        assert!(again.to_string().starts_with("source banned"));
+        let relogin = engine
+            .login(
+                "198.51.100.9:1001",
+                address.clone(),
+                "",
+                2,
+                submit_hash_cap(),
+            )
+            .expect_err("the struck pair cannot simply reconnect");
+        assert!(relogin.to_string().starts_with("source banned"));
 
-        for nonce in [100u64, 101] {
-            let err = engine
-                .submit("conn1", "job1".to_string(), nonce, Some("ff".repeat(32)))
-                .expect_err("invalid proof should be rejected");
-            assert!(err.to_string().contains("invalid share proof"));
-        }
-
+        // The address itself is not quarantined: another source may mine it.
         engine
-            .login("conn2", address.clone(), "", 2, submit_hash_cap())
-            .expect("address should remain allowed while only forced review is active");
-
-        let third = engine
-            .submit("conn1", "job1".to_string(), 102, Some("ff".repeat(32)))
-            .expect_err("third invalid proof still returns the proof rejection");
-        assert!(third.to_string().contains("invalid share proof"));
-
-        engine
-            .login("conn3", address, "", 2, submit_hash_cap())
-            .expect("invalid proofs alone should not immediately quarantine the address");
+            .login(
+                "203.0.113.5:1000",
+                address.clone(),
+                "",
+                2,
+                submit_hash_cap(),
+            )
+            .expect("other sources keep access to the address");
+        assert!(store
+            .address_risk_state(&address)
+            .expect("risk state")
+            .is_none());
     }
 
     #[test]

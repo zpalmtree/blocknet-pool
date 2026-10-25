@@ -1105,15 +1105,17 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(())
     }
 
-    pub(crate) fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<()> {
+    /// Applies an audit verdict only while the share is still provisional, so
+    /// a late passing audit cannot resurrect a share revoked meanwhile.
+    pub(crate) fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<bool> {
         let mut conn = self.conn();
         let mut tx = conn.transaction()?;
-        tx.execute(
+        let updated = tx.execute(
             "UPDATE shares
              SET status = $2,
                  was_sampled = $3,
                  reject_reason = $4
-             WHERE id = $1",
+             WHERE id = $1 AND status = 'provisional'",
             &[
                 &update.share_id,
                 &update.status,
@@ -1126,7 +1128,32 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             &[&update.share_id],
         )?;
         tx.commit()?;
-        Ok(())
+        Ok(updated > 0)
+    }
+
+    /// Marks still-provisional shares as rejected (not creditable). Used when
+    /// a source is struck for a proven fake share. Returns rows changed.
+    pub(crate) fn revoke_provisional_shares(&self, share_ids: &[i64], reason: &str) -> Result<u64> {
+        let mut total = 0u64;
+        for chunk in share_ids.chunks(5_000) {
+            let ids = chunk.to_vec();
+            let mut conn = self.conn();
+            let mut tx = conn.transaction()?;
+            let updated = tx.execute(
+                "UPDATE shares
+                 SET status = 'rejected',
+                     reject_reason = $2
+                 WHERE id = ANY($1) AND status = 'provisional'",
+                &[&ids, &reason],
+            )?;
+            tx.execute(
+                "DELETE FROM validation_provisionals WHERE share_id = ANY($1)",
+                &[&ids],
+            )?;
+            tx.commit()?;
+            total = total.saturating_add(updated);
+        }
+        Ok(total)
     }
 
     #[cfg(test)]
@@ -6789,6 +6816,72 @@ mod tests {
         assert!(!store
             .try_claim_share(&busy_assignment, &format!("tpl:other-{suffix}"), 9)
             .unwrap());
+    }
+
+    #[test]
+    fn revoked_provisional_shares_cannot_be_resurrected_by_late_audit_postgres() {
+        let Some(store) = test_store() else { return };
+        let suffix = unique_suffix();
+        let share = |nonce: u64, status: &'static str| ShareRecord {
+            job_id: format!("revoke-{suffix}"),
+            miner: format!("miner-{suffix}"),
+            worker: "rig".to_string(),
+            difficulty: 1,
+            nonce,
+            status,
+            was_sampled: false,
+            block_hash: None,
+            claimed_hash: None,
+            reject_reason: None,
+            created_at: SystemTime::now(),
+        };
+        let provisional = store
+            .add_share_with_replay_and_id(share(1, "provisional"), None)
+            .unwrap();
+        let verified = store
+            .add_share_with_replay_and_id(share(2, "verified"), None)
+            .unwrap();
+        store
+            .add_validation_provisional(
+                &format!("miner-{suffix}"),
+                Some(provisional),
+                SystemTime::now(),
+            )
+            .unwrap();
+
+        let revoked = store
+            .revoke_provisional_shares(&[provisional, verified], "source revoked")
+            .unwrap();
+        assert_eq!(revoked, 1, "verified shares are never revoked");
+        let rows = store
+            .get_shares_for_miner(&format!("miner-{suffix}"), 10)
+            .unwrap();
+        let status_of = |id: i64| rows.iter().find(|row| row.id == id).unwrap().status.clone();
+        assert_eq!(status_of(provisional), "rejected");
+        assert_eq!(status_of(verified), "verified");
+
+        let applied = store
+            .complete_validation_audit(&ShareReplayUpdate {
+                share_id: provisional,
+                status: "verified".to_string(),
+                was_sampled: true,
+                reject_reason: None,
+            })
+            .unwrap();
+        assert!(
+            !applied,
+            "a passing late audit must not resurrect a revoked share"
+        );
+        let rows = store
+            .get_shares_for_miner(&format!("miner-{suffix}"), 10)
+            .unwrap();
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.id == provisional)
+                .unwrap()
+                .status,
+            "rejected"
+        );
     }
 
     #[test]

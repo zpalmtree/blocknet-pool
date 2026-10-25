@@ -45,6 +45,13 @@ pub struct Config {
     pub quarantine_duration: String,
     pub max_quarantine_duration: String,
     pub invalid_escalation_quarantine_strikes: i32,
+    /// First ban for a source (address + IP group) that submitted a proven
+    /// fake share; doubles per strike inside the escalation window.
+    pub source_ban_duration: String,
+    pub source_max_ban_duration: String,
+    /// Strikes from one IP group before its unestablished pairs are revoked
+    /// and banned as well.
+    pub source_ip_strike_threshold: i32,
     pub provisional_share_delay: String,
     pub enable_vardiff: bool,
     pub vardiff_target_shares: i32,
@@ -105,6 +112,9 @@ impl Default for Config {
             quarantine_duration: "1h".to_string(),
             max_quarantine_duration: "168h".to_string(),
             invalid_escalation_quarantine_strikes: 1,
+            source_ban_duration: "15m".to_string(),
+            source_max_ban_duration: "24h".to_string(),
+            source_ip_strike_threshold: 2,
             provisional_share_delay: "15m".to_string(),
             enable_vardiff: true,
             vardiff_target_shares: 10,
@@ -206,6 +216,14 @@ impl Config {
         config_duration("max_quarantine_duration", &self.max_quarantine_duration)
     }
 
+    pub(crate) fn source_ban_duration_value(&self) -> Duration {
+        config_duration("source_ban_duration", &self.source_ban_duration)
+    }
+
+    pub(crate) fn source_max_ban_duration_value(&self) -> Duration {
+        config_duration("source_max_ban_duration", &self.source_max_ban_duration)
+    }
+
     pub fn payout_interval_duration(&self) -> Duration {
         config_duration("payout_interval", &self.payout_interval)
     }
@@ -258,6 +276,8 @@ impl Config {
         config_duration_result("forced_verify_duration", &self.forced_verify_duration)?;
         config_duration_result("quarantine_duration", &self.quarantine_duration)?;
         config_duration_result("max_quarantine_duration", &self.max_quarantine_duration)?;
+        ensure_nonzero_duration("source_ban_duration", &self.source_ban_duration)?;
+        ensure_nonzero_duration("source_max_ban_duration", &self.source_max_ban_duration)?;
         config_duration_result("provisional_share_delay", &self.provisional_share_delay)?;
         config_duration_result("vardiff_window", &self.vardiff_window)?;
         config_duration_result("vardiff_retarget_interval", &self.vardiff_retarget_interval)?;
@@ -286,6 +306,11 @@ impl Config {
                 "invalid_escalation_quarantine_strikes",
                 self.invalid_escalation_quarantine_strikes,
                 0,
+            ),
+            (
+                "source_ip_strike_threshold",
+                self.source_ip_strike_threshold,
+                1,
             ),
             ("vardiff_target_shares", self.vardiff_target_shares, 1),
             (
