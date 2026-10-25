@@ -30,6 +30,7 @@ const NAV_ITEMS: { route: Route; label: string }[] = [
 
 export function App() {
   const [route, setRoute] = useState<Route>(() => routeFromPathname(window.location.pathname));
+  const isNotFound = route === 'not-found';
   const [errorMsg, setErrorMsg] = useState('');
   const [poolInfo, setPoolInfo] = useState<InfoResponse | null>(null);
   const [apiKey, setApiKey] = useState(localStorage.getItem(API_KEY_STORAGE_KEY) || '');
@@ -78,8 +79,8 @@ export function App() {
   }, [route]);
 
   useEffect(() => {
-    void loadPoolInfo();
-  }, [loadPoolInfo]);
+    if (!isNotFound) void loadPoolInfo();
+  }, [loadPoolInfo, isNotFound]);
 
   useEffect(() => {
     let mounted = true;
@@ -96,9 +97,9 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (liveTick <= 0 || liveTick % 12 !== 0) return;
+    if (isNotFound || liveTick <= 0 || liveTick % 12 !== 0) return;
     void loadPoolInfo();
-  }, [liveTick, loadPoolInfo]);
+  }, [liveTick, loadPoolInfo, isNotFound]);
 
   useEffect(() => {
     const baseTitle = titleForRoute(route);
@@ -161,7 +162,22 @@ export function App() {
   );
 
   let currentPage: JSX.Element;
-  if (route === 'start') {
+  if (isNotFound) {
+    currentPage = (
+      <main id="page-not-found">
+        <div className="page-header">
+          <span className="page-kicker">404</span>
+          <h1>{t('notFoundTitle')}</h1>
+          <p className="page-intro">{t('notFoundDescription')}</p>
+        </div>
+        <div className="page-actions">
+          <a className="btn btn-primary" href={pathForRoute('dashboard')}>{t('m001')}</a>
+          <a className="btn btn-secondary" href={pathForRoute('start')}>{t('m002')}</a>
+          <a className="btn btn-secondary" href={localizePath('/blog/')}>{t('m010')}</a>
+        </div>
+      </main>
+    );
+  } else if (route === 'start') {
     currentPage = <StartPage poolInfo={poolInfo} />;
   } else if (route === 'checkpoints') {
     currentPage = <CheckpointsPage api={api} liveTick={liveTick} />;

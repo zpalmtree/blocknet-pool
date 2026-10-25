@@ -294,5 +294,7 @@
   "m617": "Status puli Blocknet",
   "m618": "Panel administracyjny puli",
   "minerHelp": "Hashrate puli nadal zerowy?",
-  "windowsGuide": "Instrukcja konfiguracji w Windows"
+  "windowsGuide": "Instrukcja konfiguracji w Windows",
+  "notFoundTitle": "Nie znaleziono strony",
+  "notFoundDescription": "Ten link nie prowadzi do żadnej strony. Otwórz panel, zacznij kopać lub przeczytaj poradniki."
 }

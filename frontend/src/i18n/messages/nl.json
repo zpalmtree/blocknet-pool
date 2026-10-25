@@ -294,5 +294,7 @@
   "m617": "Blocknet Pool Status",
   "m618": "Pool Admin Dashboard",
   "minerHelp": "Poolhashrate nog steeds nul?",
-  "windowsGuide": "Installatiehandleiding voor Windows"
+  "windowsGuide": "Installatiehandleiding voor Windows",
+  "notFoundTitle": "Pagina niet gevonden",
+  "notFoundDescription": "Deze link leidt niet naar een pagina. Open het dashboard, ga aan de slag of bekijk de mininghandleidingen."
 }

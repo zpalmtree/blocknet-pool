@@ -114,12 +114,17 @@ fn page_meta(path: &str) -> PageMeta {
             index: false,
         },
         _ => PageMeta {
-            title: "Blocknet Mining Pool",
-            description: DEFAULT_DESCRIPTION,
+            title: "Page not found",
+            description: "Open the dashboard, get started, or browse the mining guides.",
             image: "og-dashboard.png",
             index: false,
         },
     }
+}
+
+fn is_spa_route(path: &str) -> bool {
+    let path = normalize_path(path);
+    path == "/admin" || SITEMAP_PATHS.contains(&path)
 }
 
 fn normalize_path(path: &str) -> &str {
@@ -219,11 +224,17 @@ fn meta_tags(path: &str, base_url: &str) -> String {
 
 fn render_index_html(path: &str, base_url: &str) -> String {
     let tags = meta_tags(path, base_url);
-    if UI_INDEX_HTML.contains(SSR_META_MARKER) {
+    let html = if UI_INDEX_HTML.contains(SSR_META_MARKER) {
         UI_INDEX_HTML.replace(SSR_META_MARKER, &tags)
     } else {
         // Defensive fallback if the build ever drops the marker: inject into <head>.
         UI_INDEX_HTML.replacen("<head>", &format!("<head>\n    {tags}"), 1)
+    };
+    if is_spa_route(path) {
+        html
+    } else {
+        // Keep recovery links usable before JavaScript loads or if it is disabled.
+        html.replace(r#"<div id="root"></div>"#, r#"<div id="root"><main class="container" id="page-not-found"><div class="page-header"><span class="page-kicker">404</span><h1>Page not found</h1><p class="page-intro">This link does not lead to a page. Open the dashboard, get started, or browse the mining guides.</p></div><div class="page-actions"><a class="btn btn-primary" href="/">Dashboard</a><a class="btn btn-secondary" href="/start">Get Started</a><a class="btn btn-secondary" href="/blog/">Blog</a></div></main></div>"#)
     }
 }
 
@@ -261,6 +272,9 @@ pub(crate) fn app_fallback_response(method: Method, uri: &Uri, base_url: &str) -
 
     if matches!(method, Method::GET | Method::HEAD) {
         let mut response = ui_response(base_url, uri.path());
+        if !is_spa_route(uri.path()) {
+            *response.status_mut() = StatusCode::NOT_FOUND;
+        }
         if method == Method::HEAD {
             *response.body_mut() = Body::empty();
         }
@@ -417,6 +431,68 @@ pub(crate) async fn handle_ui_asset(Path(name): Path<String>) -> Response {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn known_spa_routes_keep_success_status_with_queries_and_trailing_slashes() {
+        for path in SITEMAP_PATHS.iter().copied().chain(["/admin"]) {
+            for suffix in ["", "/", "?lang=th", "/?lang=ar&worker=demo"] {
+                let uri: Uri = format!("{path}{suffix}").parse().unwrap();
+                for method in [Method::GET, Method::HEAD] {
+                    let response =
+                        app_fallback_response(method.clone(), &uri, "https://bntpool.com");
+                    assert_eq!(response.status(), StatusCode::OK, "{method} {uri}");
+                    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+                    if method == Method::HEAD {
+                        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                            .await
+                            .unwrap();
+                        assert!(body.is_empty());
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn unknown_spa_paths_return_404_with_recovery_links_and_noindex() {
+        for path in [
+            "/does-not-exist",
+            "/404",
+            "/stats/typo",
+            "/th/blog/missing",
+            "/missing.js",
+            "/missing/?lang=ar",
+            "/%3Cscript%3E",
+        ] {
+            let uri: Uri = path.parse().unwrap();
+            for method in [Method::GET, Method::HEAD] {
+                let response = app_fallback_response(method.clone(), &uri, "https://bntpool.com");
+                assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {uri}");
+                assert_eq!(
+                    response.headers()[header::CONTENT_TYPE],
+                    "text/html; charset=utf-8"
+                );
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                if method == Method::HEAD {
+                    assert!(body.is_empty());
+                } else {
+                    let html = String::from_utf8(body.to_vec()).unwrap();
+                    assert!(html.contains("<title>Page not found</title>"));
+                    assert!(html.contains(r#"content="noindex, follow""#));
+                    assert!(html.contains("<h1>Page not found</h1>"));
+                    for link in [r#"href="/""#, r#"href="/start""#, r#"href="/blog/""#] {
+                        assert!(html.contains(link));
+                    }
+                }
+            }
+            assert_eq!(
+                app_fallback_response(Method::POST, &uri, "https://bntpool.com").status(),
+                StatusCode::NOT_FOUND
+            );
+        }
+    }
+
     #[test]
     fn injects_per_route_title_description_and_image() {
         let html = render_index_html("/checkpoints", "https://bntpool.com");
@@ -433,14 +509,14 @@ mod tests {
     }
 
     #[test]
-    fn root_and_unknown_routes_fall_back_to_default_card() {
+    fn unknown_routes_have_not_found_metadata() {
         let root = render_index_html("/", "https://bntpool.com");
         assert!(root.contains("<title>Blocknet Mining Pool</title>"));
         assert!(root.contains(r#"content="https://bntpool.com/ui-assets/og-dashboard.png""#));
         assert!(root.contains(r#"<meta property="og:url" content="https://bntpool.com/" />"#));
 
         let unknown = render_index_html("/does-not-exist", "https://bntpool.com");
-        assert!(unknown.contains("<title>Blocknet Mining Pool</title>"));
+        assert!(unknown.contains("<title>Page not found</title>"));
         assert!(unknown.contains(r#"content="https://bntpool.com/ui-assets/og-dashboard.png""#));
     }
 

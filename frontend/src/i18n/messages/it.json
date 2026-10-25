@@ -294,5 +294,7 @@
   "m617": "Stato del pool Blocknet",
   "m618": "Dashboard amministrazione pool",
   "minerHelp": "Hashrate del pool ancora a zero?",
-  "windowsGuide": "Guida alla configurazione su Windows"
+  "windowsGuide": "Guida alla configurazione su Windows",
+  "notFoundTitle": "Pagina non trovata",
+  "notFoundDescription": "Questo link non porta a nessuna pagina. Apri la dashboard, inizia a minare o consulta le guide al mining."
 }

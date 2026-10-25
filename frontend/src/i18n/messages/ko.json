@@ -294,5 +294,7 @@
   "m617": "Blocknet 풀 상태",
   "m618": "풀 관리자 대시보드",
   "minerHelp": "풀 해시레이트가 아직 0인가요?",
-  "windowsGuide": "Windows 설정 가이드"
+  "windowsGuide": "Windows 설정 가이드",
+  "notFoundTitle": "페이지를 찾을 수 없습니다",
+  "notFoundDescription": "이 링크에 해당하는 페이지가 없습니다. 대시보드를 열거나, 채굴을 시작하거나, 채굴 가이드를 확인하세요."
 }

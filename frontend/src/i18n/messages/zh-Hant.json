@@ -294,5 +294,7 @@
   "m617": "Blocknet 礦池狀態",
   "m618": "礦池管理員儀表板",
   "minerHelp": "礦池算力仍為零？",
-  "windowsGuide": "Windows 設定指南"
+  "windowsGuide": "Windows 設定指南",
+  "notFoundTitle": "找不到頁面",
+  "notFoundDescription": "此連結沒有對應的頁面。你可以開啟儀表板、開始挖礦或閱讀挖礦指南。"
 }

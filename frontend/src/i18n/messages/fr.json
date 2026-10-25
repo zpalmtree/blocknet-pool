@@ -294,5 +294,7 @@
   "m617": "Statut du pool Blocknet",
   "m618": "Tableau de bord administrateur du pool",
   "minerHelp": "Le hashrate du pool reste nul ?",
-  "windowsGuide": "Guide d’installation sur Windows"
+  "windowsGuide": "Guide d’installation sur Windows",
+  "notFoundTitle": "Page introuvable",
+  "notFoundDescription": "Ce lien ne mène à aucune page. Ouvrez le tableau de bord, lancez-vous ou consultez les guides de minage."
 }

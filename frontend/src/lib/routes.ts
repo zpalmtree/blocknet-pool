@@ -11,6 +11,7 @@ const ROUTES = {
   stats: ['/stats', 'm616'],
   status: ['/status', 'm617'],
   admin: ['/admin', 'm618'],
+  'not-found': ['/404', 'notFoundTitle'],
 } as const satisfies Record<Route, readonly [string, string]>;
 
 const ROUTES_BY_PATH = Object.fromEntries(
@@ -18,7 +19,7 @@ const ROUTES_BY_PATH = Object.fromEntries(
 ) as Record<string, Route>;
 
 export function routeFromPathname(pathname: string): Route {
-  return ROUTES_BY_PATH[pathname.replace(/\/+$/, '') || '/'] || 'dashboard';
+  return ROUTES_BY_PATH[pathname.replace(/\/+$/, '') || '/'] || 'not-found';
 }
 
 export function pathForRoute(route: Route): string {

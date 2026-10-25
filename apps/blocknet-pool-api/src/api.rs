@@ -7673,7 +7673,7 @@ mod tests {
     }
 
     #[test]
-    fn app_fallback_renders_ui_for_unknown_spa_paths() {
+    fn app_fallback_renders_ui_for_known_spa_routes() {
         let runtime = test_runtime();
 
         let response = app_fallback_response(

@@ -1788,6 +1788,7 @@ pre.config-block {
   color: var(--warn);
 }
 
+.page-actions,
 .checkpoint-actions {
   display: flex;
   align-items: center;
@@ -1795,6 +1796,7 @@ pre.config-block {
   gap: 12px;
 }
 
+.page-actions .btn,
 .checkpoint-actions .btn {
   display: inline-flex;
   align-items: center;

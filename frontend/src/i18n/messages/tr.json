@@ -294,5 +294,7 @@
   "m617": "Blocknet Havuz Durumu",
   "m618": "Havuz Yönetim Paneli",
   "minerHelp": "Havuz hashrate’i hâlâ sıfır mı?",
-  "windowsGuide": "Windows kurulum kılavuzu"
+  "windowsGuide": "Windows kurulum kılavuzu",
+  "notFoundTitle": "Sayfa bulunamadı",
+  "notFoundDescription": "Bu bağlantı bir sayfaya gitmiyor. Kontrol panelini açın, madenciliğe başlayın veya madencilik rehberlerini inceleyin."
 }

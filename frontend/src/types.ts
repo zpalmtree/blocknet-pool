@@ -7,7 +7,8 @@ export type Route =
   | "payouts"
   | "stats"
   | "admin"
-  | "status";
+  | "status"
+  | "not-found";
 export type AdminTab =
   | "miners"
   | "holds"

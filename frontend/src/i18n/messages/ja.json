@@ -294,5 +294,7 @@
   "m617": "Blocknetプール状態",
   "m618": "プール管理ダッシュボード",
   "minerHelp": "プールのハッシュレートがまだゼロですか？",
-  "windowsGuide": "Windows セットアップガイド"
+  "windowsGuide": "Windows セットアップガイド",
+  "notFoundTitle": "ページが見つかりません",
+  "notFoundDescription": "このリンク先のページはありません。ダッシュボードを開くか、マイニングを始めるか、マイニングガイドをご覧ください。"
 }

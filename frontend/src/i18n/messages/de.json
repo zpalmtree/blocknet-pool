@@ -294,5 +294,7 @@
   "m617": "Blocknet-Pool-Status",
   "m618": "Pool-Verwaltungsübersicht",
   "minerHelp": "Pool-Hashrate noch bei null?",
-  "windowsGuide": "Einrichtungsanleitung für Windows"
+  "windowsGuide": "Einrichtungsanleitung für Windows",
+  "notFoundTitle": "Seite nicht gefunden",
+  "notFoundDescription": "Dieser Link führt zu keiner Seite. Öffne das Dashboard, lege los oder lies die Mining-Anleitungen."
 }
