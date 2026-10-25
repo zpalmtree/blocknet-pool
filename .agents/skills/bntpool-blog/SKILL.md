@@ -17,9 +17,11 @@ pool post never targets a search job a seineminer.com post owns; link to that po
   `node scripts/check-blog.mjs <slug> --strict` and `--overlap <slug>` from `frontend/`.
   Translate into all 19 locales (`<locale>.md`, following the seine repo's
   `site/editorial/translation-guide.md`; blog links localized to `/blog/<locale>/...`, pool app
-  links unprefixed), get a separate review pass per translation, set
-  `translation: reviewed` and the `sourceHash`, add the keyword-map row, and publish by removing
-  `draft: true`. Publishing needs the user's go-ahead.
+  links unprefixed). Set the `sourceHash` and keep `translation: draft` unless an optional
+  separate review has happened, then use `translation: reviewed`. A separate reviewer is not
+  required to publish (owner decision, 2026-10-25); automated checks still require every
+  translation to be complete, current and structurally valid. Add the keyword-map row and
+  publish by removing `draft: true`. Publishing needs the user's go-ahead.
 - **Build:** `npm --prefix frontend run build` renders `frontend/dist/blog` (the check runs first);
   the API embeds it through build.rs and serves it from `apps/blocknet-pool-api/src/blog.rs`.
   Pages can't use inline scripts or styles because of the app's CSP.
