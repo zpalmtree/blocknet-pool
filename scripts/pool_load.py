@@ -96,6 +96,49 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional JSON output path. Printed to stdout regardless.",
     )
+    parser.add_argument(
+        "--hashrate",
+        type=float,
+        default=0.0,
+        help=(
+            "Simulated hashes/s per connection. When > 0 the generator models a "
+            "real miner instead of a fixed submit rate: each connection finds "
+            "shares as a Poisson process with rate hashrate/difficulty (so vardiff "
+            "changes its share rate), submits without waiting for responses, and "
+            "never resubmits a rejected share. Shares are still fake "
+            "(claimed_hash = target)."
+        ),
+    )
+    parser.add_argument(
+        "--addresses-file",
+        default="",
+        help="File with one valid miner address per line (hashrate mode).",
+    )
+    parser.add_argument(
+        "--address-offset",
+        type=int,
+        default=0,
+        help="First line of --addresses-file to use (hashrate mode).",
+    )
+    parser.add_argument(
+        "--source-ips",
+        default="",
+        help=(
+            "Comma-separated local IPs (or a.b.c.N-M ranges) to bind connections "
+            "to round-robin, e.g. 127.0.1.1-127.0.1.30 (hashrate mode)."
+        ),
+    )
+    parser.add_argument(
+        "--ramp-secs",
+        type=float,
+        default=0.0,
+        help="Spread connection starts over this many seconds (hashrate mode).",
+    )
+    parser.add_argument(
+        "--label",
+        default="",
+        help="Population label recorded in the output (hashrate mode).",
+    )
     return parser.parse_args()
 
 
@@ -420,12 +463,328 @@ def summarize_api_samples(
     }
 
 
+def expand_source_ips(spec: str) -> List[str]:
+    ips: List[str] = []
+    for part in (p.strip() for p in spec.split(",")):
+        if not part:
+            continue
+        if "-" in part:
+            first, last = part.split("-", 1)
+            prefix, start = first.rsplit(".", 1)
+            if "." in last:
+                last = last.rsplit(".", 1)[1]
+            for octet in range(int(start), int(last) + 1):
+                ips.append(f"{prefix}.{octet}")
+        else:
+            ips.append(part)
+    return ips
+
+
+def classify_reject(error: str) -> str:
+    text = error.strip()
+    if text.startswith("server busy"):
+        return "busy"
+    if text.startswith("rate limited"):
+        return "rate_limited"
+    return "other"
+
+
+class HashrateConn:
+    """One simulated miner connection (hashrate mode)."""
+
+    def __init__(self, idx: int, address: str, worker: str, local_ip: Optional[str]) -> None:
+        self.idx = idx
+        self.address = address
+        self.worker = worker
+        self.local_ip = local_ip
+        self.job_id: Optional[str] = None
+        self.target: Optional[str] = None
+        self.difficulty = 0
+        self.nonce = 0
+        self.nonce_end = (1 << 64) - 1
+        self.login_ok = False
+        self.job_event: Optional["asyncio.Event"] = None
+        self.pending: Dict[int, float] = {}
+        self.next_id = 2
+        self.alive = False
+
+    def update_job(self, params: dict) -> None:
+        job_id = params.get("job_id")
+        if isinstance(job_id, str) and job_id:
+            self.job_id = job_id
+        target = params.get("target")
+        if isinstance(target, str) and len(target) == 64:
+            self.target = target
+        difficulty = params.get("difficulty")
+        if isinstance(difficulty, int) and difficulty > 0:
+            self.difficulty = difficulty
+        start = params.get("nonce_start")
+        end = params.get("nonce_end")
+        if isinstance(start, int) and start >= 0:
+            self.nonce = start
+        if isinstance(end, int) and end >= self.nonce:
+            self.nonce_end = end
+
+
+def run_hashrate_mode(args: argparse.Namespace) -> dict:
+    import asyncio
+    import resource
+    import statistics
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    wanted = min(hard, max(soft, args.workers * 2 + 256))
+    if wanted > soft:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (wanted, hard))
+
+    addresses: List[str] = []
+    if args.addresses_file:
+        with open(args.addresses_file, "r", encoding="utf-8") as f:
+            addresses = [line.strip() for line in f if line.strip()]
+    ips = expand_source_ips(args.source_ips)
+
+    def address_for(i: int) -> str:
+        if args.address_mode == "shared":
+            if addresses:
+                return addresses[args.address_offset]
+            return args.shared_address
+        if addresses:
+            return addresses[(args.address_offset + i) % len(addresses)]
+        return f"{args.address_prefix}_{i:04d}"
+
+    conns = [
+        HashrateConn(
+            i,
+            address_for(i),
+            f"{args.worker_prefix}_{i:04d}" if args.address_mode == "unique" else args.worker_prefix,
+            ips[i % len(ips)] if ips else None,
+        )
+        for i in range(args.workers)
+    ]
+    counters: Dict[str, int] = {
+        "submitted": 0,
+        "responses": 0,
+        "accepted": 0,
+        "busy": 0,
+        "rate_limited": 0,
+        "other": 0,
+        "transport_errors": 0,
+        "login_failed": 0,
+    }
+    reasons: Dict[str, int] = {}
+    latencies: List[float] = []
+    timeline: List[dict] = []
+    bucket: Dict[str, int] = {}
+
+    def bump(key: str) -> None:
+        counters[key] = counters.get(key, 0) + 1
+        bucket[key] = bucket.get(key, 0) + 1
+
+    hashrate = args.hashrate
+    start = time.monotonic()
+    deadline = start + args.duration_secs
+
+    async def read_loop(conn: HashrateConn, reader) -> None:
+        while True:
+            raw = await reader.readline()
+            if not raw:
+                return
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("method") == "job":
+                params = msg.get("params")
+                if isinstance(params, dict):
+                    conn.update_job(params)
+                    if conn.job_event is not None and conn.job_id and conn.target:
+                        conn.job_event.set()
+                continue
+            msg_id = msg.get("id")
+            if msg_id == 1:
+                if msg.get("status") == "ok":
+                    conn.login_ok = True
+                else:
+                    bump("login_failed")
+                    reason = str(msg.get("error") or "login failed")
+                    reasons[f"login: {reason}"] = reasons.get(f"login: {reason}", 0) + 1
+                    return
+                continue
+            sent_at = conn.pending.pop(msg_id, None) if isinstance(msg_id, int) else None
+            if sent_at is None:
+                continue
+            bump("responses")
+            latencies.append((time.monotonic() - sent_at) * 1000.0)
+            if msg.get("status") == "ok":
+                bump("accepted")
+                result = msg.get("result")
+                if isinstance(result, dict):
+                    difficulty = result.get("difficulty")
+                    if isinstance(difficulty, int) and difficulty > 0:
+                        conn.difficulty = difficulty
+            else:
+                error = str(msg.get("error") or "unknown")
+                bump(classify_reject(error))
+                key = error.split(":", 1)[0].split("(", 1)[0].strip()
+                reasons[key] = reasons.get(key, 0) + 1
+
+    async def miner(conn: HashrateConn) -> None:
+        if args.ramp_secs > 0 and args.workers > 1:
+            await asyncio.sleep(args.ramp_secs * conn.idx / (args.workers - 1))
+        conn.job_event = asyncio.Event()
+        try:
+            reader, writer = await asyncio.open_connection(
+                args.host,
+                args.stratum_port,
+                local_addr=(conn.local_ip, 0) if conn.local_ip else None,
+                limit=1 << 20,
+            )
+        except OSError as exc:
+            bump("transport_errors")
+            reasons[f"connect: {exc}"] = reasons.get(f"connect: {exc}", 0) + 1
+            return
+        reader_task = asyncio.create_task(read_loop(conn, reader))
+        try:
+            writer.write(
+                (
+                    json.dumps(
+                        {
+                            "id": 1,
+                            "method": "login",
+                            "params": {
+                                "address": conn.address,
+                                "worker": conn.worker,
+                                "protocol_version": 2,
+                                "capabilities": ["submit_claimed_hash"],
+                            },
+                        },
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                ).encode()
+            )
+            await writer.drain()
+            try:
+                await asyncio.wait_for(conn.job_event.wait(), timeout=args.login_timeout_secs)
+            except asyncio.TimeoutError:
+                bump("login_failed")
+                reasons["login timeout"] = reasons.get("login timeout", 0) + 1
+                return
+            conn.alive = True
+            while time.monotonic() < deadline and not reader_task.done():
+                rate = hashrate / max(1, conn.difficulty)
+                wait = random.expovariate(rate) if rate > 0 else 1.0
+                # Share discovery is memoryless: re-draw at least once a second
+                # so a difficulty change takes effect promptly.
+                if wait > 1.0:
+                    await asyncio.sleep(1.0)
+                    continue
+                await asyncio.sleep(wait)
+                if time.monotonic() >= deadline or conn.job_id is None or conn.target is None:
+                    continue
+                req_id = conn.next_id
+                conn.next_id += 1
+                nonce = conn.nonce
+                conn.nonce = conn.nonce + 1 if conn.nonce < conn.nonce_end else conn.nonce
+                conn.pending[req_id] = time.monotonic()
+                writer.write(
+                    (
+                        json.dumps(
+                            {
+                                "id": req_id,
+                                "method": "submit",
+                                "params": {
+                                    "job_id": conn.job_id,
+                                    "nonce": nonce,
+                                    "claimed_hash": conn.target,
+                                },
+                            },
+                            separators=(",", ":"),
+                        )
+                        + "\n"
+                    ).encode()
+                )
+                bump("submitted")
+                await writer.drain()
+            # Give in-flight submits a moment to resolve before closing.
+            grace = time.monotonic() + 3.0
+            while conn.pending and time.monotonic() < grace and not reader_task.done():
+                await asyncio.sleep(0.1)
+        except (ConnectionError, OSError) as exc:
+            bump("transport_errors")
+            reasons[f"transport: {exc}"] = reasons.get(f"transport: {exc}", 0) + 1
+        finally:
+            conn.alive = False
+            reader_task.cancel()
+            writer.close()
+
+    async def sampler() -> None:
+        second = 0
+        while time.monotonic() < deadline + 3.0:
+            await asyncio.sleep(max(0.0, start + second + 1 - time.monotonic()))
+            second += 1
+            diffs = sorted(c.difficulty for c in conns if c.alive and c.difficulty > 0)
+            row = {"t": second, **{k: bucket.get(k, 0) for k in ("submitted", "accepted", "busy", "rate_limited", "other")}}
+            bucket.clear()
+            row["connected"] = len(diffs)
+            if diffs:
+                row["diff_min"] = diffs[0]
+                row["diff_p10"] = diffs[len(diffs) // 10]
+                row["diff_median"] = diffs[len(diffs) // 2]
+                row["diff_max"] = diffs[-1]
+            timeline.append(row)
+
+    async def main_async() -> None:
+        await asyncio.gather(sampler(), *(miner(c) for c in conns))
+
+    asyncio.run(main_async())
+    elapsed = max(0.001, time.monotonic() - start)
+    lat = sorted(latencies)
+    final_diffs = sorted(c.difficulty for c in conns if c.difficulty > 0)
+    return {
+        "mode": "hashrate",
+        "label": args.label,
+        "workers": args.workers,
+        "hashrate_per_conn": hashrate,
+        "address_mode": args.address_mode,
+        "source_ips": len(ips),
+        "duration_secs": elapsed,
+        "totals": counters,
+        "reasons": dict(sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "latency_ms": {
+            "avg": statistics.fmean(lat) if lat else 0.0,
+            "p50": percentile(lat, 0.50),
+            "p95": percentile(lat, 0.95),
+            "p99": percentile(lat, 0.99),
+            "max": lat[-1] if lat else 0.0,
+        },
+        "final_difficulty": {
+            "min": final_diffs[0] if final_diffs else 0,
+            "median": final_diffs[len(final_diffs) // 2] if final_diffs else 0,
+            "max": final_diffs[-1] if final_diffs else 0,
+        },
+        "timeline": timeline,
+    }
+
+
 def main() -> int:
     args = parse_args()
     if args.workers < 1:
         raise SystemExit("--workers must be >= 1")
     if args.duration_secs <= 0:
         raise SystemExit("--duration-secs must be > 0")
+
+    if args.hashrate > 0:
+        result = run_hashrate_mode(args)
+        rendered = json.dumps(result, indent=2, sort_keys=True)
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as f:
+                f.write(rendered)
+                f.write("\n")
+        else:
+            print(rendered)
+        return 0
 
     start_iso = now_utc_iso()
     start_monotonic = time.monotonic()
