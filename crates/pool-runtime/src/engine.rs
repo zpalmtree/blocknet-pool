@@ -341,6 +341,18 @@ pub(crate) fn is_retryable_reject_reason(canonical_reason: &str) -> bool {
     RETRYABLE_REJECT_REASONS.contains(&canonical_reason)
 }
 
+/// Persisted rejections that do not settle their (assignment, nonce): the
+/// retryable ones, plus "duplicate share", whose original (if credited) is
+/// already protected by its own template-scoped claim.
+pub(crate) fn non_settling_reject_reasons() -> Vec<String> {
+    RETRYABLE_REJECT_REASONS
+        .iter()
+        .copied()
+        .chain(std::iter::once("duplicate share"))
+        .map(str::to_string)
+        .collect()
+}
+
 pub(crate) trait ShareStore: Send + Sync + 'static {
     /// Claims a share for crediting. `job_id` is the assignment id (checked
     /// against persisted rows) and `share_key` is the template-scoped key from
@@ -2449,10 +2461,11 @@ impl InMemoryStore {
             share.job_id == job_id
                 && share.nonce == nonce
                 && !(share.status == SHARE_STATUS_REJECTED
-                    && share
-                        .reject_reason
-                        .as_deref()
-                        .is_some_and(is_retryable_reject_reason))
+                    && share.reject_reason.as_deref().is_some_and(|reason| {
+                        non_settling_reject_reasons()
+                            .iter()
+                            .any(|value| value == reason)
+                    }))
         })
     }
 }

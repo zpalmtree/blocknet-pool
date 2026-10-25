@@ -10,7 +10,7 @@ use postgres::{types::ToSql, Client, Config as PostgresConfig, NoTls, Row, Trans
 use serde::Deserialize;
 use tracing::warn;
 
-use crate::engine::{ShareRecord, RETRYABLE_REJECT_REASONS};
+use crate::engine::{non_settling_reject_reasons, ShareRecord};
 use crate::share_dedupe::TEMPLATE_SHARE_CLAIM_RETENTION;
 use crate::stats::RejectionReasonCount;
 use crate::validation::{
@@ -3603,12 +3603,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     /// Whether a persisted row already settles this (assignment, nonce).
     /// Rejections whose reason told the miner to retry (busy, rate limited,
-    /// timeout) were never judged on proof and must not block the retry.
+    /// timeout) were never judged on proof and must not block the retry, and
+    /// a "duplicate share" row never settles anything by itself.
     fn has_persisted_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
-        let retryable = RETRYABLE_REJECT_REASONS
-            .iter()
-            .map(|reason| reason.to_string())
-            .collect::<Vec<_>>();
+        let retryable = non_settling_reject_reasons();
         let row = self.conn().query_opt(
             "SELECT 1 FROM shares
              WHERE job_id = $1 AND nonce = $2
@@ -6813,6 +6811,23 @@ mod tests {
             })
             .unwrap();
         assert!(store.try_claim_share(&busy_assignment, &key, 8).unwrap());
+        // Nor does a "duplicate share" row on its own.
+        store
+            .add_share(ShareRecord {
+                job_id: busy_assignment.clone(),
+                miner: format!("miner-{suffix}"),
+                worker: "rig".to_string(),
+                difficulty: 1,
+                nonce: 10,
+                status: "rejected",
+                was_sampled: false,
+                block_hash: None,
+                claimed_hash: None,
+                reject_reason: Some("duplicate share".to_string()),
+                created_at: SystemTime::now(),
+            })
+            .unwrap();
+        assert!(store.try_claim_share(&busy_assignment, &key, 10).unwrap());
         // A proof rejection persisted under the assignment still blocks.
         store
             .add_share(ShareRecord {
