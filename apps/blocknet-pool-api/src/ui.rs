@@ -293,6 +293,7 @@ pub(crate) async fn handle_sitemap_xml(State(state): State<ApiState>) -> impl In
     let base_url = state.public_base_url();
     let urls: String = SITEMAP_PATHS
         .iter()
+        .chain(crate::blog::blog_sitemap_paths())
         .map(|path| format!("  <url><loc>{}{path}</loc></url>\n", html_escape(&base_url)))
         .collect();
     (

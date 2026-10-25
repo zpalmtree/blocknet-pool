@@ -4,6 +4,7 @@ use tracing::info;
 
 mod api;
 mod background_read;
+mod blog;
 mod config;
 mod protect;
 mod runtime;

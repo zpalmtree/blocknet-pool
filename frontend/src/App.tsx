@@ -1,4 +1,4 @@
-import { type MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { Fragment, type MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 
 import { createApiClient } from './api/client';
 import { API_KEY_STORAGE_KEY, LAST_MINER_LOOKUP_KEY } from './lib/storage';
@@ -210,15 +210,18 @@ export function App() {
         </a>
         <div id="site-nav-links" className="nav-links">
           {NAV_ITEMS.map((item) => (
-            <a
-              key={item.route}
-              href={pathForRoute(item.route)}
-              data-nav={item.route}
-              className={route === item.route ? 'active' : ''}
-              onClick={(event) => onNavLinkClick(event, item.route)}
-            >
-              {item.label}
-            </a>
+            <Fragment key={item.route}>
+              {/* The blog is static pages served by the API, so it's a plain link before Admin. */}
+              {item.route === 'admin' ? <a href="/blog/">Blog</a> : null}
+              <a
+                href={pathForRoute(item.route)}
+                data-nav={item.route}
+                className={route === item.route ? 'active' : ''}
+                onClick={(event) => onNavLinkClick(event, item.route)}
+              >
+                {item.label}
+              </a>
+            </Fragment>
           ))}
         </div>
         <div className="nav-actions">

@@ -39,6 +39,67 @@ fn main() {
     }
 
     verify_ui_bundle(&frontend_dir, &frontend_src_dir, &frontend_dist_dir);
+    embed_blog(&frontend_dir, &frontend_dist_dir.join("blog"));
+}
+
+/// Embed the pre-rendered blog (frontend/dist/blog, written by scripts/build-blog.mjs) as a
+/// static table for src/blog.rs, and fail early if it is missing or older than its sources.
+fn embed_blog(frontend_dir: &Path, blog_dist_dir: &Path) {
+    let sources: Vec<PathBuf> = walk_files(&frontend_dir.join("blog"))
+        .into_iter()
+        .chain(walk_files(&frontend_dir.join("scripts")))
+        .collect();
+    for path in &sources {
+        track_path(path);
+    }
+    let marker = blog_dist_dir.join("sitemap-paths.txt");
+    track_path(&marker);
+    let built = file_mtime(&marker)
+        .unwrap_or_else(|| fail_missing_or_stale("missing frontend/dist/blog (the blog build)"));
+    if sources.iter().filter_map(|path| file_mtime(path)).max().is_some_and(|newest| newest > built) {
+        fail_missing_or_stale("frontend/dist/blog is older than frontend/blog or frontend/scripts");
+    }
+
+    let mut files = walk_files(blog_dist_dir);
+    files.sort();
+    let mut entries = String::new();
+    for file in &files {
+        let rel = file
+            .strip_prefix(blog_dist_dir)
+            .expect("blog file under dist/blog")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if rel == "sitemap-paths.txt" {
+            continue;
+        }
+        let url = match rel.strip_suffix("index.html") {
+            Some(dir) => format!("/blog/{dir}"),
+            None => format!("/blog/{rel}"),
+        };
+        let content_type = match file.extension().and_then(|ext| ext.to_str()) {
+            Some("html") => "text/html; charset=utf-8",
+            Some("css") => "text/css; charset=utf-8",
+            Some("js") => "text/javascript; charset=utf-8",
+            Some("xml") => "application/rss+xml; charset=utf-8",
+            _ => "application/octet-stream",
+        };
+        entries.push_str(&format!(
+            "    ({url:?}, {content_type:?}, include_bytes!({:?})),\n",
+            file.display().to_string()
+        ));
+    }
+    let sitemap = fs::read_to_string(&marker).expect("read blog sitemap paths");
+    let paths: String = sitemap
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| format!("    {:?},\n", line.trim()))
+        .collect();
+    let generated = format!(
+        "pub(crate) static BLOG_FILES: &[(&str, &str, &[u8])] = &[\n{entries}];\n\
+         pub(crate) static BLOG_SITEMAP_PATHS: &[&str] = &[\n{paths}];\n"
+    );
+    let out = PathBuf::from(env::var("OUT_DIR").expect("out dir")).join("blog_files.rs");
+    fs::write(out, generated).expect("write blog_files.rs");
 }
 
 fn track_path(path: &Path) {
