@@ -15,11 +15,15 @@
 }
 :lang(zh-Hant) { --sans: 'Manrope', 'PingFang TC', 'Microsoft JhengHei', 'Noto Sans TC', system-ui, sans-serif; }
 :lang(zh-Hans) { --sans: 'Manrope', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', system-ui, sans-serif; }
+:lang(ja) { --sans: 'Manrope', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', Meiryo, 'Noto Sans JP', system-ui, sans-serif; }
+:lang(ko) { --sans: 'Manrope', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', system-ui, sans-serif; }
+:lang(th) { --sans: 'Manrope', Thonburi, 'Leelawadee UI', 'Noto Sans Thai', Tahoma, system-ui, sans-serif; }
+:lang(ar) { --sans: 'Geeza Pro', 'Segoe UI', 'Noto Sans Arabic', Tahoma, system-ui, sans-serif; }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.65 var(--sans); -webkit-font-smoothing: antialiased; }
 a { color: inherit; }
 img { max-width: 100%; height: auto; }
-.wrap { max-width: 1080px; margin: 0 auto; padding-left: max(20px, env(safe-area-inset-left)); padding-right: max(20px, env(safe-area-inset-right)); }
+.wrap { max-width: 1080px; margin: 0 auto; padding-inline: max(20px, env(safe-area-inset-left)) max(20px, env(safe-area-inset-right)); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 .nav { position: sticky; top: 0; z-index: 10; background: var(--bg); border-bottom: 1px solid var(--border); }
@@ -28,8 +32,18 @@ img { max-width: 100%; height: auto; }
 .nav nav { display: flex; align-items: center; gap: 22px; font-size: 0.95rem; color: var(--muted); }
 .nav nav a { text-decoration: none; }
 .nav nav a:hover { color: var(--text); }
-.langs { display: flex; gap: 10px; font: 0.8rem/1 var(--mono); }
-.langs a[aria-current='true'] { color: var(--text); font-weight: 600; }
+.langs { position: relative; font: 0.8rem/1 var(--mono); }
+.langs summary { list-style: none; cursor: pointer; color: var(--text); padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; }
+.langs summary::-webkit-details-marker { display: none; }
+.langs summary::after { content: ' ▾'; color: var(--muted); }
+.langs ul { position: absolute; inset-inline-end: 0; top: calc(100% + 6px); margin: 0; padding: 6px 0; list-style: none; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; min-width: 190px; max-height: 70vh; overflow-y: auto; z-index: 20; font: 0.92rem/1.2 var(--sans); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); }
+.langs li a { display: block; padding: 8px 14px; color: var(--muted); }
+.langs li a:hover { background: var(--accent-light); color: var(--text); }
+.langs li a[aria-current='true'] { color: var(--text); font-weight: 600; }
+.lang-suggest { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 20px; padding: 8px max(20px, env(safe-area-inset-left)); background: var(--surface); border-bottom: 1px solid var(--border); font-size: 0.95rem; }
+.lang-suggest-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.lang-suggest .btn { padding: 7px 13px; font-size: 0.9rem; cursor: pointer; }
+.lang-suggest button.btn { background: none; font-family: inherit; }
 @media (max-width: 720px) { .nav .hide-sm { display: none; } }
 
 .page-head { padding-block: 56px 26px; border-bottom: 1px solid var(--border); margin-bottom: 36px; }
@@ -39,7 +53,11 @@ img { max-width: 100%; height: auto; }
 .page-head .meta, .crumbs { font: 0.82rem/1.4 var(--mono); color: var(--muted); }
 .page-head .meta { margin-top: 14px; }
 .crumbs a { text-decoration: none; }
-:lang(zh-Hans) :is(h1, h2, h3), :lang(zh-Hant) :is(h1, h2, h3) { letter-spacing: 0; word-break: keep-all; overflow-wrap: anywhere; }
+:lang(zh-Hans) :is(h1, h2, h3), :lang(zh-Hant) :is(h1, h2, h3), :lang(ja) :is(h1, h2, h3) { letter-spacing: 0; word-break: keep-all; overflow-wrap: anywhere; }
+:lang(ko) :is(h1, h2, h3), :lang(th) :is(h1, h2, h3), :lang(ar) :is(h1, h2, h3) { letter-spacing: 0; }
+:lang(ko) { word-break: keep-all; }
+/* Arabic letters join, so no letter-spacing, and the monospace labels use the text face. */
+:lang(ar) :is(.crumbs, .meta, .block-label, .posts time, .langs summary) { font-family: var(--sans); letter-spacing: 0; }
 
 .posts { list-style: none; margin: 0; padding: 0 0 80px; }
 .posts li { border-top: 1px solid var(--border); }
@@ -55,19 +73,19 @@ img { max-width: 100%; height: auto; }
 .prose h3 { margin: 1.6em 0 0.4em; font-size: 1.15rem; }
 .prose a { color: var(--accent-strong); text-underline-offset: 3px; }
 .prose code { font: 0.9em var(--mono); background: var(--accent-light); padding: 1px 5px; border-radius: 5px; }
-.prose pre { background: #0f1b20; color: #ecf5f0; border-radius: 10px; padding: 16px 18px; overflow-x: auto; }
+.prose pre { direction: ltr; text-align: left; background: #0f1b20; color: #ecf5f0; border-radius: 10px; padding: 16px 18px; overflow-x: auto; }
 .prose pre code { background: none; padding: 0; color: inherit; }
 .prose table { border-collapse: collapse; display: block; overflow-x: auto; margin: 1.4em 0; font-size: 0.95rem; }
-.prose th, .prose td { border-bottom: 1px solid var(--border); padding: 9px 16px 9px 0; text-align: left; }
+.prose th, .prose td { border-bottom: 1px solid var(--border); padding-block: 9px; padding-inline: 0 16px; text-align: start; }
 .prose th { border-bottom-color: var(--muted); }
 .prose h2[id], .prose h3[id] { scroll-margin-top: 80px; }
 
-.block { margin: 1.6em 0; padding: 14px 18px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--border); }
+.block { margin: 1.6em 0; padding: 14px 18px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); border-inline-start: 3px solid var(--border); }
 .block > :last-child { margin-bottom: 0; }
 .block-label { font: 600 0.72rem/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
-.block.answer { border-left-color: var(--accent); }
+.block.answer { border-inline-start-color: var(--accent); }
 .block.answer .block-label { color: var(--accent-strong); }
-.block.warning { border-left-color: var(--warn); }
+.block.warning { border-inline-start-color: var(--warn); }
 
 .faq, .related { margin-top: 2.6em; padding-top: 1.4em; border-top: 1px solid var(--border); }
 .faq h2, .related h2 { margin-top: 0; }

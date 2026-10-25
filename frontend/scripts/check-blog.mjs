@@ -6,6 +6,7 @@
 //   node scripts/check-blog.mjs <slug> --strict      one post; warnings fail too (before publishing)
 //   node scripts/check-blog.mjs --overlap <slug>     closest existing posts by shared wording
 //   node scripts/check-blog.mjs --hash <slug>        the sourceHash its translations must carry
+//   node scripts/check-blog.mjs <slug> --locale es   only the es translation (comma-separate several)
 //
 // Errors: forbidden claims, a missing keyword-map row, an H1 in the body, broken internal
 // links, a missing, stale or unreviewed translation, or a translation whose structure
@@ -15,13 +16,11 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { parse } from 'yaml';
+import { TRANSLATED } from './blog-lib.mjs';
 
 const ROOT = new URL('../blog/', import.meta.url);
 const BLOG = new URL('content/', ROOT);
-const LOCALES = [
-    { code: 'zh-Hans', path: 'zh-hans' },
-    { code: 'zh-Hant', path: 'zh-hant' },
-];
+const LOCALES = TRANSLATED.map(({ code, path }) => ({ code, path }));
 // Pool app routes a post may link to (the app is English-only, so these stay unprefixed).
 const APP_ROUTES = ['/', '/start', '/stats', '/blocks', '/payouts', '/luck', '/status', '/checkpoints'];
 const BLOCKS = ['Answer', 'Note', 'Warning'];
@@ -29,11 +28,12 @@ const ctaCount = (b) => (stripCode(b).match(/<CTA\b/g) ?? []).length;
 
 // Brand rules (marketing/brand/taglines.md, seine copy rules). [pattern, advice]
 const FORBIDDEN = [
-    [/\buntraceable\b|不可追[踪蹤]|无法追[踪蹤]|無法追[踪蹤]/i, "say 'private' (regulator and exchange risk)"],
-    [/\banonym(ous|ity)\b|匿名/i, "say 'private' (regulator and exchange risk)"],
+    // Translations: the same bans in every locale's usual wording.
+    [/\buntraceable\b|不可追[踪蹤]|无法追[踪蹤]|無法追[踪蹤]|追跡不可能|추적\s*불가|irrastreab|irrastreáve|intraçable|unverfolgbar|nicht (nach)?verfolgbar|non tracciabil|niewykrywaln|izlenemez|không thể truy vết|untraceer|tidak (dapat|bisa) dilacak|неотслеживаем|невідстежуван|μη ανιχνεύσιμ|ไม่สามารถติดตาม|لا يمكن تتبع/i, "say 'private' (regulator and exchange risk)"],
+    [/\banonym|\banónim|\banônim|\banonim|匿名|익명|nặc danh|ẩn danh|аноним|анонім|ανώνυμ|ไม่ระบุตัวตน|مجهول الهوية|إخفاء الهوية/i, "say 'private' (regulator and exchange risk)"],
     [/\bmost private\b|\bmore private than monero\b|最私密|比\s*Monero\s*更私密/i, 'false once Monero ships FCMP++'],
     [/\$BNT\b/, "the $BNT cashtag is Bancor's"],
-    [/\bguaranteed (profit|returns?|income)\b|\bpassive income\b|\brisk[- ]free\b|稳赚|穩賺|保证收益|保證收益|被动收入|被動收入/i, 'no earnings promises'],
+    [/\bguaranteed (profit|returns?|income)\b|\bpassive income\b|\brisk[- ]free\b|稳赚|穩賺|保证收益|保證收益|被动收入|被動收入|ingresos? pasivos?|renda passiva|passives? Einkommen|revenus? passifs?|reddito passivo|dochód pasywny|pasif gelir|thu nhập thụ động|passief inkomen|pendapatan pasif|пассивн\S* доход|пасивн\S* дох|παθητικό εισόδημα|不労所得|パッシブインカム|불로소득|รายได้(แบบ)?พาสซีฟ|دخل سلبي/i, 'no earnings promises'],
     [/blocknet\.org/i, 'a different project (the BLOCK token); never link it'],
 ];
 const CAUTION = [
@@ -49,7 +49,8 @@ const args = process.argv.slice(2);
 const strict = args.includes('--strict');
 const overlapMode = args.includes('--overlap');
 const hashIdx = args.indexOf('--hash');
-const wanted = args.filter((a, i) => !a.startsWith('--') && (hashIdx < 0 || i !== hashIdx + 1));
+const wanted = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--locale' && (hashIdx < 0 || i !== hashIdx + 1));
+const onlyLocales = args.flatMap((a, i) => (args[i - 1] === '--locale' ? a.split(',') : []));
 
 function readPost(slug, file) {
     const url = new URL(`${slug}/${file}`, BLOG);
@@ -94,7 +95,7 @@ function checkLinks(p, prefix, errors) {
         if (!base.startsWith('/blog/')) { errors.push(`link to unknown page ${href}`); continue; }
         const rest = base.slice('/blog/'.length);
         const parts = rest.split('/').filter(Boolean);
-        const loc = parts[0] === 'zh-hans' || parts[0] === 'zh-hant' ? parts.shift() : null;
+        const loc = LOCALES.some((l) => l.path === parts[0]) ? parts.shift() : null;
         if ((loc ?? null) !== (prefix ?? null)) {
             errors.push(prefix ? `blog link ${href} isn't localized; use /blog/${prefix}/...` : `English post links to a translated page ${href}`);
             continue;
@@ -176,7 +177,7 @@ function checkTranslation(src, locale) {
     if (headings(t.body).length !== headings(src.body).length) errors.push(tag('heading count differs from the source'));
     if (ctaCount(t.body) !== ctaCount(src.body)) errors.push(tag('<CTA> count differs from the source'));
     // seineminer.com links may point at the translation's own locale of the same page.
-    const sameSite = (l) => l.replace(/^https:\/\/seineminer\.com\/zh-han[st]\//, 'https://seineminer.com/');
+    const sameSite = (l) => l.replace(`https://seineminer.com/${locale.path}/`, 'https://seineminer.com/');
     const ext = (b) => links(b).filter((l) => !l.startsWith('/')).map(sameSite).sort().join(' ');
     if (ext(t.body) !== ext(src.body)) errors.push(tag('external links must match the source'));
     if (/^# /m.test(stripCode(t.body))) errors.push(tag('the body has an H1'));
@@ -215,7 +216,7 @@ let failures = 0;
 for (const p of selected) {
     const result = p.error ? { errors: [p.error], warnings: [] } : checkSource(p);
     if (p.data && !p.data.draft) {
-        for (const l of LOCALES) {
+        for (const l of LOCALES.filter((x) => !onlyLocales.length || onlyLocales.includes(x.code))) {
             const r = checkTranslation(p, l);
             result.errors.push(...r.errors);
             result.warnings.push(...r.warnings);

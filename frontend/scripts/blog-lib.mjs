@@ -1,6 +1,6 @@
 // Shared pieces of the bntpool.com blog: locales, interface strings, post loading.
-// Posts live in frontend/blog/content/<slug>/index.md (English) with zh-Hans.md and zh-Hant.md
-// translations beside them; the format matches the seineminer.com blog (see blog/README.md).
+// Posts live in frontend/blog/content/<slug>/index.md (English) with one <locale>.md translation
+// per locale beside them; the format matches the seineminer.com blog (see blog/README.md).
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { parse } from 'yaml';
@@ -9,10 +9,29 @@ export const BLOG_DIR = new URL('../blog/', import.meta.url);
 export const CONTENT_DIR = new URL('content/', BLOG_DIR);
 export const BASE_URL = process.env.BLOG_BASE_URL || 'https://bntpool.com';
 
+// The same 20 locales as seineminer.com and Sol Incinerator. Adding one: add it here, add
+// blog/messages/<code>.json, and translate every published post.
 export const LOCALES = [
-  { code: 'en', path: null, htmlLang: 'en', ogLocale: 'en_US', short: 'EN', endonym: 'English' },
-  { code: 'zh-Hans', path: 'zh-hans', htmlLang: 'zh-Hans', ogLocale: 'zh_CN', short: '简', endonym: '简体中文' },
-  { code: 'zh-Hant', path: 'zh-hant', htmlLang: 'zh-Hant', ogLocale: 'zh_TW', short: '繁', endonym: '繁體中文' },
+  { code: 'en', path: null, htmlLang: 'en', ogLocale: 'en_US', short: 'EN', endonym: 'English', dir: 'ltr' },
+  { code: 'id', path: 'id', htmlLang: 'id', ogLocale: 'id_ID', short: 'ID', endonym: 'Bahasa Indonesia', dir: 'ltr' },
+  { code: 'es', path: 'es', htmlLang: 'es', ogLocale: 'es_ES', short: 'ES', endonym: 'Español', dir: 'ltr' },
+  { code: 'de', path: 'de', htmlLang: 'de', ogLocale: 'de_DE', short: 'DE', endonym: 'Deutsch', dir: 'ltr' },
+  { code: 'fr', path: 'fr', htmlLang: 'fr', ogLocale: 'fr_FR', short: 'FR', endonym: 'Français', dir: 'ltr' },
+  { code: 'pt-BR', path: 'pt-br', htmlLang: 'pt-BR', ogLocale: 'pt_BR', short: 'PT', endonym: 'Português (Brasil)', dir: 'ltr' },
+  { code: 'ru', path: 'ru', htmlLang: 'ru', ogLocale: 'ru_RU', short: 'RU', endonym: 'Русский', dir: 'ltr' },
+  { code: 'it', path: 'it', htmlLang: 'it', ogLocale: 'it_IT', short: 'IT', endonym: 'Italiano', dir: 'ltr' },
+  { code: 'pl', path: 'pl', htmlLang: 'pl', ogLocale: 'pl_PL', short: 'PL', endonym: 'Polski', dir: 'ltr' },
+  { code: 'tr', path: 'tr', htmlLang: 'tr', ogLocale: 'tr_TR', short: 'TR', endonym: 'Türkçe', dir: 'ltr' },
+  { code: 'vi', path: 'vi', htmlLang: 'vi', ogLocale: 'vi_VN', short: 'VI', endonym: 'Tiếng Việt', dir: 'ltr' },
+  { code: 'ar', path: 'ar', htmlLang: 'ar', ogLocale: 'ar_AR', short: 'AR', endonym: 'العربية', dir: 'rtl' },
+  { code: 'nl', path: 'nl', htmlLang: 'nl', ogLocale: 'nl_NL', short: 'NL', endonym: 'Nederlands', dir: 'ltr' },
+  { code: 'uk', path: 'uk', htmlLang: 'uk', ogLocale: 'uk_UA', short: 'UK', endonym: 'Українська', dir: 'ltr' },
+  { code: 'el', path: 'el', htmlLang: 'el', ogLocale: 'el_GR', short: 'EL', endonym: 'Ελληνικά', dir: 'ltr' },
+  { code: 'ja', path: 'ja', htmlLang: 'ja', ogLocale: 'ja_JP', short: '日', endonym: '日本語', dir: 'ltr' },
+  { code: 'ko', path: 'ko', htmlLang: 'ko', ogLocale: 'ko_KR', short: '한', endonym: '한국어', dir: 'ltr' },
+  { code: 'th', path: 'th', htmlLang: 'th', ogLocale: 'th_TH', short: 'ไท', endonym: 'ไทย', dir: 'ltr' },
+  { code: 'zh-Hans', path: 'zh-hans', htmlLang: 'zh-Hans', ogLocale: 'zh_CN', short: '简', endonym: '简体中文', dir: 'ltr' },
+  { code: 'zh-Hant', path: 'zh-hant', htmlLang: 'zh-Hant', ogLocale: 'zh_TW', short: '繁', endonym: '繁體中文', dir: 'ltr' },
 ];
 export const TRANSLATED = LOCALES.filter((l) => l.path);
 
@@ -22,43 +41,16 @@ export function blogPath(locale, slug = '') {
   return `/blog/${prefix ? `${prefix}/` : ''}${slug ? `${slug}/` : ''}`;
 }
 
-const en = {
-  navDashboard: 'Dashboard', navStart: 'Get started', navBlog: 'Blog', navStats: 'My stats', navLanguage: 'Language',
-  blogTitle: 'Blog', blogSub: 'Guides to mining Blocknet on bntpool.com.',
-  blogMetaTitle: 'Blocknet mining pool guides · bntpool.com blog',
-  blogMetaDescription: 'Guides to mining Blocknet on bntpool.com: getting started, PPLNS payouts, your miner stats, and the Blocknet coin itself.',
-  blogEmpty: 'No posts yet.', breadcrumb: 'Breadcrumb', updated: 'Updated', minutes: '{n} min read',
-  faq: 'Frequently asked questions', related: 'Related reading',
-  ctaTitle: 'Start mining on bntpool.com', ctaStart: 'Get started', ctaSeine: 'Download seine',
-  answer: 'Short answer', note: 'Note', warning: 'Warning', rssTitle: 'bntpool.com blog',
-  footer: 'Blocknet mining pool',
-};
-const zhHans = {
-  navDashboard: '仪表盘', navStart: '快速开始', navBlog: '博客', navStats: '我的统计', navLanguage: '语言',
-  blogTitle: '博客', blogSub: '在 bntpool.com 上挖 Blocknet 的指南。',
-  blogMetaTitle: 'Blocknet 矿池指南 · bntpool.com 博客',
-  blogMetaDescription: '在 bntpool.com 上挖 Blocknet 的指南：快速开始、PPLNS 收益、矿工统计，以及 Blocknet 本身。',
-  blogEmpty: '暂无文章。', breadcrumb: '面包屑导航', updated: '更新于', minutes: '{n} 分钟阅读',
-  faq: '常见问题', related: '相关阅读',
-  ctaTitle: '在 bntpool.com 开始挖矿', ctaStart: '快速开始', ctaSeine: '下载 seine',
-  answer: '简短回答', note: '说明', warning: '警告', rssTitle: 'bntpool.com 博客',
-  footer: 'Blocknet 矿池',
-};
-const zhHant = {
-  navDashboard: '儀表板', navStart: '快速開始', navBlog: '部落格', navStats: '我的統計', navLanguage: '語言',
-  blogTitle: '部落格', blogSub: '在 bntpool.com 上挖 Blocknet 的指南。',
-  blogMetaTitle: 'Blocknet 礦池指南 · bntpool.com 部落格',
-  blogMetaDescription: '在 bntpool.com 上挖 Blocknet 的指南：快速開始、PPLNS 收益、礦工統計，以及 Blocknet 本身。',
-  blogEmpty: '尚無文章。', breadcrumb: '導覽路徑', updated: '更新於', minutes: '{n} 分鐘閱讀',
-  faq: '常見問題', related: '相關閱讀',
-  ctaTitle: '在 bntpool.com 開始挖礦', ctaStart: '快速開始', ctaSeine: '下載 seine',
-  answer: '簡短回答', note: '說明', warning: '警告', rssTitle: 'bntpool.com 部落格',
-  footer: 'Blocknet 礦池',
-};
-const CATALOGS = { en, 'zh-Hans': zhHans, 'zh-Hant': zhHant };
+// Interface strings: blog/messages/<code>.json, every file with exactly en.json's keys.
+const CATALOGS = Object.fromEntries(LOCALES.map(({ code }) => {
+  const url = new URL(`messages/${code}.json`, BLOG_DIR);
+  if (!existsSync(url)) throw new Error(`missing blog/messages/${code}.json`);
+  return [code, JSON.parse(readFileSync(url, 'utf8'))];
+}));
 for (const [code, catalog] of Object.entries(CATALOGS)) {
-  const missing = Object.keys(en).filter((k) => !catalog[k]);
-  if (missing.length) throw new Error(`blog strings ${code}: missing ${missing.join(', ')}`);
+  const missing = Object.keys(CATALOGS.en).filter((k) => !catalog[k]);
+  const extra = Object.keys(catalog).filter((k) => !(k in CATALOGS.en));
+  if (missing.length || extra.length) throw new Error(`blog/messages/${code}.json: missing [${missing.join(', ')}] extra [${extra.join(', ')}]`);
 }
 
 export function t(locale, key, vars = {}) {
@@ -87,10 +79,13 @@ export function listSlugs() {
   return readdirSync(CONTENT_DIR, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
 }
 
-const CJK = /[㐀-鿿豈-﫿]/g;
+// Scripts written without spaces between words are counted by character.
+const CJK = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/g;
+const THAI = /[\u0e00-\u0e7f]/g;
 export function readingMinutes(body) {
   const text = body.replace(/```[\s\S]*?```/g, ' ').replace(/<[^>]+>/g, ' ');
   const cjk = (text.match(CJK) ?? []).length;
-  const words = (text.replace(CJK, ' ').match(/[A-Za-z0-9][\w'’.-]*/g) ?? []).length;
-  return Math.max(1, Math.round(words / 230 + cjk / 400));
+  const thai = (text.match(THAI) ?? []).length;
+  const words = (text.replace(CJK, ' ').replace(THAI, ' ').match(/[\p{L}\p{N}][\p{L}\p{N}\p{M}'’.-]*/gu) ?? []).length;
+  return Math.max(1, Math.round(words / 230 + cjk / 400 + thai / 1000));
 }

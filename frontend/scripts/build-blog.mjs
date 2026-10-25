@@ -1,7 +1,8 @@
 // Pre-render the bntpool.com blog into frontend/dist/blog. Runs after `vite build` (which empties
 // dist). The API embeds these files and serves them under /blog/ (apps/blocknet-pool-api/src/blog.rs),
 // so crawlers get real HTML. The app's CSP forbids inline scripts and styles, so pages load
-// /blog/blog.css and /blog/theme.js; JSON-LD data blocks are not executed and are unaffected.
+// /blog/blog.css, /blog/theme.js and /blog/lang.js; JSON data blocks (JSON-LD and the language
+// banner's offers) are not executed and are unaffected.
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { Marked } from 'marked';
@@ -58,9 +59,17 @@ function page({ locale, slug = '', title, description, ogType = 'website', schem
   const canonical = BASE_URL + blogPath(locale, slug);
   const alternates = LOCALES.map((x) => `<link rel="alternate" hreflang="${x.htmlLang}" href="${BASE_URL}${blogPath(x.code, slug)}">`).join('\n')
     + `\n<link rel="alternate" hreflang="x-default" href="${BASE_URL}${blogPath('en', slug)}">`;
-  const langs = LOCALES.map((x) => `<a href="${blogPath(x.code, slug)}" hreflang="${x.htmlLang}" lang="${x.htmlLang}" title="${esc(x.endonym)}"${x.code === locale ? ' aria-current="true"' : ''}>${x.short}</a>`).join('');
+  const langs = LOCALES.map((x) => `<li><a href="${blogPath(x.code, slug)}" hreflang="${x.htmlLang}" lang="${x.htmlLang}"${x.code === locale ? ' aria-current="true"' : ''}>${esc(x.endonym)}</a></li>`).join('');
+  // English pages offer the reader's browser language (blog/lang.js); every page loads the script
+  // so a choice made in the language menu is remembered.
+  const offers = locale !== 'en' ? null : {
+    keepEnglish: t('en', 'suggestKeepEnglish'),
+    offers: Object.fromEntries(TRANSLATED.map((x) => [x.code, {
+      prompt: t(x.code, 'suggestPrompt'), action: t(x.code, 'suggestAction'), href: blogPath(x.code, slug), lang: x.htmlLang, dir: x.dir,
+    }])),
+  };
   return `<!DOCTYPE html>
-<html lang="${l.htmlLang}">
+<html lang="${l.htmlLang}" dir="${l.dir}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -90,6 +99,7 @@ ${alternates}
 ${head}${schema.map(jsonLd).join('\n')}
 </head>
 <body>
+${offers ? `<script type="application/json" id="blog-lang-offers">${JSON.stringify(offers).replace(/</g, '\\u003c')}</script>\n` : ''}<script src="/blog/lang.js"></script>
 <header class="nav"><div class="wrap">
   <a class="brand" href="/">bntpool.com</a>
   <nav aria-label="Main">
@@ -97,7 +107,7 @@ ${head}${schema.map(jsonLd).join('\n')}
     <a class="hide-sm" href="/start">${esc(t(locale, 'navStart'))}</a>
     <a class="hide-sm" href="/stats">${esc(t(locale, 'navStats'))}</a>
     <a href="${blogPath(locale)}">${esc(t(locale, 'navBlog'))}</a>
-    <span class="langs" role="group" aria-label="${esc(t(locale, 'navLanguage'))}">${langs}</span>
+    <details class="langs"><summary aria-label="${esc(t(locale, 'navLanguage'))}">${l.short}</summary><ul>${langs}</ul></details>
   </nav>
 </div></header>
 ${body}
@@ -199,6 +209,7 @@ rmSync(DIST, { recursive: true, force: true });
 mkdirSync(DIST, { recursive: true });
 copyFileSync(new URL('blog.css', BLOG_DIR), new URL('blog.css', DIST));
 copyFileSync(new URL('theme.js', BLOG_DIR), new URL('theme.js', DIST));
+copyFileSync(new URL('lang.js', BLOG_DIR), new URL('lang.js', DIST));
 copyFileSync(new URL('seine-icon.png', BLOG_DIR), new URL('seine-icon.png', DIST));
 const sitemapPaths = [];
 for (const l of LOCALES) {

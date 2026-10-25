@@ -1,6 +1,6 @@
 ---
 name: bntpool-blog
-description: Write, translate (Simplified and Traditional Chinese), check and publish posts for the bntpool.com blog, which promotes the pool, Blocknet and the seine miner. Use when asked to write or update a bntpool.com blog post, pick pool blog topics, or change the blog build.
+description: Write, translate (19 languages, including Simplified and Traditional Chinese), check and publish posts for the bntpool.com blog, which promotes the pool, Blocknet and the seine miner. Use when asked to write or update a bntpool.com blog post, pick pool blog topics, or change the blog build.
 ---
 
 # bntpool.com blog
@@ -15,8 +15,9 @@ pool post never targets a search job a seineminer.com post owns; link to that po
 
 - **New post:** draft `frontend/blog/content/<slug>/index.md` (`draft: true`), then run
   `node scripts/check-blog.mjs <slug> --strict` and `--overlap <slug>` from `frontend/`.
-  Translate to `zh-Hans.md` and `zh-Hant.md` (mainland vs Taiwan terms, blog links localized to
-  `/blog/zh-hans/...`, pool app links unprefixed), get a separate review pass, set
+  Translate into all 19 locales (`<locale>.md`, following the seine repo's
+  `site/editorial/translation-guide.md`; blog links localized to `/blog/<locale>/...`, pool app
+  links unprefixed), get a separate review pass per translation, set
   `translation: reviewed` and the `sourceHash`, add the keyword-map row, and publish by removing
   `draft: true`. Publishing needs the user's go-ahead.
 - **Build:** `npm --prefix frontend run build` renders `frontend/dist/blog` (the check runs first);
