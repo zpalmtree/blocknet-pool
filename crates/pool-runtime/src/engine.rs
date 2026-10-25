@@ -345,18 +345,6 @@ pub(crate) fn is_retryable_reject_reason(canonical_reason: &str) -> bool {
     RETRYABLE_REJECT_REASONS.contains(&canonical_reason)
 }
 
-/// Persisted rejections that do not settle their (assignment, nonce): the
-/// retryable ones, plus "duplicate share", whose original (if credited) is
-/// already protected by its own template-scoped claim.
-pub(crate) fn non_settling_reject_reasons() -> Vec<String> {
-    RETRYABLE_REJECT_REASONS
-        .iter()
-        .copied()
-        .chain(std::iter::once("duplicate share"))
-        .map(str::to_string)
-        .collect()
-}
-
 /// What a submit needs to know about its address's risk, from one read.
 /// Holds raw deadlines so a cached copy stays correct as time passes.
 #[derive(Debug, Clone, Default)]
@@ -1534,6 +1522,10 @@ impl PoolEngine {
                 }
 
                 let created_at = SystemTime::now();
+                // From here on a failure may still have committed the row
+                // (an error after COMMIT reached the server), so the claim is
+                // kept: releasing it could credit a resubmit twice.
+                release_claim_on_error = false;
                 self.store.add_share_with_replay_metadata(
                     ShareRecord {
                         job_id: job_id_for_share.clone(),
@@ -1618,6 +1610,8 @@ impl PoolEngine {
             }
 
             let created_at = SystemTime::now();
+            // As above: once the insert is attempted, keep the claim.
+            release_claim_on_error = false;
             let persisted = self.store.add_share_with_replay_metadata_and_id(
                 ShareRecord {
                     job_id: job_id_for_share.clone(),
@@ -2671,12 +2665,19 @@ pub(crate) struct InMemoryStore {
     blocks: Mutex<Vec<FoundBlockRecord>>,
     address_risk: Mutex<HashMap<String, AddressRiskState>>,
     vardiff_hints: Mutex<HashMap<(String, String), (u64, SystemTime)>>,
+    /// Next share insert commits but reports an error, like a connection
+    /// lost after COMMIT reached the server.
+    ambiguous_commit_once: Mutex<bool>,
 }
 
 #[cfg(test)]
 impl InMemoryStore {
     pub(crate) fn shares(&self) -> Vec<ShareRecord> {
         self.shares.lock().clone()
+    }
+
+    pub(crate) fn fail_next_share_insert_after_commit(&self) {
+        *self.ambiguous_commit_once.lock() = true;
     }
 
     pub(crate) fn blocks(&self) -> Vec<FoundBlockRecord> {
@@ -2725,27 +2726,11 @@ impl InMemoryStore {
         self.address_risk.lock().remove(address);
         Ok(())
     }
-
-    fn has_persisted_share(&self, job_id: &str, nonce: u64) -> bool {
-        self.shares.lock().iter().any(|share| {
-            share.job_id == job_id
-                && share.nonce == nonce
-                && !(share.status == SHARE_STATUS_REJECTED
-                    && share.reject_reason.as_deref().is_some_and(|reason| {
-                        non_settling_reject_reasons()
-                            .iter()
-                            .any(|value| value == reason)
-                    }))
-        })
-    }
 }
 
 #[cfg(test)]
 impl ShareStore for InMemoryStore {
-    fn try_claim_share(&self, job_id: &str, share_key: &str, nonce: u64) -> Result<bool> {
-        if self.has_persisted_share(job_id, nonce) {
-            return Ok(false);
-        }
+    fn try_claim_share(&self, _job_id: &str, share_key: &str, nonce: u64) -> Result<bool> {
         let key = (share_key.to_string(), nonce);
         let mut seen = self.seen.lock();
         if seen.contains(&key) {
@@ -2780,6 +2765,9 @@ impl ShareStore for InMemoryStore {
     ) -> Result<i64> {
         let mut shares = self.shares.lock();
         shares.push(share);
+        if std::mem::take(&mut *self.ambiguous_commit_once.lock()) {
+            return Err(anyhow!("connection closed after COMMIT"));
+        }
         Ok(shares.len() as i64)
     }
 
@@ -5661,6 +5649,40 @@ mod tests {
             )
             .expect_err("same header and nonce is the same work");
         assert!(err.to_string().contains("duplicate share"));
+    }
+
+    #[test]
+    fn share_whose_insert_may_have_committed_stays_claimed() {
+        let store = Arc::new(InMemoryStore::default());
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let engine = PoolEngine::new(
+            cfg(),
+            Arc::new(ValidationEngine::new(
+                cfg(),
+                Arc::new(DeterministicTestHasher),
+            )),
+            jobs,
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode::default()),
+        );
+        engine
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
+            .expect("login");
+        store.fail_next_share_insert_after_commit();
+        engine
+            .submit("conn1", "job1".to_string(), 700, Some("ff".repeat(32)))
+            .expect_err("insert reported failure");
+        let err = engine
+            .submit("conn1", "job1".to_string(), 700, Some("ff".repeat(32)))
+            .expect_err("the committed share must not be credited again");
+        assert!(err.to_string().starts_with("duplicate share"), "{err}");
+        let credited = store
+            .shares()
+            .into_iter()
+            .filter(|share| share.nonce == 700 && share.status == SHARE_STATUS_PROVISIONAL)
+            .count();
+        assert_eq!(credited, 1);
     }
 
     #[test]

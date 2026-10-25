@@ -10,7 +10,7 @@ use postgres::{types::ToSql, Client, Config as PostgresConfig, NoTls, Row, Trans
 use serde::Deserialize;
 use tracing::warn;
 
-use crate::engine::{non_settling_reject_reasons, ShareRecord};
+use crate::engine::ShareRecord;
 use crate::share_dedupe::TEMPLATE_SHARE_CLAIM_RETENTION;
 use crate::stats::RejectionReasonCount;
 use crate::validation::{
@@ -3771,17 +3771,19 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     /// template-scoped key (see `share_dedupe::template_share_key`). The claim
     /// is kept for [`TEMPLATE_SHARE_CLAIM_RETENTION`] after the share is
     /// persisted, so it doubles as the durable header-scoped dedupe record; it
-    /// is deleted only after a retryable failure. Rows persisted under the same
-    /// assignment id are still checked for compatibility with older claims.
+    /// is deleted only after a retryable failure that wrote no share row.
+    ///
+    /// This used to look up `shares` by (assignment id, nonce) first. That is
+    /// redundant: an assignment belongs to one template and lives minutes,
+    /// templates are in-memory only, and every path that writes a settling
+    /// row keeps this claim for hours. The lookup cost a random read on the
+    /// largest table for every submit.
     pub(crate) fn try_claim_share(
         &self,
-        job_id: &str,
+        _job_id: &str,
         share_key: &str,
         nonce: u64,
     ) -> Result<bool> {
-        if self.has_persisted_share(job_id, nonce)? {
-            return Ok(false);
-        }
         let now = now_unix();
         let expires_at = now + TEMPLATE_SHARE_CLAIM_RETENTION.as_secs() as i64;
         let claimed = self.conn().execute(
@@ -3799,22 +3801,6 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             &[&share_key, &u64_to_i64(nonce)?],
         )?;
         Ok(())
-    }
-
-    /// Whether a persisted row already settles this (assignment, nonce).
-    /// Rejections whose reason told the miner to retry (busy, rate limited,
-    /// timeout) were never judged on proof and must not block the retry, and
-    /// a "duplicate share" row never settles anything by itself.
-    fn has_persisted_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
-        let retryable = non_settling_reject_reasons();
-        let row = self.conn().query_opt(
-            "SELECT 1 FROM shares
-             WHERE job_id = $1 AND nonce = $2
-               AND NOT (status = 'rejected' AND reject_reason IS NOT NULL AND reject_reason = ANY($3))
-             LIMIT 1",
-            &[&job_id, &u64_to_i64(nonce)?, &retryable],
-        )?;
-        Ok(row.is_some())
     }
 
     pub(crate) fn clean_expired_seen_shares(&self) -> Result<u64> {
@@ -7409,25 +7395,8 @@ mod tests {
             })
             .unwrap();
         assert!(store.try_claim_share(&busy_assignment, &key, 10).unwrap());
-        // A proof rejection persisted under the assignment still blocks.
-        store
-            .add_share(ShareRecord {
-                job_id: busy_assignment.clone(),
-                miner: format!("miner-{suffix}"),
-                worker: "rig".to_string(),
-                difficulty: 1,
-                nonce: 9,
-                status: "rejected",
-                was_sampled: false,
-                block_hash: None,
-                claimed_hash: None,
-                reject_reason: Some("invalid share proof".to_string()),
-                created_at: SystemTime::now(),
-            })
-            .unwrap();
-        assert!(!store
-            .try_claim_share(&busy_assignment, &format!("tpl:other-{suffix}"), 9)
-            .unwrap());
+        // Claims are keyed by template header only; persisted rows never
+        // stand in for a claim (an assignment id maps to a single header).
     }
 
     #[test]
