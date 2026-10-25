@@ -19,7 +19,10 @@ use crate::dev_fee::{
     is_seine_dev_fee_address, login_difficulty_floor, DEV_VARDIFF_BOOTSTRAP_HINT_LIMIT,
 };
 use crate::share_dedupe::{template_share_key, NonceLedger};
-use crate::source_risk::{ip_group_key, SourcePolicy, SourceRef, SourceRiskTracker};
+use crate::source_risk::{
+    ip_group_key, SourcePolicy, SourceRef, SourceRiskTracker, StrikeEvidence, StrikeKind,
+    StrikeRule,
+};
 use crate::telemetry::QueueTracker;
 use crate::validation::{
     AuditAttribution, AuditFeedback, OverloadMode, ProbationReservation, ValidationEngine,
@@ -501,15 +504,32 @@ pub struct PoolEngine {
     found_block_outbox_lock: Mutex<()>,
 }
 
-/// Applies a strike to `source` and revokes its unverified credit.
-fn strike_source(
+/// One proven-fake share (the pool's hash differs from the claimed hash).
+struct ProvenFake<'a> {
+    reason: &'a str,
+    /// Skip proportionality (false block claims).
+    immediate: bool,
+    /// The address's persisted samples before this failure.
+    address_good: u64,
+    address_invalid: u64,
+    /// This failure counts toward the address's persisted invalid samples.
+    count_at_address: bool,
+}
+
+/// Penalizes a source for a proven fake share, proportionally: a source
+/// without verified history, or with an invalid rate clearly above honest
+/// hardware/backend error rates, gets a full strike (revoke its unverified
+/// window, ban, disconnect); anything else gets a soft strike (the share is
+/// rejected, the failure is counted and the source's next shares audited).
+fn penalize_proven_fake(
     cfg: &Config,
     tracker: &SourceRiskTracker,
     store: &dyn ShareStore,
     validation: Option<&ValidationEngine>,
     source: &SourceRef,
-    reason: &str,
+    fake: ProvenFake<'_>,
 ) -> AuditAttribution {
+    let reason = fake.reason;
     if !cfg.source_penalties_enabled {
         // Shadow mode: report what would happen and fall back to the
         // address-level accounting (attributed = false).
@@ -522,6 +542,42 @@ fn strike_source(
         );
         return AuditAttribution::default();
     }
+    let (source_good, source_invalid) = tracker.record_failure(source);
+    let evidence = StrikeEvidence {
+        source_good,
+        source_invalid,
+        address_good: fake.address_good,
+        address_invalid: fake
+            .address_invalid
+            .saturating_add(u64::from(fake.count_at_address)),
+    };
+    let kind = if fake.immediate {
+        StrikeKind::Full
+    } else {
+        StrikeRule::from_config(cfg).decide(evidence)
+    };
+    if kind == StrikeKind::Soft {
+        let audits = cfg.source_soft_strike_audits.max(0) as u32;
+        tracker.soft_strike(source, audits);
+        tracing::warn!(
+            address = %source.address,
+            ip_group = %source.ip_group,
+            session = source.session_id,
+            reason,
+            source_good,
+            source_invalid,
+            address_good = evidence.address_good,
+            address_invalid = evidence.address_invalid,
+            boost_audits = audits,
+            "soft strike: proven fake share from a source with clean history; share rejected, no revocation"
+        );
+        return AuditAttribution {
+            attributed: true,
+            count_invalid_at_address: fake.count_at_address,
+            revoked: Vec::new(),
+        };
+    }
+
     let outcome = tracker.strike(source, reason);
     let mut revoked_rows = 0u64;
     for (address, share_ids) in &outcome.revoked {
@@ -543,6 +599,10 @@ fn strike_source(
         ip_group = %source.ip_group,
         session = source.session_id,
         reason,
+        source_good,
+        source_invalid,
+        address_good = evidence.address_good,
+        address_invalid = evidence.address_invalid,
         pair_strikes = outcome.pair_strikes,
         pair_banned_secs = outcome.pair_banned_for.as_secs(),
         ip_banned_secs = outcome.ip_banned_for.map(|ban| ban.as_secs()),
@@ -552,6 +612,7 @@ fn strike_source(
     );
     AuditAttribution {
         attributed: true,
+        count_invalid_at_address: fake.count_at_address,
         revoked: outcome.revoked,
     }
 }
@@ -564,7 +625,14 @@ struct EngineAuditFeedback {
 }
 
 impl AuditFeedback for EngineAuditFeedback {
-    fn on_audit_result(&self, share_id: i64, address: &str, proven_fake: bool) -> AuditAttribution {
+    fn on_audit_result(
+        &self,
+        share_id: i64,
+        address: &str,
+        proven_fake: bool,
+        address_good: u64,
+        address_invalid: u64,
+    ) -> AuditAttribution {
         let Some(source) = self.tracker.source_for_share(share_id) else {
             return AuditAttribution::default();
         };
@@ -575,17 +643,26 @@ impl AuditFeedback for EngineAuditFeedback {
             self.tracker.record_audit_ok(share_id);
             return AuditAttribution {
                 attributed: true,
+                count_invalid_at_address: false,
                 revoked: Vec::new(),
             };
         }
+        let count_at_address = self.tracker.source_good(&source)
+            >= self.cfg.source_full_strike_min_source_good.max(0) as u64;
         // The caller forgets revoked shares in validation state itself.
-        strike_source(
+        penalize_proven_fake(
             &self.cfg,
             &self.tracker,
             self.store.as_ref(),
             None,
             &source,
-            PROVEN_FAKE_REJECT_REASON,
+            ProvenFake {
+                reason: PROVEN_FAKE_REJECT_REASON,
+                immediate: false,
+                address_good,
+                address_invalid,
+                count_at_address,
+            },
         )
     }
 
@@ -889,9 +966,12 @@ impl PoolEngine {
         }
         difficulty = difficulty.max(login_difficulty_floor(address, initial_difficulty));
 
+        let (address_good, _) = self.validation.address_sample_counts(address);
+        let address_vouched =
+            address_good >= self.cfg.source_full_strike_min_address_good.max(0) as u64;
         let source = self
             .source_risk
-            .open_session(address, &ip_group)
+            .open_session_vouched(address, &ip_group, address_vouched)
             .map_err(|message| anyhow!(message))?;
         let mut sessions = self.sessions.lock();
         let replaced = sessions.insert(
@@ -1159,6 +1239,13 @@ impl PoolEngine {
                 .unwrap_or(false);
 
             let risk_force_verify = self.store.should_force_verify_address(&session.address)?;
+            // Only sources with their own verified history on this address
+            // add to its persisted invalid count (strike leniency history).
+            let source_vouched = self.source_risk.source_good(&session.source)
+                >= self.cfg.source_full_strike_min_source_good.max(0) as u64;
+            let count_invalid_at_address = source_vouched || !self.cfg.source_penalties_enabled;
+            let (address_good, address_invalid) =
+                self.validation.address_sample_counts(&session.address);
             let plan = self.validation.plan_regular_submit(&session.address);
             let sync_full_verify = candidate_claim || risk_force_verify || plan.sync_full_verify;
 
@@ -1174,6 +1261,7 @@ impl PoolEngine {
                     candidate_claim,
                     force_full_verify: true,
                     attributed: self.cfg.source_penalties_enabled,
+                    count_invalid_at_address,
                 };
 
                 // A block claim from an established source is hashed inline
@@ -1215,16 +1303,26 @@ impl PoolEngine {
                     release_claim_on_error =
                         is_retryable_reject_reason(canonical_share_reject_reason(reason));
                     if reason == PROVEN_FAKE_REJECT_REASON {
-                        strike_source(
+                        // A false block claim is a full strike at once: an
+                        // honest error would also have to land below the
+                        // network target, and each claim costs a full hash in
+                        // the scarce candidate lane.
+                        penalize_proven_fake(
                             &self.cfg,
                             &self.source_risk,
                             self.store.as_ref(),
                             Some(&self.validation),
                             &session.source,
-                            if candidate_claim {
-                                "false block candidate claim"
-                            } else {
-                                PROVEN_FAKE_REJECT_REASON
+                            ProvenFake {
+                                reason: if candidate_claim {
+                                    "false block candidate claim"
+                                } else {
+                                    PROVEN_FAKE_REJECT_REASON
+                                },
+                                immediate: candidate_claim,
+                                address_good,
+                                address_invalid,
+                                count_at_address: count_invalid_at_address,
                             },
                         );
                     }
@@ -1517,6 +1615,21 @@ impl PoolEngine {
             if let Some(share) = probation_share {
                 self.validation
                     .enqueue_probation_audit(share, &session.source.ip_group);
+            } else if !plan.enqueue_audit && self.source_risk.take_boost(&session.source) {
+                // Soft-struck source: audit its next shares on the audit lane.
+                self.validation
+                    .enqueue_source_boost_audit(PendingAuditShare {
+                        share_id,
+                        job_id: job_id_for_share.clone(),
+                        miner: session.address.clone(),
+                        worker: session.worker.clone(),
+                        difficulty: share_difficulty,
+                        nonce,
+                        claimed_hash: Some(claimed_hash),
+                        header_base: job.header_base.clone(),
+                        network_target: job.network_target,
+                        created_at,
+                    });
             }
 
             let next_difficulty = self.note_share_and_maybe_adjust_difficulty(conn_id);
@@ -3247,6 +3360,8 @@ mod tests {
         shares: Arc<InMemoryStore>,
         header_base: Vec<u8>,
         network_target: [u8; 32],
+        /// Persisted address states loaded at startup.
+        persisted: Vec<crate::validation::PersistedValidationAddressState>,
     }
 
     impl crate::validation::ValidationStateStore for InMemoryShareAuditStore {
@@ -3257,7 +3372,10 @@ mod tests {
             _accepted_window_cutoff: SystemTime,
             _now: SystemTime,
         ) -> Result<crate::validation::LoadedValidationState> {
-            Ok(Default::default())
+            Ok(crate::validation::LoadedValidationState {
+                states: self.persisted.clone(),
+                ..Default::default()
+            })
         }
         fn upsert_validation_state(
             &self,
@@ -3347,6 +3465,191 @@ mod tests {
         }
     }
 
+    /// Engine with live audits of every share and persisted address history,
+    /// as after a Stratum restart: (address, sampled_shares, invalid_samples).
+    fn restarted_engine_with_history(
+        history: &[(String, u64, u64)],
+    ) -> (PoolEngine, Arc<InMemoryStore>, Arc<ValidationEngine>) {
+        let mut cfg = cfg();
+        cfg.provisional_share_delay = "0s".to_string();
+        cfg.payout_provisional_cap_multiplier = 0.0;
+        cfg.sample_rate = 1.0;
+        cfg.regular_validation_queue = 64;
+        let store = Arc::new(InMemoryStore::default());
+        let persisted = history
+            .iter()
+            .map(
+                |(address, sampled, invalid)| crate::validation::PersistedValidationAddressState {
+                    address: address.clone(),
+                    total_shares: sampled * 20,
+                    sampled_shares: *sampled,
+                    invalid_samples: *invalid,
+                    risk_sampled_shares: 0,
+                    risk_invalid_samples: 0,
+                    forced_started_at: None,
+                    forced_until: None,
+                    forced_sampled_shares: 0,
+                    forced_invalid_samples: 0,
+                    resume_forced_at: None,
+                    hold_cause: None,
+                    last_seen_at: SystemTime::now(),
+                },
+            )
+            .collect();
+        let validation = Arc::new(ValidationEngine::new_with_state_store(
+            cfg.clone(),
+            Arc::new(NonceHasher),
+            Arc::new(InMemoryShareAuditStore {
+                shares: Arc::clone(&store),
+                header_base: job().header_base,
+                network_target: job().network_target,
+                persisted,
+            }),
+        ));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let engine = PoolEngine::new(
+            cfg,
+            Arc::clone(&validation),
+            jobs,
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode::default()),
+        );
+        (engine, store, validation)
+    }
+
+    fn wait_for_audits(validation: &ValidationEngine, count: u64) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let snapshot = validation.snapshot();
+            if snapshot.audit_verified + snapshot.audit_rejected >= count {
+                return;
+            }
+            assert!(Instant::now() < deadline, "audits should complete");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn rare_error_from_long_standing_miner_is_a_soft_strike_after_restart() {
+        // YCjTZ: 544249 good shares and 3 invalid proofs in 7 days at 5%.
+        let address = test_miner_address();
+        let (engine, store, validation) =
+            restarted_engine_with_history(&[(address.clone(), 27_212 + 3, 3)]);
+        let farm = "203.0.113.1:4000";
+        engine
+            .login(farm, address.clone(), "rig", 2, submit_hash_cap())
+            .expect("login");
+        for nonce in 1..=3 {
+            engine
+                .submit(farm, "job1".to_string(), nonce, NonceHasher::honest(nonce))
+                .expect("honest share");
+        }
+        // A hardware/backend error produces one bad claimed hash.
+        engine
+            .submit(farm, "job1".to_string(), 4, fake_claim())
+            .expect("hot accept");
+        wait_for_audits(&validation, 4);
+
+        assert!(!engine.source_blocked(farm), "no ban for a rare error");
+        assert_eq!(
+            statuses(&store, 1..=4),
+            vec![
+                SHARE_STATUS_VERIFIED,
+                SHARE_STATUS_VERIFIED,
+                SHARE_STATUS_VERIFIED,
+                SHARE_STATUS_REJECTED
+            ],
+            "only the bad share is rejected"
+        );
+        assert!(store
+            .shares()
+            .iter()
+            .all(|share| share.reject_reason.as_deref() != Some(SOURCE_REVOKED_REJECT_REASON)));
+        // The source is audited more closely for a while.
+        let source = engine.sessions.lock().get(farm).unwrap().source.clone();
+        assert!(engine.source_risk.take_boost(&source));
+        engine
+            .login("203.0.113.1:4001", address, "rig2", 2, submit_hash_cap())
+            .expect("the farm can keep connecting");
+    }
+
+    #[test]
+    fn cheater_with_a_bad_address_record_is_struck_at_once_after_restart() {
+        // 8BWg: 63001 good shares, 1791 invalid proofs.
+        let address = test_miner_address();
+        let (engine, store, validation) =
+            restarted_engine_with_history(&[(address.clone(), 3_150 + 1_791, 1_791)]);
+        let rig = "198.51.100.9:5000";
+        engine
+            .login(rig, address, "x", 2, submit_hash_cap())
+            .expect("login");
+        engine
+            .submit(rig, "job1".to_string(), 1, NonceHasher::honest(1))
+            .expect("real share");
+        engine
+            .submit(rig, "job1".to_string(), 2, fake_claim())
+            .expect("hot accept");
+        wait_for_audits(&validation, 2);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !engine.source_blocked(rig) {
+            assert!(Instant::now() < deadline, "full strike expected");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(statuses(&store, 2..=2), vec![SHARE_STATUS_REJECTED]);
+    }
+
+    #[test]
+    fn attacker_using_a_victims_address_cannot_hurt_the_victim_or_its_record() {
+        let victim = test_miner_address();
+        let (engine, store, validation) =
+            restarted_engine_with_history(&[(victim.clone(), 27_215, 3)]);
+        let victim_rig = "203.0.113.1:4000";
+        engine
+            .login(victim_rig, victim.clone(), "rig", 2, submit_hash_cap())
+            .expect("victim login");
+        engine
+            .submit(victim_rig, "job1".to_string(), 1, NonceHasher::honest(1))
+            .expect("victim share");
+
+        // The attacker's first fake is shielded by the victim's history (it
+        // only credits the victim); boosted audits then convict the source.
+        let attacker = "198.51.100.9:5000";
+        engine
+            .login(attacker, victim.clone(), "x", 2, submit_hash_cap())
+            .expect("attacker login");
+        let mut accepted = 0;
+        for nonce in 100..140 {
+            match engine.submit(attacker, "job1".to_string(), nonce, fake_claim()) {
+                Ok(_) => accepted += 1,
+                Err(err) => {
+                    assert!(err.to_string().starts_with("source banned"), "{err}");
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(accepted >= 1);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !engine.source_blocked(attacker) {
+            assert!(Instant::now() < deadline, "attacker should be fully struck");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!engine.source_blocked(victim_rig));
+        engine
+            .submit(victim_rig, "job1".to_string(), 2, NonceHasher::honest(2))
+            .expect("victim keeps mining");
+        wait_for_audits(&validation, 2);
+        assert!(store
+            .shares()
+            .iter()
+            .filter(|share| share.nonce < 100)
+            .all(|share| share.status != SHARE_STATUS_REJECTED));
+        // The attacker had no verified history on the address, so its
+        // failures do not inflate the victim's persisted invalid count.
+        assert_eq!(validation.address_sample_counts(&victim).1, 3);
+    }
+
     #[test]
     fn shares_accepted_during_emergency_are_reviewed_per_source_when_capacity_returns() {
         let mut cfg = cfg();
@@ -3362,6 +3665,7 @@ mod tests {
                 shares: Arc::clone(&store),
                 header_base: job().header_base,
                 network_target: job().network_target,
+                persisted: Vec::new(),
             }),
         ));
         let jobs = Arc::new(InMemoryJobs::default());

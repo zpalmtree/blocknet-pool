@@ -93,6 +93,77 @@ impl SourcePolicy {
     }
 }
 
+/// How a proven fake share is penalized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StrikeKind {
+    /// Revoke the source's unverified window, ban, disconnect.
+    Full,
+    /// Reject the share only, log, and audit the source's next shares.
+    Soft,
+}
+
+/// Sample counts for one strike decision. Invalid counts include the
+/// failure being judged.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct StrikeEvidence {
+    pub source_good: u64,
+    pub source_invalid: u64,
+    pub address_good: u64,
+    pub address_invalid: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StrikeRule {
+    pub min_source_good: u64,
+    pub min_address_good: u64,
+    pub honest_invalid_rate: f64,
+}
+
+/// Samples needed before an invalid ratio is judged at all.
+const STRIKE_RATIO_MIN_SAMPLES: u64 = 10;
+/// One-sided margin, in standard deviations, by which the invalid count must
+/// exceed the honest expectation (about 0.1% false-positive rate), plus one
+/// share of slack so a single error in a short history is never "clearly
+/// above" the honest rate.
+const STRIKE_RATIO_Z: f64 = 3.0;
+
+impl StrikeRule {
+    pub(crate) fn from_config(cfg: &Config) -> Self {
+        Self {
+            min_source_good: cfg.source_full_strike_min_source_good.max(0) as u64,
+            min_address_good: cfg.source_full_strike_min_address_good.max(0) as u64,
+            honest_invalid_rate: cfg.source_honest_invalid_rate.clamp(0.0, 1.0),
+        }
+    }
+
+    fn clearly_above_honest(&self, good: u64, invalid: u64) -> bool {
+        let samples = good.saturating_add(invalid);
+        if samples < STRIKE_RATIO_MIN_SAMPLES {
+            return false;
+        }
+        let n = samples as f64;
+        let p = self.honest_invalid_rate;
+        let threshold = n * p + STRIKE_RATIO_Z * (n * p * (1.0 - p)).sqrt() + 1.0;
+        invalid as f64 > threshold
+    }
+
+    /// Full strike when the source cannot point to verified history (its own,
+    /// or its address's persisted samples), or when either its own or its
+    /// address's invalid rate is clearly above an honest-error rate.
+    pub(crate) fn decide(&self, evidence: StrikeEvidence) -> StrikeKind {
+        let has_history = evidence.source_good >= self.min_source_good
+            || evidence.address_good >= self.min_address_good;
+        if !has_history
+            || self.clearly_above_honest(evidence.source_good, evidence.source_invalid)
+            || self.clearly_above_honest(evidence.address_good, evidence.address_invalid)
+        {
+            StrikeKind::Full
+        } else {
+            StrikeKind::Soft
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SourceRef {
     pub session_id: u64,
@@ -161,6 +232,14 @@ struct PairEntry {
     address: Arc<str>,
     ip_group: Arc<str>,
     verified_ok: u64,
+    /// Proven-fake samples from this pair (soft and full strikes).
+    invalid: u64,
+    /// Extra audits owed after a soft strike.
+    boost_remaining: u32,
+    /// The address had long verified history (persisted) at login, so the
+    /// pair is not treated as a throwaway by network-level penalties even
+    /// before it has in-memory samples (e.g. right after a restart).
+    address_vouched: bool,
     strikes: StrikeCounter,
     ban: Option<Ban>,
     shares: VecDeque<TrackedShare>,
@@ -178,6 +257,9 @@ impl PairEntry {
             address,
             ip_group,
             verified_ok: 0,
+            invalid: 0,
+            boost_remaining: 0,
+            address_vouched: false,
             strikes: StrikeCounter::default(),
             ban: None,
             shares: VecDeque::new(),
@@ -273,6 +355,7 @@ impl SourceRiskTracker {
         pair_key: &str,
         ip_group: &str,
         now: Instant,
+        address_vouched: bool,
     ) -> Result<(), String> {
         let pair = inner.pairs.get(pair_key);
         if let Some(ban) = pair.and_then(|pair| pair.banned(now)) {
@@ -281,8 +364,13 @@ impl SourceRiskTracker {
         // An IP-group ban only keeps out pairs with no clean verified history
         // there, so honest miners sharing a network with an attacker keep
         // mining.
-        let vouched =
-            pair.is_some_and(|pair| pair.verified_ok > 0 && pair.strikes.active(now) == 0);
+        let vouched = match pair {
+            Some(pair) => {
+                (pair.verified_ok > 0 || pair.address_vouched || address_vouched)
+                    && pair.strikes.active(now) == 0
+            }
+            None => address_vouched,
+        };
         if !vouched {
             if let Some(ban) = inner
                 .ips
@@ -298,12 +386,23 @@ impl SourceRiskTracker {
 
     /// Registers a login. Fails with a client-facing message when the pair or
     /// (for unestablished pairs) the IP group is banned.
+    #[cfg(test)]
     pub(crate) fn open_session(&self, address: &str, ip_group: &str) -> Result<SourceRef, String> {
+        self.open_session_vouched(address, ip_group, false)
+    }
+
+    /// `address_vouched`: the address has long verified history persisted.
+    pub(crate) fn open_session_vouched(
+        &self,
+        address: &str,
+        ip_group: &str,
+        address_vouched: bool,
+    ) -> Result<SourceRef, String> {
         let now = Instant::now();
         let key = pair_key(address, ip_group);
         let mut inner = self.inner.lock();
         self.prune_if_due_locked(&mut inner, now);
-        Self::admission_locked(&inner, &key, ip_group, now)?;
+        Self::admission_locked(&inner, &key, ip_group, now, address_vouched)?;
 
         let ip_arc: Arc<str> = match inner.ips.get_key_value(ip_group) {
             Some((existing, _)) => Arc::clone(existing),
@@ -318,6 +417,7 @@ impl SourceRiskTracker {
             .entry(Arc::clone(&pair_arc))
             .or_insert_with(|| PairEntry::new(Arc::from(address), Arc::clone(&ip_arc), now));
         pair.open_sessions = pair.open_sessions.saturating_add(1);
+        pair.address_vouched |= address_vouched;
         pair.last_seen = now;
         let address_arc = Arc::clone(&pair.address);
         inner
@@ -365,7 +465,7 @@ impl SourceRiskTracker {
         if let Some(reason) = session.revoked.as_deref() {
             return Err(format!("source banned: {reason}"));
         }
-        Self::admission_locked(&inner, &session.pair_key, &source.ip_group, now)
+        Self::admission_locked(&inner, &session.pair_key, &source.ip_group, now, false)
     }
 
     pub(crate) fn session_blocked(&self, source: &SourceRef) -> bool {
@@ -423,6 +523,63 @@ impl SourceRiskTracker {
         if inner.share_index.len() > SOURCE_MAX_TRACKED_SHARES {
             inner.last_prune = None;
             self.prune_if_due_locked(&mut inner, now);
+        }
+    }
+
+    fn pair_key_for(inner: &Inner, source: &SourceRef) -> Arc<str> {
+        match inner
+            .sessions
+            .get(&source.session_id)
+            .map(|session| Arc::clone(&session.pair_key))
+        {
+            Some(key) => key,
+            None => Arc::from(pair_key(&source.address, &source.ip_group).as_str()),
+        }
+    }
+
+    /// Verified-good samples this source's pair has in memory.
+    pub(crate) fn source_good(&self, source: &SourceRef) -> u64 {
+        let inner = self.inner.lock();
+        let key = Self::pair_key_for(&inner, source);
+        inner.pairs.get(&key).map_or(0, |pair| pair.verified_ok)
+    }
+
+    /// Counts a proven-fake sample against the pair and returns its
+    /// (good, invalid) samples including this one.
+    pub(crate) fn record_failure(&self, source: &SourceRef) -> (u64, u64) {
+        let mut inner = self.inner.lock();
+        let key = Self::pair_key_for(&inner, source);
+        match inner.pairs.get_mut(&key) {
+            Some(pair) => {
+                pair.invalid = pair.invalid.saturating_add(1);
+                pair.last_seen = Instant::now();
+                (pair.verified_ok, pair.invalid)
+            }
+            None => (0, 1),
+        }
+    }
+
+    /// Soft strike: the source keeps its credit and access, but its next
+    /// `samples` shares are audited so a real cheater quickly accumulates
+    /// enough evidence for a full strike.
+    pub(crate) fn soft_strike(&self, source: &SourceRef, samples: u32) {
+        let mut inner = self.inner.lock();
+        let key = Self::pair_key_for(&inner, source);
+        if let Some(pair) = inner.pairs.get_mut(&key) {
+            pair.boost_remaining = pair.boost_remaining.max(samples);
+        }
+    }
+
+    /// Whether this share should get a boost audit (consumes one).
+    pub(crate) fn take_boost(&self, source: &SourceRef) -> bool {
+        let mut inner = self.inner.lock();
+        let key = Self::pair_key_for(&inner, source);
+        match inner.pairs.get_mut(&key) {
+            Some(pair) if pair.boost_remaining > 0 => {
+                pair.boost_remaining -= 1;
+                true
+            }
+            _ => false,
         }
     }
 
@@ -630,6 +787,7 @@ impl SourceRiskTracker {
                 reason: reason.to_string(),
             });
             pair.verified_ok = 0;
+            pair.boost_remaining = 0;
             pair.last_seen = now;
             outcome.pair_strikes = strikes;
             outcome.pair_banned_for = ban_for;
@@ -674,7 +832,7 @@ impl SourceRiskTracker {
                 let throwaway = inner
                     .pairs
                     .get(&sibling)
-                    .is_some_and(|pair| pair.verified_ok == 0);
+                    .is_some_and(|pair| pair.verified_ok == 0 && !pair.address_vouched);
                 if !throwaway {
                     continue;
                 }
@@ -913,6 +1071,130 @@ mod tests {
         assert!(tracker.check_session(&neighbour).is_ok());
         assert!(tracker.source_for_share(1).is_some());
         assert!(tracker.open_session("neighbour", "198.51.100.9").is_ok());
+    }
+
+    fn rule() -> StrikeRule {
+        StrikeRule {
+            min_source_good: 20,
+            min_address_good: 100,
+            honest_invalid_rate: 0.02,
+        }
+    }
+
+    /// Production 7-day counts (bad = invalid proofs, good = good shares);
+    /// at a 5% sample rate the address has good/20 verified samples.
+    fn production_case(bad: u64, good_shares: u64) -> StrikeEvidence {
+        StrikeEvidence {
+            // Right after a restart the source itself knows nothing.
+            source_good: 0,
+            source_invalid: 1,
+            address_good: good_shares / 20,
+            address_invalid: bad,
+        }
+    }
+
+    #[test]
+    fn production_honest_miners_get_soft_strikes_and_cheaters_full() {
+        let rule = rule();
+        for (name, bad, good, expected) in [
+            ("8BWgZPBrPNDL", 1791, 63001, StrikeKind::Full),
+            ("KN9iv6ZkMzaT", 1472, 20140, StrikeKind::Full),
+            ("MwF7y85g8AfV", 716, 96, StrikeKind::Full),
+            ("Dq89UMeeqymq", 656, 4, StrikeKind::Full),
+            ("WgKC7MdT2cJL", 29, 4, StrikeKind::Full),
+            ("PX5c6exGaJzd", 8, 20948, StrikeKind::Soft),
+            ("Fk1ovibcJMFS", 3, 76169, StrikeKind::Soft),
+            ("N1XpM1RhbDM6", 3, 7, StrikeKind::Full),
+            ("YCjTZ6h45bpW", 3, 544249, StrikeKind::Soft),
+        ] {
+            assert_eq!(rule.decide(production_case(bad, good)), expected, "{name}");
+            // Same verdict when the source itself has the address's history.
+            let evidence = StrikeEvidence {
+                source_good: good / 20,
+                source_invalid: bad,
+                address_good: 0,
+                address_invalid: 0,
+            };
+            assert_eq!(rule.decide(evidence), expected, "{name} (source history)");
+        }
+    }
+
+    #[test]
+    fn single_error_in_a_short_history_is_soft_but_a_burst_is_full() {
+        let rule = rule();
+        let at = |source_good, source_invalid| StrikeEvidence {
+            source_good,
+            source_invalid,
+            address_good: 0,
+            address_invalid: 0,
+        };
+        assert_eq!(rule.decide(at(19, 1)), StrikeKind::Full, "no history");
+        assert_eq!(rule.decide(at(20, 1)), StrikeKind::Soft);
+        assert_eq!(rule.decide(at(20, 2)), StrikeKind::Soft);
+        assert_eq!(rule.decide(at(20, 3)), StrikeKind::Soft);
+        assert_eq!(rule.decide(at(20, 4)), StrikeKind::Full);
+        assert_eq!(
+            rule.decide(at(500, 20)),
+            StrikeKind::Soft,
+            "4%: not clearly above"
+        );
+        assert_eq!(rule.decide(at(500, 30)), StrikeKind::Full);
+        // Address history shields a new source's first error, not a burst.
+        let new_source = |source_invalid| StrikeEvidence {
+            source_good: 0,
+            source_invalid,
+            address_good: 5_000,
+            address_invalid: 10,
+        };
+        assert_eq!(rule.decide(new_source(1)), StrikeKind::Soft);
+        assert_eq!(
+            rule.decide(new_source(3)),
+            StrikeKind::Soft,
+            "under 10 samples"
+        );
+        let after_boost = StrikeEvidence {
+            source_good: 6,
+            source_invalid: 4,
+            address_good: 5_000,
+            address_invalid: 10,
+        };
+        assert_eq!(rule.decide(after_boost), StrikeKind::Full);
+    }
+
+    #[test]
+    fn soft_strike_boosts_sampling_without_penalties() {
+        let tracker = SourceRiskTracker::new(policy());
+        let source = tracker.open_session("addr", "192.0.2.1").unwrap();
+        tracker.record_verified(&source);
+        tracker.record_provisional(&source, 1, SystemTime::now(), 1, false);
+        assert_eq!(tracker.record_failure(&source), (1, 1));
+        tracker.soft_strike(&source, 2);
+        assert!(tracker.check_session(&source).is_ok());
+        assert!(tracker.source_for_share(1).is_some());
+        assert!(tracker.take_boost(&source));
+        assert!(tracker.take_boost(&source));
+        assert!(!tracker.take_boost(&source));
+        assert_eq!(tracker.record_failure(&source), (1, 2));
+    }
+
+    #[test]
+    fn address_vouched_pairs_survive_network_penalties_after_restart() {
+        let tracker = SourceRiskTracker::new(policy());
+        // Right after a restart: no in-memory samples, long persisted history.
+        let farm = tracker
+            .open_session_vouched("farm", "198.51.100.9", true)
+            .unwrap();
+        tracker.record_provisional(&farm, 1, SystemTime::now(), 1, false);
+        for name in ["fake-1", "fake-2"] {
+            let fake = tracker.open_session(name, "198.51.100.9").unwrap();
+            tracker.strike(&fake, "invalid share proof");
+        }
+        assert!(tracker.open_session("fake-3", "198.51.100.9").is_err());
+        assert!(tracker.source_for_share(1).is_some(), "farm credit kept");
+        assert!(tracker.check_session(&farm).is_ok());
+        assert!(tracker
+            .open_session_vouched("farm", "198.51.100.9", true)
+            .is_ok());
     }
 
     #[test]

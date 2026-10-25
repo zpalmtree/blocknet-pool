@@ -73,6 +73,11 @@ pub(crate) struct ValidationTask {
     /// penalizes that source directly, so a failure must not count toward
     /// address-level risk (addresses are public; see `source_risk`).
     pub attributed: bool,
+    /// Whether a failure counts toward the address's persisted
+    /// `invalid_samples` (the history used for strike leniency). False for
+    /// sources without verified history on the address, so someone using a
+    /// public address cannot inflate its invalid ratio.
+    pub count_invalid_at_address: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -120,6 +125,7 @@ struct AddressStateUpdate<'a> {
     provisional_accepted: bool,
     overload_mode: OverloadMode,
     attributed: bool,
+    count_invalid_at_address: bool,
 }
 
 /// Engine-side hook for audit outcomes. Audits run on validation worker
@@ -127,7 +133,16 @@ struct AddressStateUpdate<'a> {
 pub(crate) trait AuditFeedback: Send + Sync + 'static {
     /// Called once per completed audit of a still-provisional share.
     /// `proven_fake` means the recomputed hash differs from the claimed hash.
-    fn on_audit_result(&self, share_id: i64, address: &str, proven_fake: bool) -> AuditAttribution;
+    /// `address_good` / `address_invalid` are the address's persisted sample
+    /// counts before this audit, for strike proportionality.
+    fn on_audit_result(
+        &self,
+        share_id: i64,
+        address: &str,
+        proven_fake: bool,
+        address_good: u64,
+        address_invalid: u64,
+    ) -> AuditAttribution;
 
     /// Address-level escalation for evidence that could not be attributed to
     /// a source. Returns the quarantine end, if one is now active.
@@ -148,6 +163,8 @@ pub(crate) trait AuditFeedback: Send + Sync + 'static {
 pub(crate) struct AuditAttribution {
     /// The share's source is known and was credited/penalized directly.
     pub attributed: bool,
+    /// The failure counts toward the address's persisted invalid samples.
+    pub count_invalid_at_address: bool,
     /// Shares revoked as a consequence, grouped by address.
     pub revoked: Vec<(String, Vec<i64>)>,
 }
@@ -894,6 +911,18 @@ impl ValidationEngine {
         self.inner.release_probation(address, group);
     }
 
+    /// (verified-good, invalid) samples persisted for the address.
+    pub(crate) fn address_sample_counts(&self, address: &str) -> (u64, u64) {
+        self.inner.address_sample_counts(address)
+    }
+
+    /// Audits a share on the audit lane (bounded, outside overload
+    /// detection); dropped if the lane is full.
+    pub(crate) fn enqueue_source_boost_audit(&self, share: PendingAuditShare) {
+        self.inner
+            .enqueue_background_audit(share, ValidationAuditSource::Sampled);
+    }
+
     /// Test hook: schedule degraded-window reviews as the Normal-mode
     /// maintenance tick would.
     #[cfg(test)]
@@ -1324,6 +1353,7 @@ impl ValidationInner {
             provisional_accepted,
             overload_mode: computed.overload_mode,
             attributed: task.attributed,
+            count_invalid_at_address: task.count_invalid_at_address,
         });
 
         ValidationResult {
@@ -1376,7 +1406,7 @@ impl ValidationInner {
         let address_risk_sample = update.sampled && !(update.attributed && update.invalid_sample);
         if update.sampled {
             st.sampled_shares = st.sampled_shares.saturating_add(1);
-            if update.invalid_sample {
+            if update.invalid_sample && update.count_invalid_at_address {
                 st.invalid_samples = st.invalid_samples.saturating_add(1);
             }
         }
@@ -1693,6 +1723,7 @@ impl ValidationInner {
             candidate_claim: false,
             force_full_verify: true,
             attributed: false,
+            count_invalid_at_address: true,
         };
         let computed = self.compute_task(
             &task,
@@ -1761,10 +1792,17 @@ impl ValidationInner {
 
         let proven_fake =
             !computed.accepted && computed.reject_reason == Some("invalid share proof");
+        let (address_good, address_invalid) = self.address_sample_counts(&queued.share.miner);
         let attribution = self
             .audit_feedback()
             .map(|feedback| {
-                feedback.on_audit_result(queued.share.share_id, &queued.share.miner, proven_fake)
+                feedback.on_audit_result(
+                    queued.share.share_id,
+                    &queued.share.miner,
+                    proven_fake,
+                    address_good,
+                    address_invalid,
+                )
             })
             .unwrap_or_default();
         for (address, share_ids) in &attribution.revoked {
@@ -1778,6 +1816,7 @@ impl ValidationInner {
             queued.share.difficulty,
             computed.accepted,
             !attribution.attributed,
+            !attribution.attributed || attribution.count_invalid_at_address,
         );
         if followup == ValidationFollowupAction::Quarantine {
             let quarantined_until = self.audit_feedback().and_then(|feedback| {
@@ -1824,6 +1863,7 @@ impl ValidationInner {
         difficulty: u64,
         accepted: bool,
         count_toward_address_risk: bool,
+        count_invalid_at_address: bool,
     ) -> ValidationFollowupAction {
         let now = SystemTime::now();
         let mut state = self.state.lock();
@@ -1864,7 +1904,7 @@ impl ValidationInner {
 
         let invalid_sample = !accepted;
         entry.sampled_shares = entry.sampled_shares.saturating_add(1);
-        if invalid_sample {
+        if invalid_sample && count_invalid_at_address {
             entry.invalid_samples = entry.invalid_samples.saturating_add(1);
         }
         // Attributed failures were penalized at their source (see
@@ -2313,6 +2353,7 @@ impl ValidationInner {
             provisional_accepted: true,
             overload_mode,
             attributed: false,
+            count_invalid_at_address: true,
         });
     }
 
@@ -2392,6 +2433,15 @@ impl ValidationInner {
             return;
         }
         self.probation_enqueued.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn address_sample_counts(&self, address: &str) -> (u64, u64) {
+        self.state.lock().get(address).map_or((0, 0), |st| {
+            (
+                st.sampled_shares.saturating_sub(st.invalid_samples),
+                st.invalid_samples,
+            )
+        })
     }
 
     fn probation_overdue(&self) -> bool {
@@ -3068,6 +3118,7 @@ mod tests {
             force_full_verify: false,
             candidate_claim: false,
             attributed: false,
+            count_invalid_at_address: true,
         }
     }
 
@@ -3087,6 +3138,7 @@ mod tests {
             force_full_verify: false,
             candidate_claim: false,
             attributed: false,
+            count_invalid_at_address: true,
         }
     }
 
