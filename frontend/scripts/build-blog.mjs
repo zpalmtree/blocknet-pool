@@ -183,21 +183,18 @@ ${faq}${related}
 }
 
 function coverImage(post, eager = false, decorative = false) {
-  return `<img class="post-cover" src="${post.cover.src}" srcset="${post.cover.small} 600w, ${post.cover.src} 1200w" sizes="(max-width: 640px) calc(100vw - 40px), ${eager ? '(max-width: 900px) calc(100vw - 40px), 600px' : '(max-width: 900px) calc((100vw - 64px) / 2), 344px'}" width="1200" height="675" alt="${decorative ? '' : esc(post.title)}" ${eager ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async">`;
+  const sizes = decorative ? '220px' : '(max-width: 900px) calc(100vw - 40px), 600px';
+  return `<img class="post-cover" src="${post.cover.src}" srcset="${post.cover.small} 600w, ${post.cover.src} 1200w" sizes="${sizes}" width="1200" height="675" alt="${decorative ? '' : esc(post.title)}" ${eager ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async">`;
 }
 
 function indexPage(locale, posts) {
   const lang = def(locale).htmlLang;
   const url = BASE_URL + blogPath(locale);
-  // Lead with the practical starting point; the remaining guides keep their date order.
-  const featured = posts.find((p) => p.slug === 'mine-blocknet-on-bntpool');
-  const ordered = featured ? [featured, ...posts.filter((p) => p !== featured)] : posts;
-  const items = ordered.map((p, i) => `<li${i === 0 ? ' class="featured"' : ''}><a href="${p.path}">
-    ${coverImage(p, i === 0, true)}
-    <div class="post-copy"><div class="post-meta"><span>${esc(p.tags[0] ?? '')}</span><span>${esc(t(locale, 'minutes', { n: readingMinutes(p.body) }))}</span></div>
-    <h2>${esc(p.title)}</h2><p>${esc(p.description)}</p>
-    <time datetime="${iso(p.date)}">${nice(p.date, lang)}</time></div>
-  </a></li>`).join('\n') || `<li class="empty-posts"><p>${esc(t(locale, 'blogEmpty'))}</p></li>`;
+  const items = posts.map((p) => `<li><a href="${p.path}">
+    <div class="post-copy"><time datetime="${iso(p.date)}">${nice(p.date, lang)}</time>
+    <h2>${esc(p.title)}</h2><p>${esc(p.description)}</p></div>
+    ${coverImage(p, false, true)}
+  </a></li>`).join('\n') || `<li><p>${esc(t(locale, 'blogEmpty'))}</p></li>`;
   const schema = [{ '@context': 'https://schema.org', '@type': 'Blog', '@id': `${url}#blog`, name: t(locale, 'rssTitle'), url, inLanguage: lang, publisher: ORG,
     blogPost: posts.map((p) => ({ '@type': 'BlogPosting', headline: p.title, url: p.url, datePublished: iso(p.date) })) }];
   return page({

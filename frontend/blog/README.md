@@ -50,5 +50,5 @@ Blocknet, bntpool.com and seine, nothing negative, nothing false) and use its
 Every published post needs a cover assigned in `scripts/blog-covers.mjs`. Use a real product
 screenshot in `blog/images/` or a language-neutral editorial diagram. The build generates
 responsive WebP covers and a per-article JPEG social image, embeds them with the blog, and
-fails if a published post has no cover. The index uses a featured guide and image cards;
-article headers use the same cover. Document screenshot provenance in `images/README.md`.
+fails if a published post has no cover. The index follows the seine blog: dated list rows with a thumbnail at the inline end.
+Below 640px the rows show text only; article headers retain the full cover at every width. Document screenshot provenance in `images/README.md`.
