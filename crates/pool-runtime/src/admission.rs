@@ -6,7 +6,8 @@
 //! submit pressure so vardiff never mistakes the pool's own overload for a
 //! miner that stopped finding shares.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,9 @@ pub(crate) enum UnprocessedReason {
     /// A share that must be verified before credit found the validation
     /// queue full.
     ValidationQueueFull,
+    /// A share that must be verified before credit found every synchronous
+    /// verification slot taken.
+    SyncVerifyBusy,
     /// A synchronous verification did not finish in time.
     ValidationTimeout,
 }
@@ -87,10 +91,11 @@ pub(crate) struct AdmissionState {
     validation_timeout: AtomicU64,
     vardiff_busy_raises: AtomicU64,
     vardiff_downward_held: AtomicU64,
+    sync_verify: Arc<SyncVerifyLimiter>,
 }
 
 impl AdmissionState {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(sync_verify_slots: usize) -> Self {
         Self {
             epoch: Instant::now(),
             last_pressure: AtomicU64::new(0),
@@ -102,6 +107,7 @@ impl AdmissionState {
             validation_timeout: AtomicU64::new(0),
             vardiff_busy_raises: AtomicU64::new(0),
             vardiff_downward_held: AtomicU64::new(0),
+            sync_verify: Arc::new(SyncVerifyLimiter::new(sync_verify_slots)),
         }
     }
 
@@ -110,6 +116,7 @@ impl AdmissionState {
             UnprocessedReason::SubmitQueueFull => &self.submit_queue_full,
             UnprocessedReason::RateLimited => &self.rate_limited,
             UnprocessedReason::ValidationQueueFull => &self.validation_queue_full,
+            UnprocessedReason::SyncVerifyBusy => &self.sync_verify_busy,
             UnprocessedReason::ValidationTimeout => &self.validation_timeout,
         };
         counter.fetch_add(1, Ordering::Relaxed);
@@ -143,6 +150,10 @@ impl AdmissionState {
         self.vardiff_downward_held.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub(crate) fn sync_verify(&self) -> &Arc<SyncVerifyLimiter> {
+        &self.sync_verify
+    }
+
     pub(crate) fn snapshot(&self) -> UnprocessedSubmitSnapshot {
         UnprocessedSubmitSnapshot {
             submit_queue_full_total: self.submit_queue_full.load(Ordering::Relaxed),
@@ -157,13 +168,58 @@ impl AdmissionState {
     }
 }
 
+/// Bounds how many submits may wait on a synchronous verification at once,
+/// so shares that need a full verify before credit cannot occupy every
+/// regular submit worker while the verifiers work through them.
+#[derive(Debug)]
+pub(crate) struct SyncVerifyLimiter {
+    slots: usize,
+    in_flight: AtomicUsize,
+}
+
+impl SyncVerifyLimiter {
+    fn new(slots: usize) -> Self {
+        Self {
+            slots: slots.max(1),
+            in_flight: AtomicUsize::new(0),
+        }
+    }
+
+    pub(crate) fn try_acquire(self: &Arc<Self>) -> Option<SyncVerifyPermit> {
+        self.in_flight
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current < self.slots).then_some(current + 1)
+            })
+            .ok()
+            .map(|_| SyncVerifyPermit {
+                limiter: Arc::clone(self),
+            })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn in_flight(&self) -> usize {
+        self.in_flight.load(Ordering::Acquire)
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct SyncVerifyPermit {
+    limiter: Arc<SyncVerifyLimiter>,
+}
+
+impl Drop for SyncVerifyPermit {
+    fn drop(&mut self) {
+        self.limiter.in_flight.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn pressure_holds_for_a_while_after_the_last_mark() {
-        let state = AdmissionState::new();
+        let state = AdmissionState::new(2);
         let now = Instant::now();
         assert!(!state.pressure_active(now));
         state.record(UnprocessedReason::RateLimited, now);
@@ -178,5 +234,20 @@ mod tests {
         let snapshot = state.snapshot();
         assert_eq!(snapshot.submit_queue_full_total, 1);
         assert_eq!(snapshot.rate_limited_total, 1);
+    }
+
+    #[test]
+    fn sync_verify_limiter_bounds_and_releases_slots() {
+        let state = AdmissionState::new(2);
+        let limiter = state.sync_verify();
+        let first = limiter.try_acquire().expect("slot 1");
+        let second = limiter.try_acquire().expect("slot 2");
+        assert!(limiter.try_acquire().is_none(), "bounded");
+        drop(first);
+        let third = limiter.try_acquire().expect("released slot is reusable");
+        assert_eq!(limiter.in_flight(), 2);
+        drop(second);
+        drop(third);
+        assert_eq!(limiter.in_flight(), 0);
     }
 }

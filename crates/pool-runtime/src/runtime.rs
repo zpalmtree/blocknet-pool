@@ -72,7 +72,9 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
     }
     warn_on_validation_visibility_config(&cfg);
 
-    let core = bootstrap_runtime_core(&cfg).await?;
+    // Only the Stratum process runs this bootstrap; its submit workers and
+    // background tasks share one pool, sized separately from the API's.
+    let core = bootstrap_runtime_core(&cfg, cfg.stratum_database_pool_size()).await?;
     let expected_address_network =
         resolve_expected_address_network(&cfg, Arc::clone(&core.node)).await;
     let validation_cfg = cfg.clone();
@@ -100,7 +102,7 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
 
 pub async fn bootstrap_api_runtime_from_config(cfg: Config) -> Result<ApiRuntime> {
     validate_pool_fee_destination_config(&cfg)?;
-    let core = bootstrap_runtime_core(&cfg).await?;
+    let core = bootstrap_runtime_core(&cfg, cfg.database_pool_size).await?;
     Ok(ApiRuntime {
         store: core.store,
         node: core.node,
@@ -108,16 +110,12 @@ pub async fn bootstrap_api_runtime_from_config(cfg: Config) -> Result<ApiRuntime
     })
 }
 
-async fn bootstrap_runtime_core(cfg: &Config) -> Result<RuntimeCore> {
-    let cfg_for_store = cfg.clone();
-    let store = tokio::task::spawn_blocking(move || {
-        PoolStore::open(
-            &cfg_for_store.database_url,
-            cfg_for_store.database_pool_size,
-        )
-    })
-    .await
-    .context("join store initialization task")??;
+async fn bootstrap_runtime_core(cfg: &Config, database_pool_size: i32) -> Result<RuntimeCore> {
+    let database_url = cfg.database_url.clone();
+    let store =
+        tokio::task::spawn_blocking(move || PoolStore::open(&database_url, database_pool_size))
+            .await
+            .context("join store initialization task")??;
     let daemon_api = cfg.daemon_api.clone();
     let daemon_cookie_path = cfg.daemon_cookie_path.clone();
     let node =

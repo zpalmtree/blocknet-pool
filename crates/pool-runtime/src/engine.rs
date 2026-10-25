@@ -816,7 +816,7 @@ impl PoolEngine {
         node: Arc<dyn NodeApi>,
     ) -> Self {
         let source_risk = Arc::new(SourceRiskTracker::new(SourcePolicy::from_config(&cfg)));
-        let admission = Arc::new(AdmissionState::new());
+        let admission = Arc::new(AdmissionState::new(cfg.sync_verify_slot_count()));
         validation.attach_audit_feedback(Arc::new(EngineAuditFeedback {
             cfg: cfg.clone(),
             tracker: Arc::clone(&source_risk),
@@ -1277,6 +1277,25 @@ impl PoolEngine {
                 // it is a one-shot privilege, since a false claim strikes the
                 // source and removes it.
                 let inline_priority = candidate_claim && source_established;
+                // This submit now holds a regular submit worker until the
+                // verifier answers. Bound how many may do that at once so a
+                // few addresses under forced verification cannot occupy every
+                // worker; past the bound only their shares are told to retry.
+                // Block candidates run on their own lane and are exempt.
+                let _sync_verify_permit = if candidate_claim {
+                    None
+                } else {
+                    match self.admission.sync_verify().try_acquire() {
+                        Some(permit) => Some(permit),
+                        None => {
+                            self.record_unprocessed_submit(
+                                conn_id,
+                                UnprocessedReason::SyncVerifyBusy,
+                            );
+                            return Err(anyhow!("server busy, retry"));
+                        }
+                    }
+                };
                 let validation = match self.validate_task(task, candidate_claim, inline_priority) {
                     Ok(v) => v,
                     Err(err) => {
@@ -4507,6 +4526,69 @@ mod tests {
         let shares = store.shares();
         assert_eq!(shares.len(), 1);
         assert_eq!(shares[0].nonce, 42);
+    }
+
+    #[test]
+    fn sync_verifies_beyond_their_slots_fail_fast_instead_of_holding_a_worker() {
+        struct SlowMatchingHasher;
+        impl PowHasher for SlowMatchingHasher {
+            fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
+                std::thread::sleep(Duration::from_millis(400));
+                Ok([0xff; 32])
+            }
+        }
+
+        let mut cfg = cfg();
+        cfg.validation_mode = "full".to_string();
+        cfg.regular_verifiers = 2;
+        cfg.sync_verify_slots = 1;
+        let validation = Arc::new(ValidationEngine::new(
+            cfg.clone(),
+            Arc::new(SlowMatchingHasher),
+        ));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let engine = Arc::new(PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        ));
+        for conn in ["conn1", "conn2"] {
+            engine
+                .login(conn, test_miner_address(), conn, 2, submit_hash_cap())
+                .expect("login");
+        }
+
+        let first = {
+            let engine = Arc::clone(&engine);
+            std::thread::spawn(move || {
+                engine.submit("conn1", "job1".to_string(), 600, Some("ff".repeat(32)))
+            })
+        };
+        while engine.admission().sync_verify().in_flight() == 0 {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let started = Instant::now();
+        let err = engine
+            .submit("conn2", "job1".to_string(), 601, Some("ff".repeat(32)))
+            .expect_err("no sync verify slot is free");
+        assert!(err.to_string().starts_with("server busy"), "{err}");
+        assert!(
+            started.elapsed() < Duration::from_millis(200),
+            "the second share must not wait for the first verify"
+        );
+        assert_eq!(engine.admission().snapshot().sync_verify_busy_total, 1);
+
+        let first = first.join().expect("join").expect("first share verifies");
+        assert!(first.verified);
+        // The busy share released its claim, so the miner may resubmit it.
+        let retry = engine
+            .submit("conn2", "job1".to_string(), 601, Some("ff".repeat(32)))
+            .expect("retried share verifies once a slot is free");
+        assert!(retry.verified);
+        assert_eq!(engine.admission().sync_verify().in_flight(), 0);
     }
 
     #[test]

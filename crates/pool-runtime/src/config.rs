@@ -31,6 +31,13 @@ pub struct Config {
     pub overload_clear_oldest_age: String,
     pub validation_mode: String,
     pub regular_submit_queue: i32,
+    /// Workers draining the regular submit queue. Each runs one submit at a
+    /// time on the blocking pool, mostly waiting on Postgres.
+    pub regular_submit_workers: i32,
+    /// How many regular submits may wait on a synchronous full verify at
+    /// once; beyond that only those shares are answered "server busy". 0
+    /// derives it from `regular_verifiers` and `regular_submit_workers`.
+    pub sync_verify_slots: i32,
     pub regular_validation_queue: i32,
     pub audit_validation_queue: i32,
     pub regular_verifiers: i32,
@@ -90,6 +97,9 @@ pub struct Config {
 
     pub database_url: String,
     pub database_pool_size: i32,
+    /// Postgres connections for the Stratum process only. 0 uses
+    /// `database_pool_size`, which the API and monitor also read.
+    pub stratum_database_pool_size: i32,
 }
 
 impl Default for Config {
@@ -111,6 +121,8 @@ impl Default for Config {
             overload_clear_oldest_age: "3s".to_string(),
             validation_mode: "probabilistic".to_string(),
             regular_submit_queue: 512,
+            regular_submit_workers: 16,
+            sync_verify_slots: 0,
             regular_validation_queue: 512,
             audit_validation_queue: 128,
             regular_verifiers: 2,
@@ -155,6 +167,7 @@ impl Default for Config {
             payout_interval: "1h".to_string(),
             database_url: String::new(),
             database_pool_size: 4,
+            stratum_database_pool_size: 0,
         }
     }
 }
@@ -193,6 +206,31 @@ impl Config {
 
     pub(crate) fn regular_submit_queue_size(&self) -> usize {
         self.regular_submit_queue as usize
+    }
+
+    pub(crate) fn regular_submit_worker_count(&self) -> usize {
+        self.regular_submit_workers.max(1) as usize
+    }
+
+    /// Concurrent synchronous verifies allowed in the regular submit lane:
+    /// enough to keep every regular verifier busy with a queued follow-up,
+    /// while always leaving at least half of the submit workers for shares
+    /// that need no verify.
+    pub(crate) fn sync_verify_slot_count(&self) -> usize {
+        if self.sync_verify_slots > 0 {
+            return self.sync_verify_slots as usize;
+        }
+        let workers = self.regular_submit_worker_count();
+        (self.regular_verifier_count().max(1) * 2).clamp(1, (workers / 2).max(1))
+    }
+
+    /// Connection pool size for the Stratum process.
+    pub fn stratum_database_pool_size(&self) -> i32 {
+        if self.stratum_database_pool_size > 0 {
+            self.stratum_database_pool_size
+        } else {
+            self.database_pool_size
+        }
     }
 
     pub fn regular_validation_queue_size(&self) -> usize {
@@ -313,6 +351,8 @@ impl Config {
         ensure_nonempty("payout_pause_file", &self.payout_pause_file)?;
         for (field, value, min) in [
             ("regular_submit_queue", self.regular_submit_queue, 1),
+            ("regular_submit_workers", self.regular_submit_workers, 1),
+            ("sync_verify_slots", self.sync_verify_slots, 0),
             ("regular_validation_queue", self.regular_validation_queue, 1),
             ("audit_validation_queue", self.audit_validation_queue, 1),
             ("regular_verifiers", self.regular_verifiers, 1),
@@ -357,6 +397,11 @@ impl Config {
                 0,
             ),
             ("database_pool_size", self.database_pool_size, 1),
+            (
+                "stratum_database_pool_size",
+                self.stratum_database_pool_size,
+                0,
+            ),
         ] {
             ensure_i32_min(field, value, min)?;
         }
@@ -529,6 +574,41 @@ mod tests {
     }
 
     #[test]
+    fn submit_lane_sizing_defaults_and_overrides() {
+        let cfg = Config::default();
+        assert_eq!(cfg.regular_submit_worker_count(), 16);
+        assert_eq!(cfg.sync_verify_slot_count(), 4, "two per regular verifier");
+        let prod = Config {
+            regular_verifiers: 3,
+            ..Config::default()
+        };
+        assert_eq!(prod.sync_verify_slot_count(), 6);
+        let few_workers = Config {
+            regular_submit_workers: 2,
+            regular_verifiers: 3,
+            ..Config::default()
+        };
+        assert_eq!(
+            few_workers.sync_verify_slot_count(),
+            1,
+            "half the workers stay free for shares that need no verify"
+        );
+        let explicit = Config {
+            sync_verify_slots: 9,
+            ..Config::default()
+        };
+        assert_eq!(explicit.sync_verify_slot_count(), 9);
+
+        assert_eq!(cfg.stratum_database_pool_size(), cfg.database_pool_size);
+        let split = Config {
+            database_pool_size: 8,
+            stratum_database_pool_size: 24,
+            ..Config::default()
+        };
+        assert_eq!(split.stratum_database_pool_size(), 24);
+    }
+
+    #[test]
     fn load_rejects_invalid_numeric_fields() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
@@ -543,6 +623,7 @@ mod tests {
 
         for field in [
             "regular_submit_queue",
+            "regular_submit_workers",
             "regular_validation_queue",
             "audit_validation_queue",
             "regular_verifiers",
@@ -562,6 +643,8 @@ mod tests {
             "invalid_escalation_quarantine_strikes",
             "payout_min_verified_shares",
             "payout_max_recipients_per_tick",
+            "sync_verify_slots",
+            "stratum_database_pool_size",
         ] {
             assert_invalid(format!(r#"{{"{field}":-1}}"#), field);
         }

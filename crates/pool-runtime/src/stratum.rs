@@ -55,7 +55,6 @@ const CANDIDATE_SUBMIT_WORKERS: usize = 1;
 // established source strikes it and drops it back to the shared lane.
 const PRIORITY_CANDIDATE_SUBMIT_WORKERS: usize = 1;
 const PRIORITY_CANDIDATE_SUBMIT_QUEUE_SIZE: usize = 16;
-const REGULAR_SUBMIT_WORKERS: usize = 4;
 
 fn client_submit_ack_difficulty(
     address: &str,
@@ -448,7 +447,11 @@ impl SubmitDispatcher {
             });
         }
 
-        for _ in 0..REGULAR_SUBMIT_WORKERS {
+        // Regular submits spend most of their time waiting on Postgres, so
+        // several run at once; shares needing a synchronous verify are
+        // bounded separately (`sync_verify_slots`) so they cannot take them
+        // all.
+        for _ in 0..cfg.regular_submit_worker_count() {
             let engine = Arc::clone(&engine);
             let dispatcher = Arc::clone(&dispatcher);
             let regular_rx = regular_rx.clone();
