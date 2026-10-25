@@ -1081,7 +1081,11 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     /// simulate another payout process.
     #[cfg(test)]
     pub(crate) fn open_independent_session(&self) -> Result<Client> {
-        Self::connect_client(&self.url, self.schema.as_deref(), "test independent session")
+        Self::connect_client(
+            &self.url,
+            self.schema.as_deref(),
+            "test independent session",
+        )
     }
 
     /// Run `work` while holding the cross-process payout sweep advisory lock.
@@ -6349,7 +6353,9 @@ mod tests {
 
     #[test]
     fn payout_sweep_lock_skips_work_while_another_session_holds_it_postgres() {
-        let Some(store) = isolated_test_store() else { return };
+        let Some(store) = isolated_test_store() else {
+            return;
+        };
         let mut other = lock_session(&store);
         assert!(try_acquire_payout_sweep_lock(&mut other).expect("lock in other session"));
 
@@ -6357,13 +6363,14 @@ mod tests {
         let skipped = store
             .with_payout_sweep_lock(|| ran = true)
             .expect("try sweep lock");
-        assert!(skipped.is_none(), "sweep must be skipped while the lock is held");
+        assert!(
+            skipped.is_none(),
+            "sweep must be skipped while the lock is held"
+        );
         assert!(!ran);
 
         assert!(release_payout_sweep_lock(&mut other).expect("release other session"));
-        let ran_now = store
-            .with_payout_sweep_lock(|| 7)
-            .expect("take sweep lock");
+        let ran_now = store.with_payout_sweep_lock(|| 7).expect("take sweep lock");
         assert_eq!(ran_now, Some(7));
 
         // The sweep released its lock: another session can take it again.
@@ -6374,18 +6381,26 @@ mod tests {
 
     #[test]
     fn payout_sweep_lock_is_held_for_the_whole_sweep_postgres() {
-        let Some(store) = isolated_test_store() else { return };
+        let Some(store) = isolated_test_store() else {
+            return;
+        };
         let mut other = lock_session(&store);
         let observed = store
             .with_payout_sweep_lock(|| try_acquire_payout_sweep_lock(&mut other).unwrap())
             .expect("take sweep lock");
-        assert_eq!(observed, Some(false), "a second session must not get the lock mid-sweep");
+        assert_eq!(
+            observed,
+            Some(false),
+            "a second session must not get the lock mid-sweep"
+        );
         assert!(try_acquire_payout_sweep_lock(&mut other).unwrap());
         release_payout_sweep_lock(&mut other).unwrap();
     }
 
     fn concurrent_balance_credits_do_not_lose_updates(seed_existing: bool) {
-        let Some(store) = isolated_test_store() else { return };
+        let Some(store) = isolated_test_store() else {
+            return;
+        };
         let address = format!("lost-update-{}", unique_suffix());
         if seed_existing {
             store
@@ -6439,7 +6454,9 @@ mod tests {
 
     #[test]
     fn concurrent_manual_offsets_accumulate_postgres() {
-        let Some(store) = isolated_test_store() else { return };
+        let Some(store) = isolated_test_store() else {
+            return;
+        };
         let address = format!("offset-race-{}", unique_suffix());
         let mut session_a = store.open_independent_session().unwrap();
         let mut tx_a = session_a.transaction().unwrap();
@@ -6468,7 +6485,9 @@ mod tests {
 
     #[test]
     fn mark_send_started_requires_every_member_unclaimed_with_planned_amount_postgres() {
-        let Some(store) = isolated_test_store() else { return };
+        let Some(store) = isolated_test_store() else {
+            return;
+        };
         store.create_pending_payout("mark-a", 100).unwrap();
         store.create_pending_payout("mark-b", 200).unwrap();
 
@@ -6484,7 +6503,11 @@ mod tests {
             .is_none());
 
         let frozen = store
-            .mark_pending_payouts_send_started_batch(&[("mark-b".to_string(), 200)], "batch-1", None)
+            .mark_pending_payouts_send_started_batch(
+                &[("mark-b".to_string(), 200)],
+                "batch-1",
+                None,
+            )
             .expect("freeze unclaimed member");
         assert_eq!(frozen.len(), 1);
         assert_eq!(frozen[0].batch_id.as_deref(), Some("batch-1"));
@@ -6507,7 +6530,11 @@ mod tests {
 
         // Missing rows and empty batch ids are refused.
         assert!(store
-            .mark_pending_payouts_send_started_batch(&[("mark-missing".to_string(), 1)], "batch-3", None)
+            .mark_pending_payouts_send_started_batch(
+                &[("mark-missing".to_string(), 1)],
+                "batch-3",
+                None
+            )
             .is_err());
         assert!(store
             .mark_pending_payouts_send_started_batch(&[("mark-a".to_string(), 100)], " ", None)
@@ -6516,7 +6543,9 @@ mod tests {
 
     #[test]
     fn inflight_payout_sends_lists_unresolved_and_broadcast_batches_postgres() {
-        let Some(store) = isolated_test_store() else { return };
+        let Some(store) = isolated_test_store() else {
+            return;
+        };
         let mut client = lock_session(&store);
         assert!(load_inflight_payout_sends(&mut client).unwrap().is_empty());
 
@@ -6525,14 +6554,21 @@ mod tests {
         store.create_pending_payout("inflight-b", 30).unwrap();
         store
             .mark_pending_payouts_send_started_batch(
-                &[("inflight-a".to_string(), 20), ("inflight-b".to_string(), 30)],
+                &[
+                    ("inflight-a".to_string(), 20),
+                    ("inflight-b".to_string(), 30),
+                ],
                 "batch-unresolved",
                 None,
             )
             .unwrap();
         store.create_pending_payout("inflight-c", 40).unwrap();
         store
-            .mark_pending_payouts_send_started_batch(&[("inflight-c".to_string(), 40)], "batch-sent", None)
+            .mark_pending_payouts_send_started_batch(
+                &[("inflight-c".to_string(), 40)],
+                "batch-sent",
+                None,
+            )
             .unwrap();
         store
             .record_pending_payout_batch_broadcast(
@@ -6548,7 +6584,10 @@ mod tests {
 
         let inflight = load_inflight_payout_sends(&mut client).unwrap();
         assert_eq!(inflight.unresolved_rows, 2);
-        assert_eq!(inflight.unresolved_batches, vec!["batch-unresolved".to_string()]);
+        assert_eq!(
+            inflight.unresolved_batches,
+            vec!["batch-unresolved".to_string()]
+        );
         assert_eq!(inflight.broadcast_rows, 1);
         assert_eq!(inflight.broadcast_tx_hashes, vec!["tx-sent".to_string()]);
     }
@@ -6755,9 +6794,11 @@ mod tests {
                             FROM shares WHERE created_at >= $1 AND created_at <= $2
                          ) r", &[&start,&end]
                     ).unwrap();
-                    let work: i64 = store.conn()
+                    let work: i64 = store
+                        .conn()
                         .query_one("SELECT share_read_work($1,$2)", &[&start, &end])
-                        .unwrap().get(0);
+                        .unwrap()
+                        .get(0);
                     assert_eq!(work, row.get::<_, i64>(5), "accepted work {start}..{end}");
                     for column in 0..3 {
                         assert_eq!(
@@ -6770,9 +6811,17 @@ mod tests {
             }
         };
         check();
-        store.conn().client.batch_execute("UPDATE share_read_state SET ready=FALSE").unwrap();
+        store
+            .conn()
+            .client
+            .batch_execute("UPDATE share_read_state SET ready=FALSE")
+            .unwrap();
         check();
-        store.conn().client.batch_execute("UPDATE share_read_state SET ready=TRUE").unwrap();
+        store
+            .conn()
+            .client
+            .batch_execute("UPDATE share_read_state SET ready=TRUE")
+            .unwrap();
         store.compact_share_read_minutes().unwrap();
         check();
         store

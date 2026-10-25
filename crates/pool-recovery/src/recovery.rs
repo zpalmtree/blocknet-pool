@@ -948,8 +948,7 @@ impl RecoveryAgent {
         // freeze or send a batch mid-cutover, and refuse while any earlier
         // send is unresolved: its status, history and journal only exist on
         // the daemon being switched away from.
-        let (guard, inflight) =
-            PayoutCutoverGuard::acquire(self.cfg.database_url.trim()).await?;
+        let (guard, inflight) = PayoutCutoverGuard::acquire(self.cfg.database_url.trim()).await?;
         let result = async {
             let mut missing_on_target = Vec::new();
             for tx_hash in &inflight.broadcast_tx_hashes {
@@ -1316,7 +1315,12 @@ fn ensure_no_inflight_payout_sends_for_cutover(
 
 fn summarize_ids(ids: &[String]) -> String {
     const SHOWN: usize = 5;
-    let mut summary = ids.iter().take(SHOWN).cloned().collect::<Vec<_>>().join(", ");
+    let mut summary = ids
+        .iter()
+        .take(SHOWN)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
     if ids.len() > SHOWN {
         summary.push_str(&format!(", and {} more", ids.len() - SHOWN));
     }
@@ -1653,7 +1657,11 @@ fn create_unique_temp_file(parent: &Path, path: &Path, mode: u32) -> Result<(Pat
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "recoveryd".to_string());
     for _ in 0..16 {
-        let tmp = parent.join(format!(".{name}.tmp.{}.{:016x}", std::process::id(), random_u64()));
+        let tmp = parent.join(format!(
+            ".{name}.tmp.{}.{:016x}",
+            std::process::id(),
+            random_u64()
+        ));
         match fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -1666,7 +1674,10 @@ fn create_unique_temp_file(parent: &Path, path: &Path, mode: u32) -> Result<(Pat
             Err(err) => return Err(err).with_context(|| format!("create {}", tmp.display())),
         }
     }
-    bail!("could not create a unique temp file next to {}", path.display())
+    bail!(
+        "could not create a unique temp file next to {}",
+        path.display()
+    )
 }
 
 fn random_u64() -> u64 {
@@ -1712,7 +1723,10 @@ fn read_regular_file_nofollow(path: &Path) -> std::io::Result<Vec<u8>> {
 /// Create the payout pause marker as a regular file, never through a
 /// symlink. Stratum and the API only test for its existence.
 fn create_pause_marker(path: &Path) -> Result<()> {
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     match fs::symlink_metadata(path) {
@@ -1721,7 +1735,10 @@ fn create_pause_marker(path: &Path) -> Result<()> {
             // Replace a planted (possibly dangling) link with a real marker.
             fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?;
         }
-        Ok(_) => bail!("refusing to use {} as the payout pause marker", path.display()),
+        Ok(_) => bail!(
+            "refusing to use {} as the payout pause marker",
+            path.display()
+        ),
         Err(err) if err.kind() == ErrorKind::NotFound => {}
         Err(err) => return Err(err).with_context(|| format!("stat {}", path.display())),
     }
@@ -1734,12 +1751,15 @@ fn create_pause_marker(path: &Path) -> Result<()> {
     {
         Ok(file) => file,
         Err(err) if err.kind() == ErrorKind::AlreadyExists => {
-            let metadata = fs::symlink_metadata(path)
-                .with_context(|| format!("stat {}", path.display()))?;
+            let metadata =
+                fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
             if metadata.file_type().is_file() {
                 return Ok(());
             }
-            bail!("refusing to use {} as the payout pause marker", path.display());
+            bail!(
+                "refusing to use {} as the payout pause marker",
+                path.display()
+            );
         }
         Err(err) => return Err(err).with_context(|| format!("create {}", path.display())),
     };
@@ -1762,7 +1782,11 @@ fn swap_symlink(link: &Path, target: &Path) -> Result<()> {
         .unwrap_or_else(|| "link".to_string());
     // symlink(2) never follows an existing path and fails if it exists.
     for _ in 0..16 {
-        let tmp = parent.join(format!(".{name}.tmp.{}.{:016x}", std::process::id(), random_u64()));
+        let tmp = parent.join(format!(
+            ".{name}.tmp.{}.{:016x}",
+            std::process::id(),
+            random_u64()
+        ));
         match symlink(target, &tmp) {
             Ok(()) => {
                 return fs::rename(&tmp, link).with_context(|| {
@@ -1772,13 +1796,15 @@ fn swap_symlink(link: &Path, target: &Path) -> Result<()> {
             }
             Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
             Err(err) => {
-                return Err(err).with_context(|| {
-                    format!("symlink {} -> {}", tmp.display(), target.display())
-                })
+                return Err(err)
+                    .with_context(|| format!("symlink {} -> {}", tmp.display(), target.display()))
             }
         }
     }
-    bail!("could not create a unique temp symlink next to {}", link.display())
+    bail!(
+        "could not create a unique temp symlink next to {}",
+        link.display()
+    )
 }
 
 fn capture_path_state(path: &Path) -> Result<StoredPathState> {
@@ -2293,7 +2319,10 @@ mod tests {
         .unwrap();
 
         let (guard, inflight) = PayoutCutoverGuard::acquire(&url).await.expect("take lock");
-        assert_eq!(inflight.unresolved_batches, vec!["batch-frozen".to_string()]);
+        assert_eq!(
+            inflight.unresolved_batches,
+            vec!["batch-frozen".to_string()]
+        );
         assert_eq!(inflight.broadcast_tx_hashes, vec!["tx-sent".to_string()]);
 
         // A payout tick in the pool cannot start while the cutover holds it.
@@ -2312,11 +2341,15 @@ mod tests {
         })
         .await
         .unwrap();
-        let err = match PayoutCutoverGuard::acquire_with_wait(&url, Duration::from_millis(600)).await {
-            Ok(_) => panic!("cutover must not take the lock during a payout sweep"),
-            Err(err) => err,
-        };
-        assert!(err.to_string().contains("payout sweep is still running"), "{err:#}");
+        let err =
+            match PayoutCutoverGuard::acquire_with_wait(&url, Duration::from_millis(600)).await {
+                Ok(_) => panic!("cutover must not take the lock during a payout sweep"),
+                Err(err) => err,
+            };
+        assert!(
+            err.to_string().contains("payout sweep is still running"),
+            "{err:#}"
+        );
         tokio::task::spawn_blocking(move || {
             assert!(release_payout_sweep_lock(&mut other).unwrap());
             drop(other);

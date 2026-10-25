@@ -1306,6 +1306,7 @@ impl PayoutProcessor {
         let mut sent_txs = 0usize;
         let mut liquidity_backoff_budget = None::<u64>;
         let mut last_wallet_send_attempt = None::<Instant>;
+        let mut send_outcome_unknown = false;
 
         while !queued.is_empty()
             && sent_txs < max_txs_per_sweep
@@ -1407,10 +1408,11 @@ impl PayoutProcessor {
             // Record which daemon instance receives this send: idempotency
             // status, send history and the journal only exist on that daemon.
             let send_daemon = self.node.daemon_instance_identity();
-            if let Err(err) = self
-                .store
-                .mark_pending_payouts_send_started_batch(&members, &plan.batch_id, send_daemon.as_deref())
-            {
+            if let Err(err) = self.store.mark_pending_payouts_send_started_batch(
+                &members,
+                &plan.batch_id,
+                send_daemon.as_deref(),
+            ) {
                 tracing::warn!(
                     batch_id = %plan.batch_id,
                     error = %err,
@@ -1613,6 +1615,7 @@ impl PayoutProcessor {
                             error = %err,
                             "advanced wallet send outcome unknown; retaining idempotent retry state and stopping this payout sweep"
                         );
+                        send_outcome_unknown = true;
                         remove_spent_outputs(&mut spendable_outputs, &plan.inputs);
                         queued.drain(..plan.recipients.len());
                         break;
@@ -1657,7 +1660,7 @@ impl PayoutProcessor {
             queued.drain(..plan.recipients.len());
         }
 
-        if queued.is_empty() && !inventory_is_healthy(&inventory) {
+        if queued.is_empty() && !send_outcome_unknown && !inventory_is_healthy(&inventory) {
             rebalance_active = self.maybe_rebalance_outputs(
                 &wallet_balance,
                 &spendable_outputs,
@@ -3512,9 +3515,9 @@ mod tests {
     use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
     use base64::Engine as _;
     use pool_common::db::{DbShare, ShareReplayData};
-    use std::path::{Path, PathBuf};
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::thread;
 
@@ -4593,7 +4596,10 @@ mod tests {
             (504, "<html>504 Gateway Time-out</html>"),
             (500, r#"{"error":"internal error"}"#),
             (409, r#"{"error":"idempotency key in progress"}"#),
-            (409, r#"{"error":"idempotency key reuse with different request"}"#),
+            (
+                409,
+                r#"{"error":"idempotency key reuse with different request"}"#,
+            ),
             (429, r#"{"error":"too many requests"}"#),
         ] {
             let err = anyhow::anyhow!(HttpError {
@@ -4892,7 +4898,10 @@ mod tests {
             .get_pending_payout("addr1")
             .expect("lookup pending payout")
             .expect("pending payout exists");
-        assert!(pending.send_started_at.is_some(), "accepted sends must not be resent");
+        assert!(
+            pending.send_started_at.is_some(),
+            "accepted sends must not be resent"
+        );
         assert_eq!(pending.batch_id.as_deref(), Some("batch-1"));
     }
 
@@ -4996,7 +5005,9 @@ mod tests {
         let daemons = DaemonInstanceFixture::new();
         let primary = DaemonInstanceFixture::identity(&daemons.primary);
         assert_eq!(
-            daemons.node("http://127.0.0.1:1").daemon_instance_identity(),
+            daemons
+                .node("http://127.0.0.1:1")
+                .daemon_instance_identity(),
             Some(primary.clone())
         );
 
@@ -5034,7 +5045,10 @@ mod tests {
             .expect("recover");
         assert!(matches!(recovered, UnknownBroadcastRecovery::Unresolved));
         let held = store.get_pending_payout("addr-moved").unwrap().unwrap();
-        assert!(held.send_started_at.is_some(), "a standby's not_found must not resend");
+        assert!(
+            held.send_started_at.is_some(),
+            "a standby's not_found must not resend"
+        );
         assert_eq!(held.batch_id.as_deref(), Some("batch-moved"));
     }
 
@@ -6301,10 +6315,8 @@ mod tests {
     fn tick_skips_while_another_session_holds_payout_sweep_lock() {
         let store = require_test_store!();
         let status = r#"{"peers":3,"chain_height":10,"syncing":false}"#.to_string();
-        let base_url = spawn_json_router_server(
-            HashMap::from([("/api/status".to_string(), status)]),
-            32,
-        );
+        let base_url =
+            spawn_json_router_server(HashMap::from([("/api/status".to_string(), status)]), 32);
         let processor = PayoutProcessor::new(
             Config::default(),
             Arc::clone(&store),
