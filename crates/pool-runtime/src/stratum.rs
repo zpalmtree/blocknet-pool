@@ -48,6 +48,12 @@ const CANDIDATE_CLAIM_IP_MAX_PER_WINDOW: usize = 8;
 const CANDIDATE_CLAIM_IP_MAX_INFLIGHT: usize = 2;
 const CANDIDATE_CLAIM_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 const CANDIDATE_SUBMIT_WORKERS: usize = 1;
+// Block candidates from established sources (clean verified history on that
+// address from that network) get their own small lane so a flood of false
+// claims from fresh sources cannot delay a real block. A false claim from an
+// established source strikes it and drops it back to the shared lane.
+const PRIORITY_CANDIDATE_SUBMIT_WORKERS: usize = 1;
+const PRIORITY_CANDIDATE_SUBMIT_QUEUE_SIZE: usize = 16;
 const REGULAR_SUBMIT_WORKERS: usize = 4;
 
 fn client_submit_ack_difficulty(
@@ -136,6 +142,10 @@ pub struct SubmitRuntimeSnapshot {
     #[serde(default)]
     pub candidate_worker_failure_total: u64,
     #[serde(default)]
+    pub candidate_priority_enqueued_total: u64,
+    #[serde(default)]
+    pub candidate_priority_queue_depth: usize,
+    #[serde(default)]
     pub candidate_queue_depth: usize,
     #[serde(default)]
     pub regular_queue_depth: usize,
@@ -191,12 +201,22 @@ struct CandidateClaimPermit {
     keys: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SubmitLane {
+    Regular,
+    Candidate,
+    PriorityCandidate,
+}
+
 #[derive(Debug)]
 struct SubmitDispatcher {
     candidate_tx: flume::Sender<SubmitWorkItem>,
+    priority_candidate_tx: flume::Sender<SubmitWorkItem>,
     regular_tx: flume::Sender<SubmitWorkItem>,
     candidate_queue: Arc<QueueTracker>,
+    priority_candidate_queue: Arc<QueueTracker>,
     regular_queue: Arc<QueueTracker>,
+    candidate_priority_enqueued: AtomicU64,
     candidate_tracker: Arc<CandidateClaimTracker>,
     submits_received: AtomicU64,
     candidate_classified: AtomicU64,
@@ -346,16 +366,22 @@ impl SubmitDispatcher {
     fn new(engine: Arc<PoolEngine>, cfg: &Config) -> Arc<Self> {
         let (candidate_tx, candidate_rx) =
             flume::bounded::<SubmitWorkItem>(CANDIDATE_SUBMIT_QUEUE_SIZE);
+        let (priority_candidate_tx, priority_candidate_rx) =
+            flume::bounded::<SubmitWorkItem>(PRIORITY_CANDIDATE_SUBMIT_QUEUE_SIZE);
         let (regular_tx, regular_rx) =
             flume::bounded::<SubmitWorkItem>(cfg.regular_submit_queue_size());
         let candidate_queue = Arc::new(QueueTracker::new(512));
+        let priority_candidate_queue = Arc::new(QueueTracker::new(512));
         let regular_queue = Arc::new(QueueTracker::new(512));
         engine.attach_submit_regular_queue(Arc::clone(&regular_queue));
         let dispatcher = Arc::new(Self {
             candidate_tx,
+            priority_candidate_tx,
             regular_tx,
             candidate_queue,
+            priority_candidate_queue,
             regular_queue,
+            candidate_priority_enqueued: AtomicU64::new(0),
             candidate_tracker: CandidateClaimTracker::new(
                 CANDIDATE_CLAIM_WINDOW,
                 CANDIDATE_CLAIM_MAX_PER_WINDOW,
@@ -380,7 +406,22 @@ impl SubmitDispatcher {
             let dispatcher = Arc::clone(&dispatcher);
             let candidate_rx = candidate_rx.clone();
             tokio::spawn(async move {
-                run_submit_worker(engine, dispatcher, candidate_rx, true).await;
+                run_submit_worker(engine, dispatcher, candidate_rx, SubmitLane::Candidate).await;
+            });
+        }
+
+        for _ in 0..PRIORITY_CANDIDATE_SUBMIT_WORKERS {
+            let engine = Arc::clone(&engine);
+            let dispatcher = Arc::clone(&dispatcher);
+            let priority_candidate_rx = priority_candidate_rx.clone();
+            tokio::spawn(async move {
+                run_submit_worker(
+                    engine,
+                    dispatcher,
+                    priority_candidate_rx,
+                    SubmitLane::PriorityCandidate,
+                )
+                .await;
             });
         }
 
@@ -389,7 +430,7 @@ impl SubmitDispatcher {
             let dispatcher = Arc::clone(&dispatcher);
             let regular_rx = regular_rx.clone();
             tokio::spawn(async move {
-                run_submit_worker(engine, dispatcher, regular_rx, false).await;
+                run_submit_worker(engine, dispatcher, regular_rx, SubmitLane::Regular).await;
             });
         }
 
@@ -401,21 +442,26 @@ impl SubmitDispatcher {
         conn_id: &str,
         address: &str,
         peer: SocketAddr,
+        established_source: bool,
         now: Instant,
     ) -> Result<CandidateClaimPermit> {
         let ip_group = ip_group_key(peer.ip());
         let per_source = self.candidate_tracker.default_limit();
-        let buckets = vec![
+        let mut buckets = vec![
             (format!("addr|{}|{}", address.trim(), ip_group), per_source),
             (format!("conn|{conn_id}"), per_source),
-            (
+        ];
+        // Established sources are exempt from network-level penalties, so a
+        // fresh source sharing their IP cannot use up their block claims.
+        if !established_source {
+            buckets.push((
                 format!("ip|{ip_group}"),
                 CandidateClaimLimit {
                     max_per_window: CANDIDATE_CLAIM_IP_MAX_PER_WINDOW,
                     max_inflight: CANDIDATE_CLAIM_IP_MAX_INFLIGHT,
                 },
-            ),
-        ];
+            ));
+        }
         match self.candidate_tracker.try_acquire_all(buckets, now) {
             Ok(permit) => {
                 self.candidate_permit_acquired
@@ -438,32 +484,43 @@ impl SubmitDispatcher {
         self.candidate_classified.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn try_enqueue(&self, item: SubmitWorkItem, route: SubmitQueueRoute) -> Result<()> {
+    fn lane_queue(&self, lane: SubmitLane) -> &QueueTracker {
+        match lane {
+            SubmitLane::Regular => &self.regular_queue,
+            SubmitLane::Candidate => &self.candidate_queue,
+            SubmitLane::PriorityCandidate => &self.priority_candidate_queue,
+        }
+    }
+
+    fn try_enqueue(&self, item: SubmitWorkItem, lane: SubmitLane) -> Result<()> {
         let queued_at = Instant::now();
-        let tracker_id = match route {
-            SubmitQueueRoute::Candidate => self.candidate_queue.push(queued_at),
-            SubmitQueueRoute::Regular => self.regular_queue.push(queued_at),
-        };
-        let result = match route {
-            SubmitQueueRoute::Candidate => self.candidate_tx.try_send(item),
-            SubmitQueueRoute::Regular => self.regular_tx.try_send(item),
+        let tracker_id = self.lane_queue(lane).push(queued_at);
+        let result = match lane {
+            SubmitLane::Regular => self.regular_tx.try_send(item),
+            SubmitLane::Candidate => self.candidate_tx.try_send(item),
+            SubmitLane::PriorityCandidate => self.priority_candidate_tx.try_send(item),
         };
         match result {
             Ok(()) => {
-                if route == SubmitQueueRoute::Candidate {
-                    self.candidate_enqueued.fetch_add(1, Ordering::Relaxed);
+                match lane {
+                    SubmitLane::Regular => {}
+                    SubmitLane::Candidate => {
+                        self.candidate_enqueued.fetch_add(1, Ordering::Relaxed);
+                    }
+                    SubmitLane::PriorityCandidate => {
+                        self.candidate_enqueued.fetch_add(1, Ordering::Relaxed);
+                        self.candidate_priority_enqueued
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
                 }
                 Ok(())
             }
             Err(flume::TrySendError::Full(item)) | Err(flume::TrySendError::Disconnected(item)) => {
-                match route {
-                    SubmitQueueRoute::Candidate => self.candidate_queue.remove(tracker_id),
-                    SubmitQueueRoute::Regular => self.regular_queue.remove(tracker_id),
-                }
+                self.lane_queue(lane).remove(tracker_id);
                 if let Some(permit) = item.candidate_permit {
                     permit.release();
                 }
-                if route == SubmitQueueRoute::Candidate {
+                if lane != SubmitLane::Regular {
                     self.candidate_enqueue_rejected
                         .fetch_add(1, Ordering::Relaxed);
                 }
@@ -475,8 +532,13 @@ impl SubmitDispatcher {
     fn snapshot(&self) -> SubmitRuntimeSnapshot {
         let now = Instant::now();
         let candidate = self.candidate_queue.snapshot(now);
+        let priority_candidate = self.priority_candidate_queue.snapshot(now);
         let regular = self.regular_queue.snapshot(now);
         SubmitRuntimeSnapshot {
+            candidate_priority_enqueued_total: self
+                .candidate_priority_enqueued
+                .load(Ordering::Relaxed),
+            candidate_priority_queue_depth: priority_candidate.depth,
             submits_received_total: self.submits_received.load(Ordering::Relaxed),
             candidate_classified_total: self.candidate_classified.load(Ordering::Relaxed),
             candidate_permit_acquired_total: self.candidate_permit_acquired.load(Ordering::Relaxed),
@@ -923,6 +985,15 @@ impl StratumServer {
                             if route == SubmitQueueRoute::Candidate {
                                 self.submit_dispatcher.record_candidate_classified();
                             }
+                            let established_source = route == SubmitQueueRoute::Candidate
+                                && self.engine.source_established(&conn_id);
+                            let lane = match route {
+                                SubmitQueueRoute::Regular => SubmitLane::Regular,
+                                SubmitQueueRoute::Candidate if established_source => {
+                                    SubmitLane::PriorityCandidate
+                                }
+                                SubmitQueueRoute::Candidate => SubmitLane::Candidate,
+                            };
                             let candidate_permit = if route == SubmitQueueRoute::Candidate {
                                 let Some((address, _, _)) = logged_in.as_ref() else {
                                     if let Err(err) = queue_error(&outbound, req.id, "not logged in") {
@@ -931,9 +1002,13 @@ impl StratumServer {
                                     }
                                     continue;
                                 };
-                                match self
-                                    .submit_dispatcher
-                                    .try_acquire_candidate_permit(&conn_id, address, peer, received_at)
+                                match self.submit_dispatcher.try_acquire_candidate_permit(
+                                    &conn_id,
+                                    address,
+                                    peer,
+                                    established_source,
+                                    received_at,
+                                )
                                 {
                                     Ok(permit) => Some(permit),
                                     Err(err) => {
@@ -963,7 +1038,7 @@ impl StratumServer {
                                 completion_tx: submit_result_tx.clone(),
                                 candidate_permit,
                             };
-                            if let Err(err) = self.submit_dispatcher.try_enqueue(work, route) {
+                            if let Err(err) = self.submit_dispatcher.try_enqueue(work, lane) {
                                 if let Some((address, _, _)) = logged_in.as_ref() {
                                     tracing::warn!(
                                         peer = %peer,
@@ -1245,17 +1320,16 @@ async fn run_submit_worker(
     engine: Arc<PoolEngine>,
     dispatcher: Arc<SubmitDispatcher>,
     submit_rx: flume::Receiver<SubmitWorkItem>,
-    candidate_lane: bool,
+    lane: SubmitLane,
 ) {
+    let candidate_lane = lane != SubmitLane::Regular;
     while let Ok(queued) = submit_rx.recv_async().await {
         let started_at = Instant::now();
+        dispatcher.lane_queue(lane).pop_and_record_wait(started_at);
         if candidate_lane {
-            dispatcher.candidate_queue.pop_and_record_wait(started_at);
             dispatcher
                 .candidate_worker_started
                 .fetch_add(1, Ordering::Relaxed);
-        } else {
-            dispatcher.regular_queue.pop_and_record_wait(started_at);
         }
         let engine = Arc::clone(&engine);
         let conn_id = queued.conn_id.clone();
@@ -2469,6 +2543,118 @@ mod tests {
         drop(writer_b);
         drop(reader_b);
         shutdown_test_listener(listener_task, server, _jobs).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn tcp_established_source_block_claims_use_priority_lane() {
+        let (server, jobs) = build_tcp_test_server(stratum_test_cfg()).await;
+        let (addr, listener_task) = start_test_tcp_listener(Arc::clone(&server)).await;
+        let (mut reader, mut writer) = connect_test_client(addr).await;
+        let job = login_test_client(
+            &mut reader,
+            &mut writer,
+            1,
+            &test_miner_address(0x55),
+            "rig",
+        )
+        .await;
+
+        // A fresh source's block claim goes through the shared lane.
+        let first_candidate = nonce_with_parity(&job, true, 0);
+        send_submit(
+            &mut writer,
+            2,
+            &job.job_id,
+            first_candidate,
+            SleepyQueueHasher::claimed_hash_hex(first_candidate),
+        )
+        .await;
+        let response = read_json_line(&mut reader).await;
+        assert_eq!(response["status"].as_str(), Some("ok"));
+        assert_eq!(
+            server.submit_snapshot().candidate_priority_enqueued_total,
+            0
+        );
+
+        // Verified shares establish the (address, IP) pair.
+        for offset in 0..crate::source_risk::SOURCE_ESTABLISHED_MIN_VERIFIED {
+            let nonce = nonce_with_parity(&job, false, offset);
+            send_submit(
+                &mut writer,
+                10 + offset,
+                &job.job_id,
+                nonce,
+                SleepyQueueHasher::claimed_hash_hex(nonce),
+            )
+            .await;
+            let response = read_json_line(&mut reader).await;
+            assert_eq!(response["status"].as_str(), Some("ok"), "{response}");
+        }
+
+        let candidate = nonce_with_parity(&job, true, 1);
+        send_submit(
+            &mut writer,
+            20,
+            &job.job_id,
+            candidate,
+            SleepyQueueHasher::claimed_hash_hex(candidate),
+        )
+        .await;
+        let response = read_json_line(&mut reader).await;
+        assert_eq!(response["status"].as_str(), Some("ok"));
+        let snapshot = server.submit_snapshot();
+        assert_eq!(snapshot.candidate_priority_enqueued_total, 1);
+        assert_eq!(snapshot.candidate_enqueued_total, 2);
+
+        drop((reader, writer));
+        shutdown_test_listener(listener_task, server, jobs).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn tcp_false_block_claim_disconnects_the_source() {
+        let (server, jobs) = build_tcp_test_server(stratum_test_cfg()).await;
+        let (addr, listener_task) = start_test_tcp_listener(Arc::clone(&server)).await;
+        let (mut reader, mut writer) = connect_test_client(addr).await;
+        let job =
+            login_test_client(&mut reader, &mut writer, 1, &test_miner_address(0x61), "x").await;
+
+        // Odd nonces do not hash below the network target; claiming zeroes is a lie.
+        let nonce = nonce_with_parity(&job, false, 0);
+        send_submit(&mut writer, 2, &job.job_id, nonce, "00".repeat(32)).await;
+        let response = read_json_line(&mut reader).await;
+        assert!(response["error"]
+            .as_str()
+            .is_some_and(|err| err.contains("invalid share proof")));
+        let mut line = String::new();
+        let read = tokio::time::timeout(Duration::from_secs(2), reader.read_line(&mut line))
+            .await
+            .expect("connection should close promptly")
+            .expect("read");
+        assert_eq!(read, 0, "struck source is disconnected, got {line:?}");
+
+        // Reconnecting with the same address from the same host is refused.
+        let (mut reader2, mut writer2) = connect_test_client(addr).await;
+        write_json_line(
+            &mut writer2,
+            &StratumRequest {
+                id: 1,
+                method: pool_common::protocol::METHOD_LOGIN.to_string(),
+                params: json!({
+                    "address": test_miner_address(0x61),
+                    "worker": "x",
+                    "protocol_version": 2,
+                    "capabilities": ["submit_claimed_hash"],
+                }),
+            },
+        )
+        .await;
+        let login = read_json_line(&mut reader2).await;
+        assert!(login["error"]
+            .as_str()
+            .is_some_and(|err| err.starts_with("source banned")));
+
+        drop((reader, writer, reader2, writer2));
+        shutdown_test_listener(listener_task, server, jobs).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

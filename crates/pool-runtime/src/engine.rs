@@ -1140,7 +1140,12 @@ impl PoolEngine {
                     attributed: true,
                 };
 
-                let validation = match self.validate_task(task, candidate_claim) {
+                // A block claim from an established source is hashed inline
+                // rather than queued behind other sources' candidate checks;
+                // it is a one-shot privilege, since a false claim strikes the
+                // source and removes it.
+                let inline_priority = candidate_claim && source_established;
+                let validation = match self.validate_task(task, candidate_claim, inline_priority) {
                     Ok(v) => v,
                     Err(err) => {
                         // Busy/timeout: the share was never judged, so let the
@@ -1462,6 +1467,17 @@ impl PoolEngine {
         }
     }
 
+    /// Whether this connection's source has clean verified history on its
+    /// address (eligible for the priority block-candidate lane).
+    pub(crate) fn source_established(&self, conn_id: &str) -> bool {
+        let source = self
+            .sessions
+            .lock()
+            .get(conn_id)
+            .map(|session| session.source.clone());
+        source.is_some_and(|source| self.source_risk.pair_established(&source))
+    }
+
     /// Whether this connection's source has been cut off (struck session,
     /// or banned pair / IP group). The Stratum layer disconnects on true.
     pub(crate) fn source_blocked(&self, conn_id: &str) -> bool {
@@ -1769,7 +1785,15 @@ impl PoolEngine {
         }
     }
 
-    fn validate_task(&self, task: ValidationTask, candidate: bool) -> Result<ValidationResult> {
+    fn validate_task(
+        &self,
+        task: ValidationTask,
+        candidate: bool,
+        inline_priority: bool,
+    ) -> Result<ValidationResult> {
+        if inline_priority {
+            return Ok(self.validation.process_inline(task));
+        }
         if let Some(rx) = self.validation.submit(task.clone(), candidate) {
             let computed = rx
                 .recv_timeout(VALIDATION_WAIT_TIMEOUT)
@@ -2929,6 +2953,74 @@ mod tests {
         engine
             .login("203.0.113.1:4000", victim, "rig", 2, submit_hash_cap())
             .expect("other sources are unaffected");
+    }
+
+    #[test]
+    fn established_source_block_bypasses_a_busy_candidate_verifier() {
+        // Nonce >= 1000 hashes slowly (the flood); others are instant. Nonce 7
+        // is a real block (all-zero hash).
+        struct FloodHasher;
+        impl PowHasher for FloodHasher {
+            fn hash(&self, _header_base: &[u8], nonce: u64) -> anyhow::Result<[u8; 32]> {
+                if nonce >= 1_000 {
+                    std::thread::sleep(Duration::from_millis(600));
+                }
+                Ok(if nonce == 7 {
+                    [0x00; 32]
+                } else {
+                    NonceHasher::hash_for(nonce)
+                })
+            }
+        }
+        let mut cfg = cfg();
+        cfg.validation_mode = "full".to_string();
+        let (engine, _store, _validation) = source_test_engine(cfg, Arc::new(FloodHasher));
+        let engine = Arc::new(engine);
+        let honest = "203.0.113.1:4000";
+        engine
+            .login(honest, test_miner_address(), "rig", 2, submit_hash_cap())
+            .expect("login");
+        for nonce in 1..=crate::source_risk::SOURCE_ESTABLISHED_MIN_VERIFIED {
+            engine
+                .submit(
+                    honest,
+                    "job1".to_string(),
+                    nonce,
+                    NonceHasher::honest(nonce),
+                )
+                .expect("verified share");
+        }
+        assert!(engine.source_established(honest));
+
+        let attacker = "198.51.100.9:5000";
+        engine
+            .login(attacker, other_miner_address(), "x", 2, submit_hash_cap())
+            .expect("attacker login");
+        assert!(!engine.source_established(attacker));
+        let flood = {
+            let engine = Arc::clone(&engine);
+            std::thread::spawn(move || {
+                engine.submit(attacker, "job1".to_string(), 1_000, fake_candidate_claim())
+            })
+        };
+        std::thread::sleep(Duration::from_millis(50));
+
+        let started = Instant::now();
+        let ack = engine
+            .submit(honest, "job1".to_string(), 7, Some("00".repeat(32)))
+            .expect("real block accepted");
+        assert!(ack.block_accepted);
+        assert!(
+            started.elapsed() < Duration::from_millis(400),
+            "established block must not wait behind the false claim ({:?})",
+            started.elapsed()
+        );
+        let flood_err = flood.join().unwrap().expect_err("false claim rejected");
+        assert!(flood_err.to_string().contains("invalid share proof"));
+        assert!(
+            engine.source_blocked(attacker),
+            "false block claim strikes the source"
+        );
     }
 
     #[test]
