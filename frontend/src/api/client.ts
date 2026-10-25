@@ -30,6 +30,7 @@ interface QueryParams {
 
 interface FetchOptions {
   auth?: boolean;
+  pollAccepted?: boolean;
   method?: string;
   body?: BodyInit | null;
   headers?: Record<string, string>;
@@ -56,8 +57,26 @@ function withQuery(path: string, params: QueryParams): string {
   return `${url.pathname}${url.search}`;
 }
 
+function retryDelay(response: Response): number {
+  const value = response.headers.get('retry-after');
+  if (!value) return 5000;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 5000;
+}
+
+function cooldownKey(path: string): string {
+  if (path === '/api/stats' || /^\/api\/miner\/[^/]+(?:\/balance)?(?:\?|$)/.test(path)) {
+    return 'public-telemetry';
+  }
+  return path;
+}
+
 export function createApiClient(getApiKey: () => string, showError: (message: string) => void) {
-  const fetchJson = async <T,>(path: string, opts?: FetchOptions): Promise<T> => {
+  const inFlight = new Map<string, Promise<unknown>>();
+  const cooldowns = new Map<string, number>();
+  const fetchOnce = async <T,>(path: string, opts?: FetchOptions, polls = 0): Promise<T> => {
     const headers: Record<string, string> = { ...(opts?.headers ?? {}) };
     if (opts?.auth) {
       const key = getApiKey();
@@ -84,7 +103,16 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
       body = null;
     }
 
+    if (res.status === 202 && opts?.pollAccepted) {
+      if (polls >= 120) throw new Error('Reward breakdown is still running; retry shortly');
+      await new Promise((resolve) => setTimeout(resolve, Math.max(1000, retryDelay(res))));
+      return fetchOnce<T>(path, opts, polls + 1);
+    }
+
     if (!res.ok) {
+      if (res.status === 429 || res.status === 503) {
+        cooldowns.set(cooldownKey(path), Date.now() + retryDelay(res));
+      }
       const msg =
         typeof body === 'object' && body && 'error' in (body as Record<string, unknown>)
           ? String((body as Record<string, unknown>).error)
@@ -94,6 +122,21 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
     }
 
     return body as T;
+  };
+  const fetchJson = <T,>(path: string, opts?: FetchOptions): Promise<T> => {
+    // Coalesce overlapping refreshes, but never deduplicate writes.
+    if (opts?.method && opts.method !== 'GET') return fetchOnce<T>(path, opts);
+    const current = inFlight.get(path);
+    if (current) return current as Promise<T>;
+    for (const [key, until] of cooldowns) {
+      if (until <= Date.now()) cooldowns.delete(key);
+    }
+    if (cooldowns.has(cooldownKey(path))) {
+      return Promise.reject(new Error('Temporarily busy; waiting before retrying'));
+    }
+    const request = fetchOnce<T>(path, opts).finally(() => inFlight.delete(path));
+    inFlight.set(path, request);
+    return request;
   };
   const postJson = <T,>(path: string, body?: unknown): Promise<T> =>
     fetchJson<T>(path, {
@@ -135,6 +178,7 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
     getAdminBlockRewardBreakdown: (height: number) =>
       fetchJson<BlockRewardBreakdownResponse>(`/api/admin/blocks/${encodeURIComponent(String(height))}/reward-breakdown`, {
         auth: true,
+        pollAccepted: true,
       }),
     getHealth: () => fetchJson<HealthResponse>('/api/health', { auth: true }),
     getAdminBalanceOverview: () =>

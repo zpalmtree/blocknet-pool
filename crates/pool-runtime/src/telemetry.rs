@@ -11,6 +11,8 @@ const DEFAULT_SAMPLE_LIMIT: usize = 512;
 pub struct PercentileSummary {
     pub p50_millis: Option<u64>,
     pub p95_millis: Option<u64>,
+    #[serde(default)]
+    pub p99_millis: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -27,6 +29,8 @@ pub struct TimedOperationSummary {
     pub max_millis: u64,
     #[serde(default)]
     pub duration: PercentileSummary,
+    #[serde(default)]
+    pub success_duration: PercentileSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -48,6 +52,8 @@ pub struct ApiPerformanceSnapshot {
     pub tasks: BTreeMap<String, TimedOperationSummary>,
     #[serde(default)]
     pub caches: BTreeMap<String, CacheCounterSummary>,
+    #[serde(default)]
+    pub database_reads: BTreeMap<String, TimedOperationSummary>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
@@ -94,12 +100,14 @@ struct TimedOperationWindow {
     total_millis: u64,
     max_millis: u64,
     durations: LatencyWindow,
+    success_durations: LatencyWindow,
 }
 
 impl TimedOperationWindow {
     fn new(sample_limit: usize) -> Self {
         Self {
             durations: LatencyWindow::new(sample_limit),
+            success_durations: LatencyWindow::new(sample_limit),
             ..Self::default()
         }
     }
@@ -116,6 +124,9 @@ impl TimedOperationWindow {
         self.total_millis = self.total_millis.saturating_add(millis);
         self.max_millis = self.max_millis.max(millis);
         self.durations.record(duration);
+        if !failed {
+            self.success_durations.record(duration);
+        }
     }
 
     fn snapshot(&self) -> TimedOperationSummary {
@@ -126,6 +137,7 @@ impl TimedOperationWindow {
             total_millis: self.total_millis,
             max_millis: self.max_millis,
             duration: self.durations.snapshot(),
+            success_duration: self.success_durations.snapshot(),
         }
     }
 }
@@ -264,6 +276,7 @@ fn percentile_summary(samples: &VecDeque<u64>) -> PercentileSummary {
     PercentileSummary {
         p50_millis: sorted.get(p50_idx).copied(),
         p95_millis: sorted.get(p95_idx).copied(),
+        p99_millis: sorted.get(percentile_index(count, 99)).copied(),
     }
 }
 
@@ -277,6 +290,25 @@ fn percentile_index(count: usize, percentile: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn success_percentiles_exclude_fast_rejections_and_keep_tail_latency() {
+        let mut window = TimedOperationWindow::new(512);
+        for millis in 1..=100 {
+            window.record(Duration::from_millis(millis), false, false);
+        }
+        for _ in 0..512 {
+            window.record(Duration::ZERO, true, false);
+        }
+        let snapshot = window.snapshot();
+        assert_eq!(snapshot.duration.p99_millis, Some(0));
+        assert_eq!(snapshot.success_duration.p99_millis, Some(99));
+        assert_eq!(snapshot.error_count, 512);
+        let old: TimedOperationSummary =
+            serde_json::from_str(r#"{"duration":{"p50_millis":1,"p95_millis":2}}"#).unwrap();
+        assert_eq!(old.duration.p99_millis, None);
+        assert_eq!(old.success_duration.p99_millis, None);
+    }
 
     #[test]
     fn timed_operation_window_tracks_counts_and_latency() {

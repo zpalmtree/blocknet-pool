@@ -824,28 +824,74 @@ impl JobManager {
     }
 
     fn renew_current_template(&self, job_id: &str, template_id: &str) {
+        // Capture the attempted job before I/O: an SSE refresh can install a
+        // different job while renewal is in flight.
+        let (height, prev_hash, lease) = {
+            let state = self.state.read();
+            let Some(job) = state
+                .current
+                .as_ref()
+                .filter(|job| job.id == job_id && job.template_id == template_id)
+            else {
+                return;
+            };
+            (
+                job.height,
+                job.prev_hash,
+                state.job_meta.get(job_id).and_then(|meta| meta.lease),
+            )
+        };
         self.refresh.record_maintenance_attempt();
         let response = match self.node.renew_block_template(template_id) {
             Ok(response) => response,
             Err(err) => {
-                let lease_remaining_millis = self
-                    .state
-                    .read()
-                    .job_meta
-                    .get(job_id)
-                    .and_then(|meta| meta.lease)
-                    .map(|lease| {
-                        lease
-                            .expires_at
-                            .saturating_duration_since(Instant::now())
-                            .as_millis() as u64
-                    });
-                tracing::warn!(
-                    error = %err,
-                    template_id,
-                    lease_remaining_millis,
-                    "failed renewing daemon template lease; fetching a replacement"
-                );
+                let lease_remaining_millis = lease.map(|lease| {
+                    lease
+                        .expires_at
+                        .saturating_duration_since(Instant::now())
+                        .as_millis() as u64
+                });
+                // Fetching a new-tip template prunes old-tip IDs in the daemon,
+                // so a still-live lease can return 404 as well as 409. Require
+                // evidence of a changed canonical tip; never exempt same-tip
+                // cache loss, elapsed leases, transport errors, or unknown status.
+                let tip_invalidated = lease_remaining_millis.is_some_and(|ms| ms > 0)
+                    && (http_error_body_contains(&err, 404, "unknown or expired template_id")
+                        || http_error_body_contains(&err, 404, "mining_template_expired")
+                        || http_error_body_contains(
+                            &err,
+                            409,
+                            "template no longer builds on current tip",
+                        ))
+                    && self
+                        .node
+                        .get_template_recovery_status()
+                        .is_ok_and(|status| {
+                            status
+                                .chain_height
+                                .checked_add(1)
+                                .is_some_and(|next| next != height)
+                                || prev_hash.is_some_and(|parent| {
+                                    hex::decode(status.best_hash.trim()).is_ok_and(|hash| {
+                                        // Current daemon status exposes an 8-byte
+                                        // prefix; also accept a future full hash.
+                                        matches!(hash.len(), 8 | 32)
+                                            && hash.as_slice() != &parent[..hash.len()]
+                                    })
+                                })
+                        });
+                if tip_invalidated {
+                    tracing::info!(
+                        error = %err, template_id, lease_remaining_millis,
+                        "daemon tip changed during template renewal; fetching a replacement"
+                    );
+                } else {
+                    self.node.record_template_renewal_error(&err);
+                    tracing::warn!(
+                        error = %err, template_id, lease_remaining_millis,
+                        "failed renewing daemon template lease; fetching a replacement"
+                    );
+                }
                 self.refresh_template_forced();
                 return;
             }
@@ -1980,6 +2026,152 @@ mod tests {
                 assert_eq!(&assignment.owner_conn_id, connection_id);
                 assert!(assignment.superseded_at.is_none());
             }
+        }
+    }
+
+    fn check_renewal_failure(
+        renewal_status: u16,
+        status_response: Value,
+        lease_live: bool,
+        expected_failures: u64,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(connection) => connection,
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            Instant::now() < deadline,
+                            "replacement template was not fetched"
+                        );
+                        thread::sleep(Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(err) => panic!("accept: {err}"),
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request = String::new();
+                reader.read_line(&mut request).unwrap();
+                loop {
+                    let mut header = String::new();
+                    reader.read_line(&mut header).unwrap();
+                    if header == "\r\n" || header.is_empty() {
+                        break;
+                    }
+                }
+                let replacement = request.starts_with("GET /api/mining/blocktemplate ");
+                let (code, body) = if request.starts_with("POST /api/mining/renewtemplate ") {
+                    let message = if renewal_status == 409 {
+                        "template no longer builds on current tip"
+                    } else {
+                        "unknown or expired template_id"
+                    };
+                    (renewal_status, serde_json::json!({"error": message}))
+                } else if request.starts_with("GET /api/status ") {
+                    if status_response.is_null() {
+                        (503, serde_json::json!({"error": "unavailable"}))
+                    } else {
+                        (200, status_response.clone())
+                    }
+                } else if replacement {
+                    (
+                        200,
+                        serde_json::json!({
+                            "block": {"header": {"Height": 11, "Difficulty": 1, "PrevHash": vec![0x22_u8; 32]}},
+                            "target": hex::encode([0xBB; 32]),
+                            "header_base": hex::encode([0xAA; 92]),
+                            "template_id": "replacement",
+                            "template_expires_at_unix_ms": (SystemTime::now() + Duration::from_secs(600))
+                                .duration_since(UNIX_EPOCH).unwrap().as_millis() as i64
+                        }),
+                    )
+                } else {
+                    panic!("unexpected request: {request}");
+                };
+                let body = body.to_string();
+                write!(stream, "HTTP/1.1 {code} Response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                if replacement {
+                    break;
+                }
+            }
+        });
+        let node = Arc::new(NodeClient::new(&format!("http://{address}"), "").unwrap());
+        let manager = JobManager::new(Arc::clone(&node), Config::default());
+        manager.reward_cache.lock().checked_at = Some(Instant::now());
+        let now = Instant::now();
+        let job = positioned_job("original", 10, 0x11);
+        {
+            let mut state = manager.state.write();
+            state.current = Some(job.clone());
+            state.jobs.insert(job.id.clone(), job.clone());
+            state.job_meta.insert(
+                job.id.clone(),
+                JobTemplateMeta {
+                    created_at: now,
+                    stale_since: None,
+                    mempool_generation: None,
+                    lease: Some(TemplateLease {
+                        probe_at: now,
+                        renew_at: now,
+                        expires_at: if lease_live {
+                            now + Duration::from_secs(568)
+                        } else {
+                            now - Duration::from_secs(1)
+                        },
+                    }),
+                    legacy_probe_at: None,
+                },
+            );
+        }
+        manager.renew_current_template(&job.id, &job.template_id);
+        server.join().unwrap();
+        assert_eq!(
+            manager.state.read().current.as_ref().unwrap().template_id,
+            "replacement"
+        );
+        let telemetry = node.template_lease_telemetry();
+        assert_eq!(telemetry.renewal_failures_total, expected_failures);
+        assert_eq!(
+            telemetry.renewal_expired_responses_total,
+            if renewal_status == 404 {
+                expected_failures
+            } else {
+                0
+            }
+        );
+    }
+
+    fn renewal_status(height: u64, parent: u8) -> Value {
+        serde_json::json!({"chain_height": height, "best_hash": hex::encode([parent; 32]), "peers": 5, "syncing": false})
+    }
+
+    #[test]
+    fn renewal_tip_change_refreshes_without_lease_failure_alert() {
+        check_renewal_failure(404, renewal_status(10, 0x22), true, 0);
+        check_renewal_failure(404, renewal_status(9, 0x22), true, 0); // Same-height reorg.
+        check_renewal_failure(409, renewal_status(10, 0x22), true, 0);
+        let mut short_hash = renewal_status(9, 0x22);
+        short_hash["best_hash"] = hex::encode([0x22; 8]).into();
+        check_renewal_failure(404, short_hash, true, 0);
+    }
+
+    #[test]
+    fn renewal_real_or_unconfirmed_failures_still_alert() {
+        check_renewal_failure(404, renewal_status(9, 0x11), true, 1); // Same tip.
+        check_renewal_failure(404, renewal_status(10, 0x22), false, 1); // Expired lease.
+        check_renewal_failure(404, Value::Null, true, 1); // Status unavailable.
+        check_renewal_failure(500, renewal_status(10, 0x22), true, 1); // Server error.
+        for hash in ["", "bad hash", "22", "1111111111111111"] {
+            let mut status = renewal_status(9, 0x11);
+            status["best_hash"] = hash.into();
+            check_renewal_failure(404, status, true, 1);
         }
     }
 
