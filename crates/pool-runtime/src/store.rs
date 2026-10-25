@@ -236,12 +236,12 @@ impl PoolStore {
 }
 
 impl ShareStore for PoolStore {
-    fn try_claim_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
-        self.inner.try_claim_share(job_id, nonce)
+    fn try_claim_share(&self, job_id: &str, share_key: &str, nonce: u64) -> Result<bool> {
+        self.inner.try_claim_share(job_id, share_key, nonce)
     }
 
-    fn release_share_claim(&self, job_id: &str, nonce: u64) -> Result<()> {
-        self.inner.release_share_claim(job_id, nonce)
+    fn release_share_claim(&self, share_key: &str, nonce: u64) -> Result<()> {
+        self.inner.release_share_claim(share_key, nonce)
     }
 
     fn add_share(&self, share: ShareRecord) -> Result<()> {

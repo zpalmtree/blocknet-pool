@@ -15,6 +15,7 @@ use crate::config::Config;
 use crate::dev_fee::{
     is_seine_dev_fee_address, login_difficulty_floor, DEV_VARDIFF_BOOTSTRAP_HINT_LIMIT,
 };
+use crate::share_dedupe::{template_share_key, NonceLedger};
 use crate::telemetry::QueueTracker;
 use crate::validation::{
     ValidationEngine, ValidationFollowupAction, ValidationResult, ValidationTask,
@@ -122,6 +123,11 @@ pub(crate) trait JobRepository: Send + Sync + 'static {
     ) -> Option<SubmitJobBinding> {
         self.resolve_submit_job_with_reason(submitted_job_id, submitted_at)
             .ok()
+    }
+    /// Whether submits can still resolve to this template job. Used to bound
+    /// template-scoped dedupe state; repositories that cannot tell keep it.
+    fn template_retained(&self, _template_job_id: &str) -> bool {
+        true
     }
 }
 
@@ -306,9 +312,30 @@ pub(crate) fn canonical_share_reject_reason(error: &str) -> &'static str {
     "other"
 }
 
+/// Canonical reject reasons that tell the miner to retry: the share was never
+/// judged on its proof, so it must not block a resubmission of the same nonce.
+pub(crate) const RETRYABLE_REJECT_REASONS: &[&str] = &[
+    "rate limited",
+    "candidate claim busy",
+    "candidate claim rate limited",
+    "server busy",
+    "validation timeout",
+    "hash computation failed",
+];
+
+pub(crate) fn is_retryable_reject_reason(canonical_reason: &str) -> bool {
+    RETRYABLE_REJECT_REASONS.contains(&canonical_reason)
+}
+
 pub(crate) trait ShareStore: Send + Sync + 'static {
-    fn try_claim_share(&self, job_id: &str, nonce: u64) -> Result<bool>;
-    fn release_share_claim(&self, _job_id: &str, _nonce: u64) -> Result<()> {
+    /// Claims a share for crediting. `job_id` is the assignment id (checked
+    /// against persisted rows) and `share_key` is the template-scoped key from
+    /// [`template_share_key`]; the claim on `(share_key, nonce)` is kept after
+    /// the share is persisted so the same work cannot be credited again under
+    /// another assignment id.
+    fn try_claim_share(&self, job_id: &str, share_key: &str, nonce: u64) -> Result<bool>;
+    /// Drops a template-scoped claim after a retryable failure.
+    fn release_share_claim(&self, _share_key: &str, _nonce: u64) -> Result<()> {
         Ok(())
     }
     fn add_share(&self, share: ShareRecord) -> Result<()>;
@@ -438,7 +465,7 @@ pub struct PoolEngine {
     node: Arc<dyn NodeApi>,
 
     sessions: Mutex<HashMap<String, MinerSession>>,
-    seen_in_memory: Mutex<HashSet<(String, u64)>>,
+    seen_in_memory: NonceLedger,
     found_block_outbox_lock: Mutex<()>,
 }
 
@@ -536,7 +563,7 @@ impl PoolEngine {
             store,
             node,
             sessions: Mutex::new(HashMap::new()),
-            seen_in_memory: Mutex::new(HashSet::new()),
+            seen_in_memory: NonceLedger::default(),
             found_block_outbox_lock: Mutex::new(()),
         };
         engine.recover_found_block_outbox();
@@ -791,26 +818,33 @@ impl PoolEngine {
         }
         let job = submit_job.job;
 
-        let seen_key = (job_id.clone(), nonce);
+        // Dedupe on the template header, not the assignment id: a same-template
+        // vardiff rebind reuses the nonce window under a new assignment id.
+        let share_key = template_share_key(&job.header_base);
+        let ledger_now = Instant::now();
+        self.seen_in_memory
+            .prune_if_due(ledger_now, |template_job_id| {
+                self.jobs.template_retained(template_job_id)
+            });
+        if !self
+            .seen_in_memory
+            .reserve(&share_key, &job.id, nonce, ledger_now)
         {
-            let mut seen = self.seen_in_memory.lock();
-            if !seen.insert(seen_key.clone()) {
-                self.persist_rejected_share_for_error(
-                    &session,
-                    &job_id,
-                    nonce,
-                    share_difficulty,
-                    "duplicate share",
-                );
-                return Err(anyhow!("duplicate share"));
-            }
+            self.persist_rejected_share_for_error(
+                &session,
+                &job_id,
+                nonce,
+                share_difficulty,
+                "duplicate share",
+            );
+            return Err(anyhow!("duplicate share"));
         }
 
         let claimed_hash = match claimed_hash_hex {
             Some(ref value) if !value.trim().is_empty() => match parse_hash_hex(value) {
                 Ok(hash) => Some(hash),
                 Err(err) => {
-                    self.seen_in_memory.lock().remove(&seen_key);
+                    self.seen_in_memory.release(&share_key, nonce);
                     self.persist_rejected_share_for_error(
                         &session,
                         &job_id,
@@ -825,7 +859,7 @@ impl PoolEngine {
         };
 
         if claimed_hash.is_none() {
-            self.seen_in_memory.lock().remove(&seen_key);
+            self.seen_in_memory.release(&share_key, nonce);
             self.persist_rejected_share_for_error(
                 &session,
                 &job_id,
@@ -836,10 +870,11 @@ impl PoolEngine {
             return Err(anyhow!("claimed hash required"));
         }
 
-        let claimed = match self.store.try_claim_share(&job_id, nonce) {
-            Ok(true) => true,
+        match self.store.try_claim_share(&job_id, &share_key, nonce) {
+            Ok(true) => {}
             Ok(false) => {
-                self.seen_in_memory.lock().remove(&seen_key);
+                // Another holder owns the persisted claim; ours was never taken.
+                self.seen_in_memory.release(&share_key, nonce);
                 self.persist_rejected_share_for_error(
                     &session,
                     &job_id,
@@ -850,7 +885,7 @@ impl PoolEngine {
                 return Err(anyhow!("duplicate share"));
             }
             Err(err) => {
-                self.seen_in_memory.lock().remove(&seen_key);
+                self.seen_in_memory.release(&share_key, nonce);
                 self.persist_rejected_share_for_error(
                     &session,
                     &job_id,
@@ -907,7 +942,11 @@ impl PoolEngine {
                 let validation = match self.validate_task(task, candidate_claim) {
                     Ok(v) => v,
                     Err(err) => {
-                        release_claim_on_error = false;
+                        // Busy/timeout: the share was never judged, so let the
+                        // miner resubmit it.
+                        release_claim_on_error = is_retryable_reject_reason(
+                            canonical_share_reject_reason(&err.to_string()),
+                        );
                         let created_at = SystemTime::now();
                         self.persist_rejected_share_with_evidence(
                             &session,
@@ -930,8 +969,9 @@ impl PoolEngine {
                 };
 
                 if !validation.accepted {
-                    release_claim_on_error = false;
                     let reason = validation.reject_reason.unwrap_or("invalid share");
+                    release_claim_on_error =
+                        is_retryable_reject_reason(canonical_share_reject_reason(reason));
                     let created_at = SystemTime::now();
                     self.persist_rejected_share_with_evidence(
                         &session,
@@ -1080,14 +1120,6 @@ impl PoolEngine {
                     }),
                     &metadata,
                 )?;
-                if let Err(err) = self.store.release_share_claim(&job_id_for_share, nonce) {
-                    tracing::warn!(
-                        job_id = %job_id_for_share,
-                        nonce,
-                        error = %err,
-                        "failed to release share claim after successful persistence"
-                    );
-                }
                 if validation.followup_action == ValidationFollowupAction::Quarantine {
                     self.trigger_forced_validation_quarantine(
                         &session.address,
@@ -1154,14 +1186,6 @@ impl PoolEngine {
                 }),
                 &metadata,
             )?;
-            if let Err(err) = self.store.release_share_claim(&job_id_for_share, nonce) {
-                tracing::warn!(
-                    job_id = %job_id_for_share,
-                    nonce,
-                    error = %err,
-                    "failed to release share claim after provisional persistence"
-                );
-            }
 
             self.validation.record_hot_accept(
                 &session.address,
@@ -1194,18 +1218,21 @@ impl PoolEngine {
             })
         })();
 
-        if claimed && result.is_err() && release_claim_on_error {
-            if let Err(err) = self.store.release_share_claim(&job_id, nonce) {
+        // Credited shares and shares rejected on proof keep both the in-memory
+        // and persisted template-scoped claims; only retryable failures (store
+        // errors, busy, timeout) release them.
+        if result.is_err() && release_claim_on_error {
+            if let Err(err) = self.store.release_share_claim(&share_key, nonce) {
                 tracing::warn!(
                     job_id = %job_id,
+                    share_key = %share_key,
                     nonce,
                     error = %err,
-                    "failed to release share claim after submit failure"
+                    "failed to release share claim after retryable submit failure"
                 );
             }
+            self.seen_in_memory.release(&share_key, nonce);
         }
-
-        self.seen_in_memory.lock().remove(&seen_key);
         result
     }
 
@@ -1305,15 +1332,6 @@ impl PoolEngine {
                 nonce,
                 error = %err,
                 "failed to persist rejected share"
-            );
-            return;
-        }
-        if let Err(err) = self.store.release_share_claim(job_id, nonce) {
-            tracing::warn!(
-                job_id = %job_id,
-                nonce,
-                error = %err,
-                "failed to release share claim after rejected persistence"
             );
         }
     }
@@ -2126,20 +2144,25 @@ impl InMemoryStore {
     }
 
     fn has_persisted_share(&self, job_id: &str, nonce: u64) -> bool {
-        self.shares
-            .lock()
-            .iter()
-            .any(|share| share.job_id == job_id && share.nonce == nonce)
+        self.shares.lock().iter().any(|share| {
+            share.job_id == job_id
+                && share.nonce == nonce
+                && !(share.status == SHARE_STATUS_REJECTED
+                    && share
+                        .reject_reason
+                        .as_deref()
+                        .is_some_and(is_retryable_reject_reason))
+        })
     }
 }
 
 #[cfg(test)]
 impl ShareStore for InMemoryStore {
-    fn try_claim_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
+    fn try_claim_share(&self, job_id: &str, share_key: &str, nonce: u64) -> Result<bool> {
         if self.has_persisted_share(job_id, nonce) {
             return Ok(false);
         }
-        let key = (job_id.to_string(), nonce);
+        let key = (share_key.to_string(), nonce);
         let mut seen = self.seen.lock();
         if seen.contains(&key) {
             return Ok(false);
@@ -2148,8 +2171,8 @@ impl ShareStore for InMemoryStore {
         Ok(true)
     }
 
-    fn release_share_claim(&self, job_id: &str, nonce: u64) -> Result<()> {
-        self.seen.lock().remove(&(job_id.to_string(), nonce));
+    fn release_share_claim(&self, share_key: &str, nonce: u64) -> Result<()> {
+        self.seen.lock().remove(&(share_key.to_string(), nonce));
         Ok(())
     }
 
@@ -3704,7 +3727,7 @@ mod tests {
     }
 
     #[test]
-    fn seen_cache_entry_is_released_after_rejected_submit() {
+    fn proof_rejected_share_stays_claimed_for_its_template() {
         let mut cfg = cfg();
         cfg.validation_mode = "full".to_string();
 
@@ -3729,7 +3752,9 @@ mod tests {
             .submit("conn1", "job1".to_string(), 88, Some("ff".repeat(32)))
             .expect_err("expected invalid share proof");
         assert!(!err.to_string().is_empty());
-        assert!(engine.seen_in_memory.lock().is_empty());
+        assert!(engine
+            .seen_in_memory
+            .contains(&template_share_key(&job().header_base), 88));
 
         let second = engine
             .submit("conn1", "job1".to_string(), 88, Some("ff".repeat(32)))
@@ -3801,7 +3826,7 @@ mod tests {
     }
 
     #[test]
-    fn seen_cache_entry_is_released_after_accepted_submit() {
+    fn accepted_share_stays_claimed_for_its_template() {
         let cfg = cfg();
         let validation = ValidationEngine::new(cfg.clone(), Arc::new(DeterministicTestHasher));
         let validation = Arc::new(validation);
@@ -3822,7 +3847,170 @@ mod tests {
             .submit("conn1", "job1".to_string(), 89, Some("ff".repeat(32)))
             .expect("share should be accepted");
 
-        assert!(engine.seen_in_memory.lock().is_empty());
+        assert!(engine
+            .seen_in_memory
+            .contains(&template_share_key(&job().header_base), 89));
+    }
+
+    #[test]
+    fn same_template_rebind_cannot_recredit_an_accepted_nonce() {
+        let cfg = cfg();
+        let validation = Arc::new(ValidationEngine::new(
+            cfg.clone(),
+            Arc::new(DeterministicTestHasher),
+        ));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let address = test_miner_address();
+        // Two assignments over the same template and nonce window, as produced by
+        // a vardiff rebind with same_template_rebind_v1 (PreserveCurrent).
+        jobs.insert_assignment("assign-old", "job1", 1, Some(address.clone()), 1_000, 1_999);
+        jobs.insert_assignment("assign-new", "job1", 1, Some(address.clone()), 1_000, 1_999);
+        let store = Arc::new(InMemoryStore::default());
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode::default()),
+        );
+        engine
+            .login("conn1", address, "", 2, submit_hash_cap())
+            .expect("login");
+
+        engine
+            .submit(
+                "conn1",
+                "assign-old".to_string(),
+                1_234,
+                Some("ff".repeat(32)),
+            )
+            .expect("original share accepted");
+        let err = engine
+            .submit(
+                "conn1",
+                "assign-new".to_string(),
+                1_234,
+                Some("ff".repeat(32)),
+            )
+            .expect_err("replay under the rebound assignment must be rejected");
+        assert!(err.to_string().contains("duplicate share"));
+
+        // A fresh nonce on the new assignment is still accepted.
+        engine
+            .submit(
+                "conn1",
+                "assign-new".to_string(),
+                1_235,
+                Some("ff".repeat(32)),
+            )
+            .expect("new work under the rebound assignment is accepted");
+
+        let credited = store
+            .shares()
+            .into_iter()
+            .filter(|share| share.status != SHARE_STATUS_REJECTED)
+            .map(|share| share.nonce)
+            .collect::<Vec<_>>();
+        assert_eq!(credited, vec![1_234, 1_235]);
+    }
+
+    #[test]
+    fn same_header_under_another_template_job_is_still_a_duplicate() {
+        let cfg = cfg();
+        let validation = Arc::new(ValidationEngine::new(
+            cfg.clone(),
+            Arc::new(DeterministicTestHasher),
+        ));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        // A forced same-tip rotation can install a new template job id whose
+        // header is byte-identical to the previous one.
+        jobs.insert(Job {
+            id: "job1-rotated".to_string(),
+            ..job()
+        });
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+        engine
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
+            .expect("login");
+        engine
+            .submit("conn1", "job1".to_string(), 77, Some("ff".repeat(32)))
+            .expect("first share accepted");
+        let err = engine
+            .submit(
+                "conn1",
+                "job1-rotated".to_string(),
+                77,
+                Some("ff".repeat(32)),
+            )
+            .expect_err("same header and nonce is the same work");
+        assert!(err.to_string().contains("duplicate share"));
+    }
+
+    #[test]
+    fn retryable_validation_failure_releases_template_claim() {
+        struct SlowHasher;
+        impl PowHasher for SlowHasher {
+            fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
+                std::thread::sleep(Duration::from_millis(150));
+                Ok([0xff; 32])
+            }
+        }
+
+        let mut cfg = cfg();
+        cfg.validation_mode = "full".to_string();
+        cfg.regular_verifiers = 1;
+        cfg.regular_validation_queue = 1;
+        let validation = Arc::new(ValidationEngine::new(cfg.clone(), Arc::new(SlowHasher)));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let engine = Arc::new(PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        ));
+        engine
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
+            .expect("login");
+
+        // Occupy the single verifier and the single queue slot.
+        let background = (0..2)
+            .map(|offset| {
+                let engine = Arc::clone(&engine);
+                std::thread::spawn(move || {
+                    let _ = engine.submit(
+                        "conn1",
+                        "job1".to_string(),
+                        10 + offset,
+                        Some("ff".repeat(32)),
+                    );
+                })
+            })
+            .collect::<Vec<_>>();
+        std::thread::sleep(Duration::from_millis(40));
+        let err = engine
+            .submit("conn1", "job1".to_string(), 99, Some("ff".repeat(32)))
+            .expect_err("saturated validation should return busy");
+        assert!(err.to_string().contains("server busy"), "{err}");
+        assert!(!engine
+            .seen_in_memory
+            .contains(&template_share_key(&job().header_base), 99));
+        for handle in background {
+            handle.join().expect("background submit");
+        }
+
+        engine
+            .submit("conn1", "job1".to_string(), 99, Some("ff".repeat(32)))
+            .expect("retry after busy must not be treated as duplicate");
     }
 
     #[test]

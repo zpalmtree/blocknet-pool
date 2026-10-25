@@ -1433,6 +1433,10 @@ impl JobRepository for JobManager {
             nonce_end: Some(assignment.nonce_end),
         })
     }
+
+    fn template_retained(&self, template_job_id: &str) -> bool {
+        self.state.read().jobs.contains_key(template_job_id)
+    }
 }
 
 fn parse_template_into_job(template: &crate::node::BlockTemplate) -> anyhow::Result<Job> {

@@ -1932,7 +1932,12 @@ mod tests {
         struct RuntimeStartingStore;
 
         impl ShareStore for RuntimeStartingStore {
-            fn try_claim_share(&self, _job_id: &str, _nonce: u64) -> anyhow::Result<bool> {
+            fn try_claim_share(
+                &self,
+                _job_id: &str,
+                _share_key: &str,
+                _nonce: u64,
+            ) -> anyhow::Result<bool> {
                 Ok(true)
             }
 
