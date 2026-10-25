@@ -26,4 +26,6 @@ pool-common = { path = "../pool-common" }
 
 [dev-dependencies]
 bs58.workspace = true
+curve25519-dalek.workspace = true
+sha3.workspace = true
 tempfile.workspace = true

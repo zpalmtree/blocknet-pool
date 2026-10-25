@@ -3390,11 +3390,26 @@ mod tests {
         live_busy: bool,
     }
 
+    /// A checksummed mainnet address with canonical Ristretto keys, so payout
+    /// address validation accepts it.
     fn test_address(seed: u8) -> String {
-        let mut payload = [seed.max(1); 64];
-        payload[0] = seed.max(1);
-        bs58::encode(payload).into_string()
+        use curve25519_dalek::{RistrettoPoint, Scalar};
+        use sha3::{Digest as _, Sha3_256};
+
+        let spend = RistrettoPoint::mul_base(&Scalar::from(u64::from(seed) * 2 + 1));
+        let view = RistrettoPoint::mul_base(&Scalar::from(u64::from(seed) * 2 + 2));
+        let mut encoded = Vec::with_capacity(68);
+        encoded.extend_from_slice(spend.compress().as_bytes());
+        encoded.extend_from_slice(view.compress().as_bytes());
+        let mut hasher = Sha3_256::new();
+        hasher.update(b"blocknet_stealth_address_checksum");
+        hasher.update(b"blocknet_mainnet");
+        hasher.update(&encoded);
+        let checksum = hasher.finalize();
+        encoded.extend_from_slice(&checksum[..4]);
+        bs58::encode(encoded).into_string()
     }
+
 
     fn wallet_output(txid: &str, output_index: u32, amount: u64) -> WalletOutput {
         WalletOutput {
