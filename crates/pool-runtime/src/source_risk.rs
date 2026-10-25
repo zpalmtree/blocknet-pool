@@ -18,6 +18,12 @@
 //! different source's failures, which is what keeps someone logging in as a
 //! victim's public address from griefing the victim's own rigs.
 //!
+//! Shares accepted while sampling was degraded (overload Shed/Emergency) are
+//! remembered per pair and reviewed later: a sample of each pair's degraded
+//! shares is audited on the audit lane, largest unverified credit first. A
+//! failure strikes the pair (revoking all of its unverified credit); a pass
+//! clears the cohort, which then counts like any other provisional share.
+//!
 //! State is in-memory only. A Stratum restart forgets bans and which
 //! provisional shares came from which source; address-level checks still
 //! cover shares from before the restart.
@@ -40,6 +46,10 @@ const SOURCE_PRUNE_INTERVAL: Duration = Duration::from_secs(30);
 const SOURCE_MAX_TRACKED_SHARES: usize = 400_000;
 /// Hard bound on tracked pairs; idle pairs are evicted first.
 const SOURCE_MAX_TRACKED_PAIRS: usize = 200_000;
+/// Audits per pair per degraded-window review.
+const DEGRADED_REVIEW_MAX_SAMPLES: usize = 4;
+/// A review whose audits never reported back is retried after this long.
+const DEGRADED_REVIEW_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 /// Groups an IP for per-source accounting: IPv4 by full address, IPv6 by /64
 /// (one end-site/host allocation). IPv4-mapped IPv6 addresses are treated as
@@ -111,6 +121,13 @@ struct TrackedShare {
 }
 
 #[derive(Debug)]
+struct DegradedReview {
+    sampled: HashSet<i64>,
+    cohort: Vec<(i64, u64)>,
+    started_at: Instant,
+}
+
+#[derive(Debug)]
 struct Ban {
     until: Instant,
     reason: String,
@@ -146,11 +163,34 @@ struct PairEntry {
     strikes: StrikeCounter,
     ban: Option<Ban>,
     shares: VecDeque<TrackedShare>,
+    /// Provisional shares accepted while sampling was degraded, not yet
+    /// covered by a passing review: (share id, difficulty).
+    degraded_pending: Vec<(i64, u64)>,
+    degraded_review: Option<DegradedReview>,
     open_sessions: u32,
     last_seen: Instant,
 }
 
 impl PairEntry {
+    fn new(address: Arc<str>, ip_group: Arc<str>, now: Instant) -> Self {
+        Self {
+            address,
+            ip_group,
+            verified_ok: 0,
+            strikes: StrikeCounter::default(),
+            ban: None,
+            shares: VecDeque::new(),
+            degraded_pending: Vec::new(),
+            degraded_review: None,
+            open_sessions: 0,
+            last_seen: now,
+        }
+    }
+
+    fn has_degraded_work(&self) -> bool {
+        !self.degraded_pending.is_empty() || self.degraded_review.is_some()
+    }
+
     fn established(&self, now: Instant) -> bool {
         self.verified_ok >= SOURCE_ESTABLISHED_MIN_VERIFIED && self.strikes.active(now) == 0
     }
@@ -260,16 +300,7 @@ impl SourceRiskTracker {
         let pair = inner
             .pairs
             .entry(Arc::clone(&pair_arc))
-            .or_insert_with(|| PairEntry {
-                address: Arc::from(address),
-                ip_group: Arc::clone(&ip_arc),
-                verified_ok: 0,
-                strikes: StrikeCounter::default(),
-                ban: None,
-                shares: VecDeque::new(),
-                open_sessions: 0,
-                last_seen: now,
-            });
+            .or_insert_with(|| PairEntry::new(Arc::from(address), Arc::clone(&ip_arc), now));
         pair.open_sessions = pair.open_sessions.saturating_add(1);
         pair.last_seen = now;
         let address_arc = Arc::clone(&pair.address);
@@ -340,11 +371,15 @@ impl SourceRiskTracker {
             .is_some_and(|pair| pair.established(now))
     }
 
+    /// Tracks a provisional share. `degraded` marks shares accepted while
+    /// sampling was reduced or off, which are queued for later review.
     pub(crate) fn record_provisional(
         &self,
         source: &SourceRef,
         share_id: i64,
         created_at: SystemTime,
+        difficulty: u64,
+        degraded: bool,
     ) {
         let now = Instant::now();
         let mut inner = self.inner.lock();
@@ -362,6 +397,9 @@ impl SourceRiskTracker {
             share_id,
             created_at,
         });
+        if degraded {
+            pair.degraded_pending.push((share_id, difficulty.max(1)));
+        }
         pair.last_seen = now;
         inner
             .share_index
@@ -407,8 +445,101 @@ impl SourceRiskTracker {
         };
         if let Some(pair) = inner.pairs.get_mut(&pair_key) {
             pair.verified_ok = pair.verified_ok.saturating_add(1);
+            Self::settle_review_sample(pair, share_id);
         }
         true
+    }
+
+    /// An audit of this share was skipped because it was already settled
+    /// (verified elsewhere, or revoked). Counts as done for any review.
+    pub(crate) fn record_audit_skipped(&self, share_id: i64) {
+        let mut inner = self.inner.lock();
+        let Some((pair_key, _)) = inner.share_index.get(&share_id).cloned() else {
+            return;
+        };
+        if let Some(pair) = inner.pairs.get_mut(&pair_key) {
+            Self::settle_review_sample(pair, share_id);
+        }
+    }
+
+    fn settle_review_sample(pair: &mut PairEntry, share_id: i64) {
+        let done = match pair.degraded_review.as_mut() {
+            Some(review) => {
+                review.sampled.remove(&share_id);
+                review.sampled.is_empty()
+            }
+            None => false,
+        };
+        if done {
+            // Every sampled share passed: the cohort is cleared and now counts
+            // like any other provisional share.
+            pair.degraded_review = None;
+        }
+    }
+
+    /// Picks degraded-window shares to audit, largest unverified credit
+    /// first: `ceil(n * sample_rate)` per pair, between 1 and 4.
+    pub(crate) fn take_degraded_review_batch(&self, budget: usize, sample_rate: f64) -> Vec<i64> {
+        use rand::seq::SliceRandom;
+
+        if budget == 0 {
+            return Vec::new();
+        }
+        let now = Instant::now();
+        let mut inner = self.inner.lock();
+        let mut candidates = Vec::new();
+        for (key, pair) in inner.pairs.iter_mut() {
+            if pair.degraded_review.as_ref().is_some_and(|review| {
+                now.saturating_duration_since(review.started_at) >= DEGRADED_REVIEW_TIMEOUT
+            }) {
+                if let Some(review) = pair.degraded_review.take() {
+                    pair.degraded_pending.extend(review.cohort);
+                }
+            }
+            if pair.degraded_review.is_some() || pair.degraded_pending.is_empty() {
+                continue;
+            }
+            let at_stake = pair
+                .degraded_pending
+                .iter()
+                .map(|(_, difficulty)| *difficulty)
+                .fold(0u64, u64::saturating_add);
+            candidates.push((Arc::clone(key), at_stake));
+        }
+        candidates.sort_by(|left, right| right.1.cmp(&left.1));
+
+        let rate = if sample_rate.is_finite() {
+            sample_rate.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let mut rng = rand::thread_rng();
+        let mut picked = Vec::new();
+        for (key, _) in candidates {
+            if picked.len() >= budget {
+                break;
+            }
+            let Some(pair) = inner.pairs.get_mut(&key) else {
+                continue;
+            };
+            let cohort = std::mem::take(&mut pair.degraded_pending);
+            let wanted = ((cohort.len() as f64) * rate).ceil() as usize;
+            let samples = wanted
+                .clamp(1, DEGRADED_REVIEW_MAX_SAMPLES)
+                .min(cohort.len())
+                .min(budget - picked.len());
+            let sampled = cohort
+                .choose_multiple(&mut rng, samples)
+                .map(|(id, _)| *id)
+                .collect::<HashSet<_>>();
+            picked.extend(sampled.iter().copied());
+            pair.degraded_review = Some(DegradedReview {
+                sampled,
+                cohort,
+                started_at: now,
+            });
+        }
+        picked
     }
 
     fn drain_pair_shares_locked(
@@ -419,6 +550,8 @@ impl SourceRiskTracker {
         if pair.shares.is_empty() {
             return None;
         }
+        pair.degraded_pending.clear();
+        pair.degraded_review = None;
         let ids = pair
             .shares
             .drain(..)
@@ -451,16 +584,11 @@ impl SourceRiskTracker {
                         let arc: Arc<str> = Arc::from(key.as_str());
                         inner.pairs.insert(
                             Arc::clone(&arc),
-                            PairEntry {
-                                address: Arc::clone(&source.address),
-                                ip_group: Arc::clone(&source.ip_group),
-                                verified_ok: 0,
-                                strikes: StrikeCounter::default(),
-                                ban: None,
-                                shares: VecDeque::new(),
-                                open_sessions: 0,
-                                last_seen: now,
-                            },
+                            PairEntry::new(
+                                Arc::clone(&source.address),
+                                Arc::clone(&source.ip_group),
+                                now,
+                            ),
                         );
                         inner
                             .ips
@@ -571,12 +699,32 @@ impl SourceRiskTracker {
             }
             window /= 2;
         }
+        {
+            let Inner {
+                pairs, share_index, ..
+            } = &mut *inner;
+            for pair in pairs.values_mut() {
+                if !pair.has_degraded_work() {
+                    continue;
+                }
+                pair.degraded_pending
+                    .retain(|(id, _)| share_index.contains_key(id));
+                let drop_review = pair.degraded_review.as_mut().is_some_and(|review| {
+                    review.cohort.retain(|(id, _)| share_index.contains_key(id));
+                    review.cohort.is_empty()
+                });
+                if drop_review {
+                    pair.degraded_review = None;
+                }
+            }
+        }
 
         let idle_after = self.policy.strike_window.max(Duration::from_secs(60));
         let mut removed = Vec::new();
         inner.pairs.retain(|key, pair| {
             let keep = pair.open_sessions > 0
                 || !pair.shares.is_empty()
+                || pair.has_degraded_work()
                 || pair.banned(now).is_some()
                 || pair.strikes.active(now) > 0
                 || now.saturating_duration_since(pair.last_seen) < idle_after;
@@ -664,9 +812,9 @@ mod tests {
         establish(&tracker, &victim_rig);
         let attacker_a = tracker.open_session("victim", "198.51.100.9").unwrap();
         let attacker_b = tracker.open_session("victim", "198.51.100.9").unwrap();
-        tracker.record_provisional(&victim_rig, 1, now);
-        tracker.record_provisional(&attacker_a, 2, now);
-        tracker.record_provisional(&attacker_b, 3, now);
+        tracker.record_provisional(&victim_rig, 1, now, 1, false);
+        tracker.record_provisional(&attacker_a, 2, now, 1, false);
+        tracker.record_provisional(&attacker_b, 3, now, 1, false);
 
         let outcome = tracker.strike(&attacker_a, "invalid share proof");
         assert_eq!(outcome.revoked, vec![("victim".to_string(), vec![2, 3])]);
@@ -688,9 +836,9 @@ mod tests {
         let now = SystemTime::now();
         let honest = tracker.open_session("honest", "198.51.100.9").unwrap();
         establish(&tracker, &honest);
-        tracker.record_provisional(&honest, 10, now);
+        tracker.record_provisional(&honest, 10, now, 1, false);
         let throwaway = tracker.open_session("throwaway-1", "198.51.100.9").unwrap();
-        tracker.record_provisional(&throwaway, 11, now);
+        tracker.record_provisional(&throwaway, 11, now, 1, false);
         let fake_1 = tracker.open_session("throwaway-2", "198.51.100.9").unwrap();
         let fake_2 = tracker.open_session("throwaway-3", "198.51.100.9").unwrap();
 
@@ -728,15 +876,64 @@ mod tests {
     fn audit_attribution_uses_share_index() {
         let tracker = SourceRiskTracker::new(policy());
         let source = tracker.open_session("addr", "192.0.2.1").unwrap();
-        tracker.record_provisional(&source, 42, SystemTime::now());
+        tracker.record_provisional(&source, 42, SystemTime::now(), 1, false);
         assert_eq!(tracker.source_for_share(42), Some(source.clone()));
         assert!(tracker.record_audit_ok(42));
         assert!(!tracker.record_audit_ok(42));
         assert!(tracker.source_for_share(99).is_none());
         tracker.close_session(source.session_id);
         // Closed sessions still leave the pair attributable for later audits.
-        tracker.record_provisional(&source, 43, SystemTime::now());
+        tracker.record_provisional(&source, 43, SystemTime::now(), 1, false);
         assert_eq!(tracker.tracked_shares(), 0);
+    }
+
+    #[test]
+    fn degraded_shares_are_sampled_per_pair_and_cleared_on_pass() {
+        let tracker = SourceRiskTracker::new(policy());
+        let now = SystemTime::now();
+        let big = tracker.open_session("big", "192.0.2.1").unwrap();
+        let small = tracker.open_session("small", "192.0.2.2").unwrap();
+        for id in 1..=40 {
+            tracker.record_provisional(&big, id, now, 100, true);
+        }
+        tracker.record_provisional(&big, 99, now, 100, false);
+        tracker.record_provisional(&small, 200, now, 1, true);
+
+        // Budget 1: the pair with the most degraded credit is reviewed first.
+        let first = tracker.take_degraded_review_batch(1, 0.05);
+        assert_eq!(first.len(), 1);
+        assert!((1..=40).contains(&first[0]));
+        // The big pair is in review; the small one comes next.
+        let second = tracker.take_degraded_review_batch(8, 0.05);
+        assert_eq!(second, vec![200]);
+        assert!(tracker.take_degraded_review_batch(8, 0.05).is_empty());
+
+        // Passing the sampled audit clears the cohort.
+        assert!(tracker.record_audit_ok(first[0]));
+        tracker.record_provisional(&big, 41, now, 100, true);
+        let third = tracker.take_degraded_review_batch(8, 0.05);
+        assert_eq!(
+            third,
+            vec![41],
+            "only shares after the passed review remain"
+        );
+    }
+
+    #[test]
+    fn degraded_review_sample_size_scales_with_volume() {
+        let tracker = SourceRiskTracker::new(policy());
+        let source = tracker.open_session("addr", "192.0.2.1").unwrap();
+        for id in 1..=1_000 {
+            tracker.record_provisional(&source, id, SystemTime::now(), 1, true);
+        }
+        let batch = tracker.take_degraded_review_batch(16, 0.05);
+        assert_eq!(batch.len(), DEGRADED_REVIEW_MAX_SAMPLES);
+        let unique = batch.iter().collect::<HashSet<_>>();
+        assert_eq!(unique.len(), batch.len());
+        // A strike revokes the whole cohort and ends the review.
+        let outcome = tracker.strike(&source, "invalid share proof");
+        assert_eq!(outcome.revoked_share_count(), 1_000);
+        assert!(tracker.take_degraded_review_batch(16, 0.05).is_empty());
     }
 
     #[test]
@@ -745,8 +942,14 @@ mod tests {
         policy.revoke_window = Duration::from_secs(60);
         let tracker = SourceRiskTracker::new(policy);
         let source = tracker.open_session("addr", "192.0.2.1").unwrap();
-        tracker.record_provisional(&source, 1, SystemTime::now() - Duration::from_secs(120));
-        tracker.record_provisional(&source, 2, SystemTime::now());
+        tracker.record_provisional(
+            &source,
+            1,
+            SystemTime::now() - Duration::from_secs(120),
+            1,
+            false,
+        );
+        tracker.record_provisional(&source, 2, SystemTime::now(), 1, false);
         tracker.inner.lock().last_prune = None;
         let mut inner = tracker.inner.lock();
         tracker.prune_if_due_locked(&mut inner, Instant::now());

@@ -1175,6 +1175,22 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(rows.into_iter().map(row_to_share).collect())
     }
 
+    pub(crate) fn get_provisional_shares_by_ids(&self, ids: &[i64]) -> Result<Vec<DbShare>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids = ids.to_vec();
+        let rows = self.conn().query(
+            "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, claimed_hash, created_at
+             FROM shares
+             WHERE id = ANY($1)
+               AND status = 'provisional'
+             ORDER BY id ASC",
+            &[&ids],
+        )?;
+        Ok(rows.into_iter().map(row_to_share).collect())
+    }
+
     pub(crate) fn get_provisional_shares_for_miner_since(
         &self,
         address: &str,

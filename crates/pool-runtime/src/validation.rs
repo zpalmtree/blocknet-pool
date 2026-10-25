@@ -131,6 +131,14 @@ pub(crate) trait AuditFeedback: Send + Sync + 'static {
     fn quarantine_unattributed(&self, _address: &str, _reason: &str) -> Option<SystemTime> {
         None
     }
+
+    /// An audit found its share already settled (e.g. revoked).
+    fn audit_skipped(&self, _share_id: i64) {}
+
+    /// Share ids accepted while sampling was degraded that are due for review.
+    fn degraded_review_batch(&self, _budget: usize) -> Vec<i64> {
+        Vec::new()
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -252,6 +260,11 @@ pub(crate) trait ValidationStateStore: Send + Sync + 'static {
         now: SystemTime,
         limit: usize,
     ) -> Result<Vec<PendingAuditShare>>;
+
+    /// Still-provisional shares by id, with replay data, for review audits.
+    fn load_provisional_audit_shares_by_ids(&self, _ids: &[i64]) -> Result<Vec<PendingAuditShare>> {
+        Ok(Vec::new())
+    }
 }
 
 #[cfg(test)]
@@ -479,6 +492,7 @@ pub(crate) enum ValidationAuditSource {
     PayoutCoverage,
     ProvisionalBacklog,
     Probation,
+    DegradedReview,
 }
 
 #[derive(Debug, Clone)]
@@ -932,6 +946,55 @@ impl ValidationInner {
         let overload_mode = self.evaluate_overload(Instant::now());
         if overload_mode == OverloadMode::Normal {
             self.schedule_background_audits(now);
+        }
+        // Degraded-window reviews run in every mode: they use only the
+        // dedicated audit workers' bounded queue, never the regular verifiers.
+        self.schedule_degraded_reviews();
+    }
+
+    fn schedule_degraded_reviews(&self) {
+        let Some(feedback) = self.audit_feedback() else {
+            return;
+        };
+        let target_depth = self
+            .config
+            .audit_verifier_count()
+            .saturating_mul(VALIDATION_AUDIT_TARGET_QUEUE_MULTIPLIER)
+            .max(1);
+        let depth = self.audit_queue.snapshot(Instant::now()).depth;
+        let budget = target_depth.saturating_sub(depth);
+        if budget == 0 {
+            return;
+        }
+        let ids = feedback.degraded_review_batch(budget);
+        if ids.is_empty() {
+            return;
+        }
+        let shares = match self.state_store.load_provisional_audit_shares_by_ids(&ids) {
+            Ok(shares) => shares,
+            Err(err) => {
+                tracing::warn!(
+                    shares = ids.len(),
+                    error = %err,
+                    "failed loading degraded-window review shares"
+                );
+                Vec::new()
+            }
+        };
+        let loaded = shares
+            .iter()
+            .map(|share| share.share_id)
+            .collect::<HashSet<_>>();
+        for id in ids.iter().filter(|id| !loaded.contains(id)) {
+            // Already verified or revoked; nothing left to review.
+            feedback.audit_skipped(*id);
+        }
+        let scheduled = shares.len();
+        for share in shares {
+            self.enqueue_background_audit(share, ValidationAuditSource::DegradedReview);
+        }
+        if scheduled > 0 {
+            tracing::debug!(scheduled, "scheduled degraded-window validation reviews");
         }
     }
 
@@ -1637,6 +1700,9 @@ impl ValidationInner {
             Ok(true) => {}
             Ok(false) => {
                 // Settled meanwhile (typically revoked by a source strike).
+                if let Some(feedback) = self.audit_feedback() {
+                    feedback.audit_skipped(queued.share.share_id);
+                }
                 tracing::debug!(
                     address = %queued.share.miner,
                     share_id = queued.share.share_id,

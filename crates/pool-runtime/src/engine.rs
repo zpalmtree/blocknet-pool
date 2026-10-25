@@ -22,7 +22,7 @@ use crate::share_dedupe::{template_share_key, NonceLedger};
 use crate::source_risk::{ip_group_key, SourcePolicy, SourceRef, SourceRiskTracker};
 use crate::telemetry::QueueTracker;
 use crate::validation::{
-    AuditAttribution, AuditFeedback, ProbationReservation, ValidationEngine,
+    AuditAttribution, AuditFeedback, OverloadMode, ProbationReservation, ValidationEngine,
     ValidationFollowupAction, ValidationResult, ValidationTask, SHARE_STATUS_PROVISIONAL,
     SHARE_STATUS_REJECTED, SHARE_STATUS_VERIFIED,
 };
@@ -565,6 +565,15 @@ impl AuditFeedback for EngineAuditFeedback {
 
     fn quarantine_unattributed(&self, address: &str, reason: &str) -> Option<SystemTime> {
         escalate_forced_validation_quarantine(&self.cfg, self.store.as_ref(), address, reason)
+    }
+
+    fn audit_skipped(&self, share_id: i64) {
+        self.tracker.record_audit_skipped(share_id);
+    }
+
+    fn degraded_review_batch(&self, budget: usize) -> Vec<i64> {
+        self.tracker
+            .take_degraded_review_batch(budget, self.cfg.sample_rate)
     }
 }
 
@@ -1434,8 +1443,15 @@ impl PoolEngine {
                     return Err(err);
                 }
             };
-            self.source_risk
-                .record_provisional(&session.source, share_id, created_at);
+            // Shares accepted while sampling is reduced or off are queued for
+            // a later per-source review instead of escaping verification.
+            self.source_risk.record_provisional(
+                &session.source,
+                share_id,
+                created_at,
+                share_difficulty,
+                plan.overload_mode != OverloadMode::Normal,
+            );
             if probation_reserved {
                 self.validation.enqueue_probation_audit(
                     PendingAuditShare {
@@ -2405,6 +2421,24 @@ impl InMemoryStore {
             .copied()
     }
 
+    /// Test audit completion: applies only to still-provisional shares.
+    pub(crate) fn complete_audit(&self, share_id: i64, status: &'static str) -> bool {
+        let mut shares = self.shares.lock();
+        let Some(share) = usize::try_from(share_id)
+            .ok()
+            .and_then(|id| id.checked_sub(1))
+            .and_then(|idx| shares.get_mut(idx))
+        else {
+            return false;
+        };
+        if share.status != SHARE_STATUS_PROVISIONAL {
+            return false;
+        }
+        share.status = status;
+        share.was_sampled = true;
+        true
+    }
+
     fn clear_address_risk_history(&self, address: &str) -> Result<()> {
         self.address_risk.lock().remove(address);
         Ok(())
@@ -3121,6 +3155,186 @@ mod tests {
         }
         assert!(engine.source_blocked(cheater));
         assert_eq!(statuses(&store, 1..=1), vec![SHARE_STATUS_REJECTED]);
+    }
+
+    /// Validation state store that audits shares held by an InMemoryStore.
+    struct InMemoryShareAuditStore {
+        shares: Arc<InMemoryStore>,
+        header_base: Vec<u8>,
+        network_target: [u8; 32],
+    }
+
+    impl crate::validation::ValidationStateStore for InMemoryShareAuditStore {
+        fn load_validation_state(
+            &self,
+            _state_cutoff: SystemTime,
+            _provisional_cutoff: SystemTime,
+            _accepted_window_cutoff: SystemTime,
+            _now: SystemTime,
+        ) -> Result<crate::validation::LoadedValidationState> {
+            Ok(Default::default())
+        }
+        fn upsert_validation_state(
+            &self,
+            _state: &crate::validation::PersistedValidationAddressState,
+        ) -> Result<()> {
+            Ok(())
+        }
+        fn add_validation_provisional(
+            &self,
+            _address: &str,
+            _share_id: Option<i64>,
+            _created_at: SystemTime,
+        ) -> Result<()> {
+            Ok(())
+        }
+        fn clean_validation_state(
+            &self,
+            _state_cutoff: SystemTime,
+            _provisional_cutoff: SystemTime,
+            _now: SystemTime,
+        ) -> Result<()> {
+            Ok(())
+        }
+        fn latest_validation_clear_event_id(&self) -> Result<i64> {
+            Ok(0)
+        }
+        fn load_validation_clear_events_since(
+            &self,
+            _cursor: i64,
+        ) -> Result<Vec<crate::validation::ValidationClearEvent>> {
+            Ok(Vec::new())
+        }
+        fn complete_validation_audit(
+            &self,
+            update: &pool_common::db::ShareReplayUpdate,
+        ) -> Result<bool> {
+            let status = if update.status == SHARE_STATUS_VERIFIED {
+                SHARE_STATUS_VERIFIED
+            } else {
+                SHARE_STATUS_REJECTED
+            };
+            Ok(self.shares.complete_audit(update.share_id, status))
+        }
+        fn load_recent_provisional_audit_shares(
+            &self,
+            _address: &str,
+            _provisional_cutoff: SystemTime,
+            _limit: usize,
+        ) -> Result<Vec<PendingAuditShare>> {
+            Ok(Vec::new())
+        }
+        fn load_pending_payout_audit_shares(
+            &self,
+            _address: &str,
+            _config: &Config,
+            _now: SystemTime,
+            _limit: usize,
+        ) -> Result<Vec<PendingAuditShare>> {
+            Ok(Vec::new())
+        }
+        fn load_provisional_audit_shares_by_ids(
+            &self,
+            ids: &[i64],
+        ) -> Result<Vec<PendingAuditShare>> {
+            let shares = self.shares.shares();
+            Ok(ids
+                .iter()
+                .filter_map(|id| {
+                    let share = shares.get(usize::try_from(*id).ok()?.checked_sub(1)?)?;
+                    (share.status == SHARE_STATUS_PROVISIONAL).then(|| PendingAuditShare {
+                        share_id: *id,
+                        job_id: share.job_id.clone(),
+                        miner: share.miner.clone(),
+                        worker: share.worker.clone(),
+                        difficulty: share.difficulty,
+                        nonce: share.nonce,
+                        claimed_hash: share
+                            .claimed_hash
+                            .as_deref()
+                            .and_then(|hash| parse_hash_hex(hash).ok()),
+                        header_base: self.header_base.clone(),
+                        network_target: self.network_target,
+                        created_at: share.created_at,
+                    })
+                })
+                .collect())
+        }
+    }
+
+    #[test]
+    fn shares_accepted_during_emergency_are_reviewed_per_source_afterwards() {
+        let mut cfg = cfg();
+        cfg.provisional_share_delay = "0s".to_string();
+        cfg.payout_provisional_cap_multiplier = 0.0;
+        cfg.sample_rate = 0.05;
+        cfg.audit_verifiers = 1;
+        let store = Arc::new(InMemoryStore::default());
+        let validation = Arc::new(ValidationEngine::new_with_state_store(
+            cfg.clone(),
+            Arc::new(NonceHasher),
+            Arc::new(InMemoryShareAuditStore {
+                shares: Arc::clone(&store),
+                header_base: job().header_base,
+                network_target: job().network_target,
+            }),
+        ));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let engine = PoolEngine::new(
+            cfg,
+            Arc::clone(&validation),
+            jobs,
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode::default()),
+        );
+
+        // Simulate a saturated submit lane: the pool enters Emergency, where
+        // the sample rate is 0 and no share is verified at accept time.
+        let pressure = Arc::new(QueueTracker::new(8));
+        pressure.push(Instant::now() - Duration::from_secs(60));
+        validation.attach_submit_regular_queue(Arc::clone(&pressure));
+        assert_eq!(validation.snapshot().overload_mode, OverloadMode::Emergency);
+
+        let honest = "203.0.113.1:4000";
+        let attacker = "198.51.100.9:5000";
+        engine
+            .login(honest, test_miner_address(), "rig", 2, submit_hash_cap())
+            .expect("honest login");
+        engine
+            .login(attacker, other_miner_address(), "x", 2, submit_hash_cap())
+            .expect("attacker login");
+        for nonce in 1..=3 {
+            engine
+                .submit(
+                    honest,
+                    "job1".to_string(),
+                    nonce,
+                    NonceHasher::honest(nonce),
+                )
+                .expect("honest share accepted unverified during emergency");
+            engine
+                .submit(attacker, "job1".to_string(), 100 + nonce, fake_claim())
+                .expect("fake accepted unverified during emergency");
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(6);
+        while !engine.source_blocked(attacker) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            engine.source_blocked(attacker),
+            "the degraded-window review catches the fake source even while overloaded"
+        );
+        assert_eq!(statuses(&store, 101..=103), vec![SHARE_STATUS_REJECTED; 3]);
+        let honest_statuses = statuses(&store, 1..=3);
+        assert!(
+            honest_statuses
+                .iter()
+                .all(|status| *status != SHARE_STATUS_REJECTED),
+            "honest degraded-window credit is kept: {honest_statuses:?}"
+        );
+        assert!(!engine.source_blocked(honest));
     }
 
     #[test]
@@ -4688,10 +4902,14 @@ mod tests {
 
     #[test]
     fn retryable_validation_failure_releases_template_claim() {
-        struct SlowHasher;
-        impl PowHasher for SlowHasher {
-            fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
-                std::thread::sleep(Duration::from_millis(150));
+        // Nonces 10/11 block in the hasher until released, so the single
+        // verifier and the single queue slot are deterministically occupied.
+        struct GatedHasher(flume::Receiver<()>);
+        impl PowHasher for GatedHasher {
+            fn hash(&self, _header_base: &[u8], nonce: u64) -> anyhow::Result<[u8; 32]> {
+                if nonce == 10 || nonce == 11 {
+                    let _ = self.0.recv_timeout(Duration::from_secs(5));
+                }
                 Ok([0xff; 32])
             }
         }
@@ -4700,12 +4918,16 @@ mod tests {
         cfg.validation_mode = "full".to_string();
         cfg.regular_verifiers = 1;
         cfg.regular_validation_queue = 1;
-        let validation = Arc::new(ValidationEngine::new(cfg.clone(), Arc::new(SlowHasher)));
+        let (release_tx, release_rx) = flume::unbounded();
+        let validation = Arc::new(ValidationEngine::new(
+            cfg.clone(),
+            Arc::new(GatedHasher(release_rx)),
+        ));
         let jobs = Arc::new(InMemoryJobs::default());
         jobs.insert(job());
         let engine = Arc::new(PoolEngine::new(
             cfg,
-            validation,
+            Arc::clone(&validation),
             jobs,
             Arc::new(InMemoryStore::default()),
             Arc::new(InMemoryNode::default()),
@@ -4714,21 +4936,25 @@ mod tests {
             .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
             .expect("login");
 
-        // Occupy the single verifier and the single queue slot.
-        let background = (0..2)
-            .map(|offset| {
-                let engine = Arc::clone(&engine);
-                std::thread::spawn(move || {
-                    let _ = engine.submit(
-                        "conn1",
-                        "job1".to_string(),
-                        10 + offset,
-                        Some("ff".repeat(32)),
-                    );
-                })
+        let wait_for =
+            |what: &str, ready: &dyn Fn(&crate::validation::ValidationSnapshot) -> bool| {
+                let deadline = Instant::now() + Duration::from_secs(3);
+                while !ready(&validation.snapshot()) {
+                    assert!(Instant::now() < deadline, "timed out waiting for {what}");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            };
+        let spawn_submit = |nonce: u64| {
+            let engine = Arc::clone(&engine);
+            std::thread::spawn(move || {
+                let _ = engine.submit("conn1", "job1".to_string(), nonce, Some("ff".repeat(32)));
             })
-            .collect::<Vec<_>>();
-        std::thread::sleep(Duration::from_millis(40));
+        };
+        let first = spawn_submit(10);
+        wait_for("verifier busy", &|snap| snap.in_flight == 1);
+        let second = spawn_submit(11);
+        wait_for("queue slot taken", &|snap| snap.regular_queue_depth == 1);
+        let background = vec![first, second];
         let err = engine
             .submit("conn1", "job1".to_string(), 99, Some("ff".repeat(32)))
             .expect_err("saturated validation should return busy");
@@ -4736,6 +4962,8 @@ mod tests {
         assert!(!engine
             .seen_in_memory
             .contains(&template_share_key(&job().header_base), 99));
+        release_tx.send(()).unwrap();
+        release_tx.send(()).unwrap();
         for handle in background {
             handle.join().expect("background submit");
         }
