@@ -20,7 +20,7 @@ execFileSync(process.execPath, [new URL('./check-blog.mjs', import.meta.url).pat
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const jsonLd = (d) => `<script type="application/ld+json">${JSON.stringify(d).replace(/</g, '\\u003c')}</script>`;
 const iso = (d) => new Date(d).toISOString().slice(0, 10);
-const nice = (d, lang) => new Intl.DateTimeFormat(lang, { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }).format(new Date(d));
+const nice = (d, lang) => new Intl.DateTimeFormat(lang, { calendar: 'gregory', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }).format(new Date(d));
 const def = (code) => LOCALES.find((l) => l.code === code);
 
 function renderMarkdown(body, locale) {

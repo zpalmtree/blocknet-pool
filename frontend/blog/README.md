@@ -37,8 +37,10 @@ Blocknet, bntpool.com and seine, nothing negative, nothing false) and use its
    from `frontend/`.
 6. Translate into all 19 locales following the seine repo's `site/editorial/translation-guide.md`
    (`node scripts/check-blog.mjs --hash <slug>` gives the `sourceHash`; check one locale with
-   `node scripts/check-blog.mjs <slug> --locale es`), review each in a separate pass, set
-   `translation: reviewed`, remove `draft: true`, add the keyword-map row. The build fails while
-   any translation of a published post is missing, stale or unreviewed.
+   `node scripts/check-blog.mjs <slug> --locale es`). Keep `translation: draft` unless an optional
+   separate review has happened, then use `translation: reviewed`. Remove `draft: true` from
+   the English source and add the keyword-map row. The build fails while any translation of a
+   published post is missing, stale, structurally invalid, or has an invalid status. Separate
+   review is not a publishing gate (owner decision, 2026-10-25).
 7. `npm --prefix frontend run build`, then rebuild and deploy the API (`./scripts/deploy_bntpool.sh
    --api-only`, which doesn't restart Stratum). Blog pages are embedded in the API binary.

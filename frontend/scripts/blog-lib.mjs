@@ -80,7 +80,7 @@ export function listSlugs() {
 }
 
 // Scripts written without spaces between words are counted by character.
-const CJK = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/g;
+const CJK = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]/g;
 const THAI = /[\u0e00-\u0e7f]/g;
 export function readingMinutes(body) {
   const text = body.replace(/```[\s\S]*?```/g, ' ').replace(/<[^>]+>/g, ' ');

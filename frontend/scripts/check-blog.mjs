@@ -9,7 +9,7 @@
 //   node scripts/check-blog.mjs <slug> --locale es   only the es translation (comma-separate several)
 //
 // Errors: forbidden claims, a missing keyword-map row, an H1 in the body, broken internal
-// links, a missing, stale or unreviewed translation, or a translation whose structure
+// links, a missing or stale translation, or a translation whose structure
 // (FAQ count, blocks, code, headings, external links) doesn't match its source.
 // Warnings: the length and structure rules in editorial/README.md.
 // The overlap report is advisory: it finds shared eight-word phrases, not shared intent.
@@ -167,7 +167,7 @@ function checkTranslation(src, locale) {
     for (const k of ['date', 'updated', 'related', 'draft', 'image']) if (k in d) errors.push(tag(`'${k}' belongs in index.md only`));
     const want = sourceHash(src.raw);
     if (d.sourceHash !== want) errors.push(tag(`stale: sourceHash ${d.sourceHash ?? '(none)'} but index.md is ${want}; update the changed passages, then the hash`));
-    if (d.translation !== 'reviewed') errors.push(tag("translation must be 'reviewed' after a separate review pass"));
+    if (!['draft', 'reviewed'].includes(d.translation)) errors.push(tag("translation must be 'draft' or 'reviewed' (review is optional)"));
     claims([prose(t.body), d.title, d.description, ...(d.faq ?? []).flatMap((f) => [f.q, f.a])].join(' '), errors, warnings);
     if ((d.faq ?? []).length !== (src.data.faq ?? []).length) errors.push(tag('FAQ entry count differs from the source'));
     for (const f of d.faq ?? []) if (/[`*[\]<>\n]/.test(f.a ?? '')) errors.push(tag(`FAQ answer must be one line of plain text: ${f.q}`));
