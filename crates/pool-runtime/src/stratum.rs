@@ -14,9 +14,11 @@ use tokio::sync::{broadcast, mpsc, Notify};
 use crate::config::{Config, CANDIDATE_SUBMIT_QUEUE_SIZE};
 use crate::dev_fee::is_seine_dev_fee_address;
 use crate::engine::{
-    canonical_share_reject_reason, PoolEngine, SubmitAck, SubmitMetadata, SubmitQueueRoute,
+    canonical_share_reject_reason, is_retryable_reject_reason, PoolEngine, SubmitAck,
+    SubmitMetadata, SubmitQueueRoute,
 };
 use crate::jobs::{AssignmentRangeMode, JobManager};
+use crate::source_risk::ip_group_key;
 use crate::stats::PoolStats;
 use crate::telemetry::{PercentileSummary, QueueTracker};
 use pool_common::protocol::{
@@ -39,6 +41,12 @@ const POST_LOGIN_IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const CANDIDATE_CLAIM_WINDOW: Duration = Duration::from_secs(60);
 const CANDIDATE_CLAIM_MAX_PER_WINDOW: usize = 4;
 const CANDIDATE_CLAIM_MAX_INFLIGHT: usize = 1;
+// Addresses are free, so address-scoped limits alone let one host flood the
+// single-worker candidate lane with throwaway addresses. Bound the IP group
+// (IPv4 address / IPv6 /64) and the connection as well.
+const CANDIDATE_CLAIM_IP_MAX_PER_WINDOW: usize = 8;
+const CANDIDATE_CLAIM_IP_MAX_INFLIGHT: usize = 2;
+const CANDIDATE_CLAIM_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 const CANDIDATE_SUBMIT_WORKERS: usize = 1;
 const REGULAR_SUBMIT_WORKERS: usize = 4;
 
@@ -157,18 +165,30 @@ struct CandidateClaimState {
     in_flight: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CandidateClaimLimit {
+    max_per_window: usize,
+    max_inflight: usize,
+}
+
+#[derive(Debug, Default)]
+struct CandidateClaimTrackerState {
+    entries: HashMap<String, CandidateClaimState>,
+    last_sweep: Option<Instant>,
+}
+
 #[derive(Debug)]
 struct CandidateClaimTracker {
     window: Duration,
     max_per_window: usize,
     max_inflight: usize,
-    state: Mutex<HashMap<String, CandidateClaimState>>,
+    state: Mutex<CandidateClaimTrackerState>,
 }
 
 #[derive(Debug, Clone)]
 struct CandidateClaimPermit {
     tracker: Arc<CandidateClaimTracker>,
-    key: String,
+    keys: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -192,55 +212,133 @@ struct SubmitDispatcher {
     candidate_worker_failure: AtomicU64,
 }
 
+impl CandidateClaimState {
+    fn prune(&mut self, now: Instant, window: Duration) {
+        while self
+            .recent
+            .front()
+            .is_some_and(|seen_at| now.saturating_duration_since(*seen_at) >= window)
+        {
+            self.recent.pop_front();
+        }
+    }
+
+    fn idle(&self) -> bool {
+        self.in_flight == 0 && self.recent.is_empty()
+    }
+}
+
 impl CandidateClaimTracker {
     fn new(window: Duration, max_per_window: usize, max_inflight: usize) -> Arc<Self> {
         Arc::new(Self {
             window: window.max(Duration::from_secs(1)),
             max_per_window: max_per_window.max(1),
             max_inflight: max_inflight.max(1),
-            state: Mutex::new(HashMap::new()),
+            state: Mutex::new(CandidateClaimTrackerState::default()),
         })
     }
 
-    fn try_acquire(self: &Arc<Self>, key: String, now: Instant) -> Result<CandidateClaimPermit> {
-        let mut state = self.state.lock();
-        let entry = state.entry(key.clone()).or_default();
-        while entry
-            .recent
-            .front()
-            .is_some_and(|seen_at| now.saturating_duration_since(*seen_at) >= self.window)
-        {
-            entry.recent.pop_front();
+    fn default_limit(&self) -> CandidateClaimLimit {
+        CandidateClaimLimit {
+            max_per_window: self.max_per_window,
+            max_inflight: self.max_inflight,
         }
-        if entry.in_flight >= self.max_inflight {
+    }
+
+    #[cfg(test)]
+    fn try_acquire(self: &Arc<Self>, key: String, now: Instant) -> Result<CandidateClaimPermit> {
+        let limit = self.default_limit();
+        self.try_acquire_all(vec![(key, limit)], now)
+    }
+
+    /// Acquires every bucket or none. Each key carries its own limits.
+    fn try_acquire_all(
+        self: &Arc<Self>,
+        buckets: Vec<(String, CandidateClaimLimit)>,
+        now: Instant,
+    ) -> Result<CandidateClaimPermit> {
+        let mut state = self.state.lock();
+        self.sweep_if_due_locked(&mut state, now);
+        let mut busy = false;
+        let mut limited = false;
+        for (key, limit) in &buckets {
+            let Some(entry) = state.entries.get_mut(key) else {
+                continue;
+            };
+            entry.prune(now, self.window);
+            if entry.in_flight >= limit.max_inflight.max(1) {
+                busy = true;
+            } else if entry.recent.len() >= limit.max_per_window.max(1) {
+                limited = true;
+            }
+        }
+        if busy {
             return Err(anyhow!("candidate claim busy, retry"));
         }
-        if entry.recent.len() >= self.max_per_window {
+        if limited {
             return Err(anyhow!("candidate claim rate limited, retry"));
         }
-        entry.recent.push_back(now);
-        entry.in_flight += 1;
+        let mut keys = Vec::with_capacity(buckets.len());
+        for (key, _) in buckets {
+            let entry = state.entries.entry(key.clone()).or_default();
+            entry.recent.push_back(now);
+            entry.in_flight += 1;
+            keys.push(key);
+        }
         Ok(CandidateClaimPermit {
             tracker: Arc::clone(self),
-            key,
+            keys,
         })
     }
 
-    fn release(&self, key: &str) {
+    fn release(&self, keys: &[String]) {
+        let now = Instant::now();
         let mut state = self.state.lock();
-        let Some(entry) = state.get_mut(key) else {
-            return;
-        };
-        entry.in_flight = entry.in_flight.saturating_sub(1);
-        if entry.in_flight == 0 && entry.recent.is_empty() {
-            state.remove(key);
+        for key in keys {
+            let Some(entry) = state.entries.get_mut(key) else {
+                continue;
+            };
+            entry.in_flight = entry.in_flight.saturating_sub(1);
+            entry.prune(now, self.window);
+            if entry.idle() {
+                state.entries.remove(key);
+            }
         }
+        self.sweep_if_due_locked(&mut state, now);
+    }
+
+    /// Drops buckets whose window history expired after their last release;
+    /// without this, keys with recent history at release time were never freed.
+    fn sweep_if_due_locked(&self, state: &mut CandidateClaimTrackerState, now: Instant) {
+        if state.last_sweep.is_some_and(|last| {
+            now.saturating_duration_since(last) < CANDIDATE_CLAIM_SWEEP_INTERVAL
+        }) {
+            return;
+        }
+        state.last_sweep = Some(now);
+        let window = self.window;
+        state.entries.retain(|_, entry| {
+            entry.prune(now, window);
+            !entry.idle()
+        });
+    }
+
+    #[cfg(test)]
+    fn tracked_keys(&self) -> usize {
+        self.state.lock().entries.len()
+    }
+
+    #[cfg(test)]
+    fn force_sweep(&self, now: Instant) {
+        let mut state = self.state.lock();
+        state.last_sweep = None;
+        self.sweep_if_due_locked(&mut state, now);
     }
 }
 
 impl CandidateClaimPermit {
     fn release(self) {
-        self.tracker.release(&self.key);
+        self.tracker.release(&self.keys);
     }
 }
 
@@ -300,12 +398,25 @@ impl SubmitDispatcher {
 
     fn try_acquire_candidate_permit(
         &self,
+        conn_id: &str,
         address: &str,
         peer: SocketAddr,
         now: Instant,
     ) -> Result<CandidateClaimPermit> {
-        let key = format!("{}|{}", address.trim(), peer.ip());
-        match self.candidate_tracker.try_acquire(key, now) {
+        let ip_group = ip_group_key(peer.ip());
+        let per_source = self.candidate_tracker.default_limit();
+        let buckets = vec![
+            (format!("addr|{}|{}", address.trim(), ip_group), per_source),
+            (format!("conn|{conn_id}"), per_source),
+            (
+                format!("ip|{ip_group}"),
+                CandidateClaimLimit {
+                    max_per_window: CANDIDATE_CLAIM_IP_MAX_PER_WINDOW,
+                    max_inflight: CANDIDATE_CLAIM_IP_MAX_INFLIGHT,
+                },
+            ),
+        ];
+        match self.candidate_tracker.try_acquire_all(buckets, now) {
             Ok(permit) => {
                 self.candidate_permit_acquired
                     .fetch_add(1, Ordering::Relaxed);
@@ -820,7 +931,7 @@ impl StratumServer {
                                 };
                                 match self
                                     .submit_dispatcher
-                                    .try_acquire_candidate_permit(address, peer, received_at)
+                                    .try_acquire_candidate_permit(&conn_id, address, peer, received_at)
                                 {
                                     Ok(permit) => Some(permit),
                                     Err(err) => {
@@ -1086,6 +1197,13 @@ impl StratumServer {
         received_at: Instant,
         reason: &str,
     ) {
+        // Admission-control rejects ("busy, retry", "rate limited, retry") are
+        // not share outcomes: the miner is told to resubmit the same nonce, so
+        // persisting them would only add DB writes under saturation. They are
+        // counted in the submit runtime snapshot instead.
+        if is_retryable_reject_reason(canonical_share_reject_reason(reason)) {
+            return;
+        }
         let engine = Arc::clone(&self.engine);
         let conn_id = conn_id.to_string();
         let job_id = job_id.to_string();
@@ -1569,6 +1687,17 @@ mod tests {
     }
 
     async fn build_tcp_test_server(cfg: Config) -> (Arc<StratumServer>, Arc<JobManager>) {
+        let (server, jobs, _store) = build_tcp_test_server_with_store(cfg).await;
+        (server, jobs)
+    }
+
+    async fn build_tcp_test_server_with_store(
+        cfg: Config,
+    ) -> (
+        Arc<StratumServer>,
+        Arc<JobManager>,
+        Arc<crate::engine::InMemoryStore>,
+    ) {
         tokio::task::spawn_blocking(move || {
             let node_client =
                 Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node client"));
@@ -1579,17 +1708,18 @@ mod tests {
                 cfg.clone(),
                 Arc::new(SleepyQueueHasher),
             ));
+            let store = Arc::new(crate::engine::InMemoryStore::default());
             let engine = Arc::new(PoolEngine::new(
                 cfg.clone(),
                 validation,
                 Arc::clone(&jobs) as Arc<dyn crate::engine::JobRepository>,
-                Arc::new(crate::engine::InMemoryStore::default()),
+                Arc::clone(&store) as Arc<dyn ShareStore>,
                 Arc::new(InMemoryNode::default()),
             ));
             let stats = Arc::new(PoolStats::default());
             let listen_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0));
             let server = StratumServer::new(listen_addr, engine, Arc::clone(&jobs), stats, cfg);
-            (server, jobs)
+            (server, jobs, store)
         })
         .await
         .expect("build tcp test server on blocking pool")
@@ -1925,6 +2055,141 @@ mod tests {
                 .is_ok(),
             "other addresses should not share the rate limiter bucket"
         );
+    }
+
+    #[test]
+    fn candidate_claims_are_bounded_per_ip_group_across_addresses() {
+        let tracker = CandidateClaimTracker::new(Duration::from_secs(60), 4, 1);
+        let ip_limit = super::CandidateClaimLimit {
+            max_per_window: 3,
+            max_inflight: 2,
+        };
+        let per_source = tracker.default_limit();
+        let buckets = |address: &str, conn: &str| {
+            vec![
+                (format!("addr|{address}|198.51.100.7"), per_source),
+                (format!("conn|{conn}"), per_source),
+                ("ip|198.51.100.7".to_string(), ip_limit),
+            ]
+        };
+        let now = Instant::now();
+        let first = tracker
+            .try_acquire_all(buckets("throwaway-1", "c1"), now)
+            .expect("first claim");
+        let second = tracker
+            .try_acquire_all(buckets("throwaway-2", "c2"), now)
+            .expect("second claim from the same IP with a fresh address");
+        let err = tracker
+            .try_acquire_all(buckets("throwaway-3", "c3"), now)
+            .expect_err("IP in-flight cap holds across fresh addresses");
+        assert!(err.to_string().contains("busy"));
+        first.release();
+        second.release();
+        tracker
+            .try_acquire_all(buckets("throwaway-4", "c4"), now)
+            .expect("third claim in the window")
+            .release();
+        let err = tracker
+            .try_acquire_all(buckets("throwaway-5", "c5"), now)
+            .expect_err("IP window cap holds across fresh addresses");
+        assert!(err.to_string().contains("rate limited"));
+        // A rejected multi-bucket acquire must not consume any bucket.
+        tracker
+            .try_acquire_all(
+                vec![
+                    ("addr|honest|203.0.113.9".to_string(), per_source),
+                    ("conn|honest".to_string(), per_source),
+                    ("ip|203.0.113.9".to_string(), ip_limit),
+                ],
+                now,
+            )
+            .expect("other IPs are unaffected")
+            .release();
+    }
+
+    #[test]
+    fn candidate_claim_tracker_frees_buckets_after_window() {
+        let tracker = CandidateClaimTracker::new(Duration::from_secs(60), 4, 1);
+        let now = Instant::now();
+        for idx in 0..50 {
+            tracker
+                .try_acquire(format!("addr-{idx}|127.0.0.1"), now)
+                .expect("acquire")
+                .release();
+        }
+        // Released buckets keep their window history until it expires...
+        assert_eq!(tracker.tracked_keys(), 50);
+        // ...and are then dropped instead of leaking forever.
+        tracker.force_sweep(now + Duration::from_secs(61));
+        assert_eq!(tracker.tracked_keys(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn retry_type_prequeue_rejects_are_not_persisted() {
+        let (server, jobs, store) = build_tcp_test_server_with_store(stratum_test_cfg()).await;
+        let address = test_miner_address(0x55);
+        let engine = Arc::clone(&server.engine);
+        tokio::task::spawn_blocking(move || {
+            engine
+                .login(
+                    "198.51.100.20:4000",
+                    address,
+                    "rig",
+                    2,
+                    vec!["submit_claimed_hash".to_string()],
+                )
+                .expect("login");
+        })
+        .await
+        .unwrap();
+        let job = jobs
+            .build_miner_job("198.51.100.20:4000", 1, &test_miner_address(0x55))
+            .expect("job");
+        for reason in [
+            "candidate claim busy, retry",
+            "candidate claim rate limited, retry",
+            "server busy, retry",
+        ] {
+            server.persist_prequeue_reject_async(
+                "198.51.100.20:4000",
+                &job.job_id,
+                job.nonce_start,
+                Some(&"00".repeat(32)),
+                Instant::now(),
+                reason,
+            );
+        }
+        server.persist_prequeue_reject_async(
+            "198.51.100.20:4000",
+            &job.job_id,
+            job.nonce_start + 1,
+            None,
+            Instant::now(),
+            "claimed hash required",
+        );
+        for _ in 0..100 {
+            if !store.shares().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let shares = store.shares();
+        assert_eq!(
+            shares.len(),
+            1,
+            "only the non-retryable reject is persisted"
+        );
+        assert_eq!(
+            shares[0].reject_reason.as_deref(),
+            Some("claimed hash required")
+        );
+        tokio::task::spawn_blocking(move || {
+            drop(server);
+            drop(jobs);
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -24,6 +24,8 @@ pub mod service_state;
 
 pub(crate) mod share_dedupe;
 
+pub(crate) mod source_risk;
+
 mod shortname;
 
 pub mod stats;
