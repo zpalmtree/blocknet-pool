@@ -8,6 +8,7 @@ import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
 import { RangeTabs } from '../components/RangeTabs';
 import { StatCard } from '../components/StatCard';
 import { WorkerVersionBadge } from '../components/WorkerVersionBadge';
+import { MinerUpdateBanner } from '../components/MinerUpdateBanner';
 import { LAST_MINER_LOOKUP_KEY } from '../lib/storage';
 import { formatCoins, formatCompactCoins, formatFee, formatPct, humanRate, ratioPct, timeAgo, timestampTitle, toUnixMs } from '../lib/format';
 import type { ThemeMode } from '../lib/theme';
@@ -347,6 +348,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   return (
     <div id="page-stats">
       <h2>My Stats</h2>
+      <MinerUpdateBanner miner={minerData} />
       <div className="card" style={{ marginBottom: 24 }}>
         <div className="lookup-form" style={{ display: 'flex', gap: 10, marginBottom: 0, flexWrap: 'wrap' }}>
           <input
@@ -555,7 +557,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
 
           {minerData && (
             <div className="section">
-              <h2>Workers</h2>
+              <h2 id="miner-workers" tabIndex={-1}>Workers</h2>
               <div className="card table-scroll">
                 <table>
                   <thead>

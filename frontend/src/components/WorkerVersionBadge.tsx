@@ -1,6 +1,6 @@
 import type { WorkerVersionStatus } from '../types';
 
-const SEINE_RELEASES_URL = 'https://github.com/zpalmtree/seine/releases';
+import { SEINE_RELEASES_URL } from './MinerUpdateBanner';
 
 interface WorkerVersionBadgeProps {
   status: WorkerVersionStatus;
@@ -10,8 +10,7 @@ interface WorkerVersionBadgeProps {
 export function WorkerVersionBadge({ status, latestVersion }: WorkerVersionBadgeProps) {
   if (status === 'current' || !latestVersion.trim()) return null;
   const tooltip =
-    `seine ${latestVersion} is available — this worker appears to be running an older or unknown miner version. ` +
-    'Updating seine adds block-candidate preservation for GPU miners, degraded-run warnings, and faster GPU startup. ' +
+    `seine ${latestVersion} is available — ${status === 'unknown' ? 'this worker’s version is unknown' : 'this worker is running an older version'}. ` +
     'Click to open the seine releases page.';
   return (
     <a
@@ -21,7 +20,7 @@ export function WorkerVersionBadge({ status, latestVersion }: WorkerVersionBadge
       rel="noopener noreferrer"
       title={tooltip}
     >
-      update available
+      {status === 'unknown' ? 'check version' : 'update available'}
     </a>
   );
 }

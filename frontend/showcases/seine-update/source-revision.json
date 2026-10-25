@@ -1,0 +1,10 @@
+{
+  "base": "3ebfb913b4ad3f487e6d48e20c715f970c413d75",
+  "files_sha256": {
+    "frontend/src/components/MinerUpdateBanner.tsx": "14d3f72fe7fe9355acb506458a78a276f8e473fe61e86513fa1ee33f27fbdbbb",
+    "frontend/src/components/WorkerVersionBadge.tsx": "805dbb40b3269e64a1e346c4487ba1daf16e23f946c0d4c38cebb1cdc1a1c842",
+    "frontend/src/pages/StatsPage.tsx": "b9fd5027da284255d1d78c55b91f1805788ccfa048570cad3676f8964c2c46a6",
+    "frontend/src/styles.css": "46e82a0e52df760244e6ea0f5de9b97f368d16f1f7f26aeb1ecd60541e4417aa",
+    "frontend/showcases/seine-update/showcase.tsx": "b187f23f56eb2470daf2e648a4518cff98c7d3c89c00ff9cc0ee4c59528ead07"
+  }
+}
