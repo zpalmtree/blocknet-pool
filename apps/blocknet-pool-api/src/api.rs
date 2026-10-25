@@ -26,7 +26,10 @@ use tokio::sync::{mpsc, Notify};
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::config::Config;
-use crate::ui::{handle_app_fallback, handle_favicon_svg, handle_ui, handle_ui_asset};
+use crate::ui::{
+    handle_app_fallback, handle_favicon_svg, handle_robots_txt, handle_sitemap_xml, handle_ui,
+    handle_ui_asset,
+};
 use pool_common::db::{
     allocate_proportional_fees, ActiveVerificationHold, AddressRiskState, Balance, DbBlock,
     DbLuckRound, DbShare, MonitorHeartbeat, MonitorIncident, PendingPayout,
@@ -918,6 +921,8 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
         .route("/", get(handle_ui))
         .route("/checkpoints.dat", get(handle_checkpoints_file))
         .route("/favicon.svg", get(handle_favicon_svg))
+        .route("/robots.txt", get(handle_robots_txt))
+        .route("/sitemap.xml", get(handle_sitemap_xml))
         .route("/ui-assets/:name", get(handle_ui_asset))
         .route("/api/info", get(handle_info))
         .route("/api/checkpoints", get(handle_checkpoints_metadata))

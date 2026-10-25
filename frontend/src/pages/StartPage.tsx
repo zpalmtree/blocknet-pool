@@ -45,9 +45,9 @@ export function StartPage({ poolInfo }: StartPageProps) {
           <span className="quickstart-step">1</span>
           <strong>Download Seine</strong>
           <p>
-            Get Seine v0.2.16 or newer for shortname support from{' '}
-            <a href="https://github.com/zpalmtree/seine/releases" target="_blank" rel="noopener">
-              github.com/zpalmtree/seine
+            Get the latest Seine for Windows, macOS or Linux from{' '}
+            <a href="https://seineminer.com/#download" target="_blank" rel="noopener">
+              seineminer.com
             </a>
             .
           </p>

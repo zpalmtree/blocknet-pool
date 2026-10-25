@@ -43,6 +43,8 @@ struct PageMeta {
     description: &'static str,
     /// Social card filename under `/ui-assets/`.
     image: &'static str,
+    /// Whether search engines may index the route. Operator and unknown paths stay out.
+    index: bool,
 }
 
 /// Resolve per-route preview metadata. Crawlers never run the SPA, so this is
@@ -53,52 +55,62 @@ fn page_meta(path: &str) -> PageMeta {
             title: "Blocknet Mining Pool",
             description: DEFAULT_DESCRIPTION,
             image: "og-dashboard.png",
+            index: true,
         },
         "/start" => PageMeta {
             title: "Mine Blocknet With Seine",
             description:
                 "Start mining Blocknet with the Seine miner. Quick setup, low fees, and fast PPLNS payouts.",
             image: "og-start.png",
+            index: true,
         },
         "/checkpoints" => PageMeta {
             title: "Blocknet Checkpoints",
             description: "Pool daemon checkpoints for fast initial sync and trusted chain pinning.",
             image: "og-checkpoints.png",
+            index: true,
         },
         "/luck" => PageMeta {
             title: "Blocknet Pool Luck",
             description: "Round luck and effort history for the Blocknet mining pool.",
             image: "og-luck.png",
+            index: true,
         },
         "/blocks" => PageMeta {
             title: "Recent Blocknet Blocks",
             description: "Recent blocks found by the Blocknet mining pool, with rewards and confirmations.",
             image: "og-blocks.png",
+            index: true,
         },
         "/payouts" => PageMeta {
             title: "Blocknet Pool Payouts",
             description: "Recent payouts from the Blocknet mining pool.",
             image: "og-payouts.png",
+            index: true,
         },
         "/stats" => PageMeta {
             title: "Blocknet Miner Stats",
             description: "Look up your Blocknet miner hashrate, shares, and balance.",
             image: "og-stats.png",
+            index: true,
         },
         "/status" => PageMeta {
             title: "Blocknet Pool Status",
             description: "Live operational status and health of the Blocknet mining pool.",
             image: "og-status.png",
+            index: true,
         },
         "/admin" => PageMeta {
             title: "Pool Admin Dashboard",
             description: "Operator dashboard for the Blocknet mining pool.",
             image: "og-admin.png",
+            index: false,
         },
         _ => PageMeta {
             title: "Blocknet Mining Pool",
             description: DEFAULT_DESCRIPTION,
             image: "og-dashboard.png",
+            index: false,
         },
     }
 }
@@ -151,8 +163,12 @@ fn meta_tags(path: &str, base_url: &str) -> String {
     let image = html_escape(&format!("{base_url}/ui-assets/{}", meta.image));
 
     let nl = "\n    ";
+    let robots = if meta.index { "index, follow" } else { "noindex, follow" };
+
     let mut out = format!("<title>{title}</title>");
     out.push_str(&format!("{nl}<meta name=\"description\" content=\"{description}\" />"));
+    out.push_str(&format!("{nl}<meta name=\"robots\" content=\"{robots}\" />"));
+    out.push_str(&format!("{nl}<link rel=\"canonical\" href=\"{url}\" />"));
     out.push_str(&format!("{nl}<meta property=\"og:type\" content=\"website\" />"));
     out.push_str(&format!("{nl}<meta property=\"og:site_name\" content=\"{site_name}\" />"));
     out.push_str(&format!("{nl}<meta property=\"og:title\" content=\"{title}\" />"));
@@ -216,6 +232,39 @@ pub(crate) async fn handle_app_fallback(method: Method, headers: HeaderMap, uri:
 
 pub(crate) fn is_api_request_path(path: &str) -> bool {
     path == "/api" || path.starts_with("/api/")
+}
+
+/// Public routes listed in the sitemap, in navigation order.
+const SITEMAP_PATHS: &[&str] = &[
+    "/", "/start", "/blocks", "/payouts", "/stats", "/luck", "/status", "/checkpoints",
+];
+
+pub(crate) async fn handle_robots_txt(headers: HeaderMap) -> impl IntoResponse {
+    let base_url = request_base_url(&headers);
+    (
+        [
+            (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        format!("User-agent: *\nAllow: /\nDisallow: /api/\n\nSitemap: {base_url}/sitemap.xml\n"),
+    )
+}
+
+pub(crate) async fn handle_sitemap_xml(headers: HeaderMap) -> impl IntoResponse {
+    let base_url = request_base_url(&headers);
+    let urls: String = SITEMAP_PATHS
+        .iter()
+        .map(|path| format!("  <url><loc>{}{path}</loc></url>\n", html_escape(&base_url)))
+        .collect();
+    (
+        [
+            (header::CONTENT_TYPE, "application/xml; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n{urls}</urlset>\n"
+        ),
+    )
 }
 
 pub(crate) async fn handle_favicon_svg() -> impl IntoResponse {
@@ -309,6 +358,22 @@ mod tests {
         let unknown = render_index_html("/does-not-exist", "https://bntpool.com");
         assert!(unknown.contains("<title>Blocknet Mining Pool</title>"));
         assert!(unknown.contains(r#"content="https://bntpool.com/ui-assets/og-dashboard.png""#));
+    }
+
+    #[test]
+    fn public_routes_are_indexable_and_operator_routes_are_not() {
+        let root = render_index_html("/", "https://bntpool.com");
+        assert!(root.contains(r#"<meta name="robots" content="index, follow" />"#));
+        assert!(root.contains(r#"<link rel="canonical" href="https://bntpool.com/" />"#));
+        assert!(!root.contains("noindex"));
+
+        for path in ["/admin", "/does-not-exist"] {
+            let html = render_index_html(path, "https://bntpool.com");
+            assert!(html.contains(r#"<meta name="robots" content="noindex, follow" />"#), "{path}");
+        }
+        for path in SITEMAP_PATHS {
+            assert!(page_meta(path).index, "{path} is in the sitemap but not indexable");
+        }
     }
 
     #[test]
