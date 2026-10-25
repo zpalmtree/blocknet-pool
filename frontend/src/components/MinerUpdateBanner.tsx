@@ -1,6 +1,6 @@
 import type { MinerResponse } from '../types';
 
-export const SEINE_RELEASES_URL = 'https://github.com/zpalmtree/seine/releases';
+const SEINE_RELEASES_URL = 'https://github.com/zpalmtree/seine/releases';
 
 export function MinerUpdateBanner({ miner }: { miner: MinerResponse | null }) {
   const version = miner?.latest_miner_version?.trim();
@@ -21,6 +21,7 @@ export function MinerUpdateBanner({ miner }: { miner: MinerResponse | null }) {
         <p>
           {outdated > 0 && `${outdated} ${outdated === 1 ? 'worker is' : 'workers are'} running an older version. `}
           {unknown > 0 && `${unknown} ${unknown === 1 ? 'worker has' : 'workers have'} an unknown version. `}
+          Newer releases may improve your hashrate.{' '}
           {outdated ? 'Update to the latest release.' : 'Check your workers against the latest release.'}
         </p>
       </div>

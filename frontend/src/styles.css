@@ -1000,11 +1000,6 @@ tr:hover td {
   color: var(--status-orphaned-text);
 }
 
-.worker-version-badge {
-  margin-left: 8px;
-  white-space: nowrap;
-}
-
 .miner-update-banner {
   display: flex;
   align-items: center;
@@ -1102,15 +1097,6 @@ tr:hover td {
   .miner-update-banner .btn {
     width: 100%;
   }
-}
-
-a.worker-version-badge {
-  color: var(--status-pending-text);
-}
-
-a.worker-version-badge:hover {
-  text-decoration: none;
-  border-color: var(--status-pending-text);
 }
 
 .pager {

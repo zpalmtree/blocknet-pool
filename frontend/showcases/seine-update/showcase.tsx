@@ -24,7 +24,9 @@ const miner: MinerResponse = {
   latest_miner_version: state === 'no-version' ? '  ' : state === 'long-version' ? '0.2.23-preview.20261025-experimental' : '0.2.23',
   workers: statuses.map((version_status, i) => ({
     worker: `demo-rig-${i + 1}`, version_status, hashrate: 1250, accepted: 12840, rejected: 2,
-    last_share_at: null, miner_version: version_status === 'unknown' ? null : '0.2.22', backend: 'cuda',
+    last_share_at: null,
+    miner_version: version_status === 'unknown' ? null : version_status === 'current' ? '0.2.23' : '0.2.22',
+    backend: 'cuda',
   })),
   shares: [], payouts: [], verification_hold: null,
 };

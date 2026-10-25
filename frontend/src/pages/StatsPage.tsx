@@ -7,7 +7,6 @@ import { HashrateChart } from '../components/HashrateChart';
 import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
 import { RangeTabs } from '../components/RangeTabs';
 import { StatCard } from '../components/StatCard';
-import { WorkerVersionBadge } from '../components/WorkerVersionBadge';
 import { MinerUpdateBanner } from '../components/MinerUpdateBanner';
 import { LAST_MINER_LOOKUP_KEY } from '../lib/storage';
 import { formatCoins, formatCompactCoins, formatFee, formatPct, humanRate, ratioPct, timeAgo, timestampTitle, toUnixMs } from '../lib/format';
@@ -563,6 +562,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                   <thead>
                     <tr>
                       <th>Worker</th>
+                      <th>Miner Version</th>
                       <th>Hashrate</th>
                       <th>Accepted</th>
                       <th>Rejected</th>
@@ -571,17 +571,12 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                   </thead>
                   <tbody>
                     {!minerData.workers.length ? (
-                      <EmptyTableRow colSpan={5}>No workers</EmptyTableRow>
+                      <EmptyTableRow colSpan={6}>No workers</EmptyTableRow>
                     ) : (
                       minerData.workers.map((w) => (
                         <tr key={w.worker}>
-                          <td>
-                            {w.worker || 'default'}
-                            <WorkerVersionBadge
-                              status={w.version_status}
-                              latestVersion={minerData.latest_miner_version || ''}
-                            />
-                          </td>
+                          <td>{w.worker || 'default'}</td>
+                          <td className="mono">{w.miner_version?.trim() || 'Unknown'}</td>
                           <td>{humanRate(w.hashrate || 0)}</td>
                           <td>{w.accepted || 0}</td>
                           <td>{w.rejected || 0}</td>
