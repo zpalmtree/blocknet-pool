@@ -137,6 +137,14 @@ impl PoolStore {
         self.build_pending_audit_shares(selected)
     }
 
+    fn load_provisional_audit_shares_by_ids(&self, ids: &[i64]) -> Result<Vec<PendingAuditShare>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let shares = self.inner.get_provisional_shares_by_ids(ids)?;
+        self.build_pending_audit_shares(shares)
+    }
+
     fn load_recent_provisional_audit_shares(
         &self,
         address: &str,
@@ -236,12 +244,12 @@ impl PoolStore {
 }
 
 impl ShareStore for PoolStore {
-    fn try_claim_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
-        self.inner.try_claim_share(job_id, nonce)
+    fn try_claim_share(&self, job_id: &str, share_key: &str, nonce: u64) -> Result<bool> {
+        self.inner.try_claim_share(job_id, share_key, nonce)
     }
 
-    fn release_share_claim(&self, job_id: &str, nonce: u64) -> Result<()> {
-        self.inner.release_share_claim(job_id, nonce)
+    fn release_share_claim(&self, share_key: &str, nonce: u64) -> Result<()> {
+        self.inner.release_share_claim(share_key, nonce)
     }
 
     fn add_share(&self, share: ShareRecord) -> Result<()> {
@@ -370,6 +378,10 @@ impl ShareStore for PoolStore {
         Ok(())
     }
 
+    fn revoke_provisional_shares(&self, share_ids: &[i64], reason: &str) -> Result<u64> {
+        self.inner.revoke_provisional_shares(share_ids, reason)
+    }
+
     fn get_vardiff_hint(&self, address: &str, worker: &str) -> Result<Option<(u64, SystemTime)>> {
         self.inner.get_vardiff_hint(address, worker)
     }
@@ -442,7 +454,7 @@ impl ValidationStateStore for PoolStore {
         self.inner.load_validation_clear_events_since(cursor)
     }
 
-    fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<()> {
+    fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<bool> {
         self.inner.complete_validation_audit(update)
     }
 
@@ -453,6 +465,10 @@ impl ValidationStateStore for PoolStore {
         limit: usize,
     ) -> Result<Vec<PendingAuditShare>> {
         PoolStore::load_recent_provisional_audit_shares(self, address, provisional_cutoff, limit)
+    }
+
+    fn load_provisional_audit_shares_by_ids(&self, ids: &[i64]) -> Result<Vec<PendingAuditShare>> {
+        PoolStore::load_provisional_audit_shares_by_ids(self, ids)
     }
 
     fn load_pending_payout_audit_shares(

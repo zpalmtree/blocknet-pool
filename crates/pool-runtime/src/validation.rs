@@ -45,6 +45,18 @@ const INVALID_SAMPLE_COUNT_THRESHOLD: u64 = 5;
 const FORCED_VALIDATION_QUARANTINE_THRESHOLD: f64 = 0.20;
 const PROVISIONAL_BACKLOG_VERIFIED_MULTIPLIER: f64 = 8.0;
 const CANDIDATE_VALIDATION_WORKERS: usize = 1;
+/// Probation audits verify addresses that have never passed a sample. They
+/// run on the audit workers at the lowest priority, in their own bounded
+/// queue that is excluded from overload detection, so a flood of brand-new
+/// addresses can neither switch sampling off for everyone nor get credited
+/// unverified: while the lane is full, such shares are rejected as busy.
+const PROBATION_QUEUE_SIZE: usize = 32;
+/// Probation audits one network (IP group) may hold at once, so a single
+/// host cannot fill the lane and lock out honest newcomers elsewhere.
+const PROBATION_MAX_PER_GROUP: usize = 4;
+/// Probation work that has waited this long is served before background
+/// audits, so a standing payout-coverage backlog cannot starve it.
+const PROBATION_MAX_WAIT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub(crate) struct ValidationTask {
@@ -57,6 +69,15 @@ pub(crate) struct ValidationTask {
     pub claimed_hash: Option<[u8; 32]>,
     pub candidate_claim: bool,
     pub force_full_verify: bool,
+    /// The caller attributes failures of this task to a network source and
+    /// penalizes that source directly, so a failure must not count toward
+    /// address-level risk (addresses are public; see `source_risk`).
+    pub attributed: bool,
+    /// Whether a failure counts toward the address's persisted
+    /// `invalid_samples` (the history used for strike leniency). False for
+    /// sources without verified history on the address, so someone using a
+    /// public address cannot inflate its invalid ratio.
+    pub count_invalid_at_address: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -103,6 +124,49 @@ struct AddressStateUpdate<'a> {
     invalid_sample: bool,
     provisional_accepted: bool,
     overload_mode: OverloadMode,
+    attributed: bool,
+    count_invalid_at_address: bool,
+}
+
+/// Engine-side hook for audit outcomes. Audits run on validation worker
+/// threads, which may block on the store.
+pub(crate) trait AuditFeedback: Send + Sync + 'static {
+    /// Called once per completed audit of a still-provisional share.
+    /// `proven_fake` means the recomputed hash differs from the claimed hash.
+    /// `address_good` / `address_invalid` are the address's persisted sample
+    /// counts before this audit, for strike proportionality.
+    fn on_audit_result(
+        &self,
+        share_id: i64,
+        address: &str,
+        proven_fake: bool,
+        address_good: u64,
+        address_invalid: u64,
+    ) -> AuditAttribution;
+
+    /// Address-level escalation for evidence that could not be attributed to
+    /// a source. Returns the quarantine end, if one is now active.
+    fn quarantine_unattributed(&self, _address: &str, _reason: &str) -> Option<SystemTime> {
+        None
+    }
+
+    /// An audit found its share already settled (e.g. revoked).
+    fn audit_skipped(&self, _share_id: i64) {}
+
+    /// Share ids accepted while sampling was degraded that are due for review.
+    fn degraded_review_batch(&self, _budget: usize) -> Vec<i64> {
+        Vec::new()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct AuditAttribution {
+    /// The share's source is known and was credited/penalized directly.
+    pub attributed: bool,
+    /// The failure counts toward the address's persisted invalid samples.
+    pub count_invalid_at_address: bool,
+    /// Shares revoked as a consequence, grouped by address.
+    pub revoked: Vec<(String, Vec<i64>)>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -197,7 +261,10 @@ pub(crate) trait ValidationStateStore: Send + Sync + 'static {
 
     fn load_validation_clear_events_since(&self, cursor: i64) -> Result<Vec<ValidationClearEvent>>;
 
-    fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<()>;
+    /// Applies an audit verdict to a share that is still provisional. Returns
+    /// false (and changes nothing) if the share was settled meanwhile, e.g.
+    /// revoked by a source strike, so a passing audit cannot resurrect it.
+    fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<bool>;
 
     fn load_recent_provisional_audit_shares(
         &self,
@@ -213,6 +280,11 @@ pub(crate) trait ValidationStateStore: Send + Sync + 'static {
         now: SystemTime,
         limit: usize,
     ) -> Result<Vec<PendingAuditShare>>;
+
+    /// Still-provisional shares by id, with replay data, for review audits.
+    fn load_provisional_audit_shares_by_ids(&self, _ids: &[i64]) -> Result<Vec<PendingAuditShare>> {
+        Ok(Vec::new())
+    }
 }
 
 #[cfg(test)]
@@ -264,8 +336,8 @@ impl ValidationStateStore for NullValidationStateStore {
         Ok(Vec::new())
     }
 
-    fn complete_validation_audit(&self, _update: &ShareReplayUpdate) -> Result<()> {
-        Ok(())
+    fn complete_validation_audit(&self, _update: &ShareReplayUpdate) -> Result<bool> {
+        Ok(true)
     }
 
     fn load_recent_provisional_audit_shares(
@@ -419,6 +491,12 @@ pub struct ValidationSnapshot {
     pub audit_deferred: u64,
     pub overload_mode: OverloadMode,
     pub effective_sample_rate: f64,
+    #[serde(default)]
+    pub probation_queue_depth: usize,
+    #[serde(default)]
+    pub probation_enqueued: u64,
+    #[serde(default)]
+    pub probation_rejected: u64,
 }
 
 struct QueuedTask {
@@ -433,12 +511,20 @@ pub(crate) enum ValidationAuditSource {
     ForcedReview,
     PayoutCoverage,
     ProvisionalBacklog,
+    Probation,
+    DegradedReview,
 }
 
 #[derive(Debug, Clone)]
 struct QueuedAuditTask {
     share: PendingAuditShare,
     source: ValidationAuditSource,
+}
+
+#[derive(Debug, Clone)]
+struct QueuedProbationTask {
+    task: QueuedAuditTask,
+    group: String,
 }
 
 enum RegularWorkItem {
@@ -452,6 +538,9 @@ pub(crate) struct RegularSubmitPlan {
     pub enqueue_audit: bool,
     pub audit_source: Option<ValidationAuditSource>,
     pub overload_mode: OverloadMode,
+    /// The address has never passed a sample and needs a probation audit;
+    /// the caller must reserve a probation slot or reject the share as busy.
+    pub probation: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -497,6 +586,29 @@ struct ValidationInner {
     validation_duration: Mutex<LatencyWindow>,
     audit_duration: Mutex<LatencyWindow>,
     overload: Mutex<OverloadState>,
+    audit_feedback: Mutex<Option<Arc<dyn AuditFeedback>>>,
+    probation_tx: flume::Sender<QueuedProbationTask>,
+    probation_queue: QueueTracker,
+    probation: Mutex<ProbationState>,
+    probation_enqueued: AtomicU64,
+    probation_rejected: AtomicU64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProbationReservation {
+    Reserved,
+    /// Another share of this address already holds the probation slot.
+    AlreadyPending,
+    /// The lane, or this network's share of it, is full.
+    Saturated,
+}
+
+#[derive(Debug, Default)]
+struct ProbationState {
+    /// Addresses with a reserved or queued probation audit.
+    pending_addresses: HashSet<String>,
+    reserved_by_group: HashMap<String, usize>,
+    reserved_total: usize,
 }
 
 pub(crate) struct ValidationEngine {
@@ -531,6 +643,8 @@ impl ValidationEngine {
         let (candidate_tx, candidate_rx) = flume::bounded::<QueuedTask>(candidate_queue_size);
         let (regular_tx, regular_rx) = flume::bounded::<RegularWorkItem>(regular_queue_size);
         let (audit_tx, audit_rx) = flume::bounded::<QueuedAuditTask>(audit_queue_size);
+        let (probation_tx, probation_rx) =
+            flume::bounded::<QueuedProbationTask>(PROBATION_QUEUE_SIZE);
         let shutdown = Arc::new(AtomicBool::new(false));
         let initial_clear_event_id = match state_store.latest_validation_clear_event_id() {
             Ok(value) => value.max(0),
@@ -569,6 +683,12 @@ impl ValidationEngine {
             validation_duration: Mutex::new(default_latency_window()),
             audit_duration: Mutex::new(default_latency_window()),
             overload: Mutex::new(OverloadState::default()),
+            audit_feedback: Mutex::new(None),
+            probation_tx,
+            probation_queue: QueueTracker::new(512),
+            probation: Mutex::new(ProbationState::default()),
+            probation_enqueued: AtomicU64::new(0),
+            probation_rejected: AtomicU64::new(0),
         });
 
         let mut candidate_handles = Vec::with_capacity(candidate_workers);
@@ -607,13 +727,40 @@ impl ValidationEngine {
         for _ in 0..audit_workers {
             let inner_cloned = Arc::clone(&inner);
             let audit_rx = audit_rx.clone();
+            let probation_rx = probation_rx.clone();
             let shutdown = Arc::clone(&shutdown);
             audit_handles.push(thread::spawn(move || {
                 while !shutdown.load(Ordering::Relaxed) {
-                    match audit_rx.recv_timeout(Duration::from_millis(25)) {
-                        Ok(queued) => inner_cloned.process_background_audit(queued),
-                        Err(flume::RecvTimeoutError::Timeout) => continue,
-                        Err(flume::RecvTimeoutError::Disconnected) => break,
+                    // Background (payout coverage) audits protect existing
+                    // credit; probation for never-verified addresses is last,
+                    // unless it has waited too long.
+                    if inner_cloned.probation_overdue() {
+                        if let Ok(queued) = probation_rx.try_recv() {
+                            inner_cloned.process_probation_audit(queued);
+                            continue;
+                        }
+                    }
+                    if let Ok(queued) = audit_rx.try_recv() {
+                        inner_cloned.process_background_audit(queued);
+                        continue;
+                    }
+                    if let Ok(queued) = probation_rx.try_recv() {
+                        inner_cloned.process_probation_audit(queued);
+                        continue;
+                    }
+                    let next = flume::Selector::new()
+                        .recv(&audit_rx, |item| item.map(either_audit_left))
+                        .recv(&probation_rx, |item| item.map(either_audit_right))
+                        .wait_timeout(Duration::from_millis(25));
+                    match next {
+                        Ok(Ok(AuditWork::Background(queued))) => {
+                            inner_cloned.process_background_audit(queued)
+                        }
+                        Ok(Ok(AuditWork::Probation(queued))) => {
+                            inner_cloned.process_probation_audit(queued)
+                        }
+                        Ok(Err(_)) => break,
+                        Err(_) => continue,
                     }
                 }
             }));
@@ -747,6 +894,51 @@ impl ValidationEngine {
         }
     }
 
+    /// Reserves a probation audit slot for a never-verified address. False
+    /// means the lane (or this network's share of it) is saturated and the
+    /// share must be rejected as busy rather than accepted unverified.
+    pub(crate) fn reserve_probation(&self, address: &str, group: &str) -> ProbationReservation {
+        self.inner.reserve_probation(address, group)
+    }
+
+    /// Queues the probation audit for a share whose slot was reserved.
+    pub(crate) fn enqueue_probation_audit(&self, share: PendingAuditShare, group: &str) {
+        self.inner.enqueue_probation_audit(share, group);
+    }
+
+    /// Releases a reservation whose share was never persisted.
+    pub(crate) fn cancel_probation(&self, address: &str, group: &str) {
+        self.inner.release_probation(address, group);
+    }
+
+    /// (verified-good, invalid) samples persisted for the address.
+    pub(crate) fn address_sample_counts(&self, address: &str) -> (u64, u64) {
+        self.inner.address_sample_counts(address)
+    }
+
+    /// Audits a share on the audit lane (bounded, outside overload
+    /// detection); dropped if the lane is full.
+    pub(crate) fn enqueue_source_boost_audit(&self, share: PendingAuditShare) {
+        self.inner
+            .enqueue_background_audit(share, ValidationAuditSource::Sampled);
+    }
+
+    /// Test hook: schedule degraded-window reviews as the Normal-mode
+    /// maintenance tick would.
+    #[cfg(test)]
+    pub(crate) fn run_degraded_reviews_now(&self) {
+        self.inner.schedule_degraded_reviews();
+    }
+
+    pub(crate) fn attach_audit_feedback(&self, feedback: Arc<dyn AuditFeedback>) {
+        *self.inner.audit_feedback.lock() = Some(feedback);
+    }
+
+    /// Drops revoked shares from in-memory coverage/backlog accounting.
+    pub(crate) fn forget_revoked_shares(&self, address: &str, share_ids: &[i64]) {
+        self.inner.forget_revoked_shares(address, share_ids);
+    }
+
     pub(crate) fn attach_submit_regular_queue(&self, queue: Arc<QueueTracker>) {
         *self.inner.submit_regular_queue.lock() = Some(queue);
         self.inner.evaluate_overload(Instant::now());
@@ -759,6 +951,19 @@ impl ValidationEngine {
     pub(crate) fn schedule_forced_review_after(&self, address: &str, start_at: SystemTime) {
         self.inner.schedule_forced_review_after(address, start_at);
     }
+}
+
+enum AuditWork {
+    Background(QueuedAuditTask),
+    Probation(QueuedProbationTask),
+}
+
+fn either_audit_left(task: QueuedAuditTask) -> AuditWork {
+    AuditWork::Background(task)
+}
+
+fn either_audit_right(task: QueuedProbationTask) -> AuditWork {
+    AuditWork::Probation(task)
 }
 
 impl Drop for ValidationEngine {
@@ -787,6 +992,56 @@ impl ValidationInner {
         let overload_mode = self.evaluate_overload(Instant::now());
         if overload_mode == OverloadMode::Normal {
             self.schedule_background_audits(now);
+            // Degraded-window reviews wait for capacity to return so they do
+            // not compete for CPU with the regular verifiers during overload;
+            // PPLNS credit only settles once a block matures.
+            self.schedule_degraded_reviews();
+        }
+    }
+
+    fn schedule_degraded_reviews(&self) {
+        let Some(feedback) = self.audit_feedback() else {
+            return;
+        };
+        let target_depth = self
+            .config
+            .audit_verifier_count()
+            .saturating_mul(VALIDATION_AUDIT_TARGET_QUEUE_MULTIPLIER)
+            .max(1);
+        let depth = self.audit_queue.snapshot(Instant::now()).depth;
+        let budget = target_depth.saturating_sub(depth);
+        if budget == 0 {
+            return;
+        }
+        let ids = feedback.degraded_review_batch(budget);
+        if ids.is_empty() {
+            return;
+        }
+        let shares = match self.state_store.load_provisional_audit_shares_by_ids(&ids) {
+            Ok(shares) => shares,
+            Err(err) => {
+                tracing::warn!(
+                    shares = ids.len(),
+                    error = %err,
+                    "failed loading degraded-window review shares"
+                );
+                Vec::new()
+            }
+        };
+        let loaded = shares
+            .iter()
+            .map(|share| share.share_id)
+            .collect::<HashSet<_>>();
+        for id in ids.iter().filter(|id| !loaded.contains(id)) {
+            // Already verified or revoked; nothing left to review.
+            feedback.audit_skipped(*id);
+        }
+        let scheduled = shares.len();
+        for share in shares {
+            self.enqueue_background_audit(share, ValidationAuditSource::DegradedReview);
+        }
+        if scheduled > 0 {
+            tracing::debug!(scheduled, "scheduled degraded-window validation reviews");
         }
     }
 
@@ -968,6 +1223,7 @@ impl ValidationInner {
                 enqueue_audit: false,
                 audit_source: None,
                 overload_mode,
+                probation: false,
             };
         }
 
@@ -991,6 +1247,30 @@ impl ValidationInner {
         ) && effective
             .forced_until
             .is_some_and(|deadline| deadline > now);
+
+        // An address stays on probation until it has as many verified-good
+        // samples as warmup would have given it.
+        let good_samples = effective
+            .sampled_shares
+            .saturating_sub(effective.invalid_samples);
+        let never_verified = good_samples < self.config.warmup_shares.max(0) as u64;
+        // Backlog/coverage holds would otherwise audit every share of a
+        // never-verified address in the regular lane; it has no payout weight
+        // before its first verified share, so probation alone is enough.
+        let needs_probation = self.config.warmup_shares > 0 && never_verified && !forced_review;
+        if needs_probation {
+            drop(state);
+            // One probation audit per address at a time is enough: payouts need
+            // a verified share, and a failure revokes the source's shares.
+            let pending = self.probation.lock().pending_addresses.contains(address);
+            return RegularSubmitPlan {
+                sync_full_verify: false,
+                enqueue_audit: false,
+                audit_source: (!pending).then_some(ValidationAuditSource::Probation),
+                overload_mode,
+                probation: !pending,
+            };
+        }
 
         let audit_source = if forced_review {
             Some(ValidationAuditSource::ForcedReview)
@@ -1044,6 +1324,7 @@ impl ValidationInner {
             enqueue_audit: !sync_full_verify && audit_source.is_some(),
             audit_source,
             overload_mode,
+            probation: false,
         }
     }
 
@@ -1071,6 +1352,8 @@ impl ValidationInner {
             invalid_sample,
             provisional_accepted,
             overload_mode: computed.overload_mode,
+            attributed: task.attributed,
+            count_invalid_at_address: task.count_invalid_at_address,
         });
 
         ValidationResult {
@@ -1118,11 +1401,16 @@ impl ValidationInner {
                 created_at: update.created_at,
             });
         }
+        // An attributed failure is penalized at its source; counting it here
+        // would let anyone push a public address into forced review.
+        let address_risk_sample = update.sampled && !(update.attributed && update.invalid_sample);
         if update.sampled {
             st.sampled_shares = st.sampled_shares.saturating_add(1);
-            if update.invalid_sample {
+            if update.invalid_sample && update.count_invalid_at_address {
                 st.invalid_samples = st.invalid_samples.saturating_add(1);
             }
+        }
+        if address_risk_sample {
             if st.forced_started_at.is_some() {
                 st.forced_sampled_shares = st.forced_sampled_shares.saturating_add(1);
                 if update.invalid_sample {
@@ -1140,7 +1428,7 @@ impl ValidationInner {
             st,
             now,
             update.overload_mode,
-            update.sampled,
+            address_risk_sample,
             update.invalid_sample,
         );
 
@@ -1281,6 +1569,9 @@ impl ValidationInner {
             audit_deferred: self.audit_deferred.load(Ordering::Relaxed),
             overload_mode,
             effective_sample_rate: self.effective_sample_rate(overload_mode),
+            probation_queue_depth: self.probation_queue.snapshot(now_instant).depth,
+            probation_enqueued: self.probation_enqueued.load(Ordering::Relaxed),
+            probation_rejected: self.probation_rejected.load(Ordering::Relaxed),
             ..ValidationSnapshot::default()
         };
 
@@ -1431,6 +1722,8 @@ impl ValidationInner {
             claimed_hash: queued.share.claimed_hash,
             candidate_claim: false,
             force_full_verify: true,
+            attributed: false,
+            count_invalid_at_address: true,
         };
         let computed = self.compute_task(
             &task,
@@ -1457,26 +1750,97 @@ impl ValidationInner {
                 .map(canonical_audit_reject_reason)
                 .map(str::to_string),
         };
-        if let Err(err) = self.state_store.complete_validation_audit(&update) {
+        if computed.reject_reason == Some("hash computation failed") {
+            // A pool-side failure says nothing about the share: leave it
+            // provisional and count it neither as a pass nor as a failure.
             self.audit_deferred.fetch_add(1, Ordering::Relaxed);
             tracing::warn!(
                 address = %queued.share.miner,
                 share_id = queued.share.share_id,
                 source = ?queued.source,
-                error = %err,
-                "failed to persist validation audit result"
+                "validation audit could not hash the share; leaving it provisional"
             );
             return;
         }
+        match self.state_store.complete_validation_audit(&update) {
+            Ok(true) => {}
+            Ok(false) => {
+                // Settled meanwhile (typically revoked by a source strike).
+                if let Some(feedback) = self.audit_feedback() {
+                    feedback.audit_skipped(queued.share.share_id);
+                }
+                tracing::debug!(
+                    address = %queued.share.miner,
+                    share_id = queued.share.share_id,
+                    source = ?queued.source,
+                    "validation audit skipped for share that is no longer provisional"
+                );
+                return;
+            }
+            Err(err) => {
+                self.audit_deferred.fetch_add(1, Ordering::Relaxed);
+                tracing::warn!(
+                    address = %queued.share.miner,
+                    share_id = queued.share.share_id,
+                    source = ?queued.source,
+                    error = %err,
+                    "failed to persist validation audit result"
+                );
+                return;
+            }
+        }
 
-        self.apply_audit_result(
+        let proven_fake =
+            !computed.accepted && computed.reject_reason == Some("invalid share proof");
+        let (address_good, address_invalid) = self.address_sample_counts(&queued.share.miner);
+        let attribution = self
+            .audit_feedback()
+            .map(|feedback| {
+                feedback.on_audit_result(
+                    queued.share.share_id,
+                    &queued.share.miner,
+                    proven_fake,
+                    address_good,
+                    address_invalid,
+                )
+            })
+            .unwrap_or_default();
+        for (address, share_ids) in &attribution.revoked {
+            self.forget_revoked_shares(address, share_ids);
+        }
+
+        let followup = self.apply_audit_result(
             &queued.share.miner,
             queued.share.share_id,
             queued.share.created_at,
             queued.share.difficulty,
             computed.accepted,
-            computed.reject_reason,
+            !attribution.attributed,
+            !attribution.attributed || attribution.count_invalid_at_address,
         );
+        if followup == ValidationFollowupAction::Quarantine {
+            let quarantined_until = self.audit_feedback().and_then(|feedback| {
+                feedback.quarantine_unattributed(
+                    &queued.share.miner,
+                    "bad share ratio during forced validation",
+                )
+            });
+            match quarantined_until {
+                Some(until) => {
+                    self.schedule_forced_review_after(&queued.share.miner, until);
+                    tracing::warn!(
+                        address = %queued.share.miner,
+                        share_id = queued.share.share_id,
+                        "async validation audit quarantined address on unattributable evidence"
+                    );
+                }
+                None => tracing::warn!(
+                    address = %queued.share.miner,
+                    share_id = queued.share.share_id,
+                    "async validation audit reached the quarantine threshold but no quarantine was applied; future shares remain in forced review"
+                ),
+            }
+        }
         if computed.accepted {
             self.audit_verified.fetch_add(1, Ordering::Relaxed);
         } else {
@@ -1498,8 +1862,9 @@ impl ValidationInner {
         created_at: SystemTime,
         difficulty: u64,
         accepted: bool,
-        reject_reason: Option<&'static str>,
-    ) {
+        count_toward_address_risk: bool,
+        count_invalid_at_address: bool,
+    ) -> ValidationFollowupAction {
         let now = SystemTime::now();
         let mut state = self.state.lock();
         let entry = get_or_insert_state(&mut state, address);
@@ -1538,38 +1903,41 @@ impl ValidationInner {
         }
 
         let invalid_sample = !accepted;
-        let _ = reject_reason;
         entry.sampled_shares = entry.sampled_shares.saturating_add(1);
-        if invalid_sample {
+        if invalid_sample && count_invalid_at_address {
             entry.invalid_samples = entry.invalid_samples.saturating_add(1);
         }
-        if entry.forced_started_at.is_some() {
-            entry.forced_sampled_shares = entry.forced_sampled_shares.saturating_add(1);
-            if invalid_sample {
-                entry.forced_invalid_samples = entry.forced_invalid_samples.saturating_add(1);
-            }
-        } else {
-            entry.risk_sampled_shares = entry.risk_sampled_shares.saturating_add(1);
-            if invalid_sample {
-                entry.risk_invalid_samples = entry.risk_invalid_samples.saturating_add(1);
+        // Attributed failures were penalized at their source (see
+        // AuditFeedback); only unattributable evidence escalates the address.
+        let address_risk_sample = count_toward_address_risk || accepted;
+        if address_risk_sample {
+            if entry.forced_started_at.is_some() {
+                entry.forced_sampled_shares = entry.forced_sampled_shares.saturating_add(1);
+                if invalid_sample {
+                    entry.forced_invalid_samples = entry.forced_invalid_samples.saturating_add(1);
+                }
+            } else {
+                entry.risk_sampled_shares = entry.risk_sampled_shares.saturating_add(1);
+                if invalid_sample {
+                    entry.risk_invalid_samples = entry.risk_invalid_samples.saturating_add(1);
+                }
             }
         }
 
-        let followup =
-            self.evaluate_post_sample_state(entry, now, OverloadMode::Normal, true, invalid_sample);
-        if followup == ValidationFollowupAction::Quarantine {
-            tracing::warn!(
-                address = %address,
-                share_id,
-                "async validation sample would have triggered forced-validation quarantine; future shares will remain in forced review"
-            );
-        }
+        let followup = self.evaluate_post_sample_state(
+            entry,
+            now,
+            OverloadMode::Normal,
+            address_risk_sample,
+            invalid_sample,
+        );
         let persisted = persisted_validation_state(address, entry);
         if state.len() > VALIDATION_STATE_MAX_TRACKED {
             self.prune_stale_state_locked(&mut state, now);
         }
         drop(state);
         self.persist_validation_state(&persisted, None, now);
+        followup
     }
 
     fn schedule_background_audits(&self, now: SystemTime) {
@@ -1984,7 +2352,111 @@ impl ValidationInner {
             invalid_sample: false,
             provisional_accepted: true,
             overload_mode,
+            attributed: false,
+            count_invalid_at_address: true,
         });
+    }
+
+    fn forget_revoked_shares(&self, address: &str, share_ids: &[i64]) {
+        if share_ids.is_empty() {
+            return;
+        }
+        let revoked = share_ids.iter().copied().collect::<HashSet<_>>();
+        let mut state = self.state.lock();
+        if let Some(st) = state.get_mut(address) {
+            st.provisional_at
+                .retain(|share| !share.share_id.is_some_and(|id| revoked.contains(&id)));
+            st.accepted_window
+                .retain(|share| share.verified || !revoked.contains(&share.share_id));
+        }
+        drop(state);
+        let mut pending = self.audit_pending_shares.lock();
+        for id in share_ids {
+            pending.remove(id);
+        }
+    }
+
+    fn audit_feedback(&self) -> Option<Arc<dyn AuditFeedback>> {
+        self.audit_feedback.lock().clone()
+    }
+
+    fn reserve_probation(&self, address: &str, group: &str) -> ProbationReservation {
+        let mut probation = self.probation.lock();
+        if probation.pending_addresses.contains(address) {
+            return ProbationReservation::AlreadyPending;
+        }
+        let group_count = probation.reserved_by_group.get(group).copied().unwrap_or(0);
+        if probation.reserved_total >= PROBATION_QUEUE_SIZE
+            || group_count >= PROBATION_MAX_PER_GROUP
+        {
+            drop(probation);
+            self.probation_rejected.fetch_add(1, Ordering::Relaxed);
+            return ProbationReservation::Saturated;
+        }
+        probation.pending_addresses.insert(address.to_string());
+        *probation
+            .reserved_by_group
+            .entry(group.to_string())
+            .or_default() += 1;
+        probation.reserved_total += 1;
+        ProbationReservation::Reserved
+    }
+
+    fn release_probation(&self, address: &str, group: &str) {
+        let mut probation = self.probation.lock();
+        if !probation.pending_addresses.remove(address) {
+            return;
+        }
+        probation.reserved_total = probation.reserved_total.saturating_sub(1);
+        if let Some(count) = probation.reserved_by_group.get_mut(group) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                probation.reserved_by_group.remove(group);
+            }
+        }
+    }
+
+    fn enqueue_probation_audit(&self, share: PendingAuditShare, group: &str) {
+        let address = share.miner.clone();
+        let tracker_id = self.probation_queue.push(Instant::now());
+        let queued = QueuedProbationTask {
+            task: QueuedAuditTask {
+                share,
+                source: ValidationAuditSource::Probation,
+            },
+            group: group.to_string(),
+        };
+        // Reservations bound the queue, so this only fails on shutdown.
+        if self.probation_tx.try_send(queued).is_err() {
+            self.probation_queue.remove(tracker_id);
+            self.release_probation(&address, group);
+            return;
+        }
+        self.probation_enqueued.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn address_sample_counts(&self, address: &str) -> (u64, u64) {
+        self.state.lock().get(address).map_or((0, 0), |st| {
+            (
+                st.sampled_shares.saturating_sub(st.invalid_samples),
+                st.invalid_samples,
+            )
+        })
+    }
+
+    fn probation_overdue(&self) -> bool {
+        self.probation_queue
+            .snapshot(Instant::now())
+            .oldest_age_millis
+            .is_some_and(|age| age >= PROBATION_MAX_WAIT.as_millis() as u64)
+    }
+
+    fn process_probation_audit(&self, queued: QueuedProbationTask) {
+        let started_at = Instant::now();
+        self.probation_queue.pop_and_record_wait(started_at);
+        let address = queued.task.share.miner.clone();
+        self.process_audit_task(queued.task, started_at);
+        self.release_probation(&address, &queued.group);
     }
 }
 
@@ -2372,6 +2844,166 @@ mod tests {
         }
     }
 
+    fn probation_share(share_id: i64, address: &str, nonce: u64) -> PendingAuditShare {
+        let header_base = vec![1, 2, 3];
+        PendingAuditShare {
+            share_id,
+            job_id: format!("job-{share_id}"),
+            miner: address.to_string(),
+            worker: "rig".to_string(),
+            difficulty: 1,
+            nonce,
+            claimed_hash: Some(DeterministicTestHasher.hash(&header_base, nonce).unwrap()),
+            header_base,
+            network_target: [0x00; 32],
+            created_at: SystemTime::now(),
+        }
+    }
+
+    #[test]
+    fn new_address_flood_is_bounded_and_does_not_trip_overload() {
+        struct SlowDeterministicHasher;
+        impl PowHasher for SlowDeterministicHasher {
+            fn hash(&self, header_base: &[u8], nonce: u64) -> anyhow::Result<[u8; 32]> {
+                std::thread::sleep(Duration::from_millis(40));
+                DeterministicTestHasher.hash(header_base, nonce)
+            }
+        }
+        // Production-like sampling with tight overload thresholds: under the old
+        // routing, dozens of queued warmup audits in the regular lane would
+        // push the pool into Emergency (sampling off for everyone).
+        let cfg = Config {
+            warmup_shares: 5,
+            sample_rate: 0.05,
+            min_sample_every: 25,
+            regular_verifiers: 1,
+            audit_verifiers: 1,
+            overload_shed_oldest_age: "150ms".to_string(),
+            overload_emergency_oldest_age: "300ms".to_string(),
+            overload_clear_oldest_age: "100ms".to_string(),
+            ..test_cfg()
+        };
+        let engine = ValidationEngine::new(cfg, Arc::new(SlowDeterministicHasher));
+
+        let mut reserved = 0usize;
+        let mut reserved_from_one_host = 0usize;
+        for idx in 0..60u64 {
+            let address = format!("throwaway-{idx}");
+            let group = if idx < 10 {
+                "198.51.100.9".to_string()
+            } else {
+                format!("203.0.{idx}.1")
+            };
+            let plan = engine.plan_regular_submit(&address);
+            assert!(plan.probation, "never-verified address needs probation");
+            assert!(!plan.enqueue_audit, "probation never uses the regular lane");
+            match engine.reserve_probation(&address, &group) {
+                ProbationReservation::Reserved => {
+                    reserved += 1;
+                    if idx < 10 {
+                        reserved_from_one_host += 1;
+                    }
+                    engine.enqueue_probation_audit(
+                        probation_share(idx as i64 + 1, &address, idx),
+                        &group,
+                    );
+                }
+                ProbationReservation::AlreadyPending => panic!("one share per address"),
+                ProbationReservation::Saturated => {}
+            }
+        }
+        assert_eq!(reserved, PROBATION_QUEUE_SIZE, "lane is bounded");
+        assert_eq!(reserved_from_one_host, PROBATION_MAX_PER_GROUP);
+
+        std::thread::sleep(Duration::from_millis(400));
+        let snapshot = engine.snapshot();
+        assert_eq!(snapshot.overload_mode, OverloadMode::Normal);
+        assert_eq!(snapshot.regular_queue_depth, 0);
+        assert_eq!(
+            snapshot.probation_rejected,
+            60 - PROBATION_QUEUE_SIZE as u64
+        );
+        // The lane drains on the audit worker meanwhile.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while engine.snapshot().probation_queue_depth >= PROBATION_QUEUE_SIZE {
+            assert!(Instant::now() < deadline, "probation lane should drain");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(engine.snapshot().overload_mode, OverloadMode::Normal);
+
+        // An address with warmup's worth of verified samples keeps normal
+        // sampling, unaffected by the flood.
+        for nonce in 7..12 {
+            let veteran = engine.process_inline(ValidationTask {
+                address: "veteran".to_string(),
+                force_full_verify: true,
+                ..matching_task(nonce)
+            });
+            assert!(veteran.accepted);
+        }
+        let plan = engine.plan_regular_submit("veteran");
+        assert!(!plan.probation);
+        assert_eq!(plan.overload_mode, OverloadMode::Normal);
+    }
+
+    #[test]
+    fn never_verified_backlog_stays_off_the_regular_lane() {
+        let cfg = Config {
+            warmup_shares: 5,
+            ..test_cfg()
+        };
+        let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));
+        assert_eq!(
+            engine.reserve_probation("flooder", "192.0.2.1"),
+            ProbationReservation::Reserved
+        );
+        for share_id in 1..=20 {
+            let plan = engine.plan_regular_submit("flooder");
+            assert!(
+                !plan.enqueue_audit && !plan.sync_full_verify,
+                "share {share_id}: a never-verified address must not use the regular lane"
+            );
+            engine.record_hot_accept("flooder", share_id, 1, SystemTime::now(), None, plan);
+        }
+        assert_eq!(engine.snapshot().regular_queue_depth, 0);
+    }
+
+    #[test]
+    fn probation_holds_one_slot_per_address_and_clears_after_a_pass() {
+        // One warmup sample: a single passing probation audit graduates.
+        let cfg = Config {
+            warmup_shares: 1,
+            ..test_cfg()
+        };
+        let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));
+        assert_eq!(
+            engine.reserve_probation("newbie", "192.0.2.1"),
+            ProbationReservation::Reserved
+        );
+        assert_eq!(
+            engine.reserve_probation("newbie", "192.0.2.2"),
+            ProbationReservation::AlreadyPending
+        );
+        assert!(!engine.plan_regular_submit("newbie").probation);
+        engine.enqueue_probation_audit(probation_share(1, "newbie", 3), "192.0.2.1");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while engine.plan_regular_submit("newbie").probation
+            || engine
+                .inner
+                .probation
+                .lock()
+                .pending_addresses
+                .contains("newbie")
+        {
+            assert!(Instant::now() < deadline, "probation audit should complete");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            !engine.plan_regular_submit("newbie").probation,
+            "a passing probation audit graduates the address"
+        );
+    }
+
     #[derive(Default)]
     struct InMemoryAuditStore {
         loaded: LoadedValidationState,
@@ -2436,9 +3068,8 @@ mod tests {
             Ok(Vec::new())
         }
 
-        fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<()> {
-            self.completed.lock().insert(update.share_id);
-            Ok(())
+        fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<bool> {
+            Ok(self.completed.lock().insert(update.share_id))
         }
 
         fn load_recent_provisional_audit_shares(
@@ -2486,6 +3117,8 @@ mod tests {
             claimed_hash: Some([0x01; 32]),
             force_full_verify: false,
             candidate_claim: false,
+            attributed: false,
+            count_invalid_at_address: true,
         }
     }
 
@@ -2504,6 +3137,8 @@ mod tests {
             claimed_hash: Some(claimed_hash),
             force_full_verify: false,
             candidate_claim: false,
+            attributed: false,
+            count_invalid_at_address: true,
         }
     }
 

@@ -10,7 +10,8 @@ use postgres::{types::ToSql, Client, Config as PostgresConfig, NoTls, Row, Trans
 use serde::Deserialize;
 use tracing::warn;
 
-use crate::engine::ShareRecord;
+use crate::engine::{non_settling_reject_reasons, ShareRecord};
+use crate::share_dedupe::TEMPLATE_SHARE_CLAIM_RETENTION;
 use crate::stats::RejectionReasonCount;
 use crate::validation::{
     LoadedValidationState, PersistedValidationAcceptedShare, PersistedValidationAddressState,
@@ -25,7 +26,6 @@ use pool_common::db::{
     ValidationHoldState,
 };
 
-const SHARE_CLAIM_EXPIRY_SECS: i64 = 2 * 60;
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 
 static READ_PERFORMANCE: OnceLock<crate::telemetry::NamedTimedOperationTracker> = OnceLock::new();
@@ -1284,15 +1284,17 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(())
     }
 
-    pub(crate) fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<()> {
+    /// Applies an audit verdict only while the share is still provisional, so
+    /// a late passing audit cannot resurrect a share revoked meanwhile.
+    pub(crate) fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<bool> {
         let mut conn = self.conn();
         let mut tx = conn.transaction()?;
-        tx.execute(
+        let updated = tx.execute(
             "UPDATE shares
              SET status = $2,
                  was_sampled = $3,
                  reject_reason = $4
-             WHERE id = $1",
+             WHERE id = $1 AND status = 'provisional'",
             &[
                 &update.share_id,
                 &update.status,
@@ -1305,7 +1307,32 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             &[&update.share_id],
         )?;
         tx.commit()?;
-        Ok(())
+        Ok(updated > 0)
+    }
+
+    /// Marks still-provisional shares as rejected (not creditable). Used when
+    /// a source is struck for a proven fake share. Returns rows changed.
+    pub(crate) fn revoke_provisional_shares(&self, share_ids: &[i64], reason: &str) -> Result<u64> {
+        let mut total = 0u64;
+        for chunk in share_ids.chunks(5_000) {
+            let ids = chunk.to_vec();
+            let mut conn = self.conn();
+            let mut tx = conn.transaction()?;
+            let updated = tx.execute(
+                "UPDATE shares
+                 SET status = 'rejected',
+                     reject_reason = $2
+                 WHERE id = ANY($1) AND status = 'provisional'",
+                &[&ids, &reason],
+            )?;
+            tx.execute(
+                "DELETE FROM validation_provisionals WHERE share_id = ANY($1)",
+                &[&ids],
+            )?;
+            tx.commit()?;
+            total = total.saturating_add(updated);
+        }
+        Ok(total)
     }
 
     #[cfg(test)]
@@ -1323,6 +1350,22 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, claimed_hash, created_at
              FROM shares WHERE miner = $1 ORDER BY created_at DESC LIMIT $2",
             &[&address, &limit],
+        )?;
+        Ok(rows.into_iter().map(row_to_share).collect())
+    }
+
+    pub(crate) fn get_provisional_shares_by_ids(&self, ids: &[i64]) -> Result<Vec<DbShare>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids = ids.to_vec();
+        let rows = self.conn().query(
+            "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, claimed_hash, created_at
+             FROM shares
+             WHERE id = ANY($1)
+               AND status = 'provisional'
+             ORDER BY id ASC",
+            &[&ids],
         )?;
         Ok(rows.into_iter().map(row_to_share).collect())
     }
@@ -3724,33 +3767,52 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(deleted)
     }
 
-    pub(crate) fn try_claim_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
+    /// Claims `(share_key, nonce)` in `seen_shares`, where `share_key` is the
+    /// template-scoped key (see `share_dedupe::template_share_key`). The claim
+    /// is kept for [`TEMPLATE_SHARE_CLAIM_RETENTION`] after the share is
+    /// persisted, so it doubles as the durable header-scoped dedupe record; it
+    /// is deleted only after a retryable failure. Rows persisted under the same
+    /// assignment id are still checked for compatibility with older claims.
+    pub(crate) fn try_claim_share(
+        &self,
+        job_id: &str,
+        share_key: &str,
+        nonce: u64,
+    ) -> Result<bool> {
         if self.has_persisted_share(job_id, nonce)? {
             return Ok(false);
         }
         let now = now_unix();
-        let expires_at = now + SHARE_CLAIM_EXPIRY_SECS;
+        let expires_at = now + TEMPLATE_SHARE_CLAIM_RETENTION.as_secs() as i64;
         let claimed = self.conn().execute(
             "INSERT INTO seen_shares (job_id, nonce, expires_at) VALUES ($1, $2, $3)
              ON CONFLICT(job_id, nonce) DO UPDATE SET expires_at = EXCLUDED.expires_at
              WHERE seen_shares.expires_at <= $4",
-            &[&job_id, &u64_to_i64(nonce)?, &expires_at, &now],
+            &[&share_key, &u64_to_i64(nonce)?, &expires_at, &now],
         )?;
         Ok(claimed > 0)
     }
 
-    pub(crate) fn release_share_claim(&self, job_id: &str, nonce: u64) -> Result<()> {
+    pub(crate) fn release_share_claim(&self, share_key: &str, nonce: u64) -> Result<()> {
         self.conn().execute(
             "DELETE FROM seen_shares WHERE job_id = $1 AND nonce = $2",
-            &[&job_id, &u64_to_i64(nonce)?],
+            &[&share_key, &u64_to_i64(nonce)?],
         )?;
         Ok(())
     }
 
+    /// Whether a persisted row already settles this (assignment, nonce).
+    /// Rejections whose reason told the miner to retry (busy, rate limited,
+    /// timeout) were never judged on proof and must not block the retry, and
+    /// a "duplicate share" row never settles anything by itself.
     fn has_persisted_share(&self, job_id: &str, nonce: u64) -> Result<bool> {
+        let retryable = non_settling_reject_reasons();
         let row = self.conn().query_opt(
-            "SELECT 1 FROM shares WHERE job_id = $1 AND nonce = $2 LIMIT 1",
-            &[&job_id, &u64_to_i64(nonce)?],
+            "SELECT 1 FROM shares
+             WHERE job_id = $1 AND nonce = $2
+               AND NOT (status = 'rejected' AND reject_reason IS NOT NULL AND reject_reason = ANY($3))
+             LIMIT 1",
+            &[&job_id, &u64_to_i64(nonce)?, &retryable],
         )?;
         Ok(row.is_some())
     }
@@ -7249,6 +7311,159 @@ mod tests {
             Some(ValidationHoldCause::PayoutCoverage)
         );
         assert!(validation_hold_cause_from_db(Some("legacy")).is_err());
+    }
+
+    #[test]
+    fn template_share_claims_outlive_persistence_and_ignore_retryable_rejects_postgres() {
+        let Some(store) = test_store() else { return };
+        let suffix = unique_suffix();
+        let key = format!("tpl:{suffix}");
+        let assignment_old = format!("assign-old-{suffix}");
+        let assignment_new = format!("assign-new-{suffix}");
+
+        assert!(store.try_claim_share(&assignment_old, &key, 7).unwrap());
+        store
+            .add_share(ShareRecord {
+                job_id: assignment_old.clone(),
+                miner: format!("miner-{suffix}"),
+                worker: "rig".to_string(),
+                difficulty: 1,
+                nonce: 7,
+                status: "provisional",
+                was_sampled: false,
+                block_hash: None,
+                claimed_hash: None,
+                reject_reason: None,
+                created_at: SystemTime::now(),
+            })
+            .unwrap();
+        // The header-scoped claim is not released after persistence, so the same
+        // nonce under a rebound assignment id is still a duplicate.
+        assert!(!store.try_claim_share(&assignment_new, &key, 7).unwrap());
+        // Releasing (retryable failure path) frees it again.
+        store.release_share_claim(&key, 7).unwrap();
+        assert!(store.try_claim_share(&assignment_new, &key, 7).unwrap());
+
+        // A persisted "server busy" rejection never blocks the retry.
+        let busy_assignment = format!("assign-busy-{suffix}");
+        store
+            .add_share(ShareRecord {
+                job_id: busy_assignment.clone(),
+                miner: format!("miner-{suffix}"),
+                worker: "rig".to_string(),
+                difficulty: 1,
+                nonce: 8,
+                status: "rejected",
+                was_sampled: false,
+                block_hash: None,
+                claimed_hash: None,
+                reject_reason: Some("server busy".to_string()),
+                created_at: SystemTime::now(),
+            })
+            .unwrap();
+        assert!(store.try_claim_share(&busy_assignment, &key, 8).unwrap());
+        // Nor does a "duplicate share" row on its own.
+        store
+            .add_share(ShareRecord {
+                job_id: busy_assignment.clone(),
+                miner: format!("miner-{suffix}"),
+                worker: "rig".to_string(),
+                difficulty: 1,
+                nonce: 10,
+                status: "rejected",
+                was_sampled: false,
+                block_hash: None,
+                claimed_hash: None,
+                reject_reason: Some("duplicate share".to_string()),
+                created_at: SystemTime::now(),
+            })
+            .unwrap();
+        assert!(store.try_claim_share(&busy_assignment, &key, 10).unwrap());
+        // A proof rejection persisted under the assignment still blocks.
+        store
+            .add_share(ShareRecord {
+                job_id: busy_assignment.clone(),
+                miner: format!("miner-{suffix}"),
+                worker: "rig".to_string(),
+                difficulty: 1,
+                nonce: 9,
+                status: "rejected",
+                was_sampled: false,
+                block_hash: None,
+                claimed_hash: None,
+                reject_reason: Some("invalid share proof".to_string()),
+                created_at: SystemTime::now(),
+            })
+            .unwrap();
+        assert!(!store
+            .try_claim_share(&busy_assignment, &format!("tpl:other-{suffix}"), 9)
+            .unwrap());
+    }
+
+    #[test]
+    fn revoked_provisional_shares_cannot_be_resurrected_by_late_audit_postgres() {
+        let Some(store) = test_store() else { return };
+        let suffix = unique_suffix();
+        let share = |nonce: u64, status: &'static str| ShareRecord {
+            job_id: format!("revoke-{suffix}"),
+            miner: format!("miner-{suffix}"),
+            worker: "rig".to_string(),
+            difficulty: 1,
+            nonce,
+            status,
+            was_sampled: false,
+            block_hash: None,
+            claimed_hash: None,
+            reject_reason: None,
+            created_at: SystemTime::now(),
+        };
+        let provisional = store
+            .add_share_with_replay_and_id(share(1, "provisional"), None)
+            .unwrap();
+        let verified = store
+            .add_share_with_replay_and_id(share(2, "verified"), None)
+            .unwrap();
+        store
+            .add_validation_provisional(
+                &format!("miner-{suffix}"),
+                Some(provisional),
+                SystemTime::now(),
+            )
+            .unwrap();
+
+        let revoked = store
+            .revoke_provisional_shares(&[provisional, verified], "source revoked")
+            .unwrap();
+        assert_eq!(revoked, 1, "verified shares are never revoked");
+        let rows = store
+            .get_shares_for_miner(&format!("miner-{suffix}"), 10)
+            .unwrap();
+        let status_of = |id: i64| rows.iter().find(|row| row.id == id).unwrap().status.clone();
+        assert_eq!(status_of(provisional), "rejected");
+        assert_eq!(status_of(verified), "verified");
+
+        let applied = store
+            .complete_validation_audit(&ShareReplayUpdate {
+                share_id: provisional,
+                status: "verified".to_string(),
+                was_sampled: true,
+                reject_reason: None,
+            })
+            .unwrap();
+        assert!(
+            !applied,
+            "a passing late audit must not resurrect a revoked share"
+        );
+        let rows = store
+            .get_shares_for_miner(&format!("miner-{suffix}"), 10)
+            .unwrap();
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.id == provisional)
+                .unwrap()
+                .status,
+            "rejected"
+        );
     }
 
     #[test]

@@ -45,6 +45,26 @@ pub struct Config {
     pub quarantine_duration: String,
     pub max_quarantine_duration: String,
     pub invalid_escalation_quarantine_strikes: i32,
+    /// First ban for a source (address + IP group) that submitted a proven
+    /// fake share; doubles per strike inside the escalation window.
+    pub source_ban_duration: String,
+    pub source_max_ban_duration: String,
+    /// Strikes from one IP group before its unestablished pairs are revoked
+    /// and banned as well.
+    pub source_ip_strike_threshold: i32,
+    /// When false, proven fakes are only logged per source and evidence is
+    /// booked against the address as before (shadow mode for rollout).
+    pub source_penalties_enabled: bool,
+    /// A proven fake from a source with less verified history than this
+    /// (in memory for the source, persisted for the address) is a full
+    /// strike; with more history it is judged on its invalid ratio.
+    pub source_full_strike_min_source_good: i32,
+    pub source_full_strike_min_address_good: i32,
+    /// Invalid-sample rate an honest miner can plausibly produce (hardware or
+    /// backend errors). Only a rate clearly above it is a full strike.
+    pub source_honest_invalid_rate: f64,
+    /// Extra audits for a source after a soft strike.
+    pub source_soft_strike_audits: i32,
     pub provisional_share_delay: String,
     pub enable_vardiff: bool,
     pub vardiff_target_shares: i32,
@@ -105,6 +125,14 @@ impl Default for Config {
             quarantine_duration: "1h".to_string(),
             max_quarantine_duration: "168h".to_string(),
             invalid_escalation_quarantine_strikes: 1,
+            source_ban_duration: "15m".to_string(),
+            source_max_ban_duration: "24h".to_string(),
+            source_ip_strike_threshold: 3,
+            source_penalties_enabled: true,
+            source_full_strike_min_source_good: 20,
+            source_full_strike_min_address_good: 100,
+            source_honest_invalid_rate: 0.02,
+            source_soft_strike_audits: 10,
             provisional_share_delay: "15m".to_string(),
             enable_vardiff: true,
             vardiff_target_shares: 10,
@@ -206,6 +234,14 @@ impl Config {
         config_duration("max_quarantine_duration", &self.max_quarantine_duration)
     }
 
+    pub(crate) fn source_ban_duration_value(&self) -> Duration {
+        config_duration("source_ban_duration", &self.source_ban_duration)
+    }
+
+    pub(crate) fn source_max_ban_duration_value(&self) -> Duration {
+        config_duration("source_max_ban_duration", &self.source_max_ban_duration)
+    }
+
     pub fn payout_interval_duration(&self) -> Duration {
         config_duration("payout_interval", &self.payout_interval)
     }
@@ -258,6 +294,8 @@ impl Config {
         config_duration_result("forced_verify_duration", &self.forced_verify_duration)?;
         config_duration_result("quarantine_duration", &self.quarantine_duration)?;
         config_duration_result("max_quarantine_duration", &self.max_quarantine_duration)?;
+        ensure_nonzero_duration("source_ban_duration", &self.source_ban_duration)?;
+        ensure_nonzero_duration("source_max_ban_duration", &self.source_max_ban_duration)?;
         config_duration_result("provisional_share_delay", &self.provisional_share_delay)?;
         config_duration_result("vardiff_window", &self.vardiff_window)?;
         config_duration_result("vardiff_retarget_interval", &self.vardiff_retarget_interval)?;
@@ -285,6 +323,26 @@ impl Config {
             (
                 "invalid_escalation_quarantine_strikes",
                 self.invalid_escalation_quarantine_strikes,
+                0,
+            ),
+            (
+                "source_ip_strike_threshold",
+                self.source_ip_strike_threshold,
+                1,
+            ),
+            (
+                "source_full_strike_min_source_good",
+                self.source_full_strike_min_source_good,
+                0,
+            ),
+            (
+                "source_full_strike_min_address_good",
+                self.source_full_strike_min_address_good,
+                0,
+            ),
+            (
+                "source_soft_strike_audits",
+                self.source_soft_strike_audits,
                 0,
             ),
             ("vardiff_target_shares", self.vardiff_target_shares, 1),
@@ -315,6 +373,12 @@ impl Config {
             );
         }
         ensure_f64_range("sample_rate", self.sample_rate, 0.0, 1.0)?;
+        ensure_f64_range(
+            "source_honest_invalid_rate",
+            self.source_honest_invalid_rate,
+            0.0,
+            1.0,
+        )?;
         ensure_f64_range("vardiff_tolerance", self.vardiff_tolerance, 0.01, 0.95)?;
         for (field, value) in [
             (

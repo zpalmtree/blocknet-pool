@@ -14,9 +14,11 @@ use tokio::sync::{broadcast, mpsc, Notify};
 use crate::config::{Config, CANDIDATE_SUBMIT_QUEUE_SIZE};
 use crate::dev_fee::is_seine_dev_fee_address;
 use crate::engine::{
-    canonical_share_reject_reason, PoolEngine, SubmitAck, SubmitMetadata, SubmitQueueRoute,
+    canonical_share_reject_reason, is_retryable_reject_reason, PoolEngine, SubmitAck,
+    SubmitMetadata, SubmitQueueRoute,
 };
 use crate::jobs::{AssignmentRangeMode, JobManager};
+use crate::source_risk::ip_group_key;
 use crate::stats::PoolStats;
 use crate::telemetry::{PercentileSummary, QueueTracker};
 use pool_common::protocol::{
@@ -39,7 +41,19 @@ const POST_LOGIN_IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const CANDIDATE_CLAIM_WINDOW: Duration = Duration::from_secs(60);
 const CANDIDATE_CLAIM_MAX_PER_WINDOW: usize = 4;
 const CANDIDATE_CLAIM_MAX_INFLIGHT: usize = 1;
+// Addresses are free, so address-scoped limits alone let one host flood the
+// single-worker candidate lane with throwaway addresses. Bound the IP group
+// (IPv4 address / IPv6 /64) and the connection as well.
+const CANDIDATE_CLAIM_IP_MAX_PER_WINDOW: usize = 8;
+const CANDIDATE_CLAIM_IP_MAX_INFLIGHT: usize = 2;
+const CANDIDATE_CLAIM_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 const CANDIDATE_SUBMIT_WORKERS: usize = 1;
+// Block candidates from established sources (clean verified history on that
+// address from that network) get their own small lane so a flood of false
+// claims from fresh sources cannot delay a real block. A false claim from an
+// established source strikes it and drops it back to the shared lane.
+const PRIORITY_CANDIDATE_SUBMIT_WORKERS: usize = 1;
+const PRIORITY_CANDIDATE_SUBMIT_QUEUE_SIZE: usize = 16;
 const REGULAR_SUBMIT_WORKERS: usize = 4;
 
 fn client_submit_ack_difficulty(
@@ -128,6 +142,10 @@ pub struct SubmitRuntimeSnapshot {
     #[serde(default)]
     pub candidate_worker_failure_total: u64,
     #[serde(default)]
+    pub candidate_priority_enqueued_total: u64,
+    #[serde(default)]
+    pub candidate_priority_queue_depth: usize,
+    #[serde(default)]
     pub candidate_queue_depth: usize,
     #[serde(default)]
     pub regular_queue_depth: usize,
@@ -157,26 +175,48 @@ struct CandidateClaimState {
     in_flight: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CandidateClaimLimit {
+    max_per_window: usize,
+    max_inflight: usize,
+}
+
+#[derive(Debug, Default)]
+struct CandidateClaimTrackerState {
+    entries: HashMap<String, CandidateClaimState>,
+    last_sweep: Option<Instant>,
+}
+
 #[derive(Debug)]
 struct CandidateClaimTracker {
     window: Duration,
     max_per_window: usize,
     max_inflight: usize,
-    state: Mutex<HashMap<String, CandidateClaimState>>,
+    state: Mutex<CandidateClaimTrackerState>,
 }
 
 #[derive(Debug, Clone)]
 struct CandidateClaimPermit {
     tracker: Arc<CandidateClaimTracker>,
-    key: String,
+    keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SubmitLane {
+    Regular,
+    Candidate,
+    PriorityCandidate,
 }
 
 #[derive(Debug)]
 struct SubmitDispatcher {
     candidate_tx: flume::Sender<SubmitWorkItem>,
+    priority_candidate_tx: flume::Sender<SubmitWorkItem>,
     regular_tx: flume::Sender<SubmitWorkItem>,
     candidate_queue: Arc<QueueTracker>,
+    priority_candidate_queue: Arc<QueueTracker>,
     regular_queue: Arc<QueueTracker>,
+    candidate_priority_enqueued: AtomicU64,
     candidate_tracker: Arc<CandidateClaimTracker>,
     submits_received: AtomicU64,
     candidate_classified: AtomicU64,
@@ -192,55 +232,133 @@ struct SubmitDispatcher {
     candidate_worker_failure: AtomicU64,
 }
 
+impl CandidateClaimState {
+    fn prune(&mut self, now: Instant, window: Duration) {
+        while self
+            .recent
+            .front()
+            .is_some_and(|seen_at| now.saturating_duration_since(*seen_at) >= window)
+        {
+            self.recent.pop_front();
+        }
+    }
+
+    fn idle(&self) -> bool {
+        self.in_flight == 0 && self.recent.is_empty()
+    }
+}
+
 impl CandidateClaimTracker {
     fn new(window: Duration, max_per_window: usize, max_inflight: usize) -> Arc<Self> {
         Arc::new(Self {
             window: window.max(Duration::from_secs(1)),
             max_per_window: max_per_window.max(1),
             max_inflight: max_inflight.max(1),
-            state: Mutex::new(HashMap::new()),
+            state: Mutex::new(CandidateClaimTrackerState::default()),
         })
     }
 
-    fn try_acquire(self: &Arc<Self>, key: String, now: Instant) -> Result<CandidateClaimPermit> {
-        let mut state = self.state.lock();
-        let entry = state.entry(key.clone()).or_default();
-        while entry
-            .recent
-            .front()
-            .is_some_and(|seen_at| now.saturating_duration_since(*seen_at) >= self.window)
-        {
-            entry.recent.pop_front();
+    fn default_limit(&self) -> CandidateClaimLimit {
+        CandidateClaimLimit {
+            max_per_window: self.max_per_window,
+            max_inflight: self.max_inflight,
         }
-        if entry.in_flight >= self.max_inflight {
+    }
+
+    #[cfg(test)]
+    fn try_acquire(self: &Arc<Self>, key: String, now: Instant) -> Result<CandidateClaimPermit> {
+        let limit = self.default_limit();
+        self.try_acquire_all(vec![(key, limit)], now)
+    }
+
+    /// Acquires every bucket or none. Each key carries its own limits.
+    fn try_acquire_all(
+        self: &Arc<Self>,
+        buckets: Vec<(String, CandidateClaimLimit)>,
+        now: Instant,
+    ) -> Result<CandidateClaimPermit> {
+        let mut state = self.state.lock();
+        self.sweep_if_due_locked(&mut state, now);
+        let mut busy = false;
+        let mut limited = false;
+        for (key, limit) in &buckets {
+            let Some(entry) = state.entries.get_mut(key) else {
+                continue;
+            };
+            entry.prune(now, self.window);
+            if entry.in_flight >= limit.max_inflight.max(1) {
+                busy = true;
+            } else if entry.recent.len() >= limit.max_per_window.max(1) {
+                limited = true;
+            }
+        }
+        if busy {
             return Err(anyhow!("candidate claim busy, retry"));
         }
-        if entry.recent.len() >= self.max_per_window {
+        if limited {
             return Err(anyhow!("candidate claim rate limited, retry"));
         }
-        entry.recent.push_back(now);
-        entry.in_flight += 1;
+        let mut keys = Vec::with_capacity(buckets.len());
+        for (key, _) in buckets {
+            let entry = state.entries.entry(key.clone()).or_default();
+            entry.recent.push_back(now);
+            entry.in_flight += 1;
+            keys.push(key);
+        }
         Ok(CandidateClaimPermit {
             tracker: Arc::clone(self),
-            key,
+            keys,
         })
     }
 
-    fn release(&self, key: &str) {
+    fn release(&self, keys: &[String]) {
+        let now = Instant::now();
         let mut state = self.state.lock();
-        let Some(entry) = state.get_mut(key) else {
-            return;
-        };
-        entry.in_flight = entry.in_flight.saturating_sub(1);
-        if entry.in_flight == 0 && entry.recent.is_empty() {
-            state.remove(key);
+        for key in keys {
+            let Some(entry) = state.entries.get_mut(key) else {
+                continue;
+            };
+            entry.in_flight = entry.in_flight.saturating_sub(1);
+            entry.prune(now, self.window);
+            if entry.idle() {
+                state.entries.remove(key);
+            }
         }
+        self.sweep_if_due_locked(&mut state, now);
+    }
+
+    /// Drops buckets whose window history expired after their last release;
+    /// without this, keys with recent history at release time were never freed.
+    fn sweep_if_due_locked(&self, state: &mut CandidateClaimTrackerState, now: Instant) {
+        if state.last_sweep.is_some_and(|last| {
+            now.saturating_duration_since(last) < CANDIDATE_CLAIM_SWEEP_INTERVAL
+        }) {
+            return;
+        }
+        state.last_sweep = Some(now);
+        let window = self.window;
+        state.entries.retain(|_, entry| {
+            entry.prune(now, window);
+            !entry.idle()
+        });
+    }
+
+    #[cfg(test)]
+    fn tracked_keys(&self) -> usize {
+        self.state.lock().entries.len()
+    }
+
+    #[cfg(test)]
+    fn force_sweep(&self, now: Instant) {
+        let mut state = self.state.lock();
+        state.last_sweep = None;
+        self.sweep_if_due_locked(&mut state, now);
     }
 }
 
 impl CandidateClaimPermit {
     fn release(self) {
-        self.tracker.release(&self.key);
+        self.tracker.release(&self.keys);
     }
 }
 
@@ -248,16 +366,22 @@ impl SubmitDispatcher {
     fn new(engine: Arc<PoolEngine>, cfg: &Config) -> Arc<Self> {
         let (candidate_tx, candidate_rx) =
             flume::bounded::<SubmitWorkItem>(CANDIDATE_SUBMIT_QUEUE_SIZE);
+        let (priority_candidate_tx, priority_candidate_rx) =
+            flume::bounded::<SubmitWorkItem>(PRIORITY_CANDIDATE_SUBMIT_QUEUE_SIZE);
         let (regular_tx, regular_rx) =
             flume::bounded::<SubmitWorkItem>(cfg.regular_submit_queue_size());
         let candidate_queue = Arc::new(QueueTracker::new(512));
+        let priority_candidate_queue = Arc::new(QueueTracker::new(512));
         let regular_queue = Arc::new(QueueTracker::new(512));
         engine.attach_submit_regular_queue(Arc::clone(&regular_queue));
         let dispatcher = Arc::new(Self {
             candidate_tx,
+            priority_candidate_tx,
             regular_tx,
             candidate_queue,
+            priority_candidate_queue,
             regular_queue,
+            candidate_priority_enqueued: AtomicU64::new(0),
             candidate_tracker: CandidateClaimTracker::new(
                 CANDIDATE_CLAIM_WINDOW,
                 CANDIDATE_CLAIM_MAX_PER_WINDOW,
@@ -282,7 +406,22 @@ impl SubmitDispatcher {
             let dispatcher = Arc::clone(&dispatcher);
             let candidate_rx = candidate_rx.clone();
             tokio::spawn(async move {
-                run_submit_worker(engine, dispatcher, candidate_rx, true).await;
+                run_submit_worker(engine, dispatcher, candidate_rx, SubmitLane::Candidate).await;
+            });
+        }
+
+        for _ in 0..PRIORITY_CANDIDATE_SUBMIT_WORKERS {
+            let engine = Arc::clone(&engine);
+            let dispatcher = Arc::clone(&dispatcher);
+            let priority_candidate_rx = priority_candidate_rx.clone();
+            tokio::spawn(async move {
+                run_submit_worker(
+                    engine,
+                    dispatcher,
+                    priority_candidate_rx,
+                    SubmitLane::PriorityCandidate,
+                )
+                .await;
             });
         }
 
@@ -291,7 +430,7 @@ impl SubmitDispatcher {
             let dispatcher = Arc::clone(&dispatcher);
             let regular_rx = regular_rx.clone();
             tokio::spawn(async move {
-                run_submit_worker(engine, dispatcher, regular_rx, false).await;
+                run_submit_worker(engine, dispatcher, regular_rx, SubmitLane::Regular).await;
             });
         }
 
@@ -300,12 +439,30 @@ impl SubmitDispatcher {
 
     fn try_acquire_candidate_permit(
         &self,
+        conn_id: &str,
         address: &str,
         peer: SocketAddr,
+        established_source: bool,
         now: Instant,
     ) -> Result<CandidateClaimPermit> {
-        let key = format!("{}|{}", address.trim(), peer.ip());
-        match self.candidate_tracker.try_acquire(key, now) {
+        let ip_group = ip_group_key(peer.ip());
+        let per_source = self.candidate_tracker.default_limit();
+        let mut buckets = vec![
+            (format!("addr|{}|{}", address.trim(), ip_group), per_source),
+            (format!("conn|{conn_id}"), per_source),
+        ];
+        // Established sources are exempt from network-level penalties, so a
+        // fresh source sharing their IP cannot use up their block claims.
+        if !established_source {
+            buckets.push((
+                format!("ip|{ip_group}"),
+                CandidateClaimLimit {
+                    max_per_window: CANDIDATE_CLAIM_IP_MAX_PER_WINDOW,
+                    max_inflight: CANDIDATE_CLAIM_IP_MAX_INFLIGHT,
+                },
+            ));
+        }
+        match self.candidate_tracker.try_acquire_all(buckets, now) {
             Ok(permit) => {
                 self.candidate_permit_acquired
                     .fetch_add(1, Ordering::Relaxed);
@@ -327,32 +484,43 @@ impl SubmitDispatcher {
         self.candidate_classified.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn try_enqueue(&self, item: SubmitWorkItem, route: SubmitQueueRoute) -> Result<()> {
+    fn lane_queue(&self, lane: SubmitLane) -> &QueueTracker {
+        match lane {
+            SubmitLane::Regular => &self.regular_queue,
+            SubmitLane::Candidate => &self.candidate_queue,
+            SubmitLane::PriorityCandidate => &self.priority_candidate_queue,
+        }
+    }
+
+    fn try_enqueue(&self, item: SubmitWorkItem, lane: SubmitLane) -> Result<()> {
         let queued_at = Instant::now();
-        let tracker_id = match route {
-            SubmitQueueRoute::Candidate => self.candidate_queue.push(queued_at),
-            SubmitQueueRoute::Regular => self.regular_queue.push(queued_at),
-        };
-        let result = match route {
-            SubmitQueueRoute::Candidate => self.candidate_tx.try_send(item),
-            SubmitQueueRoute::Regular => self.regular_tx.try_send(item),
+        let tracker_id = self.lane_queue(lane).push(queued_at);
+        let result = match lane {
+            SubmitLane::Regular => self.regular_tx.try_send(item),
+            SubmitLane::Candidate => self.candidate_tx.try_send(item),
+            SubmitLane::PriorityCandidate => self.priority_candidate_tx.try_send(item),
         };
         match result {
             Ok(()) => {
-                if route == SubmitQueueRoute::Candidate {
-                    self.candidate_enqueued.fetch_add(1, Ordering::Relaxed);
+                match lane {
+                    SubmitLane::Regular => {}
+                    SubmitLane::Candidate => {
+                        self.candidate_enqueued.fetch_add(1, Ordering::Relaxed);
+                    }
+                    SubmitLane::PriorityCandidate => {
+                        self.candidate_enqueued.fetch_add(1, Ordering::Relaxed);
+                        self.candidate_priority_enqueued
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
                 }
                 Ok(())
             }
             Err(flume::TrySendError::Full(item)) | Err(flume::TrySendError::Disconnected(item)) => {
-                match route {
-                    SubmitQueueRoute::Candidate => self.candidate_queue.remove(tracker_id),
-                    SubmitQueueRoute::Regular => self.regular_queue.remove(tracker_id),
-                }
+                self.lane_queue(lane).remove(tracker_id);
                 if let Some(permit) = item.candidate_permit {
                     permit.release();
                 }
-                if route == SubmitQueueRoute::Candidate {
+                if lane != SubmitLane::Regular {
                     self.candidate_enqueue_rejected
                         .fetch_add(1, Ordering::Relaxed);
                 }
@@ -364,8 +532,13 @@ impl SubmitDispatcher {
     fn snapshot(&self) -> SubmitRuntimeSnapshot {
         let now = Instant::now();
         let candidate = self.candidate_queue.snapshot(now);
+        let priority_candidate = self.priority_candidate_queue.snapshot(now);
         let regular = self.regular_queue.snapshot(now);
         SubmitRuntimeSnapshot {
+            candidate_priority_enqueued_total: self
+                .candidate_priority_enqueued
+                .load(Ordering::Relaxed),
+            candidate_priority_queue_depth: priority_candidate.depth,
             submits_received_total: self.submits_received.load(Ordering::Relaxed),
             candidate_classified_total: self.candidate_classified.load(Ordering::Relaxed),
             candidate_permit_acquired_total: self.candidate_permit_acquired.load(Ordering::Relaxed),
@@ -473,7 +646,9 @@ impl StratumServer {
     async fn run_tcp_listener(self: Arc<Self>, listener: TcpListener) -> Result<()> {
         loop {
             let (stream, peer) = listener.accept().await?;
-            let ip = peer.ip().to_string();
+            // Per-IP cap groups IPv6 by /64 (one host allocation), so a single
+            // machine cannot multiply its connection budget across addresses.
+            let ip = ip_group_key(peer.ip());
             if !self.try_track_conn(&ip) {
                 tracing::warn!(ip = %ip, "rejecting stratum connection due to limits");
                 continue;
@@ -663,6 +838,14 @@ impl StratumServer {
                     };
 
                     match req.method.as_str() {
+                        METHOD_LOGIN if logged_in.is_some() => {
+                            // One login per connection: re-logins would mint new
+                            // sessions and assignments without a new socket.
+                            if let Err(err) = queue_error(&outbound, req.id, "already logged in") {
+                                run_result = Err(err);
+                                break;
+                            }
+                        }
                         METHOD_LOGIN => {
                             let params: LoginParams = match serde_json::from_value(req.params.clone()) {
                                 Ok(v) => v,
@@ -685,10 +868,12 @@ impl StratumServer {
                             let login_protocol_version = params.protocol_version;
                             let login_capabilities = params.capabilities.clone();
                             let login_hint = params.difficulty_hint;
+                            let login_peer_ip = peer.ip();
                             let login = tokio::task::spawn_blocking(move || {
                                 let login_address = shortname_resolver.resolve(&login_address)?;
-                                let result = login_engine.login_with_hint(
+                                let result = login_engine.login_from_peer(
                                     &login_conn_id,
+                                    Some(login_peer_ip),
                                     login_address.clone(),
                                     &login_worker,
                                     login_protocol_version,
@@ -810,6 +995,15 @@ impl StratumServer {
                             if route == SubmitQueueRoute::Candidate {
                                 self.submit_dispatcher.record_candidate_classified();
                             }
+                            let established_source = route == SubmitQueueRoute::Candidate
+                                && self.engine.source_established(&conn_id);
+                            let lane = match route {
+                                SubmitQueueRoute::Regular => SubmitLane::Regular,
+                                SubmitQueueRoute::Candidate if established_source => {
+                                    SubmitLane::PriorityCandidate
+                                }
+                                SubmitQueueRoute::Candidate => SubmitLane::Candidate,
+                            };
                             let candidate_permit = if route == SubmitQueueRoute::Candidate {
                                 let Some((address, _, _)) = logged_in.as_ref() else {
                                     if let Err(err) = queue_error(&outbound, req.id, "not logged in") {
@@ -818,9 +1012,13 @@ impl StratumServer {
                                     }
                                     continue;
                                 };
-                                match self
-                                    .submit_dispatcher
-                                    .try_acquire_candidate_permit(address, peer, received_at)
+                                match self.submit_dispatcher.try_acquire_candidate_permit(
+                                    &conn_id,
+                                    address,
+                                    peer,
+                                    established_source,
+                                    received_at,
+                                )
                                 {
                                     Ok(permit) => Some(permit),
                                     Err(err) => {
@@ -850,7 +1048,7 @@ impl StratumServer {
                                 completion_tx: submit_result_tx.clone(),
                                 candidate_permit,
                             };
-                            if let Err(err) = self.submit_dispatcher.try_enqueue(work, route) {
+                            if let Err(err) = self.submit_dispatcher.try_enqueue(work, lane) {
                                 if let Some((address, _, _)) = logged_in.as_ref() {
                                     tracing::warn!(
                                         peer = %peer,
@@ -1027,6 +1225,9 @@ impl StratumServer {
             SubmitCompletionOutcome::Finished(Err(err)) => {
                 let err_text = err.to_string();
                 let reason_code = canonical_share_reject_reason(&err_text);
+                // A struck or banned source is disconnected after it is told why.
+                let disconnect =
+                    reason_code == "source banned" || self.engine.source_blocked(conn_id);
                 if let Some((address, _, _)) = logged_in.as_ref() {
                     if log_rejection_at_info(reason_code) {
                         tracing::info!(
@@ -1052,6 +1253,17 @@ impl StratumServer {
                 }
                 if let Some(outbound) = outbound {
                     queue_error(outbound, completion.req_id, &err_text)?;
+                }
+                if disconnect {
+                    if let Some((address, _, _)) = logged_in.as_ref() {
+                        tracing::warn!(
+                            peer = %peer,
+                            address = %address,
+                            error = %err_text,
+                            "disconnecting struck stratum source"
+                        );
+                    }
+                    return Err(anyhow!("source banned"));
                 }
             }
             SubmitCompletionOutcome::WorkerFailure(err_text) => {
@@ -1086,6 +1298,13 @@ impl StratumServer {
         received_at: Instant,
         reason: &str,
     ) {
+        // Admission-control rejects ("busy, retry", "rate limited, retry") are
+        // not share outcomes: the miner is told to resubmit the same nonce, so
+        // persisting them would only add DB writes under saturation. They are
+        // counted in the submit runtime snapshot instead.
+        if is_retryable_reject_reason(canonical_share_reject_reason(reason)) {
+            return;
+        }
         let engine = Arc::clone(&self.engine);
         let conn_id = conn_id.to_string();
         let job_id = job_id.to_string();
@@ -1111,17 +1330,16 @@ async fn run_submit_worker(
     engine: Arc<PoolEngine>,
     dispatcher: Arc<SubmitDispatcher>,
     submit_rx: flume::Receiver<SubmitWorkItem>,
-    candidate_lane: bool,
+    lane: SubmitLane,
 ) {
+    let candidate_lane = lane != SubmitLane::Regular;
     while let Ok(queued) = submit_rx.recv_async().await {
         let started_at = Instant::now();
+        dispatcher.lane_queue(lane).pop_and_record_wait(started_at);
         if candidate_lane {
-            dispatcher.candidate_queue.pop_and_record_wait(started_at);
             dispatcher
                 .candidate_worker_started
                 .fetch_add(1, Ordering::Relaxed);
-        } else {
-            dispatcher.regular_queue.pop_and_record_wait(started_at);
         }
         let engine = Arc::clone(&engine);
         let conn_id = queued.conn_id.clone();
@@ -1402,6 +1620,7 @@ fn log_rejection_at_info(reason_code: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::ip_group_key;
     use super::{
         client_submit_ack_difficulty, log_rejection_at_info, nonempty_submit_metadata,
         queue_job_json, queue_json, retarget_on_job_tick, run_tcp_outbound_writer,
@@ -1569,6 +1788,17 @@ mod tests {
     }
 
     async fn build_tcp_test_server(cfg: Config) -> (Arc<StratumServer>, Arc<JobManager>) {
+        let (server, jobs, _store) = build_tcp_test_server_with_store(cfg).await;
+        (server, jobs)
+    }
+
+    async fn build_tcp_test_server_with_store(
+        cfg: Config,
+    ) -> (
+        Arc<StratumServer>,
+        Arc<JobManager>,
+        Arc<crate::engine::InMemoryStore>,
+    ) {
         tokio::task::spawn_blocking(move || {
             let node_client =
                 Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node client"));
@@ -1579,17 +1809,18 @@ mod tests {
                 cfg.clone(),
                 Arc::new(SleepyQueueHasher),
             ));
+            let store = Arc::new(crate::engine::InMemoryStore::default());
             let engine = Arc::new(PoolEngine::new(
                 cfg.clone(),
                 validation,
                 Arc::clone(&jobs) as Arc<dyn crate::engine::JobRepository>,
-                Arc::new(crate::engine::InMemoryStore::default()),
+                Arc::clone(&store) as Arc<dyn ShareStore>,
                 Arc::new(InMemoryNode::default()),
             ));
             let stats = Arc::new(PoolStats::default());
             let listen_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0));
             let server = StratumServer::new(listen_addr, engine, Arc::clone(&jobs), stats, cfg);
-            (server, jobs)
+            (server, jobs, store)
         })
         .await
         .expect("build tcp test server on blocking pool")
@@ -1927,12 +2158,152 @@ mod tests {
         );
     }
 
+    #[test]
+    fn candidate_claims_are_bounded_per_ip_group_across_addresses() {
+        let tracker = CandidateClaimTracker::new(Duration::from_secs(60), 4, 1);
+        let ip_limit = super::CandidateClaimLimit {
+            max_per_window: 3,
+            max_inflight: 2,
+        };
+        let per_source = tracker.default_limit();
+        let buckets = |address: &str, conn: &str| {
+            vec![
+                (format!("addr|{address}|198.51.100.7"), per_source),
+                (format!("conn|{conn}"), per_source),
+                ("ip|198.51.100.7".to_string(), ip_limit),
+            ]
+        };
+        let now = Instant::now();
+        let first = tracker
+            .try_acquire_all(buckets("throwaway-1", "c1"), now)
+            .expect("first claim");
+        let second = tracker
+            .try_acquire_all(buckets("throwaway-2", "c2"), now)
+            .expect("second claim from the same IP with a fresh address");
+        let err = tracker
+            .try_acquire_all(buckets("throwaway-3", "c3"), now)
+            .expect_err("IP in-flight cap holds across fresh addresses");
+        assert!(err.to_string().contains("busy"));
+        first.release();
+        second.release();
+        tracker
+            .try_acquire_all(buckets("throwaway-4", "c4"), now)
+            .expect("third claim in the window")
+            .release();
+        let err = tracker
+            .try_acquire_all(buckets("throwaway-5", "c5"), now)
+            .expect_err("IP window cap holds across fresh addresses");
+        assert!(err.to_string().contains("rate limited"));
+        // A rejected multi-bucket acquire must not consume any bucket.
+        tracker
+            .try_acquire_all(
+                vec![
+                    ("addr|honest|203.0.113.9".to_string(), per_source),
+                    ("conn|honest".to_string(), per_source),
+                    ("ip|203.0.113.9".to_string(), ip_limit),
+                ],
+                now,
+            )
+            .expect("other IPs are unaffected")
+            .release();
+    }
+
+    #[test]
+    fn candidate_claim_tracker_frees_buckets_after_window() {
+        let tracker = CandidateClaimTracker::new(Duration::from_secs(60), 4, 1);
+        let now = Instant::now();
+        for idx in 0..50 {
+            tracker
+                .try_acquire(format!("addr-{idx}|127.0.0.1"), now)
+                .expect("acquire")
+                .release();
+        }
+        // Released buckets keep their window history until it expires...
+        assert_eq!(tracker.tracked_keys(), 50);
+        // ...and are then dropped instead of leaking forever.
+        tracker.force_sweep(now + Duration::from_secs(61));
+        assert_eq!(tracker.tracked_keys(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn retry_type_prequeue_rejects_are_not_persisted() {
+        let (server, jobs, store) = build_tcp_test_server_with_store(stratum_test_cfg()).await;
+        let address = test_miner_address(0x55);
+        let engine = Arc::clone(&server.engine);
+        tokio::task::spawn_blocking(move || {
+            engine
+                .login(
+                    "198.51.100.20:4000",
+                    address,
+                    "rig",
+                    2,
+                    vec!["submit_claimed_hash".to_string()],
+                )
+                .expect("login");
+        })
+        .await
+        .unwrap();
+        let job = jobs
+            .build_miner_job("198.51.100.20:4000", 1, &test_miner_address(0x55))
+            .expect("job");
+        for reason in [
+            "candidate claim busy, retry",
+            "candidate claim rate limited, retry",
+            "server busy, retry",
+        ] {
+            server.persist_prequeue_reject_async(
+                "198.51.100.20:4000",
+                &job.job_id,
+                job.nonce_start,
+                Some(&"00".repeat(32)),
+                Instant::now(),
+                reason,
+            );
+        }
+        server.persist_prequeue_reject_async(
+            "198.51.100.20:4000",
+            &job.job_id,
+            job.nonce_start + 1,
+            None,
+            Instant::now(),
+            "claimed hash required",
+        );
+        for _ in 0..100 {
+            if !store.shares().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let shares = store.shares();
+        assert_eq!(
+            shares.len(),
+            1,
+            "only the non-retryable reject is persisted"
+        );
+        assert_eq!(
+            shares[0].reject_reason.as_deref(),
+            Some("claimed hash required")
+        );
+        tokio::task::spawn_blocking(move || {
+            drop(server);
+            drop(jobs);
+        })
+        .await
+        .unwrap();
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn job_tick_retarget_runs_on_blocking_pool() {
         struct RuntimeStartingStore;
 
         impl ShareStore for RuntimeStartingStore {
-            fn try_claim_share(&self, _job_id: &str, _nonce: u64) -> anyhow::Result<bool> {
+            fn try_claim_share(
+                &self,
+                _job_id: &str,
+                _share_key: &str,
+                _nonce: u64,
+            ) -> anyhow::Result<bool> {
                 Ok(true)
             }
 
@@ -2157,13 +2528,15 @@ mod tests {
             .iter()
             .position(|id| *id == 20)
             .expect("candidate response should arrive");
+        // The three regular submits race into the single verifier, so the
+        // deepest-queued one is whichever finishes last, not necessarily id 12.
         let queued_regular_pos = order
             .iter()
-            .position(|id| *id == 12)
-            .expect("queued regular response should arrive");
+            .rposition(|id| [10, 11, 12].contains(id))
+            .expect("queued regular responses should arrive");
         assert!(
             candidate_pos < queued_regular_pos,
-            "candidate submit should finish before the deeper queued regular submit"
+            "candidate submit should finish before the deepest queued regular submit"
         );
         assert_eq!(responses[&20]["status"].as_str(), Some("ok"));
         let snapshot = server.submit_snapshot();
@@ -2183,6 +2556,184 @@ mod tests {
         drop(writer_b);
         drop(reader_b);
         shutdown_test_listener(listener_task, server, _jobs).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn tcp_established_source_block_claims_use_priority_lane() {
+        let (server, jobs) = build_tcp_test_server(stratum_test_cfg()).await;
+        let (addr, listener_task) = start_test_tcp_listener(Arc::clone(&server)).await;
+        let (mut reader, mut writer) = connect_test_client(addr).await;
+        let job = login_test_client(
+            &mut reader,
+            &mut writer,
+            1,
+            &test_miner_address(0x55),
+            "rig",
+        )
+        .await;
+
+        // A fresh source's block claim goes through the shared lane.
+        let first_candidate = nonce_with_parity(&job, true, 0);
+        send_submit(
+            &mut writer,
+            2,
+            &job.job_id,
+            first_candidate,
+            SleepyQueueHasher::claimed_hash_hex(first_candidate),
+        )
+        .await;
+        let response = read_json_line(&mut reader).await;
+        assert_eq!(response["status"].as_str(), Some("ok"));
+        assert_eq!(
+            server.submit_snapshot().candidate_priority_enqueued_total,
+            0
+        );
+
+        // Verified shares establish the (address, IP) pair.
+        for offset in 0..crate::source_risk::SOURCE_ESTABLISHED_MIN_VERIFIED {
+            let nonce = nonce_with_parity(&job, false, offset);
+            send_submit(
+                &mut writer,
+                10 + offset,
+                &job.job_id,
+                nonce,
+                SleepyQueueHasher::claimed_hash_hex(nonce),
+            )
+            .await;
+            let response = read_json_line(&mut reader).await;
+            assert_eq!(response["status"].as_str(), Some("ok"), "{response}");
+        }
+
+        let candidate = nonce_with_parity(&job, true, 1);
+        send_submit(
+            &mut writer,
+            20,
+            &job.job_id,
+            candidate,
+            SleepyQueueHasher::claimed_hash_hex(candidate),
+        )
+        .await;
+        let response = read_json_line(&mut reader).await;
+        assert_eq!(response["status"].as_str(), Some("ok"));
+        let snapshot = server.submit_snapshot();
+        assert_eq!(snapshot.candidate_priority_enqueued_total, 1);
+        assert_eq!(snapshot.candidate_enqueued_total, 2);
+
+        drop((reader, writer));
+        shutdown_test_listener(listener_task, server, jobs).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn tcp_false_block_claim_disconnects_the_source() {
+        let (server, jobs) = build_tcp_test_server(stratum_test_cfg()).await;
+        let (addr, listener_task) = start_test_tcp_listener(Arc::clone(&server)).await;
+        let (mut reader, mut writer) = connect_test_client(addr).await;
+        let job =
+            login_test_client(&mut reader, &mut writer, 1, &test_miner_address(0x61), "x").await;
+
+        // Odd nonces do not hash below the network target; claiming zeroes is a lie.
+        let nonce = nonce_with_parity(&job, false, 0);
+        send_submit(&mut writer, 2, &job.job_id, nonce, "00".repeat(32)).await;
+        let response = read_json_line(&mut reader).await;
+        assert!(response["error"]
+            .as_str()
+            .is_some_and(|err| err.contains("invalid share proof")));
+        let mut line = String::new();
+        let read = tokio::time::timeout(Duration::from_secs(2), reader.read_line(&mut line))
+            .await
+            .expect("connection should close promptly")
+            .expect("read");
+        assert_eq!(read, 0, "struck source is disconnected, got {line:?}");
+
+        // Reconnecting with the same address from the same host is refused.
+        let (mut reader2, mut writer2) = connect_test_client(addr).await;
+        write_json_line(
+            &mut writer2,
+            &StratumRequest {
+                id: 1,
+                method: pool_common::protocol::METHOD_LOGIN.to_string(),
+                params: json!({
+                    "address": test_miner_address(0x61),
+                    "worker": "x",
+                    "protocol_version": 2,
+                    "capabilities": ["submit_claimed_hash"],
+                }),
+            },
+        )
+        .await;
+        let login = read_json_line(&mut reader2).await;
+        assert!(login["error"]
+            .as_str()
+            .is_some_and(|err| err.starts_with("source banned")));
+
+        drop((reader, writer, reader2, writer2));
+        shutdown_test_listener(listener_task, server, jobs).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn tcp_second_login_on_a_connection_is_refused() {
+        let (server, jobs) = build_tcp_test_server(stratum_test_cfg()).await;
+        let (addr, listener_task) = start_test_tcp_listener(Arc::clone(&server)).await;
+        let (mut reader, mut writer) = connect_test_client(addr).await;
+        let job = login_test_client(
+            &mut reader,
+            &mut writer,
+            1,
+            &test_miner_address(0x55),
+            "rig",
+        )
+        .await;
+        write_json_line(
+            &mut writer,
+            &StratumRequest {
+                id: 2,
+                method: pool_common::protocol::METHOD_LOGIN.to_string(),
+                params: json!({
+                    "address": test_miner_address(0x62),
+                    "worker": "other",
+                    "protocol_version": 2,
+                    "capabilities": ["submit_claimed_hash"],
+                }),
+            },
+        )
+        .await;
+        let response = read_json_line(&mut reader).await;
+        assert_eq!(response["id"], 2);
+        assert_eq!(response["error"].as_str(), Some("already logged in"));
+
+        // The original session keeps working on the same connection.
+        let nonce = nonce_with_parity(&job, false, 0);
+        send_submit(
+            &mut writer,
+            3,
+            &job.job_id,
+            nonce,
+            SleepyQueueHasher::claimed_hash_hex(nonce),
+        )
+        .await;
+        let response = read_json_line(&mut reader).await;
+        assert_eq!(response["status"].as_str(), Some("ok"), "{response}");
+        drop((reader, writer));
+        shutdown_test_listener(listener_task, server, jobs).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn ipv6_connection_cap_is_shared_per_slash_64() {
+        let (server, jobs) = build_tcp_test_server(stratum_test_cfg()).await;
+        let host_a = ip_group_key("2001:db8:7:9::1".parse().unwrap());
+        let host_b = ip_group_key("2001:db8:7:9:ffff::2".parse().unwrap());
+        let other_net = ip_group_key("2001:db8:7:a::1".parse().unwrap());
+        for _ in 0..super::MAX_CONNS_PER_IP {
+            assert!(server.try_track_conn(&host_a));
+        }
+        assert!(!server.try_track_conn(&host_b), "same /64 shares the cap");
+        assert!(server.try_track_conn(&other_net));
+        tokio::task::spawn_blocking(move || {
+            drop(server);
+            drop(jobs);
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
