@@ -1114,6 +1114,7 @@ name = "pool-recovery"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "libc",
  "pool-runtime",
  "postgres",
  "reqwest",

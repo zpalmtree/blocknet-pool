@@ -3,8 +3,9 @@ use std::env;
 use std::fs;
 use std::future::Future;
 use std::io::ErrorKind;
-use std::os::fd::FromRawFd;
-use std::os::unix::fs::{symlink, PermissionsExt};
+use std::io::Write as _;
+use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -873,25 +874,12 @@ impl RecoveryAgent {
     }
 
     async fn pause_payouts_now(&self) -> Result<()> {
-        let path = Path::new(self.cfg.payout_pause_file.trim());
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("create {}", parent.display()))?;
-            }
-        }
-        if !path.exists() {
-            fs::write(path, b"paused\n").with_context(|| format!("write {}", path.display()))?;
-        }
-        Ok(())
+        create_pause_marker(Path::new(self.cfg.payout_pause_file.trim()))
     }
 
     async fn resume_payouts_now(&self) -> Result<()> {
-        let path = Path::new(self.cfg.payout_pause_file.trim());
-        if path.exists() {
-            fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?;
-        }
-        Ok(())
+        // Unlinking never follows a symlink; directories are refused.
+        remove_path_if_exists(Path::new(self.cfg.payout_pause_file.trim()))
     }
 
     async fn rebuild_inactive_wallet(&self) -> Result<String> {
@@ -912,10 +900,11 @@ impl RecoveryAgent {
         self.stop_instance(inactive).await?;
 
         let wallet_path = Path::new(inactive_cfg.wallet_path.trim());
-        if wallet_path.exists() {
-            fs::remove_file(wallet_path)
-                .with_context(|| format!("remove {}", wallet_path.display()))?;
+        // unlink(2) never follows the final component; refuse symlinked parents.
+        if let Some(parent) = wallet_path.parent() {
+            ensure_no_symlinks_below_managed_root(parent)?;
         }
+        remove_path_if_exists(wallet_path)?;
 
         self.start_instance(inactive).await?;
         self.wait_for_daemon_api(inactive).await?;
@@ -1393,10 +1382,13 @@ fn unconfirmed_wallet_delta_note(
 }
 
 fn load_persisted_state(path: &Path) -> Result<PersistedRecoveryState> {
-    if !path.exists() {
-        return Ok(PersistedRecoveryState::default());
-    }
-    let data = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let data = match read_regular_file_nofollow(path) {
+        Ok(data) => data,
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+            return Ok(PersistedRecoveryState::default())
+        }
+        Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
+    };
     let mut state: PersistedRecoveryState =
         serde_json::from_slice(&data).with_context(|| format!("parse {}", path.display()))?;
     while state.operations.len() > MAX_OPERATIONS {
@@ -1412,7 +1404,8 @@ fn persist_state(path: &Path, state: &PersistedRecoveryState) -> Result<()> {
         }
     }
     let data = serde_json::to_vec_pretty(state).context("serialize recovery state")?;
-    write_atomic(path, &data)
+    // Only recoveryd (root) reads its state file.
+    write_atomic(path, &data, 0o600)
 }
 
 fn bind_recovery_listener(socket_path: &str) -> Result<UnixListener> {
@@ -1535,7 +1528,7 @@ fn write_proxy_include(path: &Path, upstream: &str) -> Result<()> {
         }
     }
     let content = format!("proxy_pass {};\n", upstream.trim());
-    write_atomic(path, content.as_bytes())
+    write_atomic(path, content.as_bytes(), PUBLIC_FILE_MODE)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1605,36 +1598,187 @@ where
     Ok(())
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+/// Mode for files that non-root services or tools read (nginx include,
+/// payout pause marker).
+const PUBLIC_FILE_MODE: u32 = 0o644;
+const NOFOLLOW_CREATE_FLAGS: i32 = libc::O_NOFOLLOW | libc::O_CLOEXEC;
+
+/// Atomically replace `path` with `bytes` without ever following a symlink.
+///
+/// recoveryd runs as root while some of its directories are writable by the
+/// unprivileged daemon user, so the temp file gets an unpredictable name and
+/// is created with O_CREAT|O_EXCL|O_NOFOLLOW (a planted file or symlink makes
+/// the write fail instead of redirecting it), fsynced, then renamed over the
+/// target. A symlinked or non-regular target is refused.
+fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
-    fs::write(&tmp, bytes).with_context(|| format!("write {}", tmp.display()))?;
-    fs::rename(&tmp, path)
-        .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if !metadata.file_type().is_file() => bail!(
+            "refusing to replace {}: it is not a regular file (symlink or other type)",
+            path.display()
+        ),
+        Ok(_) => {}
+        Err(err) if err.kind() == ErrorKind::NotFound => {}
+        Err(err) => return Err(err).with_context(|| format!("stat {}", path.display())),
+    }
+
+    let (tmp, mut file) = create_unique_temp_file(parent, path, mode)?;
+    let written = (|| -> Result<()> {
+        file.write_all(bytes)
+            .with_context(|| format!("write {}", tmp.display()))?;
+        // The process umask may have narrowed the creation mode.
+        file.set_permissions(fs::Permissions::from_mode(mode))
+            .with_context(|| format!("chmod {}", tmp.display()))?;
+        file.sync_all()
+            .with_context(|| format!("fsync {}", tmp.display()))?;
+        drop(file);
+        fs::rename(&tmp, path)
+            .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))
+    })();
+    if let Err(err) = written {
+        let _ = fs::remove_file(&tmp);
+        return Err(err);
+    }
+    sync_directory(parent);
+    Ok(())
+}
+
+fn create_unique_temp_file(parent: &Path, path: &Path, mode: u32) -> Result<(PathBuf, fs::File)> {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "recoveryd".to_string());
+    for _ in 0..16 {
+        let tmp = parent.join(format!(".{name}.tmp.{}.{:016x}", std::process::id(), random_u64()));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(mode)
+            .custom_flags(NOFOLLOW_CREATE_FLAGS)
+            .open(&tmp)
+        {
+            Ok(file) => return Ok((tmp, file)),
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err).with_context(|| format!("create {}", tmp.display())),
+        }
+    }
+    bail!("could not create a unique temp file next to {}", path.display())
+}
+
+fn random_u64() -> u64 {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let mut hasher = RandomState::new().build_hasher();
+    hasher.write_u64(COUNTER.fetch_add(1, Ordering::Relaxed));
+    hasher.write_u128(
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos(),
+    );
+    hasher.finish()
+}
+
+fn sync_directory(dir: &Path) {
+    if let Ok(handle) = fs::File::open(dir) {
+        let _ = handle.sync_all();
+    }
+}
+
+/// Read a regular file without following a symlink at `path`.
+fn read_regular_file_nofollow(path: &Path) -> std::io::Result<Vec<u8>> {
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(NOFOLLOW_CREATE_FLAGS)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("{} is not a regular file", path.display()),
+        ));
+    }
+    let mut data = Vec::new();
+    std::io::Read::read_to_end(&mut file, &mut data)?;
+    Ok(data)
+}
+
+/// Create the payout pause marker as a regular file, never through a
+/// symlink. Stratum and the API only test for its existence.
+fn create_pause_marker(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => return Ok(()),
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            // Replace a planted (possibly dangling) link with a real marker.
+            fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?;
+        }
+        Ok(_) => bail!("refusing to use {} as the payout pause marker", path.display()),
+        Err(err) if err.kind() == ErrorKind::NotFound => {}
+        Err(err) => return Err(err).with_context(|| format!("stat {}", path.display())),
+    }
+    let mut file = match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(PUBLIC_FILE_MODE)
+        .custom_flags(NOFOLLOW_CREATE_FLAGS)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => {
+            let metadata = fs::symlink_metadata(path)
+                .with_context(|| format!("stat {}", path.display()))?;
+            if metadata.file_type().is_file() {
+                return Ok(());
+            }
+            bail!("refusing to use {} as the payout pause marker", path.display());
+        }
+        Err(err) => return Err(err).with_context(|| format!("create {}", path.display())),
+    };
+    file.write_all(b"paused\n")
+        .with_context(|| format!("write {}", path.display()))?;
+    file.sync_all()
+        .with_context(|| format!("fsync {}", path.display()))?;
     Ok(())
 }
 
 fn swap_symlink(link: &Path, target: &Path) -> Result<()> {
-    if let Some(parent) = link.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    let parent = link
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    let name = link
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "link".to_string());
+    // symlink(2) never follows an existing path and fails if it exists.
+    for _ in 0..16 {
+        let tmp = parent.join(format!(".{name}.tmp.{}.{:016x}", std::process::id(), random_u64()));
+        match symlink(target, &tmp) {
+            Ok(()) => {
+                return fs::rename(&tmp, link).with_context(|| {
+                    let _ = fs::remove_file(&tmp);
+                    format!("rename {} -> {}", tmp.display(), link.display())
+                });
+            }
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!("symlink {} -> {}", tmp.display(), target.display())
+                })
+            }
         }
     }
-    let tmp = link.with_extension(format!("tmp.{}", std::process::id()));
-    match fs::remove_file(&tmp) {
-        Ok(_) => {}
-        Err(err) if err.kind() == ErrorKind::NotFound => {}
-        Err(err) => return Err(err).with_context(|| format!("remove {}", tmp.display())),
-    }
-    symlink(target, &tmp)
-        .with_context(|| format!("symlink {} -> {}", tmp.display(), target.display()))?;
-    fs::rename(&tmp, link)
-        .with_context(|| format!("rename {} -> {}", tmp.display(), link.display()))?;
-    Ok(())
+    bail!("could not create a unique temp symlink next to {}", link.display())
 }
 
 fn capture_path_state(path: &Path) -> Result<StoredPathState> {
@@ -1662,7 +1806,7 @@ fn capture_path_state(path: &Path) -> Result<StoredPathState> {
 fn restore_path_state(path: &Path, state: &StoredPathState) -> Result<()> {
     match state {
         StoredPathState::Missing => remove_path_if_exists(path),
-        StoredPathState::File(bytes) => write_atomic(path, bytes),
+        StoredPathState::File(bytes) => write_atomic(path, bytes, PUBLIC_FILE_MODE),
         StoredPathState::Symlink(target) => swap_symlink(path, target),
     }
 }
@@ -1682,13 +1826,27 @@ fn remove_path_if_exists(path: &Path) -> Result<()> {
 
 fn clear_directory(path: &Path) -> Result<()> {
     validate_managed_path(path)?;
-    if !path.exists() {
+    ensure_no_symlinks_below_managed_root(path)?;
+    if fs::symlink_metadata(path).is_err_and(|err| err.kind() == ErrorKind::NotFound) {
         fs::create_dir_all(path).with_context(|| format!("create {}", path.display()))?;
         return Ok(());
     }
-    for entry in fs::read_dir(path).with_context(|| format!("read {}", path.display()))? {
+    clear_directory_pinned(path)
+}
+
+/// Delete everything inside `path`, which must be a real directory.
+fn clear_directory_pinned(path: &Path) -> Result<()> {
+    // Pin the directory with O_NOFOLLOW and work through its descriptor so a
+    // swap of `path` for a symlink after the checks cannot redirect deletes.
+    let dir = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_CLOEXEC)
+        .open(path)
+        .with_context(|| format!("open directory {} without following links", path.display()))?;
+    let pinned = PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd()));
+    for entry in fs::read_dir(&pinned).with_context(|| format!("read {}", path.display()))? {
         let entry = entry.with_context(|| format!("read {}", path.display()))?;
-        let entry_path = entry.path();
+        let entry_path = pinned.join(entry.file_name());
         let metadata = entry
             .metadata()
             .with_context(|| format!("stat {}", entry_path.display()))?;
@@ -1717,6 +1875,40 @@ fn validate_managed_path(path: impl AsRef<Path>) -> Result<()> {
         }
     }
     bail!("refusing to modify unmanaged path {}", normalized.display());
+}
+
+/// Refuse `path` if any existing component strictly below its managed root
+/// is a symlink. The managed roots themselves are root-owned entries (and
+/// may legitimately be symlinks to bigger disks); everything below them is
+/// writable by the unprivileged daemon user.
+fn ensure_no_symlinks_below_managed_root(path: &Path) -> Result<()> {
+    let normalized = normalize_absolute_path(path)?;
+    let root = MANAGED_PATH_ROOTS
+        .iter()
+        .map(Path::new)
+        .find(|root| normalized == *root || path_is_within_root(&normalized, root))
+        .ok_or_else(|| anyhow!("refusing to modify unmanaged path {}", normalized.display()))?;
+    ensure_no_symlinks_below(root, &normalized)
+}
+
+fn ensure_no_symlinks_below(root: &Path, path: &Path) -> Result<()> {
+    let remainder = path
+        .strip_prefix(root)
+        .with_context(|| format!("{} is not below {}", path.display(), root.display()))?;
+    let mut current = root.to_path_buf();
+    for component in remainder.components() {
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => bail!(
+                "refusing to follow symlink {} inside managed daemon storage",
+                current.display()
+            ),
+            Ok(_) => {}
+            Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(err) => return Err(err).with_context(|| format!("stat {}", current.display())),
+        }
+    }
+    Ok(())
 }
 
 fn normalize_absolute_path(path: &Path) -> Result<PathBuf> {
@@ -2131,6 +2323,145 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    fn file_mode(path: &Path) -> u32 {
+        fs::symlink_metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn write_atomic_replaces_regular_files_with_requested_mode() {
+        let dir = tempdir().unwrap();
+        let state = dir.path().join("state.json");
+        fs::write(&state, "old").unwrap();
+        write_atomic(&state, b"new", 0o600).unwrap();
+        assert_eq!(fs::read_to_string(&state).unwrap(), "new");
+        assert_eq!(file_mode(&state), 0o600);
+
+        let include = dir.path().join("upstream.inc");
+        write_atomic(&include, b"proxy_pass x;\n", PUBLIC_FILE_MODE).unwrap();
+        assert_eq!(file_mode(&include), 0o644);
+        // No temp files are left behind.
+        let leftovers = fs::read_dir(dir.path())
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .contains(".tmp.")
+            })
+            .count();
+        assert_eq!(leftovers, 0);
+    }
+
+    #[test]
+    fn write_atomic_refuses_symlinked_target_and_ignores_planted_temp_links() {
+        let dir = tempdir().unwrap();
+        let victim = dir.path().join("victim");
+        fs::write(&victim, "precious").unwrap();
+
+        let state = dir.path().join("state.json");
+        symlink(&victim, &state).unwrap();
+        let err = write_atomic(&state, b"attacker", 0o600).expect_err("symlink target");
+        assert!(err.to_string().contains("not a regular file"), "{err:#}");
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "precious");
+
+        // The old predictable temp name no longer redirects the write.
+        fs::remove_file(&state).unwrap();
+        let legacy_tmp = state.with_extension(format!("tmp.{}", std::process::id()));
+        symlink(&victim, &legacy_tmp).unwrap();
+        write_atomic(&state, b"state", 0o600).unwrap();
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "precious");
+        assert_eq!(fs::read_to_string(&state).unwrap(), "state");
+        assert!(fs::symlink_metadata(&state).unwrap().file_type().is_file());
+    }
+
+    #[test]
+    fn persisted_state_is_not_read_through_a_symlink() {
+        let dir = tempdir().unwrap();
+        let elsewhere = dir.path().join("elsewhere.json");
+        fs::write(&elsewhere, r#"{"next_operation_id":7,"operations":[]}"#).unwrap();
+        let state = dir.path().join("state.json");
+        symlink(&elsewhere, &state).unwrap();
+        assert!(load_persisted_state(&state).is_err());
+
+        fs::remove_file(&state).unwrap();
+        assert_eq!(load_persisted_state(&state).unwrap().next_operation_id, 1);
+        persist_state(&state, &PersistedRecoveryState::default()).unwrap();
+        assert_eq!(file_mode(&state), 0o600);
+        assert_eq!(load_persisted_state(&state).unwrap().next_operation_id, 1);
+    }
+
+    #[test]
+    fn pause_marker_never_writes_through_a_symlink() {
+        let dir = tempdir().unwrap();
+        let victim = dir.path().join("created-by-root");
+        let marker = dir.path().join("payouts.pause");
+
+        // Dangling link: must not create the link target.
+        symlink(&victim, &marker).unwrap();
+        create_pause_marker(&marker).unwrap();
+        assert!(!victim.exists());
+        assert!(fs::symlink_metadata(&marker).unwrap().file_type().is_file());
+        assert_eq!(file_mode(&marker), 0o644);
+        create_pause_marker(&marker).unwrap();
+
+        // Link to an existing file: must not touch it.
+        fs::remove_file(&marker).unwrap();
+        fs::write(&victim, "precious").unwrap();
+        symlink(&victim, &marker).unwrap();
+        create_pause_marker(&marker).unwrap();
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "precious");
+        assert_eq!(fs::read_to_string(&marker).unwrap(), "paused\n");
+
+        remove_path_if_exists(&marker).unwrap();
+        assert!(fs::symlink_metadata(&marker).is_err());
+        assert!(victim.exists());
+    }
+
+    #[test]
+    fn clear_directory_never_deletes_through_symlinks() {
+        let dir = tempdir().unwrap();
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(outside.join("nested")).unwrap();
+        fs::write(outside.join("keep"), "keep").unwrap();
+        fs::write(outside.join("nested").join("keep"), "keep").unwrap();
+
+        let data = dir.path().join("data");
+        fs::create_dir_all(data.join("chain").join("deep")).unwrap();
+        fs::write(data.join("chain").join("deep").join("block"), "x").unwrap();
+        fs::write(data.join("api.cookie"), "token").unwrap();
+        symlink(&outside, data.join("link-to-outside")).unwrap();
+        symlink(outside.join("keep"), data.join("link-to-file")).unwrap();
+
+        clear_directory_pinned(&data).unwrap();
+        assert_eq!(fs::read_dir(&data).unwrap().count(), 0);
+        assert!(outside.join("keep").exists());
+        assert!(outside.join("nested").join("keep").exists());
+
+        // The data dir itself replaced by a symlink: refuse.
+        let swapped = dir.path().join("swapped");
+        symlink(&outside, &swapped).unwrap();
+        assert!(clear_directory_pinned(&swapped).is_err());
+        assert!(outside.join("keep").exists());
+    }
+
+    #[test]
+    fn symlinks_below_managed_root_are_refused() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("root");
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, root.join("data")).unwrap();
+
+        let err = ensure_no_symlinks_below(&root, &root.join("data").join("blocks"))
+            .expect_err("symlinked data dir");
+        assert!(err.to_string().contains("refusing to follow symlink"));
+        ensure_no_symlinks_below(&root, &root.join("missing").join("x")).unwrap();
+        ensure_no_symlinks_below(&root, &root).unwrap();
     }
 
     #[test]

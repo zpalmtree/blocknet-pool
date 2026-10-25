@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+libc.workspace = true
 postgres.workspace = true
 reqwest.workspace = true
 serde.workspace = true
