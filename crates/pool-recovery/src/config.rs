@@ -12,6 +12,9 @@ const DEFAULT_PAYOUT_PAUSE_FILE: &str = "/etc/blocknet/pool/payouts.pause";
 #[serde(default)]
 pub struct Config {
     pub payout_pause_file: String,
+    /// The pool database (shared pool config file). Cutovers use it to hold
+    /// the payout sweep lock and refuse while a payout send is in flight.
+    pub database_url: String,
     pub recovery: RecoveryConfig,
 }
 
@@ -19,6 +22,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             payout_pause_file: DEFAULT_PAYOUT_PAUSE_FILE.to_string(),
+            database_url: String::new(),
             recovery: RecoveryConfig::default(),
         }
     }

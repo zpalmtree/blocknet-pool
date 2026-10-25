@@ -19,6 +19,10 @@ use tokio::sync::Mutex;
 
 use crate::config::{Config, RecoveryConfig, RecoveryDaemonInstanceConfig};
 use pool_runtime::node::{NodeStatus, WalletAddressResponse, WalletBalance};
+use pool_runtime::pgdb::{
+    connect_payout_inspection_client, load_inflight_payout_sends, release_payout_sweep_lock,
+    try_acquire_payout_sweep_lock, InflightPayoutSends,
+};
 
 const MAX_OPERATIONS: usize = 32;
 const SYSTEMD_SOCKET_FD: i32 = 3;
@@ -951,16 +955,58 @@ impl RecoveryAgent {
             bail!("target daemon cookie does not exist yet");
         }
 
-        apply_cutover_path_transition(
-            Path::new(self.cfg.recovery.proxy_include_path.trim()),
-            Path::new(self.cfg.recovery.active_cookie_path.trim()),
-            target_cfg.api.trim(),
-            Path::new(target_cfg.cookie_path.trim()),
-            validate_nginx_config,
-            reload_nginx,
-        )
-        .await?;
+        // Hold the payout sweep lock across the switch so no payout tick can
+        // freeze or send a batch mid-cutover, and refuse while any earlier
+        // send is unresolved: its status, history and journal only exist on
+        // the daemon being switched away from.
+        let (guard, inflight) =
+            PayoutCutoverGuard::acquire(self.cfg.database_url.trim()).await?;
+        let result = async {
+            let mut missing_on_target = Vec::new();
+            for tx_hash in &inflight.broadcast_tx_hashes {
+                if !self.daemon_knows_tx(target_cfg, tx_hash).await? {
+                    missing_on_target.push(tx_hash.clone());
+                }
+            }
+            ensure_no_inflight_payout_sends_for_cutover(target, &inflight, &missing_on_target)?;
+            apply_cutover_path_transition(
+                Path::new(self.cfg.recovery.proxy_include_path.trim()),
+                Path::new(self.cfg.recovery.active_cookie_path.trim()),
+                target_cfg.api.trim(),
+                Path::new(target_cfg.cookie_path.trim()),
+                validate_nginx_config,
+                reload_nginx,
+            )
+            .await
+        }
+        .await;
+        guard.release().await;
+        result?;
         Ok(format!("cut over active daemon to {}", target.as_str()))
+    }
+
+    /// Whether `cfg`'s daemon has `tx_hash` in its mempool or chain.
+    async fn daemon_knows_tx(
+        &self,
+        cfg: &RecoveryDaemonInstanceConfig,
+        tx_hash: &str,
+    ) -> Result<bool> {
+        let token = read_token_from_cookie(Path::new(cfg.cookie_path.trim()))?;
+        let path = format!("/api/tx/{}", tx_hash.trim());
+        let url = format!("{}{}", cfg.api.trim_end_matches('/'), path);
+        let response = self
+            .http
+            .get(&url)
+            .bearer_auth(token)
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await
+            .with_context(|| format!("GET {url}"))?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(false);
+        }
+        let _: serde_json::Value = decode_daemon_response(response, &format!("GET {path}")).await?;
+        Ok(true)
     }
 
     async fn purge_inactive_daemon(&self) -> Result<String> {
@@ -1150,6 +1196,142 @@ impl RecoveryAgent {
             .with_context(|| format!("POST {url}"))?;
         decode_daemon_response(response, &format!("POST {path}")).await
     }
+}
+
+const PAYOUT_LOCK_WAIT: Duration = Duration::from_secs(60);
+const PAYOUT_LOCK_RETRY: Duration = Duration::from_millis(500);
+
+/// Holds the pool's payout sweep advisory lock on a dedicated blocking
+/// thread (the sync Postgres client must not run or drop on a Tokio worker)
+/// until released; dropping the guard without `release` also unlocks.
+struct PayoutCutoverGuard {
+    release: Option<std::sync::mpsc::Sender<()>>,
+    holder: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl PayoutCutoverGuard {
+    async fn acquire(database_url: &str) -> Result<(Self, InflightPayoutSends)> {
+        Self::acquire_with_wait(database_url, PAYOUT_LOCK_WAIT).await
+    }
+
+    async fn acquire_with_wait(
+        database_url: &str,
+        wait: Duration,
+    ) -> Result<(Self, InflightPayoutSends)> {
+        if database_url.is_empty() {
+            bail!(
+                "database_url is not configured for recoveryd; refusing cutover because in-flight payout sends cannot be checked"
+            );
+        }
+        let url = database_url.to_string();
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<InflightPayoutSends>>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let holder = tokio::task::spawn_blocking(move || {
+            let mut client = match lock_payout_sweeps_for_cutover(&url, wait) {
+                Ok(client) => client,
+                Err(err) => {
+                    let _ = ready_tx.send(Err(err));
+                    return;
+                }
+            };
+            match load_inflight_payout_sends(&mut client) {
+                Ok(inflight) => {
+                    if ready_tx.send(Ok(inflight)).is_err() {
+                        return;
+                    }
+                }
+                Err(err) => {
+                    let _ = ready_tx.send(Err(err));
+                    return;
+                }
+            }
+            // Wait for release (or the guard being dropped).
+            let _ = release_rx.recv();
+            if let Err(err) = release_payout_sweep_lock(&mut client) {
+                tracing::warn!(error = %err, "failed releasing payout sweep lock after cutover; closing session");
+            }
+        });
+        let guard = Self {
+            release: Some(release_tx),
+            holder: Some(holder),
+        };
+        match ready_rx.await {
+            Ok(Ok(inflight)) => Ok((guard, inflight)),
+            Ok(Err(err)) => {
+                guard.release().await;
+                Err(err)
+            }
+            Err(_) => {
+                guard.release().await;
+                bail!("payout sweep lock holder exited unexpectedly")
+            }
+        }
+    }
+
+    async fn release(mut self) {
+        drop(self.release.take());
+        if let Some(holder) = self.holder.take() {
+            if let Err(err) = holder.await {
+                tracing::warn!(error = %err, "payout sweep lock holder task failed");
+            }
+        }
+    }
+}
+
+fn lock_payout_sweeps_for_cutover(url: &str, wait: Duration) -> Result<postgres::Client> {
+    let mut client = connect_payout_inspection_client(url, "recoveryd cutover")
+        .context("connect pool database to check in-flight payouts before cutover")?;
+    client
+        .batch_execute("SET statement_timeout = '10s'")
+        .context("set cutover statement timeout")?;
+    let deadline = Instant::now() + wait;
+    loop {
+        if try_acquire_payout_sweep_lock(&mut client)? {
+            return Ok(client);
+        }
+        if Instant::now() >= deadline {
+            bail!(
+                "a payout sweep is still running after {}s; refusing cutover, retry once it finishes",
+                wait.as_secs()
+            );
+        }
+        std::thread::sleep(PAYOUT_LOCK_RETRY);
+    }
+}
+
+/// Refuse a cutover while a payout send's outcome depends on the daemon
+/// being switched away from.
+fn ensure_no_inflight_payout_sends_for_cutover(
+    target: RecoveryInstanceId,
+    inflight: &InflightPayoutSends,
+    broadcast_missing_on_target: &[String],
+) -> Result<()> {
+    if inflight.unresolved_rows > 0 {
+        bail!(
+            "refusing cutover to {}: {} pending payout row(s) in {} batch(es) have a wallet send with an unresolved outcome ({}); let the payout processor resolve them against the current daemon (or reconcile them manually) before cutting over",
+            target.as_str(),
+            inflight.unresolved_rows,
+            inflight.unresolved_batches.len(),
+            summarize_ids(&inflight.unresolved_batches),
+        );
+    }
+    if !broadcast_missing_on_target.is_empty() {
+        bail!(
+            "refusing cutover to {}: broadcast payout transaction(s) not yet known to the target daemon ({}); wait for them to confirm or propagate before cutting over",
+            target.as_str(),
+            summarize_ids(broadcast_missing_on_target),
+        );
+    }
+    Ok(())
+}
+
+fn summarize_ids(ids: &[String]) -> String {
+    const SHOWN: usize = 5;
+    let mut summary = ids.iter().take(SHOWN).cloned().collect::<Vec<_>>().join(", ");
+    if ids.len() > SHOWN {
+        summary.push_str(&format!(", and {} more", ids.len() - SHOWN));
+    }
+    summary
 }
 
 fn build_recovery_warning(
@@ -1804,6 +1986,151 @@ mod tests {
             fs::read_link(&active_cookie).expect("read active cookie"),
             new_cookie
         );
+    }
+
+    #[test]
+    fn cutover_is_refused_while_payout_sends_are_unresolved() {
+        let inflight = InflightPayoutSends {
+            unresolved_rows: 3,
+            unresolved_batches: vec!["batch-a".to_string(), "batch-b".to_string()],
+            ..InflightPayoutSends::default()
+        };
+        let err = ensure_no_inflight_payout_sends_for_cutover(
+            RecoveryInstanceId::Standby,
+            &inflight,
+            &[],
+        )
+        .expect_err("unresolved sends must block cutover");
+        let message = err.to_string();
+        assert!(message.contains("refusing cutover to standby"), "{message}");
+        assert!(message.contains("batch-a, batch-b"), "{message}");
+    }
+
+    #[test]
+    fn cutover_is_refused_while_broadcast_payouts_are_unknown_to_the_target() {
+        let inflight = InflightPayoutSends {
+            broadcast_rows: 2,
+            broadcast_tx_hashes: vec!["tx-a".to_string(), "tx-b".to_string()],
+            ..InflightPayoutSends::default()
+        };
+        let err = ensure_no_inflight_payout_sends_for_cutover(
+            RecoveryInstanceId::Primary,
+            &inflight,
+            &["tx-b".to_string()],
+        )
+        .expect_err("broadcast tx unknown to target must block cutover");
+        assert!(err.to_string().contains("tx-b"));
+
+        ensure_no_inflight_payout_sends_for_cutover(RecoveryInstanceId::Primary, &inflight, &[])
+            .expect("broadcast txs the target already knows do not block cutover");
+        ensure_no_inflight_payout_sends_for_cutover(
+            RecoveryInstanceId::Primary,
+            &InflightPayoutSends::default(),
+            &[],
+        )
+        .expect("no in-flight sends");
+    }
+
+    #[tokio::test]
+    async fn cutover_guard_requires_database_url() {
+        let err = match PayoutCutoverGuard::acquire("").await {
+            Ok(_) => panic!("empty database_url must refuse"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("database_url"));
+    }
+
+    fn isolated_payout_schema_url() -> Option<String> {
+        let url = std::env::var("BLOCKNET_POOL_TEST_POSTGRES_URL")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())?;
+        let schema = format!(
+            "blocknet_recovery_test_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let mut admin = postgres::Client::connect(&url, postgres::NoTls).expect("connect admin");
+        admin
+            .batch_execute(&format!(
+                "CREATE SCHEMA {schema};
+                 CREATE TABLE {schema}.pending_payouts (
+                     address TEXT PRIMARY KEY,
+                     amount BIGINT NOT NULL,
+                     initiated_at BIGINT NOT NULL,
+                     send_started_at BIGINT,
+                     tx_hash TEXT,
+                     fee BIGINT,
+                     sent_at BIGINT,
+                     batch_id TEXT
+                 );"
+            ))
+            .expect("create isolated payout schema");
+        let separator = if url.contains('?') { '&' } else { '?' };
+        Some(format!(
+            "{url}{separator}options=-c%20search_path%3D{schema}"
+        ))
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cutover_guard_holds_payout_sweep_lock_and_reports_inflight_sends() {
+        let Some(url) = tokio::task::spawn_blocking(isolated_payout_schema_url)
+            .await
+            .unwrap()
+        else {
+            eprintln!("skipping postgres test: set BLOCKNET_POOL_TEST_POSTGRES_URL");
+            return;
+        };
+        let other_url = url.clone();
+        let mut other = tokio::task::spawn_blocking(move || {
+            let mut client = connect_payout_inspection_client(&other_url, "test").unwrap();
+            client
+                .batch_execute(
+                    "INSERT INTO pending_payouts VALUES
+                        ('queued', 1, 1, NULL, NULL, NULL, NULL, NULL),
+                        ('frozen', 2, 1, 5, NULL, NULL, NULL, 'batch-frozen'),
+                        ('sent', 3, 1, 5, 'tx-sent', 1, 6, 'batch-sent')",
+                )
+                .unwrap();
+            client
+        })
+        .await
+        .unwrap();
+
+        let (guard, inflight) = PayoutCutoverGuard::acquire(&url).await.expect("take lock");
+        assert_eq!(inflight.unresolved_batches, vec!["batch-frozen".to_string()]);
+        assert_eq!(inflight.broadcast_tx_hashes, vec!["tx-sent".to_string()]);
+
+        // A payout tick in the pool cannot start while the cutover holds it.
+        other = tokio::task::spawn_blocking(move || {
+            assert!(!try_acquire_payout_sweep_lock(&mut other).unwrap());
+            other
+        })
+        .await
+        .unwrap();
+        guard.release().await;
+
+        // While a payout tick holds the lock, the cutover gives up.
+        other = tokio::task::spawn_blocking(move || {
+            assert!(try_acquire_payout_sweep_lock(&mut other).unwrap());
+            other
+        })
+        .await
+        .unwrap();
+        let err = match PayoutCutoverGuard::acquire_with_wait(&url, Duration::from_millis(600)).await {
+            Ok(_) => panic!("cutover must not take the lock during a payout sweep"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("payout sweep is still running"), "{err:#}");
+        tokio::task::spawn_blocking(move || {
+            assert!(release_payout_sweep_lock(&mut other).unwrap());
+            drop(other);
+        })
+        .await
+        .unwrap();
     }
 
     #[test]
