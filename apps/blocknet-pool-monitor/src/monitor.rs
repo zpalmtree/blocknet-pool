@@ -21,6 +21,7 @@ use tokio::net::TcpListener;
 
 use crate::config::Config;
 use pool_common::db::{MonitorHeartbeatUpsert, MonitorIncidentUpsert};
+use pool_runtime::admission::UnprocessedSubmitSnapshot;
 use pool_runtime::config::CANDIDATE_VALIDATION_QUEUE_SIZE;
 use pool_runtime::node::{NodeClient, NodeCurrentProcessBlock, NodeLastProcessBlock, NodeStatus};
 use pool_runtime::pool_activity::{assess_pool_activity, POOL_ACTIVITY_SNAPSHOT_STALE_AFTER};
@@ -107,6 +108,8 @@ struct MonitorSnapshot {
     candidate_block_accepted_total: Option<u64>,
     candidate_worker_failure_total: Option<u64>,
     candidate_submit_queue_depth: Option<u64>,
+    regular_submit_queue_depth: Option<u64>,
+    submit_unprocessed: Option<UnprocessedSubmitSnapshot>,
     stratum_snapshot_age_seconds: Option<u64>,
     connected_miners: Option<u64>,
     connected_workers: Option<u64>,
@@ -1054,6 +1057,9 @@ impl MonitorRuntime {
             runtime.map(|snapshot| snapshot.submit.candidate_worker_failure_total);
         metrics.candidate_submit_queue_depth =
             runtime.map(|snapshot| snapshot.submit.candidate_queue_depth as u64);
+        metrics.regular_submit_queue_depth =
+            runtime.map(|snapshot| snapshot.submit.regular_queue_depth as u64);
+        metrics.submit_unprocessed = runtime.map(|snapshot| snapshot.submit.unprocessed);
         metrics.stratum_snapshot_age_seconds =
             runtime_snapshot_age(sample.sampled_at, runtime).map(|age| age.as_secs());
         metrics.connected_miners = runtime.map(|snapshot| snapshot.connected_miners as u64);
@@ -2348,6 +2354,22 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
             snapshot.candidate_submit_queue_depth,
         ),
         (
+            "blocknet_pool_monitor_regular_submit_queue_depth",
+            snapshot.regular_submit_queue_depth,
+        ),
+        (
+            "blocknet_pool_monitor_vardiff_unprocessed_raises_total",
+            snapshot
+                .submit_unprocessed
+                .map(|unprocessed| unprocessed.vardiff_busy_raises_total),
+        ),
+        (
+            "blocknet_pool_monitor_vardiff_downward_held_total",
+            snapshot
+                .submit_unprocessed
+                .map(|unprocessed| unprocessed.vardiff_downward_held_total),
+        ),
+        (
             "blocknet_pool_monitor_stratum_snapshot_age_seconds",
             snapshot.stratum_snapshot_age_seconds,
         ),
@@ -2389,6 +2411,18 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
         ),
     ] {
         metric_option_line(&mut out, name, value);
+    }
+    // Submits answered "busy/retry" without being judged (queue full, fair
+    // shed, rate limited, no verification capacity, verify timeout).
+    if let Some(unprocessed) = snapshot.submit_unprocessed {
+        for (reason, total) in unprocessed.by_reason() {
+            metric_line_labeled(
+                &mut out,
+                "blocknet_pool_monitor_submit_unprocessed_total",
+                &[("reason", reason)],
+                total,
+            );
+        }
     }
     for (service, metrics) in &snapshot.process_metrics {
         metric_line_labeled(
@@ -2652,6 +2686,7 @@ mod tests {
         SummaryStateInput, STRATUM_SNAPSHOT_STALE_AFTER,
     };
     use crate::config::Config;
+    use pool_runtime::admission::UnprocessedSubmitSnapshot;
     use pool_runtime::jobs::JobRuntimeSnapshot;
     use pool_runtime::node::{NodeCurrentProcessBlock, NodeLastProcessBlock, NodeStatus};
     use pool_runtime::pool_activity::assess_pool_activity;
@@ -2730,6 +2765,13 @@ mod tests {
             candidate_block_accepted_total: Some(6),
             candidate_worker_failure_total: Some(0),
             candidate_submit_queue_depth: Some(1),
+            regular_submit_queue_depth: Some(3),
+            submit_unprocessed: Some(UnprocessedSubmitSnapshot {
+                submit_queue_full_total: 5,
+                fair_shed_total: 4,
+                vardiff_busy_raises_total: 2,
+                ..UnprocessedSubmitSnapshot::default()
+            }),
             daemon_current_process_block: Some(NodeCurrentProcessBlock {
                 height: 5,
                 tx_count: 1,
@@ -2802,6 +2844,16 @@ mod tests {
         assert!(rendered.contains("blocknet_pool_monitor_candidate_block_accepted_total 6"));
         assert!(rendered.contains("blocknet_pool_monitor_candidate_worker_failure_total 0"));
         assert!(rendered.contains("blocknet_pool_monitor_candidate_submit_queue_depth 1"));
+        assert!(rendered.contains("blocknet_pool_monitor_regular_submit_queue_depth 3"));
+        assert!(rendered.contains(
+            "blocknet_pool_monitor_submit_unprocessed_total{reason=\"submit_queue_full\"} 5"
+        ));
+        assert!(rendered
+            .contains("blocknet_pool_monitor_submit_unprocessed_total{reason=\"fair_shed\"} 4"));
+        assert!(rendered.contains(
+            "blocknet_pool_monitor_submit_unprocessed_total{reason=\"sync_verify_busy\"} 0"
+        ));
+        assert!(rendered.contains("blocknet_pool_monitor_vardiff_unprocessed_raises_total 2"));
         assert!(
             rendered.contains("blocknet_pool_monitor_daemon_last_process_block_total_millis 4750")
         );

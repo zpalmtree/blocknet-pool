@@ -244,6 +244,37 @@ groups:
           summary: Validation backlog is critical
           description: One of the validation queues has exceeded 90% of the default capacity.
 
+      - alert: BlocknetPoolSubmitBusyRejects
+        # Submits answered "server busy, retry" without being judged (regular
+        # queue full, fair shed, no sync-verify slot, validation queue full or
+        # timeout). seine does not resubmit them, so each one is a lost share.
+        # On 2026-10-21 they reached ~105/s for 80 minutes while one farm
+        # flooded the lane. Rate limits are per connection and left out.
+        expr: >-
+          sum(rate(blocknet_pool_monitor_submit_unprocessed_total{reason!="rate_limited"}[5m])) > 0.5
+          and sum(rate(blocknet_pool_monitor_submit_unprocessed_total{reason!="rate_limited"}[5m]))
+            > 0.02 * sum(rate(blocknet_pool_monitor_stratum_submits_received_total[5m]))
+        for: 10m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Pool is turning shares away as busy
+          description: More than 2% of submits (and over 0.5/s) have been answered "server busy" for 10 minutes; see blocknet_pool_monitor_submit_unprocessed_total by reason.
+
+      - alert: BlocknetPoolSubmitBusyRejectsCritical
+        expr: >-
+          sum(rate(blocknet_pool_monitor_submit_unprocessed_total{reason!="rate_limited"}[5m])) > 2
+          and sum(rate(blocknet_pool_monitor_submit_unprocessed_total{reason!="rate_limited"}[5m]))
+            > 0.10 * sum(rate(blocknet_pool_monitor_stratum_submits_received_total[5m]))
+        for: 5m
+        labels:
+          severity: critical
+          visibility: private
+        annotations:
+          summary: Pool is losing a large share of submits as busy
+          description: More than 10% of submits (and over 2/s) have been answered "server busy" for 5 minutes; miners are losing shares.
+
       - alert: BlocknetPoolShareIngressStalled
         expr: blocknet_pool_monitor_connected_miners > 0 and blocknet_pool_monitor_estimated_hashrate > 0 and blocknet_pool_monitor_last_accepted_share_age_seconds > 900
         for: 5m
