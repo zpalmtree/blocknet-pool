@@ -147,7 +147,7 @@ export function CheckpointsPage({ api, liveTick }: CheckpointsPageProps) {
           </div>
           <div className="checkpoint-use-step">
             <h4>Check your copy</h4>
-            <p>Run this in the data directory, then compare the output against the hash above.</p>
+            <p>Run this from the folder you ran the download command in, then compare the output against the hash above.</p>
             <div className="checkpoint-command-row">
               <pre className="config-block">{verifyCommand}</pre>
               <button className="copy-btn" type="button" onClick={() => copyToClipboard(verifyCommand, 'verify')}>
