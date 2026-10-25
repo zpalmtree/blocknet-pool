@@ -150,3 +150,5 @@ Polling every 30 to 60 seconds is plenty: the hashrate figure is an hourly avera
 The pool shows what it has credited to you. For a live view of the machine itself, seine's terminal dashboard shows hashrate and shares as they happen, and seine can also expose a local control API with REST, a server-sent event stream and Prometheus metrics at `/metrics`, bound to `127.0.0.1:9977` by default. The [control API guide](https://github.com/zpalmtree/seine/blob/master/docs/API.md) covers the flags and endpoints. Many miners use both: seine's metrics for each machine and the pool API for balances and payouts.
 
 New to seine? [Download it](https://seineminer.com/#download), point it at the default pool, and your address will show up on My Stats within minutes of your first accepted share.
+
+<CTA target="pool" title="Start mining and track it live" text="Join bntpool.com in a few minutes, then follow your hashrate, shares and balance on My Stats." />

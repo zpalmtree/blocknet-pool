@@ -105,3 +105,5 @@ Effort measures how much work the pool did to find a block. It is the accepted w
 The [luck page](/luck) lists every round with its block height, effort, round time, status and when it was found. The [pool dashboard](/) shows the current round's effort as it builds and the pool's average luck. Individual rounds swing above and below 100%, which is normal for any proof-of-work pool, and over many rounds effort averages out around 100%.
 
 Luck affects how often blocks arrive. Your fraction of each block depends only on your share of the window's work, and steady mining keeps that fraction full whether a round is quick or long.
+
+<CTA target="pool" title="Join the pool" text="Mine steadily on bntpool.com and your share of every block is paid automatically once you reach 0.1 BNT." />

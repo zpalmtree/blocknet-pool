@@ -11,7 +11,7 @@ faq:
     a: '不需要。矿池统计、区块、支付、幸运值、状态以及单个矿工的接口都是通过 HTTPS 提供的公开 JSON，curl 命令或家庭仪表盘无需注册即可读取。金额以最小单位表示，除以 100,000,000 即为 BNT，建议每 30 到 60 秒轮询一次。'
   - q: '为什么 My Stats 显示的 Estimated Rewards 是零？'
     a: '矿池在你的份额处于支付窗口内时找到区块，Estimated Rewards（预估收益）才会出现。对新矿工来说，这可能需要挖几轮。你被接受的份额和算力会最先显示，随后是预估收益，它们成熟后转入 Confirmed Rewards（已确认收益），并自动支付。'
-sourceHash: b906c192acbf
+sourceHash: bac503690f3a
 translation: reviewed
 ---
 
@@ -150,3 +150,5 @@ rest:
 矿池显示的是它记入你名下的数据。若要实时查看机器本身，seine 的终端仪表盘会即时显示算力和份额；seine 还可以开启本地控制 API，提供 REST、服务器推送事件流以及位于 `/metrics` 的 Prometheus 指标，默认绑定到 `127.0.0.1:9977`。[控制 API 指南](https://github.com/zpalmtree/seine/blob/master/docs/API.md)介绍了相关参数和接口。许多矿工两者都用：用 seine 的指标查看每台机器，用矿池 API 查看余额和支付。
 
 第一次使用 seine？[下载它](https://seineminer.com/zh-hans/#download)，使用默认矿池，在你的第一个份额被接受后几分钟内，你的地址就会出现在 My Stats 上。
+
+<CTA target="pool" title="开始挖矿并实时查看" text="几分钟内加入 bntpool.com，然后在“我的统计”里查看你的算力、份额和余额。" />

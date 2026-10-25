@@ -13,7 +13,7 @@ faq:
     a: '尾部發行從第 48 個月開始，也就是區塊高度 414,720。這是 48 個 30 天的月份，也就是啟動後 1,440 天的五分鐘區塊，大約四年。確切的日曆日期取決於實際出塊時間。從這個高度起，每個區塊支付 2.0 BNT。'
   - q: '挖到的 Blocknet 幣多久後可以使用？'
     a: '區塊獎勵在經過 60 個區塊後即可花用，以 Blocknet 五分鐘的出塊時間約為五小時。這稱為 coinbase 成熟期。bntpool.com 礦池同樣等待 60 個區塊後才支付一個區塊的獎勵，因此它只支付已經成熟的區塊獎勵。'
-sourceHash: ef20f32f0a5d
+sourceHash: abea18c2c21b
 translation: reviewed
 ---
 
@@ -141,3 +141,5 @@ reward(month) = (723.25093035 - 2.0) × e^(-0.75 × month / 12) + 2.0
 <Note>
 本頁的數字來自 Blocknet 節點程式中的獎勵程式碼，核對日期為 2026 年 10 月 25 日。根據 [blocknetcrypto.com](https://blocknetcrypto.com/#faraday)，Blocknet 計劃在 2027-02-16 前後進行名為 Faraday 的網路升級。請讓 seine 保持在最新版本：它會在啟動時以及每 12 小時檢查一次新版本。
 </Note>
+
+<CTA target="seine" title="用 seine 挖 Blocknet" text="seine 免費提供 Windows、macOS 與 Linux 版本，預設在 bntpool.com 上挖礦。" />

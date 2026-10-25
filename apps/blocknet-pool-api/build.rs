@@ -81,6 +81,8 @@ fn embed_blog(frontend_dir: &Path, blog_dist_dir: &Path) {
             Some("css") => "text/css; charset=utf-8",
             Some("js") => "text/javascript; charset=utf-8",
             Some("xml") => "application/rss+xml; charset=utf-8",
+            Some("png") => "image/png",
+            Some("svg") => "image/svg+xml",
             _ => "application/octet-stream",
         };
         entries.push_str(&format!(

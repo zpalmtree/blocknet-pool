@@ -141,3 +141,5 @@ The [guide to mining on bntpool.com](/blog/mine-blocknet-on-bntpool/) covers eac
 <Note>
 The figures on this page come from the reward code in the Blocknet daemon, checked on October 25, 2026. Blocknet plans a network upgrade called Faraday around 2027-02-16, according to [blocknetcrypto.com](https://blocknetcrypto.com/#faraday). Keep seine up to date: it checks for new releases when it starts and every 12 hours.
 </Note>
+
+<CTA target="seine" title="Mine Blocknet with seine" text="seine is free for Windows, macOS and Linux and mines on bntpool.com by default." />

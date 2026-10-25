@@ -106,3 +106,5 @@ Taking part in a fair launch means mining. The quickest way is the seine miner o
 4. **Watch your miner.** Look up your address on the [stats page](/stats) to see your hashrate, shares and balance, and follow the pool's finds on the [blocks page](/blocks).
 
 The [guide to mining on bntpool.com](/blog/mine-blocknet-on-bntpool/) covers logging in with an address or name and checking your miner, the [Get Started page](/start) lists the pool's payout settings, and the [how to mine Blocknet guide](https://seineminer.com/blog/how-to-mine-blocknet/) walks through installing seine step by step on every system.
+
+<CTA target="seine" title="Mine your share" text="Every BNT is mined. Download seine and start mining on bntpool.com in a few minutes." />

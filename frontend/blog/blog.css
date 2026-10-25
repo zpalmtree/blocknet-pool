@@ -73,13 +73,15 @@ img { max-width: 100%; height: auto; }
 .faq h2, .related h2 { margin-top: 0; }
 .faq h3 { font-size: 1.05rem; margin: 1.2em 0 0.3em; }
 .faq p { margin: 0; }
-.cta { margin-top: 2.6em; padding: 20px 22px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: center; justify-content: space-between; }
-.cta b { font-size: 1.15rem; }
-.cta span { display: flex; flex-wrap: wrap; gap: 10px; }
+.cta { margin: 2.2em 0 0; padding: 18px 20px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 12px 18px; align-items: center; }
+.cta-icon { width: 48px; height: 48px; border-radius: 10px; }
+.cta-copy { display: grid; gap: 2px; min-width: 0; }
+.cta-copy b { font-size: 1.08rem; }
+.cta-copy span { color: var(--muted); font-size: 0.95rem; }
 .btn { display: inline-block; padding: 10px 16px; border-radius: 9px; border: 1px solid var(--border); text-decoration: none; font-weight: 600; font-size: 0.95rem; color: var(--text); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
-.prose .cta a { color: inherit; }
-.prose .cta a.primary { color: var(--accent-contrast); }
+.prose .cta a.primary { color: var(--accent-contrast); text-decoration: none; }
+@media (max-width: 640px) { .cta { grid-template-columns: 48px minmax(0, 1fr); align-items: start; } .cta .btn { grid-column: 1 / -1; justify-self: start; } }
 
 footer { border-top: 1px solid var(--border); padding-block: 30px 44px; color: var(--muted); font-size: 0.92rem; }
 footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 32px; justify-content: space-between; }

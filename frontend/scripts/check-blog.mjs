@@ -25,6 +25,7 @@ const LOCALES = [
 // Pool app routes a post may link to (the app is English-only, so these stay unprefixed).
 const APP_ROUTES = ['/', '/start', '/stats', '/blocks', '/payouts', '/luck', '/status', '/checkpoints'];
 const BLOCKS = ['Answer', 'Note', 'Warning'];
+const ctaCount = (b) => (stripCode(b).match(/<CTA\b/g) ?? []).length;
 
 // Brand rules (marketing/brand/taglines.md, seine copy rules). [pattern, advice]
 const FORBIDDEN = [
@@ -125,6 +126,7 @@ function checkSource(p) {
     claims([prose(p.body), d.title, d.description, ...faq.flatMap((f) => [f.q, f.a])].join(' '), errors, warnings);
     if (!d.draft && !keywordMap.includes(`/blog/${p.slug}/`)) errors.push(`no row for /blog/${p.slug}/ in editorial/keyword-map.md`);
     if (/^# /m.test(stripCode(p.body))) errors.push("the body has an H1 ('# '); the title is the only H1, start at '##'");
+    if (ctaCount(p.body) !== 1) errors.push(`${ctaCount(p.body)} <CTA> blocks; place exactly one near the end (target="pool" or "seine", with title and text)`);
     for (const f of faq) if (/[`*[\]<>\n]/.test(f.a ?? '')) errors.push(`FAQ answer must be one line of plain text: ${f.q}`);
     for (const s of d.related ?? []) if (!linkable(p).has(s)) errors.push(`related post '${s}' doesn't exist or is a draft`);
     checkLinks(p, null, errors);
@@ -172,6 +174,7 @@ function checkTranslation(src, locale) {
     const code = (b) => (b.match(/```[\s\S]*?```/g) ?? []);
     if (JSON.stringify(code(t.body)) !== JSON.stringify(code(src.body))) errors.push(tag('code blocks must match the source exactly'));
     if (headings(t.body).length !== headings(src.body).length) errors.push(tag('heading count differs from the source'));
+    if (ctaCount(t.body) !== ctaCount(src.body)) errors.push(tag('<CTA> count differs from the source'));
     // seineminer.com links may point at the translation's own locale of the same page.
     const sameSite = (l) => l.replace(/^https:\/\/seineminer\.com\/zh-han[st]\//, 'https://seineminer.com/');
     const ext = (b) => links(b).filter((l) => !l.startsWith('/')).map(sameSite).sort().join(' ');

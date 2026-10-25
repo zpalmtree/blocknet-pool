@@ -13,7 +13,7 @@ faq:
     a: '在 Blocknet 区块浏览器上打开区块 0，你会看到交易数为零、默克尔根全为零。然后阅读开源的节点代码：创世区块以空交易列表硬编码在代码中，coinbase 检查只接受一个金额等于区块奖励的输出。'
   - q: '如何开始挖 Blocknet？'
     a: '下载适用于 Windows、macOS 或 Linux 的 seine 挖矿软件，运行它，并在提示时粘贴你的 Blocknet 地址或 Blocknet ID 短名称。按回车接受默认矿池 bntpool.com，seine 会立即开始挖矿。之后你可以在 bntpool.com 的统计页面查询自己的地址。'
-sourceHash: fbecefc3fb8f
+sourceHash: 814839500c3d
 translation: reviewed
 ---
 
@@ -106,3 +106,5 @@ grep -n "func GetGenesisBlock\|func validateGenesisBlock\|func validateCoinbaseC
 4. **查看你的矿机。** 在[统计页面](/stats)查询你的地址，查看算力、份额和余额，并在[区块页面](/blocks)关注矿池找到的区块。
 
 [在 bntpool.com 挖 Blocknet](/blog/zh-hans/mine-blocknet-on-bntpool/)一文介绍了如何用地址或名称登录并查看矿机，[入门页面](/start)列出了矿池的支付设置，[如何挖 Blocknet 指南](https://seineminer.com/zh-hans/blog/how-to-mine-blocknet/)则一步步介绍了在各个系统上安装 seine 的方法。
+
+<CTA target="seine" title="挖到属于你的那份" text="每一枚 BNT 都是挖出来的。下载 seine，几分钟内即可在 bntpool.com 上开始挖矿。" />

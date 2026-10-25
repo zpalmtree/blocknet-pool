@@ -28,6 +28,15 @@ function renderMarkdown(body, locale) {
     const k = kind.toLowerCase();
     return `<div class="block ${k}"><div class="block-label">${esc(t(locale, k))}</div>\n\n${inner.trim()}\n\n</div>`;
   });
+  // <CTA target="pool|seine" title="…" text="…" />: one per post, near the end.
+  const withCta = labelled.replace(/<CTA\s+([^>]*?)\/>/g, (_, attrs) => {
+    const get = (name) => (attrs.match(new RegExp(`${name}="([^"]*)"`)) ?? [])[1] ?? '';
+    const pool = get('target') !== 'seine';
+    const seine = locale === 'en' ? 'https://seineminer.com/#download' : `https://seineminer.com/${def(locale).path}/#download`;
+    const icon = pool ? '/favicon.svg' : '/blog/seine-icon.png';
+    return `<aside class="cta"><img class="cta-icon" src="${icon}" alt="" width="48" height="48"><span class="cta-copy"><b>${esc(get('title'))}</b><span>${esc(get('text'))}</span></span>`
+      + `<a class="btn primary" href="${pool ? '/start' : seine}">${esc(t(locale, pool ? 'ctaStart' : 'ctaSeine'))}</a></aside>`;
+  });
   const used = new Map();
   const marked = new Marked({ gfm: true });
   marked.use({
@@ -41,7 +50,7 @@ function renderMarkdown(body, locale) {
       },
     },
   });
-  return marked.parse(labelled);
+  return marked.parse(withCta);
 }
 
 function page({ locale, slug = '', title, description, ogType = 'website', schema = [], head = '', body }) {
@@ -101,10 +110,6 @@ ${body}
 `;
 }
 
-function cta(locale) {
-  const seine = locale === 'en' ? 'https://seineminer.com/#download' : `https://seineminer.com/${def(locale).path}/#download`;
-  return `<aside class="cta"><b>${esc(t(locale, 'ctaTitle'))}</b><span><a class="btn primary" href="/start">${esc(t(locale, 'ctaStart'))}</a><a class="btn" href="${seine}">${esc(t(locale, 'ctaSeine'))}</a></span></aside>`;
-}
 
 function loadPosts(locale) {
   return listSlugs().map((slug) => {
@@ -151,7 +156,7 @@ function postPage(p, bySlug) {
 </header>
 <article class="prose">
 ${renderMarkdown(p.body, p.locale)}
-${faq}${related}${cta(p.locale)}
+${faq}${related}
 </article>
 </main>`,
   });
@@ -194,6 +199,7 @@ rmSync(DIST, { recursive: true, force: true });
 mkdirSync(DIST, { recursive: true });
 copyFileSync(new URL('blog.css', BLOG_DIR), new URL('blog.css', DIST));
 copyFileSync(new URL('theme.js', BLOG_DIR), new URL('theme.js', DIST));
+copyFileSync(new URL('seine-icon.png', BLOG_DIR), new URL('seine-icon.png', DIST));
 const sitemapPaths = [];
 for (const l of LOCALES) {
   const posts = loadPosts(l.code);

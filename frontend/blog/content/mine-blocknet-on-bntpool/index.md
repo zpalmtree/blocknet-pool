@@ -117,3 +117,5 @@ The pool's [Get Started](/start) page has everything on one screen:
 - **Setup notes.** Where seine saves its config, how to reset it, and the flags that override it.
 - **How rewards are counted.** A short explanation of PPLNS: the shares you submitted before a block was found earn its reward, and work you add afterward counts toward the blocks that follow. It also notes that rewards from unconfirmed blocks are shown separately on My Stats until those blocks confirm.
 - **Screenshots** of seine's first-run setup and its mining dashboard, so you know what to expect before you start.
+
+<CTA target="pool" title="Start mining on bntpool.com" text="Point seine at bntpool.com with your address or @name and watch your shares arrive on My Stats." />
