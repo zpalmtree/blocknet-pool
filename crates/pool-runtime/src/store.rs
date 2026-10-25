@@ -705,15 +705,17 @@ mod tests {
         assert!(!block.paid_out);
         assert!(!block.orphaned);
 
-        let issues = store
+        // Reconciled credits move to the archive and leave the live issue list.
+        assert!(store
             .list_orphaned_block_credit_issues()
-            .expect("load orphaned block credit issues");
-        let issue = issues
-            .iter()
-            .find(|issue| issue.height == height && issue.hash == old_hash)
-            .expect("archived orphaned issue preserved");
-        assert_eq!(issue.credit_event_count, 1);
-        assert_eq!(issue.paid_credit_amount, 100);
+            .expect("load live orphaned block credit issues")
+            .is_empty());
+        assert_eq!(
+            store
+                .get_unique_block_identity_counts()
+                .expect("live and archived identities"),
+            (2, 1)
+        );
 
         let reverted = store
             .revert_completed_payout_tx(&payout_tx, "missing after height reuse")

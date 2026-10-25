@@ -3660,8 +3660,9 @@ mod tests {
         format!("http://{}", addr)
     }
 
-    #[derive(Debug, Clone, Copy, Default)]
+    #[derive(Debug, Clone, Default)]
     struct MockAdvancedSendPolicy {
+        live_recipient_totals: Option<Arc<parking_lot::Mutex<Vec<u64>>>>,
         preview_recipient_cap: Option<u64>,
         live_recipient_cap: Option<u64>,
         fee: u64,
@@ -3817,6 +3818,11 @@ mod tests {
                                 })
                             })
                             .unwrap_or_default();
+                        if !dry_run {
+                            if let Some(totals) = &policy.live_recipient_totals {
+                                totals.lock().push(recipient_total);
+                            }
+                        }
                         let recipient_cap = if dry_run {
                             policy.preview_recipient_cap
                         } else {
@@ -4151,7 +4157,7 @@ mod tests {
                 },
                 Some(ShareReplayData {
                     job_id: "replay-job".to_string(),
-                    header_base: vec![1, 2, 3, 4],
+                    header_base: vec![1, 2, 3, 4, 5, 6, 7, 8],
                     network_target: [0xff; 32],
                     created_at: share_time,
                 }),
@@ -4263,7 +4269,7 @@ mod tests {
                 },
                 Some(ShareReplayData {
                     job_id: "candidate-replay-job".to_string(),
-                    header_base: vec![9, 8, 7, 6],
+                    header_base: vec![9, 8, 7, 6, 5, 4, 3, 2],
                     network_target: [0u8; 32],
                     created_at: share_time,
                 }),
@@ -5497,6 +5503,7 @@ mod tests {
             })
             .expect("seed miner b balance");
 
+        let live_totals = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let base_url = spawn_wallet_send_server(
             &wallet_address,
             vec![
@@ -5506,6 +5513,7 @@ mod tests {
                 wallet_output("out-d", 0, 20_000_000),
             ],
             MockAdvancedSendPolicy {
+                live_recipient_totals: Some(Arc::clone(&live_totals)),
                 preview_recipient_cap: None,
                 live_recipient_cap: Some(120_000_000),
                 fee: 1_000,
@@ -5516,6 +5524,8 @@ mod tests {
         );
         let cfg = Config {
             min_payout_amount: 0.01,
+            // Bound this sweep to one transaction after the liquidity retry.
+            payout_max_recipients_per_tick: 2,
             ..Config::default()
         };
         let processor = PayoutProcessor::new(
@@ -5525,6 +5535,11 @@ mod tests {
         );
 
         processor.send_payouts();
+
+        let attempts = live_totals.lock();
+        assert!(attempts.len() >= 2, "must retry a rejected live send");
+        assert_eq!(attempts[0], 170_000_000);
+        assert!(*attempts.last().expect("successful retry") <= 120_000_000);
 
         let pending = store
             .get_pending_payouts()
@@ -6255,6 +6270,8 @@ mod tests {
         );
 
         assert!(processor.reconcile_chain_recovery(&sample_status(diverged_height)));
+        // The normal payout tick activates reconciliation after detecting recovery.
+        processor.activate_recovery_payout_reconciliation();
         processor.reconcile_completed_payouts_after_recovery();
 
         let balance = store.get_balance(miner).expect("balance after recovery");

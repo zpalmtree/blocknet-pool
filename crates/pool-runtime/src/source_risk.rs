@@ -679,7 +679,7 @@ impl SourceRiskTracker {
                 .fold(0u64, u64::saturating_add);
             candidates.push((Arc::clone(key), at_stake));
         }
-        candidates.sort_by(|left, right| right.1.cmp(&left.1));
+        candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.1));
 
         let rate = if sample_rate.is_finite() {
             sample_rate.clamp(0.0, 1.0)

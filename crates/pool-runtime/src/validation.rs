@@ -1810,10 +1810,7 @@ impl ValidationInner {
         }
 
         let followup = self.apply_audit_result(
-            &queued.share.miner,
-            queued.share.share_id,
-            queued.share.created_at,
-            queued.share.difficulty,
+            &queued.share,
             computed.accepted,
             !attribution.attributed,
             !attribution.attributed || attribution.count_invalid_at_address,
@@ -1857,14 +1854,15 @@ impl ValidationInner {
 
     fn apply_audit_result(
         &self,
-        address: &str,
-        share_id: i64,
-        created_at: SystemTime,
-        difficulty: u64,
+        share: &PendingAuditShare,
         accepted: bool,
         count_toward_address_risk: bool,
         count_invalid_at_address: bool,
     ) -> ValidationFollowupAction {
+        let address = &share.miner;
+        let share_id = share.share_id;
+        let created_at = share.created_at;
+        let difficulty = share.difficulty;
         let now = SystemTime::now();
         let mut state = self.state.lock();
         let entry = get_or_insert_state(&mut state, address);
@@ -3431,6 +3429,10 @@ mod tests {
             Arc::clone(&store) as Arc<dyn ValidationStateStore>,
         );
         engine.inner.maintenance_tick();
+        wait_for(
+            || engine.snapshot().audit_verified >= 1,
+            Duration::from_secs(5),
+        );
 
         let replayed = store
             .get_recent_shares(10)
@@ -3439,11 +3441,21 @@ mod tests {
             .filter(|share| share.miner == address && share.job_id.starts_with("cov-prov"))
             .collect::<Vec<_>>();
         assert_eq!(replayed.len(), 2);
-        assert!(
+        // One replay closes the coverage deficit (2 verified out of 3).
+        // The scheduler should leave the other provisional share untouched.
+        assert_eq!(
             replayed
                 .iter()
-                .all(|share| share.status == SHARE_STATUS_VERIFIED && share.was_sampled),
-            "pending-window provisionals should be replay-verified during payout coverage hold"
+                .filter(|share| share.status == SHARE_STATUS_VERIFIED && share.was_sampled)
+                .count(),
+            1
+        );
+        assert_eq!(
+            replayed
+                .iter()
+                .filter(|share| share.status == SHARE_STATUS_PROVISIONAL && !share.was_sampled)
+                .count(),
+            1
         );
 
         let mut next = matching_task(10);
@@ -3538,6 +3550,10 @@ mod tests {
             Arc::clone(&store) as Arc<dyn ValidationStateStore>,
         );
         engine.inner.maintenance_tick();
+        wait_for(
+            || engine.snapshot().audit_verified >= 1,
+            Duration::from_secs(5),
+        );
 
         let replayed = store
             .get_recent_shares(10)
@@ -3559,7 +3575,7 @@ mod tests {
         cfg.pplns_window_duration = "6h".to_string();
         cfg.provisional_share_delay = "0s".to_string();
         cfg.payout_min_verified_shares = 1;
-        cfg.payout_provisional_cap_multiplier = 19.0;
+        cfg.payout_provisional_cap_multiplier = 1.0;
 
         let address = format!("passive-coverage-{}", rand::random::<u64>());
         let base = SystemTime::now() - Duration::from_secs(120);
@@ -3646,6 +3662,10 @@ mod tests {
             Arc::clone(&store) as Arc<dyn ValidationStateStore>,
         );
         engine.inner.maintenance_tick();
+        wait_for(
+            || engine.snapshot().audit_verified >= 1,
+            Duration::from_secs(5),
+        );
 
         let replayed = store
             .get_recent_shares(10)
@@ -3654,11 +3674,21 @@ mod tests {
             .filter(|share| share.miner == address && share.job_id.starts_with("passive-prov"))
             .collect::<Vec<_>>();
         assert_eq!(replayed.len(), 2);
-        assert!(
+        // One replay closes the coverage deficit (2 verified out of 3).
+        // The scheduler should leave the other provisional share untouched.
+        assert_eq!(
             replayed
                 .iter()
-                .all(|share| share.status == SHARE_STATUS_VERIFIED && share.was_sampled),
-            "low-coverage inactive participants should also be replay-verified"
+                .filter(|share| share.status == SHARE_STATUS_VERIFIED && share.was_sampled)
+                .count(),
+            1
+        );
+        assert_eq!(
+            replayed
+                .iter()
+                .filter(|share| share.status == SHARE_STATUS_PROVISIONAL && !share.was_sampled)
+                .count(),
+            1
         );
 
         let mut next = matching_task(44);
@@ -4074,20 +4104,56 @@ mod tests {
             Arc::clone(&store) as Arc<dyn ValidationStateStore>,
         );
 
-        let first = engine.process_inline(matching_task(1));
-        let second = engine.process_inline(matching_task(2));
-        assert!(first.accepted && !first.verified);
-        assert!(second.accepted && !second.verified);
+        let created_at = SystemTime::now();
+        let address = "restart-provisional";
+        let share_id = store
+            .add_share_with_replay_and_id(
+                ShareRecord {
+                    job_id: "restart-job".to_string(),
+                    miner: address.to_string(),
+                    worker: "rig".to_string(),
+                    difficulty: 7,
+                    nonce: 1,
+                    status: SHARE_STATUS_PROVISIONAL,
+                    was_sampled: false,
+                    block_hash: None,
+                    claimed_hash: None,
+                    reject_reason: None,
+                    created_at,
+                },
+                None,
+            )
+            .expect("persist accepted share");
+        let plan = engine.plan_regular_submit(address);
+        engine.record_hot_accept(address, share_id, 7, created_at, None, plan);
+        assert!(engine.plan_regular_submit(address).enqueue_audit);
+        drop(engine);
 
         let restarted = ValidationEngine::new_with_state_store(
             cfg,
             Arc::new(DeterministicTestHasher),
             Arc::clone(&store) as Arc<dyn ValidationStateStore>,
         );
-        let after_restart = restarted.process_inline(matching_task(3));
+        {
+            let state = restarted.inner.state.lock();
+            let restored = state.get(address).expect("restored address state");
+            assert_eq!(restored.total_shares, 1);
+            assert_eq!(restored.provisional_at.len(), 1);
+            assert_eq!(restored.provisional_at[0].share_id, Some(share_id));
+            assert_eq!(restored.accepted_window.len(), 1);
+            assert_eq!(restored.accepted_window[0].share_id, share_id);
+            assert_eq!(restored.accepted_window[0].difficulty, 7);
+            assert!(!restored.accepted_window[0].verified);
+        }
+        let after_restart = restarted.plan_regular_submit(address);
         assert!(
-            after_restart.verified,
-            "persisted provisional share pressure should survive restart"
+            after_restart.enqueue_audit,
+            "persisted provisional pressure must request an audit"
+        );
+        assert!(!after_restart.sync_full_verify);
+        assert_eq!(
+            after_restart.audit_source,
+            Some(ValidationAuditSource::ProvisionalBacklog)
         );
     }
 

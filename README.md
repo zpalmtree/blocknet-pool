@@ -27,6 +27,23 @@ Workspace layout:
 - `crates/`: shared library packages with explicit dependency boundaries
 - `frontend/`: embedded React/Vite UI for the API binary
 
+## Runtime tests
+
+Database-backed tests require `BLOCKNET_POOL_TEST_POSTGRES_URL`; without it,
+those tests return early without exercising PostgreSQL. Use a disposable local
+PostgreSQL database with permission to create schemas. Each test creates its own
+schema so the suite can run concurrently; discard the database afterward to
+remove the test schemas.
+
+```bash
+BLOCKNET_POOL_TEST_POSTGRES_URL='host=localhost user=postgres dbname=pool_test' \
+  cargo test -p pool-runtime -- --test-threads=4
+cargo clippy -p pool-runtime -p blocknet-pool-stratum-app --all-targets -- -D warnings
+```
+
+The replay tests exercise the real Argon2 implementation and require several
+GiB of available memory.
+
 ## Deploy (bntpool)
 
 From the local repo root:

@@ -6467,19 +6467,11 @@ mod tests {
 
     const POSTGRES_TEST_URL_ENV: &str = "BLOCKNET_POOL_TEST_POSTGRES_URL";
 
-    fn test_store() -> Option<Arc<PostgresStore>> {
-        let url = std::env::var(POSTGRES_TEST_URL_ENV)
-            .ok()
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())?;
-        Some(PostgresStore::connect(&url, 2).expect("connect postgres test store"))
-    }
-
     fn unique_suffix() -> String {
         format!("{}-{}", std::process::id(), rand::random::<u64>())
     }
 
-    fn isolated_test_store() -> Option<Arc<PostgresStore>> {
+    fn test_store() -> Option<Arc<PostgresStore>> {
         let url = std::env::var(POSTGRES_TEST_URL_ENV)
             .ok()
             .map(|v| v.trim().to_string())
@@ -6507,7 +6499,7 @@ mod tests {
 
     #[test]
     fn payout_sweep_lock_skips_work_while_another_session_holds_it_postgres() {
-        let Some(store) = isolated_test_store() else {
+        let Some(store) = test_store() else {
             return;
         };
         let mut other = lock_session(&store);
@@ -6535,7 +6527,7 @@ mod tests {
 
     #[test]
     fn payout_sweep_lock_is_held_for_the_whole_sweep_postgres() {
-        let Some(store) = isolated_test_store() else {
+        let Some(store) = test_store() else {
             return;
         };
         let mut other = lock_session(&store);
@@ -6552,7 +6544,7 @@ mod tests {
     }
 
     fn concurrent_balance_credits_do_not_lose_updates(seed_existing: bool) {
-        let Some(store) = isolated_test_store() else {
+        let Some(store) = test_store() else {
             return;
         };
         let address = format!("lost-update-{}", unique_suffix());
@@ -6608,7 +6600,7 @@ mod tests {
 
     #[test]
     fn concurrent_manual_offsets_accumulate_postgres() {
-        let Some(store) = isolated_test_store() else {
+        let Some(store) = test_store() else {
             return;
         };
         let address = format!("offset-race-{}", unique_suffix());
@@ -6639,7 +6631,7 @@ mod tests {
 
     #[test]
     fn mark_send_started_requires_every_member_unclaimed_with_planned_amount_postgres() {
-        let Some(store) = isolated_test_store() else {
+        let Some(store) = test_store() else {
             return;
         };
         store.create_pending_payout("mark-a", 100).unwrap();
@@ -6697,7 +6689,7 @@ mod tests {
 
     #[test]
     fn inflight_payout_sends_lists_unresolved_and_broadcast_batches_postgres() {
-        let Some(store) = isolated_test_store() else {
+        let Some(store) = test_store() else {
             return;
         };
         let mut client = lock_session(&store);
@@ -8676,7 +8668,19 @@ mod tests {
             .get_unique_block_identity_counts()
             .expect("load unique block identity counts");
 
-        assert_eq!(total_blocks, 5);
+        let physical_rows: i64 = store
+            .conn()
+            .query_one(
+                "SELECT (SELECT COUNT(*) FROM blocks) + (SELECT COUNT(*) FROM archived_blocks)",
+                &[],
+            )
+            .expect("count physical block rows")
+            .get(0);
+        assert_eq!(
+            physical_rows, 5,
+            "fixture must include a live/archive duplicate"
+        );
+        assert_eq!(total_blocks, 4);
         assert_eq!(orphaned_blocks, 2);
     }
 
@@ -8865,6 +8869,13 @@ mod tests {
             )
             .expect("insert confirmed payout");
         store
+            .update_balance(&Balance {
+                address: addr.clone(),
+                pending: 55,
+                paid: 10,
+            })
+            .expect("seed balance for queued payouts");
+        store
             .create_pending_payout(&addr, 25)
             .expect("create pending");
         store
@@ -8881,14 +8892,31 @@ mod tests {
         let payouts = store
             .get_recent_visible_payouts_for_address(&addr, 10)
             .expect("visible payouts");
-        assert_eq!(payouts.len(), 3);
-        assert_eq!(payouts[0].tx_hash, "");
-        assert_eq!(payouts[0].amount, 30);
+        // A send in flight cannot be replaced by another pending payout.
+        assert_eq!(payouts.len(), 2);
+        assert_eq!(payouts[0].tx_hash, pending_tx);
+        assert_eq!(payouts[0].amount, 25);
+        assert_eq!(payouts[0].timestamp, broadcast.sent_at.expect("sent at"));
         assert!(!payouts[0].confirmed);
-        assert_eq!(payouts[1].tx_hash, pending_tx);
-        assert_eq!(payouts[1].timestamp, broadcast.sent_at.expect("sent at"));
-        assert!(!payouts[1].confirmed);
-        assert!(payouts[2].confirmed);
+        assert!(payouts[1].confirmed);
+
+        store
+            .complete_pending_payout(&addr, 25, 2, &pending_tx)
+            .expect("complete broadcast payout");
+        store
+            .create_pending_payout(&addr, 30)
+            .expect("queue next payout after completion");
+        let payouts = store
+            .get_recent_visible_payouts_for_address(&addr, 10)
+            .expect("visible payouts after completion");
+        assert_eq!(payouts.len(), 3);
+        let queued = payouts
+            .iter()
+            .find(|payout| !payout.confirmed)
+            .expect("queued payout visible");
+        assert_eq!(queued.tx_hash, "");
+        assert_eq!(queued.amount, 30);
+        assert_eq!(payouts.iter().filter(|payout| payout.confirmed).count(), 2);
     }
 
     #[test]
