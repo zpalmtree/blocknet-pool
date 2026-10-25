@@ -22,8 +22,9 @@ use crate::share_dedupe::{template_share_key, NonceLedger};
 use crate::source_risk::{ip_group_key, SourcePolicy, SourceRef, SourceRiskTracker};
 use crate::telemetry::QueueTracker;
 use crate::validation::{
-    AuditAttribution, AuditFeedback, ValidationEngine, ValidationFollowupAction, ValidationResult,
-    ValidationTask, SHARE_STATUS_PROVISIONAL, SHARE_STATUS_REJECTED, SHARE_STATUS_VERIFIED,
+    AuditAttribution, AuditFeedback, ProbationReservation, ValidationEngine,
+    ValidationFollowupAction, ValidationResult, ValidationTask, SHARE_STATUS_PROVISIONAL,
+    SHARE_STATUS_REJECTED, SHARE_STATUS_VERIFIED,
 };
 use pool_common::db::{
     active_window_strikes, AddressRiskEscalation, AddressRiskState, PendingAuditShare,
@@ -1383,8 +1384,25 @@ impl PoolEngine {
                 return Err(anyhow!("low difficulty share"));
             }
 
+            // Never-verified addresses are verified on the probation lane. If
+            // it is saturated, ask the miner to retry instead of accepting the
+            // share unverified; not persisted, so the retry is not a duplicate.
+            let mut probation_reserved = false;
+            if plan.probation {
+                match self
+                    .validation
+                    .reserve_probation(&session.address, &session.source.ip_group)
+                {
+                    ProbationReservation::Reserved => probation_reserved = true,
+                    ProbationReservation::AlreadyPending => {}
+                    ProbationReservation::Saturated => {
+                        return Err(anyhow!("server busy, retry (new miner verification)"));
+                    }
+                }
+            }
+
             let created_at = SystemTime::now();
-            let share_id = self.store.add_share_with_replay_metadata_and_id(
+            let persisted = self.store.add_share_with_replay_metadata_and_id(
                 ShareRecord {
                     job_id: job_id_for_share.clone(),
                     miner: session.address.clone(),
@@ -1405,9 +1423,36 @@ impl PoolEngine {
                     created_at,
                 }),
                 &metadata,
-            )?;
+            );
+            let share_id = match persisted {
+                Ok(share_id) => share_id,
+                Err(err) => {
+                    if probation_reserved {
+                        self.validation
+                            .cancel_probation(&session.address, &session.source.ip_group);
+                    }
+                    return Err(err);
+                }
+            };
             self.source_risk
                 .record_provisional(&session.source, share_id, created_at);
+            if probation_reserved {
+                self.validation.enqueue_probation_audit(
+                    PendingAuditShare {
+                        share_id,
+                        job_id: job_id_for_share.clone(),
+                        miner: session.address.clone(),
+                        worker: session.worker.clone(),
+                        difficulty: share_difficulty,
+                        nonce,
+                        claimed_hash: Some(claimed_hash),
+                        header_base: job.header_base.clone(),
+                        network_target: job.network_target,
+                        created_at,
+                    },
+                    &session.source.ip_group,
+                );
+            }
 
             self.validation.record_hot_accept(
                 &session.address,
@@ -2755,9 +2800,12 @@ mod tests {
     }
 
     fn source_test_engine(
-        cfg: Config,
+        mut cfg: Config,
         hasher: Arc<dyn PowHasher>,
     ) -> (PoolEngine, Arc<InMemoryStore>, Arc<ValidationEngine>) {
+        // No provisional-backlog / payout-coverage holds: tests control sampling.
+        cfg.provisional_share_delay = "0s".to_string();
+        cfg.payout_provisional_cap_multiplier = 0.0;
         let validation = Arc::new(ValidationEngine::new(cfg.clone(), hasher));
         let jobs = Arc::new(InMemoryJobs::default());
         jobs.insert(job());
@@ -3021,6 +3069,58 @@ mod tests {
             engine.source_blocked(attacker),
             "false block claim strikes the source"
         );
+    }
+
+    #[test]
+    fn saturated_probation_rejects_new_address_shares_as_retryable_busy() {
+        let mut cfg = cfg();
+        cfg.warmup_shares = 5;
+        let (engine, store, validation) = source_test_engine(cfg, Arc::new(NonceHasher));
+        // Fill the probation lane from other networks.
+        for idx in 0..64 {
+            let _ =
+                validation.reserve_probation(&format!("filler-{idx}"), &format!("10.0.{idx}.1"));
+        }
+        let newbie = "203.0.113.1:4000";
+        engine
+            .login(newbie, test_miner_address(), "rig", 2, submit_hash_cap())
+            .expect("login");
+        let err = engine
+            .submit(newbie, "job1".to_string(), 1, NonceHasher::honest(1))
+            .expect_err("never-verified share is not accepted unverified while saturated");
+        assert!(err.to_string().starts_with("server busy"), "{err}");
+        assert!(store.shares().is_empty(), "busy reject is not persisted");
+
+        validation.cancel_probation("filler-0", "10.0.0.1");
+        let ack = engine
+            .submit(newbie, "job1".to_string(), 1, NonceHasher::honest(1))
+            .expect("retry of the same nonce succeeds once there is room");
+        assert_eq!(ack.status, SHARE_STATUS_PROVISIONAL);
+        assert_eq!(validation.snapshot().probation_enqueued, 1);
+        // Further shares while the probation audit is pending are accepted.
+        engine
+            .submit(newbie, "job1".to_string(), 2, NonceHasher::honest(2))
+            .expect("second share while probation is pending");
+    }
+
+    #[test]
+    fn probation_catches_a_never_verified_cheater() {
+        let mut cfg = cfg();
+        cfg.warmup_shares = 5;
+        let (engine, store, _validation) = source_test_engine(cfg, Arc::new(NonceHasher));
+        let cheater = "198.51.100.9:5000";
+        engine
+            .login(cheater, other_miner_address(), "x", 2, submit_hash_cap())
+            .expect("login");
+        engine
+            .submit(cheater, "job1".to_string(), 1, fake_claim())
+            .expect("hot accept before probation runs");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !engine.source_blocked(cheater) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(engine.source_blocked(cheater));
+        assert_eq!(statuses(&store, 1..=1), vec![SHARE_STATUS_REJECTED]);
     }
 
     #[test]

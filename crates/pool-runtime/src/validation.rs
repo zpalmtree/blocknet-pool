@@ -45,6 +45,15 @@ const INVALID_SAMPLE_COUNT_THRESHOLD: u64 = 5;
 const FORCED_VALIDATION_QUARANTINE_THRESHOLD: f64 = 0.20;
 const PROVISIONAL_BACKLOG_VERIFIED_MULTIPLIER: f64 = 8.0;
 const CANDIDATE_VALIDATION_WORKERS: usize = 1;
+/// Probation audits verify addresses that have never passed a sample. They
+/// run on the audit workers at the lowest priority, in their own bounded
+/// queue that is excluded from overload detection, so a flood of brand-new
+/// addresses can neither switch sampling off for everyone nor get credited
+/// unverified: while the lane is full, such shares are rejected as busy.
+const PROBATION_QUEUE_SIZE: usize = 32;
+/// Probation audits one network (IP group) may hold at once, so a single
+/// host cannot fill the lane and lock out honest newcomers elsewhere.
+const PROBATION_MAX_PER_GROUP: usize = 4;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ValidationTask {
@@ -449,6 +458,12 @@ pub struct ValidationSnapshot {
     pub audit_deferred: u64,
     pub overload_mode: OverloadMode,
     pub effective_sample_rate: f64,
+    #[serde(default)]
+    pub probation_queue_depth: usize,
+    #[serde(default)]
+    pub probation_enqueued: u64,
+    #[serde(default)]
+    pub probation_rejected: u64,
 }
 
 struct QueuedTask {
@@ -463,12 +478,19 @@ pub(crate) enum ValidationAuditSource {
     ForcedReview,
     PayoutCoverage,
     ProvisionalBacklog,
+    Probation,
 }
 
 #[derive(Debug, Clone)]
 struct QueuedAuditTask {
     share: PendingAuditShare,
     source: ValidationAuditSource,
+}
+
+#[derive(Debug, Clone)]
+struct QueuedProbationTask {
+    task: QueuedAuditTask,
+    group: String,
 }
 
 enum RegularWorkItem {
@@ -482,6 +504,9 @@ pub(crate) struct RegularSubmitPlan {
     pub enqueue_audit: bool,
     pub audit_source: Option<ValidationAuditSource>,
     pub overload_mode: OverloadMode,
+    /// The address has never passed a sample and needs a probation audit;
+    /// the caller must reserve a probation slot or reject the share as busy.
+    pub probation: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -528,6 +553,28 @@ struct ValidationInner {
     audit_duration: Mutex<LatencyWindow>,
     overload: Mutex<OverloadState>,
     audit_feedback: Mutex<Option<Arc<dyn AuditFeedback>>>,
+    probation_tx: flume::Sender<QueuedProbationTask>,
+    probation_queue: QueueTracker,
+    probation: Mutex<ProbationState>,
+    probation_enqueued: AtomicU64,
+    probation_rejected: AtomicU64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProbationReservation {
+    Reserved,
+    /// Another share of this address already holds the probation slot.
+    AlreadyPending,
+    /// The lane, or this network's share of it, is full.
+    Saturated,
+}
+
+#[derive(Debug, Default)]
+struct ProbationState {
+    /// Addresses with a reserved or queued probation audit.
+    pending_addresses: HashSet<String>,
+    reserved_by_group: HashMap<String, usize>,
+    reserved_total: usize,
 }
 
 pub(crate) struct ValidationEngine {
@@ -562,6 +609,8 @@ impl ValidationEngine {
         let (candidate_tx, candidate_rx) = flume::bounded::<QueuedTask>(candidate_queue_size);
         let (regular_tx, regular_rx) = flume::bounded::<RegularWorkItem>(regular_queue_size);
         let (audit_tx, audit_rx) = flume::bounded::<QueuedAuditTask>(audit_queue_size);
+        let (probation_tx, probation_rx) =
+            flume::bounded::<QueuedProbationTask>(PROBATION_QUEUE_SIZE);
         let shutdown = Arc::new(AtomicBool::new(false));
         let initial_clear_event_id = match state_store.latest_validation_clear_event_id() {
             Ok(value) => value.max(0),
@@ -601,6 +650,11 @@ impl ValidationEngine {
             audit_duration: Mutex::new(default_latency_window()),
             overload: Mutex::new(OverloadState::default()),
             audit_feedback: Mutex::new(None),
+            probation_tx,
+            probation_queue: QueueTracker::new(512),
+            probation: Mutex::new(ProbationState::default()),
+            probation_enqueued: AtomicU64::new(0),
+            probation_rejected: AtomicU64::new(0),
         });
 
         let mut candidate_handles = Vec::with_capacity(candidate_workers);
@@ -639,13 +693,33 @@ impl ValidationEngine {
         for _ in 0..audit_workers {
             let inner_cloned = Arc::clone(&inner);
             let audit_rx = audit_rx.clone();
+            let probation_rx = probation_rx.clone();
             let shutdown = Arc::clone(&shutdown);
             audit_handles.push(thread::spawn(move || {
                 while !shutdown.load(Ordering::Relaxed) {
-                    match audit_rx.recv_timeout(Duration::from_millis(25)) {
-                        Ok(queued) => inner_cloned.process_background_audit(queued),
-                        Err(flume::RecvTimeoutError::Timeout) => continue,
-                        Err(flume::RecvTimeoutError::Disconnected) => break,
+                    // Background (payout coverage) audits protect existing
+                    // credit; probation for never-verified addresses is last.
+                    if let Ok(queued) = audit_rx.try_recv() {
+                        inner_cloned.process_background_audit(queued);
+                        continue;
+                    }
+                    if let Ok(queued) = probation_rx.try_recv() {
+                        inner_cloned.process_probation_audit(queued);
+                        continue;
+                    }
+                    let next = flume::Selector::new()
+                        .recv(&audit_rx, |item| item.map(either_audit_left))
+                        .recv(&probation_rx, |item| item.map(either_audit_right))
+                        .wait_timeout(Duration::from_millis(25));
+                    match next {
+                        Ok(Ok(AuditWork::Background(queued))) => {
+                            inner_cloned.process_background_audit(queued)
+                        }
+                        Ok(Ok(AuditWork::Probation(queued))) => {
+                            inner_cloned.process_probation_audit(queued)
+                        }
+                        Ok(Err(_)) => break,
+                        Err(_) => continue,
                     }
                 }
             }));
@@ -779,6 +853,23 @@ impl ValidationEngine {
         }
     }
 
+    /// Reserves a probation audit slot for a never-verified address. False
+    /// means the lane (or this network's share of it) is saturated and the
+    /// share must be rejected as busy rather than accepted unverified.
+    pub(crate) fn reserve_probation(&self, address: &str, group: &str) -> ProbationReservation {
+        self.inner.reserve_probation(address, group)
+    }
+
+    /// Queues the probation audit for a share whose slot was reserved.
+    pub(crate) fn enqueue_probation_audit(&self, share: PendingAuditShare, group: &str) {
+        self.inner.enqueue_probation_audit(share, group);
+    }
+
+    /// Releases a reservation whose share was never persisted.
+    pub(crate) fn cancel_probation(&self, address: &str, group: &str) {
+        self.inner.release_probation(address, group);
+    }
+
     pub(crate) fn attach_audit_feedback(&self, feedback: Arc<dyn AuditFeedback>) {
         *self.inner.audit_feedback.lock() = Some(feedback);
     }
@@ -800,6 +891,19 @@ impl ValidationEngine {
     pub(crate) fn schedule_forced_review_after(&self, address: &str, start_at: SystemTime) {
         self.inner.schedule_forced_review_after(address, start_at);
     }
+}
+
+enum AuditWork {
+    Background(QueuedAuditTask),
+    Probation(QueuedProbationTask),
+}
+
+fn either_audit_left(task: QueuedAuditTask) -> AuditWork {
+    AuditWork::Background(task)
+}
+
+fn either_audit_right(task: QueuedProbationTask) -> AuditWork {
+    AuditWork::Probation(task)
 }
 
 impl Drop for ValidationEngine {
@@ -1009,6 +1113,7 @@ impl ValidationInner {
                 enqueue_audit: false,
                 audit_source: None,
                 overload_mode,
+                probation: false,
             };
         }
 
@@ -1032,6 +1137,25 @@ impl ValidationInner {
         ) && effective
             .forced_until
             .is_some_and(|deadline| deadline > now);
+
+        let never_verified = effective.sampled_shares <= effective.invalid_samples;
+        let needs_probation = self.config.warmup_shares > 0
+            && never_verified
+            && !forced_review
+            && !active_temporary_hold;
+        if needs_probation {
+            drop(state);
+            // One probation audit per address at a time is enough: payouts need
+            // a verified share, and a failure revokes the source's shares.
+            let pending = self.probation.lock().pending_addresses.contains(address);
+            return RegularSubmitPlan {
+                sync_full_verify: false,
+                enqueue_audit: false,
+                audit_source: (!pending).then_some(ValidationAuditSource::Probation),
+                overload_mode,
+                probation: !pending,
+            };
+        }
 
         let audit_source = if forced_review {
             Some(ValidationAuditSource::ForcedReview)
@@ -1085,6 +1209,7 @@ impl ValidationInner {
             enqueue_audit: !sync_full_verify && audit_source.is_some(),
             audit_source,
             overload_mode,
+            probation: false,
         }
     }
 
@@ -1328,6 +1453,9 @@ impl ValidationInner {
             audit_deferred: self.audit_deferred.load(Ordering::Relaxed),
             overload_mode,
             effective_sample_rate: self.effective_sample_rate(overload_mode),
+            probation_queue_depth: self.probation_queue.snapshot(now_instant).depth,
+            probation_enqueued: self.probation_enqueued.load(Ordering::Relaxed),
+            probation_rejected: self.probation_rejected.load(Ordering::Relaxed),
             ..ValidationSnapshot::default()
         };
 
@@ -2109,6 +2237,69 @@ impl ValidationInner {
     fn audit_feedback(&self) -> Option<Arc<dyn AuditFeedback>> {
         self.audit_feedback.lock().clone()
     }
+
+    fn reserve_probation(&self, address: &str, group: &str) -> ProbationReservation {
+        let mut probation = self.probation.lock();
+        if probation.pending_addresses.contains(address) {
+            return ProbationReservation::AlreadyPending;
+        }
+        let group_count = probation.reserved_by_group.get(group).copied().unwrap_or(0);
+        if probation.reserved_total >= PROBATION_QUEUE_SIZE
+            || group_count >= PROBATION_MAX_PER_GROUP
+        {
+            drop(probation);
+            self.probation_rejected.fetch_add(1, Ordering::Relaxed);
+            return ProbationReservation::Saturated;
+        }
+        probation.pending_addresses.insert(address.to_string());
+        *probation
+            .reserved_by_group
+            .entry(group.to_string())
+            .or_default() += 1;
+        probation.reserved_total += 1;
+        ProbationReservation::Reserved
+    }
+
+    fn release_probation(&self, address: &str, group: &str) {
+        let mut probation = self.probation.lock();
+        if !probation.pending_addresses.remove(address) {
+            return;
+        }
+        probation.reserved_total = probation.reserved_total.saturating_sub(1);
+        if let Some(count) = probation.reserved_by_group.get_mut(group) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                probation.reserved_by_group.remove(group);
+            }
+        }
+    }
+
+    fn enqueue_probation_audit(&self, share: PendingAuditShare, group: &str) {
+        let address = share.miner.clone();
+        let tracker_id = self.probation_queue.push(Instant::now());
+        let queued = QueuedProbationTask {
+            task: QueuedAuditTask {
+                share,
+                source: ValidationAuditSource::Probation,
+            },
+            group: group.to_string(),
+        };
+        // Reservations bound the queue, so this only fails on shutdown.
+        if self.probation_tx.try_send(queued).is_err() {
+            self.probation_queue.remove(tracker_id);
+            self.release_probation(&address, group);
+            return;
+        }
+        self.probation_enqueued.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn process_probation_audit(&self, queued: QueuedProbationTask) {
+        let started_at = Instant::now();
+        self.probation_queue.pop_and_record_wait(started_at);
+        let address = queued.task.share.miner.clone();
+        self.process_audit_task(queued.task, started_at);
+        self.release_probation(&address, &queued.group);
+    }
 }
 
 fn get_or_insert_state<'a>(
@@ -2493,6 +2684,135 @@ mod tests {
             forced_verify_duration: "1h".to_string(),
             ..Config::default()
         }
+    }
+
+    fn probation_share(share_id: i64, address: &str, nonce: u64) -> PendingAuditShare {
+        let header_base = vec![1, 2, 3];
+        PendingAuditShare {
+            share_id,
+            job_id: format!("job-{share_id}"),
+            miner: address.to_string(),
+            worker: "rig".to_string(),
+            difficulty: 1,
+            nonce,
+            claimed_hash: Some(DeterministicTestHasher.hash(&header_base, nonce).unwrap()),
+            header_base,
+            network_target: [0x00; 32],
+            created_at: SystemTime::now(),
+        }
+    }
+
+    #[test]
+    fn new_address_flood_is_bounded_and_does_not_trip_overload() {
+        struct SlowDeterministicHasher;
+        impl PowHasher for SlowDeterministicHasher {
+            fn hash(&self, header_base: &[u8], nonce: u64) -> anyhow::Result<[u8; 32]> {
+                std::thread::sleep(Duration::from_millis(40));
+                DeterministicTestHasher.hash(header_base, nonce)
+            }
+        }
+        // Production-like sampling with tight overload thresholds: under the old
+        // routing, dozens of queued warmup audits in the regular lane would
+        // push the pool into Emergency (sampling off for everyone).
+        let cfg = Config {
+            warmup_shares: 5,
+            sample_rate: 0.05,
+            min_sample_every: 25,
+            regular_verifiers: 1,
+            audit_verifiers: 1,
+            overload_shed_oldest_age: "150ms".to_string(),
+            overload_emergency_oldest_age: "300ms".to_string(),
+            overload_clear_oldest_age: "100ms".to_string(),
+            ..test_cfg()
+        };
+        let engine = ValidationEngine::new(cfg, Arc::new(SlowDeterministicHasher));
+
+        let mut reserved = 0usize;
+        let mut reserved_from_one_host = 0usize;
+        for idx in 0..60u64 {
+            let address = format!("throwaway-{idx}");
+            let group = if idx < 10 {
+                "198.51.100.9".to_string()
+            } else {
+                format!("203.0.{idx}.1")
+            };
+            let plan = engine.plan_regular_submit(&address);
+            assert!(plan.probation, "never-verified address needs probation");
+            assert!(!plan.enqueue_audit, "probation never uses the regular lane");
+            match engine.reserve_probation(&address, &group) {
+                ProbationReservation::Reserved => {
+                    reserved += 1;
+                    if idx < 10 {
+                        reserved_from_one_host += 1;
+                    }
+                    engine.enqueue_probation_audit(
+                        probation_share(idx as i64 + 1, &address, idx),
+                        &group,
+                    );
+                }
+                ProbationReservation::AlreadyPending => panic!("one share per address"),
+                ProbationReservation::Saturated => {}
+            }
+        }
+        assert_eq!(reserved, PROBATION_QUEUE_SIZE, "lane is bounded");
+        assert_eq!(reserved_from_one_host, PROBATION_MAX_PER_GROUP);
+
+        std::thread::sleep(Duration::from_millis(400));
+        let snapshot = engine.snapshot();
+        assert_eq!(snapshot.overload_mode, OverloadMode::Normal);
+        assert_eq!(snapshot.regular_queue_depth, 0);
+        assert_eq!(
+            snapshot.probation_rejected,
+            60 - PROBATION_QUEUE_SIZE as u64
+        );
+        assert!(snapshot.probation_queue_depth < PROBATION_QUEUE_SIZE);
+
+        // An address that already passed a sample keeps normal sampling.
+        let veteran = engine.process_inline(ValidationTask {
+            address: "veteran".to_string(),
+            force_full_verify: true,
+            ..matching_task(7)
+        });
+        assert!(veteran.accepted);
+        let plan = engine.plan_regular_submit("veteran");
+        assert!(!plan.probation);
+        assert_eq!(plan.overload_mode, OverloadMode::Normal);
+        assert!(plan.enqueue_audit, "warmup sampling is still on");
+    }
+
+    #[test]
+    fn probation_holds_one_slot_per_address_and_clears_after_a_pass() {
+        let cfg = Config {
+            warmup_shares: 5,
+            ..test_cfg()
+        };
+        let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));
+        assert_eq!(
+            engine.reserve_probation("newbie", "192.0.2.1"),
+            ProbationReservation::Reserved
+        );
+        assert_eq!(
+            engine.reserve_probation("newbie", "192.0.2.2"),
+            ProbationReservation::AlreadyPending
+        );
+        assert!(!engine.plan_regular_submit("newbie").probation);
+        engine.enqueue_probation_audit(probation_share(1, "newbie", 3), "192.0.2.1");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while engine.plan_regular_submit("newbie").probation
+            || engine
+                .inner
+                .probation
+                .lock()
+                .pending_addresses
+                .contains("newbie")
+        {
+            assert!(Instant::now() < deadline, "probation audit should complete");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            !engine.plan_regular_submit("newbie").probation,
+            "a passing probation audit graduates the address"
+        );
     }
 
     #[derive(Default)]
