@@ -1202,10 +1202,10 @@ impl ValidationInner {
             .is_some_and(|deadline| deadline > now);
 
         let never_verified = effective.sampled_shares <= effective.invalid_samples;
-        let needs_probation = self.config.warmup_shares > 0
-            && never_verified
-            && !forced_review
-            && !active_temporary_hold;
+        // Backlog/coverage holds would otherwise audit every share of a
+        // never-verified address in the regular lane; it has no payout weight
+        // before its first verified share, so probation alone is enough.
+        let needs_probation = self.config.warmup_shares > 0 && never_verified && !forced_review;
         if needs_probation {
             drop(state);
             // One probation audit per address at a time is enough: payouts need
@@ -2844,6 +2844,28 @@ mod tests {
         assert!(!plan.probation);
         assert_eq!(plan.overload_mode, OverloadMode::Normal);
         assert!(plan.enqueue_audit, "warmup sampling is still on");
+    }
+
+    #[test]
+    fn never_verified_backlog_stays_off_the_regular_lane() {
+        let cfg = Config {
+            warmup_shares: 5,
+            ..test_cfg()
+        };
+        let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));
+        assert_eq!(
+            engine.reserve_probation("flooder", "192.0.2.1"),
+            ProbationReservation::Reserved
+        );
+        for share_id in 1..=20 {
+            let plan = engine.plan_regular_submit("flooder");
+            assert!(
+                !plan.enqueue_audit && !plan.sync_full_verify,
+                "share {share_id}: a never-verified address must not use the regular lane"
+            );
+            engine.record_hot_accept("flooder", share_id, 1, SystemTime::now(), None, plan);
+        }
+        assert_eq!(engine.snapshot().regular_queue_depth, 0);
     }
 
     #[test]
