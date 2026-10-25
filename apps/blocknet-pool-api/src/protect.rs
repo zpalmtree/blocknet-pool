@@ -269,10 +269,10 @@ impl PublicReadCache {
     fn cleanup(&mut self, now: Instant) {
         let stale_ttl = self.stale_ttl;
         let mut freed = 0usize;
-        self.entries.retain(|_, entry| {
+        self.entries.retain(|key, entry| {
             let keep = now.saturating_duration_since(entry.stored_at) < stale_ttl;
             if !keep {
-                freed += entry.body.len();
+                freed += key.len() + entry.body.len();
             }
             keep
         });
@@ -288,16 +288,17 @@ impl PublicReadCache {
             self.cleanup(now);
         }
         if let Some(previous) = self.entries.remove(&key) {
-            self.bytes = self.bytes.saturating_sub(previous.body.len());
+            self.bytes = self.bytes.saturating_sub(key.len() + previous.body.len());
         }
+        let size = key.len() + body.len();
         if self.entries.len() >= self.max_entries
-            || self.bytes.saturating_add(body.len()) > self.max_bytes
+            || self.bytes.saturating_add(size) > self.max_bytes
         {
             // Full of live entries: serve this response uncached rather than
             // scanning for victims on every request.
             return;
         }
-        self.bytes += body.len();
+        self.bytes += size;
         self.entries.insert(
             key,
             CachedBody {
@@ -477,20 +478,25 @@ mod tests {
 
     #[test]
     fn public_read_cache_enforces_entry_and_byte_budgets() {
-        let mut cache = PublicReadCache::new(2, 10, Duration::from_secs(60));
+        // Budgets count key + body bytes.
+        let mut cache = PublicReadCache::new(2, 12, Duration::from_secs(60));
         let start = Instant::now();
         cache.insert("a".into(), Bytes::from_static(b"12345"), start);
         cache.insert("b".into(), Bytes::from_static(b"1234"), start);
         cache.insert("c".into(), Bytes::from_static(b"1"), start);
         assert_eq!(cache.len(), 2);
-        assert_eq!(cache.bytes(), 9);
+        assert_eq!(cache.bytes(), 11);
+        // Over the byte budget: not cached.
+        let mut small = PublicReadCache::new(8, 4, Duration::from_secs(60));
+        small.insert("big".into(), Bytes::from_static(b"12"), start);
+        assert_eq!(small.len(), 0);
         // Replacing an entry re-accounts its bytes.
         cache.insert("a".into(), Bytes::from_static(b"12"), start);
-        assert_eq!(cache.bytes(), 6);
+        assert_eq!(cache.bytes(), 8);
         // Expired entries are reclaimed by the next cleanup.
         let later = start + Duration::from_secs(61);
         cache.insert("d".into(), Bytes::from_static(b"123"), later);
         assert_eq!(cache.len(), 1);
-        assert_eq!(cache.bytes(), 3);
+        assert_eq!(cache.bytes(), 4);
     }
 }

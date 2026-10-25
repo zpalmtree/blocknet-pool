@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
+use std::future::Future;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path as FsPath, PathBuf};
@@ -28,7 +29,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::background_read::{BackgroundReads, ReadResult};
 use crate::config::Config;
-use crate::protect::{client_key, ClientIpPolicy, WindowedCounter};
+use crate::protect::{client_key, CacheLookup, ClientIpPolicy, PublicReadCache, WindowedCounter};
 use crate::ui::{handle_app_fallback, handle_favicon_svg, handle_ui, handle_ui_asset};
 use pool_common::db::{
     allocate_proportional_fees, ActiveVerificationHold, AddressRiskState, Balance, DbBlock,
@@ -47,6 +48,7 @@ use pool_runtime::payout::{
     is_share_payout_eligible, recover_share_window_by_replay, reward_window_end, PayoutTrustPolicy,
 };
 use pool_runtime::pgdb::{
+    with_statement_timeout,
     BalanceSourceSummary, ConfirmedPayoutImportRecipient, ConfirmedPayoutImportTx,
     ManualCompletedPayoutResolutionKind, MonitorUptimeSummary, ShareWindowAddressPreview,
     UnreconciledCompletedPayoutRow, WorkerHashrateStats,
@@ -92,6 +94,23 @@ const PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(5);
 const PUBLIC_TELEMETRY_STATS_RATE_LIMIT: u32 = 12;
 const PUBLIC_TELEMETRY_MINER_RATE_LIMIT: u32 = 12;
 const PUBLIC_TELEMETRY_RATE_LIMIT_RETRY_AFTER_SECS: u64 = 5;
+// Expensive public reads (history, status, blocks, luck, payouts) are served
+// from a shared response cache. Only requests that would reach the database
+// count against this per-client budget; cache hits are never limited.
+const PUBLIC_READ_MISS_RATE_LIMIT: u32 = 20;
+const PUBLIC_READ_CACHE_MAX_ENTRIES: usize = 8192;
+const PUBLIC_READ_CACHE_MAX_BYTES: usize = 32 << 20;
+// Past their TTL, entries remain available as a fallback when a client is
+// rate limited, the read budget is saturated, or the database read fails.
+const PUBLIC_READ_STALE_TTL: Duration = Duration::from_secs(5 * 60);
+const MAX_CONCURRENT_PUBLIC_READ_LOADS: usize = 2;
+const PUBLIC_READ_ADMISSION_WAIT: Duration = Duration::from_secs(2);
+const PUBLIC_READ_COALESCE_WAIT: Duration = Duration::from_secs(20);
+const PUBLIC_STATUS_CACHE_TTL: Duration = Duration::from_secs(15);
+const PUBLIC_BLOCKS_CACHE_TTL: Duration = Duration::from_secs(15);
+const PUBLIC_LUCK_CACHE_TTL: Duration = Duration::from_secs(15);
+const PUBLIC_PAYOUTS_CACHE_TTL: Duration = Duration::from_secs(15);
+const PUBLIC_STATS_HISTORY_CACHE_TTL: Duration = Duration::from_secs(30);
 const PUBLIC_TELEMETRY_RATE_LIMIT_MAX_BUCKETS: usize = 16_384;
 const MINER_DETAIL_SHARE_LIMIT: i64 = 20;
 const MINER_PAYOUT_HISTORY_LIMIT: i64 = 50;
@@ -315,6 +334,8 @@ pub(crate) struct ApiState {
     reward_breakdown_reads: Arc<BackgroundReads>,
     public_telemetry_rate_limiter: Arc<Mutex<PublicTelemetryRateLimiter>>,
     client_ip_policy: Arc<ClientIpPolicy>,
+    public_read_cache: Arc<Mutex<PublicReadCache>>,
+    public_read_loads: Arc<Semaphore>,
     performance: Arc<ApiPerformanceTracker>,
     recovery: Arc<RecoveryAgentClient>,
     live_runtime_snapshot_cache: Arc<Mutex<LiveRuntimeSnapshotCache>>,
@@ -442,6 +463,23 @@ impl CacheRefreshLocks {
         };
         lock.lock_owned().await
     }
+
+    /// Like [`Self::lock`] but returns `None` instead of waiting when another
+    /// request is already refreshing `key`.
+    fn try_lock(&self, key: &str) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        let lock = {
+            let mut entries = self.entries.lock();
+            if let Some(lock) = entries.get(key).and_then(Weak::upgrade) {
+                lock
+            } else {
+                entries.retain(|_, lock| lock.strong_count() > 0);
+                let lock = Arc::new(tokio::sync::Mutex::new(()));
+                entries.insert(key.to_string(), Arc::downgrade(&lock));
+                lock
+            }
+        };
+        lock.try_lock_owned().ok()
+    }
 }
 
 struct TimedMapCache<T> {
@@ -517,6 +555,8 @@ fn prune_timed_cache_entries<T>(
 enum PublicTelemetryRouteKind {
     Stats,
     Miner,
+    /// Cache misses on expensive public reads.
+    PublicRead,
 }
 
 impl PublicTelemetryRouteKind {
@@ -524,6 +564,7 @@ impl PublicTelemetryRouteKind {
         match self {
             Self::Stats => PUBLIC_TELEMETRY_STATS_RATE_LIMIT,
             Self::Miner => PUBLIC_TELEMETRY_MINER_RATE_LIMIT,
+            Self::PublicRead => PUBLIC_READ_MISS_RATE_LIMIT,
         }
     }
 }
@@ -533,6 +574,7 @@ impl PublicTelemetryRouteKind {
         match self {
             Self::Stats => "stats",
             Self::Miner => "miner",
+            Self::PublicRead => "read",
         }
     }
 }
@@ -1403,25 +1445,38 @@ async fn handle_stats(State(state): State<ApiState>) -> impl IntoResponse {
 
 async fn handle_stats_history(
     Query(query): Query<RangeQuery>,
+    client: ClientIp,
     State(state): State<ApiState>,
-) -> impl IntoResponse {
-    let since = SystemTime::now()
-        .checked_sub(history_range_duration(query.range.as_deref()))
-        .unwrap_or(UNIX_EPOCH);
-
-    let store = Arc::clone(&state.store);
-    let result = spawn_blocking_result(move || store.get_stat_snapshots(since))
+) -> Response {
+    let label = normalized_range_label(query.range.as_deref());
+    let task_state = state.clone();
+    state
+        .serve_public_read(
+            &client,
+            "stats_history",
+            format!("stats_history:{label}"),
+            PUBLIC_STATS_HISTORY_CACHE_TTL,
+            "failed loading stat history",
+            async move {
+                let since = SystemTime::now()
+                    .checked_sub(history_range_duration(Some(label)))
+                    .unwrap_or(UNIX_EPOCH);
+                let store = Arc::clone(&task_state.store);
+                let snapshots = task_state
+                    .public_blocking(move || store.get_stat_snapshots(since))
+                    .await?;
+                json_bytes(
+                    &snapshots
+                        .into_iter()
+                        .map(|snapshot| PoolHashratePointResponse {
+                            timestamp: snapshot.timestamp,
+                            hashrate: snapshot.hashrate,
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            },
+        )
         .await
-        .map(|snapshots| {
-            snapshots
-                .into_iter()
-                .map(|snapshot| PoolHashratePointResponse {
-                    timestamp: snapshot.timestamp,
-                    hashrate: snapshot.hashrate,
-                })
-                .collect::<Vec<_>>()
-        });
-    json_result(result, "failed loading stat history")
 }
 
 async fn handle_stats_insights(
@@ -1450,6 +1505,25 @@ fn rejection_window_duration(input: Option<&str>) -> Duration {
         Duration::from_secs(7 * 24 * 3600)
     } else {
         Duration::from_secs(3600)
+    }
+}
+
+/// Canonical range label shared by the history endpoints (unknown -> 24h), so
+/// cache keys cannot be multiplied with arbitrary query strings.
+fn normalized_range_label(input: Option<&str>) -> &'static str {
+    match input.map(str::trim).unwrap_or("24h") {
+        "1h" => "1h",
+        "7d" => "7d",
+        "30d" => "30d",
+        _ => "24h",
+    }
+}
+
+fn miner_hashrate_cache_ttl(label: &str) -> Duration {
+    match label {
+        "1h" => Duration::from_secs(10),
+        "24h" => Duration::from_secs(30),
+        _ => Duration::from_secs(60),
     }
 }
 
@@ -1662,11 +1736,18 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-async fn handle_status(State(state): State<ApiState>) -> impl IntoResponse {
-    json_result(
-        state.build_status_response().await,
-        "failed loading status page",
-    )
+async fn handle_status(client: ClientIp, State(state): State<ApiState>) -> Response {
+    let task_state = state.clone();
+    state
+        .serve_public_read(
+            &client,
+            "status",
+            "status".to_string(),
+            PUBLIC_STATUS_CACHE_TTL,
+            "failed loading status page",
+            async move { json_bytes(&task_state.build_status_response().await?) },
+        )
+        .await
 }
 
 async fn handle_monitor_public(State(state): State<ApiState>) -> impl IntoResponse {
@@ -2606,74 +2687,91 @@ async fn handle_miner(
 async fn handle_miner_hashrate(
     Path(address): Path<String>,
     Query(query): Query<RangeQuery>,
+    client: ClientIp,
     State(state): State<ApiState>,
-) -> impl IntoResponse {
-    let (range_duration, bucket_secs) = miner_hashrate_range(query.range.as_deref());
-    let now = SystemTime::now();
+) -> Response {
+    let label = normalized_range_label(query.range.as_deref());
+    let key = format!("miner_hashrate:{label}:{address}");
+    let task_state = state.clone();
+    state
+        .serve_public_read(
+            &client,
+            "miner_hashrate",
+            key,
+            miner_hashrate_cache_ttl(label),
+            "failed loading miner hashrate history",
+            async move {
+                let store = Arc::clone(&task_state.store);
+                let points = task_state
+                    .public_blocking(move || {
+                        miner_hashrate_points(&store, &address, label, SystemTime::now())
+                    })
+                    .await?;
+                json_bytes(&points)
+            },
+        )
+        .await
+}
+
+fn miner_hashrate_points(
+    store: &PoolStore,
+    address: &str,
+    range_label: &str,
+    now: SystemTime,
+) -> anyhow::Result<Vec<MinerHashratePointResponse>> {
+    let (range_duration, bucket_secs) = miner_hashrate_range(Some(range_label));
     let since = now.checked_sub(range_duration).unwrap_or(UNIX_EPOCH);
-
-    let store = Arc::clone(&state.store);
-    match spawn_blocking_result(move || {
-        store.hashrate_history_for_miner(&address, since, bucket_secs)
-    })
-    .await
-    {
-        Ok(buckets) => {
-            // Zero-fill missing buckets to avoid visual inflation from sparse submissions,
-            // then smooth with EWMA so the curve is less jumpy.
-            let step = bucket_secs.max(1);
-            let mut by_bucket = HashMap::<i64, f64>::with_capacity(buckets.len());
-            for (ts, total_diff, _count) in buckets {
-                let hr = total_diff as f64 / step as f64;
-                by_bucket.insert(ts, hr);
-            }
-
-            let since_unix = match since.duration_since(UNIX_EPOCH) {
-                Ok(v) => i64::try_from(v.as_secs()).unwrap_or(i64::MAX),
-                Err(_) => 0,
-            };
-            let now_unix = match now.duration_since(UNIX_EPOCH) {
-                Ok(v) => i64::try_from(v.as_secs()).unwrap_or(i64::MAX),
-                Err(_) => 0,
-            };
-            let start_bucket = since_unix.div_euclid(step) * step;
-            let end_bucket = now_unix.div_euclid(step) * step;
-
-            let mut points = Vec::<MinerHashratePointResponse>::new();
-            if end_bucket >= start_bucket {
-                let alpha = 0.35_f64;
-                let mut smoothed_prev = 0.0_f64;
-                let mut first = true;
-                let mut ts = start_bucket;
-                while ts <= end_bucket {
-                    let raw = by_bucket.get(&ts).copied().unwrap_or(0.0);
-                    let smoothed = if first {
-                        first = false;
-                        raw
-                    } else {
-                        alpha * raw + (1.0 - alpha) * smoothed_prev
-                    };
-                    smoothed_prev = smoothed;
-                    points.push(MinerHashratePointResponse {
-                        timestamp: ts,
-                        hashrate: smoothed,
-                    });
-                    ts = ts.saturating_add(step);
-                }
-            }
-
-            Json(points).into_response()
-        }
-        Err(err) => internal_error("failed loading miner hashrate history", err),
+    let buckets = store.hashrate_history_for_miner(address, since, bucket_secs)?;
+    // Zero-fill missing buckets to avoid visual inflation from sparse submissions,
+    // then smooth with EWMA so the curve is less jumpy.
+    let step = bucket_secs.max(1);
+    let mut by_bucket = HashMap::<i64, f64>::with_capacity(buckets.len());
+    for (ts, total_diff, _count) in buckets {
+        let hr = total_diff as f64 / step as f64;
+        by_bucket.insert(ts, hr);
     }
+
+    let since_unix = match since.duration_since(UNIX_EPOCH) {
+        Ok(v) => i64::try_from(v.as_secs()).unwrap_or(i64::MAX),
+        Err(_) => 0,
+    };
+    let now_unix = match now.duration_since(UNIX_EPOCH) {
+        Ok(v) => i64::try_from(v.as_secs()).unwrap_or(i64::MAX),
+        Err(_) => 0,
+    };
+    let start_bucket = since_unix.div_euclid(step) * step;
+    let end_bucket = now_unix.div_euclid(step) * step;
+
+    let mut points = Vec::<MinerHashratePointResponse>::new();
+    if end_bucket >= start_bucket {
+        let alpha = 0.35_f64;
+        let mut smoothed_prev = 0.0_f64;
+        let mut first = true;
+        let mut ts = start_bucket;
+        while ts <= end_bucket {
+            let raw = by_bucket.get(&ts).copied().unwrap_or(0.0);
+            let smoothed = if first {
+                first = false;
+                raw
+            } else {
+                alpha * raw + (1.0 - alpha) * smoothed_prev
+            };
+            smoothed_prev = smoothed;
+            points.push(MinerHashratePointResponse {
+                timestamp: ts,
+                hashrate: smoothed,
+            });
+            ts = ts.saturating_add(step);
+        }
+    }
+    Ok(points)
 }
 
 async fn handle_blocks(
     Query(query): Query<BlocksQuery>,
+    client: ClientIp,
     State(state): State<ApiState>,
-) -> impl IntoResponse {
-    let daemon_chain_height = state.node.chain_height();
-
+) -> Response {
     let (limit, offset) = page_bounds(query.limit, query.offset);
     let status = non_empty(&query.status)
         .filter(|value| {
@@ -2683,24 +2781,46 @@ async fn handle_blocks(
             )
         })
         .map(str::to_ascii_lowercase);
+    let key = format!(
+        "blocks:{limit}:{offset}:{}",
+        status.as_deref().unwrap_or("all")
+    );
+    let task_state = state.clone();
+    state
+        .serve_public_read(
+            &client,
+            "blocks",
+            key,
+            PUBLIC_BLOCKS_CACHE_TTL,
+            "failed loading blocks",
+            async move {
+                json_bytes(&load_blocks_page(task_state, limit, offset, status).await?)
+            },
+        )
+        .await
+}
 
+async fn load_blocks_page(
+    state: ApiState,
+    limit: usize,
+    offset: usize,
+    status: Option<String>,
+) -> anyhow::Result<PagedResponse<BlockPageItemResponse>> {
+    let daemon_chain_height = state.node.chain_height();
     let store = Arc::clone(&state.store);
     let node = Arc::clone(&state.node);
-    let (mut blocks, total) = match spawn_blocking_result(move || {
-        let (mut blocks, total) = store.get_blocks_page_up_to(
-            daemon_chain_height,
-            status.as_deref(),
-            limit as i64,
-            offset as i64,
-        )?;
-        flag_chain_mismatched_blocks(node.as_ref(), daemon_chain_height, &mut blocks);
-        Ok::<_, anyhow::Error>((blocks, total))
-    })
-    .await
-    {
-        Ok(v) => v,
-        Err(err) => return internal_error("failed loading blocks", err),
-    };
+    let (mut blocks, total) = state
+        .public_blocking(move || {
+            let (mut blocks, total) = store.get_blocks_page_up_to(
+                daemon_chain_height,
+                status.as_deref(),
+                limit as i64,
+                offset as i64,
+            )?;
+            flag_chain_mismatched_blocks(node.as_ref(), daemon_chain_height, &mut blocks);
+            Ok::<_, anyhow::Error>((blocks, total))
+        })
+        .await?;
     for block in &mut blocks {
         hydrate_provisional_block_reward(block);
     }
@@ -2710,33 +2830,23 @@ async fn handle_blocks(
         .collect::<HashSet<_>>();
     let store = Arc::clone(&state.store);
     let started_at = Instant::now();
-    let luck_by_hash = match spawn_blocking_result(move || {
-        let hashes = target_hashes.into_iter().collect::<Vec<_>>();
-        store.get_luck_rounds_for_hashes(&hashes)
-    })
-    .await
-    {
-        Ok(v) => {
-            record_api_operation_observation(
-                &state,
-                "luck_details_load",
-                started_at.elapsed(),
-                false,
-            );
-            v.into_iter()
-                .map(|(hash, round)| (hash, luck_round_response_from_db(round)))
-                .collect::<HashMap<_, _>>()
-        }
-        Err(err) => {
-            record_api_operation_observation(
-                &state,
-                "luck_details_load",
-                started_at.elapsed(),
-                true,
-            );
-            return internal_error("failed loading block luck details", err);
-        }
-    };
+    let luck_by_hash = state
+        .public_blocking(move || {
+            let hashes = target_hashes.into_iter().collect::<Vec<_>>();
+            store.get_luck_rounds_for_hashes(&hashes)
+        })
+        .await;
+    record_api_operation_observation(
+        &state,
+        "luck_details_load",
+        started_at.elapsed(),
+        luck_by_hash.is_err(),
+    );
+    let luck_by_hash = luck_by_hash
+        .map_err(|err| err.context("failed loading block luck details"))?
+        .into_iter()
+        .map(|(hash, round)| (hash, luck_round_response_from_db(round)))
+        .collect::<HashMap<_, _>>();
     let items = blocks
         .into_iter()
         .map(|block| {
@@ -2745,7 +2855,7 @@ async fn handle_blocks(
         })
         .collect::<Vec<_>>();
 
-    Json(PagedResponse::new(items, total as usize)).into_response()
+    Ok(PagedResponse::new(items, total as usize))
 }
 
 #[derive(Clone, Serialize)]
@@ -3960,50 +4070,72 @@ fn block_page_item_response(
 
 async fn handle_luck_history(
     Query(query): Query<PageQuery>,
+    client: ClientIp,
     State(state): State<ApiState>,
-) -> impl IntoResponse {
+) -> Response {
     let (limit, offset) = page_bounds(query.limit, query.offset);
-    let store = Arc::clone(&state.store);
-    let node = Arc::clone(&state.node);
-    let daemon_chain_height = state.node.chain_height();
-    let started_at = Instant::now();
-
-    let (items, total) = match spawn_blocking_result(move || {
-        compute_chain_aware_luck_page(
-            store.as_ref(),
-            node.as_ref(),
-            daemon_chain_height,
-            limit,
-            offset,
+    let task_state = state.clone();
+    state
+        .serve_public_read(
+            &client,
+            "luck",
+            format!("luck:{limit}:{offset}"),
+            PUBLIC_LUCK_CACHE_TTL,
+            "failed loading luck history",
+            async move {
+                let store = Arc::clone(&task_state.store);
+                let node = Arc::clone(&task_state.node);
+                let daemon_chain_height = task_state.node.chain_height();
+                let started_at = Instant::now();
+                let result = task_state
+                    .public_blocking(move || {
+                        compute_chain_aware_luck_page(
+                            store.as_ref(),
+                            node.as_ref(),
+                            daemon_chain_height,
+                            limit,
+                            offset,
+                        )
+                    })
+                    .await;
+                record_api_operation_observation(
+                    &task_state,
+                    "luck_page_load",
+                    started_at.elapsed(),
+                    result.is_err(),
+                );
+                let (items, total) = result?;
+                json_bytes(&PagedResponse::new(items, total))
+            },
         )
-    })
-    .await
-    {
-        Ok((items, total)) => {
-            record_api_operation_observation(&state, "luck_page_load", started_at.elapsed(), false);
-            (items, total)
-        }
-        Err(err) => {
-            record_api_operation_observation(&state, "luck_page_load", started_at.elapsed(), true);
-            return internal_error("failed loading luck history", err);
-        }
-    };
-    Json(PagedResponse::new(items, total)).into_response()
+        .await
 }
 
 async fn handle_public_payouts(
     Query(query): Query<PageQuery>,
+    client: ClientIp,
     State(state): State<ApiState>,
-) -> impl IntoResponse {
+) -> Response {
     let (limit, offset) = page_bounds(query.limit, query.offset);
-
-    let store = Arc::clone(&state.store);
-    let result = spawn_blocking_result(move || {
-        store.get_public_payout_batches_page(limit as i64, offset as i64)
-    })
-    .await
-    .map(|(batches, total)| PagedResponse::new(batches, total as usize));
-    json_result(result, "failed loading payouts")
+    let task_state = state.clone();
+    state
+        .serve_public_read(
+            &client,
+            "payouts_recent",
+            format!("payouts_recent:{limit}:{offset}"),
+            PUBLIC_PAYOUTS_CACHE_TTL,
+            "failed loading payouts",
+            async move {
+                let store = Arc::clone(&task_state.store);
+                let (batches, total) = task_state
+                    .public_blocking(move || {
+                        store.get_public_payout_batches_page(limit as i64, offset as i64)
+                    })
+                    .await?;
+                json_bytes(&PagedResponse::new(batches, total as usize))
+            },
+        )
+        .await
 }
 
 async fn handle_admin_block_reward_breakdown(
@@ -4069,6 +4201,11 @@ impl ApiState {
     ) -> Self {
         let detail_concurrency = (config.runtime.database_pool_size.max(2) as usize / 2)
             .clamp(1, MAX_CONCURRENT_MINER_DETAIL_LOADS);
+        // Leave most of a small DB pool for balances, stats, and background
+        // work; cached public reads rarely miss.
+        let public_read_concurrency = ((config.runtime.database_pool_size.max(1) as usize - 1)
+            / 2)
+        .clamp(1, MAX_CONCURRENT_PUBLIC_READ_LOADS);
         let client_ip_policy = Arc::new(ClientIpPolicy::new(
             &config.api_client_ip_header,
             &config.api_trusted_proxies,
@@ -4099,6 +4236,12 @@ impl ApiState {
                 PublicTelemetryRateLimiter::default(),
             )),
             client_ip_policy,
+            public_read_cache: Arc::new(Mutex::new(PublicReadCache::new(
+                PUBLIC_READ_CACHE_MAX_ENTRIES,
+                PUBLIC_READ_CACHE_MAX_BYTES,
+                PUBLIC_READ_STALE_TTL,
+            ))),
+            public_read_loads: Arc::new(Semaphore::new(public_read_concurrency)),
             performance: Arc::new(ApiPerformanceTracker::default()),
             live_runtime_snapshot_cache: Arc::new(Mutex::new(LiveRuntimeSnapshotCache::new())),
             started_at: Instant::now(),
@@ -5274,8 +5417,8 @@ impl ApiState {
             ("7d", Duration::from_secs(7 * 24 * 3600)),
         ];
         let store = Arc::clone(&self.store);
-        let (latest_local, latest_external, incidents, uptime_summaries) =
-            spawn_blocking_result(move || {
+        let (latest_local, latest_external, incidents, uptime_summaries) = self
+            .public_blocking(move || {
                 let latest_local =
                     store.get_latest_monitor_heartbeat(Some(LOCAL_MONITOR_SOURCE))?;
                 let latest_external =
@@ -5745,6 +5888,170 @@ impl ApiState {
             .map(|info| info.0.ip());
         ClientIp(self.client_ip_policy.resolve(headers, peer).map(client_key))
     }
+
+    fn public_db_statement_timeout(&self) -> Option<Duration> {
+        match self.config.api_public_db_statement_timeout_ms {
+            0 => None,
+            millis => Some(Duration::from_millis(millis)),
+        }
+    }
+
+    /// Run a blocking store read for a public request under the public
+    /// `statement_timeout`.
+    async fn public_blocking<F, R>(&self, operation: F) -> anyhow::Result<R>
+    where
+        F: FnOnce() -> anyhow::Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        let timeout = self.public_db_statement_timeout();
+        spawn_blocking_result(move || with_statement_timeout(timeout, operation)).await
+    }
+
+    /// Serve an expensive public read through the shared response cache.
+    ///
+    /// Fresh hits are returned without limits. A miss is single-flighted per
+    /// key, counts against the client's [`PUBLIC_READ_MISS_RATE_LIMIT`], and
+    /// needs one of the few `public_read_loads` permits. When any of those
+    /// would refuse the request, or the load fails, a stale copy is served if
+    /// one exists; otherwise 429/503/500. Loads run detached so a dropped
+    /// request still completes and caches its result.
+    async fn serve_public_read<Fut>(
+        &self,
+        client: &ClientIp,
+        cache_name: &'static str,
+        key: String,
+        ttl: Duration,
+        error_message: &'static str,
+        load: Fut,
+    ) -> Response
+    where
+        Fut: Future<Output = anyhow::Result<Bytes>> + Send + 'static,
+    {
+        let lookup = self.public_read_cache.lock().lookup(&key, ttl, Instant::now());
+        let stale = match lookup {
+            CacheLookup::Fresh(body) => {
+                self.performance.caches.record_hit(cache_name);
+                return cached_json_response(body, "hit");
+            }
+            CacheLookup::Stale(body) => Some(body),
+            CacheLookup::Miss => None,
+        };
+
+        if let Some(client_key) = client.key() {
+            let allowed = self.public_telemetry_rate_limiter.lock().allow(
+                client_key,
+                PublicTelemetryRouteKind::PublicRead,
+                Instant::now(),
+            );
+            if !allowed {
+                return match stale {
+                    Some(body) => cached_json_response(body, "stale"),
+                    None => public_rate_limited_response(),
+                };
+            }
+        }
+
+        let refresh = match &stale {
+            // Someone is already refreshing: the stale copy is good enough.
+            Some(body) => match self.cache_refresh_locks.try_lock(&key) {
+                Some(guard) => guard,
+                None => return cached_json_response(body.clone(), "stale"),
+            },
+            None => match tokio::time::timeout(
+                PUBLIC_READ_COALESCE_WAIT,
+                self.cache_refresh_locks.lock(&key),
+            )
+            .await
+            {
+                Ok(guard) => guard,
+                Err(_) => return public_read_overloaded_response(),
+            },
+        };
+        if let CacheLookup::Fresh(body) =
+            self.public_read_cache.lock().lookup(&key, ttl, Instant::now())
+        {
+            self.performance.caches.record_hit(cache_name);
+            return cached_json_response(body, "hit");
+        }
+        self.performance.caches.record_miss(cache_name);
+
+        let permit = match tokio::time::timeout(
+            PUBLIC_READ_ADMISSION_WAIT,
+            Arc::clone(&self.public_read_loads).acquire_owned(),
+        )
+        .await
+        {
+            Ok(Ok(permit)) => permit,
+            _ => {
+                return match stale {
+                    Some(body) => cached_json_response(body, "stale"),
+                    None => public_read_overloaded_response(),
+                };
+            }
+        };
+
+        let cache = Arc::clone(&self.public_read_cache);
+        let task = tokio::spawn(async move {
+            let _permit = permit;
+            let _refresh = refresh;
+            let result = load.await;
+            if let Ok(body) = &result {
+                cache.lock().insert(key, body.clone(), Instant::now());
+            }
+            result
+        });
+        let result = task
+            .await
+            .map_err(|err| anyhow::anyhow!("public read task failed: {err}"))
+            .and_then(|result| result);
+        match (result, stale) {
+            (Ok(body), _) => cached_json_response(body, "miss"),
+            (Err(err), Some(body)) => {
+                tracing::warn!(error = %err, cache = cache_name, "{error_message}; serving stale copy");
+                cached_json_response(body, "stale")
+            }
+            (Err(err), None) => internal_error(error_message, err),
+        }
+    }
+}
+
+fn json_bytes<T: Serialize>(value: &T) -> anyhow::Result<Bytes> {
+    Ok(Bytes::from(serde_json::to_vec(value)?))
+}
+
+fn cached_json_response(body: Bytes, cache_state: &'static str) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "application/json"),
+            (HeaderName::from_static("x-cache"), cache_state),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+fn public_rate_limited_response() -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [(
+            header::RETRY_AFTER,
+            PUBLIC_TELEMETRY_RATE_LIMIT_RETRY_AFTER_SECS.to_string(),
+        )],
+        Json(serde_json::json!({
+            "error": "rate limit exceeded",
+            "detail": "too many uncached requests; back off and retry"
+        })),
+    )
+        .into_response()
+}
+
+fn public_read_overloaded_response() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, "5")],
+        Json(json!({"error": "pool API is busy; retry shortly"})),
+    )
+        .into_response()
 }
 
 async fn require_api_key(
@@ -6441,6 +6748,127 @@ mod tests {
                 assert_eq!(perf.caches[name].hits, expected_loads * 31);
             }
         }
+    }
+
+    #[test]
+    fn public_read_cache_coalesces_limits_and_degrades_to_stale_postgres() {
+        use axum::body::Bytes;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let state = test_api_state(require_test_store!());
+        let runtime = test_runtime();
+        let ttl = Duration::from_secs(60);
+        let cache_state = |response: &axum::response::Response| {
+            response.headers()["x-cache"].to_str().unwrap().to_string()
+        };
+        runtime.block_on(async {
+            // A burst on one key performs a single load.
+            let loads = Arc::new(AtomicUsize::new(0));
+            let mut requests = Vec::new();
+            for _ in 0..16 {
+                let (state, loads) = (state.clone(), loads.clone());
+                requests.push(tokio::spawn(async move {
+                    let response = state
+                        .serve_public_read(
+                            &super::ClientIp::default(),
+                            "test",
+                            "test:burst".to_string(),
+                            ttl,
+                            "test load failed",
+                            async move {
+                                loads.fetch_add(1, Ordering::SeqCst);
+                                tokio::time::sleep(Duration::from_millis(20)).await;
+                                Ok(Bytes::from_static(b"[1]"))
+                            },
+                        )
+                        .await;
+                    assert_eq!(response.status(), StatusCode::OK);
+                }));
+            }
+            for request in requests {
+                request.await.unwrap();
+            }
+            assert_eq!(loads.load(Ordering::SeqCst), 1);
+
+            // Plant a stale entry to exercise degradation paths.
+            let old = Instant::now()
+                .checked_sub(Duration::from_secs(120))
+                .expect("monotonic clock older than two minutes");
+            state.public_read_cache.lock().insert(
+                "test:stale".to_string(),
+                Bytes::from_static(b"\"stale\""),
+                old,
+            );
+
+            // Misses count against the client's budget; hits do not.
+            let client = super::ClientIp(Some("203.0.113.70".to_string()));
+            for idx in 0..super::PUBLIC_READ_MISS_RATE_LIMIT {
+                let response = state
+                    .serve_public_read(
+                        &client,
+                        "test",
+                        format!("test:distinct:{idx}"),
+                        ttl,
+                        "test load failed",
+                        async { Ok(Bytes::from_static(b"[]")) },
+                    )
+                    .await;
+                assert_eq!(response.status(), StatusCode::OK);
+            }
+            let hit = state
+                .serve_public_read(&client, "test", "test:burst".into(), ttl, "x", async {
+                    panic!("fresh entries must not reload")
+                })
+                .await;
+            assert_eq!(cache_state(&hit), "hit");
+            let limited = state
+                .serve_public_read(&client, "test", "test:new".into(), ttl, "x", async {
+                    panic!("rate limited requests must not load")
+                })
+                .await;
+            assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert!(limited.headers().contains_key(header::RETRY_AFTER));
+            let degraded = state
+                .serve_public_read(&client, "test", "test:stale".into(), ttl, "x", async {
+                    panic!("rate limited requests must not load")
+                })
+                .await;
+            assert_eq!(degraded.status(), StatusCode::OK);
+            assert_eq!(cache_state(&degraded), "stale");
+
+            // Saturated read budget: stale copy if any, else 503.
+            let permits = state.public_read_loads.available_permits() as u32;
+            let busy = state.public_read_loads.acquire_many(permits).await.unwrap();
+            let anonymous = super::ClientIp::default();
+            let overloaded = state
+                .serve_public_read(&anonymous, "test", "test:cold".into(), ttl, "x", async {
+                    panic!("no permit available")
+                })
+                .await;
+            assert_eq!(overloaded.status(), StatusCode::SERVICE_UNAVAILABLE);
+            let stale = state
+                .serve_public_read(&anonymous, "test", "test:stale".into(), ttl, "x", async {
+                    panic!("no permit available")
+                })
+                .await;
+            assert_eq!(cache_state(&stale), "stale");
+            drop(busy);
+
+            // Failed loads fall back to stale data, or report an error.
+            let failed = state
+                .serve_public_read(&anonymous, "test", "test:stale".into(), ttl, "x", async {
+                    anyhow::bail!("database unavailable")
+                })
+                .await;
+            assert_eq!(failed.status(), StatusCode::OK);
+            assert_eq!(cache_state(&failed), "stale");
+            let failed = state
+                .serve_public_read(&anonymous, "test", "test:none".into(), ttl, "x", async {
+                    anyhow::bail!("database unavailable")
+                })
+                .await;
+            assert_eq!(failed.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        });
     }
 
     fn test_runtime() -> tokio::runtime::Runtime {

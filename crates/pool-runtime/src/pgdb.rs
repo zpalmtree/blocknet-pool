@@ -30,6 +30,30 @@ const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 
 static READ_PERFORMANCE: OnceLock<crate::telemetry::NamedTimedOperationTracker> = OnceLock::new();
 
+thread_local! {
+    /// Statement timeout requested by the current thread (see
+    /// [`with_statement_timeout`]). `None` keeps the server/session default.
+    static STATEMENT_TIMEOUT_SCOPE: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Run `op` with a Postgres `statement_timeout` applied to every pooled
+/// connection it acquires on this thread. Connections are switched lazily (one
+/// extra `SET` only when a connection's current setting differs), so callers
+/// outside a scope, such as admin and background work, keep the server default.
+pub fn with_statement_timeout<T>(timeout: Option<Duration>, op: impl FnOnce() -> T) -> T {
+    struct Restore(Option<u64>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            STATEMENT_TIMEOUT_SCOPE.with(|scope| scope.set(self.0));
+        }
+    }
+    let millis = timeout
+        .map(|value| u64::try_from(value.as_millis()).unwrap_or(u64::MAX))
+        .filter(|value| *value > 0);
+    let _restore = Restore(STATEMENT_TIMEOUT_SCOPE.with(|scope| scope.replace(millis)));
+    op()
+}
+
 #[track_caller]
 fn observe_read<T>(operation: impl FnOnce() -> Result<T>) -> Result<T> {
     // Source locations are bounded by the compiled queries. Never record SQL
@@ -271,6 +295,8 @@ struct ManagedClient {
     url: String,
     schema: Option<String>,
     label: String,
+    /// Statement timeout last applied to this session (`None` = default).
+    statement_timeout_ms: Option<u64>,
 }
 
 impl ManagedClient {
@@ -280,13 +306,30 @@ impl ManagedClient {
             url: url.to_string(),
             schema: schema.map(str::to_string),
             label: label.to_string(),
+            statement_timeout_ms: None,
         }
     }
 
     fn reconnect(&mut self) -> Result<()> {
         self.client =
             PostgresStore::connect_client(&self.url, self.schema.as_deref(), &self.label)?;
+        self.statement_timeout_ms = None;
         Ok(())
+    }
+
+    fn apply_statement_timeout_scope(&mut self) {
+        let desired = STATEMENT_TIMEOUT_SCOPE.with(|scope| scope.get());
+        if desired == self.statement_timeout_ms || self.client.is_closed() {
+            return;
+        }
+        let sql = match desired {
+            Some(millis) => format!("SET statement_timeout = {millis}"),
+            None => "RESET statement_timeout".to_string(),
+        };
+        match self.client.batch_execute(&sql) {
+            Ok(()) => self.statement_timeout_ms = desired,
+            Err(err) => warn!(label = %self.label, error = %err, "failed applying statement_timeout"),
+        }
     }
 
     fn ensure_connected(&mut self) -> Result<()> {
@@ -368,12 +411,15 @@ impl PostgresStore {
         // while another connection is idle. Acquire the selected connection
         // atomically rather than racing an is_locked() check.
         for offset in 0..pool_len {
-            if let Some(conn) = self.conns[(idx + offset) % pool_len].try_lock() {
+            if let Some(mut conn) = self.conns[(idx + offset) % pool_len].try_lock() {
+                conn.apply_statement_timeout_scope();
                 return conn;
             }
         }
         // At full capacity retain bounded, blocking backpressure.
-        self.conns[idx].lock()
+        let mut conn = self.conns[idx].lock();
+        conn.apply_statement_timeout_scope();
+        conn
     }
 
     fn connect_client(url: &str, schema: Option<&str>, label: &str) -> Result<Client> {
@@ -6648,6 +6694,31 @@ mod tests {
                 .unwrap(),
             1
         );
+    }
+
+    #[test]
+    fn statement_timeout_scope_applies_only_inside_scope_postgres() {
+        let Some(store) = test_store() else { return };
+        let show = |store: &PostgresStore| -> String {
+            store
+                .conn()
+                .query_one("SHOW statement_timeout", &[])
+                .unwrap()
+                .get(0)
+        };
+        let default = show(&store);
+        let scoped = with_statement_timeout(Some(Duration::from_millis(1500)), || show(&store));
+        assert_eq!(scoped, "1500ms");
+        assert_eq!(show(&store), default, "scope must not leak to later reads");
+        let err = with_statement_timeout(Some(Duration::from_millis(50)), || {
+            store
+                .conn()
+                .query_one("SELECT pg_sleep(2)::text", &[])
+                .map(|_| ())
+        })
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("statement timeout"), "{err:#}");
+        assert_eq!(show(&store), default, "connection stays usable after a timeout");
     }
 
     #[test]
