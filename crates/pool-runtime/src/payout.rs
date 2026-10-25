@@ -344,7 +344,32 @@ impl PayoutProcessor {
         runtime.last_tick_at = last_tick_at;
     }
 
+    /// One payout pass, serialized across processes by a Postgres advisory
+    /// lock so a second payout process (or a daemon cutover in recoveryd)
+    /// can never reconcile, freeze or send the same batches concurrently.
     fn tick(&self, send_payouts: bool) -> bool {
+        match self
+            .store
+            .with_payout_sweep_lock(|| self.tick_locked(send_payouts))
+        {
+            Ok(Some(send_completed)) => send_completed,
+            Ok(None) => {
+                tracing::warn!(
+                    "payout sweep lock is held by another session (second payout process or daemon cutover); skipping payout tick"
+                );
+                false
+            }
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "failed to acquire payout sweep lock; skipping payout tick"
+                );
+                false
+            }
+        }
+    }
+
+    fn tick_locked(&self, send_payouts: bool) -> bool {
         self.reconcile_existing_orphaned_block_credits();
 
         let status = match self.node.get_status() {
@@ -1358,14 +1383,14 @@ impl PayoutProcessor {
             planned_batch_count = planned_batch_count.saturating_add(1);
             planned_recipient_count = planned_recipient_count.saturating_add(plan.recipients.len());
 
-            let addresses = plan
+            let members = plan
                 .recipients
                 .iter()
-                .map(|candidate| candidate.balance.address.clone())
+                .map(|candidate| (candidate.balance.address.clone(), candidate.pending.amount))
                 .collect::<Vec<_>>();
             if let Err(err) = self
                 .store
-                .mark_pending_payouts_send_started_batch(&addresses, &plan.batch_id)
+                .mark_pending_payouts_send_started_batch(&members, &plan.batch_id)
             {
                 tracing::warn!(
                     batch_id = %plan.batch_id,
@@ -4616,7 +4641,7 @@ mod tests {
             .create_pending_payout("addr1", 100)
             .expect("create pending payout");
         store
-            .mark_pending_payouts_send_started_batch(&["addr1".to_string()], "batch-1")
+            .mark_pending_payouts_send_started_batch(&[("addr1".to_string(), 100)], "batch-1")
             .expect("freeze pending payout");
         let pending = store
             .get_pending_payout("addr1")
@@ -4670,7 +4695,7 @@ mod tests {
             .create_pending_payout("addr1", 100)
             .expect("create pending payout");
         store
-            .mark_pending_payouts_send_started_batch(&["addr1".to_string()], "batch-1")
+            .mark_pending_payouts_send_started_batch(&[("addr1".to_string(), 100)], "batch-1")
             .expect("freeze pending payout");
         let pending = store
             .get_pending_payout("addr1")
@@ -4731,7 +4756,7 @@ mod tests {
             .create_pending_payout("addr1", 100)
             .expect("create pending payout");
         store
-            .mark_pending_payouts_send_started_batch(&["addr1".to_string()], "batch-1")
+            .mark_pending_payouts_send_started_batch(&[("addr1".to_string(), 100)], "batch-1")
             .expect("freeze pending payout");
         let pending = store
             .get_pending_payout("addr1")
@@ -5871,6 +5896,31 @@ mod tests {
             .expect("active payouts after second batch")
             .is_empty());
         assert!(!processor.recovery_payout_reconciliation_active());
+    }
+
+    #[test]
+    fn tick_skips_while_another_session_holds_payout_sweep_lock() {
+        let store = require_test_store!();
+        let status = r#"{"peers":3,"chain_height":10,"syncing":false}"#.to_string();
+        let base_url = spawn_json_router_server(
+            HashMap::from([("/api/status".to_string(), status)]),
+            32,
+        );
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+        );
+
+        let mut other = store.open_independent_session().expect("second session");
+        assert!(crate::pgdb::try_acquire_payout_sweep_lock(&mut other).expect("lock"));
+        assert!(
+            !processor.tick(true),
+            "tick must not run while another payout process holds the lock"
+        );
+
+        assert!(crate::pgdb::release_payout_sweep_lock(&mut other).expect("unlock"));
+        assert!(processor.tick(true), "tick runs once the lock is free");
     }
 
     #[test]

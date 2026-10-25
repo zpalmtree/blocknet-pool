@@ -351,6 +351,94 @@ impl ManagedClient {
 pub struct PostgresStore {
     conns: Vec<Mutex<ManagedClient>>,
     next_conn: AtomicUsize,
+    url: String,
+    schema: Option<String>,
+    /// Dedicated session for the payout sweep advisory lock. Session locks
+    /// belong to one backend, so this connection never serves other queries.
+    payout_sweep_lock_client: Mutex<Option<Client>>,
+}
+
+/// Advisory lock key shared by every process that runs payout sweeps or
+/// moves the daemon a payout send may be in flight on. The schema is part of
+/// the key so isolated test schemas in one database do not contend.
+const PAYOUT_SWEEP_LOCK_KEY_SQL: &str =
+    "hashtextextended('blocknet-pool:payout-sweep:' || current_schema(), 0)";
+
+/// Try to take the payout sweep session lock on `client` without waiting.
+pub fn try_acquire_payout_sweep_lock(client: &mut Client) -> Result<bool> {
+    let row = client
+        .query_one(
+            &format!("SELECT pg_try_advisory_lock({PAYOUT_SWEEP_LOCK_KEY_SQL})"),
+            &[],
+        )
+        .context("try payout sweep advisory lock")?;
+    Ok(row.get::<_, bool>(0))
+}
+
+/// Release the payout sweep session lock held by `client`.
+pub fn release_payout_sweep_lock(client: &mut Client) -> Result<bool> {
+    let row = client
+        .query_one(
+            &format!("SELECT pg_advisory_unlock({PAYOUT_SWEEP_LOCK_KEY_SQL})"),
+            &[],
+        )
+        .context("release payout sweep advisory lock")?;
+    Ok(row.get::<_, bool>(0))
+}
+
+/// Payout sends whose outcome is not final yet: frozen before or during the
+/// wallet send (`unresolved_*`), or broadcast and awaiting confirmation.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InflightPayoutSends {
+    pub unresolved_rows: u64,
+    pub unresolved_batches: Vec<String>,
+    pub broadcast_rows: u64,
+    pub broadcast_tx_hashes: Vec<String>,
+}
+
+impl InflightPayoutSends {
+    pub fn is_empty(&self) -> bool {
+        self.unresolved_rows == 0 && self.broadcast_rows == 0
+    }
+}
+
+/// List payout sends that are in flight, using any client (no schema setup).
+pub fn load_inflight_payout_sends(client: &mut Client) -> Result<InflightPayoutSends> {
+    let rows = client
+        .query(
+            "SELECT COALESCE(batch_id, address), NULLIF(BTRIM(COALESCE(tx_hash, '')), '')
+             FROM pending_payouts
+             WHERE send_started_at IS NOT NULL
+                OR NULLIF(BTRIM(COALESCE(tx_hash, '')), '') IS NOT NULL
+             ORDER BY 1",
+            &[],
+        )
+        .context("load in-flight payout sends")?;
+    let mut inflight = InflightPayoutSends::default();
+    for row in rows {
+        let batch = row.get::<_, String>(0);
+        match row.get::<_, Option<String>>(1) {
+            Some(tx_hash) => {
+                inflight.broadcast_rows += 1;
+                if !inflight.broadcast_tx_hashes.contains(&tx_hash) {
+                    inflight.broadcast_tx_hashes.push(tx_hash);
+                }
+            }
+            None => {
+                inflight.unresolved_rows += 1;
+                if !inflight.unresolved_batches.contains(&batch) {
+                    inflight.unresolved_batches.push(batch);
+                }
+            }
+        }
+    }
+    Ok(inflight)
+}
+
+/// Open a plain client for lock/inspection queries without running the
+/// store's schema setup (used by out-of-process tools such as recoveryd).
+pub fn connect_payout_inspection_client(url: &str, label: &str) -> Result<Client> {
+    PostgresStore::connect_client(url, None, label)
 }
 
 impl PostgresStore {
@@ -981,7 +1069,46 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(Arc::new(Self {
             conns,
             next_conn: AtomicUsize::new(0),
+            url: url.to_string(),
+            schema: schema.map(str::to_string),
+            payout_sweep_lock_client: Mutex::new(None),
         }))
+    }
+
+    /// A separate session on this store's database/schema, for tests that
+    /// simulate another payout process.
+    #[cfg(test)]
+    pub(crate) fn open_independent_session(&self) -> Result<Client> {
+        Self::connect_client(&self.url, self.schema.as_deref(), "test independent session")
+    }
+
+    /// Run `work` while holding the cross-process payout sweep advisory lock.
+    ///
+    /// Returns `Ok(None)` without running `work` when another session (a
+    /// second payout process, or recoveryd mid-cutover) holds the lock. The
+    /// lock lives on a dedicated connection; if releasing it fails the
+    /// connection is dropped, which ends the session and frees the lock.
+    pub(crate) fn with_payout_sweep_lock<T>(&self, work: impl FnOnce() -> T) -> Result<Option<T>> {
+        let mut slot = self.payout_sweep_lock_client.lock();
+        let mut client = match slot.take() {
+            Some(client) if !client.is_closed() => client,
+            _ => Self::connect_client(&self.url, self.schema.as_deref(), "payout sweep lock")?,
+        };
+        if !try_acquire_payout_sweep_lock(&mut client)? {
+            *slot = Some(client);
+            return Ok(None);
+        }
+        // Panics in `work` drop `client`, closing the session and the lock.
+        let result = work();
+        match release_payout_sweep_lock(&mut client) {
+            Ok(true) => *slot = Some(client),
+            Ok(false) => warn!("payout sweep advisory lock was not held at release"),
+            Err(err) => warn!(
+                error = %err,
+                "failed releasing payout sweep advisory lock; dropping its session"
+            ),
+        }
+        Ok(Some(result))
     }
 
     pub fn add_share(&self, share: ShareRecord) -> Result<()> {
@@ -3951,43 +4078,57 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         &self,
         address: &str,
     ) -> Result<Option<PendingPayout>> {
+        let Some(pending) = self.get_pending_payout(address)? else {
+            return Ok(None);
+        };
         let mut rows = self.mark_pending_payouts_send_started_batch(
-            &[address.to_string()],
+            &[(address.to_string(), pending.amount)],
             &format!("test-batch:{address}"),
         )?;
         Ok(rows.pop())
     }
 
+    /// Atomically freeze every planned batch member before the wallet send.
+    ///
+    /// Each row must still be unclaimed (no send in flight, no broadcast) and
+    /// hold exactly the planned amount; otherwise nothing is frozen and an
+    /// error is returned, so a concurrent payout process or a changed amount
+    /// can never be sent under this batch id.
     pub(crate) fn mark_pending_payouts_send_started_batch(
         &self,
-        addresses: &[String],
+        members: &[(String, u64)],
         batch_id: &str,
     ) -> Result<Vec<PendingPayout>> {
-        if addresses.is_empty() {
+        if members.is_empty() {
             return Ok(Vec::new());
+        }
+        let batch_id = batch_id.trim();
+        if batch_id.is_empty() {
+            return Err(anyhow!("payout batch id is required to freeze a send"));
         }
         let mut conn = self.conn();
         let mut tx = conn.transaction()?;
         let started_at = now_unix();
-        let batch_id = batch_id.trim();
-        let batch_id_param = (!batch_id.is_empty()).then_some(batch_id);
-        let mut rows = Vec::with_capacity(addresses.len());
-        for address in addresses {
-            tx.execute(
+        let mut rows = Vec::with_capacity(members.len());
+        for (address, amount) in members {
+            let row = tx.query_opt(
                 "UPDATE pending_payouts
-                 SET send_started_at = COALESCE(send_started_at, $2),
-                     batch_id = COALESCE(batch_id, $3)
-                 WHERE address = $1",
-                &[&address, &started_at, &batch_id_param],
+                 SET send_started_at = $2,
+                     batch_id = $3
+                 WHERE address = $1
+                   AND amount = $4
+                   AND send_started_at IS NULL
+                   AND tx_hash IS NULL
+                 RETURNING address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at, batch_id",
+                &[&address, &started_at, &batch_id, &u64_to_i64(*amount)?],
             )?;
-            if let Some(row) = tx.query_opt(
-                "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at, batch_id
-                 FROM pending_payouts
-                 WHERE address = $1",
-                &[&address],
-            )? {
-                rows.push(row_to_pending_payout(&row));
-            }
+            let Some(row) = row else {
+                // Dropping the transaction rolls back members frozen so far.
+                return Err(anyhow!(
+                    "pending payout for {address} (amount {amount}) is missing, changed, or already claimed by another send; refusing to freeze batch {batch_id}"
+                ));
+            };
+            rows.push(row_to_pending_payout(&row));
         }
         tx.commit()?;
         Ok(rows)
@@ -4230,7 +4371,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             "SELECT address, amount, initiated_at, send_started_at, sent_at, tx_hash, fee, batch_id
              FROM pending_payouts
              WHERE batch_id = $1
-             ORDER BY address ASC",
+             ORDER BY address ASC
+             FOR UPDATE",
             &[&batch_id],
         )?;
         if rows.is_empty() {
@@ -6126,6 +6268,154 @@ mod tests {
 
     fn unique_suffix() -> String {
         format!("{}-{}", std::process::id(), rand::random::<u64>())
+    }
+
+    fn isolated_test_store() -> Option<Arc<PostgresStore>> {
+        let url = std::env::var(POSTGRES_TEST_URL_ENV)
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())?;
+        let schema = format!(
+            "blocknet_pool_pgdb_test_{}_{}",
+            std::process::id(),
+            rand::random::<u64>()
+        );
+        let mut admin = Client::connect(&url, NoTls).expect("connect postgres admin client");
+        admin
+            .batch_execute(&format!("CREATE SCHEMA IF NOT EXISTS {schema}"))
+            .expect("create isolated test schema");
+        Some(
+            PostgresStore::connect_with_schema(&url, 2, Some(&schema))
+                .expect("connect isolated postgres test store"),
+        )
+    }
+
+    fn lock_session(store: &PostgresStore) -> Client {
+        store
+            .open_independent_session()
+            .expect("connect lock session")
+    }
+
+    #[test]
+    fn payout_sweep_lock_skips_work_while_another_session_holds_it_postgres() {
+        let Some(store) = isolated_test_store() else { return };
+        let mut other = lock_session(&store);
+        assert!(try_acquire_payout_sweep_lock(&mut other).expect("lock in other session"));
+
+        let mut ran = false;
+        let skipped = store
+            .with_payout_sweep_lock(|| ran = true)
+            .expect("try sweep lock");
+        assert!(skipped.is_none(), "sweep must be skipped while the lock is held");
+        assert!(!ran);
+
+        assert!(release_payout_sweep_lock(&mut other).expect("release other session"));
+        let ran_now = store
+            .with_payout_sweep_lock(|| 7)
+            .expect("take sweep lock");
+        assert_eq!(ran_now, Some(7));
+
+        // The sweep released its lock: another session can take it again.
+        assert!(try_acquire_payout_sweep_lock(&mut other).expect("relock other session"));
+        assert!(store.with_payout_sweep_lock(|| ()).unwrap().is_none());
+        assert!(release_payout_sweep_lock(&mut other).unwrap());
+    }
+
+    #[test]
+    fn payout_sweep_lock_is_held_for_the_whole_sweep_postgres() {
+        let Some(store) = isolated_test_store() else { return };
+        let mut other = lock_session(&store);
+        let observed = store
+            .with_payout_sweep_lock(|| try_acquire_payout_sweep_lock(&mut other).unwrap())
+            .expect("take sweep lock");
+        assert_eq!(observed, Some(false), "a second session must not get the lock mid-sweep");
+        assert!(try_acquire_payout_sweep_lock(&mut other).unwrap());
+        release_payout_sweep_lock(&mut other).unwrap();
+    }
+
+    #[test]
+    fn mark_send_started_requires_every_member_unclaimed_with_planned_amount_postgres() {
+        let Some(store) = isolated_test_store() else { return };
+        store.create_pending_payout("mark-a", 100).unwrap();
+        store.create_pending_payout("mark-b", 200).unwrap();
+
+        // Wrong planned amount: nothing is frozen.
+        assert!(store
+            .mark_pending_payouts_send_started_batch(&[("mark-a".to_string(), 99)], "batch-x")
+            .is_err());
+        assert!(store
+            .get_pending_payout("mark-a")
+            .unwrap()
+            .unwrap()
+            .send_started_at
+            .is_none());
+
+        let frozen = store
+            .mark_pending_payouts_send_started_batch(&[("mark-b".to_string(), 200)], "batch-1")
+            .expect("freeze unclaimed member");
+        assert_eq!(frozen.len(), 1);
+        assert_eq!(frozen[0].batch_id.as_deref(), Some("batch-1"));
+
+        // A second process planning the same rows cannot claim them, and the
+        // already-claimed member makes the whole batch fail atomically.
+        let err = store
+            .mark_pending_payouts_send_started_batch(
+                &[("mark-a".to_string(), 100), ("mark-b".to_string(), 200)],
+                "batch-2",
+            )
+            .expect_err("claimed member must abort the freeze");
+        assert!(err.to_string().contains("mark-b"), "{err:#}");
+        let a = store.get_pending_payout("mark-a").unwrap().unwrap();
+        assert!(a.send_started_at.is_none(), "earlier members roll back");
+        assert!(a.batch_id.is_none());
+        let b = store.get_pending_payout("mark-b").unwrap().unwrap();
+        assert_eq!(b.batch_id.as_deref(), Some("batch-1"));
+
+        // Missing rows and empty batch ids are refused.
+        assert!(store
+            .mark_pending_payouts_send_started_batch(&[("mark-missing".to_string(), 1)], "batch-3")
+            .is_err());
+        assert!(store
+            .mark_pending_payouts_send_started_batch(&[("mark-a".to_string(), 100)], " ")
+            .is_err());
+    }
+
+    #[test]
+    fn inflight_payout_sends_lists_unresolved_and_broadcast_batches_postgres() {
+        let Some(store) = isolated_test_store() else { return };
+        let mut client = lock_session(&store);
+        assert!(load_inflight_payout_sends(&mut client).unwrap().is_empty());
+
+        store.create_pending_payout("inflight-queued", 10).unwrap();
+        store.create_pending_payout("inflight-a", 20).unwrap();
+        store.create_pending_payout("inflight-b", 30).unwrap();
+        store
+            .mark_pending_payouts_send_started_batch(
+                &[("inflight-a".to_string(), 20), ("inflight-b".to_string(), 30)],
+                "batch-unresolved",
+            )
+            .unwrap();
+        store.create_pending_payout("inflight-c", 40).unwrap();
+        store
+            .mark_pending_payouts_send_started_batch(&[("inflight-c".to_string(), 40)], "batch-sent")
+            .unwrap();
+        store
+            .record_pending_payout_batch_broadcast(
+                &[PendingPayoutBatchMember {
+                    address: "inflight-c".to_string(),
+                    amount: 40,
+                    fee: 1,
+                }],
+                "batch-sent",
+                "tx-sent",
+            )
+            .unwrap();
+
+        let inflight = load_inflight_payout_sends(&mut client).unwrap();
+        assert_eq!(inflight.unresolved_rows, 2);
+        assert_eq!(inflight.unresolved_batches, vec!["batch-unresolved".to_string()]);
+        assert_eq!(inflight.broadcast_rows, 1);
+        assert_eq!(inflight.broadcast_tx_hashes, vec!["tx-sent".to_string()]);
     }
 
     #[test]
@@ -8127,7 +8417,7 @@ mod tests {
             .expect("create pending");
         store
             .mark_pending_payouts_send_started_batch(
-                std::slice::from_ref(&pending_addr),
+                &[(pending_addr.clone(), 25)],
                 &format!("batch-pending-{suffix}"),
             )
             .expect("mark started");
