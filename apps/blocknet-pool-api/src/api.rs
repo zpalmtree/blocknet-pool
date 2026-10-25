@@ -111,6 +111,12 @@ const PUBLIC_BLOCKS_CACHE_TTL: Duration = Duration::from_secs(15);
 const PUBLIC_LUCK_CACHE_TTL: Duration = Duration::from_secs(15);
 const PUBLIC_PAYOUTS_CACHE_TTL: Duration = Duration::from_secs(15);
 const PUBLIC_STATS_HISTORY_CACHE_TTL: Duration = Duration::from_secs(30);
+// Wrong admin keys per client before protected routes answer 429 until the
+// window ends. Requests without a key do not count, and a correct key clears
+// the client's failures, so the operator is never locked out for long.
+const ADMIN_AUTH_FAILURE_LIMIT: u32 = 20;
+const ADMIN_AUTH_FAILURE_WINDOW: Duration = Duration::from_secs(5 * 60);
+const ADMIN_AUTH_FAILURE_MAX_CLIENTS: usize = 16_384;
 const PUBLIC_TELEMETRY_RATE_LIMIT_MAX_BUCKETS: usize = 16_384;
 const MINER_DETAIL_SHARE_LIMIT: i64 = 20;
 const MINER_PAYOUT_HISTORY_LIMIT: i64 = 50;
@@ -337,6 +343,7 @@ pub(crate) struct ApiState {
     public_read_cache: Arc<Mutex<PublicReadCache>>,
     public_read_loads: Arc<Semaphore>,
     checkpoint_file_cache: Arc<CheckpointFileCache>,
+    admin_auth_failures: Arc<Mutex<WindowedCounter>>,
     performance: Arc<ApiPerformanceTracker>,
     recovery: Arc<RecoveryAgentClient>,
     live_runtime_snapshot_cache: Arc<Mutex<LiveRuntimeSnapshotCache>>,
@@ -4244,6 +4251,10 @@ impl ApiState {
             ))),
             public_read_loads: Arc::new(Semaphore::new(public_read_concurrency)),
             checkpoint_file_cache: Arc::new(Mutex::new(None)),
+            admin_auth_failures: Arc::new(Mutex::new(WindowedCounter::new(
+                ADMIN_AUTH_FAILURE_WINDOW,
+                ADMIN_AUTH_FAILURE_MAX_CLIENTS,
+            ))),
             performance: Arc::new(ApiPerformanceTracker::default()),
             live_runtime_snapshot_cache: Arc::new(Mutex::new(LiveRuntimeSnapshotCache::new())),
             started_at: Instant::now(),
@@ -6060,19 +6071,74 @@ async fn require_api_key(
     State(state): State<ApiState>,
     req: Request<Body>,
     next: Next,
-) -> impl IntoResponse {
-    let expected = state.config.api_key.trim();
-    let api_key = req
+) -> Response {
+    let client = state.client_ip(req.headers(), req.extensions());
+    let client_key = client.key().unwrap_or("unknown").to_string();
+    let provided = req
         .headers()
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
         .map(str::trim)
         .filter(|v| !v.is_empty());
-    if api_key == Some(expected) {
-        return next.run(req).await.into_response();
+    match check_admin_key(
+        &state.admin_auth_failures,
+        state.config.api_key.trim(),
+        &client_key,
+        provided,
+        Instant::now(),
+    ) {
+        AdminAuth::Allowed => next.run(req).await,
+        AdminAuth::Unauthorized => error_response(StatusCode::UNAUTHORIZED, "unauthorized"),
+        AdminAuth::Throttled { retry_after_secs } => {
+            tracing::warn!(client = %client_key, "admin authentication throttled after repeated failures");
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(header::RETRY_AFTER, retry_after_secs.to_string())],
+                Json(json!({"error": "too many failed authentication attempts; retry later"})),
+            )
+                .into_response()
+        }
     }
+}
 
-    error_response(StatusCode::UNAUTHORIZED, "unauthorized")
+#[derive(Debug, PartialEq, Eq)]
+enum AdminAuth {
+    Allowed,
+    Unauthorized,
+    Throttled { retry_after_secs: u64 },
+}
+
+fn check_admin_key(
+    failures: &Mutex<WindowedCounter>,
+    expected: &str,
+    client_key: &str,
+    provided: Option<&str>,
+    now: Instant,
+) -> AdminAuth {
+    let mut failures = failures.lock();
+    // A throttled client is refused even with the right key so the response
+    // cannot be used as an oracle.
+    if failures.count(client_key, now) >= ADMIN_AUTH_FAILURE_LIMIT {
+        return AdminAuth::Throttled {
+            retry_after_secs: failures.retry_after_secs(now),
+        };
+    }
+    let Some(provided) = provided else {
+        return AdminAuth::Unauthorized;
+    };
+    // Compare fixed-length digests so neither content nor length leaks.
+    let matches = !expected.is_empty()
+        && constant_time_eq(
+            &Sha256::digest(provided.as_bytes()),
+            &Sha256::digest(expected.as_bytes()),
+        );
+    if matches {
+        failures.remove(client_key);
+        AdminAuth::Allowed
+    } else {
+        failures.record(client_key, now);
+        AdminAuth::Unauthorized
+    }
 }
 
 fn non_empty(value: &Option<String>) -> Option<&str> {
@@ -6744,6 +6810,60 @@ mod tests {
                 Err(CheckpointFileError::Invalid(_))
             ));
         }
+    }
+
+    #[test]
+    fn admin_key_check_throttles_repeated_failures_per_client() {
+        use super::{check_admin_key, AdminAuth, ADMIN_AUTH_FAILURE_LIMIT, ADMIN_AUTH_FAILURE_WINDOW};
+        let failures = super::Mutex::new(super::WindowedCounter::new(
+            ADMIN_AUTH_FAILURE_WINDOW,
+            64,
+        ));
+        let key = "k".repeat(64);
+        let start = Instant::now();
+        assert_eq!(
+            check_admin_key(&failures, &key, "a", Some(&key), start),
+            AdminAuth::Allowed
+        );
+        // Missing keys are not guesses and never count.
+        for _ in 0..(ADMIN_AUTH_FAILURE_LIMIT * 2) {
+            assert_eq!(
+                check_admin_key(&failures, &key, "a", None, start),
+                AdminAuth::Unauthorized
+            );
+        }
+        // Prefixes and different lengths are rejected.
+        assert_eq!(
+            check_admin_key(&failures, &key, "a", Some(&key[..63]), start),
+            AdminAuth::Unauthorized
+        );
+        // A correct key clears earlier failures.
+        assert_eq!(
+            check_admin_key(&failures, &key, "a", Some(&key), start),
+            AdminAuth::Allowed
+        );
+        for _ in 0..ADMIN_AUTH_FAILURE_LIMIT {
+            assert_eq!(
+                check_admin_key(&failures, &key, "a", Some("wrong"), start),
+                AdminAuth::Unauthorized
+            );
+        }
+        let throttled = check_admin_key(&failures, &key, "a", Some(&key), start);
+        assert!(matches!(throttled, AdminAuth::Throttled { retry_after_secs } if retry_after_secs > 0));
+        // Other clients are unaffected; the throttle lifts after the window.
+        assert_eq!(
+            check_admin_key(&failures, &key, "b", Some(&key), start),
+            AdminAuth::Allowed
+        );
+        assert_eq!(
+            check_admin_key(&failures, &key, "a", Some(&key), start + ADMIN_AUTH_FAILURE_WINDOW),
+            AdminAuth::Allowed
+        );
+        // An empty configured key never authorizes.
+        assert_eq!(
+            check_admin_key(&failures, "", "c", Some("anything"), start),
+            AdminAuth::Unauthorized
+        );
     }
 
     #[test]

@@ -194,6 +194,10 @@ impl WindowedCounter {
         }
     }
 
+    pub(crate) fn remove(&mut self, key: &str) {
+        self.counts.remove(key);
+    }
+
     pub(crate) fn count(&mut self, key: &str, now: Instant) -> u32 {
         self.roll(now);
         self.counts.get(key).copied().unwrap_or(0)
