@@ -14,6 +14,7 @@ use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
+use crate::admission::{AdmissionState, UnprocessedReason};
 use crate::config::Config;
 use crate::dev_fee::{
     is_seine_dev_fee_address, login_difficulty_floor, DEV_VARDIFF_BOOTSTRAP_HINT_LIMIT,
@@ -483,8 +484,11 @@ struct MinerSession {
     worker: String,
     difficulty: u64,
     capabilities: BTreeSet<String>,
-    accepted_share_times: VecDeque<Instant>,
-    last_accepted_share_at: Option<Instant>,
+    /// Recent shares for the rate estimate: accepted shares plus submits the
+    /// pool answered without processing (see `record_unprocessed_submit`).
+    share_times: VecDeque<Instant>,
+    last_share_at: Option<Instant>,
+    last_unprocessed_at: Option<Instant>,
     last_difficulty_adjustment: Option<Instant>,
     last_difficulty_hint_write: Option<Instant>,
     source: SourceRef,
@@ -502,6 +506,7 @@ pub struct PoolEngine {
     seen_in_memory: NonceLedger,
     source_risk: Arc<SourceRiskTracker>,
     found_block_outbox_lock: Mutex<()>,
+    admission: Arc<AdmissionState>,
 }
 
 /// One proven-fake share (the pool's hash differs from the claimed hash).
@@ -811,6 +816,7 @@ impl PoolEngine {
         node: Arc<dyn NodeApi>,
     ) -> Self {
         let source_risk = Arc::new(SourceRiskTracker::new(SourcePolicy::from_config(&cfg)));
+        let admission = Arc::new(AdmissionState::new());
         validation.attach_audit_feedback(Arc::new(EngineAuditFeedback {
             cfg: cfg.clone(),
             tracker: Arc::clone(&source_risk),
@@ -827,6 +833,7 @@ impl PoolEngine {
             seen_in_memory: NonceLedger::default(),
             source_risk,
             found_block_outbox_lock: Mutex::new(()),
+            admission,
         };
         engine.recover_found_block_outbox();
         engine
@@ -981,8 +988,9 @@ impl PoolEngine {
                 worker: worker.clone(),
                 difficulty,
                 capabilities: cap_set,
-                accepted_share_times: VecDeque::new(),
-                last_accepted_share_at: None,
+                share_times: VecDeque::new(),
+                last_share_at: None,
+                last_unprocessed_at: None,
                 last_difficulty_adjustment: None,
                 last_difficulty_hint_write: None,
                 source,
@@ -1274,9 +1282,20 @@ impl PoolEngine {
                     Err(err) => {
                         // Busy/timeout: the share was never judged, so let the
                         // miner resubmit it.
-                        release_claim_on_error = is_retryable_reject_reason(
-                            canonical_share_reject_reason(&err.to_string()),
-                        );
+                        let reason_code = canonical_share_reject_reason(&err.to_string());
+                        release_claim_on_error = is_retryable_reject_reason(reason_code);
+                        let unprocessed = match reason_code {
+                            "server busy" => Some(UnprocessedReason::ValidationQueueFull),
+                            "validation timeout" => Some(UnprocessedReason::ValidationTimeout),
+                            _ => None,
+                        };
+                        if let Some(reason) = unprocessed {
+                            // Like the pre-queue admission rejects, these are
+                            // not share outcomes: count them (and feed vardiff)
+                            // instead of writing a row under saturation.
+                            self.record_unprocessed_submit(conn_id, reason);
+                            return Err(err);
+                        }
                         let created_at = SystemTime::now();
                         self.persist_rejected_share_with_evidence(
                             &session,
@@ -2036,7 +2055,9 @@ impl PoolEngine {
             let now = Instant::now();
             let target_interval = vardiff_target_interval_seconds(&self.cfg);
             let tolerance = self.cfg.vardiff_tolerance.clamp(0.01, 0.95);
-            if let Some(last) = session.last_accepted_share_at {
+            // Idle is measured from the last share of any kind, including one
+            // the pool was too busy to process: that miner is not idle.
+            if let Some(last) = session.last_share_at {
                 let observed_interval = now.duration_since(last).as_secs_f64();
                 let upper = target_interval * (1.0 + tolerance);
                 if observed_interval > upper {
@@ -2054,7 +2075,9 @@ impl PoolEngine {
                         let can_retarget = session
                             .last_difficulty_adjustment
                             .is_none_or(|last| now.duration_since(last) >= retarget_interval);
-                        if can_retarget {
+                        if can_retarget && self.vardiff_downward_blocked(session, now) {
+                            self.admission.note_vardiff_downward_held();
+                        } else if can_retarget {
                             let miner = compact_address(&session.address);
                             tracing::debug!(
                                 "vardiff {:>4} -> {:>4} (job tick idle {:>5.1}s, target {:>4.0}s, miner {})",
@@ -2111,6 +2134,176 @@ impl PoolEngine {
             .is_some_and(|session| session.capabilities.contains(capability))
     }
 
+    pub(crate) fn admission(&self) -> &AdmissionState {
+        &self.admission
+    }
+
+    /// Records a submit the pool answered without judging it: queue full,
+    /// shed, rate limited, or no verification capacity. It is still evidence
+    /// that the miner found a share, so it counts toward vardiff's share-rate
+    /// estimate. A connection flooding a saturated pool therefore has its
+    /// difficulty raised, which relieves the pool, instead of seeing no
+    /// accepted shares and being lowered, which feeds the flood.
+    ///
+    /// Never lowers difficulty and never touches the store, so async Stratum
+    /// tasks may call it directly. Returns the new difficulty if it went up;
+    /// the caller must send the miner a job at that difficulty.
+    pub(crate) fn record_unprocessed_submit(
+        &self,
+        conn_id: &str,
+        reason: UnprocessedReason,
+    ) -> Option<u64> {
+        let now = Instant::now();
+        self.admission.record(reason, now);
+        if !self.cfg.enable_vardiff {
+            return None;
+        }
+        let mut sessions = self.sessions.lock();
+        let session = sessions.get_mut(conn_id)?;
+        if self.vardiff_observe_share(session, now, true) {
+            self.admission.note_vardiff_busy_raise();
+            Some(session.difficulty)
+        } else {
+            None
+        }
+    }
+
+    /// Pool-side reasons not to lower a session's difficulty right now: the
+    /// regular submit lane was saturated recently, or this session's own
+    /// submits were recently answered unprocessed. Either way the missing
+    /// accepted shares say nothing about the miner's hashrate.
+    fn vardiff_downward_blocked(&self, session: &MinerSession, now: Instant) -> bool {
+        if self.admission.pressure_active(now) {
+            return true;
+        }
+        let window = self
+            .cfg
+            .vardiff_window_duration()
+            .max(Duration::from_secs(30));
+        session
+            .last_unprocessed_at
+            .is_some_and(|at| now.saturating_duration_since(at) < window)
+    }
+
+    /// Adds one share to the session's rate estimate and retargets. The share
+    /// is either accepted or `unprocessed` (found, but the pool could not
+    /// process it); unprocessed evidence may only raise difficulty. Returns
+    /// whether the difficulty went up.
+    fn vardiff_observe_share(
+        &self,
+        session: &mut MinerSession,
+        now: Instant,
+        unprocessed: bool,
+    ) -> bool {
+        let min_diff = self.cfg.min_share_difficulty.max(1);
+        let max_diff = self.cfg.max_share_difficulty.max(min_diff);
+        session.difficulty = session.difficulty.clamp(min_diff, max_diff);
+
+        let window = self
+            .cfg
+            .vardiff_window_duration()
+            .max(Duration::from_secs(30));
+        let target_interval = vardiff_target_interval_seconds(&self.cfg);
+        let tolerance = self.cfg.vardiff_tolerance.clamp(0.01, 0.95);
+
+        let last_share_age = session.last_share_at.map(|last| now.duration_since(last));
+        session.last_share_at = Some(now);
+        if unprocessed {
+            session.last_unprocessed_at = Some(now);
+        }
+        session.share_times.push_back(now);
+        let cutoff = now.checked_sub(window).unwrap_or(now);
+        while session.share_times.front().is_some_and(|ts| *ts < cutoff) {
+            session.share_times.pop_front();
+        }
+
+        let mut next_diff = session.difficulty;
+        let mut observed_interval = 0.0;
+        let mut kind = "observed";
+        if session.share_times.len() >= VARDIFF_MIN_SAMPLE_COUNT {
+            if let Some(oldest) = session.share_times.front().copied() {
+                let elapsed = now.duration_since(oldest).as_secs_f64();
+                if elapsed >= 1.0 {
+                    observed_interval = elapsed / ((session.share_times.len() - 1) as f64);
+                    let lower = target_interval * (1.0 - tolerance);
+                    let upper = target_interval * (1.0 + tolerance);
+                    if observed_interval < lower {
+                        let raw_ratio = target_interval / observed_interval;
+                        let ratio = raw_ratio
+                            .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
+                            .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
+                        next_diff = ((session.difficulty as f64) * ratio).ceil() as u64;
+                    } else if observed_interval > upper {
+                        let raw_ratio = observed_interval / target_interval;
+                        let ratio = raw_ratio
+                            .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
+                            .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
+                        next_diff = ((session.difficulty as f64) / ratio).floor() as u64;
+                    }
+                }
+            }
+        } else if let Some(age) = last_share_age {
+            // If the previous share fell out of the vardiff window, we can still
+            // decay difficulty based on idle time before this share — but only
+            // if the gap is within the window. Gaps longer than the window
+            // indicate an intermittent session (e.g. dev fee), not a struggling
+            // miner.
+            observed_interval = age.as_secs_f64();
+            let window_secs = window.as_secs_f64();
+            let upper = target_interval * (1.0 + tolerance);
+            if observed_interval <= window_secs && observed_interval > upper {
+                let raw_ratio = observed_interval / target_interval;
+                let ratio = raw_ratio
+                    .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
+                    .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
+                next_diff = ((session.difficulty as f64) / ratio).floor().max(1.0) as u64;
+                kind = "idle";
+            }
+        }
+
+        next_diff = next_diff.clamp(min_diff, max_diff);
+        if next_diff == session.difficulty
+            || !vardiff_change_is_material(session.difficulty, next_diff)
+        {
+            return false;
+        }
+        let increasing = next_diff > session.difficulty;
+        let retarget_interval = vardiff_retarget_interval_for_direction(&self.cfg, increasing);
+        let can_retarget = session
+            .last_difficulty_adjustment
+            .is_none_or(|last| now.duration_since(last) >= retarget_interval);
+        if !can_retarget {
+            return false;
+        }
+        if !increasing {
+            if unprocessed {
+                return false;
+            }
+            if self.vardiff_downward_blocked(session, now) {
+                self.admission.note_vardiff_downward_held();
+                return false;
+            }
+        }
+        let miner = compact_address(&session.address);
+        tracing::debug!(
+            "vardiff {:>4} -> {:>4} ({} {:>5.1}s, target {:>4.0}s, miner {}{})",
+            session.difficulty,
+            next_diff,
+            kind,
+            observed_interval,
+            target_interval,
+            miner,
+            if unprocessed {
+                ", unprocessed submit"
+            } else {
+                ""
+            }
+        );
+        session.difficulty = next_diff;
+        session.last_difficulty_adjustment = Some(now);
+        increasing
+    }
+
     fn note_share_and_maybe_adjust_difficulty(&self, conn_id: &str) -> u64 {
         if !self.cfg.enable_vardiff {
             return self
@@ -2127,123 +2320,8 @@ impl PoolEngine {
             return self.cfg.initial_share_difficulty;
         };
 
-        let min_diff = self.cfg.min_share_difficulty.max(1);
-        let max_diff = self.cfg.max_share_difficulty.max(min_diff);
-        session.difficulty = session.difficulty.clamp(min_diff, max_diff);
-
         let now = Instant::now();
-        let window = self
-            .cfg
-            .vardiff_window_duration()
-            .max(Duration::from_secs(30));
-        let target_interval = vardiff_target_interval_seconds(&self.cfg);
-        let tolerance = self.cfg.vardiff_tolerance.clamp(0.01, 0.95);
-
-        let last_share_age = session
-            .last_accepted_share_at
-            .map(|last| now.duration_since(last));
-        session.last_accepted_share_at = Some(now);
-        session.accepted_share_times.push_back(now);
-        let cutoff = now.checked_sub(window).unwrap_or(now);
-        while session
-            .accepted_share_times
-            .front()
-            .is_some_and(|ts| *ts < cutoff)
-        {
-            session.accepted_share_times.pop_front();
-        }
-
-        if session.accepted_share_times.len() >= VARDIFF_MIN_SAMPLE_COUNT {
-            if let Some(oldest) = session.accepted_share_times.front().copied() {
-                let elapsed = now.duration_since(oldest).as_secs_f64();
-                if elapsed >= 1.0 {
-                    let observed_interval =
-                        elapsed / ((session.accepted_share_times.len() - 1) as f64);
-                    let lower = target_interval * (1.0 - tolerance);
-                    let upper = target_interval * (1.0 + tolerance);
-
-                    let mut next_diff = session.difficulty;
-                    if observed_interval < lower {
-                        let raw_ratio = target_interval / observed_interval;
-                        let ratio = raw_ratio
-                            .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
-                            .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
-                        next_diff = ((session.difficulty as f64) * ratio).ceil() as u64;
-                    } else if observed_interval > upper {
-                        let raw_ratio = observed_interval / target_interval;
-                        let ratio = raw_ratio
-                            .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
-                            .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
-                        next_diff = ((session.difficulty as f64) / ratio).floor() as u64;
-                    }
-
-                    next_diff = next_diff.clamp(min_diff, max_diff);
-                    if next_diff != session.difficulty
-                        && vardiff_change_is_material(session.difficulty, next_diff)
-                    {
-                        let increasing = next_diff > session.difficulty;
-                        let retarget_interval =
-                            vardiff_retarget_interval_for_direction(&self.cfg, increasing);
-                        let can_retarget = session
-                            .last_difficulty_adjustment
-                            .is_none_or(|last| now.duration_since(last) >= retarget_interval);
-                        if can_retarget {
-                            let miner = compact_address(&session.address);
-                            tracing::debug!(
-                                "vardiff {:>4} -> {:>4} (observed {:>5.1}s, target {:>4.0}s, miner {})",
-                                session.difficulty,
-                                next_diff,
-                                observed_interval,
-                                target_interval,
-                                miner
-                            );
-                            session.difficulty = next_diff;
-                            session.last_difficulty_adjustment = Some(now);
-                        }
-                    }
-                }
-            }
-        } else {
-            // If the previous accepted share fell out of the vardiff window, we can still
-            // decay difficulty based on idle time before this accepted share — but only
-            // if the gap is within the window. Gaps longer than the window indicate an
-            // intermittent session (e.g. dev fee), not a struggling miner.
-            if let Some(age) = last_share_age {
-                let observed_interval = age.as_secs_f64();
-                let window_secs = window.as_secs_f64();
-                let upper = target_interval * (1.0 + tolerance);
-                if observed_interval <= window_secs && observed_interval > upper {
-                    let raw_ratio = observed_interval / target_interval;
-                    let ratio = raw_ratio
-                        .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
-                        .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, VARDIFF_MAX_ADJUSTMENT_FACTOR);
-                    let next_diff = ((session.difficulty as f64) / ratio).floor().max(1.0) as u64;
-                    let next_diff = next_diff.clamp(min_diff, max_diff);
-                    if next_diff != session.difficulty
-                        && vardiff_change_is_material(session.difficulty, next_diff)
-                    {
-                        let retarget_interval =
-                            vardiff_retarget_interval_for_direction(&self.cfg, false);
-                        let can_retarget = session
-                            .last_difficulty_adjustment
-                            .is_none_or(|last| now.duration_since(last) >= retarget_interval);
-                        if can_retarget {
-                            let miner = compact_address(&session.address);
-                            tracing::debug!(
-                                "vardiff {:>4} -> {:>4} (idle {:>5.1}s, target {:>4.0}s, miner {})",
-                                session.difficulty,
-                                next_diff,
-                                observed_interval,
-                                target_interval,
-                                miner
-                            );
-                            session.difficulty = next_diff;
-                            session.last_difficulty_adjustment = Some(now);
-                        }
-                    }
-                }
-            }
-        }
+        self.vardiff_observe_share(session, now, false);
 
         let should_write_hint = session
             .last_difficulty_hint_write
@@ -4821,7 +4899,7 @@ mod tests {
                 .get_mut("conn1")
                 .expect("session should exist after login");
             // Simulate a sparse current vardiff window while preserving last-share age.
-            session.accepted_share_times.clear();
+            session.share_times.clear();
         }
 
         std::thread::sleep(Duration::from_millis(2_200));
@@ -4885,6 +4963,154 @@ mod tests {
             after < before,
             "job-tick retarget should decay idle user sessions so they can recover from overshoot"
         );
+    }
+
+    fn vardiff_test_engine(cfg: Config) -> PoolEngine {
+        struct ZeroHasher;
+        impl PowHasher for ZeroHasher {
+            fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
+                Ok([0u8; 32])
+            }
+        }
+        let validation = Arc::new(ValidationEngine::new(cfg.clone(), Arc::new(ZeroHasher)));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        )
+    }
+
+    /// One-second vardiff target (window clamps to 30s, 60 shares) so idle
+    /// decay is reachable in a test.
+    fn fast_vardiff_cfg() -> Config {
+        let mut cfg = cfg();
+        cfg.enable_vardiff = true;
+        cfg.validation_mode = "full".to_string();
+        cfg.initial_share_difficulty = 100;
+        cfg.vardiff_target_shares = 60;
+        cfg.vardiff_window = "1s".to_string();
+        cfg.vardiff_retarget_interval = "1s".to_string();
+        cfg
+    }
+
+    #[test]
+    fn unprocessed_submits_raise_difficulty_for_a_flooding_session() {
+        let mut cfg = cfg();
+        cfg.enable_vardiff = true;
+        cfg.initial_share_difficulty = 100;
+        cfg.vardiff_retarget_interval = "2s".to_string();
+        let engine = vardiff_test_engine(cfg);
+        engine
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
+            .expect("login");
+
+        // Nothing but busy answers: no accepted share ever arrives.
+        assert_eq!(
+            engine.record_unprocessed_submit("conn1", UnprocessedReason::SubmitQueueFull),
+            None,
+            "one sample is not a rate"
+        );
+        std::thread::sleep(Duration::from_millis(1_100));
+        assert_eq!(
+            engine.record_unprocessed_submit("conn1", UnprocessedReason::SubmitQueueFull),
+            Some(150),
+            "a share every second against a 30s target must raise difficulty"
+        );
+        assert_eq!(engine.session_difficulty("conn1"), Some(150));
+        assert_eq!(
+            engine.record_unprocessed_submit("conn1", UnprocessedReason::RateLimited),
+            None,
+            "raises still respect the retarget interval"
+        );
+        let snapshot = engine.admission().snapshot();
+        assert_eq!(snapshot.submit_queue_full_total, 2);
+        assert_eq!(snapshot.rate_limited_total, 1);
+        assert_eq!(snapshot.vardiff_busy_raises_total, 1);
+    }
+
+    #[test]
+    fn unprocessed_submits_never_lower_difficulty() {
+        let engine = vardiff_test_engine(fast_vardiff_cfg());
+        engine
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
+            .expect("login");
+        engine.record_unprocessed_submit("conn1", UnprocessedReason::ValidationQueueFull);
+        std::thread::sleep(Duration::from_millis(2_200));
+        // An idle gap followed by busy evidence would read as a slow miner.
+        assert_eq!(
+            engine.record_unprocessed_submit("conn1", UnprocessedReason::ValidationQueueFull),
+            None
+        );
+        assert_eq!(engine.session_difficulty("conn1"), Some(100));
+    }
+
+    #[test]
+    fn job_tick_holds_difficulty_while_the_submit_lane_is_saturated() {
+        let engine = vardiff_test_engine(fast_vardiff_cfg());
+        engine
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
+            .expect("login");
+        engine
+            .submit("conn1", "job1".to_string(), 400, Some("00".repeat(32)))
+            .expect("share 1");
+        std::thread::sleep(Duration::from_millis(2_200));
+
+        // Someone else's flood saturates the lane; this miner's silence is
+        // the pool's doing, not a hashrate drop.
+        engine.admission().mark_pressure(Instant::now());
+        assert_eq!(engine.retarget_on_job_if_needed("conn1"), Some(100));
+        assert_eq!(engine.admission().snapshot().vardiff_downward_held_total, 1);
+    }
+
+    #[test]
+    fn job_tick_holds_difficulty_after_the_sessions_own_submits_went_unprocessed() {
+        let engine = vardiff_test_engine(fast_vardiff_cfg());
+        for conn in ["conn1", "conn2"] {
+            engine
+                .login(conn, test_miner_address(), conn, 2, submit_hash_cap())
+                .expect("login");
+        }
+        engine
+            .submit("conn1", "job1".to_string(), 400, Some("00".repeat(32)))
+            .expect("share conn1");
+        engine
+            .submit("conn2", "job1".to_string(), 401, Some("00".repeat(32)))
+            .expect("share conn2");
+        // Rate limits are per connection: no global pressure.
+        engine.record_unprocessed_submit("conn1", UnprocessedReason::RateLimited);
+        assert!(!engine.admission().pressure_active(Instant::now()));
+        std::thread::sleep(Duration::from_millis(2_200));
+
+        assert_eq!(
+            engine.retarget_on_job_if_needed("conn1"),
+            Some(100),
+            "a session whose submits were just turned away is not idle"
+        );
+        assert!(
+            engine.retarget_on_job_if_needed("conn2").expect("conn2") < 100,
+            "an idle session without unprocessed submits still decays"
+        );
+    }
+
+    #[test]
+    fn accepted_shares_do_not_lower_difficulty_under_submit_pressure() {
+        let engine = vardiff_test_engine(fast_vardiff_cfg());
+        engine
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
+            .expect("login");
+        engine
+            .submit("conn1", "job1".to_string(), 400, Some("00".repeat(32)))
+            .expect("share 1");
+        std::thread::sleep(Duration::from_millis(2_200));
+        engine.admission().mark_pressure(Instant::now());
+        let ack = engine
+            .submit("conn1", "job1".to_string(), 401, Some("00".repeat(32)))
+            .expect("share 2");
+        assert_eq!(ack.next_difficulty, 100);
     }
 
     #[test]

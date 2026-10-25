@@ -11,6 +11,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc, Notify};
 
+use crate::admission::{UnprocessedReason, UnprocessedSubmitSnapshot};
 use crate::config::{Config, CANDIDATE_SUBMIT_QUEUE_SIZE};
 use crate::dev_fee::is_seine_dev_fee_address;
 use crate::engine::{
@@ -157,6 +158,9 @@ pub struct SubmitRuntimeSnapshot {
     pub candidate_wait: PercentileSummary,
     #[serde(default)]
     pub regular_wait: PercentileSummary,
+    /// Submits answered "busy/retry" without being judged, by reason.
+    #[serde(default)]
+    pub unprocessed: UnprocessedSubmitSnapshot,
 }
 
 #[derive(Debug)]
@@ -199,6 +203,25 @@ struct CandidateClaimTracker {
 struct CandidateClaimPermit {
     tracker: Arc<CandidateClaimTracker>,
     keys: Vec<String>,
+}
+
+/// Why a submit was not admitted to its lane. Both are answered "server
+/// busy, retry" so the miner sees no protocol change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EnqueueRejection {
+    QueueFull,
+}
+
+impl EnqueueRejection {
+    fn message(self) -> &'static str {
+        "server busy, retry"
+    }
+
+    fn reason(self) -> UnprocessedReason {
+        match self {
+            Self::QueueFull => UnprocessedReason::SubmitQueueFull,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -492,7 +515,11 @@ impl SubmitDispatcher {
         }
     }
 
-    fn try_enqueue(&self, item: SubmitWorkItem, lane: SubmitLane) -> Result<()> {
+    fn try_enqueue(
+        &self,
+        item: SubmitWorkItem,
+        lane: SubmitLane,
+    ) -> std::result::Result<(), EnqueueRejection> {
         let queued_at = Instant::now();
         let tracker_id = self.lane_queue(lane).push(queued_at);
         let result = match lane {
@@ -524,7 +551,7 @@ impl SubmitDispatcher {
                     self.candidate_enqueue_rejected
                         .fetch_add(1, Ordering::Relaxed);
                 }
-                Err(anyhow!("server busy, retry"))
+                Err(EnqueueRejection::QueueFull)
             }
         }
     }
@@ -559,6 +586,7 @@ impl SubmitDispatcher {
             regular_oldest_age_millis: regular.oldest_age_millis,
             candidate_wait: candidate.wait,
             regular_wait: regular.wait,
+            unprocessed: UnprocessedSubmitSnapshot::default(),
         }
     }
 }
@@ -606,7 +634,9 @@ impl StratumServer {
     }
 
     pub(crate) fn submit_snapshot(&self) -> SubmitRuntimeSnapshot {
-        self.submit_dispatcher.snapshot()
+        let mut snapshot = self.submit_dispatcher.snapshot();
+        snapshot.unprocessed = self.engine.admission().snapshot();
+        snapshot
     }
 
     pub async fn run(self: Arc<Self>) -> Result<()> {
@@ -964,6 +994,15 @@ impl StratumServer {
                                     run_result = Err(err);
                                     break;
                                 }
+                                if let Err(err) = self.note_unprocessed_submit(
+                                    &conn_id,
+                                    &mut logged_in,
+                                    UnprocessedReason::RateLimited,
+                                    &outbound,
+                                ) {
+                                    run_result = Err(err);
+                                    break;
+                                }
                                 continue;
                             }
                             submit_timestamps.push_back(now);
@@ -1048,27 +1087,40 @@ impl StratumServer {
                                 completion_tx: submit_result_tx.clone(),
                                 candidate_permit,
                             };
-                            if let Err(err) = self.submit_dispatcher.try_enqueue(work, lane) {
+                            if let Err(rejection) = self.submit_dispatcher.try_enqueue(work, lane) {
                                 if let Some((address, _, _)) = logged_in.as_ref() {
-                                    tracing::warn!(
+                                    tracing::debug!(
                                         peer = %peer,
                                         address = %address,
                                         job_id = %submit_job_id,
                                         nonce = submit_nonce,
+                                        reason = ?rejection,
                                         "submit queue saturated"
                                     );
                                 }
+                                let err_text = rejection.message();
                                 self.persist_prequeue_reject_async(
                                     &conn_id,
                                     &submit_job_id,
                                     submit_nonce,
                                     submit_claimed_hash.as_deref(),
                                     received_at,
-                                    &err.to_string(),
+                                    err_text,
                                 );
-                                if let Err(queue_err) = queue_error(&outbound, req.id, &err.to_string()) {
+                                if let Err(queue_err) = queue_error(&outbound, req.id, err_text) {
                                     run_result = Err(queue_err);
                                     break;
+                                }
+                                if lane == SubmitLane::Regular {
+                                    if let Err(err) = self.note_unprocessed_submit(
+                                        &conn_id,
+                                        &mut logged_in,
+                                        rejection.reason(),
+                                        &outbound,
+                                    ) {
+                                        run_result = Err(err);
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -1155,28 +1207,12 @@ impl StratumServer {
                             );
                         } else {
                             *difficulty = ack.next_difficulty;
-                            let range_mode = if self
-                                .engine
-                                .session_supports_capability(conn_id, CAP_SAME_TEMPLATE_REBIND_V1)
-                            {
-                                AssignmentRangeMode::PreserveCurrent
-                            } else {
-                                AssignmentRangeMode::Fresh
-                            };
-                            if let Some(miner_job) = self.jobs.build_miner_job_with_range_mode(
+                            self.queue_difficulty_job(
                                 conn_id,
-                                ack.next_difficulty,
                                 address,
-                                range_mode,
-                            ) {
-                                if let Some(outbound) = outbound {
-                                    let notify = StratumNotify {
-                                        method: "job".to_string(),
-                                        params: serde_json::to_value(miner_job)?,
-                                    };
-                                    queue_job_json(outbound, &notify)?;
-                                }
-                            }
+                                ack.next_difficulty,
+                                outbound,
+                            )?;
                             tracing::debug!(
                                 peer = %peer,
                                 address = %address,
@@ -1254,6 +1290,13 @@ impl StratumServer {
                 if let Some(outbound) = outbound {
                     queue_error(outbound, completion.req_id, &err_text)?;
                 }
+                if is_retryable_reject_reason(reason_code) {
+                    // The engine already counted this unprocessed share toward
+                    // vardiff; deliver any difficulty it raised.
+                    if let Some(next) = self.engine.session_difficulty(conn_id) {
+                        self.apply_raised_difficulty(conn_id, logged_in, next, outbound)?;
+                    }
+                }
                 if disconnect {
                     if let Some((address, _, _)) = logged_in.as_ref() {
                         tracing::warn!(
@@ -1284,6 +1327,78 @@ impl StratumServer {
                         &format!("submit worker failure: {err_text}"),
                     )?;
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Counts a submit the pool answered without processing and delivers any
+    /// difficulty raise vardiff derived from it. In-memory only.
+    fn note_unprocessed_submit(
+        &self,
+        conn_id: &str,
+        logged_in: &mut Option<(String, String, u64)>,
+        reason: UnprocessedReason,
+        outbound: &OutboundHandle,
+    ) -> Result<()> {
+        match self.engine.record_unprocessed_submit(conn_id, reason) {
+            Some(next) => self.apply_raised_difficulty(conn_id, logged_in, next, Some(outbound)),
+            None => Ok(()),
+        }
+    }
+
+    /// Moves the connection up to `next` difficulty with a fresh job, as the
+    /// submit-ack path does. Dev-fee sessions keep their difficulty until the
+    /// next template, also as on the ack path.
+    fn apply_raised_difficulty(
+        &self,
+        conn_id: &str,
+        logged_in: &mut Option<(String, String, u64)>,
+        next: u64,
+        outbound: Option<&OutboundHandle>,
+    ) -> Result<()> {
+        let Some((address, worker, difficulty)) = logged_in.as_mut() else {
+            return Ok(());
+        };
+        if next <= *difficulty || is_seine_dev_fee_address(address) {
+            return Ok(());
+        }
+        tracing::debug!(
+            address = %address,
+            worker = %worker,
+            from = *difficulty,
+            to = next,
+            "stratum difficulty raised on unprocessed submits"
+        );
+        *difficulty = next;
+        self.queue_difficulty_job(conn_id, address, next, outbound)
+    }
+
+    fn queue_difficulty_job(
+        &self,
+        conn_id: &str,
+        address: &str,
+        difficulty: u64,
+        outbound: Option<&OutboundHandle>,
+    ) -> Result<()> {
+        let range_mode = if self
+            .engine
+            .session_supports_capability(conn_id, CAP_SAME_TEMPLATE_REBIND_V1)
+        {
+            AssignmentRangeMode::PreserveCurrent
+        } else {
+            AssignmentRangeMode::Fresh
+        };
+        if let Some(miner_job) = self
+            .jobs
+            .build_miner_job_with_range_mode(conn_id, difficulty, address, range_mode)
+        {
+            if let Some(outbound) = outbound {
+                let notify = StratumNotify {
+                    method: "job".to_string(),
+                    params: serde_json::to_value(miner_job)?,
+                };
+                queue_job_json(outbound, &notify)?;
             }
         }
         Ok(())
@@ -2439,6 +2554,62 @@ mod tests {
         drop(writer);
         drop(reader);
         shutdown_test_listener(listener_task, server, _jobs).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn tcp_unprocessed_submits_raise_difficulty_and_send_a_job() {
+        let cfg = Config {
+            validation_mode: "probabilistic".to_string(),
+            sample_rate: 0.0,
+            warmup_shares: 0,
+            min_sample_every: 0,
+            enable_vardiff: true,
+            initial_share_difficulty: 100,
+            vardiff_retarget_interval: "2s".to_string(),
+            regular_submit_queue: 8,
+            ..stratum_test_cfg()
+        };
+        let (mut server, jobs) = build_tcp_test_server(cfg).await;
+        Arc::get_mut(&mut server).unwrap().submit_rate_limit_max = 1;
+        let (addr, listener_task) = start_test_tcp_listener(Arc::clone(&server)).await;
+        let (mut reader, mut writer) = connect_test_client(addr).await;
+        let address = test_miner_address(0x55);
+        let job = login_test_client(&mut reader, &mut writer, 1, &address, "rig-a").await;
+        assert_eq!(job.difficulty, 100);
+
+        let nonce = nonce_with_parity(&job, false, 0);
+        send_submit(&mut writer, 2, &job.job_id, nonce, job.target.clone()).await;
+        let response = read_json_line(&mut reader).await;
+        assert_eq!(response["id"], 2);
+        assert_eq!(response["status"], "ok");
+
+        // The next share is turned away by the per-connection rate limit. It
+        // is still a found share: a second share within ~1s of the first
+        // against a 30s target must raise difficulty, and the miner must be
+        // told through a new job rather than an ack it never gets.
+        tokio::time::sleep(Duration::from_millis(1_100)).await;
+        let nonce = nonce_with_parity(&job, false, 1);
+        send_submit(&mut writer, 3, &job.job_id, nonce, job.target.clone()).await;
+        let mut rejected = false;
+        let mut raised_job = None;
+        while !(rejected && raised_job.is_some()) {
+            let message = read_json_line(&mut reader).await;
+            if message["id"] == 3 {
+                assert!(message["error"]
+                    .as_str()
+                    .is_some_and(|err| err.starts_with("rate limited")));
+                rejected = true;
+            } else if message["method"] == "job" {
+                raised_job = Some(message["params"]["difficulty"].as_u64().unwrap());
+            }
+        }
+        assert_eq!(raised_job, Some(150));
+        let conn_id = writer.local_addr().expect("client addr").to_string();
+        assert_eq!(server.engine.session_difficulty(&conn_id), Some(150));
+        assert_eq!(server.submit_snapshot().unprocessed.rate_limited_total, 1);
+
+        drop((reader, writer));
+        shutdown_test_listener(listener_task, server, jobs).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
