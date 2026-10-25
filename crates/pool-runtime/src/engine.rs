@@ -357,6 +357,37 @@ pub(crate) fn non_settling_reject_reasons() -> Vec<String> {
         .collect()
 }
 
+/// What a submit needs to know about its address's risk, from one read.
+/// Holds raw deadlines so a cached copy stays correct as time passes.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SubmitRisk {
+    pub state: Option<AddressRiskState>,
+    /// `validation_address_states.forced_until` (forced review or a hold).
+    pub validation_forced_until: Option<SystemTime>,
+    /// For stores that only report a precomputed force-verify verdict.
+    pub force_verify: bool,
+}
+
+impl SubmitRisk {
+    pub(crate) fn active_quarantine(&self, now: SystemTime) -> Option<&AddressRiskState> {
+        self.state
+            .as_ref()
+            .filter(|state| state.quarantined_until.is_some_and(|until| until > now))
+    }
+
+    /// Mirrors `PostgresStore::should_force_verify_address`.
+    pub(crate) fn force_verify_at(&self, now: SystemTime) -> bool {
+        self.force_verify
+            || self.state.as_ref().is_some_and(|state| {
+                state.force_verify_until.is_some_and(|until| until > now)
+                    || state.quarantined_until.is_some_and(|until| until > now)
+            })
+            || self
+                .validation_forced_until
+                .is_some_and(|until| until > now)
+    }
+}
+
 pub(crate) trait ShareStore: Send + Sync + 'static {
     /// Claims a share for crediting. `job_id` is the assignment id (checked
     /// against persisted rows) and `share_key` is the template-scoped key from
@@ -410,6 +441,15 @@ pub(crate) trait ShareStore: Send + Sync + 'static {
     }
     fn should_force_verify_address(&self, _address: &str) -> Result<bool> {
         Ok(false)
+    }
+    /// Quarantine and force-verify inputs for one submit. Stores may serve
+    /// this from a short-lived cache; see `PoolStore`.
+    fn submit_risk(&self, address: &str) -> Result<SubmitRisk> {
+        Ok(SubmitRisk {
+            state: self.address_risk_state(address)?,
+            validation_forced_until: None,
+            force_verify: self.should_force_verify_address(address)?,
+        })
     }
     fn escalate_address_risk(&self, _escalation: AddressRiskEscalation<'_>) -> Result<()> {
         Ok(())
@@ -1222,13 +1262,16 @@ impl PoolEngine {
         let source_established = self.source_risk.pair_established(&session.source);
         let result = (|| -> Result<SubmitAck> {
             let now_wall = SystemTime::now();
+            // One risk read serves both the quarantine check and the
+            // force-verify decision below.
+            let risk = self.store.submit_risk(&session.address)?;
             let quarantine = if source_established {
                 None
             } else {
-                active_quarantine_state(self.store.as_ref(), &session.address, now_wall)?
+                risk.active_quarantine(now_wall)
             };
             if let Some(state) = quarantine {
-                let message = quarantine_error_message(Some(&state), now_wall);
+                let message = quarantine_error_message(Some(state), now_wall);
                 release_claim_on_error = false;
                 self.persist_rejected_share_for_error(
                     &session,
@@ -1246,7 +1289,7 @@ impl PoolEngine {
                 .map(|hash| check_target(hash, job.network_target))
                 .unwrap_or(false);
 
-            let risk_force_verify = self.store.should_force_verify_address(&session.address)?;
+            let risk_force_verify = risk.force_verify_at(now_wall);
             // Only sources with their own verified history on this address
             // add to its persisted invalid count (strike leniency history).
             let source_vouched = self.source_risk.source_good(&session.source)

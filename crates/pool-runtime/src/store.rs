@@ -1,7 +1,8 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 #[cfg(test)]
 use anyhow::Context;
@@ -9,7 +10,7 @@ use anyhow::{anyhow, Result};
 use tracing::warn;
 
 use crate::config::Config;
-use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore, SubmitMetadata};
+use crate::engine::{FoundBlockRecord, ShareRecord, ShareStore, SubmitMetadata, SubmitRisk};
 use crate::payout::{is_share_payout_eligible, reward_window_end};
 use crate::pgdb::PostgresStore;
 use crate::rewards::estimated_block_reward;
@@ -25,6 +26,62 @@ use pool_common::protocol::parse_hash_hex;
 
 pub struct PoolStore {
     inner: Arc<PostgresStore>,
+    submit_risk: SubmitRiskCache,
+}
+
+/// How long a submit may act on a cached risk read. Writes made by this
+/// process (strikes, quarantines, validation holds) update or drop the entry
+/// at once; the only other writer is the API's admin "clear risk" action,
+/// which loosens risk, so its effect reaches Stratum at most this late.
+const SUBMIT_RISK_CACHE_TTL: Duration = Duration::from_secs(3);
+const SUBMIT_RISK_CACHE_MAX_ENTRIES: usize = 16_384;
+
+/// Short-lived per-address cache of the risk inputs every submit reads.
+#[derive(Debug, Default)]
+struct SubmitRiskCache {
+    entries: parking_lot::Mutex<HashMap<String, (Instant, SubmitRisk)>>,
+    /// Bumped by every invalidation, so a read that raced a write does not
+    /// cache what it saw before the write.
+    generation: AtomicU64,
+}
+
+impl SubmitRiskCache {
+    fn get(&self, address: &str, now: Instant) -> Option<SubmitRisk> {
+        let entries = self.entries.lock();
+        let (cached_at, risk) = entries.get(address)?;
+        (now.saturating_duration_since(*cached_at) < SUBMIT_RISK_CACHE_TTL).then(|| risk.clone())
+    }
+
+    fn insert(&self, address: &str, risk: SubmitRisk, read_started_at: Instant, generation: u64) {
+        let mut entries = self.entries.lock();
+        if self.generation.load(Ordering::Acquire) != generation {
+            return;
+        }
+        if entries.len() >= SUBMIT_RISK_CACHE_MAX_ENTRIES {
+            entries.retain(|_, (cached_at, _)| {
+                read_started_at.saturating_duration_since(*cached_at) < SUBMIT_RISK_CACHE_TTL
+            });
+            if entries.len() >= SUBMIT_RISK_CACHE_MAX_ENTRIES {
+                entries.clear();
+            }
+        }
+        entries.insert(address.to_string(), (read_started_at, risk));
+    }
+
+    fn invalidate(&self, address: &str) {
+        let mut entries = self.entries.lock();
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        entries.remove(address);
+    }
+
+    /// This process just wrote the address's validation `forced_until`.
+    fn write_validation_forced_until(&self, address: &str, forced_until: Option<SystemTime>) {
+        let mut entries = self.entries.lock();
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        if let Some((_, risk)) = entries.get_mut(address) {
+            risk.validation_forced_until = forced_until;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -60,6 +117,7 @@ impl PoolStore {
         }
         Ok(Arc::new(Self {
             inner: PostgresStore::connect(database_url, pool_size)?,
+            submit_risk: SubmitRiskCache::default(),
         }))
     }
 
@@ -219,6 +277,14 @@ impl PoolStore {
         Ok(report)
     }
 
+    /// Shadows `PostgresStore::clear_address_risk_history` so this process's
+    /// own clears also drop its cached submit risk.
+    pub fn clear_address_risk_history(&self, address: &str) -> Result<()> {
+        let result = self.inner.clear_address_risk_history(address);
+        self.submit_risk.invalidate(address);
+        result
+    }
+
     #[cfg(test)]
     pub(crate) fn test_store() -> Option<Arc<Self>> {
         let url = std::env::var(Self::TEST_POSTGRES_URL_ENV)
@@ -239,6 +305,7 @@ impl PoolStore {
         Some(Arc::new(Self {
             inner: PostgresStore::connect_with_schema(&url, 2, Some(&schema))
                 .expect("connect postgres test store"),
+            submit_risk: SubmitRiskCache::default(),
         }))
     }
 }
@@ -373,8 +440,28 @@ impl ShareStore for PoolStore {
         Ok(force_verify)
     }
 
+    fn submit_risk(&self, address: &str) -> Result<SubmitRisk> {
+        let now = Instant::now();
+        if let Some(risk) = self.submit_risk.get(address, now) {
+            return Ok(risk);
+        }
+        let generation = self.submit_risk.generation.load(Ordering::Acquire);
+        let (state, validation_forced_until) = self.inner.get_submit_risk(address)?;
+        let risk = SubmitRisk {
+            state,
+            validation_forced_until,
+            force_verify: false,
+        };
+        self.submit_risk
+            .insert(address, risk.clone(), now, generation);
+        Ok(risk)
+    }
+
     fn escalate_address_risk(&self, escalation: AddressRiskEscalation<'_>) -> Result<()> {
-        self.inner.escalate_address_risk(escalation)?;
+        let address = escalation.address;
+        let result = self.inner.escalate_address_risk(escalation);
+        self.submit_risk.invalidate(address);
+        result?;
         Ok(())
     }
 
@@ -423,7 +510,14 @@ impl ValidationStateStore for PoolStore {
     }
 
     fn upsert_validation_state(&self, state: &PersistedValidationAddressState) -> Result<()> {
-        self.inner.upsert_validation_state(state)
+        let result = self.inner.upsert_validation_state(state);
+        match &result {
+            Ok(()) => self
+                .submit_risk
+                .write_validation_forced_until(&state.address, state.forced_until),
+            Err(_) => self.submit_risk.invalidate(&state.address),
+        }
+        result
     }
 
     fn add_validation_provisional(
@@ -662,6 +756,81 @@ mod tests {
             .expect("get hint")
             .expect("hint exists");
         assert_eq!(hint.0, 77);
+    }
+
+    #[test]
+    fn submit_risk_is_read_once_and_follows_this_process_writes() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {} to run postgres integration checks",
+                PoolStore::TEST_POSTGRES_URL_ENV
+            );
+            return;
+        };
+        let now = SystemTime::now();
+        let risk = ShareStore::submit_risk(store.as_ref(), "addr-risk").expect("risk");
+        assert!(risk.state.is_none() && !risk.force_verify_at(now));
+
+        // Our own strike is visible to the very next submit.
+        ShareStore::escalate_address_risk(
+            store.as_ref(),
+            AddressRiskEscalation::new(
+                "addr-risk",
+                "test strike",
+                Duration::from_secs(3600),
+                1,
+                Duration::from_secs(3600),
+                Duration::from_secs(7200),
+                Duration::from_secs(600),
+            ),
+        )
+        .expect("escalate");
+        let risk = ShareStore::submit_risk(store.as_ref(), "addr-risk").expect("risk");
+        assert!(risk.active_quarantine(SystemTime::now()).is_some());
+        assert!(risk.force_verify_at(SystemTime::now()));
+
+        // A write from another process (the API's admin clear) is only seen
+        // once the cached read expires.
+        store
+            .inner
+            .clear_address_risk_history("addr-risk")
+            .expect("clear behind the cache");
+        let cached = ShareStore::submit_risk(store.as_ref(), "addr-risk").expect("risk");
+        assert!(cached.active_quarantine(SystemTime::now()).is_some());
+        store
+            .clear_address_risk_history("addr-risk")
+            .expect("clear");
+        let fresh = ShareStore::submit_risk(store.as_ref(), "addr-risk").expect("risk");
+        assert!(fresh.state.is_none() && !fresh.force_verify_at(SystemTime::now()));
+
+        // Validation holds written by this process update the cached copy.
+        let until = SystemTime::now() + Duration::from_secs(900);
+        ValidationStateStore::upsert_validation_state(
+            store.as_ref(),
+            &PersistedValidationAddressState {
+                address: "addr-risk".to_string(),
+                total_shares: 1,
+                sampled_shares: 0,
+                invalid_samples: 0,
+                risk_sampled_shares: 0,
+                risk_invalid_samples: 0,
+                forced_started_at: None,
+                forced_until: Some(until),
+                forced_sampled_shares: 0,
+                forced_invalid_samples: 0,
+                resume_forced_at: None,
+                hold_cause: None,
+                last_seen_at: SystemTime::now(),
+            },
+        )
+        .expect("upsert validation state");
+        let held = ShareStore::submit_risk(store.as_ref(), "addr-risk").expect("risk");
+        assert!(held.force_verify_at(SystemTime::now()));
+        let (force, _) = store
+            .inner
+            .should_force_verify_address("addr-risk")
+            .expect("uncached check");
+        assert!(force, "cached and uncached verdicts agree");
     }
 
     #[test]

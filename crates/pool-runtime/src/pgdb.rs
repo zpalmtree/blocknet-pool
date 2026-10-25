@@ -3843,6 +3843,36 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         }))
     }
 
+    /// The address's risk row and its validation `forced_until`, in one
+    /// round trip. Deadlines are returned unfiltered; callers compare them
+    /// with the current time.
+    pub(crate) fn get_submit_risk(
+        &self,
+        address: &str,
+    ) -> Result<(Option<AddressRiskState>, Option<SystemTime>)> {
+        let row = self.conn().query_one(
+            "SELECT r.address, r.strikes, r.strike_window_until, r.last_reason, r.last_event_at,
+                    r.quarantined_until, r.force_verify_until, v.forced_until
+             FROM (SELECT $1::text AS address) AS q
+             LEFT JOIN address_risk r ON r.address = q.address
+             LEFT JOIN validation_address_states v ON v.address = q.address",
+            &[&address],
+        )?;
+        let state = row
+            .get::<_, Option<String>>(0)
+            .map(|address| AddressRiskState {
+                address,
+                strikes: row.get::<_, Option<i64>>(1).unwrap_or(0).max(0) as u64,
+                strike_window_until: row.get::<_, Option<i64>>(2).map(from_unix),
+                last_reason: row.get::<_, Option<String>>(3),
+                last_event_at: row.get::<_, Option<i64>>(4).map(from_unix),
+                quarantined_until: row.get::<_, Option<i64>>(5).map(from_unix),
+                force_verify_until: row.get::<_, Option<i64>>(6).map(from_unix),
+            });
+        let validation_forced_until = row.get::<_, Option<i64>>(7).map(from_unix);
+        Ok((state, validation_forced_until))
+    }
+
     pub fn should_force_verify_address(
         &self,
         address: &str,
