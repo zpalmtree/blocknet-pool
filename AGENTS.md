@@ -15,6 +15,7 @@
 ## Deployment
 
 - Use `./scripts/deploy_bntpool.sh` for normal production deploys to the `bntpool` SSH alias. Keep that alias pointed at the current primary production host.
+- Use `bash scripts/provision_bntpool_hardening.sh --nginx-site-only` for nginx site routing changes. It uploads only the site config, validates it, rolls back on failure, and gracefully reloads nginx without restarting pool services.
 - Use `./scripts/provision_bntpool_monitoring.sh` when monitoring stack assets or on-host monitoring package config changes need to be installed on the current primary production host.
 - Use `./scripts/deploy_cloudflare_monitor_worker.sh` for the external Cloudflare public probe. Do not hand-run `wrangler` with copied secrets when the script can do it repeatably.
 - Use `./scripts/build_blocknet_daemon.sh` when you need a fresh daemon binary for the current primary production host without compiling on the live server.

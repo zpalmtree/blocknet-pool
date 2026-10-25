@@ -11,7 +11,10 @@ Apply the host hardening baseline on the current primary pool host. Idempotent.
     change anything root or the deploy user later executes or loads
 
 Usage:
-  scripts/provision_bntpool_hardening.sh
+  scripts/provision_bntpool_hardening.sh [--nginx-site-only]
+
+--nginx-site-only uploads and validates just the nginx site config, then
+gracefully reloads nginx. It does not provision ownership, backups or services.
 
 Environment overrides:
   BNTPOOL_HOST                SSH host alias (default: bntpool)
@@ -25,6 +28,14 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
+nginx_site_only=0
+case "${1:-}" in
+  "") ;;
+  --nginx-site-only) nginx_site_only=1 ;;
+  *) usage >&2; exit 2 ;;
+esac
+if (( $# > 1 )); then usage >&2; exit 2; fi
+
 host="${BNTPOOL_HOST:-bntpool}"
 remote_dir="${BNTPOOL_REMOTE_DIR:-/opt/blocknet/blocknet-pool}"
 allow_retired_host="${BNTPOOL_ALLOW_RETIRED_HOST:-0}"
@@ -37,6 +48,35 @@ case "${host}" in
     fi
     ;;
 esac
+
+if (( nginx_site_only )); then
+  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  echo "==> uploading nginx site config to ${host}"
+  rsync -a --protect-args "${script_dir}/../deploy/nginx/bntpool.com.conf" "${host}:${remote_dir}/deploy/nginx/bntpool.com.conf"
+  ssh "${host}" "bash -s -- '${remote_dir}'" <<'REMOTE'
+set -euo pipefail
+site=/etc/nginx/sites-available/bntpool.com
+backup=$(sudo mktemp /etc/nginx/.bntpool-site.XXXXXX)
+sudo cp -a "$site" "$backup"
+rollback() {
+  trap - ERR
+  sudo cp -a "$backup" "$site"
+  sudo nginx -t && sudo systemctl reload nginx
+  sudo rm -f "$backup"
+  echo 'nginx site deployment failed; restored the previous config' >&2
+  exit 1
+}
+trap rollback ERR
+sudo install -m 0644 "$1/deploy/nginx/bntpool.com.conf" "$site"
+sudo nginx -t
+sudo systemctl reload nginx
+sudo systemctl is-active --quiet nginx
+trap - ERR
+sudo rm -f "$backup"
+REMOTE
+  echo "==> nginx site deployed; pool services were not restarted"
+  exit 0
+fi
 
 echo "==> enforcing ownership on ${host}"
 ssh "${host}" "set -euo pipefail; \
