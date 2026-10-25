@@ -5014,6 +5014,22 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(())
     }
 
+    /// True when the ledger already attributes `tx_hash` to a completed or
+    /// in-flight payout, so a wallet send with that txid must not be adopted
+    /// for a different pending batch.
+    pub(crate) fn is_payout_tx_hash_recorded(&self, tx_hash: &str) -> Result<bool> {
+        let tx_hash = tx_hash.trim();
+        if tx_hash.is_empty() {
+            return Ok(false);
+        }
+        let row = self.conn().query_one(
+            "SELECT EXISTS(SELECT 1 FROM payouts WHERE tx_hash = $1)
+                 OR EXISTS(SELECT 1 FROM pending_payouts WHERE tx_hash = $1)",
+            &[&tx_hash],
+        )?;
+        Ok(row.get::<_, bool>(0))
+    }
+
     pub fn get_pending_payouts(&self) -> Result<Vec<PendingPayout>> {
         let rows = self.conn().query(
             "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at, batch_id
