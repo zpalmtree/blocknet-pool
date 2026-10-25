@@ -1,6 +1,8 @@
+import { t, localizePath } from './i18n';
 import { Fragment, type MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 
 import { createApiClient } from './api/client';
+import { LanguageControl, LanguageOffer } from './components/LanguageControl';
 import { API_KEY_STORAGE_KEY, LAST_MINER_LOOKUP_KEY } from './lib/storage';
 import { applyTheme, getStoredTheme, setStoredTheme, type ThemeMode } from './lib/theme';
 import { pathForRoute, routeFromPathname, titleForRoute } from './lib/routes';
@@ -16,14 +18,14 @@ import { StatsPage } from './pages/StatsPage';
 import type { InfoResponse, Route } from './types';
 
 const NAV_ITEMS: { route: Route; label: string }[] = [
-  { route: 'dashboard', label: 'Dashboard' },
-  { route: 'start', label: 'Get Started' },
-  { route: 'blocks', label: 'Blocks' },
-  { route: 'payouts', label: 'Payouts' },
-  { route: 'stats', label: 'My Stats' },
-  { route: 'status', label: 'Status' },
-  { route: 'checkpoints', label: 'Checkpoints' },
-  { route: 'admin', label: 'Admin' },
+  { route: 'dashboard', label: t("m001") },
+  { route: 'start', label: t("m002") },
+  { route: 'blocks', label: t("m003") },
+  { route: 'payouts', label: t("m004") },
+  { route: 'stats', label: t("m005") },
+  { route: 'status', label: t("m006") },
+  { route: 'checkpoints', label: t("m007") },
+  { route: 'admin', label: t("m008") },
 ];
 
 export function App() {
@@ -39,7 +41,7 @@ export function App() {
 
   const showError = useCallback((msg: string) => {
     if (!msg) return;
-    setErrorMsg(msg);
+    setErrorMsg(msg === 'network error' ? t('networkError') : msg === 'Temporarily busy; waiting before retrying' ? t('busyError') : msg);
   }, []);
 
   useEffect(() => {
@@ -134,7 +136,7 @@ export function App() {
 
   const navigateToRoute = useCallback((nextRoute: Route) => {
     const nextPath = pathForRoute(nextRoute);
-    if (window.location.pathname !== nextPath) {
+    if (window.location.pathname + window.location.search !== nextPath) {
       window.history.pushState({}, '', nextPath);
     }
     setRoute(nextRoute);
@@ -198,6 +200,7 @@ export function App() {
 
   return (
     <>
+      <LanguageOffer />
       <nav className={mobileNavOpen ? 'is-open' : ''}>
         <a
           href={pathForRoute('dashboard')}
@@ -206,13 +209,13 @@ export function App() {
           style={{ textDecoration: 'none' }}
           onClick={(event) => onNavLinkClick(event, 'dashboard')}
         >
-          {poolInfo?.pool_name || 'Blocknet Pool'}
+          {poolInfo?.pool_name || t("m009")}
         </a>
         <div id="site-nav-links" className="nav-links">
           {NAV_ITEMS.map((item) => (
             <Fragment key={item.route}>
               {/* The blog is static pages served by the API, so it's a plain link before Admin. */}
-              {item.route === 'admin' ? <a href="/blog/">Blog</a> : null}
+              {item.route === 'admin' ? <a href={localizePath("/blog/")}>{t("m010")}</a> : null}
               <a
                 href={pathForRoute(item.route)}
                 data-nav={item.route}
@@ -225,12 +228,11 @@ export function App() {
           ))}
         </div>
         <div className="nav-actions">
-          {route === 'admin' && apiKey ? (
-            showNavKeyInput ? (
-              <div className="nav-key-input">
+          <LanguageControl />
+          {route === 'admin' && apiKey ? (showNavKeyInput ? (<div className="nav-key-input">
                 <input
                   type="password"
-                  placeholder="API key"
+                  placeholder={t("m011")}
                   value={apiKeyInput}
                   onChange={(e) => setApiKeyInput(e.target.value)}
                   onKeyDown={(e) => {
@@ -248,43 +250,33 @@ export function App() {
                     onSaveApiKey();
                     setShowNavKeyInput(false);
                   }}
-                >
-                  Save
-                </button>
+                >{t("m012")}</button>
                 <button
                   className="btn btn-secondary btn-xs"
                   onClick={() => {
                     onClearApiKey();
                     setShowNavKeyInput(false);
                   }}
-                >
-                  Clear
-                </button>
+                >{t("m013")}</button>
                 <button
                   className="btn btn-secondary btn-xs"
                   onClick={() => setShowNavKeyInput(false)}
-                >
-                  Cancel
-                </button>
-              </div>
-            ) : (
-              <button
+                >{t("m014")}</button>
+              </div>) : (<button
                 type="button"
                 className="nav-key-badge"
                 onClick={() => setShowNavKeyInput(true)}
-                title="Change API key"
+                title={t("m015")}
               >
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                   <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                 </svg>
-              </button>
-            )
-          ) : null}
+              </button>)) : null}
           <button
             type="button"
             className="theme-toggle"
-            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+            aria-label={t("m016", [theme === 'dark' ? t('light') : t('dark')])}
             aria-pressed={theme === 'dark'}
             onClick={onToggleTheme}
           >
@@ -302,12 +294,12 @@ export function App() {
               </span>
               <span className="theme-toggle-thumb" />
             </span>
-            <span className="sr-only">{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
+            <span className="sr-only">{theme === 'dark' ? t("m017") : t("m018")}</span>
           </button>
           <button
             type="button"
             className={`nav-toggle${mobileNavOpen ? ' is-open' : ''}`}
-            aria-label="Toggle navigation menu"
+            aria-label={t("m019")}
             aria-expanded={mobileNavOpen}
             aria-controls="site-nav-links"
             onClick={() => setMobileNavOpen((open) => !open)}

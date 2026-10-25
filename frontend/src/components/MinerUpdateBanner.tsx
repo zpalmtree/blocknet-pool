@@ -1,3 +1,4 @@
+import { t, tx } from '../i18n';
 import type { MinerResponse } from '../types';
 
 const SEINE_RELEASES_URL = 'https://github.com/zpalmtree/seine/releases';
@@ -16,20 +17,13 @@ export function MinerUpdateBanner({ miner }: { miner: MinerResponse | null }) {
         <path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5" />
       </svg>
       <div className="miner-update-banner__copy">
-        <span className="miner-update-banner__eyebrow">{outdated ? 'Miner update available' : 'Check your miner version'}</span>
-        <h3 id="miner-update-title">seine {version} is available</h3>
-        <p>
-          {outdated > 0 && `${outdated} ${outdated === 1 ? 'worker is' : 'workers are'} running an older version. `}
-          {unknown > 0 && `${unknown} ${unknown === 1 ? 'worker has' : 'workers have'} an unknown version. `}
-          Newer releases may improve your hashrate.{' '}
-          {outdated ? 'Update to the latest release.' : 'Check your workers against the latest release.'}
-        </p>
+        <span className="miner-update-banner__eyebrow">{outdated ? t("m579") : t("m580")}</span>
+        <h3 id="miner-update-title">{tx("m581", [<bdi dir="ltr">{version}</bdi>])}</h3>
+        <p>{tx("m586", [outdated > 0 && t('m607', [outdated]), unknown > 0 && t('m608', [unknown]), outdated ? t("m584") : t("m585")])}</p>
       </div>
       <div className="miner-update-banner__actions">
-        <a className="btn btn-primary" href={SEINE_RELEASES_URL} target="_blank" rel="noopener noreferrer">
-          Download seine <span aria-hidden="true">↗</span>
-        </a>
-        <a className="miner-update-banner__workers" href="#miner-workers">Review workers <span aria-hidden="true">↓</span></a>
+        <a className="btn btn-primary" href={SEINE_RELEASES_URL} target="_blank" rel="noopener noreferrer">{tx("m587", [<span aria-hidden="true">↗</span>])}</a>
+        <a className="miner-update-banner__workers" href="#miner-workers">{tx("m588", [<span aria-hidden="true">↓</span>])}</a>
       </div>
     </section>
   );

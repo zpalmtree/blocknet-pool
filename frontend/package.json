@@ -6,9 +6,11 @@
   "scripts": {
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "dev": "vite",
-    "build": "tsc -p tsconfig.json --noEmit && vite build && node scripts/build-blog.mjs",
+    "build": "node scripts/check-i18n.mjs && tsc -p tsconfig.json --noEmit && vite build && node scripts/build-blog.mjs",
     "preview": "vite preview",
-    "blog:check": "node scripts/check-blog.mjs"
+    "blog:check": "node scripts/check-blog.mjs",
+    "showcase:languages": "vite --config showcases/pool-languages/vite.config.ts",
+    "i18n:check": "node scripts/check-i18n.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

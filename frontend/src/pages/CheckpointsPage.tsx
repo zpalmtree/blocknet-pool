@@ -1,3 +1,4 @@
+import { locale, t, tx } from '../i18n';
 import { useCallback, useEffect, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
@@ -40,7 +41,7 @@ export function CheckpointsPage({ api, liveTick }: CheckpointsPageProps) {
   const available = Boolean(checkpoints?.available);
   const checkpointUrl = checkpoints?.url || `${window.location.origin}/checkpoints.dat`;
   const updatedLabel = checkpoints?.updated_at ? timeAgo(checkpoints.updated_at) : '-';
-  const heightLabel = checkpoints?.latest_height != null ? checkpoints.latest_height.toLocaleString() : '-';
+  const heightLabel = checkpoints?.latest_height != null ? checkpoints.latest_height.toLocaleString(locale) : '-';
   const sha256 = checkpoints?.sha256 || '';
   const curlCommand = `curl -L ${checkpointUrl} -o blocknet-data-mainnet/checkpoints.dat`;
   const verifyCommand = 'sha256sum blocknet-data-mainnet/checkpoints.dat';
@@ -54,31 +55,27 @@ export function CheckpointsPage({ api, liveTick }: CheckpointsPageProps) {
   return (
     <div id="page-checkpoints">
       <div className="page-header">
-        <span className="page-kicker">Chain Bootstrap</span>
-        <h1>Blocknet checkpoints</h1>
-        <p className="page-intro">
-          Pool daemon checkpoints for fast initial sync and trusted chain pinning.
-        </p>
+        <span className="page-kicker">{t("m379")}</span>
+        <h1>{t("m380")}</h1>
+        <p className="page-intro">{t("m381")}</p>
       </div>
 
       <div className="card checkpoint-hero">
         <div className="checkpoint-facts">
           <div className="checkpoint-fact">
-            <span className="checkpoint-fact-label">Latest height</span>
+            <span className="checkpoint-fact-label">{t("m382")}</span>
             <span className="checkpoint-fact-value mono">{heightLabel}</span>
           </div>
           <div className="checkpoint-fact">
-            <span className="checkpoint-fact-label">Updated</span>
+            <span className="checkpoint-fact-label">{t("m383")}</span>
             <span className="checkpoint-fact-value mono" title={timestampTitle(checkpoints?.updated_at)}>
               {updatedLabel}
             </span>
           </div>
         </div>
-        {!available && <p className="checkpoint-unavailable">Checkpoint file is currently unavailable.</p>}
+        {!available && <p className="checkpoint-unavailable">{t("m384")}</p>}
         <div className="checkpoint-actions">
-          <a className="btn btn-primary" href="/checkpoints.dat" download>
-            Download checkpoints.dat
-          </a>
+          <a className="btn btn-primary" href="/checkpoints.dat" download>{t("m385")}</a>
           <div className="copy-field">
             <a className="copy-field-value mono" href="/checkpoints.dat" title={checkpointUrl}>
               {checkpointUrl}
@@ -88,7 +85,7 @@ export function CheckpointsPage({ api, liveTick }: CheckpointsPageProps) {
               type="button"
               onClick={() => copyToClipboard(checkpointUrl, 'url')}
             >
-              {copiedKey === 'url' ? 'Copied' : 'Copy URL'}
+              {copiedKey === 'url' ? t("m386") : t("m387")}
             </button>
           </div>
         </div>
@@ -97,22 +94,18 @@ export function CheckpointsPage({ api, liveTick }: CheckpointsPageProps) {
       <div className="card section checkpoint-usage">
         <div className="section-header">
           <div>
-            <h3>Using checkpoints</h3>
-            <p className="section-lead">
-              Blocknet loads <span className="mono">checkpoints.dat</span> from the daemon data directory. The hashes
-              pin known block heights while a node catches up, so initial sync can skip expensive verification up to the
-              latest matching checkpoint.
-            </p>
+            <h3>{t("m388")}</h3>
+            <p className="section-lead">{tx("m389", [<span className="mono">checkpoints.dat</span>])}</p>
           </div>
         </div>
         <div className="checkpoint-stack">
           <div className="checkpoint-use-step">
-            <h4>Download manually</h4>
-            <p>Save the file as <span className="mono">checkpoints.dat</span> inside the data directory used by <span className="mono">--data</span>.</p>
+            <h4>{t("m390")}</h4>
+            <p>{tx("m391", [<span className="mono">checkpoints.dat</span>, <span className="mono">--data</span>])}</p>
             <div className="checkpoint-command-row">
               <pre className="config-block">{curlCommand}</pre>
               <button className="copy-btn" type="button" onClick={() => copyToClipboard(curlCommand, 'curl')}>
-                {copiedKey === 'curl' ? 'Copied' : 'Copy'}
+                {copiedKey === 'curl' ? t("m386") : t("m392")}
               </button>
             </div>
           </div>
@@ -122,36 +115,32 @@ export function CheckpointsPage({ api, liveTick }: CheckpointsPageProps) {
       <div className="card section checkpoint-integrity">
         <div className="section-header">
           <div>
-            <h3>Verify integrity</h3>
-            <p className="section-lead">
-              Confirm your download matches the checksum published by the pool before trusting it.
-            </p>
+            <h3>{t("m393")}</h3>
+            <p className="section-lead">{t("m394")}</p>
           </div>
         </div>
         <div className="checkpoint-stack">
           <div className="checkpoint-use-step">
-            <h4>Published SHA-256</h4>
-            <p>The expected checksum for the current file.</p>
+            <h4>{t("m395")}</h4>
+            <p>{t("m396")}</p>
             <div className="copy-field copy-field--block">
               <span className="copy-field-value mono">{sha256 || '-'}</span>
-              {sha256 && (
-                <button
+              {sha256 && (<button
                   className={`copy-field-btn${copiedKey === 'sha' ? ' is-copied' : ''}`}
                   type="button"
                   onClick={() => copyToClipboard(sha256, 'sha')}
                 >
-                  {copiedKey === 'sha' ? 'Copied' : 'Copy'}
-                </button>
-              )}
+                  {copiedKey === 'sha' ? t("m386") : t("m392")}
+                </button>)}
             </div>
           </div>
           <div className="checkpoint-use-step">
-            <h4>Check your copy</h4>
-            <p>Run this from the folder you ran the download command in, then compare the output against the hash above.</p>
+            <h4>{t("m397")}</h4>
+            <p>{t("m398")}</p>
             <div className="checkpoint-command-row">
               <pre className="config-block">{verifyCommand}</pre>
               <button className="copy-btn" type="button" onClick={() => copyToClipboard(verifyCommand, 'verify')}>
-                {copiedKey === 'verify' ? 'Copied' : 'Copy'}
+                {copiedKey === 'verify' ? t("m386") : t("m392")}
               </button>
             </div>
           </div>

@@ -1,15 +1,16 @@
+import { t, localizePath } from '../i18n';
 import type { Route } from '../types';
 
 const ROUTES = {
-  dashboard: ['/', 'Blocknet Mining Pool'],
-  start: ['/start', 'Mine Blocknet With Seine'],
-  checkpoints: ['/checkpoints', 'Blocknet Checkpoints'],
-  luck: ['/luck', 'Blocknet Pool Luck'],
-  blocks: ['/blocks', 'Recent Blocknet Blocks'],
-  payouts: ['/payouts', 'Blocknet Pool Payouts'],
-  stats: ['/stats', 'Blocknet Miner Stats'],
-  status: ['/status', 'Blocknet Pool Status'],
-  admin: ['/admin', 'Pool Admin Dashboard'],
+  dashboard: ['/', 'm399'],
+  start: ['/start', 'm611'],
+  checkpoints: ['/checkpoints', 'm612'],
+  luck: ['/luck', 'm613'],
+  blocks: ['/blocks', 'm614'],
+  payouts: ['/payouts', 'm615'],
+  stats: ['/stats', 'm616'],
+  status: ['/status', 'm617'],
+  admin: ['/admin', 'm618'],
 } as const satisfies Record<Route, readonly [string, string]>;
 
 const ROUTES_BY_PATH = Object.fromEntries(
@@ -21,9 +22,9 @@ export function routeFromPathname(pathname: string): Route {
 }
 
 export function pathForRoute(route: Route): string {
-  return ROUTES[route][0];
+  return localizePath(ROUTES[route][0]);
 }
 
 export function titleForRoute(route: Route): string {
-  return ROUTES[route][1];
+  return t(ROUTES[route][1]);
 }

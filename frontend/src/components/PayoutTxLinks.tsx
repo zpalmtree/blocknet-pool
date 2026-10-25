@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -44,30 +45,25 @@ export function PayoutTxLinks({ hashes }: { hashes: string[] }) {
           ))}
           {hiddenCount > 0 ? <span className="payout-tx-links__more">{` +${hiddenCount}`}</span> : null}
         </span>
-        {hiddenCount > 0 ? (
-          <button className="payout-tx-links__toggle" type="button" onClick={() => setShowDialog(true)}>
-            {`Show all ${hashes.length}`}
-          </button>
-        ) : null}
+        {hiddenCount > 0 ? (<button className="payout-tx-links__toggle" type="button" onClick={() => setShowDialog(true)}>
+            {t("m593", [hashes.length])}
+          </button>) : null}
       </span>
-      {showDialog
-        ? createPortal(
+      {showDialog ? createPortal(
             <div className="payout-tx-dialog-backdrop" role="presentation" onClick={() => setShowDialog(false)}>
               <div
                 className="payout-tx-dialog"
                 role="dialog"
                 aria-modal="true"
-                aria-label={`Payout transaction hashes (${hashes.length})`}
+                aria-label={t("m594", [hashes.length])}
                 onClick={(event) => event.stopPropagation()}
               >
                 <div className="payout-tx-dialog__header">
                   <div>
-                    <div className="payout-tx-dialog__title">Payout Transactions</div>
-                    <div className="payout-tx-dialog__meta">{`${hashes.length} transaction hashes`}</div>
+                    <div className="payout-tx-dialog__title">{t("m595")}</div>
+                    <div className="payout-tx-dialog__meta">{t("m596", [hashes.length])}</div>
                   </div>
-                  <button className="payout-tx-dialog__close" type="button" onClick={() => setShowDialog(false)}>
-                    Close
-                  </button>
+                  <button className="payout-tx-dialog__close" type="button" onClick={() => setShowDialog(false)}>{t("m597")}</button>
                 </div>
                 <div className="payout-tx-dialog__list">
                   {hashes.map((h) => (
@@ -79,8 +75,7 @@ export function PayoutTxLinks({ hashes }: { hashes: string[] }) {
               </div>
             </div>,
             document.body
-          )
-        : null}
+          ) : null}
     </>
   );
 }

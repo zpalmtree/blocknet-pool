@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 interface PagerProps {
   offset: number;
   limit: number;
@@ -12,14 +13,10 @@ export function Pager({ offset, limit, total, onPrev, onNext }: PagerProps) {
 
   return (
     <div className="pager">
-      <span>{total > 0 ? `${start}-${end} of ${total}` : 'No results'}</span>
+      <span>{total > 0 ? t("m589", [start, end, total]) : t("m590")}</span>
       <div>
-        <button disabled={offset === 0} onClick={onPrev}>
-          Prev
-        </button>{' '}
-        <button disabled={offset + limit >= total} onClick={onNext}>
-          Next
-        </button>
+        <button disabled={offset === 0} onClick={onPrev}>{t("m591")}</button>{' '}
+        <button disabled={offset + limit >= total} onClick={onNext}>{t("m592")}</button>
       </div>
     </div>
   );

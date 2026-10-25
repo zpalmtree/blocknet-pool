@@ -1,0 +1,28 @@
+{
+  "frontend_tests": {
+    "passed": 8,
+    "failed": 0
+  },
+  "production_build": "passed; 294 messages, 20 locales; 220 blog pages",
+  "bundle_bytes": 648416,
+  "bundle_sha256": "8af13af133d749e4ae0b9dc40996b4f0098f86865f71ee4cc52f31154591e42e",
+  "browser": "Configured Windows Playwright MCP",
+  "locale_sweep": "All 20 locales: translated heading, fixture API data, no page overflow or overlapping desktop navigation at 1281px",
+  "final_copy_adjustments_rechecked": [
+    "ar",
+    "pl",
+    "zh-Hant"
+  ],
+  "captures": "Desktop 1440x1000 and mobile 390x844; all 20 languages, all 8 public routes and relevant states",
+  "interactions": [
+    "Language offer accepts and remembers selection",
+    "Keep English persists across reload",
+    "Language menu preserves query and hash",
+    "Outside click and Escape close menu; Escape returns focus",
+    "SPA navigation and blog link preserve language",
+    "Mining command unchanged in Spanish, Arabic and Ukrainian",
+    "Miner version column replaces old update badges"
+  ],
+  "translated_blog_links_checked": 209,
+  "final_bundle_console_errors": 0
+}

@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useCallback, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
@@ -25,52 +26,40 @@ export function BlocksPage({ api, liveTick }: BlocksPageProps) {
   return (
     <div id="page-blocks">
       <div className="page-header">
-        <span className="page-kicker">Block Discovery</span>
-        <h1>Recently found Blocknet blocks</h1>
-        <p className="page-intro">
-          Browse confirmed, pending, and orphaned pool blocks with reward, round effort, and elapsed round time for
-          each Blocknet block.
-        </p>
+        <span className="page-kicker">{t("m368")}</span>
+        <h1>{t("m369")}</h1>
+        <p className="page-intro">{t("m370")}</p>
       </div>
       <div className="filter-bar">
         <select value={filter} onChange={(e) => setFilter(e.target.value)}>
-          <option value="">All Status</option>
-          <option value="confirmed">Confirmed</option>
-          <option value="pending">Pending</option>
-          <option value="orphaned">Orphaned</option>
+          <option value="">{t("m371")}</option>
+          <option value="confirmed">{t("m372")}</option>
+          <option value="pending">{t("m143")}</option>
+          <option value="orphaned">{t("m109")}</option>
         </select>
-        <button className="btn btn-primary" onClick={() => setPager((p) => ({ ...p, offset: 0 }))}>
-          Filter
-        </button>
+        <button className="btn btn-primary" onClick={() => setPager((p) => ({ ...p, offset: 0 }))}>{t("m373")}</button>
       </div>
       <div className="card table-scroll">
         <table>
           <thead>
             <tr>
-              <th>Height</th>
-              <th>Reward</th>
-              <th>Effort</th>
-              <th>Round Time</th>
-              <th>Status</th>
-              <th>Time</th>
+              <th>{t("m374")}</th>
+              <th>{t("m100")}</th>
+              <th>{t("m375")}</th>
+              <th>{t("m376")}</th>
+              <th>{t("m006")}</th>
+              <th>{t("m377")}</th>
             </tr>
           </thead>
           <tbody>
-            {!items.length ? (
-              <EmptyTableRow colSpan={6}>No blocks</EmptyTableRow>
-            ) : (
-              items.map((b) => (
+            {!items.length ? (<EmptyTableRow colSpan={6}>{t("m378")}</EmptyTableRow>) : (items.map((b) => (
                 <tr key={`${b.height}-${b.hash}`}>
                   <td>
                     <ExplorerLink kind="block" value={b.hash}>{b.height}</ExplorerLink>
                   </td>
                   <td>{formatCoins(b.reward)}</td>
                   <td>
-                    {b.effort_pct == null ? (
-                      '-'
-                    ) : (
-                      <span className={`round-chip ${roundToneClass(b.effort_pct)}`}>{formatPct(b.effort_pct)}</span>
-                    )}
+                    {b.effort_pct == null ? ('-') : (<span className={`round-chip ${roundToneClass(b.effort_pct)}`}>{formatPct(b.effort_pct)}</span>)}
                   </td>
                   <td>{b.duration_seconds == null ? '-' : fmtSeconds(b.duration_seconds)}</td>
                   <td>
@@ -78,8 +67,7 @@ export function BlocksPage({ api, liveTick }: BlocksPageProps) {
                   </td>
                   <td title={timestampTitle(b.timestamp)}>{timeAgo(b.timestamp)}</td>
                 </tr>
-              ))
-            )}
+              )))}
           </tbody>
         </table>
         <Pager {...pagerProps} />

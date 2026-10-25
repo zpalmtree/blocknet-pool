@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useLayoutEffect, useRef } from 'react';
 
 import { formatChartTick, humanRate, rangeToDurationMs, smoothChartPoints, toUnixMs } from '../lib/format';
@@ -53,7 +54,7 @@ function drawChartOn(canvas: HTMLCanvasElement, data: HashratePoint[], range: Ra
     ctx.fillStyle = axisColor;
     ctx.font = '14px Manrope,sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('No data yet', W / 2, H / 2);
+    ctx.fillText(t('m606'), W / 2, H / 2);
     return;
   }
 
@@ -185,7 +186,7 @@ export function HashrateChart({ data, range, theme }: { data: HashratePoint[]; r
 
   return (
     <div className="chart-wrap">
-      <canvas ref={ref} />
+      <canvas ref={ref} role="img" aria-label={t('chartDescription')} />
     </div>
   );
 }

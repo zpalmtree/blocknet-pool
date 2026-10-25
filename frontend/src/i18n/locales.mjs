@@ -1,0 +1,23 @@
+// Shared by the pool interface and the static blog.
+export const LOCALES = [
+  { code: 'en', path: null, htmlLang: 'en', ogLocale: 'en_US', short: 'EN', endonym: 'English', dir: 'ltr' },
+  { code: 'id', path: 'id', htmlLang: 'id', ogLocale: 'id_ID', short: 'ID', endonym: 'Bahasa Indonesia', dir: 'ltr' },
+  { code: 'es', path: 'es', htmlLang: 'es', ogLocale: 'es_ES', short: 'ES', endonym: 'Español', dir: 'ltr' },
+  { code: 'de', path: 'de', htmlLang: 'de', ogLocale: 'de_DE', short: 'DE', endonym: 'Deutsch', dir: 'ltr' },
+  { code: 'fr', path: 'fr', htmlLang: 'fr', ogLocale: 'fr_FR', short: 'FR', endonym: 'Français', dir: 'ltr' },
+  { code: 'pt-BR', path: 'pt-br', htmlLang: 'pt-BR', ogLocale: 'pt_BR', short: 'PT', endonym: 'Português (Brasil)', dir: 'ltr' },
+  { code: 'ru', path: 'ru', htmlLang: 'ru', ogLocale: 'ru_RU', short: 'RU', endonym: 'Русский', dir: 'ltr' },
+  { code: 'it', path: 'it', htmlLang: 'it', ogLocale: 'it_IT', short: 'IT', endonym: 'Italiano', dir: 'ltr' },
+  { code: 'pl', path: 'pl', htmlLang: 'pl', ogLocale: 'pl_PL', short: 'PL', endonym: 'Polski', dir: 'ltr' },
+  { code: 'tr', path: 'tr', htmlLang: 'tr', ogLocale: 'tr_TR', short: 'TR', endonym: 'Türkçe', dir: 'ltr' },
+  { code: 'vi', path: 'vi', htmlLang: 'vi', ogLocale: 'vi_VN', short: 'VI', endonym: 'Tiếng Việt', dir: 'ltr' },
+  { code: 'ar', path: 'ar', htmlLang: 'ar', ogLocale: 'ar_AR', short: 'AR', endonym: 'العربية', dir: 'rtl' },
+  { code: 'nl', path: 'nl', htmlLang: 'nl', ogLocale: 'nl_NL', short: 'NL', endonym: 'Nederlands', dir: 'ltr' },
+  { code: 'uk', path: 'uk', htmlLang: 'uk', ogLocale: 'uk_UA', short: 'UK', endonym: 'Українська', dir: 'ltr' },
+  { code: 'el', path: 'el', htmlLang: 'el', ogLocale: 'el_GR', short: 'EL', endonym: 'Ελληνικά', dir: 'ltr' },
+  { code: 'ja', path: 'ja', htmlLang: 'ja', ogLocale: 'ja_JP', short: '日', endonym: '日本語', dir: 'ltr' },
+  { code: 'ko', path: 'ko', htmlLang: 'ko', ogLocale: 'ko_KR', short: '한', endonym: '한국어', dir: 'ltr' },
+  { code: 'th', path: 'th', htmlLang: 'th', ogLocale: 'th_TH', short: 'ไท', endonym: 'ไทย', dir: 'ltr' },
+  { code: 'zh-Hans', path: 'zh-hans', htmlLang: 'zh-Hans', ogLocale: 'zh_CN', short: '简', endonym: '简体中文', dir: 'ltr' },
+  { code: 'zh-Hant', path: 'zh-hant', htmlLang: 'zh-Hant', ogLocale: 'zh_TW', short: '繁', endonym: '繁體中文', dir: 'ltr' },
+];

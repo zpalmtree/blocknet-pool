@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import type { ApiClient } from "../api/client";
@@ -15,22 +16,22 @@ type StatusServiceKey = "public_http" | "api" | "stratum" | "database" | "daemon
 type UptimeRow = StatusResponse["uptime"][number];
 
 const REACHABILITY_SERVICES: { label: string; key: StatusServiceKey }[] = [
-  { label: "Public HTTP", key: "public_http" },
+  { label: t("m541"), key: "public_http" },
   { label: "API", key: "api" },
-  { label: "Stratum", key: "stratum" },
-  { label: "Database", key: "database" },
-  { label: "Daemon", key: "daemon" },
+  { label: t("m402"), key: "stratum" },
+  { label: t("m542"), key: "database" },
+  { label: t("m543"), key: "daemon" },
 ];
 
 const UPTIME_COLUMNS: { label: string; value: (row: UptimeRow) => ReactNode }[] = [
-  { label: "Public HTTP", value: (row) => formatPct(row.public_http_up_pct, 2) },
+  { label: t("m541"), value: (row) => formatPct(row.public_http_up_pct, 2) },
   { label: "API", value: (row) => formatPct(row.api_up_pct, 2) },
-  { label: "Stratum", value: (row) => formatPct(row.stratum_up_pct, 2) },
-  { label: "Pool", value: (row) => formatPct(row.pool_up_pct, 2) },
-  { label: "Database", value: (row) => formatPct(row.database_up_pct, 2) },
-  { label: "Daemon", value: (row) => formatPct(row.daemon_up_pct, 2) },
-  { label: "Local Samples", value: (row) => row.sample_count },
-  { label: "External Samples", value: (row) => row.external_sample_count },
+  { label: t("m402"), value: (row) => formatPct(row.stratum_up_pct, 2) },
+  { label: t("m403"), value: (row) => formatPct(row.pool_up_pct, 2) },
+  { label: t("m542"), value: (row) => formatPct(row.database_up_pct, 2) },
+  { label: t("m543"), value: (row) => formatPct(row.daemon_up_pct, 2) },
+  { label: t("m544"), value: (row) => row.sample_count },
+  { label: t("m545"), value: (row) => row.external_sample_count },
 ];
 
 export function StatusPage({ api, liveTick }: StatusPageProps) {
@@ -58,9 +59,9 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
   const template = status?.template;
   const primaryUptimeLabel = status?.uptime[0]?.label;
   const uptimeLabel = (base: string) => (primaryUptimeLabel ? `${base} (${primaryUptimeLabel})` : base);
-  const poolStateLabel = status ? (status.healthy ? "Healthy" : "Degraded") : "-";
-  const syncStateLabel = !daemon ? "-" : !daemon.reachable ? "Offline" : daemon.syncing ? "Syncing" : "Ready";
-  const templateStateLabel = template?.observed ? (template.fresh ? "Fresh" : "Stale") : "Unknown";
+  const poolStateLabel = status ? (status.healthy ? t('m048') : t('m576')) : "-";
+  const syncStateLabel = !daemon ? "-" : !daemon.reachable ? t('m601') : daemon.syncing ? t('m573') : t('m572');
+  const templateStateLabel = template?.observed ? (template.fresh ? t('m602') : t('m603')) : t('m525');
   const templateAge = template?.age_seconds != null ? fmtSeconds(template.age_seconds) : "-";
   const refreshLagMillis = template?.last_refresh_millis;
   const refreshLagLabel =
@@ -73,45 +74,41 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
   return (
     <div id="page-status">
       <div className="page-header">
-        <span className="page-kicker">Pool Monitoring</span>
-        <h1>Blocknet pool status</h1>
-        <p className="page-intro">
-          Monitor public reachability, API health, Stratum freshness, database
-          reachability, daemon state, and recent incident history from the
-          public status page.
-        </p>
+        <span className="page-kicker">{t("m546")}</span>
+        <h1>{t("m547")}</h1>
+        <p className="page-intro">{t("m548")}</p>
       </div>
 
       <div className="stats-card-group">
-        <div className="stats-card-group-title">Pool Reachability</div>
+        <div className="stats-card-group-title">{t("m549")}</div>
         <div className="stats-card-group-grid stats-grid-dense">
-          <StatCard label="Pool" value={poolStateLabel} />
+          <StatCard label={t("m403")} value={poolStateLabel} />
           {REACHABILITY_SERVICES.map((service) => {
             const health = status?.services[service.key];
-            const value = !health ? "-" : !health.observed ? "Unknown" : health.healthy ? "Online" : "Down";
+            const value = !health ? "-" : !health.observed ? t('m525') : health.healthy ? t('m604') : t('m605');
             return <StatCard key={service.key} label={service.label} value={value} />;
           })}
         </div>
       </div>
 
       <div className="stats-card-group">
-        <div className="stats-card-group-title">Job Template</div>
+        <div className="stats-card-group-title">{t("m550")}</div>
         <div className="stats-card-group-grid stats-grid-dense">
-          <StatCard label="Template Refresh" value={templateStateLabel} />
-          <StatCard label="Refresh Lag" value={refreshLagLabel} mono />
-          <StatCard label="Current Template Age" value={templateAge} mono />
-          <StatCard label="Sync State" value={syncStateLabel} />
-          <StatCard label="Chain Height" value={daemon?.chain_height ?? "-"} mono />
+          <StatCard label={t("m551")} value={templateStateLabel} />
+          <StatCard label={t("m552")} value={refreshLagLabel} mono />
+          <StatCard label={t("m553")} value={templateAge} mono />
+          <StatCard label={t("m554")} value={syncStateLabel} />
+          <StatCard label={t("m340")} value={daemon?.chain_height ?? "-"} mono />
         </div>
       </div>
 
       <div className="stats-card-group">
-        <div className="stats-card-group-title">Sampling</div>
+        <div className="stats-card-group-title">{t("m555")}</div>
         <div className="stats-card-group-grid stats-grid-dense">
-          <StatCard label="API Uptime" value={status ? fmtSeconds(status.pool_uptime_seconds || 0) : "-"} mono />
-          <StatCard label={uptimeLabel("Local Samples")} value={status?.uptime[0]?.sample_count ?? "-"} mono />
+          <StatCard label={t("m556")} value={status ? fmtSeconds(status.pool_uptime_seconds || 0) : "-"} mono />
+          <StatCard label={uptimeLabel(t('m544'))} value={status?.uptime[0]?.sample_count ?? "-"} mono />
           <StatCard
-            label={uptimeLabel("External Samples")}
+            label={uptimeLabel(t('m545'))}
             value={status?.uptime[0]?.external_sample_count ?? "-"}
             mono
           />
@@ -121,36 +118,29 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
       <div className="section">
         <div className="section-header">
           <div>
-            <h2>Historical Uptime</h2>
-            <p className="section-lead">
-              Local samples come from the on-box monitor. External samples come
-              from the Cloudflare public probe.
-            </p>
+            <h2>{t("m557")}</h2>
+            <p className="section-lead">{t("m558")}</p>
           </div>
         </div>
         <div className="card table-scroll">
           <table>
             <thead>
               <tr>
-                <th>Window</th>
+                <th>{t("m103")}</th>
                 {UPTIME_COLUMNS.map((column) => (
                   <th key={column.label}>{column.label}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {!status?.uptime.length ? (
-                <EmptyTableRow colSpan={9}>No status samples yet</EmptyTableRow>
-              ) : (
-                status.uptime.map((row) => (
+              {!status?.uptime.length ? (<EmptyTableRow colSpan={9}>{t("m559")}</EmptyTableRow>) : (status.uptime.map((row) => (
                   <tr key={row.label}>
                     <td>{row.label}</td>
                     {UPTIME_COLUMNS.map((column) => (
                       <td key={column.label}>{column.value(row)}</td>
                     ))}
                   </tr>
-                ))
-              )}
+                )))}
             </tbody>
           </table>
         </div>
@@ -158,25 +148,22 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
 
       <div className="section">
         <div className="section-header">
-          <h2>Incident History</h2>
+          <h2>{t("m560")}</h2>
         </div>
         <div className="card table-scroll">
           <table>
             <thead>
               <tr>
-                <th>Kind</th>
-                <th>Severity</th>
-                <th>Started</th>
-                <th>Duration</th>
-                <th>Status</th>
-                <th>Message</th>
+                <th>{t("m561")}</th>
+                <th>{t("m562")}</th>
+                <th>{t("m356")}</th>
+                <th>{t("m563")}</th>
+                <th>{t("m006")}</th>
+                <th>{t("m358")}</th>
               </tr>
             </thead>
             <tbody>
-              {!status?.incidents.length ? (
-                <EmptyTableRow colSpan={6}>No incidents recorded</EmptyTableRow>
-              ) : (
-                status.incidents.map((incident) => (
+              {!status?.incidents.length ? (<EmptyTableRow colSpan={6}>{t("m564")}</EmptyTableRow>) : (status.incidents.map((incident) => (
                   <tr
                     key={`${incident.id}-${incident.kind}-${incident.started_at}`}
                   >
@@ -192,11 +179,9 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
                       {timeAgo(incident.started_at)}
                     </td>
                     <td>
-                      {incident.duration_seconds != null
-                        ? fmtSeconds(incident.duration_seconds)
-                        : "-"}
+                      {incident.duration_seconds != null ? fmtSeconds(incident.duration_seconds) : "-"}
                     </td>
-                    <td>{incident.ongoing ? "Open" : "Resolved"}</td>
+                    <td>{incident.ongoing ? t("m565") : t("m566")}</td>
                     <td className="status-incident-message-cell">
                       <div
                         className="status-incident-message"
@@ -206,8 +191,7 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
                       </div>
                     </td>
                   </tr>
-                ))
-              )}
+                )))}
             </tbody>
           </table>
         </div>

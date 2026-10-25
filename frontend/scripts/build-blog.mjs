@@ -24,6 +24,7 @@ const jsonLd = (d) => `<script type="application/ld+json">${JSON.stringify(d).re
 const iso = (d) => new Date(d).toISOString().slice(0, 10);
 const nice = (d, lang) => new Intl.DateTimeFormat(lang, { calendar: 'gregory', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }).format(new Date(d));
 const def = (code) => LOCALES.find((l) => l.code === code);
+const poolPath = (path, locale) => locale === 'en' ? path : `${path}?lang=${encodeURIComponent(locale)}`;
 // The API caches these assets for an hour; a new build must bypass older cached bytes.
 const assetUrl = (file) => `/blog/${file}?v=${createHash('sha256').update(readFileSync(new URL(file, BLOG_DIR))).digest('hex').slice(0, 12)}`;
 
@@ -55,7 +56,8 @@ function renderMarkdown(body, locale) {
       },
     },
   });
-  return marked.parse(withCta);
+  return marked.parse(withCta).replace(/href="(\/(?:start|stats|blocks|payouts|luck|status|checkpoints)?)(#[^"]*)?"/g,
+    (_, path, hash = '') => `href="${poolPath(path, locale)}${hash}"`);
 }
 
 function page({ locale, slug = '', title, description, image = OG_IMAGE, ogType = 'website', schema = [], head = '', body }) {
@@ -105,11 +107,11 @@ ${head}${schema.map(jsonLd).join('\n')}
 <body>
 ${offers ? `<script type="application/json" id="blog-lang-offers">${JSON.stringify(offers).replace(/</g, '\\u003c')}</script>\n` : ''}<script src="${assetUrl('lang.js')}"></script>
 <header class="nav"><div class="wrap">
-  <a class="brand" href="/">bntpool.com</a>
+  <a class="brand" href="${poolPath('/', locale)}">bntpool.com</a>
   <nav aria-label="Main">
-    <a class="hide-sm" href="/">${esc(t(locale, 'navDashboard'))}</a>
-    <a class="hide-sm" href="/start">${esc(t(locale, 'navStart'))}</a>
-    <a class="hide-sm" href="/stats">${esc(t(locale, 'navStats'))}</a>
+    <a class="hide-sm" href="${poolPath('/', locale)}">${esc(t(locale, 'navDashboard'))}</a>
+    <a class="hide-sm" href="${poolPath('/start', locale)}">${esc(t(locale, 'navStart'))}</a>
+    <a class="hide-sm" href="${poolPath('/stats', locale)}">${esc(t(locale, 'navStats'))}</a>
     <a href="${blogPath(locale)}">${esc(t(locale, 'navBlog'))}</a>
     <details class="langs"><summary aria-label="${esc(t(locale, 'navLanguage'))}">${l.short}</summary><ul>${langs}</ul></details>
   </nav>
@@ -117,7 +119,7 @@ ${offers ? `<script type="application/json" id="blog-lang-offers">${JSON.stringi
 ${body}
 <footer><div class="wrap">
   <span>bntpool.com · ${esc(t(locale, 'footer'))}</span>
-  <nav aria-label="Footer"><a href="/">${esc(t(locale, 'navDashboard'))}</a><a href="/start">${esc(t(locale, 'navStart'))}</a><a href="${blogPath(locale)}">${esc(t(locale, 'navBlog'))}</a><a href="https://seineminer.com">seine</a><a href="https://blocknetcrypto.com">Blocknet</a></nav>
+  <nav aria-label="Footer"><a href="${poolPath('/', locale)}">${esc(t(locale, 'navDashboard'))}</a><a href="${poolPath('/start', locale)}">${esc(t(locale, 'navStart'))}</a><a href="${blogPath(locale)}">${esc(t(locale, 'navBlog'))}</a><a href="https://seineminer.com">seine</a><a href="https://blocknetcrypto.com">Blocknet</a></nav>
 </div></footer>
 </body>
 </html>
@@ -165,7 +167,7 @@ function postPage(p, bySlug) {
     body: `<main class="wrap">
 <header class="page-head article-head">
   <div class="article-heading">
-  <nav class="crumbs" aria-label="${esc(t(p.locale, 'breadcrumb'))}"><a href="/">bntpool.com</a> / <a href="${blog}">${esc(t(p.locale, 'blogTitle'))}</a></nav>
+  <nav class="crumbs" aria-label="${esc(t(p.locale, 'breadcrumb'))}"><a href="${poolPath('/', p.locale)}">bntpool.com</a> / <a href="${blog}">${esc(t(p.locale, 'blogTitle'))}</a></nav>
   <h1>${esc(p.title)}</h1>
   <p class="lead">${esc(p.description)}</p>
   <div class="meta">${meta.join(' · ')}</div>
@@ -202,7 +204,7 @@ function indexPage(locale, posts) {
     locale, title: t(locale, 'blogMetaTitle'), description: t(locale, 'blogMetaDescription'), schema,
     body: `<main class="wrap">
 <header class="page-head">
-  <nav class="crumbs" aria-label="${esc(t(locale, 'breadcrumb'))}"><a href="/">bntpool.com</a> / ${esc(t(locale, 'blogTitle'))}</nav>
+  <nav class="crumbs" aria-label="${esc(t(locale, 'breadcrumb'))}"><a href="${poolPath('/', locale)}">bntpool.com</a> / ${esc(t(locale, 'blogTitle'))}</nav>
   <h1>${esc(t(locale, 'blogTitle'))}</h1>
   <p class="lead">${esc(t(locale, 'blogSub'))}</p>
 </header>

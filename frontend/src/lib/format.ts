@@ -1,17 +1,26 @@
+import { locale, t } from '../i18n';
 import type { Range, UnixLike } from '../types';
 
-const COIN_FORMATTER = new Intl.NumberFormat('en-US', {
+const relativeTime = new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'short' });
+const rateFormatter = new Intl.NumberFormat(locale, {
+  numberingSystem: 'latn', minimumFractionDigits: 2, maximumFractionDigits: 2,
+});
+
+const COIN_FORMATTER = new Intl.NumberFormat(locale, {
+  numberingSystem: 'latn',
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
 
-const COMPACT_COIN_FORMATTER = new Intl.NumberFormat('en-US', {
+const COMPACT_COIN_FORMATTER = new Intl.NumberFormat(locale, {
+  numberingSystem: 'latn',
   notation: 'compact',
   maximumFractionDigits: 2,
 });
 
 const feeFormatter = (maximumFractionDigits: number) =>
-  new Intl.NumberFormat('en-US', {
+  new Intl.NumberFormat(locale, {
+    numberingSystem: 'latn',
     minimumFractionDigits: 4,
     maximumFractionDigits,
   });
@@ -36,18 +45,18 @@ export function timeAgo(val: UnixLike): string {
   if (diff < 0) diff = 0;
 
   const s = Math.floor(diff / 1000);
-  if (s < 60) return `${s}s ago`;
+  if (s < 60) return relativeTime.format(-s, 'second');
 
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
+  if (m < 60) return relativeTime.format(-m, 'minute');
 
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
+  if (h < 24) return relativeTime.format(-h, 'hour');
 
   const d = Math.floor(h / 24);
-  if (d < 30) return `${d}d ago`;
+  if (d < 30) return relativeTime.format(-d, 'day');
 
-  return `${Math.floor(d / 30)}mo ago`;
+  return relativeTime.format(-Math.floor(d / 30), 'month');
 }
 
 export function timeUntil(val: UnixLike): string {
@@ -55,27 +64,27 @@ export function timeUntil(val: UnixLike): string {
   if (!ms) return '-';
 
   const diff = ms - Date.now();
-  if (Math.abs(diff) < 1000) return 'now';
-  if (diff < 0) return 'expired';
+  if (Math.abs(diff) < 1000) return relativeTime.format(0, 'second');
+  if (diff < 0) return t('expired');
 
   const s = Math.ceil(diff / 1000);
-  if (s < 60) return `in ${s}s`;
+  if (s < 60) return relativeTime.format(s, 'second');
 
   const m = Math.floor(s / 60);
-  if (m < 60) return `in ${m}m`;
+  if (m < 60) return relativeTime.format(m, 'minute');
 
   const h = Math.floor(m / 60);
-  if (h < 24) return `in ${h}h`;
+  if (h < 24) return relativeTime.format(h, 'hour');
 
   const d = Math.floor(h / 24);
-  if (d < 30) return `in ${d}d`;
+  if (d < 30) return relativeTime.format(d, 'day');
 
-  return `in ${Math.floor(d / 30)}mo`;
+  return relativeTime.format(Math.floor(d / 30), 'month');
 }
 
 export function timestampTitle(val: UnixLike): string {
   const ms = toUnixMs(val);
-  return ms ? new Date(ms).toLocaleString() : '';
+  return ms ? new Date(ms).toLocaleString(locale, { calendar: 'gregory' }) : '';
 }
 
 export function humanRate(hps: number | null | undefined): string {
@@ -87,7 +96,7 @@ export function humanRate(hps: number | null | undefined): string {
     v /= 1000;
     i += 1;
   }
-  return `${v.toFixed(2)} ${units[i]}`;
+  return `${rateFormatter.format(v)} ${units[i]}`;
 }
 
 export function formatCoins(sats: number | null | undefined): string {
@@ -116,7 +125,7 @@ export function formatFee(sats: number | null | undefined): string {
 
 export function formatPct(value: number | null | undefined, digits = 1): string {
   if (value == null || !Number.isFinite(value)) return '-';
-  return `${value.toFixed(digits)}%`;
+  return `${new Intl.NumberFormat(locale, { numberingSystem: 'latn', maximumFractionDigits: digits, minimumFractionDigits: digits }).format(value)}%`;
 }
 
 export function ratioPct(numerator: number | null | undefined, denominator: number | null | undefined): number {
@@ -127,10 +136,10 @@ export function ratioPct(numerator: number | null | undefined, denominator: numb
 }
 
 export function effortLabel(effortPct: number | null | undefined): string {
-  if (effortPct == null || !Number.isFinite(effortPct)) return 'loading';
-  if (effortPct >= 200) return 'very overdue';
-  if (effortPct >= 100) return 'overdue';
-  return 'on pace';
+  if (effortPct == null || !Number.isFinite(effortPct)) return t('loading');
+  if (effortPct >= 200) return t('veryOverdue');
+  if (effortPct >= 100) return t('overdue');
+  return t('onPace');
 }
 
 export function roundToneClass(tone: string | number | null | undefined): string {
@@ -211,9 +220,9 @@ export function formatChartTick(ts: number, range: Range, compact: boolean): str
       const mm = String(d.getMinutes()).padStart(2, '0');
       return `${hh}:${mm}`;
     }
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
   }
 
-  if (compact) return `${d.getMonth() + 1}/${d.getDate()}`;
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  if (compact) return d.toLocaleDateString(locale, { calendar: 'gregory', month: 'numeric', day: 'numeric' });
+  return d.toLocaleDateString(locale, { calendar: 'gregory', month: 'short', day: 'numeric' });
 }

@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useCallback } from 'react';
 
 import type { ApiClient } from '../api/client';
@@ -21,29 +22,23 @@ export function LuckPage({ api, liveTick }: LuckPageProps) {
   return (
     <div id="page-luck">
       <div className="page-header">
-        <span className="page-kicker">Round History</span>
-        <h1>Blocknet pool luck history</h1>
-        <p className="page-intro">
-          Compare round effort and duration over time to understand how actual block discovery compares with expected
-          pool luck.
-        </p>
+        <span className="page-kicker">{t("m441")}</span>
+        <h1>{t("m442")}</h1>
+        <p className="page-intro">{t("m443")}</p>
       </div>
       <div className="card table-scroll">
         <table>
           <thead>
             <tr>
-              <th>Block</th>
-              <th>Effort</th>
-              <th>Round Time</th>
-              <th>Status</th>
-              <th>Found</th>
+              <th>{t("m098")}</th>
+              <th>{t("m375")}</th>
+              <th>{t("m376")}</th>
+              <th>{t("m006")}</th>
+              <th>{t("m435")}</th>
             </tr>
           </thead>
           <tbody>
-            {!items.length ? (
-              <EmptyTableRow colSpan={5}>No round history yet</EmptyTableRow>
-            ) : (
-              items.map((row) => (
+            {!items.length ? (<EmptyTableRow colSpan={5}>{t("m436")}</EmptyTableRow>) : (items.map((row) => (
                 <tr key={`${row.block_height}-${row.block_hash}`}>
                   <td>
                     <ExplorerLink kind="block" value={row.block_hash}>{row.block_height}</ExplorerLink>
@@ -57,8 +52,7 @@ export function LuckPage({ api, liveTick }: LuckPageProps) {
                   </td>
                   <td title={timestampTitle(row.timestamp)}>{timeAgo(row.timestamp)}</td>
                 </tr>
-              ))
-            )}
+              )))}
           </tbody>
         </table>
         <Pager {...pagerProps} />

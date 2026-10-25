@@ -1,3 +1,4 @@
+import { locale, t, tx } from '../i18n';
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
@@ -295,7 +296,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const minerOldestShareDate = useMemo(() => {
     if (!minerData) return '-';
     const miningSince = toUnixMs(minerData.mining_since);
-    if (miningSince) return new Date(miningSince).toLocaleDateString();
+    if (miningSince) return new Date(miningSince).toLocaleDateString(locale, { calendar: 'gregory' });
 
     const shares = minerData.shares;
     let oldest = 0;
@@ -304,7 +305,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
       if (!t) continue;
       if (!oldest || t < oldest) oldest = t;
     }
-    return oldest ? new Date(oldest).toLocaleDateString() : '-';
+    return oldest ? new Date(oldest).toLocaleDateString(locale, { calendar: 'gregory' }) : '-';
   }, [minerData]);
 
   const liveBalance = minerBalanceData?.balance;
@@ -326,7 +327,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const recentShares = minerData?.shares ?? [];
   const previewBlocks = livePendingEstimate?.blocks ?? [];
   const verificationHold = minerData?.verification_hold ?? null;
-  const verificationReason = verificationHold?.reason?.trim() || 'share validation issue';
+  const verificationReason = verificationHold?.reason?.trim() || t('m599');
   const verificationPendingProvisional = verificationHold?.validation_pending_provisional ?? 0;
   const verificationStartedAt = toUnixMs(verificationHold?.started_at);
   const verificationOnlyUntil = toUnixMs(verificationHold?.verified_only_until);
@@ -346,13 +347,14 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
 
   return (
     <div id="page-stats">
-      <h2>My Stats</h2>
+      <h2>{t("m005")}</h2>
       <MinerUpdateBanner miner={minerData} />
       <div className="card" style={{ marginBottom: 24 }}>
         <div className="lookup-form" style={{ display: 'flex', gap: 10, marginBottom: 0, flexWrap: 'wrap' }}>
           <input
             type="text"
-            placeholder="Wallet address, @name or $name"
+            dir="ltr"
+            placeholder={t("m486")}
             style={{ flex: 1, minWidth: 200 }}
             value={minerInput}
             onChange={(e) => setMinerInput(e.target.value)}
@@ -367,7 +369,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
             disabled={lookupDisabled || resolving || lookupLoading}
             onClick={() => void loadMinerLookup()}
           >
-            {resolving ? 'Resolving…' : lookupLoading ? 'Loading…' : 'Lookup'}
+            {resolving ? t("m487") : lookupLoading ? t("m094") : t("m488")}
           </button>
           <button
             className="btn btn-secondary"
@@ -383,141 +385,100 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
               setResolvedHandle(null);
               localStorage.removeItem(LAST_MINER_LOOKUP_KEY);
             }}
-          >
-            Clear
-          </button>
-          {resolvedHandle && minerAddress && (
-            <span className="resolved-badge" style={{ alignSelf: 'center', fontSize: '0.85em', color: 'var(--success, #4caf50)' }}>
+          >{t("m013")}</button>
+          {resolvedHandle && minerAddress && (<span className="resolved-badge" style={{ alignSelf: 'center', fontSize: '0.85em', color: 'var(--success, #4caf50)' }}>
               ${resolvedHandle} → {minerAddress.slice(0, 8)}…{minerAddress.slice(-6)}
-            </span>
-          )}
+            </span>)}
         </div>
       </div>
 
-      {showLookupResult && (
-        <div id="lookup-result">
-          {balanceUnavailable && (
-            <div
+      {showLookupResult && (<div id="lookup-result">
+          {balanceUnavailable && (<div
               className="card"
               style={{ marginBottom: 16, background: 'rgba(247, 180, 75, 0.12)', borderColor: 'rgba(247, 180, 75, 0.45)' }}
             >
               <div style={{ color: 'var(--text)', fontSize: 13 }}>
-                {minerBalanceData
-                  ? 'Balance lookups are failing right now, so the values below may be out of date. Your shares and rewards are unaffected; this page retries automatically.'
-                  : 'Balance lookups are failing right now. Your shares and rewards are unaffected; this page retries automatically.'}
+                {minerBalanceData ? t("m489") : t("m490")}
               </div>
-            </div>
-          )}
+            </div>)}
           <div className="stats-card-group" style={{ marginBottom: 16 }}>
-            <div className="stats-card-group-title">Balance</div>
+            <div className="stats-card-group-title">{t("m491")}</div>
             <div className="stats-card-group-grid">
               <StatCard
-                label="Estimated Rewards"
+                label={t("m492")}
                 value={minerBalanceData ? formatCompactCoins(pendingEstimated) : '—'}
-                meta="Your share of unmatured blocks"
+                meta={t("m493")}
                 className="stat-card--flow"
                 title={minerBalanceData ? formatCoins(pendingEstimated) : undefined}
               />
               <StatCard
-                label="Confirmed Rewards"
+                label={t("m494")}
                 value={minerBalanceData ? formatCompactCoins(pendingConfirmed) : '—'}
-                meta="Matured balance awaiting payout"
+                meta={t("m495")}
                 className="stat-card--flow"
                 title={minerBalanceData ? formatCoins(pendingConfirmed) : undefined}
               />
               <StatCard
-                label="Paid Balance"
+                label={t("m496")}
                 value={minerBalanceData ? formatCompactCoins(livePaid) : '—'}
-                meta="Already sent to this address"
+                meta={t("m497")}
                 title={minerBalanceData ? formatCoins(livePaid) : undefined}
               />
             </div>
-            <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)' }}>
-              Estimated Rewards appear after the pool finds a block while your shares are in the payout
-              window — for a new miner this can take a few rounds of mining. Found blocks then mature for
-              several hours of confirmations before moving to Confirmed Rewards and being paid out
-              automatically.
-            </div>
+            <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)' }}>{t("m498")}</div>
           </div>
 
           <div className="stats-card-group" style={{ marginBottom: 24 }}>
-            <div className="stats-card-group-title">Mining</div>
+            <div className="stats-card-group-title">{t("m499")}</div>
             <div className="stats-card-group-grid">
-              <StatCard label="Hashrate" value={humanRate(liveHashrate)} />
-              <StatCard label="Blocks Found" value={minerData ? minerData.blocks_found : '...'} />
-              <StatCard label="Mining Since" value={minerData ? minerOldestShareDate : '...'} />
+              <StatCard label={t("m082")} value={humanRate(liveHashrate)} />
+              <StatCard label={t("m411")} value={minerData ? minerData.blocks_found : '...'} />
+              <StatCard label={t("m500")} value={minerData ? minerOldestShareDate : '...'} />
             </div>
           </div>
 
           <div className="stats-grid" style={{ marginBottom: 24 }}>
-            <StatCard label="Shares Accepted" value={minerData ? minerAccepted : '...'} />
-            <StatCard label="Shares Rejected" value={minerData ? minerRejected : '...'} />
-            <StatCard label="Reject Rate" value={minerData ? formatPct(minerRejectRate) : '...'} />
-            <StatCard label="Avg Difficulty" value={minerData ? minerAvgDiff : '...'} />
+            <StatCard label={t("m501")} value={minerData ? minerAccepted : '...'} />
+            <StatCard label={t("m502")} value={minerData ? minerRejected : '...'} />
+            <StatCard label={t("m503")} value={minerData ? formatPct(minerRejectRate) : '...'} />
+            <StatCard label={t("m504")} value={minerData ? minerAvgDiff : '...'} />
           </div>
 
-          {verificationHold && (
-            <div
+          {verificationHold && (<div
               className="card"
               style={{ marginBottom: 24, background: 'rgba(247, 180, 75, 0.12)', borderColor: 'rgba(247, 180, 75, 0.45)' }}
             >
               <div style={{ color: 'var(--text)', fontSize: 13 }}>
-                {verificationHold.mode === 'quarantined'
-                  ? `Verification hold active. This address is quarantined until ${
-                      timestampTitle(verificationQuarantineUntil) || 'the current hold expires'
-                    }, so new submissions from this address are temporarily blocked.`
-                  : `Verification hold active until ${
-                      timestampTitle(verificationOnlyUntil) || 'the current hold expires'
-                    }. Only fully verified shares count toward unconfirmed estimates and payout while this hold is active.`}
+                {verificationHold.mode === 'quarantined' ? t("m505", [timestampTitle(verificationQuarantineUntil) || t('m600')]) : t("m506", [timestampTitle(verificationOnlyUntil) || t('m600')])}
                 {verificationHold.mode === 'quarantined' &&
                   verificationOnlyUntil &&
-                  verificationOnlyUntil !== verificationQuarantineUntil && (
-                    <> {`Verified-only credit continues until ${timestampTitle(verificationOnlyUntil)} after quarantine ends.`}</>
-                  )}
+                  verificationOnlyUntil !== verificationQuarantineUntil && (<> {t("m507", [timestampTitle(verificationOnlyUntil)])}</>)}
                 {verificationHold.validation_hold_cause === 'provisional_backlog' &&
-                verificationPendingProvisional > 0
-                  ? ` Reason: ${verificationReason}. ${verificationPendingProvisional} provisional share${
-                      verificationPendingProvisional === 1 ? '' : 's'
-                    } are still waiting for full verification.`
-                  : ` Reason: ${verificationReason}.`}
-                {verificationStartedAt && <> {`Started ${timestampTitle(verificationStartedAt)}.`}</>}
-                {' Confirmed balance and completed payouts are unaffected.'}
+                verificationPendingProvisional > 0 ? t('m610', [verificationReason, verificationPendingProvisional]) : t("m509", [verificationReason])}
+                {verificationStartedAt && <> {t("m510", [timestampTitle(verificationStartedAt)])}</>}
+                {t("m511")}
               </div>
-            </div>
-          )}
+            </div>)}
 
-          {minerDetailLoading && (
-            <div className="card" style={{ marginBottom: 24, color: 'var(--muted)', fontSize: 13 }}>
-              Loading worker, payout, and share history...
-            </div>
-          )}
+          {minerDetailLoading && (<div className="card" style={{ marginBottom: 24, color: 'var(--muted)', fontSize: 13 }}>{t("m512")}</div>)}
 
-          {pendingQueued > 0 && payoutEta && payoutLiquidityConstrained && (
-            <div
+          {pendingQueued > 0 && payoutEta && payoutLiquidityConstrained && (<div
               className="card"
               style={{ marginBottom: 24, background: 'rgba(247, 180, 75, 0.12)', borderColor: 'rgba(247, 180, 75, 0.45)' }}
             >
-              <div style={{ color: 'var(--text)', fontSize: 13 }}>
-                Your payout is queued, but pool wallet liquidity is currently tight. Spendable balance:{' '}
-                <span className="mono">{formatCoins(payoutEta.wallet_spendable ?? 0)}</span>. Locked/confirming balance:{' '}
-                <span className="mono">{formatCoins(payoutEta.wallet_pending ?? 0)}</span>. Pool queue:{' '}
-                <span className="mono">{formatCoins(payoutEta.pending_total_amount)}</span>. Those locked funds are
-                already in the pool wallet and should become spendable as blocks mature.
-              </div>
-            </div>
-          )}
+              <div style={{ color: 'var(--text)', fontSize: 13 }}>{tx("m513", [<span className="mono">{formatCoins(payoutEta.wallet_spendable ?? 0)}</span>, <span className="mono">{formatCoins(payoutEta.wallet_pending ?? 0)}</span>, <span className="mono">{formatCoins(payoutEta.pending_total_amount)}</span>])}</div>
+            </div>)}
 
-          {!!previewBlocks.length && (
-            <div className="section">
-              <h2>Estimated From Recent Blocks</h2>
+          {!!previewBlocks.length && (<div className="section">
+              <h2>{t("m514")}</h2>
               <div className="card table-scroll">
                 <table>
                   <thead>
                     <tr>
-                      <th>Height</th>
-                      <th>Estimated Credit</th>
-                      <th>Confirms Left</th>
-                      <th>Time</th>
+                      <th>{t("m374")}</th>
+                      <th>{t("m515")}</th>
+                      <th>{t("m516")}</th>
+                      <th>{t("m377")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -527,11 +488,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                           <ExplorerLink kind="block" value={b.hash || ''}>{b.height}</ExplorerLink>
                         </td>
                         <td title={b.validation_detail || undefined}>
-                          {b.credit_withheld
-                            ? 'Withheld'
-                            : b.validation_state === 'extra_verification'
-                              ? `${formatCoins(b.estimated_credit)} (verified only)`
-                              : formatCoins(b.estimated_credit)}
+                          {b.credit_withheld ? t("m517") : b.validation_state === 'extra_verification' ? t("m518", [formatCoins(b.estimated_credit)]) : formatCoins(b.estimated_credit)}
                         </td>
                         <td>{b.confirmations_remaining}</td>
                         <td title={timestampTitle(b.timestamp)}>{timeAgo(b.timestamp)}</td>
@@ -539,44 +496,37 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                     ))}
                   </tbody>
                 </table>
-                <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)' }}>
-                  Estimate only. These amounts can still move until those blocks confirm or are orphaned.
-                </div>
+                <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)' }}>{t("m519")}</div>
               </div>
-            </div>
-          )}
+            </div>)}
 
           <div className="section">
             <div className="section-header">
-              <h2>Hashrate History</h2>
+              <h2>{t("m520")}</h2>
               <RangeTabs<Range> options={['1h', '24h', '7d', '30d']} value={range} onChange={setRange} />
             </div>
             <HashrateChart data={history} range={range} theme={theme} />
           </div>
 
-          {minerData && (
-            <div className="section">
-              <h2 id="miner-workers" tabIndex={-1}>Workers</h2>
+          {minerData && (<div className="section">
+              <h2 id="miner-workers" tabIndex={-1}>{t("m081")}</h2>
               <div className="card table-scroll">
                 <table>
                   <thead>
                     <tr>
-                      <th>Worker</th>
-                      <th>Miner Version</th>
-                      <th>Hashrate</th>
-                      <th>Accepted</th>
-                      <th>Rejected</th>
-                      <th>Last Share</th>
+                      <th>{t("m521")}</th>
+                      <th>{t("m522")}</th>
+                      <th>{t("m082")}</th>
+                      <th>{t("m083")}</th>
+                      <th>{t("m084")}</th>
+                      <th>{t("m085")}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {!minerData.workers.length ? (
-                      <EmptyTableRow colSpan={6}>No workers</EmptyTableRow>
-                    ) : (
-                      minerData.workers.map((w) => (
+                    {!minerData.workers.length ? (<EmptyTableRow colSpan={6}>{t("m523")}</EmptyTableRow>) : (minerData.workers.map((w) => (
                         <tr key={w.worker}>
-                          <td>{w.worker || 'default'}</td>
-                          <td className="mono">{w.miner_version?.trim() || 'Unknown'}</td>
+                          <td>{w.worker || t("m524")}</td>
+                          <td className="mono">{w.miner_version?.trim() || t("m525")}</td>
                           <td>{humanRate(w.hashrate || 0)}</td>
                           <td>{w.accepted || 0}</td>
                           <td>{w.rejected || 0}</td>
@@ -584,33 +534,27 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                             {timeAgo(w.last_share_at)}
                           </td>
                         </tr>
-                      ))
-                    )}
+                      )))}
                   </tbody>
                 </table>
               </div>
-            </div>
-          )}
+            </div>)}
 
-          {minerData && (
-            <div className="section">
-              <h2>Recent Payouts</h2>
+          {minerData && (<div className="section">
+              <h2>{t("m437")}</h2>
               <div className="card table-scroll">
                 <table>
                   <thead>
                     <tr>
-                      <th>Amount</th>
-                      <th>Fee</th>
-                      <th>Tx</th>
-                      <th>Status</th>
-                      <th>Time</th>
+                      <th>{t("m438")}</th>
+                      <th>{t("m470")}</th>
+                      <th>{t("m526")}</th>
+                      <th>{t("m006")}</th>
+                      <th>{t("m377")}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {!minerData.payouts.length ? (
-                      <EmptyTableRow colSpan={5}>No payouts yet</EmptyTableRow>
-                    ) : (
-                      minerData.payouts.map((p, payoutIndex) => {
+                    {!minerData.payouts.length ? (<EmptyTableRow colSpan={5}>{t("m440")}</EmptyTableRow>) : (minerData.payouts.map((p, payoutIndex) => {
                         const hasTx = Boolean(p.tx_hash.trim());
                         const status = p.confirmed ? 'confirmed' : hasTx ? 'unconfirmed' : 'queued';
                         return (
@@ -618,11 +562,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                             <td>{formatCoins(p.amount)}</td>
                             <td>{formatFee(p.fee || 0)}</td>
                             <td>
-                              {hasTx ? (
-                                <ExplorerLink kind="tx" value={p.tx_hash}>{p.tx_hash}</ExplorerLink>
-                              ) : (
-                                '-'
-                              )}
+                              {hasTx ? (<ExplorerLink kind="tx" value={p.tx_hash}>{p.tx_hash}</ExplorerLink>) : ('-')}
                             </td>
                             <td>
                               <PayoutStatusBadge status={status} />
@@ -630,43 +570,27 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                             <td title={timestampTitle(p.timestamp)}>{timeAgo(p.timestamp)}</td>
                           </tr>
                         );
-                      })
-                    )}
+                      }))}
                   </tbody>
                 </table>
               </div>
-            </div>
-          )}
+            </div>)}
 
           <div className="section">
             <div className="section-header">
-              <h2>Pool Rejects</h2>
+              <h2>{t("m527")}</h2>
               <RangeTabs<RejectionWindowRange> options={['1h', '24h', '7d']} value={rejectionRange} onChange={setRejectionRange} />
             </div>
             <div className="card rejection-card">
               <div className="rejection-overview">
-                <RejectionMetric label="Checked" value={rejectionChecked} />
-                <RejectionMetric label="Rejected" value={rejectionWindow?.rejected ?? 0} />
-                <RejectionMetric label="Reject Rate" value={formatPct(rejectionRatePct)} />
-                <RejectionMetric label="Top Reason" value={topWindowReason?.reason || 'none'} />
+                <RejectionMetric label={t("m528")} value={rejectionChecked} />
+                <RejectionMetric label={t("m084")} value={rejectionWindow?.rejected ?? 0} />
+                <RejectionMetric label={t("m503")} value={formatPct(rejectionRatePct)} />
+                <RejectionMetric label={t("m529")} value={topWindowReason?.reason || t("m530")} />
               </div>
 
-              {!hasWindowRejections ? (
-                <p className="rejection-empty">
-                  No rejects recorded in the selected window. All-time rejects:{' '}
-                  <span className="mono">{totalRejected}</span>
-                  {topTotalReason ? (
-                    <>
-                      {' '}
-                      • most common reason <span className="mono">{topTotalReason.reason}</span>
-                    </>
-                  ) : null}
-                </p>
-              ) : (
-                <div className="rejection-breakdown">
-                  <div className="rejection-note">
-                    Selected window: <span className="mono">{rejectionRange}</span>
-                  </div>
+              {!hasWindowRejections ? (<p className="rejection-empty">{tx("m532", [<span className="mono">{totalRejected}</span>, topTotalReason ? (<>{tx("m531", [<span className="mono">{topTotalReason.reason}</span>])}</>) : null])}</p>) : (<div className="rejection-breakdown">
+                  <div className="rejection-note">{tx("m533", [<span className="mono">{rejectionRange}</span>])}</div>
                   <div className="rejection-list">
                     {(rejectionWindow?.by_reason ?? []).slice(0, 4).map((reason) => {
                       const windowPct =
@@ -694,58 +618,42 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                       );
                     })}
                   </div>
-                  <div className="rejection-note">
-                    All-time rejects: <span className="mono">{totalRejected}</span>
-                    {topTotalReason ? (
-                      <>
-                        {' '}
-                        • all-time top reason <span className="mono">{topTotalReason.reason}</span>
-                      </>
-                    ) : null}
-                  </div>
-                </div>
-              )}
+                  <div className="rejection-note">{tx("m535", [<span className="mono">{totalRejected}</span>, topTotalReason ? (<>{tx("m534", [<span className="mono">{topTotalReason.reason}</span>])}</>) : null])}</div>
+                </div>)}
             </div>
           </div>
 
-          {minerData && (
-            <div className="section">
+          {minerData && (<div className="section">
               <div className="section-header">
-                <h2>Recent Shares</h2>
-                <span className="section-meta">Latest shares</span>
+                <h2>{t("m536")}</h2>
+                <span className="section-meta">{t("m537")}</span>
               </div>
               <div className="card table-scroll">
                 <table>
                   <thead>
                     <tr>
-                      <th>Job</th>
-                      <th>Worker</th>
-                      <th>Difficulty</th>
-                      <th>Status</th>
-                      <th>Time</th>
+                      <th>{t("m538")}</th>
+                      <th>{t("m521")}</th>
+                      <th>{t("m539")}</th>
+                      <th>{t("m006")}</th>
+                      <th>{t("m377")}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {!recentShares.length ? (
-                      <EmptyTableRow colSpan={5}>No shares</EmptyTableRow>
-                    ) : (
-                      recentShares.map((s, idx) => (
+                    {!recentShares.length ? (<EmptyTableRow colSpan={5}>{t("m540")}</EmptyTableRow>) : (recentShares.map((s, idx) => (
                         <tr key={`${s.job_id}-${idx}`}>
                           <td>{s.job_id || ''}</td>
                           <td>{s.worker || ''}</td>
                           <td>{s.difficulty}</td>
-                          <td>{s.status || ''}</td>
+                          <td>{s.status === 'accepted' ? t('m083') : s.status === 'rejected' ? t('m084') : s.status || ''}</td>
                           <td title={timestampTitle(s.created_at)}>{timeAgo(s.created_at)}</td>
                         </tr>
-                      ))
-                    )}
+                      )))}
                   </tbody>
                 </table>
               </div>
-            </div>
-          )}
-        </div>
-      )}
+            </div>)}
+        </div>)}
     </div>
   );
 }

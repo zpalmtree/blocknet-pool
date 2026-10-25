@@ -35,7 +35,7 @@ export function StatCard({
     <div className={className ? `stat-card ${className}` : 'stat-card'} title={title} onClick={onClick} style={style}>
       <div className="label">{label}</div>
       <div className={mono ? 'value mono' : 'value'} id={id} style={valueStyle} title={valueTitle}>
-        {value}
+        {typeof value === 'string' || typeof value === 'number' ? <bdi>{value}</bdi> : value}
       </div>
       {meta != null && <div className="stat-meta" style={metaStyle}>{meta}</div>}
       {children}

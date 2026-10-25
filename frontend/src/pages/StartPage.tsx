@@ -1,3 +1,4 @@
+import { t, tx, localizePath, locale } from '../i18n';
 import { useCallback, useEffect, useState } from 'react';
 
 import { stratumUrl } from '../lib/format';
@@ -10,7 +11,8 @@ interface StartPageProps {
 export function StartPage({ poolInfo }: StartPageProps) {
   const [copiedKey, setCopiedKey] = useState('');
   const poolFeePct = poolInfo?.pool_fee_pct;
-  const poolFeeLabel = poolFeePct != null && poolFeePct > 0 ? `${poolFeePct}%` : '0% (no fee)';
+  const poolFeeLabel = poolFeePct != null && poolFeePct > 0
+    ? `${poolFeePct.toLocaleString(locale, { maximumFractionDigits: 20 })}%` : t('m598');
   const poolUrl = stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url);
   const commandExample = `./seine --pool-url ${poolUrl} --address YOUR_BLOCKNET_ADDRESS`;
   const pplnsWindowLabel = poolInfo?.pplns_window_duration;
@@ -33,83 +35,57 @@ export function StartPage({ poolInfo }: StartPageProps) {
     <div className="card section">
       <div className="section-header">
         <div>
-          <h3>Quick Start</h3>
-          <p className="section-lead">
-            Mine and track payouts with your wallet address or Blocknet ID shortname.
-          </p>
+          <h3>{t("m450")}</h3>
+          <p className="section-lead">{t("m451")}</p>
         </div>
       </div>
 
       <div className="quickstart-grid">
         <div className="quickstart-card">
           <span className="quickstart-step">1</span>
-          <strong>Download Seine</strong>
-          <p>
-            Get the latest Seine for Windows, macOS or Linux from{' '}
-            <a href="https://seineminer.com/#download" target="_blank" rel="noopener">
+          <strong>{t("m452")}</strong>
+          <p>{tx("m453", [<a href="https://seineminer.com/#download" target="_blank" rel="noopener">
               seineminer.com
-            </a>
-            .
-          </p>
+            </a>])}</p>
         </div>
 
         <div className="quickstart-card">
           <span className="quickstart-step">2</span>
-          <strong>Run it once</strong>
-          <p>
-            Start with <code className="mono inline-code">./seine</code> and enter your wallet address or{' '}
-            <code className="mono inline-code">@name</code> / <code className="mono inline-code">$name</code>,
-            then the pool URL.
-          </p>
+          <strong>{t("m454")}</strong>
+          <p>{tx("m455", [<code className="mono inline-code">./seine</code>, <code className="mono inline-code">@name</code>, <code className="mono inline-code">$name</code>])}</p>
           <div className="quickstart-inline">
-            <span className="quickstart-inline-label">Pool URL</span>
+            <span className="quickstart-inline-label">{t("m456")}</span>
             <button
               type="button"
               className="inline-copy-code mono"
               onClick={() => copyToClipboard(poolUrl, setupPoolUrlKey)}
-              title="Click to copy"
+              title={t("m457")}
             >
               {poolUrl}
             </button>
-            {copiedKey === setupPoolUrlKey && <span className="inline-copy-note">Copied</span>}
+            {copiedKey === setupPoolUrlKey && <span className="inline-copy-note">{t("m386")}</span>}
           </div>
         </div>
 
         <div className="quickstart-card">
           <span className="quickstart-step">3</span>
-          <strong>Start mining</strong>
-          <p>
-            Seine saves your config automatically. Watch the TUI locally or open <a href="/stats">My Stats</a> to
-            follow hashrate and balance.
-          </p>
+          <strong>{t("m458")}</strong>
+          <p>{tx("m459", [<a href={localizePath("/stats")}>{t("m005")}</a>])}</p>
         </div>
       </div>
 
-      <p className="quickstart-label">
-        Replace <code className="mono inline-code">YOUR_BLOCKNET_ADDRESS</code> with your wallet address or{' '}
-        <code className="mono inline-code">'@yourname'</code> / <code className="mono inline-code">'$yourname'</code>.
-        Keep the quotes around shortnames so your shell passes them correctly.
-      </p>
+      <p className="quickstart-label">{tx("m460", [<code className="mono inline-code">YOUR_BLOCKNET_ADDRESS</code>, <code className="mono inline-code">'@yourname'</code>, <code className="mono inline-code">'$yourname'</code>])}</p>
       <div className="command-copy">
         <pre className="config-block">{commandExample}</pre>
         <button className="copy-btn" type="button" onClick={() => copyToClipboard(commandExample, 'cmd')}>
-          {copiedKey === 'cmd' ? 'Copied' : 'Copy Command'}
+          {copiedKey === 'cmd' ? t("m386") : t("m461")}
         </button>
       </div>
 
       <div className="quickstart-notes">
-        <p>
-          Register a shortname at <a href="https://blocknet.id" target="_blank" rel="noopener">blocknet.id</a>.
-          Seine shows the resolved wallet address before mining and keeps it fixed until you restart mining.
-          You can also use either shortname form in <a href="/stats">My Stats</a>.
-        </p>
-        <p>
-          Saved config: <code className="mono inline-code">seine-data/seine.config.json</code>
-        </p>
-        <p>
-          Need to reset? Edit or delete that file, or override with <code className="mono inline-code">--address</code>,{' '}
-          <code className="mono inline-code">--pool-url</code>, and <code className="mono inline-code">--pool-worker</code>.
-        </p>
+        <p>{tx("m463", [<a href="https://blocknet.id" target="_blank" rel="noopener">{t("m462")}</a>, <a href={localizePath("/stats")}>{t("m005")}</a>])}</p>
+        <p>{tx("m464", [<code className="mono inline-code">seine-data/seine.config.json</code>])}</p>
+        <p>{tx("m465", [<code className="mono inline-code">--address</code>, <code className="mono inline-code">--pool-url</code>, <code className="mono inline-code">--pool-worker</code>])}</p>
       </div>
     </div>
   );
@@ -117,55 +93,52 @@ export function StartPage({ poolInfo }: StartPageProps) {
   return (
     <div id="page-start">
       <div className="page-header">
-        <span className="page-kicker">Blocknet Mining Guide</span>
-        <h1>How to start mining Blocknet</h1>
-        <p className="page-intro">
-          Download Seine, connect to the pool stratum endpoint, and monitor your Blocknet hashrate and payouts from the
-          public dashboard.
-        </p>
+        <span className="page-kicker">{t("m466")}</span>
+        <h1>{t("m467")}</h1>
+        <p className="page-intro">{t("m468")}</p>
       </div>
 
       <div className="card section">
-        <h3>Pool Information</h3>
+        <h3>{t("m469")}</h3>
         <table className="info-table" style={{ maxWidth: 500 }}>
           <tbody>
             <tr>
-              <td>Stratum</td>
+              <td>{t("m402")}</td>
               <td>
                 <button
                   type="button"
                   className="inline-copy-code mono"
                   onClick={() => copyToClipboard(poolUrl, 'pool-url-info')}
-                  title="Click to copy"
+                  title={t("m457")}
                 >
                   {poolUrl}
                 </button>
-                {copiedKey === 'pool-url-info' && <span className="inline-copy-note">Copied</span>}
+                {copiedKey === 'pool-url-info' && <span className="inline-copy-note">{t("m386")}</span>}
               </td>
             </tr>
             <tr>
-              <td>Fee</td>
+              <td>{t("m470")}</td>
               <td>
                 <span className="info-value mono">{poolFeeLabel}</span>
               </td>
             </tr>
             <tr>
-              <td>Payout Scheme</td>
+              <td>{t("m471")}</td>
               <td>
                 <span className="info-value">PPLNS</span>
               </td>
             </tr>
             <tr>
-              <td>Min Payout</td>
+              <td>{t("m472")}</td>
               <td>
-                <span className="info-value mono">{poolInfo?.min_payout_amount != null ? `${poolInfo.min_payout_amount} BNT` : '-'}</span>
+                <span className="info-value mono">{poolInfo?.min_payout_amount != null ? t("m473", [poolInfo.min_payout_amount.toLocaleString(locale, { maximumFractionDigits: 20 })]) : '-'}</span>
               </td>
             </tr>
             <tr>
-              <td>Block Confirmations</td>
+              <td>{t("m474")}</td>
               <td>
                 <span className="info-value mono">
-                  {poolInfo?.blocks_before_payout != null ? `${poolInfo.blocks_before_payout} blocks` : '-'}
+                  {poolInfo?.blocks_before_payout != null ? t("m475", [poolInfo.blocks_before_payout.toLocaleString(locale)]) : '-'}
                 </span>
               </td>
             </tr>
@@ -176,36 +149,22 @@ export function StartPage({ poolInfo }: StartPageProps) {
       {setupSection}
 
       <div className="card section">
-        <h3>How Rewards Are Counted</h3>
-        <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 10 }}>
-          This pool uses <strong style={{ color: 'var(--text)' }}>PPLNS</strong>
-          {pplnsWindowLabel ? (
-            <>
-              {' '}
-              with a <strong style={{ color: 'var(--text)' }}>{pplnsWindowLabel}</strong> payout window.
-            </>
-          ) : null}
-        </p>
-        <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 10 }}>
-          Rewards are based on shares submitted before a block is found. If your hashrate increases right after a block,
-          that work helps with later blocks, not the one that was just found.
-        </p>
-        <p style={{ color: 'var(--muted)', fontSize: 14 }}>
-          <a href="/stats">My Stats</a> shows tentative rewards from unconfirmed blocks separately. Those estimates can
-          still move until the block confirms or is orphaned.
-        </p>
+        <h3>{t("m476")}</h3>
+        <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 10 }}>{tx("m478", [<strong style={{ color: 'var(--text)' }}>PPLNS</strong>, pplnsWindowLabel ? (<>{tx("m477", [<strong style={{ color: 'var(--text)' }}>{pplnsWindowLabel}</strong>])}</>) : null])}</p>
+        <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 10 }}>{t("m479")}</p>
+        <p style={{ color: 'var(--muted)', fontSize: 14 }}>{tx("m480", [<a href={localizePath("/stats")}>{t("m005")}</a>])}</p>
       </div>
 
       <div className="card section">
-        <h3>Seine in Action</h3>
+        <h3>{t("m481")}</h3>
         <div className="screenshot-grid">
           <div>
-            <img src="/ui-assets/pool-entered.png" alt="Seine pool setup screen" />
-            <div className="caption">First-run setup</div>
+            <img src="/ui-assets/pool-entered.png" alt={t("m482")} />
+            <div className="caption">{t("m483")}</div>
           </div>
           <div>
-            <img src="/ui-assets/mining-tui.png" alt="Seine mining TUI" />
-            <div className="caption">Mining TUI</div>
+            <img src="/ui-assets/mining-tui.png" alt={t("m484")} />
+            <div className="caption">{t("m485")}</div>
           </div>
         </div>
       </div>

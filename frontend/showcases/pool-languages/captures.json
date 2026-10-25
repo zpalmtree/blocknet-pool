@@ -1,0 +1,512 @@
+[
+  {
+    "name": "dashboard-ja",
+    "path": "/?lang=ja",
+    "size": "desktop",
+    "file": "pool-languages-dashboard-ja-desktop.png"
+  },
+  {
+    "name": "start-de",
+    "path": "/start?lang=de",
+    "full": true,
+    "size": "desktop",
+    "file": "pool-languages-start-de-desktop.png"
+  },
+  {
+    "name": "stats-es",
+    "path": "/stats?lang=es",
+    "size": "desktop",
+    "file": "pool-languages-stats-es-desktop.png"
+  },
+  {
+    "name": "stats-ar",
+    "path": "/stats?lang=ar",
+    "size": "desktop",
+    "file": "pool-languages-stats-ar-desktop.png"
+  },
+  {
+    "name": "blocks-es",
+    "path": "/blocks?lang=es",
+    "size": "desktop",
+    "file": "pool-languages-blocks-es-desktop.png"
+  },
+  {
+    "name": "payouts-id",
+    "path": "/payouts?lang=id",
+    "size": "desktop",
+    "file": "pool-languages-payouts-id-desktop.png"
+  },
+  {
+    "name": "luck-es",
+    "path": "/luck?lang=es",
+    "size": "desktop",
+    "file": "pool-languages-luck-es-desktop.png"
+  },
+  {
+    "name": "dashboard-ja",
+    "path": "/?lang=ja",
+    "size": "mobile",
+    "file": "pool-languages-dashboard-ja-mobile.png"
+  },
+  {
+    "name": "start-de",
+    "path": "/start?lang=de",
+    "full": true,
+    "size": "mobile",
+    "file": "pool-languages-start-de-mobile.png"
+  },
+  {
+    "name": "stats-es",
+    "path": "/stats?lang=es",
+    "size": "mobile",
+    "file": "pool-languages-stats-es-mobile.png"
+  },
+  {
+    "name": "stats-ar",
+    "path": "/stats?lang=ar",
+    "size": "mobile",
+    "file": "pool-languages-stats-ar-mobile.png"
+  },
+  {
+    "name": "blocks-es",
+    "path": "/blocks?lang=es",
+    "size": "mobile",
+    "file": "pool-languages-blocks-es-mobile.png"
+  },
+  {
+    "name": "payouts-id",
+    "path": "/payouts?lang=id",
+    "size": "mobile",
+    "file": "pool-languages-payouts-id-mobile.png"
+  },
+  {
+    "name": "luck-es",
+    "path": "/luck?lang=es",
+    "size": "mobile",
+    "file": "pool-languages-luck-es-mobile.png"
+  },
+  {
+    "name": "checkpoints-de",
+    "path": "/checkpoints?lang=de",
+    "full": true,
+    "size": "desktop",
+    "file": "pool-languages-checkpoints-de-desktop.png"
+  },
+  {
+    "name": "status-fr",
+    "path": "/status?lang=fr",
+    "full": true,
+    "size": "desktop",
+    "file": "pool-languages-status-fr-desktop.png"
+  },
+  {
+    "name": "stats-empty-es",
+    "path": "/stats?lang=es&demo=empty",
+    "size": "desktop",
+    "file": "pool-languages-stats-empty-es-desktop.png"
+  },
+  {
+    "name": "stats-loading-es",
+    "path": "/stats?lang=es&demo=loading",
+    "size": "desktop",
+    "file": "pool-languages-stats-loading-es-desktop.png"
+  },
+  {
+    "name": "stats-error-es",
+    "path": "/stats?lang=es&demo=error",
+    "size": "desktop",
+    "file": "pool-languages-stats-error-es-desktop.png"
+  },
+  {
+    "name": "blocks-empty-es",
+    "path": "/blocks?lang=es&demo=empty",
+    "size": "desktop",
+    "file": "pool-languages-blocks-empty-es-desktop.png"
+  },
+  {
+    "name": "checkpoints-unavailable-de",
+    "path": "/checkpoints?lang=de&demo=empty",
+    "full": true,
+    "size": "desktop",
+    "file": "pool-languages-checkpoints-unavailable-de-desktop.png"
+  },
+  {
+    "name": "checkpoints-de",
+    "path": "/checkpoints?lang=de",
+    "full": true,
+    "size": "mobile",
+    "file": "pool-languages-checkpoints-de-mobile.png"
+  },
+  {
+    "name": "status-fr",
+    "path": "/status?lang=fr",
+    "full": true,
+    "size": "mobile",
+    "file": "pool-languages-status-fr-mobile.png"
+  },
+  {
+    "name": "stats-empty-es",
+    "path": "/stats?lang=es&demo=empty",
+    "size": "mobile",
+    "file": "pool-languages-stats-empty-es-mobile.png"
+  },
+  {
+    "name": "stats-loading-es",
+    "path": "/stats?lang=es&demo=loading",
+    "size": "mobile",
+    "file": "pool-languages-stats-loading-es-mobile.png"
+  },
+  {
+    "name": "stats-error-es",
+    "path": "/stats?lang=es&demo=error",
+    "size": "mobile",
+    "file": "pool-languages-stats-error-es-mobile.png"
+  },
+  {
+    "name": "blocks-empty-es",
+    "path": "/blocks?lang=es&demo=empty",
+    "size": "mobile",
+    "file": "pool-languages-blocks-empty-es-mobile.png"
+  },
+  {
+    "name": "checkpoints-unavailable-de",
+    "path": "/checkpoints?lang=de&demo=empty",
+    "full": true,
+    "size": "mobile",
+    "file": "pool-languages-checkpoints-unavailable-de-mobile.png"
+  },
+  {
+    "name": "offer",
+    "size": "desktop",
+    "file": "pool-languages-offer-desktop.png",
+    "path": "/stats?demo=success",
+    "setup": "Saved blog preference: es; English page"
+  },
+  {
+    "name": "offer",
+    "size": "mobile",
+    "file": "pool-languages-offer-mobile.png",
+    "path": "/stats?demo=success",
+    "setup": "Saved blog preference: es; English page"
+  },
+  {
+    "name": "language-menu",
+    "size": "desktop",
+    "file": "pool-languages-menu-desktop.png",
+    "path": "/stats",
+    "setup": "Language menu open"
+  },
+  {
+    "name": "language-menu",
+    "size": "mobile",
+    "file": "pool-languages-menu-mobile.png",
+    "path": "/stats",
+    "setup": "Language menu open"
+  },
+  {
+    "name": "arabic-dark",
+    "size": "desktop",
+    "file": "pool-languages-ar-dark-desktop.png",
+    "path": "/stats?lang=ar",
+    "setup": "Dark theme"
+  },
+  {
+    "name": "arabic-dark",
+    "size": "mobile",
+    "file": "pool-languages-ar-dark-mobile.png",
+    "path": "/stats?lang=ar",
+    "setup": "Dark theme"
+  },
+  {
+    "name": "worker-versions-es",
+    "size": "desktop",
+    "file": "pool-languages-workers-es-desktop.png",
+    "path": "/stats?lang=es#miner-workers"
+  },
+  {
+    "name": "worker-versions-es",
+    "size": "mobile",
+    "file": "pool-languages-workers-es-mobile.png",
+    "path": "/stats?lang=es#miner-workers"
+  },
+  {
+    "name": "locale-en",
+    "label": "English",
+    "path": "/?lang=en",
+    "size": "desktop",
+    "file": "pool-languages-locale-en-desktop.png"
+  },
+  {
+    "name": "locale-en",
+    "label": "English",
+    "path": "/?lang=en",
+    "size": "mobile",
+    "file": "pool-languages-locale-en-mobile.png"
+  },
+  {
+    "name": "locale-id",
+    "label": "Bahasa Indonesia",
+    "path": "/?lang=id",
+    "size": "desktop",
+    "file": "pool-languages-locale-id-desktop.png"
+  },
+  {
+    "name": "locale-id",
+    "label": "Bahasa Indonesia",
+    "path": "/?lang=id",
+    "size": "mobile",
+    "file": "pool-languages-locale-id-mobile.png"
+  },
+  {
+    "name": "locale-es",
+    "label": "Español",
+    "path": "/?lang=es",
+    "size": "desktop",
+    "file": "pool-languages-locale-es-desktop.png"
+  },
+  {
+    "name": "locale-es",
+    "label": "Español",
+    "path": "/?lang=es",
+    "size": "mobile",
+    "file": "pool-languages-locale-es-mobile.png"
+  },
+  {
+    "name": "locale-de",
+    "label": "Deutsch",
+    "path": "/?lang=de",
+    "size": "desktop",
+    "file": "pool-languages-locale-de-desktop.png"
+  },
+  {
+    "name": "locale-de",
+    "label": "Deutsch",
+    "path": "/?lang=de",
+    "size": "mobile",
+    "file": "pool-languages-locale-de-mobile.png"
+  },
+  {
+    "name": "locale-fr",
+    "label": "Français",
+    "path": "/?lang=fr",
+    "size": "desktop",
+    "file": "pool-languages-locale-fr-desktop.png"
+  },
+  {
+    "name": "locale-fr",
+    "label": "Français",
+    "path": "/?lang=fr",
+    "size": "mobile",
+    "file": "pool-languages-locale-fr-mobile.png"
+  },
+  {
+    "name": "locale-pt-BR",
+    "label": "Português (Brasil)",
+    "path": "/?lang=pt-BR",
+    "size": "desktop",
+    "file": "pool-languages-locale-pt-BR-desktop.png"
+  },
+  {
+    "name": "locale-pt-BR",
+    "label": "Português (Brasil)",
+    "path": "/?lang=pt-BR",
+    "size": "mobile",
+    "file": "pool-languages-locale-pt-BR-mobile.png"
+  },
+  {
+    "name": "locale-ru",
+    "label": "Русский",
+    "path": "/?lang=ru",
+    "size": "desktop",
+    "file": "pool-languages-locale-ru-desktop.png"
+  },
+  {
+    "name": "locale-ru",
+    "label": "Русский",
+    "path": "/?lang=ru",
+    "size": "mobile",
+    "file": "pool-languages-locale-ru-mobile.png"
+  },
+  {
+    "name": "locale-it",
+    "label": "Italiano",
+    "path": "/?lang=it",
+    "size": "desktop",
+    "file": "pool-languages-locale-it-desktop.png"
+  },
+  {
+    "name": "locale-it",
+    "label": "Italiano",
+    "path": "/?lang=it",
+    "size": "mobile",
+    "file": "pool-languages-locale-it-mobile.png"
+  },
+  {
+    "name": "locale-pl",
+    "label": "Polski",
+    "path": "/?lang=pl",
+    "size": "desktop",
+    "file": "pool-languages-locale-pl-desktop.png"
+  },
+  {
+    "name": "locale-pl",
+    "label": "Polski",
+    "path": "/?lang=pl",
+    "size": "mobile",
+    "file": "pool-languages-locale-pl-mobile.png"
+  },
+  {
+    "name": "locale-tr",
+    "label": "Türkçe",
+    "path": "/?lang=tr",
+    "size": "desktop",
+    "file": "pool-languages-locale-tr-desktop.png"
+  },
+  {
+    "name": "locale-tr",
+    "label": "Türkçe",
+    "path": "/?lang=tr",
+    "size": "mobile",
+    "file": "pool-languages-locale-tr-mobile.png"
+  },
+  {
+    "name": "locale-vi",
+    "label": "Tiếng Việt",
+    "path": "/?lang=vi",
+    "size": "desktop",
+    "file": "pool-languages-locale-vi-desktop.png"
+  },
+  {
+    "name": "locale-vi",
+    "label": "Tiếng Việt",
+    "path": "/?lang=vi",
+    "size": "mobile",
+    "file": "pool-languages-locale-vi-mobile.png"
+  },
+  {
+    "name": "locale-ar",
+    "label": "العربية",
+    "path": "/?lang=ar",
+    "size": "desktop",
+    "file": "pool-languages-locale-ar-desktop.png"
+  },
+  {
+    "name": "locale-ar",
+    "label": "العربية",
+    "path": "/?lang=ar",
+    "size": "mobile",
+    "file": "pool-languages-locale-ar-mobile.png"
+  },
+  {
+    "name": "locale-nl",
+    "label": "Nederlands",
+    "path": "/?lang=nl",
+    "size": "desktop",
+    "file": "pool-languages-locale-nl-desktop.png"
+  },
+  {
+    "name": "locale-nl",
+    "label": "Nederlands",
+    "path": "/?lang=nl",
+    "size": "mobile",
+    "file": "pool-languages-locale-nl-mobile.png"
+  },
+  {
+    "name": "locale-uk",
+    "label": "Українська",
+    "path": "/?lang=uk",
+    "size": "desktop",
+    "file": "pool-languages-locale-uk-desktop.png"
+  },
+  {
+    "name": "locale-uk",
+    "label": "Українська",
+    "path": "/?lang=uk",
+    "size": "mobile",
+    "file": "pool-languages-locale-uk-mobile.png"
+  },
+  {
+    "name": "locale-el",
+    "label": "Ελληνικά",
+    "path": "/?lang=el",
+    "size": "desktop",
+    "file": "pool-languages-locale-el-desktop.png"
+  },
+  {
+    "name": "locale-el",
+    "label": "Ελληνικά",
+    "path": "/?lang=el",
+    "size": "mobile",
+    "file": "pool-languages-locale-el-mobile.png"
+  },
+  {
+    "name": "locale-ja",
+    "label": "日本語",
+    "path": "/?lang=ja",
+    "size": "desktop",
+    "file": "pool-languages-locale-ja-desktop.png"
+  },
+  {
+    "name": "locale-ja",
+    "label": "日本語",
+    "path": "/?lang=ja",
+    "size": "mobile",
+    "file": "pool-languages-locale-ja-mobile.png"
+  },
+  {
+    "name": "locale-ko",
+    "label": "한국어",
+    "path": "/?lang=ko",
+    "size": "desktop",
+    "file": "pool-languages-locale-ko-desktop.png"
+  },
+  {
+    "name": "locale-ko",
+    "label": "한국어",
+    "path": "/?lang=ko",
+    "size": "mobile",
+    "file": "pool-languages-locale-ko-mobile.png"
+  },
+  {
+    "name": "locale-th",
+    "label": "ไทย",
+    "path": "/?lang=th",
+    "size": "desktop",
+    "file": "pool-languages-locale-th-desktop.png"
+  },
+  {
+    "name": "locale-th",
+    "label": "ไทย",
+    "path": "/?lang=th",
+    "size": "mobile",
+    "file": "pool-languages-locale-th-mobile.png"
+  },
+  {
+    "name": "locale-zh-Hans",
+    "label": "简体中文",
+    "path": "/?lang=zh-Hans",
+    "size": "desktop",
+    "file": "pool-languages-locale-zh-Hans-desktop.png"
+  },
+  {
+    "name": "locale-zh-Hans",
+    "label": "简体中文",
+    "path": "/?lang=zh-Hans",
+    "size": "mobile",
+    "file": "pool-languages-locale-zh-Hans-mobile.png"
+  },
+  {
+    "name": "locale-zh-Hant",
+    "label": "繁體中文",
+    "path": "/?lang=zh-Hant",
+    "size": "desktop",
+    "file": "pool-languages-locale-zh-Hant-desktop.png"
+  },
+  {
+    "name": "locale-zh-Hant",
+    "label": "繁體中文",
+    "path": "/?lang=zh-Hant",
+    "size": "mobile",
+    "file": "pool-languages-locale-zh-Hant-mobile.png"
+  }
+]

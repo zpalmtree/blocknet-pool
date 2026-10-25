@@ -1,3 +1,4 @@
+import { t, tx, localizePath } from '../i18n';
 import { useCallback, useEffect, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
@@ -129,46 +130,35 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
   return (
     <div id="page-dashboard">
       <div className="page-header">
-        <span className="page-kicker">Blocknet Mining Pool</span>
-        <h1>Live Blocknet pool dashboard</h1>
-        <p className="page-intro">
-          Track pool hashrate, round luck, recent blocks, payout timing, and current chain conditions from the public
-          dashboard.
-        </p>
+        <span className="page-kicker">{t("m399")}</span>
+        <h1>{t("m400")}</h1>
+        <p className="page-intro">{t("m401")}</p>
       </div>
 
       <div className="stratum-bar">
-        <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--muted)' }}>Stratum</span>
+        <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--muted)' }}>{t("m402")}</span>
         <span className="endpoint" id="stratum-url">
           {stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url)}
         </span>
-        <button className="copy-btn" onClick={copyStratum}>
-          Copy
-        </button>
+        <button className="copy-btn" onClick={copyStratum}>{t("m392")}</button>
       </div>
 
       <div className="stats-card-group">
-        <div className="stats-card-group-title">Pool</div>
+        <div className="stats-card-group-title">{t("m403")}</div>
         <div className="stats-card-group-grid">
-          <StatCard label="Connected Miners" value={stats?.pool?.miners ?? '-'} id="s-miners" />
+          <StatCard label={t("m072")} value={stats?.pool?.miners ?? '-'} id="s-miners" />
           <StatCard
-            label="Pool Hashrate"
-            value={
-              <>
-                <span>{humanRate(stats?.pool?.raw_hashrate ?? stats?.pool?.hashrate ?? 0)}</span>
-                <span className="stat-inline-secondary">
-                  30d eff. {stats?.pool?.effective_hashrate ? humanRate(stats.pool.effective_hashrate) : '-'}
-                </span>
-              </>
-            }
-            title={stats?.pool?.block_yield_efficiency_pct != null
-              ? `Primary value is estimated from credited share work. 30d effective hashrate reflects ${formatPct(stats.pool.block_yield_efficiency_pct)} block yield across ${stats.pool.block_yield_sample_size ?? 0} solved blocks.`
-              : 'Primary value is estimated from credited share work. Effective hashrate needs solved-block history before it can be estimated.'}
+            label={t("m404")}
+            value={<>
+                <bdi dir="ltr">{humanRate(stats?.pool?.raw_hashrate ?? stats?.pool?.hashrate ?? 0)}</bdi>
+                <span className="stat-inline-secondary">{tx("m405", [stats?.pool?.effective_hashrate ? humanRate(stats.pool.effective_hashrate) : '-'])}</span>
+              </>}
+            title={stats?.pool?.block_yield_efficiency_pct != null ? t("m406", [formatPct(stats.pool.block_yield_efficiency_pct), stats.pool.block_yield_sample_size ?? 0]) : t("m407")}
             id="s-hashrate"
             className="stat-card--combined-hashrate"
           />
           <StatCard
-            label="Network Hashrate"
+            label={t("m408")}
             value={stats?.chain.network_hashrate ? humanRate(stats.chain.network_hashrate) : '-'}
             id="s-net-hashrate"
           />
@@ -176,29 +166,29 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
       </div>
 
       <div className="stats-card-group">
-        <div className="stats-card-group-title">Blocks</div>
+        <div className="stats-card-group-title">{t("m003")}</div>
         <div className="stats-card-group-grid">
-          <StatCard label="Current Block" value={stats?.chain.current_job_height ?? '-'} id="s-current-block" mono />
+          <StatCard label={t("m409")} value={stats?.chain.current_job_height ?? '-'} id="s-current-block" mono />
           <StatCard
-            label="Last Solved Block"
+            label={t("m410")}
             value={latestSolvedBlock?.block_height ?? '-'}
             id="s-last-solved-block"
             title={latestSolvedBlock ? timestampTitle(latestSolvedBlock.timestamp) : undefined}
             mono
           />
-          <StatCard label="Blocks Found" value={stats?.pool?.blocks_found ?? '-'} id="s-blocks" />
+          <StatCard label={t("m411")} value={stats?.pool?.blocks_found ?? '-'} id="s-blocks" />
         </div>
       </div>
 
       <div className="stats-card-group">
-        <div className="stats-card-group-title">Luck & Health</div>
+        <div className="stats-card-group-title">{t("m412")}</div>
         <div className="stats-card-group-grid">
-          <StatCard label="Average Luck" value={formatPct(avgLuck)} id="s-avg-luck" />
-          <StatCard label="Unique Orphans" value={stats?.pool?.orphaned_blocks ?? '-'} id="s-orphaned-blocks" />
+          <StatCard label={t("m413")} value={formatPct(avgLuck)} id="s-avg-luck" />
+          <StatCard label={t("m414")} value={stats?.pool?.orphaned_blocks ?? '-'} id="s-orphaned-blocks" />
           <StatCard
-            label="Orphan Rate (30d)"
+            label={t("m415")}
             value={formatPct(stats?.pool?.orphan_rate_30d_pct)}
-            title={`Lifetime: ${formatPct(stats?.pool?.orphan_rate_pct)} — dominated by the Apr 2026 desync event`}
+            title={t("m416", [formatPct(stats?.pool?.orphan_rate_pct)])}
             id="s-orphan-rate"
           />
         </div>
@@ -206,7 +196,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
 
       <div className="section">
         <div className="section-header">
-          <h2>Round Progress</h2>
+          <h2>{t("m417")}</h2>
           <span className={`round-chip ${roundTone}`}>
             {effortLabel(roundEffortPct)}
           </span>
@@ -214,19 +204,19 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
         <div className="card">
           <div className="round-meta">
             <div>
-              <span className="label">Round Effort</span>
+              <span className="label">{t("m418")}</span>
               <div className="value mono">{formatPct(roundEffortPct)}</div>
             </div>
             <div>
-              <span className="label">Elapsed vs ETA</span>
+              <span className="label">{t("m419")}</span>
               <div className="value mono">{formatPct(round?.timer_effort_pct)}</div>
             </div>
             <div>
-              <span className="label">Expected Block Time</span>
+              <span className="label">{t("m420")}</span>
               <div className="value mono">{round?.expected_block_seconds ? fmtSeconds(Math.floor(round.expected_block_seconds)) : '-'}</div>
             </div>
             <div>
-              <span className="label">Round Elapsed</span>
+              <span className="label">{t("m421")}</span>
               <div className="value mono">{round ? fmtSeconds(round.elapsed_seconds) : '-'}</div>
             </div>
           </div>
@@ -240,40 +230,30 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
             </div>
           </div>
 
-          <p className="round-note">
-            Luck is probabilistic. Rounds above 100% are normal and do not imply pool issues.
-          </p>
+          <p className="round-note">{t("m422")}</p>
         </div>
       </div>
 
       <div className="stats-card-group">
-        <div className="stats-card-group-title">Payouts</div>
+        <div className="stats-card-group-title">{t("m004")}</div>
         <div className="stats-card-group-grid">
           <StatCard
-            label="Payout Queue"
+            label={t("m270")}
             value={payoutEta ? formatCompactCoins(payoutEta.pending_total_amount) : '-'}
-            meta={payoutShortfall ? `${formatCompactCoins(payoutShortfall)} short` : 'funded'}
+            meta={payoutShortfall ? t("m423", [formatCompactCoins(payoutShortfall)]) : t("m424")}
             mono
-            title={
-              payoutEta
-                ? `${formatCoins(payoutEta.pending_total_amount)} currently queued`
-                : undefined
-            }
+            title={payoutEta ? t("m425", [formatCoins(payoutEta.pending_total_amount)]) : undefined}
           />
           <StatCard
-            label="Total BNT Paid"
+            label={t("m426")}
             value={stats?.pool?.paid_to_miners_total != null ? formatCompactCoins(stats.pool.paid_to_miners_total) : '-'}
             meta={stats?.pool?.paid_to_miners_total != null ? formatCoins(stats.pool.paid_to_miners_total) : ''}
             id="s-total-paid"
             mono
-            title={
-              stats?.pool?.paid_to_miners_total != null
-                ? `${formatCoins(stats.pool.paid_to_miners_total)} paid to miners`
-                : undefined
-            }
+            title={stats?.pool?.paid_to_miners_total != null ? t("m427", [formatCoins(stats.pool.paid_to_miners_total)]) : undefined}
           />
           <StatCard
-            label="Next Sweep"
+            label={t("m428")}
             value={nextSweepLabel}
             valueTitle={timestampTitle(payoutEta?.next_sweep_at) || undefined}
             mono
@@ -281,8 +261,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
         </div>
       </div>
 
-      {payoutEta && payoutLiquidityConstrained && (
-        <div
+      {payoutEta && payoutLiquidityConstrained && (<div
           className="card"
           style={{
             marginTop: 18,
@@ -291,21 +270,12 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
             borderColor: 'rgba(247, 180, 75, 0.45)',
           }}
         >
-          <div style={{ color: 'var(--text)', fontSize: 13 }}>
-            Pool payouts are currently liquidity constrained. Spendable wallet balance:{' '}
-            <span className="mono">{formatCoins(payoutEta.wallet_spendable ?? 0)}</span>. Locked/confirming wallet
-            balance: <span className="mono">{formatCoins(payoutEta.wallet_pending ?? 0)}</span>. Queued:{' '}
-            <span className="mono">{formatCoins(payoutEta.pending_total_amount)}</span>. Shortfall:{' '}
-            <span className="mono">{formatCoins(payoutShortfall)}</span>. Those locked funds are
-            already in the pool wallet and should become spendable as blocks mature. The ETA above is based on recent
-            payout cadence and may slip until liquidity is restored.
-          </div>
-        </div>
-      )}
+          <div style={{ color: 'var(--text)', fontSize: 13 }}>{tx("m429", [<span className="mono">{formatCoins(payoutEta.wallet_spendable ?? 0)}</span>, <span className="mono">{formatCoins(payoutEta.wallet_pending ?? 0)}</span>, <span className="mono">{formatCoins(payoutEta.pending_total_amount)}</span>, <span className="mono">{formatCoins(payoutShortfall)}</span>])}</div>
+        </div>)}
 
       <div className="section">
         <div className="section-header">
-          <h2>Pool Hashrate</h2>
+          <h2>{t("m404")}</h2>
           <RangeTabs<Range> id="hashrate-ranges" options={['1h', '24h', '7d', '30d']} value={range} onChange={setRange} />
         </div>
         <HashrateChart data={history} range={range} theme={theme} />
@@ -313,33 +283,23 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
 
       <div className="section">
         <div className="section-header">
-          <h2>Pool Luck History</h2>
-          <a href="/luck" className="view-all">
-            View All
-          </a>
+          <h2>{t("m430")}</h2>
+          <a href={localizePath("/luck")} className="view-all">{t("m431")}</a>
         </div>
-        {hiddenOrphanRounds > 0 && (
-          <div style={{ marginBottom: 12, color: 'var(--muted)', fontSize: 13 }}>
-            Showing canonical rounds only on the dashboard. {hiddenOrphanRounds} orphaned
-            {hiddenOrphanRounds === 1 ? ' row is' : ' rows are'} hidden here.
-          </div>
-        )}
+        {hiddenOrphanRounds > 0 && (<div style={{ marginBottom: 12, color: 'var(--muted)', fontSize: 13 }}>{t('m609', [hiddenOrphanRounds])}</div>)}
         <div className="card table-scroll">
           <table>
             <thead>
               <tr>
-                <th>Block</th>
-                <th>Effort</th>
-                <th>Round Time</th>
-                <th>Status</th>
-                <th>Found</th>
+                <th>{t("m098")}</th>
+                <th>{t("m375")}</th>
+                <th>{t("m376")}</th>
+                <th>{t("m006")}</th>
+                <th>{t("m435")}</th>
               </tr>
             </thead>
             <tbody>
-              {!dashboardLuckHistory.length ? (
-                <EmptyTableRow colSpan={5}>No round history yet</EmptyTableRow>
-              ) : (
-                dashboardLuckHistory.map((row) => (
+              {!dashboardLuckHistory.length ? (<EmptyTableRow colSpan={5}>{t("m436")}</EmptyTableRow>) : (dashboardLuckHistory.map((row) => (
                   <tr key={`${row.block_height}-${row.block_hash}`}>
                     <td>
                       <ExplorerLink kind="block" value={row.block_hash}>{row.block_height}</ExplorerLink>
@@ -353,8 +313,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
                     </td>
                     <td title={timestampTitle(row.timestamp)}>{timeAgo(row.timestamp)}</td>
                   </tr>
-                ))
-              )}
+                )))}
             </tbody>
           </table>
         </div>
@@ -362,27 +321,22 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
 
       <div className="section">
         <div className="section-header">
-          <h2>Recent Payouts</h2>
-          <a href="/payouts" className="view-all">
-            View All
-          </a>
+          <h2>{t("m437")}</h2>
+          <a href={localizePath("/payouts")} className="view-all">{t("m431")}</a>
         </div>
         <div className="card table-scroll">
           <table>
             <thead>
               <tr>
-                <th>Amount</th>
-                <th>Miners Paid</th>
+                <th>{t("m438")}</th>
+                <th>{t("m439")}</th>
                 <th>TX</th>
-                <th>Status</th>
-                <th>Time</th>
+                <th>{t("m006")}</th>
+                <th>{t("m377")}</th>
               </tr>
             </thead>
             <tbody id="dash-payouts-body">
-              {!payouts.length ? (
-                <EmptyTableRow colSpan={5}>No payouts yet</EmptyTableRow>
-              ) : (
-                payouts.map((p, idx) => (
+              {!payouts.length ? (<EmptyTableRow colSpan={5}>{t("m440")}</EmptyTableRow>) : (payouts.map((p, idx) => (
                   <tr key={`${toUnixMs(p.timestamp)}-${idx}`}>
                     <td>{formatCoins(p.total_amount)}</td>
                     <td>{p.recipient_count}</td>
@@ -394,8 +348,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
                     </td>
                     <td title={timestampTitle(p.timestamp)}>{timeAgo(p.timestamp)}</td>
                   </tr>
-                ))
-              )}
+                )))}
             </tbody>
           </table>
         </div>

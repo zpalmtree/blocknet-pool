@@ -31,8 +31,8 @@ Blocknet, bntpool.com and seine, nothing negative, nothing false) and use its
 4. Link to pool pages as `/start`, `/stats`, `/blocks`, `/payouts`, `/luck`, `/status`,
    `/checkpoints`, to other posts as `/blog/<slug>/`, and to seineminer.com with full URLs.
    Translations prefix blog links with their locale (`/blog/es/<slug>/`, `/blog/pt-br/<slug>/`)
-   and seineminer.com links with theirs (`https://seineminer.com/es/...`), but keep app links
-   unprefixed, because the pool app is English-only.
+   and seineminer.com links with theirs (`https://seineminer.com/es/...`). Keep pool app links
+   unprefixed in the source; the builder adds `?lang=<locale>` so readers stay in their language.
 5. `node scripts/check-blog.mjs <slug> --strict` and `node scripts/check-blog.mjs --overlap <slug>`
    from `frontend/`.
 6. Translate into all 19 locales following the seine repo's `site/editorial/translation-guide.md`
