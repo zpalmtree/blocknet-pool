@@ -74,12 +74,13 @@ impl SubmitRiskCache {
         entries.remove(address);
     }
 
-    /// This process just wrote the address's validation `forced_until`.
-    fn write_validation_forced_until(&self, address: &str, forced_until: Option<SystemTime>) {
+    /// Keep the deadline and cause together when this process writes a hold.
+    fn write_validation_hold(&self, state: &PersistedValidationAddressState) {
         let mut entries = self.entries.lock();
         self.generation.fetch_add(1, Ordering::AcqRel);
-        if let Some((_, risk)) = entries.get_mut(address) {
-            risk.validation_forced_until = forced_until;
+        if let Some((_, risk)) = entries.get_mut(&state.address) {
+            risk.validation_forced_until = state.forced_until;
+            risk.validation_hold_cause = state.hold_cause;
         }
     }
 }
@@ -446,12 +447,7 @@ impl ShareStore for PoolStore {
             return Ok(risk);
         }
         let generation = self.submit_risk.generation.load(Ordering::Acquire);
-        let (state, validation_forced_until) = self.inner.get_submit_risk(address)?;
-        let risk = SubmitRisk {
-            state,
-            validation_forced_until,
-            force_verify: false,
-        };
+        let risk = self.inner.get_submit_risk(address)?;
         self.submit_risk
             .insert(address, risk.clone(), now, generation);
         Ok(risk)
@@ -512,9 +508,7 @@ impl ValidationStateStore for PoolStore {
     fn upsert_validation_state(&self, state: &PersistedValidationAddressState) -> Result<()> {
         let result = self.inner.upsert_validation_state(state);
         match &result {
-            Ok(()) => self
-                .submit_risk
-                .write_validation_forced_until(&state.address, state.forced_until),
+            Ok(()) => self.submit_risk.write_validation_hold(state),
             Err(_) => self.submit_risk.invalidate(&state.address),
         }
         result
@@ -831,6 +825,82 @@ mod tests {
             .should_force_verify_address("addr-risk")
             .expect("uncached check");
         assert!(force, "cached and uncached verdicts agree");
+    }
+
+    #[test]
+    fn submit_risk_classifies_persisted_and_cached_holds_without_changing_payout_holds() {
+        use pool_common::db::ValidationHoldCause;
+
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {}",
+                PoolStore::TEST_POSTGRES_URL_ENV
+            );
+            return;
+        };
+        let now = SystemTime::now();
+        let until = now + Duration::from_secs(900);
+        // Prime the cache, then transition in both directions between audit
+        // holds and mandatory verification without waiting for the cache TTL.
+        ShareStore::submit_risk(store.as_ref(), "addr-hold").expect("prime cache");
+        for (cause, requires_sync) in [
+            (None, true),
+            (Some(ValidationHoldCause::ProvisionalBacklog), false),
+            (Some(ValidationHoldCause::InvalidSamples), true),
+            (Some(ValidationHoldCause::PayoutCoverage), false),
+            (Some(ValidationHoldCause::InvalidSamples), true),
+        ] {
+            let mut state = PersistedValidationAddressState {
+                address: "addr-hold".to_string(),
+                total_shares: 1,
+                sampled_shares: 0,
+                invalid_samples: 0,
+                risk_sampled_shares: 0,
+                risk_invalid_samples: 0,
+                forced_started_at: None,
+                forced_until: Some(until),
+                forced_sampled_shares: 0,
+                forced_invalid_samples: 0,
+                resume_forced_at: None,
+                hold_cause: cause,
+                last_seen_at: now,
+            };
+            ValidationStateStore::upsert_validation_state(store.as_ref(), &state)
+                .expect("write hold");
+            let cached = store
+                .submit_risk
+                .get("addr-hold", Instant::now())
+                .expect("warm cache");
+            let persisted = store
+                .inner
+                .get_submit_risk("addr-hold")
+                .expect("database read");
+            for risk in [cached, persisted] {
+                assert_eq!(risk.force_verify_at(now), requires_sync, "{cause:?}");
+                assert!(!risk.force_verify_at(until), "expired hold: {cause:?}");
+            }
+            assert!(
+                store
+                    .inner
+                    .should_force_verify_address("addr-hold")
+                    .unwrap()
+                    .0,
+                "payout checks must still honor {cause:?}"
+            );
+            assert!(store
+                .inner
+                .active_force_verify_addresses(&["addr-hold".to_string()], now)
+                .unwrap()
+                .contains("addr-hold"));
+
+            state.forced_until = None;
+            state.hold_cause = None;
+            ValidationStateStore::upsert_validation_state(store.as_ref(), &state)
+                .expect("clear hold");
+            assert!(!ShareStore::submit_risk(store.as_ref(), "addr-hold")
+                .unwrap()
+                .force_verify_at(now));
+        }
     }
 
     #[test]

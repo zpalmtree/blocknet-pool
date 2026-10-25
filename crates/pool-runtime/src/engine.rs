@@ -32,7 +32,7 @@ use crate::validation::{
 };
 use pool_common::db::{
     active_window_strikes, AddressRiskEscalation, AddressRiskState, PendingAuditShare,
-    ShareReplayData,
+    ShareReplayData, ValidationHoldCause,
 };
 use pool_common::pow::{check_target, difficulty_to_target};
 use pool_common::protocol::{
@@ -352,6 +352,7 @@ pub(crate) struct SubmitRisk {
     pub state: Option<AddressRiskState>,
     /// `validation_address_states.forced_until` (forced review or a hold).
     pub validation_forced_until: Option<SystemTime>,
+    pub validation_hold_cause: Option<ValidationHoldCause>,
     /// For stores that only report a precomputed force-verify verdict.
     pub force_verify: bool,
 }
@@ -363,16 +364,25 @@ impl SubmitRisk {
             .filter(|state| state.quarantined_until.is_some_and(|until| until > now))
     }
 
-    /// Mirrors `PostgresStore::should_force_verify_address`.
+    /// Mandatory synchronous verification for a submit. Temporary coverage
+    /// holds are handled by the validation planner's background audits, while
+    /// the broader payout eligibility checks still honor every active hold.
     pub(crate) fn force_verify_at(&self, now: SystemTime) -> bool {
         self.force_verify
             || self.state.as_ref().is_some_and(|state| {
                 state.force_verify_until.is_some_and(|until| until > now)
                     || state.quarantined_until.is_some_and(|until| until > now)
             })
-            || self
+            || (self
                 .validation_forced_until
                 .is_some_and(|until| until > now)
+                && !matches!(
+                    self.validation_hold_cause,
+                    Some(
+                        ValidationHoldCause::ProvisionalBacklog
+                            | ValidationHoldCause::PayoutCoverage
+                    )
+                ))
     }
 }
 
@@ -436,6 +446,7 @@ pub(crate) trait ShareStore: Send + Sync + 'static {
         Ok(SubmitRisk {
             state: self.address_risk_state(address)?,
             validation_forced_until: None,
+            validation_hold_cause: None,
             force_verify: self.should_force_verify_address(address)?,
         })
     }
@@ -4561,6 +4572,129 @@ mod tests {
         let shares = store.shares();
         assert_eq!(shares.len(), 1);
         assert_eq!(shares[0].nonce, 42);
+    }
+
+    #[test]
+    fn backlog_hold_uses_background_audit_when_sync_slots_are_full() {
+        temporary_hold_uses_background_audit(ValidationHoldCause::ProvisionalBacklog);
+    }
+
+    #[test]
+    fn coverage_hold_uses_background_audit_when_sync_slots_are_full() {
+        temporary_hold_uses_background_audit(ValidationHoldCause::PayoutCoverage);
+    }
+
+    fn temporary_hold_uses_background_audit(cause: ValidationHoldCause) {
+        use crate::store::PoolStore;
+        use crate::validation::{PersistedValidationAddressState, ValidationStateStore};
+
+        let Some(store) = PoolStore::test_store() else {
+            eprintln!(
+                "skipping postgres test: set {}",
+                PoolStore::TEST_POSTGRES_URL_ENV
+            );
+            return;
+        };
+        let address = test_miner_address();
+        let now = SystemTime::now();
+        let mut config = cfg();
+        config.sync_verify_slots = 1;
+        config.payout_min_verified_shares = 1;
+        config.payout_provisional_cap_multiplier = 1.0;
+        config.provisional_share_delay = match cause {
+            ValidationHoldCause::ProvisionalBacklog => "5m",
+            _ => "0s",
+        }
+        .to_string();
+        // A persisted provisional share keeps the temporary hold active after
+        // restart, so the planner must actually request its background audit.
+        ShareStore::add_share(
+            store.as_ref(),
+            ShareRecord {
+                job_id: "seed".to_string(),
+                miner: address.clone(),
+                worker: "rig".to_string(),
+                difficulty: 1,
+                nonce: 0,
+                status: SHARE_STATUS_PROVISIONAL,
+                was_sampled: false,
+                block_hash: None,
+                claimed_hash: Some("ff".repeat(32)),
+                reject_reason: None,
+                created_at: now,
+            },
+        )
+        .expect("seed provisional share");
+        let mut hold = PersistedValidationAddressState {
+            address: address.clone(),
+            total_shares: 1,
+            sampled_shares: 0,
+            invalid_samples: 0,
+            risk_sampled_shares: 0,
+            risk_invalid_samples: 0,
+            forced_started_at: None,
+            forced_until: Some(now + Duration::from_secs(900)),
+            forced_sampled_shares: 0,
+            forced_invalid_samples: 0,
+            resume_forced_at: None,
+            hold_cause: Some(cause),
+            last_seen_at: now,
+        };
+        ValidationStateStore::upsert_validation_state(store.as_ref(), &hold)
+            .expect("seed validation hold");
+        let validation = Arc::new(ValidationEngine::new_with_state_store(
+            config.clone(),
+            Arc::new(FfHasher),
+            Arc::clone(&store) as Arc<dyn ValidationStateStore>,
+        ));
+        let plan = validation.plan_regular_submit(&address);
+        assert!(plan.enqueue_audit && !plan.sync_full_verify);
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let engine = PoolEngine::new(
+            config,
+            Arc::clone(&validation),
+            jobs,
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode::default()),
+        );
+        engine
+            .login("conn1", address.clone(), "rig", 2, submit_hash_cap())
+            .expect("login");
+        // Hold the only permit explicitly: this exercises saturation without
+        // racing a sleeping verifier or depending on machine speed.
+        let busy = engine
+            .admission()
+            .sync_verify()
+            .try_acquire()
+            .expect("reserve slot");
+        let ack = engine
+            .submit("conn1", "job1".to_string(), 42, Some("ff".repeat(32)))
+            .expect("temporary hold must not compete for synchronous verification");
+        assert!(ack.accepted && !ack.verified);
+        assert_eq!(ack.status, SHARE_STATUS_PROVISIONAL);
+        assert_eq!(engine.admission().snapshot().sync_verify_busy_total, 0);
+        wait_for_audits(&validation, 1);
+        let snapshot = validation.snapshot();
+        assert_eq!(snapshot.audit_enqueued, 1);
+        assert_eq!(snapshot.audit_verified, 1);
+        assert_eq!(snapshot.sync_full_verifies, 0);
+
+        // A later fraud hold must immediately override the cached temporary
+        // hold, even though the in-memory planner still knows the audit hold.
+        hold.hold_cause = Some(ValidationHoldCause::InvalidSamples);
+        hold.forced_started_at = Some(now);
+        ValidationStateStore::upsert_validation_state(store.as_ref(), &hold).expect("fraud hold");
+        let error = engine
+            .submit("conn1", "job1".to_string(), 43, Some("ff".repeat(32)))
+            .expect_err("fraud review must still require a synchronous slot");
+        assert!(error.to_string().starts_with("server busy"));
+        assert_eq!(engine.admission().snapshot().sync_verify_busy_total, 1);
+        drop(busy);
+        let reviewed = engine
+            .submit("conn1", "job1".to_string(), 43, Some("ff".repeat(32)))
+            .expect("fraud-review share can retry once a slot is free");
+        assert!(reviewed.verified);
     }
 
     #[test]

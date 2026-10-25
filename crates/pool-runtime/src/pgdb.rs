@@ -10,7 +10,7 @@ use postgres::{types::ToSql, Client, Config as PostgresConfig, NoTls, Row, Trans
 use serde::Deserialize;
 use tracing::warn;
 
-use crate::engine::ShareRecord;
+use crate::engine::{ShareRecord, SubmitRisk};
 use crate::share_dedupe::TEMPLATE_SHARE_CLAIM_RETENTION;
 use crate::stats::RejectionReasonCount;
 use crate::validation::{
@@ -3856,16 +3856,13 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         }))
     }
 
-    /// The address's risk row and its validation `forced_until`, in one
-    /// round trip. Deadlines are returned unfiltered; callers compare them
-    /// with the current time.
-    pub(crate) fn get_submit_risk(
-        &self,
-        address: &str,
-    ) -> Result<(Option<AddressRiskState>, Option<SystemTime>)> {
+    /// The address's risk row and validation hold deadline/cause in one round
+    /// trip. Deadlines are returned unfiltered; submit admission distinguishes
+    /// background-audit holds from mandatory synchronous verification.
+    pub(crate) fn get_submit_risk(&self, address: &str) -> Result<SubmitRisk> {
         let row = self.conn().query_one(
             "SELECT r.address, r.strikes, r.strike_window_until, r.last_reason, r.last_event_at,
-                    r.quarantined_until, r.force_verify_until, v.forced_until
+                    r.quarantined_until, r.force_verify_until, v.forced_until, v.hold_cause
              FROM (SELECT $1::text AS address) AS q
              LEFT JOIN address_risk r ON r.address = q.address
              LEFT JOIN validation_address_states v ON v.address = q.address",
@@ -3882,8 +3879,14 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                 quarantined_until: row.get::<_, Option<i64>>(5).map(from_unix),
                 force_verify_until: row.get::<_, Option<i64>>(6).map(from_unix),
             });
-        let validation_forced_until = row.get::<_, Option<i64>>(7).map(from_unix);
-        Ok((state, validation_forced_until))
+        Ok(SubmitRisk {
+            state,
+            validation_forced_until: row.get::<_, Option<i64>>(7).map(from_unix),
+            validation_hold_cause: validation_hold_cause_from_db(
+                row.get::<_, Option<String>>(8).as_deref(),
+            )?,
+            force_verify: false,
+        })
     }
 
     pub fn should_force_verify_address(
