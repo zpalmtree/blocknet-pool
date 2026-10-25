@@ -117,6 +117,10 @@ const PUBLIC_STATS_HISTORY_CACHE_TTL: Duration = Duration::from_secs(30);
 const ADMIN_AUTH_FAILURE_LIMIT: u32 = 20;
 const ADMIN_AUTH_FAILURE_WINDOW: Duration = Duration::from_secs(5 * 60);
 const ADMIN_AUTH_FAILURE_MAX_CLIENTS: usize = 16_384;
+// Signed monitor events must carry a `checked_at` within this distance of our
+// clock and newer than the last accepted event, so captured requests cannot
+// be replayed.
+const MONITOR_INGEST_MAX_CLOCK_SKEW_SECS: u64 = 5 * 60;
 const PUBLIC_TELEMETRY_RATE_LIMIT_MAX_BUCKETS: usize = 16_384;
 const MINER_DETAIL_SHARE_LIMIT: i64 = 20;
 const MINER_PAYOUT_HISTORY_LIMIT: i64 = 50;
@@ -344,6 +348,9 @@ pub(crate) struct ApiState {
     public_read_loads: Arc<Semaphore>,
     checkpoint_file_cache: Arc<CheckpointFileCache>,
     admin_auth_failures: Arc<Mutex<WindowedCounter>>,
+    /// Newest accepted Cloudflare `checked_at` (only the `public_http` probe
+    /// exists). `None` until seeded from the latest stored heartbeat.
+    monitor_ingest_last_checked_at: Arc<tokio::sync::Mutex<Option<u64>>>,
     performance: Arc<ApiPerformanceTracker>,
     recovery: Arc<RecoveryAgentClient>,
     live_runtime_snapshot_cache: Arc<Mutex<LiveRuntimeSnapshotCache>>,
@@ -1792,6 +1799,34 @@ struct CloudflareIngestEvent {
     detail: Option<String>,
 }
 
+/// Replay protection for signed monitor events: `checked_at` (and `ended_at`
+/// when present) must be within [`MONITOR_INGEST_MAX_CLOCK_SKEW_SECS`] of now,
+/// and `checked_at` must be newer than the last accepted event.
+fn check_monitor_event_freshness(
+    event: &CloudflareIngestEvent,
+    now_secs: u64,
+    last_accepted: u64,
+) -> Result<u64, (StatusCode, &'static str)> {
+    let Some(checked_at) = event.checked_at else {
+        return Err((StatusCode::BAD_REQUEST, "monitor event missing checked_at"));
+    };
+    let outside_window =
+        |timestamp: u64| timestamp.abs_diff(now_secs) > MONITOR_INGEST_MAX_CLOCK_SKEW_SECS;
+    if outside_window(checked_at) || event.ended_at.is_some_and(outside_window) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "monitor event timestamp outside the accepted window",
+        ));
+    }
+    if checked_at <= last_accepted {
+        return Err((
+            StatusCode::CONFLICT,
+            "monitor event is not newer than the last accepted event",
+        ));
+    }
+    Ok(checked_at)
+}
+
 async fn handle_monitor_ingest_cloudflare(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -1818,6 +1853,41 @@ async fn handle_monitor_ingest_cloudflare(
 
     if !event.service.trim().eq_ignore_ascii_case("public_http") {
         return error_response(StatusCode::BAD_REQUEST, "unsupported monitor service");
+    }
+
+    // Held until the event is stored so concurrent replays cannot both pass.
+    let mut last_checked_at = state.monitor_ingest_last_checked_at.lock().await;
+    let last = match *last_checked_at {
+        Some(value) => value,
+        None => {
+            let store = Arc::clone(&state.store);
+            match spawn_blocking_result(move || {
+                store.get_latest_monitor_heartbeat(Some(CLOUDFLARE_MONITOR_SOURCE))
+            })
+            .await
+            {
+                Ok(latest) => latest
+                    .map(|row| system_time_to_unix_secs(row.sampled_at))
+                    .unwrap_or(0),
+                Err(err) => {
+                    return internal_error("failed loading last cloudflare monitor event", err)
+                }
+            }
+        }
+    };
+    let now_secs = system_time_to_unix_secs(SystemTime::now());
+    match check_monitor_event_freshness(&event, now_secs, last) {
+        Ok(checked_at) => *last_checked_at = Some(checked_at),
+        Err((status, message)) => {
+            *last_checked_at = Some(last);
+            tracing::warn!(
+                checked_at = ?event.checked_at,
+                last_accepted = last,
+                now = now_secs,
+                "rejected cloudflare monitor event: {message}"
+            );
+            return error_response(status, message);
+        }
     }
 
     let store = Arc::clone(&state.store);
@@ -4251,6 +4321,7 @@ impl ApiState {
             ))),
             public_read_loads: Arc::new(Semaphore::new(public_read_concurrency)),
             checkpoint_file_cache: Arc::new(Mutex::new(None)),
+            monitor_ingest_last_checked_at: Arc::new(tokio::sync::Mutex::new(None)),
             admin_auth_failures: Arc::new(Mutex::new(WindowedCounter::new(
                 ADMIN_AUTH_FAILURE_WINDOW,
                 ADMIN_AUTH_FAILURE_MAX_CLIENTS,
@@ -6864,6 +6935,48 @@ mod tests {
             check_admin_key(&failures, "", "c", Some("anything"), start),
             AdminAuth::Unauthorized
         );
+    }
+
+    #[test]
+    fn monitor_ingest_rejects_stale_future_missing_and_replayed_events() {
+        use super::{check_monitor_event_freshness, CloudflareIngestEvent};
+        let event = |checked_at: Option<u64>, ended_at: Option<u64>| CloudflareIngestEvent {
+            service: "public_http".into(),
+            status: "up".into(),
+            started_at: None,
+            ended_at,
+            checked_at,
+            summary: None,
+            detail: None,
+        };
+        let now = 1_800_000_000;
+        assert_eq!(
+            check_monitor_event_freshness(&event(Some(now), None), now, now - 60),
+            Ok(now)
+        );
+        assert_eq!(
+            check_monitor_event_freshness(&event(Some(now - 300), Some(now - 300)), now, 0),
+            Ok(now - 300)
+        );
+        for rejected in [
+            event(None, None),
+            event(Some(now - 301), None),
+            event(Some(now + 301), None),
+            event(Some(now), Some(now - 3600)),
+        ] {
+            assert_eq!(
+                check_monitor_event_freshness(&rejected, now, 0).unwrap_err().0,
+                StatusCode::BAD_REQUEST
+            );
+        }
+        for last in [now, now + 1] {
+            assert_eq!(
+                check_monitor_event_freshness(&event(Some(now), None), now, last)
+                    .unwrap_err()
+                    .0,
+                StatusCode::CONFLICT
+            );
+        }
     }
 
     #[test]
