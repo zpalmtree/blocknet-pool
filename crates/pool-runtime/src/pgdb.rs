@@ -843,6 +843,14 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         .context("ensure unpaid balance source indexes")?;
         conn.batch_execute("ALTER TABLE shares ADD COLUMN IF NOT EXISTS reject_reason TEXT")
             .context("ensure shares.reject_reason column")?;
+        // Apply scripts/index_share_rejections.sql concurrently before deploying
+        // to an existing production database to avoid a startup index build.
+        conn.batch_execute(
+            "CREATE INDEX IF NOT EXISTS idx_shares_rejected_created_reason
+             ON shares(created_at DESC) INCLUDE (reject_reason)
+             WHERE status NOT IN ('verified', 'provisional')",
+        )
+        .context("ensure shares rejection analytics index")?;
         conn.batch_execute(
             "UPDATE shares SET reject_reason = 'legacy / unknown'
              WHERE status NOT IN ('verified','provisional')
