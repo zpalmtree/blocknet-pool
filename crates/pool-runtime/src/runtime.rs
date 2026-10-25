@@ -75,6 +75,7 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
     // Only the Stratum process runs this bootstrap; its submit workers and
     // background tasks share one pool, sized separately from the API's.
     let core = bootstrap_runtime_core(&cfg, cfg.stratum_database_pool_size()).await?;
+    core.store.set_async_share_commit(cfg.share_async_commit);
     let expected_address_network =
         resolve_expected_address_network(&cfg, Arc::clone(&core.node)).await;
     let validation_cfg = cfg.clone();

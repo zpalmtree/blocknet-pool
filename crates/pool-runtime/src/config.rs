@@ -100,6 +100,11 @@ pub struct Config {
     /// Postgres connections for the Stratum process only. 0 uses
     /// `database_pool_size`, which the API and monitor also read.
     pub stratum_database_pool_size: i32,
+    /// Commit share claims and provisional (unverified) share inserts with
+    /// `synchronous_commit = off`. A Postgres or host crash can then lose the
+    /// last ~3 x wal_writer_delay (default 600 ms) of acknowledged
+    /// provisional shares; verified shares, blocks and payouts stay durable.
+    pub share_async_commit: bool,
 }
 
 impl Default for Config {
@@ -168,6 +173,7 @@ impl Default for Config {
             database_url: String::new(),
             database_pool_size: 4,
             stratum_database_pool_size: 0,
+            share_async_commit: false,
         }
     }
 }

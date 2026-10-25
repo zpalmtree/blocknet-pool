@@ -399,6 +399,9 @@ pub struct PostgresStore {
     /// Dedicated session for the payout sweep advisory lock. Session locks
     /// belong to one backend, so this connection never serves other queries.
     payout_sweep_lock_client: Mutex<Option<Client>>,
+    /// Commit share claims and provisional share inserts without waiting for
+    /// the WAL flush (`share_async_commit`).
+    async_share_commit: std::sync::atomic::AtomicBool,
 }
 
 /// Advisory lock key shared by every process that runs payout sweeps or
@@ -1120,6 +1123,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             url: url.to_string(),
             schema: schema.map(str::to_string),
             payout_sweep_lock_client: Mutex::new(None),
+            async_share_commit: std::sync::atomic::AtomicBool::new(false),
         }))
     }
 
@@ -1163,6 +1167,15 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(Some(result))
     }
 
+    /// See `Config::share_async_commit`.
+    pub fn set_async_share_commit(&self, enabled: bool) {
+        self.async_share_commit.store(enabled, Ordering::Relaxed);
+    }
+
+    fn async_share_commit(&self) -> bool {
+        self.async_share_commit.load(Ordering::Relaxed)
+    }
+
     pub fn add_share(&self, share: ShareRecord) -> Result<()> {
         self.add_share_with_replay(share, None)
     }
@@ -1193,6 +1206,10 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let created = to_unix(share.created_at);
         let mut conn = self.conn();
         let mut tx = conn.transaction()?;
+        // Verified shares (block candidates among them) stay durable.
+        if share.status == "provisional" && self.async_share_commit() {
+            tx.batch_execute("SET LOCAL synchronous_commit = off")?;
+        }
 
         if let Some(replay) = replay {
             let network_target = replay.network_target.to_vec();
@@ -3786,12 +3803,22 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     ) -> Result<bool> {
         let now = now_unix();
         let expires_at = now + TEMPLATE_SHARE_CLAIM_RETENTION.as_secs() as i64;
-        let claimed = self.conn().execute(
+        const CLAIM_SQL: &str =
             "INSERT INTO seen_shares (job_id, nonce, expires_at) VALUES ($1, $2, $3)
              ON CONFLICT(job_id, nonce) DO UPDATE SET expires_at = EXCLUDED.expires_at
-             WHERE seen_shares.expires_at <= $4",
-            &[&share_key, &u64_to_i64(nonce)?, &expires_at, &now],
-        )?;
+             WHERE seen_shares.expires_at <= $4";
+        let nonce = u64_to_i64(nonce)?;
+        let claimed = if self.async_share_commit() {
+            let mut conn = self.conn();
+            let mut tx = conn.transaction()?;
+            tx.batch_execute("SET LOCAL synchronous_commit = off")?;
+            let claimed = tx.execute(CLAIM_SQL, &[&share_key, &nonce, &expires_at, &now])?;
+            tx.commit()?;
+            claimed
+        } else {
+            self.conn()
+                .execute(CLAIM_SQL, &[&share_key, &nonce, &expires_at, &now])?
+        };
         Ok(claimed > 0)
     }
 
@@ -7327,6 +7354,47 @@ mod tests {
             Some(ValidationHoldCause::PayoutCoverage)
         );
         assert!(validation_hold_cause_from_db(Some("legacy")).is_err());
+    }
+
+    #[test]
+    fn async_share_commit_claims_and_inserts_provisional_shares_postgres() {
+        let Some(store) = test_store() else { return };
+        store.set_async_share_commit(true);
+        let suffix = unique_suffix();
+        let key = format!("tpl:async-{suffix}");
+        assert!(store.try_claim_share("unused", &key, 3).unwrap());
+        assert!(
+            !store.try_claim_share("unused", &key, 3).unwrap(),
+            "still exclusive"
+        );
+        let id = store
+            .add_share_with_replay_and_id(
+                ShareRecord {
+                    job_id: format!("async-{suffix}"),
+                    miner: format!("miner-{suffix}"),
+                    worker: "rig".to_string(),
+                    difficulty: 1,
+                    nonce: 3,
+                    status: "provisional",
+                    was_sampled: false,
+                    block_hash: None,
+                    claimed_hash: None,
+                    reject_reason: None,
+                    created_at: SystemTime::now(),
+                },
+                None,
+            )
+            .unwrap();
+        assert!(id > 0);
+        let mut conn = store.conn();
+        let row = conn
+            .query_one("SHOW synchronous_commit", &[])
+            .expect("show synchronous_commit");
+        assert_eq!(
+            row.get::<_, String>(0),
+            "on",
+            "SET LOCAL must not leak into the pooled session"
+        );
     }
 
     #[test]
