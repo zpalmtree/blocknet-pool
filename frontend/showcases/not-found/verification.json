@@ -1,0 +1,210 @@
+{
+  "source_revision": "5e78e70",
+  "captured": "2026-10-25",
+  "http_checks": [
+    [
+      "/",
+      200
+    ],
+    [
+      "/start",
+      200
+    ],
+    [
+      "/start/?lang=th",
+      200
+    ],
+    [
+      "/stats?lang=ar",
+      200
+    ],
+    [
+      "/blocks",
+      200
+    ],
+    [
+      "/payouts",
+      200
+    ],
+    [
+      "/checkpoints",
+      200
+    ],
+    [
+      "/luck",
+      200
+    ],
+    [
+      "/status",
+      200
+    ],
+    [
+      "/admin",
+      200
+    ],
+    [
+      "/blog/",
+      200
+    ],
+    [
+      "/blog/th/track-your-miner-on-bntpool/",
+      200
+    ],
+    [
+      "/api/status",
+      200
+    ],
+    [
+      "/sitemap.xml",
+      200
+    ],
+    [
+      "/robots.txt",
+      200
+    ],
+    [
+      "/ui-assets/app.js",
+      200
+    ],
+    [
+      "/ui-assets/app.css",
+      200
+    ],
+    [
+      "GET /seo-check-page-that-does-not-exist",
+      404
+    ],
+    [
+      "HEAD /seo-check-page-that-does-not-exist",
+      404
+    ],
+    [
+      "GET /stats/typo",
+      404
+    ],
+    [
+      "HEAD /stats/typo",
+      404
+    ],
+    [
+      "GET /404",
+      404
+    ],
+    [
+      "HEAD /404",
+      404
+    ],
+    [
+      "GET /th/blog/missing",
+      404
+    ],
+    [
+      "HEAD /th/blog/missing",
+      404
+    ],
+    [
+      "GET /missing.js",
+      404
+    ],
+    [
+      "HEAD /missing.js",
+      404
+    ],
+    [
+      "/api/does-not-exist",
+      404
+    ],
+    [
+      "/blog/does-not-exist/",
+      404
+    ],
+    [
+      "locale ja",
+      404
+    ],
+    [
+      "locale ko",
+      404
+    ],
+    [
+      "locale it",
+      404
+    ],
+    [
+      "locale zh-Hant",
+      404
+    ],
+    [
+      "locale ru",
+      404
+    ],
+    [
+      "locale id",
+      404
+    ],
+    [
+      "locale nl",
+      404
+    ],
+    [
+      "locale pl",
+      404
+    ],
+    [
+      "locale de",
+      404
+    ],
+    [
+      "locale zh-Hans",
+      404
+    ],
+    [
+      "locale uk",
+      404
+    ],
+    [
+      "locale ar",
+      404
+    ],
+    [
+      "locale pt-BR",
+      404
+    ],
+    [
+      "locale es",
+      404
+    ],
+    [
+      "locale tr",
+      404
+    ],
+    [
+      "locale th",
+      404
+    ],
+    [
+      "locale vi",
+      404
+    ],
+    [
+      "locale el",
+      404
+    ],
+    [
+      "locale en",
+      404
+    ],
+    [
+      "locale fr",
+      404
+    ]
+  ],
+  "api_restart_edt": "2026-10-25 17:48:26 EDT",
+  "stratum_pid_unchanged": 355652,
+  "monitor_pid_unchanged": 319472,
+  "recovery_pid_unchanged": 319713,
+  "api_tests": 113,
+  "frontend_tests": 11,
+  "clippy": "passed -D warnings",
+  "captures_reviewed": 12
+}
