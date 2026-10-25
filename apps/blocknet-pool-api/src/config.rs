@@ -17,6 +17,17 @@ pub(crate) struct Config {
     pub(crate) api_host: String,
     pub(crate) api_key: String,
     pub(crate) monitor_ingest_secret: String,
+    /// Header carrying the client address set by the trusted reverse proxy
+    /// (our nginx sets `X-Real-IP $remote_addr`). Empty disables it, leaving
+    /// only the rightmost `X-Forwarded-For` hop.
+    pub(crate) api_client_ip_header: String,
+    /// Extra proxy addresses (besides loopback) whose forwarding headers are
+    /// trusted. Requests from any other peer are keyed by the peer address.
+    pub(crate) api_trusted_proxies: Vec<String>,
+    /// `statement_timeout` applied to database reads made on behalf of public,
+    /// unauthenticated requests. 0 disables. Admin and background work keep
+    /// the server default.
+    pub(crate) api_public_db_statement_timeout_ms: u64,
     /// Latest released miner version, surfaced to the UI so it can nudge
     /// workers reporting an older (or no) version. Bumped per seine release.
     pub(crate) latest_miner_version: String,
@@ -33,6 +44,9 @@ impl Default for Config {
             api_host: "127.0.0.1".to_string(),
             api_key: String::new(),
             monitor_ingest_secret: String::new(),
+            api_client_ip_header: crate::protect::DEFAULT_CLIENT_IP_HEADER.to_string(),
+            api_trusted_proxies: Vec::new(),
+            api_public_db_statement_timeout_ms: 15_000,
             latest_miner_version: "0.2.15".to_string(),
             recovery: RecoveryConfig::default(),
         }
@@ -59,6 +73,18 @@ impl Config {
         }
         if self.api_port == 0 {
             anyhow::bail!("api_port must be non-zero");
+        }
+        let ip_header = self.api_client_ip_header.trim();
+        if !ip_header.is_empty()
+            && axum::http::HeaderName::from_bytes(ip_header.to_ascii_lowercase().as_bytes())
+                .is_err()
+        {
+            anyhow::bail!("api_client_ip_header is not a valid header name: {ip_header}");
+        }
+        for proxy in &self.api_trusted_proxies {
+            if proxy.trim().parse::<std::net::IpAddr>().is_err() {
+                anyhow::bail!("api_trusted_proxies entry is not an IP address: {proxy}");
+            }
         }
         Ok(())
     }
@@ -101,6 +127,8 @@ mod tests {
             (r#"{"pool_url":""}"#, "pool_url"),
             (r#"{"api_host":"   "}"#, "api_host"),
             (r#"{"api_port":0}"#, "api_port"),
+            (r#"{"api_client_ip_header":"bad header"}"#, "api_client_ip_header"),
+            (r#"{"api_trusted_proxies":["nginx"]}"#, "api_trusted_proxies"),
             (r#"{"recovery":{"socket_path":""}}"#, "recovery.socket_path"),
         ] {
             std::fs::write(&path, json).unwrap();

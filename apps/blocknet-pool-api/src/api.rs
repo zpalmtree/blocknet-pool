@@ -9,7 +9,8 @@ use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::{Body, Bytes};
-use axum::extract::{Path, Query, State};
+use axum::extract::{ConnectInfo, FromRequestParts, Path, Query, State};
+use axum::http::request::Parts;
 use axum::http::header;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode, Uri};
 use axum::middleware::{self, Next};
@@ -27,6 +28,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::background_read::{BackgroundReads, ReadResult};
 use crate::config::Config;
+use crate::protect::{client_key, ClientIpPolicy, WindowedCounter};
 use crate::ui::{handle_app_fallback, handle_favicon_svg, handle_ui, handle_ui_asset};
 use pool_common::db::{
     allocate_proportional_fees, ActiveVerificationHold, AddressRiskState, Balance, DbBlock,
@@ -89,9 +91,8 @@ const MINER_DETAIL_ADMISSION_WAIT: Duration = Duration::from_millis(50);
 const PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(5);
 const PUBLIC_TELEMETRY_STATS_RATE_LIMIT: u32 = 12;
 const PUBLIC_TELEMETRY_MINER_RATE_LIMIT: u32 = 12;
-const PUBLIC_TELEMETRY_RATE_LIMIT_RETENTION: Duration = Duration::from_secs(60);
 const PUBLIC_TELEMETRY_RATE_LIMIT_RETRY_AFTER_SECS: u64 = 5;
-const PUBLIC_TELEMETRY_RATE_LIMIT_MAX_BUCKETS: usize = 4096;
+const PUBLIC_TELEMETRY_RATE_LIMIT_MAX_BUCKETS: usize = 16_384;
 const MINER_DETAIL_SHARE_LIMIT: i64 = 20;
 const MINER_PAYOUT_HISTORY_LIMIT: i64 = 50;
 const DEFAULT_DAEMON_LOG_TAIL: usize = 200;
@@ -313,6 +314,7 @@ pub(crate) struct ApiState {
     miner_detail_loads: Arc<Semaphore>,
     reward_breakdown_reads: Arc<BackgroundReads>,
     public_telemetry_rate_limiter: Arc<Mutex<PublicTelemetryRateLimiter>>,
+    client_ip_policy: Arc<ClientIpPolicy>,
     performance: Arc<ApiPerformanceTracker>,
     recovery: Arc<RecoveryAgentClient>,
     live_runtime_snapshot_cache: Arc<Mutex<LiveRuntimeSnapshotCache>>,
@@ -526,70 +528,60 @@ impl PublicTelemetryRouteKind {
     }
 }
 
-struct PublicTelemetryRateBucket {
-    window_started_at: Instant,
-    request_count: u32,
-    last_seen_at: Instant,
+impl PublicTelemetryRouteKind {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Stats => "stats",
+            Self::Miner => "miner",
+        }
+    }
 }
 
-#[derive(Default)]
+/// Per-client fixed-window limiter (see [`WindowedCounter`]): O(1) per
+/// request, with the table dropped once per window.
 struct PublicTelemetryRateLimiter {
-    buckets: HashMap<String, PublicTelemetryRateBucket>,
-    last_cleanup_at: Option<Instant>,
+    counter: WindowedCounter,
+}
+
+impl Default for PublicTelemetryRateLimiter {
+    fn default() -> Self {
+        Self {
+            counter: WindowedCounter::new(
+                PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW,
+                PUBLIC_TELEMETRY_RATE_LIMIT_MAX_BUCKETS,
+            ),
+        }
+    }
 }
 
 impl PublicTelemetryRateLimiter {
-    fn allow(&mut self, client_ip: &str, route: PublicTelemetryRouteKind, now: Instant) -> bool {
-        if self
-            .last_cleanup_at
-            .is_none_or(|last| now.duration_since(last) >= PUBLIC_TELEMETRY_RATE_LIMIT_RETENTION)
-        {
-            self.buckets.retain(|_, bucket| {
-                now.duration_since(bucket.last_seen_at) < PUBLIC_TELEMETRY_RATE_LIMIT_RETENTION
-            });
-            self.last_cleanup_at = Some(now);
-        }
+    fn allow(&mut self, client_key: &str, route: PublicTelemetryRouteKind, now: Instant) -> bool {
+        let key = format!("{}:{client_key}", route.key());
+        self.counter.try_acquire(&key, route.limit(), now)
+    }
+}
 
-        let route_key = match route {
-            PublicTelemetryRouteKind::Stats => "stats",
-            PublicTelemetryRouteKind::Miner => "miner",
-        };
-        let key = format!("{route_key}:{client_ip}");
-        let limit = route.limit();
-        let bucket = self
-            .buckets
-            .entry(key)
-            .or_insert_with(|| PublicTelemetryRateBucket {
-                window_started_at: now,
-                request_count: 0,
-                last_seen_at: now,
-            });
+/// Rate-limit key of the requesting client, resolved by [`ClientIpPolicy`].
+/// `None` when the client cannot be identified (trusted proxy without
+/// forwarding headers); per-client limits are then skipped.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ClientIp(Option<String>);
 
-        if now.duration_since(bucket.window_started_at) >= PUBLIC_TELEMETRY_RATE_LIMIT_WINDOW {
-            bucket.window_started_at = now;
-            bucket.request_count = 0;
-        }
+impl ClientIp {
+    fn key(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+}
 
-        bucket.last_seen_at = now;
-        if bucket.request_count >= limit {
-            return false;
-        }
-        bucket.request_count = bucket.request_count.saturating_add(1);
-        if self.buckets.len() > PUBLIC_TELEMETRY_RATE_LIMIT_MAX_BUCKETS {
-            let mut oldest = self
-                .buckets
-                .iter()
-                .map(|(key, bucket)| (key.clone(), bucket.last_seen_at))
-                .collect::<Vec<_>>();
-            oldest.sort_by_key(|(_, last_seen_at)| *last_seen_at);
-            let remove_count = oldest
-                .len()
-                .saturating_sub(PUBLIC_TELEMETRY_RATE_LIMIT_MAX_BUCKETS);
-            for (key, _) in oldest.into_iter().take(remove_count) {
-                self.buckets.remove(&key);
-            }
-        }
-        true
+#[axum::async_trait]
+impl FromRequestParts<ApiState> for ClientIp {
+    type Rejection = Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &ApiState,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(state.client_ip(&parts.headers, &parts.extensions))
     }
 }
 
@@ -1010,7 +1002,13 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
             ),
         }
     });
-    axum::serve(listener, app).await?;
+    // Peer addresses let the client-IP policy distinguish our proxy from
+    // direct callers whose forwarding headers must not be trusted.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -4071,6 +4069,10 @@ impl ApiState {
     ) -> Self {
         let detail_concurrency = (config.runtime.database_pool_size.max(2) as usize / 2)
             .clamp(1, MAX_CONCURRENT_MINER_DETAIL_LOADS);
+        let client_ip_policy = Arc::new(ClientIpPolicy::new(
+            &config.api_client_ip_header,
+            &config.api_trusted_proxies,
+        ));
         Self {
             recovery: Arc::new(RecoveryAgentClient::new(
                 config.recovery.socket_path.clone(),
@@ -4096,6 +4098,7 @@ impl ApiState {
             public_telemetry_rate_limiter: Arc::new(Mutex::new(
                 PublicTelemetryRateLimiter::default(),
             )),
+            client_ip_policy,
             performance: Arc::new(ApiPerformanceTracker::default()),
             live_runtime_snapshot_cache: Arc::new(Mutex::new(LiveRuntimeSnapshotCache::new())),
             started_at: Instant::now(),
@@ -5545,24 +5548,6 @@ fn public_telemetry_route_kind_for_path(path: &str) -> Option<PublicTelemetryRou
     }
 }
 
-fn forwarded_client_ip(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(',').next())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            headers
-                .get("x-real-ip")
-                .and_then(|value| value.to_str().ok())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-        })
-}
-
 fn api_performance_route_name(uri: &Uri) -> Option<&'static str> {
     let path = uri.path();
     if !path.starts_with("/api/") {
@@ -5728,11 +5713,11 @@ async fn limit_public_telemetry_requests(
     next: Next,
 ) -> Response {
     let route = public_telemetry_route_kind_for_path(req.uri().path());
-    let client_ip = forwarded_client_ip(req.headers());
-    if let (Some(route), Some(client_ip)) = (route, client_ip) {
+    let client_ip = state.client_ip(req.headers(), req.extensions());
+    if let (Some(route), Some(client_ip)) = (route, client_ip.key()) {
         let allowed = {
             let mut limiter = state.public_telemetry_rate_limiter.lock();
-            limiter.allow(&client_ip, route, Instant::now())
+            limiter.allow(client_ip, route, Instant::now())
         };
         if !allowed {
             return (
@@ -5751,6 +5736,15 @@ async fn limit_public_telemetry_requests(
     }
 
     next.run(req).await
+}
+
+impl ApiState {
+    fn client_ip(&self, headers: &HeaderMap, extensions: &axum::http::Extensions) -> ClientIp {
+        let peer = extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|info| info.0.ip());
+        ClientIp(self.client_ip_policy.resolve(headers, peer).map(client_key))
+    }
 }
 
 async fn require_api_key(
