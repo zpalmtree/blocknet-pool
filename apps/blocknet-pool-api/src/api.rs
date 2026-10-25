@@ -336,6 +336,7 @@ pub(crate) struct ApiState {
     client_ip_policy: Arc<ClientIpPolicy>,
     public_read_cache: Arc<Mutex<PublicReadCache>>,
     public_read_loads: Arc<Semaphore>,
+    checkpoint_file_cache: Arc<CheckpointFileCache>,
     performance: Arc<ApiPerformanceTracker>,
     recovery: Arc<RecoveryAgentClient>,
     live_runtime_snapshot_cache: Arc<Mutex<LiveRuntimeSnapshotCache>>,
@@ -1078,8 +1079,8 @@ async fn handle_info(State(state): State<ApiState>) -> impl IntoResponse {
 }
 
 async fn handle_checkpoints_metadata(State(state): State<ApiState>) -> Response {
-    match load_checkpoint_file_snapshot(&state.config).await {
-        Ok(snapshot) => Json(snapshot.metadata).into_response(),
+    match load_checkpoint_file_snapshot(&state).await {
+        Ok(snapshot) => Json(snapshot.metadata.clone()).into_response(),
         Err(CheckpointFileError::NotFound) => {
             Json(unavailable_checkpoints_metadata(&state.config)).into_response()
         }
@@ -1088,7 +1089,7 @@ async fn handle_checkpoints_metadata(State(state): State<ApiState>) -> Response 
 }
 
 async fn handle_checkpoints_file(headers: HeaderMap, State(state): State<ApiState>) -> Response {
-    let snapshot = match load_checkpoint_file_snapshot(&state.config).await {
+    let snapshot = match load_checkpoint_file_snapshot(&state).await {
         Ok(snapshot) => snapshot,
         Err(err) => return checkpoint_file_error_response(err),
     };
@@ -1105,7 +1106,7 @@ async fn handle_checkpoints_file(headers: HeaderMap, State(state): State<ApiStat
         return response;
     }
 
-    let mut response = Body::from(snapshot.body).into_response();
+    let mut response = Body::from(snapshot.body.clone()).into_response();
     apply_checkpoint_response_headers(response.headers_mut(), &snapshot.metadata, &etag);
     response
 }
@@ -4242,6 +4243,7 @@ impl ApiState {
                 PUBLIC_READ_STALE_TTL,
             ))),
             public_read_loads: Arc::new(Semaphore::new(public_read_concurrency)),
+            checkpoint_file_cache: Arc::new(Mutex::new(None)),
             performance: Arc::new(ApiPerformanceTracker::default()),
             live_runtime_snapshot_cache: Arc::new(Mutex::new(LiveRuntimeSnapshotCache::new())),
             started_at: Instant::now(),
@@ -6106,22 +6108,61 @@ fn unavailable_checkpoints_metadata(config: &Config) -> CheckpointsMetadataRespo
     }
 }
 
+/// File identity used to reuse a parsed/hashed checkpoint file until it changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CheckpointFingerprint {
+    len: u64,
+    modified: Option<SystemTime>,
+    inode: u64,
+}
+
+impl CheckpointFingerprint {
+    fn of(metadata: &fs::Metadata) -> Self {
+        #[cfg(unix)]
+        let inode = std::os::unix::fs::MetadataExt::ino(metadata);
+        #[cfg(not(unix))]
+        let inode = 0;
+        Self {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+            inode,
+        }
+    }
+}
+
+struct CachedCheckpointFile {
+    path: PathBuf,
+    fingerprint: CheckpointFingerprint,
+    /// Parsed snapshot, or the validation error for an invalid file.
+    result: Result<Arc<CheckpointFileSnapshot>, String>,
+}
+
+/// Last loaded checkpoint file. Requests only `stat` the file; it is re-read
+/// and re-hashed (up to 32 MiB) only when its size, mtime, or inode changes.
+type CheckpointFileCache = Mutex<Option<CachedCheckpointFile>>;
+
 async fn load_checkpoint_file_snapshot(
-    config: &Config,
-) -> Result<CheckpointFileSnapshot, CheckpointFileError> {
-    let config = config.clone();
-    tokio::task::spawn_blocking(move || load_checkpoint_file_snapshot_blocking(&config))
+    state: &ApiState,
+) -> Result<Arc<CheckpointFileSnapshot>, CheckpointFileError> {
+    let config = state.config.clone();
+    let cache = Arc::clone(&state.checkpoint_file_cache);
+    tokio::task::spawn_blocking(move || load_checkpoint_file_snapshot_blocking(&config, &cache))
         .await
         .map_err(|err| CheckpointFileError::Internal(format!("checkpoint loader failed: {err}")))?
 }
 
 fn load_checkpoint_file_snapshot_blocking(
     config: &Config,
-) -> Result<CheckpointFileSnapshot, CheckpointFileError> {
+    cache: &CheckpointFileCache,
+) -> Result<Arc<CheckpointFileSnapshot>, CheckpointFileError> {
     let path = checkpoints_path(config);
+    // Held across a reload on purpose: concurrent misses (on blocking threads)
+    // wait for one read instead of each reading and hashing the file.
+    let mut cached = cache.lock();
     let metadata = match fs::metadata(&path) {
         Ok(metadata) => metadata,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            *cached = None;
             return Err(CheckpointFileError::NotFound);
         }
         Err(err) => return Err(CheckpointFileError::Io(err)),
@@ -6134,6 +6175,12 @@ fn load_checkpoint_file_snapshot_blocking(
     if metadata.len() > MAX_CHECKPOINTS_FILE_BYTES {
         return Err(CheckpointFileError::TooLarge(metadata.len()));
     }
+    let fingerprint = CheckpointFingerprint::of(&metadata);
+    if let Some(entry) = cached.as_ref() {
+        if entry.path == path && entry.fingerprint == fingerprint {
+            return entry.result.clone().map_err(CheckpointFileError::Invalid);
+        }
+    }
 
     let body = fs::read(&path).map_err(CheckpointFileError::Io)?;
     if u64::try_from(body.len()).unwrap_or(u64::MAX) > MAX_CHECKPOINTS_FILE_BYTES {
@@ -6141,7 +6188,31 @@ fn load_checkpoint_file_snapshot_blocking(
             u64::try_from(body.len()).unwrap_or(u64::MAX),
         ));
     }
+    let result = parse_checkpoint_snapshot(config, body, &metadata);
+    // Only remember the result if the file did not change while being read.
+    let unchanged = fs::metadata(&path)
+        .map(|after| CheckpointFingerprint::of(&after) == fingerprint)
+        .unwrap_or(false);
+    let result = match result {
+        Ok(snapshot) => Ok(Arc::new(snapshot)),
+        Err(CheckpointFileError::Invalid(message)) => Err(message),
+        Err(other) => return Err(other),
+    };
+    if unchanged {
+        *cached = Some(CachedCheckpointFile {
+            path,
+            fingerprint,
+            result: result.clone(),
+        });
+    }
+    result.map_err(CheckpointFileError::Invalid)
+}
 
+fn parse_checkpoint_snapshot(
+    config: &Config,
+    body: Vec<u8>,
+    metadata: &fs::Metadata,
+) -> Result<CheckpointFileSnapshot, CheckpointFileError> {
     let (entries, latest_height, latest_hash) = parse_checkpoint_file(&body)?;
     let sha256 = hex::encode(Sha256::digest(&body));
     let updated_at = metadata.modified().ok().map(system_time_to_unix_secs);
@@ -6673,6 +6744,43 @@ mod tests {
                 Err(CheckpointFileError::Invalid(_))
             ));
         }
+    }
+
+    #[test]
+    fn checkpoint_file_is_reparsed_only_when_it_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("checkpoints.dat");
+        let hash = "ab".repeat(32);
+        std::fs::write(&path, format!("1:{hash}\n")).unwrap();
+        let cfg = Config {
+            checkpoints_path: path.display().to_string(),
+            ..Config::default()
+        };
+        let cache = super::Mutex::new(None);
+        let first = super::load_checkpoint_file_snapshot_blocking(&cfg, &cache).unwrap();
+        let second = super::load_checkpoint_file_snapshot_blocking(&cfg, &cache).unwrap();
+        assert!(Arc::ptr_eq(&first, &second), "unchanged file must be reused");
+        assert_eq!(first.metadata.latest_height, Some(1));
+
+        std::fs::write(&path, format!("1:{hash}\n2:{hash}\n")).unwrap();
+        let third = super::load_checkpoint_file_snapshot_blocking(&cfg, &cache).unwrap();
+        assert!(!Arc::ptr_eq(&first, &third));
+        assert_eq!(third.metadata.latest_height, Some(2));
+
+        std::fs::write(&path, "garbage\n").unwrap();
+        assert!(matches!(
+            super::load_checkpoint_file_snapshot_blocking(&cfg, &cache),
+            Err(CheckpointFileError::Invalid(_))
+        ));
+        assert!(matches!(
+            super::load_checkpoint_file_snapshot_blocking(&cfg, &cache),
+            Err(CheckpointFileError::Invalid(_))
+        ));
+        std::fs::remove_file(&path).unwrap();
+        assert!(matches!(
+            super::load_checkpoint_file_snapshot_blocking(&cfg, &cache),
+            Err(CheckpointFileError::NotFound)
+        ));
     }
 
     #[test]
