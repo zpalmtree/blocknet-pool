@@ -2528,13 +2528,15 @@ mod tests {
             .iter()
             .position(|id| *id == 20)
             .expect("candidate response should arrive");
+        // The three regular submits race into the single verifier, so the
+        // deepest-queued one is whichever finishes last, not necessarily id 12.
         let queued_regular_pos = order
             .iter()
-            .position(|id| *id == 12)
-            .expect("queued regular response should arrive");
+            .rposition(|id| [10, 11, 12].contains(id))
+            .expect("queued regular responses should arrive");
         assert!(
             candidate_pos < queued_regular_pos,
-            "candidate submit should finish before the deeper queued regular submit"
+            "candidate submit should finish before the deepest queued regular submit"
         );
         assert_eq!(responses[&20]["status"].as_str(), Some("ok"));
         let snapshot = server.submit_snapshot();

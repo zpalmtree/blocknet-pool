@@ -2831,7 +2831,13 @@ mod tests {
             snapshot.probation_rejected,
             60 - PROBATION_QUEUE_SIZE as u64
         );
-        assert!(snapshot.probation_queue_depth < PROBATION_QUEUE_SIZE);
+        // The lane drains on the audit worker meanwhile.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while engine.snapshot().probation_queue_depth >= PROBATION_QUEUE_SIZE {
+            assert!(Instant::now() < deadline, "probation lane should drain");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(engine.snapshot().overload_mode, OverloadMode::Normal);
 
         // An address that already passed a sample keeps normal sampling.
         let veteran = engine.process_inline(ValidationTask {

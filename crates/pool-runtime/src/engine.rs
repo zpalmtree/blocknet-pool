@@ -3304,6 +3304,7 @@ mod tests {
         engine
             .login(attacker, other_miner_address(), "x", 2, submit_hash_cap())
             .expect("attacker login");
+        let mut fakes_accepted = 0;
         for nonce in 1..=3 {
             engine
                 .submit(
@@ -3313,10 +3314,19 @@ mod tests {
                     NonceHasher::honest(nonce),
                 )
                 .expect("honest share accepted unverified during emergency");
-            engine
-                .submit(attacker, "job1".to_string(), 100 + nonce, fake_claim())
-                .expect("fake accepted unverified during emergency");
+            // A maintenance tick may already review the first fake mid-loop.
+            match engine.submit(attacker, "job1".to_string(), 100 + nonce, fake_claim()) {
+                Ok(ack) => {
+                    assert_eq!(ack.status, SHARE_STATUS_PROVISIONAL);
+                    fakes_accepted += 1;
+                }
+                Err(err) => assert!(err.to_string().starts_with("source banned"), "{err}"),
+            }
         }
+        assert!(
+            fakes_accepted >= 1,
+            "fakes are accepted unverified during emergency"
+        );
 
         let deadline = Instant::now() + Duration::from_secs(6);
         while !engine.source_blocked(attacker) && Instant::now() < deadline {
@@ -3326,7 +3336,14 @@ mod tests {
             engine.source_blocked(attacker),
             "the degraded-window review catches the fake source even while overloaded"
         );
-        assert_eq!(statuses(&store, 101..=103), vec![SHARE_STATUS_REJECTED; 3]);
+        assert!(
+            store
+                .shares()
+                .iter()
+                .filter(|share| share.miner == other_miner_address())
+                .all(|share| share.status == SHARE_STATUS_REJECTED),
+            "every fake accepted during the degraded window is revoked"
+        );
         let honest_statuses = statuses(&store, 1..=3);
         assert!(
             honest_statuses
