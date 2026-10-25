@@ -292,5 +292,7 @@
   "m615": "Pembayaran Pool Blocknet",
   "m616": "Statistik Penambang Blocknet",
   "m617": "Status Pool Blocknet",
-  "m618": "Dasbor Admin Pool"
+  "m618": "Dasbor Admin Pool",
+  "minerHelp": "Hashrate pool masih nol?",
+  "windowsGuide": "Panduan penyiapan Windows"
 }

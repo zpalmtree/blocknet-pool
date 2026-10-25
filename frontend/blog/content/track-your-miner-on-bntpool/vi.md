@@ -2,7 +2,7 @@
 title: Theo dõi trình đào trên bntpool.com
 description: Tra địa chỉ hoặc @name trên bntpool.com để xem hashrate, share, số dư và thanh toán; theo dõi khối, may mắn, thời gian hoạt động hoặc dùng API công khai.
 tags: [bntpool, Thống kê đào coin, API pool, Blocknet]
-sourceHash: bac503690f3a
+sourceHash: 4b48ebc39148
 translation: draft
 faq:
   - q: 'Vì sao hashrate trên bntpool.com khác số seine hiển thị?'
@@ -69,6 +69,26 @@ Hai thói quen giúp đối chiếu số liệu:
 - Cho máy mới thời gian. Với máy vừa bắt đầu, pool lấy trung bình theo số phút đã đào, nên số đầu dựa trên vài share. Sau một giờ, cửa sổ đủ một giờ được áp dụng.
 
 Bảng Recent Shares cho biết ngay share đang đến, kể cả trước khi hashrate ổn định.
+
+<span id="zero-hashrate"></span>
+
+## Vì sao seine đang đào nhưng My Stats hiển thị hashrate bằng không?
+
+Bắt đầu bằng địa chỉ nhận thanh toán, kết nối pool và các share được chấp nhận. Hashrate cục bộ cho biết máy đang tính hash; ước tính của pool cần các share được chấp nhận cho địa chỉ bạn tra cứu.
+
+1. **Đối chiếu địa chỉ.** Tra cứu đúng địa chỉ nhận hoặc `@name` đã đăng ký mà seine sử dụng. Nếu đã đổi địa chỉ của tên ngắn, hãy khởi động lại seine để phân giải lại tên, rồi kiểm tra địa chỉ đã phân giải trên My Stats.
+2. **Đối chiếu pool.** Kiểm tra seine có dùng `stratum+tcp://bntpool.com:3333` hay không. Máy đào ở nơi khác hoặc ở chế độ solo sẽ không thêm share vào đây. [Hướng dẫn thiết lập pool](/blog/vi/mine-blocknet-on-bntpool/) giải thích cách kết nối.
+3. **Kiểm tra Recent Shares.** Chờ share được chấp nhận, rồi để trang cập nhật. Share đến theo khoảng thời gian thay đổi; hashrate cục bộ đang chạy không bảo đảm pool có ước tính ngay. Nếu các share được chấp nhận vẫn đến, hãy so sánh giá trị trung bình theo thời gian.
+4. **Đọc thông báo kết nối.** Dùng bảng khi máy đào chưa có share được chấp nhận. Xem [Status](/status) để biết sự cố hiện tại.
+
+| Thông báo trong seine | Nội dung cần kiểm tra |
+|---|---|
+| `failed to connect to pool at` | Kiểm tra tên máy chủ và cổng, kết nối của bạn và việc cho phép TCP đi ra tới cổng 3333. |
+| `login rejected:` | Đọc lý do theo sau; kiểm tra địa chỉ nhận hoặc tên ngắn và dùng phiên bản seine hiện tại. |
+| `stale job` | Share thuộc một nhiệm vụ cũ. Theo dõi nhiệm vụ mới và share được chấp nhận; nếu tiếp diễn, kiểm tra kết nối và phiên bản máy đào. |
+| `submit interrupted during reconnect` | Seine đang kết nối lại. Theo dõi việc chấp nhận đăng nhập và các share mới được chấp nhận sau khi kết nối trở lại. |
+
+**Estimated Rewards** bằng không là vấn đề khác: share có thể được chấp nhận trước khi một block của pool ghi nhận phần thưởng. [Hướng dẫn PPLNS](/blog/vi/how-pplns-payouts-work/) giải thích trình tự này.
 
 ## Trang công khai nào hiển thị toàn pool?
 

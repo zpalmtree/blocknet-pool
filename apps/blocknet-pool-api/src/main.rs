@@ -8,6 +8,7 @@ mod blog;
 mod config;
 mod protect;
 mod runtime;
+mod site_metrics;
 mod ui;
 
 use api::run_api;

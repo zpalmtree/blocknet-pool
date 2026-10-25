@@ -292,5 +292,7 @@
   "m615": "Blocknet Havuz Ödemeleri",
   "m616": "Blocknet Miner İstatistikleri",
   "m617": "Blocknet Havuz Durumu",
-  "m618": "Havuz Yönetim Paneli"
+  "m618": "Havuz Yönetim Paneli",
+  "minerHelp": "Havuz hashrate’i hâlâ sıfır mı?",
+  "windowsGuide": "Windows kurulum kılavuzu"
 }

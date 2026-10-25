@@ -1,0 +1,40 @@
+{
+  "bntpool.com": [
+    "blocknet-block-reward-schedule",
+    "blocknet-checkpoints-fast-sync",
+    "blocknet-fair-launch",
+    "estimate-blocknet-mining-rewards",
+    "how-pplns-payouts-work",
+    "mine-blocknet-on-bntpool",
+    "pool-vs-solo-mining-blocknet",
+    "track-your-miner-on-bntpool",
+    "what-is-a-mining-pool",
+    "what-is-hashrate"
+  ],
+  "seineminer.com": [
+    "argon2id-proof-of-work-explained",
+    "blocknet-encrypted-memos",
+    "blocknet-id-pay-by-name",
+    "blocknet-mining-hardware-hashrate",
+    "blocknet-payment-links",
+    "blocknet-privacy-features",
+    "blocknet-wallet-for-mining",
+    "bulletproofs-explained",
+    "cpu-mining-2026",
+    "dandelion-plus-plus-explained",
+    "how-crypto-mining-works",
+    "how-to-mine-blocknet",
+    "huge-pages-blocknet-mining",
+    "mine-blocknet-on-mac",
+    "mine-blocknet-on-servers",
+    "mine-blocknet-on-windows",
+    "mine-crypto-on-old-pc-or-laptop",
+    "proof-of-work-vs-proof-of-stake",
+    "ring-signatures-explained",
+    "seed-phrase-explained",
+    "seine-dashboard-explained",
+    "stealth-addresses-explained",
+    "what-is-a-privacy-coin",
+    "what-is-blocknet"
+  ]
+}

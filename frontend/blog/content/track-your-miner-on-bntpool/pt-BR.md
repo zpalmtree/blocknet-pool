@@ -2,7 +2,7 @@
 title: Acompanhe seu minerador no bntpool.com
 description: Consulte endereço ou @name no bntpool.com para ver hashrate, shares, saldo e pagamentos. Acompanhe blocos, sorte e disponibilidade ou use a API pública.
 tags: [bntpool, Estatísticas de mineração, API do pool, Blocknet]
-sourceHash: bac503690f3a
+sourceHash: 4b48ebc39148
 translation: draft
 faq:
   - q: 'Por que minha hashrate no bntpool.com difere da mostrada pelo seine?'
@@ -69,6 +69,26 @@ Dois hábitos ajudam a comparar:
 - Dê tempo ao rig novo. No início, o pool calcula a média pelos minutos já minerados, com poucos shares. Após uma hora, a janela completa passa a valer.
 
 A tabela Recent Shares confirma imediatamente a chegada de trabalho, antes de a hashrate se estabilizar.
+
+<span id="zero-hashrate"></span>
+
+## Por que o seine está minerando, mas My Stats mostra hashrate zero?
+
+Comece pelo endereço de pagamento, pela conexão com o pool e pelas shares aceitas. O hashrate local indica que a máquina calcula hashes; a estimativa do pool depende de shares aceitas para o endereço consultado.
+
+1. **Confira o endereço.** Consulte o mesmo endereço de recebimento ou `@name` registrado usado pelo seine. Se mudou o endereço de um nome curto, reinicie o seine para resolvê-lo novamente e consulte o endereço resultante em My Stats.
+2. **Confira o pool.** Verifique se o seine usa `stratum+tcp://bntpool.com:3333`. Uma máquina minerando em outro lugar ou no modo solo não envia shares para cá. O [guia de configuração do pool](/blog/pt-br/mine-blocknet-on-bntpool/) explica a conexão.
+3. **Confira Recent Shares.** Aguarde shares aceitas e a atualização da página. As shares chegam em intervalos variáveis; um hashrate local ativo não garante uma estimativa imediata do pool. Se há shares aceitas chegando, compare as médias ao longo do tempo.
+4. **Leia a mensagem de conexão.** Use a tabela enquanto o minerador ainda não envia shares aceitas. Consulte [Status](/status) para verificar incidentes atuais.
+
+| Mensagem no seine | O que verificar |
+|---|---|
+| `failed to connect to pool at` | Confira o nome do servidor e a porta, sua conexão e se conexões TCP de saída para a porta 3333 são permitidas. |
+| `login rejected:` | Leia o motivo que aparece em seguida; confira o endereço de recebimento ou nome curto e use a versão atual do seine. |
+| `stale job` | A share corresponde a uma tarefa antiga. Observe novas tarefas e shares aceitas; se continuar, confira a conexão e a versão do minerador. |
+| `submit interrupted during reconnect` | O seine está se reconectando. Observe a aceitação do login e novas shares aceitas depois que a conexão voltar. |
+
+Zero em **Estimated Rewards** é outra questão: shares podem ser aceitas antes que um bloco do pool credite recompensas. O [guia de PPLNS](/blog/pt-br/how-pplns-payouts-work/) explica essa sequência.
 
 ## Quais páginas públicas mostram o pool inteiro?
 

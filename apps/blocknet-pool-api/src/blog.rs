@@ -58,7 +58,10 @@ mod tests {
         assert!(lookup("/blog/theme.js").is_some());
         assert!(blog_sitemap_paths().contains(&"/blog/"));
         for path in blog_sitemap_paths() {
-            assert!(lookup(path).is_some(), "sitemap lists {path} but it isn't embedded");
+            assert!(
+                lookup(path).is_some(),
+                "sitemap lists {path} but it isn't embedded"
+            );
         }
     }
 }

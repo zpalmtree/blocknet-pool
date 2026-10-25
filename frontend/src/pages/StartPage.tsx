@@ -1,4 +1,4 @@
-import { t, tx, localizePath, locale } from '../i18n';
+import { t, tx, localizePath, locale, localeInfo } from '../i18n';
 import { useCallback, useEffect, useState } from 'react';
 
 import { stratumUrl } from '../lib/format';
@@ -83,6 +83,8 @@ export function StartPage({ poolInfo }: StartPageProps) {
       </div>
 
       <div className="quickstart-notes">
+        <p><a href={`https://seineminer.com/${localeInfo.path ? `${localeInfo.path}/` : ""}blog/mine-blocknet-on-windows/`}>{t("windowsGuide")}</a></p>
+        <p><a href={`${localizePath("/blog/")}track-your-miner-on-bntpool/#zero-hashrate`}>{t("minerHelp")}</a></p>
         <p>{tx("m463", [<a href="https://blocknet.id" target="_blank" rel="noopener">{t("m462")}</a>, <a href={localizePath("/stats")}>{t("m005")}</a>])}</p>
         <p>{tx("m464", [<code className="mono inline-code">seine-data/seine.config.json</code>])}</p>
         <p>{tx("m465", [<code className="mono inline-code">--address</code>, <code className="mono inline-code">--pool-url</code>, <code className="mono inline-code">--pool-worker</code>])}</p>

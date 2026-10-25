@@ -2,7 +2,7 @@
 title: Monitoruj kopanie na bntpool.com
 description: Wyszukaj adres lub @name na bntpool.com, aby zobaczyć hashrate, udziały, saldo i wypłaty. Śledź bloki, szczęście i dostępność lub użyj publicznego API.
 tags: [bntpool, Statystyki kopania, API puli, Blocknet]
-sourceHash: bac503690f3a
+sourceHash: 4b48ebc39148
 translation: draft
 faq:
   - q: 'Dlaczego mój hashrate na bntpool.com różni się od wyniku seine?'
@@ -69,6 +69,26 @@ Dwa nawyki pomagają porównywać liczby:
 - Daj nowej maszynie czas. Dla dopiero uruchomionej maszyny pula uśrednia wynik z minut dotychczasowego kopania, więc pierwszy odczyt opiera się na garstce udziałów. Po godzinie obejmuje pełne jednogodzinne okno.
 
 Tabela Recent Shares od razu pokazuje, że udziały docierają, jeszcze zanim ustabilizuje się hashrate.
+
+<span id="zero-hashrate"></span>
+
+## Dlaczego seine kopie, a My Stats pokazuje zerowy hashrate?
+
+Zacznij od adresu wypłat, połączenia z pulą i zaakceptowanych udziałów. Lokalny hashrate wskazuje, że komputer oblicza hashe; oszacowanie puli wymaga zaakceptowanych udziałów dla wyszukiwanego adresu.
+
+1. **Sprawdź adres.** Wyszukaj ten sam adres odbiorczy lub zarejestrowaną nazwę `@name`, której używa seine. Po zmianie adresu przypisanego do krótkiej nazwy uruchom seine ponownie, aby znów ustalił adres, a następnie sprawdź go w My Stats.
+2. **Sprawdź pulę.** Upewnij się, że seine używa `stratum+tcp://bntpool.com:3333`. Komputer kopiący gdzie indziej lub solo nie dodaje tu udziałów. [Poradnik konfiguracji puli](/blog/pl/mine-blocknet-on-bntpool/) opisuje połączenie.
+3. **Sprawdź Recent Shares.** Poczekaj na zaakceptowane udziały i odświeżenie strony. Udziały przychodzą w różnych odstępach; działający lokalny hashrate nie gwarantuje natychmiastowego oszacowania puli. Jeśli udziały są akceptowane, porównuj średnie w dłuższym okresie.
+4. **Przeczytaj komunikat połączenia.** Skorzystaj z tabeli, jeśli miner nie dostarcza jeszcze zaakceptowanych udziałów. Sprawdź bieżące incydenty na stronie [Status](/status).
+
+| Komunikat w seine | Co sprawdzić dalej |
+|---|---|
+| `failed to connect to pool at` | Sprawdź nazwę hosta i port, połączenie oraz czy wychodzący ruch TCP do portu 3333 jest dozwolony. |
+| `login rejected:` | Przeczytaj podany dalej powód; sprawdź adres odbiorczy lub krótką nazwę i używaj aktualnej wersji seine. |
+| `stale job` | Udział dotyczy starego zadania. Obserwuj nowe zadania i zaakceptowane udziały; jeśli problem trwa, sprawdź połączenie i wersję minera. |
+| `submit interrupted during reconnect` | Seine łączy się ponownie. Po przywróceniu połączenia poczekaj na zaakceptowanie logowania i nowe zaakceptowane udziały. |
+
+Zero w **Estimated Rewards** to osobna kwestia: udziały mogą być akceptowane, zanim blok puli przyniesie nagrody. Tę kolejność wyjaśnia [poradnik PPLNS](/blog/pl/how-pplns-payouts-work/).
 
 ## Które publiczne strony pokazują całą pulę?
 

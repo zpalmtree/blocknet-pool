@@ -292,5 +292,7 @@
   "m615": "Wypłaty puli Blocknet",
   "m616": "Statystyki wydobywcy Blocknet",
   "m617": "Status puli Blocknet",
-  "m618": "Panel administracyjny puli"
+  "m618": "Panel administracyjny puli",
+  "minerHelp": "Hashrate puli nadal zerowy?",
+  "windowsGuide": "Instrukcja konfiguracji w Windows"
 }

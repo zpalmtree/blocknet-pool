@@ -10,6 +10,8 @@
   <img src="https://img.shields.io/badge/license-BSD--3--Clause-aaff00?style=flat-square&labelColor=000" alt="License">
 </p>
 
+[Windows setup guide](https://seineminer.com/blog/mine-blocknet-on-windows/) · [Connect to bntpool.com](https://bntpool.com/blog/mine-blocknet-on-bntpool/) · [Mining locally but pool hashrate is zero?](https://bntpool.com/blog/track-your-miner-on-bntpool/#zero-hashrate)
+
 ## Runtime Modes
 
 The repo ships four runtime binaries from a Cargo workspace:

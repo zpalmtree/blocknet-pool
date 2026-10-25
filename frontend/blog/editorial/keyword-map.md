@@ -26,3 +26,6 @@ target a search job a seineminer.com post already owns.
 | `/blog/how-to-mine-blocknet/` (install seine, first shares on any OS) | `/blog/mine-blocknet-on-bntpool/` | The seineminer.com guide owns installing the miner; the pool post owns joining and using the pool and links to the guide for installation. |
 | `/blog/blocknet-mining-hardware-hashrate/` (per-machine results, hardware choice) | `/blog/what-is-hashrate/` | The seineminer.com post owns hardware results and buying advice; the pool post shows the best-per-generation table only to illustrate Blocknet's H/s scale and links there. |
 | `/blog/how-crypto-mining-works/` (draft: how mining works overall) | `/blog/what-is-a-mining-pool/` | The seineminer.com post owns mining in general and keeps a short pool section; the pool post owns pools in depth (shares, payout schemes, choosing a pool). |
+
+Expanded 2026-10-25: `track-your-miner-on-bntpool` also owns zero pool hashrate,
+address/pool mismatches, and connection/reconnect error checks (`#zero-hashrate`).

@@ -292,5 +292,7 @@
   "m615": "Blocknet 풀 지급",
   "m616": "Blocknet 마이너 통계",
   "m617": "Blocknet 풀 상태",
-  "m618": "풀 관리자 대시보드"
+  "m618": "풀 관리자 대시보드",
+  "minerHelp": "풀 해시레이트가 아직 0인가요?",
+  "windowsGuide": "Windows 설정 가이드"
 }

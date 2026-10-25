@@ -2,7 +2,7 @@
 title: Deinen Miner auf bntpool.com überwachen
 description: Suche auf bntpool.com nach Adresse oder @name für Hashrate, Shares, Guthaben und Auszahlungen. Verfolge Blöcke, Glück und Verfügbarkeit oder nutze die öffentliche API.
 tags: [bntpool, Mining-Statistik, Pool-API, Blocknet]
-sourceHash: bac503690f3a
+sourceHash: 4b48ebc39148
 translation: draft
 faq:
   - q: 'Warum unterscheidet sich meine Hashrate auf bntpool.com von der in seine?'
@@ -69,6 +69,26 @@ Zwei Gewohnheiten helfen beim Vergleich:
 - Gib einem neuen Rig Zeit. Anfangs mittelt der Pool nur über die bisherigen Mining-Minuten; die erste Anzeige beruht auf wenigen Shares. Nach einer Stunde gilt das volle einstündige Fenster.
 
 Recent Shares zeigt sofort, dass Shares eintreffen, noch bevor sich die Hashrate stabilisiert.
+
+<span id="zero-hashrate"></span>
+
+## Warum arbeitet seine, während My Stats eine Hashrate von null zeigt?
+
+Prüfe zuerst die Auszahlungsadresse, die Poolverbindung und die akzeptierten Shares. Die lokale Hashrate zeigt, dass der Rechner Hashes berechnet; die Poolschätzung benötigt akzeptierte Shares für die abgefragte Adresse.
+
+1. **Adresse abgleichen.** Suche nach derselben Empfangsadresse oder dem registrierten `@name`, den seine verwendet. Hast du die Adresse eines Kurznamens geändert, starte seine neu, damit der Name erneut aufgelöst wird. Prüfe anschließend die aufgelöste Adresse in My Stats.
+2. **Pool abgleichen.** Prüfe, ob seine `stratum+tcp://bntpool.com:3333` verwendet. Ein Rechner, der anderswo oder im Solo-Modus mint, liefert hier keine Shares. Die [Pool-Einrichtungsanleitung](/blog/de/mine-blocknet-on-bntpool/) erklärt die Verbindung.
+3. **Recent Shares prüfen.** Warte auf akzeptierte Shares und die nächste Seitenaktualisierung. Shares treffen in wechselnden Abständen ein; eine lokale Hashrate garantiert keine sofortige Poolschätzung. Treffen akzeptierte Shares ein, vergleiche Durchschnittswerte über längere Zeit.
+4. **Verbindungsmeldung lesen.** Nutze die Tabelle, solange der Miner noch keine akzeptierten Shares liefert. Aktuelle Störungen findest du unter [Status](/status).
+
+| Meldung in seine | Nächster Prüfschritt |
+|---|---|
+| `failed to connect to pool at` | Prüfe Hostname und Port, deine Verbindung und ob ausgehendes TCP zu Port 3333 erlaubt ist. |
+| `login rejected:` | Lies die anschließende Begründung; prüfe Empfangsadresse oder Kurznamen und verwende die aktuelle seine-Version. |
+| `stale job` | Der Share gehört zu einem alten Auftrag. Achte auf neue Aufträge und akzeptierte Shares; bleibt das Problem bestehen, prüfe Verbindung und Miner-Version. |
+| `submit interrupted during reconnect` | Seine verbindet sich erneut. Achte nach Wiederherstellung der Verbindung auf die bestätigte Anmeldung und neue akzeptierte Shares. |
+
+Null bei **Estimated Rewards** ist eine andere Frage: Shares können akzeptiert werden, bevor ein Poolblock Belohnungen gutschreibt. Der [PPLNS-Leitfaden](/blog/de/how-pplns-payouts-work/) erklärt den Ablauf.
 
 ## Welche öffentlichen Seiten zeigen den ganzen Pool?
 

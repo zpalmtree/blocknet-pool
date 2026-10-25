@@ -2,7 +2,7 @@
 title: bntpool.com'da madencinizi takip edin
 description: bntpool.com'da adres veya @name ile hashrate, share, bakiye ve ödemeleri görün; blokları, şansı, çalışma süresini izleyin veya açık API'yi kullanın.
 tags: [bntpool, Madencilik istatistikleri, Havuz API’si, Blocknet]
-sourceHash: bac503690f3a
+sourceHash: 4b48ebc39148
 translation: draft
 faq:
   - q: 'bntpool.com''daki hashrate''im neden seine''den farklı?'
@@ -69,6 +69,26 @@ seine makinenizin hesapladığı her hash'i sayar. Havuz yalnızca gönderdiğin
 - Yeni rig'e zaman tanıyın. Yeni başlayan rig için havuz madencilik yaptığı dakikalar üzerinden ortalama alır; ilk okuma birkaç share'e dayanır. Bir saat sonra tam bir saatlik pencere uygulanır.
 
 Recent Shares tablosu, hashrate değeri oturmadan önce bile share'lerin geldiğini hemen gösterir.
+
+<span id="zero-hashrate"></span>
+
+## Seine madencilik yaparken My Stats neden sıfır hashrate gösteriyor?
+
+Önce ödeme adresini, havuz bağlantısını ve kabul edilen payları kontrol edin. Yerel hashrate, makinenin hash hesapladığını gösterir; havuz tahmini, sorguladığınız adres için kabul edilmiş paylara ihtiyaç duyar.
+
+1. **Adresi eşleştirin.** Seine’in kullandığı alıcı adresini veya kayıtlı `@name` adını sorgulayın. Kısa adın adresini değiştirdiyseniz yeniden çözümlemesi için seine’i yeniden başlatın, ardından çözümlenen adresi My Stats’ta kontrol edin.
+2. **Havuzu eşleştirin.** Seine’in `stratum+tcp://bntpool.com:3333` kullandığını kontrol edin. Başka yerde veya solo modunda çalışan bir makine buraya pay eklemez. [Havuz kurulum rehberi](/blog/tr/mine-blocknet-on-bntpool/) bağlantıyı açıklar.
+3. **Recent Shares bölümünü kontrol edin.** Kabul edilen payları ve sayfanın yenilenmesini bekleyin. Paylar değişken aralıklarla gelir; yerel hashrate’in çalışması anında havuz tahmini garantilemez. Kabul edilen paylar geliyorsa zaman içindeki ortalamaları karşılaştırın.
+4. **Bağlantı mesajını okuyun.** Madenci henüz kabul edilen pay göndermiyorsa tabloyu kullanın. Güncel olaylar için [Status](/status) sayfasını kontrol edin.
+
+| Seine mesajı | Sonraki kontrol |
+|---|---|
+| `failed to connect to pool at` | Sunucu adını ve portu, bağlantınızı ve 3333 portuna giden TCP trafiğine izin verilip verilmediğini kontrol edin. |
+| `login rejected:` | Devamındaki nedeni okuyun; alıcı adresini veya kısa adı kontrol edin ve seine’in güncel sürümünü kullanın. |
+| `stale job` | Pay eski bir göreve ait. Yeni görevleri ve kabul edilen payları izleyin; sürerse bağlantıyı ve madenci sürümünü kontrol edin. |
+| `submit interrupted during reconnect` | Seine yeniden bağlanıyor. Bağlantı geri geldiğinde girişin kabul edilmesini ve yeni payların kabulünü izleyin. |
+
+**Estimated Rewards** değerinin sıfır olması ayrı bir konudur: havuz bloğu ödülleri hesaba geçirmeden önce paylar kabul edilebilir. [PPLNS rehberi](/blog/tr/how-pplns-payouts-work/) bu sırayı açıklar.
 
 ## Hangi açık sayfalar tüm havuzu gösterir?
 

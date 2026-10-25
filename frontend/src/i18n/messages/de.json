@@ -292,5 +292,7 @@
   "m615": "Blocknet-Pool-Auszahlungen",
   "m616": "Blocknet-Miner-Statistiken",
   "m617": "Blocknet-Pool-Status",
-  "m618": "Pool-Verwaltungsübersicht"
+  "m618": "Pool-Verwaltungsübersicht",
+  "minerHelp": "Pool-Hashrate noch bei null?",
+  "windowsGuide": "Einrichtungsanleitung für Windows"
 }

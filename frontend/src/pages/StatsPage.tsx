@@ -1,4 +1,4 @@
-import { locale, t, tx } from '../i18n';
+import { locale, t, tx, localizePath } from '../i18n';
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
@@ -391,6 +391,8 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
             </span>)}
         </div>
       </div>
+
+      <p className="section-lead" style={{ marginBottom: 16 }}><a href={`${localizePath("/blog/")}track-your-miner-on-bntpool/#zero-hashrate`}>{t("minerHelp")}</a></p>
 
       {showLookupResult && (<div id="lookup-result">
           {balanceUnavailable && (<div

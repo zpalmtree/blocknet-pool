@@ -292,5 +292,7 @@
   "m615": "Thanh toán của Pool Blocknet",
   "m616": "Thống kê Miner Blocknet",
   "m617": "Trạng thái Pool Blocknet",
-  "m618": "Bảng điều khiển quản trị Pool"
+  "m618": "Bảng điều khiển quản trị Pool",
+  "minerHelp": "Hashrate của pool vẫn bằng không?",
+  "windowsGuide": "Hướng dẫn thiết lập trên Windows"
 }

@@ -11,7 +11,7 @@ faq:
     a: 'Non. Les endpoints de statistiques, blocs, paiements, chance, statut et mineurs fournissent du JSON public via HTTPS. Un script curl ou un tableau de bord domestique peut donc les lire sans inscription. Les montants sont en unités atomiques : divisez par 100 000 000 pour obtenir des BNT et interrogez toutes les 30 à 60 secondes.'
   - q: 'Pourquoi My Stats affiche-t-il zéro dans Estimated Rewards ?'
     a: 'Les estimations apparaissent lorsque le pool trouve un bloc avec vos shares dans la fenêtre de paiement. Pour un nouveau mineur, cela peut prendre quelques périodes de minage. Shares acceptés et hashrate apparaissent d’abord, puis les récompenses estimées, qui deviennent Confirmed Rewards à maturité et sont payées automatiquement.'
-sourceHash: bac503690f3a
+sourceHash: 4b48ebc39148
 translation: draft
 ---
 
@@ -69,6 +69,26 @@ Deux habitudes permettent de comparer correctement :
 - Laissez du temps à un nouveau rig. Au début, le pool moyenne sur les minutes déjà minées : la première valeur dépend de quelques shares. Après une heure, la fenêtre complète s’applique.
 
 Recent Shares confirme immédiatement leur arrivée, avant même la stabilisation du hashrate.
+
+<span id="zero-hashrate"></span>
+
+## Pourquoi seine mine-t-il alors que My Stats affiche un hashrate nul ?
+
+Vérifiez d’abord l’adresse de paiement, la connexion au pool et les shares acceptés. Le hashrate local indique que la machine calcule des hashes ; l’estimation du pool nécessite des shares acceptés pour l’adresse recherchée.
+
+1. **Vérifiez l’adresse.** Recherchez la même adresse de réception ou le même `@name` enregistré que seine utilise. Si vous avez modifié l’adresse d’un nom court, redémarrez seine pour le résoudre à nouveau, puis consultez cette adresse dans My Stats.
+2. **Vérifiez le pool.** Assurez-vous que seine utilise `stratum+tcp://bntpool.com:3333`. Une machine qui mine ailleurs ou en solo n’ajoute aucun share ici. Le [guide de configuration du pool](/blog/fr/mine-blocknet-on-bntpool/) détaille la connexion.
+3. **Consultez Recent Shares.** Attendez des shares acceptés, puis le rafraîchissement de la page. Les shares arrivent à intervalles variables ; un hashrate local actif ne garantit pas une estimation immédiate du pool. Si des shares sont acceptés, comparez les moyennes dans la durée.
+4. **Lisez le message de connexion.** Utilisez le tableau tant que le mineur n’envoie pas de shares acceptés. Consultez [Status](/status) pour les incidents en cours.
+
+| Message dans seine | Vérification suivante |
+|---|---|
+| `failed to connect to pool at` | Vérifiez le nom d’hôte et le port, votre connexion et l’autorisation des connexions TCP sortantes vers le port 3333. |
+| `login rejected:` | Lisez le motif qui suit ; vérifiez l’adresse de réception ou le nom court et utilisez la version actuelle de seine. |
+| `stale job` | Le share concerne une ancienne tâche. Surveillez les nouvelles tâches et les shares acceptés ; si cela continue, vérifiez la connexion et la version du mineur. |
+| `submit interrupted during reconnect` | Seine se reconnecte. Attendez l’acceptation de la connexion et de nouveaux shares acceptés après le rétablissement de la connexion. |
+
+Un montant nul dans **Estimated Rewards** est un autre sujet : des shares peuvent être acceptés avant qu’un bloc du pool crédite des récompenses. Le [guide PPLNS](/blog/fr/how-pplns-payouts-work/) explique cet enchaînement.
 
 ## Quelles pages publiques montrent l’ensemble du pool ?
 

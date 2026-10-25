@@ -292,5 +292,7 @@
   "m615": "Blocknet Pool Uitbetalingen",
   "m616": "Blocknet Miner Statistieken",
   "m617": "Blocknet Pool Status",
-  "m618": "Pool Admin Dashboard"
+  "m618": "Pool Admin Dashboard",
+  "minerHelp": "Poolhashrate nog steeds nul?",
+  "windowsGuide": "Installatiehandleiding voor Windows"
 }

@@ -70,6 +70,26 @@ Two habits make the numbers line up:
 
 The Recent Shares table tells you right away that shares are arriving, even before the hashrate figure settles.
 
+<span id="zero-hashrate"></span>
+
+## Why is seine mining while My Stats shows zero hashrate?
+
+Start with the payout address, pool connection and accepted shares. A local hashrate shows that the machine is hashing; the pool estimate needs accepted shares for the address you looked up.
+
+1. **Match the address.** Look up the same receiving address or registered `@name` that seine uses. If you changed a shortname's address, restart seine so it resolves the name again, then check the resolved address on My Stats.
+2. **Match the pool.** Check that seine uses `stratum+tcp://bntpool.com:3333`. A rig mining elsewhere or in solo mode will not add shares here. The [pool setup guide](/blog/mine-blocknet-on-bntpool/) walks through the connection.
+3. **Check Recent Shares.** Wait for accepted shares, then let the page refresh. Shares arrive at variable intervals; a running local hashrate does not promise an immediate pool estimate. If accepted shares are arriving, compare averages over time.
+4. **Read the connection message.** Use the table below when the miner has not reached accepted shares. Check [Status](/status) for any current incident.
+
+| Message in seine | What to check next |
+|---|---|
+| `failed to connect to pool at` | Verify the hostname and port, your connection, and whether outbound TCP to port 3333 is allowed. |
+| `login rejected:` | Read the reason that follows; check the receiving address or shortname and use the current seine release. |
+| `stale job` | The share refers to an old assignment. Watch for new jobs and accepted shares; if it continues, check the connection and miner version. |
+| `submit interrupted during reconnect` | Seine is reconnecting. Watch for login acceptance and fresh accepted shares after the connection returns. |
+
+Zero **Estimated Rewards** is a separate question: accepted shares can arrive before a pool block credits rewards. Follow the [PPLNS guide](/blog/how-pplns-payouts-work/) for that sequence.
+
 ## Which public pages show the whole pool?
 
 These pages need no lookup and show everything the pool does in the open. The [dashboard](/) gathers the headline numbers: connected miners, pool and network hashrate, blocks found and average luck.

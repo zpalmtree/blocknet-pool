@@ -2,7 +2,7 @@
 title: 'Je miner volgen op bntpool.com'
 description: 'Zoek je adres of @name op bntpool.com voor hashrate, shares, saldo en betalingen. Volg blokken, luck en uptime of gebruik de openbare API in je scripts.'
 tags: ['bntpool', 'Miningstatistieken', 'Pool-API', 'Blocknet']
-sourceHash: bac503690f3a
+sourceHash: 4b48ebc39148
 translation: draft
 faq:
   - q: 'Waarom verschilt mijn hashrate op bntpool.com van seine?'
@@ -69,6 +69,26 @@ Twee gewoonten maken de cijfers vergelijkbaar:
 - Geef een nieuwe rig tijd. De pool middelt aanvankelijk alleen over de minuten dat hij draait. De eerste waarde rust dus op enkele shares; na een uur geldt het volledige uurvenster.
 
 Recent Shares toont meteen dat shares aankomen, nog voordat de hashrate stabiel is.
+
+<span id="zero-hashrate"></span>
+
+## Waarom mint seine terwijl My Stats een hashrate van nul toont?
+
+Controleer eerst het uitbetalingsadres, de poolverbinding en de geaccepteerde shares. De lokale hashrate laat zien dat de machine hashes berekent; de poolschatting heeft geaccepteerde shares nodig voor het opgezochte adres.
+
+1. **Controleer het adres.** Zoek hetzelfde ontvangstadres of geregistreerde `@name` op dat seine gebruikt. Heb je het adres van een korte naam gewijzigd, herstart seine om de naam opnieuw op te zoeken en controleer daarna het gevonden adres in My Stats.
+2. **Controleer de pool.** Controleer of seine `stratum+tcp://bntpool.com:3333` gebruikt. Een machine die elders of solo mint, voegt hier geen shares toe. De [poolinstallatiegids](/blog/nl/mine-blocknet-on-bntpool/) legt de verbinding uit.
+3. **Bekijk Recent Shares.** Wacht op geaccepteerde shares en laat de pagina vernieuwen. Shares komen met wisselende tussenpozen binnen; een actieve lokale hashrate garandeert geen onmiddellijke poolschatting. Komen er geaccepteerde shares binnen, vergelijk dan gemiddelden over langere tijd.
+4. **Lees de verbindingsmelding.** Gebruik de tabel zolang de miner nog geen geaccepteerde shares levert. Kijk op [Status](/status) voor actuele incidenten.
+
+| Melding in seine | Wat je vervolgens controleert |
+|---|---|
+| `failed to connect to pool at` | Controleer hostnaam en poort, je verbinding en of uitgaand TCP-verkeer naar poort 3333 is toegestaan. |
+| `login rejected:` | Lees de reden die volgt; controleer het ontvangstadres of de korte naam en gebruik de huidige versie van seine. |
+| `stale job` | De share hoort bij een oude opdracht. Let op nieuwe opdrachten en geaccepteerde shares; blijft het gebeuren, controleer dan de verbinding en de minerversie. |
+| `submit interrupted during reconnect` | Seine maakt opnieuw verbinding. Let op een geaccepteerde aanmelding en nieuwe geaccepteerde shares nadat de verbinding is hersteld. |
+
+Nul bij **Estimated Rewards** is een andere kwestie: shares kunnen worden geaccepteerd voordat een poolblok beloningen bijschrijft. De [PPLNS-gids](/blog/nl/how-pplns-payouts-work/) beschrijft die volgorde.
 
 ## Welke openbare pagina’s tonen de hele pool?
 

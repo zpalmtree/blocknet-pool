@@ -11,7 +11,7 @@ faq:
     a: 'Tidak. Endpoint statistik, blok, pembayaran, luck, status dan per penambang menyediakan JSON publik melalui HTTPS, sehingga curl atau dasbor rumah dapat membacanya tanpa mendaftar. Jumlah memakai satuan atomik, jadi bagi 100.000.000 untuk BNT, dan lakukan polling setiap 30 hingga 60 detik.'
   - q: 'Mengapa My Stats menunjukkan Estimated Rewards nol?'
     a: 'Estimated Rewards muncul setelah pool menemukan blok saat share Anda berada dalam jendela pembayaran. Bagi penambang baru mungkin perlu beberapa ronde. Share diterima dan hashrate muncul dahulu, lalu perkiraan imbalan, yang matang menjadi Confirmed Rewards dan dibayar otomatis.'
-sourceHash: bac503690f3a
+sourceHash: 4b48ebc39148
 translation: draft
 ---
 
@@ -69,6 +69,26 @@ Dua kebiasaan membantu menyelaraskan angka:
 - Beri rig baru waktu. Untuk rig yang baru mulai, pool merata-ratakan selama menit yang sudah ditambang, sehingga bacaan awal hanya dari beberapa share. Setelah satu jam, jendela satu jam penuh berlaku.
 
 Tabel Recent Shares langsung menunjukkan kedatangan share, bahkan sebelum hashrate stabil.
+
+<span id="zero-hashrate"></span>
+
+## Mengapa seine menambang tetapi My Stats menunjukkan hashrate nol?
+
+Mulai dari alamat pembayaran, koneksi pool, dan share yang diterima. Hashrate lokal menunjukkan mesin sedang menghitung hash; estimasi pool memerlukan share yang diterima untuk alamat yang Anda cari.
+
+1. **Cocokkan alamat.** Cari alamat penerima atau `@name` terdaftar yang sama dengan yang digunakan seine. Jika alamat nama singkat berubah, mulai ulang seine agar nama diresolusikan lagi, lalu periksa alamat hasil resolusi di My Stats.
+2. **Cocokkan pool.** Pastikan seine menggunakan `stratum+tcp://bntpool.com:3333`. Mesin yang menambang di tempat lain atau dalam mode solo tidak menambahkan share di sini. [Panduan pengaturan pool](/blog/id/mine-blocknet-on-bntpool/) menjelaskan koneksinya.
+3. **Periksa Recent Shares.** Tunggu share diterima, lalu biarkan halaman diperbarui. Share datang pada interval yang bervariasi; hashrate lokal yang berjalan tidak menjamin estimasi pool langsung muncul. Jika share diterima terus berdatangan, bandingkan rata-rata selama periode yang lebih panjang.
+4. **Baca pesan koneksi.** Gunakan tabel jika penambang belum mengirim share yang diterima. Periksa [Status](/status) untuk insiden yang sedang terjadi.
+
+| Pesan di seine | Yang perlu diperiksa |
+|---|---|
+| `failed to connect to pool at` | Periksa nama host dan port, koneksi Anda, serta apakah koneksi TCP keluar ke port 3333 diizinkan. |
+| `login rejected:` | Baca alasan setelah pesan tersebut; periksa alamat penerima atau nama singkat dan gunakan versi seine terbaru. |
+| `stale job` | Share mengacu pada tugas lama. Pantau tugas baru dan share yang diterima; jika berlanjut, periksa koneksi dan versi penambang. |
+| `submit interrupted during reconnect` | Seine sedang menyambung ulang. Pantau penerimaan login dan share baru yang diterima setelah koneksi kembali. |
+
+Nilai nol pada **Estimated Rewards** adalah persoalan terpisah: share bisa diterima sebelum blok pool mengkreditkan imbalan. [Panduan PPLNS](/blog/id/how-pplns-payouts-work/) menjelaskan urutannya.
 
 ## Halaman publik mana yang menunjukkan seluruh pool?
 

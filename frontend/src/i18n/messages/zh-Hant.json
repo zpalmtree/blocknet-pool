@@ -292,5 +292,7 @@
   "m615": "Blocknet 礦池派款",
   "m616": "Blocknet 礦工統計",
   "m617": "Blocknet 礦池狀態",
-  "m618": "礦池管理員儀表板"
+  "m618": "礦池管理員儀表板",
+  "minerHelp": "礦池算力仍為零？",
+  "windowsGuide": "Windows 設定指南"
 }

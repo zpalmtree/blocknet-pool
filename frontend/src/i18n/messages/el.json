@@ -292,5 +292,7 @@
   "m615": "Πληρωμές Pool Blocknet",
   "m616": "Στατιστικά Miners Blocknet",
   "m617": "Κατάσταση Pool Blocknet",
-  "m618": "Πίνακας διαχείρισης Pool"
+  "m618": "Πίνακας διαχείρισης Pool",
+  "minerHelp": "Το hashrate του pool παραμένει μηδενικό;",
+  "windowsGuide": "Οδηγός εγκατάστασης στα Windows"
 }

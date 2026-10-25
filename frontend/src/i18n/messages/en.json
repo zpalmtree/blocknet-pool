@@ -292,5 +292,7 @@
   "m615": "Blocknet Pool Payouts",
   "m616": "Blocknet Miner Stats",
   "m617": "Blocknet Pool Status",
-  "m618": "Pool Admin Dashboard"
+  "m618": "Pool Admin Dashboard",
+  "minerHelp": "Pool hashrate still zero?",
+  "windowsGuide": "Windows setup guide"
 }

@@ -246,7 +246,7 @@ const WORKER_VERSION_UNKNOWN: &str = "unknown";
 fn parse_version_triple(raw: &str) -> Option<(u64, u64, u64)> {
     let trimmed = raw.trim().trim_start_matches('v');
     let core = trimmed
-        .split_once(|c| c == '-' || c == '+')
+        .split_once(['-', '+'])
         .map(|(core, _)| core)
         .unwrap_or(trimmed);
     let mut parts = core.split('.');
@@ -328,6 +328,7 @@ fn sort_workers_for_miner(
 
 #[derive(Clone)]
 pub(crate) struct ApiState {
+    site_metrics: Arc<crate::site_metrics::SiteMetrics>,
     config: Config,
     store: Arc<PoolStore>,
     jobs: Arc<JobManager>,
@@ -915,10 +916,12 @@ fn join_result<R>(result: Result<anyhow::Result<R>, tokio::task::JoinError>) -> 
 }
 
 pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
+    state.site_metrics.start(Arc::clone(&state.store));
     let app_state = state.clone();
     let protected = Router::new()
         .route("/api/miners", get(handle_miners))
         .route("/api/admin/perf", get(handle_admin_perf))
+        .route("/api/admin/site-metrics", get(handle_site_metrics))
         .route("/api/admin/balances", get(handle_admin_balances))
         .route(
             "/api/admin/balance-overview",
@@ -1002,6 +1005,10 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
         .route("/sitemap.xml", get(handle_sitemap_xml))
         .route("/ui-assets/:name", get(handle_ui_asset))
         .route("/api/info", get(handle_info))
+        .route(
+            "/api/site-events",
+            post(handle_site_event).layer(axum::extract::DefaultBodyLimit::max(1024)),
+        )
         .route("/api/checkpoints", get(handle_checkpoints_metadata))
         .route("/api/stats/history", get(handle_stats_history))
         .route("/api/stats/insights", get(handle_stats_insights))
@@ -2017,12 +2024,12 @@ async fn handle_admin_balances(
             };
 
             match sort.as_str() {
-                "pending_asc" => filtered.sort_by(|a, b| a.pending.cmp(&b.pending)),
-                "paid_desc" => filtered.sort_by(|a, b| b.paid.cmp(&a.paid)),
-                "paid_asc" => filtered.sort_by(|a, b| a.paid.cmp(&b.paid)),
+                "pending_asc" => filtered.sort_by_key(|a| a.pending),
+                "paid_desc" => filtered.sort_by_key(|b| std::cmp::Reverse(b.paid)),
+                "paid_asc" => filtered.sort_by_key(|a| a.paid),
                 "address_asc" => filtered.sort_by(|a, b| a.address.cmp(&b.address)),
                 "address_desc" => filtered.sort_by(|a, b| b.address.cmp(&a.address)),
-                _ => filtered.sort_by(|a, b| b.pending.cmp(&a.pending)), // pending_desc default
+                _ => filtered.sort_by_key(|b| std::cmp::Reverse(b.pending)), // pending_desc default
             }
 
             let total = filtered.len();
@@ -2726,9 +2733,9 @@ async fn handle_miners(
         .unwrap_or("hashrate_desc")
     {
         "address_asc" => items.sort_by(|a, b| a.address.cmp(&b.address)),
-        "accepted_desc" => items.sort_by(|a, b| b.shares_accepted.cmp(&a.shares_accepted)),
-        "rejected_desc" => items.sort_by(|a, b| b.shares_rejected.cmp(&a.shares_rejected)),
-        "last_share_desc" => items.sort_by(|a, b| b.last_share_at.cmp(&a.last_share_at)),
+        "accepted_desc" => items.sort_by_key(|b| std::cmp::Reverse(b.shares_accepted)),
+        "rejected_desc" => items.sort_by_key(|b| std::cmp::Reverse(b.shares_rejected)),
+        "last_share_desc" => items.sort_by_key(|b| std::cmp::Reverse(b.last_share_at)),
         _ => items.sort_by(|a, b| {
             b.hashrate
                 .partial_cmp(&a.hashrate)
@@ -3411,7 +3418,7 @@ fn estimate_unconfirmed_pending_snapshot(
     }
 
     for estimate in estimates.values_mut() {
-        estimate.blocks.sort_by(|a, b| b.height.cmp(&a.height));
+        estimate.blocks.sort_by_key(|b| std::cmp::Reverse(b.height));
     }
 
     Ok(estimates)
@@ -4315,6 +4322,7 @@ impl ApiState {
             miner_detail_response_cache: Arc::new(Mutex::new(MinerDetailResponseCache::new())),
             miner_detail_loads: Arc::new(Semaphore::new(detail_concurrency)),
             reward_breakdown_reads: Arc::new(BackgroundReads::default()),
+            site_metrics: Arc::new(crate::site_metrics::SiteMetrics::default()),
             public_telemetry_rate_limiter: Arc::new(Mutex::new(
                 PublicTelemetryRateLimiter::default(),
             )),
@@ -6570,6 +6578,18 @@ fn internal_error(msg: &str, err: anyhow::Error) -> Response {
     }
     tracing::warn!(error = %err, "{msg}");
     error_response(StatusCode::INTERNAL_SERVER_ERROR, msg)
+}
+
+async fn handle_site_event(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    state.site_metrics.collect(headers, body)
+}
+
+async fn handle_site_metrics(State(state): State<ApiState>) -> Response {
+    state.site_metrics.report()
 }
 
 #[cfg(test)]

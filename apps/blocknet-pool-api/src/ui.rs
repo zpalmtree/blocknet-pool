@@ -19,9 +19,15 @@ const UI_ASSET_MINING_TUI_PNG: &[u8] = include_bytes!("ui/assets/mining-tui.png"
 
 /// Per-route social preview cards, served from `/ui-assets/<name>`.
 const OG_IMAGES: &[(&str, &[u8])] = &[
-    ("og-dashboard.png", include_bytes!("ui/assets/og-dashboard.png")),
+    (
+        "og-dashboard.png",
+        include_bytes!("ui/assets/og-dashboard.png"),
+    ),
     ("og-start.png", include_bytes!("ui/assets/og-start.png")),
-    ("og-checkpoints.png", include_bytes!("ui/assets/og-checkpoints.png")),
+    (
+        "og-checkpoints.png",
+        include_bytes!("ui/assets/og-checkpoints.png"),
+    ),
     ("og-luck.png", include_bytes!("ui/assets/og-luck.png")),
     ("og-blocks.png", include_bytes!("ui/assets/og-blocks.png")),
     ("og-payouts.png", include_bytes!("ui/assets/og-payouts.png")),
@@ -158,24 +164,56 @@ fn meta_tags(path: &str, base_url: &str) -> String {
     let image = html_escape(&format!("{base_url}/ui-assets/{}", meta.image));
 
     let nl = "\n    ";
-    let robots = if meta.index { "index, follow" } else { "noindex, follow" };
+    let robots = if meta.index {
+        "index, follow"
+    } else {
+        "noindex, follow"
+    };
 
     let mut out = format!("<title>{title}</title>");
-    out.push_str(&format!("{nl}<meta name=\"description\" content=\"{description}\" />"));
-    out.push_str(&format!("{nl}<meta name=\"robots\" content=\"{robots}\" />"));
+    out.push_str(&format!(
+        "{nl}<meta name=\"description\" content=\"{description}\" />"
+    ));
+    out.push_str(&format!(
+        "{nl}<meta name=\"robots\" content=\"{robots}\" />"
+    ));
     out.push_str(&format!("{nl}<link rel=\"canonical\" href=\"{url}\" />"));
-    out.push_str(&format!("{nl}<meta property=\"og:type\" content=\"website\" />"));
-    out.push_str(&format!("{nl}<meta property=\"og:site_name\" content=\"{site_name}\" />"));
-    out.push_str(&format!("{nl}<meta property=\"og:title\" content=\"{title}\" />"));
-    out.push_str(&format!("{nl}<meta property=\"og:description\" content=\"{description}\" />"));
-    out.push_str(&format!("{nl}<meta property=\"og:url\" content=\"{url}\" />"));
-    out.push_str(&format!("{nl}<meta property=\"og:image\" content=\"{image}\" />"));
-    out.push_str(&format!("{nl}<meta property=\"og:image:width\" content=\"1200\" />"));
-    out.push_str(&format!("{nl}<meta property=\"og:image:height\" content=\"630\" />"));
-    out.push_str(&format!("{nl}<meta name=\"twitter:card\" content=\"summary_large_image\" />"));
-    out.push_str(&format!("{nl}<meta name=\"twitter:title\" content=\"{title}\" />"));
-    out.push_str(&format!("{nl}<meta name=\"twitter:description\" content=\"{description}\" />"));
-    out.push_str(&format!("{nl}<meta name=\"twitter:image\" content=\"{image}\" />"));
+    out.push_str(&format!(
+        "{nl}<meta property=\"og:type\" content=\"website\" />"
+    ));
+    out.push_str(&format!(
+        "{nl}<meta property=\"og:site_name\" content=\"{site_name}\" />"
+    ));
+    out.push_str(&format!(
+        "{nl}<meta property=\"og:title\" content=\"{title}\" />"
+    ));
+    out.push_str(&format!(
+        "{nl}<meta property=\"og:description\" content=\"{description}\" />"
+    ));
+    out.push_str(&format!(
+        "{nl}<meta property=\"og:url\" content=\"{url}\" />"
+    ));
+    out.push_str(&format!(
+        "{nl}<meta property=\"og:image\" content=\"{image}\" />"
+    ));
+    out.push_str(&format!(
+        "{nl}<meta property=\"og:image:width\" content=\"1200\" />"
+    ));
+    out.push_str(&format!(
+        "{nl}<meta property=\"og:image:height\" content=\"630\" />"
+    ));
+    out.push_str(&format!(
+        "{nl}<meta name=\"twitter:card\" content=\"summary_large_image\" />"
+    ));
+    out.push_str(&format!(
+        "{nl}<meta name=\"twitter:title\" content=\"{title}\" />"
+    ));
+    out.push_str(&format!(
+        "{nl}<meta name=\"twitter:description\" content=\"{description}\" />"
+    ));
+    out.push_str(&format!(
+        "{nl}<meta name=\"twitter:image\" content=\"{image}\" />"
+    ));
     out
 }
 
@@ -275,7 +313,14 @@ pub(crate) fn is_api_request_path(path: &str) -> bool {
 
 /// Public routes listed in the sitemap, in navigation order.
 const SITEMAP_PATHS: &[&str] = &[
-    "/", "/start", "/blocks", "/payouts", "/stats", "/luck", "/status", "/checkpoints",
+    "/",
+    "/start",
+    "/blocks",
+    "/payouts",
+    "/stats",
+    "/luck",
+    "/status",
+    "/checkpoints",
 ];
 
 pub(crate) async fn handle_robots_txt(State(state): State<ApiState>) -> impl IntoResponse {
@@ -376,13 +421,12 @@ mod tests {
     fn injects_per_route_title_description_and_image() {
         let html = render_index_html("/checkpoints", "https://bntpool.com");
         assert!(html.contains("<title>Blocknet Checkpoints</title>"));
-        assert!(html.contains(
-            r#"<meta property="og:title" content="Blocknet Checkpoints" />"#
-        ));
+        assert!(html.contains(r#"<meta property="og:title" content="Blocknet Checkpoints" />"#));
         assert!(html.contains(
             r#"<meta property="og:image" content="https://bntpool.com/ui-assets/og-checkpoints.png" />"#
         ));
-        assert!(html.contains(r#"<meta property="og:url" content="https://bntpool.com/checkpoints" />"#));
+        assert!(html
+            .contains(r#"<meta property="og:url" content="https://bntpool.com/checkpoints" />"#));
         assert!(html.contains(r#"<meta name="twitter:card" content="summary_large_image" />"#));
         // Marker must be fully consumed.
         assert!(!html.contains(SSR_META_MARKER));
@@ -409,24 +453,37 @@ mod tests {
 
         for path in ["/admin", "/does-not-exist"] {
             let html = render_index_html(path, "https://bntpool.com");
-            assert!(html.contains(r#"<meta name="robots" content="noindex, follow" />"#), "{path}");
+            assert!(
+                html.contains(r#"<meta name="robots" content="noindex, follow" />"#),
+                "{path}"
+            );
         }
         for path in SITEMAP_PATHS {
-            assert!(page_meta(path).index, "{path} is in the sitemap but not indexable");
+            assert!(
+                page_meta(path).index,
+                "{path} is in the sitemap but not indexable"
+            );
         }
     }
 
     #[test]
     fn base_url_comes_from_configured_pool_url() {
-        assert_eq!(public_base_url("https://bntpool.com/"), "https://bntpool.com");
-        assert_eq!(public_base_url(" http://localhost:24783 "), "http://localhost:24783");
+        assert_eq!(
+            public_base_url("https://bntpool.com/"),
+            "https://bntpool.com"
+        );
+        assert_eq!(
+            public_base_url(" http://localhost:24783 "),
+            "http://localhost:24783"
+        );
         assert_eq!(public_base_url(""), "https://bntpool.com");
     }
 
     #[test]
     fn spoofed_host_headers_do_not_reach_page_metadata() {
         let uri: Uri = "/blocks".parse().unwrap();
-        let response = app_fallback_response(Method::GET, &uri, &public_base_url("https://bntpool.com"));
+        let response =
+            app_fallback_response(Method::GET, &uri, &public_base_url("https://bntpool.com"));
         let body = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap()
@@ -454,19 +511,38 @@ mod tests {
             .build()
             .unwrap();
         let response = runtime
-            .block_on(app.clone().oneshot(Request::builder().uri("/").body(Body::empty()).unwrap()))
+            .block_on(
+                app.clone()
+                    .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap()),
+            )
             .unwrap();
         let headers = response.headers();
         assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
         assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY");
-        assert_eq!(headers[header::REFERRER_POLICY], "strict-origin-when-cross-origin");
+        assert_eq!(
+            headers[header::REFERRER_POLICY],
+            "strict-origin-when-cross-origin"
+        );
         assert!(headers[header::CONTENT_SECURITY_POLICY]
             .to_str()
             .unwrap()
             .contains("frame-ancestors 'none'"));
-        assert_eq!(headers.get_all(header::X_CONTENT_TYPE_OPTIONS).iter().count(), 1);
+        assert_eq!(
+            headers
+                .get_all(header::X_CONTENT_TYPE_OPTIONS)
+                .iter()
+                .count(),
+            1
+        );
         let framed = runtime
-            .block_on(app.oneshot(Request::builder().uri("/framed").body(Body::empty()).unwrap()))
+            .block_on(
+                app.oneshot(
+                    Request::builder()
+                        .uri("/framed")
+                        .body(Body::empty())
+                        .unwrap(),
+                ),
+            )
             .unwrap();
         assert_eq!(framed.headers()[header::X_FRAME_OPTIONS], "SAMEORIGIN");
     }
@@ -474,7 +550,14 @@ mod tests {
     #[test]
     fn og_images_are_registered_for_every_route_card() {
         for path in [
-            "/", "/start", "/checkpoints", "/luck", "/blocks", "/payouts", "/stats", "/status",
+            "/",
+            "/start",
+            "/checkpoints",
+            "/luck",
+            "/blocks",
+            "/payouts",
+            "/stats",
+            "/status",
             "/admin",
         ] {
             let image = page_meta(path).image;

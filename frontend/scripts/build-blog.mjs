@@ -117,9 +117,10 @@ ${offers ? `<script type="application/json" id="blog-lang-offers">${JSON.stringi
   </nav>
 </div></header>
 ${body}
+${slug ? `<script defer src="${assetUrl('article-metrics.js')}"></script>` : ''}
 <footer><div class="wrap">
   <span>bntpool.com · ${esc(t(locale, 'footer'))}</span>
-  <nav aria-label="Footer"><a href="${poolPath('/', locale)}">${esc(t(locale, 'navDashboard'))}</a><a href="${poolPath('/start', locale)}">${esc(t(locale, 'navStart'))}</a><a href="${blogPath(locale)}">${esc(t(locale, 'navBlog'))}</a><a href="https://seineminer.com">seine</a><a href="https://blocknetcrypto.com">Blocknet</a></nav>
+  <nav aria-label="Footer"><a href="${poolPath('/', locale)}">${esc(t(locale, 'navDashboard'))}</a><a href="${poolPath('/start', locale)}">${esc(t(locale, 'navStart'))}</a><a href="${blogPath(locale)}">${esc(t(locale, 'navBlog'))}</a><a href="https://seineminer.com">seine</a><a href="https://blocknetcrypto.com">Blocknet</a><a href="https://seineminer.com/privacy/#website-analytics" lang="en">${esc(t(locale, 'websitePrivacy'))}</a></nav>
 </div></footer>
 </body>
 </html>
@@ -174,7 +175,7 @@ function postPage(p, bySlug) {
   </div>
   ${coverImage(p, true)}
 </header>
-<article class="prose">
+<article class="prose" data-metrics-article="${esc(p.slug)}" data-metrics-locale="${esc(p.locale)}">
 ${renderMarkdown(p.body, p.locale)}
 ${faq}${related}
 </article>
@@ -228,6 +229,7 @@ mkdirSync(DIST, { recursive: true });
 copyFileSync(new URL('blog.css', BLOG_DIR), new URL('blog.css', DIST));
 copyFileSync(new URL('theme.js', BLOG_DIR), new URL('theme.js', DIST));
 copyFileSync(new URL('lang.js', BLOG_DIR), new URL('lang.js', DIST));
+copyFileSync(new URL('article-metrics.js', BLOG_DIR), new URL('article-metrics.js', DIST));
 copyFileSync(new URL('seine-icon.png', BLOG_DIR), new URL('seine-icon.png', DIST));
 const covers = await buildCovers(listSlugs().filter((slug) => !readPost(slug, 'index.md').data.draft), new URL('covers/', DIST));
 const sitemapPaths = [];

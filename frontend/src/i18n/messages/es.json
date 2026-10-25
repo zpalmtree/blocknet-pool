@@ -292,5 +292,7 @@
   "m615": "Pagos del pool de Blocknet",
   "m616": "Estadísticas de mineros de Blocknet",
   "m617": "Estado del pool de Blocknet",
-  "m618": "Panel de administración del pool"
+  "m618": "Panel de administración del pool",
+  "minerHelp": "¿La tasa del pool sigue en cero?",
+  "windowsGuide": "Guía de instalación en Windows"
 }
