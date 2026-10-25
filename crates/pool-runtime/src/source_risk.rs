@@ -12,11 +12,12 @@
 //! A proven fake share (the pool's hash differs from the miner's claimed hash)
 //! strikes the source: every still-unverified share the pair submitted inside
 //! the revocation window is revoked, the session is cut off, and the pair is
-//! banned for an escalating period. Repeated strikes from one IP group also
-//! revoke and ban the group's other *unestablished* pairs (throwaway
-//! addresses). Pairs with clean verified history are never punished for a
-//! different source's failures, which is what keeps someone logging in as a
-//! victim's public address from griefing the victim's own rigs.
+//! banned for an escalating period. Strikes against several distinct pairs
+//! (addresses) from one IP group also ban that network for pairs without
+//! verified history there and revoke the credit of pairs that have never been
+//! verified (throwaway addresses). Pairs with clean verified history are never
+//! punished for a different source's failures, which is what keeps someone
+//! logging in as a victim's public address from griefing the victim's rigs.
 //!
 //! Shares accepted while sampling was degraded (overload Shed/Emergency) are
 //! remembered per pair and reviewed later: a sample of each pair's degraded
@@ -202,9 +203,20 @@ impl PairEntry {
 
 #[derive(Debug, Default)]
 struct IpEntry {
-    strikes: StrikeCounter,
+    /// Distinct struck pairs (addresses) from this network, with the end of
+    /// each one's strike window. Repeat strikes from one pair do not count:
+    /// they are already handled at the pair, and a shared IP (CGNAT, a farm)
+    /// should only be penalized for evidence from several addresses.
+    struck_pairs: HashMap<Arc<str>, Instant>,
     ban: Option<Ban>,
     pairs: HashSet<Arc<str>>,
+}
+
+impl IpEntry {
+    fn active_struck_pairs(&mut self, now: Instant) -> u32 {
+        self.struck_pairs.retain(|_, until| *until > now);
+        self.struck_pairs.len().min(u32::MAX as usize) as u32
+    }
 }
 
 #[derive(Debug)]
@@ -266,8 +278,12 @@ impl SourceRiskTracker {
         if let Some(ban) = pair.and_then(|pair| pair.banned(now)) {
             return Err(ban_message(ban, now));
         }
-        let established = pair.is_some_and(|pair| pair.established(now));
-        if !established {
+        // An IP-group ban only keeps out pairs with no clean verified history
+        // there, so honest miners sharing a network with an attacker keep
+        // mining.
+        let vouched =
+            pair.is_some_and(|pair| pair.verified_ok > 0 && pair.strikes.active(now) == 0);
+        if !vouched {
             if let Some(ban) = inner
                 .ips
                 .get(ip_group)
@@ -623,12 +639,14 @@ impl SourceRiskTracker {
         }
 
         let threshold = self.policy.ip_strike_threshold.max(1);
-        let ip_strikes = inner
-            .ips
-            .entry(Arc::clone(&source.ip_group))
-            .or_default()
-            .strikes
-            .add(now, self.policy.strike_window);
+        let ip_strikes = {
+            let ip_entry = inner.ips.entry(Arc::clone(&source.ip_group)).or_default();
+            ip_entry.struck_pairs.insert(
+                Arc::clone(&key),
+                now + self.policy.strike_window.max(Duration::from_secs(1)),
+            );
+            ip_entry.active_struck_pairs(now)
+        };
         if ip_strikes >= threshold {
             let ban_for = escalated_ban(
                 self.policy.ban_base,
@@ -651,11 +669,13 @@ impl SourceRiskTracker {
                 .cloned()
                 .collect::<Vec<_>>();
             for sibling in siblings {
-                let unestablished = inner
+                // Only throwaway pairs lose credit: no verified history at all
+                // and not themselves struck (those were drained already).
+                let throwaway = inner
                     .pairs
                     .get(&sibling)
-                    .is_some_and(|pair| !pair.established(now));
-                if !unestablished {
+                    .is_some_and(|pair| pair.verified_ok == 0);
+                if !throwaway {
                     continue;
                 }
                 if let Some(revoked) = Self::drain_pair_shares_locked(&mut inner, &sibling) {
@@ -760,7 +780,7 @@ impl SourceRiskTracker {
         inner.ips.retain(|_, ip| {
             !ip.pairs.is_empty()
                 || ip.ban.as_ref().is_some_and(|ban| ban.until > now)
-                || ip.strikes.active(now) > 0
+                || ip.struck_pairs.values().any(|until| *until > now)
         });
     }
 
@@ -857,6 +877,42 @@ mod tests {
         assert!(tracker.check_session(&honest).is_ok());
         assert!(tracker.source_for_share(10).is_some());
         assert!(tracker.open_session("honest", "198.51.100.9").is_ok());
+    }
+
+    #[test]
+    fn repeat_strikes_from_one_pair_do_not_ban_its_network() {
+        let tracker = SourceRiskTracker::new(policy());
+        let neighbour = tracker.open_session("neighbour", "198.51.100.9").unwrap();
+        tracker.record_provisional(&neighbour, 1, SystemTime::now(), 1, false);
+        let cheater = tracker.open_session("cheater", "198.51.100.9").unwrap();
+        for _ in 0..5 {
+            assert!(tracker
+                .strike(&cheater, "invalid share proof")
+                .ip_banned_for
+                .is_none());
+        }
+        assert!(
+            tracker.source_for_share(1).is_some(),
+            "neighbour keeps its credit"
+        );
+        assert!(tracker.open_session("newcomer", "198.51.100.9").is_ok());
+    }
+
+    #[test]
+    fn network_ban_spares_pairs_with_any_verified_history() {
+        let tracker = SourceRiskTracker::new(policy());
+        let now = SystemTime::now();
+        let neighbour = tracker.open_session("neighbour", "198.51.100.9").unwrap();
+        tracker.record_verified(&neighbour);
+        tracker.record_provisional(&neighbour, 1, now, 1, false);
+        for name in ["fake-1", "fake-2"] {
+            let fake = tracker.open_session(name, "198.51.100.9").unwrap();
+            tracker.strike(&fake, "invalid share proof");
+        }
+        assert!(tracker.open_session("fake-3", "198.51.100.9").is_err());
+        assert!(tracker.check_session(&neighbour).is_ok());
+        assert!(tracker.source_for_share(1).is_some());
+        assert!(tracker.open_session("neighbour", "198.51.100.9").is_ok());
     }
 
     #[test]

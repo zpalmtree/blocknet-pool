@@ -54,6 +54,9 @@ const PROBATION_QUEUE_SIZE: usize = 32;
 /// Probation audits one network (IP group) may hold at once, so a single
 /// host cannot fill the lane and lock out honest newcomers elsewhere.
 const PROBATION_MAX_PER_GROUP: usize = 4;
+/// Probation work that has waited this long is served before background
+/// audits, so a standing payout-coverage backlog cannot starve it.
+const PROBATION_MAX_WAIT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub(crate) struct ValidationTask {
@@ -712,7 +715,14 @@ impl ValidationEngine {
             audit_handles.push(thread::spawn(move || {
                 while !shutdown.load(Ordering::Relaxed) {
                     // Background (payout coverage) audits protect existing
-                    // credit; probation for never-verified addresses is last.
+                    // credit; probation for never-verified addresses is last,
+                    // unless it has waited too long.
+                    if inner_cloned.probation_overdue() {
+                        if let Ok(queued) = probation_rx.try_recv() {
+                            inner_cloned.process_probation_audit(queued);
+                            continue;
+                        }
+                    }
                     if let Ok(queued) = audit_rx.try_recv() {
                         inner_cloned.process_background_audit(queued);
                         continue;
@@ -884,6 +894,13 @@ impl ValidationEngine {
         self.inner.release_probation(address, group);
     }
 
+    /// Test hook: schedule degraded-window reviews as the Normal-mode
+    /// maintenance tick would.
+    #[cfg(test)]
+    pub(crate) fn run_degraded_reviews_now(&self) {
+        self.inner.schedule_degraded_reviews();
+    }
+
     pub(crate) fn attach_audit_feedback(&self, feedback: Arc<dyn AuditFeedback>) {
         *self.inner.audit_feedback.lock() = Some(feedback);
     }
@@ -946,10 +963,11 @@ impl ValidationInner {
         let overload_mode = self.evaluate_overload(Instant::now());
         if overload_mode == OverloadMode::Normal {
             self.schedule_background_audits(now);
+            // Degraded-window reviews wait for capacity to return so they do
+            // not compete for CPU with the regular verifiers during overload;
+            // PPLNS credit only settles once a block matures.
+            self.schedule_degraded_reviews();
         }
-        // Degraded-window reviews run in every mode: they use only the
-        // dedicated audit workers' bounded queue, never the regular verifiers.
-        self.schedule_degraded_reviews();
     }
 
     fn schedule_degraded_reviews(&self) {
@@ -1201,7 +1219,12 @@ impl ValidationInner {
             .forced_until
             .is_some_and(|deadline| deadline > now);
 
-        let never_verified = effective.sampled_shares <= effective.invalid_samples;
+        // An address stays on probation until it has as many verified-good
+        // samples as warmup would have given it.
+        let good_samples = effective
+            .sampled_shares
+            .saturating_sub(effective.invalid_samples);
+        let never_verified = good_samples < self.config.warmup_shares.max(0) as u64;
         // Backlog/coverage holds would otherwise audit every share of a
         // never-verified address in the regular lane; it has no payout weight
         // before its first verified share, so probation alone is enough.
@@ -1696,6 +1719,18 @@ impl ValidationInner {
                 .map(canonical_audit_reject_reason)
                 .map(str::to_string),
         };
+        if computed.reject_reason == Some("hash computation failed") {
+            // A pool-side failure says nothing about the share: leave it
+            // provisional and count it neither as a pass nor as a failure.
+            self.audit_deferred.fetch_add(1, Ordering::Relaxed);
+            tracing::warn!(
+                address = %queued.share.miner,
+                share_id = queued.share.share_id,
+                source = ?queued.source,
+                "validation audit could not hash the share; leaving it provisional"
+            );
+            return;
+        }
         match self.state_store.complete_validation_audit(&update) {
             Ok(true) => {}
             Ok(false) => {
@@ -2359,6 +2394,13 @@ impl ValidationInner {
         self.probation_enqueued.fetch_add(1, Ordering::Relaxed);
     }
 
+    fn probation_overdue(&self) -> bool {
+        self.probation_queue
+            .snapshot(Instant::now())
+            .oldest_age_millis
+            .is_some_and(|age| age >= PROBATION_MAX_WAIT.as_millis() as u64)
+    }
+
     fn process_probation_audit(&self, queued: QueuedProbationTask) {
         let started_at = Instant::now();
         self.probation_queue.pop_and_record_wait(started_at);
@@ -2839,17 +2881,19 @@ mod tests {
         }
         assert_eq!(engine.snapshot().overload_mode, OverloadMode::Normal);
 
-        // An address that already passed a sample keeps normal sampling.
-        let veteran = engine.process_inline(ValidationTask {
-            address: "veteran".to_string(),
-            force_full_verify: true,
-            ..matching_task(7)
-        });
-        assert!(veteran.accepted);
+        // An address with warmup's worth of verified samples keeps normal
+        // sampling, unaffected by the flood.
+        for nonce in 7..12 {
+            let veteran = engine.process_inline(ValidationTask {
+                address: "veteran".to_string(),
+                force_full_verify: true,
+                ..matching_task(nonce)
+            });
+            assert!(veteran.accepted);
+        }
         let plan = engine.plan_regular_submit("veteran");
         assert!(!plan.probation);
         assert_eq!(plan.overload_mode, OverloadMode::Normal);
-        assert!(plan.enqueue_audit, "warmup sampling is still on");
     }
 
     #[test]
@@ -2876,8 +2920,9 @@ mod tests {
 
     #[test]
     fn probation_holds_one_slot_per_address_and_clears_after_a_pass() {
+        // One warmup sample: a single passing probation audit graduates.
         let cfg = Config {
-            warmup_shares: 5,
+            warmup_shares: 1,
             ..test_cfg()
         };
         let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));

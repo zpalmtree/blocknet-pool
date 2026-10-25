@@ -503,12 +503,25 @@ pub struct PoolEngine {
 
 /// Applies a strike to `source` and revokes its unverified credit.
 fn strike_source(
+    cfg: &Config,
     tracker: &SourceRiskTracker,
     store: &dyn ShareStore,
     validation: Option<&ValidationEngine>,
     source: &SourceRef,
     reason: &str,
 ) -> AuditAttribution {
+    if !cfg.source_penalties_enabled {
+        // Shadow mode: report what would happen and fall back to the
+        // address-level accounting (attributed = false).
+        tracing::warn!(
+            address = %source.address,
+            ip_group = %source.ip_group,
+            session = source.session_id,
+            reason,
+            "source would be struck for a proven fake share (source_penalties_enabled=false)"
+        );
+        return AuditAttribution::default();
+    }
     let outcome = tracker.strike(source, reason);
     let mut revoked_rows = 0u64;
     for (address, share_ids) in &outcome.revoked {
@@ -567,6 +580,7 @@ impl AuditFeedback for EngineAuditFeedback {
         }
         // The caller forgets revoked shares in validation state itself.
         strike_source(
+            &self.cfg,
             &self.tracker,
             self.store.as_ref(),
             None,
@@ -1159,7 +1173,7 @@ impl PoolEngine {
                     claimed_hash,
                     candidate_claim,
                     force_full_verify: true,
-                    attributed: true,
+                    attributed: self.cfg.source_penalties_enabled,
                 };
 
                 // A block claim from an established source is hashed inline
@@ -1202,6 +1216,7 @@ impl PoolEngine {
                         is_retryable_reject_reason(canonical_share_reject_reason(reason));
                     if reason == PROVEN_FAKE_REJECT_REASON {
                         strike_source(
+                            &self.cfg,
                             &self.source_risk,
                             self.store.as_ref(),
                             Some(&self.validation),
@@ -1405,10 +1420,13 @@ impl PoolEngine {
                 return Err(anyhow!("low difficulty share"));
             }
 
-            // Never-verified addresses are verified on the probation lane. If
-            // it is saturated, ask the miner to retry instead of accepting the
-            // share unverified; not persisted, so the retry is not a duplicate.
+            // Not-yet-verified addresses are verified on the probation lane.
+            // If it is saturated the share is still accepted (seine never
+            // resubmits busy rejects), but it carries no payout weight until
+            // the address has verified shares, and it joins the source's
+            // degraded cohort for a later review.
             let mut probation_reserved = false;
+            let mut probation_saturated = false;
             if plan.probation {
                 match self
                     .validation
@@ -1416,9 +1434,7 @@ impl PoolEngine {
                 {
                     ProbationReservation::Reserved => probation_reserved = true,
                     ProbationReservation::AlreadyPending => {}
-                    ProbationReservation::Saturated => {
-                        return Err(anyhow!("server busy, retry (new miner verification)"));
-                    }
+                    ProbationReservation::Saturated => probation_saturated = true,
                 }
             }
 
@@ -1462,25 +1478,20 @@ impl PoolEngine {
                 share_id,
                 created_at,
                 share_difficulty,
-                plan.overload_mode != OverloadMode::Normal,
+                plan.overload_mode != OverloadMode::Normal || probation_saturated,
             );
-            if probation_reserved {
-                self.validation.enqueue_probation_audit(
-                    PendingAuditShare {
-                        share_id,
-                        job_id: job_id_for_share.clone(),
-                        miner: session.address.clone(),
-                        worker: session.worker.clone(),
-                        difficulty: share_difficulty,
-                        nonce,
-                        claimed_hash: Some(claimed_hash),
-                        header_base: job.header_base.clone(),
-                        network_target: job.network_target,
-                        created_at,
-                    },
-                    &session.source.ip_group,
-                );
-            }
+            let probation_share = probation_reserved.then(|| PendingAuditShare {
+                share_id,
+                job_id: job_id_for_share.clone(),
+                miner: session.address.clone(),
+                worker: session.worker.clone(),
+                difficulty: share_difficulty,
+                nonce,
+                claimed_hash: Some(claimed_hash),
+                header_base: job.header_base.clone(),
+                network_target: job.network_target,
+                created_at,
+            });
 
             self.validation.record_hot_accept(
                 &session.address,
@@ -1501,6 +1512,12 @@ impl PoolEngine {
                 }),
                 plan,
             );
+            // Enqueued after the hot accept so a fast audit cannot finish
+            // before the share is in the validation state.
+            if let Some(share) = probation_share {
+                self.validation
+                    .enqueue_probation_audit(share, &session.source.ip_group);
+            }
 
             let next_difficulty = self.note_share_and_maybe_adjust_difficulty(conn_id);
             Ok(SubmitAck {
@@ -2973,6 +2990,54 @@ mod tests {
     }
 
     #[test]
+    fn shadow_mode_logs_strikes_without_revoking_or_banning() {
+        let mut cfg = cfg();
+        cfg.source_penalties_enabled = false;
+        let (engine, store, _validation) = source_test_engine(cfg, Arc::new(NonceHasher));
+        let attacker = "198.51.100.9:5000";
+        engine
+            .login(attacker, test_miner_address(), "x", 2, submit_hash_cap())
+            .expect("login");
+        engine
+            .submit(attacker, "job1".to_string(), 10, fake_claim())
+            .expect("unsampled fake");
+        let err = engine
+            .submit(attacker, "job1".to_string(), 11, fake_candidate_claim())
+            .expect_err("false block claim still rejected");
+        assert!(err.to_string().contains("invalid share proof"));
+        assert!(!engine.source_blocked(attacker));
+        assert_eq!(statuses(&store, 10..=10), vec![SHARE_STATUS_PROVISIONAL]);
+    }
+
+    #[test]
+    fn pool_side_hash_failure_is_neither_a_pass_nor_a_strike() {
+        struct BrokenHasher;
+        impl PowHasher for BrokenHasher {
+            fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
+                Err(anyhow!("argon2 hash failure"))
+            }
+        }
+        let mut cfg = cfg();
+        cfg.sample_rate = 1.0;
+        let (engine, store, validation) = source_test_engine(cfg, Arc::new(BrokenHasher));
+        let rig = "203.0.113.1:4000";
+        engine
+            .login(rig, test_miner_address(), "rig", 2, submit_hash_cap())
+            .expect("login");
+        engine
+            .submit(rig, "job1".to_string(), 1, NonceHasher::honest(1))
+            .expect("hot accept");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while validation.snapshot().audit_deferred == 0 {
+            assert!(Instant::now() < deadline, "audit should run");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(statuses(&store, 1..=1), vec![SHARE_STATUS_PROVISIONAL]);
+        assert!(!engine.source_blocked(rig));
+        assert!(!engine.source_established(rig));
+    }
+
+    #[test]
     fn many_attacker_sources_cannot_push_a_public_address_into_forced_review() {
         let mut cfg = cfg();
         // Old behaviour: 5 invalid samples over a 10% ratio forced a 24h
@@ -3119,7 +3184,7 @@ mod tests {
     }
 
     #[test]
-    fn saturated_probation_rejects_new_address_shares_as_retryable_busy() {
+    fn saturated_probation_accepts_unpaid_shares_and_queues_them_for_review() {
         let mut cfg = cfg();
         cfg.warmup_shares = 5;
         let (engine, store, validation) = source_test_engine(cfg, Arc::new(NonceHasher));
@@ -3132,17 +3197,24 @@ mod tests {
         engine
             .login(newbie, test_miner_address(), "rig", 2, submit_hash_cap())
             .expect("login");
-        let err = engine
-            .submit(newbie, "job1".to_string(), 1, NonceHasher::honest(1))
-            .expect_err("never-verified share is not accepted unverified while saturated");
-        assert!(err.to_string().starts_with("server busy"), "{err}");
-        assert!(store.shares().is_empty(), "busy reject is not persisted");
-
-        validation.cancel_probation("filler-0", "10.0.0.1");
+        // Seine never resubmits busy rejects, so the share is accepted; it has
+        // no payout weight until the address is verified and is queued for a
+        // per-source review instead of escaping verification.
         let ack = engine
             .submit(newbie, "job1".to_string(), 1, NonceHasher::honest(1))
-            .expect("retry of the same nonce succeeds once there is room");
+            .expect("share accepted while the probation lane is full");
         assert_eq!(ack.status, SHARE_STATUS_PROVISIONAL);
+        assert_eq!(store.shares().len(), 1);
+        assert_eq!(validation.snapshot().probation_enqueued, 0);
+        assert_eq!(
+            engine.source_risk.take_degraded_review_batch(8, 1.0),
+            vec![1]
+        );
+
+        validation.cancel_probation("filler-0", "10.0.0.1");
+        engine
+            .submit(newbie, "job1".to_string(), 3, NonceHasher::honest(3))
+            .expect("share with a free probation slot");
         assert_eq!(validation.snapshot().probation_enqueued, 1);
         // Further shares while the probation audit is pending are accepted.
         engine
@@ -3276,7 +3348,7 @@ mod tests {
     }
 
     #[test]
-    fn shares_accepted_during_emergency_are_reviewed_per_source_afterwards() {
+    fn shares_accepted_during_emergency_are_reviewed_per_source_when_capacity_returns() {
         let mut cfg = cfg();
         cfg.provisional_share_delay = "0s".to_string();
         cfg.payout_provisional_cap_multiplier = 0.0;
@@ -3341,13 +3413,19 @@ mod tests {
             "fakes are accepted unverified during emergency"
         );
 
+        // Reviews wait for capacity: nothing is audited while overloaded.
+        std::thread::sleep(Duration::from_millis(1_500));
+        assert!(!engine.source_blocked(attacker));
+
+        // Capacity returns (the maintenance tick schedules reviews in Normal).
+        validation.run_degraded_reviews_now();
         let deadline = Instant::now() + Duration::from_secs(6);
         while !engine.source_blocked(attacker) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(
             engine.source_blocked(attacker),
-            "the degraded-window review catches the fake source even while overloaded"
+            "the degraded-window review catches the fake source afterwards"
         );
         assert!(
             store

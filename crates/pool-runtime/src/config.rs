@@ -52,6 +52,9 @@ pub struct Config {
     /// Strikes from one IP group before its unestablished pairs are revoked
     /// and banned as well.
     pub source_ip_strike_threshold: i32,
+    /// When false, proven fakes are only logged per source and evidence is
+    /// booked against the address as before (shadow mode for rollout).
+    pub source_penalties_enabled: bool,
     pub provisional_share_delay: String,
     pub enable_vardiff: bool,
     pub vardiff_target_shares: i32,
@@ -114,7 +117,8 @@ impl Default for Config {
             invalid_escalation_quarantine_strikes: 1,
             source_ban_duration: "15m".to_string(),
             source_max_ban_duration: "24h".to_string(),
-            source_ip_strike_threshold: 2,
+            source_ip_strike_threshold: 3,
+            source_penalties_enabled: true,
             provisional_share_delay: "15m".to_string(),
             enable_vardiff: true,
             vardiff_target_shares: 10,
