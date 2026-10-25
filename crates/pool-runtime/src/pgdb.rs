@@ -873,6 +873,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .context("ensure payouts.batch_id column")?;
         conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS batch_id TEXT")
             .context("ensure pending_payouts.batch_id column")?;
+        conn.batch_execute("ALTER TABLE pending_payouts ADD COLUMN IF NOT EXISTS send_daemon TEXT")
+            .context("ensure pending_payouts.send_daemon column")?;
         conn.batch_execute(
             "UPDATE payouts SET batch_id = CONCAT('legacy:', (timestamp / 300)::text)
              WHERE COALESCE(BTRIM(batch_id), '') = '';
@@ -4087,7 +4089,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                  tx_hash = NULL,
                  fee = NULL,
                  sent_at = NULL,
-                 batch_id = NULL
+                 batch_id = NULL,
+                 send_daemon = NULL
              WHERE pending_payouts.send_started_at IS NULL",
             &[&address, &u64_to_i64(amount)?, &now_unix()],
         )?;
@@ -4105,6 +4108,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let mut rows = self.mark_pending_payouts_send_started_batch(
             &[(address.to_string(), pending.amount)],
             &format!("test-batch:{address}"),
+            None,
         )?;
         Ok(rows.pop())
     }
@@ -4119,6 +4123,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         &self,
         members: &[(String, u64)],
         batch_id: &str,
+        send_daemon: Option<&str>,
     ) -> Result<Vec<PendingPayout>> {
         if members.is_empty() {
             return Ok(Vec::new());
@@ -4135,13 +4140,20 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             let row = tx.query_opt(
                 "UPDATE pending_payouts
                  SET send_started_at = $2,
-                     batch_id = $3
+                     batch_id = $3,
+                     send_daemon = $5
                  WHERE address = $1
                    AND amount = $4
                    AND send_started_at IS NULL
                    AND tx_hash IS NULL
-                 RETURNING address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at, batch_id",
-                &[&address, &started_at, &batch_id, &u64_to_i64(*amount)?],
+                 RETURNING address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at, batch_id, send_daemon",
+                &[
+                    &address,
+                    &started_at,
+                    &batch_id,
+                    &u64_to_i64(*amount)?,
+                    &send_daemon,
+                ],
             )?;
             let Some(row) = row else {
                 // Dropping the transaction rolls back members frozen so far.
@@ -4265,7 +4277,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             )?;
 
             let row = tx.query_one(
-                "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at, batch_id
+                "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at, batch_id, send_daemon
                  FROM pending_payouts
                  WHERE address = $1",
                 &[&member.address],
@@ -4284,11 +4296,25 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                  tx_hash = NULL,
                  fee = NULL,
                  sent_at = NULL,
-                 batch_id = NULL
+                 batch_id = NULL,
+                 send_daemon = NULL
              WHERE address = $1",
             &[&address],
         )?;
         Ok(())
+    }
+
+    /// Forget which daemon a batch went to (the daemon routing changed while
+    /// the send was in flight), so recovery holds it instead of resetting.
+    pub(crate) fn clear_pending_payout_batch_send_daemon(&self, batch_id: &str) -> Result<u64> {
+        if batch_id.trim().is_empty() {
+            return Ok(0);
+        }
+        let updated = self.conn().execute(
+            "UPDATE pending_payouts SET send_daemon = NULL WHERE batch_id = $1",
+            &[&batch_id],
+        )?;
+        Ok(updated)
     }
 
     pub(crate) fn reset_pending_payout_batch_send_state(&self, batch_id: &str) -> Result<u64> {
@@ -4301,7 +4327,8 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                  tx_hash = NULL,
                  fee = NULL,
                  sent_at = NULL,
-                 batch_id = NULL
+                 batch_id = NULL,
+                 send_daemon = NULL
              WHERE batch_id = $1",
             &[&batch_id],
         )?;
@@ -5195,7 +5222,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_pending_payouts(&self) -> Result<Vec<PendingPayout>> {
         let rows = self.conn().query(
-            "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at, batch_id
+            "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at, batch_id, send_daemon
              FROM pending_payouts
              ORDER BY initiated_at ASC",
             &[],
@@ -5208,7 +5235,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     pub fn get_pending_payout(&self, address: &str) -> Result<Option<PendingPayout>> {
         let row = self.conn().query_opt(
-            "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at, batch_id
+            "SELECT address, amount, initiated_at, send_started_at, tx_hash, fee, sent_at, batch_id, send_daemon
              FROM pending_payouts
              WHERE address = $1",
             &[&address],
@@ -6123,6 +6150,9 @@ fn row_to_pending_payout(row: &postgres::Row) -> PendingPayout {
             .map(|value| value.max(0) as u64),
         sent_at: row.get::<_, Option<i64>>(6).map(from_unix),
         batch_id: row.get::<_, Option<String>>(7),
+        send_daemon: row
+            .get::<_, Option<String>>(8)
+            .filter(|value| !value.trim().is_empty()),
     }
 }
 
@@ -6444,7 +6474,7 @@ mod tests {
 
         // Wrong planned amount: nothing is frozen.
         assert!(store
-            .mark_pending_payouts_send_started_batch(&[("mark-a".to_string(), 99)], "batch-x")
+            .mark_pending_payouts_send_started_batch(&[("mark-a".to_string(), 99)], "batch-x", None)
             .is_err());
         assert!(store
             .get_pending_payout("mark-a")
@@ -6454,7 +6484,7 @@ mod tests {
             .is_none());
 
         let frozen = store
-            .mark_pending_payouts_send_started_batch(&[("mark-b".to_string(), 200)], "batch-1")
+            .mark_pending_payouts_send_started_batch(&[("mark-b".to_string(), 200)], "batch-1", None)
             .expect("freeze unclaimed member");
         assert_eq!(frozen.len(), 1);
         assert_eq!(frozen[0].batch_id.as_deref(), Some("batch-1"));
@@ -6465,6 +6495,7 @@ mod tests {
             .mark_pending_payouts_send_started_batch(
                 &[("mark-a".to_string(), 100), ("mark-b".to_string(), 200)],
                 "batch-2",
+                None,
             )
             .expect_err("claimed member must abort the freeze");
         assert!(err.to_string().contains("mark-b"), "{err:#}");
@@ -6476,10 +6507,10 @@ mod tests {
 
         // Missing rows and empty batch ids are refused.
         assert!(store
-            .mark_pending_payouts_send_started_batch(&[("mark-missing".to_string(), 1)], "batch-3")
+            .mark_pending_payouts_send_started_batch(&[("mark-missing".to_string(), 1)], "batch-3", None)
             .is_err());
         assert!(store
-            .mark_pending_payouts_send_started_batch(&[("mark-a".to_string(), 100)], " ")
+            .mark_pending_payouts_send_started_batch(&[("mark-a".to_string(), 100)], " ", None)
             .is_err());
     }
 
@@ -6496,11 +6527,12 @@ mod tests {
             .mark_pending_payouts_send_started_batch(
                 &[("inflight-a".to_string(), 20), ("inflight-b".to_string(), 30)],
                 "batch-unresolved",
+                None,
             )
             .unwrap();
         store.create_pending_payout("inflight-c", 40).unwrap();
         store
-            .mark_pending_payouts_send_started_batch(&[("inflight-c".to_string(), 40)], "batch-sent")
+            .mark_pending_payouts_send_started_batch(&[("inflight-c".to_string(), 40)], "batch-sent", None)
             .unwrap();
         store
             .record_pending_payout_batch_broadcast(
@@ -8522,6 +8554,7 @@ mod tests {
             .mark_pending_payouts_send_started_batch(
                 &[(pending_addr.clone(), 25)],
                 &format!("batch-pending-{suffix}"),
+                None,
             )
             .expect("mark started");
         store

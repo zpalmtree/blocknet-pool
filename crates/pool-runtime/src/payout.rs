@@ -176,6 +176,22 @@ enum UnknownBroadcastRecovery {
     Unresolved,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SendDaemonCheck {
+    Same,
+    NotSame { recorded: String, current: String },
+}
+
+/// The daemon instance every member of a batch was sent through, if known
+/// and consistent.
+fn batch_send_daemon(entries: &[PendingPayout]) -> Option<String> {
+    let first = entries.first()?.send_daemon.clone()?;
+    entries
+        .iter()
+        .all(|entry| entry.send_daemon.as_deref() == Some(first.as_str()))
+        .then_some(first)
+}
+
 #[derive(Debug, Clone)]
 struct PlannedPayoutBatch {
     batch_id: String,
@@ -1388,9 +1404,12 @@ impl PayoutProcessor {
                 .iter()
                 .map(|candidate| (candidate.balance.address.clone(), candidate.pending.amount))
                 .collect::<Vec<_>>();
+            // Record which daemon instance receives this send: idempotency
+            // status, send history and the journal only exist on that daemon.
+            let send_daemon = self.node.daemon_instance_identity();
             if let Err(err) = self
                 .store
-                .mark_pending_payouts_send_started_batch(&members, &plan.batch_id)
+                .mark_pending_payouts_send_started_batch(&members, &plan.batch_id, send_daemon.as_deref())
             {
                 tracing::warn!(
                     batch_id = %plan.batch_id,
@@ -1422,13 +1441,15 @@ impl PayoutProcessor {
                 .map(WalletOutputRef::from)
                 .collect::<Vec<_>>();
 
-            let sent = match self.node.wallet_send_advanced(
+            let send_result = self.node.wallet_send_advanced(
                 &recipients,
                 &inputs,
                 plan.change_split,
                 &plan.idempotency_key,
                 false,
-            ) {
+            );
+            self.forget_send_daemon_if_routing_changed(&plan.batch_id, send_daemon.as_deref());
+            let sent = match send_result {
                 Ok(sent) => sent,
                 Err(err) => match classify_wallet_send_error(&err) {
                     WalletSendFailure::Permanent => {
@@ -1784,6 +1805,43 @@ impl PayoutProcessor {
         }
     }
 
+    /// If the daemon routing changed while a send was in flight we cannot
+    /// tell which instance received it, so drop the recorded instance; the
+    /// batch is then only resolved by positive evidence or an operator.
+    fn forget_send_daemon_if_routing_changed(&self, batch_id: &str, send_daemon: Option<&str>) {
+        let after = self.node.daemon_instance_identity();
+        if after.as_deref() == send_daemon {
+            return;
+        }
+        tracing::warn!(
+            batch_id = %batch_id,
+            before = send_daemon.unwrap_or("unknown"),
+            after = after.as_deref().unwrap_or("unknown"),
+            "daemon routing changed during a payout send; batch recovery will require positive evidence"
+        );
+        if let Err(err) = self.store.clear_pending_payout_batch_send_daemon(batch_id) {
+            tracing::warn!(
+                batch_id = %batch_id,
+                error = %err,
+                "failed to clear send daemon after a routing change during payout send"
+            );
+        }
+    }
+
+    /// Whether negative evidence about this batch ("not found", "no such tx")
+    /// comes from the same daemon instance that received its send.
+    fn batch_send_daemon_check(&self, entries: &[PendingPayout]) -> SendDaemonCheck {
+        let recorded = batch_send_daemon(entries);
+        let current = self.node.daemon_instance_identity();
+        match (recorded, current) {
+            (Some(recorded), Some(current)) if recorded == current => SendDaemonCheck::Same,
+            (recorded, current) => SendDaemonCheck::NotSame {
+                recorded: recorded.unwrap_or_else(|| "unknown".to_string()),
+                current: current.unwrap_or_else(|| "unknown".to_string()),
+            },
+        }
+    }
+
     fn recover_pending_batch_from_daemon_idempotency(
         &self,
         batch_id: &str,
@@ -1832,22 +1890,41 @@ impl PayoutProcessor {
                         }
                         Err(err) => return Err(err),
                     };
-                    match matching_send {
-                        Some(send) => {
-                            return self
-                                .record_recovered_wallet_send(
-                                    batch_id, entries, &send.txid, send.fee,
-                                )
-                                .map(UnknownBroadcastRecovery::Broadcast);
-                        }
-                        None => {
+                    if let Some(send) = matching_send {
+                        return self
+                            .record_recovered_wallet_send(batch_id, entries, &send.txid, send.fee)
+                            .map(UnknownBroadcastRecovery::Broadcast);
+                    }
+                    if status.state != "not_found" {
+                        // The daemon accepted this key (and may have broadcast) but
+                        // never recorded an outcome, e.g. it restarted mid-send.
+                        tracing::warn!(
+                            batch_id = %batch_id,
+                            state = %status.state,
+                            "daemon accepted the payout send but reports no outcome and no matching wallet send; holding batch for operator reconciliation"
+                        );
+                        return Ok(UnknownBroadcastRecovery::Unresolved);
+                    }
+                    match self.batch_send_daemon_check(entries) {
+                        SendDaemonCheck::Same => {
                             self.store.reset_pending_payout_batch_send_state(batch_id)?;
                             tracing::warn!(
                                 batch_id = %batch_id,
                                 state = %status.state,
-                                "daemon send status unresolved and no matching wallet send history; reset batch for retry"
+                                "daemon that received the send has no record of it and no matching wallet send; reset batch for retry"
                             );
                             return Ok(UnknownBroadcastRecovery::ResetForRetry);
+                        }
+                        SendDaemonCheck::NotSame { recorded, current } => {
+                            tracing::warn!(
+                                batch_id = %batch_id,
+                                send_daemon = %recorded,
+                                current_daemon = %current,
+                                "payout send was made via a different or unknown daemon instance, so its absence here proves nothing; checking that instance's journal, otherwise holding batch for operator reconciliation"
+                            );
+                            return self.recover_pending_batch_from_local_daemon_idempotency(
+                                batch_id, entries,
+                            );
                         }
                     }
                 }
@@ -1877,13 +1954,19 @@ impl PayoutProcessor {
         batch_id: &str,
         entries: &[PendingPayout],
     ) -> anyhow::Result<UnknownBroadcastRecovery> {
-        let daemon_data_dir = self.cfg.daemon_data_dir.trim();
-        let idempotency_path = PathBuf::from(if daemon_data_dir.is_empty() {
-            "data"
-        } else {
-            daemon_data_dir
-        })
-        .join("send-idempotency.json");
+        // The journal lives in the data directory of the daemon that received
+        // the send; fall back to the active daemon, then the configured dir.
+        let daemon_data_dir = batch_send_daemon(entries)
+            .or_else(|| self.node.daemon_instance_identity())
+            .unwrap_or_else(|| {
+                let configured = self.cfg.daemon_data_dir.trim();
+                if configured.is_empty() {
+                    "data".to_string()
+                } else {
+                    configured.to_string()
+                }
+            });
+        let idempotency_path = PathBuf::from(daemon_data_dir).join("send-idempotency.json");
         let Some(recovered) = load_recovered_wallet_send_for_batch(&idempotency_path, batch_id)?
         else {
             return Ok(UnknownBroadcastRecovery::Unresolved);
@@ -2039,6 +2122,19 @@ impl PayoutProcessor {
                     .max()
                     .unwrap_or_default();
                 if age < PENDING_PAYOUT_RETRY_GRACE {
+                    return Ok(());
+                }
+                if let SendDaemonCheck::NotSame { recorded, current } =
+                    self.batch_send_daemon_check(entries)
+                {
+                    tracing::warn!(
+                        batch_id = %batch_id,
+                        tx = %tx_hash,
+                        send_daemon = %recorded,
+                        current_daemon = %current,
+                        age_secs = age.as_secs(),
+                        "broadcast payout batch is unknown to this daemon but was sent via a different or unknown instance; holding instead of resetting"
+                    );
                     return Ok(());
                 }
                 self.store.reset_pending_payout_batch_send_state(batch_id)?;
@@ -3416,6 +3512,7 @@ mod tests {
     use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
     use base64::Engine as _;
     use pool_common::db::{DbShare, ShareReplayData};
+    use std::path::{Path, PathBuf};
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::Arc;
@@ -3489,6 +3586,7 @@ mod tests {
                 fee: None,
                 sent_at: None,
                 batch_id: None,
+                send_daemon: None,
             },
         }
     }
@@ -4532,6 +4630,7 @@ mod tests {
             fee: None,
             sent_at: None,
             batch_id: None,
+            send_daemon: None,
         };
         assert!(has_stale_unknown_broadcast_outcome(&stale, now));
 
@@ -4605,6 +4704,7 @@ mod tests {
                 fee: None,
                 sent_at: None,
                 batch_id: Some("batch-1".to_string()),
+                send_daemon: None,
             },
             PendingPayout {
                 address: "addr-a".to_string(),
@@ -4615,6 +4715,7 @@ mod tests {
                 fee: None,
                 sent_at: None,
                 batch_id: Some("batch-1".to_string()),
+                send_daemon: None,
             },
         ];
         validate_recovered_wallet_send_matches_pending(&recovered, &pending)
@@ -4641,7 +4742,7 @@ mod tests {
             .create_pending_payout("addr1", 100)
             .expect("create pending payout");
         store
-            .mark_pending_payouts_send_started_batch(&[("addr1".to_string(), 100)], "batch-1")
+            .mark_pending_payouts_send_started_batch(&[("addr1".to_string(), 100)], "batch-1", None)
             .expect("freeze pending payout");
         let pending = store
             .get_pending_payout("addr1")
@@ -4695,7 +4796,7 @@ mod tests {
             .create_pending_payout("addr1", 100)
             .expect("create pending payout");
         store
-            .mark_pending_payouts_send_started_batch(&[("addr1".to_string(), 100)], "batch-1")
+            .mark_pending_payouts_send_started_batch(&[("addr1".to_string(), 100)], "batch-1", None)
             .expect("freeze pending payout");
         let pending = store
             .get_pending_payout("addr1")
@@ -4743,7 +4844,7 @@ mod tests {
     }
 
     #[test]
-    fn accepted_send_status_without_wallet_send_resets_unknown_batch() {
+    fn accepted_send_status_without_wallet_send_holds_unknown_batch() {
         let store = require_test_store!();
         store
             .update_balance(&Balance {
@@ -4756,7 +4857,7 @@ mod tests {
             .create_pending_payout("addr1", 100)
             .expect("create pending payout");
         store
-            .mark_pending_payouts_send_started_batch(&[("addr1".to_string(), 100)], "batch-1")
+            .mark_pending_payouts_send_started_batch(&[("addr1".to_string(), 100)], "batch-1", None)
             .expect("freeze pending payout");
         let pending = store
             .get_pending_payout("addr1")
@@ -4785,15 +4886,312 @@ mod tests {
         let recovered = processor
             .recover_pending_batch_from_daemon_idempotency("batch-1", &[pending])
             .expect("recover unresolved send");
-        assert!(matches!(recovered, UnknownBroadcastRecovery::ResetForRetry));
+        assert!(matches!(recovered, UnknownBroadcastRecovery::Unresolved));
 
         let pending = store
             .get_pending_payout("addr1")
             .expect("lookup pending payout")
             .expect("pending payout exists");
-        assert!(pending.send_started_at.is_none());
-        assert!(pending.batch_id.is_none());
-        assert!(pending.tx_hash.is_none());
+        assert!(pending.send_started_at.is_some(), "accepted sends must not be resent");
+        assert_eq!(pending.batch_id.as_deref(), Some("batch-1"));
+    }
+
+    struct DaemonInstanceFixture {
+        _dir: tempfile::TempDir,
+        active_cookie: PathBuf,
+        primary: PathBuf,
+        standby: PathBuf,
+    }
+
+    impl DaemonInstanceFixture {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let primary = dir.path().join("primary");
+            let standby = dir.path().join("standby");
+            for instance in [&primary, &standby] {
+                fs::create_dir_all(instance).expect("instance dir");
+                fs::write(instance.join("api.cookie"), "token\n").expect("cookie");
+            }
+            let active_cookie = dir.path().join("daemon-active.api.cookie");
+            std::os::unix::fs::symlink(primary.join("api.cookie"), &active_cookie)
+                .expect("active cookie symlink");
+            Self {
+                _dir: dir,
+                active_cookie,
+                primary,
+                standby,
+            }
+        }
+
+        fn cut_over_to_standby(&self) {
+            fs::remove_file(&self.active_cookie).expect("remove active cookie");
+            std::os::unix::fs::symlink(self.standby.join("api.cookie"), &self.active_cookie)
+                .expect("switch active cookie");
+        }
+
+        fn identity(path: &Path) -> String {
+            fs::canonicalize(path)
+                .expect("canonical instance")
+                .to_string_lossy()
+                .into_owned()
+        }
+
+        fn node(&self, base_url: &str) -> Arc<NodeClient> {
+            Arc::new(
+                NodeClient::new(base_url, self.active_cookie.to_str().expect("utf8 path"))
+                    .expect("node"),
+            )
+        }
+    }
+
+    fn frozen_single_payout(
+        store: &Arc<PoolStore>,
+        address: &str,
+        batch_id: &str,
+        send_daemon: Option<&str>,
+    ) -> PendingPayout {
+        store
+            .update_balance(&Balance {
+                address: address.to_string(),
+                pending: 100,
+                paid: 0,
+            })
+            .expect("seed balance");
+        store
+            .create_pending_payout(address, 100)
+            .expect("create pending payout");
+        store
+            .mark_pending_payouts_send_started_batch(
+                &[(address.to_string(), 100)],
+                batch_id,
+                send_daemon,
+            )
+            .expect("freeze pending payout");
+        store
+            .get_pending_payout(address)
+            .expect("lookup pending payout")
+            .expect("pending payout exists")
+    }
+
+    fn not_found_status_server(batch_id: &str) -> String {
+        let idem = payout_batch_idempotency_key(batch_id);
+        spawn_json_router_server(
+            HashMap::from([
+                (
+                    format!("/api/wallet/send/advanced/status?idempotency_key={idem}"),
+                    r#"{"state":"not_found"}"#.to_string(),
+                ),
+                (
+                    "/api/wallet/sends?limit=500&offset=0&order=desc".to_string(),
+                    r#"{"total":0,"sends":[]}"#.to_string(),
+                ),
+            ]),
+            4,
+        )
+    }
+
+    #[test]
+    fn not_found_send_status_resets_only_when_answered_by_the_sending_daemon() {
+        let store = require_test_store!();
+        let daemons = DaemonInstanceFixture::new();
+        let primary = DaemonInstanceFixture::identity(&daemons.primary);
+        assert_eq!(
+            daemons.node("http://127.0.0.1:1").daemon_instance_identity(),
+            Some(primary.clone())
+        );
+
+        let pending = frozen_single_payout(&store, "addr-same", "batch-same", Some(&primary));
+        assert_eq!(pending.send_daemon.as_deref(), Some(primary.as_str()));
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            daemons.node(&not_found_status_server("batch-same")),
+        );
+        let recovered = processor
+            .recover_pending_batch_from_daemon_idempotency("batch-same", &[pending])
+            .expect("recover");
+        assert!(matches!(recovered, UnknownBroadcastRecovery::ResetForRetry));
+        let reset = store.get_pending_payout("addr-same").unwrap().unwrap();
+        assert!(reset.send_started_at.is_none());
+        assert!(reset.send_daemon.is_none());
+    }
+
+    #[test]
+    fn not_found_send_status_after_cutover_holds_batch() {
+        let store = require_test_store!();
+        let daemons = DaemonInstanceFixture::new();
+        let primary = DaemonInstanceFixture::identity(&daemons.primary);
+        let pending = frozen_single_payout(&store, "addr-moved", "batch-moved", Some(&primary));
+        daemons.cut_over_to_standby();
+
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            daemons.node(&not_found_status_server("batch-moved")),
+        );
+        let recovered = processor
+            .recover_pending_batch_from_daemon_idempotency("batch-moved", &[pending])
+            .expect("recover");
+        assert!(matches!(recovered, UnknownBroadcastRecovery::Unresolved));
+        let held = store.get_pending_payout("addr-moved").unwrap().unwrap();
+        assert!(held.send_started_at.is_some(), "a standby's not_found must not resend");
+        assert_eq!(held.batch_id.as_deref(), Some("batch-moved"));
+    }
+
+    #[test]
+    fn not_found_send_status_after_cutover_recovers_from_sending_daemon_journal() {
+        let store = require_test_store!();
+        let daemons = DaemonInstanceFixture::new();
+        let primary = DaemonInstanceFixture::identity(&daemons.primary);
+        let pending = frozen_single_payout(&store, "addr-journal", "batch-journal", Some(&primary));
+        let journal_key = format!(
+            "send-advanced:{}",
+            payout_batch_idempotency_key("batch-journal")
+        );
+        let body = serde_json::json!({
+            "txid": "tx-from-primary-journal",
+            "dry_run": false,
+            "fee": 3u64,
+            "recipients": [{"address": "addr-journal", "amount": 100u64}]
+        });
+        fs::write(
+            daemons.primary.join("send-idempotency.json"),
+            serde_json::json!({
+                "entries": {
+                    journal_key: {
+                        "status": 200,
+                        "body_base64": BASE64_STANDARD.encode(body.to_string())
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .expect("write primary journal");
+        daemons.cut_over_to_standby();
+
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            daemons.node(&not_found_status_server("batch-journal")),
+        );
+        let recovered = processor
+            .recover_pending_batch_from_daemon_idempotency("batch-journal", &[pending])
+            .expect("recover");
+        assert!(matches!(recovered, UnknownBroadcastRecovery::Broadcast(_)));
+        let recorded = store.get_pending_payout("addr-journal").unwrap().unwrap();
+        assert_eq!(recorded.tx_hash.as_deref(), Some("tx-from-primary-journal"));
+    }
+
+    #[test]
+    fn not_found_send_status_for_legacy_batch_without_send_daemon_holds_batch() {
+        let store = require_test_store!();
+        let daemons = DaemonInstanceFixture::new();
+        let pending = frozen_single_payout(&store, "addr-legacy", "batch-legacy", None);
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            daemons.node(&not_found_status_server("batch-legacy")),
+        );
+        let recovered = processor
+            .recover_pending_batch_from_daemon_idempotency("batch-legacy", &[pending])
+            .expect("recover");
+        assert!(matches!(recovered, UnknownBroadcastRecovery::Unresolved));
+        assert!(store
+            .get_pending_payout("addr-legacy")
+            .unwrap()
+            .unwrap()
+            .send_started_at
+            .is_some());
+    }
+
+    #[test]
+    fn broadcast_batch_unknown_to_a_different_daemon_is_not_reset() {
+        let store = require_test_store!();
+        let daemons = DaemonInstanceFixture::new();
+        let primary = DaemonInstanceFixture::identity(&daemons.primary);
+        frozen_single_payout(&store, "addr-tx", "batch-tx", Some(&primary));
+        store
+            .record_pending_payout_batch_broadcast(
+                &[PendingPayoutBatchMember {
+                    address: "addr-tx".to_string(),
+                    amount: 100,
+                    fee: 1,
+                }],
+                "batch-tx",
+                "tx-broadcast-by-primary",
+            )
+            .expect("record broadcast");
+        let mut entries = vec![store.get_pending_payout("addr-tx").unwrap().unwrap()];
+        entries[0].sent_at = Some(SystemTime::now() - Duration::from_secs(20 * 60));
+
+        // Same daemon that broadcast it no longer knows the tx: reset (as before).
+        // After a cutover the standby not knowing it proves nothing: hold.
+        daemons.cut_over_to_standby();
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            daemons.node(&spawn_json_router_server(HashMap::new(), 4)),
+        );
+        processor
+            .reconcile_pending_batch(&entries)
+            .expect("reconcile broadcast batch");
+        let held = store.get_pending_payout("addr-tx").unwrap().unwrap();
+        assert_eq!(held.tx_hash.as_deref(), Some("tx-broadcast-by-primary"));
+        assert!(held.send_started_at.is_some());
+    }
+
+    #[test]
+    fn broadcast_batch_missing_from_its_sending_daemon_is_reset_after_grace() {
+        let store = require_test_store!();
+        let daemons = DaemonInstanceFixture::new();
+        let primary = DaemonInstanceFixture::identity(&daemons.primary);
+        frozen_single_payout(&store, "addr-gone", "batch-gone", Some(&primary));
+        store
+            .record_pending_payout_batch_broadcast(
+                &[PendingPayoutBatchMember {
+                    address: "addr-gone".to_string(),
+                    amount: 100,
+                    fee: 1,
+                }],
+                "batch-gone",
+                "tx-dropped",
+            )
+            .expect("record broadcast");
+        let mut entries = vec![store.get_pending_payout("addr-gone").unwrap().unwrap()];
+        entries[0].sent_at = Some(SystemTime::now() - Duration::from_secs(20 * 60));
+
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            daemons.node(&spawn_json_router_server(HashMap::new(), 4)),
+        );
+        processor
+            .reconcile_pending_batch(&entries)
+            .expect("reconcile broadcast batch");
+        let reset = store.get_pending_payout("addr-gone").unwrap().unwrap();
+        assert!(reset.tx_hash.is_none());
+        assert!(reset.send_started_at.is_none());
+    }
+
+    #[test]
+    fn daemon_instance_identity_follows_the_active_cookie_symlink() {
+        let daemons = DaemonInstanceFixture::new();
+        let node = daemons.node("http://127.0.0.1:1");
+        assert_eq!(
+            node.daemon_instance_identity(),
+            Some(DaemonInstanceFixture::identity(&daemons.primary))
+        );
+        daemons.cut_over_to_standby();
+        assert_eq!(
+            node.daemon_instance_identity(),
+            Some(DaemonInstanceFixture::identity(&daemons.standby))
+        );
+        assert_eq!(
+            NodeClient::new("http://127.0.0.1:1", "")
+                .expect("node")
+                .daemon_instance_identity(),
+            None
+        );
     }
 
     #[test]
@@ -4808,6 +5206,7 @@ mod tests {
             fee: None,
             sent_at: None,
             batch_id: None,
+            send_daemon: None,
         };
         let second = PendingPayout {
             send_started_at: Some(base + Duration::from_secs(15)),

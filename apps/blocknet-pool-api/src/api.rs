@@ -7504,6 +7504,7 @@ mod tests {
             fee: None,
             sent_at: None,
             batch_id: None,
+            send_daemon: None,
         };
         let response = miner_balance_response(&balance, Some(&queued));
         assert_eq!(response.pending_confirmed, 250);
