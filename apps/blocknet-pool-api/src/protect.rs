@@ -209,7 +209,11 @@ impl WindowedCounter {
             .window_started_at
             .map(|started| now.saturating_duration_since(started))
             .unwrap_or_default();
-        self.window.saturating_sub(elapsed).as_secs_f64().ceil().max(1.0) as u64
+        self.window
+            .saturating_sub(elapsed)
+            .as_secs_f64()
+            .ceil()
+            .max(1.0) as u64
     }
 
     #[cfg(test)]
@@ -385,7 +389,9 @@ mod tests {
                 policy.resolve(&h, LOOPBACK).map(client_key)
             })
             .collect::<Vec<_>>();
-        assert!(keys.iter().all(|key| key.as_deref() == Some("198.51.100.9")));
+        assert!(keys
+            .iter()
+            .all(|key| key.as_deref() == Some("198.51.100.9")));
     }
 
     #[test]
@@ -399,7 +405,10 @@ mod tests {
     #[test]
     fn configured_proxy_is_trusted_and_header_is_configurable() {
         let policy = ClientIpPolicy::new("CF-Connecting-IP", &["10.1.2.3".to_string()]);
-        let h = headers(&[("cf-connecting-ip", "203.0.113.50"), ("x-real-ip", "9.9.9.9")]);
+        let h = headers(&[
+            ("cf-connecting-ip", "203.0.113.50"),
+            ("x-real-ip", "9.9.9.9"),
+        ]);
         assert_eq!(
             policy.resolve(&h, Some("10.1.2.3".parse().unwrap())),
             Some("203.0.113.50".parse().unwrap())
@@ -437,7 +446,10 @@ mod tests {
             assert!(counter.try_acquire("a", 2, start));
         }
         assert!(!counter.try_acquire("a", 2, start));
-        assert_eq!(counter.retry_after_secs(start + Duration::from_millis(1500)), 4);
+        assert_eq!(
+            counter.retry_after_secs(start + Duration::from_millis(1500)),
+            4
+        );
         assert!(counter.try_acquire("b", 2, start));
         assert!(counter.try_acquire("c", 2, start));
         // Table full: unseen keys fail open without growing the table.
@@ -468,7 +480,10 @@ mod tests {
         let start = Instant::now();
         cache.insert("k".into(), Bytes::from_static(b"[1]"), start);
         let ttl = Duration::from_secs(10);
-        assert!(matches!(cache.lookup("k", ttl, start), CacheLookup::Fresh(_)));
+        assert!(matches!(
+            cache.lookup("k", ttl, start),
+            CacheLookup::Fresh(_)
+        ));
         assert!(matches!(
             cache.lookup("k", ttl, start + Duration::from_secs(11)),
             CacheLookup::Stale(_)
@@ -477,7 +492,10 @@ mod tests {
             cache.lookup("k", ttl, start + Duration::from_secs(61)),
             CacheLookup::Miss
         ));
-        assert!(matches!(cache.lookup("other", ttl, start), CacheLookup::Miss));
+        assert!(matches!(
+            cache.lookup("other", ttl, start),
+            CacheLookup::Miss
+        ));
     }
 
     #[test]

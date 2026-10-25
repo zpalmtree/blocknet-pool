@@ -127,8 +127,14 @@ mod tests {
             (r#"{"pool_url":""}"#, "pool_url"),
             (r#"{"api_host":"   "}"#, "api_host"),
             (r#"{"api_port":0}"#, "api_port"),
-            (r#"{"api_client_ip_header":"bad header"}"#, "api_client_ip_header"),
-            (r#"{"api_trusted_proxies":["nginx"]}"#, "api_trusted_proxies"),
+            (
+                r#"{"api_client_ip_header":"bad header"}"#,
+                "api_client_ip_header",
+            ),
+            (
+                r#"{"api_trusted_proxies":["nginx"]}"#,
+                "api_trusted_proxies",
+            ),
             (r#"{"recovery":{"socket_path":""}}"#, "recovery.socket_path"),
         ] {
             std::fs::write(&path, json).unwrap();

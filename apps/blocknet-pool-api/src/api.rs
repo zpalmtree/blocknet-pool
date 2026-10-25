@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
-use std::future::Future;
 use std::fs;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::path::{Path as FsPath, PathBuf};
 use std::process::Stdio;
@@ -11,8 +11,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::{Body, Bytes};
 use axum::extract::{ConnectInfo, FromRequestParts, Path, Query, State};
-use axum::http::request::Parts;
 use axum::http::header;
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -30,7 +30,9 @@ use tokio_stream::wrappers::ReceiverStream;
 use crate::background_read::{BackgroundReads, ReadResult};
 use crate::config::Config;
 use crate::protect::{client_key, CacheLookup, ClientIpPolicy, PublicReadCache, WindowedCounter};
-use crate::ui::{handle_app_fallback, handle_favicon_svg, handle_ui, handle_ui_asset};
+use crate::ui::{
+    apply_security_headers, handle_app_fallback, handle_favicon_svg, handle_ui, handle_ui_asset,
+};
 use pool_common::db::{
     allocate_proportional_fees, ActiveVerificationHold, AddressRiskState, Balance, DbBlock,
     DbLuckRound, DbShare, MonitorHeartbeat, MonitorIncident, PendingPayout,
@@ -48,10 +50,9 @@ use pool_runtime::payout::{
     is_share_payout_eligible, recover_share_window_by_replay, reward_window_end, PayoutTrustPolicy,
 };
 use pool_runtime::pgdb::{
-    with_statement_timeout,
-    BalanceSourceSummary, ConfirmedPayoutImportRecipient, ConfirmedPayoutImportTx,
-    ManualCompletedPayoutResolutionKind, MonitorUptimeSummary, ShareWindowAddressPreview,
-    UnreconciledCompletedPayoutRow, WorkerHashrateStats,
+    with_statement_timeout, BalanceSourceSummary, ConfirmedPayoutImportRecipient,
+    ConfirmedPayoutImportTx, ManualCompletedPayoutResolutionKind, MonitorUptimeSummary,
+    ShareWindowAddressPreview, UnreconciledCompletedPayoutRow, WorkerHashrateStats,
 };
 use pool_runtime::rewards::estimated_block_reward;
 use pool_runtime::service_state::{
@@ -1015,6 +1016,7 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
             observe_api_request_performance,
         ))
         .fallback(handle_app_fallback)
+        .layer(middleware::from_fn(apply_security_headers))
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -2871,9 +2873,7 @@ async fn handle_blocks(
             key,
             PUBLIC_BLOCKS_CACHE_TTL,
             "failed loading blocks",
-            async move {
-                json_bytes(&load_blocks_page(task_state, limit, offset, status).await?)
-            },
+            async move { json_bytes(&load_blocks_page(task_state, limit, offset, status).await?) },
         )
         .await
 }
@@ -4281,9 +4281,8 @@ impl ApiState {
             .clamp(1, MAX_CONCURRENT_MINER_DETAIL_LOADS);
         // Leave most of a small DB pool for balances, stats, and background
         // work; cached public reads rarely miss.
-        let public_read_concurrency = ((config.runtime.database_pool_size.max(1) as usize - 1)
-            / 2)
-        .clamp(1, MAX_CONCURRENT_PUBLIC_READ_LOADS);
+        let public_read_concurrency = ((config.runtime.database_pool_size.max(1) as usize - 1) / 2)
+            .clamp(1, MAX_CONCURRENT_PUBLIC_READ_LOADS);
         let client_ip_policy = Arc::new(ClientIpPolicy::new(
             &config.api_client_ip_header,
             &config.api_trusted_proxies,
@@ -5966,6 +5965,10 @@ async fn limit_public_telemetry_requests(
 }
 
 impl ApiState {
+    pub(crate) fn public_base_url(&self) -> String {
+        crate::ui::public_base_url(&self.config.pool_url)
+    }
+
     fn client_ip(&self, headers: &HeaderMap, extensions: &axum::http::Extensions) -> ClientIp {
         let peer = extensions
             .get::<ConnectInfo<SocketAddr>>()
@@ -6011,7 +6014,10 @@ impl ApiState {
     where
         Fut: Future<Output = anyhow::Result<Bytes>> + Send + 'static,
     {
-        let lookup = self.public_read_cache.lock().lookup(&key, ttl, Instant::now());
+        let lookup = self
+            .public_read_cache
+            .lock()
+            .lookup(&key, ttl, Instant::now());
         let stale = match lookup {
             CacheLookup::Fresh(body) => {
                 self.performance.caches.record_hit(cache_name);
@@ -6052,7 +6058,9 @@ impl ApiState {
             },
         };
         if let CacheLookup::Fresh(body) =
-            self.public_read_cache.lock().lookup(&key, ttl, Instant::now())
+            self.public_read_cache
+                .lock()
+                .lookup(&key, ttl, Instant::now())
         {
             self.performance.caches.record_hit(cache_name);
             return cached_json_response(body, "hit");
@@ -6731,7 +6739,7 @@ mod tests {
     use crate::config::Config;
     use axum::body::to_bytes;
     use axum::extract::{Path, Query, State};
-    use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
+    use axum::http::{header, HeaderValue, Method, StatusCode, Uri};
     use axum::response::IntoResponse;
     use axum::Json;
     use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -6749,7 +6757,7 @@ mod tests {
     use pool_runtime::validation::{PersistedValidationAddressState, ValidationSnapshot};
     use tempfile::tempdir;
 
-    use crate::ui::{handle_app_fallback, is_api_request_path};
+    use crate::ui::{app_fallback_response, is_api_request_path};
 
     use super::{
         api_performance_route_name, apply_wallet_liquidity_to_payout_eta, backfill_block_effort,
@@ -6885,11 +6893,11 @@ mod tests {
 
     #[test]
     fn admin_key_check_throttles_repeated_failures_per_client() {
-        use super::{check_admin_key, AdminAuth, ADMIN_AUTH_FAILURE_LIMIT, ADMIN_AUTH_FAILURE_WINDOW};
-        let failures = super::Mutex::new(super::WindowedCounter::new(
-            ADMIN_AUTH_FAILURE_WINDOW,
-            64,
-        ));
+        use super::{
+            check_admin_key, AdminAuth, ADMIN_AUTH_FAILURE_LIMIT, ADMIN_AUTH_FAILURE_WINDOW,
+        };
+        let failures =
+            super::Mutex::new(super::WindowedCounter::new(ADMIN_AUTH_FAILURE_WINDOW, 64));
         let key = "k".repeat(64);
         let start = Instant::now();
         assert_eq!(
@@ -6920,14 +6928,22 @@ mod tests {
             );
         }
         let throttled = check_admin_key(&failures, &key, "a", Some(&key), start);
-        assert!(matches!(throttled, AdminAuth::Throttled { retry_after_secs } if retry_after_secs > 0));
+        assert!(
+            matches!(throttled, AdminAuth::Throttled { retry_after_secs } if retry_after_secs > 0)
+        );
         // Other clients are unaffected; the throttle lifts after the window.
         assert_eq!(
             check_admin_key(&failures, &key, "b", Some(&key), start),
             AdminAuth::Allowed
         );
         assert_eq!(
-            check_admin_key(&failures, &key, "a", Some(&key), start + ADMIN_AUTH_FAILURE_WINDOW),
+            check_admin_key(
+                &failures,
+                &key,
+                "a",
+                Some(&key),
+                start + ADMIN_AUTH_FAILURE_WINDOW
+            ),
             AdminAuth::Allowed
         );
         // An empty configured key never authorizes.
@@ -6965,7 +6981,9 @@ mod tests {
             event(Some(now), Some(now - 3600)),
         ] {
             assert_eq!(
-                check_monitor_event_freshness(&rejected, now, 0).unwrap_err().0,
+                check_monitor_event_freshness(&rejected, now, 0)
+                    .unwrap_err()
+                    .0,
                 StatusCode::BAD_REQUEST
             );
         }
@@ -6992,7 +7010,10 @@ mod tests {
         let cache = super::Mutex::new(None);
         let first = super::load_checkpoint_file_snapshot_blocking(&cfg, &cache).unwrap();
         let second = super::load_checkpoint_file_snapshot_blocking(&cfg, &cache).unwrap();
-        assert!(Arc::ptr_eq(&first, &second), "unchanged file must be reused");
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "unchanged file must be reused"
+        );
         assert_eq!(first.metadata.latest_height, Some(1));
 
         std::fs::write(&path, format!("1:{hash}\n2:{hash}\n")).unwrap();
@@ -7607,11 +7628,11 @@ mod tests {
     fn app_fallback_returns_json_404_for_unknown_api_paths() {
         let runtime = test_runtime();
 
-        let response = runtime.block_on(handle_app_fallback(
+        let response = app_fallback_response(
             Method::GET,
-            HeaderMap::new(),
-            "/api/does-not-exist".parse().expect("uri"),
-        ));
+            &"/api/does-not-exist".parse().expect("uri"),
+            "https://bntpool.com",
+        );
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let content_type = response
@@ -7629,11 +7650,11 @@ mod tests {
     fn app_fallback_renders_ui_for_unknown_spa_paths() {
         let runtime = test_runtime();
 
-        let response = runtime.block_on(handle_app_fallback(
+        let response = app_fallback_response(
             Method::GET,
-            HeaderMap::new(),
-            "/admin".parse().expect("uri"),
-        ));
+            &"/admin".parse().expect("uri"),
+            "https://bntpool.com",
+        );
 
         assert_eq!(response.status(), StatusCode::OK);
         let body = runtime
