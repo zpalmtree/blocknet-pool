@@ -125,7 +125,7 @@ print(json.load(open('/etc/blocknet/pool/config.json'))['api_key'])
 PY
   ); \
   echo '==> protected health check'; \
-  curl -fsS --max-time 10 -H \"x-api-key: \${api_key}\" -o \"\${tmp_health}\" -w 'curl	http://127.0.0.1:24783/api/health	http=%{http_code} bytes=%{size_download} time=%{time_total}\n' http://127.0.0.1:24783/api/health; \
+  printf 'x-api-key: %s\\n' \"\${api_key}\" | curl -fsS --max-time 10 -H @- -o \"\${tmp_health}\" -w 'curl	http://127.0.0.1:24783/api/health	http=%{http_code} bytes=%{size_download} time=%{time_total}\n' http://127.0.0.1:24783/api/health; \
   echo '==> status health check'; \
   status_ok=0; \
   for attempt in \$(seq 1 12); do \

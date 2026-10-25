@@ -43,7 +43,10 @@
 - Use `./scripts/verify_bntpool_deploy.sh` for a read-only post-deploy or live-health check without deploying.
 - The retired bridge host should be referenced as `oldpool`, not `bntpool`.
 - The deploy/provision scripts refuse `oldpool` or `5.161.113.120` unless `BNTPOOL_ALLOW_RETIRED_HOST=1` is set explicitly.
-- Keep the SSH deploy user able to write `/opt/blocknet/blocknet-pool` without sudo. Prefer shared group access on the primary host over world-writable directories.
+- Keep the SSH deploy user able to write `/opt/blocknet/blocknet-pool` without sudo by owning it (`bntpool:blocknet`, no group or world write). The `blocknet` service user runs the internet-facing services and must never be able to write code, units, config, or env files that root or the deploy user later executes or loads. `data/` (Stratum's found-block outbox) is the only service-writable path in the tree.
+- `/etc/blocknet` and `/etc/blocknet/pool` are root-owned; `config.json`, `.env` and `.api_key` are `root:blocknet 0640`. Edit them with sudo. `/var/lib/blocknet-recovery` is root-owned. `scripts/provision_bntpool_hardening.sh` re-applies this baseline plus the nginx limits and the nightly accounting DB backup (`/var/backups/blocknet-pool`, 7 days).
+- The `blocknet` user has no SSH login or sudo. Only `bntpool` logs in.
+- Only Stratum gets the wallet password (`/etc/blocknet/pool/.env`); the API and monitor units mask it and the wallet files. Keep it that way when adding services.
 - The API uses a DB/meta-backed live runtime snapshot written by the Stratum service so pool and validation counters remain available after the split.
 - After deploys, verify the active service states and record the restart timestamp(s) in the handoff.
 

@@ -48,8 +48,12 @@ remote_primary_cookie="/var/lib/blocknet/data/api.cookie"
 
 echo "==> installing recovery topology assets on ${host}"
 ssh "${host}" "set -euo pipefail; \
-  sudo install -d -m 0755 '${recovery_dir}' '${remote_recovery_state_dir}' '/etc/blocknet/pool' '/var/lib/blocknet-standby/data'; \
-  sudo chown -R blocknet:blocknet '${remote_recovery_state_dir}' '/var/lib/blocknet-standby'; \
+  sudo install -d -o root -g root -m 0755 '/etc/blocknet' '${recovery_dir}'; \
+  sudo install -d -o root -g blocknet -m 0750 '/etc/blocknet/pool'; \
+  sudo install -d -m 0755 '/var/lib/blocknet-standby/data'; \
+  sudo chown -R blocknet:blocknet '/var/lib/blocknet-standby'; \
+  sudo install -d -o root -g root -m 0755 '${remote_recovery_state_dir}'; \
+  sudo chown -R root:root '${remote_recovery_state_dir}'; \
   sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknetd@.service' '/etc/systemd/system/blocknetd@.service'; \
   sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-recoveryd.service' '/etc/systemd/system/blocknet-pool-recoveryd.service'; \
   sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-recoveryd.socket' '/etc/systemd/system/blocknet-pool-recoveryd.socket'; \
@@ -117,7 +121,7 @@ recovery['standby'] = {
 }
 path.write_text(json.dumps(cfg, indent=2) + '\n')
 PY
-sudo chown root:root '${pool_config}'"
+sudo chown root:blocknet '${pool_config}'; sudo chmod 0640 '${pool_config}'"
 
 echo "==> validating nginx and enabling recovery socket"
 ssh "${host}" "set -euo pipefail; \

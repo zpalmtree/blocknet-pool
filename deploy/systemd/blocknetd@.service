@@ -17,7 +17,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=/opt/blocknet/blocknet-core /var/lib/blocknet /var/lib/blocknet-primary /var/lib/blocknet-standby /etc/blocknet/recovery
+ReadWritePaths=/var/lib/blocknet /var/lib/blocknet-primary /var/lib/blocknet-standby
+InaccessiblePaths=-/etc/blocknet/pool -/etc/blocknet/recovery/pool-wallet.json
 
 [Install]
 WantedBy=multi-user.target

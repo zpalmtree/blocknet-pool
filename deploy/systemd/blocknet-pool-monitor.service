@@ -8,7 +8,6 @@ Type=simple
 User=blocknet
 Group=blocknet
 WorkingDirectory=/opt/blocknet/blocknet-pool
-EnvironmentFile=/etc/blocknet/pool/.env
 EnvironmentFile=-/etc/blocknet/monitoring.env
 ExecStart=/opt/blocknet/blocknet-pool/target/release/blocknet-pool-monitor --config /etc/blocknet/pool/config.json
 Restart=always
@@ -18,7 +17,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=/var/lib/blocknet-pool /etc/blocknet/pool
+ReadWritePaths=/var/lib/blocknet-pool
+InaccessiblePaths=-/var/lib/blocknet/wallet.dat -/var/lib/blocknet-standby/wallet.dat -/etc/blocknet/recovery -/etc/blocknet/pool/.env
 
 [Install]
 WantedBy=multi-user.target

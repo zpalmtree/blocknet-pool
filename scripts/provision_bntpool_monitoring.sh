@@ -118,10 +118,12 @@ if not str(data.get('monitor_ingest_secret', '')).strip():
     data['monitor_ingest_secret'] = secrets.token_hex(32)
     path.write_text(json.dumps(data, indent=2) + '\n')
 PY
+sudo chown root:blocknet /etc/blocknet/pool/config.json
+sudo chmod 0640 /etc/blocknet/pool/config.json
 
 if [[ ! -f /etc/blocknet/monitoring.env ]]; then
-  sudo install -d -m 0755 /etc/blocknet
-  sudo install -m 0640 "${REMOTE_DIR}/deploy/monitoring/monitoring.env.example" /etc/blocknet/monitoring.env
+  sudo install -d -o root -g root -m 0755 /etc/blocknet
+  sudo install -o root -g blocknet -m 0640 "${REMOTE_DIR}/deploy/monitoring/monitoring.env.example" /etc/blocknet/monitoring.env
 fi
 
 sudo promtool check config /etc/prometheus/prometheus.yml >/dev/null

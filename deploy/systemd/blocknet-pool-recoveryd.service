@@ -8,7 +8,6 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory=/opt/blocknet/blocknet-pool
-EnvironmentFile=/etc/blocknet/pool/.env
 ExecStart=/opt/blocknet/blocknet-pool/target/release/blocknet-pool-recoveryd --config /etc/blocknet/pool/config.json
 Restart=always
 RestartSec=5

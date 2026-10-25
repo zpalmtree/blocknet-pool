@@ -135,18 +135,23 @@ source_dirty="0"
 if [[ -n "$(git -C "${repo_dir}" status --porcelain)" ]]; then
   source_dirty="1"
 fi
+# The service user (blocknet) shares a group with the deploy user and runs the
+# binaries and units installed from this tree, some as root. Never leave any of
+# it group- or world-writable, whatever the local filesystem's modes are.
 source_rsync_args=(
   -rltz
   --delete
   --omit-dir-times
   --no-owner
   --no-group
+  --chmod=go-w
 )
 binary_rsync_args=(
   -rtzp
   --omit-dir-times
   --no-owner
   --no-group
+  --chmod=go-w
 )
 
 guard_retired_host() {
@@ -422,6 +427,14 @@ if [[ "${skip_build}" -eq 0 ]]; then
   fi
   ssh "${host}" "${chmod_cmd}"
 fi
+
+echo "==> removing group/world write access from ${remote_dir}"
+# data/ holds the Stratum found-block outbox and must stay service-writable.
+ssh "${host}" "set -euo pipefail; \
+  find '${remote_dir}' -path '${remote_dir}/data' -prune -o ! -type l -perm /022 -exec chmod go-w {} +; \
+  if find '${remote_dir}' -path '${remote_dir}/data' -prune -o ! -type l ! -user \"\$(id -un)\" -print -quit | grep -q .; then \
+    echo 'warning: files under ${remote_dir} are not owned by the deploy user; run: sudo chown -R \$(id -un):blocknet ${remote_dir} (excluding data/)' >&2; \
+  fi"
 
 echo "==> reading updated remote binary hashes"
 after_api_hash="$(remote_hash "${remote_api_bin}")"
