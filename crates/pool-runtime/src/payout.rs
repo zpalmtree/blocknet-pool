@@ -176,6 +176,22 @@ enum UnknownBroadcastRecovery {
     Unresolved,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SendDaemonCheck {
+    Same,
+    NotSame { recorded: String, current: String },
+}
+
+/// The daemon instance every member of a batch was sent through, if known
+/// and consistent.
+fn batch_send_daemon(entries: &[PendingPayout]) -> Option<String> {
+    let first = entries.first()?.send_daemon.clone()?;
+    entries
+        .iter()
+        .all(|entry| entry.send_daemon.as_deref() == Some(first.as_str()))
+        .then_some(first)
+}
+
 #[derive(Debug, Clone)]
 struct PlannedPayoutBatch {
     batch_id: String,
@@ -344,7 +360,32 @@ impl PayoutProcessor {
         runtime.last_tick_at = last_tick_at;
     }
 
+    /// One payout pass, serialized across processes by a Postgres advisory
+    /// lock so a second payout process (or a daemon cutover in recoveryd)
+    /// can never reconcile, freeze or send the same batches concurrently.
     fn tick(&self, send_payouts: bool) -> bool {
+        match self
+            .store
+            .with_payout_sweep_lock(|| self.tick_locked(send_payouts))
+        {
+            Ok(Some(send_completed)) => send_completed,
+            Ok(None) => {
+                tracing::warn!(
+                    "payout sweep lock is held by another session (second payout process or daemon cutover); skipping payout tick"
+                );
+                false
+            }
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "failed to acquire payout sweep lock; skipping payout tick"
+                );
+                false
+            }
+        }
+    }
+
+    fn tick_locked(&self, send_payouts: bool) -> bool {
         self.reconcile_existing_orphaned_block_credits();
 
         let status = match self.node.get_status() {
@@ -1265,6 +1306,7 @@ impl PayoutProcessor {
         let mut sent_txs = 0usize;
         let mut liquidity_backoff_budget = None::<u64>;
         let mut last_wallet_send_attempt = None::<Instant>;
+        let mut send_outcome_unknown = false;
 
         while !queued.is_empty()
             && sent_txs < max_txs_per_sweep
@@ -1358,15 +1400,19 @@ impl PayoutProcessor {
             planned_batch_count = planned_batch_count.saturating_add(1);
             planned_recipient_count = planned_recipient_count.saturating_add(plan.recipients.len());
 
-            let addresses = plan
+            let members = plan
                 .recipients
                 .iter()
-                .map(|candidate| candidate.balance.address.clone())
+                .map(|candidate| (candidate.balance.address.clone(), candidate.pending.amount))
                 .collect::<Vec<_>>();
-            if let Err(err) = self
-                .store
-                .mark_pending_payouts_send_started_batch(&addresses, &plan.batch_id)
-            {
+            // Record which daemon instance receives this send: idempotency
+            // status, send history and the journal only exist on that daemon.
+            let send_daemon = self.node.daemon_instance_identity();
+            if let Err(err) = self.store.mark_pending_payouts_send_started_batch(
+                &members,
+                &plan.batch_id,
+                send_daemon.as_deref(),
+            ) {
                 tracing::warn!(
                     batch_id = %plan.batch_id,
                     error = %err,
@@ -1397,16 +1443,18 @@ impl PayoutProcessor {
                 .map(WalletOutputRef::from)
                 .collect::<Vec<_>>();
 
-            let sent = match self.node.wallet_send_advanced(
+            let send_result = self.node.wallet_send_advanced(
                 &recipients,
                 &inputs,
                 plan.change_split,
                 &plan.idempotency_key,
                 false,
-            ) {
+            );
+            self.forget_send_daemon_if_routing_changed(&plan.batch_id, send_daemon.as_deref());
+            let sent = match send_result {
                 Ok(sent) => sent,
-                Err(err) => {
-                    if should_drop_pending_payout(&err) {
+                Err(err) => match classify_wallet_send_error(&err) {
+                    WalletSendFailure::Permanent => {
                         for candidate in &plan.recipients {
                             if let Err(cancel_err) =
                                 self.store.cancel_pending_payout(&candidate.balance.address)
@@ -1424,7 +1472,60 @@ impl PayoutProcessor {
                             error = %err,
                             "wallet send failed permanently; dropped payout batch"
                         );
-                    } else if is_wallet_stale_input_error(&err) {
+                        queued.drain(..plan.recipients.len());
+                        continue;
+                    }
+                    WalletSendFailure::StaleInputs => {
+                        // The daemon rejected this request, but the "spent" inputs
+                        // may have been consumed by an earlier attempt for these same
+                        // recipients whose outcome was never recorded. Never retry
+                        // with alternate inputs until the wallet's send history shows
+                        // no unrecorded send already paying this exact batch.
+                        match self.find_prior_unrecorded_wallet_send_for_plan(&plan) {
+                            Ok(None) => {}
+                            Ok(Some(prior)) => {
+                                let entries = plan
+                                    .recipients
+                                    .iter()
+                                    .map(|candidate| candidate.pending.clone())
+                                    .collect::<Vec<_>>();
+                                match self.record_recovered_wallet_send(
+                                    &plan.batch_id,
+                                    &entries,
+                                    &prior.txid,
+                                    prior.fee,
+                                ) {
+                                    Ok(_) => tracing::warn!(
+                                        batch_id = %plan.batch_id,
+                                        tx = %prior.txid,
+                                        recipients = plan.recipients.len(),
+                                        error = %err,
+                                        "wallet rejected payout inputs as spent by an earlier unrecorded send to the same recipients; adopted that send instead of retrying"
+                                    ),
+                                    Err(record_err) => tracing::error!(
+                                        batch_id = %plan.batch_id,
+                                        tx = %prior.txid,
+                                        error = %record_err,
+                                        "wallet rejected payout inputs as spent by an earlier unrecorded send to the same recipients and recording it failed; holding batch for operator reconciliation"
+                                    ),
+                                }
+                                remove_spent_outputs(&mut spendable_outputs, &plan.inputs);
+                                queued.drain(..plan.recipients.len());
+                                break;
+                            }
+                            Err(lookup_err) => {
+                                tracing::warn!(
+                                    batch_id = %plan.batch_id,
+                                    recipients = plan.recipients.len(),
+                                    error = %err,
+                                    lookup_error = %lookup_err,
+                                    "wallet rejected stale payout inputs and send history could not rule out an earlier payment; holding batch for idempotent reconciliation"
+                                );
+                                remove_spent_outputs(&mut spendable_outputs, &plan.inputs);
+                                queued.drain(..plan.recipients.len());
+                                break;
+                            }
+                        }
                         if let Err(reset_err) = self
                             .store
                             .reset_pending_payout_batch_send_state(&plan.batch_id)
@@ -1434,6 +1535,8 @@ impl PayoutProcessor {
                                 error = %reset_err,
                                 "wallet stale-input retry could not reset payout batch"
                             );
+                            queued.drain(..plan.recipients.len());
+                            break;
                         }
                         remove_spent_outputs(&mut spendable_outputs, &plan.inputs);
                         inventory =
@@ -1447,7 +1550,8 @@ impl PayoutProcessor {
                             "wallet rejected stale payout inputs; retrying with alternate inputs"
                         );
                         continue;
-                    } else if is_wallet_send_retryable_error(&err) {
+                    }
+                    WalletSendFailure::NotProcessed => {
                         if let Err(reset_err) = self
                             .store
                             .reset_pending_payout_batch_send_state(&plan.batch_id)
@@ -1463,10 +1567,11 @@ impl PayoutProcessor {
                             recipients = plan.recipients.len(),
                             recipient_total = plan.recipient_total,
                             error = %err,
-                            "wallet send temporarily unavailable; deferring payout batch retry until next tick"
+                            "wallet send was not processed by the daemon; deferring payout batch retry until next tick"
                         );
                         break;
-                    } else if is_wallet_liquidity_error(&err) {
+                    }
+                    WalletSendFailure::Liquidity => {
                         if let Err(reset_err) = self
                             .store
                             .reset_pending_payout_batch_send_state(&plan.batch_id)
@@ -1476,6 +1581,8 @@ impl PayoutProcessor {
                                 error = %reset_err,
                                 "wallet liquidity failure could not reset payout batch"
                             );
+                            queued.drain(..plan.recipients.len());
+                            break;
                         }
                         let next_backoff_budget = plan.locked_amount.saturating_sub(1);
                         if next_backoff_budget > 0 {
@@ -1494,16 +1601,26 @@ impl PayoutProcessor {
                             "wallet liquidity insufficient for planned batch; backing off to a smaller retry"
                         );
                         continue;
-                    } else {
+                    }
+                    WalletSendFailure::Unknown => {
+                        // The daemon may have broadcast this batch. Keep its batch id
+                        // and idempotency key so reconciliation resolves it through
+                        // the daemon's send status/history instead of paying again.
+                        // Stop the sweep: the inputs may be spent and the daemon may
+                        // be wedged, so further sends this tick are unsafe.
                         tracing::warn!(
                             batch_id = %plan.batch_id,
+                            idempotency_key = %plan.idempotency_key,
+                            recipients = plan.recipients.len(),
                             error = %err,
-                            "advanced wallet send failed; retaining idempotent retry state"
+                            "advanced wallet send outcome unknown; retaining idempotent retry state and stopping this payout sweep"
                         );
+                        send_outcome_unknown = true;
+                        remove_spent_outputs(&mut spendable_outputs, &plan.inputs);
+                        queued.drain(..plan.recipients.len());
+                        break;
                     }
-                    queued.drain(..plan.recipients.len());
-                    continue;
-                }
+                },
             };
 
             let fee_members = allocate_batch_fees(&plan.recipients, sent.fee);
@@ -1543,7 +1660,7 @@ impl PayoutProcessor {
             queued.drain(..plan.recipients.len());
         }
 
-        if queued.is_empty() && !inventory_is_healthy(&inventory) {
+        if queued.is_empty() && !send_outcome_unknown && !inventory_is_healthy(&inventory) {
             rebalance_active = self.maybe_rebalance_outputs(
                 &wallet_balance,
                 &spendable_outputs,
@@ -1691,6 +1808,43 @@ impl PayoutProcessor {
         }
     }
 
+    /// If the daemon routing changed while a send was in flight we cannot
+    /// tell which instance received it, so drop the recorded instance; the
+    /// batch is then only resolved by positive evidence or an operator.
+    fn forget_send_daemon_if_routing_changed(&self, batch_id: &str, send_daemon: Option<&str>) {
+        let after = self.node.daemon_instance_identity();
+        if after.as_deref() == send_daemon {
+            return;
+        }
+        tracing::warn!(
+            batch_id = %batch_id,
+            before = send_daemon.unwrap_or("unknown"),
+            after = after.as_deref().unwrap_or("unknown"),
+            "daemon routing changed during a payout send; batch recovery will require positive evidence"
+        );
+        if let Err(err) = self.store.clear_pending_payout_batch_send_daemon(batch_id) {
+            tracing::warn!(
+                batch_id = %batch_id,
+                error = %err,
+                "failed to clear send daemon after a routing change during payout send"
+            );
+        }
+    }
+
+    /// Whether negative evidence about this batch ("not found", "no such tx")
+    /// comes from the same daemon instance that received its send.
+    fn batch_send_daemon_check(&self, entries: &[PendingPayout]) -> SendDaemonCheck {
+        let recorded = batch_send_daemon(entries);
+        let current = self.node.daemon_instance_identity();
+        match (recorded, current) {
+            (Some(recorded), Some(current)) if recorded == current => SendDaemonCheck::Same,
+            (recorded, current) => SendDaemonCheck::NotSame {
+                recorded: recorded.unwrap_or_else(|| "unknown".to_string()),
+                current: current.unwrap_or_else(|| "unknown".to_string()),
+            },
+        }
+    }
+
     fn recover_pending_batch_from_daemon_idempotency(
         &self,
         batch_id: &str,
@@ -1739,22 +1893,41 @@ impl PayoutProcessor {
                         }
                         Err(err) => return Err(err),
                     };
-                    match matching_send {
-                        Some(send) => {
-                            return self
-                                .record_recovered_wallet_send(
-                                    batch_id, entries, &send.txid, send.fee,
-                                )
-                                .map(UnknownBroadcastRecovery::Broadcast);
-                        }
-                        None => {
+                    if let Some(send) = matching_send {
+                        return self
+                            .record_recovered_wallet_send(batch_id, entries, &send.txid, send.fee)
+                            .map(UnknownBroadcastRecovery::Broadcast);
+                    }
+                    if status.state != "not_found" {
+                        // The daemon accepted this key (and may have broadcast) but
+                        // never recorded an outcome, e.g. it restarted mid-send.
+                        tracing::warn!(
+                            batch_id = %batch_id,
+                            state = %status.state,
+                            "daemon accepted the payout send but reports no outcome and no matching wallet send; holding batch for operator reconciliation"
+                        );
+                        return Ok(UnknownBroadcastRecovery::Unresolved);
+                    }
+                    match self.batch_send_daemon_check(entries) {
+                        SendDaemonCheck::Same => {
                             self.store.reset_pending_payout_batch_send_state(batch_id)?;
                             tracing::warn!(
                                 batch_id = %batch_id,
                                 state = %status.state,
-                                "daemon send status unresolved and no matching wallet send history; reset batch for retry"
+                                "daemon that received the send has no record of it and no matching wallet send; reset batch for retry"
                             );
                             return Ok(UnknownBroadcastRecovery::ResetForRetry);
+                        }
+                        SendDaemonCheck::NotSame { recorded, current } => {
+                            tracing::warn!(
+                                batch_id = %batch_id,
+                                send_daemon = %recorded,
+                                current_daemon = %current,
+                                "payout send was made via a different or unknown daemon instance, so its absence here proves nothing; checking that instance's journal, otherwise holding batch for operator reconciliation"
+                            );
+                            return self.recover_pending_batch_from_local_daemon_idempotency(
+                                batch_id, entries,
+                            );
                         }
                     }
                 }
@@ -1784,13 +1957,19 @@ impl PayoutProcessor {
         batch_id: &str,
         entries: &[PendingPayout],
     ) -> anyhow::Result<UnknownBroadcastRecovery> {
-        let daemon_data_dir = self.cfg.daemon_data_dir.trim();
-        let idempotency_path = PathBuf::from(if daemon_data_dir.is_empty() {
-            "data"
-        } else {
-            daemon_data_dir
-        })
-        .join("send-idempotency.json");
+        // The journal lives in the data directory of the daemon that received
+        // the send; fall back to the active daemon, then the configured dir.
+        let daemon_data_dir = batch_send_daemon(entries)
+            .or_else(|| self.node.daemon_instance_identity())
+            .unwrap_or_else(|| {
+                let configured = self.cfg.daemon_data_dir.trim();
+                if configured.is_empty() {
+                    "data".to_string()
+                } else {
+                    configured.to_string()
+                }
+            });
+        let idempotency_path = PathBuf::from(daemon_data_dir).join("send-idempotency.json");
         let Some(recovered) = load_recovered_wallet_send_for_batch(&idempotency_path, batch_id)?
         else {
             return Ok(UnknownBroadcastRecovery::Unresolved);
@@ -1827,13 +2006,38 @@ impl PayoutProcessor {
         &self,
         entries: &[PendingPayout],
     ) -> anyhow::Result<Option<WalletSendHistoryEntry>> {
+        let (earliest_timestamp, latest_timestamp) = pending_batch_send_time_window(entries);
+        self.find_unrecorded_wallet_send_matching(entries, earliest_timestamp, latest_timestamp)
+    }
+
+    /// Look for a wallet send that already paid exactly this planned batch at
+    /// any point since its payouts were queued, ignoring sends the ledger
+    /// already attributes to a payout.
+    fn find_prior_unrecorded_wallet_send_for_plan(
+        &self,
+        plan: &PlannedPayoutBatch,
+    ) -> anyhow::Result<Option<WalletSendHistoryEntry>> {
+        let entries = plan
+            .recipients
+            .iter()
+            .map(|candidate| candidate.pending.clone())
+            .collect::<Vec<_>>();
+        let (earliest_timestamp, latest_timestamp) = pending_batch_queue_time_window(&entries);
+        self.find_unrecorded_wallet_send_matching(&entries, earliest_timestamp, latest_timestamp)
+    }
+
+    fn find_unrecorded_wallet_send_matching(
+        &self,
+        entries: &[PendingPayout],
+        earliest_timestamp: i64,
+        latest_timestamp: i64,
+    ) -> anyhow::Result<Option<WalletSendHistoryEntry>> {
         let expected_total = pending_batch_total_amount(entries);
         let expected_recipients = pending_batch_recipient_signature(entries);
         if expected_total == 0 || expected_recipients.is_empty() {
             return Ok(None);
         }
 
-        let (earliest_timestamp, latest_timestamp) = pending_batch_send_time_window(entries);
         let mut offset = 0usize;
         loop {
             let page = self
@@ -1856,7 +2060,8 @@ impl PayoutProcessor {
                     &expected_recipients,
                     earliest_timestamp,
                     latest_timestamp,
-                ) {
+                ) && !self.store.is_payout_tx_hash_recorded(send.txid.trim())?
+                {
                     return Ok(Some(send));
                 }
             }
@@ -1920,6 +2125,19 @@ impl PayoutProcessor {
                     .max()
                     .unwrap_or_default();
                 if age < PENDING_PAYOUT_RETRY_GRACE {
+                    return Ok(());
+                }
+                if let SendDaemonCheck::NotSame { recorded, current } =
+                    self.batch_send_daemon_check(entries)
+                {
+                    tracing::warn!(
+                        batch_id = %batch_id,
+                        tx = %tx_hash,
+                        send_daemon = %recorded,
+                        current_daemon = %current,
+                        age_secs = age.as_secs(),
+                        "broadcast payout batch is unknown to this daemon but was sent via a different or unknown instance; holding instead of resetting"
+                    );
                     return Ok(());
                 }
                 self.store.reset_pending_payout_batch_send_state(batch_id)?;
@@ -2131,7 +2349,7 @@ impl PayoutProcessor {
         ) {
             Ok(preview) => preview,
             Err(err) => {
-                if is_wallet_send_retryable_error(&err) {
+                if classify_wallet_send_error(&err) == WalletSendFailure::NotProcessed {
                     tracing::info!(
                         error = %err,
                         "wallet send temporarily unavailable; skipping wallet rebalance this tick"
@@ -2538,6 +2756,21 @@ fn pending_batch_send_time_window(entries: &[PendingPayout]) -> (i64, i64) {
     let slack = WALLET_SEND_MATCH_TIME_SLACK.as_secs().min(i64::MAX as u64) as i64;
     (
         earliest_send_started_at.saturating_sub(slack),
+        now_timestamp.saturating_add(slack),
+    )
+}
+
+/// Window covering every send attempt since these payouts were first queued.
+fn pending_batch_queue_time_window(entries: &[PendingPayout]) -> (i64, i64) {
+    let now_timestamp = system_time_unix_seconds(SystemTime::now());
+    let earliest_initiated_at = entries
+        .iter()
+        .map(|entry| system_time_unix_seconds(entry.initiated_at))
+        .min()
+        .unwrap_or(now_timestamp);
+    let slack = WALLET_SEND_MATCH_TIME_SLACK.as_secs().min(i64::MAX as u64) as i64;
+    (
+        earliest_initiated_at.saturating_sub(slack),
         now_timestamp.saturating_add(slack),
     )
 }
@@ -3154,14 +3387,57 @@ fn should_drop_pending_payout(err: &anyhow::Error) -> bool {
         || http_error_body_contains(err, 400, "self-sends are temporarily disabled")
 }
 
-fn is_wallet_send_retryable_error(err: &anyhow::Error) -> bool {
-    is_wallet_stale_input_error(err)
-        || http_error_body_contains(err, 422, "not a canonical on-chain output")
+/// How a failed live wallet send must be handled. Only outcomes where the
+/// daemon provably did not broadcast may release the batch for a fresh send
+/// (which gets a new batch id and therefore a new idempotency key).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WalletSendFailure {
+    /// The daemon rejected a recipient permanently; drop the payouts.
+    Permanent,
+    /// The daemon rejected the selected inputs as already spent.
+    StaleInputs,
+    /// The daemon rejected the batch for insufficient input liquidity.
+    Liquidity,
+    /// The request never reached the daemon, or the daemon refused it before
+    /// doing any work (and released the idempotency key).
+    NotProcessed,
+    /// The daemon may have broadcast the transaction (timeouts, resets, body
+    /// errors after the request was written, proxy 5xx, unexpected statuses).
+    Unknown,
+}
+
+fn classify_wallet_send_error(err: &anyhow::Error) -> WalletSendFailure {
+    if should_drop_pending_payout(err) {
+        WalletSendFailure::Permanent
+    } else if is_wallet_stale_input_error(err) {
+        WalletSendFailure::StaleInputs
+    } else if is_wallet_liquidity_error(err) {
+        WalletSendFailure::Liquidity
+    } else if is_wallet_send_not_processed_error(err) {
+        WalletSendFailure::NotProcessed
+    } else {
+        WalletSendFailure::Unknown
+    }
+}
+
+fn is_wallet_send_not_processed_error(err: &anyhow::Error) -> bool {
+    // The daemon abandons the idempotency key for 429s and only reports the
+    // canonical-output failure after mempool rejection, so neither broadcast.
+    http_error_body_contains(err, 422, "not a canonical on-chain output")
         || http_error_body_contains(err, 429, "send busy, retry later")
         || http_error_body_contains(err, 429, "send rate limit exceeded")
-        || err
-            .chain()
-            .any(|cause| cause.downcast_ref::<reqwest::Error>().is_some())
+        || is_request_never_sent_error(err)
+}
+
+/// True only for transport failures that happen before any request bytes can
+/// reach the daemon. Timeouts, connection resets and body errors are excluded:
+/// the daemon keeps processing a send after the client disconnects.
+fn is_request_never_sent_error(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(|err| err.is_builder() || (err.is_connect() && !err.is_timeout()))
+    })
 }
 
 fn is_wallet_stale_input_error(err: &anyhow::Error) -> bool {
@@ -3241,6 +3517,7 @@ mod tests {
     use pool_common::db::{DbShare, ShareReplayData};
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::thread;
 
@@ -3312,6 +3589,7 @@ mod tests {
                 fee: None,
                 sent_at: None,
                 batch_id: None,
+                send_daemon: None,
             },
         }
     }
@@ -3382,18 +3660,39 @@ mod tests {
         format!("http://{}", addr)
     }
 
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug, Clone, Copy, Default)]
     struct MockAdvancedSendPolicy {
         preview_recipient_cap: Option<u64>,
         live_recipient_cap: Option<u64>,
         fee: u64,
         live_busy: bool,
+        /// Status line and body returned for every live (non dry-run) send.
+        live_failure: Option<(&'static str, &'static str)>,
+        /// Close the connection without answering live sends, like a timeout
+        /// or reset after the daemon received the request.
+        live_drop_connection: bool,
+        /// Body for `GET /api/wallet/sends`; 404 when unset.
+        wallet_sends_body: Option<&'static str>,
     }
 
+    /// A checksummed mainnet address with canonical Ristretto keys, so payout
+    /// address validation accepts it.
     fn test_address(seed: u8) -> String {
-        let mut payload = [seed.max(1); 64];
-        payload[0] = seed.max(1);
-        bs58::encode(payload).into_string()
+        use curve25519_dalek::{RistrettoPoint, Scalar};
+        use sha3::{Digest as _, Sha3_256};
+
+        let spend = RistrettoPoint::mul_base(&Scalar::from(u64::from(seed) * 2 + 1));
+        let view = RistrettoPoint::mul_base(&Scalar::from(u64::from(seed) * 2 + 2));
+        let mut encoded = Vec::with_capacity(68);
+        encoded.extend_from_slice(spend.compress().as_bytes());
+        encoded.extend_from_slice(view.compress().as_bytes());
+        let mut hasher = Sha3_256::new();
+        hasher.update(b"blocknet_stealth_address_checksum");
+        hasher.update(b"blocknet_mainnet");
+        hasher.update(&encoded);
+        let checksum = hasher.finalize();
+        encoded.extend_from_slice(&checksum[..4]);
+        bs58::encode(encoded).into_string()
     }
 
     fn wallet_output(txid: &str, output_index: u32, amount: u64) -> WalletOutput {
@@ -3462,6 +3761,15 @@ mod tests {
                         })
                         .to_string(),
                     ),
+                    ("GET", path)
+                        if path.starts_with("/api/wallet/sends?")
+                            && policy.wallet_sends_body.is_some() =>
+                    {
+                        (
+                            "HTTP/1.1 200 OK",
+                            policy.wallet_sends_body.unwrap_or_default().to_string(),
+                        )
+                    }
                     ("POST", "/api/wallet/send/advanced") => {
                         let payload = serde_json::from_str::<serde_json::Value>(body)
                             .expect("decode advanced send payload");
@@ -3514,7 +3822,13 @@ mod tests {
                         } else {
                             policy.live_recipient_cap
                         };
-                        if !dry_run && policy.live_busy {
+                        if !dry_run && policy.live_drop_connection {
+                            drop(stream);
+                            continue;
+                        }
+                        if let Some((status, body)) = policy.live_failure.filter(|_| !dry_run) {
+                            (status, body.to_string())
+                        } else if !dry_run && policy.live_busy {
                             (
                                 "HTTP/1.1 429 Too Many Requests",
                                 r#"{"error":"send busy, retry later"}"#.to_string(),
@@ -4149,14 +4463,20 @@ mod tests {
             status_code: 429,
             body: r#"{"error":"send busy, retry later"}"#.to_string(),
         });
-        assert!(is_wallet_send_retryable_error(&busy));
+        assert_eq!(
+            classify_wallet_send_error(&busy),
+            WalletSendFailure::NotProcessed
+        );
 
         let rate_limited = anyhow::anyhow!(HttpError {
             path: "/api/wallet/send".to_string(),
             status_code: 429,
             body: r#"{"error":"send rate limit exceeded"}"#.to_string(),
         });
-        assert!(is_wallet_send_retryable_error(&rate_limited));
+        assert_eq!(
+            classify_wallet_send_error(&rate_limited),
+            WalletSendFailure::NotProcessed
+        );
     }
 
     #[test]
@@ -4166,14 +4486,20 @@ mod tests {
             status_code: 409,
             body: r#"{"error":"mempool rejected: validation failed: input 0: key image already spent (double-spend)"}"#.to_string(),
         });
-        assert!(is_wallet_send_retryable_error(&key_image));
+        assert_eq!(
+            classify_wallet_send_error(&key_image),
+            WalletSendFailure::StaleInputs
+        );
 
         let spent_output = anyhow::anyhow!(HttpError {
             path: "/api/wallet/send/advanced".to_string(),
             status_code: 400,
             body: r#"{"error":"input 0: output already spent"}"#.to_string(),
         });
-        assert!(is_wallet_send_retryable_error(&spent_output));
+        assert_eq!(
+            classify_wallet_send_error(&spent_output),
+            WalletSendFailure::StaleInputs
+        );
     }
 
     #[test]
@@ -4183,11 +4509,14 @@ mod tests {
             status_code: 422,
             body: r#"{"error":"mempool rejected: validation failed: input 0 ring member 4: not a canonical on-chain output"}"#.to_string(),
         });
-        assert!(is_wallet_send_retryable_error(&noncanonical));
+        assert_eq!(
+            classify_wallet_send_error(&noncanonical),
+            WalletSendFailure::NotProcessed
+        );
     }
 
     #[test]
-    fn wallet_send_transport_errors_are_treated_as_retryable() {
+    fn wallet_send_connect_errors_are_treated_as_not_processed() {
         use anyhow::Context as _;
 
         let client = reqwest::blocking::Client::builder()
@@ -4200,7 +4529,99 @@ mod tests {
             .context("POST /api/wallet/send/advanced")
             .expect_err("send to closed port should fail");
 
-        assert!(is_wallet_send_retryable_error(&err));
+        assert_eq!(
+            classify_wallet_send_error(&err),
+            WalletSendFailure::NotProcessed
+        );
+    }
+
+    #[test]
+    fn wallet_send_timeouts_have_unknown_outcome() {
+        use anyhow::Context as _;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind silent server");
+        let addr = listener.local_addr().expect("silent server addr");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            thread::sleep(Duration::from_millis(500));
+        });
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_millis(100))
+            .build()
+            .expect("build reqwest client");
+        let err = client
+            .post(format!("http://{addr}/api/wallet/send/advanced"))
+            .body("{}")
+            .send()
+            .context("POST /api/wallet/send/advanced")
+            .expect_err("silent daemon should time out");
+        server.join().expect("join silent server");
+
+        assert_eq!(classify_wallet_send_error(&err), WalletSendFailure::Unknown);
+    }
+
+    #[test]
+    fn wallet_send_reset_after_request_has_unknown_outcome() {
+        use anyhow::Context as _;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind reset server");
+        let addr = listener.local_addr().expect("reset server addr");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            drop(stream);
+        });
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .expect("build reqwest client");
+        let err = client
+            .post(format!("http://{addr}/api/wallet/send/advanced"))
+            .body("{}")
+            .send()
+            .context("POST /api/wallet/send/advanced")
+            .expect_err("closed connection should fail");
+        server.join().expect("join reset server");
+
+        assert_eq!(classify_wallet_send_error(&err), WalletSendFailure::Unknown);
+    }
+
+    #[test]
+    fn ambiguous_wallet_send_responses_have_unknown_outcome() {
+        for (status_code, body) in [
+            (502, "<html>502 Bad Gateway</html>"),
+            (504, "<html>504 Gateway Time-out</html>"),
+            (500, r#"{"error":"internal error"}"#),
+            (409, r#"{"error":"idempotency key in progress"}"#),
+            (
+                409,
+                r#"{"error":"idempotency key reuse with different request"}"#,
+            ),
+            (429, r#"{"error":"too many requests"}"#),
+        ] {
+            let err = anyhow::anyhow!(HttpError {
+                path: "/api/wallet/send/advanced".to_string(),
+                status_code,
+                body: body.to_string(),
+            });
+            assert_eq!(
+                classify_wallet_send_error(&err),
+                WalletSendFailure::Unknown,
+                "{status_code} {body}"
+            );
+        }
+
+        let decode = serde_json::from_str::<serde_json::Value>("not json")
+            .map_err(anyhow::Error::from)
+            .map_err(|err| err.context("decode JSON response for POST /api/wallet/send/advanced"))
+            .expect_err("garbage body should fail to decode");
+        assert_eq!(
+            classify_wallet_send_error(&decode),
+            WalletSendFailure::Unknown
+        );
     }
 
     #[test]
@@ -4215,6 +4636,7 @@ mod tests {
             fee: None,
             sent_at: None,
             batch_id: None,
+            send_daemon: None,
         };
         assert!(has_stale_unknown_broadcast_outcome(&stale, now));
 
@@ -4288,6 +4710,7 @@ mod tests {
                 fee: None,
                 sent_at: None,
                 batch_id: Some("batch-1".to_string()),
+                send_daemon: None,
             },
             PendingPayout {
                 address: "addr-a".to_string(),
@@ -4298,6 +4721,7 @@ mod tests {
                 fee: None,
                 sent_at: None,
                 batch_id: Some("batch-1".to_string()),
+                send_daemon: None,
             },
         ];
         validate_recovered_wallet_send_matches_pending(&recovered, &pending)
@@ -4324,7 +4748,7 @@ mod tests {
             .create_pending_payout("addr1", 100)
             .expect("create pending payout");
         store
-            .mark_pending_payouts_send_started_batch(&["addr1".to_string()], "batch-1")
+            .mark_pending_payouts_send_started_batch(&[("addr1".to_string(), 100)], "batch-1", None)
             .expect("freeze pending payout");
         let pending = store
             .get_pending_payout("addr1")
@@ -4378,7 +4802,7 @@ mod tests {
             .create_pending_payout("addr1", 100)
             .expect("create pending payout");
         store
-            .mark_pending_payouts_send_started_batch(&["addr1".to_string()], "batch-1")
+            .mark_pending_payouts_send_started_batch(&[("addr1".to_string(), 100)], "batch-1", None)
             .expect("freeze pending payout");
         let pending = store
             .get_pending_payout("addr1")
@@ -4426,7 +4850,7 @@ mod tests {
     }
 
     #[test]
-    fn accepted_send_status_without_wallet_send_resets_unknown_batch() {
+    fn accepted_send_status_without_wallet_send_holds_unknown_batch() {
         let store = require_test_store!();
         store
             .update_balance(&Balance {
@@ -4439,7 +4863,7 @@ mod tests {
             .create_pending_payout("addr1", 100)
             .expect("create pending payout");
         store
-            .mark_pending_payouts_send_started_batch(&["addr1".to_string()], "batch-1")
+            .mark_pending_payouts_send_started_batch(&[("addr1".to_string(), 100)], "batch-1", None)
             .expect("freeze pending payout");
         let pending = store
             .get_pending_payout("addr1")
@@ -4468,15 +4892,320 @@ mod tests {
         let recovered = processor
             .recover_pending_batch_from_daemon_idempotency("batch-1", &[pending])
             .expect("recover unresolved send");
-        assert!(matches!(recovered, UnknownBroadcastRecovery::ResetForRetry));
+        assert!(matches!(recovered, UnknownBroadcastRecovery::Unresolved));
 
         let pending = store
             .get_pending_payout("addr1")
             .expect("lookup pending payout")
             .expect("pending payout exists");
-        assert!(pending.send_started_at.is_none());
-        assert!(pending.batch_id.is_none());
-        assert!(pending.tx_hash.is_none());
+        assert!(
+            pending.send_started_at.is_some(),
+            "accepted sends must not be resent"
+        );
+        assert_eq!(pending.batch_id.as_deref(), Some("batch-1"));
+    }
+
+    struct DaemonInstanceFixture {
+        _dir: tempfile::TempDir,
+        active_cookie: PathBuf,
+        primary: PathBuf,
+        standby: PathBuf,
+    }
+
+    impl DaemonInstanceFixture {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let primary = dir.path().join("primary");
+            let standby = dir.path().join("standby");
+            for instance in [&primary, &standby] {
+                fs::create_dir_all(instance).expect("instance dir");
+                fs::write(instance.join("api.cookie"), "token\n").expect("cookie");
+            }
+            let active_cookie = dir.path().join("daemon-active.api.cookie");
+            std::os::unix::fs::symlink(primary.join("api.cookie"), &active_cookie)
+                .expect("active cookie symlink");
+            Self {
+                _dir: dir,
+                active_cookie,
+                primary,
+                standby,
+            }
+        }
+
+        fn cut_over_to_standby(&self) {
+            fs::remove_file(&self.active_cookie).expect("remove active cookie");
+            std::os::unix::fs::symlink(self.standby.join("api.cookie"), &self.active_cookie)
+                .expect("switch active cookie");
+        }
+
+        fn identity(path: &Path) -> String {
+            fs::canonicalize(path)
+                .expect("canonical instance")
+                .to_string_lossy()
+                .into_owned()
+        }
+
+        fn node(&self, base_url: &str) -> Arc<NodeClient> {
+            Arc::new(
+                NodeClient::new(base_url, self.active_cookie.to_str().expect("utf8 path"))
+                    .expect("node"),
+            )
+        }
+    }
+
+    fn frozen_single_payout(
+        store: &Arc<PoolStore>,
+        address: &str,
+        batch_id: &str,
+        send_daemon: Option<&str>,
+    ) -> PendingPayout {
+        store
+            .update_balance(&Balance {
+                address: address.to_string(),
+                pending: 100,
+                paid: 0,
+            })
+            .expect("seed balance");
+        store
+            .create_pending_payout(address, 100)
+            .expect("create pending payout");
+        store
+            .mark_pending_payouts_send_started_batch(
+                &[(address.to_string(), 100)],
+                batch_id,
+                send_daemon,
+            )
+            .expect("freeze pending payout");
+        store
+            .get_pending_payout(address)
+            .expect("lookup pending payout")
+            .expect("pending payout exists")
+    }
+
+    fn not_found_status_server(batch_id: &str) -> String {
+        let idem = payout_batch_idempotency_key(batch_id);
+        spawn_json_router_server(
+            HashMap::from([
+                (
+                    format!("/api/wallet/send/advanced/status?idempotency_key={idem}"),
+                    r#"{"state":"not_found"}"#.to_string(),
+                ),
+                (
+                    "/api/wallet/sends?limit=500&offset=0&order=desc".to_string(),
+                    r#"{"total":0,"sends":[]}"#.to_string(),
+                ),
+            ]),
+            4,
+        )
+    }
+
+    #[test]
+    fn not_found_send_status_resets_only_when_answered_by_the_sending_daemon() {
+        let store = require_test_store!();
+        let daemons = DaemonInstanceFixture::new();
+        let primary = DaemonInstanceFixture::identity(&daemons.primary);
+        assert_eq!(
+            daemons
+                .node("http://127.0.0.1:1")
+                .daemon_instance_identity(),
+            Some(primary.clone())
+        );
+
+        let pending = frozen_single_payout(&store, "addr-same", "batch-same", Some(&primary));
+        assert_eq!(pending.send_daemon.as_deref(), Some(primary.as_str()));
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            daemons.node(&not_found_status_server("batch-same")),
+        );
+        let recovered = processor
+            .recover_pending_batch_from_daemon_idempotency("batch-same", &[pending])
+            .expect("recover");
+        assert!(matches!(recovered, UnknownBroadcastRecovery::ResetForRetry));
+        let reset = store.get_pending_payout("addr-same").unwrap().unwrap();
+        assert!(reset.send_started_at.is_none());
+        assert!(reset.send_daemon.is_none());
+    }
+
+    #[test]
+    fn not_found_send_status_after_cutover_holds_batch() {
+        let store = require_test_store!();
+        let daemons = DaemonInstanceFixture::new();
+        let primary = DaemonInstanceFixture::identity(&daemons.primary);
+        let pending = frozen_single_payout(&store, "addr-moved", "batch-moved", Some(&primary));
+        daemons.cut_over_to_standby();
+
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            daemons.node(&not_found_status_server("batch-moved")),
+        );
+        let recovered = processor
+            .recover_pending_batch_from_daemon_idempotency("batch-moved", &[pending])
+            .expect("recover");
+        assert!(matches!(recovered, UnknownBroadcastRecovery::Unresolved));
+        let held = store.get_pending_payout("addr-moved").unwrap().unwrap();
+        assert!(
+            held.send_started_at.is_some(),
+            "a standby's not_found must not resend"
+        );
+        assert_eq!(held.batch_id.as_deref(), Some("batch-moved"));
+    }
+
+    #[test]
+    fn not_found_send_status_after_cutover_recovers_from_sending_daemon_journal() {
+        let store = require_test_store!();
+        let daemons = DaemonInstanceFixture::new();
+        let primary = DaemonInstanceFixture::identity(&daemons.primary);
+        let pending = frozen_single_payout(&store, "addr-journal", "batch-journal", Some(&primary));
+        let journal_key = format!(
+            "send-advanced:{}",
+            payout_batch_idempotency_key("batch-journal")
+        );
+        let body = serde_json::json!({
+            "txid": "tx-from-primary-journal",
+            "dry_run": false,
+            "fee": 3u64,
+            "recipients": [{"address": "addr-journal", "amount": 100u64}]
+        });
+        fs::write(
+            daemons.primary.join("send-idempotency.json"),
+            serde_json::json!({
+                "entries": {
+                    journal_key: {
+                        "status": 200,
+                        "body_base64": BASE64_STANDARD.encode(body.to_string())
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .expect("write primary journal");
+        daemons.cut_over_to_standby();
+
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            daemons.node(&not_found_status_server("batch-journal")),
+        );
+        let recovered = processor
+            .recover_pending_batch_from_daemon_idempotency("batch-journal", &[pending])
+            .expect("recover");
+        assert!(matches!(recovered, UnknownBroadcastRecovery::Broadcast(_)));
+        let recorded = store.get_pending_payout("addr-journal").unwrap().unwrap();
+        assert_eq!(recorded.tx_hash.as_deref(), Some("tx-from-primary-journal"));
+    }
+
+    #[test]
+    fn not_found_send_status_for_legacy_batch_without_send_daemon_holds_batch() {
+        let store = require_test_store!();
+        let daemons = DaemonInstanceFixture::new();
+        let pending = frozen_single_payout(&store, "addr-legacy", "batch-legacy", None);
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            daemons.node(&not_found_status_server("batch-legacy")),
+        );
+        let recovered = processor
+            .recover_pending_batch_from_daemon_idempotency("batch-legacy", &[pending])
+            .expect("recover");
+        assert!(matches!(recovered, UnknownBroadcastRecovery::Unresolved));
+        assert!(store
+            .get_pending_payout("addr-legacy")
+            .unwrap()
+            .unwrap()
+            .send_started_at
+            .is_some());
+    }
+
+    #[test]
+    fn broadcast_batch_unknown_to_a_different_daemon_is_not_reset() {
+        let store = require_test_store!();
+        let daemons = DaemonInstanceFixture::new();
+        let primary = DaemonInstanceFixture::identity(&daemons.primary);
+        frozen_single_payout(&store, "addr-tx", "batch-tx", Some(&primary));
+        store
+            .record_pending_payout_batch_broadcast(
+                &[PendingPayoutBatchMember {
+                    address: "addr-tx".to_string(),
+                    amount: 100,
+                    fee: 1,
+                }],
+                "batch-tx",
+                "tx-broadcast-by-primary",
+            )
+            .expect("record broadcast");
+        let mut entries = vec![store.get_pending_payout("addr-tx").unwrap().unwrap()];
+        entries[0].sent_at = Some(SystemTime::now() - Duration::from_secs(20 * 60));
+
+        // Same daemon that broadcast it no longer knows the tx: reset (as before).
+        // After a cutover the standby not knowing it proves nothing: hold.
+        daemons.cut_over_to_standby();
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            daemons.node(&spawn_json_router_server(HashMap::new(), 4)),
+        );
+        processor
+            .reconcile_pending_batch(&entries)
+            .expect("reconcile broadcast batch");
+        let held = store.get_pending_payout("addr-tx").unwrap().unwrap();
+        assert_eq!(held.tx_hash.as_deref(), Some("tx-broadcast-by-primary"));
+        assert!(held.send_started_at.is_some());
+    }
+
+    #[test]
+    fn broadcast_batch_missing_from_its_sending_daemon_is_reset_after_grace() {
+        let store = require_test_store!();
+        let daemons = DaemonInstanceFixture::new();
+        let primary = DaemonInstanceFixture::identity(&daemons.primary);
+        frozen_single_payout(&store, "addr-gone", "batch-gone", Some(&primary));
+        store
+            .record_pending_payout_batch_broadcast(
+                &[PendingPayoutBatchMember {
+                    address: "addr-gone".to_string(),
+                    amount: 100,
+                    fee: 1,
+                }],
+                "batch-gone",
+                "tx-dropped",
+            )
+            .expect("record broadcast");
+        let mut entries = vec![store.get_pending_payout("addr-gone").unwrap().unwrap()];
+        entries[0].sent_at = Some(SystemTime::now() - Duration::from_secs(20 * 60));
+
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            daemons.node(&spawn_json_router_server(HashMap::new(), 4)),
+        );
+        processor
+            .reconcile_pending_batch(&entries)
+            .expect("reconcile broadcast batch");
+        let reset = store.get_pending_payout("addr-gone").unwrap().unwrap();
+        assert!(reset.tx_hash.is_none());
+        assert!(reset.send_started_at.is_none());
+    }
+
+    #[test]
+    fn daemon_instance_identity_follows_the_active_cookie_symlink() {
+        let daemons = DaemonInstanceFixture::new();
+        let node = daemons.node("http://127.0.0.1:1");
+        assert_eq!(
+            node.daemon_instance_identity(),
+            Some(DaemonInstanceFixture::identity(&daemons.primary))
+        );
+        daemons.cut_over_to_standby();
+        assert_eq!(
+            node.daemon_instance_identity(),
+            Some(DaemonInstanceFixture::identity(&daemons.standby))
+        );
+        assert_eq!(
+            NodeClient::new("http://127.0.0.1:1", "")
+                .expect("node")
+                .daemon_instance_identity(),
+            None
+        );
     }
 
     #[test]
@@ -4491,6 +5220,7 @@ mod tests {
             fee: None,
             sent_at: None,
             batch_id: None,
+            send_daemon: None,
         };
         let second = PendingPayout {
             send_started_at: Some(base + Duration::from_secs(15)),
@@ -4542,6 +5272,7 @@ mod tests {
                 live_recipient_cap: None,
                 fee: 1_000,
                 live_busy: false,
+                ..MockAdvancedSendPolicy::default()
             },
             64,
         );
@@ -4600,6 +5331,7 @@ mod tests {
                 live_recipient_cap: Some(120_000_000),
                 fee: 1_000,
                 live_busy: false,
+                ..MockAdvancedSendPolicy::default()
             },
             64,
         );
@@ -4657,6 +5389,7 @@ mod tests {
                 live_recipient_cap: None,
                 fee: 1_000,
                 live_busy: false,
+                ..MockAdvancedSendPolicy::default()
             },
             8,
         );
@@ -4710,6 +5443,7 @@ mod tests {
                 live_recipient_cap: None,
                 fee: 1_000,
                 live_busy: false,
+                ..MockAdvancedSendPolicy::default()
             },
             64,
         );
@@ -4776,6 +5510,7 @@ mod tests {
                 live_recipient_cap: Some(120_000_000),
                 fee: 1_000,
                 live_busy: false,
+                ..MockAdvancedSendPolicy::default()
             },
             96,
         );
@@ -4833,6 +5568,7 @@ mod tests {
                 live_recipient_cap: None,
                 fee: 1_000,
                 live_busy: true,
+                ..MockAdvancedSendPolicy::default()
             },
             32,
         );
@@ -4857,6 +5593,170 @@ mod tests {
         assert!(pending.tx_hash.is_none());
         assert!(pending.fee.is_none());
         assert!(pending.sent_at.is_none());
+        assert!(pending.batch_id.is_none());
+    }
+
+    fn run_single_miner_send_with_policy(
+        seed: u8,
+        policy: MockAdvancedSendPolicy,
+    ) -> (Arc<PoolStore>, String) {
+        let store = test_store().expect("postgres test store");
+        let miner = test_address(seed);
+        let wallet_address = test_address(seed.wrapping_add(70));
+        store
+            .update_balance(&Balance {
+                address: miner.clone(),
+                pending: 90_000_000,
+                paid: 0,
+            })
+            .expect("seed miner balance");
+        let base_url = spawn_wallet_send_server(
+            &wallet_address,
+            vec![
+                wallet_output("out-1", 0, 100_000_000),
+                wallet_output("out-2", 0, 140_000_000),
+            ],
+            policy,
+            32,
+        );
+        let cfg = Config {
+            min_payout_amount: 0.01,
+            ..Config::default()
+        };
+        let processor = PayoutProcessor::new(
+            cfg,
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+        );
+        processor.send_payouts();
+        (store, miner)
+    }
+
+    #[test]
+    fn send_payouts_retains_batch_when_wallet_send_outcome_is_unknown() {
+        if test_store().is_none() {
+            eprintln!("skipping postgres test: set BLOCKNET_POOL_TEST_POSTGRES_URL");
+            return;
+        }
+        for policy in [
+            MockAdvancedSendPolicy {
+                fee: 1_000,
+                live_drop_connection: true,
+                ..MockAdvancedSendPolicy::default()
+            },
+            MockAdvancedSendPolicy {
+                fee: 1_000,
+                live_failure: Some((
+                    "HTTP/1.1 504 Gateway Timeout",
+                    "<html>504 Gateway Time-out</html>",
+                )),
+                ..MockAdvancedSendPolicy::default()
+            },
+        ] {
+            let (store, miner) = run_single_miner_send_with_policy(41, policy);
+            let pending = store
+                .get_pending_payout(&miner)
+                .expect("lookup pending payout")
+                .expect("pending payout should remain queued");
+            assert!(
+                pending.send_started_at.is_some(),
+                "unknown outcome must keep the batch frozen"
+            );
+            assert!(
+                pending.batch_id.is_some(),
+                "unknown outcome must keep the batch id and idempotency key"
+            );
+            assert!(pending.tx_hash.is_none());
+        }
+    }
+
+    #[test]
+    fn stale_input_rejection_adopts_earlier_unrecorded_send_instead_of_retrying() {
+        if test_store().is_none() {
+            eprintln!("skipping postgres test: set BLOCKNET_POOL_TEST_POSTGRES_URL");
+            return;
+        }
+        let miner = test_address(43);
+        let now = system_time_unix_seconds(SystemTime::now());
+        let sends_body: &'static str = Box::leak(
+            format!(
+                r#"{{"total":1,"sends":[{{"txid":"tx-earlier-attempt","timestamp":{now},"chain_state":"mempool","confirmations":0,"in_mempool":true,"fee":7,"total_amount":90000000,"recipients":[{{"address":"{miner}","amount":90000000}}]}}]}}"#
+            )
+            .into_boxed_str(),
+        );
+        let (store, miner) = run_single_miner_send_with_policy(
+            43,
+            MockAdvancedSendPolicy {
+                fee: 1_000,
+                live_failure: Some((
+                    "HTTP/1.1 409 Conflict",
+                    r#"{"error":"mempool rejected: validation failed: input 0: key image already spent (double-spend)"}"#,
+                )),
+                wallet_sends_body: Some(sends_body),
+                ..MockAdvancedSendPolicy::default()
+            },
+        );
+        let pending = store
+            .get_pending_payout(&miner)
+            .expect("lookup pending payout")
+            .expect("pending payout should remain queued");
+        assert_eq!(pending.tx_hash.as_deref(), Some("tx-earlier-attempt"));
+        assert_eq!(pending.fee, Some(7));
+        assert!(pending.send_started_at.is_some());
+    }
+
+    #[test]
+    fn stale_input_rejection_holds_batch_when_send_history_is_unavailable() {
+        if test_store().is_none() {
+            eprintln!("skipping postgres test: set BLOCKNET_POOL_TEST_POSTGRES_URL");
+            return;
+        }
+        let (store, miner) = run_single_miner_send_with_policy(
+            45,
+            MockAdvancedSendPolicy {
+                fee: 1_000,
+                live_failure: Some((
+                    "HTTP/1.1 409 Conflict",
+                    r#"{"error":"mempool rejected: validation failed: input 0: key image already spent (double-spend)"}"#,
+                )),
+                ..MockAdvancedSendPolicy::default()
+            },
+        );
+        let pending = store
+            .get_pending_payout(&miner)
+            .expect("lookup pending payout")
+            .expect("pending payout should remain queued");
+        assert!(pending.send_started_at.is_some());
+        assert!(pending.batch_id.is_some());
+        assert!(pending.tx_hash.is_none());
+    }
+
+    #[test]
+    fn stale_input_rejection_without_prior_send_retries_with_alternate_inputs() {
+        if test_store().is_none() {
+            eprintln!("skipping postgres test: set BLOCKNET_POOL_TEST_POSTGRES_URL");
+            return;
+        }
+        let (store, miner) = run_single_miner_send_with_policy(
+            47,
+            MockAdvancedSendPolicy {
+                fee: 1_000,
+                live_failure: Some((
+                    "HTTP/1.1 409 Conflict",
+                    r#"{"error":"mempool rejected: validation failed: input 0: key image already spent (double-spend)"}"#,
+                )),
+                wallet_sends_body: Some(r#"{"total":0,"sends":[]}"#),
+                ..MockAdvancedSendPolicy::default()
+            },
+        );
+        let pending = store
+            .get_pending_payout(&miner)
+            .expect("lookup pending payout")
+            .expect("pending payout should remain queued");
+        assert!(
+            pending.send_started_at.is_none(),
+            "a provable stale-input rejection releases the batch for a fresh attempt"
+        );
         assert!(pending.batch_id.is_none());
     }
 
@@ -5409,6 +6309,29 @@ mod tests {
             .expect("active payouts after second batch")
             .is_empty());
         assert!(!processor.recovery_payout_reconciliation_active());
+    }
+
+    #[test]
+    fn tick_skips_while_another_session_holds_payout_sweep_lock() {
+        let store = require_test_store!();
+        let status = r#"{"peers":3,"chain_height":10,"syncing":false}"#.to_string();
+        let base_url =
+            spawn_json_router_server(HashMap::from([("/api/status".to_string(), status)]), 32);
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+        );
+
+        let mut other = store.open_independent_session().expect("second session");
+        assert!(crate::pgdb::try_acquire_payout_sweep_lock(&mut other).expect("lock"));
+        assert!(
+            !processor.tick(true),
+            "tick must not run while another payout process holds the lock"
+        );
+
+        assert!(crate::pgdb::release_payout_sweep_lock(&mut other).expect("unlock"));
+        assert!(processor.tick(true), "tick runs once the lock is free");
     }
 
     #[test]

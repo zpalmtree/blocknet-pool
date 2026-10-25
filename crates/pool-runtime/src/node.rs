@@ -244,6 +244,16 @@ pub(crate) fn http_error_body_contains(err: &anyhow::Error, status: u16, needle:
         .contains(&needle.to_ascii_lowercase())
 }
 
+pub(crate) fn daemon_instance_identity_for_cookie(cookie_path: &Path) -> Option<String> {
+    if cookie_path.as_os_str().is_empty() {
+        return None;
+    }
+    let resolved = fs::canonicalize(cookie_path).ok()?;
+    let dir = resolved.parent()?;
+    let identity = dir.to_string_lossy().trim().to_string();
+    (!identity.is_empty()).then_some(identity)
+}
+
 fn is_unknown_or_expired_template_id_error(err: &anyhow::Error) -> bool {
     err.downcast_ref::<HttpError>().is_some_and(|http_err| {
         let body = http_err.body.to_ascii_lowercase();
@@ -373,6 +383,15 @@ impl NodeClient {
             max_accepted_block_template_age_seconds: AtomicU64::new(0),
             accepted_blocks_after_ten_minutes: AtomicU64::new(0),
         })
+    }
+
+    /// Identify the daemon instance behind the API: the data directory that
+    /// holds the (possibly symlinked) auth cookie. Daemon cutovers switch
+    /// that symlink, so the identity changes exactly when the pool starts
+    /// talking to a different daemon, and stays stable across restarts of
+    /// the same daemon (whose idempotency journal lives in that directory).
+    pub(crate) fn daemon_instance_identity(&self) -> Option<String> {
+        daemon_instance_identity_for_cookie(&self.auth_cookie_path)
     }
 
     pub fn get_status(&self) -> Result<NodeStatus> {

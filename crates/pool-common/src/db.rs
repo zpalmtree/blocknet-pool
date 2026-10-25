@@ -261,6 +261,10 @@ pub struct PendingPayout {
     pub fee: Option<u64>,
     pub sent_at: Option<SystemTime>,
     pub batch_id: Option<String>,
+    /// Daemon instance (its data directory, resolved from the active API
+    /// cookie) the batch was sent through. `None` when unknown, including
+    /// rows frozen before this was recorded; unknown never auto-resets.
+    pub send_daemon: Option<String>,
 }
 
 #[derive(Debug, Clone)]
