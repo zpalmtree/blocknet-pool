@@ -4,7 +4,8 @@
 // /blog/blog.css, /blog/theme.js and /blog/lang.js; JSON data blocks (JSON-LD and the language
 // banner's offers) are not executed and are unaffected.
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { Marked } from 'marked';
 import {
   BASE_URL, BLOG_DIR, LOCALES, TRANSLATED, blogPath, listSlugs, readPost, readingMinutes, t,
@@ -22,6 +23,8 @@ const jsonLd = (d) => `<script type="application/ld+json">${JSON.stringify(d).re
 const iso = (d) => new Date(d).toISOString().slice(0, 10);
 const nice = (d, lang) => new Intl.DateTimeFormat(lang, { calendar: 'gregory', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }).format(new Date(d));
 const def = (code) => LOCALES.find((l) => l.code === code);
+// The API caches these assets for an hour; a new build must bypass older cached bytes.
+const assetUrl = (file) => `/blog/${file}?v=${createHash('sha256').update(readFileSync(new URL(file, BLOG_DIR))).digest('hex').slice(0, 12)}`;
 
 function renderMarkdown(body, locale) {
   // <Answer>, <Note> and <Warning> use the same syntax as the seineminer.com blog.
@@ -94,12 +97,12 @@ ${alternates}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="/blog/blog.css">
-<script src="/blog/theme.js"></script>
+<link rel="stylesheet" href="${assetUrl('blog.css')}">
+<script src="${assetUrl('theme.js')}"></script>
 ${head}${schema.map(jsonLd).join('\n')}
 </head>
 <body>
-${offers ? `<script type="application/json" id="blog-lang-offers">${JSON.stringify(offers).replace(/</g, '\\u003c')}</script>\n` : ''}<script src="/blog/lang.js"></script>
+${offers ? `<script type="application/json" id="blog-lang-offers">${JSON.stringify(offers).replace(/</g, '\\u003c')}</script>\n` : ''}<script src="${assetUrl('lang.js')}"></script>
 <header class="nav"><div class="wrap">
   <a class="brand" href="/">bntpool.com</a>
   <nav aria-label="Main">
