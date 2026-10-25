@@ -16,9 +16,13 @@ target a search job a seineminer.com post already owns.
 | blocknet checkpoints, blocknet fast sync, checkpoints.dat | `/blog/blocknet-checkpoints-fast-sync/` | Understand bntpool.com's checkpoints and use them to sync a Blocknet node fast | sync Blocknet node, Blocknet full sync, bntpool checkpoints API, verify checkpoints.dat SHA-256, load-checkpoints, Blocknet 检查点快速同步 / Blocknet 檢查點快速同步 |
 | Blocknet solo mining, pool vs solo mining Blocknet | `/blog/pool-vs-solo-mining-blocknet/` | Decide between bntpool.com and solo mining: expected solo blocks per day, why a pool pays steadily, solo setup with seine `--mode daemon` | how often find a block solo, seine daemon mode, mine against your own node, Blocknet solo vs pool, 矿池挖矿还是单独挖矿 / 礦池挖礦還是單獨挖礦 |
 | blocknet mining calculator, blocknet mining rewards estimate | `/blog/estimate-blocknet-mining-rewards/` | Estimate BNT per day from your hashrate, the network hashrate and the block reward, with inputs read from the pool dashboard | how much BNT per day, Blocknet network hashrate, BNT per day per H/s, expected block time, 挖矿收益计算 / 挖礦收益計算 |
+| what is a mining pool, how mining pools work | `/blog/what-is-a-mining-pool/` | Understand what a mining pool is, why miners pool, shares, PPLNS vs PPS vs solo, and what to look for in a pool, with bntpool.com as the example | mining pool explained, what is a share in a mining pool, PPLNS vs PPS, pool payout schemes, how to choose a mining pool, 什么是矿池 / 什麼是礦池 |
+| what is hashrate, hash rate explained | `/blog/what-is-hashrate/` | Explain hashrate in general: units, your vs pool vs network hashrate, how network hashrate is calculated, why it fluctuates, with Blocknet and the bntpool.com dashboard as the example | H/s kH/s MH/s meaning, KH/s to H/s, network hashrate from difficulty, why hashrate fluctuates, Blocknet hashrate H/s, 什么是算力 / 什麼是算力, 算力单位 |
 
 ## Boundaries with seineminer.com
 
 | seineminer.com owner | bntpool.com owner | Boundary |
 |---|---|---|
 | `/blog/how-to-mine-blocknet/` (install seine, first shares on any OS) | `/blog/mine-blocknet-on-bntpool/` | The seineminer.com guide owns installing the miner; the pool post owns joining and using the pool and links to the guide for installation. |
+| `/blog/blocknet-mining-hardware-hashrate/` (per-machine results, hardware choice) | `/blog/what-is-hashrate/` | The seineminer.com post owns hardware results and buying advice; the pool post shows the best-per-generation table only to illustrate Blocknet's H/s scale and links there. |
+| `/blog/how-crypto-mining-works/` (draft: how mining works overall) | `/blog/what-is-a-mining-pool/` | The seineminer.com post owns mining in general and keeps a short pool section; the pool post owns pools in depth (shares, payout schemes, choosing a pool). |

@@ -51,7 +51,7 @@ Once you are mining on the pool, the **Hashrate** card on [My Stats](/stats) sho
 
 The dashboard's **Network Hashrate** card shows the whole network's hashrate. It is displayed in KH/s, so a reading of 62.33 KH/s means 62,330 H/s. Convert it to H/s before you divide, or your result will be off by a factor of a thousand.
 
-The pool measures this figure from the work and timestamps of the most recent ten blocks, so it moves from block to block. For a steadier input, check it a few times over a day and use the average. You can also read it in H/s from the API:
+The pool measures this figure from the work and timestamps of the most recent ten blocks, so it moves from block to block; [what is hashrate?](/blog/what-is-hashrate/) explains this calculation and why the figure moves. For a steadier input, check it a few times over a day and use the average. You can also read it in H/s from the API:
 
 ```sh
 curl -s https://bntpool.com/api/stats

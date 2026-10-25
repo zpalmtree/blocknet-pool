@@ -19,7 +19,7 @@ related: [track-your-miner-on-bntpool, mine-blocknet-on-bntpool, blocknet-block-
 
 This guide explains how bntpool.com turns the shares your miner submits into Blocknet payouts. By the end you'll know how a block's reward is split, why it waits about five hours before it can be paid, when your balance is sent, and how to read the balance cards on the [stats page](/stats) and the [luck page](/luck).
 
-If you haven't started mining yet, the [seine mining guide](https://seineminer.com/blog/how-to-mine-blocknet/) gets you from download to first shares in a few minutes.
+If you're new to pool mining, [what is a mining pool?](/blog/what-is-a-mining-pool/) covers the basics. If you haven't started mining yet, the [seine mining guide](https://seineminer.com/blog/how-to-mine-blocknet/) gets you from download to first shares in a few minutes.
 
 ## What is PPLNS?
 

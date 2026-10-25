@@ -13,13 +13,13 @@ faq:
     a: '不會。每個份額在提交後會在 PPLNS 區間中保留六小時，所以礦池在這段時間內找到的區塊仍會為你記帳。已經確認的收益會留在你的餘額中，餘額達到 0.1 BNT 最低支付額後，礦池就會把它支付給你。'
   - q: '幸運值頁面上的努力值超過 100% 是什麼意思？'
     a: '努力值把礦池在一輪中完成的工作量與該區塊的難度（即預期工作量）相比較。努力值超過 100% 表示這一輪用時比平均更長，低於 100% 表示更快。兩種情況都很正常，經過多輪之後，努力值的平均會接近 100%。'
-sourceHash: 7edb56e1c1c0
+sourceHash: bd204b6650c5
 translation: reviewed
 ---
 
 本指南說明 bntpool.com 如何把你的礦機提交的份額轉換為 Blocknet 收益。讀完後你會知道區塊獎勵如何分配、為什麼要等待約五小時才能支付、餘額何時發送，以及如何看懂[統計頁面](/stats)上的餘額卡片與[幸運值頁面](/luck)。
 
-如果你還沒有開始挖礦，[seine 挖礦指南](https://seineminer.com/zh-hant/blog/how-to-mine-blocknet/)可以帶你在幾分鐘內從下載走到提交第一批份額。
+如果你剛接觸礦池挖礦，[什麼是礦池？](/blog/zh-hant/what-is-a-mining-pool/)介紹了基礎知識。如果你還沒有開始挖礦，[seine 挖礦指南](https://seineminer.com/zh-hant/blog/how-to-mine-blocknet/)可以帶你在幾分鐘內從下載走到提交第一批份額。
 
 ## 什麼是 PPLNS？
 
