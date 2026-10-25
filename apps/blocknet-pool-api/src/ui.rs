@@ -41,85 +41,34 @@ const UI_FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox
 /// Marker placed in `frontend/index.html` where per-route `<head>` metadata is injected.
 const SSR_META_MARKER: &str = "<!--SSR-META-->";
 
-const DEFAULT_DESCRIPTION: &str =
-    "Blocknet mining pool with low fees and fast PPLNS payouts. Live hashrate, blocks, payouts, and pool status.";
-
-struct PageMeta {
-    /// Used for `<title>`, `og:title`, and `twitter:title`.
-    title: &'static str,
-    description: &'static str,
-    /// Social card filename under `/ui-assets/`.
-    image: &'static str,
-    /// Whether search engines may index the route. Operator and unknown paths stay out.
-    index: bool,
+// Shared with the browser so route transitions retain the server's canonical,
+// robots, description and social-card metadata.
+#[derive(serde::Deserialize)]
+struct GuideLink {
+    href: String,
+    label: String,
 }
 
-/// Resolve per-route preview metadata. Crawlers never run the SPA, so this is
-/// the only place page-specific titles/descriptions/images reach them.
-fn page_meta(path: &str) -> PageMeta {
-    match normalize_path(path) {
-        "/" => PageMeta {
-            title: "Blocknet Mining Pool",
-            description: DEFAULT_DESCRIPTION,
-            image: "og-dashboard.png",
-            index: true,
-        },
-        "/start" => PageMeta {
-            title: "Mine Blocknet With Seine",
-            description:
-                "Start mining Blocknet with the Seine miner. Quick setup, low fees, and fast PPLNS payouts.",
-            image: "og-start.png",
-            index: true,
-        },
-        "/checkpoints" => PageMeta {
-            title: "Blocknet Checkpoints",
-            description: "Pool daemon checkpoints for fast initial sync and trusted chain pinning.",
-            image: "og-checkpoints.png",
-            index: true,
-        },
-        "/luck" => PageMeta {
-            title: "Blocknet Pool Luck",
-            description: "Round luck and effort history for the Blocknet mining pool.",
-            image: "og-luck.png",
-            index: true,
-        },
-        "/blocks" => PageMeta {
-            title: "Recent Blocknet Blocks",
-            description: "Recent blocks found by the Blocknet mining pool, with rewards and confirmations.",
-            image: "og-blocks.png",
-            index: true,
-        },
-        "/payouts" => PageMeta {
-            title: "Blocknet Pool Payouts",
-            description: "Recent payouts from the Blocknet mining pool.",
-            image: "og-payouts.png",
-            index: true,
-        },
-        "/stats" => PageMeta {
-            title: "Blocknet Miner Stats",
-            description: "Look up your Blocknet miner hashrate, shares, and balance.",
-            image: "og-stats.png",
-            index: true,
-        },
-        "/status" => PageMeta {
-            title: "Blocknet Pool Status",
-            description: "Live operational status and health of the Blocknet mining pool.",
-            image: "og-status.png",
-            index: true,
-        },
-        "/admin" => PageMeta {
-            title: "Pool Admin Dashboard",
-            description: "Operator dashboard for the Blocknet mining pool.",
-            image: "og-admin.png",
-            index: false,
-        },
-        _ => PageMeta {
-            title: "Page not found",
-            description: "Open the dashboard, get started, or browse the mining guides.",
-            image: "og-dashboard.png",
-            index: false,
-        },
-    }
+#[derive(serde::Deserialize)]
+struct PageMeta {
+    title: String,
+    description: String,
+    image: String,
+    index: bool,
+    label: String,
+    guides: Vec<GuideLink>,
+}
+
+static PAGE_METADATA: std::sync::LazyLock<std::collections::HashMap<String, PageMeta>> =
+    std::sync::LazyLock::new(|| {
+        serde_json::from_str(include_str!("../../../frontend/src/lib/page-meta.json"))
+            .expect("valid public page metadata")
+    });
+
+fn page_meta(path: &str) -> &'static PageMeta {
+    PAGE_METADATA
+        .get(normalize_path(path))
+        .unwrap_or(&PAGE_METADATA["/404"])
 }
 
 fn is_spa_route(path: &str) -> bool {
@@ -162,8 +111,8 @@ fn host_label(base_url: &str) -> &str {
 
 fn meta_tags(path: &str, base_url: &str) -> String {
     let meta = page_meta(path);
-    let title = html_escape(meta.title);
-    let description = html_escape(meta.description);
+    let title = html_escape(&meta.title);
+    let description = html_escape(&meta.description);
     let site_name = html_escape(host_label(base_url));
     let url = html_escape(&format!("{base_url}{}", normalize_path(path)));
     let image = html_escape(&format!("{base_url}/ui-assets/{}", meta.image));
@@ -230,12 +179,50 @@ fn render_index_html(path: &str, base_url: &str) -> String {
         // Defensive fallback if the build ever drops the marker: inject into <head>.
         UI_INDEX_HTML.replacen("<head>", &format!("<head>\n    {tags}"), 1)
     };
-    if is_spa_route(path) {
+    if SITEMAP_PATHS.contains(&normalize_path(path)) {
+        html.replace(r#"<div id="root"></div>"#, &public_page_html(path))
+    } else if is_spa_route(path) {
         html
     } else {
         // Keep recovery links usable before JavaScript loads or if it is disabled.
         html.replace(r#"<div id="root"></div>"#, r#"<div id="root"><main class="container" id="page-not-found"><div class="page-header"><span class="page-kicker">404</span><h1>Page not found</h1><p class="page-intro">This link does not lead to a page. Open the dashboard, get started, or browse the mining guides.</p></div><div class="page-actions"><a class="btn btn-primary" href="/">Dashboard</a><a class="btn btn-secondary" href="/start">Get Started</a><a class="btn btn-secondary" href="/blog/">Blog</a></div></main></div>"#)
     }
+}
+
+/// Useful initial content for all visitors, including when the app bundle fails.
+/// React replaces this shell when ready; changing live metrics are never fabricated.
+fn public_page_html(path: &str) -> String {
+    let meta = page_meta(path);
+    let mut html = String::from(
+        r#"<div id="root"><nav aria-label="Main navigation"><a class="nav-brand" href="/">bntpool.com</a></nav><main class="container" id="public-page"><div class="page-header">"#,
+    );
+    html.push_str(&format!(
+        "<h1>{}</h1><p class=\"page-intro\">{}</p></div>",
+        html_escape(&meta.title),
+        html_escape(&meta.description)
+    ));
+    if normalize_path(path) == "/start" {
+        html.push_str(r#"<section class="card section"><h2>Connect your miner</h2><ol><li><a href="https://seineminer.com/#download">Download Seine for your operating system</a>.</li><li>Run Seine and enter your Blocknet wallet address or Blocknet ID when prompted.</li><li>Choose bntpool.com, then open <a href="/stats">My Stats</a> to check your miner's accepted shares.</li></ol></section>"#);
+    }
+    html.push_str(r#"<section class="card section"><h2>Mining guides</h2><ul>"#);
+    for guide in &meta.guides {
+        html.push_str(&format!(
+            "<li><a href=\"{}\">{}</a></li>",
+            html_escape(&guide.href),
+            html_escape(&guide.label)
+        ));
+    }
+    html.push_str(r#"</ul><a href="/blog/">All mining guides</a></section><section class="card section"><h2>Pool pages</h2><div class="page-actions">"#);
+    for route in SITEMAP_PATHS {
+        let item = page_meta(route);
+        html.push_str(&format!(
+            "<a class=\"btn btn-secondary\" href=\"{}\">{}</a>",
+            route,
+            html_escape(&item.label)
+        ));
+    }
+    html.push_str(r#"</div><p>Live charts and miner lookups load with JavaScript. You can open the setup and mining guides above without it.</p></section></main></div>"#);
+    html
 }
 
 fn og_image_bytes(name: &str) -> Option<&'static [u8]> {
@@ -542,6 +529,49 @@ mod tests {
         }
     }
 
+    /// Export the actual server HTML for browser checks without starting a pool or DB.
+    #[test]
+    #[ignore = "set BNTPOOL_UI_PREVIEW_DIR to export a disposable visual fixture"]
+    fn export_public_pages_for_visual_check() {
+        let dir = std::path::PathBuf::from(std::env::var("BNTPOOL_UI_PREVIEW_DIR").unwrap());
+        std::fs::create_dir_all(&dir).unwrap();
+        for path in SITEMAP_PATHS.iter().copied().chain(["/admin", "/missing"]) {
+            let name = if path == "/" { "index" } else { &path[1..] };
+            std::fs::write(
+                dir.join(format!("{name}.html")),
+                render_index_html(path, "https://bntpool.com"),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn public_pages_have_useful_html_before_javascript() {
+        for path in SITEMAP_PATHS {
+            let html = render_index_html(path, "https://bntpool.com");
+            assert_eq!(html.matches("<h1>").count(), 1, "{path}");
+            assert!(html.contains(&html_escape(&page_meta(path).description)));
+            for route in SITEMAP_PATHS {
+                assert!(
+                    html.contains(&format!("href=\"{route}\"")),
+                    "{path} -> {route}"
+                );
+            }
+            for guide in &page_meta(path).guides {
+                assert!(
+                    crate::blog::blog_sitemap_paths()
+                        .contains(&guide.href.split('#').next().unwrap()),
+                    "{}",
+                    guide.href
+                );
+                assert!(html.contains(&format!("href=\"{}\"", guide.href)));
+            }
+            assert!(!html.contains(r#"<div id="root"></div>"#));
+        }
+        assert!(render_index_html("/start/", "https://bntpool.com").contains("Download Seine"));
+        assert!(!render_index_html("/admin", "https://bntpool.com").contains("id=\"public-page\""));
+    }
+
     #[test]
     fn base_url_comes_from_configured_pool_url() {
         assert_eq!(
@@ -636,7 +666,7 @@ mod tests {
             "/status",
             "/admin",
         ] {
-            let image = page_meta(path).image;
+            let image = &page_meta(path).image;
             assert!(
                 og_image_bytes(image).is_some(),
                 "missing embedded og image for {path}: {image}"

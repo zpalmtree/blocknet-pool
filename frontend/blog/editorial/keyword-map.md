@@ -4,11 +4,26 @@ Which bntpool.com blog URL owns which search job. The build fails if a published
 Same rules as the seineminer.com keyword map (seine repo, `site/editorial/keyword-map.md`); never
 target a search job a seineminer.com post already owns.
 
+## Main site and blog boundaries
+
+- `/` owns **bntpool / Blocknet mining pool**: the pool dashboard and entry point.
+- `/start` owns the quick connection workflow; the setup article owns the detailed
+  walkthrough, worker names and troubleshooting links.
+- `/stats`, `/blocks`, `/payouts`, `/luck` and `/status` own their live lookups and
+  histories. Articles explain how to interpret those values and link back to the tools.
+- `/checkpoints` supplies the current download; the checkpoint article owns the
+  verification and sync procedure.
+
+These are distinct reader jobs, not evidence of current query rankings. App language
+query parameters currently canonicalize to the English path; localized blog pages
+have their own self-canonical URLs and hreflang clusters. Do not advertise translated
+app query URLs as separately indexed pages without implementing server localization.
+
 ## Current ownership
 
 | Primary keyword cluster | URL | Search job | Supporting phrases |
 |---|---|---|---|
-| bntpool.com, bntpool stratum address, Blocknet mining pool | `/blog/mine-blocknet-on-bntpool/` | Join and use bntpool.com with seine: pool address, address or `@name` login, rig names, confirming shares on My Stats, the Get Started page | stratum+tcp://bntpool.com:3333, mine to @name, Blocknet pool worker name, several rigs one address, bntpool 矿池地址 |
+| join bntpool.com, bntpool stratum address, connect Seine to bntpool | `/blog/mine-blocknet-on-bntpool/` | Join and use bntpool.com with seine: pool address, address or `@name` login, rig names, confirming shares on My Stats, the Get Started page | stratum+tcp://bntpool.com:3333, mine to @name, Blocknet pool worker name, several rigs one address, bntpool 矿池地址 |
 | bntpool PPLNS, Blocknet pool payouts | `/blog/how-pplns-payouts-work/` | How bntpool.com splits block rewards and when it pays | PPLNS 6-hour window, 60 confirmations, 0.1 BNT minimum payout, estimated vs confirmed rewards, pool effort and luck, 矿池 PPLNS 收益支付 |
 | bntpool stats, Blocknet miner stats, bntpool API | `/blog/track-your-miner-on-bntpool/` | Read your miner's stats and the pool's public pages, and query the public API | check Blocknet hashrate on pool, bntpool.com API miner endpoint, pool hashrate differs from miner, Blocknet pool luck/effort page, bntpool status page, Home Assistant mining sensor, 矿池统计 / 礦池統計, 查看矿机算力 |
 | blocknet block reward, blocknet emission schedule | `/blog/blocknet-block-reward-schedule/` | Look up the reward per block by month, the tail, supply before the tail | blocknet supply, blocknet tail emission, BNT per block, blocks per day, 区块奖励时间表 / 區塊獎勵時程表 |

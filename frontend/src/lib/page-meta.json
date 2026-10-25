@@ -1,0 +1,134 @@
+{
+  "/": {
+    "title": "Blocknet Mining Pool",
+    "description": "Connect Seine to bntpool.com for Blocknet mining. Track pool hashrate, found blocks, PPLNS payouts and your miner’s shares from the public dashboard.",
+    "image": "og-dashboard.png",
+    "index": true,
+    "label": "Dashboard",
+    "guides": [
+      {
+        "href": "/blog/mine-blocknet-on-bntpool/",
+        "label": "Connect your miner to bntpool.com"
+      },
+      {
+        "href": "/blog/how-pplns-payouts-work/",
+        "label": "How PPLNS payouts work"
+      }
+    ]
+  },
+  "/start": {
+    "title": "Connect Seine to the Blocknet pool",
+    "description": "Set up Seine for the Blocknet mining pool: choose your wallet address or Blocknet ID, name your rigs, connect, and check accepted shares in My Stats.",
+    "image": "og-start.png",
+    "index": true,
+    "label": "Get Started",
+    "guides": [
+      {
+        "href": "/blog/mine-blocknet-on-bntpool/",
+        "label": "Pool setup guide"
+      },
+      {
+        "href": "/blog/track-your-miner-on-bntpool/",
+        "label": "Check your first accepted shares"
+      }
+    ]
+  },
+  "/checkpoints": {
+    "title": "Blocknet Checkpoints",
+    "description": "Pool daemon checkpoints for fast initial sync and trusted chain pinning.",
+    "image": "og-checkpoints.png",
+    "index": true,
+    "label": "Checkpoints",
+    "guides": [
+      {
+        "href": "/blog/blocknet-checkpoints-fast-sync/",
+        "label": "Download and verify Blocknet checkpoints"
+      }
+    ]
+  },
+  "/luck": {
+    "title": "Blocknet Pool Luck",
+    "description": "Round luck and effort history for the Blocknet mining pool.",
+    "image": "og-luck.png",
+    "index": true,
+    "label": "Pool Luck",
+    "guides": [
+      {
+        "href": "/blog/pool-vs-solo-mining-blocknet/",
+        "label": "Pool and solo mining explained"
+      },
+      {
+        "href": "/blog/estimate-blocknet-mining-rewards/",
+        "label": "Estimate mining rewards"
+      }
+    ]
+  },
+  "/blocks": {
+    "title": "Recent Blocknet Blocks",
+    "description": "Recent blocks found by the Blocknet mining pool, with rewards and confirmations.",
+    "image": "og-blocks.png",
+    "index": true,
+    "label": "Blocks",
+    "guides": [
+      {
+        "href": "/blog/blocknet-block-reward-schedule/",
+        "label": "Block rewards and the emission schedule"
+      }
+    ]
+  },
+  "/payouts": {
+    "title": "Blocknet Pool Payouts",
+    "description": "View recent bntpool.com payouts and transaction links. Learn how PPLNS shares, block confirmations and the payout threshold determine when rewards are sent.",
+    "image": "og-payouts.png",
+    "index": true,
+    "label": "Payouts",
+    "guides": [
+      {
+        "href": "/blog/how-pplns-payouts-work/",
+        "label": "PPLNS rewards, confirmations and payouts"
+      }
+    ]
+  },
+  "/stats": {
+    "title": "Blocknet Miner Stats",
+    "description": "Look up your Blocknet miner hashrate, shares, and balance.",
+    "image": "og-stats.png",
+    "index": true,
+    "label": "My Stats",
+    "guides": [
+      {
+        "href": "/blog/track-your-miner-on-bntpool/",
+        "label": "Find your miner and understand its stats"
+      }
+    ]
+  },
+  "/status": {
+    "title": "Blocknet Pool Status",
+    "description": "Live operational status and health of the Blocknet mining pool.",
+    "image": "og-status.png",
+    "index": true,
+    "label": "Status",
+    "guides": [
+      {
+        "href": "/blog/track-your-miner-on-bntpool/#zero-hashrate",
+        "label": "Check connection and zero-hashrate problems"
+      }
+    ]
+  },
+  "/admin": {
+    "title": "Pool Admin Dashboard",
+    "description": "Operator dashboard for the Blocknet mining pool.",
+    "image": "og-admin.png",
+    "index": false,
+    "label": "Admin",
+    "guides": []
+  },
+  "/404": {
+    "title": "Page not found",
+    "description": "Open the dashboard, get started, or browse the mining guides.",
+    "image": "og-dashboard.png",
+    "index": false,
+    "label": "Page not found",
+    "guides": []
+  }
+}

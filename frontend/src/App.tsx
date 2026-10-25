@@ -1,10 +1,11 @@
-import { t, localizePath } from './i18n';
+import { t, localizePath, locale } from './i18n';
 import { Fragment, type MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 
 import { createApiClient } from './api/client';
 import { LanguageControl, LanguageOffer } from './components/LanguageControl';
 import { API_KEY_STORAGE_KEY, LAST_MINER_LOOKUP_KEY } from './lib/storage';
 import { applyTheme, getStoredTheme, setStoredTheme, type ThemeMode } from './lib/theme';
+import { metadataForPath, updatePageMetadata } from './lib/page-meta';
 import { pathForRoute, routeFromPathname, titleForRoute } from './lib/routes';
 import { AdminPage } from './pages/AdminPage';
 import { BlocksPage } from './pages/BlocksPage';
@@ -102,9 +103,11 @@ export function App() {
   }, [liveTick, loadPoolInfo, isNotFound]);
 
   useEffect(() => {
-    const baseTitle = titleForRoute(route);
+    const baseTitle = locale === 'en'
+      ? metadataForPath(window.location.pathname, '').title
+      : titleForRoute(route);
     const poolName = poolInfo?.pool_name.trim();
-    document.title = poolName ? `${baseTitle} | ${poolName}` : baseTitle;
+    updatePageMetadata(window.location.pathname, poolName ? `${baseTitle} | ${poolName}` : baseTitle);
     document
       .querySelector<HTMLMetaElement>('meta[name="theme-color"]')
       ?.setAttribute('content', theme === 'dark' ? '#071114' : '#f6f8f2');
