@@ -2208,11 +2208,26 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(())
     }
 
+    /// Load a balance for read-modify-write inside `tx`, holding its row lock
+    /// until the transaction ends.
+    ///
+    /// Every balance write (`upsert_balance`) stores absolute values computed
+    /// from this read, so the lock is what keeps concurrent writers (payout
+    /// completion in Stratum, admin imports/offsets/reverts in the API) from
+    /// losing each other's updates. A missing row is created as zero first so
+    /// two transactions crediting a new address also serialize on its lock.
     fn load_balance(tx: &mut Transaction<'_>, destination: &str) -> Result<Balance> {
-        let row = tx.query_opt(
-            "SELECT address, pending, paid FROM balances WHERE address = $1",
-            &[&destination],
-        )?;
+        const SELECT_FOR_UPDATE: &str =
+            "SELECT address, pending, paid FROM balances WHERE address = $1 FOR UPDATE";
+        let mut row = tx.query_opt(SELECT_FOR_UPDATE, &[&destination])?;
+        if row.is_none() {
+            tx.execute(
+                "INSERT INTO balances (address, pending, paid) VALUES ($1, 0, 0)
+                 ON CONFLICT(address) DO NOTHING",
+                &[&destination],
+            )?;
+            row = tx.query_opt(SELECT_FOR_UPDATE, &[&destination])?;
+        }
         Ok(if let Some(row) = row {
             Balance {
                 address: row.get::<_, String>(0),
@@ -2271,11 +2286,17 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         if address.trim().is_empty() || amount == 0 {
             return Ok(());
         }
-        let existing = Self::load_manual_payout_offset(tx, address)?;
-        let updated = existing
-            .checked_add(amount)
-            .ok_or_else(|| anyhow!("manual payout offset overflow for {address}"))?;
-        Self::upsert_manual_payout_offset(tx, address, updated)
+        // Relative upsert: a concurrent first offset for the same address
+        // must add to, not overwrite, this one.
+        tx.execute(
+            "INSERT INTO manual_payout_offsets (address, amount)
+             VALUES ($1, $2)
+             ON CONFLICT(address) DO UPDATE
+             SET amount = manual_payout_offsets.amount + EXCLUDED.amount",
+            &[&address, &u64_to_i64(amount)?],
+        )
+        .with_context(|| format!("add manual payout offset for {address}"))?;
+        Ok(())
     }
 
     fn apply_manual_payout_offset(
@@ -6331,6 +6352,88 @@ mod tests {
         assert_eq!(observed, Some(false), "a second session must not get the lock mid-sweep");
         assert!(try_acquire_payout_sweep_lock(&mut other).unwrap());
         release_payout_sweep_lock(&mut other).unwrap();
+    }
+
+    fn concurrent_balance_credits_do_not_lose_updates(seed_existing: bool) {
+        let Some(store) = isolated_test_store() else { return };
+        let address = format!("lost-update-{}", unique_suffix());
+        if seed_existing {
+            store
+                .update_balance(&Balance {
+                    address: address.clone(),
+                    pending: 1_000,
+                    paid: 0,
+                })
+                .unwrap();
+        }
+
+        // Session A: read-modify-write the balance and keep the tx open.
+        let mut session_a = store.open_independent_session().unwrap();
+        let mut tx_a = session_a.transaction().unwrap();
+        let mut balance = PostgresStore::load_balance(&mut tx_a, &address).unwrap();
+        balance.pending += 50;
+        PostgresStore::upsert_balance(&mut tx_a, &balance).unwrap();
+
+        // Session B (e.g. an API admin action) credits the same address.
+        let mut session_b = store.open_independent_session().unwrap();
+        let address_b = address.clone();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            let mut tx_b = session_b.transaction().unwrap();
+            PostgresStore::credit_pending_balance(&mut tx_b, &address_b, 30).unwrap();
+            tx_b.commit().unwrap();
+            done_tx.send(()).unwrap();
+        });
+
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            done_rx.try_recv().is_err(),
+            "second writer must wait for the first writer's row lock"
+        );
+        tx_a.commit().unwrap();
+        writer.join().unwrap();
+
+        let expected = if seed_existing { 1_080 } else { 80 };
+        assert_eq!(store.get_balance(&address).unwrap().pending, expected);
+    }
+
+    #[test]
+    fn concurrent_balance_writes_serialize_on_existing_rows_postgres() {
+        concurrent_balance_credits_do_not_lose_updates(true);
+    }
+
+    #[test]
+    fn concurrent_balance_writes_serialize_on_new_rows_postgres() {
+        concurrent_balance_credits_do_not_lose_updates(false);
+    }
+
+    #[test]
+    fn concurrent_manual_offsets_accumulate_postgres() {
+        let Some(store) = isolated_test_store() else { return };
+        let address = format!("offset-race-{}", unique_suffix());
+        let mut session_a = store.open_independent_session().unwrap();
+        let mut tx_a = session_a.transaction().unwrap();
+        PostgresStore::add_manual_payout_offset(&mut tx_a, &address, 40).unwrap();
+
+        let mut session_b = store.open_independent_session().unwrap();
+        let address_b = address.clone();
+        let writer = std::thread::spawn(move || {
+            let mut tx_b = session_b.transaction().unwrap();
+            PostgresStore::add_manual_payout_offset(&mut tx_b, &address_b, 2).unwrap();
+            tx_b.commit().unwrap();
+        });
+        std::thread::sleep(Duration::from_millis(200));
+        tx_a.commit().unwrap();
+        writer.join().unwrap();
+
+        let row = store
+            .conn()
+            .query_one(
+                "SELECT amount FROM manual_payout_offsets WHERE address = $1",
+                &[&address],
+            )
+            .unwrap();
+        assert_eq!(row.get::<_, i64>(0), 42);
     }
 
     #[test]
