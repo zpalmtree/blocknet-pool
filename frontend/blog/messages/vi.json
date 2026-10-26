@@ -56,5 +56,6 @@
   "topicHardware": "Phần cứng và tinh chỉnh",
   "topicTroubleshooting": "Khắc phục sự cố",
   "topicRewards": "Phần thưởng và thanh toán",
-  "topicBlocknet": "Về Blocknet"
+  "topicBlocknet": "Về Blocknet",
+  "calcReleaseFee": "Giá trị mặc định cho Seine {version} trên bntpool.com: {fee}%."
 }

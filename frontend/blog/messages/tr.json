@@ -56,5 +56,6 @@
   "topicHardware": "Donanım ve ayarlar",
   "topicTroubleshooting": "Sorun giderme",
   "topicRewards": "Ödüller ve ödemeler",
-  "topicBlocknet": "Blocknet hakkında"
+  "topicBlocknet": "Blocknet hakkında",
+  "calcReleaseFee": "bntpool.com üzerinde Seine {version} için varsayılan değer: %{fee}."
 }

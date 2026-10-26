@@ -2,7 +2,7 @@
 title: "Blocknet-miningcalculator"
 description: "Schat BNT per dag en week met je hashrate, actuele netwerkgegevens en het beloningsschema. Kosten worden apart getoond."
 tags: ['Miningbeloningen', 'Mininggids', 'Hashrate', 'bntpool']
-sourceHash: 0e1d600e0b00
+sourceHash: c8369c1db7c0
 translation: draft
 faq:
   - q: 'Hoe bereken je Blocknet-miningbeloningen?'

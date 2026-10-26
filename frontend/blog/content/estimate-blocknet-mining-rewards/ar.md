@@ -2,7 +2,7 @@
 title: "حاسبة تعدين Blocknet"
 description: "قدّر BNT يوميًا وأسبوعيًا باستخدام معدل التجزئة لديك وبيانات الشبكة المباشرة وجدول المكافآت، مع عرض الرسوم بشكل منفصل."
 tags: [مكافآت التعدين, دليل التعدين, معدل التجزئة, bntpool]
-sourceHash: 0e1d600e0b00
+sourceHash: c8369c1db7c0
 translation: draft
 faq:
   - q: 'كيف تحسب مكافآت تعدين Blocknet؟'

@@ -56,5 +56,6 @@
   "topicHardware": "Matériel et réglages",
   "topicTroubleshooting": "Dépannage",
   "topicRewards": "Récompenses et paiements",
-  "topicBlocknet": "À propos de Blocknet"
+  "topicBlocknet": "À propos de Blocknet",
+  "calcReleaseFee": "Valeur par défaut pour Seine {version} sur bntpool.com : {fee}%."
 }

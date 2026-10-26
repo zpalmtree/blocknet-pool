@@ -56,5 +56,6 @@
   "topicHardware": "Υλικό και ρυθμίσεις",
   "topicTroubleshooting": "Αντιμετώπιση προβλημάτων",
   "topicRewards": "Ανταμοιβές και πληρωμές",
-  "topicBlocknet": "Σχετικά με το Blocknet"
+  "topicBlocknet": "Σχετικά με το Blocknet",
+  "calcReleaseFee": "Προεπιλογή για το Seine {version} στο bntpool.com: {fee}%."
 }

@@ -2,7 +2,7 @@
 title: "Kalkulator wydobycia Blocknet"
 description: "Oszacuj BNT dziennie i tygodniowo na podstawie swojego hashrate, bieżących danych sieci i harmonogramu nagród. Opłaty są pokazane osobno."
 tags: [Nagrody za kopanie, Poradnik kopania, Hashrate, bntpool]
-sourceHash: 0e1d600e0b00
+sourceHash: c8369c1db7c0
 translation: draft
 faq:
   - q: 'Jak obliczyć nagrody za kopanie Blocknetu?'

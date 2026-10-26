@@ -53,13 +53,18 @@ with `rewards-math.js` into a content-hashed asset loaded only by this article.
 The calculator fetches only `/api/stats` and `/api/info`, never a wallet or entered
 hashrate. Inputs expire after five minutes and require an explicit refresh.
 
-Calculation sources verified October 25, 2026:
+Calculation and release sources rechecked October 26, 2026:
 
 - `blocknet-core/miner.go`, `GetBlockReward`: initial reward 72,325,093,035 atomic
   units, tail 200,000,000, annual exponential decay 0.75, 8,640-block months and
   tail starting at month 48. `blocknet-core/block.go`: 300-second target interval.
-- `seine/src/dev_fee.rs`: 1% dev time on bntpool.com. The calculator defaults to
-  1%; a pool-reported user hashrate should use 0% to avoid deducting it twice.
+- `seine@v0.2.26:src/dev_fee.rs`: 1% dev time on bntpool.com.
+  `miner-release.json` pins this public release; the calculator uses its fee
+  and displays its version in all languages. Source on master has a pending 2%
+  policy; that is not the v0.2.26 release. A pool-reported user hashrate should
+  use 0% to avoid deducting the miner fee twice.
+- Live `/api/info` reported a 0% pool fee, 0.1 BNT minimum payout, 60-block
+  maturity and a six-hour PPLNS window. The calculator still reads the fee live.
 - Pool fee comes from `pool_fee_pct` in `/api/info`, never a hardcoded fallback.
 - Estimates integrate scheduled block rewards over the next 288 or 2,016 blocks,
   hold network hashrate fixed, and compound the miner and pool fees. They exclude
@@ -89,3 +94,12 @@ Indexes keep every article in static HTML, newest first within its topic. Fragme
 links work without JavaScript; article breadcrumbs link back to the topic.
 Hardware links lead to the matching Seine language; Seine links back to rewards.
 No extra category URLs or sitemap entries are created.
+
+Release drift is checked by Seine's **Content facts** GitHub workflow after its
+Build Release workflow finishes. It checks the pool's canonical
+`frontend/blog/miner-release.json` as well as Seine's editorial manifest against
+the latest public release and its source. Update both manifests together after
+reviewing a new release; pending miner source is not a published fee change.
+Calculator rendering and tests use the reviewed manifest. The live pool fee still
+comes exclusively from `/api/info`. This pass updates all 20 localized fee labels;
+translations retain draft status, without an independent linguistic review claim.

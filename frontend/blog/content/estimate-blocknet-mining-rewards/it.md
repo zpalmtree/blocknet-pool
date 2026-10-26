@@ -13,7 +13,7 @@ faq:
     a: 'La stima è una media. In un singolo giorno la pool può trovare più o meno blocchi del previsto e l’hashrate della rete cambia con l’arrivo di miner. Su una settimana o più di mining costante le oscillazioni si compensano. Puoi seguire le ricompense accreditate su My Stats.'
   - q: 'Minare in pool cambia i BNT che posso aspettarmi?'
     a: 'La quota attesa delle ricompense di rete resta uguale, perché dipende solo dalla tua quota di hashrate. La pool cambia il ritmo: anziché aspettare giorni per un blocco intero, ricevi una parte di ogni blocco trovato da bntpool.com, in importi piccoli e regolari.'
-sourceHash: 0e1d600e0b00
+sourceHash: c8369c1db7c0
 translation: draft
 ---
 

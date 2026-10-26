@@ -13,7 +13,7 @@ faq:
     a: 'L’estimation est une moyenne. Un jour donné, le pool peut trouver plus ou moins de blocs que prévu, et le hashrate du réseau change avec l’arrivée de mineurs. Sur une semaine ou plus de minage régulier, ces variations s’atténuent. Vous pouvez suivre les récompenses créditées sur My Stats.'
   - q: 'Miner dans un pool change-t-il la quantité de BNT attendue ?'
     a: 'Votre part attendue des récompenses du réseau reste identique, car elle dépend uniquement de votre part du hashrate du réseau. Le pool change leur rythme. Au lieu d’attendre plusieurs jours un bloc entier, vous recevez une fraction de chaque bloc trouvé par bntpool.com, en petits montants réguliers.'
-sourceHash: 0e1d600e0b00
+sourceHash: c8369c1db7c0
 translation: draft
 ---
 

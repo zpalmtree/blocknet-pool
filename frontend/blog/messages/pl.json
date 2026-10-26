@@ -56,5 +56,6 @@
   "topicHardware": "Sprzęt i optymalizacja",
   "topicTroubleshooting": "Rozwiązywanie problemów",
   "topicRewards": "Nagrody i wypłaty",
-  "topicBlocknet": "O Blocknet"
+  "topicBlocknet": "O Blocknet",
+  "calcReleaseFee": "Wartość domyślna dla Seine {version} na bntpool.com: {fee}%."
 }

@@ -56,5 +56,6 @@
   "topicHardware": "Perangkat keras & penyetelan",
   "topicTroubleshooting": "Pemecahan masalah",
   "topicRewards": "Imbalan & pembayaran",
-  "topicBlocknet": "Tentang Blocknet"
+  "topicBlocknet": "Tentang Blocknet",
+  "calcReleaseFee": "Nilai bawaan untuk Seine {version} di bntpool.com: {fee}%."
 }

@@ -56,5 +56,6 @@
   "topicHardware": "ฮาร์ดแวร์และการปรับแต่ง",
   "topicTroubleshooting": "การแก้ไขปัญหา",
   "topicRewards": "รางวัลและการจ่ายเงิน",
-  "topicBlocknet": "เกี่ยวกับ Blocknet"
+  "topicBlocknet": "เกี่ยวกับ Blocknet",
+  "calcReleaseFee": "ค่าเริ่มต้นสำหรับ Seine {version} บน bntpool.com: {fee}%"
 }

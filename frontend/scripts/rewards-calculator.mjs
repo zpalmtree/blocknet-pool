@@ -1,4 +1,6 @@
+import release from '../blog/miner-release.json' with { type: 'json' };
 import { t } from './blog-lib.mjs';
+if (!/^v\d+\.\d+\.\d+$/.test(release.tag) || typeof release.bntpoolMinerFeePercent !== 'number' || !Number.isFinite(release.bntpoolMinerFeePercent) || release.bntpoolMinerFeePercent < 0 || release.bntpoolMinerFeePercent > 100) throw new Error('Invalid reviewed miner release fee');
 const esc = value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 export function calculatorHtml(locale) {
@@ -12,8 +14,8 @@ export function calculatorHtml(locale) {
 <fieldset disabled><legend class="calc-sr-only">${text('calcTitle')}</legend>
 <div class="calc-fields"><div><label for="calc-hashrate">${text('calcHashrate')}</label><input id="calc-hashrate" data-calc="hashrate" type="text" inputmode="decimal" autocomplete="off" dir="ltr" aria-describedby="calc-hint" placeholder="0"></div>
 <div><label for="calc-units">${text('calcUnit')}</label><select id="calc-units" data-calc="units" dir="ltr"><option value="1">H/s</option><option value="1000">kH/s</option><option value="1000000">MH/s</option></select></div>
-<div><label for="calc-fee">${text('calcMinerFee')}</label><input id="calc-fee" data-calc="minerFee" type="text" inputmode="decimal" autocomplete="off" value="2" dir="ltr" aria-describedby="calc-fee-help calc-hint"></div></div>
-<p id="calc-fee-help" class="calc-note">${text('calcFeeHelp')}</p>
+<div><label for="calc-fee">${text('calcMinerFee')}</label><input id="calc-fee" data-calc="minerFee" type="text" inputmode="decimal" autocomplete="off" value="${esc(release.bntpoolMinerFeePercent)}" dir="ltr" aria-describedby="calc-fee-help calc-hint"></div></div>
+<p id="calc-fee-help" class="calc-note">${esc(t(locale, 'calcReleaseFee', { version: release.tag, fee: new Intl.NumberFormat(locale).format(release.bntpoolMinerFeePercent) }))} ${text('calcFeeHelp')}</p>
 </fieldset>
 <p id="calc-hint" data-calc="hint" role="status">${text('calcEmpty')}</p>
 <div data-calc="result" aria-live="polite" hidden><table class="calc-results"><thead><tr><th scope="col">BNT</th><th scope="col">${text('calcGross')}</th><th scope="col">${text('calcNet')}</th></tr></thead><tbody>

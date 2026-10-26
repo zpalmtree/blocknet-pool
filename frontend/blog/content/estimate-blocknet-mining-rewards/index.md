@@ -2,6 +2,7 @@
 title: "Blocknet mining calculator"
 description: "Estimate your Blocknet mining rewards in BNT per day and week using live network data, your hashrate and the reward schedule, with fees shown separately."
 date: 2026-10-25
+updated: 2026-10-26
 tags: [Mining rewards, Mining guide, Hashrate, bntpool]
 faq:
   - q: How do you calculate Blocknet mining rewards?

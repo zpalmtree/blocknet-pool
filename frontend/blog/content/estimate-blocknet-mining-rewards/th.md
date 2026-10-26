@@ -2,7 +2,7 @@
 title: "เครื่องคำนวณการขุด Blocknet"
 description: "ประมาณ BNT ต่อวันและต่อสัปดาห์จากแฮชเรตของคุณ ข้อมูลเครือข่ายสด และตารางรางวัล โดยแสดงค่าธรรมเนียมแยกกัน"
 tags: ['รางวัลขุด', 'คู่มือขุด', 'Hashrate', 'bntpool']
-sourceHash: 0e1d600e0b00
+sourceHash: c8369c1db7c0
 translation: draft
 faq:
   - q: 'คำนวณรางวัลขุด Blocknet อย่างไร?'

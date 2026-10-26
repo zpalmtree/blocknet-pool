@@ -56,5 +56,6 @@
   "topicHardware": "الأجهزة والضبط",
   "topicTroubleshooting": "استكشاف الأخطاء وإصلاحها",
   "topicRewards": "المكافآت والمدفوعات",
-  "topicBlocknet": "حول Blocknet"
+  "topicBlocknet": "حول Blocknet",
+  "calcReleaseFee": "القيمة الافتراضية لـ Seine {version} على bntpool.com: {fee}%."
 }

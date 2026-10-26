@@ -56,5 +56,6 @@
   "topicHardware": "하드웨어 및 튜닝",
   "topicTroubleshooting": "문제 해결",
   "topicRewards": "보상 및 지급",
-  "topicBlocknet": "Blocknet 소개"
+  "topicBlocknet": "Blocknet 소개",
+  "calcReleaseFee": "bntpool.com에서 Seine {version}의 기본값: {fee}%."
 }

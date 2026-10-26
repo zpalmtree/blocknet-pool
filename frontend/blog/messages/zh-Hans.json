@@ -56,5 +56,6 @@
   "topicHardware": "硬件与调优",
   "topicTroubleshooting": "故障排查",
   "topicRewards": "奖励与支付",
-  "topicBlocknet": "关于 Blocknet"
+  "topicBlocknet": "关于 Blocknet",
+  "calcReleaseFee": "Seine {version} 在 bntpool.com 上的默认值：{fee}%。"
 }

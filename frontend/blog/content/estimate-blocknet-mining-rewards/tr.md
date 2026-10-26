@@ -2,7 +2,7 @@
 title: "Blocknet madencilik hesaplayıcısı"
 description: "Hash gücünüz, canlı ağ verileri ve ödül takvimiyle günlük ve haftalık BNT miktarını tahmin edin. Ücretler ayrı gösterilir."
 tags: [Madencilik ödülleri, Madencilik rehberi, Hashrate, bntpool]
-sourceHash: 0e1d600e0b00
+sourceHash: c8369c1db7c0
 translation: draft
 faq:
   - q: 'Blocknet madencilik ödülleri nasıl hesaplanır?'

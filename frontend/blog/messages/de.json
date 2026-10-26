@@ -56,5 +56,6 @@
   "topicHardware": "Hardware & Optimierung",
   "topicTroubleshooting": "Fehlerbehebung",
   "topicRewards": "Belohnungen & Auszahlungen",
-  "topicBlocknet": "Über Blocknet"
+  "topicBlocknet": "Über Blocknet",
+  "calcReleaseFee": "Vorgabe für Seine {version} auf bntpool.com: {fee}%."
 }

@@ -56,5 +56,6 @@
   "topicHardware": "ハードウェアと調整",
   "topicTroubleshooting": "トラブルシューティング",
   "topicRewards": "報酬と支払い",
-  "topicBlocknet": "Blocknetについて"
+  "topicBlocknet": "Blocknetについて",
+  "calcReleaseFee": "bntpool.comでのSeine {version}の初期値：{fee}%。"
 }

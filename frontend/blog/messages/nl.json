@@ -56,5 +56,6 @@
   "topicHardware": "Hardware en afstemming",
   "topicTroubleshooting": "Problemen oplossen",
   "topicRewards": "Beloningen en uitbetalingen",
-  "topicBlocknet": "Over Blocknet"
+  "topicBlocknet": "Over Blocknet",
+  "calcReleaseFee": "Standaardwaarde voor Seine {version} op bntpool.com: {fee}%."
 }

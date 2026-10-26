@@ -2,7 +2,7 @@
 title: "Calculadora de mineração Blocknet"
 description: "Estime BNT por dia e semana com seu hashrate, dados da rede ao vivo e o cronograma de recompensas, com as taxas mostradas separadamente."
 tags: [Recompensas de mineração, Guia de mineração, Hashrate, bntpool]
-sourceHash: 0e1d600e0b00
+sourceHash: c8369c1db7c0
 translation: draft
 faq:
   - q: 'Como calcular as recompensas de mineração de Blocknet?'
