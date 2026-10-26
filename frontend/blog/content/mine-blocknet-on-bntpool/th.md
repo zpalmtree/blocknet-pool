@@ -2,7 +2,7 @@
 title: 'ขุด Blocknet กับ bntpool.com'
 description: 'เข้าร่วม bntpool.com พูลเริ่มต้นของ seine เชื่อมต่อ stratum+tcp://bntpool.com:3333 ด้วยที่อยู่หรือ @name ตั้งชื่อเครื่องและตรวจสถิติของคุณ'
 tags: ['คู่มือขุด', 'bntpool', 'Blocknet ID', 'seine']
-sourceHash: '84ce1ed92e20'
+sourceHash: '3126e8e7e396'
 translation: draft
 faq:
   - q: 'ที่อยู่ Stratum ของ bntpool.com คืออะไร?'

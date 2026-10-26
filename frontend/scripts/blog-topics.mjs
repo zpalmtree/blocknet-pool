@@ -23,6 +23,7 @@ export const TOPICS = [
 ];
 const groups = {
   "getting-started": [
+    "mine-multiple-computers-one-wallet",
     "stratum-mining-protocol",
     "mine-blocknet-on-bntpool",
     "what-is-a-mining-pool"

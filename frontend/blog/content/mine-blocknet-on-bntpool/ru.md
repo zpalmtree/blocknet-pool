@@ -2,7 +2,7 @@
 title: Майнинг Blocknet на bntpool.com
 description: Подключитесь к bntpool.com, пулу Blocknet по умолчанию в seine. Используйте stratum+tcp://bntpool.com:3333 и свой адрес или @name, задайте имена ригам и проверьте статистику.
 tags: [Руководство по майнингу, bntpool, Blocknet ID, seine]
-sourceHash: '84ce1ed92e20'
+sourceHash: '3126e8e7e396'
 translation: draft
 faq:
   - q: 'Какой Stratum-адрес у bntpool.com?'

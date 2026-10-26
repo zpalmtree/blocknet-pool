@@ -37,3 +37,4 @@ no language-dependent text or invented dashboard values. Added October 26, 2026.
   stage. Conceptual timeline, not a live block record. October 26, 2026.
 
 - `mining-pool-fees-vs-miner-fees`: original miner/time, pool/reward and retained-BNT diagram in `blog-covers.mjs`, with retained factors (1 − m) and (1 − p). Schematic, not measured rewards. October 26, 2026.
+- `mine-multiple-computers-one-wallet`: original numbered-computers → pool → receiving-wallet diagram in `blog-covers.mjs`. Conceptual grouping, not a claim of fixed payments per machine. October 26, 2026.

@@ -2,7 +2,7 @@
 title: 'Blocknet minen op bntpool.com'
 description: 'Sluit aan op bntpool.com, de standaardpool van seine. Gebruik je adres of @name met stratum+tcp://bntpool.com:3333, geef rigs namen en bekijk je statistieken.'
 tags: ['Mininggids', 'bntpool', 'Blocknet ID', 'seine']
-sourceHash: '84ce1ed92e20'
+sourceHash: '3126e8e7e396'
 translation: draft
 faq:
   - q: 'Wat is het Stratum-adres van bntpool.com?'

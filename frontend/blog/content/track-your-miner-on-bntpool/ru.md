@@ -2,7 +2,7 @@
 title: Наблюдение за майнером на bntpool.com
 description: Найдите адрес или @name на bntpool.com, чтобы видеть хешрейт, шары, баланс и выплаты. Следите за блоками, удачей и доступностью или используйте публичный API.
 tags: [bntpool, Статистика майнинга, API пула, Blocknet]
-sourceHash: '5367192a57e2'
+sourceHash: 'f785e00cbe03'
 translation: draft
 faq:
   - q: 'Почему хешрейт bntpool.com отличается от seine?'

@@ -93,3 +93,11 @@ PPLNS owns allocation, balance threshold and sending rules. This article owns de
 | mining pool fees vs miner developer fees | `/blog/mining-pool-fees-vs-miner-fees/` | Identify the two fee stages, select gross versus already-adjusted inputs and avoid double subtraction | Blocknet mining, seine, bntpool |
 
 The calculator owns numerical estimates and PPLNS owns allocation and payout timing. This guide owns fee-layer interpretation and input provenance. The user explicitly approved this fee topic. No URL is retargeted.
+
+## Windows startup and multiple miners (October 26, 2026)
+
+| Primary keyword cluster | URL | Search job |
+|---|---|---|
+| mine multiple computers one wallet; Blocknet multiple rigs | `/blog/mine-multiple-computers-one-wallet/` | Add another computer with a distinct rig name and verify work under a shared receiving address |
+
+Pool setup owns first connection; stats owns dashboard fields; PPLNS owns reward allocation. No existing URL is retargeted.

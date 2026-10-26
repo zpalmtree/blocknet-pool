@@ -2,7 +2,7 @@
 title: تابع جهاز التعدين على bntpool.com
 description: ابحث بعنوانك أو @name لعرض المعدل والحصص والرصيد والدفعات، ثم تابع الكتل والحظ والتوافر أو استخدم API العام في نص برمجي.
 tags: [bntpool, إحصاءات التعدين, API المجمع, Blocknet]
-sourceHash: '5367192a57e2'
+sourceHash: 'f785e00cbe03'
 translation: draft
 faq:
   - q: 'لماذا يختلف معدل bntpool.com عن seine؟'

@@ -12,7 +12,7 @@ faq:
     a: No. There is no sign-up, password or email. Your Blocknet address, or a Blocknet ID name that points to it, is your login and your payout destination. Start seine with it, then look it up on the My Stats page to see your hashrate, shares, rigs, balance and payouts.
   - q: Can I mine to one address from several computers?
     a: Yes. Run seine on each computer with the same address or name and give each one its own rig name. The pool counts shares, balance and payouts per address, so every rig adds to one balance and one payout, and the My Stats page lists each rig on its own row.
-related: [how-pplns-payouts-work, track-your-miner-on-bntpool, blocknet-fair-launch, stratum-mining-protocol]
+related: [mine-multiple-computers-one-wallet, how-pplns-payouts-work, track-your-miner-on-bntpool, blocknet-fair-launch]
 ---
 
 This guide covers joining the bntpool.com pool with seine: the pool address, logging in with a Blocknet address or a Blocknet ID `@name`, naming each rig, and checking on the stats page that your shares are arriving. If seine isn't installed yet, follow the [seine install guide](https://seineminer.com/blog/how-to-mine-blocknet/) first, then come back here.

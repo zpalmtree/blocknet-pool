@@ -2,7 +2,7 @@
 title: Theo dõi trình đào trên bntpool.com
 description: Tra địa chỉ hoặc @name trên bntpool.com để xem hashrate, share, số dư và thanh toán; theo dõi khối, may mắn, thời gian hoạt động hoặc dùng API công khai.
 tags: [bntpool, Thống kê đào coin, API pool, Blocknet]
-sourceHash: '5367192a57e2'
+sourceHash: 'f785e00cbe03'
 translation: draft
 faq:
   - q: 'Vì sao hashrate trên bntpool.com khác số seine hiển thị?'

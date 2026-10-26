@@ -2,7 +2,7 @@
 title: 'Je miner volgen op bntpool.com'
 description: 'Zoek je adres of @name op bntpool.com voor hashrate, shares, saldo en betalingen. Volg blokken, luck en uptime of gebruik de openbare API in je scripts.'
 tags: ['bntpool', 'Miningstatistieken', 'Pool-API', 'Blocknet']
-sourceHash: '5367192a57e2'
+sourceHash: 'f785e00cbe03'
 translation: draft
 faq:
   - q: 'Waarom verschilt mijn hashrate op bntpool.com van seine?'

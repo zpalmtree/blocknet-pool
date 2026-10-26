@@ -71,7 +71,12 @@ function miningFeeStages() {
   return frame(`${rect(70, 100, 1060, 475, '#f9fcf3', 24)}${miner(215,250,1.1)}${cube(600,230,85)}${check(1000,255,1.5)}${line('M310 260H475M455 243 475 260 455 277M720 260H890M870 243 890 260 870 277','#629569',5)}${text(215,400,'(1 − m)',42,'#123c2a','text-anchor="middle"')}${text(600,400,'(1 − p)',42,'#123c2a','text-anchor="middle"')}${text(1000,400,'BNT',42,'#123c2a','text-anchor="middle"')}${line('M215 475H1000M215 463V487M1000 463V487','#a7bda0',3)}`);
 }
 
+function multipleComputers() {
+  return frame(`${[180,337,495].map((y,i)=>`${miner(210,y,.8)}${text(115,y+12,String(i+1),28)}${line(`M275 ${y}H390L520 337`,'#629569',4)}`).join('')}${cube(600,300,105)}${line('M710 337H865M845 320 865 337 845 354','#629569',5)}${rect(900,245,220,175,'#f9fcf3',22)}${rect(1020,295,100,75,'#c8dfb5',12)}${circle(1050,332,10,'#237a4e')}${check(1005,485,.8)}`);
+}
+
 const illustrations = {
+  'mine-multiple-computers-one-wallet': multipleComputers,
   'mining-pool-fees-vs-miner-fees': miningFeeStages,
   'block-confirmations-mining-rewards': confirmationTimeline,
   'stratum-mining-protocol': stratumConversation,

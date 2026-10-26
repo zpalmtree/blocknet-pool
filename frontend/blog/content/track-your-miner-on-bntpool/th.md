@@ -2,7 +2,7 @@
 title: 'ติดตามเครื่องขุดบน bntpool.com'
 description: 'ค้นหาที่อยู่หรือ @name บน bntpool.com เพื่อดู hashrate, share ยอดและการจ่าย ติดตามบล็อก luck และ uptime หรือใช้ API สาธารณะในสคริปต์ของคุณ'
 tags: ['bntpool', 'สถิติขุด', 'API พูล', 'Blocknet']
-sourceHash: '5367192a57e2'
+sourceHash: 'f785e00cbe03'
 translation: draft
 faq:
   - q: 'ทำไม hashrate บน bntpool.com ต่างจาก seine?'

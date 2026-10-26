@@ -2,7 +2,7 @@
 title: Kop Blocknet na bntpool.com
 description: Dołącz do bntpool.com, domyślnej puli Blocknetu w seine. Połącz się z stratum+tcp://bntpool.com:3333 adresem lub @name, nazwij maszyny i sprawdź statystyki.
 tags: [Poradnik kopania, bntpool, Blocknet ID, seine]
-sourceHash: '84ce1ed92e20'
+sourceHash: '3126e8e7e396'
 translation: draft
 faq:
   - q: 'Jaki jest adres Stratum bntpool.com?'

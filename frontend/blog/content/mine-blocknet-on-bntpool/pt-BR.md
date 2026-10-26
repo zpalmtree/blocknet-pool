@@ -2,7 +2,7 @@
 title: Mine Blocknet no bntpool.com
 description: Entre no bntpool.com, o pool padrão do seine para Blocknet. Conecte-se a stratum+tcp://bntpool.com:3333 com seu endereço ou @name, nomeie os rigs e acompanhe as estatísticas.
 tags: [Guia de mineração, bntpool, Blocknet ID, seine]
-sourceHash: '84ce1ed92e20'
+sourceHash: '3126e8e7e396'
 translation: draft
 faq:
   - q: 'Qual é o endereço Stratum do bntpool.com?'
