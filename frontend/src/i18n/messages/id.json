@@ -299,5 +299,7 @@
   "notFoundDescription": "Tautan ini tidak mengarah ke halaman mana pun. Buka dasbor, mulai menambang, atau baca panduan penambangan.",
   "statsDescription": "Lihat hashrate, share, dan saldo penambang Blocknet Anda.",
   "rewardsCalculator": "Perkirakan imbalan BNT Anda",
-  "poolFee": "Biaya pool"
+  "poolFee": "Biaya pool",
+  "dashboardIntro": "Hubungkan miner Anda dan pantau hashrate, blok, serta pembayaran.",
+  "copyUnavailable": "Pilih alamat untuk menyalinnya secara manual."
 }

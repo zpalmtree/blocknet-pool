@@ -299,5 +299,7 @@
   "notFoundDescription": "此链接没有对应的页面。你可以打开仪表板、开始挖矿或阅读挖矿指南。",
   "statsDescription": "查询您的 Blocknet 矿工算力、份额和余额。",
   "rewardsCalculator": "估算你的 BNT 奖励",
-  "poolFee": "矿池费用"
+  "poolFee": "矿池费用",
+  "dashboardIntro": "连接矿工软件，查看算力、区块和付款。",
+  "copyUnavailable": "选中地址以手动复制。"
 }

@@ -299,5 +299,7 @@
   "notFoundDescription": "This link does not lead to a page. Open the dashboard, get started, or browse the mining guides.",
   "statsDescription": "Look up your Blocknet miner hashrate, shares, and balance.",
   "rewardsCalculator": "Estimate your BNT rewards",
-  "poolFee": "Pool fee"
+  "poolFee": "Pool fee",
+  "dashboardIntro": "Connect your miner and track hashrate, blocks and payouts.",
+  "copyUnavailable": "Select the address to copy it manually."
 }

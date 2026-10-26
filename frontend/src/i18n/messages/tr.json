@@ -299,5 +299,7 @@
   "notFoundDescription": "Bu bağlantı bir sayfaya gitmiyor. Kontrol panelini açın, madenciliğe başlayın veya madencilik rehberlerini inceleyin.",
   "statsDescription": "Blocknet madencinizin hashrate değerini, paylarını ve bakiyesini kontrol edin.",
   "rewardsCalculator": "BNT ödüllerinizi tahmin edin",
-  "poolFee": "Havuz ücreti"
+  "poolFee": "Havuz ücreti",
+  "dashboardIntro": "Madencinizi bağlayın; hashrate, bloklar ve ödemeleri takip edin.",
+  "copyUnavailable": "Adresi elle kopyalamak için seçin."
 }

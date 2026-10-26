@@ -299,5 +299,7 @@
   "notFoundDescription": "このリンク先のページはありません。ダッシュボードを開くか、マイニングを始めるか、マイニングガイドをご覧ください。",
   "statsDescription": "Blocknet マイナーのハッシュレート、シェア、残高を確認できます。",
   "rewardsCalculator": "BNT報酬を見積もる",
-  "poolFee": "プール手数料"
+  "poolFee": "プール手数料",
+  "dashboardIntro": "マイナーを接続して、ハッシュレート、ブロック、支払いを確認しましょう。",
+  "copyUnavailable": "アドレスを選択して手動でコピーしてください。"
 }

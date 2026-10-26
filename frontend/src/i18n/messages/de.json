@@ -299,5 +299,7 @@
   "notFoundDescription": "Dieser Link führt zu keiner Seite. Öffne das Dashboard, lege los oder lies die Mining-Anleitungen.",
   "statsDescription": "Prüfe die Hashrate, Shares und das Guthaben deines Blocknet-Miners.",
   "rewardsCalculator": "Deine BNT-Belohnungen schätzen",
-  "poolFee": "Poolgebühr"
+  "poolFee": "Poolgebühr",
+  "dashboardIntro": "Verbinde deinen Miner und verfolge Hashrate, Blöcke und Auszahlungen.",
+  "copyUnavailable": "Markiere die Adresse, um sie manuell zu kopieren."
 }

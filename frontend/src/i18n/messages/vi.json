@@ -299,5 +299,7 @@
   "notFoundDescription": "Liên kết này không dẫn đến trang nào. Mở bảng điều khiển, bắt đầu đào hoặc đọc các hướng dẫn đào.",
   "statsDescription": "Tra cứu hashrate, share và số dư của máy đào Blocknet của bạn.",
   "rewardsCalculator": "Ước tính phần thưởng BNT của bạn",
-  "poolFee": "Phí pool"
+  "poolFee": "Phí pool",
+  "dashboardIntro": "Kết nối phần mềm đào và theo dõi hashrate, khối cùng các khoản thanh toán.",
+  "copyUnavailable": "Chọn địa chỉ để sao chép thủ công."
 }

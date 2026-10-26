@@ -42,6 +42,7 @@ interface DashboardPageProps {
 }
 
 export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageProps) {
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [insights, setInsights] = useState<StatsInsightsResponse | null>(null);
   const [payouts, setPayouts] = useState<PayoutItem[]>([]);
@@ -106,9 +107,26 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
     void loadHistory();
   }, [loadHistory, range]);
 
-  const copyStratum = useCallback(() => {
-    void navigator.clipboard.writeText(stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url));
-  }, [poolInfo?.pool_url, poolInfo?.stratum_port]);
+  const poolUrl = poolInfo ? stratumUrl(poolInfo.stratum_port, poolInfo.pool_url) : null;
+  const fee = poolInfo?.pool_fee_pct;
+  const feeLabel = fee != null && Number.isFinite(fee)
+    ? `${fee.toLocaleString(locale, { maximumFractionDigits: 20 })}%` : '-';
+
+  useEffect(() => {
+    if (copyState !== 'copied') return;
+    const timer = window.setTimeout(() => setCopyState('idle'), 2000);
+    return () => window.clearTimeout(timer);
+  }, [copyState]);
+
+  const copyStratum = useCallback(async () => {
+    if (!poolUrl) return;
+    try {
+      await navigator.clipboard.writeText(poolUrl);
+      setCopyState('copied');
+    } catch {
+      setCopyState('error');
+    }
+  }, [poolUrl]);
 
   const round = insights?.round;
   const payoutEta = insights?.payout_eta;
@@ -129,30 +147,40 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
   const roundProgressPct = Number.isFinite(cappedRoundEffortPct) ? (cappedRoundEffortPct / 250) * 100 : 0;
   return (
     <div id="page-dashboard">
-      <div className="page-header">
-        <span className="page-kicker">{t("m399")}</span>
-        <h1>{t("m400")}</h1>
-        <p className="page-intro">{t("m401")}</p>
-        <p><a href={localizePath('/blog/') + 'estimate-blocknet-mining-rewards/#mining-calculator'}>{t('rewardsCalculator')}</a></p>
-      </div>
-
-      <div className="section">
-        <StatCard
-          label={t('poolFee')}
-          value={poolInfo?.pool_fee_pct != null && Number.isFinite(poolInfo.pool_fee_pct)
-            ? `${poolInfo.pool_fee_pct.toLocaleString(locale, { maximumFractionDigits: 20 })}%`
-            : '-'}
-          id="s-pool-fee"
-        />
-      </div>
-
-      <div className="stratum-bar">
-        <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--muted)' }}>{t("m402")}</span>
-        <span className="endpoint" id="stratum-url">
-          {stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url)}
-        </span>
-        <button className="copy-btn" onClick={copyStratum}>{t("m392")}</button>
-      </div>
+      <header className="dashboard-header">
+        <div className="dashboard-heading">
+          <span className="page-kicker">{t('m001')}</span>
+          <h1>{t('m399')}</h1>
+          <p className="page-intro">{t('dashboardIntro')}</p>
+        </div>
+        <div className={`dashboard-fee${fee === 0 ? ' dashboard-fee--zero' : ''}`}>
+          <span className="dashboard-fee-label">{t('poolFee')}</span>
+          <strong id="s-pool-fee"><bdi>{feeLabel}</bdi></strong>
+        </div>
+        <div className="dashboard-actions page-actions">
+          <a className="btn btn-primary" href={localizePath('/start')}>{t('m002')}</a>
+          <a className="dashboard-calculator" href={localizePath('/blog/') + 'estimate-blocknet-mining-rewards/#mining-calculator'}>
+            {t('rewardsCalculator')}
+            <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+        <div className="dashboard-connection">
+          <span className="dashboard-connection-label">{t('m402')}</span>
+          <div className="copy-field">
+            <code className="copy-field-value" id="stratum-url" dir="ltr">{poolUrl ?? '-'}</code>
+            <button
+              className={`copy-field-btn${copyState === 'copied' ? ' is-copied' : ''}`}
+              type="button"
+              onClick={copyStratum}
+              disabled={!poolUrl}
+              aria-label={t('m387')}
+            >
+              <span role="status">{copyState === 'copied' ? t('m386') : t('m392')}</span>
+            </button>
+          </div>
+          {copyState === 'error' && <p className="dashboard-copy-error" role="alert">{t('copyUnavailable')}</p>}
+        </div>
+      </header>
 
       <div className="stats-card-group">
         <div className="stats-card-group-title">{t("m403")}</div>

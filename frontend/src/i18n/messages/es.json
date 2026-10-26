@@ -299,5 +299,7 @@
   "notFoundDescription": "Este enlace no lleva a ninguna página. Abre el panel, empieza a minar o consulta las guías de minería.",
   "statsDescription": "Consulta el hashrate, las shares y el saldo de tu minero de Blocknet.",
   "rewardsCalculator": "Estima tus recompensas en BNT",
-  "poolFee": "Comisión del pool"
+  "poolFee": "Comisión del pool",
+  "dashboardIntro": "Conecta tu minero y sigue el hashrate, los bloques y los pagos.",
+  "copyUnavailable": "Selecciona la dirección para copiarla manualmente."
 }

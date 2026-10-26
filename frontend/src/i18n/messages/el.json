@@ -299,5 +299,7 @@
   "notFoundDescription": "Αυτός ο σύνδεσμος δεν οδηγεί σε κάποια σελίδα. Ανοίξτε τον πίνακα ελέγχου, ξεκινήστε ή διαβάστε τους οδηγούς εξόρυξης.",
   "statsDescription": "Δείτε το hashrate, τα shares και το υπόλοιπο του miner σας στο Blocknet.",
   "rewardsCalculator": "Εκτιμήστε τις ανταμοιβές σας σε BNT",
-  "poolFee": "Προμήθεια pool"
+  "poolFee": "Προμήθεια pool",
+  "dashboardIntro": "Συνδέστε τον miner σας και παρακολουθήστε hashrate, μπλοκ και πληρωμές.",
+  "copyUnavailable": "Επιλέξτε τη διεύθυνση για να την αντιγράψετε χειροκίνητα."
 }

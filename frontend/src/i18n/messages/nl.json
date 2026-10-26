@@ -299,5 +299,7 @@
   "notFoundDescription": "Deze link leidt niet naar een pagina. Open het dashboard, ga aan de slag of bekijk de mininghandleidingen.",
   "statsDescription": "Bekijk de hashrate, shares en het saldo van je Blocknet-miner.",
   "rewardsCalculator": "Schat je BNT-beloningen",
-  "poolFee": "Poolkosten"
+  "poolFee": "Poolkosten",
+  "dashboardIntro": "Verbind je miner en volg hashrate, blokken en uitbetalingen.",
+  "copyUnavailable": "Selecteer het adres om het handmatig te kopiëren."
 }
