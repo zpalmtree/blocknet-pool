@@ -46,7 +46,12 @@ function estimate() {
   return frame(`${rect(115, 100, 590, 475, '#f9fcf3', 28)}${text(220, 260, 'H/s', 68)}${line('M195 295H405', '#2d6d43', 4)}${text(220, 385, 'H/s', 68)}${text(465, 332, '×', 80)}${text(500, 425, '288', 32, '#789475')}${line('M735 335H835M805 310 835 335 805 360', '#82ba87', 6)}${circle(965, 335, 110, '#b7e29a')}${circle(965, 335, 91, 'none', 'stroke="#639b59" stroke-width="3"')}${text(965, 354, 'BNT', 51, '#204b30', 'text-anchor="middle"')}${line('M180 485H650', '#d4dfca', 3)}${text(185, 535, '≈', 40, '#508459')}${[0, 1, 2, 3, 4, 5, 6].map(i => rect(300 + i * 45, 527 - i * 7, 24, 15 + i * 7, '#a5c88b', 4)).join('')}`, true);
 }
 
+function poolLuck() {
+  return frame(`${rect(90, 85, 1020, 505, '#fbfcf5', 28)}${line('M560 145V535', '#789475', 3, 'stroke-dasharray="10 10"')}${[50, 100, 200].map((n, i) => `${text(155, 225 + i * 135, `${n}%`, 38)}${rect(300, 175 + i * 135, n * 2.6, 70, ['#a2d69b', '#58ac72', '#237a4e'][i], 10)}${cube(340 + n * 2.6, 205 + i * 135, 33)}`).join('')}`);
+}
+
 const illustrations = {
+  'mining-pool-luck-explained': poolLuck,
   'blocknet-block-reward-schedule': rewardSchedule,
   'blocknet-checkpoints-fast-sync': checkpoints,
   'blocknet-fair-launch': fairLaunch,
@@ -77,6 +82,11 @@ export async function buildCovers(slugs, output) {
       sharp(rendered).jpeg({ quality: 88 }).toFile(fileURLToPath(new URL(`${filename}.jpg`, output))),
     ]);
     covers.set(slug, { src: `/blog/covers/${filename}.webp`, small: `/blog/covers/${filename}-small.webp`, social: `/blog/covers/${filename}.jpg` });
+  }
+  if (slugs.includes('mining-pool-luck-explained')) {
+    await sharp(readFileSync(new URL('pool-luck-history.png', imageDir)))
+      .resize(1200).jpeg({ quality: 88 })
+      .toFile(fileURLToPath(new URL('pool-luck-history-20261026.jpg', output)));
   }
   return covers;
 }

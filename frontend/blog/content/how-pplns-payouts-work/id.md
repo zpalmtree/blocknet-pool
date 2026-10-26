@@ -13,7 +13,7 @@ faq:
     a: 'Tidak. Setiap share berada dalam jendela PPLNS selama enam jam setelah dikirim, jadi blok yang ditemukan pool dalam waktu itu masih mengkreditkan Anda. Imbalan yang sudah terkonfirmasi tetap dalam saldo dan dibayarkan setelah mencapai minimum 0,1 BNT.'
   - q: 'Apa arti effort di atas 100% pada halaman luck?'
     a: 'Effort membandingkan pekerjaan pool selama satu ronde dengan kesulitan blok, yaitu jumlah pekerjaan yang diharapkan. Effort di atas 100% berarti ronde lebih lama dari rata-rata, dan di bawah 100% berarti lebih cepat. Keduanya normal, dan selama banyak ronde rata-rata effort mendekati 100%.'
-sourceHash: bd204b6650c5
+sourceHash: 08a99741f46c
 translation: draft
 ---
 

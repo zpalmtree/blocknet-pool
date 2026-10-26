@@ -2,7 +2,7 @@
 title: bntpool.com'da PPLNS ödemeleri nasıl çalışır?
 description: bntpool.com Blocknet madencilerine altı saatlik share penceresiyle PPLNS öder. Ödül paylaşımını, 60 onayı ve 0,1 BNT ödeme alt sınırını öğrenin.
 tags: [Ödemeler, PPLNS, bntpool, Madencilik rehberi]
-sourceHash: bd204b6650c5
+sourceHash: 08a99741f46c
 translation: draft
 faq:
   - q: 'bntpool.com''da PPLNS penceresi ne kadar uzun?'

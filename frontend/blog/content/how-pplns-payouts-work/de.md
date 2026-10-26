@@ -2,7 +2,7 @@
 title: So funktionieren PPLNS-Auszahlungen auf bntpool.com
 description: bntpool.com vergütet Blocknet-Miner mit PPLNS über ein sechsstündiges Share-Fenster. Erfahre, wie Belohnungen aufgeteilt werden, warum 60 Bestätigungen nötig sind und wann 0,1 BNT ausgezahlt werden.
 tags: [Auszahlungen, PPLNS, bntpool, Mining-Anleitung]
-sourceHash: bd204b6650c5
+sourceHash: 08a99741f46c
 translation: draft
 faq:
   - q: 'Wie lang ist das PPLNS-Fenster auf bntpool.com?'

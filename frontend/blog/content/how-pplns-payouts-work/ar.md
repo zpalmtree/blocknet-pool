@@ -2,7 +2,7 @@
 title: كيف تعمل دفعات PPLNS على bntpool.com
 description: يدفع bntpool.com لمعدّني Blocknet بنظام PPLNS ونافذة حصص من ست ساعات. تعرّف على تقسيم المكافآت وسبب انتظار 60 تأكيدًا والحد الأدنى 0.1 BNT.
 tags: [الدفعات, PPLNS, bntpool, دليل التعدين]
-sourceHash: bd204b6650c5
+sourceHash: 08a99741f46c
 translation: draft
 faq:
   - q: 'ما مدة نافذة PPLNS على bntpool.com؟'

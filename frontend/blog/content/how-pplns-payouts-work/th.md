@@ -2,7 +2,7 @@
 title: 'การจ่ายรางวัล PPLNS ของ bntpool.com'
 description: 'bntpool.com จ่ายรางวัล Blocknet แบบ PPLNS โดยนับ share ย้อนหลังหกชั่วโมง ดูวิธีแบ่งรางวัล การรอ 60 การยืนยัน และยอดจ่ายขั้นต่ำ 0.1 BNT'
 tags: ['การจ่ายรางวัล', 'PPLNS', 'bntpool', 'คู่มือขุด']
-sourceHash: bd204b6650c5
+sourceHash: 08a99741f46c
 translation: draft
 faq:
   - q: 'ช่วงเวลา PPLNS ของ bntpool.com ยาวเท่าไร?'

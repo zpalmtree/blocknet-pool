@@ -2,7 +2,7 @@
 title: Jak działają wypłaty PPLNS na bntpool.com
 description: bntpool.com wypłaca nagrody górnikom Blocknetu przez PPLNS z sześciogodzinnym oknem. Poznaj podział nagród, 60 potwierdzeń i minimum 0,1 BNT.
 tags: [Wypłaty, PPLNS, bntpool, Poradnik kopania]
-sourceHash: bd204b6650c5
+sourceHash: 08a99741f46c
 translation: draft
 faq:
   - q: 'Jak długie jest okno PPLNS na bntpool.com?'

@@ -13,7 +13,7 @@ faq:
     a: 'Non. Chaque share reste dans la fenêtre PPLNS pendant six heures après son envoi. Les blocs trouvés pendant ce délai vous créditent encore. Les récompenses déjà confirmées restent dans votre solde et sont payées dès qu’il atteint le minimum de 0,1 BNT.'
   - q: 'Que signifie un effort supérieur à 100 % sur la page de chance ?'
     a: 'L’effort compare le travail du pool pendant une période à la difficulté du bloc, soit le travail attendu. Au-dessus de 100 %, la période a pris plus de temps que la moyenne ; en dessous, elle a été plus rapide. Les deux sont normaux et, sur de nombreuses périodes, l’effort moyen se rapproche de 100 %.'
-sourceHash: bd204b6650c5
+sourceHash: 08a99741f46c
 translation: draft
 ---
 

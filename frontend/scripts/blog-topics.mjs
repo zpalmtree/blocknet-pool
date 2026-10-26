@@ -32,6 +32,7 @@ const groups = {
   ],
   "rewards": [
     "how-pplns-payouts-work",
+    "mining-pool-luck-explained",
     "estimate-blocknet-mining-rewards",
     "blocknet-block-reward-schedule",
     "pool-vs-solo-mining-blocknet"

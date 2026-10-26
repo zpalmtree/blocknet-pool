@@ -2,7 +2,7 @@
 title: Thanh toán PPLNS trên bntpool.com hoạt động thế nào?
 description: bntpool.com trả thưởng thợ đào Blocknet bằng PPLNS với cửa sổ share sáu giờ. Tìm hiểu cách chia thưởng, 60 xác nhận và mức tối thiểu 0,1 BNT.
 tags: [Thanh toán, PPLNS, bntpool, Hướng dẫn đào coin]
-sourceHash: bd204b6650c5
+sourceHash: 08a99741f46c
 translation: draft
 faq:
   - q: 'Cửa sổ PPLNS trên bntpool.com dài bao lâu?'

@@ -2,7 +2,7 @@
 title: 'bntpool.comのPPLNS支払い方式'
 description: 'bntpool.comは6時間のシェアウィンドウを使うPPLNSでBlocknet報酬を分配します。分配方法、60承認を待つ理由、最低支払額0.1 BNTを解説します。'
 tags: ['支払い', 'PPLNS', 'bntpool', 'マイニングガイド']
-sourceHash: bd204b6650c5
+sourceHash: 08a99741f46c
 translation: draft
 faq:
   - q: 'bntpool.comのPPLNSウィンドウは何時間ですか？'
