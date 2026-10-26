@@ -40,3 +40,12 @@ no ongoing incidents. Config backup:
 Deployed revision: `aee60c8`. Deployment metadata marked `dirty=1` solely because
 of an untracked symlink to the existing local Cargo build cache (`target`);
 tracked source was clean. That symlink was removed after deployment.
+
+## Simplified hashrate card
+
+Removed the secondary 30-day effective rate, its tooltip, and unused styling.
+Source revision `649acc8`; deployed revision `e0402ff`. Refreshed and reviewed
+all 18 screenshots. Frontend production build passed. Live browser verification
+confirmed the main rate remains, the secondary label is absent, and the pool fee
+is still 0%. API/UI restarted October 26, 2026 at 12:03:29 AM EDT; Stratum,
+monitor and recovery PIDs stayed unchanged. Health checks passed (266 miners).
