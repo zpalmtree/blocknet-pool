@@ -31,3 +31,7 @@ no language-dependent text or invented dashboard values. Added October 26, 2026.
   miner/pool/node columns with literal protocol method labels. Arrows show login,
   node template delivery, job, share submission, block candidate and reply.
   Conceptual flow, not a packet capture. October 26, 2026.
+
+- `block-confirmations-mining-rewards`: original sequence in `blog-covers.mjs`,
+  showing depth 0, 1, an ellipsis and 60, then confirmation and an account/payment
+  stage. Conceptual timeline, not a live block record. October 26, 2026.

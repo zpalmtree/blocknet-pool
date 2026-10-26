@@ -77,3 +77,11 @@ Hashrate owns speed and units, luck owns round variance, share outcomes owns rej
 | what is Stratum; mining pool protocol | `/blog/stratum-mining-protocol/` | Follow bntpool login, job assignment, share submission and reply stages | Blocknet mining, seine, bntpool |
 
 Pool overview owns pooling and payout models; setup owns connection instructions; difficulty owns target arithmetic; share outcomes owns rejection diagnosis. This article owns the wire conversation. No URL is retargeted.
+
+## Benchmarks and confirmations (October 26, 2026)
+
+| Primary keyword cluster | URL | Search job | Supporting phrases |
+|---|---|---|---|
+| block confirmations; immature mining rewards | `/blog/block-confirmations-mining-rewards/` | Follow chain depth and block identity from pending reward through maturity to a separate payout | Blocknet mining, seine, bntpool |
+
+PPLNS owns allocation, balance threshold and sending rules. This article owns depth counting, maturity timing and block identity, with a worked height timeline. Tracking owns the full account interface. No URL is retargeted.

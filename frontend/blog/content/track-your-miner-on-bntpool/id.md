@@ -11,7 +11,7 @@ faq:
     a: 'Tidak. Endpoint statistik, blok, pembayaran, luck, status dan per penambang menyediakan JSON publik melalui HTTPS, sehingga curl atau dasbor rumah dapat membacanya tanpa mendaftar. Jumlah memakai satuan atomik, jadi bagi 100.000.000 untuk BNT, dan lakukan polling setiap 30 hingga 60 detik.'
   - q: 'Mengapa My Stats menunjukkan Estimated Rewards nol?'
     a: 'Estimated Rewards muncul setelah pool menemukan blok saat share Anda berada dalam jendela pembayaran. Bagi penambang baru mungkin perlu beberapa ronde. Share diterima dan hashrate muncul dahulu, lalu perkiraan imbalan, yang matang menjadi Confirmed Rewards dan dibayar otomatis.'
-sourceHash: f7e0a568c6cf
+sourceHash: '5367192a57e2'
 translation: draft
 ---
 

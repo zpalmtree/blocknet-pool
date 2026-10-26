@@ -2,7 +2,7 @@
 title: Acompanhe seu minerador no bntpool.com
 description: Consulte endereço ou @name no bntpool.com para ver hashrate, shares, saldo e pagamentos. Acompanhe blocos, sorte e disponibilidade ou use a API pública.
 tags: [bntpool, Estatísticas de mineração, API do pool, Blocknet]
-sourceHash: f7e0a568c6cf
+sourceHash: '5367192a57e2'
 translation: draft
 faq:
   - q: 'Por que minha hashrate no bntpool.com difere da mostrada pelo seine?'

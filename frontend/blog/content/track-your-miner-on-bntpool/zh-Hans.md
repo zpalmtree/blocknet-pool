@@ -11,7 +11,7 @@ faq:
     a: '不需要。矿池统计、区块、支付、幸运值、状态以及单个矿工的接口都是通过 HTTPS 提供的公开 JSON，curl 命令或家庭仪表盘无需注册即可读取。金额以最小单位表示，除以 100,000,000 即为 BNT，建议每 30 到 60 秒轮询一次。'
   - q: '为什么 My Stats 显示的 Estimated Rewards 是零？'
     a: '矿池在你的份额处于支付窗口内时找到区块，Estimated Rewards（预估收益）才会出现。对新矿工来说，这可能需要挖几轮。你被接受的份额和算力会最先显示，随后是预估收益，它们成熟后转入 Confirmed Rewards（已确认收益），并自动支付。'
-sourceHash: f7e0a568c6cf
+sourceHash: '5367192a57e2'
 translation: reviewed
 ---
 

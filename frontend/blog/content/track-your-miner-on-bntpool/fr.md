@@ -11,7 +11,7 @@ faq:
     a: 'Non. Les endpoints de statistiques, blocs, paiements, chance, statut et mineurs fournissent du JSON public via HTTPS. Un script curl ou un tableau de bord domestique peut donc les lire sans inscription. Les montants sont en unités atomiques : divisez par 100 000 000 pour obtenir des BNT et interrogez toutes les 30 à 60 secondes.'
   - q: 'Pourquoi My Stats affiche-t-il zéro dans Estimated Rewards ?'
     a: 'Les estimations apparaissent lorsque le pool trouve un bloc avec vos shares dans la fenêtre de paiement. Pour un nouveau mineur, cela peut prendre quelques périodes de minage. Shares acceptés et hashrate apparaissent d’abord, puis les récompenses estimées, qui deviennent Confirmed Rewards à maturité et sont payées automatiquement.'
-sourceHash: f7e0a568c6cf
+sourceHash: '5367192a57e2'
 translation: draft
 ---
 
