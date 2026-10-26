@@ -301,5 +301,8 @@
   "rewardsCalculator": "Schat je BNT-beloningen",
   "poolFee": "Poolkosten",
   "dashboardIntro": "Verbind je miner en volg hashrate, blokken en uitbetalingen.",
-  "copyUnavailable": "Selecteer het adres om het handmatig te kopiëren."
+  "copyUnavailable": "Selecteer het adres om het handmatig te kopiëren.",
+  "browseTopics": "Bladeren op onderwerp",
+  "topicGettingStarted": "Aan de slag",
+  "topicTroubleshooting": "Problemen oplossen"
 }

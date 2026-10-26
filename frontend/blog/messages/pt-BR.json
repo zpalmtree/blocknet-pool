@@ -50,5 +50,11 @@
   "calcAssumptions": "As estimativas consideram mineração contínua com o hashrate atual da rede e 288 blocos por dia. As mudanças programadas de recompensa estão incluídas. As taxas são aplicadas em sequência: bruto × (1 − taxa do minerador) × (1 − taxa do pool). A sorte do pool e o PPLNS afetam quando as recompensas chegam; isto não é um cronograma de pagamentos.",
   "calcNoScript": "Ative o JavaScript para estimativas ao vivo ou use a fórmula abaixo.",
   "calcSource": "Seu hashrate fica neste navegador. Os dados da rede vêm do bntpool.com.",
-  "calcLink": "Estime suas recompensas em BNT"
+  "calcLink": "Estime suas recompensas em BNT",
+  "browseTopics": "Explorar por assunto",
+  "topicGettingStarted": "Primeiros passos",
+  "topicHardware": "Hardware e ajustes",
+  "topicTroubleshooting": "Solução de problemas",
+  "topicRewards": "Recompensas e pagamentos",
+  "topicBlocknet": "Sobre o Blocknet"
 }

@@ -301,5 +301,8 @@
   "rewardsCalculator": "Deine BNT-Belohnungen schätzen",
   "poolFee": "Poolgebühr",
   "dashboardIntro": "Verbinde deinen Miner und verfolge Hashrate, Blöcke und Auszahlungen.",
-  "copyUnavailable": "Markiere die Adresse, um sie manuell zu kopieren."
+  "copyUnavailable": "Markiere die Adresse, um sie manuell zu kopieren.",
+  "browseTopics": "Nach Thema stöbern",
+  "topicGettingStarted": "Erste Schritte",
+  "topicTroubleshooting": "Fehlerbehebung"
 }

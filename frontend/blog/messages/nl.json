@@ -50,5 +50,11 @@
   "calcAssumptions": "De schatting gaat uit van continu minen bij de huidige netwerkhashrate en 288 blokken per dag. Geplande beloningswijzigingen zijn inbegrepen. Kosten worden na elkaar toegepast: bruto × (1 − minerkosten) × (1 − poolkosten). Poolgeluk en PPLNS beïnvloeden wanneer beloningen binnenkomen; dit is geen uitbetalingsschema.",
   "calcNoScript": "Schakel JavaScript in voor actuele schattingen of gebruik de formule hieronder.",
   "calcSource": "Je hashrate blijft in deze browser. Netwerkgegevens komen van bntpool.com.",
-  "calcLink": "Schat je BNT-beloningen"
+  "calcLink": "Schat je BNT-beloningen",
+  "browseTopics": "Bladeren op onderwerp",
+  "topicGettingStarted": "Aan de slag",
+  "topicHardware": "Hardware en afstemming",
+  "topicTroubleshooting": "Problemen oplossen",
+  "topicRewards": "Beloningen en uitbetalingen",
+  "topicBlocknet": "Over Blocknet"
 }

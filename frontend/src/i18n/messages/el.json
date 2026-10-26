@@ -301,5 +301,8 @@
   "rewardsCalculator": "Εκτιμήστε τις ανταμοιβές σας σε BNT",
   "poolFee": "Προμήθεια pool",
   "dashboardIntro": "Συνδέστε τον miner σας και παρακολουθήστε hashrate, μπλοκ και πληρωμές.",
-  "copyUnavailable": "Επιλέξτε τη διεύθυνση για να την αντιγράψετε χειροκίνητα."
+  "copyUnavailable": "Επιλέξτε τη διεύθυνση για να την αντιγράψετε χειροκίνητα.",
+  "browseTopics": "Περιήγηση ανά θέμα",
+  "topicGettingStarted": "Πρώτα βήματα",
+  "topicTroubleshooting": "Αντιμετώπιση προβλημάτων"
 }

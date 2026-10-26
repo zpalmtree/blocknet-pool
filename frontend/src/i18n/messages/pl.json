@@ -301,5 +301,8 @@
   "rewardsCalculator": "Oszacuj swoje nagrody BNT",
   "poolFee": "Opłata puli",
   "dashboardIntro": "Podłącz minera i śledź hashrate, bloki oraz wypłaty.",
-  "copyUnavailable": "Zaznacz adres, aby skopiować go ręcznie."
+  "copyUnavailable": "Zaznacz adres, aby skopiować go ręcznie.",
+  "browseTopics": "Przeglądaj według tematu",
+  "topicGettingStarted": "Pierwsze kroki",
+  "topicTroubleshooting": "Rozwiązywanie problemów"
 }

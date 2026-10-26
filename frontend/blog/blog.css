@@ -65,9 +65,9 @@ img { max-width: 100%; height: auto; }
 .posts a { display: grid; grid-template-columns: minmax(0, 1fr) 220px; align-items: center; gap: 32px; padding: 28px 0; text-decoration: none; }
 .post-copy { min-width: 0; }
 .posts time { font: .82rem/1.4 var(--mono); color: var(--muted); }
-.posts h2 { margin: 6px 0 8px; font-size: 1.5rem; line-height: 1.35; letter-spacing: -.015em; }
+.posts h3 { margin: 6px 0 8px; font-size: 1.5rem; line-height: 1.35; letter-spacing: -.015em; }
 .posts p { margin: 0; color: var(--muted); }
-.posts a:hover h2 { text-decoration: underline 1px; text-underline-offset: 4px; }
+.posts a:hover h3 { text-decoration: underline 1px; text-underline-offset: 4px; }
 .post-cover { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: cover; background: #edf2e5; }
 .posts .post-cover { border: 1px solid var(--border); border-radius: 8px; }
 .article-head { display: grid; grid-template-columns: 1fr 1.1fr; gap: 40px; align-items: center; padding-bottom: 40px; }
@@ -150,3 +150,15 @@ footer a:hover { color: var(--text); }
   .calc-fields > :last-child { grid-column: 1 / -1; }
   .calc-results th, .calc-results td { padding: 10px 4px; font-size: .8rem; }
 }
+
+/* Topic jumps keep every article visible and usable without JavaScript. */
+.topic-nav { margin: -12px 0 40px; }
+.topic-nav p { margin: 0 0 12px; color: var(--muted); font-size: .9rem; }
+.topic-nav ul { display: flex; flex-wrap: wrap; gap: 8px 24px; list-style: none; padding: 0; margin: 0 0 12px; }
+.topic-nav a { display: inline-block; padding-block: 8px; text-underline-offset: 4px; text-decoration-thickness: 1px; }
+.topic-nav a:hover { color: var(--text); }
+.topic-nav .topic-sibling { color: var(--muted); font-size: .9rem; }
+.topic-section > h2 { margin: 0 0 18px; font-size: 1.6rem; scroll-margin-top: 90px; }
+.topic-section > h2:target { text-decoration: underline; text-underline-offset: 6px; text-decoration-thickness: 1px; }
+.topic-section .posts { padding-bottom: 56px; }
+.crumbs { line-height: 1.6; }

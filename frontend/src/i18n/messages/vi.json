@@ -301,5 +301,8 @@
   "rewardsCalculator": "Ước tính phần thưởng BNT của bạn",
   "poolFee": "Phí pool",
   "dashboardIntro": "Kết nối phần mềm đào và theo dõi hashrate, khối cùng các khoản thanh toán.",
-  "copyUnavailable": "Chọn địa chỉ để sao chép thủ công."
+  "copyUnavailable": "Chọn địa chỉ để sao chép thủ công.",
+  "browseTopics": "Duyệt theo chủ đề",
+  "topicGettingStarted": "Bắt đầu",
+  "topicTroubleshooting": "Khắc phục sự cố"
 }

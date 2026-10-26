@@ -50,5 +50,11 @@
   "calcAssumptions": "Estimates assume continuous mining at the current network hashrate and 288 blocks per day. Scheduled reward changes are included. Fees are applied in sequence: gross × (1 − miner fee) × (1 − pool fee). Pool luck and PPLNS affect when rewards arrive; this is not a payout schedule.",
   "calcNoScript": "Enable JavaScript for live estimates, or use the formula below.",
   "calcSource": "Your hashrate stays in this browser. Network data comes from bntpool.com.",
-  "calcLink": "Estimate your BNT rewards"
+  "calcLink": "Estimate your BNT rewards",
+  "browseTopics": "Browse by topic",
+  "topicGettingStarted": "Getting started",
+  "topicHardware": "Hardware & tuning",
+  "topicTroubleshooting": "Troubleshooting",
+  "topicRewards": "Rewards & payouts",
+  "topicBlocknet": "About Blocknet"
 }

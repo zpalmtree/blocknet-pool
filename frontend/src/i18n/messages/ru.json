@@ -301,5 +301,8 @@
   "rewardsCalculator": "Оценить свои награды в BNT",
   "poolFee": "Комиссия пула",
   "dashboardIntro": "Подключите майнер и отслеживайте хешрейт, блоки и выплаты.",
-  "copyUnavailable": "Выделите адрес, чтобы скопировать его вручную."
+  "copyUnavailable": "Выделите адрес, чтобы скопировать его вручную.",
+  "browseTopics": "Выбрать тему",
+  "topicGettingStarted": "Начало работы",
+  "topicTroubleshooting": "Решение проблем"
 }

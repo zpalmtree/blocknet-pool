@@ -50,5 +50,11 @@
   "calcAssumptions": "Les estimations supposent un minage continu au hashrate actuel du réseau et 288 blocs par jour. Les changements de récompense prévus sont inclus. Les frais s’appliquent successivement : brut × (1 − frais du mineur) × (1 − frais du pool). La chance du pool et PPLNS influencent l’arrivée des récompenses ; il ne s’agit pas d’un calendrier de versements.",
   "calcNoScript": "Activez JavaScript pour les estimations en direct, ou utilisez la formule ci-dessous.",
   "calcSource": "Votre hashrate reste dans ce navigateur. Les données réseau proviennent de bntpool.com.",
-  "calcLink": "Estimer vos récompenses en BNT"
+  "calcLink": "Estimer vos récompenses en BNT",
+  "browseTopics": "Parcourir par sujet",
+  "topicGettingStarted": "Premiers pas",
+  "topicHardware": "Matériel et réglages",
+  "topicTroubleshooting": "Dépannage",
+  "topicRewards": "Récompenses et paiements",
+  "topicBlocknet": "À propos de Blocknet"
 }

@@ -50,5 +50,11 @@
   "calcAssumptions": "現在のネットワークハッシュレートでの連続採掘と1日288ブロックを仮定します。予定されている報酬変更も含みます。手数料は順に適用します：総報酬 ×（1 − マイナー手数料）×（1 − プール手数料）。プールの運とPPLNSによって報酬を受け取る時期は変わります。これは支払いスケジュールではありません。",
   "calcNoScript": "最新データによる見積もりにはJavaScriptを有効にするか、下の計算式を使ってください。",
   "calcSource": "入力したハッシュレートはこのブラウザー内に留まります。ネットワークデータはbntpool.comから取得します。",
-  "calcLink": "BNT報酬を見積もる"
+  "calcLink": "BNT報酬を見積もる",
+  "browseTopics": "トピックから探す",
+  "topicGettingStarted": "はじめに",
+  "topicHardware": "ハードウェアと調整",
+  "topicTroubleshooting": "トラブルシューティング",
+  "topicRewards": "報酬と支払い",
+  "topicBlocknet": "Blocknetについて"
 }

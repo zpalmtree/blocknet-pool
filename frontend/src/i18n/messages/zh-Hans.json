@@ -301,5 +301,8 @@
   "rewardsCalculator": "估算你的 BNT 奖励",
   "poolFee": "矿池费用",
   "dashboardIntro": "连接矿工软件，查看算力、区块和付款。",
-  "copyUnavailable": "选中地址以手动复制。"
+  "copyUnavailable": "选中地址以手动复制。",
+  "browseTopics": "按主题浏览",
+  "topicGettingStarted": "入门指南",
+  "topicTroubleshooting": "故障排查"
 }

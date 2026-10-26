@@ -301,5 +301,8 @@
   "rewardsCalculator": "ประมาณรางวัล BNT ของคุณ",
   "poolFee": "ค่าธรรมเนียมพูล",
   "dashboardIntro": "เชื่อมต่อโปรแกรมขุดและติดตามแฮชเรต บล็อก และการจ่ายรางวัล",
-  "copyUnavailable": "เลือกที่อยู่เพื่อคัดลอกด้วยตนเอง"
+  "copyUnavailable": "เลือกที่อยู่เพื่อคัดลอกด้วยตนเอง",
+  "browseTopics": "เลือกตามหัวข้อ",
+  "topicGettingStarted": "เริ่มต้นใช้งาน",
+  "topicTroubleshooting": "การแก้ไขปัญหา"
 }

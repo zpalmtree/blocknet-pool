@@ -301,5 +301,8 @@
   "rewardsCalculator": "قدّر مكافآتك من BNT",
   "poolFee": "رسوم مجمع التعدين",
   "dashboardIntro": "وصّل برنامج التعدين وتابع معدل التجزئة والكتل والمكافآت.",
-  "copyUnavailable": "حدد العنوان لنسخه يدويًا."
+  "copyUnavailable": "حدد العنوان لنسخه يدويًا.",
+  "browseTopics": "تصفح حسب الموضوع",
+  "topicGettingStarted": "البدء",
+  "topicTroubleshooting": "استكشاف الأخطاء وإصلاحها"
 }

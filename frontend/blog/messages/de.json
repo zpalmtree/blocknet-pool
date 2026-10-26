@@ -50,5 +50,11 @@
   "calcAssumptions": "Die Schätzung setzt durchgehendes Mining bei aktueller Netzwerk-Hashrate und 288 Blöcken pro Tag voraus. Geplante Änderungen der Blockbelohnung sind enthalten. Gebühren werden nacheinander angewandt: Brutto × (1 − Miner-Gebühr) × (1 − Pool-Gebühr). Pool-Glück und PPLNS beeinflussen den Zeitpunkt der Belohnungen; dies ist kein Auszahlungsplan.",
   "calcNoScript": "Aktiviere JavaScript für Live-Schätzungen oder nutze die Formel unten.",
   "calcSource": "Deine Hashrate bleibt in diesem Browser. Die Netzwerkdaten stammen von bntpool.com.",
-  "calcLink": "Deine BNT-Belohnungen schätzen"
+  "calcLink": "Deine BNT-Belohnungen schätzen",
+  "browseTopics": "Nach Thema stöbern",
+  "topicGettingStarted": "Erste Schritte",
+  "topicHardware": "Hardware & Optimierung",
+  "topicTroubleshooting": "Fehlerbehebung",
+  "topicRewards": "Belohnungen & Auszahlungen",
+  "topicBlocknet": "Über Blocknet"
 }

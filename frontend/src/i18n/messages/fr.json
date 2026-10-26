@@ -301,5 +301,8 @@
   "rewardsCalculator": "Estimer vos récompenses en BNT",
   "poolFee": "Frais du pool",
   "dashboardIntro": "Connectez votre mineur et suivez le hashrate, les blocs et les paiements.",
-  "copyUnavailable": "Sélectionnez l’adresse pour la copier manuellement."
+  "copyUnavailable": "Sélectionnez l’adresse pour la copier manuellement.",
+  "browseTopics": "Parcourir par sujet",
+  "topicGettingStarted": "Premiers pas",
+  "topicTroubleshooting": "Dépannage"
 }

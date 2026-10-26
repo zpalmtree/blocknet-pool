@@ -79,3 +79,13 @@ screenshot in `blog/images/` or a language-neutral editorial diagram. The build 
 responsive WebP covers and a per-article JPEG social image, embeds them with the blog, and
 fails if a published post has no cover. The index follows the seine blog: dated list rows with a thumbnail at the inline end.
 Below 640px the rows show text only; article headers retain the full cover at every width. Document screenshot provenance in `images/README.md`.
+
+## Topic navigation
+
+`../scripts/blog-topics.mjs` assigns one topic to each published source slug.
+Add new articles there; an unassigned article fails the build. All translations
+reuse that assignment and translate the topic names in the interface catalogs.
+Indexes keep every article in static HTML, newest first within its topic. Fragment
+links work without JavaScript; article breadcrumbs link back to the topic.
+Hardware links lead to the matching Seine language; Seine links back to rewards.
+No extra category URLs or sitemap entries are created.

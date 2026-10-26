@@ -50,5 +50,11 @@
   "calcAssumptions": "Tahminler, ağın mevcut hash gücünde kesintisiz madencilik ve günde 288 blok varsayar. Planlı ödül değişiklikleri dahildir. Ücretler sırayla uygulanır: brüt × (1 − madenci ücreti) × (1 − havuz ücreti). Havuz şansı ve PPLNS, ödüllerin geliş zamanını etkiler; bu bir ödeme takvimi değildir.",
   "calcNoScript": "Canlı tahminler için JavaScript’i etkinleştirin veya aşağıdaki formülü kullanın.",
   "calcSource": "Hash gücünüz bu tarayıcıda kalır. Ağ verileri bntpool.com’dan gelir.",
-  "calcLink": "BNT ödüllerinizi tahmin edin"
+  "calcLink": "BNT ödüllerinizi tahmin edin",
+  "browseTopics": "Konuya göre göz at",
+  "topicGettingStarted": "Başlangıç",
+  "topicHardware": "Donanım ve ayarlar",
+  "topicTroubleshooting": "Sorun giderme",
+  "topicRewards": "Ödüller ve ödemeler",
+  "topicBlocknet": "Blocknet hakkında"
 }

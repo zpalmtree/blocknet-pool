@@ -50,5 +50,11 @@
   "calcAssumptions": "Perkiraan mengasumsikan mining terus-menerus pada hashrate jaringan saat ini dan 288 blok per hari. Perubahan imbalan terjadwal sudah diperhitungkan. Biaya diterapkan berurutan: bruto × (1 − biaya miner) × (1 − biaya pool). Keberuntungan pool dan PPLNS memengaruhi kapan imbalan diterima; ini bukan jadwal pembayaran.",
   "calcNoScript": "Aktifkan JavaScript untuk perkiraan langsung, atau gunakan rumus di bawah.",
   "calcSource": "Hashrate Anda tetap di browser ini. Data jaringan berasal dari bntpool.com.",
-  "calcLink": "Perkirakan imbalan BNT Anda"
+  "calcLink": "Perkirakan imbalan BNT Anda",
+  "browseTopics": "Jelajahi menurut topik",
+  "topicGettingStarted": "Mulai menambang",
+  "topicHardware": "Perangkat keras & penyetelan",
+  "topicTroubleshooting": "Pemecahan masalah",
+  "topicRewards": "Imbalan & pembayaran",
+  "topicBlocknet": "Tentang Blocknet"
 }

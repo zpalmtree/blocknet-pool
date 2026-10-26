@@ -301,5 +301,8 @@
   "rewardsCalculator": "Stima le tue ricompense in BNT",
   "poolFee": "Commissione del pool",
   "dashboardIntro": "Collega il tuo miner e segui hashrate, blocchi e pagamenti.",
-  "copyUnavailable": "Seleziona l’indirizzo per copiarlo manualmente."
+  "copyUnavailable": "Seleziona l’indirizzo per copiarlo manualmente.",
+  "browseTopics": "Esplora per argomento",
+  "topicGettingStarted": "Primi passi",
+  "topicTroubleshooting": "Risoluzione dei problemi"
 }

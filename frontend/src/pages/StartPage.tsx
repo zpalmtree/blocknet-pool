@@ -84,6 +84,10 @@ export function StartPage({ poolInfo }: StartPageProps) {
       </div>
 
       <div className="quickstart-notes">
+        <div role="navigation" aria-label={t('browseTopics')}>
+          <p><a href={`${localizePath('/blog/')}#getting-started`}>{t('topicGettingStarted')}</a></p>
+          <p><a href={`${localizePath('/blog/')}#troubleshooting`}>{t('topicTroubleshooting')}</a></p>
+        </div>
         <p><a href={`https://seineminer.com/${localeInfo.path ? `${localeInfo.path}/` : ""}blog/mine-blocknet-on-windows/`}>{t("windowsGuide")}</a></p>
         <p><a href={`${localizePath("/blog/")}track-your-miner-on-bntpool/#zero-hashrate`}>{t("minerHelp")}</a></p>
         <p>{tx("m463", [<a href="https://blocknet.id" target="_blank" rel="noopener">{t("m462")}</a>, <a href={localizePath("/stats")}>{t("m005")}</a>])}</p>

@@ -301,5 +301,8 @@
   "rewardsCalculator": "Perkirakan imbalan BNT Anda",
   "poolFee": "Biaya pool",
   "dashboardIntro": "Hubungkan miner Anda dan pantau hashrate, blok, serta pembayaran.",
-  "copyUnavailable": "Pilih alamat untuk menyalinnya secara manual."
+  "copyUnavailable": "Pilih alamat untuk menyalinnya secara manual.",
+  "browseTopics": "Jelajahi menurut topik",
+  "topicGettingStarted": "Mulai menambang",
+  "topicTroubleshooting": "Pemecahan masalah"
 }

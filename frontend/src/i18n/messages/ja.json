@@ -301,5 +301,8 @@
   "rewardsCalculator": "BNT報酬を見積もる",
   "poolFee": "プール手数料",
   "dashboardIntro": "マイナーを接続して、ハッシュレート、ブロック、支払いを確認しましょう。",
-  "copyUnavailable": "アドレスを選択して手動でコピーしてください。"
+  "copyUnavailable": "アドレスを選択して手動でコピーしてください。",
+  "browseTopics": "トピックから探す",
+  "topicGettingStarted": "はじめに",
+  "topicTroubleshooting": "トラブルシューティング"
 }

@@ -301,5 +301,8 @@
   "rewardsCalculator": "Estimate your BNT rewards",
   "poolFee": "Pool fee",
   "dashboardIntro": "Connect your miner and track hashrate, blocks and payouts.",
-  "copyUnavailable": "Select the address to copy it manually."
+  "copyUnavailable": "Select the address to copy it manually.",
+  "browseTopics": "Browse by topic",
+  "topicGettingStarted": "Getting started",
+  "topicTroubleshooting": "Troubleshooting"
 }

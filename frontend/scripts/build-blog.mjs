@@ -8,6 +8,7 @@ import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'no
 import { createHash } from 'node:crypto';
 import { Marked } from 'marked';
 import { build } from 'vite';
+import { TOPICS, topicFor } from './blog-topics.mjs';
 import { calculatorHtml } from './rewards-calculator.mjs';
 import { buildCovers } from './blog-covers.mjs';
 import {
@@ -148,6 +149,7 @@ function loadPosts(locale) {
 function postPage(p, bySlug) {
   const lang = def(p.locale).htmlLang;
   const blog = blogPath(p.locale);
+  const topic = topicFor(p.slug);
   const meta = [`<time datetime="${iso(p.date)}">${nice(p.date, lang)}</time>`];
   if (iso(p.updated) !== iso(p.date)) meta.push(`${esc(t(p.locale, 'updated'))} <time datetime="${iso(p.updated)}">${nice(p.updated, lang)}</time>`);
   meta.push(esc(t(p.locale, 'minutes', { n: readingMinutes(p.body) })));
@@ -171,7 +173,7 @@ function postPage(p, bySlug) {
     body: `<main class="wrap">
 <header class="page-head article-head">
   <div class="article-heading">
-  <nav class="crumbs" aria-label="${esc(t(p.locale, 'breadcrumb'))}"><a href="${poolPath('/', p.locale)}">bntpool.com</a> / <a href="${blog}">${esc(t(p.locale, 'blogTitle'))}</a></nav>
+  <nav class="crumbs" aria-label="${esc(t(p.locale, 'breadcrumb'))}"><a href="${poolPath('/', p.locale)}">bntpool.com</a> / <a href="${blog}">${esc(t(p.locale, 'blogTitle'))}</a> / <a href="${blog}#${topic.id}">${esc(t(p.locale, topic.key))}</a></nav>
   <h1>${esc(p.title)}</h1>
   <p class="lead">${esc(p.description)}</p>
   <div class="meta">${meta.join(' · ')}</div>
@@ -194,11 +196,12 @@ function coverImage(post, eager = false, decorative = false) {
 function indexPage(locale, posts) {
   const lang = def(locale).htmlLang;
   const url = BASE_URL + blogPath(locale);
-  const items = posts.map((p) => `<li><a href="${p.path}">
+  const items = (members) => members.map((p) => `<li><a href="${p.path}">
     <div class="post-copy"><time datetime="${iso(p.date)}">${nice(p.date, lang)}</time>
-    <h2>${esc(p.title)}</h2><p>${esc(p.description)}</p></div>
+    <h3>${esc(p.title)}</h3><p>${esc(p.description)}</p></div>
     ${coverImage(p, false, true)}
   </a></li>`).join('\n') || `<li><p>${esc(t(locale, 'blogEmpty'))}</p></li>`;
+  const groups = TOPICS.map(topic => ({ ...topic, posts: posts.filter(p => topicFor(p.slug).id === topic.id) })).filter(g => g.posts.length);
   const schema = [{ '@context': 'https://schema.org', '@type': 'Blog', '@id': `${url}#blog`, name: t(locale, 'rssTitle'), url, inLanguage: lang, publisher: ORG,
     blogPost: posts.map((p) => ({ '@type': 'BlogPosting', headline: p.title, url: p.url, datePublished: iso(p.date) })) }];
   return page({
@@ -209,9 +212,13 @@ function indexPage(locale, posts) {
   <h1>${esc(t(locale, 'blogTitle'))}</h1>
   <p class="lead">${esc(t(locale, 'blogSub'))}</p>
 </header>
-<ul class="posts">
-${items}
-</ul>
+<nav class="topic-nav" aria-label="${esc(t(locale, 'browseTopics'))}">
+<p>${esc(t(locale, 'browseTopics'))}</p>
+<ul>${groups.map(g => `<li><a href="#${g.id}">${esc(t(locale, g.key))}</a></li>`).join('')}</ul>
+<a class="topic-sibling" href="https://seineminer.com/${def(locale).path ? def(locale).path + '/' : ''}blog/#hardware">${esc(t(locale, 'topicHardware'))} · seine ↗</a>
+</nav>
+${!posts.length ? `<p>${esc(t(locale, 'blogEmpty'))}</p>` : ''}
+${groups.map(g => `<section class="topic-section" aria-labelledby="${g.id}"><h2 id="${g.id}" tabindex="-1">${esc(t(locale, g.key))}</h2><ul class="posts">${items(g.posts)}</ul></section>`).join('')}
 </main>`,
   });
 }
