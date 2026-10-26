@@ -1,6 +1,6 @@
 # Pool dashboard header showcase
 
-Source revision: `946b3d15e9d86601a144377af7f90bfcdb0d0225`. Captures use the real application and synthetic data.
+Source revision: `ebb13223274e45a801bd014d6b79ac588071fae2`. Captures use the real application and synthetic data.
 All 26 desktop/mobile captures were reviewed. This stable showcase also covers
 the pool fee display and the simplified main hashrate card from earlier updates.
 
@@ -24,7 +24,7 @@ The header combines the title, API-backed fee badge, Get Started, rewards
 calculator, and Stratum address. It reuses existing button/copy-field styles.
 Copy reports success only after the clipboard promise resolves and shows manual
 copying guidance on failure. During loading/errors the endpoint is unknown and
-Copy is disabled. Unknown and nonzero fees use neutral styling.
+Copy is disabled. The header uses neutral colors for every fee value, actions, focus and copy feedback.
 
 20 frontend tests, TypeScript and the production build passed. Browser checks
 covered desktop/mobile states, 320px in ten additional languages, localized
@@ -40,4 +40,4 @@ miner fee is committed but still needs a separate release.
 
 ## Deployment verification
 
-Deployed October 26, 2026 at 12:22:29 AM EDT (API/UI only), revision 7db14a6. Live desktop/mobile checks passed: compact header, 0% pool fee, correct action links, and no overflow. Health checks passed with 268 connected miners. Stratum, monitor and recovery PIDs were unchanged; no daemon restart.
+Neutral header deployment verification pending.
