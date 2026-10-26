@@ -9,7 +9,7 @@ faq:
     a: 'Con la misma dirección, su historial de shares se agrupa bajo ese nombre. Así resulta más difícil identificar qué máquina produce una lectura. Asigna un nombre diferente a cada instalación y reiníciala con él; los shares ya registrados conservan su etiqueta original.'
   - q: '¿Añadir otro equipo divide mi pago?'
     a: 'Los nombres organizan la actividad mostrada y no crean saldos independientes bajo una misma dirección. El trabajo válido de los ordenadores contribuye a la participación PPLNS de esa dirección, cuyo saldo sigue las reglas normales de confirmación y pago del pool.'
-sourceHash: 'e3e53f4af4c1'
+sourceHash: 'a07a17533ad2'
 translation: draft
 ---
 

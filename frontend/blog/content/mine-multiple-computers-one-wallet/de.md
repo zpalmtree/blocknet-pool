@@ -9,7 +9,7 @@ faq:
     a: 'Unter derselben Adresse wird ihre Share-Historie unter diesem Namen zusammengefasst. Dadurch lässt sich eine Anzeige schwerer einem Rechner zuordnen. Gib jeder Installation einen eigenen Namen und starte sie damit neu. Bereits gespeicherte Shares behalten ihre ursprüngliche Bezeichnung.'
   - q: 'Teilt ein zusätzlicher Rechner meine Auszahlung auf?'
     a: 'Gerätenamen ordnen die angezeigte Mining-Aktivität und erzeugen keine getrennten Guthaben unter derselben Adresse. Gültige Arbeit deiner Rechner trägt zur PPLNS-Beteiligung dieser Adresse bei. Für ihr Guthaben gelten weiterhin die üblichen Bestätigungs- und Auszahlungsregeln des Pools.'
-sourceHash: 'e3e53f4af4c1'
+sourceHash: 'a07a17533ad2'
 translation: draft
 ---
 

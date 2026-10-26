@@ -9,7 +9,7 @@ faq:
     a: 'Di bawah alamat yang sama, riwayat share keduanya dikelompokkan berdasarkan nama itu. Akibatnya mesin di balik suatu pembacaan lebih sulit dikenali. Berikan nama berbeda untuk tiap instalasi dan mulai ulang dengan nama itu; share lama mempertahankan label semula.'
   - q: 'Apakah mesin tambahan membagi pembayaran saya?'
     a: 'Nama mengatur tampilan aktivitas mining dan tidak membuat saldo terpisah di bawah alamat yang sama. Pekerjaan valid dari komputer Anda berkontribusi pada partisipasi PPLNS alamat tersebut. Saldo mengikuti aturan konfirmasi dan pembayaran normal pool.'
-sourceHash: 'e3e53f4af4c1'
+sourceHash: 'a07a17533ad2'
 translation: draft
 ---
 

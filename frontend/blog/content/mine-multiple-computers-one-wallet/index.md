@@ -2,14 +2,14 @@
 title: 'Mine Blocknet from multiple computers to one wallet'
 description: 'Add a second Blocknet miner to the same wallet on bntpool.com. Name each computer, verify its shares, understand combined rewards and fix duplicate rig names.'
 date: 2026-10-26
-tags: ['Mining guide', 'rigs', 'Setup']
+tags: ['Mining guide', 'Rigs', 'Setup']
 faq:
   - q: 'Do I need a separate wallet for each computer?'
     a: 'No. Each computer can use the same receiving address on bntpool.com, while a different rig name identifies each mining setup. The pool accounts for rewards by address. You only need the receiving address or your Blocknet ID on the mining machines, not the wallet recovery phrase.'
   - q: 'What happens if two miners use the same rig name?'
     a: 'Under the same address, their share history is grouped under the same rig name. That makes it harder to identify the machine behind a reading. Assign a distinct name to each setup and restart it with that name; already recorded shares keep their original label.'
   - q: 'Does adding another rig split my payout?'
-    a: 'rig names organize the display of mining activity. They do not create separate reward balances under the same address. Valid work from your computers contributes to that address''s PPLNS participation, and its balance follows the pool''s normal confirmation and payout rules.'
+    a: 'Rig names organize the display of mining activity. They do not create separate reward balances under the same address. Valid work from your computers contributes to that address''s PPLNS participation, and its balance follows the pool''s normal confirmation and payout rules.'
 related: [mine-blocknet-on-bntpool, track-your-miner-on-bntpool, how-pplns-payouts-work, accepted-rejected-stale-shares]
 ---
 
@@ -63,7 +63,7 @@ For a missing machine, compare its actual resolved address, pool endpoint and ri
 
 ## How do combined rewards and payouts work?
 
-Valid work from the computers contributes to the same address's participation in the pool's PPLNS window. rig names help you track the contribution; they do not create separate payout balances. Adding a machine adds whatever useful work it actually submits, not a fixed reward per device or per name. Machines with different hardware and uptime can contribute different amounts, and more names alone do not increase earned work.
+Valid work from the computers contributes to the same address's participation in the pool's PPLNS window. Rig names help you track the contribution; they do not create separate payout balances. Adding a machine adds whatever useful work it actually submits, not a fixed reward per device or per name. Machines with different hardware and uptime can contribute different amounts, and more names alone do not increase earned work.
 
 The [PPLNS guide](/blog/how-pplns-payouts-work/) explains allocation when the pool finds a block. Confirmation and payout rules still apply to the combined address balance. You do not need to combine wallets or transfer balances between rig names after adding a computer. Before leaving the setup running, check the destination, a distinct name and accepted shares on every machine. Keep that small checklist when you add the next one.
 
