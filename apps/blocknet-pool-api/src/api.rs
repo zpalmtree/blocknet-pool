@@ -1003,7 +1003,7 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
         .route("/blog/", get(crate::blog::handle_blog))
         .route("/blog/*path", get(crate::blog::handle_blog))
         .route("/sitemap.xml", get(handle_sitemap_xml))
-        .route("/ui-assets/:name", get(handle_ui_asset))
+        .route("/ui-assets/*name", get(handle_ui_asset))
         .route("/api/info", get(handle_info))
         .route(
             "/api/site-events",

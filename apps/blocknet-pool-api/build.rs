@@ -39,7 +39,35 @@ fn main() {
     }
 
     verify_ui_bundle(&frontend_dir, &frontend_src_dir, &frontend_dist_dir);
+    embed_languages(&frontend_dist_dir);
     embed_blog(&frontend_dir, &frontend_dist_dir.join("blog"));
+}
+
+// Vite's ?url imports emit content-hashed catalogs instead of putting all
+// languages into app.js. Embed the exact filenames; never read request paths.
+fn embed_languages(frontend_dist_dir: &Path) {
+    let mut files = walk_files(&frontend_dist_dir.join("assets"));
+    files.sort();
+    let mut entries = String::new();
+    for file in files {
+        if file.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        track_path(&file);
+        let name = file.file_name().expect("catalog filename").to_string_lossy();
+        entries.push_str(&format!(
+            "    ({:?}, include_bytes!({:?})),\n",
+            format!("assets/{name}"),
+            file.display().to_string()
+        ));
+    }
+    assert!(!entries.is_empty(), "missing built language catalogs");
+    let out = PathBuf::from(env::var("OUT_DIR").expect("out dir")).join("ui_languages.rs");
+    fs::write(
+        out,
+        format!("static UI_LANGUAGES: &[(&str, &[u8])] = &[\n{entries}];\n"),
+    )
+    .expect("write ui_languages.rs");
 }
 
 /// Embed the pre-rendered blog (frontend/dist/blog, written by scripts/build-blog.mjs) as a

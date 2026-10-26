@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { LOCALES, LANGUAGE_PREFERENCE_KEY, languageUrl, locale, localeInfo, rememberLanguage, t } from '../i18n';
 import { preferredLanguage } from '../i18n/core';
 
-const blogMessages = import.meta.glob('../../blog/messages/*.json', { eager: true, import: 'default' }) as Record<string, Record<string, string>>;
+// Keep the native-language offer copy; discard unrelated blog translations.
+const prompts = import.meta.glob('../../blog/messages/*.json', { eager: true, import: 'suggestPrompt' }) as Record<string, string>;
+const actions = import.meta.glob('../../blog/messages/*.json', { eager: true, import: 'suggestAction' }) as Record<string, string>;
 
 export function LanguageControl() {
   const menu = useRef<HTMLDetailsElement>(null);
@@ -50,14 +52,14 @@ export function LanguageOffer() {
   });
   if (!target) return null;
   const item = LOCALES.find((entry) => entry.code === target)!;
-  const copy = blogMessages[`../../blog/messages/${target}.json`];
+  const key = `../../blog/messages/${target}.json`;
   return (
     <aside className="pool-language-offer" dir="ltr" aria-label={t('languageOfferLabel')}>
-      <span lang={item.htmlLang} dir={item.dir}>{copy.suggestPrompt}</span>
+      <span lang={item.htmlLang} dir={item.dir}>{prompts[key]}</span>
       <div className="pool-language-offer__actions">
         <a className="btn btn-primary" lang={item.htmlLang} dir={item.dir}
           href={languageUrl(location.pathname + location.search + location.hash, target)}
-          onClick={() => rememberLanguage(target)}>{copy.suggestAction}</a>
+          onClick={() => rememberLanguage(target)}>{actions[key]}</a>
         <button className="btn btn-secondary" type="button" onClick={() => { rememberLanguage('en'); setTarget(null); }}>
           {t('keepEnglish')}
         </button>

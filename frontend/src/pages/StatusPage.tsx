@@ -15,26 +15,25 @@ interface StatusPageProps {
 type StatusServiceKey = "public_http" | "api" | "stratum" | "database" | "daemon";
 type UptimeRow = StatusResponse["uptime"][number];
 
-const REACHABILITY_SERVICES: { label: string; key: StatusServiceKey }[] = [
-  { label: t("m541"), key: "public_http" },
-  { label: "API", key: "api" },
-  { label: t("m402"), key: "stratum" },
-  { label: t("m542"), key: "database" },
-  { label: t("m543"), key: "daemon" },
-];
-
-const UPTIME_COLUMNS: { label: string; value: (row: UptimeRow) => ReactNode }[] = [
-  { label: t("m541"), value: (row) => formatPct(row.public_http_up_pct, 2) },
-  { label: "API", value: (row) => formatPct(row.api_up_pct, 2) },
-  { label: t("m402"), value: (row) => formatPct(row.stratum_up_pct, 2) },
-  { label: t("m403"), value: (row) => formatPct(row.pool_up_pct, 2) },
-  { label: t("m542"), value: (row) => formatPct(row.database_up_pct, 2) },
-  { label: t("m543"), value: (row) => formatPct(row.daemon_up_pct, 2) },
-  { label: t("m544"), value: (row) => row.sample_count },
-  { label: t("m545"), value: (row) => row.external_sample_count },
-];
-
 export function StatusPage({ api, liveTick }: StatusPageProps) {
+  const REACHABILITY_SERVICES: { label: string; key: StatusServiceKey }[] = [
+    { label: t("m541"), key: "public_http" },
+    { label: "API", key: "api" },
+    { label: t("m402"), key: "stratum" },
+    { label: t("m542"), key: "database" },
+    { label: t("m543"), key: "daemon" },
+  ];
+
+  const UPTIME_COLUMNS: { label: string; value: (row: UptimeRow) => ReactNode }[] = [
+    { label: t("m541"), value: (row) => formatPct(row.public_http_up_pct, 2) },
+    { label: "API", value: (row) => formatPct(row.api_up_pct, 2) },
+    { label: t("m402"), value: (row) => formatPct(row.stratum_up_pct, 2) },
+    { label: t("m403"), value: (row) => formatPct(row.pool_up_pct, 2) },
+    { label: t("m542"), value: (row) => formatPct(row.database_up_pct, 2) },
+    { label: t("m543"), value: (row) => formatPct(row.daemon_up_pct, 2) },
+    { label: t("m544"), value: (row) => row.sample_count },
+    { label: t("m545"), value: (row) => row.external_sample_count },
+  ];
   const [status, setStatus] = useState<StatusResponse | null>(null);
 
   const loadStatus = useCallback(async () => {

@@ -16,6 +16,7 @@ const UI_ASSET_APP_CSS: &str =
     include_str!(concat!(env!("BLOCKNET_POOL_FRONTEND_DIST_DIR"), "/app.css"));
 const UI_ASSET_POOL_ENTERED_PNG: &[u8] = include_bytes!("ui/assets/pool-entered.png");
 const UI_ASSET_MINING_TUI_PNG: &[u8] = include_bytes!("ui/assets/mining-tui.png");
+include!(concat!(env!("OUT_DIR"), "/ui_languages.rs"));
 
 /// Per-route social preview cards, served from `/ui-assets/<name>`.
 const OG_IMAGES: &[(&str, &[u8])] = &[
@@ -364,6 +365,16 @@ pub(crate) async fn handle_favicon_svg() -> impl IntoResponse {
 }
 
 pub(crate) async fn handle_ui_asset(Path(name): Path<String>) -> Response {
+    if let Some((_, bytes)) = UI_LANGUAGES.iter().find(|(path, _)| *path == name) {
+        return (
+            [
+                (header::CONTENT_TYPE, "application/json; charset=utf-8"),
+                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+            ],
+            *bytes,
+        )
+            .into_response();
+    }
     match name.as_str() {
         "app.js" => (
             [
@@ -417,6 +428,47 @@ pub(crate) async fn handle_ui_asset(Path(name): Path<String>) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn hashed_language_assets_are_embedded_complete_and_cacheable() {
+        assert_eq!(UI_LANGUAGES.len(), 19);
+        let english: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../frontend/src/i18n/messages/en.json"
+        ))
+        .unwrap();
+        for (name, expected) in UI_LANGUAGES {
+            let response = handle_ui_asset(Path((*name).to_owned())).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response.headers()[header::CONTENT_TYPE],
+                "application/json; charset=utf-8"
+            );
+            assert_eq!(
+                response.headers()[header::CACHE_CONTROL],
+                "public, max-age=31536000, immutable"
+            );
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert_eq!(body.as_ref(), *expected);
+            let catalog: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(
+                catalog.as_object().unwrap().keys().collect::<Vec<_>>(),
+                english.as_object().unwrap().keys().collect::<Vec<_>>()
+            );
+        }
+        for name in [
+            "assets/missing.json",
+            "assets/../../index.html",
+            "index.html",
+            "chunks/missing.js",
+        ] {
+            assert_eq!(
+                handle_ui_asset(Path(name.to_owned())).await.status(),
+                StatusCode::NOT_FOUND
+            );
+        }
+    }
 
     #[tokio::test]
     async fn known_spa_routes_keep_success_status_with_queries_and_trailing_slashes() {

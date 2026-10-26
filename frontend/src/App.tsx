@@ -18,18 +18,17 @@ import { StatusPage } from './pages/StatusPage';
 import { StatsPage } from './pages/StatsPage';
 import type { InfoResponse, Route } from './types';
 
-const NAV_ITEMS: { route: Route; label: string }[] = [
-  { route: 'dashboard', label: t("m001") },
-  { route: 'start', label: t("m002") },
-  { route: 'blocks', label: t("m003") },
-  { route: 'payouts', label: t("m004") },
-  { route: 'stats', label: t("m005") },
-  { route: 'status', label: t("m006") },
-  { route: 'checkpoints', label: t("m007") },
-  { route: 'admin', label: t("m008") },
-];
-
 export function App() {
+  const NAV_ITEMS: { route: Route; label: string }[] = [
+    { route: 'dashboard', label: t("m001") },
+    { route: 'start', label: t("m002") },
+    { route: 'blocks', label: t("m003") },
+    { route: 'payouts', label: t("m004") },
+    { route: 'stats', label: t("m005") },
+    { route: 'status', label: t("m006") },
+    { route: 'checkpoints', label: t("m007") },
+    { route: 'admin', label: t("m008") },
+  ];
   const [route, setRoute] = useState<Route>(() => routeFromPathname(window.location.pathname));
   const isNotFound = route === 'not-found';
   const [errorMsg, setErrorMsg] = useState('');
