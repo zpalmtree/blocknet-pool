@@ -11,7 +11,7 @@ faq:
     a: 'Tidak. Pool menjalankan node, menyusun template, memeriksa share dan mengirim blok temuan. Di bntpool.com Anda hanya perlu penambang seine dan alamat Blocknet atau nama Blocknet ID. Jalankan seine, tempel alamat, terima pool default, dan bagian setiap blok dibayar ke alamat itu.'
   - q: 'Bagaimana mulai menambang di bntpool.com?'
     a: 'Unduh seine untuk Windows, macOS atau Linux dari seineminer.com, jalankan dan tempel alamat Blocknet atau @name saat diminta. bntpool.com adalah pool default, jadi terima dan mulai menambang. Cari alamat di halaman statistik untuk melihat hashrate, share dan saldo.'
-sourceHash: 7b8c04cd86ae
+sourceHash: 'a17a47ab1d73'
 translation: draft
 ---
 

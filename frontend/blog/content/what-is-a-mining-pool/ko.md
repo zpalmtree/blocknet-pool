@@ -12,7 +12,7 @@ faq:
     a: '아니요. 풀이 노드를 운영하고 블록 템플릿을 만들며 셰어를 검증하고 발견한 블록을 제출합니다. bntpool.com에서는 seine 채굴 프로그램과 Blocknet 주소 또는 Blocknet ID 이름만 있으면 됩니다. Seine을 실행하고 주소를 붙여 넣은 뒤 기본 풀을 선택하면 각 블록의 몫이 해당 주소로 지급됩니다.'
   - q: 'bntpool.com에서 어떻게 채굴을 시작하나요?'
     a: 'seineminer.com에서 Windows, macOS 또는 Linux용 seine을 내려받아 실행하고, 요청할 때 Blocknet 주소나 @name을 입력하세요. bntpool.com은 seine의 기본 풀이므로 그대로 선택해 채굴을 시작할 수 있습니다. 풀의 통계 페이지에서 주소를 조회하면 해시레이트, 셰어, 잔액을 확인할 수 있습니다.'
-sourceHash: 7b8c04cd86ae
+sourceHash: 'a17a47ab1d73'
 translation: draft
 ---
 

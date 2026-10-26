@@ -2,7 +2,7 @@
 title: Madencilik havuzu nedir?
 description: Madencilik havuzu birçok madencinin hashrate'ini birleştirip her blok ödülünü paylaşır. Havuzları, PPLNS, PPS ve solo madenciliği öğrenin.
 tags: [Madencilik temelleri, Madencilik havuzları, PPLNS, bntpool]
-sourceHash: 7b8c04cd86ae
+sourceHash: 'a17a47ab1d73'
 translation: draft
 faq:
   - q: 'Madencilik havuzuna katılmak ürettiğim miktarı artırır mı?'

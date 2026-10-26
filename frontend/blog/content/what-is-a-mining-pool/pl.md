@@ -2,7 +2,7 @@
 title: Czym jest pula wydobywcza?
 description: Pula wydobywcza łączy hashrate wielu górników i dzieli między nich nagrodę za każdy blok. Poznaj działanie pul, PPLNS, PPS i kopania solo.
 tags: [Podstawy kopania, Pule wydobywcze, PPLNS, bntpool]
-sourceHash: 7b8c04cd86ae
+sourceHash: 'a17a47ab1d73'
 translation: draft
 faq:
   - q: 'Czy dołączenie do puli wydobywczej zwiększa ilość wykopanych monet?'

@@ -11,7 +11,7 @@ faq:
     a: 'Non. Aucune inscription, aucun mot de passe ni e-mail. Votre adresse Blocknet, ou un nom Blocknet ID qui y mène, sert d’identifiant et de destination de paiement. Lancez seine avec cette valeur, puis recherchez-la sur My Stats pour voir hashrate, shares, rigs, solde et paiements.'
   - q: 'Peut-on miner vers une seule adresse depuis plusieurs ordinateurs ?'
     a: 'Oui. Lancez seine sur chaque ordinateur avec la même adresse ou le même nom et donnez un nom distinct à chaque rig. Le pool compte les shares, soldes et paiements par adresse. Tous les rigs alimentent donc un seul solde et un seul paiement, avec une ligne par rig sur My Stats.'
-sourceHash: f6080e03ffd0
+sourceHash: '84ce1ed92e20'
 translation: draft
 ---
 

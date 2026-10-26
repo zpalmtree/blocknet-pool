@@ -58,7 +58,13 @@ function difficultyTargets() {
   return frame(`${rect(100, 150, 460, 375, '#f9fcf3', 24)}${rect(640, 150, 460, 375, '#f9fcf3', 24)}${Array.from({length: 6}, (_, row) => Array.from({length: 8}, (_, col) => circle(155 + col * 50, 215 + row * 48, 9, '#bbcfb0')).join('')).join('')}${Array.from({length: 6}, (_, row) => Array.from({length: 8}, (_, col) => circle(695 + col * 50, 215 + row * 48, 9, '#bbcfb0')).join('')).join('')}${circle(330, 337, 110, '#b8e8a4', 'fill-opacity=".6" stroke="#237a4e" stroke-width="4"')}${circle(870, 337, 48, '#b8e8a4', 'fill-opacity=".6" stroke="#237a4e" stroke-width="4"')}${line('M575 337H625M614 326 625 337 614 348', '#629569', 4)}`);
 }
 
+function stratumConversation() {
+  const arrow = (x1, x2, y) => line(`M${x1} ${y}H${x2}M${x2 + (x2 > x1 ? -14 : 14)} ${y-12}L${x2} ${y}L${x2 + (x2 > x1 ? -14 : 14)} ${y+12}`, '#629569', 5);
+  return frame(`${miner(195, 120, 1.1)}${rect(520, 60, 160, 120, '#123c2a', 18)}${[85,120,155].map(y=>line(`M545 ${y}H655`, '#b8ee9d', 5)).join('')}${cube(1000, 105, 78)}${[195,600,1000].map(x=>line(`M${x} 205V590`, '#a7bda0', 3, 'stroke-dasharray="8 10"')).join('')}${arrow(210,585,250)}${arrow(985,615,310)}${arrow(585,210,370)}${arrow(210,585,430)}${arrow(600,985,490)}${arrow(585,210,550)}${[250,370,430,550].map((y,i)=>text(395,y-15,['login','job','submit','ok'][i],24,'#123c2a','text-anchor="middle"')).join('')}`);
+}
+
 const illustrations = {
+  'stratum-mining-protocol': stratumConversation,
   'mining-difficulty-explained': difficultyTargets,
   'accepted-rejected-stale-shares': shareOutcomes,
   'mining-pool-luck-explained': poolLuck,

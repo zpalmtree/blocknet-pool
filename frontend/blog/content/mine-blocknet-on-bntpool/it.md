@@ -11,7 +11,7 @@ faq:
     a: 'No. Nessuna registrazione, password o email. L’indirizzo Blocknet, o un nome Blocknet ID che vi punta, è login e destinazione dei pagamenti. Avvia seine e cercalo su My Stats per vedere hashrate, share, rig, saldo e pagamenti.'
   - q: 'Posso minare allo stesso indirizzo da più computer?'
     a: 'Sì. Esegui seine su ogni computer con lo stesso indirizzo o nome e un nome rig distinto. La pool conta share, saldo e pagamenti per indirizzo: ogni rig contribuisce allo stesso saldo e pagamento, e My Stats mostra una riga per rig.'
-sourceHash: f6080e03ffd0
+sourceHash: '84ce1ed92e20'
 translation: draft
 ---
 

@@ -3,7 +3,7 @@ title: 'bntpool.comでBlocknetをマイニングする'
 seoTitle: 'bntpool.comでBlocknetを採掘'
 description: 'seineの標準プール、bntpool.comへの接続方法。アドレスや@nameでログインし、リグに名前を付け、ハッシュレートやシェアの到着を確認します。'
 tags: ['マイニングガイド', 'bntpool', 'Blocknet ID', 'seine']
-sourceHash: f6080e03ffd0
+sourceHash: '84ce1ed92e20'
 translation: draft
 faq:
   - q: 'bntpool.comのStratumアドレスは？'

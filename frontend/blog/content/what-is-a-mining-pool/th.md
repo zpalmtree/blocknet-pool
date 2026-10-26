@@ -2,7 +2,7 @@
 title: 'พูลขุดคืออะไร?'
 description: 'พูลขุดรวม hashrate ของนักขุดหลายคนและแบ่งรางวัลทุกบล็อก เรียนรู้การทำงาน ระบบ PPLNS, PPS และ solo รวมถึงสิ่งที่ควรตรวจสอบก่อนเข้าร่วม'
 tags: ['พื้นฐานการขุด', 'พูลขุด', 'PPLNS', 'bntpool']
-sourceHash: 7b8c04cd86ae
+sourceHash: 'a17a47ab1d73'
 translation: draft
 faq:
   - q: 'เข้าพูลแล้วขุดได้มากขึ้นไหม?'

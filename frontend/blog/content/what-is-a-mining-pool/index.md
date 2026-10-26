@@ -12,7 +12,7 @@ faq:
     a: No. The pool runs the node, builds the block templates, checks shares and submits the blocks it finds. On bntpool.com you only need the seine miner and a Blocknet address or Blocknet ID name. Run seine, paste your address, accept the default pool, and your portion of each block is paid to that address.
   - q: How do I start mining on bntpool.com?
     a: Download seine for Windows, macOS or Linux from seineminer.com, run it and paste your Blocknet address or @name when it asks. bntpool.com is seine's default pool, so you can accept it and start mining. Look up your address on the pool's stats page to see your hashrate, shares and balance.
-related: [how-pplns-payouts-work, pool-vs-solo-mining-blocknet, what-is-hashrate]
+related: [how-pplns-payouts-work, pool-vs-solo-mining-blocknet, what-is-hashrate, stratum-mining-protocol]
 ---
 
 This guide explains what a mining pool is, why most miners join one, and how a pool decides what each miner earns. You'll learn the common payout schemes, PPLNS, PPS and solo mining, and what to check before you point your miner at a pool. bntpool.com, the Blocknet mining pool, serves as the worked example throughout.

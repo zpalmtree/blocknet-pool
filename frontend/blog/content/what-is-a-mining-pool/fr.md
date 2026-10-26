@@ -11,7 +11,7 @@ faq:
     a: 'Non. Le pool gère le nœud, prépare les modèles, vérifie les shares et soumet les blocs. Sur bntpool.com, il suffit de seine et d’une adresse Blocknet ou d’un nom Blocknet ID. Lancez seine, collez votre adresse et acceptez le pool par défaut : votre part des blocs y est payée.'
   - q: 'Comment commencer sur bntpool.com ?'
     a: 'Téléchargez seine pour Windows, macOS ou Linux sur seineminer.com, lancez-le et collez votre adresse Blocknet ou @name. bntpool.com est le pool par défaut : acceptez-le pour commencer. Recherchez votre adresse dans les statistiques du pool pour voir hashrate, shares et solde.'
-sourceHash: 7b8c04cd86ae
+sourceHash: 'a17a47ab1d73'
 translation: draft
 ---
 

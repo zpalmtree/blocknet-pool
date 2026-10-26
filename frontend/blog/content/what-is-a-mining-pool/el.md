@@ -2,7 +2,7 @@
 title: 'Τι είναι ένα mining pool;'
 description: 'Ένα mining pool συνδυάζει το hashrate πολλών miners και μοιράζει τις ανταμοιβές μπλοκ. Μάθετε πώς λειτουργεί, τα PPLNS, PPS και solo και τι να ελέγξετε.'
 tags: ['Βασικά εξόρυξης', 'Mining pools', 'PPLNS', 'bntpool']
-sourceHash: 7b8c04cd86ae
+sourceHash: 'a17a47ab1d73'
 translation: draft
 faq:
   - q: 'Αυξάνει ένα mining pool την ποσότητα που εξορύσσω;'

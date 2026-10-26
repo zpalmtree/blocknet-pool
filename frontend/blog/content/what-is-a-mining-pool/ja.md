@@ -2,7 +2,7 @@
 title: 'マイニングプールとは？'
 description: 'マイニングプールは多くのマイナーのハッシュレートを合わせ、各ブロック報酬を分けます。仕組み、PPLNS・PPS・ソロの違い、参加前に確認する項目を説明します。'
 tags: ['マイニング入門', 'マイニングプール', 'PPLNS', 'bntpool']
-sourceHash: 7b8c04cd86ae
+sourceHash: 'a17a47ab1d73'
 translation: draft
 faq:
   - q: 'プールに入ると採掘量は増えますか？'

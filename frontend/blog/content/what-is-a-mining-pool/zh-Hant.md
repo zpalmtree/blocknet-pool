@@ -11,7 +11,7 @@ faq:
     a: '不需要。礦池負責執行節點、建立區塊模板、檢查份額並提交找到的區塊。在 bntpool.com 上，你只需要 seine 挖礦軟體和一個 Blocknet 地址或 Blocknet ID 名稱。執行 seine，貼上地址，接受預設礦池，你在每個區塊中所得的部分就會支付到這個地址。'
   - q: '要怎麼開始在 bntpool.com 挖礦？'
     a: '從 seineminer.com 下載適用於 Windows、macOS 或 Linux 的 seine，執行它，並在提示時貼上你的 Blocknet 地址或 @name。bntpool.com 是 seine 的預設礦池，接受即可開始挖礦。在礦池的統計頁面查詢你的地址，就能看到你的算力、份額和餘額。'
-sourceHash: 7b8c04cd86ae
+sourceHash: 'a17a47ab1d73'
 translation: reviewed
 ---
 

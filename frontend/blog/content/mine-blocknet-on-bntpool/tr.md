@@ -2,7 +2,7 @@
 title: bntpool.com'da Blocknet madenciliği yapın
 description: seine'in varsayılan Blocknet havuzu bntpool.com'a katılın. Adresiniz veya @name ile stratum+tcp://bntpool.com:3333'e bağlanın, rig'lerinizi adlandırın.
 tags: [Madencilik rehberi, bntpool, Blocknet ID, seine]
-sourceHash: f6080e03ffd0
+sourceHash: '84ce1ed92e20'
 translation: draft
 faq:
   - q: 'bntpool.com Stratum adresi nedir?'

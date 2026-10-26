@@ -26,3 +26,8 @@ no language-dependent text or invented dashboard values. Added October 26, 2026.
 - `mining-difficulty-explained`: original language-neutral SVG diagram in
   `blog-covers.mjs`, showing a smaller qualifying region in the same field of
   possible outcomes. Schematic, not measured probabilities. October 26, 2026.
+
+- `stratum-mining-protocol`: original sequence illustration in `blog-covers.mjs`,
+  miner/pool/node columns with literal protocol method labels. Arrows show login,
+  node template delivery, job, share submission, block candidate and reply.
+  Conceptual flow, not a packet capture. October 26, 2026.

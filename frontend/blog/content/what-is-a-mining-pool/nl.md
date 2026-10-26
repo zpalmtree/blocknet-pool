@@ -2,7 +2,7 @@
 title: 'Wat is een miningpool?'
 description: 'Een miningpool bundelt de hashrate van miners en verdeelt elke blokbeloning. Lees hoe pools werken, wat PPLNS, PPS en solo betekenen en waarop je let.'
 tags: ['Miningbasis', 'Miningpools', 'PPLNS', 'bntpool']
-sourceHash: 7b8c04cd86ae
+sourceHash: 'a17a47ab1d73'
 translation: draft
 faq:
   - q: 'Verdien ik meer door bij een miningpool aan te sluiten?'

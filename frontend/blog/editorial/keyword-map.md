@@ -69,3 +69,11 @@ The tracking guide owns navigating My Stats and zero-hashrate/connection diagnos
 | mining difficulty explained; network difficulty vs share difficulty | `/blog/mining-difficulty-explained/` | Explain target thresholds, Blocknet's per-block LWMA adjustment and difficulty-to-time arithmetic | difficulty adjustment, vardiff meaning, 挖矿难度 |
 
 Hashrate owns speed and units, luck owns round variance, share outcomes owns rejection diagnosis, and the calculator owns reward estimates. This guide owns difficulty as a threshold and adjustment mechanism, linking to those existing owners for their tasks.
+
+## Tuning and Stratum (October 26, 2026)
+
+| Primary keyword cluster | URL | Search job | Supporting phrases |
+|---|---|---|---|
+| what is Stratum; mining pool protocol | `/blog/stratum-mining-protocol/` | Follow bntpool login, job assignment, share submission and reply stages | Blocknet mining, seine, bntpool |
+
+Pool overview owns pooling and payout models; setup owns connection instructions; difficulty owns target arithmetic; share outcomes owns rejection diagnosis. This article owns the wire conversation. No URL is retargeted.

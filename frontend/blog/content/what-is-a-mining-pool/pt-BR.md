@@ -2,7 +2,7 @@
 title: O que é um pool de mineração?
 description: Um pool combina a hashrate de vários mineradores e divide cada recompensa de bloco. Entenda seu funcionamento, PPLNS, PPS, mineração solo e o que avaliar.
 tags: [Fundamentos de mineração, Pools de mineração, PPLNS, bntpool]
-sourceHash: 7b8c04cd86ae
+sourceHash: 'a17a47ab1d73'
 translation: draft
 faq:
   - q: 'Entrar em um pool aumenta quanto eu minero?'

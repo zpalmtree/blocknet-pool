@@ -11,7 +11,7 @@ faq:
     a: 'No. El pool ejecuta el nodo, crea plantillas, comprueba shares y envía bloques. En bntpool.com solo necesitas seine y una dirección Blocknet o nombre Blocknet ID. Ejecuta seine, pega la dirección y acepta el pool predeterminado: tu parte de cada bloque se paga allí.'
   - q: '¿Cómo empiezo en bntpool.com?'
     a: 'Descarga seine para Windows, macOS o Linux desde seineminer.com, ejecútalo y pega tu dirección o @name. Acepta bntpool.com, el pool predeterminado, y empieza a minar. Busca tu dirección en las estadísticas para ver tasa de hash, shares y saldo.'
-sourceHash: 7b8c04cd86ae
+sourceHash: 'a17a47ab1d73'
 translation: draft
 ---
 

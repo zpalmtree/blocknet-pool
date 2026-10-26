@@ -2,7 +2,7 @@
 title: Was ist ein Mining-Pool?
 description: Ein Mining-Pool bündelt die Hashrate vieler Miner und teilt jede Blockbelohnung unter ihnen auf. Erfahre, wie Pools, PPLNS, PPS und Solo-Mining funktionieren und worauf du achten solltest.
 tags: [Mining-Grundlagen, Mining-Pools, PPLNS, bntpool]
-sourceHash: 7b8c04cd86ae
+sourceHash: 'a17a47ab1d73'
 translation: draft
 faq:
   - q: 'Verdiene ich durch den Beitritt zu einem Mining-Pool mehr?'

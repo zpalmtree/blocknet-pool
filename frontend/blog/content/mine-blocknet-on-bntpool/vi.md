@@ -2,7 +2,7 @@
 title: Đào Blocknet trên bntpool.com
 description: Tham gia bntpool.com, pool Blocknet mặc định của seine. Kết nối stratum+tcp://bntpool.com:3333 bằng địa chỉ hoặc @name, đặt tên dàn máy và xem thống kê.
 tags: [Hướng dẫn đào coin, bntpool, Blocknet ID, seine]
-sourceHash: f6080e03ffd0
+sourceHash: '84ce1ed92e20'
 translation: draft
 faq:
   - q: 'Địa chỉ Stratum của bntpool.com là gì?'

@@ -2,7 +2,7 @@
 title: تعدين Blocknet على bntpool.com
 description: انضم إلى bntpool.com، المجمع الافتراضي في seine. اتصل عبر stratum+tcp://bntpool.com:3333 بعنوانك أو @name، وسمّ أجهزة التعدين وتابع إحصاءاتك.
 tags: [دليل التعدين, bntpool, Blocknet ID, seine]
-sourceHash: f6080e03ffd0
+sourceHash: '84ce1ed92e20'
 translation: draft
 faq:
   - q: 'ما عنوان Stratum الخاص بـ bntpool.com؟'

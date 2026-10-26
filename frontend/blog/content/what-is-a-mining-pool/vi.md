@@ -2,7 +2,7 @@
 title: Pool đào là gì?
 description: Pool đào kết hợp hashrate nhiều thợ đào và chia phần thưởng mỗi khối. Tìm hiểu cách pool hoạt động, PPLNS, PPS, solo và tiêu chí lựa chọn.
 tags: [Kiến thức đào coin, Pool đào, PPLNS, bntpool]
-sourceHash: 7b8c04cd86ae
+sourceHash: 'a17a47ab1d73'
 translation: draft
 faq:
   - q: 'Tham gia pool có tăng lượng coin tôi đào được không?'

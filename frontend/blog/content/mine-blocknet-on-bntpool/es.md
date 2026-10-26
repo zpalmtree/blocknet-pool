@@ -11,7 +11,7 @@ faq:
     a: 'No. No hay registro, contraseña ni correo electrónico. Tu dirección Blocknet, o un nombre Blocknet ID que apunte a ella, es tu usuario y destino de pagos. Inicia seine con ella y búscala en My Stats para ver tu tasa de hash, shares, rigs, saldo y pagos.'
   - q: '¿Puedo minar desde varias computadoras hacia una dirección?'
     a: 'Sí. Ejecuta seine en cada computadora con la misma dirección o nombre y asigna un nombre distinto a cada rig. El pool cuenta shares, saldo y pagos por dirección, de modo que todos los rigs suman a un saldo y un pago, y My Stats muestra cada rig en su propia fila.'
-sourceHash: f6080e03ffd0
+sourceHash: '84ce1ed92e20'
 translation: draft
 ---
 

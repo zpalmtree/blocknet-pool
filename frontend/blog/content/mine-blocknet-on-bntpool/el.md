@@ -2,7 +2,7 @@
 title: 'Εξόρυξη Blocknet στο bntpool.com'
 description: 'Συνδεθείτε στο bntpool.com, το προεπιλεγμένο pool του seine, με διεύθυνση ή @name. Ονομάστε τα μηχανήματά σας και δείτε shares, hashrate και πληρωμές.'
 tags: ['Οδηγός εξόρυξης', 'bntpool', 'Blocknet ID', 'seine']
-sourceHash: f6080e03ffd0
+sourceHash: '84ce1ed92e20'
 translation: draft
 faq:
   - q: 'Ποια είναι η διεύθυνση Stratum του bntpool.com;'
