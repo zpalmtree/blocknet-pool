@@ -9,7 +9,7 @@ faq:
     a: 'Ja. Jeder Mining-Prozess verwendet sein eigenes konfiguriertes Ziel. Stelle zuerst einen Computer um und prüfe ihn, anschließend die anderen einschließlich gespeicherter Konfiguration und Startargumenten. Unterschiedliche Rig-Namen zeigen, welche Geräte bereits Arbeit unter der neuen Adresse einreichen.'
   - q: 'Aktualisiert eine geänderte Blocknet ID einen laufenden Miner?'
     a: 'seine löst die gespeicherte ID beim Start auf und behält diese Adresse während des Laufs einschließlich Neuverbindungen. Starte nach einer geänderten Zuordnung jeden Miner neu und prüfe die vollständige Adresse. Frühere Arbeit und Guthaben werden dadurch nicht neu zugeordnet.'
-sourceHash: 'fca912d46d55'
+sourceHash: '645b2eff8a61'
 translation: draft
 ---
 
@@ -51,7 +51,7 @@ Aktualisiere oder entferne altes `--address` aus Verknüpfung, Skript, Aufgabe o
 
 ## Was gilt bei einer Blocknet ID?
 
-seine v0.2.36 löst `@name` beim Start auf und validiert es. Die vollständige Adresse bleibt während dieses Laufs einschließlich Pool-Neuverbindungen fest. Nach geänderter Namenszuordnung starte jeden Miner neu und prüfe das Ziel. Eine Neuverbindung des laufenden Prozesses wiederholt die Startauflösung nicht.
+seine v0.2.37 löst `@name` beim Start auf und validiert es. Die vollständige Adresse bleibt während dieses Laufs einschließlich Pool-Neuverbindungen fest. Nach geänderter Namenszuordnung starte jeden Miner neu und prüfe das Ziel. Eine Neuverbindung des laufenden Prozesses wiederholt die Startauflösung nicht.
 
 Notiere alte und neue vollständige Adresse, auch wenn der lesbare Name gleich bleibt. Die Buchhaltung folgt der aufgelösten Adresse; eine neue Zuordnung leitet alte Shares oder Guthaben nicht um. Schlägt die Auflösung fehl, prüfe die Zuordnung oder verwende bewusst die in deiner Wallet geprüfte vollständige Adresse.
 

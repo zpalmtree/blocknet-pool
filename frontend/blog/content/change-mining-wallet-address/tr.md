@@ -9,7 +9,7 @@ faq:
     a: 'Evet. Her süreç kendi yapılandırılmış hedefini kullanır. Önce bir bilgisayarı güncelleyip doğrulayın, ardından kayıtlı dosya ve başlangıç argümanlarıyla diğerlerini değiştirin. Farklı cihaz adları, yeni adrese iş göndermeye başlayan makineleri tanımayı kolaylaştırır.'
   - q: 'Blocknet ID değişikliği çalışan madenciyi günceller mi?'
     a: 'seine kayıtlı ID’yi başlangıçta çözümler ve yeniden bağlantılar dahil çalıştırma boyunca adresi korur. Eşlemeyi değiştirdikten sonra her madenciyi yeniden başlatıp tam adresi kontrol edin. Önceki adrese kaydedilmiş iş ve bakiyeler yeniden atanmaz.'
-sourceHash: 'fca912d46d55'
+sourceHash: '645b2eff8a61'
 translation: draft
 ---
 
@@ -51,7 +51,7 @@ Kısayol, betik, görev veya hizmette eski `--address` argümanını güncelleyi
 
 ## Blocknet ID kullanırken ne değişir?
 
-seine v0.2.36, `@name` değerini başlangıçta çözümleyip doğrular. Tam adres yeniden bağlantılar dahil bu çalıştırmada sabittir. Ad eşlemesini değiştirirseniz her madenciyi yeniden başlatıp hedefi kontrol edin. Mevcut sürecin yeniden bağlanması başlangıç çözümlemesini tekrarlamaz.
+seine v0.2.37, `@name` değerini başlangıçta çözümleyip doğrular. Tam adres yeniden bağlantılar dahil bu çalıştırmada sabittir. Ad eşlemesini değiştirirseniz her madenciyi yeniden başlatıp hedefi kontrol edin. Mevcut sürecin yeniden bağlanması başlangıç çözümlemesini tekrarlamaz.
 
 Okunabilir ad aynı kalsa bile eski ve yeni tam adresi not edin. Muhasebe çözümlenen adresi izler; eşleme değişikliği eski payları veya bakiyeleri yönlendirmez. Ad çözümlenemiyorsa eşlemeyi kontrol edin ya da cüzdanda doğruladığınız tam adresi bilinçli olarak kullanın.
 

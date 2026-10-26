@@ -9,7 +9,7 @@ faq:
     a: 'Sì. Ogni processo usa la propria destinazione configurata. Aggiorna e verifica prima un computer, poi gli altri, inclusi configurazione salvata e argomenti di avvio. Nomi distinti consentono di riconoscere le macchine che inviano lavoro al nuovo indirizzo.'
   - q: 'Cambiare Blocknet ID aggiorna il miner attivo?'
     a: 'seine risolve l’ID salvato all’avvio e mantiene l’indirizzo durante l’esecuzione, riconnessioni incluse. Dopo una modifica dell’associazione riavvia ogni miner e verifica l’indirizzo completo. Il cambiamento non riassegna lavoro o saldi già registrati all’indirizzo precedente.'
-sourceHash: 'fca912d46d55'
+sourceHash: '645b2eff8a61'
 translation: draft
 ---
 
@@ -51,7 +51,7 @@ Aggiorna o rimuovi i vecchi `--address` da collegamento, script, attività o ser
 
 ## Cosa cambia usando un Blocknet ID?
 
-seine v0.2.36 risolve e valida `@name` all’avvio. L’indirizzo completo resta fisso per l’esecuzione, riconnessioni incluse. Se cambi l’associazione del nome, riavvia ogni miner e controlla la destinazione. Riconnettere il processo esistente non ripete la risoluzione iniziale.
+seine v0.2.37 risolve e valida `@name` all’avvio. L’indirizzo completo resta fisso per l’esecuzione, riconnessioni incluse. Se cambi l’associazione del nome, riavvia ogni miner e controlla la destinazione. Riconnettere il processo esistente non ripete la risoluzione iniziale.
 
 Annota i due indirizzi completi anche se il nome leggibile resta uguale. La contabilità usa l’indirizzo risolto: una nuova associazione non reindirizza vecchie share o saldi. Se il nome non si risolve, verifica l’associazione oppure usa esplicitamente l’indirizzo completo controllato nel wallet.
 

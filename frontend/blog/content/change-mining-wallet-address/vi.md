@@ -9,7 +9,7 @@ faq:
     a: 'Có. Mỗi tiến trình dùng đích đã cấu hình riêng. Cập nhật và kiểm tra một máy trước, rồi các máy khác cùng tệp lưu và tham số khởi chạy. Tên máy riêng giúp nhận biết máy đã gửi công việc đến địa chỉ mới.'
   - q: 'Đổi Blocknet ID có cập nhật máy đang chạy không?'
     a: 'seine phân giải ID đã lưu khi khởi chạy và giữ địa chỉ suốt phiên, kể cả kết nối lại. Sau khi đổi ánh xạ, khởi động lại từng máy đào và kiểm tra địa chỉ đầy đủ. Công việc và số dư cũ không được gán lại.'
-sourceHash: 'fca912d46d55'
+sourceHash: '645b2eff8a61'
 translation: draft
 ---
 
@@ -51,7 +51,7 @@ Cập nhật hoặc bỏ `--address` cũ trong lối tắt, tập lệnh, tác v
 
 ## Điều gì khác khi dùng Blocknet ID?
 
-Trong seine v0.2.36, `@name` được phân giải và xác thực lúc khởi chạy. Địa chỉ đầy đủ giữ nguyên trong phiên, kể cả nối lại pool. Nếu đổi ánh xạ tên, khởi động lại từng máy và kiểm tra đích. Chỉ nối lại tiến trình cũ không lặp bước phân giải đầu tiên.
+Trong seine v0.2.37, `@name` được phân giải và xác thực lúc khởi chạy. Địa chỉ đầy đủ giữ nguyên trong phiên, kể cả nối lại pool. Nếu đổi ánh xạ tên, khởi động lại từng máy và kiểm tra đích. Chỉ nối lại tiến trình cũ không lặp bước phân giải đầu tiên.
 
 Ghi cả hai địa chỉ đầy đủ dù tên dễ đọc không đổi. Hạch toán theo địa chỉ đã phân giải; đổi ánh xạ không chuyển share hay số dư cũ. Nếu tên không phân giải, kiểm tra ánh xạ hoặc chủ động dùng địa chỉ đầy đủ đã xác nhận trong ví.
 

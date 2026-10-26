@@ -9,7 +9,7 @@ faq:
     a: 'Sim. Cada processo usa seu próprio destino configurado. Atualize e confira primeiro um computador e depois os demais, incluindo configuração salva e argumentos de início. Nomes diferentes identificam quais máquinas já enviam trabalho ao novo endereço.'
   - q: 'Mudar meu Blocknet ID atualiza um minerador ativo?'
     a: 'O seine resolve o ID salvo ao iniciar e mantém esse endereço durante a execução, inclusive nas reconexões. Após mudar o vínculo do ID, reinicie cada minerador e confira o endereço completo. Isso não reatribui trabalho ou saldos já registrados no endereço anterior.'
-sourceHash: 'fca912d46d55'
+sourceHash: '645b2eff8a61'
 translation: draft
 ---
 
@@ -51,7 +51,7 @@ Atualize ou remova `--address` antigo do atalho, script, tarefa ou serviço. Um 
 
 ## O que muda usando um Blocknet ID?
 
-No seine v0.2.36, `@name` é resolvido e validado ao iniciar. O endereço completo fica fixo naquela execução, inclusive nas reconexões ao pool. Se mudar o vínculo do nome, reinicie cada minerador e confira o destino. Reconectar o processo existente não repete a resolução inicial.
+No seine v0.2.37, `@name` é resolvido e validado ao iniciar. O endereço completo fica fixo naquela execução, inclusive nas reconexões ao pool. Se mudar o vínculo do nome, reinicie cada minerador e confira o destino. Reconectar o processo existente não repete a resolução inicial.
 
 Anote os endereços completos antigo e novo, mesmo mantendo o nome legível. A contabilidade usa o endereço resolvido: mudar o vínculo não redireciona shares ou saldos anteriores. Se o nome não resolver, confira o vínculo ou use deliberadamente o endereço completo verificado na carteira.
 

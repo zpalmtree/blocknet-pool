@@ -9,7 +9,7 @@ faq:
     a: 'Ya. Setiap proses memakai tujuan konfigurasinya sendiri. Perbarui dan periksa satu komputer dahulu, kemudian yang lain beserta berkas dan argumen mulai. Nama rig berbeda membantu mengenali mesin yang sudah mengirim pekerjaan ke alamat baru.'
   - q: 'Apakah perubahan Blocknet ID memperbarui penambang aktif?'
     a: 'seine menyelesaikan ID tersimpan menjadi alamat saat mulai dan mempertahankannya selama sesi, termasuk koneksi ulang. Setelah mengubah pemetaan, mulai ulang setiap penambang dan periksa alamat lengkap. Perubahan tidak mengalihkan pekerjaan atau saldo yang tercatat pada alamat sebelumnya.'
-sourceHash: 'fca912d46d55'
+sourceHash: '645b2eff8a61'
 translation: draft
 ---
 
@@ -51,7 +51,7 @@ Perbarui atau hapus `--address` lama di pintasan, skrip, tugas, atau layanan. Pe
 
 ## Apa bedanya jika memakai Blocknet ID?
 
-Pada seine v0.2.36, `@name` diresolusi dan divalidasi saat mulai. Alamat lengkap tetap selama sesi, termasuk koneksi pool ulang. Jika pemetaan nama berubah, mulai ulang setiap penambang dan periksa tujuan. Menyambungkan ulang proses lama tidak mengulangi resolusi awal.
+Pada seine v0.2.37, `@name` diresolusi dan divalidasi saat mulai. Alamat lengkap tetap selama sesi, termasuk koneksi pool ulang. Jika pemetaan nama berubah, mulai ulang setiap penambang dan periksa tujuan. Menyambungkan ulang proses lama tidak mengulangi resolusi awal.
 
 Catat kedua alamat lengkap meski nama tetap sama. Akuntansi mengikuti alamat hasil resolusi; perubahan pemetaan tidak mengalihkan share atau saldo lama. Jika nama gagal diresolusi, periksa pemetaan atau pilih alamat lengkap yang sudah Anda verifikasi dari dompet.
 

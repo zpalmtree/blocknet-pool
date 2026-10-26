@@ -9,7 +9,7 @@ faq:
     a: 'Oui. Chaque processus utilise sa propre destination configurée. Modifiez et vérifiez d’abord un ordinateur, puis les autres, y compris leurs fichiers et arguments de lancement. Des noms de machines distincts permettent de reconnaître celles qui envoient désormais du travail à la nouvelle adresse.'
   - q: 'Modifier mon Blocknet ID actualise-t-il un mineur actif ?'
     a: 'seine résout l’ID enregistré au démarrage et conserve l’adresse pendant l’exécution, reconnexions comprises. Après modification de l’association, redémarrez chaque mineur et contrôlez l’adresse complète résolue. Le changement ne réattribue ni le travail ni les soldes enregistrés pour l’ancienne adresse.'
-sourceHash: 'fca912d46d55'
+sourceHash: '645b2eff8a61'
 translation: draft
 ---
 
@@ -51,7 +51,7 @@ Actualisez ou retirez tout ancien `--address` du raccourci, script, tâche ou se
 
 ## Que change l’utilisation d’un Blocknet ID ?
 
-Avec seine v0.2.36, `@name` est résolu et validé au démarrage. L’adresse complète reste fixe pendant cette exécution, même après reconnexion au pool. Si vous modifiez l’association du nom, redémarrez chaque mineur et contrôlez la destination. Une simple reconnexion ne répète pas cette résolution initiale.
+Avec seine v0.2.37, `@name` est résolu et validé au démarrage. L’adresse complète reste fixe pendant cette exécution, même après reconnexion au pool. Si vous modifiez l’association du nom, redémarrez chaque mineur et contrôlez la destination. Une simple reconnexion ne répète pas cette résolution initiale.
 
 Conservez les deux adresses complètes, même si le nom lisible reste identique. La comptabilité suit l’adresse résolue : modifier l’association ne redirige pas les anciennes shares ou soldes. Si la résolution échoue, vérifiez l’association ou choisissez explicitement l’adresse complète contrôlée dans votre portefeuille.
 

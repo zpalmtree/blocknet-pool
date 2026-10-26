@@ -9,7 +9,7 @@ faq:
     a: 'Ja. Elk miningproces gebruikt zijn eigen ingestelde bestemming. Pas eerst één computer aan en controleer die, daarna de overige met hun configuratie en startargumenten. Verschillende machinenamen laten zien welke computers werk voor het nieuwe adres indienen.'
   - q: 'Verandert een Blocknet ID een actieve miner meteen?'
     a: 'seine resolveert de opgeslagen ID bij het starten en houdt het adres gedurende die uitvoering vast, ook bij opnieuw verbinden. Herstart na een gewijzigde koppeling elke miner en controleer het volledige adres. Eerder geregistreerd werk en saldo worden niet opnieuw toegewezen.'
-sourceHash: 'fca912d46d55'
+sourceHash: '645b2eff8a61'
 translation: draft
 ---
 
@@ -51,7 +51,7 @@ Werk oude `--address`-argumenten in snelkoppeling, script, taak of service bij o
 
 ## Wat verandert met een Blocknet ID?
 
-In seine v0.2.36 wordt `@name` bij het starten opgelost en gevalideerd. Het volledige adres blijft vast tijdens die uitvoering, inclusief nieuwe poolverbindingen. Wijzig je de naamkoppeling, herstart dan elke miner en controleer het doel. Alleen opnieuw verbinden herhaalt de oorspronkelijke naamresolutie niet.
+In seine v0.2.37 wordt `@name` bij het starten opgelost en gevalideerd. Het volledige adres blijft vast tijdens die uitvoering, inclusief nieuwe poolverbindingen. Wijzig je de naamkoppeling, herstart dan elke miner en controleer het doel. Alleen opnieuw verbinden herhaalt de oorspronkelijke naamresolutie niet.
 
 Noteer beide volledige adressen, ook als de leesbare naam gelijk blijft. De administratie gebruikt het opgeloste adres; een nieuwe koppeling stuurt oude shares of saldo niet door. Werkt de naam niet, controleer de koppeling of gebruik bewust het volledige adres dat je in de wallet hebt gecontroleerd.
 

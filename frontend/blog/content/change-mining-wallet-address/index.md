@@ -51,7 +51,7 @@ Then update or remove any older `--address` argument in the shortcut, script, sc
 
 ## What changes when you use a Blocknet ID?
 
-In seine v0.2.36, `@name` is resolved and validated at startup. The resulting full address stays fixed for that run, including pool reconnects. If you update the name's mapping, restart each miner and inspect the resolved destination before relying on the change. Reconnecting an existing process alone does not repeat seine's startup resolution.
+In seine v0.2.37, `@name` is resolved and validated at startup. The resulting full address stays fixed for that run, including pool reconnects. If you update the name's mapping, restart each miner and inspect the resolved destination before relying on the change. Reconnecting an existing process alone does not repeat seine's startup resolution.
 
 Keep the full old and new addresses in your transition notes, even if the readable name stays the same. Pool accounting follows the resolved address, so changing the mapping does not redirect previously recorded shares or balances. If a name cannot be resolved, confirm the mapping or deliberately use the full receiving address you verified from your wallet.
 

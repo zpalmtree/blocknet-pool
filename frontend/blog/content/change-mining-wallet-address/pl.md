@@ -9,7 +9,7 @@ faq:
     a: 'Tak. Każdy proces używa własnego skonfigurowanego celu. Najpierw zmień i sprawdź jeden komputer, potem pozostałe, razem z zapisanymi ustawieniami i argumentami. Różne nazwy pomagają rozpoznać maszyny wysyłające pracę na nowy adres.'
   - q: 'Czy zmiana Blocknet ID aktualizuje działającą koparkę?'
     a: 'seine rozwiązuje zapisane ID przy starcie i zachowuje adres przez całą sesję, także przy ponownych połączeniach. Po zmianie przypisania uruchom ponownie każdą koparkę i sprawdź pełny adres. Wcześniejsza praca i salda nie są przypisywane ponownie.'
-sourceHash: 'fca912d46d55'
+sourceHash: '645b2eff8a61'
 translation: draft
 ---
 
@@ -51,7 +51,7 @@ Zaktualizuj lub usuń stare `--address` ze skrótu, skryptu, zadania lub usługi
 
 ## Co zmienia używanie Blocknet ID?
 
-seine v0.2.36 rozwiązuje i sprawdza `@name` przy starcie. Pełny adres pozostaje stały przez sesję, również przy ponownych połączeniach. Po zmianie przypisania nazwy uruchom ponownie każdą koparkę i sprawdź cel. Samo ponowne połączenie nie powtarza rozwiązywania nazwy.
+seine v0.2.37 rozwiązuje i sprawdza `@name` przy starcie. Pełny adres pozostaje stały przez sesję, również przy ponownych połączeniach. Po zmianie przypisania nazwy uruchom ponownie każdą koparkę i sprawdź cel. Samo ponowne połączenie nie powtarza rozwiązywania nazwy.
 
 Zapisz oba pełne adresy, nawet jeśli nazwa się nie zmienia. Rozliczenia dotyczą rozwiązanego adresu: nowa mapa nie przekierowuje starych udziałów ani sald. Gdy nazwa nie działa, sprawdź przypisanie lub świadomie użyj pełnego adresu zweryfikowanego w portfelu.
 

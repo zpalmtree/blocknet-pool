@@ -9,7 +9,7 @@ faq:
     a: 'Sí. Cada proceso de minería usa su propio destino configurado. Actualiza y verifica primero un ordenador y repite después en los demás, incluida su configuración guardada y argumentos de inicio. Nombres distintos permiten identificar los equipos que ya envían trabajo a la nueva dirección.'
   - q: '¿Cambiar mi Blocknet ID actualiza un minero activo?'
     a: 'seine resuelve el Blocknet ID guardado al iniciarse y conserva esa dirección durante la ejecución, incluidas las reconexiones. Tras cambiar el destino del ID, reinicia cada minero y comprueba la dirección completa resuelta. El cambio de nombre no reasigna trabajo ni saldos de la dirección anterior.'
-sourceHash: 'fca912d46d55'
+sourceHash: '645b2eff8a61'
 translation: draft
 ---
 
@@ -51,7 +51,7 @@ Actualiza o elimina cualquier `--address` anterior del acceso directo, script, t
 
 ## ¿Qué cambia si usas un Blocknet ID?
 
-En seine v0.2.36, `@name` se resuelve y valida al iniciar. La dirección completa resultante queda fija durante esa ejecución, incluidas las reconexiones al pool. Si cambias el destino del nombre, reinicia cada minero y revisa la dirección resuelta. Reconectar el proceso existente no repite la resolución inicial de seine.
+En seine v0.2.37, `@name` se resuelve y valida al iniciar. La dirección completa resultante queda fija durante esa ejecución, incluidas las reconexiones al pool. Si cambias el destino del nombre, reinicia cada minero y revisa la dirección resuelta. Reconectar el proceso existente no repite la resolución inicial de seine.
 
 Anota las direcciones completas anterior y nueva aunque el nombre legible siga igual. La contabilidad usa la dirección resuelta, así que cambiar la asociación no redirige las participaciones ni saldos ya registrados. Si el nombre no se resuelve, confirma su asociación o usa deliberadamente la dirección completa que verificaste en tu cartera.
 
