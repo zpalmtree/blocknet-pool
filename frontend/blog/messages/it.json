@@ -31,7 +31,7 @@
   "calcHashrate": "Il tuo hashrate",
   "calcUnit": "Unità",
   "calcMinerFee": "Commissione del miner (%)",
-  "calcFeeHelp": "Seine applica l’1% su bntpool.com. Usa 0% se il tuo hashrate esclude già la commissione del miner, come in Le mie statistiche.",
+  "calcFeeHelp": "Inserisci la commissione della tua versione del miner. Usa 0% se il tuo hashrate esclude già la commissione del miner, come in Le mie statistiche.",
   "calcPoolFee": "Commissione del pool",
   "calcNetwork": "Hashrate della rete",
   "calcHeight": "Blocco attuale",

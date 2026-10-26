@@ -31,7 +31,7 @@
   "calcHashrate": "Your hashrate",
   "calcUnit": "Unit",
   "calcMinerFee": "Miner fee (%)",
-  "calcFeeHelp": "Seine uses 1% on bntpool.com. Use 0% if your hashrate already excludes miner fees, as on My Stats.",
+  "calcFeeHelp": "Enter the fee for your miner version. Use 0% if your hashrate already excludes miner fees, as on My Stats.",
   "calcPoolFee": "Pool fee",
   "calcNetwork": "Network hashrate",
   "calcHeight": "Current block",

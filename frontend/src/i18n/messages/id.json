@@ -298,5 +298,6 @@
   "notFoundTitle": "Halaman tidak ditemukan",
   "notFoundDescription": "Tautan ini tidak mengarah ke halaman mana pun. Buka dasbor, mulai menambang, atau baca panduan penambangan.",
   "statsDescription": "Lihat hashrate, share, dan saldo penambang Blocknet Anda.",
-  "rewardsCalculator": "Perkirakan imbalan BNT Anda"
+  "rewardsCalculator": "Perkirakan imbalan BNT Anda",
+  "poolFee": "Biaya pool"
 }

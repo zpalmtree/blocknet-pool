@@ -31,7 +31,7 @@
   "calcHashrate": "Hashrate Anda",
   "calcUnit": "Satuan",
   "calcMinerFee": "Biaya miner (%)",
-  "calcFeeHelp": "Seine mengenakan 1% di bntpool.com. Gunakan 0% jika hashrate Anda sudah tidak mencakup biaya miner, seperti di Statistik Saya.",
+  "calcFeeHelp": "Masukkan biaya untuk versi miner Anda. Gunakan 0% jika hashrate Anda sudah tidak mencakup biaya miner, seperti di Statistik Saya.",
   "calcPoolFee": "Biaya pool",
   "calcNetwork": "Hashrate jaringan",
   "calcHeight": "Blok saat ini",

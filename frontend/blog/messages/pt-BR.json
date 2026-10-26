@@ -31,7 +31,7 @@
   "calcHashrate": "Seu hashrate",
   "calcUnit": "Unidade",
   "calcMinerFee": "Taxa do minerador (%)",
-  "calcFeeHelp": "O Seine aplica 1% no bntpool.com. Use 0% se seu hashrate já exclui a taxa do minerador, como em Minhas estatísticas.",
+  "calcFeeHelp": "Informe a taxa da sua versão do minerador. Use 0% se seu hashrate já exclui a taxa do minerador, como em Minhas estatísticas.",
   "calcPoolFee": "Taxa do pool",
   "calcNetwork": "Hashrate da rede",
   "calcHeight": "Bloco atual",

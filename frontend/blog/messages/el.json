@@ -31,7 +31,7 @@
   "calcHashrate": "Το hashrate σας",
   "calcUnit": "Μονάδα",
   "calcMinerFee": "Χρέωση miner (%)",
-  "calcFeeHelp": "Το Seine εφαρμόζει 1% στο bntpool.com. Χρησιμοποιήστε 0% αν το hashrate σας εξαιρεί ήδη τη χρέωση miner, όπως στη σελίδα Τα στατιστικά μου.",
+  "calcFeeHelp": "Εισαγάγετε τη χρέωση για την έκδοση του miner σας. Χρησιμοποιήστε 0% αν το hashrate σας εξαιρεί ήδη τη χρέωση miner, όπως στη σελίδα Τα στατιστικά μου.",
   "calcPoolFee": "Χρέωση pool",
   "calcNetwork": "Hashrate δικτύου",
   "calcHeight": "Τρέχον μπλοκ",

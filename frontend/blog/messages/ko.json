@@ -31,7 +31,7 @@
   "calcHashrate": "내 해시레이트",
   "calcUnit": "단위",
   "calcMinerFee": "채굴 프로그램 수수료 (%)",
-  "calcFeeHelp": "Seine은 bntpool.com에서 1%를 적용합니다. 내 통계처럼 채굴 프로그램 수수료가 이미 제외된 해시레이트라면 0%를 사용하세요.",
+  "calcFeeHelp": "사용 중인 마이너 버전의 수수료를 입력하세요. 내 통계처럼 채굴 프로그램 수수료가 이미 제외된 해시레이트라면 0%를 사용하세요.",
   "calcPoolFee": "풀 수수료",
   "calcNetwork": "네트워크 해시레이트",
   "calcHeight": "현재 블록",

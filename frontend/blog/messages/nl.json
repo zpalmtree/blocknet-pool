@@ -31,7 +31,7 @@
   "calcHashrate": "Je hashrate",
   "calcUnit": "Eenheid",
   "calcMinerFee": "Minerkosten (%)",
-  "calcFeeHelp": "Seine rekent 1% op bntpool.com. Gebruik 0% als je hashrate de minerkosten al uitsluit, zoals op Mijn statistieken.",
+  "calcFeeHelp": "Vul de kosten van jouw minerversie in. Gebruik 0% als je hashrate de minerkosten al uitsluit, zoals op Mijn statistieken.",
   "calcPoolFee": "Poolkosten",
   "calcNetwork": "Netwerkhashrate",
   "calcHeight": "Huidig blok",

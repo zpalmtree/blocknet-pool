@@ -298,5 +298,6 @@
   "notFoundTitle": "Page not found",
   "notFoundDescription": "This link does not lead to a page. Open the dashboard, get started, or browse the mining guides.",
   "statsDescription": "Look up your Blocknet miner hashrate, shares, and balance.",
-  "rewardsCalculator": "Estimate your BNT rewards"
+  "rewardsCalculator": "Estimate your BNT rewards",
+  "poolFee": "Pool fee"
 }

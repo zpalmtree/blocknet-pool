@@ -298,5 +298,6 @@
   "notFoundTitle": "Nie znaleziono strony",
   "notFoundDescription": "Ten link nie prowadzi do żadnej strony. Otwórz panel, zacznij kopać lub przeczytaj poradniki.",
   "statsDescription": "Sprawdź hashrate, udziały i saldo swojej koparki Blocknet.",
-  "rewardsCalculator": "Oszacuj swoje nagrody BNT"
+  "rewardsCalculator": "Oszacuj swoje nagrody BNT",
+  "poolFee": "Opłata puli"
 }

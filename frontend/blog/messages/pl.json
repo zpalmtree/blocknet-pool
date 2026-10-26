@@ -31,7 +31,7 @@
   "calcHashrate": "Twój hashrate",
   "calcUnit": "Jednostka",
   "calcMinerFee": "Opłata minera (%)",
-  "calcFeeHelp": "Seine pobiera 1% na bntpool.com. Ustaw 0%, jeśli hashrate już pomija opłatę minera, tak jak na stronie Moje statystyki.",
+  "calcFeeHelp": "Wpisz opłatę dla swojej wersji minera. Ustaw 0%, jeśli hashrate już pomija opłatę minera, tak jak na stronie Moje statystyki.",
   "calcPoolFee": "Opłata puli",
   "calcNetwork": "Hashrate sieci",
   "calcHeight": "Bieżący blok",

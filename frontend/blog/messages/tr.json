@@ -31,7 +31,7 @@
   "calcHashrate": "Hash gücünüz",
   "calcUnit": "Birim",
   "calcMinerFee": "Madenci ücreti (%)",
-  "calcFeeHelp": "Seine, bntpool.com’da %1 uygular. Hash gücünüz İstatistiklerim sayfasındaki gibi madenci ücretini zaten hariç tutuyorsa %0 kullanın.",
+  "calcFeeHelp": "Madenci sürümünüzün ücretini girin. Hash gücünüz İstatistiklerim sayfasındaki gibi madenci ücretini zaten hariç tutuyorsa %0 kullanın.",
   "calcPoolFee": "Havuz ücreti",
   "calcNetwork": "Ağın hash gücü",
   "calcHeight": "Geçerli blok",

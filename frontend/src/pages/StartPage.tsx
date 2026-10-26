@@ -11,8 +11,9 @@ interface StartPageProps {
 export function StartPage({ poolInfo }: StartPageProps) {
   const [copiedKey, setCopiedKey] = useState('');
   const poolFeePct = poolInfo?.pool_fee_pct;
-  const poolFeeLabel = poolFeePct != null && poolFeePct > 0
-    ? `${poolFeePct.toLocaleString(locale, { maximumFractionDigits: 20 })}%` : t('m598');
+  const poolFeeLabel = poolFeePct == null || !Number.isFinite(poolFeePct) ? '-'
+    : poolFeePct === 0 ? t('m598')
+    : `${poolFeePct.toLocaleString(locale, { maximumFractionDigits: 20 })}%`;
   const poolUrl = stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url);
   const commandExample = `./seine --pool-url ${poolUrl} --address YOUR_BLOCKNET_ADDRESS`;
   const pplnsWindowLabel = poolInfo?.pplns_window_duration;
@@ -119,7 +120,7 @@ export function StartPage({ poolInfo }: StartPageProps) {
               </td>
             </tr>
             <tr>
-              <td>{t("m470")}</td>
+              <td>{t("poolFee")}</td>
               <td>
                 <span className="info-value mono">{poolFeeLabel}</span>
               </td>

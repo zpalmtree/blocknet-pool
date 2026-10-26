@@ -31,7 +31,7 @@
   "calcHashrate": "Hashrate của bạn",
   "calcUnit": "Đơn vị",
   "calcMinerFee": "Phí phần mềm đào (%)",
-  "calcFeeHelp": "Seine áp dụng 1% trên bntpool.com. Dùng 0% nếu hashrate đã loại trừ phí phần mềm đào, như trên trang Thống kê của tôi.",
+  "calcFeeHelp": "Nhập phí cho phiên bản phần mềm đào của bạn. Dùng 0% nếu hashrate đã loại trừ phí phần mềm đào, như trên trang Thống kê của tôi.",
   "calcPoolFee": "Phí pool",
   "calcNetwork": "Hashrate mạng",
   "calcHeight": "Khối hiện tại",

@@ -298,5 +298,6 @@
   "notFoundTitle": "페이지를 찾을 수 없습니다",
   "notFoundDescription": "이 링크에 해당하는 페이지가 없습니다. 대시보드를 열거나, 채굴을 시작하거나, 채굴 가이드를 확인하세요.",
   "statsDescription": "Blocknet 채굴기의 해시레이트, 셰어 및 잔액을 확인하세요.",
-  "rewardsCalculator": "내 BNT 보상 추정하기"
+  "rewardsCalculator": "내 BNT 보상 추정하기",
+  "poolFee": "풀 수수료"
 }

@@ -12,7 +12,7 @@ export function calculatorHtml(locale) {
 <fieldset disabled><legend class="calc-sr-only">${text('calcTitle')}</legend>
 <div class="calc-fields"><div><label for="calc-hashrate">${text('calcHashrate')}</label><input id="calc-hashrate" data-calc="hashrate" type="text" inputmode="decimal" autocomplete="off" dir="ltr" aria-describedby="calc-hint" placeholder="0"></div>
 <div><label for="calc-units">${text('calcUnit')}</label><select id="calc-units" data-calc="units" dir="ltr"><option value="1">H/s</option><option value="1000">kH/s</option><option value="1000000">MH/s</option></select></div>
-<div><label for="calc-fee">${text('calcMinerFee')}</label><input id="calc-fee" data-calc="minerFee" type="text" inputmode="decimal" autocomplete="off" value="1" dir="ltr" aria-describedby="calc-fee-help calc-hint"></div></div>
+<div><label for="calc-fee">${text('calcMinerFee')}</label><input id="calc-fee" data-calc="minerFee" type="text" inputmode="decimal" autocomplete="off" value="2" dir="ltr" aria-describedby="calc-fee-help calc-hint"></div></div>
 <p id="calc-fee-help" class="calc-note">${text('calcFeeHelp')}</p>
 </fieldset>
 <p id="calc-hint" data-calc="hint" role="status">${text('calcEmpty')}</p>

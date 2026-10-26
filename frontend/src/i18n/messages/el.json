@@ -298,5 +298,6 @@
   "notFoundTitle": "Η σελίδα δεν βρέθηκε",
   "notFoundDescription": "Αυτός ο σύνδεσμος δεν οδηγεί σε κάποια σελίδα. Ανοίξτε τον πίνακα ελέγχου, ξεκινήστε ή διαβάστε τους οδηγούς εξόρυξης.",
   "statsDescription": "Δείτε το hashrate, τα shares και το υπόλοιπο του miner σας στο Blocknet.",
-  "rewardsCalculator": "Εκτιμήστε τις ανταμοιβές σας σε BNT"
+  "rewardsCalculator": "Εκτιμήστε τις ανταμοιβές σας σε BNT",
+  "poolFee": "Προμήθεια pool"
 }

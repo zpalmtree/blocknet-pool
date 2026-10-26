@@ -1,4 +1,4 @@
-import { t, tx, localizePath } from '../i18n';
+import { t, tx, localizePath, locale } from '../i18n';
 import { useCallback, useEffect, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
@@ -134,6 +134,16 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
         <h1>{t("m400")}</h1>
         <p className="page-intro">{t("m401")}</p>
         <p><a href={localizePath('/blog/') + 'estimate-blocknet-mining-rewards/#mining-calculator'}>{t('rewardsCalculator')}</a></p>
+      </div>
+
+      <div className="section">
+        <StatCard
+          label={t('poolFee')}
+          value={poolInfo?.pool_fee_pct != null && Number.isFinite(poolInfo.pool_fee_pct)
+            ? `${poolInfo.pool_fee_pct.toLocaleString(locale, { maximumFractionDigits: 20 })}%`
+            : '-'}
+          id="s-pool-fee"
+        />
       </div>
 
       <div className="stratum-bar">

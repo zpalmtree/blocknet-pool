@@ -31,7 +31,7 @@
   "calcHashrate": "Deine Hashrate",
   "calcUnit": "Einheit",
   "calcMinerFee": "Miner-Gebühr (%)",
-  "calcFeeHelp": "Seine berechnet auf bntpool.com 1%. Verwende 0%, wenn deine Hashrate die Miner-Gebühr bereits ausschließt, wie unter Meine Statistik.",
+  "calcFeeHelp": "Gib die Gebühr deiner Miner-Version ein. Verwende 0%, wenn deine Hashrate die Miner-Gebühr bereits ausschließt, wie unter Meine Statistik.",
   "calcPoolFee": "Pool-Gebühr",
   "calcNetwork": "Netzwerk-Hashrate",
   "calcHeight": "Aktueller Block",

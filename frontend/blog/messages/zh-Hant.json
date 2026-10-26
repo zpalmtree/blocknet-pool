@@ -31,7 +31,7 @@
   "calcHashrate": "你的算力",
   "calcUnit": "單位",
   "calcMinerFee": "礦工軟體費用（%）",
-  "calcFeeHelp": "Seine 在 bntpool.com 的費用為 1%。如果算力已排除礦工軟體費用，例如「我的統計」中的數值，請填 0%。",
+  "calcFeeHelp": "請輸入您所用礦工軟體版本的費用。 如果算力已排除礦工軟體費用，例如「我的統計」中的數值，請填 0%。",
   "calcPoolFee": "礦池費用",
   "calcNetwork": "全網算力",
   "calcHeight": "目前區塊",

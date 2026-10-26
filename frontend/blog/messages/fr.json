@@ -31,7 +31,7 @@
   "calcHashrate": "Votre hashrate",
   "calcUnit": "Unité",
   "calcMinerFee": "Frais du mineur (%)",
-  "calcFeeHelp": "Seine applique 1% sur bntpool.com. Utilisez 0% si votre hashrate exclut déjà les frais du mineur, comme dans Mes statistiques.",
+  "calcFeeHelp": "Indiquez les frais de votre version du mineur. Utilisez 0% si votre hashrate exclut déjà les frais du mineur, comme dans Mes statistiques.",
   "calcPoolFee": "Frais du pool",
   "calcNetwork": "Hashrate du réseau",
   "calcHeight": "Bloc actuel",
