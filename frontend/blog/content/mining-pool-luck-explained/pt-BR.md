@@ -9,7 +9,7 @@ faq:
     a: 'Leia primeiro o rótulo e a definição. A coluna Esforço e o cartão Sorte média da bntpool.com expressam trabalho em relação ao esperado; valores menores significam menos trabalho registrado por bloco. Outros sites podem usar a convenção inversa. Compare métricas e tamanhos de amostra equivalentes, não apenas percentuais.'
   - q: 'Uma rodada longa aumentará meu próximo pagamento?'
     a: 'Uma rodada longa não garante um pagamento individual maior. A descoberta de blocos determina quando uma recompensa fica disponível, enquanto a contabilidade PPLNS do pool determina sua parte pelo trabalho aceito elegível. Depois se aplicam as regras de confirmação e pagamento. Consulte seus saldos em Minhas estatísticas e a sequência no guia de pagamentos.'
-sourceHash: dfd8c710a719
+sourceHash: 'f7051fa67591'
 translation: draft
 ---
 

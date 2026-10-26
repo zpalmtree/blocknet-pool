@@ -54,7 +54,12 @@ function shareOutcomes() {
   return frame(`${miner(185, 337, 1.25)}${line('M275 337H395', '#629569', 5)}${rect(405, 200, 220, 275, '#f9fcf3', 24)}${[260, 337, 414].map(y => `${circle(515, y, 20, '#6aa77a')}`).join('')}${line('M635 337H745M745 170V505M745 170H910M745 337H910M745 505H910', '#629569', 4)}${check(975, 170, 1.35)}${circle(975, 337, 39, '#dfe8d6')}${line('M957 319 993 355M993 319 957 355', '#52725b', 5)}${circle(975, 505, 39, '#e8e0b9')}${circle(975, 505, 24, 'none', 'stroke="#786d48" stroke-width="3"')}${line('M975 488V505L987 513', '#786d48', 4)}`);
 }
 
+function difficultyTargets() {
+  return frame(`${rect(100, 150, 460, 375, '#f9fcf3', 24)}${rect(640, 150, 460, 375, '#f9fcf3', 24)}${Array.from({length: 6}, (_, row) => Array.from({length: 8}, (_, col) => circle(155 + col * 50, 215 + row * 48, 9, '#bbcfb0')).join('')).join('')}${Array.from({length: 6}, (_, row) => Array.from({length: 8}, (_, col) => circle(695 + col * 50, 215 + row * 48, 9, '#bbcfb0')).join('')).join('')}${circle(330, 337, 110, '#b8e8a4', 'fill-opacity=".6" stroke="#237a4e" stroke-width="4"')}${circle(870, 337, 48, '#b8e8a4', 'fill-opacity=".6" stroke="#237a4e" stroke-width="4"')}${line('M575 337H625M614 326 625 337 614 348', '#629569', 4)}`);
+}
+
 const illustrations = {
+  'mining-difficulty-explained': difficultyTargets,
   'accepted-rejected-stale-shares': shareOutcomes,
   'mining-pool-luck-explained': poolLuck,
   'blocknet-block-reward-schedule': rewardSchedule,

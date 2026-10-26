@@ -9,7 +9,7 @@ faq:
     a: 'Baca label dan definisinya terlebih dahulu. Kolom Effort dan kartu Average Luck di bntpool.com menyatakan kerja relatif terhadap kerja yang diharapkan. Nilai lebih rendah berarti lebih sedikit kerja tercatat per blok. Situs lain mungkin memakai konvensi kebalikannya. Bandingkan metrik dan ukuran sampel yang setara, bukan persentase saja.'
   - q: 'Apakah putaran panjang meningkatkan pembayaran berikutnya?'
     a: 'Putaran panjang tidak menjamin pembayaran pribadi yang lebih besar. Penemuan blok menentukan kapan imbalan tersedia, sedangkan perhitungan PPLNS menentukan bagian Anda berdasarkan kerja diterima yang memenuhi syarat. Setelahnya berlaku aturan konfirmasi dan pembayaran. Periksa saldo di Statistik Saya dan urutannya di panduan pembayaran.'
-sourceHash: dfd8c710a719
+sourceHash: 'f7051fa67591'
 translation: draft
 ---
 

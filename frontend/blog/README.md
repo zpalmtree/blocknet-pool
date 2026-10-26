@@ -58,11 +58,11 @@ Calculation and release sources rechecked October 26, 2026:
 - `blocknet-core/miner.go`, `GetBlockReward`: initial reward 72,325,093,035 atomic
   units, tail 200,000,000, annual exponential decay 0.75, 8,640-block months and
   tail starting at month 48. `blocknet-core/block.go`: 300-second target interval.
-- `seine@v0.2.26:src/dev_fee.rs`: 1% dev time on bntpool.com.
-  `miner-release.json` pins this public release; the calculator uses its fee
-  and displays its version in all languages. Source on master has a pending 2%
-  policy; that is not the v0.2.26 release. A pool-reported user hashrate should
-  use 0% to avoid deducting the miner fee twice.
+- `seine@v0.2.36:src/dev_fee.rs`: flat 2% dev time on all pools and solo mode.
+  `miner-release.json` pins this reviewed public release; the calculator displays
+  its fee and version in all languages. A pool-reported user hashrate should
+  use 0% to avoid deducting the miner fee twice. Historical v0.2.26 examples
+  retain their dated release labels and original fee values.
 - Live `/api/info` reported a 0% pool fee, 0.1 BNT minimum payout, 60-block
   maturity and a six-hour PPLNS window. The calculator still reads the fee live.
 - Pool fee comes from `pool_fee_pct` in `/api/info`, never a hardcoded fallback.

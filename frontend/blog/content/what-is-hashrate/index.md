@@ -12,7 +12,7 @@ faq:
     a: Your miner counts every hash it completes. The pool sees only the shares you submit and estimates your hashrate from their difficulty over the last hour. Shares arrive at random moments, so the pool figure moves more and settles over time. Compare the 24-hour chart on My Stats with your miner's average for a fair match.
   - q: Does a higher hashrate mean more mining rewards?
     a: Yes, in proportion. Every hash has the same chance of finding a block, so your expected share of the network's blocks equals your share of the network hashrate. Doubling your hashrate doubles your expected rewards, while a rising network hashrate shrinks your share. On bntpool.com, that share arrives as a portion of every block the pool finds.
-related: [what-is-a-mining-pool, estimate-blocknet-mining-rewards, track-your-miner-on-bntpool, accepted-rejected-stale-shares]
+related: [what-is-a-mining-pool, estimate-blocknet-mining-rewards, track-your-miner-on-bntpool, mining-difficulty-explained]
 ---
 
 Hashrate is the number every miner, pool and block explorer shows first. This guide explains what it measures, how to read the units from H/s upward, how your own hashrate relates to the pool's and the network's, and why each figure moves from minute to minute, using Blocknet and the bntpool.com dashboard as the worked example.

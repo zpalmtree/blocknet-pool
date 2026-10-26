@@ -75,13 +75,13 @@ test('every calculator has localized controls, a non-JavaScript explanation and 
 
 test('calculator identifies its reviewed release and uses its published bntpool fee in every locale', () => {
   const release = JSON.parse(readFileSync(new URL('../blog/miner-release.json', import.meta.url)));
-  // Evidence: v0.2.26 src/dev_fee.rs, BNTPOOL_DEV_FEE_PERCENT = 1.0.
-  assert.equal(release.tag, 'v0.2.26');
-  assert.equal(release.bntpoolMinerFeePercent, 1);
+  // Evidence: v0.2.36 src/dev_fee.rs, DEV_FEE_PERCENT = 2.0.
+  assert.equal(release.tag, 'v0.2.36');
+  assert.equal(release.bntpoolMinerFeePercent, 2);
   for (const { code } of LOCALES) {
     const html = calculatorHtml(code);
-    assert.match(html, /id="calc-fee"[^>]*value="1"/);
-    assert.ok(html.includes('v0.2.26'));
+    assert.match(html, /id="calc-fee"[^>]*value="2"/);
+    assert.ok(html.includes('v0.2.36'));
     assert.ok(!/\{(?:version|fee)\}/.test(html));
   }
 });

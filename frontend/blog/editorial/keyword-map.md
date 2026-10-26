@@ -61,3 +61,11 @@ Added 2026-10-26: the luck guide owns the detailed probability and effort explan
 | accepted rejected stale mining shares | `/blog/accepted-rejected-stale-shares/` | Interpret submission outcomes, vardiff and rejection reasons, then diagnose repeated errors on one rig | duplicate share, low difficulty share, nonce range, rejection rate |
 
 The tracking guide owns navigating My Stats and zero-hashrate/connection diagnosis. The PPLNS guide owns reward eligibility and payment timing. This article owns submitted-share outcomes and difficulty-weighted interpretation; it links to those owners for the next stage.
+
+## Mining difficulty (October 26, 2026)
+
+| Primary keyword cluster | URL | Search job | Supporting phrases |
+|---|---|---|---|
+| mining difficulty explained; network difficulty vs share difficulty | `/blog/mining-difficulty-explained/` | Explain target thresholds, Blocknet's per-block LWMA adjustment and difficulty-to-time arithmetic | difficulty adjustment, vardiff meaning, 挖矿难度 |
+
+Hashrate owns speed and units, luck owns round variance, share outcomes owns rejection diagnosis, and the calculator owns reward estimates. This guide owns difficulty as a threshold and adjustment mechanism, linking to those existing owners for their tasks.

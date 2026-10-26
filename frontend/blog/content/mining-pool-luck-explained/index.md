@@ -10,7 +10,7 @@ faq:
     a: 'Read the label and definition first. The bntpool.com Effort column and Average Luck card express work relative to expected work, so lower values mean less recorded work per block. Other sites may use the inverse convention. Compare matching metrics and sample sizes rather than percentages alone.'
   - q: 'Will a long round increase my next payout?'
     a: 'A long round does not guarantee a larger personal payout. Block discovery decides when a reward becomes available, while the pool''s PPLNS accounting decides your share using eligible accepted work. Confirmation and payout rules apply afterward. Check My Stats for your own balances and the payout guide for the sequence.'
-related: [how-pplns-payouts-work, estimate-blocknet-mining-rewards, track-your-miner-on-bntpool]
+related: [how-pplns-payouts-work, estimate-blocknet-mining-rewards, track-your-miner-on-bntpool, mining-difficulty-explained]
 ---
 
 The pool dashboard shows both mining work and the blocks that work finds. This guide explains how to read effort percentages, expected block times and round history on bntpool.com. You will be able to distinguish a statistical average from a countdown, then check your own mining connection without waiting for the pool's next block.

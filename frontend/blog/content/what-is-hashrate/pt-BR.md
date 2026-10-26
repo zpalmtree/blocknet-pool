@@ -2,7 +2,7 @@
 title: O que é hashrate na mineração de criptomoedas?
 description: Hashrate é o número de hashes calculados por segundo. Entenda as unidades, as diferenças entre sua taxa, a do pool e a da rede e por que cada uma varia.
 tags: [Hashrate, Fundamentos de mineração, Blocknet, bntpool]
-sourceHash: 78ea554d4001
+sourceHash: '5af3a8b3f18b'
 translation: draft
 faq:
   - q: 'Qual hashrate um computador alcança minerando Blocknet?'

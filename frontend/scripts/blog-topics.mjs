@@ -32,6 +32,7 @@ const groups = {
     "what-is-hashrate"
   ],
   "rewards": [
+    "mining-difficulty-explained",
     "how-pplns-payouts-work",
     "mining-pool-luck-explained",
     "estimate-blocknet-mining-rewards",

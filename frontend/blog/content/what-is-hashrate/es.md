@@ -11,7 +11,7 @@ faq:
     a: 'Tu minero cuenta cada hash terminado. El pool solo ve shares y estima la tasa por su dificultad durante la última hora. Los shares llegan aleatoriamente, así que su cifra oscila más y se estabiliza con el tiempo. Compara el gráfico de 24 horas de My Stats con la media del minero.'
   - q: '¿Más tasa de hash significa más recompensas?'
     a: 'Sí, proporcionalmente. Cada hash tiene igual probabilidad de encontrar un bloque, por lo que tu parte esperada de bloques equivale a tu parte de la tasa de red. Duplicar tu tasa duplica lo esperado; si crece la red, tu parte disminuye. En bntpool.com recibes esa parte de cada bloque encontrado.'
-sourceHash: 78ea554d4001
+sourceHash: '5af3a8b3f18b'
 translation: draft
 ---
 

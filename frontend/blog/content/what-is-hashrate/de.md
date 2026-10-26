@@ -2,7 +2,7 @@
 title: Was bedeutet Hashrate beim Krypto-Mining?
 description: Die Hashrate ist die Anzahl der Hashes, die ein Miner pro Sekunde berechnet. Lerne die Einheiten, die Unterschiede zwischen eigener, Pool- und Netzwerk-Hashrate und ihre Schwankungen kennen.
 tags: [Hashrate, Mining-Grundlagen, Blocknet, bntpool]
-sourceHash: 78ea554d4001
+sourceHash: '5af3a8b3f18b'
 translation: draft
 faq:
   - q: 'Welche Hashrate erreicht ein Rechner beim Blocknet-Mining?'

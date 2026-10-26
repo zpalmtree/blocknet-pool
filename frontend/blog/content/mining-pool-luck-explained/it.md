@@ -9,7 +9,7 @@ faq:
     a: 'Leggi prima l’etichetta e la definizione. La colonna Sforzo e la scheda Fortuna media di bntpool.com esprimono il lavoro rispetto a quello atteso: valori inferiori indicano meno lavoro registrato per blocco. Altri siti possono usare la convenzione inversa. Confronta metriche e dimensioni dei campioni equivalenti, non solo percentuali.'
   - q: 'Un round lungo aumenterà il mio prossimo pagamento?'
     a: 'Un round lungo non garantisce un pagamento personale maggiore. La scoperta del blocco determina quando diventa disponibile una ricompensa; la contabilità PPLNS stabilisce la tua quota usando il lavoro accettato idoneo. Seguono le regole di conferma e pagamento. Controlla i saldi in Le mie statistiche e la sequenza nella guida ai pagamenti.'
-sourceHash: dfd8c710a719
+sourceHash: 'f7051fa67591'
 translation: draft
 ---
 

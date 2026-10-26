@@ -9,7 +9,7 @@ faq:
     a: 'Lisez d’abord le libellé et sa définition. La colonne Effort et la carte Chance moyenne de bntpool.com expriment le travail par rapport au travail attendu : une valeur inférieure signifie moins de travail enregistré par bloc. D’autres sites utilisent parfois la convention inverse. Comparez des métriques et tailles d’échantillon équivalentes, pas seulement des pourcentages.'
   - q: 'Une longue ronde augmentera-t-elle mon prochain paiement ?'
     a: 'Une longue ronde ne garantit pas un paiement personnel supérieur. La découverte d’un bloc détermine quand une récompense devient disponible ; la comptabilité PPLNS du pool détermine votre part selon le travail accepté admissible. Les règles de confirmation et de paiement s’appliquent ensuite. Consultez vos soldes dans Mes statistiques et les étapes dans le guide des paiements.'
-sourceHash: dfd8c710a719
+sourceHash: 'f7051fa67591'
 translation: draft
 ---
 

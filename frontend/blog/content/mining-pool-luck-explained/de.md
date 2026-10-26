@@ -9,7 +9,7 @@ faq:
     a: 'Lies zuerst die Bezeichnung und Definition. Die Spalte Aufwand und die Karte Durchschnittliches Glück auf bntpool.com setzen geleistete zu erwarteter Arbeit ins Verhältnis. Niedrigere Werte bedeuten weniger erfasste Arbeit pro Block. Andere Seiten verwenden eventuell den Kehrwert. Vergleiche passende Kennzahlen und Stichprobengrößen statt nur Prozentwerte.'
   - q: 'Erhöht eine lange Runde meine nächste Auszahlung?'
     a: 'Eine lange Runde garantiert keine höhere persönliche Auszahlung. Der Blockfund bestimmt, wann eine Belohnung verfügbar wird; die PPLNS-Abrechnung bestimmt deinen Anteil anhand berechtigter akzeptierter Arbeit. Danach gelten Bestätigungs- und Auszahlungsregeln. Prüfe deine Guthaben unter Meine Statistiken und den Ablauf im Auszahlungsleitfaden.'
-sourceHash: dfd8c710a719
+sourceHash: 'f7051fa67591'
 translation: draft
 ---
 

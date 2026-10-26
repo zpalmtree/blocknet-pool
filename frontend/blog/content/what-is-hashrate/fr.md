@@ -11,7 +11,7 @@ faq:
     a: 'Votre mineur compte tous les hachages terminés. Le pool ne voit que les shares soumis et estime le hashrate selon leur difficulté sur la dernière heure. Ils arrivent aléatoirement : la valeur varie davantage et se stabilise avec le temps. Comparez le graphique 24 heures de My Stats à la moyenne du mineur.'
   - q: 'Un hashrate supérieur donne-t-il plus de récompenses ?'
     a: 'Oui, proportionnellement. Chaque hachage a la même chance de trouver un bloc : votre part attendue des blocs égale votre part du hashrate réseau. Doubler votre hashrate double vos récompenses attendues, tandis qu’une hausse du réseau réduit votre part. Sur bntpool.com, elle arrive comme fraction de chaque bloc trouvé.'
-sourceHash: 78ea554d4001
+sourceHash: '5af3a8b3f18b'
 translation: draft
 ---
 

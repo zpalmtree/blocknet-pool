@@ -9,7 +9,7 @@ faq:
     a: 'Primero consulta la etiqueta y su definición. La columna Esfuerzo y la tarjeta Suerte media de bntpool.com expresan el trabajo respecto al esperado: valores más bajos significan menos trabajo registrado por bloque. Otros sitios pueden utilizar la convención inversa. Compara métricas y tamaños de muestra equivalentes, no solo porcentajes.'
   - q: '¿Una ronda larga aumentará mi próximo pago?'
     a: 'Una ronda larga no garantiza un pago personal mayor. El hallazgo de bloques determina cuándo hay una recompensa disponible; la contabilidad PPLNS del pool determina tu parte según el trabajo aceptado elegible. Después se aplican las reglas de confirmación y pago. Consulta tus saldos en Mis estadísticas y la secuencia en la guía de pagos.'
-sourceHash: dfd8c710a719
+sourceHash: 'f7051fa67591'
 translation: draft
 ---
 

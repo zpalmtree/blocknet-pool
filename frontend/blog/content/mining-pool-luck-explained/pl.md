@@ -9,7 +9,7 @@ faq:
     a: 'Najpierw przeczytaj etykietę i definicję. Kolumna Wysiłek i karta Średnie szczęście na bntpool.com przedstawiają pracę względem oczekiwanej, więc niższe wartości oznaczają mniej zarejestrowanej pracy na blok. Inne witryny mogą stosować odwrotną konwencję. Porównuj zgodne wskaźniki i rozmiary próbek, nie tylko procenty.'
   - q: 'Czy długa runda zwiększy moją następną wypłatę?'
     a: 'Długa runda nie gwarantuje większej indywidualnej wypłaty. Znalezienie bloku określa, kiedy nagroda staje się dostępna, a rozliczenie PPLNS wyznacza twój udział na podstawie kwalifikującej się zaakceptowanej pracy. Potem obowiązują reguły potwierdzeń i wypłat. Sprawdź salda w Moich statystykach, a kolejność etapów w poradniku wypłat.'
-sourceHash: dfd8c710a719
+sourceHash: 'f7051fa67591'
 translation: draft
 ---
 

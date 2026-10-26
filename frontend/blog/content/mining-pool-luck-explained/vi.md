@@ -9,7 +9,7 @@ faq:
     a: 'Hãy đọc nhãn và định nghĩa trước. Cột Effort và thẻ Average Luck của bntpool.com thể hiện công việc so với lượng kỳ vọng, nên giá trị thấp hơn nghĩa là ít công việc được ghi nhận hơn cho mỗi khối. Trang khác có thể dùng quy ước ngược. Hãy so sánh cùng chỉ số và cỡ mẫu, không chỉ phần trăm.'
   - q: 'Vòng đào dài có làm khoản thanh toán tiếp theo lớn hơn không?'
     a: 'Vòng dài không đảm bảo khoản thanh toán cá nhân lớn hơn. Việc tìm khối quyết định khi nào có phần thưởng; kế toán PPLNS của pool quyết định phần của bạn theo công việc được chấp nhận đủ điều kiện. Sau đó mới áp dụng quy tắc xác nhận và thanh toán. Xem số dư trong Thống kê của tôi và trình tự trong hướng dẫn thanh toán.'
-sourceHash: dfd8c710a719
+sourceHash: 'f7051fa67591'
 translation: draft
 ---
 

@@ -9,7 +9,7 @@ faq:
     a: 'Önce etiketi ve tanımını okuyun. bntpool.com Efor sütunu ve Ortalama Şans kartı, yapılan işi beklenen işe oranlar; düşük değerler blok başına daha az kayıtlı iş anlamına gelir. Başka siteler ters tanımı kullanabilir. Yalnızca yüzdeleri değil, aynı ölçütleri ve örneklem büyüklüklerini karşılaştırın.'
   - q: 'Uzun bir tur sonraki ödememi artırır mı?'
     a: 'Uzun tur kişisel ödemenizin daha yüksek olacağını garanti etmez. Blok bulunması ödülün ne zaman kullanılabilir olduğunu, havuzun PPLNS muhasebesi ise uygun kabul edilmiş işe göre sizin payınızı belirler. Sonrasında onay ve ödeme kuralları uygulanır. Bakiyelerinizi İstatistiklerim''den, aşamaları ödeme rehberinden kontrol edin.'
-sourceHash: dfd8c710a719
+sourceHash: 'f7051fa67591'
 translation: draft
 ---
 

@@ -2,7 +2,7 @@
 title: 'Hashrate ในการขุดคริปโตคืออะไร?'
 description: 'Hashrate คือจำนวน hash ที่คำนวณต่อวินาที เรียนรู้หน่วยวัด ความต่างระหว่างของคุณ พูล และเครือข่าย รวมถึงเหตุผลที่แต่ละค่าเปลี่ยนแปลง'
 tags: ['Hashrate', 'พื้นฐานการขุด', 'Blocknet', 'bntpool']
-sourceHash: 78ea554d4001
+sourceHash: '5af3a8b3f18b'
 translation: draft
 faq:
   - q: 'คอมพิวเตอร์ขุด Blocknet ได้ hashrate เท่าไร?'

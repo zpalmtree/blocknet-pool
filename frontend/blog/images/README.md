@@ -22,3 +22,7 @@ images. To add a post, assign its screenshot or illustration in `blog-covers.mjs
 `accepted-rejected-stale-shares` uses the `shareOutcomes()` code-native diagram in
 `blog-covers.mjs`: a miner, submitted work, and check/cross/clock outcomes. It has
 no language-dependent text or invented dashboard values. Added October 26, 2026.
+
+- `mining-difficulty-explained`: original language-neutral SVG diagram in
+  `blog-covers.mjs`, showing a smaller qualifying region in the same field of
+  possible outcomes. Schematic, not measured probabilities. October 26, 2026.

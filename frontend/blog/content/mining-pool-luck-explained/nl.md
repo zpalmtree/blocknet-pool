@@ -9,7 +9,7 @@ faq:
     a: 'Lees eerst het label en de definitie. De kolom Inspanning en kaart Gemiddeld geluk op bntpool.com vergelijken werk met verwacht werk. Lagere waarden betekenen minder geregistreerd werk per blok. Andere sites gebruiken soms de omgekeerde conventie. Vergelijk overeenkomstige metingen en steekproefgroottes in plaats van alleen percentages.'
   - q: 'Verhoogt een lange ronde mijn volgende uitbetaling?'
     a: 'Een lange ronde garandeert geen hogere persoonlijke uitbetaling. Een blokvondst bepaalt wanneer een beloning beschikbaar komt; de PPLNS-administratie bepaalt je aandeel op basis van in aanmerking komend geaccepteerd werk. Daarna gelden bevestigings- en uitbetalingsregels. Bekijk je saldi bij Mijn statistieken en de volgorde in de uitbetalingsgids.'
-sourceHash: dfd8c710a719
+sourceHash: 'f7051fa67591'
 translation: draft
 ---
 
