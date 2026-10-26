@@ -13,7 +13,7 @@ faq:
     a: 'No. Ogni share resta nella finestra PPLNS sei ore dopo l’invio, quindi i blocchi trovati in quel periodo ti accreditano ancora una quota. Le ricompense già confermate restano nel saldo e vengono pagate quando raggiunge il minimo di 0,1 BNT.'
   - q: 'Cosa significa effort sopra il 100% nella pagina Luck?'
     a: 'Confronta il lavoro della pool nel round con la difficoltà del blocco, cioè il lavoro atteso. Sopra il 100% il round ha richiesto più tempo della media, sotto è stato più rapido. Entrambi sono normali e su molti round l’effort medio si avvicina al 100%.'
-sourceHash: 'e00112e9e82e'
+sourceHash: '1ca5549586c5'
 translation: draft
 ---
 

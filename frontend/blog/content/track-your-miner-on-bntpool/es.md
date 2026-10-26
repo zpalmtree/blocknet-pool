@@ -11,7 +11,7 @@ faq:
     a: 'No. Estadísticas, bloques, pagos, suerte, estado y endpoints de mineros son JSON público sobre HTTPS, accesible mediante curl o un panel doméstico sin registro. Los importes son unidades atómicas: divide entre 100.000.000 para obtener BNT y consulta cada 30 a 60 segundos.'
   - q: '¿Por qué Estimated Rewards muestra cero?'
     a: 'Aparece cuando el pool encuentra un bloque mientras tus shares están en la ventana de pagos. Para un minero nuevo puede requerir algunas rondas. Primero aparecen shares aceptados y tasa de hash; después, recompensas estimadas que maduran a Confirmed Rewards y se pagan automáticamente.'
-sourceHash: 'f785e00cbe03'
+sourceHash: '8f19279f18f8'
 translation: draft
 ---
 

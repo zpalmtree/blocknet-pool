@@ -80,7 +80,12 @@ function changeAddress() {
   return frame(`${miner(190,337,1.3)}${line('M285 337H450M450 337V190H695','#a7bda0',5,'stroke-dasharray="10 10"')}${line('M450 337V490H695M675 470 695 490 675 510','#237a4e',7)}${wallet(740,120,'#d5dfca')}${wallet(740,420,'#b8ee9d')}${text(850,315,'1',36,'#6b8068','text-anchor="middle"')}${text(850,610,'2',36,'#123c2a','text-anchor="middle"')}${rect(1010,145,95,95,'#fbfcf5',12)}${[170,193,216].map(y=>line(`M1030 ${y}H1085`,'#789475',4)).join('')}${check(1055,490,1.15)}`);
 }
 
+function payoutWalletTrace() {
+ return frame(`${rect(70,200,245,285,'#fbfcf5',22)}${[250,295,340,385].map(y=>line(`M105 ${y}H275`,'#87ac8d',5)).join('')}${check(193,440,.65)}${line('M340 337H460M440 317 460 337 440 357','#237a4e',6)}${cube(590,295,110)}${line('M720 337H840M820 317 840 337 820 357','#237a4e',6)}${rect(880,250,240,175,'#d5e8c8',22)}${rect(1010,300,110,75,'#fbfcf5',12)}${circle(1040,337,10,'#237a4e')}${line('M920 485c90 65 190 5 175-45m-22 12 22-12 14 24','#629569',5)}${check(1000,165,1.2)}`);
+}
+
 const illustrations = {
+  'pool-payout-missing-from-wallet': payoutWalletTrace,
   'change-mining-wallet-address': changeAddress,
   'mine-multiple-computers-one-wallet': multipleComputers,
   'mining-pool-fees-vs-miner-fees': miningFeeStages,

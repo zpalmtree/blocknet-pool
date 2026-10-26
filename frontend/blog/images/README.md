@@ -40,3 +40,5 @@ no language-dependent text or invented dashboard values. Added October 26, 2026.
 - `mine-multiple-computers-one-wallet`: original numbered-computers → pool → receiving-wallet diagram in `blog-covers.mjs`. Conceptual grouping, not a claim of fixed payments per machine. October 26, 2026.
 
 `change-mining-wallet-address`: original language-neutral SVG illustration generated in `blog-covers.mjs`; old wallet and retained ledger above, new submissions and verified wallet below. Numbers 1/2 identify destinations, not payout values. Caption is localized in every article. October 26, 2026.
+
+`pool-payout-missing-from-wallet`: original language-neutral illustration in `blog-covers.mjs`: payout record, chain transaction and wallet scan. Caption localized in all articles; October 26, 2026.

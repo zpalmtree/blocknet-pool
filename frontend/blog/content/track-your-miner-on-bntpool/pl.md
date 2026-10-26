@@ -2,7 +2,7 @@
 title: Monitoruj kopanie na bntpool.com
 description: Wyszukaj adres lub @name na bntpool.com, aby zobaczyć hashrate, udziały, saldo i wypłaty. Śledź bloki, szczęście i dostępność lub użyj publicznego API.
 tags: [bntpool, Statystyki kopania, API puli, Blocknet]
-sourceHash: 'f785e00cbe03'
+sourceHash: '8f19279f18f8'
 translation: draft
 faq:
   - q: 'Dlaczego mój hashrate na bntpool.com różni się od wyniku seine?'

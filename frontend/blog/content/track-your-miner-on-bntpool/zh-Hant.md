@@ -11,7 +11,7 @@ faq:
     a: '不需要。礦池統計、區塊、支付、幸運值、狀態以及個別礦工的端點都是透過 HTTPS 提供的公開 JSON，curl 指令或家庭儀表板不必註冊就能讀取。金額以最小單位表示，除以 100,000,000 即為 BNT，建議每 30 到 60 秒輪詢一次。'
   - q: '為什麼 My Stats 顯示的 Estimated Rewards 是零？'
     a: '礦池在你的份額位於支付區間內時找到區塊，Estimated Rewards（預估收益）才會出現。對新礦工來說，這可能需要挖幾輪。你被接受的份額與算力會最先顯示，接著是預估收益，它們成熟後轉入 Confirmed Rewards（已確認收益），並自動支付。'
-sourceHash: 'f785e00cbe03'
+sourceHash: '8f19279f18f8'
 translation: reviewed
 ---
 

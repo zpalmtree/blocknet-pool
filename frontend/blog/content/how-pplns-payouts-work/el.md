@@ -2,7 +2,7 @@
 title: 'Πώς λειτουργούν οι πληρωμές PPLNS στο bntpool.com'
 description: 'Το bntpool.com πληρώνει με PPLNS και παράθυρο έξι ωρών. Δείτε πώς μοιράζονται οι ανταμοιβές, τις 60 επιβεβαιώσεις και το ελάχιστο πληρωμής 0,1 BNT.'
 tags: ['Πληρωμές', 'PPLNS', 'bntpool', 'Οδηγός εξόρυξης']
-sourceHash: 'e00112e9e82e'
+sourceHash: '1ca5549586c5'
 translation: draft
 faq:
   - q: 'Πόσο διαρκεί το παράθυρο PPLNS του bntpool.com;'

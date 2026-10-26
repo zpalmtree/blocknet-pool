@@ -109,3 +109,11 @@ Pool setup owns first connection; stats owns dashboard fields; PPLNS owns reward
 | change mining wallet address; Blocknet payout address change | `/blog/change-mining-wallet-address/` | Switch existing rigs to a new destination, verify the transition and track old-address rewards |
 
 Pool setup owns first connection, multiple computers owns adding rigs, PPLNS owns allocation. This article owns an existing destination transition; Seine owns generic configuration editing. No URL is retargeted.
+
+## Miner stops and wallet receipt (October 26, 2026)
+
+| Primary keyword cluster | URL | Search job |
+|---|---|---|
+| pool payout missing from wallet; Blocknet sent payout troubleshooting | `/blog/pool-payout-missing-from-wallet/` | Trace an identified payout through transaction status, destination matching and wallet scanning |
+
+PPLNS owns payout eligibility; confirmations owns reward maturity; tracking owns dashboard fields. This guide owns reconciling an identified payout with the receiving wallet. No existing URL is retargeted.

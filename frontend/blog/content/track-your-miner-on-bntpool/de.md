@@ -2,7 +2,7 @@
 title: Deinen Miner auf bntpool.com überwachen
 description: Suche auf bntpool.com nach Adresse oder @name für Hashrate, Shares, Guthaben und Auszahlungen. Verfolge Blöcke, Glück und Verfügbarkeit oder nutze die öffentliche API.
 tags: [bntpool, Mining-Statistik, Pool-API, Blocknet]
-sourceHash: 'f785e00cbe03'
+sourceHash: '8f19279f18f8'
 translation: draft
 faq:
   - q: 'Warum unterscheidet sich meine Hashrate auf bntpool.com von der in seine?'

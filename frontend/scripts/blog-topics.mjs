@@ -35,6 +35,7 @@ const groups = {
     "what-is-hashrate"
   ],
   "rewards": [
+    "pool-payout-missing-from-wallet",
     "mining-pool-fees-vs-miner-fees",
     "block-confirmations-mining-rewards",
     "mining-difficulty-explained",

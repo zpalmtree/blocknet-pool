@@ -2,7 +2,7 @@
 title: 'Παρακολουθήστε τον miner σας στο bntpool.com'
 description: 'Αναζητήστε διεύθυνση ή @name στο bntpool.com για hashrate, shares, υπόλοιπο και πληρωμές. Δείτε μπλοκ, τύχη, διαθεσιμότητα και χρησιμοποιήστε το δημόσιο API.'
 tags: ['bntpool', 'Στατιστικά εξόρυξης', 'API pool', 'Blocknet']
-sourceHash: 'f785e00cbe03'
+sourceHash: '8f19279f18f8'
 translation: draft
 faq:
   - q: 'Γιατί το hashrate στο bntpool.com διαφέρει από του seine;'
