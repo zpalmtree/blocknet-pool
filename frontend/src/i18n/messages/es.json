@@ -296,5 +296,6 @@
   "minerHelp": "¿La tasa del pool sigue en cero?",
   "windowsGuide": "Guía de instalación en Windows",
   "notFoundTitle": "Página no encontrada",
-  "notFoundDescription": "Este enlace no lleva a ninguna página. Abre el panel, empieza a minar o consulta las guías de minería."
+  "notFoundDescription": "Este enlace no lleva a ninguna página. Abre el panel, empieza a minar o consulta las guías de minería.",
+  "statsDescription": "Consulta el hashrate, las shares y el saldo de tu minero de Blocknet."
 }

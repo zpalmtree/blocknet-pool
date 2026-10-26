@@ -296,5 +296,6 @@
   "minerHelp": "Hashrate pool masih nol?",
   "windowsGuide": "Panduan penyiapan Windows",
   "notFoundTitle": "Halaman tidak ditemukan",
-  "notFoundDescription": "Tautan ini tidak mengarah ke halaman mana pun. Buka dasbor, mulai menambang, atau baca panduan penambangan."
+  "notFoundDescription": "Tautan ini tidak mengarah ke halaman mana pun. Buka dasbor, mulai menambang, atau baca panduan penambangan.",
+  "statsDescription": "Lihat hashrate, share, dan saldo penambang Blocknet Anda."
 }

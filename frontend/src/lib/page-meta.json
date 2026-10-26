@@ -14,7 +14,10 @@
         "href": "/blog/how-pplns-payouts-work/",
         "label": "How PPLNS payouts work"
       }
-    ]
+    ],
+    "titleKey": "m399",
+    "descriptionKey": "m401",
+    "labelKey": "m001"
   },
   "/start": {
     "title": "Connect Seine to the Blocknet pool",
@@ -31,7 +34,10 @@
         "href": "/blog/track-your-miner-on-bntpool/",
         "label": "Check your first accepted shares"
       }
-    ]
+    ],
+    "titleKey": "m611",
+    "descriptionKey": "m468",
+    "labelKey": "m002"
   },
   "/checkpoints": {
     "title": "Blocknet Checkpoints",
@@ -44,7 +50,10 @@
         "href": "/blog/blocknet-checkpoints-fast-sync/",
         "label": "Download and verify Blocknet checkpoints"
       }
-    ]
+    ],
+    "titleKey": "m612",
+    "descriptionKey": "m381",
+    "labelKey": "m007"
   },
   "/luck": {
     "title": "Blocknet Pool Luck",
@@ -61,7 +70,10 @@
         "href": "/blog/estimate-blocknet-mining-rewards/",
         "label": "Estimate mining rewards"
       }
-    ]
+    ],
+    "titleKey": "m613",
+    "descriptionKey": "m443",
+    "labelKey": "m613"
   },
   "/blocks": {
     "title": "Recent Blocknet Blocks",
@@ -74,7 +86,10 @@
         "href": "/blog/blocknet-block-reward-schedule/",
         "label": "Block rewards and the emission schedule"
       }
-    ]
+    ],
+    "titleKey": "m614",
+    "descriptionKey": "m370",
+    "labelKey": "m003"
   },
   "/payouts": {
     "title": "Blocknet Pool Payouts",
@@ -87,7 +102,10 @@
         "href": "/blog/how-pplns-payouts-work/",
         "label": "PPLNS rewards, confirmations and payouts"
       }
-    ]
+    ],
+    "titleKey": "m615",
+    "descriptionKey": "m446",
+    "labelKey": "m004"
   },
   "/stats": {
     "title": "Blocknet Miner Stats",
@@ -100,7 +118,10 @@
         "href": "/blog/track-your-miner-on-bntpool/",
         "label": "Find your miner and understand its stats"
       }
-    ]
+    ],
+    "titleKey": "m616",
+    "descriptionKey": "statsDescription",
+    "labelKey": "m005"
   },
   "/status": {
     "title": "Blocknet Pool Status",
@@ -113,7 +134,10 @@
         "href": "/blog/track-your-miner-on-bntpool/#zero-hashrate",
         "label": "Check connection and zero-hashrate problems"
       }
-    ]
+    ],
+    "titleKey": "m617",
+    "descriptionKey": "m548",
+    "labelKey": "m006"
   },
   "/admin": {
     "title": "Pool Admin Dashboard",

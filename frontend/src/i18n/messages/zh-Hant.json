@@ -296,5 +296,6 @@
   "minerHelp": "礦池算力仍為零？",
   "windowsGuide": "Windows 設定指南",
   "notFoundTitle": "找不到頁面",
-  "notFoundDescription": "此連結沒有對應的頁面。你可以開啟儀表板、開始挖礦或閱讀挖礦指南。"
+  "notFoundDescription": "此連結沒有對應的頁面。你可以開啟儀表板、開始挖礦或閱讀挖礦指南。",
+  "statsDescription": "查詢您的 Blocknet 礦工算力、份額和餘額。"
 }

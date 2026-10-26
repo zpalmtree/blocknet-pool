@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-const REQUIRED_UI_ASSETS: &[&str] = &["index.html", "app.js", "app.css"];
+const REQUIRED_UI_ASSETS: &[&str] = &["index.html", "app.js", "app.css", "public-pages.json"];
 const FRONTEND_SOURCE_FILES: &[&str] = &[
     "package.json",
     "package-lock.json",
@@ -54,7 +54,10 @@ fn embed_languages(frontend_dist_dir: &Path) {
             continue;
         }
         track_path(&file);
-        let name = file.file_name().expect("catalog filename").to_string_lossy();
+        let name = file
+            .file_name()
+            .expect("catalog filename")
+            .to_string_lossy();
         entries.push_str(&format!(
             "    ({:?}, include_bytes!({:?})),\n",
             format!("assets/{name}"),
@@ -84,7 +87,12 @@ fn embed_blog(frontend_dir: &Path, blog_dist_dir: &Path) {
     track_path(&marker);
     let built = file_mtime(&marker)
         .unwrap_or_else(|| fail_missing_or_stale("missing frontend/dist/blog (the blog build)"));
-    if sources.iter().filter_map(|path| file_mtime(path)).max().is_some_and(|newest| newest > built) {
+    if sources
+        .iter()
+        .filter_map(|path| file_mtime(path))
+        .max()
+        .is_some_and(|newest| newest > built)
+    {
         fail_missing_or_stale("frontend/dist/blog is older than frontend/blog or frontend/scripts");
     }
 

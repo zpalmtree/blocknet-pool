@@ -24,3 +24,29 @@ test('private and unknown routes are noindex; returning to a public page restore
   assert.equal(publicPage.robots, 'index, follow');
   assert.equal(publicPage.imageUrl, 'https://bntpool.com/ui-assets/og-start.png');
 });
+
+test('all public language canonicals and reciprocal alternates exclude unrelated queries', async () => {
+  const { LOCALES } = await import('../src/i18n/locales.mjs');
+  const { readFileSync } = await import('node:fs');
+  const pages = JSON.parse(readFileSync(new URL('../src/lib/page-meta.json', import.meta.url), 'utf8'));
+  for (const locale of LOCALES) {
+    const messages = JSON.parse(readFileSync(new URL(`../src/i18n/messages/${locale.code}.json`, import.meta.url), 'utf8'));
+    const translate = key => messages[key];
+    for (const [path, source] of Object.entries(pages).filter(([, meta]) => meta.index)) {
+      const meta = metadataForPath(path, 'https://pool.example', locale.code, translate);
+      const canonical = `https://pool.example${path}${locale.code === 'en' ? '' : `?lang=${locale.code}`}`;
+      assert.equal(meta.canonical, canonical);
+      assert.equal(meta.title, locale.code === 'en' ? source.title : messages[source.titleKey]);
+      assert.equal(meta.description, locale.code === 'en' ? source.description : messages[source.descriptionKey]);
+      assert.equal(meta.alternates.length, 21);
+      assert.equal(meta.alternates.find(item => item.language === locale.htmlLang).url, canonical);
+      assert.equal(meta.alternates.find(item => item.language === 'x-default').url, `https://pool.example${path}`);
+    }
+    for (const path of ['/admin', '/unknown']) {
+      const meta = metadataForPath(path, 'https://pool.example', locale.code, translate);
+      assert.equal(meta.robots, 'noindex, follow');
+      assert.deepEqual(meta.alternates, []);
+      assert.equal(meta.canonical, `https://pool.example${path}`);
+    }
+  }
+});

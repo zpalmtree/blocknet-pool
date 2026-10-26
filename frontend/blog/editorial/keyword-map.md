@@ -14,10 +14,11 @@ target a search job a seineminer.com post already owns.
 - `/checkpoints` supplies the current download; the checkpoint article owns the
   verification and sync procedure.
 
-These are distinct reader jobs, not evidence of current query rankings. App language
-query parameters currently canonicalize to the English path; localized blog pages
-have their own self-canonical URLs and hreflang clusters. Do not advertise translated
-app query URLs as separately indexed pages without implementing server localization.
+These are distinct reader jobs, not evidence of current query rankings. The eight public app pages use self-canonical `?lang=<code>` URLs for non-English
+languages, with translated initial HTML and reciprocal hreflang links. English keeps
+the query-free path. Tracking and lookup parameters are excluded from canonicals.
+Admin and unknown routes stay noindex and outside the language clusters. Localized
+blog pages retain their existing path URLs and hreflang clusters.
 
 ## Current ownership
 

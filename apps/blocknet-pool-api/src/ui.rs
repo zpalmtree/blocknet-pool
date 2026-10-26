@@ -1,5 +1,5 @@
 use axum::body::Body;
-use axum::extract::{Path, Request, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::{header, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Response};
@@ -45,19 +45,11 @@ const SSR_META_MARKER: &str = "<!--SSR-META-->";
 // Shared with the browser so route transitions retain the server's canonical,
 // robots, description and social-card metadata.
 #[derive(serde::Deserialize)]
-struct GuideLink {
-    href: String,
-    label: String,
-}
-
-#[derive(serde::Deserialize)]
 struct PageMeta {
     title: String,
     description: String,
     image: String,
     index: bool,
-    label: String,
-    guides: Vec<GuideLink>,
 }
 
 static PAGE_METADATA: std::sync::LazyLock<std::collections::HashMap<String, PageMeta>> =
@@ -65,6 +57,79 @@ static PAGE_METADATA: std::sync::LazyLock<std::collections::HashMap<String, Page
         serde_json::from_str(include_str!("../../../frontend/src/lib/page-meta.json"))
             .expect("valid public page metadata")
     });
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PageLanguage {
+    code: String,
+    html_lang: String,
+    og_locale: String,
+    dir: String,
+    pages: std::collections::HashMap<String, TranslatedPage>,
+}
+
+#[derive(serde::Deserialize)]
+struct TranslatedPage {
+    title: String,
+    description: String,
+    body: String,
+}
+
+static PAGE_LANGUAGES: std::sync::LazyLock<Vec<PageLanguage>> = std::sync::LazyLock::new(|| {
+    serde_json::from_str(include_str!(concat!(
+        env!("BLOCKNET_POOL_FRONTEND_DIST_DIR"),
+        "/public-pages.json"
+    )))
+    .expect("valid localized public pages")
+});
+
+fn page_language(uri: &Uri) -> &'static PageLanguage {
+    // Private and unknown routes never participate in the public language cluster.
+    if !page_meta(uri.path()).index {
+        return &PAGE_LANGUAGES[0];
+    }
+    let query = Query::<Vec<(String, String)>>::try_from_uri(uri).ok();
+    let requested = query
+        .as_ref()
+        .and_then(|pairs| pairs.iter().find(|(key, _)| key == "lang"));
+    let code = requested
+        .map(|(_, value)| value.to_lowercase())
+        .unwrap_or_default();
+    if let Some(language) = PAGE_LANGUAGES
+        .iter()
+        .find(|language| language.code.eq_ignore_ascii_case(&code))
+    {
+        return language;
+    }
+    let parts: Vec<_> = code.split('-').collect();
+    let code = match parts[0] {
+        "zh" => {
+            if parts
+                .iter()
+                .any(|part| matches!(*part, "hant" | "tw" | "hk" | "mo"))
+            {
+                "zh-Hant"
+            } else {
+                "zh-Hans"
+            }
+        }
+        "pt" => "pt-BR",
+        base => base,
+    };
+    PAGE_LANGUAGES
+        .iter()
+        .find(|language| language.code == code)
+        .unwrap_or(&PAGE_LANGUAGES[0])
+}
+
+fn language_path(path: &str, code: &str) -> String {
+    let path = normalize_path(path);
+    if code == "en" {
+        path.to_owned()
+    } else {
+        format!("{path}?lang={code}")
+    }
+}
 
 fn page_meta(path: &str) -> &'static PageMeta {
     PAGE_METADATA
@@ -110,12 +175,16 @@ fn host_label(base_url: &str) -> &str {
     base_url.split("://").nth(1).unwrap_or(base_url)
 }
 
-fn meta_tags(path: &str, base_url: &str) -> String {
+fn meta_tags(path: &str, base_url: &str, language: &PageLanguage) -> String {
     let meta = page_meta(path);
-    let title = html_escape(&meta.title);
-    let description = html_escape(&meta.description);
+    let translated = language.pages.get(normalize_path(path));
+    let title = html_escape(translated.map_or(&meta.title, |page| &page.title));
+    let description = html_escape(translated.map_or(&meta.description, |page| &page.description));
     let site_name = html_escape(host_label(base_url));
-    let url = html_escape(&format!("{base_url}{}", normalize_path(path)));
+    let url = html_escape(&format!(
+        "{base_url}{}",
+        language_path(path, &language.code)
+    ));
     let image = html_escape(&format!("{base_url}/ui-assets/{}", meta.image));
 
     let nl = "\n    ";
@@ -133,6 +202,26 @@ fn meta_tags(path: &str, base_url: &str) -> String {
         "{nl}<meta name=\"robots\" content=\"{robots}\" />"
     ));
     out.push_str(&format!("{nl}<link rel=\"canonical\" href=\"{url}\" />"));
+    if meta.index {
+        for alternate in PAGE_LANGUAGES.iter() {
+            out.push_str(&format!(
+                "{nl}<link rel=\"alternate\" hreflang=\"{}\" href=\"{}\" />",
+                alternate.html_lang,
+                html_escape(&format!(
+                    "{base_url}{}",
+                    language_path(path, &alternate.code)
+                ))
+            ));
+        }
+        out.push_str(&format!(
+            "{nl}<link rel=\"alternate\" hreflang=\"x-default\" href=\"{}\" />",
+            html_escape(&format!("{base_url}{}", normalize_path(path)))
+        ));
+    }
+    out.push_str(&format!(
+        "{nl}<meta property=\"og:locale\" content=\"{}\" />",
+        language.og_locale
+    ));
     out.push_str(&format!(
         "{nl}<meta property=\"og:type\" content=\"website\" />"
     ));
@@ -173,57 +262,35 @@ fn meta_tags(path: &str, base_url: &str) -> String {
 }
 
 fn render_index_html(path: &str, base_url: &str) -> String {
-    let tags = meta_tags(path, base_url);
+    let uri: Uri = path.parse().expect("valid page URI");
+    let language = page_language(&uri);
+    let path = uri.path();
+    let tags = meta_tags(path, base_url, language);
     let html = if UI_INDEX_HTML.contains(SSR_META_MARKER) {
         UI_INDEX_HTML.replace(SSR_META_MARKER, &tags)
     } else {
         // Defensive fallback if the build ever drops the marker: inject into <head>.
         UI_INDEX_HTML.replacen("<head>", &format!("<head>\n    {tags}"), 1)
     };
+    let html = html.replacen(
+        r#"<html lang="en">"#,
+        &format!(
+            r#"<html lang="{}" dir="{}">"#,
+            language.html_lang, language.dir
+        ),
+        1,
+    );
     if SITEMAP_PATHS.contains(&normalize_path(path)) {
-        html.replace(r#"<div id="root"></div>"#, &public_page_html(path))
+        html.replace(
+            r#"<div id="root"></div>"#,
+            &language.pages[normalize_path(path)].body,
+        )
     } else if is_spa_route(path) {
         html
     } else {
         // Keep recovery links usable before JavaScript loads or if it is disabled.
         html.replace(r#"<div id="root"></div>"#, r#"<div id="root"><main class="container" id="page-not-found"><div class="page-header"><span class="page-kicker">404</span><h1>Page not found</h1><p class="page-intro">This link does not lead to a page. Open the dashboard, get started, or browse the mining guides.</p></div><div class="page-actions"><a class="btn btn-primary" href="/">Dashboard</a><a class="btn btn-secondary" href="/start">Get Started</a><a class="btn btn-secondary" href="/blog/">Blog</a></div></main></div>"#)
     }
-}
-
-/// Useful initial content for all visitors, including when the app bundle fails.
-/// React replaces this shell when ready; changing live metrics are never fabricated.
-fn public_page_html(path: &str) -> String {
-    let meta = page_meta(path);
-    let mut html = String::from(
-        r#"<div id="root"><nav aria-label="Main navigation"><a class="nav-brand" href="/">bntpool.com</a></nav><main class="container" id="public-page"><div class="page-header">"#,
-    );
-    html.push_str(&format!(
-        "<h1>{}</h1><p class=\"page-intro\">{}</p></div>",
-        html_escape(&meta.title),
-        html_escape(&meta.description)
-    ));
-    if normalize_path(path) == "/start" {
-        html.push_str(r#"<section class="card section"><h2>Connect your miner</h2><ol><li><a href="https://seineminer.com/#download">Download Seine for your operating system</a>.</li><li>Run Seine and enter your Blocknet wallet address or Blocknet ID when prompted.</li><li>Choose bntpool.com, then open <a href="/stats">My Stats</a> to check your miner's accepted shares.</li></ol></section>"#);
-    }
-    html.push_str(r#"<section class="card section"><h2>Mining guides</h2><ul>"#);
-    for guide in &meta.guides {
-        html.push_str(&format!(
-            "<li><a href=\"{}\">{}</a></li>",
-            html_escape(&guide.href),
-            html_escape(&guide.label)
-        ));
-    }
-    html.push_str(r#"</ul><a href="/blog/">All mining guides</a></section><section class="card section"><h2>Pool pages</h2><div class="page-actions">"#);
-    for route in SITEMAP_PATHS {
-        let item = page_meta(route);
-        html.push_str(&format!(
-            "<a class=\"btn btn-secondary\" href=\"{}\">{}</a>",
-            route,
-            html_escape(&item.label)
-        ));
-    }
-    html.push_str(r#"</div><p>Live charts and miner lookups load with JavaScript. You can open the setup and mining guides above without it.</p></section></main></div>"#);
-    html
 }
 
 fn og_image_bytes(name: &str) -> Option<&'static [u8]> {
@@ -241,8 +308,8 @@ fn ui_response(base_url: &str, path: &str) -> Response {
     response
 }
 
-pub(crate) async fn handle_ui(State(state): State<ApiState>) -> Response {
-    ui_response(&state.public_base_url(), "/")
+pub(crate) async fn handle_ui(State(state): State<ApiState>, method: Method, uri: Uri) -> Response {
+    app_fallback_response(method, &uri, &state.public_base_url())
 }
 
 pub(crate) async fn handle_app_fallback(
@@ -259,7 +326,11 @@ pub(crate) fn app_fallback_response(method: Method, uri: &Uri, base_url: &str) -
     }
 
     if matches!(method, Method::GET | Method::HEAD) {
-        let mut response = ui_response(base_url, uri.path());
+        let mut response = ui_response(
+            base_url,
+            uri.path_and_query()
+                .map_or(uri.path(), |value| value.as_str()),
+        );
         if !is_spa_route(uri.path()) {
             *response.status_mut() = StatusCode::NOT_FOUND;
         }
@@ -336,13 +407,31 @@ pub(crate) async fn handle_robots_txt(State(state): State<ApiState>) -> impl Int
     )
 }
 
+fn sitemap_entries(base_url: &str) -> String {
+    SITEMAP_PATHS
+        .iter()
+        .flat_map(|path| {
+            PAGE_LANGUAGES
+                .iter()
+                .map(move |locale| language_path(path, &locale.code))
+        })
+        .chain(
+            crate::blog::blog_sitemap_paths()
+                .iter()
+                .map(|path| (*path).to_owned()),
+        )
+        .map(|path| {
+            format!(
+                "  <url><loc>{}</loc></url>\n",
+                html_escape(&format!("{base_url}{path}"))
+            )
+        })
+        .collect()
+}
+
 pub(crate) async fn handle_sitemap_xml(State(state): State<ApiState>) -> impl IntoResponse {
     let base_url = state.public_base_url();
-    let urls: String = SITEMAP_PATHS
-        .iter()
-        .chain(crate::blog::blog_sitemap_paths())
-        .map(|path| format!("  <url><loc>{}{path}</loc></url>\n", html_escape(&base_url)))
-        .collect();
+    let urls = sitemap_entries(&base_url);
     (
         [
             (header::CONTENT_TYPE, "application/xml; charset=utf-8"),
@@ -430,12 +519,90 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn every_public_language_has_localized_html_and_reciprocal_search_links() {
+        assert_eq!(PAGE_LANGUAGES.len(), 20);
+        let sitemap = sitemap_entries("https://pool.example");
+        assert_eq!(
+            sitemap.matches("<loc>").count(),
+            160 + crate::blog::blog_sitemap_paths().len()
+        );
+        for locale in PAGE_LANGUAGES.iter() {
+            for path in SITEMAP_PATHS {
+                let canonical =
+                    format!("https://pool.example{}", language_path(path, &locale.code));
+                let uri: Uri =
+                    format!("{path}?worker=example&lang={}&utm_source=test", locale.code)
+                        .parse()
+                        .unwrap();
+                let response = app_fallback_response(Method::GET, &uri, "https://pool.example");
+                assert_eq!(response.status(), StatusCode::OK);
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                let html = String::from_utf8(body.to_vec()).unwrap();
+                assert!(html.contains(&format!(
+                    r#"<html lang="{}" dir="{}">"#,
+                    locale.html_lang, locale.dir
+                )));
+                assert!(html.contains(&format!(r#"<link rel="canonical" href="{canonical}" />"#)));
+                assert!(html.contains(&format!(
+                    "<title>{}</title>",
+                    html_escape(&locale.pages[*path].title)
+                )));
+                assert!(html.contains(&format!(
+                    "<h1>{}</h1>",
+                    html_escape(&locale.pages[*path].title)
+                )));
+                assert!(html.contains(&html_escape(&locale.pages[*path].description)));
+                assert_eq!(html.matches("<h1>").count(), 1);
+                assert_eq!(
+                    html.matches(r#"<link rel="alternate" hreflang="#).count(),
+                    21
+                );
+                assert!(!html.contains("utm_source"));
+                assert!(sitemap.contains(&format!("<loc>{canonical}</loc>")));
+                for other in PAGE_LANGUAGES.iter() {
+                    assert!(html.contains(&format!(
+                        r#"<link rel="alternate" hreflang="{}" href="https://pool.example{}" />"#,
+                        other.html_lang,
+                        language_path(path, &other.code)
+                    )));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn language_queries_match_the_browser_and_do_not_create_private_alternates() {
+        for (query, expected) in [
+            ("lang=th", "th"),
+            ("lang=AR", "ar"),
+            ("lang=es-MX", "es"),
+            ("lang=zh-TW", "zh-Hant"),
+            ("lang=zh-CN", "zh-Hans"),
+            ("lang=pt-PT", "pt-BR"),
+            ("lang=%74h", "th"),
+            ("lang=th&lang=ar", "th"),
+            ("lang=unknown", "en"),
+            ("lang=javascript%3Aalert(1)", "en"),
+            ("lang=", "en"),
+        ] {
+            let uri: Uri = format!("/?{query}").parse().unwrap();
+            assert_eq!(page_language(&uri).code, expected, "{query}");
+        }
+        for path in ["/admin?lang=ar", "/unknown?lang=th"] {
+            let html = render_index_html(path, "https://pool.example");
+            assert!(html.contains(r#"content="noindex, follow""#));
+            assert!(!html.contains(r#"rel="alternate""#));
+        }
+    }
+
+    #[tokio::test]
     async fn hashed_language_assets_are_embedded_complete_and_cacheable() {
         assert_eq!(UI_LANGUAGES.len(), 19);
-        let english: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../frontend/src/i18n/messages/en.json"
-        ))
-        .unwrap();
+        let english: serde_json::Value =
+            serde_json::from_str(include_str!("../../../frontend/src/i18n/messages/en.json"))
+                .unwrap();
         for (name, expected) in UI_LANGUAGES {
             let response = handle_ui_asset(Path((*name).to_owned())).await;
             assert_eq!(response.status(), StatusCode::OK);
@@ -587,14 +754,23 @@ mod tests {
     fn export_public_pages_for_visual_check() {
         let dir = std::path::PathBuf::from(std::env::var("BNTPOOL_UI_PREVIEW_DIR").unwrap());
         std::fs::create_dir_all(&dir).unwrap();
-        for path in SITEMAP_PATHS.iter().copied().chain(["/admin", "/missing"]) {
-            let name = if path == "/" { "index" } else { &path[1..] };
-            std::fs::write(
-                dir.join(format!("{name}.html")),
-                render_index_html(path, "https://bntpool.com"),
-            )
-            .unwrap();
+        for language in PAGE_LANGUAGES.iter() {
+            let locale_dir = dir.join(&language.code);
+            std::fs::create_dir_all(&locale_dir).unwrap();
+            for path in SITEMAP_PATHS.iter().copied().chain(["/admin", "/missing"]) {
+                let name = if path == "/" { "index" } else { &path[1..] };
+                std::fs::write(
+                    locale_dir.join(format!("{name}.html")),
+                    render_index_html(&language_path(path, &language.code), "https://bntpool.com"),
+                )
+                .unwrap();
+            }
         }
+        std::fs::write(
+            dir.join("sitemap-entries.xml"),
+            sitemap_entries("https://bntpool.com"),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -609,14 +785,17 @@ mod tests {
                     "{path} -> {route}"
                 );
             }
-            for guide in &page_meta(path).guides {
+            let pages: serde_json::Value =
+                serde_json::from_str(include_str!("../../../frontend/src/lib/page-meta.json"))
+                    .unwrap();
+            for guide in pages[path]["guides"].as_array().unwrap() {
+                let href = guide["href"].as_str().unwrap();
                 assert!(
-                    crate::blog::blog_sitemap_paths()
-                        .contains(&guide.href.split('#').next().unwrap()),
+                    crate::blog::blog_sitemap_paths().contains(&href.split('#').next().unwrap()),
                     "{}",
-                    guide.href
+                    href
                 );
-                assert!(html.contains(&format!("href=\"{}\"", guide.href)));
+                assert!(html.contains(&format!("href=\"{}\"", href)));
             }
             assert!(!html.contains(r#"<div id="root"></div>"#));
         }

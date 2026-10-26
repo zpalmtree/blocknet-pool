@@ -296,5 +296,6 @@
   "minerHelp": "Havuz hashrate’i hâlâ sıfır mı?",
   "windowsGuide": "Windows kurulum kılavuzu",
   "notFoundTitle": "Sayfa bulunamadı",
-  "notFoundDescription": "Bu bağlantı bir sayfaya gitmiyor. Kontrol panelini açın, madenciliğe başlayın veya madencilik rehberlerini inceleyin."
+  "notFoundDescription": "Bu bağlantı bir sayfaya gitmiyor. Kontrol panelini açın, madenciliğe başlayın veya madencilik rehberlerini inceleyin.",
+  "statsDescription": "Blocknet madencinizin hashrate değerini, paylarını ve bakiyesini kontrol edin."
 }

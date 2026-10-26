@@ -296,5 +296,6 @@
   "minerHelp": "Hashrate del pool ancora a zero?",
   "windowsGuide": "Guida alla configurazione su Windows",
   "notFoundTitle": "Pagina non trovata",
-  "notFoundDescription": "Questo link non porta a nessuna pagina. Apri la dashboard, inizia a minare o consulta le guide al mining."
+  "notFoundDescription": "Questo link non porta a nessuna pagina. Apri la dashboard, inizia a minare o consulta le guide al mining.",
+  "statsDescription": "Controlla l’hashrate, le share e il saldo del tuo miner Blocknet."
 }

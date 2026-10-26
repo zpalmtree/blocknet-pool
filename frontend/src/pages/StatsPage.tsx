@@ -347,7 +347,10 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
 
   return (
     <div id="page-stats">
-      <h2>{t("m005")}</h2>
+      <div className="page-header">
+        <h1>{t("m616")}</h1>
+        <p className="page-intro">{t('statsDescription')}</p>
+      </div>
       <MinerUpdateBanner miner={minerData} />
       <div className="card" style={{ marginBottom: 24 }}>
         <div className="lookup-form" style={{ display: 'flex', gap: 10, marginBottom: 0, flexWrap: 'wrap' }}>

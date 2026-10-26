@@ -106,7 +106,7 @@ export function App() {
       ? metadataForPath(window.location.pathname, '').title
       : titleForRoute(route);
     const poolName = poolInfo?.pool_name.trim();
-    updatePageMetadata(window.location.pathname, poolName ? `${baseTitle} | ${poolName}` : baseTitle);
+    updatePageMetadata(window.location.pathname, poolName ? `${baseTitle} | ${poolName}` : baseTitle, locale, t);
     document
       .querySelector<HTMLMetaElement>('meta[name="theme-color"]')
       ?.setAttribute('content', theme === 'dark' ? '#071114' : '#f6f8f2');
