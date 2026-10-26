@@ -11,7 +11,7 @@ faq:
     a: 'Penambang menghitung setiap hash selesai. Pool hanya melihat share yang dikirim dan memperkirakan hashrate dari kesulitannya selama satu jam terakhir. Share tiba secara acak, jadi angka pool lebih berubah dan stabil seiring waktu. Bandingkan grafik 24 jam My Stats dengan rata-rata penambang agar setara.'
   - q: 'Apakah hashrate lebih tinggi berarti imbalan lebih besar?'
     a: 'Ya, secara proporsional. Setiap hash berpeluang sama menemukan blok, jadi perkiraan bagian blok jaringan setara bagian hashrate jaringan. Menggandakan hashrate menggandakan perkiraan imbalan, sedangkan kenaikan hashrate jaringan mengurangi bagian Anda. Di bntpool.com bagian itu tiba dari setiap blok pool.'
-sourceHash: 0bfdcdca348e
+sourceHash: 78ea554d4001
 translation: draft
 ---
 

@@ -11,7 +11,7 @@ faq:
     a: 'Il miner conta ogni hash completato. La pool vede solo le share e stima l’hashrate dalla loro difficoltà nell’ultima ora. Le share arrivano casualmente, quindi la stima oscilla di più e si stabilizza nel tempo. Confronta il grafico 24 ore di My Stats con la media del miner.'
   - q: 'Un hashrate maggiore significa più ricompense?'
     a: 'Sì, in proporzione. Ogni hash ha la stessa probabilità di trovare un blocco: la quota attesa di blocchi è la quota di hashrate di rete. Raddoppiando l’hashrate raddoppi le ricompense attese; se cresce la rete, la tua quota scende. Su bntpool.com ricevi una parte di ogni blocco trovato.'
-sourceHash: 0bfdcdca348e
+sourceHash: 78ea554d4001
 translation: draft
 ---
 

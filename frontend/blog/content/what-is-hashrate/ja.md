@@ -2,7 +2,7 @@
 title: '暗号資産マイニングのハッシュレートとは？'
 description: 'ハッシュレートは1秒に計算するハッシュ数です。H/sなどの単位、自分・プール・ネットワークの違い、各数値が変動する理由をBlocknetを例に解説します。'
 tags: ['ハッシュレート', 'マイニング入門', 'Blocknet', 'bntpool']
-sourceHash: 0bfdcdca348e
+sourceHash: 78ea554d4001
 translation: draft
 faq:
   - q: 'Blocknet採掘でPCはどの程度の速度を出せますか？'

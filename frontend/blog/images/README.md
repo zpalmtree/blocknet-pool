@@ -18,3 +18,7 @@ images. To add a post, assign its screenshot or illustration in `blog-covers.mjs
   values only. The article build produces a 1200×833 JPEG for inline use.
 - `poolLuck()` illustrates 50%, 100% and 200% effort with proportional bars and
   a reference at 100%. These are explanatory examples, not observed rounds.
+
+`accepted-rejected-stale-shares` uses the `shareOutcomes()` code-native diagram in
+`blog-covers.mjs`: a miner, submitted work, and check/cross/clock outcomes. It has
+no language-dependent text or invented dashboard values. Added October 26, 2026.

@@ -2,7 +2,7 @@
 title: bntpool.com에서 채굴기 상태 확인하기
 description: bntpool.com에서 주소나 @name으로 해시레이트, 셰어, 잔액, 지급 내역을 확인하세요. 블록, 운, 가동률을 살펴보거나 공개 API를 활용할 수 있습니다.
 tags: [bntpool, 채굴 통계, 풀 API, Blocknet]
-sourceHash: 4b48ebc39148
+sourceHash: f7e0a568c6cf
 translation: draft
 faq:
   - q: 'bntpool.com의 해시레이트가 seine에 표시되는 값과 다른 이유는 무엇인가요?'

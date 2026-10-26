@@ -53,3 +53,11 @@ calculator intent, linked from the pool dashboard and Seine hardware guide. No
 competing calculator landing page is created.
 
 Added 2026-10-26: the luck guide owns the detailed probability and effort explanation. PPLNS remains the accounting/payment owner; My Stats remains the lookup/troubleshooting owner; the calculator owns reward estimation. `/luck` remains the live history. Existing pages keep short context and link to the new owner; no redirects.
+
+## Share outcomes (October 26, 2026)
+
+| Primary keyword cluster | URL | Search job | Supporting phrases |
+|---|---|---|---|
+| accepted rejected stale mining shares | `/blog/accepted-rejected-stale-shares/` | Interpret submission outcomes, vardiff and rejection reasons, then diagnose repeated errors on one rig | duplicate share, low difficulty share, nonce range, rejection rate |
+
+The tracking guide owns navigating My Stats and zero-hashrate/connection diagnosis. The PPLNS guide owns reward eligibility and payment timing. This article owns submitted-share outcomes and difficulty-weighted interpretation; it links to those owners for the next stage.

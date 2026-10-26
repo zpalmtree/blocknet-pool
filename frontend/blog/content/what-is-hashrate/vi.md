@@ -2,7 +2,7 @@
 title: Hashrate trong đào tiền mã hóa là gì?
 description: Hashrate là số hash trình đào tính mỗi giây. Tìm hiểu đơn vị, khác biệt giữa hashrate của bạn, pool và mạng, cùng lý do từng số thay đổi.
 tags: [Hashrate, Kiến thức đào coin, Blocknet, bntpool]
-sourceHash: 0bfdcdca348e
+sourceHash: 78ea554d4001
 translation: draft
 faq:
   - q: 'Máy tính có thể đạt hashrate bao nhiêu khi đào Blocknet?'

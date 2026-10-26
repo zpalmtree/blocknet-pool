@@ -50,7 +50,12 @@ function poolLuck() {
   return frame(`${rect(90, 85, 1020, 505, '#fbfcf5', 28)}${line('M560 145V535', '#789475', 3, 'stroke-dasharray="10 10"')}${[50, 100, 200].map((n, i) => `${text(155, 225 + i * 135, `${n}%`, 38)}${rect(300, 175 + i * 135, n * 2.6, 70, ['#a2d69b', '#58ac72', '#237a4e'][i], 10)}${cube(340 + n * 2.6, 205 + i * 135, 33)}`).join('')}`);
 }
 
+function shareOutcomes() {
+  return frame(`${miner(185, 337, 1.25)}${line('M275 337H395', '#629569', 5)}${rect(405, 200, 220, 275, '#f9fcf3', 24)}${[260, 337, 414].map(y => `${circle(515, y, 20, '#6aa77a')}`).join('')}${line('M635 337H745M745 170V505M745 170H910M745 337H910M745 505H910', '#629569', 4)}${check(975, 170, 1.35)}${circle(975, 337, 39, '#dfe8d6')}${line('M957 319 993 355M993 319 957 355', '#52725b', 5)}${circle(975, 505, 39, '#e8e0b9')}${circle(975, 505, 24, 'none', 'stroke="#786d48" stroke-width="3"')}${line('M975 488V505L987 513', '#786d48', 4)}`);
+}
+
 const illustrations = {
+  'accepted-rejected-stale-shares': shareOutcomes,
   'mining-pool-luck-explained': poolLuck,
   'blocknet-block-reward-schedule': rewardSchedule,
   'blocknet-checkpoints-fast-sync': checkpoints,

@@ -11,7 +11,7 @@ faq:
     a: 'No. Statistiche, blocchi, pagamenti, fortuna, stato ed endpoint dei miner sono JSON pubblico via HTTPS, leggibile con curl o una dashboard domestica senza registrazione. Gli importi sono in unità atomiche: dividi per 100.000.000 per ottenere BNT e interroga ogni 30-60 secondi.'
   - q: 'Perché My Stats mostra zero Estimated Rewards?'
     a: 'Le stime appaiono quando la pool trova un blocco con le tue share nella finestra di pagamento. Per un nuovo miner possono servire alcuni round. Share accettate e hashrate compaiono prima, poi le ricompense stimate, che maturano in Confirmed Rewards e vengono pagate automaticamente.'
-sourceHash: 4b48ebc39148
+sourceHash: f7e0a568c6cf
 translation: draft
 ---
 

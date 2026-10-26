@@ -2,7 +2,7 @@
 title: 암호화폐 채굴에서 해시레이트란?
 description: 해시레이트는 초당 계산하는 해시 수입니다. 단위와 내 해시레이트, 풀 및 네트워크 해시레이트의 차이, 각 수치가 변하는 이유를 알아봅니다.
 tags: [해시레이트, 채굴 기초, Blocknet, bntpool]
-sourceHash: 0bfdcdca348e
+sourceHash: 78ea554d4001
 translation: draft
 faq:
   - q: '컴퓨터로 Blocknet을 채굴하면 해시레이트가 얼마나 나오나요?'

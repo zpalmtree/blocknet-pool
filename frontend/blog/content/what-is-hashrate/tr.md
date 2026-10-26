@@ -2,7 +2,7 @@
 title: Kripto madenciliğinde hashrate nedir?
 description: Hashrate, madencinin saniyede hesapladığı hash sayısıdır. Birimleri, sizin, havuzun ve ağın hashrate farklarını ve neden değiştiklerini öğrenin.
 tags: [Hashrate, Madencilik temelleri, Blocknet, bntpool]
-sourceHash: 0bfdcdca348e
+sourceHash: 78ea554d4001
 translation: draft
 faq:
   - q: 'Bir bilgisayar Blocknet madenciliğinde ne kadar hashrate sağlar?'

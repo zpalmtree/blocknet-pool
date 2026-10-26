@@ -2,7 +2,7 @@
 title: 'Wat is hashrate bij cryptomining?'
 description: 'Hashrate is het aantal hashes dat een miner per seconde berekent. Lees over de eenheden, jouw hashrate, die van pool en netwerk, en waarom ze schommelen.'
 tags: ['Hashrate', 'Miningbasis', 'Blocknet', 'bntpool']
-sourceHash: 0bfdcdca348e
+sourceHash: 78ea554d4001
 translation: draft
 faq:
   - q: 'Welke hashrate haalt een computer bij Blocknet-mining?'

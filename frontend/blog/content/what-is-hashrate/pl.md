@@ -2,7 +2,7 @@
 title: Czym jest hashrate w kopaniu kryptowalut?
 description: Hashrate to liczba hashy obliczanych przez górnika na sekundę. Poznaj jednostki i różnice między hashrate Twoim, puli i sieci oraz przyczyny ich zmian.
 tags: [Hashrate, Podstawy kopania, Blocknet, bntpool]
-sourceHash: 0bfdcdca348e
+sourceHash: 78ea554d4001
 translation: draft
 faq:
   - q: 'Jaki hashrate może osiągnąć komputer podczas kopania Blocknetu?'

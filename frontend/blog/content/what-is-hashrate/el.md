@@ -2,7 +2,7 @@
 title: 'Τι είναι το hashrate στην εξόρυξη κρυπτονομισμάτων;'
 description: 'Το hashrate μετρά hashes ανά δευτερόλεπτο. Μάθετε τις μονάδες του, τις διαφορές μεταξύ miner, pool και δικτύου και γιατί κάθε μέτρηση μεταβάλλεται.'
 tags: ['Hashrate', 'Βασικά εξόρυξης', 'Blocknet', 'bntpool']
-sourceHash: 0bfdcdca348e
+sourceHash: 78ea554d4001
 translation: draft
 faq:
   - q: 'Τι hashrate πετυχαίνει ένας υπολογιστής στην εξόρυξη Blocknet;'
