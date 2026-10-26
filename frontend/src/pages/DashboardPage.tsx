@@ -160,13 +160,8 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
           <StatCard label={t("m072")} value={stats?.pool?.miners ?? '-'} id="s-miners" />
           <StatCard
             label={t("m404")}
-            value={<>
-                <bdi dir="ltr">{humanRate(stats?.pool?.raw_hashrate ?? stats?.pool?.hashrate ?? 0)}</bdi>
-                <span className="stat-inline-secondary">{tx("m405", [stats?.pool?.effective_hashrate ? humanRate(stats.pool.effective_hashrate) : '-'])}</span>
-              </>}
-            title={stats?.pool?.block_yield_efficiency_pct != null ? t("m406", [formatPct(stats.pool.block_yield_efficiency_pct), stats.pool.block_yield_sample_size ?? 0]) : t("m407")}
+            value={<bdi dir="ltr">{humanRate(stats?.pool?.raw_hashrate ?? stats?.pool?.hashrate ?? 0)}</bdi>}
             id="s-hashrate"
-            className="stat-card--combined-hashrate"
           />
           <StatCard
             label={t("m408")}

@@ -571,22 +571,6 @@ html:lang(zh) .page-header h1 {
   white-space: nowrap;
 }
 
-.stat-card--combined-hashrate .value {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-}
-
-.stat-inline-secondary {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .share-focus-title {
   font-size: 24px;
   font-weight: 700;
