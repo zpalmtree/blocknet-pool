@@ -133,6 +133,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
         <span className="page-kicker">{t("m399")}</span>
         <h1>{t("m400")}</h1>
         <p className="page-intro">{t("m401")}</p>
+        <p><a href={localizePath('/blog/') + 'estimate-blocknet-mining-rewards/#mining-calculator'}>{t('rewardsCalculator')}</a></p>
       </div>
 
       <div className="stratum-bar">

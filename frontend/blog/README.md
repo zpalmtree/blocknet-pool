@@ -45,6 +45,33 @@ Blocknet, bntpool.com and seine, nothing negative, nothing false) and use its
 7. `npm --prefix frontend run build`, then rebuild and deploy the API (`./scripts/deploy_bntpool.sh
    --api-only`, which doesn't restart Stratum). Blog pages are embedded in the API binary.
 
+## Rewards calculator
+
+The rewards guide embeds `<RewardsCalculator />` in every language. Its controls and
+initial HTML are generated from the blog catalogs; `rewards-calculator.js` is bundled
+with `rewards-math.js` into a content-hashed asset loaded only by this article.
+The calculator fetches only `/api/stats` and `/api/info`, never a wallet or entered
+hashrate. Inputs expire after five minutes and require an explicit refresh.
+
+Calculation sources verified October 25, 2026:
+
+- `blocknet-core/miner.go`, `GetBlockReward`: initial reward 72,325,093,035 atomic
+  units, tail 200,000,000, annual exponential decay 0.75, 8,640-block months and
+  tail starting at month 48. `blocknet-core/block.go`: 300-second target interval.
+- `seine/src/dev_fee.rs`: 1% dev time on bntpool.com. The calculator defaults to
+  1%; a pool-reported user hashrate should use 0% to avoid deducting it twice.
+- Pool fee comes from `pool_fee_pct` in `/api/info`, never a hardcoded fallback.
+- Estimates integrate scheduled block rewards over the next 288 or 2,016 blocks,
+  hold network hashrate fixed, and compound the miner and pool fees. They exclude
+  transaction fees and do not forecast PPLNS payout timing or pool luck.
+- `tests/reward-schedule.json` is an independent Python/libm evaluation of all
+  49 reward periods from the daemon formula, in atomic units. Arithmetic tests
+  cover each boundary, tail emission, invalid API data, fees and decimal input.
+
+Recheck emission constants and the default miner fee when either upstream contract
+changes, including the planned Faraday upgrade. A separate linguistic review was
+not performed; updated translations retain draft review status.
+
 ## Article images
 
 Every published post needs a cover assigned in `scripts/blog-covers.mjs`. Use a real product

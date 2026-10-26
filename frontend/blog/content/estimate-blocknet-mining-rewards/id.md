@@ -1,6 +1,6 @@
 ---
-title: Cara memperkirakan imbalan penambangan Blocknet
-description: Perkirakan BNT yang ditambang perangkat Anda per hari dengan satu rumus, sumber angkanya di dasbor bntpool.com, dan contoh perhitungan bertanggal.
+title: "Kalkulator mining Blocknet"
+description: "Perkirakan BNT per hari dan minggu berdasarkan hashrate Anda, data jaringan langsung, dan jadwal imbalan, dengan biaya ditampilkan terpisah."
 tags: [Imbalan penambangan, Panduan penambangan, Hashrate, bntpool]
 faq:
   - q: 'Bagaimana menghitung imbalan penambangan Blocknet?'
@@ -13,9 +13,11 @@ faq:
     a: 'Perkiraan adalah rata-rata. Pada hari tertentu pool dapat menemukan lebih banyak atau lebih sedikit blok dari perkiraan, dan hashrate jaringan berubah saat penambang bergabung. Dalam seminggu atau lebih penambangan konsisten, variasi harian merata, dan Anda dapat memantau imbalan yang dikreditkan di My Stats.'
   - q: 'Apakah menambang di pool mengubah perkiraan jumlah BNT?'
     a: 'Perkiraan bagian imbalan jaringan tetap sama, karena hanya bergantung pada proporsi hashrate jaringan Anda. Pool mengubah waktunya. Alih-alih menunggu berhari-hari untuk satu blok utuh, Anda mendapat bagian setiap blok bntpool.com, sehingga imbalan masuk dalam jumlah kecil teratur.'
-sourceHash: 28d46138019e
+sourceHash: 0e1d600e0b00
 translation: draft
 ---
+
+<RewardsCalculator />
 
 Panduan ini menunjukkan cara memperkirakan BNT yang ditambang perangkat Anda per hari. Anda akan mempelajari rumus, tempat membaca setiap masukan di [dasbor bntpool.com](/), dan cara menghitung dengan contoh bertanggal dari data langsung pool serta hashrate terbaik terukur seine.
 

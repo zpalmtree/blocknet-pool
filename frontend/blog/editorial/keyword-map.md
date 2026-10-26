@@ -45,3 +45,8 @@ blog pages retain their existing path URLs and hreflang clusters.
 
 Expanded 2026-10-25: `track-your-miner-on-bntpool` also owns zero pool hashrate,
 address/pool mismatches, and connection/reconnect error checks (`#zero-hashrate`).
+
+Expanded 2026-10-25: `estimate-blocknet-mining-rewards` now contains the live
+20-language calculator at `#mining-calculator`. It remains the owner of the mining
+calculator intent, linked from the pool dashboard and Seine hardware guide. No
+competing calculator landing page is created.

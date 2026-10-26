@@ -1,8 +1,8 @@
 ---
-title: Blocknet madencilik ödüllerinizi nasıl tahmin edersiniz?
-description: Tek formülle donanımınızın günde ne kadar BNT üreteceğini hesaplayın. bntpool.com panelindeki girdileri ve tarihli hesaplama örneğini öğrenin.
+title: "Blocknet madencilik hesaplayıcısı"
+description: "Hash gücünüz, canlı ağ verileri ve ödül takvimiyle günlük ve haftalık BNT miktarını tahmin edin. Ücretler ayrı gösterilir."
 tags: [Madencilik ödülleri, Madencilik rehberi, Hashrate, bntpool]
-sourceHash: 28d46138019e
+sourceHash: 0e1d600e0b00
 translation: draft
 faq:
   - q: 'Blocknet madencilik ödülleri nasıl hesaplanır?'
@@ -16,6 +16,8 @@ faq:
   - q: 'Havuzda madencilik beklediğim BNT miktarını değiştirir mi?'
     a: 'Ağın ödüllerindeki beklenen payınız aynı kalır, çünkü yalnızca ağ hashrate''indeki payınıza bağlıdır. Havuzun değiştirdiği zamanlamadır. Tam bir blok için günlerce beklemek yerine bntpool.com''un bulduğu her bloktan pay alırsınız; ödüller küçük, düzenli tutarlarda gelir.'
 ---
+
+<RewardsCalculator />
 
 Bu rehber donanımınızın günde ne kadar BNT üreteceğini tahmin etmeyi gösterir. Formülü, her girdinin [bntpool.com panelinde](/) nereden okunacağını ve havuzun canlı verileriyle seine'in en iyi ölçülmüş hashrate'lerinden oluşturulmuş tarihli bir örnekle hesabı öğreneceksiniz.
 

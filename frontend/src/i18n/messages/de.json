@@ -297,5 +297,6 @@
   "windowsGuide": "Einrichtungsanleitung für Windows",
   "notFoundTitle": "Seite nicht gefunden",
   "notFoundDescription": "Dieser Link führt zu keiner Seite. Öffne das Dashboard, lege los oder lies die Mining-Anleitungen.",
-  "statsDescription": "Prüfe die Hashrate, Shares und das Guthaben deines Blocknet-Miners."
+  "statsDescription": "Prüfe die Hashrate, Shares und das Guthaben deines Blocknet-Miners.",
+  "rewardsCalculator": "Deine BNT-Belohnungen schätzen"
 }

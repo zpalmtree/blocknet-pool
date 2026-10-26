@@ -1,6 +1,6 @@
 ---
-title: Estimer vos récompenses de minage Blocknet
-description: Estimez les BNT minés chaque jour avec une formule, les valeurs du tableau de bord bntpool.com et un exemple daté fondé sur des hashrates mesurés.
+title: "Calculateur de minage Blocknet"
+description: "Estimez les BNT par jour et par semaine avec votre hashrate, les données réseau en direct et le calendrier des récompenses, frais affichés séparément."
 tags: [Récompenses de minage, Guide de minage, Hashrate, bntpool]
 faq:
   - q: 'Comment calculer les récompenses de minage Blocknet ?'
@@ -13,9 +13,11 @@ faq:
     a: 'L’estimation est une moyenne. Un jour donné, le pool peut trouver plus ou moins de blocs que prévu, et le hashrate du réseau change avec l’arrivée de mineurs. Sur une semaine ou plus de minage régulier, ces variations s’atténuent. Vous pouvez suivre les récompenses créditées sur My Stats.'
   - q: 'Miner dans un pool change-t-il la quantité de BNT attendue ?'
     a: 'Votre part attendue des récompenses du réseau reste identique, car elle dépend uniquement de votre part du hashrate du réseau. Le pool change leur rythme. Au lieu d’attendre plusieurs jours un bloc entier, vous recevez une fraction de chaque bloc trouvé par bntpool.com, en petits montants réguliers.'
-sourceHash: 28d46138019e
+sourceHash: 0e1d600e0b00
 translation: draft
 ---
+
+<RewardsCalculator />
 
 Ce guide explique comment estimer les BNT que votre matériel mine par jour. Vous découvrirez la formule, où relever chaque valeur sur le [tableau de bord bntpool.com](/) et un exemple daté utilisant les données réelles du pool et les meilleurs hashrates mesurés avec seine.
 

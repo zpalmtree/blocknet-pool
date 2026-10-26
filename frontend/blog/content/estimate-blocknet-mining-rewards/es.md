@@ -1,6 +1,6 @@
 ---
-title: Cómo estimar tus recompensas de minería Blocknet
-description: Calcula cuánto BNT mina tu hardware al día con una fórmula, aprende dónde leer los datos en bntpool.com y sigue un ejemplo con fecha y cifras reales.
+title: "Calculadora de minería de Blocknet"
+description: "Estima los BNT por día y semana con tu hashrate, datos de red en vivo y el calendario de recompensas, con las comisiones por separado."
 tags: [Recompensas de minería, Guía de minería, Tasa de hash, bntpool]
 faq:
   - q: '¿Cómo se calculan las recompensas Blocknet?'
@@ -13,9 +13,11 @@ faq:
     a: 'La estimación es una media. En un día el pool puede encontrar más o menos bloques de lo esperado y la tasa de la red cambia al entrar mineros. Tras una semana o más de minería constante, las oscilaciones se promedian. Puedes seguir los créditos en My Stats.'
   - q: '¿Minar en un pool cambia cuánto BNT puedo esperar?'
     a: 'Tu parte esperada de las recompensas de la red permanece igual: depende solo de tu parte de su tasa de hash. El pool cambia el momento de cobro. En vez de esperar días por un bloque entero, recibes parte de cada bloque de bntpool.com, en cantidades pequeñas y regulares.'
-sourceHash: 28d46138019e
+sourceHash: 0e1d600e0b00
 translation: draft
 ---
+
+<RewardsCalculator />
 
 Esta guía enseña a estimar cuánto BNT mina tu hardware al día. Verás la fórmula, dónde leer cada dato en el [panel de bntpool.com](/) y un ejemplo fechado con datos reales del pool y las mejores tasas medidas por seine.
 

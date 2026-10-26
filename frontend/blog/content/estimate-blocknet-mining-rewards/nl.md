@@ -1,8 +1,8 @@
 ---
-title: 'Je Blocknet-miningbeloningen schatten'
-description: 'Schat met één formule hoeveel BNT je hardware per dag mint. Vind de invoer op het dashboard van bntpool.com en volg een gedateerd rekenvoorbeeld.'
+title: "Blocknet-miningcalculator"
+description: "Schat BNT per dag en week met je hashrate, actuele netwerkgegevens en het beloningsschema. Kosten worden apart getoond."
 tags: ['Miningbeloningen', 'Mininggids', 'Hashrate', 'bntpool']
-sourceHash: 28d46138019e
+sourceHash: 0e1d600e0b00
 translation: draft
 faq:
   - q: 'Hoe bereken je Blocknet-miningbeloningen?'
@@ -16,6 +16,8 @@ faq:
   - q: 'Verandert poolmining hoeveel BNT ik kan verwachten?'
     a: 'Je verwachte aandeel in de netwerkbeloningen blijft gelijk: het hangt alleen af van je aandeel in de netwerkhashrate. Een pool verandert de timing. In plaats van dagen op een heel blok te wachten, krijg je een deel van elk blok van bntpool.com, in kleine, regelmatige bedragen.'
 ---
+
+<RewardsCalculator />
 
 Deze gids laat zien hoe je schat hoeveel BNT je hardware per dag mint. Je leert de formule, waar elke invoer op het [dashboard van bntpool.com](/) staat en hoe je rekent met een gedateerd voorbeeld uit echte poolgegevens en de beste gemeten hashrates van seine.
 

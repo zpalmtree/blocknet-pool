@@ -1,8 +1,8 @@
 ---
-title: Cách ước tính phần thưởng đào Blocknet
-description: Ước tính phần cứng đào được bao nhiêu BNT mỗi ngày bằng một công thức, tìm dữ liệu trên bảng điều khiển bntpool.com và xem ví dụ có ngày cụ thể.
+title: "Công cụ tính phần thưởng đào Blocknet"
+description: "Ước tính BNT mỗi ngày và mỗi tuần từ hashrate của bạn, dữ liệu mạng trực tiếp và lịch phần thưởng, với phí hiển thị riêng."
 tags: [Phần thưởng đào coin, Hướng dẫn đào coin, Hashrate, bntpool]
-sourceHash: 28d46138019e
+sourceHash: 0e1d600e0b00
 translation: draft
 faq:
   - q: 'Tính phần thưởng đào Blocknet thế nào?'
@@ -16,6 +16,8 @@ faq:
   - q: 'Đào trong pool có thay đổi lượng BNT kỳ vọng không?'
     a: 'Phần kỳ vọng của bạn trong phần thưởng mạng không đổi, vì chỉ phụ thuộc tỷ lệ hashrate mạng. Pool thay đổi thời điểm nhận. Thay vì chờ nhiều ngày cho cả khối, bạn nhận một phần mỗi khối bntpool.com tìm thấy, nên phần thưởng đến nhỏ và đều.'
 ---
+
+<RewardsCalculator />
 
 Hướng dẫn này cho thấy cách ước tính phần cứng đào được bao nhiêu BNT mỗi ngày. Bạn sẽ biết công thức, nơi đọc từng dữ liệu trên [bảng điều khiển bntpool.com](/) và cách tính với ví dụ có ngày cụ thể từ dữ liệu pool trực tiếp cùng hashrate tốt nhất seine đo được.
 

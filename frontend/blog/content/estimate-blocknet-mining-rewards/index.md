@@ -1,6 +1,6 @@
 ---
-title: How to estimate your Blocknet mining rewards
-description: Estimate how much BNT your hardware mines per day with one formula, where to read each input on the bntpool.com dashboard, and a dated worked example.
+title: "Blocknet mining calculator"
+description: "Estimate your Blocknet mining rewards in BNT per day and week using live network data, your hashrate and the reward schedule, with fees shown separately."
 date: 2026-10-25
 tags: [Mining rewards, Mining guide, Hashrate, bntpool]
 faq:
@@ -16,6 +16,8 @@ faq:
     a: Your expected share of the network's rewards stays the same, because it depends only on your share of the network hashrate. What a pool changes is the timing. Instead of waiting days for a whole block, you receive a portion of every block bntpool.com finds, so rewards arrive in small, regular amounts.
 related: [blocknet-block-reward-schedule, how-pplns-payouts-work, pool-vs-solo-mining-blocknet]
 ---
+
+<RewardsCalculator />
 
 This guide shows you how to estimate how much BNT your hardware mines per day. You'll learn the formula, where to read each input on the [bntpool.com dashboard](/), and how to run the numbers with a dated example built from the pool's live data and seine's best measured hashrates.
 

@@ -1,8 +1,8 @@
 ---
-title: So schätzt du deine Blocknet-Mining-Belohnungen
-description: Schätze mit einer Formel, wie viel BNT deine Hardware pro Tag minet. Finde alle Eingabewerte im Dashboard von bntpool.com und folge einem datierten Rechenbeispiel.
+title: "Blocknet-Mining-Rechner"
+description: "Schätze BNT pro Tag und Woche anhand deiner Hashrate, aktueller Netzwerkdaten und des Belohnungsplans. Gebühren werden separat ausgewiesen."
 tags: [Mining-Belohnungen, Mining-Anleitung, Hashrate, bntpool]
-sourceHash: 28d46138019e
+sourceHash: 0e1d600e0b00
 translation: draft
 faq:
   - q: 'Wie berechnet man Blocknet-Mining-Belohnungen?'
@@ -16,6 +16,8 @@ faq:
   - q: 'Ändert Pool-Mining meine erwartete BNT-Menge?'
     a: 'Dein erwarteter Anteil an den Netzwerk-Belohnungen bleibt gleich, denn er hängt nur von deinem Anteil an der Netzwerk-Hashrate ab. Der Pool verändert den Zeitpunkt: Statt tagelang auf einen ganzen Block zu warten, erhältst du einen Anteil an jedem Block von bntpool.com und damit kleine, regelmäßige Beträge.'
 ---
+
+<RewardsCalculator />
 
 Diese Anleitung zeigt dir, wie du die täglich von deiner Hardware geschürfte BNT-Menge schätzt. Du lernst die Formel, findest ihre Eingabewerte im [Dashboard von bntpool.com](/) und rechnest ein datiertes Beispiel mit Live-Pool-Daten und den besten von seine gemessenen Hashraten durch.
 

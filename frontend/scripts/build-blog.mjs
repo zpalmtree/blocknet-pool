@@ -7,6 +7,8 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { Marked } from 'marked';
+import { build } from 'vite';
+import { calculatorHtml } from './rewards-calculator.mjs';
 import { buildCovers } from './blog-covers.mjs';
 import {
   BASE_URL, BLOG_DIR, LOCALES, TRANSLATED, blogPath, listSlugs, readPost, readingMinutes, t,
@@ -30,7 +32,7 @@ const assetUrl = (file) => `/blog/${file}?v=${createHash('sha256').update(readFi
 
 function renderMarkdown(body, locale) {
   // <Answer>, <Note> and <Warning> use the same syntax as the seineminer.com blog.
-  const labelled = body.replace(/<(Answer|Note|Warning)>([\s\S]*?)<\/\1>/g, (_, kind, inner) => {
+  const labelled = body.replace('<RewardsCalculator />', calculatorHtml(locale)).replace(/<(Answer|Note|Warning)>([\s\S]*?)<\/\1>/g, (_, kind, inner) => {
     const k = kind.toLowerCase();
     return `<div class="block ${k}"><div class="block-label">${esc(t(locale, k))}</div>\n\n${inner.trim()}\n\n</div>`;
   });
@@ -118,6 +120,7 @@ ${offers ? `<script type="application/json" id="blog-lang-offers">${JSON.stringi
 </div></header>
 ${body}
 ${slug ? `<script defer src="${assetUrl('article-metrics.js')}"></script>` : ''}
+${slug === 'estimate-blocknet-mining-rewards' ? `<script type="module" src="${calculatorScript}"></script>` : ''}
 <footer><div class="wrap">
   <span>bntpool.com · ${esc(t(locale, 'footer'))}</span>
   <nav aria-label="Footer"><a href="${poolPath('/', locale)}">${esc(t(locale, 'navDashboard'))}</a><a href="${poolPath('/start', locale)}">${esc(t(locale, 'navStart'))}</a><a href="${blogPath(locale)}">${esc(t(locale, 'navBlog'))}</a><a href="https://seineminer.com">seine</a><a href="https://blocknetcrypto.com">Blocknet</a><a href="https://seineminer.com/privacy/#website-analytics" lang="en">${esc(t(locale, 'websitePrivacy'))}</a></nav>
@@ -231,6 +234,14 @@ copyFileSync(new URL('theme.js', BLOG_DIR), new URL('theme.js', DIST));
 copyFileSync(new URL('lang.js', BLOG_DIR), new URL('lang.js', DIST));
 copyFileSync(new URL('article-metrics.js', BLOG_DIR), new URL('article-metrics.js', DIST));
 copyFileSync(new URL('seine-icon.png', BLOG_DIR), new URL('seine-icon.png', DIST));
+// Bundle only on the calculator article; hashed URL covers changes to its math too.
+const calculatorBuild = await build({ configFile: false, logLevel: 'warn', build: {
+  write: false, minify: true, lib: { entry: new URL('rewards-calculator.js', BLOG_DIR).pathname, formats: ['es'], fileName: 'calculator' },
+} });
+const calculatorCode = calculatorBuild[0].output.find(file => file.type === 'chunk').code;
+const calculatorName = `rewards-calculator.${createHash('sha256').update(calculatorCode).digest('hex').slice(0, 12)}.js`;
+write(calculatorName, calculatorCode);
+const calculatorScript = `/blog/${calculatorName}`;
 const covers = await buildCovers(listSlugs().filter((slug) => !readPost(slug, 'index.md').data.draft), new URL('covers/', DIST));
 const sitemapPaths = [];
 for (const l of LOCALES) {

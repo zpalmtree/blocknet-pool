@@ -297,5 +297,6 @@
   "windowsGuide": "Windows 设置指南",
   "notFoundTitle": "找不到页面",
   "notFoundDescription": "此链接没有对应的页面。你可以打开仪表板、开始挖矿或阅读挖矿指南。",
-  "statsDescription": "查询您的 Blocknet 矿工算力、份额和余额。"
+  "statsDescription": "查询您的 Blocknet 矿工算力、份额和余额。",
+  "rewardsCalculator": "估算你的 BNT 奖励"
 }

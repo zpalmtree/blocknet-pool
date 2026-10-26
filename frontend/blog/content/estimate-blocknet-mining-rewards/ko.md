@@ -1,8 +1,8 @@
 ---
-title: Blocknet 채굴 보상 추정하기
-description: 한 가지 공식으로 하드웨어의 하루 BNT 채굴량을 추정합니다. bntpool.com 대시보드에서 입력값을 찾고 날짜가 명시된 예제를 계산해 보세요.
+title: "Blocknet 채굴 계산기"
+description: "내 해시레이트, 실시간 네트워크 데이터와 보상 일정으로 일일·주간 BNT를 추정합니다. 수수료는 별도로 표시됩니다."
 tags: [채굴 보상, 채굴 가이드, 해시레이트, bntpool]
-sourceHash: 28d46138019e
+sourceHash: 0e1d600e0b00
 translation: draft
 faq:
   - q: 'Blocknet 채굴 보상은 어떻게 계산하나요?'
@@ -16,6 +16,8 @@ faq:
   - q: '풀에서 채굴하면 예상 BNT가 달라지나요?'
     a: '네트워크 해시레이트 지분만으로 정해지므로 예상 보상 지분은 같습니다. 풀은 지급 시점을 바꿉니다. 며칠간 전체 블록을 기다리는 대신 bntpool.com의 각 블록에서 작은 몫을 규칙적으로 받습니다.'
 ---
+
+<RewardsCalculator />
 
 이 가이드는 하드웨어의 일일 BNT 채굴량을 추정하는 방법을 설명합니다. 공식과 [bntpool.com 대시보드](/)의 입력값 위치를 알아보고 풀의 실제 데이터와 seine 최고 측정치를 사용한 날짜별 예제를 계산합니다.
 

@@ -297,5 +297,6 @@
   "windowsGuide": "Hướng dẫn thiết lập trên Windows",
   "notFoundTitle": "Không tìm thấy trang",
   "notFoundDescription": "Liên kết này không dẫn đến trang nào. Mở bảng điều khiển, bắt đầu đào hoặc đọc các hướng dẫn đào.",
-  "statsDescription": "Tra cứu hashrate, share và số dư của máy đào Blocknet của bạn."
+  "statsDescription": "Tra cứu hashrate, share và số dư của máy đào Blocknet của bạn.",
+  "rewardsCalculator": "Ước tính phần thưởng BNT của bạn"
 }

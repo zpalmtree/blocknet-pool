@@ -297,5 +297,6 @@
   "windowsGuide": "Guide d’installation sur Windows",
   "notFoundTitle": "Page introuvable",
   "notFoundDescription": "Ce lien ne mène à aucune page. Ouvrez le tableau de bord, lancez-vous ou consultez les guides de minage.",
-  "statsDescription": "Consultez le hashrate, les shares et le solde de votre mineur Blocknet."
+  "statsDescription": "Consultez le hashrate, les shares et le solde de votre mineur Blocknet.",
+  "rewardsCalculator": "Estimer vos récompenses en BNT"
 }

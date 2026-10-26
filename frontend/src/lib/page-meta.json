@@ -13,6 +13,10 @@
       {
         "href": "/blog/how-pplns-payouts-work/",
         "label": "How PPLNS payouts work"
+      },
+      {
+        "href": "/blog/estimate-blocknet-mining-rewards/#mining-calculator",
+        "label": "Estimate your BNT rewards"
       }
     ],
     "titleKey": "m399",

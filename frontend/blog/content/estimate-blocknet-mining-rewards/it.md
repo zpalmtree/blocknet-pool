@@ -1,6 +1,6 @@
 ---
-title: Come stimare le ricompense del mining Blocknet
-description: Stima i BNT al giorno del tuo hardware con una formula, i valori della dashboard bntpool.com e un esempio datato basato su dati reali e hashrate misurati.
+title: "Calcolatore di mining Blocknet"
+description: "Stima i BNT al giorno e alla settimana con il tuo hashrate, i dati di rete in tempo reale e il calendario delle ricompense, con commissioni separate."
 tags: [Ricompense del mining, Guida al mining, Hashrate, bntpool]
 faq:
   - q: 'Come si calcolano le ricompense Blocknet?'
@@ -13,9 +13,11 @@ faq:
     a: 'La stima è una media. In un singolo giorno la pool può trovare più o meno blocchi del previsto e l’hashrate della rete cambia con l’arrivo di miner. Su una settimana o più di mining costante le oscillazioni si compensano. Puoi seguire le ricompense accreditate su My Stats.'
   - q: 'Minare in pool cambia i BNT che posso aspettarmi?'
     a: 'La quota attesa delle ricompense di rete resta uguale, perché dipende solo dalla tua quota di hashrate. La pool cambia il ritmo: anziché aspettare giorni per un blocco intero, ricevi una parte di ogni blocco trovato da bntpool.com, in importi piccoli e regolari.'
-sourceHash: 28d46138019e
+sourceHash: 0e1d600e0b00
 translation: draft
 ---
+
+<RewardsCalculator />
 
 Questa guida mostra come stimare quanti BNT mina il tuo hardware al giorno: la formula, dove leggere i dati sulla [dashboard bntpool.com](/) e un esempio datato costruito con dati reali della pool e i migliori hashrate misurati da seine.
 

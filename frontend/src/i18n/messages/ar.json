@@ -297,5 +297,6 @@
   "windowsGuide": "دليل الإعداد على Windows",
   "notFoundTitle": "الصفحة غير موجودة",
   "notFoundDescription": "هذا الرابط لا يؤدي إلى صفحة. افتح لوحة التحكم، أو ابدأ التعدين، أو تصفّح أدلة التعدين.",
-  "statsDescription": "تحقق من معدل التجزئة والحصص والرصيد الخاص بمُعدِّن Blocknet لديك."
+  "statsDescription": "تحقق من معدل التجزئة والحصص والرصيد الخاص بمُعدِّن Blocknet لديك.",
+  "rewardsCalculator": "قدّر مكافآتك من BNT"
 }

@@ -297,5 +297,6 @@
   "windowsGuide": "Installatiehandleiding voor Windows",
   "notFoundTitle": "Pagina niet gevonden",
   "notFoundDescription": "Deze link leidt niet naar een pagina. Open het dashboard, ga aan de slag of bekijk de mininghandleidingen.",
-  "statsDescription": "Bekijk de hashrate, shares en het saldo van je Blocknet-miner."
+  "statsDescription": "Bekijk de hashrate, shares en het saldo van je Blocknet-miner.",
+  "rewardsCalculator": "Schat je BNT-beloningen"
 }

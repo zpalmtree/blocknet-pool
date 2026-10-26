@@ -297,5 +297,6 @@
   "windowsGuide": "Настройка в Windows",
   "notFoundTitle": "Страница не найдена",
   "notFoundDescription": "По этой ссылке нет страницы. Откройте панель, начните майнинг или прочитайте руководства.",
-  "statsDescription": "Проверьте хешрейт, шары и баланс вашего майнера Blocknet."
+  "statsDescription": "Проверьте хешрейт, шары и баланс вашего майнера Blocknet.",
+  "rewardsCalculator": "Оценить свои награды в BNT"
 }

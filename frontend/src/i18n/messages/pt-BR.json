@@ -297,5 +297,6 @@
   "windowsGuide": "Guia de instalação no Windows",
   "notFoundTitle": "Página não encontrada",
   "notFoundDescription": "Este link não leva a nenhuma página. Abra o painel, comece a minerar ou consulte os guias de mineração.",
-  "statsDescription": "Consulte o hashrate, as shares e o saldo do seu minerador Blocknet."
+  "statsDescription": "Consulte o hashrate, as shares e o saldo do seu minerador Blocknet.",
+  "rewardsCalculator": "Estime suas recompensas em BNT"
 }

@@ -1,8 +1,8 @@
 ---
-title: Jak szacować nagrody za kopanie Blocknetu
-description: Oblicz jednym wzorem, ile BNT dziennie kopie Twój sprzęt. Sprawdź, skąd wziąć dane w panelu bntpool.com, i przeanalizuj datowany przykład.
+title: "Kalkulator wydobycia Blocknet"
+description: "Oszacuj BNT dziennie i tygodniowo na podstawie swojego hashrate, bieżących danych sieci i harmonogramu nagród. Opłaty są pokazane osobno."
 tags: [Nagrody za kopanie, Poradnik kopania, Hashrate, bntpool]
-sourceHash: 28d46138019e
+sourceHash: 0e1d600e0b00
 translation: draft
 faq:
   - q: 'Jak obliczyć nagrody za kopanie Blocknetu?'
@@ -16,6 +16,8 @@ faq:
   - q: 'Czy kopanie w puli zmienia oczekiwaną ilość BNT?'
     a: 'Twój oczekiwany udział w nagrodach sieci pozostaje taki sam, ponieważ zależy wyłącznie od udziału w hashrate sieci. Pula zmienia moment otrzymywania nagród. Zamiast czekać dni na cały blok, otrzymujesz część każdego bloku znalezionego przez bntpool.com, więc nagrody przychodzą w małych, regularnych kwotach.'
 ---
+
+<RewardsCalculator />
 
 Ten poradnik pokazuje, jak oszacować, ile BNT dziennie kopie Twój sprzęt. Poznasz wzór, miejsca odczytu poszczególnych danych w [panelu bntpool.com](/) oraz obliczenia na datowanym przykładzie opartym na bieżących danych puli i najlepszych zmierzonych wynikach seine.
 
