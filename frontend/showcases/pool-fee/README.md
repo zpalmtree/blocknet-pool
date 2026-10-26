@@ -37,3 +37,7 @@ Production pool fee is 0%. The earlier fee cutover restarted Stratum on October
 25, 2026 at 11:58:35 PM EDT. Header changes require only an API/UI deployment;
 Stratum, monitor, recovery and the daemon should stay running. Seine's flat 2%
 miner fee is committed but still needs a separate release.
+
+## Deployment verification
+
+Deployed October 26, 2026 at 12:22:29 AM EDT (API/UI only), revision 7db14a6. Live desktop/mobile checks passed: compact header, 0% pool fee, correct action links, and no overflow. Health checks passed with 268 connected miners. Stratum, monitor and recovery PIDs were unchanged; no daemon restart.
