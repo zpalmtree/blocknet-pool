@@ -40,4 +40,4 @@ miner fee is committed but still needs a separate release.
 
 ## Deployment verification
 
-Neutral header deployment verification pending.
+Deployed October 26, 2026 at 12:29:25 AM EDT (API/UI only), revision 4255d35. Live desktop/mobile checks passed: neutral header, 0% pool fee, and no overflow. Health checks passed with 265 connected miners. Stratum, monitor and recovery PIDs were unchanged; no daemon restart.
