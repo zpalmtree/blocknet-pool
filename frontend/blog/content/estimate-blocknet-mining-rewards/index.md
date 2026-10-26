@@ -15,7 +15,7 @@ faq:
     a: The estimate is an average. On any one day the pool may find more or fewer blocks than expected, and the network hashrate moves as miners join. Over a week or more of steady mining, the day-to-day swings average out, and you can follow your credited rewards on the My Stats page.
   - q: Does mining on a pool change how much BNT I can expect?
     a: Your expected share of the network's rewards stays the same, because it depends only on your share of the network hashrate. What a pool changes is the timing. Instead of waiting days for a whole block, you receive a portion of every block bntpool.com finds, so rewards arrive in small, regular amounts.
-related: [blocknet-block-reward-schedule, how-pplns-payouts-work, pool-vs-solo-mining-blocknet]
+related: [blocknet-block-reward-schedule, how-pplns-payouts-work, pool-vs-solo-mining-blocknet, mining-pool-fees-vs-miner-fees]
 ---
 
 <RewardsCalculator />

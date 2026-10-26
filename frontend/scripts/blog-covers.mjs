@@ -67,7 +67,12 @@ function confirmationTimeline() {
   return frame(`${rect(75, 95, 1050, 470, '#f9fcf3', 26)}${line('M175 280H1010M990 263 1010 280 990 297', '#629569', 5)}${[175,370,565,760].map((x,i)=>`${cube(x,250,65)}${text(x,380,['0','1','…','60'][i],35,'#123c2a','text-anchor="middle"')}`).join('')}${line('M850 160V430','#82a67b',3,'stroke-dasharray="8 10"')}${check(975,250,1.5)}${rect(915,345,120,80,'#dbe8d2',14)}${line('M935 370h80m-80 25h50','#629569',4)}${line('M175 485H760M175 475V495M760 475V495','#a7bda0',3)}`);
 }
 
+function miningFeeStages() {
+  return frame(`${rect(70, 100, 1060, 475, '#f9fcf3', 24)}${miner(215,250,1.1)}${cube(600,230,85)}${check(1000,255,1.5)}${line('M310 260H475M455 243 475 260 455 277M720 260H890M870 243 890 260 870 277','#629569',5)}${text(215,400,'(1 − m)',42,'#123c2a','text-anchor="middle"')}${text(600,400,'(1 − p)',42,'#123c2a','text-anchor="middle"')}${text(1000,400,'BNT',42,'#123c2a','text-anchor="middle"')}${line('M215 475H1000M215 463V487M1000 463V487','#a7bda0',3)}`);
+}
+
 const illustrations = {
+  'mining-pool-fees-vs-miner-fees': miningFeeStages,
   'block-confirmations-mining-rewards': confirmationTimeline,
   'stratum-mining-protocol': stratumConversation,
   'mining-difficulty-explained': difficultyTargets,

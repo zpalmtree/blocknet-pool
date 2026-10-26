@@ -2,7 +2,7 @@
 title: "Blocknet 채굴 계산기"
 description: "내 해시레이트, 실시간 네트워크 데이터와 보상 일정으로 일일·주간 BNT를 추정합니다. 수수료는 별도로 표시됩니다."
 tags: [채굴 보상, 채굴 가이드, 해시레이트, bntpool]
-sourceHash: c8369c1db7c0
+sourceHash: 'ce91c64a8567'
 translation: draft
 faq:
   - q: 'Blocknet 채굴 보상은 어떻게 계산하나요?'

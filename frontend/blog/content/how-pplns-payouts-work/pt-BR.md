@@ -2,7 +2,7 @@
 title: Como funcionam os pagamentos PPLNS no bntpool.com
 description: O bntpool.com paga mineradores de Blocknet com PPLNS em uma janela de seis horas. Entenda a divisão das recompensas, as 60 confirmações e o mínimo de 0,1 BNT.
 tags: [Pagamentos, PPLNS, bntpool, Guia de mineração]
-sourceHash: 'ff0605be8a08'
+sourceHash: 'e00112e9e82e'
 translation: draft
 faq:
   - q: 'Qual é a duração da janela PPLNS no bntpool.com?'

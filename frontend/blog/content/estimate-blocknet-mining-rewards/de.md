@@ -2,7 +2,7 @@
 title: "Blocknet-Mining-Rechner"
 description: "Schätze BNT pro Tag und Woche anhand deiner Hashrate, aktueller Netzwerkdaten und des Belohnungsplans. Gebühren werden separat ausgewiesen."
 tags: [Mining-Belohnungen, Mining-Anleitung, Hashrate, bntpool]
-sourceHash: c8369c1db7c0
+sourceHash: 'ce91c64a8567'
 translation: draft
 faq:
   - q: 'Wie berechnet man Blocknet-Mining-Belohnungen?'

@@ -13,7 +13,7 @@ faq:
     a: 'Perkiraan adalah rata-rata. Pada hari tertentu pool dapat menemukan lebih banyak atau lebih sedikit blok dari perkiraan, dan hashrate jaringan berubah saat penambang bergabung. Dalam seminggu atau lebih penambangan konsisten, variasi harian merata, dan Anda dapat memantau imbalan yang dikreditkan di My Stats.'
   - q: 'Apakah menambang di pool mengubah perkiraan jumlah BNT?'
     a: 'Perkiraan bagian imbalan jaringan tetap sama, karena hanya bergantung pada proporsi hashrate jaringan Anda. Pool mengubah waktunya. Alih-alih menunggu berhari-hari untuk satu blok utuh, Anda mendapat bagian setiap blok bntpool.com, sehingga imbalan masuk dalam jumlah kecil teratur.'
-sourceHash: c8369c1db7c0
+sourceHash: 'ce91c64a8567'
 translation: draft
 ---
 

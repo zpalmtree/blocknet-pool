@@ -14,7 +14,7 @@ faq:
     a: No. Each share stays in the PPLNS window for six hours after you submit it, so blocks the pool finds during that time still credit you. Rewards that are already confirmed stay in your balance, and the pool pays them out once the balance reaches the 0.1 BNT minimum.
   - q: What does an effort above 100% mean on the luck page?
     a: Effort compares the work the pool did during a round with the block's difficulty, which is the expected amount of work. An effort above 100% means that round took longer than average, and below 100% means it was quicker. Both are normal, and over many rounds effort averages out around 100%.
-related: [track-your-miner-on-bntpool, mining-pool-luck-explained, blocknet-block-reward-schedule, block-confirmations-mining-rewards]
+related: [track-your-miner-on-bntpool, mining-pool-luck-explained, blocknet-block-reward-schedule, mining-pool-fees-vs-miner-fees]
 ---
 
 This guide explains how bntpool.com turns the shares your miner submits into Blocknet payouts. By the end you'll know how a block's reward is split, why it waits about five hours before it can be paid, when your balance is sent, and how to read the balance cards on the [stats page](/stats) and the [luck page](/luck).

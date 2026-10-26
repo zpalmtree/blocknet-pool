@@ -85,3 +85,11 @@ Pool overview owns pooling and payout models; setup owns connection instructions
 | block confirmations; immature mining rewards | `/blog/block-confirmations-mining-rewards/` | Follow chain depth and block identity from pending reward through maturity to a separate payout | Blocknet mining, seine, bntpool |
 
 PPLNS owns allocation, balance threshold and sending rules. This article owns depth counting, maturity timing and block identity, with a worked height timeline. Tracking owns the full account interface. No URL is retargeted.
+
+## CPU usage and mining fees (October 26, 2026)
+
+| Primary keyword cluster | URL | Search job | Supporting phrases |
+|---|---|---|---|
+| mining pool fees vs miner developer fees | `/blog/mining-pool-fees-vs-miner-fees/` | Identify the two fee stages, select gross versus already-adjusted inputs and avoid double subtraction | Blocknet mining, seine, bntpool |
+
+The calculator owns numerical estimates and PPLNS owns allocation and payout timing. This guide owns fee-layer interpretation and input provenance. The user explicitly approved this fee topic. No URL is retargeted.

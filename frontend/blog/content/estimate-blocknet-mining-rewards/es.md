@@ -13,7 +13,7 @@ faq:
     a: 'La estimación es una media. En un día el pool puede encontrar más o menos bloques de lo esperado y la tasa de la red cambia al entrar mineros. Tras una semana o más de minería constante, las oscilaciones se promedian. Puedes seguir los créditos en My Stats.'
   - q: '¿Minar en un pool cambia cuánto BNT puedo esperar?'
     a: 'Tu parte esperada de las recompensas de la red permanece igual: depende solo de tu parte de su tasa de hash. El pool cambia el momento de cobro. En vez de esperar días por un bloque entero, recibes parte de cada bloque de bntpool.com, en cantidades pequeñas y regulares.'
-sourceHash: c8369c1db7c0
+sourceHash: 'ce91c64a8567'
 translation: draft
 ---
 
