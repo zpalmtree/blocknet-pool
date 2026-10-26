@@ -153,7 +153,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
           <h1>{t('m399')}</h1>
           <p className="page-intro">{t('dashboardIntro')}</p>
         </div>
-        <div className={`dashboard-fee${fee === 0 ? ' dashboard-fee--zero' : ''}`}>
+        <div className="dashboard-fee">
           <span className="dashboard-fee-label">{t('poolFee')}</span>
           <strong id="s-pool-fee"><bdi>{feeLabel}</bdi></strong>
         </div>

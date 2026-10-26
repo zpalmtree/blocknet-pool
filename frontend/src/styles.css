@@ -519,6 +519,10 @@ html:lang(zh) .page-header h1 {
 }
 
 .dashboard-header {
+  --accent: var(--text);
+  --accent-strong: var(--text);
+  --accent-contrast: var(--surface);
+  --surface-hover: color-mix(in srgb, var(--text) 6%, var(--surface));
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 20px 32px;
@@ -547,14 +551,9 @@ html:lang(zh) .page-header h1 {
   padding: 18px 24px;
   min-width: 140px;
   max-width: 240px;
-  background: var(--bg-elevated);
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-}
-.dashboard-fee--zero {
-  background: var(--accent-light);
-  border-color: var(--tone-ok-border);
-  color: var(--accent-strong);
 }
 .dashboard-fee-label { font-size: 13px; font-weight: 600; }
 .dashboard-fee strong {
