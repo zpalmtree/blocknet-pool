@@ -9,7 +9,7 @@ faq:
     a: 'Onder hetzelfde adres wordt hun sharegeschiedenis onder die naam samengevoegd. Dat maakt het lastiger de machine achter een meting te herkennen. Geef elke installatie een eigen naam en herstart daarmee; al vastgelegde shares behouden hun oorspronkelijke label.'
   - q: 'Wordt mijn uitbetaling gesplitst bij een extra machine?'
     a: 'Namen ordenen de getoonde miningactiviteit en maken geen aparte saldi onder hetzelfde adres. Geldig werk van je computers draagt bij aan de PPLNS-deelname van dat adres. Het saldo volgt de normale bevestigings- en uitbetalingsregels van de pool.'
-sourceHash: 'a07a17533ad2'
+sourceHash: '1e7424aee51d'
 translation: draft
 ---
 

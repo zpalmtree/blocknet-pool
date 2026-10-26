@@ -9,7 +9,7 @@ faq:
     a: 'Pod tym samym adresem ich historia udziałów jest grupowana pod wspólną nazwą. Utrudnia to rozpoznanie maszyny stojącej za odczytem. Nadaj każdej instalacji inną nazwę i uruchom ją ponownie; wcześniejsze udziały zachowują oryginalną etykietę.'
   - q: 'Czy dodatkowy komputer dzieli moją wypłatę?'
     a: 'Nazwy porządkują wyświetlaną aktywność i nie tworzą osobnych sald dla tego samego adresu. Prawidłowa praca komputerów zwiększa udział tego adresu w PPLNS. Jego saldo nadal podlega zwykłym zasadom potwierdzeń i wypłat puli.'
-sourceHash: 'a07a17533ad2'
+sourceHash: '1e7424aee51d'
 translation: draft
 ---
 

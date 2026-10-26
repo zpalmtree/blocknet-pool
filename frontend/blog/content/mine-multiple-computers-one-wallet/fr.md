@@ -9,7 +9,7 @@ faq:
     a: 'Sous une même adresse, leur historique de parts est regroupé sous ce nom. Il devient plus difficile d''identifier la machine correspondant à une mesure. Donnez un nom distinct à chaque installation et redémarrez-la avec celui-ci ; les parts déjà enregistrées conservent leur ancienne étiquette.'
   - q: 'Ajouter une machine divise-t-il mon paiement ?'
     a: 'Les noms organisent l''affichage de l''activité et ne créent pas de soldes séparés sous la même adresse. Le travail valide de vos ordinateurs contribue à la participation PPLNS de cette adresse. Son solde suit les règles habituelles de confirmation et de paiement du pool.'
-sourceHash: 'a07a17533ad2'
+sourceHash: '1e7424aee51d'
 translation: draft
 ---
 

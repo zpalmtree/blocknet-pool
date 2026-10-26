@@ -11,7 +11,7 @@ faq:
     a: 'Nein. Es gibt keine Registrierung, kein Passwort und keine E-Mail. Deine Blocknet-Adresse oder ein darauf verweisender Blocknet-ID-Name ist Login und Auszahlungsziel. Starte seine damit und suche danach auf My Stats, um Hashrate, Shares, Rigs, Guthaben und Auszahlungen zu sehen.'
   - q: 'Können mehrere Computer an dieselbe Adresse minen?'
     a: 'Ja. Starte seine auf jedem Computer mit derselben Adresse oder demselben Namen und gib jedem Rig einen eigenen Namen. Der Pool zählt Shares, Guthaben und Auszahlungen je Adresse. Alle Rigs tragen so zu einem Guthaben und einer Auszahlung bei, während My Stats jedes Rig einzeln auflistet.'
-sourceHash: '3126e8e7e396'
+sourceHash: 'df269126bb76'
 translation: draft
 ---
 

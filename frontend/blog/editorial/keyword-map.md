@@ -101,3 +101,11 @@ The calculator owns numerical estimates and PPLNS owns allocation and payout tim
 | mine multiple computers one wallet; Blocknet multiple rigs | `/blog/mine-multiple-computers-one-wallet/` | Add another computer with a distinct rig name and verify work under a shared receiving address |
 
 Pool setup owns first connection; stats owns dashboard fields; PPLNS owns reward allocation. No existing URL is retargeted.
+
+## Configuration and address changes (October 26, 2026)
+
+| Primary keyword cluster | URL | Search job |
+|---|---|---|
+| change mining wallet address; Blocknet payout address change | `/blog/change-mining-wallet-address/` | Switch existing rigs to a new destination, verify the transition and track old-address rewards |
+
+Pool setup owns first connection, multiple computers owns adding rigs, PPLNS owns allocation. This article owns an existing destination transition; Seine owns generic configuration editing. No URL is retargeted.

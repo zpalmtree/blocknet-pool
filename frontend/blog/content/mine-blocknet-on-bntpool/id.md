@@ -11,7 +11,7 @@ faq:
     a: 'Tidak. Tidak ada pendaftaran, kata sandi atau email. Alamat Blocknet, atau nama Blocknet ID yang mengarah ke sana, menjadi login dan tujuan pembayaran. Jalankan seine dengannya, lalu cari di halaman My Stats untuk melihat hashrate, share, rig, saldo dan pembayaran.'
   - q: 'Bisakah beberapa komputer menambang ke satu alamat?'
     a: 'Ya. Jalankan seine pada setiap komputer dengan alamat atau nama yang sama dan beri masing-masing nama rig sendiri. Pool menghitung share, saldo dan pembayaran per alamat, sehingga semua rig menambah satu saldo dan satu pembayaran, dan My Stats menampilkan setiap rig pada baris tersendiri.'
-sourceHash: '3126e8e7e396'
+sourceHash: 'df269126bb76'
 translation: draft
 ---
 
