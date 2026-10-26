@@ -1,51 +1,39 @@
-# Pool fee showcase
+# Pool dashboard header showcase
 
-Run `npm --prefix frontend run showcase:languages -- --port 5187` from the repo root.
-Open http://localhost:5187/showcases/pool-fee/index.html for the reviewed captures.
-The preview renders the real application with synthetic API responses.
+Source revision: `946b3d15e9d86601a144377af7f90bfcdb0d0225`. Captures use the real application and synthetic data.
+All 26 desktop/mobile captures were reviewed. This stable showcase also covers
+the pool fee display and the simplified main hashrate card from earlier updates.
 
-The homepage prominently displays the fee from `/api/info`. Zero is shown as
-`0%`; unavailable fee data stays unknown (`-`), including on the setup page.
-The server fee remains the source of truth; the UI does not hardcode a free pool.
+## Preview
 
-States: success (0%), empty pool history, loading, API error, missing fee,
-nonzero fee, Arabic RTL, dark theme. There is no disabled control for this
-read-only fee display. Desktop and mobile captures are stored here.
+Run `npm --prefix frontend run showcase:languages -- --port 5187` from the repo
+root. Visit `http://localhost:5187/?demo=success&lang=en`.
+Fixture states: `empty`, `loading`, `error`, `missing-fee`, `paid-fee`,
+`long-endpoint`. Use `lang=ar` for RTL; the normal theme switch supports dark mode.
+Clipboard success/failure captures use a page-local mock of `navigator.clipboard`.
 
-## Production rollout
+Stable gallery: http://localhost:8877/
 
-The default and example config already specify `pool_fee_pct: 0`. Production uses
-`/etc/blocknet/pool/config.json` and now sets this to 0. Deploying
-frontend code alone does not change the charged fee.
+```bash
+python3 -m http.server 8877 --directory /home/zp/Code/blocknet/showcases/pool-fee
+```
 
-Completed with explicit production approval on October 25, 2026:
+## Behavior and checks
 
-1. Back up the production config and set only `pool_fee_pct` to `0`.
-2. Restart Stratum through `BNTPOOL_FORCE_RESTART=1 scripts/deploy_bntpool.sh
-   --stratum-only --skip-build` to reload the fee (miners briefly reconnect).
-3. Deploy the homepage with `scripts/deploy_bntpool.sh --api-only`.
-4. Verify `/api/info` reports `pool_fee_pct: 0`, homepage shows `Pool fee / 0%`,
-   and pool health is good. Record service restart times in America/New_York.
+The header combines the title, API-backed fee badge, Get Started, rewards
+calculator, and Stratum address. It reuses existing button/copy-field styles.
+Copy reports success only after the clipboard promise resolves and shows manual
+copying guidance on failure. During loading/errors the endpoint is unknown and
+Copy is disabled. Unknown and nonzero fees use neutral styling.
 
-Do not restart the daemon. The new Seine rate needs a separate miner release;
-existing installed binaries retain their previous rate until upgraded.
+20 frontend tests, TypeScript and the production build passed. Browser checks
+covered desktop/mobile states, 320px in ten additional languages, localized
+link destinations, clipboard success/failure, keyboard focus, and overflow.
+The shared browser's existing wallet extension logs an unrelated injection error.
 
-Verified live: `/api/info` reports `0.0`, homepage shows `Pool fee / 0%` at
-390px and 1440px, and the calculator defaults to 2%. Stratum restarted at
-11:58:35 PM EDT; API/UI at 11:59:03 PM EDT. Monitor and recovery PIDs stayed
-unchanged; no daemon restart. Health was good with 265 connected miners and
-no ongoing incidents. Config backup:
-`/etc/blocknet/pool/config.json.before-zero-fee-20261025-235822-EDT`.
+## Operational context
 
-Deployed revision: `aee60c8`. Deployment metadata marked `dirty=1` solely because
-of an untracked symlink to the existing local Cargo build cache (`target`);
-tracked source was clean. That symlink was removed after deployment.
-
-## Simplified hashrate card
-
-Removed the secondary 30-day effective rate, its tooltip, and unused styling.
-Source revision `649acc8`; deployed revision `e0402ff`. Refreshed and reviewed
-all 18 screenshots. Frontend production build passed. Live browser verification
-confirmed the main rate remains, the secondary label is absent, and the pool fee
-is still 0%. API/UI restarted October 26, 2026 at 12:03:29 AM EDT; Stratum,
-monitor and recovery PIDs stayed unchanged. Health checks passed (266 miners).
+Production pool fee is 0%. The earlier fee cutover restarted Stratum on October
+25, 2026 at 11:58:35 PM EDT. Header changes require only an API/UI deployment;
+Stratum, monitor, recovery and the daemon should stay running. Seine's flat 2%
+miner fee is committed but still needs a separate release.
