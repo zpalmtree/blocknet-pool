@@ -3,15 +3,16 @@ use pool_common::{cli::parse_config_path, logging::init_logging};
 use tracing::info;
 
 mod api;
-mod hosted_wallet;
 mod background_read;
 mod blog;
 mod config;
+mod hosted_wallet;
 mod miner_release;
 mod protect;
 mod runtime;
 mod site_metrics;
 mod ui;
+mod wallet_hints;
 
 use api::run_api;
 use runtime::{api_listen_addr, bootstrap_api_runtime, build_api_state};

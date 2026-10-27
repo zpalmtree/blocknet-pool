@@ -274,6 +274,18 @@ pub struct PendingPayoutBatchMember {
     pub fee: u64,
 }
 
+/// One payout recipient in a broadcast transaction, for the hosted wallet
+/// service's discovery feed. Not credit: the wallet verifies it on chain.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WalletPayoutHint {
+    pub seq: i64,
+    pub payout_id: String,
+    pub tx_hash: String,
+    pub address: String,
+    pub amount: u64,
+    pub created_at_ms: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct PoolFeeEvent {
     pub id: i64,

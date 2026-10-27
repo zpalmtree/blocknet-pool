@@ -23,7 +23,7 @@ use pool_common::db::{
     DbShare, MonitorHeartbeat, MonitorHeartbeatUpsert, MonitorIncident, MonitorIncidentUpsert,
     Payout, PendingPayout, PendingPayoutBatchMember, PoolFeeEvent, PoolFeeRecord,
     PublicPayoutBatch, ShareReplayData, ShareReplayUpdate, ValidationHoldCause,
-    ValidationHoldState,
+    ValidationHoldState, WalletPayoutHint,
 };
 
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
@@ -328,7 +328,9 @@ impl ManagedClient {
         };
         match self.client.batch_execute(&sql) {
             Ok(()) => self.statement_timeout_ms = desired,
-            Err(err) => warn!(label = %self.label, error = %err, "failed applying statement_timeout"),
+            Err(err) => {
+                warn!(label = %self.label, error = %err, "failed applying statement_timeout")
+            }
         }
     }
 
@@ -629,6 +631,20 @@ CREATE TABLE IF NOT EXISTS pending_payouts (
     tx_hash TEXT,
     fee BIGINT,
     sent_at BIGINT
+);
+
+-- Outbox of broadcast payouts for the hosted wallet service
+-- (showcases/hosted-wallet/m1/contracts.md §2). Written in the same
+-- transaction that records a payout's txid; one row per (tx, recipient).
+-- A hint is discovery only: the wallet service verifies it on chain.
+CREATE TABLE IF NOT EXISTS wallet_payout_hints (
+    seq BIGSERIAL PRIMARY KEY,
+    payout_id TEXT NOT NULL,
+    tx_hash TEXT NOT NULL,
+    address TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    created_at_ms BIGINT NOT NULL,
+    UNIQUE (tx_hash, address)
 );
 
 CREATE TABLE IF NOT EXISTS manual_payout_offsets (
@@ -4440,6 +4456,21 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                  WHERE address = $1",
                 &[&member.address],
             )?;
+            let payout_id = row
+                .get::<_, Option<String>>(7)
+                .unwrap_or_else(|| tx_hash.to_string());
+            tx.execute(
+                "INSERT INTO wallet_payout_hints (payout_id, tx_hash, address, amount, created_at_ms)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (tx_hash, address) DO NOTHING",
+                &[
+                    &payout_id,
+                    &tx_hash,
+                    &member.address,
+                    &u64_to_i64(member.amount)?,
+                    &now_unix().saturating_mul(1000),
+                ],
+            )?;
             recorded.push(row_to_pending_payout(&row));
         }
         tx.commit()?;
@@ -5376,6 +5407,33 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             &[&tx_hash],
         )?;
         Ok(row.get::<_, bool>(0))
+    }
+
+    /// Payout hints after `after`, oldest first (hosted wallet feed).
+    pub fn wallet_payout_hints_after(
+        &self,
+        after: i64,
+        limit: i64,
+    ) -> Result<Vec<WalletPayoutHint>> {
+        let rows = self.conn().query(
+            "SELECT seq, payout_id, tx_hash, address, amount, created_at_ms
+             FROM wallet_payout_hints
+             WHERE seq > $1
+             ORDER BY seq
+             LIMIT $2",
+            &[&after, &limit],
+        )?;
+        Ok(rows
+            .iter()
+            .map(|row| WalletPayoutHint {
+                seq: row.get(0),
+                payout_id: row.get(1),
+                tx_hash: row.get(2),
+                address: row.get(3),
+                amount: row.get::<_, i64>(4).max(0) as u64,
+                created_at_ms: row.get(5),
+            })
+            .collect())
     }
 
     pub fn get_pending_payouts(&self) -> Result<Vec<PendingPayout>> {
@@ -7308,7 +7366,11 @@ mod tests {
         })
         .unwrap_err();
         assert!(format!("{err:#}").contains("statement timeout"), "{err:#}");
-        assert_eq!(show(&store), default, "connection stays usable after a timeout");
+        assert_eq!(
+            show(&store),
+            default,
+            "connection stays usable after a timeout"
+        );
     }
 
     #[test]
@@ -9016,6 +9078,92 @@ mod tests {
             .find(|item| item.tx_hashes.iter().any(|tx| tx == &confirmed_tx))
             .expect("confirmed payout batch");
         assert!(confirmed.confirmed);
+    }
+
+    #[test]
+    fn broadcast_records_one_wallet_hint_per_recipient_postgres() {
+        let Some(store) = test_store() else {
+            eprintln!(
+                "skipping postgres test: set {POSTGRES_TEST_URL_ENV} to run postgres integration checks"
+            );
+            return;
+        };
+
+        let suffix = unique_suffix();
+        let a = format!("hint-a-{suffix}");
+        let b = format!("hint-b-{suffix}");
+        let txid = format!("tx-hint-{suffix}");
+        let batch = format!("batch-hint-{suffix}");
+        let before = store
+            .wallet_payout_hints_after(0, 500)
+            .expect("read hints")
+            .last()
+            .map(|hint| hint.seq)
+            .unwrap_or(0);
+        for (addr, amount) in [(&a, 100u64), (&b, 250u64)] {
+            store
+                .update_balance(&Balance {
+                    address: addr.clone(),
+                    pending: amount,
+                    paid: 0,
+                })
+                .expect("seed balance");
+            store
+                .create_pending_payout(addr, amount)
+                .expect("create pending");
+        }
+        store
+            .mark_pending_payouts_send_started_batch(
+                &[(a.clone(), 100), (b.clone(), 250)],
+                &batch,
+                None,
+            )
+            .expect("mark batch started");
+        let members = [
+            PendingPayoutBatchMember {
+                address: a.clone(),
+                amount: 100,
+                fee: 1,
+            },
+            PendingPayoutBatchMember {
+                address: b.clone(),
+                amount: 250,
+                fee: 1,
+            },
+        ];
+        store
+            .record_pending_payout_batch_broadcast(&members, &batch, &txid)
+            .expect("record broadcast");
+        // A retried record of the same broadcast must not duplicate hints.
+        store
+            .record_pending_payout_batch_broadcast(&members, &batch, &txid)
+            .expect("re-record broadcast");
+
+        let hints: Vec<_> = store
+            .wallet_payout_hints_after(before, 500)
+            .expect("read hints")
+            .into_iter()
+            .filter(|hint| hint.tx_hash == txid)
+            .collect();
+        assert_eq!(hints.len(), 2, "one hint per recipient: {hints:?}");
+        assert!(hints.windows(2).all(|pair| pair[0].seq < pair[1].seq));
+        let by_addr = |addr: &str| {
+            hints
+                .iter()
+                .find(|hint| hint.address == addr)
+                .expect("hint")
+        };
+        assert_eq!(by_addr(&a).amount, 100);
+        assert_eq!(by_addr(&b).amount, 250);
+        assert!(hints
+            .iter()
+            .all(|hint| hint.payout_id == batch && hint.created_at_ms > 0));
+
+        let paged = store
+            .wallet_payout_hints_after(hints[0].seq, 1)
+            .expect("page hints");
+        assert_eq!(paged.len(), 1);
+        assert_eq!(paged[0].seq, hints[1].seq);
     }
 
     #[test]

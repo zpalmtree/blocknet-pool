@@ -10,6 +10,8 @@ use serde::Deserialize;
 #[serde(default)]
 pub(crate) struct Config {
     pub(crate) hosted_wallet: Option<crate::hosted_wallet::HostedWalletConfig>,
+    /// Payout-hint feed for the hosted wallet service; off unless enabled.
+    pub(crate) wallet_hints: Option<crate::wallet_hints::WalletHintsConfig>,
     #[serde(flatten)]
     pub(crate) runtime: RuntimeConfig,
     pub(crate) pool_url: String,
@@ -39,6 +41,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             hosted_wallet: None,
+            wallet_hints: None,
             runtime: RuntimeConfig::default(),
             pool_url: "http://localhost:24783".to_string(),
             checkpoints_path: String::new(),
@@ -70,7 +73,16 @@ impl Config {
         self.hosted_wallet.as_ref().filter(|wallet| wallet.enabled)
     }
 
+    pub(crate) fn active_wallet_hints(&self) -> Option<&crate::wallet_hints::WalletHintsConfig> {
+        self.wallet_hints.as_ref().filter(|hints| hints.enabled)
+    }
+
     fn validate(&self) -> Result<()> {
+        if let Some(hints) = self.active_wallet_hints() {
+            if hints.token_file.trim().is_empty() {
+                anyhow::bail!("wallet_hints.token_file is required when wallet_hints is enabled");
+            }
+        }
         if let Some(wallet) = self.active_hosted_wallet() {
             wallet.validate()?;
         }
