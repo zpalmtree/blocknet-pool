@@ -81,6 +81,16 @@ impl Argon2PowHasher {
         }
     }
 
+    /// Production-size hasher retaining up to `retained_limit` idle arenas.
+    pub fn with_arena_limit(retained_limit: usize) -> Self {
+        Self::new(POW_MEMORY_KIB, retained_limit)
+    }
+
+    /// Label of the compression path in use, e.g. `avx512`.
+    pub fn kernel_label(&self) -> &'static str {
+        self.kernel.hasher.isa_label()
+    }
+
     /// Returns allocation and cache counters for operational diagnostics.
     pub fn arena_pool_stats(&self) -> PowArenaPoolStats {
         self.kernel.arenas.stats()
