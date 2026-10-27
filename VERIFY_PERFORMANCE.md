@@ -32,5 +32,8 @@ From the persisted runtime snapshot and Prometheus, before latency histograms ex
 - 2026-10-27 · T2 · `sample_rate` 0.08 instead of 0.05 with hold 0.25: also 100% Normal, coverage 12.4-12.6%. Not proposed; small coverage gain for less headroom.
 - 2026-10-27 · T2 · surges above capacity with kernel + hold 0.25: 2x for 5 simulated minutes → 63% Normal over 40 min; 3x with half shares → 81% Normal; 0 audit drops and ~11% coverage in both. Recovery is stretched by the fixed 30 s clear-hold (2.5 simulated minutes at 5x). Open lead: overload clear logic for an async audit queue.
 
+- 2026-10-27 · T3 · production, batch at 51c978c (kernel, hold 0.25, sync lane) deployed 08:56 UTC: 100% Normal, live-audit wait p50 1 ms, 0 drops, live-audit hash mean 1,396 → 567 ms. Regression: hot-ack p99 50 → ~215 ms, tracking 2 GiB arena discards (~20/min, r = 0.55) once verifier concurrency started fluctuating.
+- 2026-10-27 · T3 · production, Stratum gateway + arena retention = verifier threads (4e9ba96) migrated 21:33 UTC (swap 0.4 s; 2,345 workers back within ~40 s): 30-min window hot-ack p50/p99 9/25 ms (baseline 22/50), 0 arena discards (was 613/30 min), 100% Normal, 0 transitions, live-audit wait p99 1 ms, 6.9 verifies/s, 0 busy replies. **Landed.**
+
 Raw results: `perf-results/2026-10-27/pool-verify/pv-9700x5/results/` (runs.jsonl, host.txt, parity-fullsize.txt) and `perf-results/2026-10-27/pool-verify/replay/*.json`.
 
