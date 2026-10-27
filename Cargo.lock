@@ -176,6 +176,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "blocknet-pool-gateway-app"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pool-common",
+ "pool-gateway",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "blocknet-pool-monitor-app"
 version = "0.1.0"
 dependencies = [
@@ -1151,6 +1164,7 @@ dependencies = [
  "flume",
  "hex",
  "humantime",
+ "libc",
  "parking_lot",
  "pool-common",
  "pool-gateway",

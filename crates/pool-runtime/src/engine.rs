@@ -6,7 +6,7 @@ use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::net::IpAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -53,6 +53,10 @@ const LOGIN_DIFFICULTY_HINT_MIN_FACTOR: f64 = 0.25;
 const LOGIN_DIFFICULTY_HINT_MAX_FACTOR: f64 = 4.0;
 const FOUND_BLOCK_OUTBOX_ENV: &str = "BLOCKNET_POOL_FOUND_BLOCK_OUTBOX";
 const FOUND_BLOCK_OUTBOX_DEFAULT_PATH: &str = "data/found-block-recovery.jsonl";
+/// Comma-separated outboxes of other Stratum instances behind the gateway.
+/// Setting it also makes this instance lock its own outbox while running.
+const FOUND_BLOCK_OUTBOX_PEERS_ENV: &str = "BLOCKNET_POOL_FOUND_BLOCK_OUTBOX_PEERS";
+const OUTBOX_LOCK_ATTEMPTS: u32 = 50;
 const FOUND_BLOCK_PERSIST_MAX_RETRIES: usize = 3;
 const VALIDATION_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Stored reject reason for provisional shares revoked by a source strike.
@@ -545,6 +549,8 @@ pub struct PoolEngine {
     seen_in_memory: NonceLedger,
     source_risk: Arc<SourceRiskTracker>,
     found_block_outbox_lock: Mutex<()>,
+    /// Held while this process owns its outbox (see `OutboxLock`).
+    _outbox_ownership: Option<OutboxLock>,
     admission: Arc<AdmissionState>,
     /// Daemon `submitblock` round trips by outcome; the daemon re-hashes the
     /// block, so this is the pool-side half of block propagation delay.
@@ -882,6 +888,7 @@ impl PoolEngine {
             seen_in_memory: NonceLedger::default(),
             source_risk,
             found_block_outbox_lock: Mutex::new(()),
+            _outbox_ownership: claim_found_block_outbox(),
             admission,
             block_submit_latency: NamedLatencyHistograms::default(),
         };
@@ -1896,6 +1903,19 @@ impl PoolEngine {
         let path = found_block_outbox_path();
         let _guard = self.found_block_outbox_lock.lock();
         self.recover_found_block_outbox_locked(&path);
+        // A peer instance's outbox is replayed only while its owner is gone,
+        // so a block it is submitting right now is never handled twice.
+        for peer in found_block_outbox_peers() {
+            match OutboxLock::try_acquire(&peer) {
+                Ok(Some(_peer_lock)) => self.recover_found_block_outbox_locked(&peer),
+                Ok(None) => {}
+                Err(err) => tracing::warn!(
+                    path = %peer.display(),
+                    error = %err,
+                    "cannot lock peer found-block outbox"
+                ),
+            }
+        }
     }
 
     fn stage_found_block_submission(&self, found: &FoundBlockRecord) -> Result<()> {
@@ -2598,6 +2618,70 @@ fn compact_address(address: &str) -> String {
         return trimmed.to_string();
     }
     format!("{}...{}", &trimmed[..6], &trimmed[trimmed.len() - 6..])
+}
+
+fn found_block_outbox_peers() -> Vec<PathBuf> {
+    env::var(FOUND_BLOCK_OUTBOX_PEERS_ENV)
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .collect()
+}
+
+/// With peers configured, locks this instance's outbox for its lifetime so
+/// peers only replay it once this process has exited. Retries briefly in
+/// case a peer is replaying it right now.
+fn claim_found_block_outbox() -> Option<OutboxLock> {
+    if found_block_outbox_peers().is_empty() {
+        return None;
+    }
+    let path = found_block_outbox_path();
+    for _ in 0..OUTBOX_LOCK_ATTEMPTS {
+        match OutboxLock::try_acquire(&path) {
+            Ok(Some(lock)) => return Some(lock),
+            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+            Err(err) => {
+                tracing::error!(path = %path.display(), error = %err, "cannot lock found-block outbox");
+                return None;
+            }
+        }
+    }
+    tracing::error!(
+        path = %path.display(),
+        "found-block outbox is locked by another live process; two instances share one outbox"
+    );
+    None
+}
+
+/// Exclusive `flock` on `<outbox>.lock`, released when dropped (or when the
+/// process exits, however it exits).
+struct OutboxLock {
+    _file: std::fs::File,
+}
+
+impl OutboxLock {
+    fn try_acquire(outbox: &Path) -> std::io::Result<Option<Self>> {
+        use std::os::fd::AsRawFd;
+        let mut lock_path = outbox.as_os_str().to_owned();
+        lock_path.push(".lock");
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(PathBuf::from(lock_path))?;
+        // Safety: flock on a descriptor this function owns.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Ok(Some(Self { _file: file }));
+        }
+        let err = std::io::Error::last_os_error();
+        if err.kind() == std::io::ErrorKind::WouldBlock {
+            Ok(None)
+        } else {
+            Err(err)
+        }
+    }
 }
 
 fn found_block_outbox_path() -> PathBuf {
@@ -5867,6 +5951,18 @@ mod tests {
             .filter(|share| share.nonce == 700 && share.status == SHARE_STATUS_PROVISIONAL)
             .count();
         assert_eq!(credited, 1);
+    }
+
+    #[test]
+    fn outbox_lock_excludes_other_owners_until_released() {
+        let dir = tempfile::tempdir().unwrap();
+        let outbox = dir.path().join("found-block-recovery-a.jsonl");
+        let owner = OutboxLock::try_acquire(&outbox)
+            .unwrap()
+            .expect("first owner");
+        assert!(OutboxLock::try_acquire(&outbox).unwrap().is_none());
+        drop(owner);
+        assert!(OutboxLock::try_acquire(&outbox).unwrap().is_some());
     }
 
     #[test]

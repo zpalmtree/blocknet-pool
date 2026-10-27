@@ -7,6 +7,7 @@ members = [
     "crates/pool-gateway",
     "apps/blocknet-pool-api",
     "apps/blocknet-pool-stratum",
+    "apps/blocknet-pool-gateway",
     "apps/blocknet-pool-monitor",
     "apps/blocknet-pool-recoveryd",
 ]

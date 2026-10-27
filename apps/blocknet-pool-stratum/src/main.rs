@@ -52,6 +52,16 @@ async fn main() -> Result<()> {
         }
     };
     background.quiesce(PAYOUT_QUIESCE_TIMEOUT).await;
-    info!("stratum stopped");
-    outcome
+    // Exit now: dropping the runtime would wait for long-running blocking
+    // work (validation, payout loops) and keep a retired engine alive.
+    match outcome {
+        Ok(()) => {
+            info!("stratum stopped");
+            std::process::exit(0);
+        }
+        Err(err) => {
+            tracing::error!(error = %format!("{err:#}"), "stratum stopped");
+            std::process::exit(1);
+        }
+    }
 }
