@@ -3,7 +3,7 @@
 // happens before the English page renders. English pages list their translations as a JSON block:
 // a saved choice wins, otherwise the first supported browser language decides.
 (function () {
-  var KEY = 'bntpool:language:preference:v1';
+  var KEY = 'bntpool:language:preference:v2';
   function remember(code) { try { localStorage.setItem(KEY, code); } catch (e) {} }
   document.addEventListener('click', function (e) {
     var a = e.target.closest && e.target.closest('.langs a[hreflang]');

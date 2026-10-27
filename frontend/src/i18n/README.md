@@ -14,9 +14,10 @@ language choice, otherwise in the first supported browser language: the app adds
 `?lang=` to the address before its first render, without a reload. English blog
 pages do the same by redirecting to the page's translation when one exists. A
 choice from either language menu (including English) is saved and wins over the
-browser language; automatic selections are not saved. Both surfaces use
-`bntpool:language:preference:v1`; blocked browser storage falls back to the
-browser language. A language switch preserves the route, query and fragment.
+browser language. Nothing else is saved: opening a `?lang=` link or being switched
+automatically leaves the preference alone. Both surfaces use
+`bntpool:language:preference:v2` (v1 was also written by `?lang=` visits, so it is
+ignored); blocked browser storage falls back to the browser language. A language switch preserves the route, query and fragment.
 Internal pool navigation preserves the chosen language.
 
 ## Updating copy

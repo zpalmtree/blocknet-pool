@@ -13,17 +13,16 @@ const catalogUrls = import.meta.glob(['./messages/*.json', '!./messages/en.json'
 let catalog: Record<string, string> = english;
 // A URL without ?lang= opens in the saved choice, else the first supported browser language.
 // The URL is rewritten in place so links, sharing and reloads keep that language.
-function autoLanguage(): string | null {
-  if (typeof window === 'undefined' || new URLSearchParams(window.location.search).has('lang')) return null;
+function autoLanguage() {
+  if (typeof window === 'undefined' || new URLSearchParams(window.location.search).has('lang')) return;
   let saved: string | null = null;
   try { saved = localStorage.getItem(LANGUAGE_PREFERENCE_KEY); } catch { /* Browser language still works. */ }
   const preferred = preferredLanguage(saved, navigator.languages || [navigator.language]);
-  if (!preferred || preferred === 'en') return null;
+  if (!preferred || preferred === 'en') return;
   const { pathname, search, hash } = window.location;
   window.history.replaceState(window.history.state, '', languageUrl(pathname + search + hash, preferred));
-  return preferred;
 }
-const automatic = autoLanguage();
+autoLanguage();
 const search = typeof window === 'undefined' ? '' : window.location.search;
 export const locale = matchLanguage(new URLSearchParams(search).get('lang') || 'en') || 'en';
 export const localeInfo = LOCALES.find((item) => item.code === locale)!;
@@ -65,7 +64,4 @@ export async function initializeLanguage() {
   }
   document.documentElement.lang = locale;
   document.documentElement.dir = localeInfo.dir;
-  // Only an explicit link or menu choice is remembered, so a browser change still applies later.
-  const requested = new URLSearchParams(search).get('lang');
-  if (requested && !automatic && matchLanguage(requested)) rememberLanguage(locale);
 }

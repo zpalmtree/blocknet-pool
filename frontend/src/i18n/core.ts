@@ -1,6 +1,7 @@
 import { LOCALES } from './locales.mjs';
 
-export const LANGUAGE_PREFERENCE_KEY = 'bntpool:language:preference:v1';
+// v1 was also written by any visit to a ?lang= URL, so old values may not be real choices.
+export const LANGUAGE_PREFERENCE_KEY = 'bntpool:language:preference:v2';
 
 export function matchLanguage(language: string): string | null {
   const normalized = language.toLowerCase();
