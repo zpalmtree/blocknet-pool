@@ -7733,6 +7733,7 @@ mod tests {
             submit: Default::default(),
             validation: ValidationSnapshot::default(),
             runtime_tasks: BTreeMap::new(),
+            latency: Default::default(),
         };
         store
             .set_meta(
@@ -7900,6 +7901,7 @@ mod tests {
                 ..ValidationSnapshot::default()
             },
             runtime_tasks: BTreeMap::new(),
+            latency: Default::default(),
         };
         store
             .set_meta(
@@ -7977,6 +7979,7 @@ mod tests {
                 ..ValidationSnapshot::default()
             },
             runtime_tasks: BTreeMap::new(),
+            latency: Default::default(),
         };
         store
             .set_meta(

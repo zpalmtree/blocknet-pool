@@ -14,10 +14,15 @@ pub const DEFAULT_POW_ARENA_CACHE_LIMIT: usize = 4;
 
 pub trait PowHasher: Send + Sync + 'static {
     fn hash(&self, header_base: &[u8], nonce: u64) -> Result<[u8; 32]>;
+
+    /// Arena cache counters, for hashers that keep reusable arenas.
+    fn arena_pool_stats(&self) -> Option<PowArenaPoolStats> {
+        None
+    }
 }
 
 /// Snapshot of the reusable PoW arena cache.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PowArenaPoolStats {
     pub allocations: u64,
     pub cache_hits: u64,
@@ -85,6 +90,10 @@ impl Argon2PowHasher {
 impl PowHasher for Argon2PowHasher {
     fn hash(&self, header_base: &[u8], nonce: u64) -> Result<[u8; 32]> {
         self.kernel.hash(header_base, nonce)
+    }
+
+    fn arena_pool_stats(&self) -> Option<PowArenaPoolStats> {
+        Some(Argon2PowHasher::arena_pool_stats(self))
     }
 }
 

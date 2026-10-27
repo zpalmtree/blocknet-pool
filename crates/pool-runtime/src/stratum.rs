@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -21,7 +21,9 @@ use crate::engine::{
 use crate::jobs::{AssignmentRangeMode, JobManager};
 use crate::source_risk::ip_group_key;
 use crate::stats::PoolStats;
-use crate::telemetry::{PercentileSummary, QueueTracker};
+use crate::telemetry::{
+    LatencyHistogramSnapshot, NamedLatencyHistograms, PercentileSummary, QueueTracker,
+};
 use pool_common::protocol::{
     normalize_worker_name, LoginParams, StratumNotify, StratumRequest, StratumResponse,
     SubmitParams, CAP_SAME_TEMPLATE_REBIND_V1, METHOD_LOGIN, METHOD_NOTIFICATION, METHOD_SUBMIT,
@@ -313,6 +315,8 @@ struct SubmitDispatcher {
     candidate_stale_block: AtomicU64,
     candidate_block_accepted: AtomicU64,
     candidate_worker_failure: AtomicU64,
+    /// Received-to-answered latency of queued submits, by lane and outcome.
+    ack_latency: NamedLatencyHistograms,
 }
 
 impl CandidateClaimState {
@@ -485,6 +489,7 @@ impl SubmitDispatcher {
             candidate_stale_block: AtomicU64::new(0),
             candidate_block_accepted: AtomicU64::new(0),
             candidate_worker_failure: AtomicU64::new(0),
+            ack_latency: NamedLatencyHistograms::default(),
         });
 
         for _ in 0..CANDIDATE_SUBMIT_WORKERS {
@@ -743,6 +748,30 @@ impl StratumServer {
             submit_rate_limit_window: SUBMIT_RATE_LIMIT_WINDOW,
             submit_rate_limit_max: SUBMIT_RATE_LIMIT_MAX,
         })
+    }
+
+    /// Cumulative latency histograms by metric family, then lane.
+    pub(crate) fn latency_histograms(
+        &self,
+    ) -> BTreeMap<String, BTreeMap<String, LatencyHistogramSnapshot>> {
+        let dispatcher = &self.submit_dispatcher;
+        let queue_waits = [
+            ("candidate", SubmitLane::Candidate),
+            ("priority_candidate", SubmitLane::PriorityCandidate),
+            ("regular", SubmitLane::Regular),
+        ]
+        .into_iter()
+        .map(|(lane, queue)| {
+            (
+                lane.to_string(),
+                dispatcher.lane_queue(queue).wait_histogram(),
+            )
+        })
+        .collect();
+        BTreeMap::from([
+            ("submit_ack".to_string(), dispatcher.ack_latency.snapshot()),
+            ("submit_queue_wait".to_string(), queue_waits),
+        ])
     }
 
     pub(crate) fn submit_snapshot(&self) -> SubmitRuntimeSnapshot {
@@ -1648,6 +1677,9 @@ async fn run_submit_worker(
         if let Some(permit) = candidate_permit {
             permit.release();
         }
+        dispatcher
+            .ack_latency
+            .record(submit_ack_lane(lane, &outcome), received_at.elapsed());
         if completion_tx
             .send(SubmitCompletion {
                 req_id,
@@ -1659,6 +1691,21 @@ async fn run_submit_worker(
         {
             continue;
         }
+    }
+}
+
+/// Splits regular acks by path: a synchronous full verify answers seconds
+/// later than a hot accept, so mixing them would hide either tail.
+fn submit_ack_lane(lane: SubmitLane, outcome: &SubmitCompletionOutcome) -> &'static str {
+    match (lane, outcome) {
+        (SubmitLane::Candidate, _) => "candidate",
+        (SubmitLane::PriorityCandidate, _) => "priority_candidate",
+        (SubmitLane::Regular, SubmitCompletionOutcome::Finished(Ok(ack))) if ack.verified => {
+            "regular_verified"
+        }
+        (SubmitLane::Regular, SubmitCompletionOutcome::Finished(Ok(_))) => "regular_hot",
+        (SubmitLane::Regular, SubmitCompletionOutcome::Finished(Err(_))) => "regular_rejected",
+        (SubmitLane::Regular, SubmitCompletionOutcome::WorkerFailure(_)) => "regular_failure",
     }
 }
 

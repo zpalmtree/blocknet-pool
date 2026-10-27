@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::jobs::JobRuntimeSnapshot;
 use crate::payout::PayoutRuntimeSnapshot;
 use crate::stats::PoolSnapshot;
-use crate::telemetry::TimedOperationSummary;
+use crate::telemetry::{LatencyHistogramSnapshot, TimedOperationSummary};
 
 pub use crate::stratum::SubmitRuntimeSnapshot;
 pub use crate::validation::ValidationSnapshot;
@@ -29,6 +29,10 @@ pub struct PersistedRuntimeSnapshot {
     pub validation: ValidationSnapshot,
     #[serde(default)]
     pub runtime_tasks: BTreeMap<String, TimedOperationSummary>,
+    /// Cumulative latency histograms by metric family (e.g. `submit_ack`),
+    /// then lane.
+    #[serde(default)]
+    pub latency: BTreeMap<String, BTreeMap<String, LatencyHistogramSnapshot>>,
 }
 
 impl PersistedRuntimeSnapshot {
@@ -39,6 +43,7 @@ impl PersistedRuntimeSnapshot {
         jobs: JobRuntimeSnapshot,
         payouts: PayoutRuntimeSnapshot,
         runtime_tasks: BTreeMap<String, TimedOperationSummary>,
+        latency: BTreeMap<String, BTreeMap<String, LatencyHistogramSnapshot>>,
     ) -> Self {
         Self {
             sampled_at: SystemTime::now(),
@@ -51,6 +56,7 @@ impl PersistedRuntimeSnapshot {
             submit,
             validation,
             runtime_tasks,
+            latency,
         }
     }
 }

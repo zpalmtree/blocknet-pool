@@ -408,6 +408,11 @@ fn start_live_runtime_snapshot_persist(
                 jobs.runtime_snapshot(),
                 payouts.runtime_snapshot(),
                 task_metrics.snapshot(),
+                stratum
+                    .latency_histograms()
+                    .into_iter()
+                    .chain(validation.latency_histograms())
+                    .collect(),
             );
             let store = Arc::clone(&store);
             let failed = match tokio::task::spawn_blocking(move || -> Result<()> {

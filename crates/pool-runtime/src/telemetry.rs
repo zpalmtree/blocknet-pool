@@ -56,6 +56,88 @@ pub struct ApiPerformanceSnapshot {
     pub database_reads: BTreeMap<String, TimedOperationSummary>,
 }
 
+/// Inclusive upper bounds of the cumulative latency histogram buckets. Dense
+/// between 1 s and 4 s so a few-percent shift in Argon2 verify time is visible
+/// in `histogram_quantile`, and wide enough to keep queue-wait tails.
+pub const LATENCY_BUCKET_BOUNDS_MILLIS: [u64; 27] = [
+    1, 2, 5, 10, 25, 50, 100, 250, 500, 750, 1_000, 1_250, 1_500, 1_750, 2_000, 2_250, 2_500,
+    2_750, 3_000, 3_500, 4_000, 5_000, 7_500, 10_000, 15_000, 30_000, 60_000,
+];
+
+/// Process-lifetime latency histogram. Unlike the rolling percentile windows,
+/// its counts only grow, so Prometheus can compute quantiles over any range
+/// and compare before/after a change.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct LatencyHistogramSnapshot {
+    pub bounds_millis: Vec<u64>,
+    /// Per-bucket (not cumulative) counts; the extra last entry is `+Inf`.
+    pub counts: Vec<u64>,
+    pub sum_micros: u64,
+}
+
+impl LatencyHistogramSnapshot {
+    pub fn count(&self) -> u64 {
+        self.counts.iter().sum()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LatencyHistogram {
+    counts: [u64; LATENCY_BUCKET_BOUNDS_MILLIS.len() + 1],
+    sum_micros: u64,
+}
+
+impl Default for LatencyHistogram {
+    fn default() -> Self {
+        Self {
+            counts: [0; LATENCY_BUCKET_BOUNDS_MILLIS.len() + 1],
+            sum_micros: 0,
+        }
+    }
+}
+
+impl LatencyHistogram {
+    pub(crate) fn record(&mut self, duration: Duration) {
+        let micros = duration.as_micros().min(u64::MAX as u128) as u64;
+        let idx = LATENCY_BUCKET_BOUNDS_MILLIS
+            .partition_point(|bound| bound.saturating_mul(1_000) < micros);
+        self.counts[idx] = self.counts[idx].saturating_add(1);
+        self.sum_micros = self.sum_micros.saturating_add(micros);
+    }
+
+    pub(crate) fn snapshot(&self) -> LatencyHistogramSnapshot {
+        LatencyHistogramSnapshot {
+            bounds_millis: LATENCY_BUCKET_BOUNDS_MILLIS.to_vec(),
+            counts: self.counts.to_vec(),
+            sum_micros: self.sum_micros,
+        }
+    }
+}
+
+/// Latency histograms keyed by lane, e.g. `candidate` or `regular_sync`.
+#[derive(Debug, Default)]
+pub struct NamedLatencyHistograms {
+    entries: Mutex<BTreeMap<&'static str, LatencyHistogram>>,
+}
+
+impl NamedLatencyHistograms {
+    pub fn record(&self, lane: &'static str, duration: Duration) {
+        self.entries
+            .lock()
+            .entry(lane)
+            .or_default()
+            .record(duration);
+    }
+
+    pub fn snapshot(&self) -> BTreeMap<String, LatencyHistogramSnapshot> {
+        self.entries
+            .lock()
+            .iter()
+            .map(|(lane, histogram)| (lane.to_string(), histogram.snapshot()))
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub(crate) struct QueuePressureSnapshot {
     #[serde(default)]
@@ -211,6 +293,7 @@ pub(crate) struct QueueTracker {
     next_id: AtomicU64,
     queued_at: Mutex<VecDeque<(u64, Instant)>>,
     waits: Mutex<LatencyWindow>,
+    wait_histogram: Mutex<LatencyHistogram>,
 }
 
 impl QueueTracker {
@@ -219,6 +302,7 @@ impl QueueTracker {
             next_id: AtomicU64::new(1),
             queued_at: Mutex::new(VecDeque::new()),
             waits: Mutex::new(LatencyWindow::new(sample_limit.max(1))),
+            wait_histogram: Mutex::new(LatencyHistogram::default()),
         }
     }
 
@@ -239,10 +323,14 @@ impl QueueTracker {
     pub(crate) fn pop_and_record_wait(&self, started_at: Instant) {
         let queued_at = self.queued_at.lock().pop_front();
         if let Some((_, queued_at)) = queued_at {
-            self.waits
-                .lock()
-                .record(started_at.saturating_duration_since(queued_at));
+            let wait = started_at.saturating_duration_since(queued_at);
+            self.waits.lock().record(wait);
+            self.wait_histogram.lock().record(wait);
         }
+    }
+
+    pub(crate) fn wait_histogram(&self) -> LatencyHistogramSnapshot {
+        self.wait_histogram.lock().snapshot()
     }
 
     pub(crate) fn snapshot(&self, now: Instant) -> QueuePressureSnapshot {
@@ -290,6 +378,29 @@ fn percentile_index(count: usize, percentile: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn latency_histogram_buckets_are_inclusive_upper_bounds() {
+        let mut histogram = LatencyHistogram::default();
+        histogram.record(Duration::from_micros(0));
+        histogram.record(Duration::from_millis(1));
+        histogram.record(Duration::from_micros(1_001));
+        histogram.record(Duration::from_millis(1_900));
+        histogram.record(Duration::from_secs(120));
+        let snapshot = histogram.snapshot();
+        assert_eq!(snapshot.counts.len(), snapshot.bounds_millis.len() + 1);
+        assert_eq!(snapshot.counts[0], 2, "0 ms and exactly 1 ms land in le=1");
+        assert_eq!(snapshot.counts[1], 1, "1.001 ms lands in le=2");
+        let le_2000 = snapshot
+            .bounds_millis
+            .iter()
+            .position(|bound| *bound == 2_000)
+            .expect("2 s bound");
+        assert_eq!(snapshot.counts[le_2000], 1);
+        assert_eq!(*snapshot.counts.last().expect("+Inf"), 1);
+        assert_eq!(snapshot.count(), 5);
+        assert_eq!(snapshot.sum_micros, 1_000 + 1_001 + 1_900_000 + 120_000_000);
+    }
 
     #[test]
     fn success_percentiles_exclude_fast_rejections_and_keep_tail_latency() {

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -11,9 +11,12 @@ use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Config, CANDIDATE_VALIDATION_QUEUE_SIZE};
-use crate::telemetry::{default_latency_window, LatencyWindow, PercentileSummary, QueueTracker};
+use crate::telemetry::{
+    default_latency_window, LatencyHistogramSnapshot, LatencyWindow, NamedLatencyHistograms,
+    PercentileSummary, QueueTracker,
+};
 use pool_common::db::{PendingAuditShare, ShareReplayUpdate, ValidationHoldCause};
-use pool_common::pow::{check_target, PowHasher};
+use pool_common::pow::{check_target, PowArenaPoolStats, PowHasher};
 
 pub const SHARE_STATUS_VERIFIED: &str = "verified";
 pub const SHARE_STATUS_PROVISIONAL: &str = "provisional";
@@ -497,6 +500,17 @@ pub struct ValidationSnapshot {
     pub probation_enqueued: u64,
     #[serde(default)]
     pub probation_rejected: u64,
+    /// Process-lifetime time spent in each overload mode.
+    #[serde(default)]
+    pub overload_normal_millis_total: u64,
+    #[serde(default)]
+    pub overload_shed_millis_total: u64,
+    #[serde(default)]
+    pub overload_emergency_millis_total: u64,
+    #[serde(default)]
+    pub overload_transitions_total: u64,
+    #[serde(default)]
+    pub arena: Option<PowArenaPoolStats>,
 }
 
 struct QueuedTask {
@@ -547,6 +561,10 @@ pub(crate) struct RegularSubmitPlan {
 struct OverloadState {
     mode: OverloadMode,
     below_clear_started_at: Option<Instant>,
+    accounted_until: Option<Instant>,
+    /// Indexed by `overload_mode_index`.
+    mode_millis: [u64; 3],
+    transitions: u64,
 }
 
 impl Default for OverloadState {
@@ -554,7 +572,32 @@ impl Default for OverloadState {
         Self {
             mode: OverloadMode::Normal,
             below_clear_started_at: None,
+            accounted_until: None,
+            mode_millis: [0; 3],
+            transitions: 0,
         }
+    }
+}
+
+impl OverloadState {
+    /// Charges the time since the last evaluation to the mode that was active.
+    fn account(&mut self, now: Instant) {
+        if let Some(since) = self.accounted_until {
+            let millis = now.saturating_duration_since(since).as_millis() as u64;
+            let slot = &mut self.mode_millis[overload_mode_index(self.mode)];
+            *slot = slot.saturating_add(millis);
+        }
+        if self.accounted_until.is_none_or(|since| now > since) {
+            self.accounted_until = Some(now);
+        }
+    }
+}
+
+fn overload_mode_index(mode: OverloadMode) -> usize {
+    match mode {
+        OverloadMode::Normal => 0,
+        OverloadMode::Shed => 1,
+        OverloadMode::Emergency => 2,
     }
 }
 
@@ -585,6 +628,8 @@ struct ValidationInner {
     submit_regular_queue: Mutex<Option<Arc<QueueTracker>>>,
     validation_duration: Mutex<LatencyWindow>,
     audit_duration: Mutex<LatencyWindow>,
+    /// Pure hasher time per lane, excluding queueing and bookkeeping.
+    hash_durations: NamedLatencyHistograms,
     overload: Mutex<OverloadState>,
     audit_feedback: Mutex<Option<Arc<dyn AuditFeedback>>>,
     probation_tx: flume::Sender<QueuedProbationTask>,
@@ -682,6 +727,7 @@ impl ValidationEngine {
             submit_regular_queue: Mutex::new(None),
             validation_duration: Mutex::new(default_latency_window()),
             audit_duration: Mutex::new(default_latency_window()),
+            hash_durations: NamedLatencyHistograms::default(),
             overload: Mutex::new(OverloadState::default()),
             audit_feedback: Mutex::new(None),
             probation_tx,
@@ -843,7 +889,7 @@ impl ValidationEngine {
         let started_at = Instant::now();
         self.inner.in_flight.fetch_add(1, Ordering::Relaxed);
         let prepared = self.inner.prepare_task(&task.address);
-        let computed = self.inner.compute_task(&task, prepared);
+        let computed = self.inner.compute_task(&task, prepared, "inline");
         if computed.verified {
             self.inner
                 .sync_full_verifies
@@ -946,6 +992,29 @@ impl ValidationEngine {
 
     pub(crate) fn snapshot(&self) -> ValidationSnapshot {
         self.inner.snapshot()
+    }
+
+    /// Cumulative latency histograms by metric family, then lane.
+    pub(crate) fn latency_histograms(
+        &self,
+    ) -> BTreeMap<String, BTreeMap<String, LatencyHistogramSnapshot>> {
+        let inner = &self.inner;
+        let queue_waits = [
+            ("candidate", &inner.candidate_queue),
+            ("regular", &inner.regular_queue),
+            ("audit", &inner.audit_queue),
+            ("probation", &inner.probation_queue),
+        ]
+        .into_iter()
+        .map(|(lane, queue)| (lane.to_string(), queue.wait_histogram()))
+        .collect();
+        BTreeMap::from([
+            (
+                "validation_hash".to_string(),
+                inner.hash_durations.snapshot(),
+            ),
+            ("validation_queue_wait".to_string(), queue_waits),
+        ])
     }
 
     pub(crate) fn schedule_forced_review_after(&self, address: &str, start_at: SystemTime) {
@@ -1054,7 +1123,8 @@ impl ValidationInner {
         }
         self.in_flight.fetch_add(1, Ordering::Relaxed);
         let prepared = self.prepare_task(&queued.task.address);
-        let result = self.compute_task(&queued.task, prepared);
+        let lane = if candidate_lane { "candidate" } else { "sync" };
+        let result = self.compute_task(&queued.task, prepared, lane);
         if result.verified {
             self.sync_full_verifies.fetch_add(1, Ordering::Relaxed);
         }
@@ -1081,7 +1151,12 @@ impl ValidationInner {
         }
     }
 
-    fn compute_task(&self, task: &ValidationTask, plan: ValidationPlan) -> ValidationComputeResult {
+    fn compute_task(
+        &self,
+        task: &ValidationTask,
+        plan: ValidationPlan,
+        lane: &'static str,
+    ) -> ValidationComputeResult {
         let full_verify = task.force_full_verify || plan.full_verify;
 
         let mut result = ValidationComputeResult {
@@ -1098,7 +1173,10 @@ impl ValidationInner {
         };
 
         if full_verify {
-            let hash = match self.hasher.hash(&task.header_base, task.nonce) {
+            let hash_started_at = Instant::now();
+            let hashed = self.hasher.hash(&task.header_base, task.nonce);
+            self.hash_durations.record(lane, hash_started_at.elapsed());
+            let hash = match hashed {
                 Ok(hash) => hash,
                 Err(err) => {
                     tracing::warn!(
@@ -1572,8 +1650,16 @@ impl ValidationInner {
             probation_queue_depth: self.probation_queue.snapshot(now_instant).depth,
             probation_enqueued: self.probation_enqueued.load(Ordering::Relaxed),
             probation_rejected: self.probation_rejected.load(Ordering::Relaxed),
+            arena: self.hasher.arena_pool_stats(),
             ..ValidationSnapshot::default()
         };
+        {
+            let overload = self.overload.lock();
+            snap.overload_normal_millis_total = overload.mode_millis[0];
+            snap.overload_shed_millis_total = overload.mode_millis[1];
+            snap.overload_emergency_millis_total = overload.mode_millis[2];
+            snap.overload_transitions_total = overload.transitions;
+        }
 
         let mut state = self.state.lock();
         if state.len() > VALIDATION_STATE_MAX_TRACKED {
@@ -1702,16 +1788,16 @@ impl ValidationInner {
     fn process_live_audit(&self, queued: QueuedAuditTask) {
         let started_at = Instant::now();
         self.regular_queue.pop_and_record_wait(started_at);
-        self.process_audit_task(queued, started_at);
+        self.process_audit_task(queued, started_at, "live_audit");
     }
 
     fn process_background_audit(&self, queued: QueuedAuditTask) {
         let started_at = Instant::now();
         self.audit_queue.pop_and_record_wait(started_at);
-        self.process_audit_task(queued, started_at);
+        self.process_audit_task(queued, started_at, "background_audit");
     }
 
-    fn process_audit_task(&self, queued: QueuedAuditTask, started_at: Instant) {
+    fn process_audit_task(&self, queued: QueuedAuditTask, started_at: Instant, lane: &'static str) {
         let task = ValidationTask {
             address: queued.share.miner.clone(),
             nonce: queued.share.nonce,
@@ -1731,6 +1817,7 @@ impl ValidationInner {
                 full_verify: true,
                 overload_mode: self.evaluate_overload(Instant::now()),
             },
+            lane,
         );
         self.audit_duration.lock().record(started_at.elapsed());
         self.audit_pending_shares
@@ -2112,6 +2199,7 @@ impl ValidationInner {
             && oldest_age <= self.config.overload_clear_oldest_age_duration();
 
         let mut state = self.overload.lock();
+        state.account(now);
         let previous_mode = state.mode;
         match state.mode {
             OverloadMode::Normal => {
@@ -2148,6 +2236,7 @@ impl ValidationInner {
             state.mode = OverloadMode::Emergency;
         }
         if state.mode != previous_mode {
+            state.transitions = state.transitions.saturating_add(1);
             tracing::info!(
                 previous = ?previous_mode,
                 current = ?state.mode,
@@ -2453,7 +2542,7 @@ impl ValidationInner {
         let started_at = Instant::now();
         self.probation_queue.pop_and_record_wait(started_at);
         let address = queued.task.share.miner.clone();
-        self.process_audit_task(queued.task, started_at);
+        self.process_audit_task(queued.task, started_at, "probation");
         self.release_probation(&address, &queued.group);
     }
 }
@@ -2810,6 +2899,20 @@ mod tests {
 
     fn test_store() -> Option<Arc<PoolStore>> {
         PoolStore::test_store()
+    }
+
+    #[test]
+    fn overload_time_is_charged_to_the_mode_that_was_active() {
+        let start = Instant::now();
+        let mut state = OverloadState::default();
+        state.account(start);
+        // `evaluate_overload` accounts before switching modes.
+        state.account(start + Duration::from_millis(1_500));
+        state.mode = OverloadMode::Emergency;
+        state.account(start + Duration::from_millis(4_000));
+        // A caller that sampled `now` before taking the lock may arrive late.
+        state.account(start + Duration::from_millis(3_000));
+        assert_eq!(state.mode_millis, [1_500, 0, 2_500]);
     }
 
     macro_rules! require_test_store {

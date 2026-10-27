@@ -26,9 +26,14 @@ use pool_runtime::config::CANDIDATE_VALIDATION_QUEUE_SIZE;
 use pool_runtime::node::{NodeClient, NodeCurrentProcessBlock, NodeLastProcessBlock, NodeStatus};
 use pool_runtime::pool_activity::{assess_pool_activity, POOL_ACTIVITY_SNAPSHOT_STALE_AFTER};
 use pool_runtime::runtime::load_dotenv;
-use pool_runtime::service_state::{PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY};
+use pool_runtime::service_state::{
+    PersistedRuntimeSnapshot, ValidationSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY,
+};
 use pool_runtime::store::PoolStore;
-use pool_runtime::telemetry::{ApiPerformanceSnapshot, TimedOperationSummary};
+use pool_runtime::telemetry::{
+    ApiPerformanceSnapshot, LatencyHistogramSnapshot, TimedOperationSummary,
+};
+use pool_runtime::validation::OverloadMode;
 
 const LOCAL_MONITOR_SOURCE: &str = "local";
 const MONITOR_LISTEN_ADDR: &str = "127.0.0.1:24784";
@@ -131,6 +136,8 @@ struct MonitorSnapshot {
     reference_source_up: BTreeMap<String, bool>,
     api_performance: ApiPerformanceSnapshot,
     stratum_runtime_tasks: BTreeMap<String, TimedOperationSummary>,
+    stratum_latency: BTreeMap<String, BTreeMap<String, LatencyHistogramSnapshot>>,
+    validation: Option<ValidationSnapshot>,
     process_metrics: BTreeMap<String, ProcessMetrics>,
     open_public_incidents: u64,
     open_private_incidents: u64,
@@ -1119,6 +1126,10 @@ impl MonitorRuntime {
         metrics.stratum_runtime_tasks = runtime
             .map(|snapshot| snapshot.runtime_tasks.clone())
             .unwrap_or_default();
+        metrics.stratum_latency = runtime
+            .map(|snapshot| snapshot.latency.clone())
+            .unwrap_or_default();
+        metrics.validation = runtime.map(|snapshot| snapshot.validation);
         metrics.process_metrics = sample.process_metrics.clone();
         metrics.open_public_incidents = open_public;
         metrics.open_private_incidents = open_private;
@@ -2504,6 +2515,16 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
         "task",
         &snapshot.stratum_runtime_tasks,
     );
+    for (family, by_lane) in &snapshot.stratum_latency {
+        render_latency_histograms(
+            &mut out,
+            &format!("blocknet_pool_monitor_{family}_millis"),
+            by_lane,
+        );
+    }
+    if let Some(validation) = snapshot.validation.as_ref() {
+        render_validation_metrics(&mut out, validation);
+    }
     if let Some(hashrate) = snapshot.estimated_hashrate {
         metric_line(
             &mut out,
@@ -2570,6 +2591,169 @@ where
     buf.push(' ');
     buf.push_str(&value.to_string());
     buf.push('\n');
+}
+
+/// Prometheus histogram series (`_bucket` cumulative with `le`, `_sum`,
+/// `_count`), one set per lane.
+fn render_latency_histograms(
+    out: &mut String,
+    name: &str,
+    by_lane: &BTreeMap<String, LatencyHistogramSnapshot>,
+) {
+    let bucket_name = format!("{name}_bucket");
+    for (lane, histogram) in by_lane {
+        let mut cumulative = 0u64;
+        for (idx, count) in histogram.counts.iter().enumerate() {
+            cumulative = cumulative.saturating_add(*count);
+            let le = histogram
+                .bounds_millis
+                .get(idx)
+                .map(u64::to_string)
+                .unwrap_or_else(|| "+Inf".to_string());
+            metric_line_labeled(
+                out,
+                &bucket_name,
+                &[("lane", lane.as_str()), ("le", le.as_str())],
+                cumulative,
+            );
+        }
+        let labels = [("lane", lane.as_str())];
+        metric_line_labeled(
+            out,
+            &format!("{name}_sum"),
+            &labels,
+            histogram.sum_micros as f64 / 1_000.0,
+        );
+        metric_line_labeled(out, &format!("{name}_count"), &labels, cumulative);
+    }
+}
+
+fn render_validation_metrics(out: &mut String, validation: &ValidationSnapshot) {
+    let mode = match validation.overload_mode {
+        OverloadMode::Normal => 0,
+        OverloadMode::Shed => 1,
+        OverloadMode::Emergency => 2,
+    };
+    metric_line(out, "blocknet_pool_monitor_validation_overload_mode", mode);
+    for (mode, millis) in [
+        ("normal", validation.overload_normal_millis_total),
+        ("shed", validation.overload_shed_millis_total),
+        ("emergency", validation.overload_emergency_millis_total),
+    ] {
+        metric_line_labeled(
+            out,
+            "blocknet_pool_monitor_validation_overload_seconds_total",
+            &[("mode", mode)],
+            millis as f64 / 1_000.0,
+        );
+    }
+    metric_line(
+        out,
+        "blocknet_pool_monitor_validation_effective_sample_rate",
+        validation.effective_sample_rate,
+    );
+    for (name, value) in [
+        (
+            "blocknet_pool_monitor_validation_overload_transitions_total",
+            validation.overload_transitions_total,
+        ),
+        (
+            "blocknet_pool_monitor_validation_in_flight",
+            validation.in_flight.max(0) as u64,
+        ),
+        (
+            "blocknet_pool_monitor_validation_audit_queue_depth",
+            validation.audit_queue_depth as u64,
+        ),
+        (
+            "blocknet_pool_monitor_validation_probation_queue_depth",
+            validation.probation_queue_depth as u64,
+        ),
+        (
+            "blocknet_pool_monitor_validation_regular_oldest_age_millis",
+            validation.regular_oldest_age_millis.unwrap_or(0),
+        ),
+        (
+            "blocknet_pool_monitor_validation_forced_verify_addresses",
+            validation.forced_verify_addresses as u64,
+        ),
+        (
+            "blocknet_pool_monitor_validation_pending_provisional",
+            validation.pending_provisional,
+        ),
+        (
+            "blocknet_pool_monitor_validation_hot_accepts_total",
+            validation.hot_accepts,
+        ),
+        (
+            "blocknet_pool_monitor_validation_sync_full_verifies_total",
+            validation.sync_full_verifies,
+        ),
+        (
+            "blocknet_pool_monitor_validation_audit_enqueued_total",
+            validation.audit_enqueued,
+        ),
+        (
+            "blocknet_pool_monitor_validation_audit_verified_total",
+            validation.audit_verified,
+        ),
+        (
+            "blocknet_pool_monitor_validation_audit_rejected_total",
+            validation.audit_rejected,
+        ),
+        (
+            "blocknet_pool_monitor_validation_audit_deferred_total",
+            validation.audit_deferred,
+        ),
+        (
+            "blocknet_pool_monitor_validation_probation_enqueued_total",
+            validation.probation_enqueued,
+        ),
+        (
+            "blocknet_pool_monitor_validation_probation_rejected_total",
+            validation.probation_rejected,
+        ),
+        (
+            "blocknet_pool_monitor_validation_fraud_detections_total",
+            validation.fraud_detections,
+        ),
+    ] {
+        metric_line(out, name, value);
+    }
+    if let Some(arena) = validation.arena {
+        for (backing, value) in [
+            ("hugetlb", arena.hugetlb_allocations),
+            ("thp_hint", arena.thp_hint_allocations),
+            ("heap", arena.heap_allocations),
+        ] {
+            metric_line_labeled(
+                out,
+                "blocknet_pool_monitor_pow_arena_allocations_total",
+                &[("backing", backing)],
+                value,
+            );
+        }
+        for (name, value) in [
+            (
+                "blocknet_pool_monitor_pow_arena_cache_hits_total",
+                arena.cache_hits,
+            ),
+            (
+                "blocknet_pool_monitor_pow_arena_discarded_total",
+                arena.discarded,
+            ),
+            (
+                "blocknet_pool_monitor_pow_arena_cached",
+                arena.cached_arenas as u64,
+            ),
+            (
+                "blocknet_pool_monitor_pow_arena_retained_limit",
+                arena.retained_limit as u64,
+            ),
+        ] {
+            metric_line(out, name, value);
+        }
+    }
 }
 
 fn render_timed_operation_metrics(
@@ -2710,6 +2894,7 @@ mod tests {
             submit: SubmitRuntimeSnapshot::default(),
             validation: ValidationSnapshot::default(),
             runtime_tasks: BTreeMap::new(),
+            latency: BTreeMap::new(),
         }
     }
 
@@ -2932,6 +3117,54 @@ mod tests {
         assert!(rendered.contains(
             "blocknet_pool_monitor_stratum_task_count{task=\"runtime_snapshot_persist\"} 4"
         ));
+    }
+
+    #[test]
+    fn render_metrics_outputs_latency_histograms_and_validation_counters() {
+        let mut snapshot = MonitorSnapshot {
+            summary_state: "healthy".to_string(),
+            ..MonitorSnapshot::default()
+        };
+        snapshot.stratum_latency = BTreeMap::from([(
+            "validation_hash".to_string(),
+            BTreeMap::from([(
+                "sync".to_string(),
+                pool_runtime::telemetry::LatencyHistogramSnapshot {
+                    bounds_millis: vec![1_000, 2_000],
+                    counts: vec![1, 3, 2],
+                    sum_micros: 9_500_000,
+                },
+            )]),
+        )]);
+        snapshot.validation = Some(ValidationSnapshot {
+            overload_mode: pool_runtime::validation::OverloadMode::Emergency,
+            overload_emergency_millis_total: 90_500,
+            overload_transitions_total: 7,
+            audit_deferred: 11,
+            arena: Some(pool_common::pow::PowArenaPoolStats {
+                hugetlb_allocations: 5,
+                heap_allocations: 2,
+                ..Default::default()
+            }),
+            ..ValidationSnapshot::default()
+        });
+
+        let rendered = render_metrics(&snapshot);
+        for line in [
+            "blocknet_pool_monitor_validation_hash_millis_bucket{lane=\"sync\",le=\"1000\"} 1",
+            "blocknet_pool_monitor_validation_hash_millis_bucket{lane=\"sync\",le=\"2000\"} 4",
+            "blocknet_pool_monitor_validation_hash_millis_bucket{lane=\"sync\",le=\"+Inf\"} 6",
+            "blocknet_pool_monitor_validation_hash_millis_sum{lane=\"sync\"} 9500",
+            "blocknet_pool_monitor_validation_hash_millis_count{lane=\"sync\"} 6",
+            "blocknet_pool_monitor_validation_overload_mode 2",
+            "blocknet_pool_monitor_validation_overload_seconds_total{mode=\"emergency\"} 90.5",
+            "blocknet_pool_monitor_validation_overload_transitions_total 7",
+            "blocknet_pool_monitor_validation_audit_deferred_total 11",
+            "blocknet_pool_monitor_pow_arena_allocations_total{backing=\"hugetlb\"} 5",
+            "blocknet_pool_monitor_pow_arena_allocations_total{backing=\"heap\"} 2",
+        ] {
+            assert!(rendered.contains(line), "missing {line}");
+        }
     }
 
     #[test]
