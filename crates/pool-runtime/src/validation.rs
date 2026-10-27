@@ -3050,6 +3050,12 @@ mod tests {
         let single_ms = env_f64("VERIFY_REPLAY_SINGLE_MS", 700.0);
         let wall_secs = env_f64("VERIFY_REPLAY_SECS", 480.0);
         let base_rate = env_f64("VERIFY_REPLAY_RATE", weights.iter().sum::<f64>() / 3600.0);
+        // Block-candidate claims per real second, sent through the candidate
+        // lane; their verify latency is reported in real time.
+        let candidate_rate = env_f64("VERIFY_REPLAY_CANDIDATE_RATE", 0.05);
+        let candidate_latencies = Arc::new(Mutex::new(Vec::<f64>::new()));
+        let mut candidate_refused = 0u64;
+        let mut candidate_handles = Vec::new();
         // "start,end,factor" in wall seconds.
         let surge: Option<(f64, f64, f64)> = std::env::var("VERIFY_REPLAY_SURGE").ok().map(|v| {
             let parts: Vec<f64> = v.split(',').map(|p| p.parse().expect("surge")).collect();
@@ -3129,6 +3135,38 @@ mod tests {
             }
             share_id += 1;
             let address = format!("replay-{}", pick.sample(&mut rng));
+            if rng.gen::<f64>() < candidate_rate * speedup / rate {
+                let started = Instant::now();
+                match engine.submit(
+                    ValidationTask {
+                        address: address.clone(),
+                        nonce: share_id as u64,
+                        difficulty,
+                        header_base: share_id.to_le_bytes().to_vec(),
+                        share_target: difficulty_to_target(difficulty),
+                        network_target: [0xff; 32],
+                        claimed_hash: Some(REPLAY_HASH),
+                        candidate_claim: true,
+                        force_full_verify: true,
+                        attributed: false,
+                        count_invalid_at_address: true,
+                    },
+                    true,
+                ) {
+                    Some(rx) => {
+                        let latencies = Arc::clone(&candidate_latencies);
+                        candidate_handles.push(std::thread::spawn(move || {
+                            if rx.recv_timeout(Duration::from_secs(60)).is_ok() {
+                                latencies
+                                    .lock()
+                                    .push(started.elapsed().as_secs_f64() * 1000.0 * speedup);
+                            }
+                        }));
+                    }
+                    None => candidate_refused += 1,
+                }
+                continue;
+            }
             let plan = engine.plan_regular_submit(&address);
             let header_base = share_id.to_le_bytes().to_vec();
             if plan.sync_full_verify {
@@ -3201,6 +3239,14 @@ mod tests {
             .map(|handle| handle.join().unwrap_or(false))
             .filter(|answered| *answered)
             .count();
+        for handle in candidate_handles {
+            let _ = handle.join();
+        }
+        let mut candidates = candidate_latencies.lock().clone();
+        candidates.sort_by(f64::total_cmp);
+        let candidate_pct = |pct: usize| -> Option<f64> {
+            (!candidates.is_empty()).then(|| candidates[((candidates.len() - 1) * pct) / 100])
+        };
         let snap = engine.snapshot();
         let waits = engine.latency_histograms();
         let quantile = |lane: &str, q: f64| -> Option<u64> {
@@ -3258,6 +3304,13 @@ mod tests {
                     "p99": quantile("regular", 0.99),
                 },
                 "sync_wait_real_ms_p99": quantile("sync", 0.99),
+                "candidates": {
+                    "answered": candidates.len(),
+                    "refused": candidate_refused,
+                    "p50_real_ms": candidate_pct(50),
+                    "p99_real_ms": candidate_pct(99),
+                    "max_real_ms": candidates.last(),
+                },
             })
         );
     }
