@@ -1,6 +1,6 @@
 # Rewards calculator showcase
 
-Source revision: `0e87e2032233416d271a32d11b472253bfa0711d`.
+Source revision: `7711c5289cda7e8b4ebcf381a4a6011658298594`.
 
 The production calculator and stylesheet are rendered with synthetic network data.
 All 18 desktop (1280px) and mobile (390px) screenshots were reviewed. States cover
