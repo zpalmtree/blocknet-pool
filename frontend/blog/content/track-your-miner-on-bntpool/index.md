@@ -12,7 +12,7 @@ faq:
     a: No. The pool stats, blocks, payouts, luck, status and per-miner endpoints are public JSON over HTTPS, so a curl command or a home dashboard can read them without signing up. Amounts come in atomic units, so divide by 100,000,000 to get BNT, and poll every 30 to 60 seconds.
   - q: Why does My Stats show zero Estimated Rewards?
     a: Estimated Rewards appear once the pool finds a block while your shares are inside the payout window. For a new miner that can take a few rounds of mining. Your accepted shares and hashrate show up first, then estimated rewards, which mature into Confirmed Rewards and are paid out automatically.
-related: [pool-payout-missing-from-wallet, mine-multiple-computers-one-wallet, mine-blocknet-on-bntpool, how-pplns-payouts-work]
+related: [internet-speed-mining, pool-payout-missing-from-wallet, mine-multiple-computers-one-wallet, mine-blocknet-on-bntpool]
 ---
 
 Once seine is mining on bntpool.com, the pool shows you everything it sees: your hashrate, every accepted share, what you have earned and every payout sent to your address. This guide walks through the My Stats page, the public pages for the whole pool, and the public API you can use from scripts and home dashboards.

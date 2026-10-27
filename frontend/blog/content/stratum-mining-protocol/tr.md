@@ -9,7 +9,7 @@ faq:
     a: 'Farklı bağlantılara hizmet ederler. bntpool.com sayfa ve API için HTTPS kullanır; belgelenmiş madencilik ucu stratum+tcp://bntpool.com:3333 adresidir. Bunu madencinin havuz ayarına girin. Web sitesini açabilmek tek başına madencilik bağlantısı kurmaz.'
   - q: 'Kabul edilen Stratum payı ödeme gönderildiği anlamına gelir mi?'
     a: 'Hayır. Pay yanıtı oturumdaki gönderimin sonucudur. Doğrulama, ağ açısından geçerli blok, ödüle uygunluk ve tamamlanmış ödeme ayrı aşamalardır. Kabul edilmiş işi My Stats üzerinden izleyin; onaylar, PPLNS ve eşik için ödeme rehberini okuyun.'
-sourceHash: '1dba87acd7c0'
+sourceHash: '5cc5086d7b28'
 translation: draft
 ---
 

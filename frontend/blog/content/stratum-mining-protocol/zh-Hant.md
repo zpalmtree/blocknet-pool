@@ -9,7 +9,7 @@ faq:
     a: '它們用於不同連線。bntpool.com 網站以 HTTPS 提供頁面與 API 資料，文件中的挖礦端點是 stratum+tcp://bntpool.com:3333。請將挖礦端點填入礦工的礦池設定。能開啟網站並不代表已建立挖礦連線。'
   - q: 'Stratum 份額被接受是否代表已付款？'
     a: '不是。份額回應說明工作階段內的一次提交結果。驗證、網路有效區塊、獎勵資格與付款完成是不同階段。請在 My Stats 查看活動，並透過支付指南了解確認數、PPLNS 與支付門檻。'
-sourceHash: '1dba87acd7c0'
+sourceHash: '5cc5086d7b28'
 translation: draft
 ---
 

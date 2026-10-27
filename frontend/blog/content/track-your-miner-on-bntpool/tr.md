@@ -2,7 +2,7 @@
 title: bntpool.com'da madencinizi takip edin
 description: bntpool.com'da adres veya @name ile hashrate, share, bakiye ve ödemeleri görün; blokları, şansı, çalışma süresini izleyin veya açık API'yi kullanın.
 tags: [bntpool, Madencilik istatistikleri, Havuz API’si, Blocknet]
-sourceHash: '8f19279f18f8'
+sourceHash: 'bde59962f8d3'
 translation: draft
 faq:
   - q: 'bntpool.com''daki hashrate''im neden seine''den farklı?'

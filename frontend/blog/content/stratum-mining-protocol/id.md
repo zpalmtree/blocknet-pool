@@ -9,7 +9,7 @@ faq:
     a: 'Keduanya melayani koneksi berbeda. Situs bntpool.com menggunakan HTTPS untuk halaman dan API; endpoint penambangan resminya adalah stratum+tcp://bntpool.com:3333. Masukkan endpoint itu ke pengaturan pool penambang. Berhasil membuka situs saja belum membentuk koneksi penambangan.'
   - q: 'Apakah share Stratum diterima berarti pembayaran sudah dikirim?'
     a: 'Tidak. Balasan share melaporkan hasil pengiriman dalam sesi. Verifikasi, blok valid di jaringan, kelayakan imbalan, dan pembayaran selesai merupakan tahap berbeda. Ikuti aktivitas diterima di My Stats dan baca panduan pembayaran untuk memahami konfirmasi, PPLNS, dan ambang pembayaran.'
-sourceHash: '1dba87acd7c0'
+sourceHash: '5cc5086d7b28'
 translation: draft
 ---
 

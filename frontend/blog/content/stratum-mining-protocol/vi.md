@@ -9,7 +9,7 @@ faq:
     a: 'Chúng phục vụ kết nối khác nhau. bntpool.com dùng HTTPS cho trang và API; đầu nối đào được ghi rõ là stratum+tcp://bntpool.com:3333. Nhập nó vào cấu hình pool của máy đào. Chỉ mở được website chưa thiết lập kết nối đào.'
   - q: 'Share Stratum được chấp nhận có nghĩa đã thanh toán không?'
     a: 'Không. Phản hồi share báo kết quả gửi trong phiên. Xác minh, khối hợp lệ trên mạng, quyền nhận thưởng và thanh toán hoàn tất là các bước riêng. Theo dõi công việc được chấp nhận ở My Stats và xem hướng dẫn thanh toán để hiểu xác nhận, PPLNS và ngưỡng.'
-sourceHash: '1dba87acd7c0'
+sourceHash: '5cc5086d7b28'
 translation: draft
 ---
 

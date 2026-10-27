@@ -30,6 +30,7 @@ const groups = {
     "what-is-a-mining-pool"
   ],
   "troubleshooting": [
+    "internet-speed-mining",
     "accepted-rejected-stale-shares",
     "track-your-miner-on-bntpool",
     "what-is-hashrate"

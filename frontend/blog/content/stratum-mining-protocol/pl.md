@@ -9,7 +9,7 @@ faq:
     a: 'Obsługują różne połączenia. Strona bntpool.com używa HTTPS dla stron i API, a udokumentowany adres kopania to stratum+tcp://bntpool.com:3333. Wpisz go w ustawieniu poola w minerze. Samo otwarcie strony nie ustanawia połączenia do kopania.'
   - q: 'Czy zaakceptowany udział Stratum oznacza wysłaną wypłatę?'
     a: 'Nie. Odpowiedź udziału opisuje wynik zgłoszenia w sesji. Weryfikacja, poprawny blok, prawo do nagrody i zakończona wypłata to osobne etapy. Śledź przyjętą pracę w My Stats, a potwierdzenia, PPLNS i próg poznaj w poradniku wypłat.'
-sourceHash: '1dba87acd7c0'
+sourceHash: '5cc5086d7b28'
 translation: draft
 ---
 

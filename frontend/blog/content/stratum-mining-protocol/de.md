@@ -9,7 +9,7 @@ faq:
     a: 'Die Verbindungen haben verschiedene Aufgaben. bntpool.com verwendet HTTPS für Webseiten und API-Daten; der dokumentierte Mining-Endpunkt ist stratum+tcp://bntpool.com:3333. Trage ihn in der Pool-Einstellung des Miners ein. Das erfolgreiche Öffnen der Webseite stellt noch keine Mining-Verbindung her.'
   - q: 'Bedeutet ein akzeptierter Stratum-Share eine Auszahlung?'
     a: 'Nein. Eine Share-Antwort meldet das Ergebnis einer Einreichung innerhalb der Sitzung. Verifizierung, netzwerkgültiger Block, Belohnungsberechtigung und abgeschlossene Auszahlung sind getrennte Schritte. Verfolge akzeptierte Arbeit unter My Stats; die Auszahlungsanleitung erklärt Bestätigungen, PPLNS und die Auszahlungsschwelle.'
-sourceHash: '1dba87acd7c0'
+sourceHash: '5cc5086d7b28'
 translation: draft
 ---
 

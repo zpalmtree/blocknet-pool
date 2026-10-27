@@ -10,7 +10,7 @@ faq:
     a: 'They serve different connections. The bntpool.com website uses HTTPS for pages and API data, while its documented mining endpoint is stratum+tcp://bntpool.com:3333. Enter the mining endpoint in the miner''s pool setting. Opening the website successfully alone does not establish a mining connection.'
   - q: 'Does an accepted Stratum share mean a payout was sent?'
     a: 'No. A share response reports a submission outcome within the mining session. Verification, a network-valid block, reward eligibility and a completed payout are separate stages. Follow accepted mining activity on My Stats and use the payout guide to understand confirmations, PPLNS and the payment threshold.'
-related: [mine-blocknet-on-bntpool, what-is-a-mining-pool, mining-difficulty-explained, accepted-rejected-stale-shares]
+related: [internet-speed-mining, mine-blocknet-on-bntpool, what-is-a-mining-pool, mining-difficulty-explained]
 ---
 
 Follow a mining job from bntpool.com to seine and a share back to the pool. Understanding that conversation makes connection messages, job updates and submission replies easier to read. This guide describes bntpool.com's implementation; for the initial endpoint and payout-address setup, use the [pool setup guide](/blog/mine-blocknet-on-bntpool/).

@@ -9,7 +9,7 @@ faq:
     a: 'Sirven para conexiones distintas. La web bntpool.com usa HTTPS para páginas y datos de API; su punto de minería documentado es stratum+tcp://bntpool.com:3333. Introduce ese punto en la configuración del pool del minero. Abrir la web correctamente no establece por sí solo una conexión de minería.'
   - q: '¿Una participación Stratum aceptada significa que se envió un pago?'
     a: 'No. La respuesta informa del resultado de un envío dentro de la sesión. Verificación, bloque válido para la red, elegibilidad para recompensas y pago completado son etapas distintas. Sigue la actividad aceptada en My Stats y consulta la guía de pagos para entender confirmaciones, PPLNS y el umbral de pago.'
-sourceHash: '1dba87acd7c0'
+sourceHash: '5cc5086d7b28'
 translation: draft
 ---
 

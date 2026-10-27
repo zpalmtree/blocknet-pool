@@ -84,7 +84,12 @@ function payoutWalletTrace() {
  return frame(`${rect(70,200,245,285,'#fbfcf5',22)}${[250,295,340,385].map(y=>line(`M105 ${y}H275`,'#87ac8d',5)).join('')}${check(193,440,.65)}${line('M340 337H460M440 317 460 337 440 357','#237a4e',6)}${cube(590,295,110)}${line('M720 337H840M820 317 840 337 820 357','#237a4e',6)}${rect(880,250,240,175,'#d5e8c8',22)}${rect(1010,300,110,75,'#fbfcf5',12)}${circle(1040,337,10,'#237a4e')}${line('M920 485c90 65 190 5 175-45m-22 12 22-12 14 24','#629569',5)}${check(1000,165,1.2)}`);
 }
 
+function miningNetwork() {
+ return frame(`${miner(175,330,1.3)}${line('M270 285H485M465 265 485 285 465 305','#237a4e',7)}${line('M485 385H270M290 365 270 385 290 405','#87ac8d',7)}${rect(520,255,160,145,'#d5e8c8',20)}${circle(560,355,9,'#237a4e')}${circle(600,355,9,'#237a4e')}${line('M550 255V210M650 255V210M720 285H905M885 265 905 285 885 305','#237a4e',7)}${line('M905 385H720M740 365 720 385 740 405','#87ac8d',7)}${cube(1000,300,95)}${circle(600,510,50,'#fbfcf5','stroke="#87ac8d" stroke-width="4"')}${line('M600 478V510L625 525','#237a4e',6)}${rect(355,265,45,40,'#b8ee9d',6)}${rect(795,365,45,40,'#b8ee9d',6)}`);
+}
+
 const illustrations = {
+  'internet-speed-mining': miningNetwork,
   'pool-payout-missing-from-wallet': payoutWalletTrace,
   'change-mining-wallet-address': changeAddress,
   'mine-multiple-computers-one-wallet': multipleComputers,

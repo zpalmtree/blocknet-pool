@@ -9,7 +9,7 @@ faq:
     a: 'Ces adresses servent des connexions distinctes. Le site bntpool.com utilise HTTPS pour ses pages et son API ; son point de minage documenté est stratum+tcp://bntpool.com:3333. Saisissez celui-ci dans les paramètres du pool du mineur. Ouvrir le site ne crée pas à lui seul une connexion de minage.'
   - q: 'Une share Stratum acceptée signifie-t-elle un paiement ?'
     a: 'Non. La réponse indique le résultat d''un envoi dans la session. Vérification, bloc valide pour le réseau, admissibilité aux récompenses et paiement terminé sont des étapes distinctes. Suivez l''activité acceptée dans My Stats et consultez le guide des paiements pour les confirmations, PPLNS et le seuil.'
-sourceHash: '1dba87acd7c0'
+sourceHash: '5cc5086d7b28'
 translation: draft
 ---
 

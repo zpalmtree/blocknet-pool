@@ -117,3 +117,11 @@ Pool setup owns first connection, multiple computers owns adding rigs, PPLNS own
 | pool payout missing from wallet; Blocknet sent payout troubleshooting | `/blog/pool-payout-missing-from-wallet/` | Trace an identified payout through transaction status, destination matching and wallet scanning |
 
 PPLNS owns payout eligibility; confirmations owns reward maturity; tracking owns dashboard fields. This guide owns reconciling an identified payout with the receiving wallet. No existing URL is retargeted.
+
+## Desktop use and network quality (October 26, 2026)
+
+| Primary keyword cluster | URL | Search job |
+|---|---|---|
+| does internet speed affect mining; mining Wi-Fi vs Ethernet | `/blog/internet-speed-mining/` | Isolate connection quality with a controlled link comparison and job/submission evidence |
+
+Hashrate owns rate estimation, Stratum owns the protocol, tracking owns account lookup and endpoint setup. This guide owns diagnosing the network path without conflating bandwidth, local computation and share outcomes. No existing URL is retargeted.

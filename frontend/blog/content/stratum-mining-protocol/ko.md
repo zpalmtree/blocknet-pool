@@ -9,7 +9,7 @@ faq:
     a: '서로 다른 연결입니다. bntpool.com 웹사이트는 페이지와 API에 HTTPS를 쓰며 문서화된 채굴 주소는 stratum+tcp://bntpool.com:3333입니다. 채굴기의 풀 설정에는 채굴 주소를 넣으세요. 사이트가 열린다고 채굴 연결이 성립한 것은 아닙니다.'
   - q: 'Stratum 셰어가 승인되면 지급이 전송된 것인가요?'
     a: '아닙니다. 셰어 응답은 세션 내 제출 결과입니다. 검증, 네트워크에서 유효한 블록, 보상 자격, 지급 완료는 별도 단계입니다. My Stats에서 활동을 보고 지급 가이드에서 확인 수, PPLNS, 지급 기준액을 살펴보세요.'
-sourceHash: '1dba87acd7c0'
+sourceHash: '5cc5086d7b28'
 translation: draft
 ---
 

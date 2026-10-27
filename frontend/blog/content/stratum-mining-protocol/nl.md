@@ -9,7 +9,7 @@ faq:
     a: 'Ze dienen verschillende verbindingen. De website bntpool.com gebruikt HTTPS voor pagina''s en API-data; het gedocumenteerde miningadres is stratum+tcp://bntpool.com:3333. Vul dit in bij de poolinstelling van de miner. Alleen succesvol de website openen vormt nog geen miningverbinding.'
   - q: 'Betekent een geaccepteerde Stratum-share dat er is uitbetaald?'
     a: 'Nee. Een shareantwoord meldt het resultaat van een inzending binnen de sessie. Verificatie, een netwerkgeldig blok, beloningsrecht en afgeronde uitbetaling zijn aparte stappen. Volg geaccepteerde activiteit in My Stats en lees de uitbetalingsgids voor bevestigingen, PPLNS en de drempel.'
-sourceHash: '1dba87acd7c0'
+sourceHash: '5cc5086d7b28'
 translation: draft
 ---
 

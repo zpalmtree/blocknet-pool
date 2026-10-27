@@ -9,7 +9,7 @@ faq:
     a: 'Servono connessioni differenti. Il sito bntpool.com usa HTTPS per pagine e API; l''endpoint di mining documentato è stratum+tcp://bntpool.com:3333. Inseriscilo nell''impostazione del pool del miner. Aprire correttamente il sito non stabilisce da solo una connessione di mining.'
   - q: 'Una share Stratum accettata significa un pagamento inviato?'
     a: 'No. La risposta indica l''esito di un invio nella sessione. Verifica, blocco valido per la rete, idoneità alla ricompensa e pagamento completato sono fasi distinte. Segui l''attività accettata in My Stats e leggi la guida ai pagamenti per conferme, PPLNS e soglia.'
-sourceHash: '1dba87acd7c0'
+sourceHash: '5cc5086d7b28'
 translation: draft
 ---
 
