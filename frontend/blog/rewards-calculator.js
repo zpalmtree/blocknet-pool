@@ -11,6 +11,15 @@ if (root) {
   const result = find('result');
   const format = new Intl.NumberFormat(document.documentElement.lang, { maximumFractionDigits: 6 });
   const integer = new Intl.NumberFormat(document.documentElement.lang, { maximumFractionDigits: 0 });
+  const rateFormat = new Intl.NumberFormat(document.documentElement.lang, {
+    numberingSystem: 'latn', minimumFractionDigits: 2, maximumFractionDigits: 2,
+  });
+  function humanRate(hps) {
+    const units = ['H/s', 'KH/s', 'MH/s', 'GH/s', 'TH/s', 'PH/s'];
+    let i = 0;
+    while (hps >= 1000 && i < units.length - 1) { hps /= 1000; i++; }
+    return `${rateFormat.format(hps)} ${units[i]}`;
+  }
   let snapshot = null, expires = 0, expirationTimer;
   const clearResults = () => { result.hidden = true; };
 
@@ -47,7 +56,7 @@ if (root) {
       }));
       snapshot = liveInputs(stats, info);
       expires = Date.now() + LIVE_DATA_MAX_AGE_MS;
-      find('network').textContent = format.format(snapshot.network) + ' H/s';
+      find('network').textContent = humanRate(snapshot.network);
       find('height').textContent = integer.format(snapshot.height);
       find('reward').textContent = format.format(blockReward(snapshot.height)) + ' BNT';
       status.textContent = messages.calcReady.replace('{time}', new Intl.DateTimeFormat(document.documentElement.lang, { hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(new Date()));
