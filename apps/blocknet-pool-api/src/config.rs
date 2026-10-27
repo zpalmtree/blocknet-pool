@@ -130,6 +130,8 @@ mod tests {
         let cfg: Config = serde_json::from_str(r#"{"hosted_wallet":{"enabled":true}}"#).unwrap();
         assert!(cfg.validate().is_err());
         let cfg: Config = serde_json::from_str(r#"{"hosted_wallet":{"enabled":true,"backend_url":"http://127.0.0.1:8335","gateway_token_file":"/missing/token"}}"#).unwrap();
+        assert!(cfg.validate().is_err(), "service_key is required");
+        let cfg: Config = serde_json::from_str(&format!(r#"{{"hosted_wallet":{{"enabled":true,"backend_url":"http://127.0.0.1:8335","gateway_token_file":"/missing/token","service_key":"{}"}}}}"#, "ab".repeat(32))).unwrap();
         assert!(cfg.active_hosted_wallet().is_some());
         cfg.validate().unwrap();
         assert!(serde_json::from_str::<Config>(r#"{"hosted_wallet":{"enabled":"true"}}"#).is_err());

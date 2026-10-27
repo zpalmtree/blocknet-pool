@@ -160,8 +160,8 @@
     "guides": []
   },
   "/wallet": {
-    "title": "BNT Testnet Wallet",
-    "description": "Hosted testnet wallet with recovery phrase and encrypted backup export.",
+    "title": "BNT Wallet",
+    "description": "Your BNT wallet on the pool: receive payouts, send with passkey approval and keep your own recovery phrase.",
     "image": "og-dashboard.png",
     "index": false,
     "label": "Wallet",

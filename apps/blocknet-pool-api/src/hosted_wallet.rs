@@ -1,6 +1,7 @@
-//! Opt-in gateway for the testnet hosted-wallet prototype. Wallet keys and the
-//! payout daemon cookie never enter this module. User authentication is enforced
-//! by the wallet service; the gateway credential is not a user credential.
+//! Opt-in gateway to the hosted wallet service (blocknet-core `hostedwallet`,
+//! `/api/wallet/v2/*`). Wallet keys and the payout daemon cookie never enter
+//! this module. Sessions and passkey approvals are enforced by the wallet
+//! service; the gateway credential is not a user credential.
 use std::{net::IpAddr, path::Path, sync::Arc, time::Duration};
 
 use anyhow::{bail, Context, Result};
@@ -23,6 +24,10 @@ pub(crate) struct HostedWalletConfig {
     pub enabled: bool,
     pub backend_url: String,
     pub gateway_token_file: String,
+    /// The wallet key service's Ed25519 envelope-signing public key (hex).
+    /// Served through /api/info so the page can pin it independently of the
+    /// wallet API that relays envelopes.
+    pub service_key: String,
 }
 
 impl HostedWalletConfig {
@@ -43,6 +48,10 @@ impl HostedWalletConfig {
             || self.gateway_token_file.is_empty()
         {
             bail!("hosted wallet requires a loopback HTTP origin with an explicit port and a gateway_token_file");
+        }
+        if self.service_key.len() != 64 || !self.service_key.bytes().all(|c| c.is_ascii_hexdigit())
+        {
+            bail!("hosted wallet service_key must be the key service's 32-byte Ed25519 public key in hex");
         }
         Ok(())
     }
@@ -98,20 +107,21 @@ where
 
 fn routes() -> Router<Arc<Gateway>> {
     Router::new()
-        .route("/api/wallet/register", post(forward))
-        .route("/api/wallet/login", post(forward))
-        .route("/api/wallet/logout", post(forward))
-        .route("/api/wallet/recover", post(forward))
-        .route("/api/wallet/password", post(forward))
-        .route("/api/wallet/session", get(forward))
-        .route("/api/wallet/export", post(forward))
-        .route("/api/wallet/backup/confirm", post(forward))
-        .route("/api/wallet/balance", get(forward))
-        .route("/api/wallet/history", get(forward))
-        .route("/api/wallet/sends", get(forward))
-        .route("/api/wallet/send", post(forward))
-        .route("/api/wallet/send/status", get(forward))
-        .route("/api/wallet/estimate", post(forward))
+        .route("/api/wallet/v2/enroll/begin", post(forward))
+        .route("/api/wallet/v2/enroll/finish", post(forward))
+        .route("/api/wallet/v2/login", post(forward))
+        .route("/api/wallet/v2/logout", post(forward))
+        .route("/api/wallet/v2/session", get(forward))
+        .route("/api/wallet/v2/service-key", get(forward))
+        .route("/api/wallet/v2/approve/begin", post(forward))
+        .route("/api/wallet/v2/approve/finish", post(forward))
+        .route("/api/wallet/v2/passkeys", get(forward))
+        .route("/api/wallet/v2/passkeys/finish", post(forward))
+        .route("/api/wallet/v2/backup/confirm", post(forward))
+        .route("/api/wallet/v2/balance", get(forward))
+        .route("/api/wallet/v2/history", get(forward))
+        .route("/api/wallet/v2/sends", get(forward).post(forward))
+        .route("/api/wallet/v2/destinations", get(forward))
 }
 
 fn failure(status: StatusCode, message: &str) -> Response {
@@ -217,10 +227,10 @@ mod tests {
             assert!(!config.enabled);
             let app: Router = router(Some(&config)).unwrap();
             for (method, path) in [
-                ("GET", "/api/wallet/session"),
-                ("POST", "/api/wallet/register"),
-                ("POST", "/api/wallet/send"),
-                ("POST", "/api/wallet/export"),
+                ("GET", "/api/wallet/v2/session"),
+                ("POST", "/api/wallet/v2/enroll/begin"),
+                ("POST", "/api/wallet/v2/sends"),
+                ("POST", "/api/wallet/v2/approve/finish"),
             ] {
                 let response = app
                     .clone()
@@ -240,7 +250,7 @@ mod tests {
         let response = app
             .oneshot(
                 Request::builder()
-                    .uri("/api/wallet/session")
+                    .uri("/api/wallet/v2/session")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -263,7 +273,8 @@ mod tests {
                 HostedWalletConfig {
                     enabled: true,
                     backend_url: url.into(),
-                    gateway_token_file: "token".into()
+                    gateway_token_file: "token".into(),
+                    service_key: "cd".repeat(32),
                 }
                 .validate()
                 .is_err(),
@@ -273,10 +284,21 @@ mod tests {
         assert!(HostedWalletConfig {
             enabled: true,
             backend_url: "http://127.0.0.1:8335".into(),
-            gateway_token_file: "token".into()
+            gateway_token_file: "token".into(),
+            service_key: "cd".repeat(32),
         }
         .validate()
         .is_ok());
+        for bad_key in ["", "cd", &"zz".repeat(32)] {
+            assert!(HostedWalletConfig {
+                enabled: true,
+                backend_url: "http://127.0.0.1:8335".into(),
+                gateway_token_file: "token".into(),
+                service_key: bad_key.into(),
+            }
+            .validate()
+            .is_err());
+        }
     }
 
     #[tokio::test]
@@ -285,14 +307,26 @@ mod tests {
         use tower::ServiceExt;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let backend = Router::new().route("/api/wallet/export", post(|headers: axum::http::HeaderMap, body: String| async move {
-            assert_eq!(headers[header::AUTHORIZATION], format!("Bearer {}", "ab".repeat(32)));
-            assert_eq!(headers[header::COOKIE], "bnt_wallet_session=test-session");
-            assert_eq!(headers[header::ORIGIN], "https://pool.example");
-            assert!(headers.get("x-user-id").is_none());
-            assert_eq!(body, r#"{"password":"example-password"}"#);
-            ([(header::SET_COOKIE, "bnt_wallet_session=new; HttpOnly; Secure; SameSite=Strict; Path=/api/wallet")], Json(json!({"mnemonic":"fixture only"})))
-        }));
+        let backend = Router::new().route(
+            "/api/wallet/v2/approve/finish",
+            post(|headers: axum::http::HeaderMap, body: String| async move {
+                assert_eq!(
+                    headers[header::AUTHORIZATION],
+                    format!("Bearer {}", "ab".repeat(32))
+                );
+                assert_eq!(headers[header::COOKIE], "hw_session=test-session");
+                assert_eq!(headers[header::ORIGIN], "https://pool.example");
+                assert!(headers.get("x-user-id").is_none());
+                assert_eq!(body, r#"{"challenge_id":"c"}"#);
+                (
+                    [(
+                        header::SET_COOKIE,
+                        "hw_session=new; HttpOnly; Secure; SameSite=Strict; Path=/api/wallet",
+                    )],
+                    Json(json!({"envelope":"fixture only"})),
+                )
+            }),
+        );
         let task = tokio::spawn(async move { axum::serve(listener, backend).await.unwrap() });
         let dir = tempfile::tempdir().unwrap();
         let token = dir.path().join("gateway-token");
@@ -306,6 +340,7 @@ mod tests {
             enabled: true,
             backend_url: format!("http://{addr}"),
             gateway_token_file: token.to_string_lossy().into(),
+            service_key: "cd".repeat(32),
         }))
         .unwrap();
         let response = app
@@ -313,12 +348,12 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/wallet/export")
-                    .header(header::COOKIE, "bnt_wallet_session=test-session")
+                    .uri("/api/wallet/v2/approve/finish")
+                    .header(header::COOKIE, "hw_session=test-session")
                     .header(header::ORIGIN, "https://pool.example")
                     .header(header::AUTHORIZATION, "Bearer attacker")
                     .header("x-user-id", "other-user")
-                    .body(Body::from(r#"{"password":"example-password"}"#))
+                    .body(Body::from(r#"{"challenge_id":"c"}"#))
                     .unwrap(),
             )
             .await
@@ -332,6 +367,9 @@ mod tests {
         for path in [
             "/api/wallet/seed",
             "/api/wallet/load",
+            "/api/wallet/send",
+            "/api/wallet/export",
+            "/api/wallet/v2/../seed",
             "/api/purge",
             "/api/mining/start",
         ] {

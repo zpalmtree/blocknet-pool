@@ -2315,8 +2315,8 @@ a.copy-field-value:hover {
 .hosted-toolbar { margin-block: 24px; }
 .hosted-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .hosted-tabs { margin-top: 28px; }
-.hosted-balances { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; }
-.hosted-balances .value { font-size: clamp(1.2rem, 2.5vw, 1.9rem); overflow-wrap: anywhere; }
+.hosted-balances { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 16px; }
+.hosted-balances .value { font-size: clamp(1.05rem, 1.7vw, 1.6rem); overflow-wrap: anywhere; }
 .hosted-form fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
 .hosted-form fieldset:disabled { opacity: .65; }
 .hosted-field { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; font-weight: 600; }
@@ -2350,3 +2350,24 @@ a.copy-field-value:hover {
 }
 
 .hosted-balances .hosted-large-value { font-size: 1rem; white-space: nowrap; }
+
+/* Hosted wallet v2: recovery words, payment review and status */
+@media (max-width: 1000px) and (min-width: 761px) { .hosted-balances { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.hosted-words { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; padding: 0; margin: 16px 0; list-style: none; }
+.hosted-words li { display: flex; gap: 8px; align-items: baseline; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.95rem; }
+.hosted-words li span { color: var(--muted); font-size: 0.8rem; min-width: 1.5em; text-align: right; }
+.hosted-summary { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 12px 0 16px; }
+.hosted-summary dt { color: var(--muted); }
+.hosted-summary dd { margin: 0; min-width: 0; }
+.hosted-status { font-weight: 600; }
+@media (max-width: 560px) { .hosted-summary { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .hosted-balances { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } .hosted-balances .value { font-size: 1.25rem; } }
+.hosted-explainer p + p { margin-top: 12px; }
+#page-wallet .card > p + p, #page-wallet .card > p + .hosted-words { margin-top: 10px; }
+#page-wallet .card > .hosted-actions, #page-wallet .card > p + .btn, #page-wallet .hosted-words + .btn { margin-top: 16px; }
+#page-wallet .hosted-form > p { margin-bottom: 12px; }
+#page-wallet .hosted-error { margin-top: 12px; }
+#page-wallet .hosted-balances + p, #page-wallet .hosted-notice + .hosted-balances { margin-top: 12px; }
+#page-wallet .hosted-words { grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 720px; }
+@media (max-width: 760px) { #page-wallet .hosted-words { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+#page-wallet .hosted-receive .hosted-address + .btn { margin-top: 10px; }
