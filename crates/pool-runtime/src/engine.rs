@@ -1,6 +1,6 @@
 #[cfg(test)]
 use std::collections::HashSet;
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::env;
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -24,7 +24,7 @@ use crate::source_risk::{
     ip_group_key, SourcePolicy, SourceRef, SourceRiskTracker, StrikeEvidence, StrikeKind,
     StrikeRule,
 };
-use crate::telemetry::QueueTracker;
+use crate::telemetry::{LatencyHistogramSnapshot, NamedLatencyHistograms, QueueTracker};
 use crate::validation::{
     AuditAttribution, AuditFeedback, OverloadMode, ProbationReservation, ValidationEngine,
     ValidationFollowupAction, ValidationResult, ValidationTask, SHARE_STATUS_PROVISIONAL,
@@ -546,6 +546,9 @@ pub struct PoolEngine {
     source_risk: Arc<SourceRiskTracker>,
     found_block_outbox_lock: Mutex<()>,
     admission: Arc<AdmissionState>,
+    /// Daemon `submitblock` round trips by outcome; the daemon re-hashes the
+    /// block, so this is the pool-side half of block propagation delay.
+    block_submit_latency: NamedLatencyHistograms,
 }
 
 /// One proven-fake share (the pool's hash differs from the claimed hash).
@@ -873,6 +876,7 @@ impl PoolEngine {
             source_risk,
             found_block_outbox_lock: Mutex::new(()),
             admission,
+            block_submit_latency: NamedLatencyHistograms::default(),
         };
         engine.recover_found_block_outbox();
         engine
@@ -1472,7 +1476,17 @@ impl PoolEngine {
                         return Err(err);
                     }
 
-                    let submit = match self.node.submit_block(&job, nonce) {
+                    let submit_started_at = Instant::now();
+                    let submitted = self.node.submit_block(&job, nonce);
+                    self.block_submit_latency.record(
+                        match &submitted {
+                            Ok(submit) if submit.accepted => "accepted",
+                            Ok(_) => "rejected",
+                            Err(_) => "error",
+                        },
+                        submit_started_at.elapsed(),
+                    );
+                    let submit = match submitted {
                         Ok(submit) => submit,
                         Err(err) => {
                             release_claim_on_error = false;
@@ -2095,6 +2109,10 @@ impl PoolEngine {
         }
 
         Err(anyhow!("server busy, retry"))
+    }
+
+    pub(crate) fn block_submit_histograms(&self) -> BTreeMap<String, LatencyHistogramSnapshot> {
+        self.block_submit_latency.snapshot()
     }
 
     pub(crate) fn session_difficulty(&self, conn_id: &str) -> Option<u64> {

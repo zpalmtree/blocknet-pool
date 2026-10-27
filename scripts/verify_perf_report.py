@@ -22,7 +22,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 PREFIX = 'blocknet_pool_monitor_'
-HISTOGRAMS = ['submit_ack', 'submit_queue_wait', 'validation_queue_wait', 'validation_hash']
+HISTOGRAMS = ['submit_ack', 'submit_queue_wait', 'validation_queue_wait', 'validation_hash', 'block_submit']
 QUANTILES = [0.5, 0.95, 0.99]
 RATES = [
     ('submits/s', 'stratum_submits_received_total'),

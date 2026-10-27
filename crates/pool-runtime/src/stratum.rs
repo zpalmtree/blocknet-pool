@@ -771,6 +771,10 @@ impl StratumServer {
         BTreeMap::from([
             ("submit_ack".to_string(), dispatcher.ack_latency.snapshot()),
             ("submit_queue_wait".to_string(), queue_waits),
+            (
+                "block_submit".to_string(),
+                self.engine.block_submit_histograms(),
+            ),
         ])
     }
 
