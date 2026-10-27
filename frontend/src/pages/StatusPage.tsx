@@ -3,6 +3,7 @@ import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import type { ApiClient } from "../api/client";
 import { EmptyTableRow } from "../components/EmptyTableRow";
+import { PoolRejects } from "../components/PoolRejects";
 import { StatCard } from "../components/StatCard";
 import { fmtSeconds, formatPct, timeAgo, timestampTitle } from "../lib/format";
 import type { StatusResponse } from "../types";
@@ -196,6 +197,7 @@ export function StatusPage({ api, liveTick }: StatusPageProps) {
         </div>
       </div>
 
+      <PoolRejects api={api} liveTick={liveTick} />
     </div>
   );
 }

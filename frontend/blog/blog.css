@@ -40,10 +40,6 @@ img { max-width: 100%; height: auto; }
 .langs li a { display: block; padding: 8px 14px; color: var(--muted); }
 .langs li a:hover { background: var(--accent-light); color: var(--text); }
 .langs li a[aria-current='true'] { color: var(--text); font-weight: 600; }
-.lang-suggest { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 20px; padding: 8px max(20px, env(safe-area-inset-left)); background: var(--surface); border-bottom: 1px solid var(--border); font-size: 0.95rem; }
-.lang-suggest-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.lang-suggest .btn { padding: 7px 13px; font-size: 0.9rem; cursor: pointer; }
-.lang-suggest button.btn { background: none; font-family: inherit; }
 @media (max-width: 720px) { .nav .hide-sm { display: none; } }
 
 .page-head { padding-block: 56px 26px; border-bottom: 1px solid var(--border); margin-bottom: 36px; }

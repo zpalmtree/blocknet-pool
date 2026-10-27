@@ -10,9 +10,8 @@ Run `npm --prefix frontend run showcase:languages` from the repository root.
 - Synthetic states: `demo=empty`, `demo=loading`, `demo=error`.
 - The fixture intercepts `/api/` and Blocknet ID lookups. No live wallet or pool
   is used. The screenshots contain synthetic addresses and example versions.
-- To see an offer, select a non-English language, then visit `/stats` without a
-  language query. “Keep English” suppresses later offers until another language
-  is selected.
+- Without `lang`, the app opens in the saved or browser language. Choose English
+  from the menu to stay in English; a later menu choice replaces it.
 
 `captures.json` records each route/state. Images were captured with the configured
 Windows Playwright MCP at desktop and mobile widths and visually checked.

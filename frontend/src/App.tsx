@@ -1,8 +1,8 @@
 import { t, localizePath, locale } from './i18n';
-import { Fragment, type MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { type MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 
 import { createApiClient } from './api/client';
-import { LanguageControl, LanguageOffer } from './components/LanguageControl';
+import { LanguageControl } from './components/LanguageControl';
 import { API_KEY_STORAGE_KEY, LAST_MINER_LOOKUP_KEY } from './lib/storage';
 import { applyTheme, getStoredTheme, setStoredTheme, type ThemeMode } from './lib/theme';
 import { metadataForPath, updatePageMetadata } from './lib/page-meta';
@@ -22,10 +22,13 @@ export function App() {
   const NAV_ITEMS: { route: Route; label: string }[] = [
     { route: 'dashboard', label: t("m001") },
     { route: 'start', label: t("m002") },
+    { route: 'stats', label: t("m005") },
     { route: 'blocks', label: t("m003") },
     { route: 'payouts', label: t("m004") },
-    { route: 'stats', label: t("m005") },
     { route: 'status', label: t("m006") },
+  ];
+  // Node operators and the pool operator need these, miners rarely do.
+  const FOOTER_ITEMS: { route: Route; label: string }[] = [
     { route: 'checkpoints', label: t("m007") },
     { route: 'admin', label: t("m008") },
   ];
@@ -212,13 +215,13 @@ export function App() {
         poolInfo={poolInfo}
         liveTick={liveTick}
         theme={theme}
+        onJumpToStats={onJumpToStats}
       />
     );
   }
 
   return (
     <>
-      <LanguageOffer />
       <nav className={mobileNavOpen ? 'is-open' : ''}>
         <a
           href={pathForRoute('dashboard')}
@@ -231,19 +234,18 @@ export function App() {
         </a>
         <div id="site-nav-links" className="nav-links">
           {NAV_ITEMS.map((item) => (
-            <Fragment key={item.route}>
-              {/* The blog is static pages served by the API, so it's a plain link before Admin. */}
-              {item.route === 'admin' ? <a href={localizePath("/blog/")}>{t("m010")}</a> : null}
-              <a
-                href={pathForRoute(item.route)}
-                data-nav={item.route}
-                className={route === item.route ? 'active' : ''}
-                onClick={(event) => onNavLinkClick(event, item.route)}
-              >
-                {item.label}
-              </a>
-            </Fragment>
+            <a
+              key={item.route}
+              href={pathForRoute(item.route)}
+              data-nav={item.route}
+              className={route === item.route ? 'active' : ''}
+              onClick={(event) => onNavLinkClick(event, item.route)}
+            >
+              {item.label}
+            </a>
           ))}
+          {/* The blog is static pages served by the API, so it's a plain link. */}
+          <a href={localizePath("/blog/")}>{t("m010")}</a>
         </div>
         <div className="nav-actions">
           <LanguageControl />
@@ -336,6 +338,20 @@ export function App() {
       <div className={route === 'admin' ? 'container container-wide' : 'container'}>
         {currentPage}
       </div>
+
+      <footer className="site-footer">
+        {FOOTER_ITEMS.map((item) => (
+          <a
+            key={item.route}
+            href={pathForRoute(item.route)}
+            className={route === item.route ? 'active' : ''}
+            onClick={(event) => onNavLinkClick(event, item.route)}
+          >
+            {item.label}
+          </a>
+        ))}
+        <a href="https://seineminer.com/" target="_blank" rel="noopener">seineminer.com</a>
+      </footer>
     </>
   );
 }

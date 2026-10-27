@@ -3,6 +3,7 @@ import { startTransition, useCallback, useEffect, useMemo, useRef, useState } fr
 
 import type { ApiClient } from '../api/client';
 import { EmptyTableRow } from '../components/EmptyTableRow';
+import { Pager } from '../components/Pager';
 import { ExplorerLink } from '../components/ExplorerLink';
 import { HashrateChart } from '../components/HashrateChart';
 import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
@@ -10,7 +11,7 @@ import { RangeTabs } from '../components/RangeTabs';
 import { StatCard } from '../components/StatCard';
 import { MinerUpdateBanner } from '../components/MinerUpdateBanner';
 import { LAST_MINER_LOOKUP_KEY } from '../lib/storage';
-import { formatCoins, formatCompactCoins, formatFee, formatPct, humanRate, ratioPct, timeAgo, timestampTitle, toUnixMs } from '../lib/format';
+import { formatCoins, formatCompactCoins, formatFee, formatPct, humanRate, timeAgo, timestampTitle, toUnixMs } from '../lib/format';
 import type { ThemeMode } from '../lib/theme';
 import type {
   HashratePoint,
@@ -26,7 +27,9 @@ interface StatsPageProps {
   theme: ThemeMode;
 }
 
-type RejectionWindowRange = '1h' | '24h' | '7d';
+// Large farms report hundreds of rigs; page them so balance and history stay in reach.
+const WORKERS_PAGE_SIZE = 20;
+const PAYOUTS_PAGE_SIZE = 10;
 
 function looksLikeHandle(raw: string): boolean {
   return raw.startsWith('$') || raw.startsWith('@') || (raw.length < 25 && /^[$@]?[a-z0-9][a-z0-9_.\-]{0,62}$/i.test(raw));
@@ -34,15 +37,6 @@ function looksLikeHandle(raw: string): boolean {
 
 const lookupResult = async <T,>(promise: Promise<T>) =>
   promise.then((value) => ({ ok: true as const, value })).catch(() => ({ ok: false as const }));
-
-function RejectionMetric({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="rejection-metric">
-      <div className="label">{label}</div>
-      <div className="value mono">{value}</div>
-    </div>
-  );
-}
 
 export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const [minerInput, setMinerInput] = useState(localStorage.getItem(LAST_MINER_LOOKUP_KEY) || '');
@@ -52,7 +46,6 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const [balanceUnavailable, setBalanceUnavailable] = useState(false);
   const [range, setRange] = useState<Range>('1h');
   const [history, setHistory] = useState<HashratePoint[]>([]);
-  const [rejectionRange, setRejectionRange] = useState<RejectionWindowRange>('1h');
   const [insights, setInsights] = useState<StatsInsightsResponse | null>(null);
   const minerAddressRef = useRef(minerAddress);
   const lookupRequestSeq = useRef(0);
@@ -60,9 +53,13 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const [resolving, setResolving] = useState(false);
   const [lookupLoading, setLookupLoading] = useState(false);
   const [resolvedHandle, setResolvedHandle] = useState<string | null>(null);
+  const [workersOffset, setWorkersOffset] = useState(0);
+  const [payoutsOffset, setPayoutsOffset] = useState(0);
 
   useEffect(() => {
     minerAddressRef.current = minerAddress;
+    setWorkersOffset(0);
+    setPayoutsOffset(0);
   }, [minerAddress]);
 
   const refreshMinerData = useCallback(async () => {
@@ -217,14 +214,15 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
     [api, minerInput, range]
   );
 
-  const loadRejections = useCallback(async () => {
+  // Only the pool payout ETA is used here, for the liquidity notice.
+  const loadInsights = useCallback(async () => {
     try {
-      const d = await api.getStatsInsights(rejectionRange);
+      const d = await api.getStatsInsights();
       setInsights(d);
     } catch {
       setInsights(null);
     }
-  }, [api, rejectionRange]);
+  }, [api]);
 
   useEffect(() => {
     const stored = localStorage.getItem(LAST_MINER_LOOKUP_KEY) || '';
@@ -250,8 +248,8 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   }, [currentHashrateKey, loadMinerHashrate, minerAddress]);
 
   useEffect(() => {
-    void loadRejections();
-  }, [loadRejections]);
+    void loadInsights();
+  }, [loadInsights]);
 
   useEffect(() => {
     if (liveTick <= 0) return;
@@ -271,9 +269,9 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
       }
     }
     if (liveTick % 6 === 0) {
-      void loadRejections();
+      void loadInsights();
     }
-  }, [liveTick, minerAddress, refreshMinerBalance, refreshMinerData, loadMinerHashrate, loadRejections]);
+  }, [liveTick, minerAddress, refreshMinerBalance, refreshMinerData, loadMinerHashrate, loadInsights]);
 
   const lookupDisabled = useMemo(() => {
     const raw = minerInput.trim();
@@ -319,7 +317,6 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
       ? 0
       : Math.max(0, payoutEta.pending_total_amount - payoutEta.wallet_spendable);
   const payoutLiquidityConstrained = payoutEta != null && payoutEta.pending_total_amount > 0 && payoutShortfall > 0;
-  const rejectionWindow = insights?.rejections ?? null;
   const minerAccepted = minerData ? minerData.total_accepted : 0;
   const minerRejected = minerData ? minerData.total_rejected : 0;
   const minerChecked = minerAccepted + minerRejected;
@@ -335,15 +332,12 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const latestHashratePoint = history.length > 0 ? history[history.length - 1] : null;
   const liveHashrate = minerData ? minerData.hashrate : latestHashratePoint?.hashrate ?? 0;
   const livePaid = liveBalance?.paid ?? 0;
+  // A refresh can shrink a list under the current page; fall back to the first page.
+  const workersStart = minerData && workersOffset < minerData.workers.length ? workersOffset : 0;
+  const payoutsStart = minerData && payoutsOffset < minerData.payouts.length ? payoutsOffset : 0;
   const showLookupResult = !!minerAddress && (!!minerData || !!minerBalanceData || history.length > 0);
   const minerDetailLoading = lookupLoading && !minerData;
 
-  const rejectionChecked = (rejectionWindow?.accepted ?? 0) + (rejectionWindow?.rejected ?? 0);
-  const rejectionRatePct = ratioPct(rejectionWindow?.rejected, rejectionChecked);
-  const topWindowReason = rejectionWindow?.by_reason?.[0];
-  const topTotalReason = rejectionWindow?.totals_by_reason?.[0];
-  const totalRejected = (rejectionWindow?.totals_by_reason ?? []).reduce((sum, reason) => sum + reason.count, 0);
-  const hasWindowRejections = (rejectionWindow?.rejected ?? 0) > 0;
 
   return (
     <div id="page-stats">
@@ -395,6 +389,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
         </div>
       </div>
 
+      {!minerAddress && !lookupLoading && (<p className="section-lead" style={{ marginBottom: 16 }}>{tx("statsEmpty", [<a href={localizePath("/start")}>{t("m002")}</a>])}</p>)}
       <p className="section-lead" style={{ marginBottom: 16 }}><a href={`${localizePath("/blog/")}track-your-miner-on-bntpool/#zero-hashrate`}>{t("minerHelp")}</a></p>
 
       {showLookupResult && (<div id="lookup-result">
@@ -528,7 +523,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {!minerData.workers.length ? (<EmptyTableRow colSpan={6}>{t("m523")}</EmptyTableRow>) : (minerData.workers.map((w) => (
+                    {!minerData.workers.length ? (<EmptyTableRow colSpan={6}>{t("m523")}</EmptyTableRow>) : (minerData.workers.slice(workersStart, workersStart + WORKERS_PAGE_SIZE).map((w) => (
                         <tr key={w.worker}>
                           <td>{w.worker || t("m524")}</td>
                           <td className="mono">{w.miner_version?.trim() || t("m525")}</td>
@@ -542,6 +537,13 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                       )))}
                   </tbody>
                 </table>
+                {minerData.workers.length > WORKERS_PAGE_SIZE && (<Pager
+                    offset={workersStart}
+                    limit={WORKERS_PAGE_SIZE}
+                    total={minerData.workers.length}
+                    onPrev={() => setWorkersOffset(Math.max(0, workersStart - WORKERS_PAGE_SIZE))}
+                    onNext={() => setWorkersOffset(workersStart + WORKERS_PAGE_SIZE)}
+                  />)}
               </div>
             </div>)}
 
@@ -559,7 +561,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {!minerData.payouts.length ? (<EmptyTableRow colSpan={5}>{t("m440")}</EmptyTableRow>) : (minerData.payouts.map((p, payoutIndex) => {
+                    {!minerData.payouts.length ? (<EmptyTableRow colSpan={5}>{t("m440")}</EmptyTableRow>) : (minerData.payouts.slice(payoutsStart, payoutsStart + PAYOUTS_PAGE_SIZE).map((p, payoutIndex) => {
                         const hasTx = Boolean(p.tx_hash.trim());
                         const status = p.confirmed ? 'confirmed' : hasTx ? 'unconfirmed' : 'queued';
                         return (
@@ -578,55 +580,15 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                       }))}
                   </tbody>
                 </table>
+                {minerData.payouts.length > PAYOUTS_PAGE_SIZE && (<Pager
+                    offset={payoutsStart}
+                    limit={PAYOUTS_PAGE_SIZE}
+                    total={minerData.payouts.length}
+                    onPrev={() => setPayoutsOffset(Math.max(0, payoutsStart - PAYOUTS_PAGE_SIZE))}
+                    onNext={() => setPayoutsOffset(payoutsStart + PAYOUTS_PAGE_SIZE)}
+                  />)}
               </div>
             </div>)}
-
-          <div className="section">
-            <div className="section-header">
-              <h2>{t("m527")}</h2>
-              <RangeTabs<RejectionWindowRange> options={['1h', '24h', '7d']} value={rejectionRange} onChange={setRejectionRange} />
-            </div>
-            <div className="card rejection-card">
-              <div className="rejection-overview">
-                <RejectionMetric label={t("m528")} value={rejectionChecked} />
-                <RejectionMetric label={t("m084")} value={rejectionWindow?.rejected ?? 0} />
-                <RejectionMetric label={t("m503")} value={formatPct(rejectionRatePct)} />
-                <RejectionMetric label={t("m529")} value={topWindowReason?.reason || t("m530")} />
-              </div>
-
-              {!hasWindowRejections ? (<p className="rejection-empty">{tx("m532", [<span className="mono">{totalRejected}</span>, topTotalReason ? (<>{tx("m531", [<span className="mono">{topTotalReason.reason}</span>])}</>) : null])}</p>) : (<div className="rejection-breakdown">
-                  <div className="rejection-note">{tx("m533", [<span className="mono">{rejectionRange}</span>])}</div>
-                  <div className="rejection-list">
-                    {(rejectionWindow?.by_reason ?? []).slice(0, 4).map((reason) => {
-                      const windowPct =
-                        (rejectionWindow?.rejected ?? 0) > 0
-                          ? (reason.count / (rejectionWindow?.rejected ?? 0)) * 100
-                          : 0;
-
-                      return (
-                        <div key={reason.reason} className="rejection-row">
-                          <div>
-                            <div className="rejection-row-head">
-                              <span>{reason.reason}</span>
-                              <span className="mono">{formatPct(windowPct)}</span>
-                            </div>
-                            <div className="rejection-row-bar">
-                              <div className="rejection-row-fill" style={{ width: `${Math.max(windowPct, 4)}%` }} />
-                            </div>
-                          </div>
-                          <div className="rejection-row-count mono">
-                            {reason.count}
-                            <span>/</span>
-                            {rejectionWindow?.rejected ?? 0}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="rejection-note">{tx("m535", [<span className="mono">{totalRejected}</span>, topTotalReason ? (<>{tx("m534", [<span className="mono">{topTotalReason.reason}</span>])}</>) : null])}</div>
-                </div>)}
-            </div>
-          </div>
 
           {minerData && (<div className="section">
               <div className="section-header">

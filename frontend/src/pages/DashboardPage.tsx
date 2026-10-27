@@ -39,9 +39,11 @@ interface DashboardPageProps {
   poolInfo: InfoResponse | null;
   liveTick: number;
   theme: ThemeMode;
+  onJumpToStats: (address: string) => void;
 }
 
-export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageProps) {
+export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }: DashboardPageProps) {
+  const [lookupInput, setLookupInput] = useState('');
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [insights, setInsights] = useState<StatsInsightsResponse | null>(null);
@@ -133,7 +135,9 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
   const dashboardLuckHistory = (insights?.luck_history ?? []).filter((row) => !row.orphaned);
   const hiddenOrphanRounds = Math.max(0, (insights?.luck_history.length ?? 0) - dashboardLuckHistory.length);
   const latestSolvedBlock = dashboardLuckHistory[0];
-  const nextSweepLabel = payoutEta?.next_sweep_at ? timeUntil(payoutEta.next_sweep_at) : '-';
+  // A sweep time in the past means the next payout run is due, not that something lapsed.
+  const nextSweepDue = payoutEta?.next_sweep_at != null && toUnixMs(payoutEta.next_sweep_at) <= Date.now();
+  const nextSweepLabel = !payoutEta?.next_sweep_at ? '-' : nextSweepDue ? t('dueNow') : timeUntil(payoutEta.next_sweep_at);
   const payoutShortfall =
     payoutEta?.wallet_spendable == null
       ? 0
@@ -179,6 +183,28 @@ export function DashboardPage({ api, poolInfo, liveTick, theme }: DashboardPageP
             </button>
           </div>
           {copyState === 'error' && <p className="dashboard-copy-error" role="alert">{t('copyUnavailable')}</p>}
+          <label className="dashboard-connection-label" htmlFor="dashboard-lookup">{t('m005')}</label>
+          <form
+            className="copy-field"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const value = lookupInput.trim();
+              if (value) onJumpToStats(value);
+            }}
+          >
+            <input
+              id="dashboard-lookup"
+              className="copy-field-value copy-field-input"
+              type="text"
+              dir="ltr"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={t('m486')}
+              value={lookupInput}
+              onChange={(event) => setLookupInput(event.target.value)}
+            />
+            <button className="copy-field-btn" type="submit" disabled={!lookupInput.trim()}>{t('m488')}</button>
+          </form>
         </div>
       </header>
 

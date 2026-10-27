@@ -69,13 +69,10 @@ function page({ locale, slug = '', title, description, image = OG_IMAGE, ogType 
   const alternates = LOCALES.map((x) => `<link rel="alternate" hreflang="${x.htmlLang}" href="${BASE_URL}${blogPath(x.code, slug)}">`).join('\n')
     + `\n<link rel="alternate" hreflang="x-default" href="${BASE_URL}${blogPath('en', slug)}">`;
   const langs = LOCALES.map((x) => `<li><a href="${blogPath(x.code, slug)}" hreflang="${x.htmlLang}" lang="${x.htmlLang}"${x.code === locale ? ' aria-current="true"' : ''}>${esc(x.endonym)}</a></li>`).join('');
-  // English pages offer the reader's browser language (blog/lang.js); every page loads the script
-  // so a choice made in the language menu is remembered.
+  // English pages switch to the reader's language when this page has it (blog/lang.js); every page
+  // loads the script so a choice made in the language menu is remembered.
   const offers = locale !== 'en' ? null : {
-    keepEnglish: t('en', 'suggestKeepEnglish'),
-    offers: Object.fromEntries(TRANSLATED.map((x) => [x.code, {
-      prompt: t(x.code, 'suggestPrompt'), action: t(x.code, 'suggestAction'), href: blogPath(x.code, slug), lang: x.htmlLang, dir: x.dir,
-    }])),
+    offers: Object.fromEntries(TRANSLATED.map((x) => [x.code, blogPath(x.code, slug)])),
   };
   return `<!DOCTYPE html>
 <html lang="${l.htmlLang}" dir="${l.dir}">

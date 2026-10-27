@@ -13,7 +13,7 @@ Blocknet, bntpool.com and seine, nothing negative, nothing false) and use its
 | `content/<slug>/index.md` | English post; `<locale>.md` beside it (`es.md`, `pt-BR.md`, `zh-Hans.md`, ...) are the translations |
 | `messages/<locale>.json` | Interface strings, one file per locale with the same keys as `en.json` |
 | `editorial/keyword-map.md` | Which bntpool.com URL owns which search job, and the boundary with seineminer.com posts |
-| `blog.css`, `theme.js`, `lang.js` | Page styles, the dark-theme switch, and the language menu memory plus "available in your language" banner (separate files: the app's CSP forbids inline ones) |
+| `blog.css`, `theme.js`, `lang.js` | Page styles, the dark-theme switch, and the language menu memory plus automatic switching to the reader's language (separate files: the app's CSP forbids inline ones) |
 | `../scripts/build-blog.mjs` | Renders `frontend/dist/blog`; part of `npm run build` |
 | `../scripts/check-blog.mjs` | Editorial and translation checks; the build runs it first |
 

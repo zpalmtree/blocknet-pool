@@ -1,10 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { LOCALES, LANGUAGE_PREFERENCE_KEY, languageUrl, locale, localeInfo, rememberLanguage, t } from '../i18n';
-import { preferredLanguage } from '../i18n/core';
-
-// Keep the native-language offer copy; discard unrelated blog translations.
-const prompts = import.meta.glob('../../blog/messages/*.json', { eager: true, import: 'suggestPrompt' }) as Record<string, string>;
-const actions = import.meta.glob('../../blog/messages/*.json', { eager: true, import: 'suggestAction' }) as Record<string, string>;
+import { useEffect, useRef } from 'react';
+import { LOCALES, languageUrl, locale, localeInfo, rememberLanguage, t } from '../i18n';
 
 export function LanguageControl() {
   const menu = useRef<HTMLDetailsElement>(null);
@@ -39,31 +34,5 @@ export function LanguageControl() {
         ))}
       </ul>
     </details>
-  );
-}
-
-export function LanguageOffer() {
-  const [target, setTarget] = useState(() => {
-    if (locale !== 'en') return null;
-    let saved: string | null = null;
-    try { saved = localStorage.getItem(LANGUAGE_PREFERENCE_KEY); } catch { /* Browser language still works. */ }
-    const preferred = preferredLanguage(saved, navigator.languages || [navigator.language]);
-    return preferred && preferred !== 'en' ? preferred : null;
-  });
-  if (!target) return null;
-  const item = LOCALES.find((entry) => entry.code === target)!;
-  const key = `../../blog/messages/${target}.json`;
-  return (
-    <aside className="pool-language-offer" dir="ltr" aria-label={t('languageOfferLabel')}>
-      <span lang={item.htmlLang} dir={item.dir}>{prompts[key]}</span>
-      <div className="pool-language-offer__actions">
-        <a className="btn btn-primary" lang={item.htmlLang} dir={item.dir}
-          href={languageUrl(location.pathname + location.search + location.hash, target)}
-          onClick={() => rememberLanguage(target)}>{actions[key]}</a>
-        <button className="btn btn-secondary" type="button" onClick={() => { rememberLanguage('en'); setTarget(null); }}>
-          {t('keepEnglish')}
-        </button>
-      </div>
-    </aside>
   );
 }

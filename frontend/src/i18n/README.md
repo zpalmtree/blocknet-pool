@@ -9,12 +9,15 @@ existing SPA routes and embedded `app.js`; the catalogs are bundled eagerly, so
 no new server routes or assets are needed. The blog keeps its existing localized
 paths, and its pool links carry the selected language.
 
-The header offers every language. On English pages, a saved language preference
-or the first supported browser language triggers the same native-language offer
-as the blog. Switching is explicit. “Keep English” remembers the choice. Both
-surfaces use `bntpool:language:preference:v1`; blocked browser storage does not
-prevent language selection. A language switch preserves the route, query and
-fragment. Internal pool navigation preserves the chosen language.
+The header offers every language. A pool URL without `lang` opens in the saved
+language choice, otherwise in the first supported browser language: the app adds
+`?lang=` to the address before its first render, without a reload. English blog
+pages do the same by redirecting to the page's translation when one exists. A
+choice from either language menu (including English) is saved and wins over the
+browser language; automatic selections are not saved. Both surfaces use
+`bntpool:language:preference:v1`; blocked browser storage falls back to the
+browser language. A language switch preserves the route, query and fragment.
+Internal pool navigation preserves the chosen language.
 
 ## Updating copy
 

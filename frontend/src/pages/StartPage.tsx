@@ -32,70 +32,7 @@ export function StartPage({ poolInfo }: StartPageProps) {
 
   const setupPoolUrlKey = 'pool-url-quickstart';
 
-  const setupSection = (
-    <div className="card section">
-      <div className="section-header">
-        <div>
-          <h3>{t("m450")}</h3>
-          <p className="section-lead">{t("m451")}</p>
-        </div>
-      </div>
-
-      <div className="quickstart-grid">
-        <div className="quickstart-card">
-          <span className="quickstart-step">1</span>
-          <strong>{t("m452")}</strong>
-          <p>{tx("m453", [<a href="https://seineminer.com/#download" target="_blank" rel="noopener">
-              seineminer.com
-            </a>])}</p>
-        </div>
-
-        <div className="quickstart-card">
-          <span className="quickstart-step">2</span>
-          <strong>{t("m454")}</strong>
-          <p>{tx("m455", [<code className="mono inline-code">./seine</code>, <code className="mono inline-code">@name</code>, <code className="mono inline-code">$name</code>])}</p>
-          <div className="quickstart-inline">
-            <span className="quickstart-inline-label">{t("m456")}</span>
-            <button
-              type="button"
-              className="inline-copy-code mono"
-              onClick={() => copyToClipboard(poolUrl, setupPoolUrlKey)}
-              title={t("m457")}
-            >
-              {poolUrl}
-            </button>
-            {copiedKey === setupPoolUrlKey && <span className="inline-copy-note">{t("m386")}</span>}
-          </div>
-        </div>
-
-        <div className="quickstart-card">
-          <span className="quickstart-step">3</span>
-          <strong>{t("m458")}</strong>
-          <p>{tx("m459", [<a href={localizePath("/stats")}>{t("m005")}</a>])}</p>
-        </div>
-      </div>
-
-      <p className="quickstart-label">{tx("m460", [<code className="mono inline-code">YOUR_BLOCKNET_ADDRESS</code>, <code className="mono inline-code">'@yourname'</code>, <code className="mono inline-code">'$yourname'</code>])}</p>
-      <div className="command-copy">
-        <pre className="config-block">{commandExample}</pre>
-        <button className="copy-btn" type="button" onClick={() => copyToClipboard(commandExample, 'cmd')}>
-          {copiedKey === 'cmd' ? t("m386") : t("m461")}
-        </button>
-      </div>
-
-      <div className="quickstart-notes">
-        <div role="navigation" aria-label={t('browseTopics')}>
-          <p><a href={`${localizePath('/blog/')}#getting-started`}>{t('topicGettingStarted')}</a></p>
-          <p><a href={`${localizePath('/blog/')}#troubleshooting`}>{t('topicTroubleshooting')}</a></p>
-        </div>
-        <p><a href={`https://seineminer.com/${localeInfo.path ? `${localeInfo.path}/` : ""}blog/mine-blocknet-on-windows/`}>{t("windowsGuide")}</a></p>
-        <p><a href={`${localizePath("/blog/")}track-your-miner-on-bntpool/#zero-hashrate`}>{t("minerHelp")}</a></p>
-        <p>{tx("m463", [<a href="https://blocknet.id" target="_blank" rel="noopener">{t("m462")}</a>, <a href={localizePath("/stats")}>{t("m005")}</a>])}</p>
-        <p>{tx("m464", [<code className="mono inline-code">seine-data/seine.config.json</code>])}</p>
-        <p>{tx("m465", [<code className="mono inline-code">--address</code>, <code className="mono inline-code">--pool-url</code>, <code className="mono inline-code">--pool-worker</code>])}</p>
-      </div>
-    </div>
-  );
+  const seineGuideBase = `https://seineminer.com/${localeInfo.path ? `${localeInfo.path}/` : ""}blog/`;
 
   return (
     <div id="page-start">
@@ -103,6 +40,104 @@ export function StartPage({ poolInfo }: StartPageProps) {
         <span className="page-kicker">{t("m466")}</span>
         <h1>{t("m467")}</h1>
         <p className="page-intro">{t("m468")}</p>
+      </div>
+
+      <div className="card section">
+        <div className="section-header">
+          <div>
+            <h3>{t("m450")}</h3>
+            <p className="section-lead">{t("m451")}</p>
+          </div>
+        </div>
+
+        <ol className="quickstart-grid">
+          <li className="quickstart-card">
+            <span className="quickstart-step">1</span>
+            <strong>{t("walletStep")}</strong>
+            <p>{tx("walletStepBody", [<a href="#wallet">{t("walletStepLink")}</a>])}</p>
+          </li>
+
+          <li className="quickstart-card">
+            <span className="quickstart-step">2</span>
+            <strong>{t("m452")}</strong>
+            <p>{tx("m453", [<a href="https://seineminer.com/#download" target="_blank" rel="noopener">
+                seineminer.com
+              </a>])}</p>
+          </li>
+
+          <li className="quickstart-card">
+            <span className="quickstart-step">3</span>
+            <strong>{t("m454")}</strong>
+            <p>{tx("m455", [<code className="mono inline-code">./seine</code>, <code className="mono inline-code">@name</code>, <code className="mono inline-code">$name</code>])}</p>
+            <div className="quickstart-inline">
+              <span className="quickstart-inline-label">{t("m456")}</span>
+              <button
+                type="button"
+                className="inline-copy-code mono"
+                onClick={() => copyToClipboard(poolUrl, setupPoolUrlKey)}
+                title={t("m457")}
+              >
+                {/* Narrow cards wrap the URL after the scheme rather than mid-host. */}
+                {poolUrl.includes('://') ? (<>{poolUrl.slice(0, poolUrl.indexOf('://') + 3)}<wbr />{poolUrl.slice(poolUrl.indexOf('://') + 3)}</>) : poolUrl}
+              </button>
+              {copiedKey === setupPoolUrlKey && <span className="inline-copy-note">{t("m386")}</span>}
+            </div>
+          </li>
+
+          <li className="quickstart-card">
+            <span className="quickstart-step">4</span>
+            <strong>{t("m458")}</strong>
+            <p>{tx("m459", [<a href={localizePath("/stats")}>{t("m005")}</a>])}</p>
+          </li>
+        </ol>
+
+        <p className="quickstart-label">{tx("m460", [<code className="mono inline-code">YOUR_BLOCKNET_ADDRESS</code>, <code className="mono inline-code">'@yourname'</code>, <code className="mono inline-code">'$yourname'</code>])}</p>
+        <div className="command-copy">
+          <pre className="config-block">{commandExample}</pre>
+          <button className="copy-btn" type="button" onClick={() => copyToClipboard(commandExample, 'cmd')}>
+            {copiedKey === 'cmd' ? t("m386") : t("m461")}
+          </button>
+        </div>
+      </div>
+
+      <div className="card section" id="wallet">
+        <h3>{t("walletTitle")}</h3>
+        <p className="section-lead">{t("walletLead")}</p>
+        <div className="wallet-grid">
+          <div className="wallet-option">
+            <strong>{t("walletDesktop")}</strong>
+            <p>{tx("walletDesktopBody", [<strong>Create New Wallet</strong>, <strong>Receive</strong>])}</p>
+            <a className="btn btn-primary" href="https://github.com/blocknetprivacy/blocknet-gui/releases/latest" target="_blank" rel="noopener">
+              {t("walletDesktopDownload")}
+            </a>
+          </div>
+          <div className="wallet-option">
+            <strong>{t("walletCli")}</strong>
+            <p>{tx("walletCliBody", [<code className="mono inline-code">blocknet setup</code>, <code className="mono inline-code">blocknet attach mainnet</code>, <code className="mono inline-code">load</code>, <strong>Create a new wallet</strong>, <code className="mono inline-code">address</code>])}</p>
+            <a className="btn btn-secondary" href="https://github.com/blocknetprivacy/blocknet/releases/latest" target="_blank" rel="noopener">
+              {t("walletCliDownload")}
+            </a>
+          </div>
+        </div>
+        <div className="quickstart-notes">
+          <p>{t("walletSeed")}</p>
+          <p>{tx("m463", [<a href="https://blocknet.id" target="_blank" rel="noopener">{t("m462")}</a>, <a href={localizePath("/stats")}>{t("m005")}</a>])}</p>
+          <p><a href={`${seineGuideBase}blocknet-wallet-for-mining/`}>{t("walletGuide")}</a></p>
+        </div>
+      </div>
+
+      <div className="card section">
+        <h3>{t("helpTitle")}</h3>
+        <ul className="help-links" aria-label={t('browseTopics')}>
+          <li><a href={`${localizePath('/blog/')}#getting-started`}>{t('topicGettingStarted')}</a></li>
+          <li><a href={`${seineGuideBase}mine-blocknet-on-windows/`}>{t("windowsGuide")}</a></li>
+          <li><a href={`${localizePath("/blog/")}track-your-miner-on-bntpool/#zero-hashrate`}>{t("minerHelp")}</a></li>
+          <li><a href={`${localizePath('/blog/')}#troubleshooting`}>{t('topicTroubleshooting')}</a></li>
+        </ul>
+        <div className="quickstart-notes">
+          <p>{tx("m464", [<code className="mono inline-code">seine-data/seine.config.json</code>])}</p>
+          <p>{tx("m465", [<code className="mono inline-code">--address</code>, <code className="mono inline-code">--pool-url</code>, <code className="mono inline-code">--pool-worker</code>])}</p>
+        </div>
       </div>
 
       <div className="card section">
@@ -153,7 +188,6 @@ export function StartPage({ poolInfo }: StartPageProps) {
         </table>
       </div>
 
-      {setupSection}
 
       <div className="card section">
         <h3>{t("m476")}</h3>
