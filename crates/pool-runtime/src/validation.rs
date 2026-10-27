@@ -3072,8 +3072,9 @@ mod tests {
             sample_rate: env_f64("VERIFY_REPLAY_SAMPLE_RATE", 0.05),
             min_sample_every: 25,
             // Production restores per-address state from the database, so
-            // established miners are past warmup.
-            warmup_shares: 0,
+            // established miners are past warmup; VERIFY_REPLAY_WARMUP=5
+            // models a restart that lost it (every address in probation).
+            warmup_shares: env_f64("VERIFY_REPLAY_WARMUP", 0.0) as i32,
             provisional_share_delay: scaled(15.0 * 60.0),
             overload_shed_oldest_age: scaled(6.0),
             overload_emergency_oldest_age: scaled(10.0),
@@ -3137,6 +3138,27 @@ mod tests {
                 }
                 continue;
             }
+            if plan.probation {
+                // As the engine: one IP group per address, accepted either way.
+                let group = format!("group-{address}");
+                if engine.reserve_probation(&address, &group) == ProbationReservation::Reserved {
+                    engine.enqueue_probation_audit(
+                        PendingAuditShare {
+                            share_id,
+                            job_id: format!("job-{share_id}"),
+                            miner: address.clone(),
+                            worker: "rig".to_string(),
+                            difficulty,
+                            nonce: share_id as u64,
+                            claimed_hash: Some(REPLAY_HASH),
+                            header_base: header_base.clone(),
+                            network_target: [0; 32],
+                            created_at: SystemTime::now(),
+                        },
+                        &group,
+                    );
+                }
+            }
             let live_audit = plan.enqueue_audit.then(|| PendingAuditShare {
                 share_id,
                 job_id: format!("job-{share_id}"),
@@ -3197,6 +3219,8 @@ mod tests {
                 "capacity": capacity,
                 "hold_audit_rate": env_f64("VERIFY_REPLAY_HOLD_AUDIT_RATE", 1.0),
                 "sample_rate": env_f64("VERIFY_REPLAY_SAMPLE_RATE", 0.05),
+                "warmup": env_f64("VERIFY_REPLAY_WARMUP", 0.0),
+                "probation_rejected": snap.probation_rejected,
                 "surge": surge,
                 "simulated_secs": elapsed,
                 "shares": share_id,
