@@ -62,5 +62,18 @@
     "apps/blocknet-pool-api/src/miner_release.rs": "b5e4135b90fc846ecae2d075a0a624d6c19ef4a5eba4c0ee146a5178d779f3b9",
     "apps/blocknet-pool-api/src/api.rs": "65553c7ce123622c2faf8359aa656ac94cf228019687a412f12879d575110b31",
     "apps/blocknet-pool-api/src/config.rs": "d5842f666a92c476b1a852400f3acbb9f6cbd14044b14e724cdaa1f60d1417fc"
+  },
+  "production_verification": {
+    "deployed_revision": "ea29cf0e68ed0999b77f9de2332c7d66772d8b97",
+    "release_discovery_commit": "6f7099ed0cd8268b6503f38c6fcdc95b9da192d1",
+    "api_restart": "2026-10-26 22:15:31 EDT",
+    "release_discovered": "2026-10-26 22:15:33 EDT",
+    "latest_miner_version": "0.2.38",
+    "stratum_restarted": false,
+    "post_deploy_health": "passed",
+    "api_tests": "119 passed, 1 ignored",
+    "api_clippy": "passed",
+    "frontend_build": "passed",
+    "browser": "22 reviewed desktop/mobile fixture captures; production API checked via Playwright MCP"
   }
 }

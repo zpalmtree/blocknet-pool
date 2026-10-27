@@ -4,6 +4,9 @@
 <p>Real StatsPage rendered with synthetic API responses. Desktop: 1440 × 1000. Mobile: 390 × 844. Captured and visually reviewed October 26, 2026 (EDT) through the configured Windows Playwright MCP.</p>
 <p>Source: base <code>12d9fd7</code> plus the exact <a href="source-revision.json">source SHA-256 manifest</a>. The sample version is fixture data, not a release announcement.</p>
 <p>The API now discovers the latest stable seine release at startup and every 15 minutes. Failed checks retain the last fetched version and retry after one minute. With no known release at startup, the banner stays hidden. The API tests, strict lint and frontend build pass. Browser checks cover version text, visibility, worker counts, loading and disabled lookup states, and no horizontal overflow. A shared wallet extension reports an unrelated injection error; the app renders successfully. The banner has no independent loading, error or disabled state; those lookup states are shown below.</p>
+<p>Production verified October 26, 2026 at 10:15:33 PM EDT: GitHub discovery logged seine 0.2.38 and the public miner API returned 0.2.38. The API restarted at 10:15:31 PM EDT; Stratum did not restart. Post-deploy health checks passed. Deployed source: <code>ea29cf0</code> (includes release discovery commit <code>6f7099e</code>).</p>
+<details><summary>Serve the stable static gallery</summary><pre>python3 -m http.server 5194 --directory /home/zp/Code/blocknet/showcases
+# Open http://localhost:5194/seine-update/captures.html</pre></details>
 <details><summary>Run the interactive fixture from this revision</summary><pre>npm --prefix frontend ci
 npm --prefix frontend run showcase:languages -- --port 5193
 # Open http://localhost:5193/showcases/seine-update/</pre></details>
