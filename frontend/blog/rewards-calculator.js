@@ -5,7 +5,8 @@ if (root) {
   const messages = JSON.parse(root.querySelector('[data-calculator-messages]').textContent);
   const find = name => root.querySelector(`[data-calc="${name}"]`);
   const fieldset = root.querySelector('fieldset');
-  const rate = find('hashrate'), units = find('units'), fee = find('minerFee');
+  const rate = find('hashrate'), units = find('units');
+  const minerFee = Number(root.dataset.minerFee);
   const status = find('status'), hint = find('hint'), refresh = find('refresh');
   const result = find('result');
   const format = new Intl.NumberFormat(document.documentElement.lang, { maximumFractionDigits: 6 });
@@ -15,17 +16,16 @@ if (root) {
 
   function render() {
     clearResults();
-    rate.removeAttribute('aria-invalid'); fee.removeAttribute('aria-invalid');
+    rate.removeAttribute('aria-invalid');
     if (!snapshot || Date.now() >= expires) return;
     if (!rate.value.trim()) { hint.textContent = messages.calcEmpty; return; }
-    const hashrate = decimalInput(rate.value) * Number(units.value), minerFee = decimalInput(fee.value);
+    const hashrate = decimalInput(rate.value) * Number(units.value);
     try {
       const values = estimateRewards(snapshot, hashrate, minerFee);
       for (const [key, value] of Object.entries(values)) find(key).textContent = value > 0 && value < 0.000001 ? '< ' + format.format(0.000001) : format.format(value);
       result.hidden = false; hint.textContent = '';
     } catch {
       rate.setAttribute('aria-invalid', String(!Number.isFinite(hashrate) || hashrate < 0 || hashrate > snapshot.network));
-      fee.setAttribute('aria-invalid', String(!Number.isFinite(minerFee) || minerFee < 0 || minerFee > 100));
       hint.textContent = messages.calcInvalid;
     }
   }
@@ -36,7 +36,7 @@ if (root) {
     snapshot = null; clearResults(); fieldset.disabled = true;
     refresh.disabled = true; root.setAttribute('aria-busy', 'true');
     status.textContent = messages.calcLoading; hint.textContent = '';
-    for (const key of ['network', 'height', 'reward', 'poolFee']) find(key).textContent = '—';
+    for (const key of ['network', 'height', 'reward']) find(key).textContent = '—';
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
     try {
@@ -50,7 +50,6 @@ if (root) {
       find('network').textContent = format.format(snapshot.network) + ' H/s';
       find('height').textContent = integer.format(snapshot.height);
       find('reward').textContent = format.format(blockReward(snapshot.height)) + ' BNT';
-      find('poolFee').textContent = format.format(snapshot.poolFee) + '%';
       status.textContent = messages.calcReady.replace('{time}', new Intl.DateTimeFormat(document.documentElement.lang, { hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(new Date()));
       fieldset.disabled = false; render();
       expirationTimer = setTimeout(expire, LIVE_DATA_MAX_AGE_MS);
@@ -66,7 +65,7 @@ if (root) {
       status.textContent = messages.calcStale; hint.textContent = '';
     }
   }
-  for (const input of [rate, units, fee]) input.addEventListener('input', () => { expire(); render(); });
+  for (const input of [rate, units]) input.addEventListener('input', () => { expire(); render(); });
   document.addEventListener('visibilitychange', expire);
   refresh.addEventListener('click', load);
   refresh.disabled = false;

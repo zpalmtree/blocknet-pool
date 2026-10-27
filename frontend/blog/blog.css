@@ -128,7 +128,7 @@ footer a:hover { color: var(--text); }
 .calculator { scroll-margin-top: 80px; padding: 24px; margin: 0 0 36px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; }
 .prose .calculator h2 { margin-top: 0; }
 .calculator fieldset { padding: 0; border: 0; margin: 24px 0 0; min-width: 0; }
-.calc-fields { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, .8fr) minmax(0, 1fr); gap: 16px; align-items: end; }
+.calc-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; align-items: end; }
 .calc-fields label { display: block; margin-bottom: 8px; font-size: .9rem; font-weight: 600; }
 .calc-fields input, .calc-fields select { width: 100%; min-height: 44px; padding: 10px; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 9px; }
 .calc-fields [aria-invalid='true'] { border-color: var(--warn); }
@@ -148,7 +148,6 @@ footer a:hover { color: var(--text); }
 @media (max-width: 540px) {
   .calculator { padding: 18px 14px; }
   .calc-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
-  .calc-fields > :last-child { grid-column: 1 / -1; }
   .calc-results th, .calc-results td { padding: 10px 4px; font-size: .8rem; }
 }
 
