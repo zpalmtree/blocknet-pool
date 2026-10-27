@@ -1,15 +1,15 @@
 # Rewards calculator showcase
 
-Source revision: `7711c5289cda7e8b4ebcf381a4a6011658298594`.
+Source revision: `789495d`.
 
 The production calculator and stylesheet are rendered with synthetic network data.
 All 18 desktop (1280px) and mobile (390px) screenshots were reviewed. States cover
 success, empty, loading/disabled, API error, invalid input, zero hashrate, stale data,
 dark theme, and Arabic RTL. No horizontal overflow was observed.
 
-The miner fee field, release fee note, pool fee readout and fee formula are removed
-in all 20 languages. Gross/net results retain the existing fee deductions using
-the reviewed release's miner fee and API-provided pool fee.
+Network hashrate uses the same scaled units and two decimal places as the pool
+dashboard. Reward calculations and input units are unchanged. Browser checks
+covered H/s through PH/s, including the 1000 H/s boundary.
 
 Validation: 21 frontend tests, TypeScript, translation checks, blog checks and
 production build passed. Browser input changes recalculated results correctly.
