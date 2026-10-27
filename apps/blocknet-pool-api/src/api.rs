@@ -918,6 +918,7 @@ fn join_result<R>(result: Result<anyhow::Result<R>, tokio::task::JoinError>) -> 
 
 pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
     state.site_metrics.start(Arc::clone(&state.store));
+    let hosted_wallet = crate::hosted_wallet::router(state.config.hosted_wallet.as_ref())?;
     let app_state = state.clone();
     let protected = Router::new()
         .route("/api/miners", get(handle_miners))
@@ -1023,6 +1024,7 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
         .route("/api/blocks", get(handle_blocks))
         .route("/api/payouts/recent", get(handle_public_payouts))
         .route("/api/miner/:address/hashrate", get(handle_miner_hashrate))
+        .merge(hosted_wallet)
         .merge(public_telemetry)
         .merge(protected)
         .layer(middleware::from_fn_with_state(

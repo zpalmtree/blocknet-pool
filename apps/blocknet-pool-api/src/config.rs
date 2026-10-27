@@ -9,6 +9,7 @@ use serde::Deserialize;
 #[derive(Clone, Deserialize)]
 #[serde(default)]
 pub(crate) struct Config {
+    pub(crate) hosted_wallet: Option<crate::hosted_wallet::HostedWalletConfig>,
     #[serde(flatten)]
     pub(crate) runtime: RuntimeConfig,
     pub(crate) pool_url: String,
@@ -37,6 +38,7 @@ pub(crate) struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            hosted_wallet: None,
             runtime: RuntimeConfig::default(),
             pool_url: "http://localhost:24783".to_string(),
             checkpoints_path: String::new(),
@@ -65,6 +67,9 @@ impl Config {
     }
 
     fn validate(&self) -> Result<()> {
+        if let Some(wallet) = &self.hosted_wallet {
+            wallet.validate()?;
+        }
         if self.pool_url.trim().is_empty() {
             anyhow::bail!("pool_url must not be empty");
         }
