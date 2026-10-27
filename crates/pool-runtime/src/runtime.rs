@@ -80,10 +80,16 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
         resolve_expected_address_network(&cfg, Arc::clone(&core.node)).await;
     let validation_cfg = cfg.clone();
     let validation_store = Arc::clone(&core.store) as Arc<dyn ValidationStateStore>;
+    // One arena per dedicated verifier thread (candidate, regular, audit).
+    // With the default four, fluctuating verifier concurrency mapped and
+    // unmapped a 2 GiB arena ~20 times a minute; each munmap takes the
+    // process-wide mmap lock and stalls page faults on every thread, which
+    // pushed hot-accept p99 from ~50 ms to ~200 ms in production.
+    let retained_arenas = 1 + cfg.regular_verifier_count() + cfg.audit_verifier_count();
     let validation = tokio::task::spawn_blocking(move || {
         Arc::new(ValidationEngine::new_with_state_store(
             validation_cfg,
-            Arc::new(Argon2PowHasher::default()),
+            Arc::new(Argon2PowHasher::with_arena_limit(retained_arenas)),
             validation_store,
         ))
     })
