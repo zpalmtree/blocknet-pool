@@ -139,7 +139,7 @@ fn page_meta(path: &str) -> &'static PageMeta {
 
 fn is_spa_route(path: &str) -> bool {
     let path = normalize_path(path);
-    path == "/admin" || SITEMAP_PATHS.contains(&path)
+    matches!(path, "/admin" | "/wallet") || SITEMAP_PATHS.contains(&path)
 }
 
 fn normalize_path(path: &str) -> &str {
@@ -639,7 +639,7 @@ mod tests {
 
     #[tokio::test]
     async fn known_spa_routes_keep_success_status_with_queries_and_trailing_slashes() {
-        for path in SITEMAP_PATHS.iter().copied().chain(["/admin"]) {
+        for path in SITEMAP_PATHS.iter().copied().chain(["/admin", "/wallet"]) {
             for suffix in ["", "/", "?lang=th", "/?lang=ar&worker=demo"] {
                 let uri: Uri = format!("{path}{suffix}").parse().unwrap();
                 for method in [Method::GET, Method::HEAD] {

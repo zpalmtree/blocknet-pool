@@ -319,5 +319,6 @@
   "walletGuide": "Stapsgewijze walletgids",
   "helpTitle": "Hulp",
   "dueNow": "Nu aan de beurt",
-  "statsEmpty": "Voer het walletadres of de Blocknet ID-naam in die je miner gebruikt. Nieuw bij de pool? {0}"
+  "statsEmpty": "Voer het walletadres of de Blocknet ID-naam in die je miner gebruikt. Nieuw bij de pool? {0}",
+  "hostedWallet": "Wallet"
 }

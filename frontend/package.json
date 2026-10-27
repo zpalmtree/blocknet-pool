@@ -11,9 +11,11 @@
     "blog:check": "node scripts/check-blog.mjs",
     "showcase:languages": "vite --config showcases/pool-languages/vite.config.ts",
     "showcase:ui": "vite --config showcases/ui-simplify/vite.config.ts",
-    "i18n:check": "node scripts/check-i18n.mjs"
+    "i18n:check": "node scripts/check-i18n.mjs",
+    "showcase:wallet": "vite --config showcases/hosted-wallet/vite.config.ts"
   },
   "dependencies": {
+    "qrcode.react": "4.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

@@ -1088,6 +1088,7 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
 
 #[derive(Serialize)]
 struct PoolInfoResponse {
+    hosted_wallet_enabled: bool,
     pool_name: String,
     pool_url: String,
     stratum_port: u16,
@@ -1099,6 +1100,7 @@ struct PoolInfoResponse {
 
 async fn handle_info(State(state): State<ApiState>) -> impl IntoResponse {
     Json(PoolInfoResponse {
+        hosted_wallet_enabled: state.config.hosted_wallet.is_some(),
         pool_name: state.config.runtime.pool_name.clone(),
         pool_url: state.config.pool_url.clone(),
         stratum_port: state.config.runtime.stratum_port,

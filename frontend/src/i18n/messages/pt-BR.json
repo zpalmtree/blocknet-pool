@@ -319,5 +319,6 @@
   "walletGuide": "Guia da carteira passo a passo",
   "helpTitle": "Ajuda",
   "dueNow": "Agora",
-  "statsEmpty": "Digite o endereço da carteira ou o nome Blocknet ID que seu minerador usa. Novo no pool? {0}"
+  "statsEmpty": "Digite o endereço da carteira ou o nome Blocknet ID que seu minerador usa. Novo no pool? {0}",
+  "hostedWallet": "Carteira"
 }

@@ -1,4 +1,5 @@
 export type Route =
+  | "wallet"
   | "dashboard"
   | "start"
   | "checkpoints"
@@ -47,6 +48,7 @@ export interface StatsResponse {
 }
 
 export interface InfoResponse {
+  hosted_wallet_enabled?: boolean;
   pool_name: string;
   pool_url: string;
   stratum_port: number;

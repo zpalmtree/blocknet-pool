@@ -319,5 +319,6 @@
   "walletGuide": "錢包分步指南",
   "helpTitle": "說明",
   "dueNow": "即將執行",
-  "statsEmpty": "輸入您的礦機使用的錢包地址或 Blocknet ID 名稱。第一次使用本礦池？{0}"
+  "statsEmpty": "輸入您的礦機使用的錢包地址或 Blocknet ID 名稱。第一次使用本礦池？{0}",
+  "hostedWallet": "錢包"
 }

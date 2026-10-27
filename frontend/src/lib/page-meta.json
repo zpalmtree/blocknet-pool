@@ -158,5 +158,13 @@
     "index": false,
     "label": "Page not found",
     "guides": []
+  },
+  "/wallet": {
+    "title": "BNT Testnet Wallet",
+    "description": "Hosted testnet wallet with recovery phrase and encrypted backup export.",
+    "image": "og-dashboard.png",
+    "index": false,
+    "label": "Wallet",
+    "guides": []
   }
 }

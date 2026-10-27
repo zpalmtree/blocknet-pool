@@ -1,7 +1,11 @@
 # Public pool languages
 
 The public pool UI and blog share the 20 locales in `locales.mjs`, including native
-language names and Arabic RTL direction. Administrative diagnostics remain in
+language names and Arabic RTL direction. The opt-in hosted testnet wallet prototype has an explicitly labeled English-only
+body (`lang="en"`, `dir="ltr"`); its navigation label is translated. Translating
+the full wallet flow is a requirement before public production rollout.
+
+Administrative diagnostics remain in
 English; server-supplied incident/rejection details retain their original text.
 
 Pool URLs use `?lang=es` (English uses the existing URL). This works with the API's

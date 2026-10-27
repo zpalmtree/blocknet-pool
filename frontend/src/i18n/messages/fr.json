@@ -319,5 +319,6 @@
   "walletGuide": "Guide du portefeuille pas à pas",
   "helpTitle": "Aide",
   "dueNow": "À effectuer maintenant",
-  "statsEmpty": "Saisissez l'adresse de portefeuille ou le nom Blocknet ID utilisé par votre mineur. Nouveau sur le pool ? {0}"
+  "statsEmpty": "Saisissez l'adresse de portefeuille ou le nom Blocknet ID utilisé par votre mineur. Nouveau sur le pool ? {0}",
+  "hostedWallet": "Portefeuille"
 }

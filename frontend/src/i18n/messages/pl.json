@@ -319,5 +319,6 @@
   "walletGuide": "Przewodnik po portfelu krok po kroku",
   "helpTitle": "Pomoc",
   "dueNow": "Teraz",
-  "statsEmpty": "Wpisz adres portfela lub nazwę Blocknet ID, której używa Twoja koparka. Nowy w puli? {0}"
+  "statsEmpty": "Wpisz adres portfela lub nazwę Blocknet ID, której używa Twoja koparka. Nowy w puli? {0}",
+  "hostedWallet": "Portfel"
 }

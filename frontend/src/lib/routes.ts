@@ -2,6 +2,7 @@ import { t, localizePath } from '../i18n';
 import type { Route } from '../types';
 
 const ROUTES = {
+  wallet: ['/wallet', 'hostedWallet'],
   dashboard: ['/', 'm399'],
   start: ['/start', 'm611'],
   checkpoints: ['/checkpoints', 'm612'],

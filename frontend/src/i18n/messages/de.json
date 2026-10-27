@@ -319,5 +319,6 @@
   "walletGuide": "Wallet-Anleitung Schritt für Schritt",
   "helpTitle": "Hilfe",
   "dueNow": "Jetzt fällig",
-  "statsEmpty": "Geben Sie die Wallet-Adresse oder den Blocknet-ID-Namen ein, den Ihr Miner verwendet. Neu im Pool? {0}"
+  "statsEmpty": "Geben Sie die Wallet-Adresse oder den Blocknet-ID-Namen ein, den Ihr Miner verwendet. Neu im Pool? {0}",
+  "hostedWallet": "Wallet"
 }

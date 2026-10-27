@@ -319,5 +319,6 @@
   "walletGuide": "Adım adım cüzdan rehberi",
   "helpTitle": "Yardım",
   "dueNow": "Şimdi",
-  "statsEmpty": "Madencinizin kullandığı cüzdan adresini veya Blocknet ID adını girin. Havuzda yeni misiniz? {0}"
+  "statsEmpty": "Madencinizin kullandığı cüzdan adresini veya Blocknet ID adını girin. Havuzda yeni misiniz? {0}",
+  "hostedWallet": "Cüzdan"
 }

@@ -319,5 +319,6 @@
   "walletGuide": "Panduan wallet langkah demi langkah",
   "helpTitle": "Bantuan",
   "dueNow": "Jatuh tempo sekarang",
-  "statsEmpty": "Masukkan alamat wallet atau nama Blocknet ID yang digunakan miner Anda. Baru di pool ini? {0}"
+  "statsEmpty": "Masukkan alamat wallet atau nama Blocknet ID yang digunakan miner Anda. Baru di pool ini? {0}",
+  "hostedWallet": "Dompet"
 }

@@ -319,5 +319,6 @@
   "walletGuide": "Hướng dẫn ví từng bước",
   "helpTitle": "Trợ giúp",
   "dueNow": "Đến hạn",
-  "statsEmpty": "Nhập địa chỉ ví hoặc tên Blocknet ID mà máy đào của bạn sử dụng. Mới dùng pool? {0}"
+  "statsEmpty": "Nhập địa chỉ ví hoặc tên Blocknet ID mà máy đào của bạn sử dụng. Mới dùng pool? {0}",
+  "hostedWallet": "Ví"
 }

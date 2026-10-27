@@ -17,7 +17,7 @@ test('each public route has distinct metadata and a normalized canonical', () =>
 });
 
 test('private and unknown routes are noindex; returning to a public page restores indexing', () => {
-  for (const path of ['/admin', '/made-up', '/toString', '/__proto__']) {
+  for (const path of ['/wallet', '/admin', '/made-up', '/toString', '/__proto__']) {
     assert.equal(metadataForPath(path, 'https://bntpool.com').robots, 'noindex, follow');
   }
   const publicPage = metadataForPath('/start', 'https://bntpool.com');

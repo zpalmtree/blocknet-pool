@@ -319,5 +319,6 @@
   "walletGuide": "단계별 지갑 가이드",
   "helpTitle": "도움말",
   "dueNow": "지금 예정",
-  "statsEmpty": "채굴기가 사용하는 지갑 주소 또는 Blocknet ID 이름을 입력하세요. 풀이 처음이신가요? {0}"
+  "statsEmpty": "채굴기가 사용하는 지갑 주소 또는 Blocknet ID 이름을 입력하세요. 풀이 처음이신가요? {0}",
+  "hostedWallet": "지갑"
 }

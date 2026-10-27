@@ -319,5 +319,6 @@
   "walletGuide": "Guía paso a paso de la billetera",
   "helpTitle": "Ayuda",
   "dueNow": "Pendiente ahora",
-  "statsEmpty": "Introduce la dirección de billetera o el nombre de Blocknet ID que usa tu minero. ¿Nuevo en el pool? {0}"
+  "statsEmpty": "Introduce la dirección de billetera o el nombre de Blocknet ID que usa tu minero. ¿Nuevo en el pool? {0}",
+  "hostedWallet": "Monedero"
 }

@@ -7,6 +7,7 @@ import { API_KEY_STORAGE_KEY, LAST_MINER_LOOKUP_KEY } from './lib/storage';
 import { applyTheme, getStoredTheme, setStoredTheme, type ThemeMode } from './lib/theme';
 import { metadataForPath, updatePageMetadata } from './lib/page-meta';
 import { pathForRoute, routeFromPathname, titleForRoute } from './lib/routes';
+import { WalletPage } from './pages/WalletPage';
 import { AdminPage } from './pages/AdminPage';
 import { BlocksPage } from './pages/BlocksPage';
 import { CheckpointsPage } from './pages/CheckpointsPage';
@@ -182,6 +183,8 @@ export function App() {
         </div>
       </main>
     );
+  } else if (route === 'wallet') {
+    currentPage = <WalletPage />;
   } else if (route === 'start') {
     currentPage = <StartPage poolInfo={poolInfo} />;
   } else if (route === 'checkpoints') {
@@ -233,7 +236,7 @@ export function App() {
           {poolInfo?.pool_name || t("m009")}
         </a>
         <div id="site-nav-links" className="nav-links">
-          {NAV_ITEMS.map((item) => (
+          {[...NAV_ITEMS, ...(poolInfo?.hosted_wallet_enabled ? [{ route: 'wallet' as const, label: t('hostedWallet') }] : [])].map((item) => (
             <a
               key={item.route}
               href={pathForRoute(item.route)}
