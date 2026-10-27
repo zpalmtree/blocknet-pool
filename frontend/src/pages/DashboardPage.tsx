@@ -144,7 +144,6 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
       : Math.max(0, payoutEta.pending_total_amount - payoutEta.wallet_spendable);
   const payoutLiquidityConstrained = payoutEta != null && payoutEta.pending_total_amount > 0 && payoutShortfall > 0;
 
-  const avgLuck = insights?.avg_effort_pct;
   const roundEffortPct = round?.effort_pct;
   const roundTone = roundToneClass(roundEffortPct);
   const cappedRoundEffortPct = Math.min(Math.max(roundEffortPct ?? 0, 0), 250);
@@ -237,20 +236,6 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
             mono
           />
           <StatCard label={t("m411")} value={stats?.pool?.blocks_found ?? '-'} id="s-blocks" />
-        </div>
-      </div>
-
-      <div className="stats-card-group">
-        <div className="stats-card-group-title">{t("m412")}</div>
-        <div className="stats-card-group-grid">
-          <StatCard label={t("m413")} value={formatPct(avgLuck)} id="s-avg-luck" />
-          <StatCard label={t("m414")} value={stats?.pool?.orphaned_blocks ?? '-'} id="s-orphaned-blocks" />
-          <StatCard
-            label={t("m415")}
-            value={formatPct(stats?.pool?.orphan_rate_30d_pct)}
-            title={t("m416", [formatPct(stats?.pool?.orphan_rate_pct)])}
-            id="s-orphan-rate"
-          />
         </div>
       </div>
 
