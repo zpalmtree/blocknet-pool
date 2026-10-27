@@ -43,6 +43,9 @@ pub struct Config {
     pub regular_verifiers: i32,
     pub audit_verifiers: i32,
     pub sample_rate: f64,
+    /// Fraction of a held address's shares audited while a provisional-backlog
+    /// or payout-coverage hold is active.
+    pub hold_audit_rate: f64,
     pub warmup_shares: i32,
     pub min_sample_every: i32,
     pub invalid_sample_threshold: f64,
@@ -133,6 +136,7 @@ impl Default for Config {
             regular_verifiers: 2,
             audit_verifiers: 1,
             sample_rate: 0.10,
+            hold_audit_rate: 0.25,
             warmup_shares: 20,
             min_sample_every: 10,
             invalid_sample_threshold: 0.10,
@@ -424,6 +428,7 @@ impl Config {
             );
         }
         ensure_f64_range("sample_rate", self.sample_rate, 0.0, 1.0)?;
+        ensure_f64_range("hold_audit_rate", self.hold_audit_rate, 0.0, 1.0)?;
         ensure_f64_range(
             "source_honest_invalid_rate",
             self.source_honest_invalid_rate,
@@ -665,6 +670,7 @@ mod tests {
         }
 
         assert_invalid(r#"{"sample_rate":2.0}"#.to_string(), "sample_rate");
+        assert_invalid(r#"{"hold_audit_rate":1.5}"#.to_string(), "hold_audit_rate");
         assert_invalid(
             r#"{"invalid_sample_threshold":0.0}"#.to_string(),
             "invalid_sample_threshold",

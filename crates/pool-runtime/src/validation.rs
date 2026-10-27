@@ -1415,6 +1415,18 @@ impl ValidationInner {
             }
         };
 
+        // Auditing every share of a held farm floods the regular lane in
+        // bursts; a fixed fraction still restores coverage, more slowly.
+        let audit_source = match audit_source {
+            Some(
+                ValidationAuditSource::ProvisionalBacklog | ValidationAuditSource::PayoutCoverage,
+            ) if self.config.hold_audit_rate < 1.0
+                && self.rng.lock().gen::<f64>() >= self.config.hold_audit_rate =>
+            {
+                None
+            }
+            source => source,
+        };
         let sync_full_verify = matches!(audit_source, Some(ValidationAuditSource::ForcedReview));
         RegularSubmitPlan {
             sync_full_verify,
@@ -2984,6 +2996,258 @@ mod tests {
             network_target: [0x00; 32],
             created_at: SystemTime::now(),
         }
+    }
+
+    /// T2 replay (VERIFY_PERFORMANCE.md): drives the real validation policy
+    /// (hot accepts, backlog holds, sampling, overload modes) with a production
+    /// share mix and a hasher modelling the verifier's memory-bandwidth
+    /// ceiling. Time is compressed by VERIFY_REPLAY_SPEEDUP: hash latency and
+    /// policy windows shrink, arrival rates grow. Prints one JSON line.
+    ///
+    ///   VERIFY_REPLAY_WEIGHTS=counts.txt VERIFY_REPLAY_CAPACITY=7.7 \
+    ///   cargo test --release -p pool-runtime replay_production_share_mix -- --ignored --nocapture
+    #[test]
+    #[ignore = "T2 replay; runs for minutes"]
+    fn replay_production_share_mix() {
+        use rand::distributions::{Distribution, WeightedIndex};
+        use std::sync::atomic::AtomicUsize;
+
+        fn env_f64(name: &str, default: f64) -> f64 {
+            std::env::var(name)
+                .ok()
+                .map(|value| value.parse().expect(name))
+                .unwrap_or(default)
+        }
+        let weights: Vec<f64> = std::fs::read_to_string(
+            std::env::var("VERIFY_REPLAY_WEIGHTS").expect("VERIFY_REPLAY_WEIGHTS"),
+        )
+        .expect("weights file")
+        .lines()
+        .filter_map(|line| line.trim().parse().ok())
+        .collect();
+        let speedup = env_f64("VERIFY_REPLAY_SPEEDUP", 5.0);
+        let load = env_f64("VERIFY_REPLAY_LOAD", 1.0);
+        // 0.5 models halving vardiff's target share rate: half the shares,
+        // each with twice the difficulty.
+        let share_scale = env_f64("VERIFY_REPLAY_SHARE_SCALE", 1.0);
+        let capacity = env_f64("VERIFY_REPLAY_CAPACITY", 5.7);
+        let single_ms = env_f64("VERIFY_REPLAY_SINGLE_MS", 700.0);
+        let wall_secs = env_f64("VERIFY_REPLAY_SECS", 480.0);
+        let base_rate = env_f64("VERIFY_REPLAY_RATE", weights.iter().sum::<f64>() / 3600.0);
+        // "start,end,factor" in wall seconds.
+        let surge: Option<(f64, f64, f64)> = std::env::var("VERIFY_REPLAY_SURGE").ok().map(|v| {
+            let parts: Vec<f64> = v.split(',').map(|p| p.parse().expect("surge")).collect();
+            (parts[0], parts[1], parts[2])
+        });
+
+        /// Fixed hash below every share target and above the zero network
+        /// target: audits pass and nothing is a block. Latency follows the
+        /// measured curve: flat until bandwidth saturates, then concurrency
+        /// over capacity.
+        struct BandwidthHasher {
+            active: AtomicUsize,
+            capacity_per_s: f64,
+            single: Duration,
+        }
+        const REPLAY_HASH: [u8; 32] = {
+            let mut hash = [0u8; 32];
+            hash[31] = 1;
+            hash
+        };
+        impl PowHasher for BandwidthHasher {
+            fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
+                let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+                let bound = Duration::from_secs_f64(active as f64 / self.capacity_per_s);
+                std::thread::sleep(self.single.max(bound));
+                self.active.fetch_sub(1, Ordering::SeqCst);
+                Ok(REPLAY_HASH)
+            }
+        }
+        let scaled = |secs: f64| format!("{}ms", ((secs * 1000.0) / speedup).round() as u64);
+        let cfg = Config {
+            validation_mode: "probabilistic".to_string(),
+            regular_verifiers: 8,
+            audit_verifiers: 2,
+            regular_validation_queue: 512,
+            sample_rate: env_f64("VERIFY_REPLAY_SAMPLE_RATE", 0.05),
+            min_sample_every: 25,
+            // Production restores per-address state from the database, so
+            // established miners are past warmup.
+            warmup_shares: 0,
+            provisional_share_delay: scaled(15.0 * 60.0),
+            overload_shed_oldest_age: scaled(6.0),
+            overload_emergency_oldest_age: scaled(10.0),
+            overload_clear_oldest_age: scaled(4.0),
+            forced_verify_duration: scaled(24.0 * 3600.0),
+            pplns_window_duration: scaled(6.0 * 3600.0),
+            hold_audit_rate: env_f64("VERIFY_REPLAY_HOLD_AUDIT_RATE", 1.0),
+            ..Config::default()
+        };
+        let hasher = Arc::new(BandwidthHasher {
+            active: AtomicUsize::new(0),
+            capacity_per_s: capacity * speedup,
+            single: Duration::from_secs_f64(single_ms / 1000.0 / speedup),
+        });
+        let engine = ValidationEngine::new(cfg, hasher);
+        let pick = WeightedIndex::new(&weights).expect("weights");
+        let mut rng = StdRng::seed_from_u64(7);
+        let difficulty = (60.0 / share_scale).round() as u64;
+        let started = Instant::now();
+        let mut next_at = 0.0f64;
+        let mut share_id = 0i64;
+        let mut sync_handles = Vec::new();
+        loop {
+            let factor = match surge {
+                Some((from, to, factor)) if next_at >= from && next_at < to => factor,
+                _ => 1.0,
+            };
+            let rate = base_rate * load * share_scale * factor * speedup;
+            next_at += -rng.gen::<f64>().max(f64::MIN_POSITIVE).ln() / rate;
+            if next_at >= wall_secs {
+                break;
+            }
+            let wait = Duration::from_secs_f64(next_at).saturating_sub(started.elapsed());
+            if !wait.is_zero() {
+                std::thread::sleep(wait);
+            }
+            share_id += 1;
+            let address = format!("replay-{}", pick.sample(&mut rng));
+            let plan = engine.plan_regular_submit(&address);
+            let header_base = share_id.to_le_bytes().to_vec();
+            if plan.sync_full_verify {
+                if let Some(rx) = engine.submit(
+                    ValidationTask {
+                        address: address.clone(),
+                        nonce: share_id as u64,
+                        difficulty,
+                        header_base,
+                        share_target: difficulty_to_target(difficulty),
+                        network_target: [0; 32],
+                        claimed_hash: Some(REPLAY_HASH),
+                        candidate_claim: false,
+                        force_full_verify: true,
+                        attributed: false,
+                        count_invalid_at_address: true,
+                    },
+                    false,
+                ) {
+                    sync_handles.push(std::thread::spawn(move || {
+                        rx.recv_timeout(Duration::from_secs(60)).is_ok()
+                    }));
+                }
+                continue;
+            }
+            let live_audit = plan.enqueue_audit.then(|| PendingAuditShare {
+                share_id,
+                job_id: format!("job-{share_id}"),
+                miner: address.clone(),
+                worker: "rig".to_string(),
+                difficulty,
+                nonce: share_id as u64,
+                claimed_hash: Some(REPLAY_HASH),
+                header_base,
+                network_target: [0; 32],
+                created_at: SystemTime::now(),
+            });
+            engine.record_hot_accept(
+                &address,
+                share_id,
+                difficulty,
+                SystemTime::now(),
+                live_audit,
+                plan,
+            );
+        }
+        let sync_answered = sync_handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap_or(false))
+            .filter(|answered| *answered)
+            .count();
+        let snap = engine.snapshot();
+        let waits = engine.latency_histograms();
+        let quantile = |lane: &str, q: f64| -> Option<u64> {
+            let histogram = waits.get("validation_queue_wait")?.get(lane)?;
+            let total = histogram.count();
+            let mut seen = 0;
+            for (idx, count) in histogram.counts.iter().enumerate() {
+                seen += count;
+                if total > 0 && seen as f64 >= q * total as f64 {
+                    return Some(
+                        histogram
+                            .bounds_millis
+                            .get(idx)
+                            .map(|bound| (*bound as f64 * speedup) as u64)
+                            .unwrap_or(u64::MAX),
+                    );
+                }
+            }
+            None
+        };
+        let mode_total = (snap.overload_normal_millis_total
+            + snap.overload_shed_millis_total
+            + snap.overload_emergency_millis_total)
+            .max(1) as f64;
+        let elapsed = started.elapsed().as_secs_f64() * speedup;
+        println!(
+            "{}",
+            serde_json::json!({
+                "speedup": speedup,
+                "load": load,
+                "share_scale": share_scale,
+                "capacity": capacity,
+                "hold_audit_rate": env_f64("VERIFY_REPLAY_HOLD_AUDIT_RATE", 1.0),
+                "sample_rate": env_f64("VERIFY_REPLAY_SAMPLE_RATE", 0.05),
+                "surge": surge,
+                "simulated_secs": elapsed,
+                "shares": share_id,
+                "shares_per_s": share_id as f64 / elapsed,
+                "overload_pct": {
+                    "normal": 100.0 * snap.overload_normal_millis_total as f64 / mode_total,
+                    "shed": 100.0 * snap.overload_shed_millis_total as f64 / mode_total,
+                    "emergency": 100.0 * snap.overload_emergency_millis_total as f64 / mode_total,
+                },
+                "overload_transitions": snap.overload_transitions_total,
+                "audits_verified_per_s": snap.audit_verified as f64 / elapsed,
+                "audits_deferred_per_s": snap.audit_deferred as f64 / elapsed,
+                "coverage_pct": 100.0 * (snap.audit_verified + sync_answered as u64) as f64
+                    / share_id.max(1) as f64,
+                "sync_answered": sync_answered,
+                "forced_addresses": snap.forced_verify_addresses,
+                "regular_wait_real_ms": {
+                    "p50": quantile("regular", 0.5),
+                    "p99": quantile("regular", 0.99),
+                },
+                "sync_wait_real_ms_p99": quantile("sync", 0.99),
+            })
+        );
+    }
+
+    #[test]
+    fn backlog_hold_audits_the_configured_fraction_of_shares() {
+        let backlog_audits = |hold_audit_rate: f64| {
+            let engine = ValidationEngine::new(
+                Config {
+                    hold_audit_rate,
+                    ..test_cfg()
+                },
+                Arc::new(DeterministicTestHasher),
+            );
+            // Provisional shares with nothing verified put the address in
+            // provisional backlog; no live audit is queued, so it stays there.
+            let first = engine.plan_regular_submit("farm");
+            engine.record_hot_accept("farm", 1, 10, SystemTime::now(), None, first);
+            (0..400)
+                .filter(|_| {
+                    let plan = engine.plan_regular_submit("farm");
+                    plan.enqueue_audit
+                        && plan.audit_source == Some(ValidationAuditSource::ProvisionalBacklog)
+                })
+                .count()
+        };
+        assert_eq!(backlog_audits(1.0), 400);
+        let half = backlog_audits(0.5);
+        assert!((140..=260).contains(&half), "{half} of 400 audited at 0.5");
+        assert_eq!(backlog_audits(0.0), 0);
     }
 
     #[test]
