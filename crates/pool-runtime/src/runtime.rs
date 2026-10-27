@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -183,6 +183,49 @@ fn stratum_listen_addr(cfg: &Config) -> Result<SocketAddr> {
                 cfg.stratum_host, cfg.stratum_port
             )
         })
+}
+
+/// Re-reads `config_path` on SIGHUP (`systemctl reload`) and applies its hot
+/// settings (see `Config::with_hot_settings_from`) to the running engine,
+/// without disconnecting miners. An invalid file changes nothing; settings
+/// that need a restart are reported, not applied. Also replaces SIGHUP's
+/// default action, which would terminate Stratum.
+pub fn start_config_reload_on_hangup(config_path: PathBuf, engine: Arc<PoolEngine>) {
+    use tokio::signal::unix::{signal, SignalKind};
+    tokio::spawn(async move {
+        let mut hangups = match signal(SignalKind::hangup()) {
+            Ok(hangups) => hangups,
+            Err(err) => {
+                warn!(error = %err, "cannot listen for SIGHUP; config reload disabled");
+                return;
+            }
+        };
+        while hangups.recv().await.is_some() {
+            let path = config_path.clone();
+            let engine = Arc::clone(&engine);
+            let reloaded =
+                tokio::task::spawn_blocking(move || reload_hot_config(&path, &engine)).await;
+            if let Ok(Err(err)) = reloaded {
+                warn!(error = %format!("{err:#}"), "config reload rejected; running settings unchanged");
+            }
+        }
+    });
+}
+
+/// Loads and validates `config_path`, then applies its hot settings to
+/// `engine`. Returns the names of the settings that changed.
+pub fn reload_hot_config(config_path: &Path, engine: &PoolEngine) -> Result<Vec<&'static str>> {
+    let next = Config::load(config_path)?;
+    let changed = engine.reload_hot_config(&next);
+    if changed.is_empty() {
+        info!("config reloaded; no hot settings changed");
+    } else {
+        info!(changed = ?changed, "config reloaded; hot settings applied");
+    }
+    if *engine.cfg() != next {
+        warn!("config file also changes settings that only apply after a Stratum restart");
+    }
+    Ok(changed)
 }
 
 pub fn start_stratum_background_tasks(

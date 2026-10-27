@@ -10,7 +10,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Config, CANDIDATE_VALIDATION_QUEUE_SIZE};
+use crate::config::{Config, LiveConfig, CANDIDATE_VALIDATION_QUEUE_SIZE};
 use crate::telemetry::{
     default_latency_window, LatencyHistogramSnapshot, LatencyWindow, NamedLatencyHistograms,
     PercentileSummary, QueueTracker,
@@ -604,7 +604,7 @@ fn overload_mode_index(mode: OverloadMode) -> usize {
 }
 
 struct ValidationInner {
-    config: Config,
+    live_config: Arc<LiveConfig>,
     hasher: Arc<dyn PowHasher>,
     state: Mutex<HashMap<String, ValidationAddressState>>,
     rng: Mutex<StdRng>,
@@ -707,7 +707,7 @@ impl ValidationEngine {
         let initial_state = load_initial_validation_state(&config, state_store.as_ref());
 
         let inner = Arc::new(ValidationInner {
-            config,
+            live_config: Arc::new(LiveConfig::new(config)),
             hasher,
             state: Mutex::new(initial_state),
             rng: Mutex::new(StdRng::from_entropy()),
@@ -1012,6 +1012,11 @@ impl ValidationEngine {
         self.inner.snapshot()
     }
 
+    /// Applies the hot settings of `next`; returns the names that changed.
+    pub(crate) fn reload_hot_config(&self, next: &Config) -> Vec<&'static str> {
+        self.inner.live_config.apply_hot(next)
+    }
+
     /// Cumulative latency histograms by metric family, then lane.
     pub(crate) fn latency_histograms(
         &self,
@@ -1073,6 +1078,12 @@ impl Drop for ValidationEngine {
 }
 
 impl ValidationInner {
+    /// Snapshot of the current configuration; hot settings may change
+    /// between calls (see `Config::with_hot_settings_from`).
+    fn config(&self) -> Arc<Config> {
+        self.live_config.get()
+    }
+
     fn maintenance_tick(&self) {
         self.sync_external_clears(false);
         let now = SystemTime::now();
@@ -1092,7 +1103,7 @@ impl ValidationInner {
             return;
         };
         let target_depth = self
-            .config
+            .config()
             .audit_verifier_count()
             .saturating_mul(VALIDATION_AUDIT_TARGET_QUEUE_MULTIPLIER)
             .max(1);
@@ -1247,19 +1258,19 @@ impl ValidationInner {
     }
 
     fn should_fully_verify(&self, address: &str, overload_mode: OverloadMode) -> bool {
-        if self.config.validation_mode == "full" {
+        if self.config().validation_mode == "full" {
             return true;
         }
 
         let now = SystemTime::now();
         let state = self.state.lock();
         let mut default_state = ValidationAddressState::default();
-        prune_accepted_window(&mut default_state, &self.config, now);
+        prune_accepted_window(&mut default_state, &self.config(), now);
         let st = state.get(address).unwrap_or(&default_state);
         let mut effective = st.clone();
         self.prune_provisional_locked(&mut effective, now);
-        prune_accepted_window(&mut effective, &self.config, now);
-        refresh_dynamic_validation_hold(&mut effective, &self.config, now);
+        prune_accepted_window(&mut effective, &self.config(), now);
+        refresh_dynamic_validation_hold(&mut effective, &self.config(), now);
 
         if effective
             .resume_forced_at
@@ -1273,13 +1284,13 @@ impl ValidationInner {
         }
 
         if overload_mode == OverloadMode::Normal
-            && should_force_for_provisional_backlog(&effective, &self.config, now)
+            && should_force_for_provisional_backlog(&effective, &self.config(), now)
         {
             return true;
         }
 
         if overload_mode == OverloadMode::Normal
-            && should_force_for_payout_coverage(&effective, &self.config, now)
+            && should_force_for_payout_coverage(&effective, &self.config(), now)
         {
             return true;
         }
@@ -1290,11 +1301,13 @@ impl ValidationInner {
 
         if overload_mode == OverloadMode::Normal {
             let next_share_idx = effective.total_shares.saturating_add(1);
-            if self.config.warmup_shares > 0 && next_share_idx <= self.config.warmup_shares as u64 {
+            if self.config().warmup_shares > 0
+                && next_share_idx <= self.config().warmup_shares as u64
+            {
                 return true;
             }
-            if self.config.min_sample_every > 0
-                && next_share_idx.is_multiple_of(self.config.min_sample_every as u64)
+            if self.config().min_sample_every > 0
+                && next_share_idx.is_multiple_of(self.config().min_sample_every as u64)
             {
                 return true;
             }
@@ -1314,7 +1327,7 @@ impl ValidationInner {
     fn plan_regular_submit(&self, address: &str) -> RegularSubmitPlan {
         self.sync_external_clears(self.address_has_live_hold(address));
         let overload_mode = self.evaluate_overload(Instant::now());
-        if self.config.validation_mode == "full" {
+        if self.config().validation_mode == "full" {
             return RegularSubmitPlan {
                 sync_full_verify: true,
                 enqueue_audit: false,
@@ -1327,12 +1340,12 @@ impl ValidationInner {
         let now = SystemTime::now();
         let state = self.state.lock();
         let mut default_state = ValidationAddressState::default();
-        prune_accepted_window(&mut default_state, &self.config, now);
+        prune_accepted_window(&mut default_state, &self.config(), now);
         let st = state.get(address).unwrap_or(&default_state);
         let mut effective = st.clone();
         self.prune_provisional_locked(&mut effective, now);
-        prune_accepted_window(&mut effective, &self.config, now);
-        refresh_dynamic_validation_hold(&mut effective, &self.config, now);
+        prune_accepted_window(&mut effective, &self.config(), now);
+        refresh_dynamic_validation_hold(&mut effective, &self.config(), now);
 
         let forced_review = effective
             .resume_forced_at
@@ -1350,11 +1363,11 @@ impl ValidationInner {
         let good_samples = effective
             .sampled_shares
             .saturating_sub(effective.invalid_samples);
-        let never_verified = good_samples < self.config.warmup_shares.max(0) as u64;
+        let never_verified = good_samples < self.config().warmup_shares.max(0) as u64;
         // Backlog/coverage holds would otherwise audit every share of a
         // never-verified address in the regular lane; it has no payout weight
         // before its first verified share, so probation alone is enough.
-        let needs_probation = self.config.warmup_shares > 0 && never_verified && !forced_review;
+        let needs_probation = self.config().warmup_shares > 0 && never_verified && !forced_review;
         if needs_probation {
             drop(state);
             // One probation audit per address at a time is enough: payouts need
@@ -1382,20 +1395,21 @@ impl ValidationInner {
                 _ => None,
             }
         } else if overload_mode == OverloadMode::Normal
-            && should_force_for_provisional_backlog(&effective, &self.config, now)
+            && should_force_for_provisional_backlog(&effective, &self.config(), now)
         {
             Some(ValidationAuditSource::ProvisionalBacklog)
         } else if overload_mode == OverloadMode::Normal
-            && should_force_for_payout_coverage(&effective, &self.config, now)
+            && should_force_for_payout_coverage(&effective, &self.config(), now)
         {
             Some(ValidationAuditSource::PayoutCoverage)
         } else if overload_mode == OverloadMode::Emergency {
             None
         } else if overload_mode == OverloadMode::Normal {
             let next_share_idx = effective.total_shares.saturating_add(1);
-            if (self.config.warmup_shares > 0 && next_share_idx <= self.config.warmup_shares as u64)
-                || (self.config.min_sample_every > 0
-                    && next_share_idx.is_multiple_of(self.config.min_sample_every as u64))
+            if (self.config().warmup_shares > 0
+                && next_share_idx <= self.config().warmup_shares as u64)
+                || (self.config().min_sample_every > 0
+                    && next_share_idx.is_multiple_of(self.config().min_sample_every as u64))
             {
                 Some(ValidationAuditSource::Sampled)
             } else {
@@ -1420,8 +1434,8 @@ impl ValidationInner {
         let audit_source = match audit_source {
             Some(
                 ValidationAuditSource::ProvisionalBacklog | ValidationAuditSource::PayoutCoverage,
-            ) if self.config.hold_audit_rate < 1.0
-                && self.rng.lock().gen::<f64>() >= self.config.hold_audit_rate =>
+            ) if self.config().hold_audit_rate < 1.0
+                && self.rng.lock().gen::<f64>() >= self.config().hold_audit_rate =>
             {
                 None
             }
@@ -1482,12 +1496,12 @@ impl ValidationInner {
         let now = SystemTime::now();
         let mut state = self.state.lock();
         let st = get_or_insert_state(&mut state, update.address);
-        let forced_review_duration = self.config.forced_verify_duration();
+        let forced_review_duration = self.config().forced_verify_duration();
 
         st.total_shares = st.total_shares.saturating_add(1);
         self.prune_provisional_locked(st, now);
-        prune_accepted_window(st, &self.config, now);
-        refresh_dynamic_validation_hold(st, &self.config, now);
+        prune_accepted_window(st, &self.config(), now);
+        refresh_dynamic_validation_hold(st, &self.config(), now);
         st.last_seen_at = now;
         if st.resume_forced_at.is_some_and(|start_at| start_at <= now) {
             st.start_forced_review(
@@ -1565,10 +1579,10 @@ impl ValidationInner {
         sampled: bool,
         invalid_sample: bool,
     ) -> ValidationFollowupAction {
-        let forced_review_duration = self.config.forced_verify_duration();
-        let min_samples = self.config.invalid_sample_min.max(1) as u64;
+        let forced_review_duration = self.config().forced_verify_duration();
+        let min_samples = self.config().invalid_sample_min.max(1) as u64;
         let min_invalids = INVALID_SAMPLE_COUNT_THRESHOLD;
-        let forced_clear_threshold = self.config.invalid_sample_threshold;
+        let forced_clear_threshold = self.config().invalid_sample_threshold;
         let forced_quarantine_threshold = FORCED_VALIDATION_QUARANTINE_THRESHOLD;
 
         let mut followup = ValidationFollowupAction::None;
@@ -1593,7 +1607,7 @@ impl ValidationInner {
             let risk_ratio = ratio(st.risk_invalid_samples, st.risk_sampled_shares);
             if st.risk_sampled_shares >= min_samples
                 && st.risk_invalid_samples >= min_invalids
-                && risk_ratio > self.config.invalid_sample_threshold
+                && risk_ratio > self.config().invalid_sample_threshold
                 && overload_mode == OverloadMode::Normal
             {
                 st.start_forced_review(
@@ -1609,21 +1623,21 @@ impl ValidationInner {
         }
 
         if overload_mode == OverloadMode::Normal && st.forced_started_at.is_none() {
-            if should_force_for_provisional_backlog(st, &self.config, now) {
+            if should_force_for_provisional_backlog(st, &self.config(), now) {
                 st.start_temporary_hold(
                     now,
-                    self.config.provisional_share_delay_duration(),
+                    self.config().provisional_share_delay_duration(),
                     ValidationHoldCause::ProvisionalBacklog,
                 );
-            } else if should_force_for_payout_coverage(st, &self.config, now) {
+            } else if should_force_for_payout_coverage(st, &self.config(), now) {
                 st.start_temporary_hold(
                     now,
-                    self.config.provisional_share_delay_duration(),
+                    self.config().provisional_share_delay_duration(),
                     ValidationHoldCause::PayoutCoverage,
                 );
             }
         }
-        refresh_dynamic_validation_hold(st, &self.config, now);
+        refresh_dynamic_validation_hold(st, &self.config(), now);
         followup
     }
 
@@ -1632,7 +1646,7 @@ impl ValidationInner {
             return;
         }
 
-        let delay = self.config.provisional_share_delay_duration();
+        let delay = self.config().provisional_share_delay_duration();
         if delay.is_zero() {
             st.provisional_at.clear();
             return;
@@ -1700,8 +1714,8 @@ impl ValidationInner {
         snap.tracked_addresses = state.len();
         for st in state.values_mut() {
             self.prune_provisional_locked(st, now);
-            prune_accepted_window(st, &self.config, now);
-            refresh_dynamic_validation_hold(st, &self.config, now);
+            prune_accepted_window(st, &self.config(), now);
+            refresh_dynamic_validation_hold(st, &self.config(), now);
             snap.total_shares = snap.total_shares.saturating_add(st.total_shares);
             snap.sampled_shares = snap.sampled_shares.saturating_add(st.sampled_shares);
             snap.invalid_samples = snap.invalid_samples.saturating_add(st.invalid_samples);
@@ -1733,8 +1747,8 @@ impl ValidationInner {
                 st.hold_cause,
             );
             self.prune_provisional_locked(st, now);
-            prune_accepted_window(st, &self.config, now);
-            refresh_dynamic_validation_hold(st, &self.config, now);
+            prune_accepted_window(st, &self.config(), now);
+            refresh_dynamic_validation_hold(st, &self.config(), now);
             let after = (
                 st.forced_started_at,
                 st.forced_until,
@@ -1986,8 +2000,8 @@ impl ValidationInner {
         let mut state = self.state.lock();
         let entry = get_or_insert_state(&mut state, address);
         self.prune_provisional_locked(entry, now);
-        prune_accepted_window(entry, &self.config, now);
-        refresh_dynamic_validation_hold(entry, &self.config, now);
+        prune_accepted_window(entry, &self.config(), now);
+        refresh_dynamic_validation_hold(entry, &self.config(), now);
 
         if let Some(pos) = entry
             .provisional_at
@@ -2064,7 +2078,7 @@ impl ValidationInner {
         }
         let audit_snapshot = self.audit_queue.snapshot(instant_now);
         let target_depth = self
-            .config
+            .config()
             .audit_verifier_count()
             .saturating_mul(VALIDATION_AUDIT_TARGET_QUEUE_MULTIPLIER)
             .max(1);
@@ -2074,7 +2088,7 @@ impl ValidationInner {
         }
 
         let provisional_cutoff = now
-            .checked_sub(self.config.provisional_share_delay_duration())
+            .checked_sub(self.config().provisional_share_delay_duration())
             .unwrap_or(now);
         let max_addresses = AUDIT_MAX_ADDRESSES_PER_TICK;
         let per_address_limit = AUDIT_MAX_SHARES_PER_ADDRESS;
@@ -2084,9 +2098,9 @@ impl ValidationInner {
             let mut state = self.state.lock();
             for (address, st) in state.iter_mut() {
                 self.prune_provisional_locked(st, now);
-                prune_accepted_window(st, &self.config, now);
-                refresh_dynamic_validation_hold(st, &self.config, now);
-                if !should_backfill_pending_window(st, &self.config, now) {
+                prune_accepted_window(st, &self.config(), now);
+                refresh_dynamic_validation_hold(st, &self.config(), now);
+                if !should_backfill_pending_window(st, &self.config(), now) {
                     continue;
                 }
                 let due_now = st.last_replay_backfill_at.is_none_or(|last| {
@@ -2118,7 +2132,7 @@ impl ValidationInner {
                     .load_recent_provisional_audit_shares(&address, provisional_cutoff, load_limit),
                 _ => self.state_store.load_pending_payout_audit_shares(
                     &address,
-                    &self.config,
+                    &self.config(),
                     now,
                     load_limit,
                 ),
@@ -2195,7 +2209,7 @@ impl ValidationInner {
     }
 
     fn effective_sample_rate(&self, overload_mode: OverloadMode) -> f64 {
-        let base = self.config.sample_rate.clamp(0.0, 1.0);
+        let base = self.config().sample_rate.clamp(0.0, 1.0);
         match overload_mode {
             OverloadMode::Normal => base,
             OverloadMode::Shed => base.min(OVERLOAD_SAMPLE_RATE_FLOOR),
@@ -2211,10 +2225,12 @@ impl ValidationInner {
             .as_ref()
             .map(|queue| queue.snapshot(now));
         let validation_pct =
-            regular_validation.depth as f64 / self.config.regular_validation_queue_size() as f64;
+            regular_validation.depth as f64 / self.config().regular_validation_queue_size() as f64;
         let submit_pct = regular_submit
             .as_ref()
-            .map(|snapshot| snapshot.depth as f64 / self.config.regular_submit_queue_size() as f64)
+            .map(|snapshot| {
+                snapshot.depth as f64 / self.config().regular_submit_queue_size() as f64
+            })
             .unwrap_or_default();
         let queue_pct = validation_pct.max(submit_pct);
         let oldest_age = Duration::from_millis(
@@ -2229,11 +2245,11 @@ impl ValidationInner {
                 ),
         );
         let emergency = queue_pct >= OVERLOAD_EMERGENCY_QUEUE_PCT
-            || oldest_age >= self.config.overload_emergency_oldest_age_duration();
+            || oldest_age >= self.config().overload_emergency_oldest_age_duration();
         let shed = queue_pct >= OVERLOAD_SHED_QUEUE_PCT
-            || oldest_age >= self.config.overload_shed_oldest_age_duration();
+            || oldest_age >= self.config().overload_shed_oldest_age_duration();
         let below_clear = queue_pct <= OVERLOAD_CLEAR_QUEUE_PCT
-            && oldest_age <= self.config.overload_clear_oldest_age_duration();
+            && oldest_age <= self.config().overload_clear_oldest_age_duration();
 
         let mut state = self.overload.lock();
         state.account(now);
@@ -2290,13 +2306,13 @@ impl ValidationInner {
         let now = SystemTime::now();
         self.state.lock().get(address).is_some_and(|st| {
             let mut effective = st.clone();
-            if self.config.provisional_share_delay_duration().is_zero() {
+            if self.config().provisional_share_delay_duration().is_zero() {
                 effective.provisional_at.clear();
             } else {
                 self.prune_provisional_locked(&mut effective, now);
             }
-            prune_accepted_window(&mut effective, &self.config, now);
-            refresh_dynamic_validation_hold(&mut effective, &self.config, now);
+            prune_accepted_window(&mut effective, &self.config(), now);
+            refresh_dynamic_validation_hold(&mut effective, &self.config(), now);
             effective.forced_started_at.is_some()
                 || effective
                     .forced_until
@@ -2352,8 +2368,8 @@ impl ValidationInner {
         let cutoff = now.checked_sub(VALIDATION_STATE_RETENTION).unwrap_or(now);
         state.retain(|_, st| {
             self.prune_provisional_locked(st, now);
-            prune_accepted_window(st, &self.config, now);
-            refresh_dynamic_validation_hold(st, &self.config, now);
+            prune_accepted_window(st, &self.config(), now);
+            refresh_dynamic_validation_hold(st, &self.config(), now);
             st.last_seen_at >= cutoff
                 || st.forced_started_at.is_some()
                 || st.forced_until.is_some_and(|deadline| deadline > now)
@@ -2430,7 +2446,7 @@ impl ValidationInner {
             .checked_sub(VALIDATION_STATE_RETENTION)
             .unwrap_or(UNIX_EPOCH);
         let provisional_cutoff = now
-            .checked_sub(self.config.provisional_share_delay_duration())
+            .checked_sub(self.config().provisional_share_delay_duration())
             .unwrap_or(UNIX_EPOCH);
         if let Err(err) =
             self.state_store
@@ -3272,6 +3288,32 @@ mod tests {
         let half = backlog_audits(0.5);
         assert!((140..=260).contains(&half), "{half} of 400 audited at 0.5");
         assert_eq!(backlog_audits(0.0), 0);
+    }
+
+    #[test]
+    fn reloaded_hold_audit_rate_takes_effect_without_restart() {
+        let engine = ValidationEngine::new(
+            Config {
+                hold_audit_rate: 1.0,
+                ..test_cfg()
+            },
+            Arc::new(DeterministicTestHasher),
+        );
+        let first = engine.plan_regular_submit("farm");
+        engine.record_hot_accept("farm", 1, 10, SystemTime::now(), None, first);
+        let audited = |engine: &ValidationEngine| {
+            (0..50)
+                .filter(|_| engine.plan_regular_submit("farm").enqueue_audit)
+                .count()
+        };
+        assert_eq!(audited(&engine), 50);
+
+        let changed = engine.reload_hot_config(&Config {
+            hold_audit_rate: 0.0,
+            ..test_cfg()
+        });
+        assert_eq!(changed, vec!["hold_audit_rate"]);
+        assert_eq!(audited(&engine), 0);
     }
 
     #[test]

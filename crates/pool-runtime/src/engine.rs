@@ -15,7 +15,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::admission::{AdmissionState, UnprocessedReason};
-use crate::config::Config;
+use crate::config::{Config, LiveConfig};
 use crate::dev_fee::{
     is_seine_dev_fee_address, login_difficulty_floor, DEV_VARDIFF_BOOTSTRAP_HINT_LIMIT,
 };
@@ -534,7 +534,7 @@ struct MinerSession {
 }
 
 pub struct PoolEngine {
-    cfg: Config,
+    live_cfg: Arc<LiveConfig>,
     expected_address_network: Option<AddressNetwork>,
     validation: Arc<ValidationEngine>,
     jobs: Arc<dyn JobRepository>,
@@ -666,9 +666,15 @@ fn penalize_proven_fake(
 
 /// Routes audit outcomes back to per-source tracking.
 struct EngineAuditFeedback {
-    cfg: Config,
+    live_cfg: Arc<LiveConfig>,
     tracker: Arc<SourceRiskTracker>,
     store: Arc<dyn ShareStore>,
+}
+
+impl EngineAuditFeedback {
+    fn cfg(&self) -> Arc<Config> {
+        self.live_cfg.get()
+    }
 }
 
 impl AuditFeedback for EngineAuditFeedback {
@@ -695,10 +701,10 @@ impl AuditFeedback for EngineAuditFeedback {
             };
         }
         let count_at_address = self.tracker.source_good(&source)
-            >= self.cfg.source_full_strike_min_source_good.max(0) as u64;
+            >= self.cfg().source_full_strike_min_source_good.max(0) as u64;
         // The caller forgets revoked shares in validation state itself.
         penalize_proven_fake(
-            &self.cfg,
+            &self.cfg(),
             &self.tracker,
             self.store.as_ref(),
             None,
@@ -714,7 +720,7 @@ impl AuditFeedback for EngineAuditFeedback {
     }
 
     fn quarantine_unattributed(&self, address: &str, reason: &str) -> Option<SystemTime> {
-        escalate_forced_validation_quarantine(&self.cfg, self.store.as_ref(), address, reason)
+        escalate_forced_validation_quarantine(&self.cfg(), self.store.as_ref(), address, reason)
     }
 
     fn audit_skipped(&self, share_id: i64) {
@@ -723,7 +729,7 @@ impl AuditFeedback for EngineAuditFeedback {
 
     fn degraded_review_batch(&self, budget: usize) -> Vec<i64> {
         self.tracker
-            .take_degraded_review_batch(budget, self.cfg.sample_rate)
+            .take_degraded_review_batch(budget, self.cfg().sample_rate)
     }
 }
 
@@ -859,13 +865,14 @@ impl PoolEngine {
     ) -> Self {
         let source_risk = Arc::new(SourceRiskTracker::new(SourcePolicy::from_config(&cfg)));
         let admission = Arc::new(AdmissionState::new(cfg.sync_verify_slot_count()));
+        let live_cfg = Arc::new(LiveConfig::new(cfg));
         validation.attach_audit_feedback(Arc::new(EngineAuditFeedback {
-            cfg: cfg.clone(),
+            live_cfg: Arc::clone(&live_cfg),
             tracker: Arc::clone(&source_risk),
             store: Arc::clone(&store),
         }));
         let engine = Self {
-            cfg,
+            live_cfg,
             expected_address_network,
             validation,
             jobs,
@@ -880,6 +887,24 @@ impl PoolEngine {
         };
         engine.recover_found_block_outbox();
         engine
+    }
+
+    /// Snapshot of the current configuration; hot settings may change
+    /// between calls (see `Config::with_hot_settings_from`).
+    pub(crate) fn cfg(&self) -> Arc<Config> {
+        self.live_cfg.get()
+    }
+
+    /// Applies the hot settings of `next` to the engine, its audit feedback
+    /// and the validation engine; returns the names that changed.
+    pub fn reload_hot_config(&self, next: &Config) -> Vec<&'static str> {
+        let changed = self.live_cfg.apply_hot(next);
+        let validation_changed = self.validation.reload_hot_config(next);
+        debug_assert!(
+            validation_changed.iter().all(|name| changed.contains(name)),
+            "engine and validation configs diverged"
+        );
+        changed
     }
 
     pub(crate) fn attach_submit_regular_queue(&self, queue: Arc<QueueTracker>) {
@@ -969,11 +994,14 @@ impl PoolEngine {
                 return Err(anyhow!(quarantine_error_message(Some(&state), now_wall)));
             }
         }
-        let min_diff = self.cfg.min_share_difficulty.max(1);
-        let max_diff = self.cfg.max_share_difficulty.max(min_diff);
-        let initial_difficulty = self.cfg.initial_share_difficulty.clamp(min_diff, max_diff);
+        let min_diff = self.cfg().min_share_difficulty.max(1);
+        let max_diff = self.cfg().max_share_difficulty.max(min_diff);
+        let initial_difficulty = self
+            .cfg()
+            .initial_share_difficulty
+            .clamp(min_diff, max_diff);
         let mut difficulty = initial_difficulty;
-        if self.cfg.enable_vardiff {
+        if self.cfg().enable_vardiff {
             if let Some((cached, updated_at)) = self.store.get_vardiff_hint(address, &worker)? {
                 let age = now_wall.duration_since(updated_at).unwrap_or_default();
                 if let Some(derived) = derive_vardiff_login_difficulty(
@@ -987,7 +1015,7 @@ impl PoolEngine {
                 }
             }
         }
-        let address_bootstrap = if self.cfg.enable_vardiff && is_seine_dev_fee_address(address) {
+        let address_bootstrap = if self.cfg().enable_vardiff && is_seine_dev_fee_address(address) {
             derive_address_vardiff_login_difficulty(
                 self.store
                     .get_vardiff_hints_for_address(address, DEV_VARDIFF_BOOTSTRAP_HINT_LIMIT)?,
@@ -1018,7 +1046,7 @@ impl PoolEngine {
 
         let (address_good, _) = self.validation.address_sample_counts(address);
         let address_vouched =
-            address_good >= self.cfg.source_full_strike_min_address_good.max(0) as u64;
+            address_good >= self.cfg().source_full_strike_min_address_good.max(0) as u64;
         let source = self
             .source_risk
             .open_session_vouched(address, &ip_group, address_vouched)
@@ -1044,7 +1072,7 @@ impl PoolEngine {
             self.source_risk.close_session(replaced.source.session_id);
         }
 
-        if self.cfg.enable_vardiff && is_seine_dev_fee_address(address) {
+        if self.cfg().enable_vardiff && is_seine_dev_fee_address(address) {
             if let Err(err) = self
                 .store
                 .upsert_vardiff_hint(address, &worker, difficulty, now_wall)
@@ -1296,8 +1324,8 @@ impl PoolEngine {
             // Only sources with their own verified history on this address
             // add to its persisted invalid count (strike leniency history).
             let source_vouched = self.source_risk.source_good(&session.source)
-                >= self.cfg.source_full_strike_min_source_good.max(0) as u64;
-            let count_invalid_at_address = source_vouched || !self.cfg.source_penalties_enabled;
+                >= self.cfg().source_full_strike_min_source_good.max(0) as u64;
+            let count_invalid_at_address = source_vouched || !self.cfg().source_penalties_enabled;
             let (address_good, address_invalid) =
                 self.validation.address_sample_counts(&session.address);
             let plan = self.validation.plan_regular_submit(&session.address);
@@ -1314,7 +1342,7 @@ impl PoolEngine {
                     claimed_hash,
                     candidate_claim,
                     force_full_verify: true,
-                    attributed: self.cfg.source_penalties_enabled,
+                    attributed: self.cfg().source_penalties_enabled,
                     count_invalid_at_address,
                 };
 
@@ -1392,7 +1420,7 @@ impl PoolEngine {
                         // network target, and each claim costs a full hash in
                         // the scarce candidate lane.
                         penalize_proven_fake(
-                            &self.cfg,
+                            &self.cfg(),
                             &self.source_risk,
                             self.store.as_ref(),
                             Some(&self.validation),
@@ -1763,7 +1791,7 @@ impl PoolEngine {
 
     fn trigger_forced_validation_quarantine(&self, address: &str, reason: &str) {
         if let Some(quarantined_until) =
-            escalate_forced_validation_quarantine(&self.cfg, self.store.as_ref(), address, reason)
+            escalate_forced_validation_quarantine(&self.cfg(), self.store.as_ref(), address, reason)
         {
             self.validation
                 .schedule_forced_review_after(address, quarantined_until);
@@ -2123,23 +2151,23 @@ impl PoolEngine {
     }
 
     pub(crate) fn retarget_on_job_if_needed(&self, conn_id: &str) -> Option<u64> {
-        if !self.cfg.enable_vardiff {
+        if !self.cfg().enable_vardiff {
             return self.session_difficulty(conn_id);
         }
 
         let mut hint_to_write: Option<(String, String, u64)> = None;
         let mut sessions = self.sessions.lock();
         let session = sessions.get_mut(conn_id)?;
-        let min_diff = self.cfg.min_share_difficulty.max(1);
-        let max_diff = self.cfg.max_share_difficulty.max(min_diff);
+        let min_diff = self.cfg().min_share_difficulty.max(1);
+        let max_diff = self.cfg().max_share_difficulty.max(min_diff);
         session.difficulty = session.difficulty.clamp(min_diff, max_diff);
 
         // Keep dev-fee sessions on submit-only retargeting so their long idle
         // periods do not collapse difficulty between the brief fee windows.
         if !is_seine_dev_fee_address(&session.address) {
             let now = Instant::now();
-            let target_interval = vardiff_target_interval_seconds(&self.cfg);
-            let tolerance = self.cfg.vardiff_tolerance.clamp(0.01, 0.95);
+            let target_interval = vardiff_target_interval_seconds(&self.cfg());
+            let tolerance = self.cfg().vardiff_tolerance.clamp(0.01, 0.95);
             // Idle is measured from the last share of any kind, including one
             // the pool was too busy to process: that miner is not idle.
             if let Some(last) = session.last_share_at {
@@ -2156,7 +2184,7 @@ impl PoolEngine {
                         && vardiff_change_is_material(session.difficulty, next_diff)
                     {
                         let retarget_interval =
-                            vardiff_retarget_interval_for_direction(&self.cfg, false);
+                            vardiff_retarget_interval_for_direction(&self.cfg(), false);
                         let can_retarget = session
                             .last_difficulty_adjustment
                             .is_none_or(|last| now.duration_since(last) >= retarget_interval);
@@ -2244,7 +2272,7 @@ impl PoolEngine {
     ) -> Option<u64> {
         let now = Instant::now();
         self.admission.record(reason, now);
-        if !self.cfg.enable_vardiff {
+        if !self.cfg().enable_vardiff {
             return None;
         }
         let mut sessions = self.sessions.lock();
@@ -2266,7 +2294,7 @@ impl PoolEngine {
             return true;
         }
         let window = self
-            .cfg
+            .cfg()
             .vardiff_window_duration()
             .max(Duration::from_secs(30));
         session
@@ -2284,16 +2312,16 @@ impl PoolEngine {
         now: Instant,
         unprocessed: bool,
     ) -> bool {
-        let min_diff = self.cfg.min_share_difficulty.max(1);
-        let max_diff = self.cfg.max_share_difficulty.max(min_diff);
+        let min_diff = self.cfg().min_share_difficulty.max(1);
+        let max_diff = self.cfg().max_share_difficulty.max(min_diff);
         session.difficulty = session.difficulty.clamp(min_diff, max_diff);
 
         let window = self
-            .cfg
+            .cfg()
             .vardiff_window_duration()
             .max(Duration::from_secs(30));
-        let target_interval = vardiff_target_interval_seconds(&self.cfg);
-        let tolerance = self.cfg.vardiff_tolerance.clamp(0.01, 0.95);
+        let target_interval = vardiff_target_interval_seconds(&self.cfg());
+        let tolerance = self.cfg().vardiff_tolerance.clamp(0.01, 0.95);
 
         let last_share_age = session.last_share_at.map(|last| now.duration_since(last));
         session.last_share_at = Some(now);
@@ -2357,7 +2385,7 @@ impl PoolEngine {
             return false;
         }
         let increasing = next_diff > session.difficulty;
-        let retarget_interval = vardiff_retarget_interval_for_direction(&self.cfg, increasing);
+        let retarget_interval = vardiff_retarget_interval_for_direction(&self.cfg(), increasing);
         let can_retarget = session
             .last_difficulty_adjustment
             .is_none_or(|last| now.duration_since(last) >= retarget_interval);
@@ -2394,19 +2422,19 @@ impl PoolEngine {
     }
 
     fn note_share_and_maybe_adjust_difficulty(&self, conn_id: &str) -> u64 {
-        if !self.cfg.enable_vardiff {
+        if !self.cfg().enable_vardiff {
             return self
                 .sessions
                 .lock()
                 .get(conn_id)
                 .map(|session| session.difficulty)
-                .unwrap_or(self.cfg.initial_share_difficulty);
+                .unwrap_or(self.cfg().initial_share_difficulty);
         }
 
         let mut hint_to_write: Option<(String, String, u64)> = None;
         let mut sessions = self.sessions.lock();
         let Some(session) = sessions.get_mut(conn_id) else {
-            return self.cfg.initial_share_difficulty;
+            return self.cfg().initial_share_difficulty;
         };
 
         let now = Instant::now();
@@ -5839,6 +5867,49 @@ mod tests {
             .filter(|share| share.nonce == 700 && share.status == SHARE_STATUS_PROVISIONAL)
             .count();
         assert_eq!(credited, 1);
+    }
+
+    #[test]
+    fn config_file_reload_applies_hot_settings_and_rejects_invalid_files() {
+        let cfg = cfg();
+        let validation = Arc::new(ValidationEngine::new(
+            cfg.clone(),
+            Arc::new(DeterministicTestHasher),
+        ));
+        let engine = PoolEngine::new(
+            cfg.clone(),
+            Arc::clone(&validation),
+            Arc::new(InMemoryJobs::default()),
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+
+        std::fs::write(
+            &path,
+            r#"{"hold_audit_rate": 0.0, "vardiff_target_shares": 3, "regular_verifiers": 99}"#,
+        )
+        .unwrap();
+        let changed = crate::runtime::reload_hot_config(&path, &engine).expect("valid file");
+        assert!(changed.contains(&"hold_audit_rate"));
+        assert!(changed.contains(&"vardiff_target_shares"));
+        assert_eq!(engine.cfg().hold_audit_rate, 0.0);
+        assert_eq!(engine.cfg().vardiff_target_shares, 3);
+        assert_eq!(engine.cfg().regular_verifiers, cfg.regular_verifiers);
+
+        std::fs::write(
+            &path,
+            r#"{"hold_audit_rate": 2.0, "vardiff_target_shares": 7}"#,
+        )
+        .unwrap();
+        assert!(crate::runtime::reload_hot_config(&path, &engine).is_err());
+        assert_eq!(
+            engine.cfg().hold_audit_rate,
+            0.0,
+            "invalid file changes nothing"
+        );
+        assert_eq!(engine.cfg().vardiff_target_shares, 3);
     }
 
     #[test]

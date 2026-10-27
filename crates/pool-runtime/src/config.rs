@@ -1,15 +1,17 @@
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use parking_lot::RwLock;
 use pool_common::protocol::{address_network, AddressNetwork};
 use serde::Deserialize;
 
 pub(crate) const CANDIDATE_SUBMIT_QUEUE_SIZE: usize = 64;
 pub const CANDIDATE_VALIDATION_QUEUE_SIZE: usize = 64;
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub pool_name: String,
@@ -182,7 +184,58 @@ impl Default for Config {
     }
 }
 
+/// Copies the settings a running Stratum may change on reload, recording the
+/// names of those that differ. Everything else (listeners, database, daemon,
+/// worker and queue sizes, payouts, windows shared with other services) is
+/// read once at startup and needs a restart.
+macro_rules! hot_settings {
+    ($running:expr, $next:expr, $changed:expr, [$($field:ident),* $(,)?]) => {
+        $(
+            if $running.$field != $next.$field {
+                $running.$field = $next.$field.clone();
+                $changed.push(stringify!($field));
+            }
+        )*
+    };
+}
+
 impl Config {
+    /// `self` with the hot-reloadable settings taken from `next`, and the
+    /// names of the settings that changed.
+    pub fn with_hot_settings_from(&self, next: &Config) -> (Config, Vec<&'static str>) {
+        let mut running = self.clone();
+        let mut changed = Vec::new();
+        hot_settings!(
+            running,
+            next,
+            changed,
+            [
+                sample_rate,
+                hold_audit_rate,
+                warmup_shares,
+                min_sample_every,
+                invalid_sample_threshold,
+                invalid_sample_min,
+                forced_verify_duration,
+                quarantine_duration,
+                max_quarantine_duration,
+                invalid_escalation_quarantine_strikes,
+                overload_shed_oldest_age,
+                overload_emergency_oldest_age,
+                overload_clear_oldest_age,
+                enable_vardiff,
+                vardiff_target_shares,
+                vardiff_window,
+                vardiff_retarget_interval,
+                vardiff_tolerance,
+                min_share_difficulty,
+                max_share_difficulty,
+                initial_share_difficulty,
+            ]
+        );
+        (running, changed)
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let data = fs::read(path).with_context(|| format!("read config {}", path.display()))?;
         let cfg: Config = serde_json::from_slice(&data)
@@ -511,6 +564,41 @@ fn ensure_nonempty(field: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+/// A component's view of the configuration, swapped atomically when hot
+/// settings are reloaded. Readers take a cheap snapshot per use.
+pub struct LiveConfig {
+    current: RwLock<Arc<Config>>,
+}
+
+impl std::fmt::Debug for LiveConfig {
+    // Config holds credentials (database URL), so it is never printed.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LiveConfig { .. }")
+    }
+}
+
+impl LiveConfig {
+    pub fn new(cfg: Config) -> Self {
+        Self {
+            current: RwLock::new(Arc::new(cfg)),
+        }
+    }
+
+    pub fn get(&self) -> Arc<Config> {
+        Arc::clone(&self.current.read())
+    }
+
+    /// Applies the hot settings of `next` and returns the names that changed.
+    pub fn apply_hot(&self, next: &Config) -> Vec<&'static str> {
+        let mut current = self.current.write();
+        let (updated, changed) = current.with_hot_settings_from(next);
+        if !changed.is_empty() {
+            *current = Arc::new(updated);
+        }
+        changed
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -683,6 +771,40 @@ mod tests {
             r#"{"vardiff_tolerance":1.0}"#.to_string(),
             "vardiff_tolerance",
         );
+    }
+
+    #[test]
+    fn hot_reload_applies_only_allowlisted_settings() {
+        let running = Config {
+            sample_rate: 0.05,
+            vardiff_target_shares: 10,
+            regular_verifiers: 8,
+            stratum_port: 3333,
+            database_url: "postgres://running".to_string(),
+            ..Config::default()
+        };
+        let next = Config {
+            sample_rate: 0.08,
+            vardiff_target_shares: 5,
+            regular_verifiers: 12,
+            stratum_port: 4444,
+            database_url: "postgres://edited".to_string(),
+            ..running.clone()
+        };
+        let live = LiveConfig::new(running.clone());
+
+        let changed = live.apply_hot(&next);
+        assert_eq!(changed, vec!["sample_rate", "vardiff_target_shares"]);
+        let applied = live.get();
+        assert_eq!(applied.sample_rate, 0.08);
+        assert_eq!(applied.vardiff_target_shares, 5);
+        // Restart-only settings keep their running values.
+        assert_eq!(applied.regular_verifiers, 8);
+        assert_eq!(applied.stratum_port, 3333);
+        assert_eq!(applied.database_url, "postgres://running");
+        assert!(*applied != next, "restart-only differences remain visible");
+
+        assert!(live.apply_hot(&next).is_empty(), "reapplying is a no-op");
     }
 
     #[test]
