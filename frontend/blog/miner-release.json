@@ -1,9 +1,9 @@
 {
   "repository": "zpalmtree/seine",
-  "tag": "v0.2.41",
-  "commit": "9aca14fc89256343c6f97504af3ff7d83e7f2150",
-  "publishedAt": "2026-10-27T17:44:50Z",
-  "checkedAt": "2026-10-27T16:11:18.942037-04:00",
+  "tag": "v0.2.42",
+  "commit": "3b6dd40819676bb9b222536e6992e6f1c8bb52a9",
+  "publishedAt": "2026-10-27T20:28:42Z",
+  "checkedAt": "2026-10-27T17:33:28.360943-04:00",
   "bntpoolMinerFeePercent": 2,
   "otherPoolMinerFeePercent": 2,
   "assets": [
