@@ -9,7 +9,7 @@ faq:
     a: 'Trong cùng địa chỉ, lịch sử share được gộp dưới tên ấy, khiến việc nhận biết máy tạo ra một số liệu khó hơn. Đặt tên riêng cho mỗi cài đặt và khởi động lại với tên đó; share đã ghi vẫn giữ nhãn ban đầu.'
   - q: 'Thêm máy có chia tách khoản thanh toán không?'
     a: 'Tên máy sắp xếp hoạt động hiển thị và không tạo số dư riêng trong cùng địa chỉ. Công việc hợp lệ từ các máy đóng góp vào phần tham gia PPLNS của địa chỉ đó. Số dư tuân theo quy tắc xác nhận và thanh toán thông thường của pool.'
-sourceHash: '1e7424aee51d'
+sourceHash: '1cfcb79502c0'
 translation: draft
 ---
 

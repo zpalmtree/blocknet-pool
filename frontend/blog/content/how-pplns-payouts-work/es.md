@@ -13,7 +13,7 @@ faq:
     a: 'No. Cada share permanece seis horas en la ventana PPLNS tras enviarlo, así que sigues recibiendo crédito por los bloques encontrados en ese tiempo. Las recompensas confirmadas permanecen en tu saldo y el pool las paga cuando alcanza el mínimo de 0,1 BNT.'
   - q: '¿Qué significa un esfuerzo superior al 100% en Luck?'
     a: 'El esfuerzo compara el trabajo del pool durante una ronda con la dificultad del bloque, que es el trabajo esperado. Más del 100% significa que tardó más que la media; menos del 100%, que fue más rápida. Ambos son normales y, tras muchas rondas, el esfuerzo medio ronda el 100%.'
-sourceHash: '1ca5549586c5'
+sourceHash: 'f216680e1944'
 translation: draft
 ---
 

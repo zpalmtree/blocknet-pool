@@ -10,7 +10,7 @@ faq:
     a: 'Under the same address, their share history is grouped under the same rig name. That makes it harder to identify the machine behind a reading. Assign a distinct name to each setup and restart it with that name; already recorded shares keep their original label.'
   - q: 'Does adding another rig split my payout?'
     a: 'Rig names organize the display of mining activity. They do not create separate reward balances under the same address. Valid work from your computers contributes to that address''s PPLNS participation, and its balance follows the pool''s normal confirmation and payout rules.'
-related: [change-mining-wallet-address, mine-blocknet-on-bntpool, track-your-miner-on-bntpool, how-pplns-payouts-work]
+related: [mine-blocknet-part-time, change-mining-wallet-address, mine-blocknet-on-bntpool, track-your-miner-on-bntpool]
 ---
 
 You can add a second computer to bntpool.com while keeping one receiving wallet. Give each mining setup its own name, verify it separately, then monitor the combined address. This guide walks through adding that second machine and untangling duplicate names. If you are starting with your first miner, complete the [pool setup guide](/blog/mine-blocknet-on-bntpool/) before expanding.

@@ -88,7 +88,12 @@ function miningNetwork() {
  return frame(`${miner(175,330,1.3)}${line('M270 285H485M465 265 485 285 465 305','#237a4e',7)}${line('M485 385H270M290 365 270 385 290 405','#87ac8d',7)}${rect(520,255,160,145,'#d5e8c8',20)}${circle(560,355,9,'#237a4e')}${circle(600,355,9,'#237a4e')}${line('M550 255V210M650 255V210M720 285H905M885 265 905 285 885 305','#237a4e',7)}${line('M905 385H720M740 365 720 385 740 405','#87ac8d',7)}${cube(1000,300,95)}${circle(600,510,50,'#fbfcf5','stroke="#87ac8d" stroke-width="4"')}${line('M600 478V510L625 525','#237a4e',6)}${rect(355,265,45,40,'#b8ee9d',6)}${rect(795,365,45,40,'#b8ee9d',6)}`);
 }
 
+function partTimeMining() {
+ return frame(`${miner(220,190,1.2)}${miner(980,190,1.2)}${circle(600,190,62,'#fbfcf5','stroke="#87ac8d" stroke-width="4"')}${rect(572,160,16,60,'#87ac8d',4)}${rect(612,160,16,60,'#87ac8d',4)}${line('M120 340H1080M1060 320 1080 340 1060 360','#237a4e',6)}${rect(135,305,265,70,'#b8ee9d',12)}${rect(850,305,215,70,'#b8ee9d',12)}${[175,235,295,355,890,950,1010].map(x=>circle(x,340,10,'#237a4e')).join('')}${rect(275,285,495,110,'none',16,'stroke="#87ac8d" stroke-width="4" stroke-dasharray="10 8"')}${line('M180 465H1030','#87ac8d',4)}${rect(760,440,270,110,'#fbfcf5',14)}${line('M795 475H995M795 515H940','#87ac8d',5)}${check(1040,495,.8)}`);
+}
+
 const illustrations = {
+  'mine-blocknet-part-time': partTimeMining,
   'internet-speed-mining': miningNetwork,
   'pool-payout-missing-from-wallet': payoutWalletTrace,
   'change-mining-wallet-address': changeAddress,

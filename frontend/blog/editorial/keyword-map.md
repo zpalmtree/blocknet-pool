@@ -125,3 +125,11 @@ PPLNS owns payout eligibility; confirmations owns reward maturity; tracking owns
 | does internet speed affect mining; mining Wi-Fi vs Ethernet | `/blog/internet-speed-mining/` | Isolate connection quality with a controlled link comparison and job/submission evidence |
 
 Hashrate owns rate estimation, Stratum owns the protocol, tracking owns account lookup and endpoint setup. This guide owns diagnosing the network path without conflating bandwidth, local computation and share outcomes. No existing URL is retargeted.
+
+## Electricity and part-time mining (October 26, 2026)
+
+| Primary keyword cluster | URL | Search job |
+|---|---|---|
+| mine Blocknet part-time; intermittent pool mining | `/blog/mine-blocknet-part-time/` | Plan a stop-and-return routine and follow one share across an offline interval |
+
+PPLNS owns allocation mechanics and thresholds; confirmations owns maturity; tracking owns account fields. This article owns a short-session timeline and restart procedure. The six-hour window is not a waiting period or a payout promise. No existing URL is retargeted.

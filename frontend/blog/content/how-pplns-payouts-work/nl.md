@@ -2,7 +2,7 @@
 title: 'Hoe PPLNS-uitbetalingen werken op bntpool.com'
 description: 'bntpool.com betaalt Blocknet-miners via PPLNS over zes uur. Lees hoe beloningen worden verdeeld, waarom 60 bevestigingen nodig zijn en wanneer 0,1 BNT wordt betaald.'
 tags: ['Uitbetalingen', 'PPLNS', 'bntpool', 'Mininggids']
-sourceHash: '1ca5549586c5'
+sourceHash: 'f216680e1944'
 translation: draft
 faq:
   - q: 'Hoe lang is het PPLNS-venster op bntpool.com?'

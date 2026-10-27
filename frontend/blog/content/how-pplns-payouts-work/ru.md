@@ -2,7 +2,7 @@
 title: Как работают выплаты PPLNS на bntpool.com
 description: bntpool.com платит майнерам Blocknet по PPLNS с шестичасовым окном шар. Узнайте о разделении наград, 60 подтверждениях и минимальной выплате 0,1 BNT.
 tags: [Выплаты, PPLNS, bntpool, Руководство по майнингу]
-sourceHash: '1ca5549586c5'
+sourceHash: 'f216680e1944'
 translation: draft
 faq:
   - q: 'Какова длина окна PPLNS на bntpool.com?'

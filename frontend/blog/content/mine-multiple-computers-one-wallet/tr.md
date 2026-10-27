@@ -9,7 +9,7 @@ faq:
     a: 'Aynı adres altında pay geçmişleri aynı isimle gruplanır. Bu, ölçümün hangi makineden geldiğini anlamayı zorlaştırır. Her kuruluma farklı ad verip bu adla yeniden başlatın; önceden kaydedilmiş paylar eski etiketlerini korur.'
   - q: 'Yeni makine eklemek ödemeyi böler mi?'
     a: 'Makine adları etkinlik görünümünü düzenler, aynı adres altında ayrı ödül bakiyeleri oluşturmaz. Bilgisayarların geçerli işi o adresin PPLNS katılımına eklenir. Bakiye havuzun normal onay ve ödeme kurallarına tabi olmaya devam eder.'
-sourceHash: '1e7424aee51d'
+sourceHash: '1cfcb79502c0'
 translation: draft
 ---
 

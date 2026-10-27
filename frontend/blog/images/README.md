@@ -44,3 +44,5 @@ no language-dependent text or invented dashboard values. Added October 26, 2026.
 `pool-payout-missing-from-wallet`: original language-neutral illustration in `blog-covers.mjs`: payout record, chain transaction and wallet scan. Caption localized in all articles; October 26, 2026.
 
 `internet-speed-mining`: original language-neutral SVG illustration in `blog-covers.mjs`: miner, network link, pool and delivery clock. Localized caption; October 26, 2026.
+
+`mine-blocknet-part-time`: original language-neutral session/pause/return timeline in `blog-covers.mjs`, with a share-window outline and a separate retained balance record. Schematic, not measured rewards or an exact time scale. October 26, 2026.
