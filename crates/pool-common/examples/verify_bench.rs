@@ -8,7 +8,8 @@
 //! check.
 //!
 //!     cargo run --release -p pool-common --example verify_bench -- \
-//!         --threads 8 --hashes 160 [--warmup 8] [--retain 8] [--seed 1]
+//!         --threads 8 --hashes 160 [--warmup 8] [--retain 8] [--seed 1] \
+//!         [--kernel avx512]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -22,6 +23,7 @@ struct Args {
     warmup: usize,
     retain: usize,
     seed: u64,
+    kernel: Option<blocknet_pow_kernel::CpuKernel>,
 }
 
 fn parse_args() -> Args {
@@ -31,12 +33,21 @@ fn parse_args() -> Args {
         warmup: 0,
         retain: 0,
         seed: 1,
+        kernel: None,
     };
     let mut iter = std::env::args().skip(1);
     while let Some(flag) = iter.next() {
         let value = iter
             .next()
             .unwrap_or_else(|| panic!("{flag} needs a value"));
+        if flag == "--kernel" {
+            args.kernel = Some(
+                value
+                    .parse()
+                    .unwrap_or_else(|err| panic!("--kernel: {err}")),
+            );
+            continue;
+        }
         let value: u64 = value.parse().unwrap_or_else(|_| panic!("{flag}: {value}"));
         match flag.as_str() {
             "--threads" => args.threads = value as usize,
@@ -76,7 +87,10 @@ fn percentile(sorted: &[f64], pct: usize) -> f64 {
 
 fn main() {
     let args = parse_args();
-    let hasher = Argon2PowHasher::with_arena_limit(args.retain);
+    let hasher = match args.kernel {
+        Some(kernel) => Argon2PowHasher::with_kernel(kernel, args.retain).expect("kernel"),
+        None => Argon2PowHasher::with_arena_limit(args.retain),
+    };
     let total = args.warmup + args.hashes;
     let next = Arc::new(AtomicUsize::new(0));
     // (index, finished_at, latency_ms, hash)

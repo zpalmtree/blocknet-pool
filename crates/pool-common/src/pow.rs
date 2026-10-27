@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
-use blocknet_pow_kernel::{FixedArgon2id, PowBlock};
+use blocknet_pow_kernel::{CpuKernel, FixedArgon2id, PowBlock};
 
 const POW_MEMORY_KIB: u32 = 2 * 1024 * 1024;
 
@@ -86,6 +86,19 @@ impl Argon2PowHasher {
         Self::new(POW_MEMORY_KIB, retained_limit)
     }
 
+    /// Production-size hasher on an explicit compression path, for benchmarks.
+    pub fn with_kernel(kernel: CpuKernel, retained_limit: usize) -> Result<Self> {
+        let hasher = FixedArgon2id::with_kernel(POW_MEMORY_KIB, kernel)
+            .map_err(|err| anyhow!("unsupported PoW kernel {kernel}: {err:?}"))?;
+        Ok(Self {
+            kernel: Arc::new(PowKernel {
+                memory_kib: POW_MEMORY_KIB,
+                hasher,
+                arenas: PowArenaPool::new(retained_limit),
+            }),
+        })
+    }
+
     /// Label of the compression path in use, e.g. `avx512`.
     pub fn kernel_label(&self) -> &'static str {
         self.kernel.hasher.isa_label()
@@ -115,9 +128,12 @@ struct PowKernel {
 
 impl PowKernel {
     fn new(memory_kib: u32, retained_limit: usize) -> Self {
+        let hasher = host_kernel()
+            .and_then(|kernel| FixedArgon2id::with_kernel(memory_kib, kernel).ok())
+            .unwrap_or_else(|| FixedArgon2id::new(memory_kib));
         Self {
             memory_kib,
-            hasher: FixedArgon2id::new(memory_kib),
+            hasher,
             arenas: PowArenaPool::new(retained_limit),
         }
     }
@@ -135,6 +151,43 @@ impl PowKernel {
             .map_err(|err| anyhow!("argon2 hash failure: {err:?}"))?;
         Ok(output)
     }
+}
+
+/// Compression path override for this host, or `None` for the kernel crate's
+/// default dispatch. AMD Zen 4/Zen 5 (family 19h/1Ah) with AVX-512 use the
+/// streaming kernel Seine mines with on that cohort: it measured 38-46% faster
+/// than every uniform kernel on a Ryzen 9950X3D at 8 and 16 concurrent hashes,
+/// the verifier's regime. The ISA support check stays mandatory.
+fn host_kernel() -> Option<CpuKernel> {
+    let (vendor, family) = cpu_vendor_family()?;
+    let zen4_or_zen5 = vendor == *b"AuthenticAMD" && matches!(family, 0x19 | 0x1a);
+    (zen4_or_zen5 && CpuKernel::Avx512256Stream.is_supported())
+        .then_some(CpuKernel::Avx512256Stream)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn cpu_vendor_family() -> Option<([u8; 12], u32)> {
+    use std::arch::x86_64::__cpuid;
+    // Safety: CPUID leaves 0 and 1 exist on every x86_64 processor. Newer
+    // toolchains made `__cpuid` safe; older ones still require the block.
+    #[allow(unused_unsafe)]
+    let (leaf0, leaf1) = unsafe { (__cpuid(0), __cpuid(1)) };
+    let mut vendor = [0u8; 12];
+    vendor[..4].copy_from_slice(&leaf0.ebx.to_le_bytes());
+    vendor[4..8].copy_from_slice(&leaf0.edx.to_le_bytes());
+    vendor[8..].copy_from_slice(&leaf0.ecx.to_le_bytes());
+    let base_family = (leaf1.eax >> 8) & 0xf;
+    let family = if base_family == 0xf {
+        base_family + ((leaf1.eax >> 20) & 0xff)
+    } else {
+        base_family
+    };
+    Some((vendor, family))
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn cpu_vendor_family() -> Option<([u8; 12], u32)> {
+    None
 }
 
 struct PowArenaPool {
