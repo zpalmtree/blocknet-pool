@@ -2670,6 +2670,10 @@ fn render_validation_metrics(out: &mut String, validation: &ValidationSnapshot) 
             validation.probation_queue_depth as u64,
         ),
         (
+            "blocknet_pool_monitor_validation_sync_queue_depth",
+            validation.sync_queue_depth as u64,
+        ),
+        (
             "blocknet_pool_monitor_validation_regular_oldest_age_millis",
             validation.regular_oldest_age_millis.unwrap_or(0),
         ),

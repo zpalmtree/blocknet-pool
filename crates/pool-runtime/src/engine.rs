@@ -5876,7 +5876,7 @@ mod tests {
         let first = spawn_submit(10);
         wait_for("verifier busy", &|snap| snap.in_flight == 1);
         let second = spawn_submit(11);
-        wait_for("queue slot taken", &|snap| snap.regular_queue_depth == 1);
+        wait_for("queue slot taken", &|snap| snap.sync_queue_depth == 1);
         let background = vec![first, second];
         let err = engine
             .submit("conn1", "job1".to_string(), 99, Some("ff".repeat(32)))

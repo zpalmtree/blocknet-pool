@@ -510,6 +510,8 @@ pub struct ValidationSnapshot {
     #[serde(default)]
     pub overload_transitions_total: u64,
     #[serde(default)]
+    pub sync_queue_depth: usize,
+    #[serde(default)]
     pub arena: Option<PowArenaPoolStats>,
 }
 
@@ -620,6 +622,7 @@ struct ValidationInner {
     last_clear_sync_at: Mutex<Option<Instant>>,
     last_clear_event_id: Mutex<i64>,
     candidate_queue: QueueTracker,
+    sync_queue: QueueTracker,
     regular_queue: QueueTracker,
     audit_queue: QueueTracker,
     audit_pending_shares: Mutex<HashSet<i64>>,
@@ -659,7 +662,9 @@ struct ProbationState {
 pub(crate) struct ValidationEngine {
     inner: Arc<ValidationInner>,
     candidate_tx: flume::Sender<QueuedTask>,
-    regular_tx: flume::Sender<RegularWorkItem>,
+    /// Synchronous verifies hold a miner's answer, so regular verifiers take
+    /// them ahead of queued live audits.
+    sync_tx: flume::Sender<QueuedTask>,
     shutdown: Arc<AtomicBool>,
     maintenance_worker: Option<thread::JoinHandle<()>>,
     candidate_workers: Vec<thread::JoinHandle<()>>,
@@ -687,6 +692,7 @@ impl ValidationEngine {
 
         let (candidate_tx, candidate_rx) = flume::bounded::<QueuedTask>(candidate_queue_size);
         let (regular_tx, regular_rx) = flume::bounded::<RegularWorkItem>(regular_queue_size);
+        let (sync_tx, sync_rx) = flume::bounded::<QueuedTask>(regular_queue_size.max(1));
         let (audit_tx, audit_rx) = flume::bounded::<QueuedAuditTask>(audit_queue_size);
         let (probation_tx, probation_rx) =
             flume::bounded::<QueuedProbationTask>(PROBATION_QUEUE_SIZE);
@@ -719,6 +725,7 @@ impl ValidationEngine {
             last_clear_sync_at: Mutex::new(None),
             last_clear_event_id: Mutex::new(initial_clear_event_id),
             candidate_queue: QueueTracker::new(512),
+            sync_queue: QueueTracker::new(512),
             regular_queue: QueueTracker::new(512),
             audit_queue: QueueTracker::new(512),
             audit_pending_shares: Mutex::new(HashSet::new()),
@@ -757,13 +764,24 @@ impl ValidationEngine {
         for _ in 0..regular_workers {
             let inner_cloned = Arc::clone(&inner);
             let regular_rx = regular_rx.clone();
+            let sync_rx = sync_rx.clone();
             let shutdown = Arc::clone(&shutdown);
             regular_handles.push(thread::spawn(move || {
                 while !shutdown.load(Ordering::Relaxed) {
-                    match regular_rx.recv_timeout(Duration::from_millis(25)) {
-                        Ok(queued) => inner_cloned.process_regular_work(queued),
-                        Err(flume::RecvTimeoutError::Timeout) => continue,
-                        Err(flume::RecvTimeoutError::Disconnected) => break,
+                    // A queued synchronous verify is a miner waiting for its
+                    // answer (with a timeout); live audits are not.
+                    if let Ok(queued) = sync_rx.try_recv() {
+                        inner_cloned.process(queued, false);
+                        continue;
+                    }
+                    let next = flume::Selector::new()
+                        .recv(&sync_rx, |item| item.map(RegularWorkItem::Sync))
+                        .recv(&regular_rx, |item| item)
+                        .wait_timeout(Duration::from_millis(25));
+                    match next {
+                        Ok(Ok(queued)) => inner_cloned.process_regular_work(queued),
+                        Ok(Err(_)) => break,
+                        Err(_) => continue,
                     }
                 }
             }));
@@ -834,7 +852,7 @@ impl ValidationEngine {
         Self {
             inner,
             candidate_tx,
-            regular_tx,
+            sync_tx,
             shutdown,
             maintenance_worker,
             candidate_workers: candidate_handles,
@@ -857,7 +875,7 @@ impl ValidationEngine {
         let tracker_id = if candidate {
             self.inner.candidate_queue.push(queued_at)
         } else {
-            self.inner.regular_queue.push(queued_at)
+            self.inner.sync_queue.push(queued_at)
         };
 
         if candidate {
@@ -872,13 +890,13 @@ impl ValidationEngine {
                 }
             }
         } else {
-            match self.regular_tx.try_send(RegularWorkItem::Sync(queued)) {
+            match self.sync_tx.try_send(queued) {
                 Ok(()) => {
                     self.inner.evaluate_overload(Instant::now());
                     Some(rx)
                 }
                 Err(flume::TrySendError::Full(_)) | Err(flume::TrySendError::Disconnected(_)) => {
-                    self.inner.regular_queue.remove(tracker_id);
+                    self.inner.sync_queue.remove(tracker_id);
                     None
                 }
             }
@@ -1001,6 +1019,7 @@ impl ValidationEngine {
         let inner = &self.inner;
         let queue_waits = [
             ("candidate", &inner.candidate_queue),
+            ("sync", &inner.sync_queue),
             ("regular", &inner.regular_queue),
             ("audit", &inner.audit_queue),
             ("probation", &inner.probation_queue),
@@ -1119,7 +1138,7 @@ impl ValidationInner {
         if candidate_lane {
             self.candidate_queue.pop_and_record_wait(started_at);
         } else {
-            self.regular_queue.pop_and_record_wait(started_at);
+            self.sync_queue.pop_and_record_wait(started_at);
         }
         self.in_flight.fetch_add(1, Ordering::Relaxed);
         let prepared = self.prepare_task(&queued.task.address);
@@ -1651,6 +1670,7 @@ impl ValidationInner {
             probation_enqueued: self.probation_enqueued.load(Ordering::Relaxed),
             probation_rejected: self.probation_rejected.load(Ordering::Relaxed),
             arena: self.hasher.arena_pool_stats(),
+            sync_queue_depth: self.sync_queue.snapshot(now_instant).depth,
             ..ValidationSnapshot::default()
         };
         {
@@ -2146,8 +2166,13 @@ impl ValidationInner {
             return false;
         }
         let candidate = self.candidate_queue.snapshot(now);
+        let sync = self.sync_queue.snapshot(now);
         let regular = self.regular_queue.snapshot(now);
-        if candidate.depth > 0 || regular.depth > 0 || self.in_flight.load(Ordering::Relaxed) > 0 {
+        if candidate.depth > 0
+            || sync.depth > 0
+            || regular.depth > 0
+            || self.in_flight.load(Ordering::Relaxed) > 0
+        {
             return false;
         }
         self.submit_regular_queue
@@ -2959,6 +2984,61 @@ mod tests {
             network_target: [0x00; 32],
             created_at: SystemTime::now(),
         }
+    }
+
+    #[test]
+    fn sync_verify_is_served_before_queued_live_audits() {
+        struct SlowDeterministicHasher;
+        impl PowHasher for SlowDeterministicHasher {
+            fn hash(&self, header_base: &[u8], nonce: u64) -> anyhow::Result<[u8; 32]> {
+                std::thread::sleep(Duration::from_millis(50));
+                DeterministicTestHasher.hash(header_base, nonce)
+            }
+        }
+        let cfg = Config {
+            regular_verifiers: 1,
+            audit_verifiers: 1,
+            regular_validation_queue: 64,
+            ..test_cfg()
+        };
+        let engine = ValidationEngine::new(cfg, Arc::new(SlowDeterministicHasher));
+        for idx in 0..20u64 {
+            engine.inner.enqueue_live_audit(
+                probation_share(idx as i64 + 1, &format!("audited-{idx}"), idx),
+                ValidationAuditSource::ProvisionalBacklog,
+            );
+        }
+        assert!(engine.snapshot().regular_queue_depth >= 18);
+
+        let header_base = vec![9, 9, 9];
+        let started = Instant::now();
+        let rx = engine
+            .submit(
+                ValidationTask {
+                    address: "held-miner".to_string(),
+                    nonce: 77,
+                    difficulty: 1,
+                    claimed_hash: Some(DeterministicTestHasher.hash(&header_base, 77).unwrap()),
+                    header_base,
+                    share_target: [0xff; 32],
+                    network_target: [0x00; 32],
+                    candidate_claim: false,
+                    force_full_verify: true,
+                    attributed: false,
+                    count_invalid_at_address: true,
+                },
+                false,
+            )
+            .expect("sync lane has room");
+        let result = rx.recv_timeout(Duration::from_secs(5)).expect("answered");
+        assert!(result.accepted && result.verified);
+        // At most the in-flight audit plus the sync hash, not the 20 queued.
+        assert!(
+            started.elapsed() < Duration::from_millis(400),
+            "sync verify waited {:?} behind live audits",
+            started.elapsed()
+        );
+        assert!(engine.snapshot().regular_queue_depth >= 15);
     }
 
     #[test]
