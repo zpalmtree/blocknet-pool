@@ -328,6 +328,7 @@ fn sort_workers_for_miner(
 
 #[derive(Clone)]
 pub(crate) struct ApiState {
+    miner_release: crate::miner_release::MinerRelease,
     site_metrics: Arc<crate::site_metrics::SiteMetrics>,
     config: Config,
     store: Arc<PoolStore>,
@@ -1076,11 +1077,10 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
     });
     // Peer addresses let the client-IP policy distinguish our proxy from
     // direct callers whose forwarding headers must not be trusted.
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await?;
+    tokio::select! {
+        result = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()) => { result?; }
+        _ = state.miner_release.refresh_forever() => {}
+    }
     Ok(())
 }
 
@@ -4304,6 +4304,7 @@ impl ApiState {
             recovery: Arc::new(RecoveryAgentClient::new(
                 config.recovery.socket_path.clone(),
             )),
+            miner_release: crate::miner_release::MinerRelease::new(&config.latest_miner_version),
             config,
             store,
             jobs,
@@ -5229,7 +5230,7 @@ impl ApiState {
             HASHRATE_WINDOW,
         );
 
-        let latest_miner_version = self.config.latest_miner_version.clone();
+        let latest_miner_version = self.miner_release.version();
         let worker_versions: HashMap<String, (String, Option<String>)> = worker_versions_raw
             .into_iter()
             .map(|(worker, version, backend)| (worker, (version, backend)))

@@ -21,11 +21,11 @@ const statuses: WorkerVersionStatus[] = state === 'mixed' ? ['outdated', 'outdat
   : state === 'no-workers' ? [] : ['outdated'];
 const miner: MinerResponse = {
   hashrate: 1250, mining_since: null, blocks_found: 3, total_accepted: 12840, total_rejected: 2,
-  latest_miner_version: state === 'no-version' ? '  ' : state === 'long-version' ? '0.2.23-preview.20261025-experimental' : '0.2.23',
+  latest_miner_version: state === 'no-version' ? '  ' : state === 'long-version' ? '0.2.38-preview.20261025-experimental' : '0.2.38',
   workers: statuses.map((version_status, i) => ({
     worker: `demo-rig-${i + 1}`, version_status, hashrate: 1250, accepted: 12840, rejected: 2,
     last_share_at: null,
-    miner_version: version_status === 'unknown' ? null : version_status === 'current' ? '0.2.23' : '0.2.22',
+    miner_version: version_status === 'unknown' ? null : version_status === 'current' ? '0.2.38' : '0.2.37',
     backend: 'cuda',
   })),
   shares: [], payouts: [], verification_hold: null,

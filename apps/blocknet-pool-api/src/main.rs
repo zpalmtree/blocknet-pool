@@ -6,6 +6,7 @@ mod api;
 mod background_read;
 mod blog;
 mod config;
+mod miner_release;
 mod protect;
 mod runtime;
 mod site_metrics;

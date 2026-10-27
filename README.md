@@ -357,3 +357,7 @@ At minimum:
 ## Notes
 
 - This repository no longer uses Go; runtime is Rust-only.
+
+### Miner release notices
+
+The API checks the latest stable release of `zpalmtree/seine` on GitHub at startup and every 15 minutes. Miner requests use the cached version, so GitHub latency never delays a lookup. Failed checks retry after one minute and keep the last successful version in memory. On a fresh start, update notices stay hidden until a check succeeds. The optional `latest_miner_version` config field supplies a startup fallback; leave it empty for automatic discovery without a fixed fallback. Drafts, prereleases, malformed tags and failed HTTP responses cannot replace the cached release. Existing miner response caches may take another 10 seconds to expire after an update.

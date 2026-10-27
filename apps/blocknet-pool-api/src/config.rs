@@ -28,8 +28,8 @@ pub(crate) struct Config {
     /// unauthenticated requests. 0 disables. Admin and background work keep
     /// the server default.
     pub(crate) api_public_db_statement_timeout_ms: u64,
-    /// Latest released miner version, surfaced to the UI so it can nudge
-    /// workers reporting an older (or no) version. Bumped per seine release.
+    /// Optional startup fallback until GitHub supplies the latest stable seine
+    /// release. Empty hides update notices until the first successful check.
     pub(crate) latest_miner_version: String,
     pub(crate) recovery: RecoveryConfig,
 }
@@ -47,7 +47,7 @@ impl Default for Config {
             api_client_ip_header: crate::protect::DEFAULT_CLIENT_IP_HEADER.to_string(),
             api_trusted_proxies: Vec::new(),
             api_public_db_statement_timeout_ms: 15_000,
-            latest_miner_version: "0.2.15".to_string(),
+            latest_miner_version: String::new(),
             recovery: RecoveryConfig::default(),
         }
     }
@@ -103,6 +103,7 @@ mod tests {
         assert_eq!(cfg.runtime.pool_name, "flat");
         assert_eq!(cfg.runtime.stratum_port, 4444);
         assert_eq!(cfg.api_port, 1234);
+        assert!(cfg.latest_miner_version.is_empty());
     }
 
     #[test]

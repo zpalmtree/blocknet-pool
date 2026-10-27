@@ -164,6 +164,7 @@ dependencies = [
  "pool-common",
  "pool-recovery",
  "pool-runtime",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",

@@ -65,7 +65,7 @@
   "share_async_commit": false,
   "api_key": "replace-with-a-long-random-secret",
   "monitor_ingest_secret": "replace-with-a-long-random-secret",
-  "latest_miner_version": "0.2.23",
+  "latest_miner_version": "",
   "recovery": {
     "enabled": true,
     "socket_path": "/run/blocknet-recoveryd.sock",
