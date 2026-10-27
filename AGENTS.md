@@ -28,6 +28,7 @@
   - Restarting `blocknet-pool-api.service` for API/UI-only changes should not disconnect miners from Stratum.
   - `blocknet-pool-stratum.service` owns Stratum, payouts, recovery, retention, and live runtime snapshot persistence.
   - Restarting `blocknet-pool-stratum.service` disconnects miners; avoid it unless Stratum-side code, config, or runtime behavior changed.
+  - Once a host is migrated to the Stratum gateway (`STRATUM_GATEWAY.md`, `scripts/migrate_bntpool_to_gateway.sh`), miners connect to `blocknet-pool-gateway.service` and Stratum runs as `blocknet-pool-stratum@a`/`@b`: `deploy_bntpool.sh --stratum-only` hands miners to the new engine without disconnecting them, and validation/vardiff settings apply with `systemctl reload blocknet-pool-stratum@<active>`. Restarting the gateway (`--restart-gateway`) is what disconnects miners there.
   - `blocknet-pool-monitor.service` samples API/Stratum/DB/daemon health, persists monitor heartbeats/incidents, and exposes Prometheus metrics.
 - The frontend UI is embedded in the Rust API binary. UI-only changes still require rebuilding and redeploying `blocknet-pool-api`.
 - The deploy script builds `blocknet-pool-api`, `blocknet-pool-stratum`, and `blocknet-pool-monitor` locally, uploads the binaries, and only restarts the service whose binary changed, unless forced.

@@ -69,6 +69,28 @@ are disconnected only if no engine appears within `engine_absent_timeout`.
 
 ## Gateway upgrades
 
-These are rare. The gateway binds with `SO_REUSEPORT`; a new gateway
-starts beside the old one, and the old one stops accepting and closes its
-miners gradually, so each miner reconnects once, without a storm.
+These are rare, because the gateway only relays lines. Today a gateway
+restart (`scripts/deploy_bntpool.sh --stratum-only --restart-gateway`)
+disconnects every miner once, like a Stratum restart used to. A staggered
+drain (a new gateway beside the old one with `SO_REUSEPORT`, the old one
+closing miners gradually) is a planned follow-up.
+
+## Operations
+
+- **Deploy Stratum**: `scripts/deploy_bntpool.sh --stratum-only`. In gateway
+  mode it starts the idle instance (`blocknet-pool-stratum@a` or `@b`) on
+  the new binary, waits for the gateway to retire the old one (it exits 0),
+  and moves the enable to the new instance. If the handover stalls for 10
+  minutes, both engines keep running and the deploy fails with the gateway's
+  metrics.
+- **Change validation or vardiff settings**: edit config.json, then
+  `sudo systemctl reload blocknet-pool-stratum@<active>` (SIGHUP; see
+  `Config::with_hot_settings_from`). No engine restart is needed.
+- **Migrate a host** (once): `scripts/deploy_bntpool.sh --stratum-only
+  --no-restart`, then `scripts/migrate_bntpool_to_gateway.sh`. Miners
+  reconnect once. `scripts/migrate_bntpool_to_gateway.sh --rollback` returns
+  to the single Stratum service.
+- **Monitoring**: `127.0.0.1:24786/metrics` (`blocknet_pool_gateway_*`):
+  miners, miners without an engine, engines, migrations, replay failures,
+  busy replies, retires. Alerts: `BlocknetPoolGatewayNoEngine`,
+  `BlocknetPoolGatewayMinersWithoutEngine`, `BlocknetPoolGatewayReplayFailures`.

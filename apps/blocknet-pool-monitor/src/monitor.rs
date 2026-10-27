@@ -1810,6 +1810,7 @@ fn collect_process_metrics() -> BTreeMap<String, ProcessMetrics> {
     [
         ("api", "blocknet-pool-api"),
         ("stratum", "blocknet-pool-stratum"),
+        ("gateway", "blocknet-pool-gateway"),
         ("monitor", "blocknet-pool-monitor"),
         ("recoveryd", "blocknet-pool-recoveryd"),
     ]

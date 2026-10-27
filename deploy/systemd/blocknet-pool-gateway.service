@@ -1,0 +1,29 @@
+[Unit]
+Description=Blocknet Pool Stratum Gateway
+Documentation=file:///opt/blocknet/blocknet-pool/STRATUM_GATEWAY.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=blocknet
+Group=blocknet
+WorkingDirectory=/opt/blocknet/blocknet-pool
+# Owns port 3333 and every miner connection; Stratum engines connect to its
+# socket under /run/blocknet-pool. Restarting it disconnects miners, so it
+# is only restarted for gateway changes.
+ExecStart=/opt/blocknet/blocknet-pool/target/release/blocknet-pool-gateway --config /etc/blocknet/pool/config.json
+Restart=always
+RestartSec=2
+LimitNOFILE=65535
+RuntimeDirectory=blocknet-pool
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+InaccessiblePaths=-/var/lib/blocknet/wallet.dat -/var/lib/blocknet-standby/wallet.dat -/etc/blocknet/recovery -/etc/blocknet/pool/.env
+
+[Install]
+WantedBy=multi-user.target

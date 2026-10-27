@@ -6,7 +6,15 @@ usage() {
 Deploy blocknet-pool to the current primary pool host.
 
 Usage:
-  scripts/deploy_bntpool.sh [--skip-build] [--skip-ui-build] [--api-only] [--stratum-only] [--provision-monitoring] [--provision-recovery] [--deploy-cloudflare] [--monitor-only] [--recovery-only]
+  scripts/deploy_bntpool.sh [--skip-build] [--skip-ui-build] [--api-only] [--stratum-only] [--provision-monitoring] [--provision-recovery] [--deploy-cloudflare] [--monitor-only] [--recovery-only] [--restart-gateway] [--no-restart]
+
+--no-restart uploads binaries and installs units without restarting any
+service (used before migrate_bntpool_to_gateway.sh).
+
+With the Stratum gateway enabled on the host (STRATUM_GATEWAY.md), a Stratum
+deploy hands miners over to a new engine instance instead of restarting:
+miners stay connected. The gateway itself is only restarted with
+--restart-gateway, which disconnects every miner once.
 
 Environment overrides:
   BNTPOOL_HOST             SSH host alias (default: bntpool)
@@ -34,6 +42,8 @@ provision_recovery=0
 deploy_cloudflare=0
 monitor_only=0
 recovery_only=0
+restart_gateway=0
+no_restart=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-build)
@@ -50,6 +60,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --stratum-only)
       stratum_only=1
+      shift
+      ;;
+    --restart-gateway)
+      restart_gateway=1
+      shift
+      ;;
+    --no-restart)
+      no_restart=1
       shift
       ;;
     --provision-monitoring)
@@ -113,6 +131,8 @@ local_build_image="${BNTPOOL_LOCAL_BUILD_IMAGE:-}"
 skip_verify="${BNTPOOL_SKIP_VERIFY:-0}"
 remote_api_bin="${remote_dir}/target/release/blocknet-pool-api"
 remote_stratum_bin="${remote_dir}/target/release/blocknet-pool-stratum"
+remote_gateway_bin="${remote_dir}/target/release/blocknet-pool-gateway"
+gateway_service="blocknet-pool-gateway.service"
 remote_monitor_bin="${remote_dir}/target/release/blocknet-pool-monitor"
 remote_recovery_bin="${remote_dir}/target/release/blocknet-pool-recoveryd"
 remote_deploy_info="${remote_dir}/deploy-info.txt"
@@ -125,6 +145,7 @@ host_uid="$(id -u)"
 host_gid="$(id -g)"
 local_api_bin="${repo_dir}/target/release/blocknet-pool-api"
 local_stratum_bin="${repo_dir}/target/release/blocknet-pool-stratum"
+local_gateway_bin="${repo_dir}/target/release/blocknet-pool-gateway"
 local_monitor_bin="${repo_dir}/target/release/blocknet-pool-monitor"
 local_recovery_bin="${repo_dir}/target/release/blocknet-pool-recoveryd"
 deploy_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -220,6 +241,40 @@ wait_remote_service_active() {
     exit 1"
 }
 
+# Prints the active Stratum engine unit in gateway mode.
+active_stratum_engine() {
+  ssh "${host}" "for i in a b; do \
+      if systemctl is-active --quiet blocknet-pool-stratum@\$i.service; then echo blocknet-pool-stratum@\$i.service; exit 0; fi; \
+    done; echo 'no active Stratum engine' >&2; exit 1"
+}
+
+# Starts the inactive engine instance on the new binary; the gateway makes
+# it primary, moves every miner to it and retires the old instance, which
+# exits 0. Prints the new engine's unit. Never stops the old engine itself:
+# if the handover stalls, both keep running and the deploy fails loudly.
+handover_stratum_engine() {
+  ssh "${host}" "set -euo pipefail; \
+    old=''; for i in a b; do systemctl is-active --quiet blocknet-pool-stratum@\$i.service && old=\$i; done; \
+    if [[ \$old == a ]]; then new=b; else new=a; fi; \
+    echo \"==> starting blocknet-pool-stratum@\$new; the gateway hands miners over from \${old:-none}\" >&2; \
+    sudo systemctl start blocknet-pool-stratum@\$new.service; \
+    for _ in \$(seq 1 30); do systemctl is-active --quiet blocknet-pool-stratum@\$new.service && break; sleep 1; done; \
+    systemctl is-active --quiet blocknet-pool-stratum@\$new.service || { echo \"blocknet-pool-stratum@\$new failed to start; miners stay on \$old\" >&2; sudo journalctl -u blocknet-pool-stratum@\$new.service --no-pager -n 40 >&2; exit 1; }; \
+    if [[ -n \$old ]]; then \
+      for _ in \$(seq 1 600); do systemctl is-active --quiet blocknet-pool-stratum@\$old.service || break; sleep 1; done; \
+      if systemctl is-active --quiet blocknet-pool-stratum@\$old.service; then \
+        echo \"handover stalled: blocknet-pool-stratum@\$old still active after 10 min; both engines left running\" >&2; \
+        curl -s 127.0.0.1:24786/metrics >&2 || true; exit 1; \
+      fi; \
+      result=\$(systemctl show -p Result --value blocknet-pool-stratum@\$old.service); \
+      echo \"==> blocknet-pool-stratum@\$old retired (result=\$result)\" >&2; \
+      sudo systemctl disable --quiet blocknet-pool-stratum@\$old.service; \
+    fi; \
+    sudo systemctl enable --quiet blocknet-pool-stratum@\$new.service; \
+    curl -s 127.0.0.1:24786/metrics | grep -E 'gateway_(miners|engines|migrations_total|replay_failures_total|busy_replies_total)' >&2 || true; \
+    echo blocknet-pool-stratum@\$new.service"
+}
+
 remote_build_release() {
   local build_cmd
   build_cmd=""
@@ -228,6 +283,7 @@ remote_build_release() {
   fi
   if [[ "${deploy_stratum}" == "1" ]]; then
     build_cmd+="cargo build --release -p blocknet-pool-stratum-app --bin blocknet-pool-stratum; "
+    build_cmd+="cargo build --release -p blocknet-pool-gateway-app --bin blocknet-pool-gateway; "
   fi
   if [[ "${deploy_monitor}" == "1" ]]; then
     build_cmd+="cargo build --release -p blocknet-pool-monitor-app --bin blocknet-pool-monitor; "
@@ -261,6 +317,7 @@ verify_deploy_binaries() {
   fi
   if [[ "${deploy_stratum}" == "1" ]]; then
     verify_remote_binary "blocknet-pool-stratum" "${remote_stratum_bin}"
+    verify_remote_binary "blocknet-pool-gateway" "${remote_gateway_bin}"
   fi
   if [[ "${deploy_monitor}" == "1" ]]; then
     verify_remote_binary "blocknet-pool-monitor" "${remote_monitor_bin}"
@@ -306,6 +363,7 @@ build_locally() {
     fi
     if [[ "${deploy_stratum}" == "1" ]]; then
       build_cmd+="cargo build --release -p blocknet-pool-stratum-app --bin blocknet-pool-stratum; "
+      build_cmd+="cargo build --release -p blocknet-pool-gateway-app --bin blocknet-pool-gateway; "
     fi
     if [[ "${deploy_monitor}" == "1" ]]; then
       build_cmd+="cargo build --release -p blocknet-pool-monitor-app --bin blocknet-pool-monitor; "
@@ -330,6 +388,7 @@ build_locally() {
     fi
     if [[ "${deploy_stratum}" == "1" ]]; then
       cargo build --release -p blocknet-pool-stratum-app --bin blocknet-pool-stratum
+      cargo build --release -p blocknet-pool-gateway-app --bin blocknet-pool-gateway
     fi
     if [[ "${deploy_monitor}" == "1" ]]; then
       cargo build --release -p blocknet-pool-monitor-app --bin blocknet-pool-monitor
@@ -369,9 +428,18 @@ if [[ "${remote_build}" == "1" && "${deploy_api}" == "1" ]]; then
     "${repo_dir}/frontend/dist/" "${host}:${remote_dir}/frontend/dist/"
 fi
 
+# Gateway mode: Stratum engines run as blocknet-pool-stratum@{a,b} behind
+# blocknet-pool-gateway, which owns the miners' connections.
+gateway_mode=0
+if [[ "$(ssh "${host}" "systemctl is-enabled ${gateway_service} 2>/dev/null || true")" == "enabled" ]]; then
+  gateway_mode=1
+  echo "==> Stratum gateway enabled on ${host}: engines are handed over, not restarted"
+fi
+
 echo "==> reading current remote binary hashes"
 before_api_hash="__skipped__"
 before_stratum_hash="__skipped__"
+before_gateway_hash="__skipped__"
 before_monitor_hash="__skipped__"
 before_recovery_hash="__skipped__"
 if [[ "${deploy_api}" == "1" ]]; then
@@ -379,6 +447,7 @@ if [[ "${deploy_api}" == "1" ]]; then
 fi
 if [[ "${deploy_stratum}" == "1" ]]; then
   before_stratum_hash="$(remote_hash "${remote_stratum_bin}")"
+  before_gateway_hash="$(remote_hash "${remote_gateway_bin}")"
 fi
 if [[ "${deploy_monitor}" == "1" ]]; then
   before_monitor_hash="$(remote_hash "${remote_monitor_bin}")"
@@ -401,7 +470,7 @@ if [[ "${skip_build}" -eq 0 ]]; then
       rsync_args+=( "${local_api_bin}" )
     fi
     if [[ "${deploy_stratum}" == "1" ]]; then
-      rsync_args+=( "${local_stratum_bin}" )
+      rsync_args+=( "${local_stratum_bin}" "${local_gateway_bin}" )
     fi
     if [[ "${deploy_monitor}" == "1" ]]; then
       rsync_args+=( "${local_monitor_bin}" )
@@ -417,7 +486,7 @@ if [[ "${skip_build}" -eq 0 ]]; then
     chmod_cmd+="chmod 755 '${remote_api_bin}'; "
   fi
   if [[ "${deploy_stratum}" == "1" ]]; then
-    chmod_cmd+="chmod 755 '${remote_stratum_bin}'; "
+    chmod_cmd+="chmod 755 '${remote_stratum_bin}' '${remote_gateway_bin}'; "
   fi
   if [[ "${deploy_monitor}" == "1" ]]; then
     chmod_cmd+="chmod 755 '${remote_monitor_bin}'; "
@@ -439,6 +508,7 @@ ssh "${host}" "set -euo pipefail; \
 echo "==> reading updated remote binary hashes"
 after_api_hash="$(remote_hash "${remote_api_bin}")"
 after_stratum_hash="$(remote_hash "${remote_stratum_bin}")"
+after_gateway_hash="$(remote_hash "${remote_gateway_bin}")"
 after_monitor_hash="$(remote_hash "${remote_monitor_bin}")"
 after_recovery_hash="$(remote_hash "${remote_recovery_bin}")"
 
@@ -454,7 +524,12 @@ if [[ "${deploy_api}" == "1" ]]; then
   systemd_cmd+="sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-api.service' '/etc/systemd/system/${api_service}'; "
 fi
 if [[ "${deploy_stratum}" == "1" ]]; then
-  systemd_cmd+="sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-stratum.service' '/etc/systemd/system/${stratum_service}'; "
+  if [[ "${gateway_mode}" == "1" ]]; then
+    systemd_cmd+="sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-stratum@.service' '/etc/systemd/system/blocknet-pool-stratum@.service'; "
+    systemd_cmd+="sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-gateway.service' '/etc/systemd/system/${gateway_service}'; "
+  else
+    systemd_cmd+="sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-stratum.service' '/etc/systemd/system/${stratum_service}'; "
+  fi
 fi
 if [[ "${deploy_monitor}" == "1" ]]; then
   systemd_cmd+="sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-monitor.service' '/etc/systemd/system/${monitor_service}'; "
@@ -497,6 +572,14 @@ fi
 if [[ "${deploy_recovery}" == "1" && ("${force_restart}" == "1" || "${before_recovery_hash}" != "${after_recovery_hash}" || "${provision_recovery}" == "1") ]]; then
   restart_recovery=1
 fi
+if [[ "${no_restart}" == "1" ]]; then
+  echo "==> --no-restart: services keep running their current binaries"
+  restart_api=0
+  restart_stratum=0
+  restart_monitor=0
+  restart_recovery=0
+  restart_gateway=0
+fi
 
 if [[ "${restart_api}" == "1" ]]; then
   echo "==> restarting ${api_service}"
@@ -507,7 +590,24 @@ else
   wait_remote_service_active "${api_service}"
 fi
 
-if [[ "${restart_stratum}" == "1" ]]; then
+if [[ "${gateway_mode}" == "1" ]]; then
+  if [[ "${deploy_stratum}" == "1" && "${before_gateway_hash}" != "${after_gateway_hash}" ]]; then
+    if [[ "${restart_gateway}" == "1" ]]; then
+      echo "==> restarting ${gateway_service} (disconnects every miner once)"
+      ssh "${host}" "set -euo pipefail; sudo systemctl restart '${gateway_service}'"
+      wait_remote_service_active "${gateway_service}"
+    else
+      echo "==> note: the gateway binary changed; it keeps running the previous build until a deploy with --restart-gateway"
+    fi
+  fi
+  if [[ "${restart_stratum}" == "1" ]]; then
+    stratum_service="$(handover_stratum_engine)"
+  else
+    stratum_service="$(active_stratum_engine)"
+    echo "==> ${stratum_service} unchanged; leaving it running"
+  fi
+  wait_remote_service_active "${stratum_service}"
+elif [[ "${restart_stratum}" == "1" ]]; then
   echo "==> restarting ${stratum_service}"
   ssh "${host}" "set -euo pipefail; sudo systemctl restart '${stratum_service}'"
   wait_remote_service_active "${stratum_service}"

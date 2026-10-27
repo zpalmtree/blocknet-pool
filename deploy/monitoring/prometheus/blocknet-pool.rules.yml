@@ -31,6 +31,36 @@ groups:
           summary: Pool stratum is down
           description: The on-host monitor cannot reach the Stratum listener.
 
+      - alert: BlocknetPoolGatewayNoEngine
+        expr: blocknet_pool_gateway_engines == 0
+        for: 1m
+        labels:
+          severity: critical
+          visibility: private
+        annotations:
+          summary: No Stratum engine behind the gateway
+          description: Miners are held and told to retry; they are disconnected after two minutes without an engine.
+
+      - alert: BlocknetPoolGatewayMinersWithoutEngine
+        expr: blocknet_pool_gateway_miners_without_engine > 0
+        for: 3m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Miners stuck without a Stratum engine
+          description: Some miners have not been moved to an engine; check replay failures and the engine logs.
+
+      - alert: BlocknetPoolGatewayReplayFailures
+        expr: increase(blocknet_pool_gateway_replay_failures_total[10m]) > 10
+        for: 0m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Engine handover is rejecting replayed logins
+          description: Miners stay on the old engine and the deploy will stall; check the new engine's login rejections.
+
       - alert: BlocknetPoolDatabaseDown
         expr: blocknet_pool_monitor_db_up == 0
         for: 20s

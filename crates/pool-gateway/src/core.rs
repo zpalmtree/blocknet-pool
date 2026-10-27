@@ -94,6 +94,9 @@ struct Miner {
     /// The miner's first login request, replayed on each new engine.
     login_line: Option<String>,
     login_id: Option<u64>,
+    /// The login arrived while no engine was available; it is forwarded,
+    /// unchanged, once one is.
+    login_held: bool,
     /// Some engine has accepted this miner's login.
     logged_in: bool,
     /// Engine receiving the miner's requests and whose jobs it works on.
@@ -176,6 +179,7 @@ impl Gateway {
             connected_at: now,
             login_line: None,
             login_id: None,
+            login_held: false,
             logged_in: false,
             current: None,
             opened: HashSet::new(),
@@ -251,6 +255,13 @@ impl Gateway {
         if !delivered {
             if miner.current.is_none() && miner.orphaned_since.is_none() {
                 miner.orphaned_since = Some(now);
+            }
+            if method == Some("login") && miner.current.is_none() {
+                // An engine is starting (deploy or restart): answer the login
+                // late rather than refuse it, which some miners treat as a
+                // reason to back off or fail over.
+                miner.login_held = true;
+                return;
             }
             if let Some(id) = id {
                 self.metrics.busy_replies.fetch_add(1, Ordering::Relaxed);
@@ -524,6 +535,26 @@ impl Gateway {
         for (conn, miner) in self.miners.iter_mut() {
             if self.migrate_credit < 1.0 {
                 break;
+            }
+            if miner.login_held && miner.current.is_none() {
+                let Some(login) = miner.login_line.clone() else {
+                    continue;
+                };
+                if !open_on(&self.engines, miner, *conn, primary) {
+                    break;
+                }
+                if self.engines[&primary]
+                    .tx
+                    .try_send(Frame::new(FrameKind::Line, *conn, login.into_bytes()))
+                    .is_err()
+                {
+                    break;
+                }
+                miner.login_held = false;
+                miner.current = Some(primary);
+                miner.orphaned_since = None;
+                self.migrate_credit -= 1.0;
+                continue;
             }
             if miner.current == Some(primary) || miner.replay.is_some() || !miner.logged_in {
                 continue;
@@ -934,6 +965,29 @@ mod tests {
         assert_eq!(miner.line(), job_line("j2"));
         h.miner_says(&miner, &submit_line(3, "j2"));
         assert_eq!(b.expect(FrameKind::Line, 7), submit_line(3, "j2"));
+    }
+
+    #[test]
+    fn logins_without_an_engine_are_held_until_one_starts() {
+        let mut h = Harness::new();
+        let mut miner = h.miner(7);
+        h.miner_says(&miner, LOGIN);
+        miner.assert_quiet();
+
+        let mut a = h.engine(1, 100);
+        h.advance(Duration::from_millis(100));
+        a.expect(FrameKind::Open, 7);
+        assert_eq!(
+            a.expect(FrameKind::Line, 7),
+            LOGIN,
+            "the original login, not a replay"
+        );
+        h.engine_says(&a, 7, r#"{"id":1,"status":"ok"}"#);
+        assert_eq!(miner.line(), r#"{"id":1,"status":"ok"}"#);
+        h.engine_says(&a, 7, &job_line("j1"));
+        assert_eq!(miner.line(), job_line("j1"));
+        h.miner_says(&miner, &submit_line(2, "j1"));
+        assert_eq!(a.expect(FrameKind::Line, 7), submit_line(2, "j1"));
     }
 
     #[test]

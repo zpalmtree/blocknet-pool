@@ -1,0 +1,36 @@
+[Unit]
+Description=Blocknet Pool Stratum engine %i (behind the gateway)
+Documentation=file:///opt/blocknet/blocknet-pool/STRATUM_GATEWAY.md
+After=network-online.target nginx.service postgresql.service blocknet-pool-recoveryd.socket blocknet-pool-gateway.service
+Wants=network-online.target nginx.service postgresql.service blocknet-pool-recoveryd.socket blocknet-pool-gateway.service
+
+[Service]
+Type=simple
+User=blocknet
+Group=blocknet
+WorkingDirectory=/opt/blocknet/blocknet-pool
+EnvironmentFile=/etc/blocknet/pool/.env
+# Instances (a, b) alternate on deploys: the new one connects to the gateway
+# and takes over; the old one is retired and exits 0, so it stays stopped.
+Environment=BLOCKNET_POOL_INSTANCE=%i
+Environment=BLOCKNET_POOL_FOUND_BLOCK_OUTBOX=/opt/blocknet/blocknet-pool/data/found-block-recovery-%i.jsonl
+Environment=BLOCKNET_POOL_FOUND_BLOCK_OUTBOX_PEERS=/opt/blocknet/blocknet-pool/data/found-block-recovery-a.jsonl,/opt/blocknet/blocknet-pool/data/found-block-recovery-b.jsonl,/opt/blocknet/blocknet-pool/data/found-block-recovery.jsonl
+ExecStartPre=/usr/bin/pg_isready -h 127.0.0.1 -p 5432 -t 5
+ExecStart=/opt/blocknet/blocknet-pool/target/release/blocknet-pool-stratum --config /etc/blocknet/pool/config.json
+# Applies hot settings (validation sampling, vardiff, overload ages) without
+# disconnecting miners; see Config::with_hot_settings_from.
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+# Waits for an in-flight payout pass before exiting (see StratumBackground).
+TimeoutStopSec=150
+LimitNOFILE=65535
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/blocknet-pool /opt/blocknet/blocknet-pool/data
+InaccessiblePaths=-/var/lib/blocknet/wallet.dat -/var/lib/blocknet-standby/wallet.dat -/etc/blocknet/recovery
+
+[Install]
+WantedBy=multi-user.target
