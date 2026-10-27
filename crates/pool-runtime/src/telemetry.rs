@@ -58,10 +58,11 @@ pub struct ApiPerformanceSnapshot {
 
 /// Inclusive upper bounds of the cumulative latency histogram buckets. Dense
 /// between 1 s and 4 s so a few-percent shift in Argon2 verify time is visible
-/// in `histogram_quantile`, and wide enough to keep queue-wait tails.
-pub const LATENCY_BUCKET_BOUNDS_MILLIS: [u64; 27] = [
+/// in `histogram_quantile`, and wide enough to keep audit-backlog waits,
+/// which run past a minute under overload.
+pub const LATENCY_BUCKET_BOUNDS_MILLIS: [u64; 29] = [
     1, 2, 5, 10, 25, 50, 100, 250, 500, 750, 1_000, 1_250, 1_500, 1_750, 2_000, 2_250, 2_500,
-    2_750, 3_000, 3_500, 4_000, 5_000, 7_500, 10_000, 15_000, 30_000, 60_000,
+    2_750, 3_000, 3_500, 4_000, 5_000, 7_500, 10_000, 15_000, 30_000, 60_000, 120_000, 300_000,
 ];
 
 /// Process-lifetime latency histogram. Unlike the rolling percentile windows,
@@ -386,7 +387,7 @@ mod tests {
         histogram.record(Duration::from_millis(1));
         histogram.record(Duration::from_micros(1_001));
         histogram.record(Duration::from_millis(1_900));
-        histogram.record(Duration::from_secs(120));
+        histogram.record(Duration::from_secs(600));
         let snapshot = histogram.snapshot();
         assert_eq!(snapshot.counts.len(), snapshot.bounds_millis.len() + 1);
         assert_eq!(snapshot.counts[0], 2, "0 ms and exactly 1 ms land in le=1");
@@ -399,7 +400,7 @@ mod tests {
         assert_eq!(snapshot.counts[le_2000], 1);
         assert_eq!(*snapshot.counts.last().expect("+Inf"), 1);
         assert_eq!(snapshot.count(), 5);
-        assert_eq!(snapshot.sum_micros, 1_000 + 1_001 + 1_900_000 + 120_000_000);
+        assert_eq!(snapshot.sum_micros, 1_000 + 1_001 + 1_900_000 + 600_000_000);
     }
 
     #[test]
