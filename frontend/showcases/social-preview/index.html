@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BNTpool social preview showcase</title>
+<style>body{margin:0;background:#07151a;color:#ebf5f0;font:16px/1.6 system-ui,sans-serif}main{max-width:1200px;margin:auto;padding:24px}h1{font-size:26px}h2{font-size:20px}p{max-width:75ch;color:#a6b9b1}img{display:block;width:100%;height:auto}article{margin:32px 0}small{color:#a6b9b1}</style>
+<main><h1>BNTpool social previews</h1><p>Production social cards and shared page descriptions. Static previews have one state and are independent of live pool data.</p><small>Source: zero-fee metadata change based on 0126c3b.</small><div id="cards"></div></main>
+<script type="module">
+const pages=await (await fetch('../../src/lib/page-meta.json')).json();
+for(const path of ['/', '/start']){
+ const meta=pages[path], article=document.createElement('article');
+ const heading=document.createElement('h2');heading.textContent=meta.title+' · '+path;
+ const image=document.createElement('img');image.src='../../../apps/blocknet-pool-api/src/ui/assets/'+meta.image;image.alt=meta.title+' social card';image.width=1200;image.height=630;
+ const description=document.createElement('p');description.textContent=meta.description;
+ article.append(heading,image,description);document.querySelector('#cards').append(article);
+}
+</script></html>

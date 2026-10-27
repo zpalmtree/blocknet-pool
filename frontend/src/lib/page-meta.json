@@ -1,7 +1,7 @@
 {
   "/": {
     "title": "Blocknet Mining Pool",
-    "description": "Connect Seine to bntpool.com for Blocknet mining. Track pool hashrate, found blocks, PPLNS payouts and your miner’s shares from the public dashboard.",
+    "description": "Mine Blocknet on bntpool.com with a 0% pool fee and PPLNS payouts. Track live hashrate, found blocks, payouts, and your miner’s shares.",
     "image": "og-dashboard.png",
     "index": true,
     "label": "Dashboard",
@@ -25,7 +25,7 @@
   },
   "/start": {
     "title": "Connect Seine to the Blocknet pool",
-    "description": "Set up Seine for the Blocknet mining pool: choose your wallet address or Blocknet ID, name your rigs, connect, and check accepted shares in My Stats.",
+    "description": "Start mining Blocknet on bntpool.com with Seine and a 0% pool fee. Set up your wallet, connect your rigs, and track accepted shares.",
     "image": "og-start.png",
     "index": true,
     "label": "Get Started",
