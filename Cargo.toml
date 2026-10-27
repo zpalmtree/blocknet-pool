@@ -16,7 +16,7 @@ edition = "2021"
 
 [workspace.dependencies]
 anyhow = "1.0"
-blocknet-pow-kernel = { git = "https://github.com/zpalmtree/seine.git", rev = "e4f05927df3f2537679c2db17695eefb44e8ece6" }
+blocknet-pow-kernel = { git = "https://github.com/zpalmtree/seine.git", rev = "8a822f767bdc6a8b2effd7565751f47ba2c6846d" }
 curve25519-dalek = "4.1"
 argon2 = "0.5"
 axum = "0.7"

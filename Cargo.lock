@@ -216,7 +216,7 @@ dependencies = [
 [[package]]
 name = "blocknet-pow-kernel"
 version = "0.1.0"
-source = "git+https://github.com/zpalmtree/seine.git?rev=e4f05927df3f2537679c2db17695eefb44e8ece6#e4f05927df3f2537679c2db17695eefb44e8ece6"
+source = "git+https://github.com/zpalmtree/seine.git?rev=8a822f767bdc6a8b2effd7565751f47ba2c6846d#8a822f767bdc6a8b2effd7565751f47ba2c6846d"
 dependencies = [
  "blake2",
 ]
