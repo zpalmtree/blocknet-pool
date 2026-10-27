@@ -66,8 +66,12 @@ impl Config {
         Ok(cfg)
     }
 
+    pub(crate) fn active_hosted_wallet(&self) -> Option<&crate::hosted_wallet::HostedWalletConfig> {
+        self.hosted_wallet.as_ref().filter(|wallet| wallet.enabled)
+    }
+
     fn validate(&self) -> Result<()> {
-        if let Some(wallet) = &self.hosted_wallet {
+        if let Some(wallet) = self.active_hosted_wallet() {
             wallet.validate()?;
         }
         if self.pool_url.trim().is_empty() {
@@ -98,6 +102,26 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::Config;
+
+    #[test]
+    fn hosted_wallet_requires_explicit_enablement() {
+        for json in [
+            r#"{}"#,
+            r#"{"hosted_wallet":null}"#,
+            r#"{"hosted_wallet":{"enabled":false}}"#,
+            r#"{"hosted_wallet":{"backend_url":"http://127.0.0.1:8335","gateway_token_file":"/missing/token"}}"#,
+        ] {
+            let cfg: Config = serde_json::from_str(json).unwrap();
+            assert!(cfg.active_hosted_wallet().is_none());
+            cfg.validate().unwrap();
+        }
+        let cfg: Config = serde_json::from_str(r#"{"hosted_wallet":{"enabled":true}}"#).unwrap();
+        assert!(cfg.validate().is_err());
+        let cfg: Config = serde_json::from_str(r#"{"hosted_wallet":{"enabled":true,"backend_url":"http://127.0.0.1:8335","gateway_token_file":"/missing/token"}}"#).unwrap();
+        assert!(cfg.active_hosted_wallet().is_some());
+        cfg.validate().unwrap();
+        assert!(serde_json::from_str::<Config>(r#"{"hosted_wallet":{"enabled":"true"}}"#).is_err());
+    }
 
     #[test]
     fn api_config_accepts_flat_runtime_fields() {

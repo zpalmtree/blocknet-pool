@@ -918,7 +918,7 @@ fn join_result<R>(result: Result<anyhow::Result<R>, tokio::task::JoinError>) -> 
 
 pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
     state.site_metrics.start(Arc::clone(&state.store));
-    let hosted_wallet = crate::hosted_wallet::router(state.config.hosted_wallet.as_ref())?;
+    let hosted_wallet = crate::hosted_wallet::router(state.config.active_hosted_wallet())?;
     let app_state = state.clone();
     let protected = Router::new()
         .route("/api/miners", get(handle_miners))
@@ -1100,7 +1100,7 @@ struct PoolInfoResponse {
 
 async fn handle_info(State(state): State<ApiState>) -> impl IntoResponse {
     Json(PoolInfoResponse {
-        hosted_wallet_enabled: state.config.hosted_wallet.is_some(),
+        hosted_wallet_enabled: state.config.active_hosted_wallet().is_some(),
         pool_name: state.config.runtime.pool_name.clone(),
         pool_url: state.config.pool_url.clone(),
         stratum_port: state.config.runtime.stratum_port,

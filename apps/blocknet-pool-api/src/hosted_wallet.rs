@@ -16,9 +16,11 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::Semaphore;
 
-#[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub(crate) struct HostedWalletConfig {
+    /// Explicit opt-in; backend connection settings alone never enable wallets.
+    pub enabled: bool,
     pub backend_url: String,
     pub gateway_token_file: String,
 }
@@ -57,7 +59,7 @@ pub(crate) fn router<S>(config: Option<&HostedWalletConfig>) -> Result<Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
-    let Some(config) = config else {
+    let Some(config) = config.filter(|config| config.enabled) else {
         return Ok(Router::new());
     };
     config.validate()?;
@@ -200,6 +202,53 @@ async fn forward(State(gateway): State<Arc<Gateway>>, request: Request) -> Respo
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn disabled_wallet_never_reads_credentials_or_registers_routes() {
+        use tower::ServiceExt;
+        // A missing credential file would fail startup if the disabled gateway
+        // tried to initialize. Test both omitted and explicitly false flags.
+        for json in [
+            r#"{}"#,
+            r#"{"enabled":false}"#,
+            r#"{"backend_url":"http://127.0.0.1:8335","gateway_token_file":"/missing/wallet-token"}"#,
+            r#"{"enabled":false,"backend_url":"http://127.0.0.1:8335","gateway_token_file":"/missing/wallet-token"}"#,
+        ] {
+            let config: HostedWalletConfig = serde_json::from_str(json).unwrap();
+            assert!(!config.enabled);
+            let app: Router = router(Some(&config)).unwrap();
+            for (method, path) in [
+                ("GET", "/api/wallet/session"),
+                ("POST", "/api/wallet/register"),
+                ("POST", "/api/wallet/send"),
+                ("POST", "/api/wallet/export"),
+            ] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(path)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::NOT_FOUND, "{json}: {path}");
+            }
+        }
+        let app: Router = router(None).unwrap();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/wallet/session")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
     #[test]
     fn rejects_remote_and_ambiguous_backend_urls() {
         for url in [
@@ -212,6 +261,7 @@ mod tests {
         ] {
             assert!(
                 HostedWalletConfig {
+                    enabled: true,
                     backend_url: url.into(),
                     gateway_token_file: "token".into()
                 }
@@ -221,6 +271,7 @@ mod tests {
             );
         }
         assert!(HostedWalletConfig {
+            enabled: true,
             backend_url: "http://127.0.0.1:8335".into(),
             gateway_token_file: "token".into()
         }
@@ -252,6 +303,7 @@ mod tests {
             std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).unwrap();
         }
         let app: Router = router(Some(&HostedWalletConfig {
+            enabled: true,
             backend_url: format!("http://{addr}"),
             gateway_token_file: token.to_string_lossy().into(),
         }))
