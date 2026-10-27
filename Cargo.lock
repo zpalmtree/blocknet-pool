@@ -1107,8 +1107,20 @@ dependencies = [
  "serde",
  "serde_json",
  "sha3",
+ "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "pool-gateway"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pool-common",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1141,6 +1153,7 @@ dependencies = [
  "humantime",
  "parking_lot",
  "pool-common",
+ "pool-gateway",
  "postgres",
  "rand 0.8.5",
  "reqwest",

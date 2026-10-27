@@ -15,6 +15,7 @@ use crate::node::{
     WalletAddressResponse, WalletOutput, WalletOutputRef, WalletRecipient, WalletSendHistoryEntry,
 };
 use crate::pgdb::UnreconciledCompletedPayoutRow;
+use crate::service_state::EngineRole;
 use crate::store::PoolStore;
 use crate::telemetry::NamedTimedOperationTracker;
 #[cfg(test)]
@@ -231,6 +232,9 @@ pub(crate) struct PayoutProcessor {
     runtime: RwLock<PayoutRuntimeSnapshot>,
     recovery_payout_reconciliation: RwLock<RecoveryPayoutReconciliationState>,
     task_metrics: Option<Arc<NamedTimedOperationTracker>>,
+    /// Set while a payout pass runs, so a retiring Stratum can wait for it
+    /// instead of exiting mid-send.
+    tick_running: std::sync::atomic::AtomicBool,
 }
 
 impl PayoutProcessor {
@@ -265,6 +269,7 @@ impl PayoutProcessor {
                 RecoveryPayoutReconciliationState::default(),
             ),
             task_metrics,
+            tick_running: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -272,16 +277,25 @@ impl PayoutProcessor {
         self.runtime.read().clone()
     }
 
-    pub(crate) fn start(self: &Arc<Self>) {
+    /// Whether a payout pass is running right now.
+    pub(crate) fn tick_running(&self) -> bool {
+        self.tick_running.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Runs payout passes while `role` is primary; the first pass waits for
+    /// it, and passes are skipped while another engine owns payouts.
+    pub(crate) fn start(self: &Arc<Self>, role: Arc<EngineRole>) {
         let this = Arc::clone(self);
         tokio::spawn(async move {
             let payout_interval = bounded_payout_interval(this.cfg.payout_interval_duration());
             let maintenance_interval = bounded_payout_maintenance_interval(payout_interval);
+            role.wait_primary().await;
             {
                 let this = Arc::clone(&this);
                 let task_metrics = this.task_metrics.clone();
                 let started_at = Instant::now();
                 let startup = tokio::task::spawn_blocking(move || {
+                    let _running = TickRunning::start(&this.tick_running);
                     this.recover_pending_payouts();
                     this.tick(true);
                     let now = SystemTime::now();
@@ -307,11 +321,17 @@ impl PayoutProcessor {
             ticker.tick().await;
             loop {
                 ticker.tick().await;
+                if !role.is_primary() {
+                    continue;
+                }
                 let should_send = Instant::now() >= next_send_due;
                 let worker = Arc::clone(&this);
                 let started_at = Instant::now();
-                let send_completed =
-                    tokio::task::spawn_blocking(move || worker.tick(should_send)).await;
+                let send_completed = tokio::task::spawn_blocking(move || {
+                    let _running = TickRunning::start(&worker.tick_running);
+                    worker.tick(should_send)
+                })
+                .await;
                 let (send_completed, failed) = match send_completed {
                     Ok(value) => (value, false),
                     Err(err) => {
@@ -3368,6 +3388,22 @@ fn payout_idempotency_key(p: &PendingPayout) -> String {
 
 fn sha256_hex(input: impl AsRef<str>) -> String {
     hex::encode(Sha256::digest(input.as_ref().as_bytes()))
+}
+
+/// Marks a payout pass as running until dropped.
+struct TickRunning<'a>(&'a std::sync::atomic::AtomicBool);
+
+impl<'a> TickRunning<'a> {
+    fn start(flag: &'a std::sync::atomic::AtomicBool) -> Self {
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        Self(flag)
+    }
+}
+
+impl Drop for TickRunning<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 fn bounded_payout_interval(configured: Duration) -> Duration {

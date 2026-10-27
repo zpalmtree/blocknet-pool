@@ -19,10 +19,14 @@ use crate::engine::{
     SubmitMetadata, SubmitQueueRoute,
 };
 use crate::jobs::{AssignmentRangeMode, JobManager};
+use crate::service_state::EngineRole;
 use crate::source_risk::ip_group_key;
 use crate::stats::PoolStats;
 use crate::telemetry::{
     LatencyHistogramSnapshot, NamedLatencyHistograms, PercentileSummary, QueueTracker,
+};
+use pool_common::gateway::{
+    read_frame, write_frame, EngineHello, Frame, FrameKind, GatewayRole, MAX_FRAME_PAYLOAD,
 };
 use pool_common::protocol::{
     normalize_worker_name, LoginParams, StratumNotify, StratumRequest, StratumResponse,
@@ -38,6 +42,10 @@ const NOTIFICATION_CHANNEL_CAPACITY: usize = 256;
 const INBOUND_QUEUE_CAPACITY: usize = 256;
 const OUTBOUND_QUEUE_CAPACITY: usize = 256;
 const OUTBOUND_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
+const GATEWAY_RECONNECT_DELAY: Duration = Duration::from_secs(1);
+const GATEWAY_FRAME_QUEUE: usize = 8192;
+/// Per virtual connection; engine-side writes beyond this wait for the gateway.
+const GATEWAY_CONN_BUFFER: usize = 64 * 1024;
 const SUBMIT_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(10);
 const SUBMIT_RATE_LIMIT_MAX: usize = 120;
 const POST_LOGIN_IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
@@ -708,6 +716,50 @@ impl SubmitDispatcher {
     }
 }
 
+enum GatewaySession {
+    /// The gateway retired this engine; it should exit.
+    Retired,
+    /// The gateway went away; reconnect.
+    Lost,
+}
+
+/// Virtual connections of one gateway session: conn ID → line sender into
+/// the miner's session. Removing a sender ends that session.
+#[derive(Clone, Default)]
+struct GatewayConns(Arc<Mutex<HashMap<u64, mpsc::Sender<String>>>>);
+
+impl GatewayConns {
+    fn insert(&self, conn: u64, tx: mpsc::Sender<String>) {
+        self.0.lock().insert(conn, tx);
+    }
+
+    /// Returns whether the connection was still open.
+    fn remove(&self, conn: u64) -> bool {
+        self.0.lock().remove(&conn).is_some()
+    }
+
+    fn clear(&self) {
+        self.0.lock().clear();
+    }
+
+    /// A miner flooding faster than its session reads is disconnected, like
+    /// a TCP miner whose inbound queue overflows.
+    fn deliver(&self, conn: u64, line: String, frame_tx: &mpsc::Sender<Frame>) {
+        let tx = self.0.lock().get(&conn).cloned();
+        if let Some(tx) = tx {
+            if tx.try_send(line).is_err() {
+                self.close(conn, frame_tx);
+            }
+        }
+    }
+
+    fn close(&self, conn: u64, frame_tx: &mpsc::Sender<Frame>) {
+        if self.remove(conn) {
+            let _ = frame_tx.try_send(Frame::new(FrameKind::Close, conn, Vec::new()));
+        }
+    }
+}
+
 pub struct StratumServer {
     shortname_resolver: Arc<crate::shortname::ShortnameResolver>,
     listen_addr: SocketAddr,
@@ -790,6 +842,199 @@ impl StratumServer {
         self.run_tcp_listener(listener).await
     }
 
+    /// Serves miners relayed by the Stratum gateway (STRATUM_GATEWAY.md):
+    /// connects to `socket` (again whenever the gateway restarts) until the
+    /// gateway retires this engine, then returns.
+    pub async fn run_gateway_client(
+        self: Arc<Self>,
+        socket: std::path::PathBuf,
+        instance: String,
+        role: Arc<EngineRole>,
+    ) -> Result<()> {
+        let started_at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let hello = EngineHello {
+            instance,
+            pid: std::process::id(),
+            started_at_ms,
+        };
+        let mut connect_warned = false;
+        loop {
+            match tokio::net::UnixStream::connect(&socket).await {
+                Ok(stream) => {
+                    connect_warned = false;
+                    tracing::info!(socket = %socket.display(), instance = %hello.instance, "connected to stratum gateway");
+                    match Arc::clone(&self).serve_gateway(stream, &hello, &role).await {
+                        Ok(GatewaySession::Retired) => {
+                            tracing::info!("retired by stratum gateway");
+                            return Ok(());
+                        }
+                        Ok(GatewaySession::Lost) => {
+                            tracing::warn!("stratum gateway connection closed; reconnecting");
+                        }
+                        Err(err) => {
+                            tracing::warn!(error = %format!("{err:#}"), "stratum gateway session failed; reconnecting");
+                        }
+                    }
+                }
+                Err(err) if !connect_warned => {
+                    connect_warned = true;
+                    tracing::warn!(socket = %socket.display(), error = %err, "stratum gateway unavailable; retrying");
+                }
+                Err(_) => {}
+            }
+            tokio::time::sleep(GATEWAY_RECONNECT_DELAY).await;
+        }
+    }
+
+    async fn serve_gateway(
+        self: Arc<Self>,
+        stream: tokio::net::UnixStream,
+        hello: &EngineHello,
+        role: &EngineRole,
+    ) -> Result<GatewaySession> {
+        let (mut reader, mut writer) = stream.into_split();
+        let (frame_tx, mut frame_rx) = mpsc::channel::<Frame>(GATEWAY_FRAME_QUEUE);
+        let mut writer_task = tokio::spawn(async move {
+            while let Some(frame) = frame_rx.recv().await {
+                write_frame(&mut writer, &frame).await?;
+            }
+            Ok::<_, anyhow::Error>(())
+        });
+        frame_tx
+            .send(Frame::new(FrameKind::Hello, 0, serde_json::to_vec(hello)?))
+            .await
+            .map_err(|_| anyhow!("gateway writer stopped"))?;
+
+        let conns = GatewayConns::default();
+        let outcome = loop {
+            let frame = tokio::select! {
+                frame = read_frame(&mut reader) => frame,
+                written = &mut writer_task => {
+                    break match written {
+                        Ok(Ok(())) => Ok(GatewaySession::Lost),
+                        Ok(Err(err)) => Err(err),
+                        Err(err) => Err(anyhow!("gateway writer task failed: {err}")),
+                    };
+                }
+            };
+            let frame = match frame {
+                Ok(Some(frame)) => frame,
+                Ok(None) => break Ok(GatewaySession::Lost),
+                Err(err) => break Err(err),
+            };
+            match frame.kind {
+                FrameKind::Role => match frame.payload_str().and_then(GatewayRole::parse) {
+                    Ok(GatewayRole::Primary) => role.set_primary(true),
+                    Ok(GatewayRole::Draining) => role.set_primary(false),
+                    Err(err) => tracing::warn!(error = %err, "ignoring malformed gateway role"),
+                },
+                FrameKind::Open => {
+                    let peer = frame
+                        .payload_str()
+                        .ok()
+                        .and_then(|peer| peer.parse::<SocketAddr>().ok());
+                    match peer {
+                        Some(peer) => self.open_gateway_conn(frame.conn, peer, &conns, &frame_tx),
+                        None => {
+                            tracing::warn!(
+                                conn = frame.conn,
+                                "gateway opened a connection without a valid peer"
+                            );
+                            let _ = frame_tx.try_send(Frame::new(
+                                FrameKind::Close,
+                                frame.conn,
+                                Vec::new(),
+                            ));
+                        }
+                    }
+                }
+                FrameKind::Line => match String::from_utf8(frame.payload) {
+                    Ok(line) => conns.deliver(frame.conn, line, &frame_tx),
+                    Err(_) => conns.close(frame.conn, &frame_tx),
+                },
+                FrameKind::Close => {
+                    conns.remove(frame.conn);
+                }
+                FrameKind::Retire => break Ok(GatewaySession::Retired),
+                FrameKind::Hello => tracing::warn!("ignoring unexpected hello from gateway"),
+            }
+        };
+        // Dropping every sender ends every virtual connection's session.
+        conns.clear();
+        writer_task.abort();
+        outcome
+    }
+
+    /// Starts a session for a miner relayed by the gateway. The session runs
+    /// the same handler as a TCP miner over an in-memory duplex stream; two
+    /// pumps move its lines to and from gateway frames.
+    fn open_gateway_conn(
+        self: &Arc<Self>,
+        conn: u64,
+        peer: SocketAddr,
+        conns: &GatewayConns,
+        frame_tx: &mpsc::Sender<Frame>,
+    ) {
+        let ip = ip_group_key(peer.ip());
+        if !self.try_track_conn(&ip) {
+            tracing::warn!(ip = %ip, "rejecting relayed stratum connection due to limits");
+            let _ = frame_tx.try_send(Frame::new(FrameKind::Close, conn, Vec::new()));
+            return;
+        }
+        let (engine_io, gateway_io) = tokio::io::duplex(GATEWAY_CONN_BUFFER);
+        let (gateway_read, mut gateway_write) = tokio::io::split(gateway_io);
+        let (line_tx, mut line_rx) = mpsc::channel::<String>(INBOUND_QUEUE_CAPACITY);
+        conns.insert(conn, line_tx);
+
+        // Gateway → session.
+        tokio::spawn(async move {
+            while let Some(line) = line_rx.recv().await {
+                let mut bytes = line.into_bytes();
+                bytes.push(b'\n');
+                if gateway_write.write_all(&bytes).await.is_err() {
+                    break;
+                }
+            }
+            let _ = gateway_write.shutdown().await;
+        });
+
+        // Session → gateway; the session ending closes the connection.
+        let pump_tx = frame_tx.clone();
+        let pump_conns = conns.clone();
+        tokio::spawn(async move {
+            let mut reader = BufReader::new(gateway_read);
+            while let Ok(Some(line)) = read_line_limited(&mut reader, MAX_FRAME_PAYLOAD).await {
+                if pump_tx
+                    .send(Frame::new(FrameKind::Line, conn, line))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            if pump_conns.remove(conn) {
+                let _ = pump_tx
+                    .send(Frame::new(FrameKind::Close, conn, Vec::new()))
+                    .await;
+            }
+        });
+
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            let (engine_read, engine_write) = tokio::io::split(engine_io);
+            if let Err(err) = this
+                .handle_stream_conn(engine_read, engine_write, peer)
+                .await
+            {
+                tracing::warn!(peer = %peer, error = %err, "relayed stratum connection ended with error");
+            }
+            this.untrack_conn(&ip);
+        });
+    }
+
     fn try_track_conn(&self, ip: &str) -> bool {
         let mut state = self.conn_state.lock();
         if state.total >= MAX_CONNS_TOTAL {
@@ -840,8 +1085,24 @@ impl StratumServer {
     }
 
     async fn handle_tcp_conn(&self, stream: TcpStream, peer: SocketAddr) -> Result<()> {
-        let conn_id = peer.to_string();
         let (reader_half, writer_half) = stream.into_split();
+        self.handle_stream_conn(reader_half, writer_half, peer)
+            .await
+    }
+
+    /// Serves one miner over any byte stream: a TCP socket, or a virtual
+    /// connection relayed by the gateway carrying the miner's real address.
+    async fn handle_stream_conn<R, W>(
+        &self,
+        reader_half: R,
+        writer_half: W,
+        peer: SocketAddr,
+    ) -> Result<()>
+    where
+        R: tokio::io::AsyncRead + Unpin + Send + 'static,
+        W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
+        let conn_id = peer.to_string();
         let (inbound_tx, inbound_rx) = mpsc::channel(INBOUND_QUEUE_CAPACITY);
         let reader_task =
             tokio::spawn(
@@ -1751,8 +2012,8 @@ fn queue_error(outbound: &OutboundHandle, id: u64, msg: &str) -> Result<()> {
     queue_json(outbound, &response)
 }
 
-async fn read_line_limited(
-    reader: &mut BufReader<tokio::net::tcp::OwnedReadHalf>,
+async fn read_line_limited<R: tokio::io::AsyncRead + Unpin>(
+    reader: &mut BufReader<R>,
     max_bytes: usize,
 ) -> Result<Option<String>> {
     let mut data = Vec::<u8>::with_capacity(256);
@@ -1803,8 +2064,8 @@ fn serialize_json_text<T: serde::Serialize>(value: &T) -> Result<String> {
     serde_json::to_string(value).map_err(Into::into)
 }
 
-async fn run_tcp_reader(
-    mut reader: BufReader<tokio::net::tcp::OwnedReadHalf>,
+async fn run_tcp_reader<R: tokio::io::AsyncRead + Unpin>(
+    mut reader: BufReader<R>,
     inbound_tx: mpsc::Sender<InboundFrame>,
 ) -> Result<()> {
     loop {
@@ -2716,6 +2977,157 @@ mod tests {
         .expect("job tick should not panic on runtime-backed store");
 
         assert_eq!(difficulty, cfg.initial_share_difficulty);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn gateway_hands_a_miner_to_a_new_engine_without_disconnecting_it() {
+        use crate::service_state::EngineRole;
+        use pool_gateway::{GatewayListeners, GatewayMetrics, Timings};
+        use std::sync::atomic::Ordering;
+
+        async fn wait_until(what: &str, ready: impl Fn() -> bool) {
+            for _ in 0..500 {
+                if ready() {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            panic!("timed out waiting for {what}");
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let socket = dir.path().join("gateway.sock");
+        let miner_listener =
+            TcpListener::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)))
+                .await
+                .expect("bind gateway");
+        let gateway_addr = miner_listener.local_addr().expect("gateway addr");
+        let engine_listener = tokio::net::UnixListener::bind(&socket).expect("bind engine socket");
+        let metrics = Arc::new(GatewayMetrics::default());
+        let timings = Timings {
+            retire_grace: Duration::from_millis(500),
+            tick: Duration::from_millis(20),
+            migrate_per_second: 1_000,
+            ..Timings::default()
+        };
+        let gateway = tokio::spawn(pool_gateway::run(
+            GatewayListeners {
+                miners: miner_listener,
+                engines: engine_listener,
+            },
+            timings,
+            1_000,
+            Arc::clone(&metrics),
+        ));
+
+        let (engine_a, jobs_a) = build_tcp_test_server(stratum_test_cfg()).await;
+        let role_a = Arc::new(EngineRole::new(false));
+        let mut serve_a = tokio::spawn(Arc::clone(&engine_a).run_gateway_client(
+            socket.clone(),
+            "a".to_string(),
+            Arc::clone(&role_a),
+        ));
+        wait_until("engine a primary", || role_a.is_primary()).await;
+
+        let (mut reader, mut writer) = connect_test_client(gateway_addr).await;
+        let address = test_miner_address(0x55);
+        let job_a = login_test_client(&mut reader, &mut writer, 1, &address, "rig").await;
+        let nonce = nonce_with_parity(&job_a, false, 0);
+        send_submit(
+            &mut writer,
+            2,
+            &job_a.job_id,
+            nonce,
+            SleepyQueueHasher::claimed_hash_hex(nonce),
+        )
+        .await;
+        let accepted = read_json_line(&mut reader).await;
+        assert_eq!(
+            (accepted["id"].as_u64(), accepted["status"].as_str()),
+            (Some(2), Some("ok"))
+        );
+
+        // Deploy: engine b starts; a drains and the miner moves to b.
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        let (engine_b, jobs_b) = build_tcp_test_server(stratum_test_cfg()).await;
+        let role_b = Arc::new(EngineRole::new(false));
+        let serve_b = tokio::spawn(Arc::clone(&engine_b).run_gateway_client(
+            socket.clone(),
+            "b".to_string(),
+            Arc::clone(&role_b),
+        ));
+        wait_until("engine b primary", || role_b.is_primary()).await;
+        assert!(!role_a.is_primary(), "the replaced engine drains");
+
+        // The miner's next message is a fresh job from b, on the same socket.
+        let job = read_json_line(&mut reader).await;
+        assert_eq!(job["method"].as_str(), Some("job"));
+        let job_b: MinerJob = serde_json::from_value(job["params"].clone()).expect("job");
+        assert_ne!(job_b.job_id, job_a.job_id);
+        assert_eq!(metrics.migrations.load(Ordering::Relaxed), 1);
+
+        // A late share for a's job is still judged by a; b judges its own.
+        let late = nonce_with_parity(&job_a, false, 1);
+        send_submit(
+            &mut writer,
+            3,
+            &job_a.job_id,
+            late,
+            SleepyQueueHasher::claimed_hash_hex(late),
+        )
+        .await;
+        let fresh = nonce_with_parity(&job_b, false, 0);
+        send_submit(
+            &mut writer,
+            4,
+            &job_b.job_id,
+            fresh,
+            SleepyQueueHasher::claimed_hash_hex(fresh),
+        )
+        .await;
+        let (responses, _) = read_response_map(&mut reader, &[3, 4]).await;
+        assert_eq!(
+            responses[&3]["status"].as_str(),
+            Some("ok"),
+            "{:?}",
+            responses[&3]
+        );
+        assert_eq!(
+            responses[&4]["status"].as_str(),
+            Some("ok"),
+            "{:?}",
+            responses[&4]
+        );
+
+        // After the grace, a is retired and exits; the miner never noticed.
+        tokio::time::timeout(Duration::from_secs(5), &mut serve_a)
+            .await
+            .expect("engine a retired")
+            .expect("engine a task")
+            .expect("engine a exits cleanly");
+        assert_eq!(metrics.retires.load(Ordering::Relaxed), 1);
+        let after = nonce_with_parity(&job_b, false, 1);
+        send_submit(
+            &mut writer,
+            5,
+            &job_b.job_id,
+            after,
+            SleepyQueueHasher::claimed_hash_hex(after),
+        )
+        .await;
+        let response = read_json_line(&mut reader).await;
+        assert_eq!(
+            (response["id"].as_u64(), response["status"].as_str()),
+            (Some(5), Some("ok"))
+        );
+
+        drop(writer);
+        drop(reader);
+        serve_b.abort();
+        gateway.abort();
+        tokio::task::spawn_blocking(move || drop((engine_a, jobs_a, engine_b, jobs_b)))
+            .await
+            .expect("drop engines");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

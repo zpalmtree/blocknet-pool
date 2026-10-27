@@ -13,6 +13,54 @@ pub use crate::validation::ValidationSnapshot;
 
 pub const LIVE_RUNTIME_SNAPSHOT_META_KEY: &str = "live_runtime_snapshot_v1";
 
+/// Whether this Stratum process owns pool-wide singleton work: payout ticks,
+/// the live runtime snapshot, stat snapshots, retention and seen-share GC.
+/// A process serving miners directly is always primary. Behind the gateway
+/// (STRATUM_GATEWAY.md) the gateway promotes the newest engine and demotes
+/// the one it replaces, so two engines never both run singleton work for
+/// longer than an in-flight tick.
+#[derive(Debug)]
+pub struct EngineRole {
+    primary: std::sync::atomic::AtomicBool,
+    changed: tokio::sync::Notify,
+}
+
+impl EngineRole {
+    pub fn new(primary: bool) -> Self {
+        Self {
+            primary: std::sync::atomic::AtomicBool::new(primary),
+            changed: tokio::sync::Notify::new(),
+        }
+    }
+
+    pub fn is_primary(&self) -> bool {
+        self.primary.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn set_primary(&self, primary: bool) {
+        let previous = self
+            .primary
+            .swap(primary, std::sync::atomic::Ordering::SeqCst);
+        if previous != primary {
+            tracing::info!(primary, "engine role changed");
+            self.changed.notify_waiters();
+        }
+    }
+
+    /// Resolves once this process is primary.
+    pub async fn wait_primary(&self) {
+        loop {
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if self.is_primary() {
+                return;
+            }
+            changed.await;
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedRuntimeSnapshot {
     pub sampled_at: SystemTime,

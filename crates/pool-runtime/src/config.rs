@@ -18,6 +18,10 @@ pub struct Config {
 
     pub stratum_host: String,
     pub stratum_port: u16,
+    /// Unix socket of the Stratum gateway (STRATUM_GATEWAY.md). When set,
+    /// Stratum serves miners relayed by the gateway instead of binding
+    /// `stratum_host:stratum_port`.
+    pub gateway_socket: String,
 
     pub daemon_data_dir: String,
     pub daemon_api: String,
@@ -118,6 +122,7 @@ impl Default for Config {
             pool_name: "blocknet pool".to_string(),
             stratum_host: "127.0.0.1".to_string(),
             stratum_port: 3333,
+            gateway_socket: String::new(),
             daemon_data_dir: "data".to_string(),
             daemon_api: "http://127.0.0.1:8332".to_string(),
             daemon_cookie_path: "/etc/blocknet/pool/daemon-active.api.cookie".to_string(),

@@ -4,6 +4,7 @@ members = [
     "crates/pool-common",
     "crates/pool-runtime",
     "crates/pool-recovery",
+    "crates/pool-gateway",
     "apps/blocknet-pool-api",
     "apps/blocknet-pool-stratum",
     "apps/blocknet-pool-monitor",

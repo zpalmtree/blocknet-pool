@@ -12,7 +12,7 @@ use crate::hashrate::from_stats_with_warmup as hashrate_from_stats_with_warmup;
 use crate::jobs::JobManager;
 use crate::node::NodeClient;
 use crate::payout::PayoutProcessor;
-use crate::service_state::{PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY};
+use crate::service_state::{EngineRole, PersistedRuntimeSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY};
 use crate::stats::PoolStats;
 use crate::store::PoolStore;
 use crate::stratum::StratumServer;
@@ -36,6 +36,8 @@ pub struct SharedRuntime {
     pub(crate) jobs: Arc<JobManager>,
     pub(crate) validation: Arc<ValidationEngine>,
     pub(crate) stats: Arc<PoolStats>,
+    /// Behind the gateway this starts non-primary until the gateway says so.
+    pub role: Arc<EngineRole>,
 }
 
 pub struct ApiRuntime {
@@ -63,7 +65,7 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
         cfg.vardiff_target_shares,
         cfg.vardiff_retarget_interval
     );
-    if !is_local_bind_host(&cfg.stratum_host) {
+    if cfg.gateway_socket.trim().is_empty() && !is_local_bind_host(&cfg.stratum_host) {
         warn!(
             host = %cfg.stratum_host,
             port = cfg.stratum_port,
@@ -96,6 +98,7 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
     .await
     .context("join validation engine init task")?;
 
+    let role = Arc::new(EngineRole::new(cfg.gateway_socket.trim().is_empty()));
     Ok(SharedRuntime {
         cfg,
         store: core.store,
@@ -104,6 +107,7 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
         jobs: core.jobs,
         validation,
         stats: Arc::new(PoolStats::default()),
+        role,
     })
 }
 
@@ -234,12 +238,35 @@ pub fn reload_hot_config(config_path: &Path, engine: &PoolEngine) -> Result<Vec<
     Ok(changed)
 }
 
+/// Handle to Stratum's background work, for a clean exit.
+pub struct StratumBackground {
+    role: Arc<EngineRole>,
+    payout: Arc<PayoutProcessor>,
+}
+
+impl StratumBackground {
+    /// Stops singleton work and waits (bounded) for an in-flight payout pass,
+    /// so the process never exits in the middle of sending a payout.
+    pub async fn quiesce(&self, max_wait: Duration) {
+        self.role.set_primary(false);
+        let deadline = Instant::now() + max_wait;
+        while self.payout.tick_running() {
+            if Instant::now() >= deadline {
+                warn!("exiting with a payout pass still running");
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+}
+
 pub fn start_stratum_background_tasks(
     shared: &SharedRuntime,
     engine: Arc<PoolEngine>,
     stratum: Arc<StratumServer>,
-) {
+) -> StratumBackground {
     let validation = Arc::clone(&shared.validation);
+    let role = Arc::clone(&shared.role);
     let task_metrics = Arc::new(NamedTimedOperationTracker::default());
     start_found_block_recovery(engine, Arc::clone(&task_metrics));
     let payout = PayoutProcessor::new_with_task_metrics(
@@ -248,14 +275,23 @@ pub fn start_stratum_background_tasks(
         Arc::clone(&shared.node),
         Some(Arc::clone(&task_metrics)),
     );
-    payout.start();
-    start_seen_share_gc(Arc::clone(&shared.store), Arc::clone(&task_metrics));
+    payout.start(Arc::clone(&role));
+    start_seen_share_gc(
+        Arc::clone(&shared.store),
+        Arc::clone(&role),
+        Arc::clone(&task_metrics),
+    );
     start_stat_snapshots(
         Arc::clone(&shared.stats),
         Arc::clone(&shared.store),
+        Arc::clone(&role),
         Arc::clone(&task_metrics),
     );
-    start_retention_maintenance(Arc::clone(&shared.store), Arc::clone(&task_metrics));
+    start_retention_maintenance(
+        Arc::clone(&shared.store),
+        Arc::clone(&role),
+        Arc::clone(&task_metrics),
+    );
     start_live_runtime_snapshot_persist(
         Arc::clone(&shared.jobs),
         Arc::clone(&payout),
@@ -263,15 +299,24 @@ pub fn start_stratum_background_tasks(
         stratum,
         validation,
         Arc::clone(&shared.store),
+        Arc::clone(&role),
         task_metrics,
     );
+    StratumBackground { role, payout }
 }
 
-fn start_seen_share_gc(store: Arc<PoolStore>, task_metrics: Arc<NamedTimedOperationTracker>) {
+fn start_seen_share_gc(
+    store: Arc<PoolStore>,
+    role: Arc<EngineRole>,
+    task_metrics: Arc<NamedTimedOperationTracker>,
+) {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(SEEN_SHARE_GC_INTERVAL);
         loop {
             ticker.tick().await;
+            if !role.is_primary() {
+                continue;
+            }
             let started_at = Instant::now();
             let store = Arc::clone(&store);
             let failed = match tokio::task::spawn_blocking(move || {
@@ -306,6 +351,7 @@ fn start_seen_share_gc(store: Arc<PoolStore>, task_metrics: Arc<NamedTimedOperat
 fn start_stat_snapshots(
     stats: Arc<PoolStats>,
     store: Arc<PoolStore>,
+    role: Arc<EngineRole>,
     task_metrics: Arc<NamedTimedOperationTracker>,
 ) {
     tokio::spawn(async move {
@@ -314,6 +360,9 @@ fn start_stat_snapshots(
         let hr_window = Duration::from_secs(60 * 60);
         loop {
             ticker.tick().await;
+            if !role.is_primary() {
+                continue;
+            }
             let started_at = Instant::now();
             let snap = stats.snapshot();
             let store = Arc::clone(&store);
@@ -352,6 +401,7 @@ fn start_stat_snapshots(
 
 fn start_retention_maintenance(
     store: Arc<PoolStore>,
+    role: Arc<EngineRole>,
     task_metrics: Arc<NamedTimedOperationTracker>,
 ) {
     tokio::spawn(async move {
@@ -361,6 +411,9 @@ fn start_retention_maintenance(
         );
         loop {
             ticker.tick().await;
+            if !role.is_primary() {
+                continue;
+            }
             let now = SystemTime::now();
             let shares_before = now.checked_sub(SHARES_RETENTION);
             let payouts_before = now.checked_sub(PAYOUTS_RETENTION);
@@ -436,6 +489,7 @@ fn start_found_block_recovery(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn start_live_runtime_snapshot_persist(
     jobs: Arc<JobManager>,
     payouts: Arc<PayoutProcessor>,
@@ -443,12 +497,18 @@ fn start_live_runtime_snapshot_persist(
     stratum: Arc<StratumServer>,
     validation: Arc<ValidationEngine>,
     store: Arc<PoolStore>,
+    role: Arc<EngineRole>,
     task_metrics: Arc<NamedTimedOperationTracker>,
 ) {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(5));
         loop {
             ticker.tick().await;
+            // The API and monitor read one shared snapshot; only the primary
+            // engine writes it.
+            if !role.is_primary() {
+                continue;
+            }
             let started_at = Instant::now();
             let payload = PersistedRuntimeSnapshot::from_live(
                 stats.snapshot(),

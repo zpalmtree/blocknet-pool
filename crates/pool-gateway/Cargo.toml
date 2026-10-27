@@ -1,0 +1,11 @@
+[package]
+name = "pool-gateway"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+pool-common = { path = "../pool-common" }
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
