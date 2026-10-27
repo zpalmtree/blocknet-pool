@@ -26,5 +26,11 @@ From the persisted runtime snapshot and Prometheus, before latency histograms ex
 - 2026-10-27 · T1 · same host · THP-hinted vs explicit HugeTLB arenas: -1.2% (stream), -0.5% (avx512) on a fresh host. Low value; enlarging the bntpool hugepage pool stays optional.
 - 2026-10-27 · unit test · sync verifies served ahead of queued live audits (they previously queued behind ~77 s of audits and hit the 10 s validation timeout). **Landed**; T2 replay not run (the load generator's claimed hashes fail real Argon2 audits), so production confirmation comes from the `sync` lane of `validation_queue_wait`.
 
-Raw results: `perf-results/2026-10-27/pool-verify/pv-9700x5/results/` (runs.jsonl, host.txt, parity-fullsize.txt).
+- 2026-10-27 · T2 · replay of the production share mix (279 addresses, 47.9 shares/s, 1 h) through the real validation engine (`replay_production_share_mix`, 5x time compression, hasher modelling the bandwidth ceiling: current 5.7/s, kernel 7.7/s). Calibration: current capacity reproduces production (97% Emergency, audit wait p50 150 s, 8.9 audit drops/s, coverage 8.9%).
+- 2026-10-27 · T2 · kernel alone at 1x: still 55% Emergency / 42% Shed, coverage 10.8%. Holds that audit every share of a held farm flood the lane in bursts. Not sufficient alone.
+- 2026-10-27 · T2 · kernel + `hold_audit_rate` 0.25 at 1x: 100% Normal in 2/2 runs, 0 drops, audit wait p50 5 ms / p99 1.25 s, coverage 11.6-11.7%. At 2x arrivals with half the shares (vardiff_target_shares 10 → 5): 100% Normal in 2/2, coverage 11.6%. **Landed** (default 0.25). Hold rate 0.5 was bistable (5% Normal in 3 of 5 runs). Hold change without the kernel: still 94% overloaded.
+- 2026-10-27 · T2 · `sample_rate` 0.08 instead of 0.05 with hold 0.25: also 100% Normal, coverage 12.4-12.6%. Not proposed; small coverage gain for less headroom.
+- 2026-10-27 · T2 · surges above capacity with kernel + hold 0.25: 2x for 5 simulated minutes → 63% Normal over 40 min; 3x with half shares → 81% Normal; 0 audit drops and ~11% coverage in both. Recovery is stretched by the fixed 30 s clear-hold (2.5 simulated minutes at 5x). Open lead: overload clear logic for an async audit queue.
+
+Raw results: `perf-results/2026-10-27/pool-verify/pv-9700x5/results/` (runs.jsonl, host.txt, parity-fullsize.txt) and `perf-results/2026-10-27/pool-verify/replay/*.json`.
 
