@@ -95,6 +95,8 @@ struct MonitorSnapshot {
     block_submit_full_fallback_attempts_total: Option<u64>,
     block_submit_full_fallback_accepted_total: Option<u64>,
     block_submit_full_fallback_stale_total: Option<u64>,
+    block_submit_retries_total: Option<u64>,
+    block_submit_recovered_total: Option<u64>,
     block_submit_full_fallback_errors_total: Option<u64>,
     last_block_submit_template_age_seconds: Option<u64>,
     max_accepted_block_template_age_seconds: Option<u64>,
@@ -1037,6 +1039,10 @@ impl MonitorRuntime {
             runtime.map(|snapshot| snapshot.jobs.block_submit_full_fallback_attempts_total);
         metrics.block_submit_full_fallback_accepted_total =
             runtime.map(|snapshot| snapshot.jobs.block_submit_full_fallback_accepted_total);
+        metrics.block_submit_retries_total =
+            runtime.map(|snapshot| snapshot.jobs.block_submit_retries_total);
+        metrics.block_submit_recovered_total =
+            runtime.map(|snapshot| snapshot.jobs.block_submit_recovered_total);
         metrics.block_submit_full_fallback_stale_total =
             runtime.map(|snapshot| snapshot.jobs.block_submit_full_fallback_stale_total);
         metrics.block_submit_full_fallback_errors_total =
@@ -2317,6 +2323,14 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
         (
             "blocknet_pool_monitor_block_submit_full_fallback_attempts_total",
             snapshot.block_submit_full_fallback_attempts_total,
+        ),
+        (
+            "blocknet_pool_monitor_block_submit_retries_total",
+            snapshot.block_submit_retries_total,
+        ),
+        (
+            "blocknet_pool_monitor_block_submit_recovered_total",
+            snapshot.block_submit_recovered_total,
         ),
         (
             "blocknet_pool_monitor_block_submit_full_fallback_accepted_total",

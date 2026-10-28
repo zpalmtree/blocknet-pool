@@ -3,6 +3,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
@@ -15,6 +16,13 @@ use crate::engine::{BlockSubmitResponse, Job, NodeApi};
 use crate::telemetry::LatencyHistogramSnapshot;
 
 const NODE_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// How long a found block keeps being resubmitted while the daemon is
+/// unreachable (restart, proxy 502). The block stays winnable until the
+/// network finds the next one, five minutes on average; once it is stale the
+/// returning daemon rejects it and the retry stops.
+const BLOCK_SUBMIT_RETRY_WINDOW: std::time::Duration = std::time::Duration::from_secs(300);
+const BLOCK_SUBMIT_RETRY_DELAY_MIN: std::time::Duration = std::time::Duration::from_millis(250);
+const BLOCK_SUBMIT_RETRY_DELAY_MAX: std::time::Duration = std::time::Duration::from_secs(2);
 const WALLET_SEND_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 const ORIGINAL_TEMPLATE_LEASE_SECONDS: u64 = 10 * 60;
 
@@ -84,6 +92,8 @@ pub struct NodeBlock {
     pub timestamp: i64,
     #[serde(default)]
     pub difficulty: u64,
+    #[serde(default)]
+    pub nonce: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -271,6 +281,44 @@ fn is_unknown_or_expired_template_id_error(err: &anyhow::Error) -> bool {
     })
 }
 
+/// Whether a failed block submit may be retried, and whether the daemon might
+/// already have received it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlockSubmitRetry {
+    /// The daemon never got the block: refused connection, proxy 502/503,
+    /// daemon busy (429).
+    NotDelivered,
+    /// The request may have reached the daemon (timeout, dropped response,
+    /// proxy 504), so a later "rejected" can mean it was accepted.
+    MaybeDelivered,
+}
+
+fn block_submit_retry_kind(err: &anyhow::Error) -> Option<BlockSubmitRetry> {
+    for cause in err.chain() {
+        if let Some(http_err) = cause.downcast_ref::<HttpError>() {
+            return match http_err.status_code {
+                429 | 502 | 503 => Some(BlockSubmitRetry::NotDelivered),
+                504 => Some(BlockSubmitRetry::MaybeDelivered),
+                _ => None,
+            };
+        }
+        if let Some(req_err) = cause.downcast_ref::<reqwest::Error>() {
+            return Some(if req_err.is_connect() {
+                BlockSubmitRetry::NotDelivered
+            } else {
+                BlockSubmitRetry::MaybeDelivered
+            });
+        }
+    }
+    None
+}
+
+fn block_submit_retry_delay(attempt: u32) -> std::time::Duration {
+    BLOCK_SUBMIT_RETRY_DELAY_MIN
+        .saturating_mul(1u32 << attempt.saturating_sub(1).min(8))
+        .min(BLOCK_SUBMIT_RETRY_DELAY_MAX)
+}
+
 fn is_stale_block_submit_error(err: &anyhow::Error) -> bool {
     http_error_body_contains(err, 400, "block rejected as stale")
 }
@@ -302,6 +350,8 @@ pub(crate) struct TemplateLeaseTelemetrySnapshot {
     pub block_submit_full_fallback_accepted_total: u64,
     pub block_submit_full_fallback_stale_total: u64,
     pub block_submit_full_fallback_errors_total: u64,
+    pub block_submit_retries_total: u64,
+    pub block_submit_recovered_total: u64,
     pub last_block_submit_template_age_seconds: u64,
     pub max_accepted_block_template_age_seconds: u64,
     pub accepted_blocks_after_ten_minutes_total: u64,
@@ -324,9 +374,12 @@ pub struct NodeClient {
     block_submit_full_fallback_accepted: AtomicU64,
     block_submit_full_fallback_stale: AtomicU64,
     block_submit_full_fallback_errors: AtomicU64,
+    block_submit_retries: AtomicU64,
+    block_submit_recovered: AtomicU64,
     last_block_submit_template_age_seconds: AtomicU64,
     max_accepted_block_template_age_seconds: AtomicU64,
     accepted_blocks_after_ten_minutes: AtomicU64,
+    block_submit_retry_window: std::time::Duration,
 }
 
 impl NodeClient {
@@ -389,10 +442,19 @@ impl NodeClient {
             block_submit_full_fallback_accepted: AtomicU64::new(0),
             block_submit_full_fallback_stale: AtomicU64::new(0),
             block_submit_full_fallback_errors: AtomicU64::new(0),
+            block_submit_retries: AtomicU64::new(0),
+            block_submit_recovered: AtomicU64::new(0),
             last_block_submit_template_age_seconds: AtomicU64::new(0),
             max_accepted_block_template_age_seconds: AtomicU64::new(0),
             accepted_blocks_after_ten_minutes: AtomicU64::new(0),
+            block_submit_retry_window: BLOCK_SUBMIT_RETRY_WINDOW,
         })
+    }
+
+    #[cfg(test)]
+    fn with_block_submit_retry_window(mut self, window: std::time::Duration) -> Self {
+        self.block_submit_retry_window = window;
+        self
     }
 
     /// Identify the daemon instance behind the API: the data directory that
@@ -482,6 +544,8 @@ impl NodeClient {
             block_submit_full_fallback_errors_total: self
                 .block_submit_full_fallback_errors
                 .load(Ordering::Relaxed),
+            block_submit_retries_total: self.block_submit_retries.load(Ordering::Relaxed),
+            block_submit_recovered_total: self.block_submit_recovered.load(Ordering::Relaxed),
             last_block_submit_template_age_seconds: self
                 .last_block_submit_template_age_seconds
                 .load(Ordering::Relaxed),
@@ -916,8 +980,21 @@ fn read_token_from_cookie_file(cookie_path: &Path) -> Result<String> {
     Ok(trimmed.to_string())
 }
 
-impl NodeApi for NodeClient {
-    fn submit_block(&self, job: &Job, nonce: u64) -> Result<BlockSubmitResponse> {
+impl NodeClient {
+    /// After an attempt that may have reached the daemon, a rejection can
+    /// mean our block is already in the chain. It is ours when the block at
+    /// the job height has our nonce.
+    fn accepted_block_in_chain(&self, job: &Job, nonce: u64) -> Option<BlockSubmitResponse> {
+        let block = self.get_block_by_height_optional(job.height).ok()??;
+        (block.nonce == Some(nonce)).then(|| BlockSubmitResponse {
+            accepted: true,
+            hash: (!block.hash.is_empty()).then_some(block.hash),
+            height: Some(job.height),
+            daemon_total_us: None,
+        })
+    }
+
+    fn submit_block_once(&self, job: &Job, nonce: u64) -> Result<BlockSubmitResponse> {
         let template_id = job.template_id.trim();
         if template_id.is_empty() {
             return Err(anyhow!("missing template_id for compact block submit"));
@@ -963,6 +1040,81 @@ impl NodeApi for NodeClient {
             },
             daemon_total_us: resp.timings_us.and_then(|timings| timings.total),
         })
+    }
+}
+
+impl NodeApi for NodeClient {
+    /// Submits a found block, resubmitting while the daemon is unreachable
+    /// for up to `BLOCK_SUBMIT_RETRY_WINDOW`. A restarted daemon has
+    /// forgotten the template ID, so a retry falls back to the full block.
+    fn submit_block(&self, job: &Job, nonce: u64) -> Result<BlockSubmitResponse> {
+        let started_at = Instant::now();
+        let mut attempt = 0u32;
+        let mut maybe_delivered = false;
+        loop {
+            attempt += 1;
+            let err = match self.submit_block_once(job, nonce) {
+                Ok(resp) => {
+                    if attempt > 1 && resp.accepted {
+                        self.block_submit_recovered.fetch_add(1, Ordering::Relaxed);
+                        tracing::warn!(
+                            height = job.height,
+                            nonce,
+                            attempts = attempt,
+                            elapsed_ms = started_at.elapsed().as_millis() as u64,
+                            "block submit succeeded after retrying an unreachable daemon"
+                        );
+                    }
+                    return Ok(resp);
+                }
+                Err(err) => err,
+            };
+            let retry = block_submit_retry_kind(&err);
+            if retry.is_none() && maybe_delivered {
+                if let Some(resp) = self.accepted_block_in_chain(job, nonce) {
+                    self.block_submit_recovered.fetch_add(1, Ordering::Relaxed);
+                    tracing::warn!(
+                        height = job.height,
+                        nonce,
+                        attempts = attempt,
+                        error = %err,
+                        "block submit retry was rejected but an earlier attempt is in the chain"
+                    );
+                    return Ok(resp);
+                }
+            }
+            let Some(retry) = retry else {
+                return Err(err);
+            };
+            maybe_delivered |= retry == BlockSubmitRetry::MaybeDelivered;
+            let delay = block_submit_retry_delay(attempt);
+            if started_at.elapsed() + delay > self.block_submit_retry_window {
+                if maybe_delivered {
+                    if let Some(resp) = self.accepted_block_in_chain(job, nonce) {
+                        self.block_submit_recovered.fetch_add(1, Ordering::Relaxed);
+                        return Ok(resp);
+                    }
+                }
+                tracing::error!(
+                    height = job.height,
+                    nonce,
+                    attempts = attempt,
+                    error = %err,
+                    "giving up on block submit: daemon unreachable for the whole retry window"
+                );
+                return Err(err);
+            }
+            self.block_submit_retries.fetch_add(1, Ordering::Relaxed);
+            tracing::warn!(
+                height = job.height,
+                nonce,
+                attempt,
+                retry_in_ms = delay.as_millis() as u64,
+                error = %format!("{err:#}"),
+                "block submit failed: daemon unreachable; retrying"
+            );
+            std::thread::sleep(delay);
+        }
     }
 
     fn current_chain_height(&self) -> Result<u64> {
@@ -1063,6 +1215,205 @@ mod tests {
             serde_json::from_str(r#"{"accepted":true,"hash":"ab","height":9}"#)
                 .expect("parse legacy submit response");
         assert!(legacy.timings_us.is_none());
+    }
+
+    /// What the scripted daemon does with one HTTP request.
+    enum Reply {
+        Status(u16, &'static str),
+        /// Read the request, then close without answering.
+        Drop,
+    }
+
+    /// A daemon stand-in answering requests in order from `script`, keyed by
+    /// whether the request line starts with each prefix. Returns its URL and
+    /// the request lines it saw.
+    fn scripted_daemon(
+        script: Vec<(&'static str, Reply)>,
+    ) -> (String, std::sync::Arc<Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind scripted daemon");
+        let url = format!("http://{}", listener.local_addr().expect("addr"));
+        let seen = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let seen_by_server = std::sync::Arc::clone(&seen);
+        std::thread::spawn(move || {
+            let mut script = std::collections::VecDeque::from(script);
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut request = Vec::new();
+                let mut buf = [0u8; 4096];
+                // Read headers, then the Content-Length body.
+                let header_end = loop {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    if n == 0 {
+                        break None;
+                    }
+                    request.extend_from_slice(&buf[..n]);
+                    if let Some(pos) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break Some(pos + 4);
+                    }
+                };
+                let Some(header_end) = header_end else {
+                    continue;
+                };
+                let head = String::from_utf8_lossy(&request[..header_end]).to_string();
+                let body_len = head
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                while request.len() < header_end + body_len {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buf[..n]);
+                }
+                let line = head.lines().next().unwrap_or_default().to_string();
+                seen_by_server.lock().push(line.clone());
+                let index = script
+                    .iter()
+                    .position(|(prefix, _)| line.starts_with(prefix));
+                match index
+                    .and_then(|index| script.remove(index))
+                    .map(|(_, reply)| reply)
+                {
+                    Some(Reply::Status(code, body)) => {
+                        let _ = write!(
+                            stream,
+                            "HTTP/1.1 {code} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                    }
+                    Some(Reply::Drop) | None => {}
+                }
+            }
+        });
+        (url, seen)
+    }
+
+    fn retry_test_job(template_block: Option<Value>) -> Job {
+        Job {
+            id: "job1".to_string(),
+            height: 7,
+            header_base: vec![0xAA; 92],
+            network_target: [0xBB; 32],
+            network_difficulty: 1,
+            template_id: "tmpl-1".to_string(),
+            prev_hash: None,
+            template_created_at: std::time::Instant::now(),
+            template_block: template_block.map(std::sync::Arc::new),
+        }
+    }
+
+    #[test]
+    fn block_submit_retries_through_a_daemon_restart() {
+        // Proxy 502 while the daemon is down, then the restarted daemon has
+        // forgotten the template ID and takes the retained full block.
+        let (url, seen) = scripted_daemon(vec![
+            (
+                "POST /api/mining/submitblock",
+                Reply::Status(502, "<html>502 Bad Gateway</html>"),
+            ),
+            (
+                "POST /api/mining/submitblock",
+                Reply::Status(502, "<html>502 Bad Gateway</html>"),
+            ),
+            (
+                "POST /api/mining/submitblock",
+                Reply::Status(400, r#"{"error":"unknown or expired template_id"}"#),
+            ),
+            (
+                "POST /api/mining/submitblock",
+                Reply::Status(200, r#"{"accepted":true,"hash":"abc","height":7}"#),
+            ),
+        ]);
+        let client = NodeClient::new(&url, "").expect("node client");
+        let job = retry_test_job(Some(serde_json::json!({"header": {"nonce": 0}})));
+
+        let resp = client
+            .submit_block(&job, 42)
+            .expect("block should be accepted");
+
+        assert!(resp.accepted);
+        assert_eq!(seen.lock().len(), 4);
+        let telemetry = client.template_lease_telemetry();
+        assert_eq!(telemetry.block_submit_retries_total, 2);
+        assert_eq!(telemetry.block_submit_recovered_total, 1);
+        assert_eq!(telemetry.block_submit_full_fallback_attempts_total, 1);
+    }
+
+    #[test]
+    fn block_submit_gives_up_after_the_retry_window() {
+        let unused = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!("http://{}", unused.local_addr().expect("addr"));
+        drop(unused);
+        let client = NodeClient::new(&url, "")
+            .expect("node client")
+            .with_block_submit_retry_window(std::time::Duration::from_millis(600));
+        let started_at = std::time::Instant::now();
+
+        client
+            .submit_block(&retry_test_job(None), 42)
+            .expect_err("refused connections should fail once the window ends");
+
+        assert!(started_at.elapsed() < std::time::Duration::from_secs(5));
+        assert!(client.template_lease_telemetry().block_submit_retries_total >= 1);
+    }
+
+    #[test]
+    fn block_submit_recognizes_an_earlier_attempt_that_reached_the_chain() {
+        // The first response is lost; the retry is rejected because our block
+        // is already the tip, and the chain shows our nonce at that height.
+        let (url, _) = scripted_daemon(vec![
+            ("POST /api/mining/submitblock", Reply::Drop),
+            (
+                "POST /api/mining/submitblock",
+                Reply::Status(400, r#"{"error":"block rejected as stale"}"#),
+            ),
+            (
+                "GET /api/block/7",
+                Reply::Status(
+                    200,
+                    r#"{"hash":"abc","reward":1,"timestamp":1,"difficulty":1,"nonce":42}"#,
+                ),
+            ),
+        ]);
+        let client = NodeClient::new(&url, "").expect("node client");
+
+        let resp = client
+            .submit_block(&retry_test_job(None), 42)
+            .expect("earlier attempt should count as accepted");
+
+        assert!(resp.accepted);
+        assert_eq!(resp.hash.as_deref(), Some("abc"));
+        assert_eq!(
+            client
+                .template_lease_telemetry()
+                .block_submit_recovered_total,
+            1
+        );
+    }
+
+    #[test]
+    fn block_submit_does_not_retry_a_stale_rejection() {
+        let (url, seen) = scripted_daemon(vec![(
+            "POST /api/mining/submitblock",
+            Reply::Status(400, r#"{"error":"block rejected as stale"}"#),
+        )]);
+        let client = NodeClient::new(&url, "").expect("node client");
+
+        client
+            .submit_block(&retry_test_job(None), 42)
+            .expect_err("a stale block is final");
+
+        assert_eq!(seen.lock().len(), 1);
+        assert_eq!(
+            client.template_lease_telemetry().block_submit_retries_total,
+            0
+        );
     }
 
     #[test]
