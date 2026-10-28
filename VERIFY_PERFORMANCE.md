@@ -111,7 +111,7 @@ Batch approval: the whole batch (both kernel upgrades, hold_audit_rate 0.25,
 sync lane, per-thread arena retention, hot reload, Stratum gateway with the
 retried-login fix, automatic growth mode) was presented against these
 criteria and approved by the owner as bntpool's production setup on
-2026-10-28 (~06:50 UTC). Candidate spacing in the replay (2 s minimum gap)
+2026-10-28 (06:27 UTC). Candidate spacing in the replay (2 s minimum gap)
 is a modelling choice made after the first runs; it is recorded beside the
 pure-Poisson results, which show the only waits are candidate-on-candidate.
 
