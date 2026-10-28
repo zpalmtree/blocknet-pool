@@ -3368,6 +3368,13 @@ mod tests {
                 },
                 "sync_wait_real_ms_p99": quantile("sync", 0.99),
                 "candidates": {
+                    // Time waiting for the candidate verifier, excluding
+                    // the hash itself (the "delay" a block could suffer).
+                    "queue_wait_real_ms": {
+                        "p50": quantile("candidate", 0.5),
+                        "p99": quantile("candidate", 0.99),
+                        "max": quantile("candidate", 1.0),
+                    },
                     "answered": candidates.len(),
                     "refused": candidate_refused,
                     "p50_real_ms": candidate_pct(50),
