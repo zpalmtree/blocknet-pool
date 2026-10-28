@@ -325,5 +325,9 @@
   "trackWorker": "Find your worker",
   "trackBody": "Use the same wallet address or shortname as in Seine. Accepted shares show the pool is receiving your work. The pool’s hashrate estimate can take a few minutes to appear.",
   "launchBody": "Windows: double-click {0}. macOS or Linux: run {1}. Enter your wallet address or {2} / {3}, then the pool URL.",
-  "commandOption": "Command-line option"
+  "commandOption": "Command-line option",
+  "currentRound": "Current Round",
+  "roundAverageWork": "Average work",
+  "roundAverageInterval": "Estimated average block interval: {0}",
+  "roundEffortExplanation": "100% is average expected work, not completion. The next block can arrive at any time."
 }

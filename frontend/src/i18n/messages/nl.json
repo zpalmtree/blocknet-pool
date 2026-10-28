@@ -325,5 +325,9 @@
   "trackWorker": "Vind je worker",
   "trackBody": "Gebruik hetzelfde walletadres of dezelfde korte naam als in Seine. Geaccepteerde shares laten zien dat de pool je werk ontvangt. Het kan enkele minuten duren voordat de geschatte hashrate van de pool verschijnt.",
   "launchBody": "Windows: dubbelklik op {0}. macOS of Linux: voer {1} uit. Vul je walletadres of {2} / {3} in en daarna de pool-URL.",
-  "commandOption": "Opdrachtregeloptie"
+  "commandOption": "Opdrachtregeloptie",
+  "currentRound": "Huidige ronde",
+  "roundAverageWork": "Gemiddeld werk",
+  "roundAverageInterval": "Geschatte gemiddelde tijd tussen blokken: {0}",
+  "roundEffortExplanation": "100% is het gemiddeld verwachte werk, niet de voltooiing. Het volgende blok kan op elk moment worden gevonden."
 }

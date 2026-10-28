@@ -1493,7 +1493,7 @@ h3 {
 
 .round-meta {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
   margin-bottom: 12px;
 }
@@ -1512,60 +1512,66 @@ h3 {
   font-weight: 600;
 }
 
-.round-progress-wrap {
-  margin-top: 10px;
+.round-effort-scale {
+  margin-top: 18px;
 }
 
-.round-progress-track {
+.round-effort-track {
   position: relative;
-  height: 16px;
+  height: 12px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: var(--progress-track);
+  background: var(--bg-elevated);
   overflow: hidden;
 }
 
-.round-progress-fill {
+.round-effort-fill {
   height: 100%;
-  border-radius: 999px;
+  border-radius: inherit;
+  background: var(--accent);
+  opacity: 0.55;
 }
 
-.round-progress-fill.is-ok {
-  background: var(--progress-ok-fill);
-}
-
-.round-progress-fill.is-warn {
-  background: var(--progress-warn-fill);
-}
-
-.round-progress-fill.is-critical {
-  background: var(--progress-bad-fill);
-}
-
-.round-marker {
+.round-effort-average {
   position: absolute;
-  top: 20px;
-  font-size: 10px;
+  inset-block: 0;
+  left: 50%;
+  border-left: 2px solid var(--text);
+  transform: translateX(-1px);
+}
+
+.round-effort-labels {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12px;
   color: var(--muted);
-  transform: translateX(-50%);
 }
 
-.marker-50 {
-  left: 20%;
+.round-effort-reference {
+  display: grid;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
-.marker-100 {
-  left: 40%;
+.round-effort-labels > :last-child {
+  text-align: right;
 }
 
-.marker-200 {
-  left: 80%;
+.round-note,
+.round-interval {
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .round-note {
-  margin-top: 28px;
-  font-size: 12px;
-  color: var(--muted);
+  margin-top: 18px;
+}
+
+.round-interval {
+  margin-top: 8px;
 }
 
 .rejection-card {
@@ -2281,14 +2287,6 @@ a.copy-field-value:hover {
 
   .stat-card .value {
     font-size: 18px;
-  }
-
-  .round-meta {
-    grid-template-columns: 1fr;
-  }
-
-  .round-marker {
-    font-size: 9px;
   }
 
   .rejection-row {

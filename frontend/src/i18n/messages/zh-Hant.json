@@ -325,5 +325,9 @@
   "trackWorker": "查看你的礦機",
   "trackBody": "使用與 Seine 中相同的錢包地址或短名稱。已接受的份額表示礦池正在接收你的挖礦結果。礦池的預估算力可能需要幾分鐘才會顯示。",
   "launchBody": "Windows：按兩下 {0}。macOS 或 Linux：執行 {1}。輸入錢包地址或 {2} / {3}，然後輸入礦池 URL。",
-  "commandOption": "命令列選項"
+  "commandOption": "命令列選項",
+  "currentRound": "目前輪次",
+  "roundAverageWork": "平均工作量",
+  "roundAverageInterval": "預估平均出塊間隔：{0}",
+  "roundEffortExplanation": "100%表示預期的平均工作量，並非完成進度。下一個區塊隨時可能被找到。"
 }

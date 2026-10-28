@@ -135,13 +135,6 @@ export function ratioPct(numerator: number | null | undefined, denominator: numb
   return (n / d) * 100;
 }
 
-export function effortLabel(effortPct: number | null | undefined): string {
-  if (effortPct == null || !Number.isFinite(effortPct)) return t('loading');
-  if (effortPct >= 200) return t('veryOverdue');
-  if (effortPct >= 100) return t('overdue');
-  return t('onPace');
-}
-
 export function roundToneClass(tone: string | number | null | undefined): string {
   if (typeof tone === 'number') {
     if (tone >= 200) return 'is-critical';

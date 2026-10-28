@@ -12,7 +12,6 @@ import { RangeTabs } from '../components/RangeTabs';
 import { PoolGuide } from '../components/PoolGuide';
 import { StatCard } from '../components/StatCard';
 import {
-  effortLabel,
   formatCoins,
   formatCompactCoins,
   formatPct,
@@ -146,9 +145,11 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
   const payoutLiquidityConstrained = payoutEta != null && payoutEta.pending_total_amount > 0 && payoutShortfall > 0;
 
   const roundEffortPct = round?.effort_pct;
-  const roundTone = roundToneClass(roundEffortPct);
-  const cappedRoundEffortPct = Math.min(Math.max(roundEffortPct ?? 0, 0), 250);
-  const roundProgressPct = Number.isFinite(cappedRoundEffortPct) ? (cappedRoundEffortPct / 250) * 100 : 0;
+  const hasRoundEffort = roundEffortPct != null && Number.isFinite(roundEffortPct) && roundEffortPct >= 0;
+  // This is a work scale, not progress toward a guaranteed block. Keep the
+  // exact value above it even when a long round extends past the scale.
+  const roundScalePct = hasRoundEffort ? Math.min(roundEffortPct / 2, 100) : 0;
+  const averageBlockInterval = round?.expected_block_seconds;
   return (
     <div id="page-dashboard">
       <header className="dashboard-header">
@@ -240,45 +241,40 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
         </div>
       </div>
 
-      <div className="section">
+      <section className="section" aria-labelledby="current-round-title">
         <div className="section-header">
-          <h2>{t("m417")}</h2>
-          <span className={`round-chip ${roundTone}`}>
-            {effortLabel(roundEffortPct)}
-          </span>
+          <h2 id="current-round-title">{t('currentRound')}</h2>
         </div>
         <div className="card">
           <div className="round-meta">
             <div>
               <span className="label">{t("m418")}</span>
-              <div className="value mono">{formatPct(roundEffortPct)}</div>
-            </div>
-            <div>
-              <span className="label">{t("m419")}</span>
-              <div className="value mono">{formatPct(round?.timer_effort_pct)}</div>
-            </div>
-            <div>
-              <span className="label">{t("m420")}</span>
-              <div className="value mono">{round?.expected_block_seconds ? fmtSeconds(Math.floor(round.expected_block_seconds)) : '-'}</div>
+              <div className="value mono">{hasRoundEffort ? formatPct(roundEffortPct) : '-'}</div>
             </div>
             <div>
               <span className="label">{t("m421")}</span>
-              <div className="value mono">{round ? fmtSeconds(round.elapsed_seconds) : '-'}</div>
+              <div className="value mono">{round && Number.isFinite(round.elapsed_seconds) && round.elapsed_seconds >= 0 ? fmtSeconds(round.elapsed_seconds) : '-'}</div>
             </div>
           </div>
 
-          <div className="round-progress-wrap">
-            <div className="round-progress-track">
-              <div className={`round-progress-fill ${roundTone}`} style={{ width: `${roundProgressPct}%` }} />
-              <div className="round-marker marker-50">50%</div>
-              <div className="round-marker marker-100">100%</div>
-              <div className="round-marker marker-200">200%</div>
+          <div className="round-effort-scale" dir="ltr" aria-hidden="true">
+            <div className="round-effort-track">
+              <div className="round-effort-fill" style={{ width: `${roundScalePct}%` }} />
+              <div className="round-effort-average" />
+            </div>
+            <div className="round-effort-labels">
+              <span>0%</span>
+              <span className="round-effort-reference"><bdi>100%</bdi><span dir="auto">{t('roundAverageWork')}</span></span>
+              <span>200%+</span>
             </div>
           </div>
 
-          <p className="round-note">{t("m422")}</p>
+          <p className="round-note">{t('roundEffortExplanation')}</p>
+          <p className="round-interval">{tx('roundAverageInterval', [
+            <bdi className="mono" key="interval">{averageBlockInterval != null && Number.isFinite(averageBlockInterval) && averageBlockInterval > 0 ? fmtSeconds(Math.floor(averageBlockInterval)) : '-'}</bdi>,
+          ])}</p>
         </div>
-      </div>
+      </section>
 
       <div className="stats-card-group">
         <div className="stats-card-group-title">{t("m004")}</div>

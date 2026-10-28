@@ -1,0 +1,30 @@
+{
+  "base_revision": "168f38f1d622310c4bd7767fd2f0a79b5dd5889e",
+  "captured_on": "2026-10-28 EDT",
+  "source_sha256": {
+    "frontend/src/pages/DashboardPage.tsx": "1f7d0cb32f060e1630431ce7601c90400a90e7f168fa960a094cee588240aa44",
+    "frontend/src/styles.css": "7febdb49baaec2c419b0da4691e97a3348311d1776ff191931cf17033ed4b254",
+    "frontend/src/lib/format.ts": "1f81966183fb8c1397217d8167c15260c1bfb3cbb99f2e59a5850d39255b81b5",
+    "frontend/showcases/round-clarity/fixtures.ts": "34360f227786fb4f991a006309ce140a19af910f3c937ef3f693460df3ac839a",
+    "frontend/src/i18n/messages/ar.json": "d75e9385514c0e89fb84ec95c22efe2de43a92e9100654bff469bdab7b1add88",
+    "frontend/src/i18n/messages/de.json": "6d17db537703f6a06da1ad67c99e7e5b5664534f51a0d5b56713408651613fbd",
+    "frontend/src/i18n/messages/el.json": "a4e4d837eadb904f27dc73bf280dd56fc2db1044fdddf5af81416244acb50aab",
+    "frontend/src/i18n/messages/en.json": "8d63842f604d543eb9f58168eff312450ebea3cb662d42a1a8d23d7209c0f5b0",
+    "frontend/src/i18n/messages/es.json": "3235883a7888e7b6e449288158963a8b994358cc3f9aa4620e1b925f65999895",
+    "frontend/src/i18n/messages/fr.json": "e139ce920940c8f3c4cfc978d7972f9a1dbaf198acf75b4a9f4d8894e863282f",
+    "frontend/src/i18n/messages/id.json": "171b05e029944ea70a9f3e6520b2fdb51efbc2f68300d428b595de3dad79c9d2",
+    "frontend/src/i18n/messages/it.json": "ee4244620117dcc6010215cb672a7bc6c2655ce586f8af66beac0a17ee925618",
+    "frontend/src/i18n/messages/ja.json": "a471990398054c3487a3365b48b0a9da02c5c201ef1b1a89f3f1feb741c77d4b",
+    "frontend/src/i18n/messages/ko.json": "a638516d93003d0e9f2663e35fd6212945b03b67b50e376f11037cf49987329c",
+    "frontend/src/i18n/messages/nl.json": "2b2d5e61e5d100eeb98d873a021ca4ad246895abc6d8f2f0d093415c799ded4d",
+    "frontend/src/i18n/messages/pl.json": "679448850cee15cb3c7afaa55eb96ac39a7e0b757f111e9f77c691d1cdccf737",
+    "frontend/src/i18n/messages/pt-BR.json": "ded7e4f7f72b9f93ddff3d42d47d2ec4a2e01b68f9f02286c65f60bd514ff741",
+    "frontend/src/i18n/messages/ru.json": "ae3cf560c994b2173880671907c19d0fd87e91dcd89419130eb5267d9ff4c2c0",
+    "frontend/src/i18n/messages/th.json": "b07687faeff5a0a31b658f6b4676c9057a42f1ba103690f2ddb24f47a8908420",
+    "frontend/src/i18n/messages/tr.json": "db388cfc6b8cb386c843cbccae203f5cc15c33822d5924aff63ed04dba988610",
+    "frontend/src/i18n/messages/uk.json": "bd1f5a77da7a882ccde9c7db8e158fd9195e1afbd5c2d4e793818e792dbe2188",
+    "frontend/src/i18n/messages/vi.json": "9c8cec80a9bbcc2217662ea73d60a5c3ec0f0442bed1b8abb1e038dff113e08c",
+    "frontend/src/i18n/messages/zh-Hans.json": "94eb3e9ed6f7f8cd7531647dd0a935208788050492230934682edaeb80616958",
+    "frontend/src/i18n/messages/zh-Hant.json": "0979a128878b28e0c1a1f3efd3050dacdc8aa14868cd8c78145e0712cc455dd4"
+  }
+}

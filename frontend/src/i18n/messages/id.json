@@ -325,5 +325,9 @@
   "trackWorker": "Temukan worker Anda",
   "trackBody": "Gunakan alamat dompet atau nama singkat yang sama seperti di Seine. Share yang diterima menunjukkan bahwa pool menerima hasil kerja Anda. Estimasi hashrate pool dapat memerlukan beberapa menit untuk muncul.",
   "launchBody": "Windows: klik dua kali {0}. macOS atau Linux: jalankan {1}. Masukkan alamat dompet atau {2} / {3}, lalu URL pool.",
-  "commandOption": "Opsi baris perintah"
+  "commandOption": "Opsi baris perintah",
+  "currentRound": "Putaran saat ini",
+  "roundAverageWork": "Rata-rata kerja",
+  "roundAverageInterval": "Perkiraan interval rata-rata antarblok: {0}",
+  "roundEffortExplanation": "100% menunjukkan rata-rata kerja yang diharapkan, bukan penyelesaian. Blok berikutnya dapat ditemukan kapan saja."
 }

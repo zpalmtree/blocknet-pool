@@ -1,0 +1,165 @@
+{
+  "checked_on": "2026-10-28 EDT",
+  "locales": [
+    {
+      "lang": "en",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "Current Round",
+      "hasEffort": true
+    },
+    {
+      "lang": "de",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "Aktuelle Runde",
+      "hasEffort": true
+    },
+    {
+      "lang": "es",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "Ronda actual",
+      "hasEffort": true
+    },
+    {
+      "lang": "fr",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "Tour en cours",
+      "hasEffort": true
+    },
+    {
+      "lang": "it",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "Round attuale",
+      "hasEffort": true
+    },
+    {
+      "lang": "nl",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "Huidige ronde",
+      "hasEffort": true
+    },
+    {
+      "lang": "pt-BR",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "Rodada atual",
+      "hasEffort": true
+    },
+    {
+      "lang": "pl",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "Bieżąca runda",
+      "hasEffort": true
+    },
+    {
+      "lang": "ru",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "Текущий раунд",
+      "hasEffort": true
+    },
+    {
+      "lang": "uk",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "Поточний раунд",
+      "hasEffort": true
+    },
+    {
+      "lang": "tr",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "Geçerli tur",
+      "hasEffort": true
+    },
+    {
+      "lang": "el",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "Τρέχων γύρος",
+      "hasEffort": true
+    },
+    {
+      "lang": "id",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "Putaran saat ini",
+      "hasEffort": true
+    },
+    {
+      "lang": "vi",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "Vòng hiện tại",
+      "hasEffort": true
+    },
+    {
+      "lang": "th",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "รอบปัจจุบัน",
+      "hasEffort": true
+    },
+    {
+      "lang": "ja",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "現在のラウンド",
+      "hasEffort": true
+    },
+    {
+      "lang": "ko",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "현재 라운드",
+      "hasEffort": true
+    },
+    {
+      "lang": "zh-Hans",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "当前轮次",
+      "hasEffort": true
+    },
+    {
+      "lang": "zh-Hant",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "目前輪次",
+      "hasEffort": true
+    },
+    {
+      "lang": "ar",
+      "width": 390,
+      "overflow": false,
+      "labelsInside": true,
+      "title": "الجولة الحالية",
+      "hasEffort": true
+    }
+  ]
+}

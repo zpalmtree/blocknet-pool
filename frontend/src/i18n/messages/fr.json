@@ -325,5 +325,9 @@
   "trackWorker": "Retrouver votre worker",
   "trackBody": "Utilisez la même adresse de portefeuille ou le même nom court que dans Seine. Les parts acceptées indiquent que le pool reçoit votre travail. L’estimation du hashrate du pool peut mettre quelques minutes à apparaître.",
   "launchBody": "Windows : double-cliquez sur {0}. macOS ou Linux : exécutez {1}. Saisissez votre adresse de portefeuille ou {2} / {3}, puis l’URL du pool.",
-  "commandOption": "Option en ligne de commande"
+  "commandOption": "Option en ligne de commande",
+  "currentRound": "Tour en cours",
+  "roundAverageWork": "Travail moyen",
+  "roundAverageInterval": "Intervalle moyen estimé entre les blocs : {0}",
+  "roundEffortExplanation": "100% représente le travail moyen attendu, pas la fin du tour. Le prochain bloc peut arriver à tout moment."
 }

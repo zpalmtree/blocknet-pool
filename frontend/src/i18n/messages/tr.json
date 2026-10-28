@@ -325,5 +325,9 @@
   "trackWorker": "Worker’ınızı bulun",
   "trackBody": "Seine’de kullandığınız cüzdan adresini veya kısa adı kullanın. Kabul edilen paylar, havuzun çalışmanızı aldığını gösterir. Havuzun tahmini hashrate değerinin görünmesi birkaç dakika sürebilir.",
   "launchBody": "Windows: {0} dosyasına çift tıklayın. macOS veya Linux: {1} komutunu çalıştırın. Cüzdan adresinizi veya {2} / {3} bilgilerinizi, ardından havuz URL’sini girin.",
-  "commandOption": "Komut satırı seçeneği"
+  "commandOption": "Komut satırı seçeneği",
+  "currentRound": "Geçerli tur",
+  "roundAverageWork": "Ortalama iş",
+  "roundAverageInterval": "Tahmini ortalama blok aralığı: {0}",
+  "roundEffortExplanation": "100%, tamamlanmayı değil beklenen ortalama işi gösterir. Bir sonraki blok her an bulunabilir."
 }

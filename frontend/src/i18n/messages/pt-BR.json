@@ -325,5 +325,9 @@
   "trackWorker": "Encontre seu worker",
   "trackBody": "Use o mesmo endereço de carteira ou nome curto informado no Seine. As shares aceitas indicam que o pool está recebendo seu trabalho. A estimativa de hashrate do pool pode levar alguns minutos para aparecer.",
   "launchBody": "Windows: clique duas vezes em {0}. macOS ou Linux: execute {1}. Informe seu endereço de carteira ou {2} / {3} e depois a URL do pool.",
-  "commandOption": "Opção de linha de comando"
+  "commandOption": "Opção de linha de comando",
+  "currentRound": "Rodada atual",
+  "roundAverageWork": "Trabalho médio",
+  "roundAverageInterval": "Intervalo médio estimado entre blocos: {0}",
+  "roundEffortExplanation": "100% representa o trabalho médio esperado, não a conclusão. O próximo bloco pode chegar a qualquer momento."
 }

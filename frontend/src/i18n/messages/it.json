@@ -325,5 +325,9 @@
   "trackWorker": "Trova il tuo worker",
   "trackBody": "Usa lo stesso indirizzo del portafoglio o nome breve inserito in Seine. Le share accettate indicano che il pool riceve il tuo lavoro. La stima dell’hashrate del pool può richiedere alcuni minuti prima di apparire.",
   "launchBody": "Windows: fai doppio clic su {0}. macOS o Linux: esegui {1}. Inserisci l’indirizzo del portafoglio o {2} / {3}, poi l’URL del pool.",
-  "commandOption": "Opzione da riga di comando"
+  "commandOption": "Opzione da riga di comando",
+  "currentRound": "Round attuale",
+  "roundAverageWork": "Lavoro medio",
+  "roundAverageInterval": "Intervallo medio stimato tra i blocchi: {0}",
+  "roundEffortExplanation": "Il 100% indica il lavoro medio previsto, non il completamento. Il prossimo blocco può arrivare in qualsiasi momento."
 }

@@ -325,5 +325,9 @@
   "trackWorker": "Znajdź swój worker",
   "trackBody": "Użyj tego samego adresu portfela lub krótkiej nazwy co w Seine. Zaakceptowane udziały oznaczają, że pula otrzymuje Twoją pracę. Szacowany hashrate puli może pojawić się po kilku minutach.",
   "launchBody": "Windows: kliknij dwukrotnie {0}. macOS lub Linux: uruchom {1}. Wpisz adres portfela lub {2} / {3}, a następnie adres URL puli.",
-  "commandOption": "Opcja wiersza poleceń"
+  "commandOption": "Opcja wiersza poleceń",
+  "currentRound": "Bieżąca runda",
+  "roundAverageWork": "Średni nakład pracy",
+  "roundAverageInterval": "Szacowany średni odstęp między blokami: {0}",
+  "roundEffortExplanation": "100% oznacza średni oczekiwany nakład pracy, a nie ukończenie rundy. Następny blok może pojawić się w każdej chwili."
 }

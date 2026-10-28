@@ -325,5 +325,9 @@
   "trackWorker": "Encuentra tu equipo",
   "trackBody": "Usa la misma dirección de monedero o nombre corto que en Seine. Las participaciones aceptadas indican que el pool recibe tu trabajo. La estimación de hashrate del pool puede tardar unos minutos en aparecer.",
   "launchBody": "Windows: haz doble clic en {0}. macOS o Linux: ejecuta {1}. Introduce tu dirección de monedero o {2} / {3} y después la URL del pool.",
-  "commandOption": "Opción de línea de comandos"
+  "commandOption": "Opción de línea de comandos",
+  "currentRound": "Ronda actual",
+  "roundAverageWork": "Trabajo medio",
+  "roundAverageInterval": "Intervalo medio estimado entre bloques: {0}",
+  "roundEffortExplanation": "El 100% representa el trabajo medio esperado, no la finalización. El siguiente bloque puede llegar en cualquier momento."
 }
