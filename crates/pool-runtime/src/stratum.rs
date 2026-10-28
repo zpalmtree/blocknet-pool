@@ -170,6 +170,11 @@ pub struct SubmitRuntimeSnapshot {
     /// Submits answered "busy/retry" without being judged, by reason.
     #[serde(default)]
     pub unprocessed: UnprocessedSubmitSnapshot,
+    #[serde(default)]
+    pub growth_mode_active: bool,
+    /// Smoothed share rate at the normal share size (growth-mode input).
+    #[serde(default)]
+    pub growth_normal_size_submits_per_s: Option<f64>,
 }
 
 #[derive(Debug)]
@@ -712,6 +717,8 @@ impl SubmitDispatcher {
             candidate_wait: candidate.wait,
             regular_wait: regular.wait,
             unprocessed: UnprocessedSubmitSnapshot::default(),
+            growth_mode_active: false,
+            growth_normal_size_submits_per_s: None,
         }
     }
 }
@@ -833,6 +840,8 @@ impl StratumServer {
     pub(crate) fn submit_snapshot(&self) -> SubmitRuntimeSnapshot {
         let mut snapshot = self.submit_dispatcher.snapshot();
         snapshot.unprocessed = self.engine.admission().snapshot();
+        snapshot.growth_mode_active = self.engine.growth_mode_active();
+        snapshot.growth_normal_size_submits_per_s = self.engine.growth_normal_size_rate();
         snapshot
     }
 

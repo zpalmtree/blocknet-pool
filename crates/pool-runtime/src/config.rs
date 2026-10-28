@@ -52,6 +52,15 @@ pub struct Config {
     /// Fraction of a held address's shares audited while a provisional-backlog
     /// or payout-coverage hold is active.
     pub hold_audit_rate: f64,
+    /// Growth mode: above this many shares per second (sustained, measured
+    /// at the normal share size), Stratum switches to
+    /// `growth_vardiff_target_shares` and `growth_sample_rate` so verifier
+    /// demand stays within capacity. 0 disables it.
+    pub growth_submit_rate: f64,
+    /// Growth mode ends below this rate (same units).
+    pub growth_exit_submit_rate: f64,
+    pub growth_vardiff_target_shares: i32,
+    pub growth_sample_rate: f64,
     pub warmup_shares: i32,
     pub min_sample_every: i32,
     pub invalid_sample_threshold: f64,
@@ -144,6 +153,10 @@ impl Default for Config {
             audit_verifiers: 1,
             sample_rate: 0.10,
             hold_audit_rate: 0.25,
+            growth_submit_rate: 55.0,
+            growth_exit_submit_rate: 40.0,
+            growth_vardiff_target_shares: 5,
+            growth_sample_rate: 0.08,
             warmup_shares: 20,
             min_sample_every: 10,
             invalid_sample_threshold: 0.10,
@@ -236,9 +249,22 @@ impl Config {
                 min_share_difficulty,
                 max_share_difficulty,
                 initial_share_difficulty,
+                growth_submit_rate,
+                growth_exit_submit_rate,
+                growth_vardiff_target_shares,
+                growth_sample_rate,
             ]
         );
         (running, changed)
+    }
+
+    /// The configuration Stratum runs with while growth mode is active.
+    pub fn with_growth_mode(&self) -> Config {
+        Config {
+            vardiff_target_shares: self.growth_vardiff_target_shares,
+            sample_rate: self.growth_sample_rate,
+            ..self.clone()
+        }
     }
 
     pub fn load(path: &Path) -> Result<Self> {
@@ -455,6 +481,11 @@ impl Config {
             ),
             ("vardiff_target_shares", self.vardiff_target_shares, 1),
             (
+                "growth_vardiff_target_shares",
+                self.growth_vardiff_target_shares,
+                1,
+            ),
+            (
                 "payout_min_verified_shares",
                 self.payout_min_verified_shares,
                 0,
@@ -487,6 +518,18 @@ impl Config {
         }
         ensure_f64_range("sample_rate", self.sample_rate, 0.0, 1.0)?;
         ensure_f64_range("hold_audit_rate", self.hold_audit_rate, 0.0, 1.0)?;
+        ensure_f64_range("growth_sample_rate", self.growth_sample_rate, 0.0, 1.0)?;
+        ensure_f64_range("growth_submit_rate", self.growth_submit_rate, 0.0, f64::MAX)?;
+        ensure_f64_range(
+            "growth_exit_submit_rate",
+            self.growth_exit_submit_rate,
+            0.0,
+            f64::MAX,
+        )?;
+        if self.growth_submit_rate > 0.0 && self.growth_exit_submit_rate >= self.growth_submit_rate
+        {
+            anyhow::bail!("growth_exit_submit_rate must be below growth_submit_rate");
+        }
         ensure_f64_range(
             "source_honest_invalid_rate",
             self.source_honest_invalid_rate,

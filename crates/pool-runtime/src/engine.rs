@@ -538,7 +538,14 @@ struct MinerSession {
 }
 
 pub struct PoolEngine {
+    /// Settings Stratum runs with: `base_cfg`, plus the growth-mode overrides
+    /// while growth mode is active.
     live_cfg: Arc<LiveConfig>,
+    /// Settings as configured (file and reloads).
+    base_cfg: Mutex<Config>,
+    growth_active: std::sync::atomic::AtomicBool,
+    /// Last smoothed share rate at the normal share size (f64 bits).
+    growth_rate_bits: std::sync::atomic::AtomicU64,
     expected_address_network: Option<AddressNetwork>,
     validation: Arc<ValidationEngine>,
     jobs: Arc<dyn JobRepository>,
@@ -871,6 +878,7 @@ impl PoolEngine {
     ) -> Self {
         let source_risk = Arc::new(SourceRiskTracker::new(SourcePolicy::from_config(&cfg)));
         let admission = Arc::new(AdmissionState::new(cfg.sync_verify_slot_count()));
+        let base_cfg = Mutex::new(cfg.clone());
         let live_cfg = Arc::new(LiveConfig::new(cfg));
         validation.attach_audit_feedback(Arc::new(EngineAuditFeedback {
             live_cfg: Arc::clone(&live_cfg),
@@ -879,6 +887,9 @@ impl PoolEngine {
         }));
         let engine = Self {
             live_cfg,
+            base_cfg,
+            growth_active: std::sync::atomic::AtomicBool::new(false),
+            growth_rate_bits: std::sync::atomic::AtomicU64::new(f64::NAN.to_bits()),
             expected_address_network,
             validation,
             jobs,
@@ -902,16 +913,67 @@ impl PoolEngine {
         self.live_cfg.get()
     }
 
-    /// Applies the hot settings of `next` to the engine, its audit feedback
-    /// and the validation engine; returns the names that changed.
+    /// Settings as configured, without growth-mode overrides.
+    pub(crate) fn base_cfg(&self) -> Config {
+        self.base_cfg.lock().clone()
+    }
+
+    /// Applies the hot settings of `next` to the configured settings, then
+    /// re-derives what the engine, its audit feedback and the validation
+    /// engine run with; returns the names of configured settings that changed.
     pub fn reload_hot_config(&self, next: &Config) -> Vec<&'static str> {
-        let changed = self.live_cfg.apply_hot(next);
-        let validation_changed = self.validation.reload_hot_config(next);
-        debug_assert!(
-            validation_changed.iter().all(|name| changed.contains(name)),
-            "engine and validation configs diverged"
-        );
+        let mut base = self.base_cfg.lock();
+        let (updated, changed) = base.with_hot_settings_from(next);
+        *base = updated;
+        self.apply_effective(&base);
         changed
+    }
+
+    pub(crate) fn growth_normal_size_rate(&self) -> Option<f64> {
+        let rate = f64::from_bits(
+            self.growth_rate_bits
+                .load(std::sync::atomic::Ordering::Relaxed),
+        );
+        rate.is_finite().then_some(rate)
+    }
+
+    pub(crate) fn record_growth_rate(&self, rate: f64) {
+        self.growth_rate_bits
+            .store(rate.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub(crate) fn growth_mode_active(&self) -> bool {
+        self.growth_active.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Switches growth mode (see `crate::growth`); returns whether it changed.
+    pub(crate) fn set_growth_mode(&self, active: bool) -> bool {
+        let base = self.base_cfg.lock();
+        if self
+            .growth_active
+            .swap(active, std::sync::atomic::Ordering::SeqCst)
+            == active
+        {
+            return false;
+        }
+        self.apply_effective(&base);
+        tracing::info!(
+            active,
+            vardiff_target_shares = self.cfg().vardiff_target_shares,
+            sample_rate = self.cfg().sample_rate,
+            "growth mode changed"
+        );
+        true
+    }
+
+    fn apply_effective(&self, base: &Config) {
+        let effective = if self.growth_mode_active() && base.growth_submit_rate > 0.0 {
+            base.with_growth_mode()
+        } else {
+            base.clone()
+        };
+        self.live_cfg.apply_hot(&effective);
+        self.validation.reload_hot_config(&effective);
     }
 
     pub(crate) fn attach_submit_regular_queue(&self, queue: Arc<QueueTracker>) {
@@ -5963,6 +6025,46 @@ mod tests {
         assert!(OutboxLock::try_acquire(&outbox).unwrap().is_none());
         drop(owner);
         assert!(OutboxLock::try_acquire(&outbox).unwrap().is_some());
+    }
+
+    #[test]
+    fn growth_mode_overrides_compose_with_reloads() {
+        let mut cfg = cfg();
+        cfg.vardiff_target_shares = 10;
+        cfg.sample_rate = 0.05;
+        let validation = Arc::new(ValidationEngine::new(
+            cfg.clone(),
+            Arc::new(DeterministicTestHasher),
+        ));
+        let engine = PoolEngine::new(
+            cfg.clone(),
+            Arc::clone(&validation),
+            Arc::new(InMemoryJobs::default()),
+            Arc::new(InMemoryStore::default()),
+            Arc::new(InMemoryNode::default()),
+        );
+
+        assert!(engine.set_growth_mode(true));
+        assert!(!engine.set_growth_mode(true), "already active");
+        assert_eq!(engine.cfg().vardiff_target_shares, 5);
+        assert_eq!(engine.cfg().sample_rate, 0.08);
+        assert_eq!(validation.snapshot().effective_sample_rate, 0.08);
+
+        // A reload while growing changes the configured values; the growth
+        // overrides stay in force.
+        engine.reload_hot_config(&Config {
+            sample_rate: 0.06,
+            hold_audit_rate: 0.5,
+            ..cfg.clone()
+        });
+        assert_eq!(engine.cfg().sample_rate, 0.08);
+        assert_eq!(engine.cfg().hold_audit_rate, 0.5);
+        assert_eq!(engine.base_cfg().sample_rate, 0.06);
+
+        assert!(engine.set_growth_mode(false));
+        assert_eq!(engine.cfg().vardiff_target_shares, 10);
+        assert_eq!(engine.cfg().sample_rate, 0.06);
+        assert_eq!(validation.snapshot().effective_sample_rate, 0.06);
     }
 
     #[test]

@@ -3056,6 +3056,16 @@ mod tests {
         let candidate_latencies = Arc::new(Mutex::new(Vec::<f64>::new()));
         let mut candidate_refused = 0u64;
         let mut candidate_handles = Vec::new();
+        // "from,to,start,end": load ramps linearly between wall seconds.
+        let ramp: Option<(f64, f64, f64, f64)> =
+            std::env::var("VERIFY_REPLAY_RAMP").ok().map(|v| {
+                let parts: Vec<f64> = v.split(',').map(|p| p.parse().expect("ramp")).collect();
+                (parts[0], parts[1], parts[2], parts[3])
+            });
+        // Runs the real growth-mode controller on simulated time; miners'
+        // share size follows its target with a vardiff-like lag.
+        let growth = env_f64("VERIFY_REPLAY_GROWTH", 0.0) > 0.0;
+        let growth_start_active = env_f64("VERIFY_REPLAY_GROWTH_ACTIVE", 0.0) > 0.0;
         // "start,end,factor" in wall seconds.
         let surge: Option<(f64, f64, f64)> = std::env::var("VERIFY_REPLAY_SURGE").ok().map(|v| {
             let parts: Vec<f64> = v.split(',').map(|p| p.parse().expect("surge")).collect();
@@ -3111,7 +3121,25 @@ mod tests {
             capacity_per_s: capacity * speedup,
             single: Duration::from_secs_f64(single_ms / 1000.0 / speedup),
         });
+        let replay_base_cfg = Config {
+            vardiff_target_shares: 10,
+            ..cfg.clone()
+        };
         let engine = ValidationEngine::new(cfg, hasher);
+        let sim_start = Instant::now();
+        let sim_now = |started: Instant| sim_start + started.elapsed().mul_f64(speedup);
+        let mut controller = crate::growth::GrowthController::new(growth_start_active, sim_start);
+        if growth && growth_start_active {
+            engine.reload_hot_config(&replay_base_cfg.with_growth_mode());
+        }
+        let mut share_size = if growth && growth_start_active {
+            2.0
+        } else {
+            1.0
+        };
+        let mut share_size_target = share_size;
+        let mut last_growth_tick = 0.0f64;
+        let mut growth_switches = Vec::<(f64, bool)>::new();
         let pick = WeightedIndex::new(&weights).expect("weights");
         let mut rng = StdRng::seed_from_u64(7);
         let difficulty = (60.0 / share_scale).round() as u64;
@@ -3124,7 +3152,39 @@ mod tests {
                 Some((from, to, factor)) if next_at >= from && next_at < to => factor,
                 _ => 1.0,
             };
-            let rate = base_rate * load * share_scale * factor * speedup;
+            let load_now = match ramp {
+                Some((from, to, start, end)) => {
+                    from + (to - from) * ((next_at - start) / (end - start)).clamp(0.0, 1.0)
+                }
+                None => load,
+            };
+            if growth {
+                // 30 simulated seconds per controller tick.
+                if next_at - last_growth_tick >= 30.0 / speedup {
+                    let dt = next_at - last_growth_tick;
+                    last_growth_tick = next_at;
+                    if let Some(active) =
+                        controller.observe(sim_now(started), share_id as u64, &replay_base_cfg)
+                    {
+                        growth_switches.push((next_at * speedup / 60.0, active));
+                        let effective = if active {
+                            replay_base_cfg.with_growth_mode()
+                        } else {
+                            replay_base_cfg.clone()
+                        };
+                        engine.reload_hot_config(&effective);
+                        share_size_target = if active { 2.0 } else { 1.0 };
+                    }
+                    // Vardiff moves miners to the new share size over minutes.
+                    let blend = 1.0 - (-(dt * speedup) / 120.0).exp();
+                    share_size += (share_size_target - share_size) * blend;
+                }
+            }
+            let rate = if growth {
+                base_rate * load_now * factor * speedup / share_size
+            } else {
+                base_rate * load_now * share_scale * factor * speedup
+            };
             next_at += -rng.gen::<f64>().max(f64::MIN_POSITIVE).ln() / rate;
             if next_at >= wall_secs {
                 break;
@@ -3284,6 +3344,9 @@ mod tests {
                 "warmup": env_f64("VERIFY_REPLAY_WARMUP", 0.0),
                 "probation_rejected": snap.probation_rejected,
                 "surge": surge,
+                "ramp": ramp,
+                "growth_switches_sim_minute": growth_switches,
+                "growth_normal_size_rate": controller.normal_size_rate(),
                 "simulated_secs": elapsed,
                 "shares": share_id,
                 "shares_per_s": share_id as f64 / elapsed,

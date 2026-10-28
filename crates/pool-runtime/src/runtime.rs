@@ -25,6 +25,8 @@ const HASHRATE_WARMUP_WINDOW: Duration = Duration::from_secs(5 * 60);
 const RUNTIME_TASK_SLOW_LOG_AFTER: Duration = Duration::from_millis(250);
 const SEEN_SHARE_GC_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const RETENTION_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const GROWTH_MODE_META_KEY: &str = "growth_mode_v1";
+const GROWTH_MODE_TICK: Duration = Duration::from_secs(30);
 const SHARES_RETENTION: Duration = Duration::from_secs(90 * 24 * 60 * 60);
 const PAYOUTS_RETENTION: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 
@@ -232,7 +234,7 @@ pub fn reload_hot_config(config_path: &Path, engine: &PoolEngine) -> Result<Vec<
     } else {
         info!(changed = ?changed, "config reloaded; hot settings applied");
     }
-    if *engine.cfg() != next {
+    if engine.base_cfg() != next {
         warn!("config file also changes settings that only apply after a Stratum restart");
     }
     Ok(changed)
@@ -268,6 +270,12 @@ pub fn start_stratum_background_tasks(
     let validation = Arc::clone(&shared.validation);
     let role = Arc::clone(&shared.role);
     let task_metrics = Arc::new(NamedTimedOperationTracker::default());
+    start_growth_mode(
+        Arc::clone(&engine),
+        Arc::clone(&stratum),
+        Arc::clone(&shared.store),
+        Arc::clone(&role),
+    );
     start_found_block_recovery(engine, Arc::clone(&task_metrics));
     let payout = PayoutProcessor::new_with_task_metrics(
         shared.cfg.clone(),
@@ -303,6 +311,62 @@ pub fn start_stratum_background_tasks(
         task_metrics,
     );
     StratumBackground { role, payout }
+}
+
+/// Resumes the persisted growth mode, then lets the primary engine switch it
+/// from the measured share rate (see `crate::growth`).
+fn start_growth_mode(
+    engine: Arc<PoolEngine>,
+    stratum: Arc<StratumServer>,
+    store: Arc<PoolStore>,
+    role: Arc<EngineRole>,
+) {
+    tokio::spawn(async move {
+        let load_store = Arc::clone(&store);
+        let persisted =
+            tokio::task::spawn_blocking(move || load_store.get_meta(GROWTH_MODE_META_KEY)).await;
+        let active = match persisted {
+            Ok(Ok(Some(value))) => value == b"1",
+            Ok(Ok(None)) => false,
+            Ok(Err(err)) => {
+                warn!(error = %err, "failed loading growth mode; starting without it");
+                false
+            }
+            Err(err) => {
+                warn!(error = %err, "growth mode load task failed");
+                false
+            }
+        };
+        if active {
+            engine.set_growth_mode(true);
+        }
+        let mut controller = crate::growth::GrowthController::new(active, Instant::now());
+        let mut ticker = tokio::time::interval(GROWTH_MODE_TICK);
+        loop {
+            ticker.tick().await;
+            if !role.is_primary() {
+                continue;
+            }
+            let total = stratum.submit_snapshot().submits_received_total;
+            let switched = controller.observe(Instant::now(), total, &engine.base_cfg());
+            if let Some(rate) = controller.normal_size_rate() {
+                engine.record_growth_rate(rate);
+            }
+            let Some(active) = switched else {
+                continue;
+            };
+            engine.set_growth_mode(active);
+            let store = Arc::clone(&store);
+            let value: &'static [u8] = if active { b"1" } else { b"0" };
+            match tokio::task::spawn_blocking(move || store.set_meta(GROWTH_MODE_META_KEY, value))
+                .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => warn!(error = %err, "failed persisting growth mode"),
+                Err(err) => warn!(error = %err, "growth mode persist task failed"),
+            }
+        }
+    });
 }
 
 fn start_seen_share_gc(

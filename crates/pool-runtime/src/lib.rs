@@ -38,6 +38,7 @@ pub(crate) mod stratum;
 
 pub mod telemetry;
 
+pub(crate) mod growth;
 pub mod validation;
 
 pub mod wallet_send_journal;
