@@ -201,14 +201,12 @@ async fn read_miner(
                 let Ok(text) = String::from_utf8(line.clone()) else {
                     break;
                 };
-                if text.trim().is_empty() {
-                    continue;
-                }
-                if events
-                    .send(Event::MinerLine { conn, line: text })
-                    .await
-                    .is_err()
-                {
+                let event = if text.trim().is_empty() {
+                    Event::MinerKeepalive { conn }
+                } else {
+                    Event::MinerLine { conn, line: text }
+                };
+                if events.send(event).await.is_err() {
                     return;
                 }
             }

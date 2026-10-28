@@ -23,6 +23,10 @@ const BUSY_ERROR: &str = "server busy, retry";
 /// Wait after a rejected or unanswered replay before trying that miner again.
 const REPLAY_BACKOFF: Duration = Duration::from_secs(5);
 const MAX_PENDING_LOGINS: usize = 4;
+/// Blank keepalive lines are relayed at most this often per miner. The engine
+/// drops a logged-in session after 15 idle minutes, and an idle miner (such as
+/// seine's parked dev-fee or user session) sends nothing else.
+const KEEPALIVE_RELAY_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub struct Timings {
@@ -75,6 +79,10 @@ pub enum Event {
         conn: u64,
         line: String,
     },
+    /// A blank line: the miner is alive but has nothing to say.
+    MinerKeepalive {
+        conn: u64,
+    },
     MinerClosed {
         conn: u64,
     },
@@ -119,6 +127,8 @@ struct Miner {
     jobs: VecDeque<(String, u64)>,
     /// Since when the miner has had no engine.
     orphaned_since: Option<Instant>,
+    /// When a line from this miner last reached its current engine.
+    last_relayed_at: Option<Instant>,
 }
 
 struct EngineLink {
@@ -157,6 +167,7 @@ impl Gateway {
         match event {
             Event::MinerConnected { conn, peer, tx } => self.miner_connected(conn, peer, tx, now),
             Event::MinerLine { conn, line } => self.miner_line(conn, line, now),
+            Event::MinerKeepalive { conn } => self.miner_keepalive(conn, now),
             Event::MinerClosed { conn } => self.miner_closed(conn),
             Event::EngineConnected { engine, tx } => {
                 self.engines.insert(
@@ -200,6 +211,7 @@ impl Gateway {
             replay_not_before: None,
             jobs: VecDeque::new(),
             orphaned_since: Some(now),
+            last_relayed_at: None,
         };
         if let Some(primary) = self.primary {
             if open_on(&self.engines, &mut miner, conn, primary) {
@@ -270,6 +282,9 @@ impl Gateway {
                     .try_send(Frame::new(FrameKind::Line, conn, line.into_bytes()))
                     .is_ok()
             });
+        if delivered && target == miner.current {
+            miner.last_relayed_at = Some(now);
+        }
         if !delivered {
             if miner.current.is_none() && miner.orphaned_since.is_none() {
                 miner.orphaned_since = Some(now);
@@ -286,6 +301,33 @@ impl Gateway {
                 let reply = serde_json::json!({ "id": id, "error": BUSY_ERROR }).to_string();
                 send_miner(miner, MinerOut::Line(reply));
             }
+        }
+    }
+
+    /// Relays a miner's keepalive to its current engine, which otherwise
+    /// times the session out (and so disconnects the miner) after 15 quiet
+    /// minutes. Old engines only hold sessions for old-job shares and are
+    /// retired, so they are not kept alive.
+    fn miner_keepalive(&mut self, conn: u64, now: Instant) {
+        let Some(miner) = self.miners.get_mut(&conn) else {
+            return;
+        };
+        let Some(engine) = miner.current.filter(|_| miner.logged_in) else {
+            return;
+        };
+        if miner
+            .last_relayed_at
+            .is_some_and(|at| now.duration_since(at) < KEEPALIVE_RELAY_INTERVAL)
+        {
+            return;
+        }
+        let delivered = self.engines.get(&engine).is_some_and(|link| {
+            link.tx
+                .try_send(Frame::new(FrameKind::Line, conn, Vec::new()))
+                .is_ok()
+        });
+        if delivered {
+            miner.last_relayed_at = Some(now);
         }
     }
 
@@ -940,6 +982,41 @@ mod tests {
         assert_eq!(a.expect(FrameKind::Line, 7), submit_line(2, "j1"));
         h.engine_says(&a, 7, r#"{"id":2,"status":"OK"}"#);
         assert_eq!(miner.line(), r#"{"id":2,"status":"OK"}"#);
+    }
+
+    #[test]
+    fn keepalives_reach_the_current_engine_at_a_bounded_rate() {
+        let mut h = Harness::new();
+        let mut a = h.engine(1, 100);
+        let mut miner = h.logged_in_miner(7, &mut a, "j1");
+
+        // The login just reached the engine, so it is not idle yet.
+        h.handle(Event::MinerKeepalive { conn: 7 });
+        a.assert_quiet();
+
+        h.advance(KEEPALIVE_RELAY_INTERVAL);
+        h.handle(Event::MinerKeepalive { conn: 7 });
+        assert_eq!(a.expect(FrameKind::Line, 7), "");
+        h.handle(Event::MinerKeepalive { conn: 7 });
+        a.assert_quiet();
+
+        // Any relayed request also counts as activity.
+        h.advance(KEEPALIVE_RELAY_INTERVAL);
+        h.miner_says(&miner, &submit_line(2, "j1"));
+        assert_eq!(a.expect(FrameKind::Line, 7), submit_line(2, "j1"));
+        h.handle(Event::MinerKeepalive { conn: 7 });
+        a.assert_quiet();
+        miner.assert_quiet();
+    }
+
+    #[test]
+    fn keepalives_before_login_are_not_relayed() {
+        let mut h = Harness::new();
+        let mut a = h.engine(1, 100);
+        let _miner = h.miner(7);
+        a.expect(FrameKind::Open, 7);
+        h.handle(Event::MinerKeepalive { conn: 7 });
+        a.assert_quiet();
     }
 
     #[test]
