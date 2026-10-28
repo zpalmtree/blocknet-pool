@@ -3051,6 +3051,52 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(rows.into_iter().map(|row| row_to_block(&row)).collect())
     }
 
+    pub(crate) fn get_orphaned_blocks_from_height(&self, min_height: u64) -> Result<Vec<DbBlock>> {
+        let rows = self.conn().query(
+            "SELECT height, hash, difficulty, finder, finder_worker, reward, timestamp, confirmed, orphaned, paid_out, effort_pct
+             FROM blocks
+             WHERE orphaned = TRUE AND height >= $1
+             ORDER BY height ASC",
+            &[&u64_to_i64(min_height)?],
+        )?;
+        Ok(rows.into_iter().map(|row| row_to_block(&row)).collect())
+    }
+
+    /// Clears the orphan mark on a block the daemon shows as canonical again,
+    /// but only when orphaning fully reversed it: no credits or fee credits
+    /// left and nothing paid. The block then confirms and distributes through
+    /// the normal path. Returns whether it was restored.
+    pub(crate) fn restore_canonical_orphaned_block(&self, height: u64, hash: &str) -> Result<bool> {
+        let mut conn = self.conn();
+        let mut tx = conn.transaction()?;
+        let height = u64_to_i64(height)?;
+        let Some(row) = tx.query_opt(
+            "SELECT orphaned, paid_out FROM blocks WHERE height = $1 AND hash = $2 FOR UPDATE",
+            &[&height, &hash],
+        )?
+        else {
+            return Ok(false);
+        };
+        let (orphaned, paid_out) = (row.get::<_, bool>(0), row.get::<_, bool>(1));
+        if !orphaned || paid_out {
+            return Ok(false);
+        }
+        let leftover = tx.query_one(
+            "SELECT (SELECT COUNT(*) FROM block_credit_events WHERE block_height = $1)
+                  + (SELECT COUNT(*) FROM pool_fee_balance_credits WHERE block_height = $1)",
+            &[&height],
+        )?;
+        if leftover.get::<_, i64>(0) > 0 {
+            return Ok(false);
+        }
+        tx.execute(
+            "UPDATE blocks SET orphaned = FALSE, confirmed = FALSE WHERE height = $1",
+            &[&height],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     pub(crate) fn get_non_orphan_blocks_from_height(
         &self,
         min_height: u64,

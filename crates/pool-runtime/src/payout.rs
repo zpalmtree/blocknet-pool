@@ -36,6 +36,10 @@ use pool_common::protocol::{address_network, validate_miner_address_for_network,
 
 const MIN_PAYOUT_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_PAYOUT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30);
+/// How long the daemon must keep showing a different block at one of our
+/// heights before that block is orphaned. A daemon briefly on another branch
+/// (just switched to, or mid-reorg) must not cost miners a real block.
+const DIVERGENCE_CONFIRM_AFTER: Duration = Duration::from_secs(90);
 const MIN_PAYOUT_FEE_BUFFER: u64 = 1_000;
 const PENDING_PAYOUT_RETRY_GRACE: Duration = Duration::from_secs(15 * 60);
 const WALLET_SEND_HISTORY_PAGE_SIZE: usize = 500;
@@ -235,12 +239,31 @@ pub(crate) struct PayoutProcessor {
     /// Set while a payout pass runs, so a retiring Stratum can wait for it
     /// instead of exiting mid-send.
     tick_running: std::sync::atomic::AtomicBool,
+    /// Pool block height → (daemon's differing hash, first seen), so a
+    /// divergence only orphans once it persists.
+    divergence_observations: parking_lot::Mutex<HashMap<u64, (String, Instant)>>,
+    divergence_confirm_after: Duration,
 }
 
 impl PayoutProcessor {
+    /// Test processor that orphans a diverged block as soon as it is seen.
     #[cfg(test)]
     pub(crate) fn new(cfg: Config, store: Arc<PoolStore>, node: Arc<NodeClient>) -> Arc<Self> {
-        Self::new_with_task_metrics(cfg, store, node, None)
+        Self::new_with_divergence_confirm_after(cfg, store, node, Duration::ZERO)
+    }
+
+    #[cfg(test)]
+    fn new_with_divergence_confirm_after(
+        cfg: Config,
+        store: Arc<PoolStore>,
+        node: Arc<NodeClient>,
+        divergence_confirm_after: Duration,
+    ) -> Arc<Self> {
+        let processor = Self::new_with_task_metrics(cfg, store, node, None);
+        let mut processor = Arc::try_unwrap(processor)
+            .unwrap_or_else(|_| unreachable!("freshly built processor is not shared"));
+        processor.divergence_confirm_after = divergence_confirm_after;
+        Arc::new(processor)
     }
 
     pub(crate) fn new_with_task_metrics(
@@ -270,6 +293,8 @@ impl PayoutProcessor {
             ),
             task_metrics,
             tick_running: std::sync::atomic::AtomicBool::new(false),
+            divergence_observations: parking_lot::Mutex::new(HashMap::new()),
+            divergence_confirm_after: DIVERGENCE_CONFIRM_AFTER,
         })
     }
 
@@ -423,6 +448,7 @@ impl PayoutProcessor {
             return false;
         }
 
+        self.restore_canonical_orphans(&status);
         let recovery_detected = self.reconcile_chain_recovery(&status);
         if recovery_detected {
             self.activate_recovery_payout_reconciliation();
@@ -452,7 +478,69 @@ impl PayoutProcessor {
         self.recovery_payout_reconciliation.read().active
     }
 
+    /// Un-orphans recent blocks the daemon shows as canonical again, e.g.
+    /// after a daemon on another branch rejoined the main chain.
+    fn restore_canonical_orphans(&self, status: &NodeStatus) {
+        let from = status
+            .chain_height
+            .saturating_sub(CHAIN_RECOVERY_LOOKBACK_BLOCKS as u64);
+        let orphaned = match self.store.get_orphaned_blocks_from_height(from) {
+            Ok(blocks) => blocks,
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to load recent orphaned blocks");
+                return;
+            }
+        };
+        for block in orphaned {
+            if block.height > status.chain_height {
+                continue;
+            }
+            match self.node.get_block_by_height_optional(block.height) {
+                Ok(Some(node_block)) if node_block.hash == block.hash => {}
+                Ok(_) => continue,
+                Err(err) => {
+                    tracing::warn!(height = block.height, error = %err, "failed to check orphaned block");
+                    return;
+                }
+            }
+            match self
+                .store
+                .restore_canonical_orphaned_block(block.height, &block.hash)
+            {
+                Ok(true) => tracing::warn!(
+                    height = block.height,
+                    hash = %block.hash,
+                    "orphaned block is canonical again; restored for confirmation and payout"
+                ),
+                Ok(false) => tracing::warn!(
+                    height = block.height,
+                    hash = %block.hash,
+                    "orphaned block is canonical again but its credits were not fully reversed; needs manual reconciliation"
+                ),
+                Err(err) => {
+                    tracing::warn!(height = block.height, error = %err, "failed to restore orphaned block")
+                }
+            }
+        }
+    }
+
     fn reconcile_chain_recovery(&self, status: &NodeStatus) -> bool {
+        // A daemon below our newest found block is behind us (a lagging
+        // standby, a restart still syncing), not evidence of a reorg.
+        match self
+            .store
+            .get_latest_non_orphan_block_up_to(i64::MAX as u64)
+        {
+            Ok(Some(newest)) if newest.height > status.chain_height => {
+                self.divergence_observations.lock().clear();
+                return false;
+            }
+            Ok(_) => {}
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to load newest pool block");
+                return false;
+            }
+        }
         let latest_block = match self
             .store
             .get_latest_non_orphan_block_up_to(status.chain_height)
@@ -512,8 +600,30 @@ impl PayoutProcessor {
             mismatched_blocks.push((block, node_block.hash));
         }
 
+        let now = Instant::now();
+        let mismatched_blocks = {
+            let mut observations = self.divergence_observations.lock();
+            observations.retain(|height, _| {
+                mismatched_blocks
+                    .iter()
+                    .any(|(block, _)| block.height == *height)
+            });
+            mismatched_blocks
+                .into_iter()
+                .filter(|(block, daemon_hash)| {
+                    let first_seen = match observations.get(&block.height) {
+                        Some((hash, seen)) if hash == daemon_hash => *seen,
+                        _ => {
+                            observations.insert(block.height, (daemon_hash.clone(), now));
+                            now
+                        }
+                    };
+                    now.saturating_duration_since(first_seen) >= self.divergence_confirm_after
+                })
+                .collect::<Vec<_>>()
+        };
         if mismatched_blocks.is_empty() {
-            return false;
+            return !self.divergence_observations.lock().is_empty();
         }
 
         tracing::warn!(
@@ -6023,6 +6133,151 @@ mod tests {
         assert!(store
             .get_block_credit_events(diverged_height)
             .expect("credit events after reconcile")
+            .is_empty());
+    }
+
+    fn insert_found_block(store: &PoolStore, height: u64, hash: String) {
+        store
+            .add_block(&DbBlock {
+                height,
+                hash,
+                difficulty: 1,
+                finder: "finder".to_string(),
+                finder_worker: "rig".to_string(),
+                reward: 100,
+                timestamp: SystemTime::now(),
+                confirmed: true,
+                orphaned: false,
+                paid_out: false,
+                effort_pct: None,
+            })
+            .expect("insert block");
+    }
+
+    fn daemon_block_route(height: u64, hash: &str) -> (String, String) {
+        (
+            format!("/api/block/{height}"),
+            format!(
+                r#"{{"height":{height},"hash":"{hash}","reward":100,"difficulty":1,"timestamp":0,"tx_count":1}}"#
+            ),
+        )
+    }
+
+    #[test]
+    fn chain_reconciliation_ignores_a_daemon_behind_our_newest_block() {
+        // A lagging standby on another branch at an older height must not
+        // orphan our block there while it is still below our newest block.
+        let store = require_test_store!();
+        let height = 9_170_000u64 + (rand::random::<u16>() as u64);
+        insert_found_block(&store, height, format!("pool-{height}"));
+        insert_found_block(&store, height + 5, format!("pool-{}", height + 5));
+        let base_url = spawn_json_router_server(
+            HashMap::from([daemon_block_route(height, "daemon-other-branch")]),
+            20,
+        );
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+        );
+
+        assert!(!processor.reconcile_chain_recovery(&sample_status(height + 2)));
+        assert!(
+            !store
+                .get_block(height)
+                .expect("load")
+                .expect("block")
+                .orphaned
+        );
+    }
+
+    #[test]
+    fn chain_reconciliation_orphans_only_a_divergence_that_persists() {
+        let store = require_test_store!();
+        let height = 9_180_000u64 + (rand::random::<u16>() as u64);
+        insert_found_block(&store, height, format!("pool-{height}"));
+        let base_url = spawn_json_router_server(
+            HashMap::from([daemon_block_route(height, "daemon-other-branch")]),
+            20,
+        );
+        let processor = PayoutProcessor::new_with_divergence_confirm_after(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+            Duration::from_secs(60),
+        );
+
+        assert!(
+            processor.reconcile_chain_recovery(&sample_status(height)),
+            "a pending divergence still counts as recovery"
+        );
+        assert!(
+            !store
+                .get_block(height)
+                .expect("load")
+                .expect("block")
+                .orphaned
+        );
+
+        processor
+            .divergence_observations
+            .lock()
+            .get_mut(&height)
+            .expect("divergence recorded")
+            .1 -= Duration::from_secs(61);
+        processor.reconcile_chain_recovery(&sample_status(height));
+        assert!(
+            store
+                .get_block(height)
+                .expect("load")
+                .expect("block")
+                .orphaned
+        );
+    }
+
+    #[test]
+    fn orphaned_block_that_is_canonical_again_is_restored() {
+        let store = require_test_store!();
+        let height = 9_190_000u64 + (rand::random::<u16>() as u64);
+        let hash = format!("pool-{height}");
+        insert_found_block(&store, height, hash.clone());
+        assert!(store
+            .apply_block_credits_and_mark_paid(height, &[("miner-restored".to_string(), 100)])
+            .expect("apply credits"));
+        let diverged_url = spawn_json_router_server(
+            HashMap::from([daemon_block_route(height, "daemon-other-branch")]),
+            20,
+        );
+        PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&diverged_url, "").expect("node")),
+        )
+        .reconcile_chain_recovery(&sample_status(height));
+        assert!(
+            store
+                .get_block(height)
+                .expect("load")
+                .expect("block")
+                .orphaned
+        );
+
+        let rejoined_url =
+            spawn_json_router_server(HashMap::from([daemon_block_route(height, &hash)]), 20);
+        PayoutProcessor::new(
+            Config::default(),
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&rejoined_url, "").expect("node")),
+        )
+        .restore_canonical_orphans(&sample_status(height));
+
+        let block = store.get_block(height).expect("load").expect("block");
+        assert!(!block.orphaned, "a canonical block must be un-orphaned");
+        assert!(!block.confirmed, "it re-confirms through the normal path");
+        assert!(!block.paid_out, "and is distributed again from scratch");
+        assert!(store
+            .get_block_credit_events(height)
+            .expect("credit events")
             .is_empty());
     }
 
