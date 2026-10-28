@@ -17,6 +17,7 @@ const UI_ASSET_APP_CSS: &str =
 const UI_ASSET_POOL_ENTERED_PNG: &[u8] = include_bytes!("ui/assets/pool-entered.png");
 const UI_ASSET_MINING_TUI_PNG: &[u8] = include_bytes!("ui/assets/mining-tui.png");
 include!(concat!(env!("OUT_DIR"), "/ui_languages.rs"));
+include!(concat!(env!("OUT_DIR"), "/ui_wasm.rs"));
 
 /// Per-route social preview cards, served from `/ui-assets/<name>`.
 const OG_IMAGES: &[(&str, &[u8])] = &[
@@ -454,6 +455,16 @@ pub(crate) async fn handle_favicon_svg() -> impl IntoResponse {
 }
 
 pub(crate) async fn handle_ui_asset(Path(name): Path<String>) -> Response {
+    if let Some((_, bytes)) = UI_WASM.iter().find(|(path, _)| *path == name) {
+        return (
+            [
+                (header::CONTENT_TYPE, "application/wasm"),
+                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+            ],
+            *bytes,
+        )
+            .into_response();
+    }
     if let Some((_, bytes)) = UI_LANGUAGES.iter().find(|(path, _)| *path == name) {
         return (
             [
@@ -594,6 +605,24 @@ mod tests {
             let html = render_index_html(path, "https://pool.example");
             assert!(html.contains(r#"content="noindex, follow""#));
             assert!(!html.contains(r#"rel="alternate""#));
+        }
+    }
+
+    #[tokio::test]
+    async fn hashed_wasm_assets_are_served_as_wasm_and_cacheable() {
+        for (name, expected) in UI_WASM {
+            assert!(name.starts_with("assets/") && name.ends_with(".wasm"));
+            let response = handle_ui_asset(Path((*name).to_owned())).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()[header::CONTENT_TYPE], "application/wasm");
+            assert_eq!(
+                response.headers()[header::CACHE_CONTROL],
+                "public, max-age=31536000, immutable"
+            );
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert_eq!(body.as_ref(), *expected);
         }
     }
 

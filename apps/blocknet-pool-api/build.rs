@@ -40,6 +40,7 @@ fn main() {
 
     verify_ui_bundle(&frontend_dir, &frontend_src_dir, &frontend_dist_dir);
     embed_languages(&frontend_dist_dir);
+    embed_wasm(&frontend_dist_dir);
     embed_blog(&frontend_dir, &frontend_dist_dir.join("blog"));
 }
 
@@ -71,6 +72,32 @@ fn embed_languages(frontend_dist_dir: &Path) {
         format!("static UI_LANGUAGES: &[(&str, &[u8])] = &[\n{entries}];\n"),
     )
     .expect("write ui_languages.rs");
+}
+
+// WebAssembly modules imported with ?url are emitted as content-hashed files
+// in dist/assets. Embed whichever the build produced (often none).
+fn embed_wasm(frontend_dist_dir: &Path) {
+    let mut files = walk_files(&frontend_dist_dir.join("assets"));
+    files.sort();
+    let mut entries = String::new();
+    for file in files {
+        if file.extension().and_then(|ext| ext.to_str()) != Some("wasm") {
+            continue;
+        }
+        track_path(&file);
+        let name = file.file_name().expect("wasm filename").to_string_lossy();
+        entries.push_str(&format!(
+            "    ({:?}, include_bytes!({:?})),\n",
+            format!("assets/{name}"),
+            file.display().to_string()
+        ));
+    }
+    let out = PathBuf::from(env::var("OUT_DIR").expect("out dir")).join("ui_wasm.rs");
+    fs::write(
+        out,
+        format!("static UI_WASM: &[(&str, &[u8])] = &[\n{entries}];\n"),
+    )
+    .expect("write ui_wasm.rs");
 }
 
 /// Embed the pre-rendered blog (frontend/dist/blog, written by scripts/build-blog.mjs) as a
