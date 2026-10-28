@@ -42,25 +42,25 @@ From the persisted runtime snapshot and Prometheus, before latency histograms ex
 
 Raw results: `perf-results/2026-10-27/pool-verify/pv-9700x5/results/` (runs.jsonl, host.txt, parity-fullsize.txt) and `perf-results/2026-10-27/pool-verify/replay/*.json`.
 
-## Approved load-growth runbook (2026-10-27)
+## Growth mode (automatic; approved 2026-10-27)
 
-Approved by the pool owner as the plan if load grows; not applied today
-(~28 shares/s). When `BlocknetPoolLoadGrowthConfigDue` fires (submits above
-55/s for 30 min, where the current config nears verifier capacity of ~7.7
-verifies/s at ~11.6% coverage):
+The owner first approved the load-growth config as a manual plan, then asked
+for it to switch automatically. Stratum's primary engine measures the share
+rate (normalised to the normal share size, 5-min EWMA, every 30 s). Above
+`growth_submit_rate` (55/s) it runs with `growth_vardiff_target_shares` (5)
+and `growth_sample_rate` (0.08); below `growth_exit_submit_rate` (40/s) it
+returns to the configured values. Switches wait 10 minutes to settle, the mode
+is persisted (meta `growth_mode_v1`) so restarts and handovers resume it, and
+setting `growth_submit_rate` to 0 (by reload) turns it off. Alerts:
+`BlocknetPoolGrowthModeActive`, `BlocknetPoolBeyondGrowthCapacity`.
 
-1. In `/etc/blocknet/pool/config.json` set `"vardiff_target_shares": 5` and
-   `"sample_rate": 0.08` (keep a copy of the previous values).
-2. `sudo systemctl reload blocknet-pool-stratum@<active>`; the engine logs the
-   changed settings. No restart, no disconnects.
-3. Confirm with `scripts/verify_perf_report.py --host bntpool --window 1h`:
-   overload 100% Normal, audits deferred 0, regular queue near empty.
-
-Evidence (T2 replay, kernel capacity, hold 0.25): 2x arrivals and a 2x restart
-storm stay 100% Normal with 0 drops and 0 delayed block candidates in 3/3 runs.
-Trade-offs: per-worker hashrate readings are noisier (half the shares), and a
-cheater takes ~1.4x longer to catch than at today's load, though still faster
-than the old code would at 2x. Revert by restoring the two values and reloading.
+- 2026-10-27 · T2 · load ramping 1x → 2x over 30 simulated minutes, then
+  held at 2x, with the real controller in the loop and miners' share size
+  following its target with a 2-minute lag: 100% Normal in 2/2 runs, 0
+  transitions, 0 drops, 182/182 block candidates answered (p99 1.8 s),
+  coverage 12.3-12.4%; growth mode switched on at minute 13.5 (~1.3x load).
+  Control without the controller: 29% Normal, 50% Emergency, 3 drops/s.
+  2x restart storm resuming growth mode: 100% Normal, 126/126 candidates.
 
 ## Goal "Done" criteria and evidence (BNTPOOL_VERIFY_GOAL.md, 2026-10-27)
 
@@ -68,13 +68,11 @@ than the old code would at 2x. Revert by restoring the two values and reloading.
    storm: zero candidate delays, zero busy/shed/timeout rejects, no Shed or
    Emergency, share-ack p99 no worse at 1x.* The batch is the deployed code
    (kernel, hold 0.25, sync lane, arena retention, gateway, hot reload) plus
-   the load-growth config (vardiff_target_shares 5, sample_rate 0.08), which
-   the owner approved as the plan to apply by reload at >55 submits/s
-   (runbook above; alert `BlocknetPoolLoadGrowthConfigDue`). T2: 2x arrivals
-   and a 2x restart storm 100% Normal in 3/3 runs, 0 transitions, 0 drops,
-   126/126 candidates answered (p99 1.3-1.7 s). The current config alone
-   cannot hold 2x on this hardware: ~11.6% coverage of ~96 shares/s needs ~11
-   verifies/s against ~7.7 capacity. At 1x the current config holds (100%
+   automatic growth mode (above). T2 with the deployed defaults: a 1x → 2x
+   ramp and a 2x restart storm are 100% Normal with 0 transitions, 0 drops
+   and 0 refused or delayed block candidates (growth-mode section). Without
+   growth mode this hardware cannot hold 2x: ~11.6% coverage of ~96
+   shares/s needs ~11 verifies/s against ~7.7 capacity. At 1x the current config holds (100%
    Normal in 2/2 runs incl. a restart storm, candidates p99 1.2 s).
    Share-ack p99 at 1x in production: 25 ms vs 50 ms before.
 2. *Steady-state regular queue near empty.* Production 21:34-22:04 UTC:

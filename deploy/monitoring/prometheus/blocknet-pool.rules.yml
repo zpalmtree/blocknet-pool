@@ -31,15 +31,25 @@ groups:
           summary: Pool stratum is down
           description: The on-host monitor cannot reach the Stratum listener.
 
-      - alert: BlocknetPoolLoadGrowthConfigDue
-        expr: rate(blocknet_pool_monitor_stratum_submits_received_total[30m]) > 55
+      - alert: BlocknetPoolGrowthModeActive
+        expr: blocknet_pool_monitor_growth_mode_active == 1
+        for: 5m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Growth mode is on
+          description: The share rate passed growth_submit_rate, so miners were moved to fewer, larger shares (growth_vardiff_target_shares, growth_sample_rate). Expected as the pool grows; see VERIFY_PERFORMANCE.md.
+
+      - alert: BlocknetPoolBeyondGrowthCapacity
+        expr: blocknet_pool_monitor_growth_normal_size_submits_per_s > 110
         for: 30m
         labels:
           severity: warning
           visibility: private
         annotations:
-          summary: Share rate is nearing verifier capacity
-          description: Apply the approved load-growth config (vardiff_target_shares 5, sample_rate 0.08) by reload; see VERIFY_PERFORMANCE.md.
+          summary: Load is beyond what growth mode was tested for
+          description: The share rate at the normal share size exceeds twice the pre-growth peak; verification may fall behind. Plan more verifier capacity.
 
       - alert: BlocknetPoolGatewayNoEngine
         expr: blocknet_pool_gateway_engines == 0

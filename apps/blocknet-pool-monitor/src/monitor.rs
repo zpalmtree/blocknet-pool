@@ -138,6 +138,8 @@ struct MonitorSnapshot {
     stratum_runtime_tasks: BTreeMap<String, TimedOperationSummary>,
     stratum_latency: BTreeMap<String, BTreeMap<String, LatencyHistogramSnapshot>>,
     validation: Option<ValidationSnapshot>,
+    growth_mode_active: Option<bool>,
+    growth_normal_size_submits_per_s: Option<f64>,
     process_metrics: BTreeMap<String, ProcessMetrics>,
     open_public_incidents: u64,
     open_private_incidents: u64,
@@ -1130,6 +1132,9 @@ impl MonitorRuntime {
             .map(|snapshot| snapshot.latency.clone())
             .unwrap_or_default();
         metrics.validation = runtime.map(|snapshot| snapshot.validation);
+        metrics.growth_mode_active = runtime.map(|snapshot| snapshot.submit.growth_mode_active);
+        metrics.growth_normal_size_submits_per_s =
+            runtime.and_then(|snapshot| snapshot.submit.growth_normal_size_submits_per_s);
         metrics.process_metrics = sample.process_metrics.clone();
         metrics.open_public_incidents = open_public;
         metrics.open_private_incidents = open_private;
@@ -2525,6 +2530,20 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
     }
     if let Some(validation) = snapshot.validation.as_ref() {
         render_validation_metrics(&mut out, validation);
+    }
+    if let Some(active) = snapshot.growth_mode_active {
+        metric_line(
+            &mut out,
+            "blocknet_pool_monitor_growth_mode_active",
+            u8::from(active),
+        );
+    }
+    if let Some(rate) = snapshot.growth_normal_size_submits_per_s {
+        metric_line(
+            &mut out,
+            "blocknet_pool_monitor_growth_normal_size_submits_per_s",
+            rate,
+        );
     }
     if let Some(hashrate) = snapshot.estimated_hashrate {
         metric_line(
