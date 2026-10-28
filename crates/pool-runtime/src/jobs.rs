@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -146,6 +146,7 @@ pub struct JobManager {
     nonce_counter: AtomicU64,
     refresh: RefreshCoordinator,
     reward_cache: Mutex<RewardAddressCache>,
+    wallet_recovery_in_flight: Arc<AtomicBool>,
     last_template_wallet_recovery: Mutex<Option<Instant>>,
     last_missing_wallet_password_log: Mutex<Option<Instant>>,
     tip_events: Mutex<TipEventState>,
@@ -347,6 +348,7 @@ impl JobManager {
                 address: None,
                 checked_at: None,
             }),
+            wallet_recovery_in_flight: Arc::new(AtomicBool::new(false)),
             last_template_wallet_recovery: Mutex::new(None),
             last_missing_wallet_password_log: Mutex::new(None),
             tip_events: Mutex::new(TipEventState::default()),
@@ -1181,6 +1183,14 @@ impl JobManager {
     }
 
     fn resolve_reward_address(&self) -> Option<String> {
+        let password = std::env::var("BLOCKNET_WALLET_PASSWORD")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        self.resolve_reward_address_with_password(password)
+    }
+
+    fn resolve_reward_address_with_password(&self, password: Option<String>) -> Option<String> {
         {
             let cache = self.reward_cache.lock();
             if cache
@@ -1203,14 +1213,17 @@ impl JobManager {
                 cache.address.clone()
             }
             Err(err) => {
-                let password = std::env::var("BLOCKNET_WALLET_PASSWORD")
-                    .ok()
-                    .map(|v| v.trim().to_string())
-                    .filter(|v| !v.is_empty());
-
                 if let Some(password) = password {
+                    if is_http_status(&err, 503) && cache.address.is_some() {
+                        // A restarted daemon serves templates for an explicit
+                        // address before its wallet is loaded, so keep mining
+                        // to the known address and load the wallet beside it
+                        // instead of holding template fetches for the load.
+                        self.spawn_wallet_recovery(password);
+                        return cache.address.clone();
+                    }
                     if is_http_status(&err, 503) {
-                        let _ = self.recover_wallet_loaded_and_unlocked(&password);
+                        let _ = recover_wallet_loaded_and_unlocked(&self.node, &password);
                     } else if is_http_status(&err, 403) {
                         let _ = self.node.wallet_unlock(&password);
                     }
@@ -1226,6 +1239,29 @@ impl JobManager {
                 tracing::warn!(error = %err, "wallet address unavailable");
                 cache.address.clone()
             }
+        }
+    }
+
+    /// Loads and unlocks the daemon wallet on a background thread; at most
+    /// one recovery runs at a time.
+    fn spawn_wallet_recovery(&self, password: String) {
+        if self.wallet_recovery_in_flight.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let node = Arc::clone(&self.node);
+        let in_flight = Arc::clone(&self.wallet_recovery_in_flight);
+        let spawned = thread::Builder::new()
+            .name("pool-wallet-recovery".to_string())
+            .spawn(move || {
+                if recover_wallet_loaded_and_unlocked(&node, &password) {
+                    tracing::info!("daemon wallet loaded in the background");
+                }
+                in_flight.store(false, Ordering::Release);
+            });
+        if let Err(err) = spawned {
+            self.wallet_recovery_in_flight
+                .store(false, Ordering::Release);
+            tracing::warn!(error = %err, "failed to start background wallet recovery");
         }
     }
 
@@ -1263,7 +1299,7 @@ impl JobManager {
         };
 
         if is_http_status(err, 503) {
-            if !self.recover_wallet_loaded_and_unlocked(&password) {
+            if !recover_wallet_loaded_and_unlocked(&self.node, &password) {
                 return false;
             }
         } else if is_http_status(err, 403) {
@@ -1279,61 +1315,61 @@ impl JobManager {
         tracing::info!("wallet recovered for template fetch; retrying blocktemplate");
         true
     }
+}
 
-    fn recover_wallet_loaded_and_unlocked(&self, password: &str) -> bool {
-        match self.node.wallet_load(password) {
-            Ok(_) => {}
-            Err(load_err) => {
-                if !is_http_status(&load_err, 409) {
-                    tracing::warn!(
-                        error = %load_err,
-                        "wallet recovery failed during load step for template fetch"
-                    );
-                    return false;
-                }
-            }
-        }
-
-        // 409 from /wallet/load can mean either already loaded or currently loading.
-        // Wait briefly for the wallet to become available before attempting unlock.
-        if !self.wait_for_wallet_available(WALLET_LOAD_WAIT_TIMEOUT) {
-            tracing::warn!(
-                timeout_secs = WALLET_LOAD_WAIT_TIMEOUT.as_secs(),
-                "wallet recovery timed out waiting for wallet load to complete"
-            );
-            return false;
-        }
-
-        if let Err(unlock_err) = self.node.wallet_unlock(password) {
-            if is_http_status(&unlock_err, 503)
-                && self.wait_for_wallet_available(WALLET_LOAD_WAIT_POLL)
-                && self.node.wallet_unlock(password).is_ok()
-            {
-                return true;
-            }
-            tracing::warn!(
-                error = %unlock_err,
-                "wallet recovery failed during unlock step for template fetch"
-            );
-            return false;
-        }
-
-        true
-    }
-
-    fn wait_for_wallet_available(&self, timeout: Duration) -> bool {
-        let deadline = Instant::now()
-            .checked_add(timeout)
-            .unwrap_or_else(Instant::now);
-        loop {
-            if self.node.get_wallet_address().is_ok() {
-                return true;
-            }
-            if Instant::now() >= deadline {
+fn recover_wallet_loaded_and_unlocked(node: &NodeClient, password: &str) -> bool {
+    match node.wallet_load(password) {
+        Ok(_) => {}
+        Err(load_err) => {
+            if !is_http_status(&load_err, 409) {
+                tracing::warn!(
+                    error = %load_err,
+                    "wallet recovery failed during load step for template fetch"
+                );
                 return false;
             }
-            thread::sleep(WALLET_LOAD_WAIT_POLL);
         }
+    }
+
+    // 409 from /wallet/load can mean either already loaded or currently loading.
+    // Wait briefly for the wallet to become available before attempting unlock.
+    if !wait_for_wallet_available(node, WALLET_LOAD_WAIT_TIMEOUT) {
+        tracing::warn!(
+            timeout_secs = WALLET_LOAD_WAIT_TIMEOUT.as_secs(),
+            "wallet recovery timed out waiting for wallet load to complete"
+        );
+        return false;
+    }
+
+    if let Err(unlock_err) = node.wallet_unlock(password) {
+        if is_http_status(&unlock_err, 503)
+            && wait_for_wallet_available(node, WALLET_LOAD_WAIT_POLL)
+            && node.wallet_unlock(password).is_ok()
+        {
+            return true;
+        }
+        tracing::warn!(
+            error = %unlock_err,
+            "wallet recovery failed during unlock step for template fetch"
+        );
+        return false;
+    }
+
+    true
+}
+
+fn wait_for_wallet_available(node: &NodeClient, timeout: Duration) -> bool {
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .unwrap_or_else(Instant::now);
+    loop {
+        if node.get_wallet_address().is_ok() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(WALLET_LOAD_WAIT_POLL);
     }
 }
 
@@ -2063,6 +2099,79 @@ mod tests {
             }
         });
         (format!("http://{address}"), handle)
+    }
+
+    #[test]
+    fn known_reward_address_is_used_while_the_wallet_loads_in_the_background() {
+        // The restarted daemon answers the wallet address with 503 (no wallet
+        // yet) and takes a second to load it. The pool must not wait for that.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind wallet test server");
+        let address = listener.local_addr().expect("wallet server address");
+        let (seen_tx, seen_rx) = std::sync::mpsc::channel::<String>();
+        thread::spawn(move || {
+            let mut loaded = false;
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut request = [0u8; 4096];
+                let read = stream.read(&mut request).unwrap_or(0);
+                let request = String::from_utf8_lossy(&request[..read]).to_string();
+                let line = request.lines().next().unwrap_or_default().to_string();
+                let _ = seen_tx.send(line.clone());
+                let (status, body) = if line.starts_with("GET /api/wallet/address") {
+                    if loaded {
+                        ("200 OK", r#"{"address":"pool-address","view_only":false}"#)
+                    } else {
+                        ("503 Service Unavailable", r#"{"error":"no wallet loaded"}"#)
+                    }
+                } else if line.starts_with("POST /api/wallet/load") {
+                    thread::sleep(Duration::from_secs(1));
+                    loaded = true;
+                    ("200 OK", r#"{"loaded":true}"#)
+                } else if line.starts_with("POST /api/wallet/unlock") {
+                    ("200 OK", r#"{"locked":false}"#)
+                } else {
+                    ("404 Not Found", r#"{"error":"unexpected"}"#)
+                };
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new(&format!("http://{address}"), "").expect("node")),
+            Config::default(),
+        );
+        *manager.reward_cache.lock() = RewardAddressCache {
+            address: Some("pool-address".to_string()),
+            checked_at: None,
+        };
+
+        let started_at = Instant::now();
+        let resolved = manager.resolve_reward_address_with_password(Some("pw".to_string()));
+
+        assert_eq!(resolved.as_deref(), Some("pool-address"));
+        assert!(
+            started_at.elapsed() < Duration::from_millis(900),
+            "template fetches must not wait for the wallet load"
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut saw_load = false;
+        while !saw_load && Instant::now() < deadline {
+            if let Ok(line) = seen_rx.recv_timeout(Duration::from_millis(100)) {
+                saw_load |= line.starts_with("POST /api/wallet/load");
+            }
+        }
+        assert!(saw_load, "the wallet should be loaded in the background");
+        while manager.wallet_recovery_in_flight.load(Ordering::Acquire) {
+            assert!(
+                Instant::now() < deadline,
+                "background recovery should finish; requests: {:?}",
+                seen_rx.try_iter().collect::<Vec<_>>()
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
     }
 
     fn assert_assignment_indexes(state: &JobState) {
