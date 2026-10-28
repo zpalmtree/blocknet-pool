@@ -1,5 +1,8 @@
 # bntpool.com blog keyword map
 
+Shared priorities and cross-site ownership: [publishing plan](cross-site-publishing-plan.md).
+Broader Blocknet coverage is open to both sites when the reader job is distinct.
+
 Which bntpool.com blog URL owns which search job. The build fails if a published post has no row.
 Same rules as the seineminer.com keyword map (seine repo, `site/editorial/keyword-map.md`); never
 target a search job a seineminer.com post already owns.

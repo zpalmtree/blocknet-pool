@@ -11,7 +11,8 @@
     "blog:check": "node scripts/check-blog.mjs",
     "showcase:languages": "vite --config showcases/pool-languages/vite.config.ts",
     "showcase:ui": "vite --config showcases/ui-simplify/vite.config.ts",
-    "i18n:check": "node scripts/check-i18n.mjs"
+    "i18n:check": "node scripts/check-i18n.mjs",
+    "postbuild": "node scripts/check-covers.mjs"
   },
   "dependencies": {
     "qrcode.react": "4.2.0",

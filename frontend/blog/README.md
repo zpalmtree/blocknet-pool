@@ -103,3 +103,10 @@ reviewing a new release; pending miner source is not a published fee change.
 Calculator rendering and tests use the reviewed manifest. The live pool fee still
 comes exclusively from `/api/info`. This pass updates all 20 localized fee labels;
 translations retain draft status, without an independent linguistic review claim.
+
+## Shared planning and covers
+
+Read the [publishing plan](editorial/cross-site-publishing-plan.md) before selecting work.
+Bntpool also owns substantive Blocknet currency/economics topics where its reader job is distinct.
+Follow the [shared cover standard](editorial/cover-system.md); both sites use the same frame,
+palette and 440px thumbnail contract.

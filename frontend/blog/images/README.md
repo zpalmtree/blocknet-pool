@@ -10,7 +10,7 @@
   explain concepts rather than displaying live statistics. They contain no translated
   prose, so the same cover is suitable for every locale.
 
-The blog build generates versioned 1200×675 covers, 600×338 thumbnails, and JPEG social
+The blog build generates versioned 1200×675 covers, 440×248 thumbnails, and JPEG social
 images. To add a post, assign its screenshot or illustration in `blog-covers.mjs`.
 
 - `pool-luck-history.png`: real public Luck page captured with the shared Windows
@@ -46,3 +46,7 @@ no language-dependent text or invented dashboard values. Added October 26, 2026.
 `internet-speed-mining`: original language-neutral SVG illustration in `blog-covers.mjs`: miner, network link, pool and delivery clock. Localized caption; October 26, 2026.
 
 `mine-blocknet-part-time`: original language-neutral session/pause/return timeline in `blog-covers.mjs`, with a share-window outline and a separate retained balance record. Schematic, not measured rewards or an exact time scale. October 26, 2026.
+
+October 28, 2026: all covers now use the common light-paper frame in `scripts/editorial-cover.mjs`.
+Screenshot content and chart geometry are preserved using contain sizing. Dark illustration
+backgrounds become the shared paper color. See `editorial/cover-system.md`.

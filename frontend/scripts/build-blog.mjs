@@ -187,7 +187,7 @@ ${faq}${related}
 
 function coverImage(post, eager = false, decorative = false) {
   const sizes = decorative ? '220px' : '(max-width: 900px) calc(100vw - 40px), 600px';
-  return `<img class="post-cover" src="${post.cover.src}" srcset="${post.cover.small} 600w, ${post.cover.src} 1200w" sizes="${sizes}" width="1200" height="675" alt="${decorative ? '' : esc(post.title)}" ${eager ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async">`;
+  return `<img class="post-cover" src="${decorative ? post.cover.small : post.cover.src}" srcset="${post.cover.small} 440w, ${post.cover.src} 1200w" sizes="${sizes}" width="1200" height="675" alt="${decorative ? '' : esc(post.title)}" ${eager ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async">`;
 }
 
 function indexPage(locale, posts) {

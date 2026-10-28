@@ -1,8 +1,8 @@
 // Language-neutral editorial illustrations and real product captures, shared by all locales.
-import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { fileURLToPath } from 'node:url';
+import { renderCover, writeCover } from './editorial-cover.mjs';
 
 const imageDir = new URL('../blog/images/', import.meta.url);
 const line = (d, color = '#70c793', width = 3, extra = '') => `<path d="${d}" fill="none" stroke="${color}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round" ${extra}/>`;
@@ -13,8 +13,8 @@ const cube = (x, y, size = 100) => `<g transform="translate(${x} ${y}) scale(${s
 const miner = (x, y, scale = 1) => `<g transform="translate(${x} ${y}) scale(${scale})">${rect(-60, -42, 120, 80, '#f0f5df', 12)}${rect(-49, -31, 98, 54, '#103c2a', 5)}${line('M-32 9V-5M-16 9V-18M0 9V-9M16 9V-22M32 9V-13', '#9de5ad', 6)}${line('M0 38V55M-25 56H25', '#8dc4a0', 7)}</g>`;
 const check = (x, y, scale = 1) => `<g transform="translate(${x} ${y}) scale(${scale})">${circle(0, 0, 29, '#b8ee9d')}${line('M-12 0 -3 9 14 -10', '#16432e', 5)}</g>`;
 function frame(body, dark = false) {
-  const bg = dark ? '#0b2920' : '#edf2e5';
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675"><defs><pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse"><path d="M48 0H0V48" fill="none" stroke="${dark ? '#315142' : '#d5dfca'}" stroke-width="1" opacity=".45"/></pattern><linearGradient id="area" x2="0" y2="1"><stop stop-color="#58ac72" stop-opacity=".3"/><stop offset="1" stop-color="#58ac72" stop-opacity="0"/></linearGradient></defs>${rect(0, 0, 1200, 675, bg, 0)}${rect(0, 0, 1200, 675, 'url(#grid)', 0)}${body}</svg>`;
+  const bg = '#edf2e5';
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675"><defs><pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse"><path d="M48 0H0V48" fill="none" stroke="#d5dfca" stroke-width="1" opacity=".45"/></pattern><linearGradient id="area" x2="0" y2="1"><stop stop-color="#58ac72" stop-opacity=".3"/><stop offset="1" stop-color="#58ac72" stop-opacity="0"/></linearGradient></defs>${rect(0, 0, 1200, 675, bg, 0)}${rect(0, 0, 1200, 675, 'url(#grid)', 0)}${body}</svg>`;
 }
 
 function rewardSchedule() {
@@ -125,15 +125,8 @@ export async function buildCovers(slugs, output) {
     const screenshot = screenshots[slug];
     if (!screenshot && !illustrations[slug]) throw new Error(`Add an editorial cover for ${slug} in blog-covers.mjs`);
     const source = screenshot ? readFileSync(new URL(screenshot, imageDir)) : Buffer.from(illustrations[slug]());
-    const rendered = await sharp(source).resize(1200, 675, { fit: screenshot ? 'contain' : 'fill', background: screenshot === 'seine-dashboard.webp' ? '#0b1217' : '#edf2e5' }).png().toBuffer();
-    const version = createHash('sha256').update(rendered).digest('hex').slice(0, 12);
-    const filename = `${slug}-${version}`;
-    await Promise.all([
-      sharp(rendered).webp({ quality: 88 }).toFile(fileURLToPath(new URL(`${filename}.webp`, output))),
-      sharp(rendered).resize(600, 338).webp({ quality: 82 }).toFile(fileURLToPath(new URL(`${filename}-small.webp`, output))),
-      sharp(rendered).jpeg({ quality: 88 }).toFile(fileURLToPath(new URL(`${filename}.jpg`, output))),
-    ]);
-    covers.set(slug, { src: `/blog/covers/${filename}.webp`, small: `/blog/covers/${filename}-small.webp`, social: `/blog/covers/${filename}.jpg` });
+    const rendered = await renderCover(source, { screenshot: Boolean(screenshot) });
+    covers.set(slug, await writeCover(slug, rendered, output, '/blog/covers/'));
   }
   if (slugs.includes('mining-pool-luck-explained')) {
     await sharp(readFileSync(new URL('pool-luck-history.png', imageDir)))
