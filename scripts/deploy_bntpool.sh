@@ -527,6 +527,8 @@ if [[ "${deploy_stratum}" == "1" ]]; then
   if [[ "${gateway_mode}" == "1" ]]; then
     systemd_cmd+="sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-stratum@.service' '/etc/systemd/system/blocknet-pool-stratum@.service'; "
     systemd_cmd+="sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-gateway.service' '/etc/systemd/system/${gateway_service}'; "
+    systemd_cmd+="sudo install -d -m 0755 /etc/needrestart/conf.d; "
+    systemd_cmd+="sudo install -m 0644 '${remote_dir}/deploy/needrestart/blocknet-pool.conf' /etc/needrestart/conf.d/blocknet-pool.conf; "
   else
     systemd_cmd+="sudo install -m 0644 '${remote_dir}/deploy/systemd/blocknet-pool-stratum.service' '/etc/systemd/system/${stratum_service}'; "
   fi
