@@ -26,6 +26,7 @@ urlencoding.workspace = true
 pool-common = { path = "../pool-common" }
 
 [dev-dependencies]
+axum.workspace = true
 pool-gateway = { path = "../pool-gateway" }
 bs58.workspace = true
 curve25519-dalek.workspace = true

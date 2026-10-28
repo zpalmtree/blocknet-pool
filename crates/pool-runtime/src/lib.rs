@@ -9,6 +9,7 @@ pub mod engine;
 pub mod hashrate;
 
 pub mod jobs;
+pub mod miner_release;
 
 pub mod node;
 

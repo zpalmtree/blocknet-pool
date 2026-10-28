@@ -15,6 +15,10 @@ pub const CANDIDATE_VALIDATION_QUEUE_SIZE: usize = 64;
 #[serde(default)]
 pub struct Config {
     pub pool_name: String,
+    /// Fallback for the newest stable seine release when GitHub is unreachable.
+    /// Stratum tells miners on an older version once per connection that an
+    /// upgrade exists; empty disables the notice until a release is discovered.
+    pub latest_miner_version: String,
 
     pub stratum_host: String,
     pub stratum_port: u16,
@@ -129,6 +133,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             pool_name: "blocknet pool".to_string(),
+            latest_miner_version: String::new(),
             stratum_host: "127.0.0.1".to_string(),
             stratum_port: 3333,
             gateway_socket: String::new(),

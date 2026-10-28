@@ -328,7 +328,7 @@ fn sort_workers_for_miner(
 
 #[derive(Clone)]
 pub(crate) struct ApiState {
-    miner_release: crate::miner_release::MinerRelease,
+    miner_release: pool_runtime::miner_release::MinerRelease,
     site_metrics: Arc<crate::site_metrics::SiteMetrics>,
     config: Config,
     store: Arc<PoolStore>,
@@ -4317,7 +4317,7 @@ impl ApiState {
             recovery: Arc::new(RecoveryAgentClient::new(
                 config.recovery.socket_path.clone(),
             )),
-            miner_release: crate::miner_release::MinerRelease::new(&config.latest_miner_version),
+            miner_release: pool_runtime::miner_release::MinerRelease::new(&config.latest_miner_version),
             config,
             store,
             jobs,

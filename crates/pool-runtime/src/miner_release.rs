@@ -10,7 +10,7 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const RETRY_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
-pub(crate) struct MinerRelease {
+pub struct MinerRelease {
     version: Arc<Mutex<String>>,
 }
 
@@ -42,13 +42,13 @@ fn stable_version(release: Release) -> Result<String> {
 }
 
 impl MinerRelease {
-    pub(crate) fn new(fallback: &str) -> Self {
+    pub fn new(fallback: &str) -> Self {
         Self {
             version: Arc::new(Mutex::new(fallback.trim().to_string())),
         }
     }
 
-    pub(crate) fn version(&self) -> String {
+    pub fn version(&self) -> String {
         self.version.lock().clone()
     }
 
@@ -77,7 +77,7 @@ impl MinerRelease {
         Ok(())
     }
 
-    pub(crate) async fn refresh_forever(&self) {
+    pub async fn refresh_forever(&self) {
         loop {
             let delay = match self.refresh(LATEST_RELEASE_URL).await {
                 Ok(()) => REFRESH_INTERVAL,

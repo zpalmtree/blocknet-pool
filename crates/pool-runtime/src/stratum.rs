@@ -804,6 +804,8 @@ pub struct StratumServer {
     job_fanout: Arc<NamedLatencyHistograms>,
     /// Miner-reported timings carried on submits (`submit_timing_v1`).
     miner_submit_timing: NamedLatencyHistograms,
+    /// Newest stable seine release, for the once-per-connection upgrade notice.
+    miner_release: crate::miner_release::MinerRelease,
 }
 
 impl StratumServer {
@@ -833,7 +835,15 @@ impl StratumServer {
             submit_rate_limit_max: SUBMIT_RATE_LIMIT_MAX,
             job_fanout: Arc::default(),
             miner_submit_timing: NamedLatencyHistograms::default(),
+            miner_release: crate::miner_release::MinerRelease::new(&cfg.latest_miner_version),
         })
+    }
+
+    /// Keeps the newest-release version fresh for the upgrade notice; returns
+    /// the task so callers can drop it with the server.
+    fn spawn_release_refresh(&self) -> tokio::task::JoinHandle<()> {
+        let release = self.miner_release.clone();
+        tokio::spawn(async move { release.refresh_forever().await })
     }
 
     /// Cumulative latency histograms by metric family, then lane.
@@ -905,7 +915,10 @@ impl StratumServer {
     pub async fn run(self: Arc<Self>) -> Result<()> {
         let listener = TcpListener::bind(self.listen_addr).await?;
         tracing::info!(addr = %self.listen_addr, "stratum listening");
-        self.run_tcp_listener(listener).await
+        let refresh = self.spawn_release_refresh();
+        let result = self.run_tcp_listener(listener).await;
+        refresh.abort();
+        result
     }
 
     /// Serves miners relayed by the Stratum gateway (STRATUM_GATEWAY.md):
@@ -926,6 +939,7 @@ impl StratumServer {
             pid: std::process::id(),
             started_at_ms,
         };
+        let _refresh = AbortOnDrop(self.spawn_release_refresh());
         let mut connect_warned = false;
         loop {
             match tokio::net::UnixStream::connect(&socket).await {
@@ -1211,6 +1225,9 @@ impl StratumServer {
     ) -> Result<()> {
         let mut writer_task_finished = false;
         let mut logged_in: Option<(String, String, u64)> = None;
+        // One upgrade notice per connection, sent with the first submit that
+        // reports an older miner version (login carries no version).
+        let mut update_notice_sent = false;
         let mut rx_jobs = self.jobs.subscribe();
         let mut rx_notifications = self.notifications.subscribe();
         let post_login_idle_timeout = self.post_login_idle_timeout;
@@ -1475,6 +1492,19 @@ impl StratumServer {
                                     continue;
                                 }
                             };
+                            if !update_notice_sent {
+                                if let Some(message) =
+                                    self.miner_update_notice(params.miner_version.as_deref())
+                                {
+                                    update_notice_sent = true;
+                                    let notify =
+                                        block_notification(NOTIFY_MINER_UPDATE_AVAILABLE, &message);
+                                    if let Err(err) = queue_json(&outbound, &notify) {
+                                        run_result = Err(err);
+                                        break;
+                                    }
+                                }
+                            }
                             self.submit_dispatcher.record_submit_received();
                             let now = Instant::now();
                             let cutoff = now.checked_sub(submit_rate_limit_window).unwrap_or(now);
@@ -2071,6 +2101,49 @@ fn sanitize_submit_metadata(value: &str) -> String {
         .collect()
 }
 
+/// Notification kind for the once-per-connection upgrade notice. Seine prints
+/// unknown kinds as plain pool messages, so old versions show it too.
+pub const NOTIFY_MINER_UPDATE_AVAILABLE: &str = "miner_update_available";
+
+/// Aborts a background task when the owning future finishes or is dropped.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+impl StratumServer {
+    /// The upgrade notice for a miner reporting `version`, if a newer stable
+    /// seine release is known. Unparseable versions never trigger a notice.
+    fn miner_update_notice(&self, version: Option<&str>) -> Option<String> {
+        let latest = self.miner_release.version();
+        miner_update_notice(version?, &latest)
+    }
+}
+
+fn miner_update_notice(current: &str, latest: &str) -> Option<String> {
+    let (current_parsed, latest_parsed) = (parse_release_version(current)?, parse_release_version(latest)?);
+    (latest_parsed > current_parsed).then(|| {
+        format!(
+            "seine {} is available (this worker runs {}); newer releases mine faster on most CPUs: https://github.com/zpalmtree/seine/releases/latest",
+            latest.trim(),
+            current.trim()
+        )
+    })
+}
+
+/// Parses `v1.2.3` or `1.2.3`, ignoring any `-pre` or `+build` suffix.
+fn parse_release_version(raw: &str) -> Option<(u64, u64, u64)> {
+    let raw = raw.trim();
+    let raw = raw.strip_prefix('v').unwrap_or(raw);
+    let core = raw.split(['-', '+']).next()?;
+    let mut parts = core.split('.').map(|part| part.parse::<u64>().ok());
+    let version = (parts.next()??, parts.next()??, parts.next()??);
+    parts.next().is_none().then_some(version)
+}
+
 fn submit_metadata(params: &SubmitParams) -> SubmitMetadata {
     SubmitMetadata {
         miner_version: params
@@ -2303,7 +2376,8 @@ fn log_rejection_at_info(reason_code: &str) -> bool {
 mod tests {
     use super::ip_group_key;
     use super::{
-        client_submit_ack_difficulty, log_rejection_at_info, nonempty_submit_metadata,
+        client_submit_ack_difficulty, log_rejection_at_info, miner_update_notice, nonempty_submit_metadata,
+        parse_release_version,
         queue_job_json, queue_json, retarget_on_job_tick, run_tcp_outbound_writer,
         CandidateClaimTracker, OutboundHandle, QueuedSource, QueuedSources, StratumResponse,
         StratumServer,
@@ -2330,6 +2404,20 @@ mod tests {
     };
 
     const TEST_SUBMIT_DELAY: Duration = Duration::from_millis(200);
+
+    #[test]
+    fn miner_update_notice_only_for_older_parseable_versions() {
+        assert!(miner_update_notice("0.2.26", "0.2.44")
+            .unwrap()
+            .contains("seine 0.2.44 is available (this worker runs 0.2.26)"));
+        assert!(miner_update_notice("v0.2.26-3-gabc1234", "v0.2.44").is_some());
+        assert!(miner_update_notice("0.2.44", "0.2.44").is_none());
+        assert!(miner_update_notice("0.2.45", "0.2.44").is_none());
+        assert!(miner_update_notice("seine-dev", "0.2.44").is_none());
+        assert!(miner_update_notice("0.2.26", "").is_none());
+        assert_eq!(parse_release_version("v0.2.44"), Some((0, 2, 44)));
+        assert_eq!(parse_release_version("0.2.44.1"), None);
+    }
 
     #[test]
     fn submit_metadata_is_trimmed_bounded_and_control_free() {

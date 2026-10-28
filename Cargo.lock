@@ -1157,6 +1157,7 @@ name = "pool-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "base64",
  "bs58",
  "curve25519-dalek",
