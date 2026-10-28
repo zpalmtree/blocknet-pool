@@ -1,5 +1,5 @@
 ---
-sourceHash: 77522359a409
+sourceHash: 'e64d7723349d'
 translation: draft
 title: Jak kopanie zabezpiecza płatności Blocknet
 description: Dowiedz się, jak Blocknet wybiera historię płatności przez proof of work, co dają potwierdzenia i co sprawdzają węzły przed zaakceptowaniem nowego bloku.

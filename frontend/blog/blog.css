@@ -168,3 +168,8 @@ footer a:hover { color: var(--text); }
 @media (max-width: 640px) {
   .tracking-figure picture { max-width: 352px; margin-inline: auto; }
 }
+
+/* Wallet captures retain their proportions and open at full resolution. */
+.prose .payment-figure { margin: 2em 0; }
+.payment-figure img { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 12px; }
+.payment-figure figcaption { margin-top: 10px; font-size: .85rem; color: var(--muted); }

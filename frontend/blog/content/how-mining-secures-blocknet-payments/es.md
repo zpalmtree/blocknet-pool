@@ -1,5 +1,5 @@
 ---
-sourceHash: 77522359a409
+sourceHash: 'e64d7723349d'
 translation: draft
 title: Cómo protege la minería los pagos de Blocknet
 description: Aprende cómo Blocknet elige el historial de pagos mediante prueba de trabajo, qué aportan las confirmaciones y qué verifican los nodos al aceptar bloques.

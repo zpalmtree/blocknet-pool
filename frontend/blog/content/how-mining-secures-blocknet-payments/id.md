@@ -1,5 +1,5 @@
 ---
-sourceHash: 77522359a409
+sourceHash: 'e64d7723349d'
 translation: draft
 title: Cara penambangan mengamankan pembayaran Blocknet
 description: Pelajari cara Blocknet memilih riwayat pembayaran lewat proof of work, peran konfirmasi dalam menambah kerja, dan pemeriksaan node saat menerima blok.

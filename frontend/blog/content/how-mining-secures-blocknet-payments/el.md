@@ -1,5 +1,5 @@
 ---
-sourceHash: 77522359a409
+sourceHash: 'e64d7723349d'
 translation: draft
 title: Πώς η εξόρυξη προστατεύει τις πληρωμές Blocknet
 description: Μάθετε πώς το Blocknet επιλέγει ιστορικό πληρωμών με proof of work, τι προσθέτουν οι επιβεβαιώσεις και τι ελέγχουν οι κόμβοι πριν αποδεχτούν ένα block.

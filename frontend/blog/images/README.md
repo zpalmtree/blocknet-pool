@@ -60,3 +60,10 @@ backgrounds become the shared paper color. See `editorial/cover-system.md`.
   Desktop 1180px / mobile 390px browser widths, including element crops.
   Reproduce with the showcase README; Sharp converts PNG to WebP without
   altering the interface. The build copies these into `/blog/tracking/`.
+
+- `accept-payments/request.webp` and `receipt.webp`: real released Blocknet desktop
+  wallet v0.22.0, captured through shared Windows Chrome on October 28, 2026, around
+  4:53 PM EDT. Labeled demo wallet, fictional 1.25 BNT order and `order-1042` memo;
+  no real funds or keys. Request is an actual form crop; receipt is the History view.
+  Full provenance: `editorial/accept-payments-research.md`. The shared cover renderer
+  draws document → wallet → check; it is an explanatory illustration, not a UI mockup.

@@ -147,3 +147,16 @@ Seine retains wallet procedures, privacy mechanisms and rule-enforcement roles. 
 retains coinbase maturity and accounting. The new guide owns payment-history selection; its released
 code evidence and overlap assessment are in `currency-and-security-2026-10-28/research.md`.
 Fair launch and the reward schedule were expanded at their existing URLs; no duplicate owners.
+
+## Accepting customer payments — October 28, 2026
+
+| Primary cluster | Owner | Reader job |
+|---|---|---|
+| accept Blocknet payments; accept BNT for goods and services | `/blog/accept-blocknet-payments/` | Match a customer receipt to an order, apply an agreed confirmation policy, handle partial/extra/unmatched payments and record a refund |
+
+Seine's payment-links guide owns request syntax, desktop-wallet owns the interface
+walkthrough, transfer-time owns depth and maturity, and payment-proof owns generating
+and verifying cryptographic evidence. This guide owns the seller's manual order
+reconciliation, with a single 1.25 BNT example. No automatic checkout integration,
+merchant adoption, search-volume, or ranking claim is made. Broader currency coverage
+belongs on bntpool when the reader task differs from the existing Seine owners.

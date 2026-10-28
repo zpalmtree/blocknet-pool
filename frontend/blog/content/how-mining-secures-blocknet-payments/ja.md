@@ -1,5 +1,5 @@
 ---
-sourceHash: 77522359a409
+sourceHash: 'e64d7723349d'
 translation: draft
 title: 採掘がBlocknetの支払いを守る仕組み
 description: BlocknetがProof of Workで支払い履歴を選ぶ仕組み、承認によって支払いの後ろに作業が積み重なる意味、ノードがブロックを受け入れる前に行う検証を解説します。

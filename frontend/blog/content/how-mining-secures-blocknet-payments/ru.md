@@ -1,5 +1,5 @@
 ---
-sourceHash: 77522359a409
+sourceHash: 'e64d7723349d'
 translation: draft
 title: Как майнинг защищает платежи Blocknet
 description: Узнайте, как Blocknet выбирает историю платежей по proof of work, зачем нужны подтверждения и что проверяют узлы перед принятием очередного блока.

@@ -1,5 +1,5 @@
 ---
-sourceHash: 77522359a409
+sourceHash: 'e64d7723349d'
 translation: draft
 title: 挖礦如何保障 Blocknet 付款安全
 description: 了解 Blocknet 如何用工作量證明選擇付款歷史，確認如何在一筆付款之後累積工作，以及節點在接受區塊前會驗證哪些內容。

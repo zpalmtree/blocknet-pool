@@ -10,7 +10,7 @@ faq:
     a: 'Released core v0.22.0 tracks cumulative work by adding each block’s difficulty. A valid branch with greater accumulated work can become the selected chain, subject to the reorganization rules. Block count alone is insufficient because blocks can have different difficulty values; their work and validity both matter.'
   - q: 'Are payment confirmations and pool shares the same thing?'
     a: 'A pool share records mining work submitted to the pool. A payment confirmation concerns a transaction’s inclusion in the selected blockchain and the blocks built after it. Shares help allocate pool rewards, while network blocks advance payment history. Increasing your share count does not directly add confirmations to a particular payment.'
-related: [block-confirmations-mining-rewards, mining-difficulty-explained, blocknet-fair-launch]
+related: [block-confirmations-mining-rewards, mining-difficulty-explained, accept-blocknet-payments]
 ---
 
 Follow a BNT payment from inclusion in a block to a history supported by later mining work. This guide explains why the network needs a way to choose between competing histories, what confirmations tell you, and how that choice works alongside private transaction validation. The implementation described here is released core v0.22.0, checked on October 28, 2026.

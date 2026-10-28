@@ -1,5 +1,5 @@
 ---
-sourceHash: 77522359a409
+sourceHash: 'e64d7723349d'
 translation: draft
 title: 채굴이 Blocknet 결제를 보호하는 방법
 description: Blocknet이 작업 증명으로 결제 이력을 선택하는 방식, 확인이 결제 뒤에 작업을 더하는 의미, 노드가 새 블록을 승인하기 전에 검증하는 내용을 알아보세요.

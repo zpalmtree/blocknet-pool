@@ -1,5 +1,5 @@
 ---
-sourceHash: 77522359a409
+sourceHash: 'e64d7723349d'
 translation: draft
 title: Wie Mining Blocknet-Zahlungen absichert
 description: Erfahre, wie Blocknet per Proof of Work die Zahlungshistorie auswählt, warum Bestätigungen Arbeit hinzufügen und was Nodes vor der Blockannahme prüfen.

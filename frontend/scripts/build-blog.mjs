@@ -238,6 +238,10 @@ copyFileSync(new URL('theme.js', BLOG_DIR), new URL('theme.js', DIST));
 copyFileSync(new URL('lang.js', BLOG_DIR), new URL('lang.js', DIST));
 copyFileSync(new URL('article-metrics.js', BLOG_DIR), new URL('article-metrics.js', DIST));
 copyFileSync(new URL('seine-icon.png', BLOG_DIR), new URL('seine-icon.png', DIST));
+mkdirSync(new URL('accept-payments/', DIST), { recursive: true });
+for (const name of ['request.webp', 'receipt.webp']) {
+  copyFileSync(new URL(`images/accept-payments/${name}`, BLOG_DIR), new URL(`accept-payments/${name}`, DIST));
+}
 mkdirSync(new URL('tracking/', DIST), { recursive: true });
 for (const state of ['first', 'rewards']) {
   for (const size of ['desktop', 'mobile']) {

@@ -1,5 +1,5 @@
 ---
-sourceHash: 77522359a409
+sourceHash: 'e64d7723349d'
 translation: draft
 title: Madencilik Blocknet ödemelerini nasıl korur?
 description: Blocknet'in iş kanıtıyla ödeme geçmişini nasıl seçtiğini, onayların nasıl iş eklediğini ve düğümlerin blokları kabul etmeden neleri doğruladığını öğrenin.

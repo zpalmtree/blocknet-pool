@@ -1,5 +1,5 @@
 ---
-sourceHash: 77522359a409
+sourceHash: 'e64d7723349d'
 translation: draft
 title: Come il mining protegge i pagamenti Blocknet
 description: Scopri come Blocknet sceglie la cronologia dei pagamenti tramite proof of work, cosa aggiungono le conferme e quali controlli eseguono i nodi sui blocchi.

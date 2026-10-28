@@ -93,6 +93,7 @@ function partTimeMining() {
 }
 
 const illustrations = {
+  'accept-blocknet-payments': () => scene({ main: 'wallet', left: 'document', right: 'check' }),
   'how-mining-secures-blocknet-payments': () => scene({ main: 'shield', left: 'block', right: 'wallet' }),
   'mine-blocknet-part-time': partTimeMining,
   'internet-speed-mining': miningNetwork,

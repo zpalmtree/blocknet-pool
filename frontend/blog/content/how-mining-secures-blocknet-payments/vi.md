@@ -1,5 +1,5 @@
 ---
-sourceHash: 77522359a409
+sourceHash: 'e64d7723349d'
 translation: draft
 title: Đào coin bảo vệ thanh toán Blocknet như thế nào?
 description: Tìm hiểu cách Blocknet chọn lịch sử thanh toán bằng proof of work, ý nghĩa của xác nhận và những gì nút kiểm tra trước khi chấp nhận một khối mới.

@@ -1,5 +1,5 @@
 ---
-sourceHash: 77522359a409
+sourceHash: 'e64d7723349d'
 translation: draft
 title: Comment le minage sécurise les paiements Blocknet
 description: Découvrez comment Blocknet choisit l’historique des paiements par preuve de travail, le rôle des confirmations et les contrôles des nœuds sur les blocs.
