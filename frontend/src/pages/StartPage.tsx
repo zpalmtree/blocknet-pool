@@ -16,6 +16,7 @@ export function StartPage({ poolInfo }: StartPageProps) {
     : `${poolFeePct.toLocaleString(locale, { maximumFractionDigits: 20 })}%`;
   const poolUrl = stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url);
   const commandExample = `./seine --pool-url ${poolUrl} --address YOUR_BLOCKNET_ADDRESS`;
+  const windowsCommand = `.\\seine.exe --pool-url ${poolUrl} --address YOUR_BLOCKNET_ADDRESS`;
   const pplnsWindowLabel = poolInfo?.pplns_window_duration;
 
   useEffect(() => {
@@ -26,8 +27,7 @@ export function StartPage({ poolInfo }: StartPageProps) {
 
   const copyToClipboard = useCallback((value: string, key: string) => {
     if (!navigator.clipboard?.writeText) return;
-    void navigator.clipboard.writeText(value);
-    setCopiedKey(key);
+    void navigator.clipboard.writeText(value).then(() => setCopiedKey(key)).catch(() => {});
   }, []);
 
   const setupPoolUrlKey = 'pool-url-quickstart';
@@ -60,15 +60,18 @@ export function StartPage({ poolInfo }: StartPageProps) {
           <li className="quickstart-card">
             <span className="quickstart-step">2</span>
             <strong>{t("m452")}</strong>
-            <p>{tx("m453", [<a href="https://seineminer.com/#download" target="_blank" rel="noopener">
+            <p>{tx("m453", [<a href={`https://seineminer.com/${localeInfo.path ? `${localeInfo.path}/` : ''}#download`} target="_blank" rel="noopener">
                 seineminer.com
               </a>])}</p>
+            <ul className="help-links">
+              {['windows', 'mac', 'linux'].map((platform, index) => <li key={platform}><a href={`${seineGuideBase}mine-blocknet-on-${platform}/`}>{['Windows', 'macOS', 'Linux'][index]} · {t('setupGuide')}</a></li>)}
+            </ul>
           </li>
 
           <li className="quickstart-card">
             <span className="quickstart-step">3</span>
             <strong>{t("m454")}</strong>
-            <p>{tx("m455", [<code className="mono inline-code">./seine</code>, <code className="mono inline-code">@name</code>, <code className="mono inline-code">$name</code>])}</p>
+            <p>{tx("launchBody", [<code className="mono inline-code">seine.exe</code>, <code className="mono inline-code">./seine</code>, <code className="mono inline-code">@name</code>, <code className="mono inline-code">$name</code>])}</p>
             <div className="quickstart-inline">
               <span className="quickstart-inline-label">{t("m456")}</span>
               <button
@@ -86,18 +89,30 @@ export function StartPage({ poolInfo }: StartPageProps) {
 
           <li className="quickstart-card">
             <span className="quickstart-step">4</span>
-            <strong>{t("m458")}</strong>
-            <p>{tx("m459", [<a href={localizePath("/stats")}>{t("m005")}</a>])}</p>
+            <strong>{t("trackWorker")}</strong>
+            <p>{t('trackBody')}</p>
+            <a className="btn btn-secondary" href={localizePath('/stats')}>{t('m005')}</a>
           </li>
         </ol>
 
+        <details className="command-option">
+        <summary>{t('commandOption')}</summary>
         <p className="quickstart-label">{tx("m460", [<code className="mono inline-code">YOUR_BLOCKNET_ADDRESS</code>, <code className="mono inline-code">'@yourname'</code>, <code className="mono inline-code">'$yourname'</code>])}</p>
+        <p className="quickstart-label">Windows · PowerShell</p>
         <div className="command-copy">
-          <pre className="config-block">{commandExample}</pre>
+          <pre className="config-block" dir="ltr">{windowsCommand}</pre>
+          <button className="copy-btn" type="button" onClick={() => copyToClipboard(windowsCommand, 'cmd-windows')}>
+            {copiedKey === 'cmd-windows' ? t('m386') : t('m461')}
+          </button>
+        </div>
+        <p className="quickstart-label">macOS / Linux</p>
+        <div className="command-copy">
+          <pre className="config-block" dir="ltr">{commandExample}</pre>
           <button className="copy-btn" type="button" onClick={() => copyToClipboard(commandExample, 'cmd')}>
             {copiedKey === 'cmd' ? t("m386") : t("m461")}
           </button>
         </div>
+        </details>
       </div>
 
       <div className="card section" id="wallet">

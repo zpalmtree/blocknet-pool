@@ -1862,6 +1862,8 @@ pre.config-block {
   font-size: 14px;
 }
 
+.quickstart-card .help-links { grid-template-columns: 1fr; margin-top: 0; }
+
 .quickstart-notes {
   display: grid;
   gap: 8px;
@@ -2297,3 +2299,6 @@ a.copy-field-value:hover {
     justify-content: flex-start;
   }
 }
+.command-option { margin-top: 24px; }
+.command-option summary { cursor: pointer; color: var(--text); font-weight: 600; }
+.command-option summary:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }

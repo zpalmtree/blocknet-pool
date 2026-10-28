@@ -320,5 +320,10 @@
   "helpTitle": "Trợ giúp",
   "dueNow": "Đến hạn",
   "statsEmpty": "Nhập địa chỉ ví hoặc tên Blocknet ID mà máy đào của bạn sử dụng. Mới dùng pool? {0}",
-  "hostedWallet": "Ví"
+  "hostedWallet": "Ví",
+  "setupGuide": "Hướng dẫn thiết lập",
+  "trackWorker": "Tìm worker của bạn",
+  "trackBody": "Dùng cùng địa chỉ ví hoặc tên ngắn như trong Seine. Các share được chấp nhận cho thấy pool đang nhận kết quả đào của bạn. Ước tính hashrate của pool có thể mất vài phút mới xuất hiện.",
+  "launchBody": "Windows: nhấp đúp vào {0}. macOS hoặc Linux: chạy {1}. Nhập địa chỉ ví hoặc {2} / {3}, rồi nhập URL của pool.",
+  "commandOption": "Tùy chọn dòng lệnh"
 }

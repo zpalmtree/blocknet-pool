@@ -320,5 +320,10 @@
   "helpTitle": "Yardım",
   "dueNow": "Şimdi",
   "statsEmpty": "Madencinizin kullandığı cüzdan adresini veya Blocknet ID adını girin. Havuzda yeni misiniz? {0}",
-  "hostedWallet": "Cüzdan"
+  "hostedWallet": "Cüzdan",
+  "setupGuide": "Kurulum rehberi",
+  "trackWorker": "Worker’ınızı bulun",
+  "trackBody": "Seine’de kullandığınız cüzdan adresini veya kısa adı kullanın. Kabul edilen paylar, havuzun çalışmanızı aldığını gösterir. Havuzun tahmini hashrate değerinin görünmesi birkaç dakika sürebilir.",
+  "launchBody": "Windows: {0} dosyasına çift tıklayın. macOS veya Linux: {1} komutunu çalıştırın. Cüzdan adresinizi veya {2} / {3} bilgilerinizi, ardından havuz URL’sini girin.",
+  "commandOption": "Komut satırı seçeneği"
 }

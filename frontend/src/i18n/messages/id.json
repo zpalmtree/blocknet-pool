@@ -320,5 +320,10 @@
   "helpTitle": "Bantuan",
   "dueNow": "Jatuh tempo sekarang",
   "statsEmpty": "Masukkan alamat wallet atau nama Blocknet ID yang digunakan miner Anda. Baru di pool ini? {0}",
-  "hostedWallet": "Dompet"
+  "hostedWallet": "Dompet",
+  "setupGuide": "Panduan penyiapan",
+  "trackWorker": "Temukan worker Anda",
+  "trackBody": "Gunakan alamat dompet atau nama singkat yang sama seperti di Seine. Share yang diterima menunjukkan bahwa pool menerima hasil kerja Anda. Estimasi hashrate pool dapat memerlukan beberapa menit untuk muncul.",
+  "launchBody": "Windows: klik dua kali {0}. macOS atau Linux: jalankan {1}. Masukkan alamat dompet atau {2} / {3}, lalu URL pool.",
+  "commandOption": "Opsi baris perintah"
 }

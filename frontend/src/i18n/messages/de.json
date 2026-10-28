@@ -320,5 +320,10 @@
   "helpTitle": "Hilfe",
   "dueNow": "Jetzt fällig",
   "statsEmpty": "Geben Sie die Wallet-Adresse oder den Blocknet-ID-Namen ein, den Ihr Miner verwendet. Neu im Pool? {0}",
-  "hostedWallet": "Wallet"
+  "hostedWallet": "Wallet",
+  "setupGuide": "Einrichtungsanleitung",
+  "trackWorker": "Deinen Worker finden",
+  "trackBody": "Verwende dieselbe Wallet-Adresse oder denselben Kurznamen wie in Seine. Akzeptierte Shares zeigen, dass der Pool deine Arbeit empfängt. Es kann einige Minuten dauern, bis die geschätzte Hashrate im Pool erscheint.",
+  "launchBody": "Windows: Doppelklick auf {0}. macOS oder Linux: {1} ausführen. Gib deine Wallet-Adresse oder {2} / {3} und anschließend die Pool-URL ein.",
+  "commandOption": "Option für die Kommandozeile"
 }

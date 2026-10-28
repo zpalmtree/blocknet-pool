@@ -320,5 +320,10 @@
   "helpTitle": "Aide",
   "dueNow": "À effectuer maintenant",
   "statsEmpty": "Saisissez l'adresse de portefeuille ou le nom Blocknet ID utilisé par votre mineur. Nouveau sur le pool ? {0}",
-  "hostedWallet": "Portefeuille"
+  "hostedWallet": "Portefeuille",
+  "setupGuide": "Guide de configuration",
+  "trackWorker": "Retrouver votre worker",
+  "trackBody": "Utilisez la même adresse de portefeuille ou le même nom court que dans Seine. Les parts acceptées indiquent que le pool reçoit votre travail. L’estimation du hashrate du pool peut mettre quelques minutes à apparaître.",
+  "launchBody": "Windows : double-cliquez sur {0}. macOS ou Linux : exécutez {1}. Saisissez votre adresse de portefeuille ou {2} / {3}, puis l’URL du pool.",
+  "commandOption": "Option en ligne de commande"
 }

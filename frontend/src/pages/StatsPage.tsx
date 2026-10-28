@@ -352,6 +352,8 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
             type="text"
             dir="ltr"
             placeholder={t("m486")}
+            aria-label={t('m486')}
+            aria-describedby="miner-lookup-help"
             style={{ flex: 1, minWidth: 200 }}
             value={minerInput}
             onChange={(e) => setMinerInput(e.target.value)}
@@ -387,6 +389,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
               ${resolvedHandle} → {minerAddress.slice(0, 8)}…{minerAddress.slice(-6)}
             </span>)}
         </div>
+        <p id="miner-lookup-help" className="section-lead" style={{ marginTop: 16 }}>{t('trackBody')}</p>
       </div>
 
       {!minerAddress && !lookupLoading && (<p className="section-lead" style={{ marginBottom: 16 }}>{tx("statsEmpty", [<a href={localizePath("/start")}>{t("m002")}</a>])}</p>)}

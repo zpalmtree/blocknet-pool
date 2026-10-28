@@ -320,5 +320,10 @@
   "helpTitle": "Ayuda",
   "dueNow": "Pendiente ahora",
   "statsEmpty": "Introduce la dirección de billetera o el nombre de Blocknet ID que usa tu minero. ¿Nuevo en el pool? {0}",
-  "hostedWallet": "Monedero"
+  "hostedWallet": "Monedero",
+  "setupGuide": "Guía de configuración",
+  "trackWorker": "Encuentra tu equipo",
+  "trackBody": "Usa la misma dirección de monedero o nombre corto que en Seine. Las participaciones aceptadas indican que el pool recibe tu trabajo. La estimación de hashrate del pool puede tardar unos minutos en aparecer.",
+  "launchBody": "Windows: haz doble clic en {0}. macOS o Linux: ejecuta {1}. Introduce tu dirección de monedero o {2} / {3} y después la URL del pool.",
+  "commandOption": "Opción de línea de comandos"
 }

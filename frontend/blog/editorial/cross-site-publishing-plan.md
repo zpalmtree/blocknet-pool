@@ -49,14 +49,30 @@ self-canonicals; relocation requires a separate, evidence-backed migration decis
 - Evidence and verification: pool `currency-and-security-2026-10-28/research.md`;
   stable visual showcase: `http://localhost:8874/currency-and-security/`.
 
+## Newcomer journey cycle — 2026-10-28
+
+- Seine download rows link directly to the matching Windows, macOS or Linux setup guide.
+  Mac browsers no longer select Apple Silicon automatically: the browser does not reliably
+  distinguish it from Intel. Both downloads remain available.
+- A fourth setup step links to bntpool My Stats in the same language and explains using the
+  same wallet identity, accepted shares and the initial hashrate delay.
+- bntpool retains its existing homepage Get Started action. `/start` adds localized platform
+  guides, Windows double-click instructions, a direct My Stats action, and optional separate
+  PowerShell and Unix command examples. `/stats` repeats the wallet-identity guidance beside
+  its accessible lookup input. Static search landing HTML follows the same four setup steps.
+- New copy covers all 20 languages. Archive verification is not part of the onboarding flow;
+  existing security troubleshooting articles remain available through the blog.
+- Validation: both frontend builds, pool's 21 tests, separate API release build, 60 mobile
+  locale/route checks, desktop/mobile stats fixtures (empty, success, loading, error, zero),
+  Arabic RTL, seven platform-detection cases and both command-copy actions.
+- Stable visual showcase: `http://localhost:8874/onboarding/`.
+
 ## Remaining publishing queue, in order
 
 Give the next cycle more bntpool editorial effort; do not require a permanent article-count quota.
 
 | Priority | Site / action | Reader question and concrete work | Boundary / evidence required |
 |---|---|---|---|
-| 4 | Seine: improve existing high-intent landing journey | Can a newcomer choose the right archive, verify it, and reach the correct setup guide from `/#download`? Audit the current release and platform links | Measure this flow and fix observed gaps; no extra download/OS keyword landing pages |
-| 5 | bntpool: improve the home → `/start` → `/stats` journey | Can a newcomer understand the pool, connect and identify their worker? Audit search landing copy, current connection instructions and links to the correct guides | Use real public API facts and existing UI. Keep account-specific results out of indexable URLs |
 | 6 | bntpool: research `blocknet-bnt-atomic-units` | How do wallet decimals, atomic units and rounding represent the same BNT amount? | Check whether fees, supply and payout guides already answer this adequately. Verify precision and rounding in released code. If the answer fits a short section, update an existing owner instead of making a thin article |
 | 7 | Both: use actual search results to choose the following cycle | Which useful pages are getting impressions but failing to satisfy the query or attract clicks? | Follow the measurement procedure below; do not infer performance from article count |
 

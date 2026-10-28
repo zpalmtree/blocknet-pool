@@ -320,5 +320,10 @@
   "helpTitle": "Help",
   "dueNow": "Due now",
   "statsEmpty": "Enter the wallet address or Blocknet ID name your miner uses. New to the pool? {0}",
-  "hostedWallet": "Wallet"
+  "hostedWallet": "Wallet",
+  "setupGuide": "Setup guide",
+  "trackWorker": "Find your worker",
+  "trackBody": "Use the same wallet address or shortname as in Seine. Accepted shares show the pool is receiving your work. The pool’s hashrate estimate can take a few minutes to appear.",
+  "launchBody": "Windows: double-click {0}. macOS or Linux: run {1}. Enter your wallet address or {2} / {3}, then the pool URL.",
+  "commandOption": "Command-line option"
 }

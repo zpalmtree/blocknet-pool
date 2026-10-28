@@ -320,5 +320,10 @@
   "helpTitle": "帮助",
   "dueNow": "即将执行",
   "statsEmpty": "输入您的矿机使用的钱包地址或 Blocknet ID 名称。第一次使用本矿池？{0}",
-  "hostedWallet": "钱包"
+  "hostedWallet": "钱包",
+  "setupGuide": "设置指南",
+  "trackWorker": "查看你的矿机",
+  "trackBody": "使用与 Seine 中相同的钱包地址或短名称。已接受的份额表示矿池正在接收你的挖矿结果。矿池的预估算力可能需要几分钟才会显示。",
+  "launchBody": "Windows：双击 {0}。macOS 或 Linux：运行 {1}。输入钱包地址或 {2} / {3}，然后输入矿池 URL。",
+  "commandOption": "命令行选项"
 }

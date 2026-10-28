@@ -320,5 +320,10 @@
   "helpTitle": "도움말",
   "dueNow": "지금 예정",
   "statsEmpty": "채굴기가 사용하는 지갑 주소 또는 Blocknet ID 이름을 입력하세요. 풀이 처음이신가요? {0}",
-  "hostedWallet": "지갑"
+  "hostedWallet": "지갑",
+  "setupGuide": "설정 가이드",
+  "trackWorker": "워커 확인하기",
+  "trackBody": "Seine에 입력한 것과 동일한 지갑 주소나 단축 이름을 사용하세요. 승인된 셰어는 풀이 채굴 작업 결과를 수신하고 있음을 뜻합니다. 풀의 추정 해시레이트가 표시되기까지 몇 분 걸릴 수 있습니다.",
+  "launchBody": "Windows: {0}를 두 번 클릭하세요. macOS 또는 Linux: {1}을 실행하세요. 지갑 주소 또는 {2} / {3}을 입력한 다음 풀 URL을 입력하세요.",
+  "commandOption": "명령줄 옵션"
 }

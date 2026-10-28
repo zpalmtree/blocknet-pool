@@ -320,5 +320,10 @@
   "helpTitle": "Pomoc",
   "dueNow": "Teraz",
   "statsEmpty": "Wpisz adres portfela lub nazwę Blocknet ID, której używa Twoja koparka. Nowy w puli? {0}",
-  "hostedWallet": "Portfel"
+  "hostedWallet": "Portfel",
+  "setupGuide": "Instrukcja konfiguracji",
+  "trackWorker": "Znajdź swój worker",
+  "trackBody": "Użyj tego samego adresu portfela lub krótkiej nazwy co w Seine. Zaakceptowane udziały oznaczają, że pula otrzymuje Twoją pracę. Szacowany hashrate puli może pojawić się po kilku minutach.",
+  "launchBody": "Windows: kliknij dwukrotnie {0}. macOS lub Linux: uruchom {1}. Wpisz adres portfela lub {2} / {3}, a następnie adres URL puli.",
+  "commandOption": "Opcja wiersza poleceń"
 }
