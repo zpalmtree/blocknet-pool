@@ -64,6 +64,8 @@ setting `growth_submit_rate` to 0 (by reload) turns it off. Alerts:
 
 - 2026-10-28 · T3 · growth-mode rollout (deploy-growth-20261027 = 4e9ba96 + growth mode, built without other sessions' unreleased payout/API changes) by handover 03:44 UTC: 2,544 of ~2,549 miners moved to @a in ~15 s with 0 replay failures and 0 busy replies; one miner (rejected first login, retried with a new ID) was never tracked, so @b did not retire and the deploy stopped after 10 min with both engines serving. With the owner's approval @b was stopped at 04:04; that one miner was held then reconnected. Growth mode is off at ~31 shares/s (normal size) as intended. Fixed in the gateway (master 8afeda7: pending logins tracked by ID; 3-minute drain deadline); live after the next gateway restart.
 
+- 2026-10-28 · T3 · live growth-mode test (owner-approved, config reload only): growth_submit_rate lowered to 20/s below the live ~31/s at 04:12:07 UTC; the controller switched on at 04:12:32 (vardiff_target_shares 5, sample_rate 0.08, persisted). Submits fell 31.8 → ~13/s within ~4 min as vardiff enlarged shares while its normal-size rate held 28-34/s (no flapping); 100% Normal; 2,302-2,311 workers throughout. Slow acks unchanged in absolute terms (10 min: >50 ms 132 vs 132, >100 ms 29 vs 77, >250 ms 0 vs 13, mean 11.1 vs 10.9 ms); p99 rose to 60-90 ms only because there were half as many acks. Config restored at 04:29:07; growth mode switched off at 04:29:32 and submits returned to 33.9/s.
+
 ## Goal "Done" criteria and evidence (BNTPOOL_VERIFY_GOAL.md, 2026-10-27)
 
 1. *Approved-ready batch with T2 evidence at 2x peak arrival and in a restart
