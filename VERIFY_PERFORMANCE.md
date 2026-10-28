@@ -62,6 +62,8 @@ setting `growth_submit_rate` to 0 (by reload) turns it off. Alerts:
   Control without the controller: 29% Normal, 50% Emergency, 3 drops/s.
   2x restart storm resuming growth mode: 100% Normal, 126/126 candidates.
 
+- 2026-10-28 · T3 · growth-mode rollout (deploy-growth-20261027 = 4e9ba96 + growth mode, built without other sessions' unreleased payout/API changes) by handover 03:44 UTC: 2,544 of ~2,549 miners moved to @a in ~15 s with 0 replay failures and 0 busy replies; one miner (rejected first login, retried with a new ID) was never tracked, so @b did not retire and the deploy stopped after 10 min with both engines serving. With the owner's approval @b was stopped at 04:04; that one miner was held then reconnected. Growth mode is off at ~31 shares/s (normal size) as intended. Fixed in the gateway (master 8afeda7: pending logins tracked by ID; 3-minute drain deadline); live after the next gateway restart.
+
 ## Goal "Done" criteria and evidence (BNTPOOL_VERIFY_GOAL.md, 2026-10-27)
 
 1. *Approved-ready batch with T2 evidence at 2x peak arrival and in a restart

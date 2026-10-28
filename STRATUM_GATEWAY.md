@@ -91,6 +91,8 @@ closing miners gradually) is a planned follow-up.
   reconnect once. `scripts/migrate_bntpool_to_gateway.sh --rollback` returns
   to the single Stratum service.
 - **Monitoring**: `127.0.0.1:24786/metrics` (`blocknet_pool_gateway_*`):
-  miners, miners without an engine, engines, migrations, replay failures,
-  busy replies, retires. Alerts: `BlocknetPoolGatewayNoEngine`,
+  miners, miners without an engine, miners on draining engines, engines,
+  migrations, replay failures, busy replies, retires, forced reconnects (miners
+  still on a draining engine after 3 minutes are reconnected so a handover
+  always completes). Alerts: `BlocknetPoolGatewayNoEngine`,
   `BlocknetPoolGatewayMinersWithoutEngine`, `BlocknetPoolGatewayReplayFailures`.
