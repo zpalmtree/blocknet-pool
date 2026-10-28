@@ -107,6 +107,14 @@ setting `growth_submit_rate` to 0 (by reload) turns it off. Alerts:
    v0.2.44's Zen 4 far-L2 prefetch (+~5.7% per hash when bandwidth-bound) is
    live since 2026-10-28 05:39 UTC (live hash means -11 to -14%).
 
+Batch approval: the whole batch (both kernel upgrades, hold_audit_rate 0.25,
+sync lane, per-thread arena retention, hot reload, Stratum gateway with the
+retried-login fix, automatic growth mode) was presented against these
+criteria and approved by the owner as bntpool's production setup on
+2026-10-28 (~06:50 UTC). Candidate spacing in the replay (2 s minimum gap)
+is a modelling choice made after the first runs; it is recorded beside the
+pure-Poisson results, which show the only waits are candidate-on-candidate.
+
 Not part of these criteria, recorded for completeness: five large farms
 (old seine 0.2.21/0.2.36) left around the 08:56 Stratum restart and did not
 return. Their decline started before it (0.2.21 work 968 -> 685 at 08:40;
