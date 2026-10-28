@@ -68,6 +68,8 @@ setting `growth_submit_rate` to 0 (by reload) turns it off. Alerts:
 
 - 2026-10-28 · T2 · the 2x replays re-run on the exact deployed revision 2d98924 (branch deploy-growth-20261027, matching /opt/blocknet/blocknet-pool/deploy-info.txt), deployed defaults: 1x → 2x ramp 100% Normal in 2/2 runs (0 transitions, 0 drops, 182/182 candidates answered, p99 1.3-1.4 s, growth on at minute 13.5); 2x restart storm resuming growth mode 100% Normal (126/126 candidates, p99 1.7 s). Control without growth mode: 31% Normal, 55% Emergency, 2.6 drops/s. Raw: perf-results/2026-10-27/pool-verify/replay-deployed-2d98924/.
 
+- 2026-10-28 · T3 · gateway handover fix made live (owner-approved): gateway built from branch deploy-gateway-fix-20261028 (deploy-growth-20261027 + the gateway fix only), uploaded alone and restarted 04:53:30 UTC. Engine @a reconnected within 1 s; 2,280 miners back within 5 s, all on the engine by 04:53:45, 2,403 connections by 04:54:30 (2,428 before); 0 busy replies; connected workers 2,311 vs 2,325 before. The live pool now runs everything built and tested: Stratum/monitor 2d98924, gateway with pending-login tracking and the 3-minute drain deadline.
+
 ## Goal "Done" criteria and evidence (BNTPOOL_VERIFY_GOAL.md, 2026-10-27)
 
 1. *Approved-ready batch with T2 evidence at 2x peak arrival and in a restart
