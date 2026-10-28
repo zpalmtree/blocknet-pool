@@ -45,3 +45,7 @@ blocknet-pool
 # --- Agent instruction variants ---
 agent.md
 agents.md
+
+# --- Private wallet page (installed from the private bnt-wallet repo) ---
+frontend/src/wallet-private/
+frontend/tests/wallet-private/

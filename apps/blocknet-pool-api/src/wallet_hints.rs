@@ -1,5 +1,5 @@
 //! Payout-hint feed for the hosted wallet service
-//! (showcases/hosted-wallet/m1/contracts.md §2). Off unless
+//! (contract in the private wallet repo). Off unless
 //! `wallet_hints.enabled`; callers need the bearer token from a 0600 file.
 //! The pool does not know which payees are hosted wallets, so every payout
 //! recipient is listed and the wallet service filters by its own addresses.
