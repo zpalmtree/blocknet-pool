@@ -2,7 +2,7 @@
 title: Blocknets Blockbelohnungsplan
 description: Blocknets monatliche Blockbelohnung von 723,25 BNT zum Start bis zur dauerhaften Emission von 2,0 BNT ab Monat 48, mit 288 Blöcken täglich und zuvor 98,6 Millionen BNT.
 tags: [Blocknet, Blockbelohnung, Emission, Mining]
-sourceHash: abea18c2c21b
+sourceHash: 6c38930dfa09
 translation: draft
 faq:
   - q: 'Wie hoch ist die aktuelle Blocknet-Blockbelohnung?'
@@ -17,7 +17,7 @@ faq:
     a: 'Eine Blockbelohnung wird nach 60 Blöcken ausgebbar, bei fünfminütigen Blöcken etwa nach fünf Stunden. Diese Regel heißt Coinbase-Reife. Auch bntpool.com wartet 60 Blöcke vor der Auszahlung einer Blockbelohnung und zahlt daher nur aus gereiften Blöcken.'
 ---
 
-Diese Seite listet die Blocknet-Blockbelohnung für jeden Monat des Emissionsplans auf, erklärt ihre Berechnung und zeigt, was der Plan für dich als Miner bedeutet.
+Verfolge neu ausgegebene BNT von der Blockbelohnung bis zu ausgebbaren Coins und späteren Zahlungen. Diese Seite erklärt diesen Währungsfluss, listet anschließend jeden Monat des Belohnungsplans auf und zeigt, wie Miner und Coin-Besitzer die Zahlen lesen können.
 
 ## Was ist die Blocknet-Blockbelohnung?
 
@@ -28,6 +28,12 @@ Blocknets Blockbelohnung begann mit 723,25 BNT pro Block und sinkt einmal je 30-
 Blocknet strebt einen Block alle fünf Minuten (300 Sekunden) an. Das ergibt 288 Blöcke täglich und 8.640 je 30-Tage-Monat. Die Difficulty passt sich nach jedem Block anhand eines gewichteten Mittels der letzten 60 Blockzeiten an. So bleibt das Tempo auch bei veränderter Netzwerk-Hashrate nahe fünf Minuten.
 
 Die Belohnung hängt ausschließlich davon ab, in welchen Monat die Blockhöhe fällt. Der Monat ist die abgerundete Blockhöhe geteilt durch 8.640: Höhen 0 bis 8.639 gehören zu Monat 0, Höhen 8.640 bis 17.279 zu Monat 1 und so weiter.
+
+## Wie wird eine Blockbelohnung zu nutzbaren BNT?
+
+Ein geschürfter Block erzeugt seine vorgesehene Belohnung in einer Coinbase-Ausgabe. Diese gehört dem für den Block gewählten Empfänger und durchläuft zunächst die Coinbase-Reifezeit. Sobald sie ausgebbar ist, kann der Besitzer sie für normale Transaktionen verwenden. Hat ein Pool den Block geschürft, verteilt seine Buchhaltung anrechenbare Belohnungen auf die Teilnehmer. Spätere Auszahlungstransaktionen senden vorhandene BNT an deren Wallets.
+
+Eine Auszahlung erzeugt also keine zweite Belohnung. Auch der Empfang einer Übertragung setzt kein eigenes Mining voraus. Die Ausgabe beschreibt den Ursprung von BNT; Übertragungen beschreiben spätere Besitzerwechsel. Die [Bestätigungsanleitung](/blog/de/block-confirmations-mining-rewards/) verfolgt die Pool-Phasen, die [Blocknet-Angebotsübersicht](https://seineminer.com/de/blog/blocknet-supply/) erläutert den übergreifenden Währungsplan.
 
 ## Wie wird die Belohnung berechnet?
 
@@ -110,6 +116,8 @@ Monat 48 beginnt nach 1.440 Tagen fünfminütiger Blöcke seit dem Start, also u
 ## Wie viel BNT wird vor der Restemission geschürft?
 
 Die Summe aller Blöcke von Höhe 1 bis 414.719 beträgt 98.561.905,08 BNT, etwa 98,6 Millionen. Code und offizielle Website beschreiben den Plan als rund 100 Millionen Coins über vier Jahre zuzüglich Restemission. Die exakte Summe liegt knapp unter diesem gerundeten Wert.
+
+Die folgenden kumulierten Summen messen die planmäßige Ausgabe durch akzeptierte Blöcke. Sie sind weder eine Summe aktuell ausgebbarer Wallet-Guthaben noch ein Maß für Handelsaktivität. Die Übertragung vorhandener BNT zwischen Besitzern erhöht diese Ausgabesummen nicht.
 
 Der größte Teil entsteht früh. Nach Planjahren gruppiert:
 

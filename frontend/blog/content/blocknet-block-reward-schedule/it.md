@@ -13,11 +13,11 @@ faq:
     a: 'Inizia al mese 48, all’altezza 414.720: 48 mesi di 30 giorni, cioè 1.440 giorni di blocchi da cinque minuti dopo il lancio, circa quattro anni. La data esatta dipende dai tempi di blocco reali. Da quell’altezza ogni blocco paga 2,0 BNT.'
   - q: 'Quando si possono spendere i BNT minati?'
     a: 'La ricompensa diventa spendibile dopo 60 blocchi, circa cinque ore con i blocchi da cinque minuti di Blocknet. Si chiama maturità coinbase. Anche bntpool.com attende 60 blocchi prima di pagare una ricompensa, distribuendo quindi solo ricompense maturate.'
-sourceHash: abea18c2c21b
+sourceHash: 6c38930dfa09
 translation: draft
 ---
 
-Questa pagina elenca la ricompensa Blocknet per ogni mese del calendario di emissione, spiega come viene calcolata e cosa significa per te che mini.
+Segui i BNT appena emessi dalla ricompensa di blocco alle monete spendibili e ai pagamenti successivi. Questa pagina spiega il percorso della valuta, elenca ogni mese del programma di ricompense e mostra come interpretarne i valori da minatore o titolare.
 
 ## Qual è la ricompensa di un blocco Blocknet?
 
@@ -28,6 +28,12 @@ La ricompensa è partita da 723,25 BNT per blocco e scende una volta per mese di
 Blocknet punta a un blocco ogni cinque minuti (300 secondi): 288 al giorno e 8.640 per mese di 30 giorni. La difficoltà si adatta dopo ogni blocco sulla base di una media ponderata degli ultimi 60 tempi di blocco, mantenendo il ritmo vicino a cinque minuti mentre cambia l’hashrate della rete.
 
 La ricompensa dipende solo dal mese in cui cade l’altezza. Il mese è l’altezza divisa per 8.640, arrotondata per difetto: le altezze da 0 a 8.639 sono il mese 0, da 8.640 a 17.279 il mese 1, e così via.
+
+## Come diventa utilizzabile una ricompensa in BNT?
+
+Un blocco minato crea la ricompensa prevista in un’uscita coinbase. L’uscita appartiene alla destinazione scelta per il blocco e attraversa prima la maturazione coinbase. Quando diventa spendibile, il proprietario può usarla nelle transazioni ordinarie. Se il blocco è stato minato da un pool, la sua contabilità divide le ricompense ammissibili tra i partecipanti e i pagamenti successivi inviano BNT esistenti ai loro wallet.
+
+Un pagamento del pool non crea quindi una seconda ricompensa. Nemmeno ricevere un trasferimento richiede di minare nuove monete. L’emissione descrive l’origine dei BNT; i trasferimenti descrivono i successivi cambi di proprietario. La [guida alle conferme](/blog/it/block-confirmations-mining-rewards/) segue le fasi del pool e la [guida all’offerta di Blocknet](https://seineminer.com/it/blog/blocknet-supply/) spiega il programma monetario generale.
 
 ## Come si calcola la ricompensa?
 
@@ -110,6 +116,8 @@ Il mese 48 inizia dopo 1.440 giorni di blocchi da cinque minuti dal lancio, circ
 ## Quanti BNT vengono minati prima della coda?
 
 Sommando tutti i blocchi dall’altezza 1 alla 414.719 si ottengono 98.561.905,08 BNT, circa 98,6 milioni. Il codice e il sito ufficiale descrivono circa 100 milioni di monete in quattro anni più la coda; la somma esatta è poco sotto quella cifra tonda.
+
+I totali cumulativi seguenti misurano l’emissione prevista dai blocchi accettati. Non rappresentano la somma dei saldi attualmente spendibili nei wallet né una misura dell’attività di scambio. Spostare BNT esistenti tra titolari non aumenta questi totali.
 
 La maggior parte viene minata all’inizio. Raggruppando per anno del calendario:
 

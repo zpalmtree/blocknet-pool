@@ -1,15 +1,15 @@
 ---
 title: 'Blocknetの公平な開始：プレマインなし、全コインを採掘'
 seoTitle: 'Blocknetの公平な開始とプレマインなしの仕組み'
-description: 'Blocknetにはプレマイン、開発基金、運営準備金がありません。空のジェネシスブロックと単一出力のcoinbase規則を確認し、自分で検証してBNTを採掘する方法を紹介します。'
+description: "Blocknetの空のジェネシスブロック、最初の採掘報酬、発行ルールを確認。BNTがどのように流通し始め、採掘されたコインが他の保有者へ渡るのかを解説します。"
 tags: ['Blocknet', '公平な開始', 'ジェネシスブロック', 'マイニング', 'bntpool']
-sourceHash: 814839500c3d
+sourceHash: a283d654ab64
 translation: draft
 faq:
   - q: 'Blocknetにはプレマインがありましたか？'
     a: 'ありません。2026年2月15日に作成されたジェネシスブロックには取引が一件もなく、採掘開始前のコインは存在しません。最初のコインはブロック1の報酬で、それ以降のすべてのBNTも、それを生んだブロックの採掘者へ支払われています。'
   - q: 'Blocknetに開発基金や運営準備金はありますか？'
-    a: 'ありません。合意規則は各ブロックにcoinbase取引を一件だけ認め、その出力もブロック報酬と同額の一つだけに限定します。開発者、創設者、準備金向けの二つ目の出力はなく、追加しようとするブロックはネットワークの全ノードに拒否されます。'
+    a: "公開済みのルールには、プロトコルが義務付ける開発基金やトレジャリーへの割り当てはありません。ジェネシス後の各ブロックには、予定報酬と等しいcoinbase出力が1つあります。これは新規発行の説明であり、その後の保有者の身元を示すものではありません。BNTの保有者は、開発者への任意の支払いを含む通常の送金を行えます。"
   - q: 'Blocknetのジェネシスブロックはいつ作られましたか？'
     a: 'タイムスタンプは2026年2月15日20:58:38 EST、UTCでは2月16日01:58:38です。「Wired 2026/02/15 - The Nothing That Has the Potential to Be Anything」というメッセージを持ち、前ブロックのハッシュにはこのメッセージのSHA3-256が使われています。'
   - q: 'Blocknetの公平な開始を自分で確認するには？'
@@ -18,7 +18,7 @@ faq:
     a: 'Windows、macOS、Linux用のseineをダウンロードして起動し、質問にBlocknetアドレスかBlocknet ID短縮名を入力します。Enterで標準プールbntpool.comを選ぶとすぐ採掘が始まります。その後、bntpool.comの統計ページで自分のアドレスを検索できます。'
 ---
 
-Blocknetは誰にも事前配分せずに始まりました。このページではジェネシスの内容、プレマインや開発基金、準備金を排除する合意規則、エクスプローラーとコードでの確認方法、bntpool.comで自分のBNTを採掘する方法を説明します。
+BNTが流通し始めた経緯を、空のジェネシスブロック、最初の採掘報酬、その後の保有者間の送金から確認します。このガイドでは開始時の記録と発行ルールを検証し、そこから何が分かるかを説明するとともに、bntpool.comでの採掘を通じて新規発行BNTを受け取る方法を紹介します。
 
 ## Blocknetにはプレマインがありましたか？
 
@@ -26,7 +26,7 @@ Blocknetは誰にも事前配分せずに始まりました。このページで
 ありません。2026年2月15日のジェネシスブロックは取引を含まないため、採掘前のコインは存在しません。ブロック1から各ブロックは決められた額と等しい一つのcoinbase出力で報酬を払い、流通するすべてのBNTはproof of workを実行した誰かが採掘したものです。
 </Answer>
 
-ジェネシスにも後続ブロックにも、創設者、開発者、投資家、財団への配分はありません。供給源はブロック報酬だけです。これを守る規則は合意規則に含まれ、全ノードが各ブロックを検証します。
+ジェネシスブロックは、創設者、開発者、投資家、財団に準備金を割り当てていません。以後のブロックは予定された採掘報酬を作成し、プロトコルが義務付ける追加のトレジャリー出力はありません。これは発行のルールであり、誰が報酬を採掘したか、誰が既存のコインを後から送金で受け取ったかを示すものではありません。
 
 ## ジェネシスブロックには何が入っていますか？
 
@@ -50,7 +50,7 @@ daemonのジェネシス関数のコメントには、ジェネシスに取引�
 ## 合意規則は開発基金や準備金をどう排除しますか？
 
 <Answer>
-各Blocknetブロックの先頭にはcoinbase取引が一つ必要です。入力なし、手数料0、出力はその高さのブロック報酬と同額の一つだけでなければなりません。二つ目の支払いを入れる場所がないため、開発基金、創設者報酬、準備金向けの出力はチェーン上に作れません。
+ジェネシス以降、各ブロックは入力なし、手数料ゼロ、予定報酬と等しい出力がちょうど1つのcoinbaseトランザクションで始まります。公開済みのルールでは、そのトランザクションに創設者やトレジャリー向けの別出力を設けていません。保有者は、すでに持っているBNTを通常の送金で移転できます。
 </Answer>
 
 daemonの複数の検証が組み合わさっています。
@@ -76,7 +76,7 @@ printf '%s' 'Wired 2026/02/15 - The Nothing That Has the Potential to Be Anythin
 
 結果の末尾は`a94a7f2b8685ff3c7dc76de5ad0f13568629b1f0e0495440c58a3ed3d0d909df`で、ブロック0の表示と一致します。
 
-**コードで。** daemonのソースは[github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core)で公開されています。[`block.go`](https://github.com/blocknetprivacy/core/blob/master/block.go)で次の関数を探します。
+**コードで。** daemonのソースは[github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core)で公開されています。[`block.go`](https://github.com/blocknetprivacy/core/blob/5a0a5b510c1dce46f4eeb12c33a291052e44e7b3/block.go)で次の関数を探します。
 
 ```sh
 git clone https://github.com/blocknetprivacy/core.git
@@ -85,6 +85,12 @@ grep -n "func GetGenesisBlock\|func validateGenesisBlock\|func validateCoinbaseC
 ```
 
 `GetGenesisBlock`は空の取引リストでブロック0を作り、`validateGenesisBlock`は取引入りのブロック0を拒否します。`validateCoinbaseConsensus`は報酬額の単一出力を強制します。`transaction.go`の`validateCoinbase`と`verifyCommitmentBalance`はcoinbaseの形と通常取引の収支を検証します。
+
+## 新しく採掘されたBNTはどのように他の保有者へ渡ったのですか？
+
+エクスプローラーに記録されたジェネシスの時刻は2026年2月15日20:58:38 ESTです。ブロック1の時刻は2026年2月20日14:29:20 ESTで、最初のcoinbaseトランザクションを含みます。この2つは別の記録です。ジェネシスは共通の開始ブロックを定め、ブロック1が報酬を伴う発行を開始します。空のジェネシスに表示される報酬はスケジュール上の額であり、それを受け取る出力はありません。
+
+採掘報酬が使用可能になると、所有者はBNTを他の人へ送れます。プールも、受け取った報酬から後日支払いを行います。これらは既存のコインの再分配であり、再発行ではありません。したがって、元のブロックを自分で採掘しなくてもBNTを保有・使用できます。[送受信ガイド](https://seineminer.com/ja/blog/send-receive-blocknet/)は通常の支払いを、[供給量ガイド](https://seineminer.com/ja/blog/blocknet-supply/)は通貨全体の発行スケジュールを説明します。
 
 ## 公平な開始はマイナーにとってなぜ重要ですか？
 
@@ -99,7 +105,7 @@ grep -n "func GetGenesisBlock\|func validateGenesisBlock\|func validateCoinbaseC
 
 ## 自分でBlocknetを採掘するには？
 
-公平な開始への参加とは採掘することです。手早い方法はbntpool.comでseineを使うことです。
+採掘で新規発行BNTを受け取るには、seineマイナーをbntpool.comで使用します。
 
 1. **アドレスを取得。** 公式の[コマンドラインウォレット](https://github.com/blocknetprivacy/blocknet/releases/latest)か[デスクトップウォレット](https://github.com/blocknetprivacy/blocknet-gui/releases/latest)を導入し、アドレスをコピーします。`@name`のようなBlocknet IDも使えます。
 2. **seineを入手。** [seineminer.com](https://seineminer.com/ja/#download)からOS用アーカイブをダウンロードして展開します。インストール操作は不要です。

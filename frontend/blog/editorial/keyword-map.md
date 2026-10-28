@@ -31,8 +31,8 @@ blog pages retain their existing path URLs and hreflang clusters.
 | mining pool luck, pool effort explained | `/blog/mining-pool-luck-explained/` | Interpret difficulty-weighted effort, expected block time, long rounds and bntpool luck history | 100% effort, pool block overdue, Average Luck, pool luck vs payouts, 矿池幸运值 / 礦池幸運值 |
 | bntpool PPLNS, Blocknet pool payouts | `/blog/how-pplns-payouts-work/` | How bntpool.com splits block rewards and when it pays | PPLNS 6-hour window, 60 confirmations, 0.1 BNT minimum payout, estimated vs confirmed rewards, pool effort and luck, 矿池 PPLNS 收益支付 |
 | bntpool stats, Blocknet miner stats, bntpool API | `/blog/track-your-miner-on-bntpool/` | Read your miner's stats and the pool's public pages, and query the public API | check Blocknet hashrate on pool, bntpool.com API miner endpoint, pool hashrate differs from miner, Blocknet pool luck/effort page, bntpool status page, Home Assistant mining sensor, 矿池统计 / 礦池統計, 查看矿机算力 |
-| blocknet block reward, blocknet emission schedule | `/blog/blocknet-block-reward-schedule/` | Look up the reward per block by month, the tail, supply before the tail | blocknet supply, blocknet tail emission, BNT per block, blocks per day, 区块奖励时间表 / 區塊獎勵時程表 |
-| blocknet fair launch | `/blog/blocknet-fair-launch/` | Show that Blocknet had no premine, dev fund or treasury, how to verify it, and how to mine it | Blocknet premine, Blocknet genesis block, Blocknet dev fund, Blocknet no premine, Blocknet 公平启动, Blocknet 有预挖吗 |
+| blocknet block reward, blocknet emission schedule | `/blog/blocknet-block-reward-schedule/` | Follow issuance into spendable BNT; look up monthly block rewards, tail emission and pre-tail totals | blocknet supply, blocknet tail emission, BNT per block, blocks per day, 区块奖励时间表 / 區塊獎勵時程表 |
+| blocknet fair launch | `/blog/blocknet-fair-launch/` | Verify the empty genesis and scheduled coinbase issuance; distinguish launch allocations from later transfers and explain how to mine BNT | Blocknet premine, Blocknet genesis block, Blocknet dev fund, Blocknet no premine, Blocknet 公平启动, Blocknet 有预挖吗 |
 | blocknet checkpoints, blocknet fast sync, checkpoints.dat | `/blog/blocknet-checkpoints-fast-sync/` | Understand bntpool.com's checkpoints and use them to sync a Blocknet node fast | sync Blocknet node, Blocknet full sync, bntpool checkpoints API, verify checkpoints.dat SHA-256, load-checkpoints, Blocknet 检查点快速同步 / Blocknet 檢查點快速同步 |
 | Blocknet solo mining, pool vs solo mining Blocknet | `/blog/pool-vs-solo-mining-blocknet/` | Decide between bntpool.com and solo mining: expected solo blocks per day, why a pool pays steadily, solo setup with seine `--mode daemon` | how often find a block solo, seine daemon mode, mine against your own node, Blocknet solo vs pool, 矿池挖矿还是单独挖矿 / 礦池挖礦還是單獨挖礦 |
 | blocknet mining calculator, blocknet mining rewards estimate | `/blog/estimate-blocknet-mining-rewards/` | Estimate BNT per day from your hashrate, the network hashrate and the block reward, with inputs read from the pool dashboard | how much BNT per day, Blocknet network hashrate, BNT per day per H/s, expected block time, 挖矿收益计算 / 挖礦收益計算 |
@@ -136,3 +136,14 @@ Hashrate owns rate estimation, Stratum owns the protocol, tracking owns account 
 | mine Blocknet part-time; intermittent pool mining | `/blog/mine-blocknet-part-time/` | Plan a stop-and-return routine and follow one share across an offline interval |
 
 PPLNS owns allocation mechanics and thresholds; confirmations owns maturity; tracking owns account fields. This article owns a short-session timeline and restart procedure. The six-hour window is not a waiting period or a payout promise. No existing URL is retargeted.
+
+## Currency issuance and payment security (October 28, 2026)
+
+| Primary keyword cluster | URL | Search job |
+|---|---|---|
+| how mining secures Blocknet payments; Blocknet accumulated work; BNT double spending | `/blog/how-mining-secures-blocknet-payments/` | Follow a payment through competing valid histories, linked headers, accumulated work and confirmation depth |
+
+Seine retains wallet procedures, privacy mechanisms and rule-enforcement roles. Pool confirmations
+retains coinbase maturity and accounting. The new guide owns payment-history selection; its released
+code evidence and overlap assessment are in `currency-and-security-2026-10-28/research.md`.
+Fair launch and the reward schedule were expanded at their existing URLs; no duplicate owners.

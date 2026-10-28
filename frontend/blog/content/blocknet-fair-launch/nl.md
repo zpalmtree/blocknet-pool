@@ -1,14 +1,14 @@
 ---
 title: 'Blocknets eerlijke start: geen premine, elke munt gemined'
-description: 'Blocknet startte zonder premine, ontwikkelfonds of treasury. Bekijk het lege genesisblok en de coinbase met één output, controleer de code en mine BNT.'
+description: "Controleer Blocknets lege genesisblok, eerste beloning en uitgifteregels. Lees hoe BNT in omloop kwam en hoe gemijnde munten andere houders bereiken."
 tags: ['Blocknet', 'Eerlijke start', 'Genesisblok', 'Mining', 'bntpool']
-sourceHash: 814839500c3d
+sourceHash: a283d654ab64
 translation: draft
 faq:
   - q: 'Had Blocknet een premine?'
     a: 'Nee. Het genesisblok van Blocknet, gemaakt op 15 februari 2026, bevat helemaal geen transacties. Er bestonden dus geen munten voordat het minen begon. De eerste munten kwamen uit de beloning van blok 1. Elke BNT sindsdien is betaald aan degene die het bijbehorende blok mined heeft.'
   - q: 'Heeft Blocknet een ontwikkelfonds of treasury?'
-    a: 'Nee. Consensus staat precies één coinbasetransactie per blok toe, met precies één output ter waarde van de blokbeloning. Er is geen tweede output voor een ontwikkelaar, oprichter of treasury. Elk blok dat zoiets probeert toe te voegen, wordt door alle nodes in het netwerk afgewezen.'
+    a: "De gepubliceerde regels kennen geen door het protocol verplichte toewijzing aan een ontwikkelfonds of treasury. Elk blok na genesis heeft één coinbase-output gelijk aan de geplande beloning. Dit beschrijft nieuwe uitgifte, niet de identiteit van latere houders. Iedereen met BNT kan gewone overdrachten uitvoeren, waaronder vrijwillige betalingen aan een ontwikkelaar."
   - q: 'Wanneer is het genesisblok van Blocknet gemaakt?'
     a: 'De tijdstempel is 15 februari 2026 om 20:58:38 EST, oftewel 16 februari om 01:58:38 UTC. Het bevat de boodschap «Wired 2026/02/15 - The Nothing That Has the Potential to Be Anything». De hash van het vorige blok is de SHA3-256-hash van die boodschap.'
   - q: 'Hoe controleer ik zelf de eerlijke start van Blocknet?'
@@ -17,7 +17,7 @@ faq:
     a: 'Download seine voor Windows, macOS of Linux, start het en plak je Blocknet-adres of korte Blocknet ID-naam wanneer daarom wordt gevraagd. Druk op Enter voor de standaardpool bntpool.com en seine begint direct. Daarna kun je je adres opzoeken op de statistiekenpagina van bntpool.com.'
 ---
 
-Blocknet begon zonder iets aan iemand toe te wijzen. Deze pagina toont wat het genesisblok bevat, welke consensusregels een premine, ontwikkelfonds of treasury onmogelijk maken, hoe je dit in de explorer en broncode controleert en hoe je zelf BNT mint op bntpool.com.
+Zo kwam BNT in omloop: een leeg genesisblok, de eerste gemijnde beloning en latere overdrachten tussen houders. Deze gids controleert de startgegevens en uitgifteregels, legt uit wat ze aantonen en laat zien hoe je nieuw uitgegeven BNT ontvangt door op bntpool.com te minen.
 
 ## Had Blocknet een premine?
 
@@ -25,7 +25,7 @@ Blocknet begon zonder iets aan iemand toe te wijzen. Deze pagina toont wat het g
 Nee. Het genesisblok van Blocknet, gemaakt op 15 februari 2026, bevat geen transacties. Er bestonden geen munten voordat mining begon. Sinds blok 1 betaalt elk blok zijn beloning in één coinbase-output, precies ter waarde van het vastgelegde bedrag. Elke BNT in omloop is dus gemined door iemand die de proof of work uitvoerde.
 </Answer>
 
-Er is geen toewijzing aan oprichters, ontwikkelaars, investeerders of een stichting, niet in genesis en niet in latere blokken. De muntvoorraad komt uitsluitend uit blokbeloningen. De regels hiervoor zijn onderdeel van consensus, dus iedere node controleert ze voor elk blok.
+Het genesisblok wijst geen reserve toe aan oprichters, ontwikkelaars, investeerders of een stichting. Latere blokken creëren de geplande miningbeloning, zonder extra treasury-output die het protocol voorschrijft. Dit zijn uitgifteregels: ze identificeren niet wie een beloning heeft gemijnd of wie bestaande munten later via een overdracht heeft ontvangen.
 
 ## Wat bevat het genesisblok van Blocknet?
 
@@ -49,7 +49,7 @@ Het commentaar boven de genesisfunctie in de daemon zegt het duidelijk: genesis 
 ## Hoe sluit consensus een ontwikkelfonds of treasury uit?
 
 <Answer>
-Elk Blocknet-blok moet beginnen met precies één coinbasetransactie, zonder inputs, met nul transactiekosten en precies één output gelijk aan de beloning voor die hoogte. Er is geen plaats voor een tweede betaling. Een output voor een ontwikkelfonds, oprichtersbeloning of treasury kan daardoor niet op de keten bestaan.
+Na genesis begint elk blok met een coinbase-transactie zonder inputs, met nul kosten en precies één output gelijk aan de geplande beloning. De gepubliceerde regels voorzien in die transactie niet in een aparte output voor oprichters of een treasury. Houders kunnen bestaande BNT gewoon blijven overdragen.
 </Answer>
 
 Verschillende controles in de daemon werken hierbij samen:
@@ -75,7 +75,7 @@ printf '%s' 'Wired 2026/02/15 - The Nothing That Has the Potential to Be Anythin
 
 De uitvoer eindigt op `a94a7f2b8685ff3c7dc76de5ad0f13568629b1f0e0495440c58a3ed3d0d909df`, dezelfde waarde als voor blok 0 in de explorer.
 
-**In de code.** De daemon is opensource op [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core). Zoek in [`block.go`](https://github.com/blocknetprivacy/core/blob/master/block.go) deze functies:
+**In de code.** De daemon is opensource op [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core). Zoek in [`block.go`](https://github.com/blocknetprivacy/core/blob/5a0a5b510c1dce46f4eeb12c33a291052e44e7b3/block.go) deze functies:
 
 ```sh
 git clone https://github.com/blocknetprivacy/core.git
@@ -84,6 +84,12 @@ grep -n "func GetGenesisBlock\|func validateGenesisBlock\|func validateCoinbaseC
 ```
 
 `GetGenesisBlock` maakt blok 0 met een lege transactielijst. `validateGenesisBlock` wijst elk blok 0 met transacties af. `validateCoinbaseConsensus` dwingt één output ter waarde van de blokbeloning af. In `transaction.go` controleren `validateCoinbase` en `verifyCommitmentBalance` de coinbasevorm en de balans van gewone transacties.
+
+## Hoe kwam nieuw gemijnde BNT bij andere houders terecht?
+
+De explorer vermeldt voor genesis 15 februari 2026 om 20:58:38 EST. Blok 1 draagt 20 februari 2026 om 14:29:20 EST en bevat de eerste coinbase-transactie. Dit zijn aparte records: genesis definieert het gezamenlijke beginblok, terwijl blok 1 de betaalde uitgifte begint. De beloning die de explorer bij het lege genesisblok toont, is het geplande bedrag; geen output ontvangt het.
+
+Zodra een miningbeloning besteedbaar is, kan de eigenaar BNT aan iemand anders overdragen. Een pool verstuurt op dezelfde manier latere betalingen uit ontvangen beloningen. Die overdrachten herverdelen bestaande munten; ze herhalen de uitgifte niet. Je kunt dus BNT bezitten en gebruiken zonder zelf het oorspronkelijke blok te hebben gemijnd. De [gids voor verzenden en ontvangen](https://seineminer.com/nl/blog/send-receive-blocknet/) behandelt gewone betalingen; de [aanbodgids](https://seineminer.com/nl/blog/blocknet-supply/) legt het algemene monetaire schema uit.
 
 ## Waarom is een eerlijke start belangrijk voor miners?
 
@@ -98,7 +104,7 @@ Nieuw met de munt? [Wat is Blocknet?](https://seineminer.com/nl/blog/what-is-blo
 
 ## Hoe mine je zelf Blocknet?
 
-Deelnemen aan een eerlijke start betekent minen. De snelste weg is seine op bntpool.com:
+Gebruik de seine-miner met bntpool.com om via mining nieuw uitgegeven BNT te ontvangen:
 
 1. **Haal een adres op.** Installeer de officiële Blocknet-[opdrachtregelwallet](https://github.com/blocknetprivacy/blocknet/releases/latest) of [desktopwallet](https://github.com/blocknetprivacy/blocknet-gui/releases/latest) en kopieer je adres, of gebruik een Blocknet ID-naam zoals `@name`.
 2. **Download seine.** Download het archief voor Windows, macOS of Linux van [seineminer.com](https://seineminer.com/nl/#download) en pak het uit. Installeren is niet nodig.

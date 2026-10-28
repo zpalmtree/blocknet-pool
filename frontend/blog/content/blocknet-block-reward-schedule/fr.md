@@ -13,11 +13,11 @@ faq:
     a: 'Elle commence au mois 48, à la hauteur 414 720. Cela représente 48 mois de 30 jours, soit 1 440 jours de blocs de cinq minutes après le lancement, environ quatre ans. La date exacte dépend des temps de bloc réels. À partir de cette hauteur, chaque bloc verse 2,0 BNT.'
   - q: 'Quand peut-on dépenser les BNT minés ?'
     a: 'Une récompense de bloc devient dépensable après 60 blocs, soit environ cinq heures avec les blocs de cinq minutes de Blocknet. C’est la maturité coinbase. Le pool bntpool.com attend aussi 60 blocs avant de distribuer la récompense, et ne paie donc que les récompenses de blocs arrivés à maturité.'
-sourceHash: abea18c2c21b
+sourceHash: 6c38930dfa09
 translation: draft
 ---
 
-Cette page présente la récompense de bloc Blocknet pour chaque mois du calendrier d’émission, explique son calcul et ce que ce calendrier signifie pour vous en tant que mineur.
+Suivez les BNT nouvellement émis depuis la récompense de bloc jusqu’aux coins dépensables et aux paiements ultérieurs. Cette page explique ce parcours monétaire, présente ensuite chaque mois du calendrier des récompenses et montre comment lire les chiffres en tant que mineur ou détenteur.
 
 ## Quelle est la récompense de bloc Blocknet ?
 
@@ -28,6 +28,12 @@ La récompense de bloc Blocknet a commencé à 723,25 BNT par bloc et diminue un
 Blocknet vise un bloc toutes les cinq minutes (300 secondes). Cela donne 288 blocs par jour et 8 640 par mois de 30 jours. La difficulté s’ajuste après chaque bloc selon une moyenne pondérée des 60 derniers temps de bloc, pour maintenir un rythme proche de cinq minutes quand le hashrate du réseau change.
 
 La récompense d’un bloc dépend uniquement du mois correspondant à sa hauteur. Le mois est la hauteur divisée par 8 640, arrondie à l’entier inférieur : les hauteurs 0 à 8 639 appartiennent au mois 0, les hauteurs 8 640 à 17 279 au mois 1, et ainsi de suite.
+
+## Comment une récompense de bloc devient-elle du BNT utilisable ?
+
+Un bloc miné crée sa récompense prévue dans une sortie coinbase. Cette sortie appartient au destinataire choisi pour le bloc et passe d’abord par la maturité coinbase. Une fois dépensable, son propriétaire peut l’utiliser dans des transactions ordinaires. Si un pool a miné le bloc, sa comptabilité répartit les récompenses admissibles entre participants et ses paiements ultérieurs envoient des BNT existants à leurs portefeuilles.
+
+Un paiement du pool ne crée donc pas une seconde récompense. Recevoir un transfert n’exige pas non plus de miner de nouveaux coins. L’émission décrit l’origine des BNT ; les transferts décrivent leurs changements de propriétaire. Le [guide des confirmations](/blog/fr/block-confirmations-mining-rewards/) suit les étapes du pool, et le [guide de l’offre Blocknet](https://seineminer.com/fr/blog/blocknet-supply/) explique le calendrier monétaire général.
 
 ## Comment la récompense est-elle calculée ?
 
@@ -110,6 +116,8 @@ Le mois 48 commence après 1 440 jours de blocs de cinq minutes depuis le lance
 ## Combien de BNT sont minés avant la traîne ?
 
 La somme de tous les blocs de la hauteur 1 à 414 719 donne 98 561 905,08 BNT, environ 98,6 millions. Le code et le site officiel décrivent une émission d’environ 100 millions de coins sur quatre ans, suivie de la traîne ; la somme exacte est légèrement inférieure à ce chiffre rond.
+
+Les totaux cumulés ci-dessous mesurent l’émission prévue des blocs acceptés. Ils ne représentent ni les soldes actuellement dépensables des portefeuilles ni l’activité de négociation. Transférer des BNT existants entre détenteurs n’augmente pas ces totaux d’émission.
 
 La majeure partie est minée tôt. Voici le regroupement par année du calendrier :
 

@@ -2,7 +2,7 @@
 title: 'Het blokbeloningsschema van Blocknet'
 description: 'De Blocknet-beloning per maand: van 723,25 BNT bij de start naar permanent 2,0 BNT vanaf maand 48, met 288 blokken per dag en 98,6 miljoen BNT vóór de staart.'
 tags: ['Blocknet', 'Blokbeloning', 'Uitgifte', 'Mining']
-sourceHash: abea18c2c21b
+sourceHash: 6c38930dfa09
 translation: draft
 faq:
   - q: 'Wat is de huidige blokbeloning van Blocknet?'
@@ -17,7 +17,7 @@ faq:
     a: 'Een blokbeloning is na 60 blokken besteedbaar, ongeveer vijf uur bij de bloktijd van vijf minuten. Dit heet coinbase maturity. Ook bntpool.com wacht 60 blokken voordat een beloning wordt uitbetaald, zodat alleen beloningen van gerijpte blokken worden verstuurd.'
 ---
 
-Deze pagina vermeldt de Blocknet-blokbeloning voor elke maand van het uitgifteschema, legt de berekening uit en laat zien wat het schema voor jou als miner betekent.
+Volg nieuw uitgegeven BNT van blokbeloning naar besteedbare munten en latere betalingen. Deze pagina legt die geldstroom uit, vermeldt vervolgens elke maand van het beloningsschema en laat zien hoe miners en munthouders de cijfers kunnen lezen.
 
 ## Wat is de blokbeloning van Blocknet?
 
@@ -28,6 +28,12 @@ De blokbeloning begon op 723,25 BNT en daalt eenmaal per maand van 30 dagen, oft
 Blocknet mikt op één blok per vijf minuten, 300 seconden. Dat geeft 288 blokken per dag en 8.640 per maand van 30 dagen. De moeilijkheid wordt na ieder blok aangepast op basis van een gewogen gemiddelde van de laatste 60 bloktijden, zodat het tempo bij veranderende netwerkhashrate rond vijf minuten blijft.
 
 De beloning hangt alleen af van de maand waarin de blokhoogte valt. Deel de hoogte door 8.640 en rond naar beneden af: hoogtes 0 tot 8.639 zijn maand 0, 8.640 tot 17.279 zijn maand 1, enzovoort.
+
+## Hoe wordt een blokbeloning bruikbare BNT?
+
+Een gemijnd blok creëert de geplande beloning in een coinbase-output. Die output behoort aan de gekozen bestemming voor het blok en doorloopt eerst de coinbase-rijping. Zodra hij besteedbaar is, kan de eigenaar hem in gewone transacties gebruiken. Als een pool het blok heeft gemijnd, verdeelt zijn administratie de in aanmerking komende beloningen over deelnemers. Latere uitbetalingstransacties sturen bestaande BNT naar hun wallets.
+
+Een uitbetaling creëert dus geen tweede beloning. Ook voor het ontvangen van een overdracht hoef je geen nieuwe munten te minen. Uitgifte beschrijft de oorsprong van BNT; overdrachten beschrijven latere eigendomsoverdracht. De [bevestigingsgids](/blog/nl/block-confirmations-mining-rewards/) volgt de poolfasen, en de [Blocknet-aanbodgids](https://seineminer.com/nl/blog/blocknet-supply/) verklaart het algemene monetaire schema.
 
 ## Hoe wordt de beloning berekend?
 
@@ -110,6 +116,8 @@ Maand 48 begint na 1.440 dagen met blokken van vijf minuten, ongeveer vier jaar 
 ## Hoeveel BNT wordt vóór de staart gemined?
 
 Alle blokken van hoogte 1 tot 414.719 bij elkaar leveren 98.561.905,08 BNT op, ongeveer 98,6 miljoen. De code en officiële site omschrijven het schema als circa 100 miljoen munten in vier jaar plus de staart. De exacte som ligt net onder dat ronde getal.
+
+De cumulatieve totalen hieronder meten de geplande uitgifte door geaccepteerde blokken. Ze zijn geen optelsom van momenteel besteedbare walletsaldi en meten geen handelsactiviteit. Bestaande BNT tussen houders verplaatsen verhoogt deze uitgiftetotalen niet.
 
 Het grootste deel wordt vroeg gemined. Per jaar van het schema:
 

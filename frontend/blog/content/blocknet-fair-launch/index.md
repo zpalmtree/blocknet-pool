@@ -1,23 +1,24 @@
 ---
 title: "Blocknet's fair launch: no premine, every coin mined"
-description: Blocknet launched with no premine, dev fund or treasury. See the empty genesis block and the one-output coinbase rule, check them yourself, and mine BNT.
+description: Check Blocknet’s empty genesis block, first mined reward and issuance rules. Learn how BNT entered circulation and how mined coins reach other holders.
 date: 2026-10-25
+updated: 2026-10-28
 tags: [Blocknet, Fair launch, Genesis block, Mining, bntpool]
 faq:
   - q: Did Blocknet have a premine?
     a: No. Blocknet's genesis block, created on February 15, 2026, contains no transactions at all, so no coins existed before mining began. The first coins came from the block reward of block 1, and every BNT since then has been paid to whoever mined the block it came from.
   - q: Does Blocknet have a dev fund or treasury?
-    a: No. Consensus allows exactly one coinbase transaction per block, and that transaction must have exactly one output worth exactly the block reward. There is no second output for a developer, founder or treasury, and a block that tries to add one is rejected by every node on the network.
+    a: The released rules have no protocol-mandated dev fund or treasury allocation. Each post-genesis block has one coinbase output equal to the scheduled reward. This describes new issuance, rather than the identity of later holders. Anyone who owns BNT can make ordinary transfers, including voluntary payments to a developer.
   - q: When was Blocknet's genesis block created?
     a: The genesis block's timestamp is February 15, 2026 at 20:58:38 EST, which is 01:58:38 UTC on February 16. It carries the message "Wired 2026/02/15 - The Nothing That Has the Potential to Be Anything", and its previous-block hash is the SHA3-256 hash of that message.
   - q: How can I verify Blocknet's fair launch myself?
     a: Open block 0 on the Blocknet explorer and you will see zero transactions and an all-zero merkle root. Then read the open-source daemon code, where the genesis block is hard-coded with an empty transaction list and the coinbase check accepts one output equal to the block reward.
   - q: How do I start mining Blocknet?
     a: Download the seine miner for Windows, macOS or Linux, run it, and paste your Blocknet address or Blocknet ID shortname when it asks. Press Enter to accept the default pool, bntpool.com, and seine starts mining right away. You can then look up your address on the bntpool.com stats page.
-related: [blocknet-block-reward-schedule, mine-blocknet-on-bntpool, how-pplns-payouts-work]
+related: [blocknet-block-reward-schedule, how-mining-secures-blocknet-payments, mine-blocknet-on-bntpool]
 ---
 
-Blocknet started with nothing allocated to anyone. This page shows you what the genesis block contains, which consensus rules make a premine, dev fund or treasury impossible, how to check both on the explorer and in the source code, and how to start mining BNT yourself on bntpool.com.
+See how BNT entered circulation: an empty genesis block, the first mined reward, and later transfers between holders. This guide checks the launch records and issuance rules, explains what they establish, and shows how to receive newly issued BNT through mining on bntpool.com.
 
 ## Did Blocknet have a premine?
 
@@ -25,7 +26,7 @@ Blocknet started with nothing allocated to anyone. This page shows you what the 
 No. Blocknet's genesis block, created on February 15, 2026, holds no transactions, so no coins existed before mining began. Since block 1, every block has paid its reward in a single coinbase output worth exactly the scheduled amount, so every BNT in circulation was mined by someone running the proof of work.
 </Answer>
 
-There is no allocation to founders, developers, investors or a foundation, either in the genesis block or in any block after it. The coin supply comes from block rewards and nothing else, and the rules that enforce this are part of consensus, so every node on the network checks them on every block.
+The genesis block assigns no reserve to founders, developers, investors or a foundation. Later blocks create the scheduled mining reward, with no additional protocol-mandated treasury output. These are issuance rules: they do not identify who mined a reward or who later received existing coins through a transfer.
 
 ## What is in Blocknet's genesis block?
 
@@ -49,7 +50,7 @@ The comment above the genesis function in the daemon says it plainly: "Genesis h
 ## How does consensus rule out a dev fund or treasury?
 
 <Answer>
-Every Blocknet block must start with exactly one coinbase transaction, and that coinbase must have no inputs, a zero fee and exactly one output whose amount equals the block reward for that height. There is nowhere to put a second payment, so a dev fund, founder reward or treasury output cannot exist on-chain.
+After genesis, each block starts with one coinbase transaction with no inputs, a zero fee and exactly one output equal to the scheduled reward. The released rules provide no separate founder or treasury output in that transaction. Holders can still make ordinary transfers from BNT they already own.
 </Answer>
 
 Several checks in the daemon work together here:
@@ -75,7 +76,7 @@ printf '%s' 'Wired 2026/02/15 - The Nothing That Has the Potential to Be Anythin
 
 The output ends in `a94a7f2b8685ff3c7dc76de5ad0f13568629b1f0e0495440c58a3ed3d0d909df`, the same value the explorer shows for block 0.
 
-**In the code.** The daemon is open source at [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core). In [`block.go`](https://github.com/blocknetprivacy/core/blob/master/block.go), look for these functions:
+**In the code.** The daemon is open source at [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core). In [`block.go`](https://github.com/blocknetprivacy/core/blob/5a0a5b510c1dce46f4eeb12c33a291052e44e7b3/block.go), look for these functions:
 
 ```sh
 git clone https://github.com/blocknetprivacy/core.git
@@ -84,6 +85,12 @@ grep -n "func GetGenesisBlock\|func validateGenesisBlock\|func validateCoinbaseC
 ```
 
 `GetGenesisBlock` builds block 0 with an empty transaction list, `validateGenesisBlock` rejects any block 0 that has transactions, and `validateCoinbaseConsensus` enforces the single output worth the block reward. In `transaction.go`, `validateCoinbase` and `verifyCommitmentBalance` cover the coinbase shape and the balance check for ordinary transactions.
+
+## How did newly mined BNT reach other holders?
+
+The explorer records the genesis timestamp as February 15, 2026 at 20:58:38 EST. Block 1 carries February 20, 2026 at 14:29:20 EST and contains the first coinbase transaction. These are separate records: genesis defines the common starting block, while block 1 begins paid issuance. The reward shown for the empty genesis block on an explorer displays the schedule amount; no output receives it.
+
+After a mining reward becomes spendable, its owner can transfer BNT to someone else. A pool similarly sends later payments from rewards it has received. Those transfers redistribute existing coins; they do not repeat issuance. You can therefore hold and use BNT without personally mining the block that originally created it. The [send-and-receive guide](https://seineminer.com/blog/send-receive-blocknet/) covers ordinary payments, while the [supply guide](https://seineminer.com/blog/blocknet-supply/) explains the currency-wide schedule.
 
 ## Why does a fair launch matter to miners?
 
@@ -98,7 +105,7 @@ If you are new to the coin as a whole, [What is Blocknet?](https://seineminer.co
 
 ## How do you mine Blocknet yourself?
 
-Taking part in a fair launch means mining. The quickest way is the seine miner on bntpool.com:
+To receive newly issued BNT through mining, use the seine miner with bntpool.com:
 
 1. **Get an address.** Install the official Blocknet [command-line wallet](https://github.com/blocknetprivacy/blocknet/releases/latest) or [desktop wallet](https://github.com/blocknetprivacy/blocknet-gui/releases/latest) and copy your address, or use a Blocknet ID shortname such as `@name`.
 2. **Download seine.** Get the archive for Windows, macOS or Linux from [seineminer.com](https://seineminer.com/#download) and unzip it. There is nothing to install.

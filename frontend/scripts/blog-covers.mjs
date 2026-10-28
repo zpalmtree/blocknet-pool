@@ -2,7 +2,7 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { fileURLToPath } from 'node:url';
-import { renderCover, writeCover } from './editorial-cover.mjs';
+import { renderCover, writeCover, scene } from './editorial-cover.mjs';
 
 const imageDir = new URL('../blog/images/', import.meta.url);
 const line = (d, color = '#70c793', width = 3, extra = '') => `<path d="${d}" fill="none" stroke="${color}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round" ${extra}/>`;
@@ -93,6 +93,7 @@ function partTimeMining() {
 }
 
 const illustrations = {
+  'how-mining-secures-blocknet-payments': () => scene({ main: 'shield', left: 'block', right: 'wallet' }),
   'mine-blocknet-part-time': partTimeMining,
   'internet-speed-mining': miningNetwork,
   'pool-payout-missing-from-wallet': payoutWalletTrace,

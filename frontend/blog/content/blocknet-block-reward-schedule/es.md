@@ -13,11 +13,11 @@ faq:
     a: 'En el mes 48, a la altura 414.720. Son 48 meses de 30 días, o 1440 días de bloques de cinco minutos desde el lanzamiento: aproximadamente cuatro años. La fecha exacta depende de los tiempos reales. Desde esa altura, cada bloque paga 2,0 BNT.'
   - q: '¿Cuándo se pueden gastar las monedas minadas?'
     a: 'La recompensa se puede gastar tras 60 bloques, unas cinco horas con bloques de cinco minutos. Se llama madurez de coinbase. bntpool.com también espera 60 bloques antes de pagar la recompensa, de modo que solo paga recompensas maduras.'
-sourceHash: abea18c2c21b
+sourceHash: 6c38930dfa09
 translation: draft
 ---
 
-Esta página enumera la recompensa Blocknet de cada mes de emisión, explica cómo se calcula y muestra lo que implica el calendario para los mineros.
+Sigue los BNT recién emitidos desde la recompensa de un bloque hasta las monedas gastables y los pagos posteriores. Esta página explica ese recorrido monetario, enumera después cada mes del calendario de recompensas y muestra cómo interpretar sus cifras como minero o titular.
 
 ## ¿Cuál es la recompensa de bloque de Blocknet?
 
@@ -28,6 +28,12 @@ La recompensa empezó en 723,25 BNT por bloque y baja una vez por mes de 30 día
 Blocknet busca un bloque cada cinco minutos (300 segundos): 288 diarios y 8640 por mes de 30 días. La dificultad se ajusta cada bloque con una media ponderada de los últimos 60 tiempos para mantener el ritmo cerca de cinco minutos cuando cambia la tasa de hash.
 
 La recompensa depende solo del mes al que pertenece la altura. El mes es la altura dividida por 8640, redondeada hacia abajo: de 0 a 8639 es el mes 0, de 8640 a 17.279 es el mes 1, y así sucesivamente.
+
+## ¿Cómo se convierte una recompensa de bloque en BNT utilizable?
+
+Un bloque minado crea la recompensa prevista en una salida coinbase. Esa salida pertenece al destino elegido para el bloque y primero pasa por la maduración de coinbase. Cuando es gastable, su propietario puede usarla en transacciones normales. Si el bloque lo minó un pool, su contabilidad reparte las recompensas admisibles entre los participantes y las transacciones de pago posteriores envían BNT existentes a sus monederos.
+
+Por tanto, un pago del pool no crea una segunda recompensa. Tampoco necesitas minar monedas nuevas para recibir una transferencia. La emisión describe el origen de BNT; las transferencias describen los cambios posteriores de propietario. La [guía de confirmaciones](/blog/es/block-confirmations-mining-rewards/) sigue las etapas del pool y la [guía de oferta de Blocknet](https://seineminer.com/es/blog/blocknet-supply/) explica el calendario monetario general.
 
 ## ¿Cómo se calcula la recompensa?
 
@@ -110,6 +116,8 @@ El mes 48 empieza tras 1440 días de bloques de cinco minutos desde el lanzamien
 ## ¿Cuánto BNT se mina antes de la cola?
 
 Sumar todos los bloques desde la altura 1 hasta la 414.719 da 98.561.905,08 BNT, unos 98,6 millones. El código y la web oficial describen unos 100 millones de monedas en cuatro años más la cola; la suma exacta queda un poco por debajo de esa cifra redonda.
+
+Los totales acumulados de abajo miden la emisión prevista de los bloques aceptados. No suman los saldos actualmente gastables de los monederos ni miden la actividad comercial. Mover BNT existentes entre titulares no incrementa estos totales de emisión.
 
 La mayor parte se mina al principio. Agrupada por año del calendario:
 

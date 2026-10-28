@@ -2,7 +2,7 @@
 title: Harmonogram nagród za bloki Blocknetu
 description: Nagroda Blocknetu miesiąc po miesiącu, od 723,25 BNT do stałej emisji 2,0 BNT od miesiąca 48, z 288 blokami dziennie i 98,6 mln BNT przed tym progiem.
 tags: [Blocknet, Nagroda za blok, Emisja, Kopanie]
-sourceHash: abea18c2c21b
+sourceHash: 6c38930dfa09
 translation: draft
 faq:
   - q: 'Jaka jest aktualna nagroda za blok Blocknetu?'
@@ -17,7 +17,7 @@ faq:
     a: 'Nagrodę za blok można wydać po 60 blokach, czyli około pięciu godzinach przy pięciominutowym czasie bloku Blocknetu. Nazywa się to dojrzewaniem coinbase. Pula bntpool.com także czeka 60 bloków przed wypłatą nagrody, więc wypłaca tylko nagrody z dojrzałych bloków.'
 ---
 
-Ta strona wymienia nagrodę za blok Blocknetu dla każdego miesiąca harmonogramu emisji, wyjaśnia jej obliczanie i pokazuje, co harmonogram oznacza dla Ciebie jako górnika.
+Prześledź drogę nowo emitowanych BNT od nagrody za blok do monet możliwych do wydania i późniejszych płatności. Ta strona wyjaśnia przepływ waluty, następnie wymienia każdy miesiąc harmonogramu nagród i pokazuje, jak czytać liczby jako górnik lub posiadacz monet.
 
 ## Jaka jest nagroda za blok Blocknetu?
 
@@ -28,6 +28,12 @@ Nagroda za blok Blocknetu zaczęła się od 723,25 BNT i maleje raz na każdy 30
 Docelowo Blocknet tworzy blok co pięć minut (300 sekund). Daje to 288 bloków dziennie i 8640 bloków w każdym 30-dniowym miesiącu. Trudność dostosowuje się po każdym bloku na podstawie średniej ważonej czasów ostatnich 60 bloków, więc tempo pozostaje bliskie pięciu minutom mimo zmian hashrate sieci.
 
 Nagroda za dowolny blok zależy wyłącznie od miesiąca, do którego należy jego wysokość. Miesiąc to wysokość bloku podzielona przez 8640, zaokrąglona w dół, więc wysokości od 0 do 8639 należą do miesiąca 0, od 8640 do 17 279 do miesiąca 1 i tak dalej.
+
+## Jak nagroda za blok staje się użytecznym BNT?
+
+Wykopany blok tworzy zaplanowaną nagrodę w wyjściu coinbase. Wyjście należy do odbiorcy wybranego dla bloku i najpierw przechodzi okres dojrzewania coinbase. Gdy można je wydać, właściciel może używać go w zwykłych transakcjach. Jeśli blok wykopała pula, jej księgowość dzieli kwalifikujące się nagrody między uczestników, a późniejsze transakcje wypłaty przesyłają istniejące BNT do ich portfeli.
+
+Wypłata nie tworzy zatem drugiej nagrody. Otrzymanie transferu również nie wymaga kopania nowych monet. Emisja opisuje pochodzenie BNT; transfery opisują późniejsze zmiany właściciela. [Poradnik potwierdzeń](/blog/pl/block-confirmations-mining-rewards/) śledzi etapy w puli, a [poradnik podaży Blocknet](https://seineminer.com/pl/blog/blocknet-supply/) wyjaśnia szerszy harmonogram monetarny.
 
 ## Jak oblicza się nagrodę?
 
@@ -110,6 +116,8 @@ Miesiąc 48 zaczyna się po 1440 dniach pięciominutowych bloków od startu, czy
 ## Ile BNT zostaje wykopane przed emisją ogonową?
 
 Suma wszystkich bloków od wysokości 1 do 414 719 wynosi 98 561 905,08 BNT, około 98,6 miliona. Kod i oficjalna strona opisują harmonogram jako około 100 milionów monet przez cztery lata plus emisja ogonowa, a dokładna suma jest nieco niższa od tej okrągłej liczby.
+
+Poniższe sumy narastające mierzą zaplanowaną emisję z zaakceptowanych bloków. Nie są sumą sald portfeli obecnie dostępnych do wydania ani miarą aktywności handlowej. Przenoszenie istniejących BNT między właścicielami nie zwiększa tych sum emisji.
 
 Większość monet zostaje wykopana wcześnie. W podziale na lata harmonogramu:
 

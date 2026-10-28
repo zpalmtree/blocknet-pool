@@ -1,23 +1,23 @@
 ---
 title: 'Fair launch Blocknet: tanpa premine, setiap koin ditambang'
-description: Blocknet diluncurkan tanpa premine, dana pengembang atau kas. Lihat genesis kosong dan aturan coinbase satu output, periksa sendiri, lalu tambang BNT.
+description: "Periksa genesis kosong Blocknet, imbalan pertama dan aturan penerbitannya. Pahami bagaimana BNT mulai beredar dan koin hasil tambang sampai ke pemilik lain."
 tags: [Blocknet, Fair launch, Blok genesis, Penambangan, bntpool]
 faq:
   - q: 'Apakah Blocknet memiliki premine?'
     a: 'Tidak. Blok genesis Blocknet, dibuat pada 15 Februari 2026, sama sekali tidak memiliki transaksi, sehingga tidak ada koin sebelum penambangan dimulai. Koin pertama berasal dari imbalan blok 1, dan setiap BNT sejak itu dibayar kepada penambang blok asalnya.'
   - q: 'Apakah Blocknet memiliki dana pengembang atau kas?'
-    a: 'Tidak. Konsensus mengizinkan tepat satu transaksi coinbase per blok, dan transaksi itu harus memiliki tepat satu output dengan nilai persis imbalan blok. Tidak ada output kedua untuk pengembang, pendiri atau kas, dan blok yang mencoba menambahkannya ditolak setiap node jaringan.'
+    a: "Aturan yang dirilis tidak mewajibkan alokasi protokol untuk dana pengembang atau kas. Setiap blok setelah genesis memiliki satu output coinbase sebesar imbalan terjadwal. Ini menjelaskan penerbitan baru, bukan identitas pemilik berikutnya. Siapa pun yang memiliki BNT dapat melakukan transfer biasa, termasuk pembayaran sukarela kepada pengembang."
   - q: 'Kapan blok genesis Blocknet dibuat?'
     a: 'Timestamp blok genesis adalah 15 Februari 2026 pukul 20:58:38 EST, yaitu 01:58:38 UTC pada 16 Februari. Blok membawa pesan "Wired 2026/02/15 - The Nothing That Has the Potential to Be Anything", dan hash blok sebelumnya adalah hash SHA3-256 pesan tersebut.'
   - q: 'Bagaimana memverifikasi fair launch Blocknet sendiri?'
     a: 'Buka blok 0 pada Blocknet explorer untuk melihat nol transaksi dan merkle root seluruhnya nol. Lalu baca kode daemon open source, tempat blok genesis ditetapkan dengan daftar transaksi kosong dan pemeriksaan coinbase menerima satu output senilai imbalan blok.'
   - q: 'Bagaimana mulai menambang Blocknet?'
     a: 'Unduh penambang seine untuk Windows, macOS atau Linux, jalankan, lalu tempel alamat Blocknet atau nama pendek Blocknet ID saat diminta. Tekan Enter untuk menerima pool default bntpool.com, dan seine langsung menambang. Kemudian cari alamat Anda di halaman statistik bntpool.com.'
-sourceHash: 814839500c3d
+sourceHash: a283d654ab64
 translation: draft
 ---
 
-Blocknet dimulai tanpa alokasi kepada siapa pun. Halaman ini menunjukkan isi blok genesis, aturan konsensus yang meniadakan premine, dana pengembang atau kas, cara memeriksa keduanya pada explorer dan kode sumber, serta cara mulai menambang BNT sendiri di bntpool.com.
+Lihat bagaimana BNT mulai beredar: blok genesis kosong, imbalan pertama yang ditambang, lalu transfer antar pemilik. Panduan ini memeriksa catatan peluncuran dan aturan penerbitan, menjelaskan apa yang dibuktikannya, serta menunjukkan cara menerima BNT baru melalui penambangan di bntpool.com.
 
 ## Apakah Blocknet memiliki premine?
 
@@ -25,7 +25,7 @@ Blocknet dimulai tanpa alokasi kepada siapa pun. Halaman ini menunjukkan isi blo
 Tidak. Blok genesis Blocknet, dibuat pada 15 Februari 2026, tidak memiliki transaksi, jadi tidak ada koin sebelum penambangan dimulai. Sejak blok 1, setiap blok membayar imbalannya dalam satu output coinbase dengan nilai tepat sesuai jadwal, sehingga setiap BNT beredar ditambang oleh seseorang yang menjalankan proof of work.
 </Answer>
 
-Tidak ada alokasi untuk pendiri, pengembang, investor atau yayasan, baik dalam genesis maupun blok sesudahnya. Pasokan koin hanya berasal dari imbalan blok, dan aturan penegaknya bagian dari konsensus, sehingga semua node memeriksanya pada setiap blok.
+Blok genesis tidak memberikan cadangan kepada pendiri, pengembang, investor, atau yayasan. Blok berikutnya menciptakan imbalan penambangan terjadwal tanpa output kas tambahan yang diwajibkan protokol. Ini adalah aturan penerbitan: aturan tersebut tidak mengidentifikasi siapa yang menambang imbalan atau siapa yang kemudian menerima koin yang sudah ada melalui transfer.
 
 ## Apa isi blok genesis Blocknet?
 
@@ -49,7 +49,7 @@ Komentar di atas fungsi genesis menjelaskannya: "Genesis tidak memiliki transaks
 ## Bagaimana konsensus meniadakan dana pengembang atau kas?
 
 <Answer>
-Setiap blok Blocknet harus dimulai dengan tepat satu transaksi coinbase, dan coinbase itu harus tanpa input, berbiaya nol, serta memiliki tepat satu output senilai imbalan blok pada ketinggiannya. Tidak ada tempat untuk pembayaran kedua, sehingga output dana pengembang, imbalan pendiri atau kas tidak dapat ada di blockchain.
+Setelah genesis, setiap blok diawali satu transaksi coinbase tanpa input, dengan biaya nol dan tepat satu output sebesar imbalan terjadwal. Aturan yang dirilis tidak menyediakan output terpisah untuk pendiri atau kas dalam transaksi itu. Pemilik tetap dapat melakukan transfer biasa dari BNT yang sudah dimilikinya.
 </Answer>
 
 Beberapa pemeriksaan daemon bekerja bersama:
@@ -75,7 +75,7 @@ printf '%s' 'Wired 2026/02/15 - The Nothing That Has the Potential to Be Anythin
 
 Output berakhir dengan `a94a7f2b8685ff3c7dc76de5ad0f13568629b1f0e0495440c58a3ed3d0d909df`, sama dengan nilai blok 0 pada explorer.
 
-**Dalam kode.** Daemon tersedia open source di [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core). Dalam [`block.go`](https://github.com/blocknetprivacy/core/blob/master/block.go), cari fungsi berikut:
+**Dalam kode.** Daemon tersedia open source di [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core). Dalam [`block.go`](https://github.com/blocknetprivacy/core/blob/5a0a5b510c1dce46f4eeb12c33a291052e44e7b3/block.go), cari fungsi berikut:
 
 ```sh
 git clone https://github.com/blocknetprivacy/core.git
@@ -84,6 +84,12 @@ grep -n "func GetGenesisBlock\|func validateGenesisBlock\|func validateCoinbaseC
 ```
 
 `GetGenesisBlock` membangun blok 0 dengan daftar transaksi kosong, `validateGenesisBlock` menolak blok 0 yang memiliki transaksi, dan `validateCoinbaseConsensus` menegakkan satu output senilai imbalan blok. Dalam `transaction.go`, `validateCoinbase` dan `verifyCommitmentBalance` memeriksa bentuk coinbase serta keseimbangan transaksi biasa.
+
+## Bagaimana BNT yang baru ditambang sampai ke pemilik lain?
+
+Explorer mencatat waktu genesis pada 15 Februari 2026 pukul 20:58:38 EST. Blok 1 bertanggal 20 Februari 2026 pukul 14:29:20 EST dan memuat transaksi coinbase pertama. Keduanya merupakan catatan berbeda: genesis menentukan blok awal bersama, sedangkan blok 1 memulai penerbitan berimbalan. Imbalan yang ditampilkan explorer untuk genesis kosong adalah jumlah menurut jadwal; tidak ada output yang menerimanya.
+
+Setelah imbalan penambangan dapat dibelanjakan, pemiliknya dapat mentransfer BNT kepada orang lain. Pool juga mengirim pembayaran berikutnya dari imbalan yang diterimanya. Transfer ini mendistribusikan ulang koin yang sudah ada; tidak menerbitkannya lagi. Jadi, Anda dapat memiliki dan menggunakan BNT tanpa menambang sendiri blok yang menciptakannya. [Panduan kirim dan terima](https://seineminer.com/id/blog/send-receive-blocknet/) membahas pembayaran biasa, sedangkan [panduan pasokan](https://seineminer.com/id/blog/blocknet-supply/) menjelaskan jadwal moneter secara keseluruhan.
 
 ## Mengapa fair launch penting bagi penambang?
 
@@ -98,7 +104,7 @@ Jika baru mengenal koin ini, [Apa itu Blocknet?](https://seineminer.com/id/blog/
 
 ## Bagaimana menambang Blocknet sendiri?
 
-Berpartisipasi dalam fair launch berarti menambang. Cara tercepat adalah penambang seine pada bntpool.com:
+Untuk menerima BNT baru melalui penambangan, gunakan miner seine dengan bntpool.com:
 
 1. **Dapatkan alamat.** Pasang [wallet baris perintah](https://github.com/blocknetprivacy/blocknet/releases/latest) atau [wallet desktop](https://github.com/blocknetprivacy/blocknet-gui/releases/latest) resmi Blocknet lalu salin alamat, atau gunakan nama pendek Blocknet ID seperti `@name`.
 2. **Unduh seine.** Ambil arsip Windows, macOS atau Linux dari [seineminer.com](https://seineminer.com/id/#download) lalu ekstrak. Tidak perlu instalasi.

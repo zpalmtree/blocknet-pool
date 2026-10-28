@@ -2,7 +2,7 @@
 title: Lịch phần thưởng khối Blocknet
 description: Phần thưởng Blocknet theo tháng, từ 723,25 BNT lúc ra mắt đến mức đuôi vĩnh viễn 2,0 BNT ở tháng 48, với 288 khối/ngày và 98,6 triệu BNT trước đuôi.
 tags: [Blocknet, Phần thưởng khối, Phát hành, Đào coin]
-sourceHash: abea18c2c21b
+sourceHash: 6c38930dfa09
 translation: draft
 faq:
   - q: 'Phần thưởng khối Blocknet hiện tại là bao nhiêu?'
@@ -17,7 +17,7 @@ faq:
     a: 'Phần thưởng khối có thể chi tiêu sau 60 khối, khoảng năm giờ với thời gian khối năm phút của Blocknet. Đây gọi là độ trưởng thành coinbase. Pool bntpool.com cũng chờ 60 khối trước khi thanh toán phần thưởng, nên chỉ trả thưởng từ các khối đã trưởng thành.'
 ---
 
-Trang này liệt kê phần thưởng khối Blocknet cho từng tháng trong lịch phát hành, giải thích cách tính phần thưởng và cho thấy lịch này có ý nghĩa gì với bạn khi đào coin.
+Theo dõi BNT mới phát hành từ phần thưởng khối đến coin có thể chi tiêu và các khoản thanh toán sau đó. Trang này giải thích dòng tiền ấy, rồi liệt kê từng tháng trong lịch phần thưởng và cách đọc số liệu dành cho thợ đào hoặc người nắm giữ.
 
 ## Phần thưởng khối Blocknet là gì?
 
@@ -28,6 +28,12 @@ Phần thưởng khối Blocknet bắt đầu ở 723,25 BNT mỗi khối và gi
 Blocknet đặt mục tiêu một khối mỗi năm phút (300 giây). Như vậy có 288 khối mỗi ngày và 8.640 khối trong mỗi tháng 30 ngày. Độ khó điều chỉnh sau mỗi khối dựa trên trung bình có trọng số của thời gian 60 khối gần nhất, nên nhịp độ vẫn gần năm phút khi hashrate mạng thay đổi.
 
 Phần thưởng của một khối chỉ phụ thuộc tháng mà độ cao của nó thuộc về. Tháng bằng độ cao khối chia cho 8.640 rồi làm tròn xuống: độ cao 0 đến 8.639 là tháng 0, độ cao 8.640 đến 17.279 là tháng 1, và cứ thế tiếp tục.
+
+## Phần thưởng khối trở thành BNT sử dụng được như thế nào?
+
+Khối được đào tạo phần thưởng theo lịch trong một đầu ra coinbase. Đầu ra thuộc về đích được chọn cho khối và trước tiên phải trải qua thời gian trưởng thành coinbase. Khi có thể chi tiêu, chủ sở hữu dùng nó trong giao dịch thông thường. Nếu pool đào khối, hệ thống kế toán chia phần thưởng đủ điều kiện cho người tham gia và các giao dịch thanh toán sau đó gửi BNT hiện có tới ví của họ.
+
+Do đó, khoản chi trả của pool không tạo phần thưởng thứ hai. Nhận chuyển khoản cũng không đòi hỏi bạn phải đào coin mới. Phát hành mô tả nguồn gốc BNT; chuyển khoản mô tả việc đổi chủ sau đó. [Hướng dẫn xác nhận](/blog/vi/block-confirmations-mining-rewards/) theo dõi các giai đoạn của pool, còn [hướng dẫn nguồn cung Blocknet](https://seineminer.com/vi/blog/blocknet-supply/) giải thích lịch tiền tệ tổng thể.
 
 ## Phần thưởng được tính thế nào?
 
@@ -110,6 +116,8 @@ Tháng 48 bắt đầu sau 1.440 ngày với khối năm phút kể từ khi ra 
 ## Có bao nhiêu BNT được đào trước đuôi?
 
 Cộng tất cả các khối từ độ cao 1 đến 414.719 cho kết quả 98.561.905,08 BNT, khoảng 98,6 triệu. Mã nguồn và trang chính thức mô tả lịch là khoảng 100 triệu coin trong bốn năm cộng thêm đuôi; tổng chính xác thấp hơn một chút so với con số tròn đó.
+
+Các tổng tích lũy dưới đây đo lượng phát hành theo lịch từ những khối được chấp nhận. Chúng không phải tổng số dư ví hiện có thể chi tiêu, cũng không đo hoạt động giao dịch mua bán. Chuyển BNT hiện có giữa các chủ sở hữu không làm tăng các tổng phát hành này.
 
 Phần lớn được đào sớm. Nhóm theo năm của lịch:
 

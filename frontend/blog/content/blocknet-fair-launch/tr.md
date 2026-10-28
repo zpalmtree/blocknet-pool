@@ -1,14 +1,14 @@
 ---
 title: 'Blocknet’in adil başlangıcı: premine yok, her coin madencilikle üretilir'
-description: Blocknet premine, geliştirici fonu veya hazine olmadan başladı. Boş genesis bloğunu ve tek çıktılı coinbase kuralını kendiniz doğrulayın, BNT üretin.
+description: "Blocknet'in boş genesis bloğunu, ilk ödülünü ve ihraç kurallarını doğrulayın. BNT'nin dolaşıma nasıl girdiğini ve diğer sahiplerine nasıl ulaştığını öğrenin."
 tags: [Blocknet, Adil başlangıç, Genesis bloğu, Madencilik, bntpool]
-sourceHash: 814839500c3d
+sourceHash: a283d654ab64
 translation: draft
 faq:
   - q: 'Blocknet''te premine var mıydı?'
     a: 'Hayır. 15 Şubat 2026 tarihinde oluşturulan Blocknet genesis bloğu hiçbir işlem içermez; dolayısıyla madencilik başlamadan önce coin yoktu. İlk coin''ler 1. bloğun ödülünden geldi ve o zamandan beri her BNT, kaynaklandığı bloğu üreten madenciye ödendi.'
   - q: 'Blocknet''in geliştirici fonu veya hazinesi var mı?'
-    a: 'Hayır. Konsensüs her blokta tam bir coinbase işlemine izin verir ve bu işlemde tam olarak blok ödülü değerinde tek çıktı bulunmalıdır. Geliştirici, kurucu veya hazine için ikinci çıktı yoktur; eklemeye çalışan bir blok ağdaki her düğüm tarafından reddedilir.'
+    a: "Yayımlanan kurallar, protokolün zorunlu kıldığı bir geliştirici fonu veya hazine tahsisi içermez. Genesis sonrası her blokta planlanan ödüle eşit tek coinbase çıktısı vardır. Bu, yeni ihracı açıklar; sonraki sahiplerin kimliğini değil. BNT sahibi herkes, geliştiriciye gönüllü ödemeler dahil normal transferler yapabilir."
   - q: 'Blocknet''in genesis bloğu ne zaman oluşturuldu?'
     a: 'Genesis bloğunun zaman damgası 15 Şubat 2026, 20:58:38 EST, yani 16 Şubat 01:58:38 UTC''dir. "Wired 2026/02/15 - The Nothing That Has the Potential to Be Anything" mesajını taşır; önceki blok hash''i bu mesajın SHA3-256 hash''idir.'
   - q: 'Blocknet''in adil başlangıcını kendim nasıl doğrulayabilirim?'
@@ -17,7 +17,7 @@ faq:
     a: 'Windows, macOS veya Linux için seine madencisini indirin, çalıştırın ve sorulduğunda Blocknet adresinizi veya Blocknet ID kısa adınızı yapıştırın. Varsayılan havuz bntpool.com''u kabul etmek için Enter''a basın; seine hemen madenciliğe başlar. Ardından bntpool.com istatistikler sayfasında adresinizi aratabilirsiniz.'
 ---
 
-Blocknet kimseye tahsis yapılmadan başladı. Bu sayfa genesis bloğunun içeriğini, premine, geliştirici fonu veya hazineyi imkânsız kılan konsensüs kurallarını, bunları gezginde ve kaynak kodunda nasıl kontrol edeceğinizi ve bntpool.com'da kendiniz BNT üretmeye nasıl başlayacağınızı gösterir.
+BNT'nin dolaşıma nasıl girdiğini izleyin: boş bir genesis bloğu, ilk kazılan ödül ve sahipler arasındaki sonraki transferler. Bu rehber başlangıç kayıtlarını ve ihraç kurallarını doğrular, neyi kanıtladıklarını açıklar ve bntpool.com'da madencilik yaparak yeni BNT almayı gösterir.
 
 ## Blocknet'te premine var mıydı?
 
@@ -25,7 +25,7 @@ Blocknet kimseye tahsis yapılmadan başladı. Bu sayfa genesis bloğunun içeri
 Hayır. 15 Şubat 2026 tarihinde oluşturulan Blocknet genesis bloğu hiçbir işlem içermez; bu nedenle madencilik başlamadan önce coin yoktu. 1. bloktan bu yana her blok, ödülünü takvimdeki tutara tam olarak eşit tek bir coinbase çıktısında ödedi. Dolayısıyla dolaşımdaki her BNT, iş kanıtını çalıştıran biri tarafından üretildi.
 </Answer>
 
-Ne genesis bloğunda ne de sonraki herhangi bir blokta kuruculara, geliştiricilere, yatırımcılara veya bir vakfa tahsis vardır. Coin arzı yalnızca blok ödüllerinden gelir. Bunu uygulayan kurallar konsensüsün parçasıdır; ağdaki her düğüm her blokta bunları denetler.
+Genesis bloğu kuruculara, geliştiricilere, yatırımcılara veya bir vakfa rezerv ayırmaz. Sonraki bloklar, protokolün zorunlu kıldığı ek bir hazine çıktısı olmadan planlanan madencilik ödülünü oluşturur. Bunlar ihraç kurallarıdır: ödülü kimin kazdığını veya mevcut coinleri sonradan transferle kimin aldığını belirlemezler.
 
 ## Blocknet'in genesis bloğunda ne var?
 
@@ -49,7 +49,7 @@ Daemon'daki genesis fonksiyonunun üzerindeki yorum açıkça şöyle der: “Ge
 ## Konsensüs geliştirici fonunu veya hazineyi nasıl dışlar?
 
 <Answer>
-Her Blocknet bloğu tam bir coinbase işlemiyle başlamalıdır. Bu coinbase'in girdisi olmamalı, ücreti sıfır olmalı ve tutarı o yükseklikteki blok ödülüne eşit tek çıktısı bulunmalıdır. İkinci bir ödeme için yer yoktur; bu yüzden zincir üzerinde geliştirici fonu, kurucu ödülü veya hazine çıktısı bulunamaz.
+Genesis'ten sonra her blok girdisiz, sıfır ücretli ve planlanan ödüle eşit tek çıktılı bir coinbase işlemiyle başlar. Yayımlanan kurallar bu işlemde ayrı bir kurucu veya hazine çıktısı öngörmez. Sahipler, ellerindeki BNT ile normal transferler yapmaya devam edebilir.
 </Answer>
 
 Daemon'daki birkaç kontrol burada birlikte çalışır:
@@ -75,7 +75,7 @@ printf '%s' 'Wired 2026/02/15 - The Nothing That Has the Potential to Be Anythin
 
 Çıktı `a94a7f2b8685ff3c7dc76de5ad0f13568629b1f0e0495440c58a3ed3d0d909df` ile biter; gezginin 0. blok için gösterdiği değerle aynıdır.
 
-**Kodda.** Daemon'ın açık kaynak kodu [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core) adresindedir. [`block.go`](https://github.com/blocknetprivacy/core/blob/master/block.go) içinde şu fonksiyonları arayın:
+**Kodda.** Daemon'ın açık kaynak kodu [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core) adresindedir. [`block.go`](https://github.com/blocknetprivacy/core/blob/5a0a5b510c1dce46f4eeb12c33a291052e44e7b3/block.go) içinde şu fonksiyonları arayın:
 
 ```sh
 git clone https://github.com/blocknetprivacy/core.git
@@ -84,6 +84,12 @@ grep -n "func GetGenesisBlock\|func validateGenesisBlock\|func validateCoinbaseC
 ```
 
 `GetGenesisBlock`, 0. bloğu boş işlem listesiyle oluşturur; `validateGenesisBlock`, işlem içeren her 0. bloğu reddeder; `validateCoinbaseConsensus` ise blok ödülü değerinde tek çıktı şartını uygular. `transaction.go` içindeki `validateCoinbase` ve `verifyCommitmentBalance`, coinbase yapısını ve normal işlemlerin bakiye kontrolünü kapsar.
+
+## Yeni kazılan BNT diğer sahiplerine nasıl ulaştı?
+
+Gezgin, genesis zamanını 15 Şubat 2026 saat 20:58:38 EST olarak kaydeder. Blok 1, 20 Şubat 2026 saat 14:29:20 EST tarihini taşır ve ilk coinbase işlemini içerir. Bunlar ayrı kayıtlardır: genesis ortak başlangıç bloğunu tanımlar; blok 1 ödüllü ihracı başlatır. Gezginin boş genesis için gösterdiği ödül, takvimdeki tutardır; bunu alan bir çıktı yoktur.
+
+Madencilik ödülü harcanabilir olduğunda sahibi BNT'yi başkasına aktarabilir. Havuz da aldığı ödüllerden sonraki ödemelerini gönderir. Bu transferler mevcut coinleri yeniden dağıtır; ihracı tekrarlamaz. Dolayısıyla BNT'yi oluşturan bloğu kendiniz kazmadan da BNT sahibi olabilir ve kullanabilirsiniz. [Gönderme ve alma rehberi](https://seineminer.com/tr/blog/send-receive-blocknet/) normal ödemeleri, [arz rehberi](https://seineminer.com/tr/blog/blocknet-supply/) ise genel para arzı takvimini açıklar.
 
 ## Adil başlangıç madenciler için neden önemlidir?
 
@@ -98,7 +104,7 @@ Coin'i yeni tanıyorsanız [Blocknet nedir?](https://seineminer.com/tr/blog/what
 
 ## Kendiniz nasıl Blocknet madenciliği yaparsınız?
 
-Adil başlangıca katılmak madencilik yapmak demektir. En hızlı yol bntpool.com'da seine madencisidir:
+Madencilik yoluyla yeni çıkarılan BNT almak için seine madencisini bntpool.com ile kullanın:
 
 1. **Bir adres edinin.** Resmî Blocknet [komut satırı cüzdanını](https://github.com/blocknetprivacy/blocknet/releases/latest) veya [masaüstü cüzdanını](https://github.com/blocknetprivacy/blocknet-gui/releases/latest) kurup adresinizi kopyalayın ya da `@name` gibi bir Blocknet ID kısa adı kullanın.
 2. **seine'i indirin.** [seineminer.com](https://seineminer.com/tr/#download) üzerinden Windows, macOS veya Linux arşivini alıp açın. Kurulacak bir şey yoktur.

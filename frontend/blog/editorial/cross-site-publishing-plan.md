@@ -11,7 +11,7 @@ choose, download and run the miner; bntpool should help them earn BNT, understan
 mining economics, join the pool and follow their rewards. Both can publish substantial general
 Blocknet education. Bntpool is not restricted to operational support articles.
 
-At this audit: Seine has 61 English source articles and bntpool has 21, each published in 20
+After the currency cycle: Seine has 61 English source articles and bntpool has 22, each published in 20
 languages. Those counts measure the catalog, not rankings, demand or quality. Recent currency,
 wallet and privacy publishing favored Seine. No Search Console performance export was collected
 for this pass; proposed search phrases below are intent hypotheses, not measured query volumes.
@@ -35,22 +35,33 @@ reader's language. Do not copy articles between domains, add reciprocal links me
 link counts, or point unique articles' canonicals at the other site. Preserve existing URLs and
 self-canonicals; relocation requires a separate, evidence-backed migration decision.
 
-## Next publishing cycle, in order
+## Completed currency cycle — October 28, 2026
+
+- Expanded bntpool `/blog/blocknet-fair-launch/` with the distinct genesis and block-1 records,
+  issuance-to-transfer explanation, and precise limits on what allocation rules establish.
+- Expanded `/blog/blocknet-block-reward-schedule/` with issuance, maturity and later transfers;
+  retained every table/code block and independently verified the pre-tail total.
+- Added `/blog/how-mining-secures-blocknet-payments/` after comparing the existing owners on both
+  sites. It owns competing payment histories, cumulative work, confirmation depth and conflicting
+  spends. Linked to the existing wallet, privacy, rules and pool-accounting owners in every locale.
+- All three changes cover 20 languages. The new block/shield/wallet cover uses the shared renderer.
+  Mobile inline hashes now wrap without changing the horizontal scrolling of command examples.
+- Evidence and verification: pool `currency-and-security-2026-10-28/research.md`;
+  stable visual showcase: `http://localhost:8874/currency-and-security/`.
+
+## Remaining publishing queue, in order
 
 Give the next cycle more bntpool editorial effort; do not require a permanent article-count quota.
 
 | Priority | Site / action | Reader question and concrete work | Boundary / evidence required |
 |---|---|---|---|
-| 1 | bntpool: improve `/blog/blocknet-fair-launch/` | How did BNT enter circulation? Strengthen the currency origin/allocation explanation, chronology and links to issuance and earning BNT | Verify public launch records and released chain rules. Keep supply math in the reward schedule; no new fair-launch URL |
-| 2 | bntpool: improve `/blog/blocknet-block-reward-schedule/` | Where do newly issued BNT come from, and what does the reward schedule mean? Add a plain-language path from block reward to circulating currency before the detailed table | Retain exact arithmetic and dates; link to Seine's supply overview and distinguish scheduled issuance from pool payouts |
-| 3 | bntpool: research `how-mining-secures-blocknet-payments` | How does proof of work protect BNT's payment history? Explain competing histories, cumulative work and why deeper payments require more work to replace | Compare Seine's `who-controls-blocknet`, `how-crypto-mining-works`, `proof-of-work-vs-proof-of-stake` and pool confirmation guide first. Publish only if a substantive payment-security explanation is missing. Verify released daemon fork-choice rules; no invented attack-cost numbers |
 | 4 | Seine: improve existing high-intent landing journey | Can a newcomer choose the right archive, verify it, and reach the correct setup guide from `/#download`? Audit the current release and platform links | Measure this flow and fix observed gaps; no extra download/OS keyword landing pages |
 | 5 | bntpool: improve the home → `/start` → `/stats` journey | Can a newcomer understand the pool, connect and identify their worker? Audit search landing copy, current connection instructions and links to the correct guides | Use real public API facts and existing UI. Keep account-specific results out of indexable URLs |
 | 6 | bntpool: research `blocknet-bnt-atomic-units` | How do wallet decimals, atomic units and rounding represent the same BNT amount? | Check whether fees, supply and payout guides already answer this adequately. Verify precision and rounding in released code. If the answer fits a short section, update an existing owner instead of making a thin article |
 | 7 | Both: use actual search results to choose the following cycle | Which useful pages are getting impressions but failing to satisfy the query or attract clicks? | Follow the measurement procedure below; do not infer performance from article count |
 
-This file is a plan, not a claim that the queued articles or landing-page revisions are already
-published. No new article is part of the cover rollout. Before drafting, check BOTH keyword maps
+The remaining queue is not a claim that its articles or landing-page revisions are published.
+The currency cycle above followed the separate cover rollout. Before drafting, check BOTH keyword maps
 and record the distinct reader job, nearest owner, primary sources, evidence added, and next action.
 All article changes ship in all 20 languages; separate reviewer sign-off is not a publishing gate.
 

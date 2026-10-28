@@ -2,6 +2,7 @@
 title: Blocknet block reward schedule
 description: Blocknet's block reward by month, from 723.25 BNT at launch to a permanent 2.0 BNT tail at month 48, with 288 blocks a day and 98.6M BNT before the tail.
 date: 2026-10-25
+updated: 2026-10-28
 tags: [Blocknet, Block reward, Emission, Mining]
 faq:
   - q: What is the current Blocknet block reward?
@@ -14,10 +15,10 @@ faq:
     a: The tail starts at month 48, at block height 414,720. That is 48 months of 30 days, or 1,440 days of five-minute blocks after launch, which is roughly four years. The exact calendar date depends on real block times. From that height, every block pays 2.0 BNT.
   - q: How long before mined Blocknet coins can be spent?
     a: A block reward becomes spendable after 60 blocks, which is about five hours at Blocknet's five-minute block time. This is called coinbase maturity. The bntpool.com pool also waits 60 blocks before it pays out a block's reward, so it only pays out rewards from blocks that have matured.
-related: [blocknet-fair-launch, how-pplns-payouts-work, mine-blocknet-on-bntpool]
+related: [blocknet-fair-launch, how-mining-secures-blocknet-payments, how-pplns-payouts-work]
 ---
 
-This page lists the Blocknet block reward for every month of the emission schedule, explains how the reward is calculated, and shows what the schedule means for you as a miner.
+Follow newly issued BNT from a block reward to spendable coins and later payments. This page explains that currency flow, then lists every month of the reward schedule and shows how to read the figures as a miner or coin holder.
 
 ## What is the Blocknet block reward?
 
@@ -28,6 +29,12 @@ The Blocknet block reward started at 723.25 BNT per block and steps down once ev
 Blocknet targets one block every five minutes (300 seconds). That gives 288 blocks a day and 8,640 blocks in each 30-day month. The difficulty adjusts after every block, based on a weighted average of the last 60 block times, so the pace stays close to five minutes as the network's hashrate changes.
 
 The reward for any block depends only on which month its height falls in. The month is the block height divided by 8,640, rounded down, so heights 0 to 8,639 are month 0, heights 8,640 to 17,279 are month 1, and so on.
+
+## How does a block reward become usable BNT?
+
+A mined block creates its scheduled reward in a coinbase output. That output belongs to the destination chosen for the block and first passes through coinbase maturity. Once spendable, the owner can use it in ordinary transactions. If a pool mined the block, its accounting divides eligible rewards among participants and its later payout transactions send existing BNT to their wallets.
+
+A payout therefore does not create a second reward. Nor does receiving a transfer require you to mine new coins. Issuance describes the origin of BNT; transfers describe how ownership changes afterward. The [confirmation guide](/blog/block-confirmations-mining-rewards/) follows the pool stages, and the [Blocknet supply guide](https://seineminer.com/blog/blocknet-supply/) explains the broader monetary schedule.
 
 ## How is the reward calculated?
 
@@ -110,6 +117,8 @@ Month 48 begins 1,440 days of five-minute blocks after launch, which is roughly 
 ## How much BNT is mined before the tail?
 
 Adding up every block from height 1 to 414,719 gives 98,561,905.08 BNT, about 98.6 million. The code and the official site describe the schedule as about 100 million coins over four years plus the tail, and the exact sum lands just under that round figure.
+
+The cumulative totals below measure scheduled issuance from accepted blocks. They are not a count of currently spendable wallet balances or a measurement of trading activity. Moving existing BNT between holders does not add to these issuance totals.
 
 Most of it is mined early. Grouped by year of the schedule:
 

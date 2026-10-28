@@ -1,14 +1,14 @@
 ---
 title: 'Blocknets Fair Launch: kein Premine, jeder Coin geschürft'
-description: Blocknet startete ohne Premine, Entwicklerfonds oder Treasury. Prüfe den leeren Genesis-Block und die Coinbase-Regel mit genau einer Ausgabe selbst und mine BNT.
+description: "Prüfe Blocknets leeren Genesis-Block, erste Mining-Belohnung und Ausgaberegeln. Erfahre, wie BNT in Umlauf kam und geschürfte Coins andere Besitzer erreichen."
 tags: [Blocknet, Fair Launch, Genesis-Block, Mining, bntpool]
-sourceHash: 814839500c3d
+sourceHash: a283d654ab64
 translation: draft
 faq:
   - q: 'Gab es bei Blocknet einen Premine?'
     a: 'Nein. Blocknets Genesis-Block vom 15. Februar 2026 enthält keinerlei Transaktionen. Vor Beginn des Minings existierten somit keine Coins. Die ersten Coins entstanden mit der Belohnung von Block 1. Jeder BNT seither wurde an den Miner des jeweiligen Blocks ausgezahlt.'
   - q: 'Hat Blocknet einen Entwicklerfonds oder eine Treasury?'
-    a: 'Nein. Der Konsens erlaubt pro Block genau eine Coinbase-Transaktion mit genau einer Ausgabe im Wert der exakten Blockbelohnung. Es gibt keine zweite Ausgabe für Entwickler, Gründer oder eine Treasury. Jeder Netzwerk-Node lehnt einen Block ab, der eine solche hinzufügt.'
+    a: "Die veröffentlichten Regeln enthalten keine protokollseitig vorgeschriebene Zuteilung an Entwicklerfonds oder Treasury. Jeder Block nach Genesis hat eine Coinbase-Ausgabe in Höhe der vorgesehenen Belohnung. Das beschreibt die Neuemission, nicht die Identität späterer Besitzer. Jeder BNT-Besitzer kann normale Übertragungen ausführen, einschließlich freiwilliger Zahlungen an Entwickler."
   - q: 'Wann wurde Blocknets Genesis-Block erstellt?'
     a: 'Sein Zeitstempel ist der 15. Februar 2026 um 20:58:38 Uhr EST, entsprechend dem 16. Februar um 01:58:38 Uhr UTC. Er trägt die Nachricht "Wired 2026/02/15 - The Nothing That Has the Potential to Be Anything". Der Hash des Vorgängerblocks ist der SHA3-256-Hash dieser Nachricht.'
   - q: 'Wie kann ich Blocknets Fair Launch selbst prüfen?'
@@ -17,7 +17,7 @@ faq:
     a: 'Lade den Miner seine für Windows, macOS oder Linux herunter, starte ihn und füge bei der Aufforderung deine Blocknet-Adresse oder deinen Blocknet-ID-Kurznamen ein. Akzeptiere mit Enter den Standardpool bntpool.com. Der Miner beginnt sofort; anschließend findest du deine Adresse auf der Statistikseite von bntpool.com.'
 ---
 
-Blocknet begann ohne Zuteilung an irgendjemanden. Diese Seite zeigt den Inhalt des Genesis-Blocks, die Konsensregeln, die Premine, Entwicklerfonds und Treasury ausschließen, ihre Überprüfung im Explorer und im Quellcode sowie den Einstieg ins eigene BNT-Mining auf bntpool.com.
+So kam BNT in Umlauf: ein leerer Genesis-Block, die erste Mining-Belohnung und spätere Übertragungen zwischen Besitzern. Diese Anleitung prüft die Startdaten und Ausgaberegeln, erläutert ihre Aussagekraft und zeigt, wie du durch Mining auf bntpool.com neu ausgegebene BNT erhalten kannst.
 
 ## Gab es bei Blocknet einen Premine?
 
@@ -25,7 +25,7 @@ Blocknet begann ohne Zuteilung an irgendjemanden. Diese Seite zeigt den Inhalt d
 Nein. Blocknets Genesis-Block vom 15. Februar 2026 enthält keine Transaktionen. Vor Beginn des Minings existierten keine Coins. Seit Block 1 zahlt jeder Block seine Belohnung über eine einzige Coinbase-Ausgabe in exakt der vorgesehenen Höhe. Jeder umlaufende BNT wurde daher von jemandem geschürft, der den Proof of Work ausführte.
 </Answer>
 
-Weder im Genesis-Block noch in späteren Blöcken gibt es Zuteilungen an Gründer, Entwickler, Investoren oder eine Stiftung. Das Coin-Angebot stammt ausschließlich aus Blockbelohnungen. Die dafür zuständigen Regeln gehören zum Konsens und werden von jedem Netzwerk-Node bei jedem Block geprüft.
+Der Genesis-Block weist Gründern, Entwicklern, Investoren oder einer Stiftung keine Reserve zu. Spätere Blöcke erzeugen die vorgesehene Mining-Belohnung ohne zusätzliche, vom Protokoll vorgeschriebene Treasury-Ausgabe. Das sind Ausgaberegeln: Sie sagen nicht, wer eine Belohnung geschürft oder vorhandene Coins später durch eine Übertragung erhalten hat.
 
 ## Was enthält Blocknets Genesis-Block?
 
@@ -49,7 +49,7 @@ Der Kommentar über der Genesis-Funktion im Daemon formuliert es klar: „Genesi
 ## Wie schließt der Konsens Entwicklerfonds und Treasury aus?
 
 <Answer>
-Jeder Blocknet-Block muss mit genau einer Coinbase-Transaktion beginnen. Diese darf keine Eingaben haben, muss eine Gebühr von null und genau eine Ausgabe in Höhe der Blockbelohnung auf dieser Höhe enthalten. Für eine zweite Zahlung gibt es keinen Platz. Eine Ausgabe an Entwicklerfonds, Gründer oder Treasury kann daher auf der Blockchain nicht existieren.
+Nach Genesis beginnt jeder Block mit einer Coinbase-Transaktion ohne Eingaben, mit Gebühr null und genau einer Ausgabe in Höhe der vorgesehenen Belohnung. Die veröffentlichten Regeln sehen darin keine gesonderte Gründer- oder Treasury-Ausgabe vor. Besitzer können vorhandene BNT weiterhin durch normale Transaktionen übertragen.
 </Answer>
 
 Mehrere Daemon-Prüfungen greifen dabei ineinander:
@@ -75,7 +75,7 @@ printf '%s' 'Wired 2026/02/15 - The Nothing That Has the Potential to Be Anythin
 
 Die Ausgabe endet mit `a94a7f2b8685ff3c7dc76de5ad0f13568629b1f0e0495440c58a3ed3d0d909df`, demselben Wert wie im Explorer für Block 0.
 
-**Im Code.** Der Daemon ist unter [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core) quelloffen verfügbar. Suche in [`block.go`](https://github.com/blocknetprivacy/core/blob/master/block.go) nach diesen Funktionen:
+**Im Code.** Der Daemon ist unter [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core) quelloffen verfügbar. Suche in [`block.go`](https://github.com/blocknetprivacy/core/blob/5a0a5b510c1dce46f4eeb12c33a291052e44e7b3/block.go) nach diesen Funktionen:
 
 ```sh
 git clone https://github.com/blocknetprivacy/core.git
@@ -84,6 +84,12 @@ grep -n "func GetGenesisBlock\|func validateGenesisBlock\|func validateCoinbaseC
 ```
 
 `GetGenesisBlock` erstellt Block 0 mit einer leeren Transaktionsliste. `validateGenesisBlock` lehnt jeden Block 0 mit Transaktionen ab. `validateCoinbaseConsensus` erzwingt die einzelne Ausgabe in Höhe der Blockbelohnung. In `transaction.go` prüfen `validateCoinbase` und `verifyCommitmentBalance` die Coinbase-Struktur sowie die Bilanz normaler Transaktionen.
+
+## Wie gelangten neu geschürfte BNT zu anderen Besitzern?
+
+Der Explorer verzeichnet für Genesis den 15. Februar 2026 um 20:58:38 Uhr EST. Block 1 trägt den 20. Februar 2026 um 14:29:20 Uhr EST und enthält die erste Coinbase-Transaktion. Es sind unterschiedliche Datensätze: Genesis definiert den gemeinsamen Ausgangsblock, Block 1 beginnt die vergütete Ausgabe. Die im Explorer beim leeren Genesis-Block angezeigte Belohnung ist der Betrag des Zeitplans; keine Ausgabe erhält ihn.
+
+Sobald eine Mining-Belohnung ausgebbar ist, kann ihr Besitzer BNT an andere übertragen. Ein Pool sendet ebenso spätere Zahlungen aus erhaltenen Belohnungen. Diese Übertragungen verteilen vorhandene Coins neu; sie erzeugen sie nicht erneut. Du kannst BNT also besitzen und verwenden, ohne den ursprünglichen Block selbst geschürft zu haben. Die [Anleitung zum Senden und Empfangen](https://seineminer.com/de/blog/send-receive-blocknet/) behandelt normale Zahlungen, die [Angebotsübersicht](https://seineminer.com/de/blog/blocknet-supply/) den übergreifenden Ausgabeplan.
 
 ## Warum ist ein Fair Launch für Miner wichtig?
 
@@ -98,7 +104,7 @@ Wenn du die Coin insgesamt noch nicht kennst, erklärt [Was ist Blocknet?](https
 
 ## Wie minest du Blocknet selbst?
 
-An einem Fair Launch nimmst du durch Mining teil. Am schnellsten geht das mit dem Miner seine auf bntpool.com:
+Um neu ausgegebene BNT durch Mining zu erhalten, nutze den Miner seine mit bntpool.com:
 
 1. **Besorge dir eine Adresse.** Installiere die offizielle Blocknet-[Kommandozeilen-Wallet](https://github.com/blocknetprivacy/blocknet/releases/latest) oder [Desktop-Wallet](https://github.com/blocknetprivacy/blocknet-gui/releases/latest) und kopiere deine Adresse. Alternativ nutzt du einen Blocknet-ID-Kurznamen wie `@name`.
 2. **Lade seine herunter.** Hole das Archiv für Windows, macOS oder Linux von [seineminer.com](https://seineminer.com/de/#download) und entpacke es. Eine Installation ist nicht nötig.

@@ -1,23 +1,23 @@
 ---
 title: Blocknet 的公平啟動：沒有預挖，每一枚幣都是挖出來的
-description: Blocknet 啟動時沒有預挖、開發基金或國庫。了解空的創世區塊與單一輸出 coinbase 規則，親自查證，並開始挖 BNT。
+description: "核對 Blocknet 的空創世區塊、首筆挖礦獎勵與發行規則。了解 BNT 如何進入流通，以及挖出的幣如何經由後續轉帳到達其他持有者手中。"
 tags: [Blocknet, 公平啟動, 創世區塊, 挖礦, bntpool]
 faq:
   - q: 'Blocknet 有預挖嗎？'
     a: '沒有。Blocknet 的創世區塊建立於 2026 年 2 月 15 日，裡面沒有任何交易，因此在挖礦開始之前不存在任何幣。第一批幣來自區塊 1 的區塊獎勵，此後的每一枚 BNT 都支付給了挖出對應區塊的人。'
   - q: 'Blocknet 有開發基金或國庫嗎？'
-    a: '沒有。共識規則規定每個區塊只能有一筆 coinbase 交易，而這筆交易必須恰好有一個輸出，金額恰好等於區塊獎勵。沒有可以留給開發者、創辦人或國庫的第二個輸出，試圖加入這種輸出的區塊會被網路上的每個節點拒絕。'
+    a: "已發布規則沒有協定強制要求的開發基金或國庫分配。創世之後每個區塊只有一個 coinbase 輸出，等於規定獎勵。這描述的是新幣發行，而非後續持有者的身分。任何擁有 BNT 的人都能進行一般轉帳，包括自願向開發者付款。"
   - q: 'Blocknet 的創世區塊是什麼時候建立的？'
     a: '創世區塊的時間戳記是 2026 年 2 月 15 日 20:58:38（美國東部標準時間 EST），即 UTC 時間 2 月 16 日 01:58:38。它帶有訊息 "Wired 2026/02/15 - The Nothing That Has the Potential to Be Anything"，它的前一區塊雜湊就是這則訊息的 SHA3-256 雜湊。'
   - q: '如何親自查證 Blocknet 的公平啟動？'
     a: '在 Blocknet 區塊瀏覽器上開啟區塊 0，你會看到交易數為零、Merkle 根全為零。接著閱讀開源的節點程式碼：創世區塊以空交易清單寫死在程式碼中，coinbase 檢查只接受一個金額等於區塊獎勵的輸出。'
   - q: '如何開始挖 Blocknet？'
     a: '下載適用於 Windows、macOS 或 Linux 的 seine 挖礦軟體，執行它，並在提示時貼上你的 Blocknet 地址或 Blocknet ID 短名稱。按 Enter 接受預設礦池 bntpool.com，seine 會立即開始挖礦。之後你可以在 bntpool.com 的統計頁面查詢自己的地址。'
-sourceHash: 814839500c3d
-translation: reviewed
+sourceHash: a283d654ab64
+translation: draft
 ---
 
-Blocknet 啟動時沒有替任何人預留任何幣。本頁介紹創世區塊裡有什麼、哪些共識規則讓預挖、開發基金或國庫無法存在、如何在區塊瀏覽器與原始碼中查證這兩點，以及如何在 bntpool.com 上親自挖 BNT。
+了解 BNT 如何進入流通：從空的創世區塊、首筆挖礦獎勵，到持有者之間後續的轉帳。本指南核對啟動紀錄與發行規則，說明這些證據能證明什麼，並介紹如何在 bntpool.com 挖礦來取得新發行的 BNT。
 
 ## Blocknet 有預挖嗎？
 
@@ -25,7 +25,7 @@ Blocknet 啟動時沒有替任何人預留任何幣。本頁介紹創世區塊�
 沒有。Blocknet 的創世區塊建立於 2026 年 2 月 15 日，裡面沒有任何交易，因此在挖礦開始之前不存在任何幣。從區塊 1 起，每個區塊都以單一 coinbase 輸出支付獎勵，金額恰好等於排定數額，所以流通中的每一枚 BNT 都是有人執行工作量證明挖出來的。
 </Answer>
 
-無論是在創世區塊還是之後的任何區塊中，都沒有分配給創辦人、開發者、投資人或基金會的幣。幣的供給只來自區塊獎勵，執行這一點的規則屬於共識的一部分，因此網路上的每個節點都會在每個區塊上檢查它們。
+創世區塊沒有向創辦人、開發者、投資者或基金會分配儲備。之後的區塊按計畫建立挖礦獎勵，沒有協定強制要求的額外國庫輸出。這些是發行規則，並不能確定誰挖到了獎勵，或誰後來透過轉帳收到了既有的幣。
 
 ## Blocknet 的創世區塊裡有什麼？
 
@@ -49,7 +49,7 @@ Blocknet 啟動時沒有替任何人預留任何幣。本頁介紹創世區塊�
 ## 共識如何杜絕開發基金或國庫？
 
 <Answer>
-每個 Blocknet 區塊都必須以恰好一筆 coinbase 交易開頭，這筆 coinbase 必須沒有輸入、手續費為零，並且恰好有一個輸出，金額等於該高度的區塊獎勵。沒有地方可以放第二筆付款，所以開發基金、創辦人獎勵或國庫輸出不可能存在於鏈上。
+創世區塊之後，每個區塊都以一筆沒有輸入、手續費為零、且恰好有一個輸出的 coinbase 交易開始，輸出金額等於規定獎勵。已發布規則沒有在這筆交易中設置獨立的創辦人或國庫輸出。持有者仍可透過一般交易轉移自己既有的 BNT。
 </Answer>
 
 節點程式中的幾項檢查共同保證了這一點：
@@ -75,7 +75,7 @@ printf '%s' 'Wired 2026/02/15 - The Nothing That Has the Potential to Be Anythin
 
 輸出的結尾是 `a94a7f2b8685ff3c7dc76de5ad0f13568629b1f0e0495440c58a3ed3d0d909df`，與區塊瀏覽器為區塊 0 顯示的值相同。
 
-**在程式碼中。** 節點程式在 [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core) 開源。在 [`block.go`](https://github.com/blocknetprivacy/core/blob/master/block.go) 中尋找以下函式：
+**在程式碼中。** 節點程式在 [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core) 開源。在 [`block.go`](https://github.com/blocknetprivacy/core/blob/5a0a5b510c1dce46f4eeb12c33a291052e44e7b3/block.go) 中尋找以下函式：
 
 ```sh
 git clone https://github.com/blocknetprivacy/core.git
@@ -84,6 +84,12 @@ grep -n "func GetGenesisBlock\|func validateGenesisBlock\|func validateCoinbaseC
 ```
 
 `GetGenesisBlock` 以空交易清單建立區塊 0，`validateGenesisBlock` 拒絕任何帶有交易的區塊 0，`validateCoinbaseConsensus` 則強制要求唯一一個金額等於區塊獎勵的輸出。在 `transaction.go` 中，`validateCoinbase` 與 `verifyCommitmentBalance` 分別負責 coinbase 的結構檢查與一般交易的平衡檢查。
+
+## 新挖出的 BNT 如何到達其他持有者手中？
+
+瀏覽器記錄的創世時間為 2026 年 2 月 15 日 20:58:38 EST。區塊 1 的時間為 2026 年 2 月 20 日 14:29:20 EST，包含第一筆 coinbase 交易。兩者是不同的紀錄：創世區塊定義共同起點，區塊 1 開始帶獎勵的發行。瀏覽器為空創世區塊顯示的獎勵只是計畫金額，沒有任何輸出領取它。
+
+挖礦獎勵可以花費後，擁有者就能把 BNT 轉給他人。礦池同樣會從收到的獎勵中發出後續付款。這些轉帳重新分配既有的幣，而不是再次發行。因此，即使沒有親自挖出最初建立這些幣的區塊，你也可以持有和使用 BNT。[收發指南](https://seineminer.com/zh-hant/blog/send-receive-blocknet/)介紹一般付款，[供應量指南](https://seineminer.com/zh-hant/blog/blocknet-supply/)解釋整體貨幣發行計畫。
 
 ## 公平啟動對礦工為什麼重要？
 
@@ -98,7 +104,7 @@ grep -n "func GetGenesisBlock\|func validateGenesisBlock\|func validateCoinbaseC
 
 ## 如何親自挖 Blocknet？
 
-參與公平啟動就是去挖礦。最快的方式是在 bntpool.com 上使用 seine 挖礦軟體：
+若要透過挖礦取得新發行的 BNT，請將 seine 礦工連接到 bntpool.com：
 
 1. **準備地址。** 安裝官方 Blocknet [命令列錢包](https://github.com/blocknetprivacy/blocknet/releases/latest)或[桌面錢包](https://github.com/blocknetprivacy/blocknet-gui/releases/latest)並複製你的地址，或者使用 `@name` 這樣的 Blocknet ID 短名稱。
 2. **下載 seine。** 從 [seineminer.com](https://seineminer.com/zh-hant/#download) 取得適用於 Windows、macOS 或 Linux 的壓縮檔並解壓縮。無需安裝。

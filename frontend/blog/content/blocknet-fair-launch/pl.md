@@ -1,14 +1,14 @@
 ---
 title: 'Uczciwy start Blocknetu: bez premine, każda moneta wykopana'
-description: Blocknet wystartował bez premine, funduszu deweloperów i skarbca. Sprawdź pusty blok genezy i regułę jednego wyjścia coinbase, a potem kop BNT.
+description: "Sprawdź pusty genesis Blocknet, pierwszą nagrodę i zasady emisji. Dowiedz się, jak BNT trafił do obiegu i jak wykopane monety docierają do innych osób."
 tags: [Blocknet, Uczciwy start, Blok genezy, Kopanie, bntpool]
-sourceHash: 814839500c3d
+sourceHash: a283d654ab64
 translation: draft
 faq:
   - q: 'Czy Blocknet miał premine?'
     a: 'Nie. Blok genezy Blocknetu, utworzony 15 lutego 2026 r., nie zawiera żadnych transakcji, więc przed rozpoczęciem kopania nie istniały żadne monety. Pierwsze monety pochodziły z nagrody za blok 1, a każde BNT od tego czasu wypłacono osobie, która wykopała blok będący jego źródłem.'
   - q: 'Czy Blocknet ma fundusz deweloperów lub skarbiec?'
-    a: 'Nie. Konsensus dopuszcza dokładnie jedną transakcję coinbase w bloku, która musi mieć dokładnie jedno wyjście o wartości równej nagrodzie za blok. Nie ma drugiego wyjścia dla dewelopera, założyciela ani skarbca, a blok próbujący je dodać zostaje odrzucony przez każdy węzeł sieci.'
+    a: "Opublikowane zasady nie wymagają protokołowego przydziału dla funduszu deweloperskiego lub skarbca. Każdy blok po genesis ma jedno wyjście coinbase równe zaplanowanej nagrodzie. Opisuje to nową emisję, a nie tożsamość późniejszych właścicieli. Każdy posiadacz BNT może wykonywać zwykłe transfery, w tym dobrowolnie płacić deweloperowi."
   - q: 'Kiedy utworzono blok genezy Blocknetu?'
     a: 'Znacznik czasu bloku genezy to 15 lutego 2026 r., 20:58:38 EST, czyli 16 lutego o 01:58:38 UTC. Zawiera wiadomość "Wired 2026/02/15 - The Nothing That Has the Potential to Be Anything", a hash poprzedniego bloku jest hashem SHA3-256 tej wiadomości.'
   - q: 'Jak samodzielnie zweryfikować uczciwy start Blocknetu?'
@@ -17,7 +17,7 @@ faq:
     a: 'Pobierz program seine dla Windows, macOS lub Linux, uruchom go i wklej adres Blocknet lub krótką nazwę Blocknet ID, gdy o to poprosi. Naciśnij Enter, aby zaakceptować domyślną pulę bntpool.com, a seine od razu zacznie kopać. Potem możesz wyszukać swój adres na stronie statystyk bntpool.com.'
 ---
 
-Blocknet wystartował bez przydziału monet komukolwiek. Ta strona pokazuje zawartość bloku genezy, reguły konsensusu uniemożliwiające premine, fundusz deweloperów lub skarbiec, sposoby ich sprawdzenia w eksploratorze i kodzie źródłowym oraz rozpoczęcie samodzielnego kopania BNT na bntpool.com.
+Zobacz, jak BNT trafił do obiegu: pusty blok genesis, pierwsza wykopana nagroda i późniejsze transfery między właścicielami. Ten poradnik sprawdza zapisy startu oraz zasady emisji, wyjaśnia, co z nich wynika, i pokazuje, jak otrzymywać nowe BNT przez kopanie na bntpool.com.
 
 ## Czy Blocknet miał premine?
 
@@ -25,7 +25,7 @@ Blocknet wystartował bez przydziału monet komukolwiek. Ta strona pokazuje zawa
 Nie. Blok genezy Blocknetu, utworzony 15 lutego 2026 r., nie zawiera transakcji, więc przed rozpoczęciem kopania nie istniały monety. Od bloku 1 każdy blok wypłaca nagrodę w jednym wyjściu coinbase o wartości dokładnie zgodnej z harmonogramem, więc każde BNT w obiegu wykopał ktoś wykonujący proof of work.
 </Answer>
 
-Nie ma przydziału dla założycieli, deweloperów, inwestorów ani fundacji — ani w bloku genezy, ani w żadnym późniejszym bloku. Podaż monet pochodzi wyłącznie z nagród za bloki, a egzekwujące to reguły są częścią konsensusu, więc każdy węzeł sieci sprawdza je dla każdego bloku.
+Blok genesis nie przydziela rezerwy założycielom, deweloperom, inwestorom ani fundacji. Kolejne bloki tworzą zaplanowaną nagrodę za kopanie, bez dodatkowego wyjścia dla skarbca wymaganego przez protokół. To zasady emisji: nie określają, kto wykopał nagrodę ani kto później otrzymał istniejące monety w transferze.
 
 ## Co zawiera blok genezy Blocknetu?
 
@@ -49,7 +49,7 @@ Komentarz nad funkcją genezy w demonie mówi wprost: „Genesi nie ma transakcj
 ## Jak konsensus wyklucza fundusz deweloperów lub skarbiec?
 
 <Answer>
-Każdy blok Blocknetu musi zaczynać się dokładnie jedną transakcją coinbase, a ta musi nie mieć wejść, mieć zerową opłatę i dokładnie jedno wyjście o kwocie równej nagrodzie za blok na danej wysokości. Nie ma miejsca na drugą płatność, więc fundusz deweloperów, nagroda dla założyciela ani wyjście skarbca nie mogą istnieć w łańcuchu.
+Po genesis każdy blok rozpoczyna się transakcją coinbase bez wejść, z zerową opłatą i dokładnie jednym wyjściem równym zaplanowanej nagrodzie. Opublikowane zasady nie przewidują w tej transakcji osobnego wyjścia dla założycieli lub skarbca. Właściciele nadal mogą zwyczajnie przesyłać posiadane BNT.
 </Answer>
 
 Współdziała tu kilka kontroli demona:
@@ -75,7 +75,7 @@ printf '%s' 'Wired 2026/02/15 - The Nothing That Has the Potential to Be Anythin
 
 Wynik kończy się na `a94a7f2b8685ff3c7dc76de5ad0f13568629b1f0e0495440c58a3ed3d0d909df`, czyli tej samej wartości, którą eksplorator pokazuje dla bloku 0.
 
-**W kodzie.** Otwarty kod demona znajduje się na [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core). W [`block.go`](https://github.com/blocknetprivacy/core/blob/master/block.go) znajdź te funkcje:
+**W kodzie.** Otwarty kod demona znajduje się na [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core). W [`block.go`](https://github.com/blocknetprivacy/core/blob/5a0a5b510c1dce46f4eeb12c33a291052e44e7b3/block.go) znajdź te funkcje:
 
 ```sh
 git clone https://github.com/blocknetprivacy/core.git
@@ -84,6 +84,12 @@ grep -n "func GetGenesisBlock\|func validateGenesisBlock\|func validateCoinbaseC
 ```
 
 `GetGenesisBlock` tworzy blok 0 z pustą listą transakcji, `validateGenesisBlock` odrzuca każdy blok 0 zawierający transakcje, a `validateCoinbaseConsensus` wymusza pojedyncze wyjście warte nagrodę za blok. W `transaction.go` funkcje `validateCoinbase` i `verifyCommitmentBalance` odpowiadają za strukturę coinbase i kontrolę bilansu zwykłych transakcji.
+
+## Jak nowo wykopane BNT trafiały do innych właścicieli?
+
+Eksplorator podaje dla genesis 15 lutego 2026 o 20:58:38 EST. Blok 1 ma znacznik 20 lutego 2026 o 14:29:20 EST i zawiera pierwszą transakcję coinbase. To osobne zapisy: genesis wyznacza wspólny blok początkowy, a blok 1 rozpoczyna emisję z nagrodami. Nagroda pokazywana przez eksplorator przy pustym genesis jest kwotą z harmonogramu; żadne wyjście jej nie otrzymuje.
+
+Gdy nagrodę za kopanie można już wydać, jej właściciel może przesłać BNT komuś innemu. Pula podobnie wysyła późniejsze płatności z otrzymanych nagród. Transfery rozdzielają istniejące monety; nie powtarzają emisji. Możesz więc posiadać i używać BNT bez samodzielnego wykopania bloku, który je utworzył. [Poradnik wysyłania i odbierania](https://seineminer.com/pl/blog/send-receive-blocknet/) opisuje zwykłe płatności, a [poradnik podaży](https://seineminer.com/pl/blog/blocknet-supply/) ogólny harmonogram waluty.
 
 ## Dlaczego uczciwy start ma znaczenie dla górników?
 
@@ -98,7 +104,7 @@ Jeśli dopiero poznajesz tę kryptowalutę, [Czym jest Blocknet?](https://seinem
 
 ## Jak samodzielnie kopać Blocknet?
 
-Udział w uczciwym starcie oznacza kopanie. Najszybszym sposobem jest seine na bntpool.com:
+Aby otrzymywać nowo emitowane BNT przez kopanie, użyj minera seine z bntpool.com:
 
 1. **Zdobądź adres.** Zainstaluj oficjalny [portfel wiersza poleceń](https://github.com/blocknetprivacy/blocknet/releases/latest) lub [portfel desktopowy](https://github.com/blocknetprivacy/blocknet-gui/releases/latest) Blocknetu i skopiuj adres albo użyj krótkiej nazwy Blocknet ID, takiej jak `@name`.
 2. **Pobierz seine.** Pobierz archiwum dla Windows, macOS lub Linux z [seineminer.com](https://seineminer.com/pl/#download) i rozpakuj je. Niczego nie trzeba instalować.

@@ -48,6 +48,7 @@ const groups = {
     "pool-vs-solo-mining-blocknet"
   ],
   "blocknet": [
+    "how-mining-secures-blocknet-payments",
     "blocknet-fair-launch",
     "blocknet-checkpoints-fast-sync"
   ]

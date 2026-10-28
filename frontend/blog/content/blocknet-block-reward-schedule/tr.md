@@ -2,7 +2,7 @@
 title: Blocknet blok ödülü takvimi
 description: Blocknet'in aylık blok ödülü; başlangıçta 723,25 BNT, 48. ayda kalıcı 2,0 BNT kuyruk ödülü, günde 288 blok ve kuyruk öncesinde 98,6 milyon BNT.
 tags: [Blocknet, Blok ödülü, Emisyon, Madencilik]
-sourceHash: abea18c2c21b
+sourceHash: 6c38930dfa09
 translation: draft
 faq:
   - q: 'Blocknet''in güncel blok ödülü nedir?'
@@ -17,7 +17,7 @@ faq:
     a: 'Bir blok ödülü 60 blok sonra harcanabilir; Blocknet''in beş dakikalık blok süresinde bu yaklaşık beş saattir. Buna coinbase olgunlaşması denir. bntpool.com havuzu da blok ödülünü ödemeden önce 60 blok bekler, böylece yalnızca olgunlaşmış blokların ödüllerini öder.'
 ---
 
-Bu sayfa, emisyon takviminin her ayı için Blocknet blok ödülünü listeler, ödülün nasıl hesaplandığını açıklar ve takvimin bir madenci olarak sizin için anlamını gösterir.
+Yeni çıkarılan BNT'yi blok ödülünden harcanabilir coinlere ve sonraki ödemelere kadar izleyin. Bu sayfa para akışını açıklar, ardından ödül takviminin her ayını listeler ve rakamları madenci veya coin sahibi olarak nasıl okuyacağınızı gösterir.
 
 ## Blocknet blok ödülü nedir?
 
@@ -28,6 +28,12 @@ Blocknet blok ödülü blok başına 723,25 BNT ile başladı ve düzgün bir az
 Blocknet her beş dakikada (300 saniyede) bir blok hedefler. Bu, günde 288 ve her 30 günlük ayda 8.640 blok eder. Zorluk, son 60 blok süresinin ağırlıklı ortalamasına göre her bloktan sonra ayarlanır; böylece ağın hashrate'i değişirken tempo beş dakikaya yakın kalır.
 
 Bir bloğun ödülü yalnızca yüksekliğinin hangi aya denk geldiğine bağlıdır. Ay, blok yüksekliğinin 8.640'a bölünüp aşağı yuvarlanmasıyla bulunur: 0–8.639 yükseklikleri 0. ay, 8.640–17.279 yükseklikleri 1. aydır ve böyle devam eder.
+
+## Blok ödülü kullanılabilir BNT'ye nasıl dönüşür?
+
+Kazılan blok, planlanan ödülü bir coinbase çıktısında oluşturur. Bu çıktı blok için seçilen hedefe aittir ve önce coinbase olgunlaşma süresini tamamlar. Harcanabilir olduğunda sahibi bunu normal işlemlerde kullanabilir. Bloğu havuz kazdıysa muhasebesi uygun ödülleri katılımcılar arasında paylaştırır; sonraki ödeme işlemleri mevcut BNT'yi onların cüzdanlarına gönderir.
+
+Dolayısıyla havuz ödemesi ikinci bir ödül yaratmaz. Transfer almak için yeni coin kazmanız da gerekmez. İhraç BNT'nin kökenini, transferler ise sonraki sahiplik değişimlerini açıklar. [Onay rehberi](/blog/tr/block-confirmations-mining-rewards/) havuz aşamalarını, [Blocknet arz rehberi](https://seineminer.com/tr/blog/blocknet-supply/) ise genel parasal takvimi anlatır.
 
 ## Ödül nasıl hesaplanır?
 
@@ -110,6 +116,8 @@ Azalma formülü 0–47. aylar için geçerlidir ve 47. ayda blok başına 40,22
 ## Kuyruk başlamadan önce ne kadar BNT üretilir?
 
 1–414.719 yükseklikleri arasındaki tüm blokları toplamak 98.561.905,08 BNT, yaklaşık 98,6 milyon verir. Kod ve resmî site, takvimi dört yılda yaklaşık 100 milyon coin artı kuyruk olarak tanımlar; kesin toplam bu yuvarlak sayının biraz altında kalır.
+
+Aşağıdaki birikimli toplamlar kabul edilen blokların planlanan ihracını ölçer. Bunlar şu anda harcanabilir cüzdan bakiyelerinin toplamı veya alım satım faaliyetinin ölçüsü değildir. Mevcut BNT'nin sahipler arasında taşınması bu ihraç toplamlarını artırmaz.
 
 Çoğu erken dönemde üretilir. Takvimin yıllarına göre:
 

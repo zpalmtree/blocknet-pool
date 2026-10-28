@@ -2,7 +2,7 @@
 title: Cronograma de recompensas de bloco do Blocknet
 description: A recompensa mensal do Blocknet vai de 723,25 BNT no lançamento a 2,0 BNT permanentes no mês 48, com 288 blocos diários e 98,6 milhões de BNT antes da emissão residual.
 tags: [Blocknet, Recompensa do bloco, Emissão, Mineração]
-sourceHash: abea18c2c21b
+sourceHash: 6c38930dfa09
 translation: draft
 faq:
   - q: 'Qual é a recompensa atual por bloco do Blocknet?'
@@ -17,7 +17,7 @@ faq:
     a: 'A recompensa fica disponível após 60 blocos, cerca de cinco horas com o tempo de bloco de cinco minutos. Essa regra se chama maturidade da coinbase. O bntpool.com também espera 60 blocos antes de pagar a recompensa e só paga moedas de blocos maduros.'
 ---
 
-Esta página lista a recompensa de bloco do Blocknet em cada mês do cronograma de emissão, explica seu cálculo e mostra o que isso significa para você como minerador.
+Acompanhe os BNT recém-emitidos desde a recompensa de bloco até as moedas gastáveis e os pagamentos posteriores. Esta página explica esse fluxo monetário, lista cada mês do cronograma de recompensas e mostra como interpretar os números como minerador ou titular.
 
 ## Qual é a recompensa de bloco do Blocknet?
 
@@ -28,6 +28,12 @@ A recompensa começou em 723,25 BNT por bloco e diminui uma vez por mês de 30 d
 O Blocknet busca um bloco a cada cinco minutos, ou 300 segundos. São 288 blocos por dia e 8.640 por mês de 30 dias. A dificuldade se ajusta após cada bloco pela média ponderada dos últimos 60 tempos de bloco, mantendo o ritmo perto de cinco minutos conforme muda a hashrate da rede.
 
 A recompensa depende apenas do mês correspondente à altura. O mês é a altura dividida por 8.640, arredondada para baixo. Assim, alturas de 0 a 8.639 são mês 0, de 8.640 a 17.279 são mês 1, e assim por diante.
+
+## Como uma recompensa de bloco se torna BNT utilizável?
+
+Um bloco minerado cria a recompensa prevista em uma saída coinbase. Essa saída pertence ao destino escolhido para o bloco e primeiro passa pela maturação coinbase. Quando se torna gastável, o proprietário pode usá-la em transações comuns. Se um pool minerou o bloco, sua contabilidade divide as recompensas elegíveis entre os participantes, e os pagamentos posteriores enviam BNT existentes às suas carteiras.
+
+Um pagamento do pool, portanto, não cria uma segunda recompensa. Receber uma transferência também não exige minerar novas moedas. A emissão descreve a origem do BNT; as transferências descrevem as mudanças posteriores de titularidade. O [guia de confirmações](/blog/pt-br/block-confirmations-mining-rewards/) acompanha as etapas do pool, e o [guia da oferta do Blocknet](https://seineminer.com/pt-br/blog/blocknet-supply/) explica o cronograma monetário geral.
 
 ## Como a recompensa é calculada?
 
@@ -110,6 +116,8 @@ O mês 48 começa após 1.440 dias de blocos de cinco minutos desde o lançament
 ## Quanto BNT é minerado antes da emissão residual?
 
 A soma de todos os blocos da altura 1 até 414.719 dá 98.561.905,08 BNT, cerca de 98,6 milhões. O código e o site oficial descrevem cerca de 100 milhões em quatro anos mais a emissão residual. A soma exata fica um pouco abaixo do número arredondado.
+
+Os totais acumulados abaixo medem a emissão prevista dos blocos aceitos. Não são uma soma dos saldos atualmente gastáveis nas carteiras nem uma medida da atividade de negociação. Mover BNT existentes entre titulares não aumenta esses totais de emissão.
 
 A maior parte é minerada cedo. Por ano do cronograma:
 

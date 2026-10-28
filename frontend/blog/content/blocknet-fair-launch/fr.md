@@ -1,23 +1,23 @@
 ---
 title: 'Le lancement équitable de Blocknet : chaque coin est miné'
-description: Blocknet est né sans premine, fonds de développement ni trésorerie. Vérifiez le genesis vide et la règle coinbase à une sortie, puis minez vos BNT.
+description: "Vérifiez le genesis vide de Blocknet, sa première récompense et ses règles d’émission. Découvrez comment les BNT ont circulé jusqu’à d’autres détenteurs."
 tags: [Blocknet, Lancement équitable, Bloc genesis, Minage, bntpool]
 faq:
   - q: 'Blocknet a-t-il eu un premine ?'
     a: 'Non. Le bloc genesis de Blocknet, créé le 15 février 2026, ne contient aucune transaction : aucun coin n’existait avant le minage. Les premiers coins proviennent de la récompense du bloc 1, et chaque BNT depuis a été versé à la personne ayant miné son bloc d’origine.'
   - q: 'Blocknet possède-t-il un fonds de développement ou une trésorerie ?'
-    a: 'Non. Le consensus autorise exactement une transaction coinbase par bloc, avec exactement une sortie valant la récompense de bloc. Aucune deuxième sortie n’est réservée à un développeur, un fondateur ou une trésorerie. Chaque nœud rejette un bloc qui tente d’en ajouter une.'
+    a: "Les règles publiées n’imposent aucune allocation à un fonds de développement ou à une trésorerie. Chaque bloc après genesis possède une sortie coinbase égale à la récompense prévue. Cela décrit l’émission, et non l’identité des détenteurs ultérieurs. Tout détenteur de BNT peut effectuer des transferts ordinaires, dont des paiements volontaires à un développeur."
   - q: 'Quand le bloc genesis de Blocknet a-t-il été créé ?'
     a: 'Son horodatage est le 15 février 2026 à 20:58:38 EST, soit le 16 février à 01:58:38 UTC. Il porte le message « Wired 2026/02/15 - The Nothing That Has the Potential to Be Anything », dont le SHA3-256 constitue le hachage du bloc précédent.'
   - q: 'Comment vérifier moi-même le lancement équitable de Blocknet ?'
     a: 'Ouvrez le bloc 0 sur l’explorateur Blocknet : il comporte zéro transaction et une racine de Merkle entièrement nulle. Consultez ensuite le code ouvert du daemon : le genesis est codé avec une liste de transactions vide et le contrôle coinbase accepte une sortie égale à la récompense du bloc.'
   - q: 'Comment commencer à miner Blocknet ?'
     a: 'Téléchargez seine pour Windows, macOS ou Linux, lancez-le et collez votre adresse Blocknet ou votre nom court Blocknet ID lorsqu’il le demande. Appuyez sur Entrée pour accepter bntpool.com, le pool par défaut, et seine commence immédiatement. Vous pouvez ensuite rechercher votre adresse sur la page de statistiques bntpool.com.'
-sourceHash: 814839500c3d
+sourceHash: a283d654ab64
 translation: draft
 ---
 
-Blocknet a démarré sans aucune allocation à qui que ce soit. Cette page présente le contenu du bloc genesis, les règles de consensus qui excluent premine, fonds de développement et trésorerie, comment les vérifier sur l’explorateur et dans le code, et comment miner vos propres BNT sur bntpool.com.
+Voici comment les BNT sont entrés en circulation : un bloc genesis vide, la première récompense minée, puis des transferts entre détenteurs. Ce guide vérifie les données du lancement et les règles d’émission, explique ce qu’elles établissent et montre comment recevoir de nouveaux BNT en minant sur bntpool.com.
 
 ## Blocknet a-t-il eu un premine ?
 
@@ -25,7 +25,7 @@ Blocknet a démarré sans aucune allocation à qui que ce soit. Cette page prés
 Non. Le bloc genesis de Blocknet, créé le 15 février 2026, ne contient aucune transaction : aucun coin n’existait avant le minage. Depuis le bloc 1, chaque bloc verse sa récompense dans une seule sortie coinbase, égale au montant prévu. Chaque BNT en circulation a donc été miné par quelqu’un exécutant la preuve de travail.
 </Answer>
 
-Aucune allocation n’est réservée aux fondateurs, développeurs, investisseurs ou à une fondation, ni dans le genesis ni dans les blocs suivants. L’offre provient uniquement des récompenses de bloc. Les règles qui l’imposent font partie du consensus et chaque nœud les vérifie pour chaque bloc.
+Le bloc genesis n’attribue aucune réserve aux fondateurs, développeurs, investisseurs ou à une fondation. Les blocs suivants créent la récompense prévue, sans sortie supplémentaire de trésorerie imposée par le protocole. Ce sont des règles d’émission : elles n’identifient ni la personne ayant miné une récompense ni celle ayant reçu des coins existants lors d’un transfert ultérieur.
 
 ## Que contient le bloc genesis de Blocknet ?
 
@@ -49,7 +49,7 @@ Le commentaire de la fonction genesis est explicite : « Le genesis ne contien
 ## Comment le consensus exclut-il fonds de développement et trésorerie ?
 
 <Answer>
-Chaque bloc Blocknet doit commencer par exactement une transaction coinbase, sans entrées, avec des frais nuls et exactement une sortie égale à la récompense prévue pour cette hauteur. Il n’y a aucun emplacement pour un deuxième paiement : une sortie destinée à un fonds de développement, un fondateur ou une trésorerie ne peut donc pas exister sur la chaîne.
+Après genesis, chaque bloc commence par une transaction coinbase sans entrées, avec des frais nuls et exactement une sortie égale à la récompense prévue. Les règles publiées ne prévoient aucune sortie distincte pour les fondateurs ou une trésorerie dans cette transaction. Les détenteurs peuvent toujours transférer normalement les BNT qu’ils possèdent déjà.
 </Answer>
 
 Plusieurs contrôles du daemon agissent ensemble :
@@ -75,7 +75,7 @@ printf '%s' 'Wired 2026/02/15 - The Nothing That Has the Potential to Be Anythin
 
 Le résultat se termine par `a94a7f2b8685ff3c7dc76de5ad0f13568629b1f0e0495440c58a3ed3d0d909df`, la valeur affichée pour le bloc 0.
 
-**Dans le code.** Le daemon est ouvert sur [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core). Dans [`block.go`](https://github.com/blocknetprivacy/core/blob/master/block.go), recherchez ces fonctions :
+**Dans le code.** Le daemon est ouvert sur [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core). Dans [`block.go`](https://github.com/blocknetprivacy/core/blob/5a0a5b510c1dce46f4eeb12c33a291052e44e7b3/block.go), recherchez ces fonctions :
 
 ```sh
 git clone https://github.com/blocknetprivacy/core.git
@@ -84,6 +84,12 @@ grep -n "func GetGenesisBlock\|func validateGenesisBlock\|func validateCoinbaseC
 ```
 
 `GetGenesisBlock` crée le bloc 0 avec une liste de transactions vide, `validateGenesisBlock` rejette tout bloc 0 contenant des transactions, et `validateCoinbaseConsensus` impose la sortie unique valant la récompense. Dans `transaction.go`, `validateCoinbase` et `verifyCommitmentBalance` contrôlent la structure coinbase et l’équilibre des transactions ordinaires.
+
+## Comment les BNT nouvellement minés sont-ils parvenus à d’autres détenteurs ?
+
+L’explorateur indique le 15 février 2026 à 20:58:38 EST pour genesis. Le bloc 1 porte la date du 20 février 2026 à 14:29:20 EST et contient la première transaction coinbase. Ce sont deux enregistrements distincts : genesis définit le point de départ commun, tandis que le bloc 1 commence l’émission rémunérée. La récompense affichée par l’explorateur pour le genesis vide correspond au montant prévu ; aucune sortie ne la reçoit.
+
+Une fois une récompense de minage dépensable, son propriétaire peut transférer des BNT à quelqu’un d’autre. Un pool envoie de même des paiements ultérieurs à partir des récompenses reçues. Ces transferts redistribuent des coins existants ; ils ne répètent pas l’émission. Vous pouvez donc détenir et utiliser des BNT sans avoir miné leur bloc d’origine. Le [guide d’envoi et de réception](https://seineminer.com/fr/blog/send-receive-blocknet/) traite des paiements courants, et le [guide de l’offre](https://seineminer.com/fr/blog/blocknet-supply/) du calendrier monétaire général.
 
 ## Pourquoi un lancement équitable compte-t-il pour les mineurs ?
 
@@ -98,7 +104,7 @@ Si vous découvrez la monnaie, [Qu’est-ce que Blocknet ?](https://seineminer.
 
 ## Comment miner Blocknet vous-même ?
 
-Participer à un lancement équitable, c’est miner. Le plus rapide est d’utiliser seine sur bntpool.com :
+Pour recevoir des BNT nouvellement émis par le minage, utilisez le mineur seine avec bntpool.com :
 
 1. **Obtenez une adresse.** Installez le [portefeuille en ligne de commande](https://github.com/blocknetprivacy/blocknet/releases/latest) ou le [portefeuille de bureau](https://github.com/blocknetprivacy/blocknet-gui/releases/latest) officiel et copiez votre adresse, ou utilisez un nom court Blocknet ID comme `@name`.
 2. **Téléchargez seine.** Prenez l’archive Windows, macOS ou Linux sur [seineminer.com](https://seineminer.com/fr/#download) et décompressez-la. Rien à installer.

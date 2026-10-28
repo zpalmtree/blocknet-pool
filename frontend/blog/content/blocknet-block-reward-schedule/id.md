@@ -13,11 +13,11 @@ faq:
     a: 'Tail dimulai pada bulan 48, di ketinggian blok 414.720. Itu berarti 48 bulan masing-masing 30 hari, atau 1.440 hari blok lima menit setelah peluncuran, kira-kira empat tahun. Tanggal kalender tepatnya bergantung pada waktu blok sebenarnya. Mulai ketinggian itu, setiap blok membayar 2,0 BNT.'
   - q: 'Berapa lama sebelum koin Blocknet hasil tambang dapat dibelanjakan?'
     a: 'Imbalan blok dapat dibelanjakan setelah 60 blok, sekitar lima jam pada waktu blok lima menit. Ini disebut coinbase maturity. Pool bntpool.com juga menunggu 60 blok sebelum membayar imbalan, sehingga hanya imbalan dari blok matang yang dibayar.'
-sourceHash: abea18c2c21b
+sourceHash: 6c38930dfa09
 translation: draft
 ---
 
-Halaman ini mencantumkan imbalan blok Blocknet untuk setiap bulan jadwal emisi, menjelaskan perhitungannya, serta arti jadwal tersebut bagi Anda sebagai penambang.
+Ikuti BNT yang baru diterbitkan dari imbalan blok hingga menjadi koin yang dapat dibelanjakan dan pembayaran berikutnya. Halaman ini menjelaskan aliran mata uang tersebut, kemudian mencantumkan setiap bulan jadwal imbalan dan cara membaca angkanya sebagai penambang atau pemilik koin.
 
 ## Berapa imbalan blok Blocknet?
 
@@ -28,6 +28,12 @@ Imbalan blok Blocknet dimulai dari 723,25 BNT per blok dan turun sekali setiap b
 Blocknet menargetkan satu blok setiap lima menit (300 detik). Hasilnya 288 blok sehari dan 8.640 blok per bulan 30 hari. Kesulitan disesuaikan setiap blok berdasarkan rata-rata tertimbang waktu 60 blok terakhir, agar laju tetap mendekati lima menit saat hashrate jaringan berubah.
 
 Imbalan setiap blok hanya bergantung pada bulan dari ketinggiannya. Bulan dihitung dengan membagi ketinggian blok dengan 8.640 lalu membulatkan ke bawah: ketinggian 0 sampai 8.639 adalah bulan 0, ketinggian 8.640 sampai 17.279 adalah bulan 1, dan seterusnya.
+
+## Bagaimana imbalan blok menjadi BNT yang dapat digunakan?
+
+Blok yang ditambang menciptakan imbalan terjadwal dalam output coinbase. Output itu dimiliki tujuan yang dipilih untuk blok tersebut dan terlebih dahulu melewati pematangan coinbase. Setelah dapat dibelanjakan, pemilik dapat menggunakannya dalam transaksi biasa. Jika pool menambang blok, pembukuannya membagi imbalan yang memenuhi syarat kepada peserta dan transaksi pembayaran berikutnya mengirim BNT yang sudah ada ke dompet mereka.
+
+Karena itu, pembayaran pool tidak menciptakan imbalan kedua. Menerima transfer juga tidak mengharuskan Anda menambang koin baru. Penerbitan menjelaskan asal BNT; transfer menjelaskan perpindahan kepemilikan setelahnya. [Panduan konfirmasi](/blog/id/block-confirmations-mining-rewards/) mengikuti tahapan pool, sementara [panduan pasokan Blocknet](https://seineminer.com/id/blog/blocknet-supply/) menjelaskan jadwal moneter secara keseluruhan.
 
 ## Bagaimana imbalan dihitung?
 
@@ -110,6 +116,8 @@ Bulan 48 dimulai setelah 1.440 hari blok lima menit sejak peluncuran, kira-kira 
 ## Berapa BNT ditambang sebelum tail?
 
 Menjumlahkan setiap blok dari ketinggian 1 hingga 414.719 menghasilkan 98.561.905,08 BNT, sekitar 98,6 juta. Kode dan situs resmi menggambarkan jadwal sebagai sekitar 100 juta koin selama empat tahun ditambah tail, dan jumlah tepatnya sedikit di bawah angka bulat tersebut.
+
+Total kumulatif di bawah mengukur penerbitan terjadwal dari blok yang diterima. Angka tersebut bukan jumlah saldo dompet yang saat ini dapat dibelanjakan maupun ukuran aktivitas perdagangan. Memindahkan BNT yang sudah ada antar pemilik tidak menambah total penerbitan ini.
 
 Sebagian besar ditambang lebih awal. Dikelompokkan berdasarkan tahun jadwal:
 

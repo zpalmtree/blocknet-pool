@@ -1,23 +1,23 @@
 ---
 title: 'Lanzamiento justo de Blocknet: sin preminado'
-description: Blocknet nació sin preminado, fondo de desarrollo ni tesorería. Comprueba el génesis vacío y la coinbase de una sola salida, y empieza a minar BNT.
+description: "Comprueba el génesis vacío de Blocknet, su primera recompensa y las reglas de emisión. Descubre cómo entró BNT en circulación y llegó a otros titulares."
 tags: [Blocknet, Lanzamiento justo, Bloque génesis, Minería, bntpool]
 faq:
   - q: '¿Tuvo Blocknet preminado?'
     a: 'No. Su bloque génesis, creado el 15 de febrero de 2026, no contiene ninguna transacción, así que no existían monedas antes de la minería. Las primeras procedieron de la recompensa del bloque 1, y cada BNT posterior se pagó a quien minó su bloque de origen.'
   - q: '¿Tiene Blocknet un fondo de desarrollo o tesorería?'
-    a: 'No. El consenso permite exactamente una transacción coinbase por bloque con exactamente una salida por el valor de la recompensa. No hay segunda salida para desarrolladores, fundadores o tesorería, y todos los nodos rechazan cualquier bloque que intente añadirla.'
+    a: "Las reglas publicadas no exigen ninguna asignación a un fondo de desarrollo o tesorería. Cada bloque posterior al génesis tiene una salida coinbase igual a la recompensa prevista. Esto describe la nueva emisión, no la identidad de los titulares posteriores. Quien posee BNT puede realizar transferencias normales, incluidos pagos voluntarios a un desarrollador."
   - q: '¿Cuándo se creó el bloque génesis de Blocknet?'
     a: 'Su marca temporal es el 15 de febrero de 2026 a las 20:58:38 EST, equivalente a las 01:58:38 UTC del 16 de febrero. Lleva el mensaje "Wired 2026/02/15 - The Nothing That Has the Potential to Be Anything", y su hash de bloque anterior es el SHA3-256 de ese mensaje.'
   - q: '¿Cómo verifico el lanzamiento justo por mi cuenta?'
     a: 'Abre el bloque 0 en el explorador Blocknet: verás cero transacciones y una raíz de Merkle de ceros. Después consulta el código abierto del daemon, donde génesis tiene una lista vacía de transacciones y la validación coinbase acepta una salida igual a la recompensa.'
   - q: '¿Cómo empiezo a minar Blocknet?'
     a: 'Descarga seine para Windows, macOS o Linux, ejecútalo e introduce tu dirección Blocknet o nombre corto Blocknet ID. Pulsa Enter para aceptar bntpool.com y empezará a minar inmediatamente. Después busca tu dirección en las estadísticas del pool.'
-sourceHash: 814839500c3d
+sourceHash: a283d654ab64
 translation: draft
 ---
 
-Blocknet comenzó sin asignar nada a nadie. Esta página muestra el contenido del bloque génesis, las reglas que impiden preminado, fondo de desarrollo o tesorería, cómo comprobarlas en el explorador y el código, y cómo minar BNT en bntpool.com.
+Así entró BNT en circulación: un bloque génesis vacío, la primera recompensa minada y transferencias posteriores entre titulares. Esta guía comprueba los registros del lanzamiento y las reglas de emisión, explica qué demuestran y muestra cómo recibir BNT recién emitido minando en bntpool.com.
 
 ## ¿Tuvo Blocknet preminado?
 
@@ -25,7 +25,7 @@ Blocknet comenzó sin asignar nada a nadie. Esta página muestra el contenido de
 No. El génesis, creado el 15 de febrero de 2026, no tiene transacciones: no existían monedas antes de empezar la minería. Desde el bloque 1, cada bloque paga una sola salida coinbase por el importe exacto previsto, así que todo BNT en circulación lo minó alguien ejecutando la prueba de trabajo.
 </Answer>
 
-No hay asignación para fundadores, desarrolladores, inversores o una fundación, ni en génesis ni después. La oferta procede únicamente de recompensas de bloque. Las reglas que lo garantizan forman parte del consenso y todos los nodos las comprueban en cada bloque.
+El bloque génesis no asigna reservas a fundadores, desarrolladores, inversores ni fundaciones. Los bloques posteriores crean la recompensa de minería prevista, sin una salida adicional de tesorería exigida por el protocolo. Son reglas de emisión: no identifican quién minó una recompensa ni quién recibió monedas existentes mediante una transferencia posterior.
 
 ## ¿Qué contiene el génesis de Blocknet?
 
@@ -49,7 +49,7 @@ El comentario de la función génesis lo explica: "Génesis no tiene transaccion
 ## ¿Cómo descarta el consenso un fondo de desarrollo o tesorería?
 
 <Answer>
-Cada bloque debe empezar con exactamente una coinbase, sin entradas, con comisión cero y una sola salida cuyo importe sea la recompensa de esa altura. No hay lugar para un segundo pago, así que no puede existir una salida para desarrolladores, fundadores o tesorería en la cadena.
+Después del génesis, cada bloque comienza con una transacción coinbase sin entradas, con comisión cero y exactamente una salida igual a la recompensa prevista. Las reglas publicadas no incluyen una salida separada para fundadores o tesorería en esa transacción. Los titulares pueden transferir normalmente los BNT que ya poseen.
 </Answer>
 
 Varias comprobaciones colaboran:
@@ -75,7 +75,7 @@ printf '%s' 'Wired 2026/02/15 - The Nothing That Has the Potential to Be Anythin
 
 El resultado termina en `a94a7f2b8685ff3c7dc76de5ad0f13568629b1f0e0495440c58a3ed3d0d909df`, el mismo valor que muestra el explorador.
 
-**En el código.** El daemon es abierto en [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core). En [`block.go`](https://github.com/blocknetprivacy/core/blob/master/block.go), busca:
+**En el código.** El daemon es abierto en [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core). En [`block.go`](https://github.com/blocknetprivacy/core/blob/5a0a5b510c1dce46f4eeb12c33a291052e44e7b3/block.go), busca:
 
 ```sh
 git clone https://github.com/blocknetprivacy/core.git
@@ -84,6 +84,12 @@ grep -n "func GetGenesisBlock\|func validateGenesisBlock\|func validateCoinbaseC
 ```
 
 `GetGenesisBlock` construye el bloque 0 con lista vacía, `validateGenesisBlock` rechaza cualquier génesis con transacciones y `validateCoinbaseConsensus` exige una salida por el valor de recompensa. En `transaction.go`, `validateCoinbase` y `verifyCommitmentBalance` comprueban la forma coinbase y el equilibrio de las transacciones ordinarias.
+
+## ¿Cómo llegaron los BNT recién minados a otros titulares?
+
+El explorador registra el génesis el 15 de febrero de 2026 a las 20:58:38 EST. El bloque 1 lleva fecha del 20 de febrero de 2026 a las 14:29:20 EST y contiene la primera transacción coinbase. Son registros distintos: el génesis define el punto de partida común y el bloque 1 inicia la emisión remunerada. La recompensa que el explorador muestra para el génesis vacío es el importe del calendario; ninguna salida lo recibe.
+
+Cuando una recompensa de minería se puede gastar, su propietario puede transferir BNT a otra persona. Del mismo modo, un pool envía pagos posteriores a partir de las recompensas recibidas. Estas transferencias redistribuyen monedas existentes; no repiten la emisión. Por tanto, puedes poseer y usar BNT sin haber minado el bloque que lo creó. La [guía de envío y recepción](https://seineminer.com/es/blog/send-receive-blocknet/) explica los pagos habituales y la [guía de oferta](https://seineminer.com/es/blog/blocknet-supply/) el calendario monetario general.
 
 ## ¿Por qué importa un lanzamiento justo a los mineros?
 
@@ -98,7 +104,7 @@ Si acabas de conocer la moneda, [¿qué es Blocknet?](https://seineminer.com/es/
 
 ## ¿Cómo minas Blocknet tú mismo?
 
-Participar en el lanzamiento justo significa minar. La vía más rápida es seine con bntpool.com:
+Para recibir BNT recién emitido mediante minería, utiliza el minero seine con bntpool.com:
 
 1. **Consigue una dirección.** Instala la [billetera de línea de comandos](https://github.com/blocknetprivacy/blocknet/releases/latest) o la [de escritorio](https://github.com/blocknetprivacy/blocknet-gui/releases/latest), copia tu dirección o usa un nombre Blocknet ID como `@name`.
 2. **Descarga seine.** Obtén el archivo para Windows, macOS o Linux en [seineminer.com](https://seineminer.com/es/#download) y descomprímelo. No hay que instalar nada.

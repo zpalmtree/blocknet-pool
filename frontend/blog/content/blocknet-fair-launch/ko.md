@@ -1,14 +1,14 @@
 ---
 title: 'Blocknet의 공정한 출시: 프리마인 없는 코인'
-description: Blocknet은 프리마인, 개발 기금, 트레저리 없이 시작했습니다. 빈 제네시스 블록과 단일 출력 coinbase 규칙을 직접 확인하고 BNT를 채굴하세요.
+description: "Blocknet의 빈 제네시스 블록, 첫 보상과 발행 규칙을 확인하세요. BNT가 어떻게 유통되기 시작했으며 채굴된 코인이 다른 보유자에게 어떻게 전달되는지 알아봅니다."
 tags: [Blocknet, 공정한 출시, 제네시스 블록, 채굴, bntpool]
-sourceHash: 814839500c3d
+sourceHash: a283d654ab64
 translation: draft
 faq:
   - q: 'Blocknet에는 프리마인이 있었나요?'
     a: '없었습니다. 2026년 2월 15일 생성된 제네시스 블록에는 트랜잭션이 하나도 없어 채굴 전에는 코인이 존재하지 않았습니다. 첫 코인은 블록 1의 보상에서 나왔고 이후 모든 BNT는 해당 블록을 채굴한 사람에게 지급됐습니다.'
   - q: 'Blocknet에 개발 기금이나 트레저리가 있나요?'
-    a: '없습니다. 합의 규칙은 블록마다 coinbase 트랜잭션 하나만 허용하며, 정확한 블록 보상 금액의 출력 하나만 가져야 합니다. 개발자, 설립자, 트레저리용 두 번째 출력은 없으며 이를 추가한 블록은 모든 노드가 거부합니다.'
+    a: "공개된 규칙에는 프로토콜이 의무화한 개발 기금이나 재무 기금 배정이 없습니다. 제네시스 이후 각 블록에는 예정된 보상과 같은 coinbase 출력이 하나 있습니다. 이는 신규 발행에 관한 설명이며 이후 보유자의 신원을 말하지 않습니다. BNT 소유자는 개발자에게 자발적으로 지급하는 경우를 포함해 일반 전송을 할 수 있습니다."
   - q: 'Blocknet 제네시스 블록은 언제 생성됐나요?'
     a: '타임스탬프는 2026년 2월 15일 20:58:38 EST, 즉 2월 16일 01:58:38 UTC입니다. 메시지는 "Wired 2026/02/15 - The Nothing That Has the Potential to Be Anything"이며 이전 블록 해시는 이 메시지의 SHA3-256입니다.'
   - q: '공정한 출시를 직접 확인하려면 어떻게 하나요?'
@@ -17,7 +17,7 @@ faq:
     a: 'Windows, macOS, Linux용 seine을 다운로드해 실행하고 Blocknet 주소나 Blocknet ID 짧은 이름을 입력하세요. Enter로 기본 풀 bntpool.com을 선택하면 즉시 채굴합니다. 이후 풀 통계에서 주소를 검색할 수 있습니다.'
 ---
 
-Blocknet은 누구에게도 코인을 배정하지 않고 시작했습니다. 이 글에서는 제네시스 블록의 내용, 프리마인과 개발 기금 및 트레저리를 배제하는 합의 규칙, 탐색기와 코드에서 확인하는 방법, bntpool.com에서 직접 BNT를 채굴하는 방법을 설명합니다.
+BNT가 유통되기 시작한 과정을 살펴봅니다. 빈 제네시스 블록, 첫 채굴 보상, 이후 보유자 간 전송을 차례로 확인합니다. 이 가이드는 출범 기록과 발행 규칙이 무엇을 입증하는지 설명하고, bntpool.com에서 채굴해 새로 발행된 BNT를 받는 방법을 안내합니다.
 
 ## Blocknet에 프리마인이 있었나요?
 
@@ -25,7 +25,7 @@ Blocknet은 누구에게도 코인을 배정하지 않고 시작했습니다. �
 없었습니다. 2026년 2월 15일 생성된 제네시스 블록에는 트랜잭션이 없어 채굴 전 코인도 없었습니다. 블록 1부터 모든 블록은 예정된 정확한 금액을 단일 coinbase 출력으로 지급했습니다. 유통되는 모든 BNT는 작업 증명을 수행한 누군가가 채굴했습니다.
 </Answer>
 
-제네시스나 이후 블록 어디에도 설립자, 개발자, 투자자, 재단 배정이 없습니다. 공급은 오직 블록 보상에서 나오며 이를 강제하는 규칙은 합의의 일부라 모든 노드가 매 블록 검사합니다.
+제네시스 블록은 창립자, 개발자, 투자자 또는 재단에 준비금을 배정하지 않습니다. 이후 블록은 예정된 채굴 보상을 생성하며, 프로토콜이 의무화한 별도의 재무 기금 출력은 없습니다. 이는 발행 규칙입니다. 누가 보상을 채굴했는지, 누가 나중에 기존 코인을 전송받았는지는 밝히지 않습니다.
 
 ## Blocknet 제네시스 블록에는 무엇이 있나요?
 
@@ -49,7 +49,7 @@ Blocknet은 누구에게도 코인을 배정하지 않고 시작했습니다. �
 ## 합의 규칙은 개발 기금과 트레저리를 어떻게 막나요?
 
 <Answer>
-모든 Blocknet 블록은 정확히 하나의 coinbase로 시작해야 합니다. 입력은 없고 수수료는 0이며 출력은 해당 높이의 블록 보상과 같은 하나뿐입니다. 두 번째 지급을 넣을 자리가 없어 개발 기금, 설립자 보상, 트레저리 출력은 체인에 존재할 수 없습니다.
+제네시스 이후 각 블록은 입력이 없고 수수료가 0이며 예정된 보상과 같은 출력이 정확히 하나인 coinbase 거래로 시작합니다. 공개된 규칙은 이 거래에 창립자나 재무 기금을 위한 별도 출력을 두지 않습니다. 보유자는 이미 가진 BNT를 일반 거래로 계속 전송할 수 있습니다.
 </Answer>
 
 여러 검사가 함께 작동합니다.
@@ -75,7 +75,7 @@ printf '%s' 'Wired 2026/02/15 - The Nothing That Has the Potential to Be Anythin
 
 결과는 `a94a7f2b8685ff3c7dc76de5ad0f13568629b1f0e0495440c58a3ed3d0d909df`로 끝나며 블록 0의 탐색기 값과 같습니다.
 
-**코드에서.** 데몬 소스는 [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core)에 있습니다. [`block.go`](https://github.com/blocknetprivacy/core/blob/master/block.go)에서 다음 함수를 찾으세요.
+**코드에서.** 데몬 소스는 [github.com/blocknetprivacy/core](https://github.com/blocknetprivacy/core)에 있습니다. [`block.go`](https://github.com/blocknetprivacy/core/blob/5a0a5b510c1dce46f4eeb12c33a291052e44e7b3/block.go)에서 다음 함수를 찾으세요.
 
 ```sh
 git clone https://github.com/blocknetprivacy/core.git
@@ -84,6 +84,12 @@ grep -n "func GetGenesisBlock\|func validateGenesisBlock\|func validateCoinbaseC
 ```
 
 `GetGenesisBlock`은 빈 목록으로 블록 0을 만들고, `validateGenesisBlock`은 트랜잭션이 있는 블록 0을 거부하며, `validateCoinbaseConsensus`는 보상 금액의 단일 출력을 강제합니다. `transaction.go`의 `validateCoinbase`와 `verifyCommitmentBalance`는 coinbase 구조와 일반 트랜잭션 균형을 검사합니다.
+
+## 새로 채굴된 BNT는 어떻게 다른 보유자에게 전달됐나요?
+
+탐색기는 제네시스 시각을 2026년 2월 15일 20:58:38 EST로 기록합니다. 블록 1의 시각은 2026년 2월 20일 14:29:20 EST이며 첫 coinbase 거래를 포함합니다. 이 둘은 별개의 기록입니다. 제네시스는 공통 시작 블록을 정하고, 블록 1은 보상이 지급되는 발행을 시작합니다. 탐색기에 표시되는 빈 제네시스의 보상은 일정상 금액일 뿐, 이를 받는 출력은 없습니다.
+
+채굴 보상을 사용할 수 있게 되면 소유자는 다른 사람에게 BNT를 전송할 수 있습니다. 풀도 받은 보상에서 나중에 지급금을 보냅니다. 이러한 전송은 기존 코인을 재분배하며 발행을 반복하지 않습니다. 따라서 코인이 처음 생성된 블록을 직접 채굴하지 않아도 BNT를 보유하고 사용할 수 있습니다. [보내기와 받기 가이드](https://seineminer.com/ko/blog/send-receive-blocknet/)는 일반 결제를, [공급량 가이드](https://seineminer.com/ko/blog/blocknet-supply/)는 전체 통화 발행 일정을 설명합니다.
 
 ## 공정한 출시가 채굴자에게 중요한 이유는?
 
@@ -98,7 +104,7 @@ grep -n "func GetGenesisBlock\|func validateGenesisBlock\|func validateCoinbaseC
 
 ## 직접 Blocknet을 채굴하려면?
 
-공정한 출시에 참여하는 방법은 채굴입니다. 가장 빠른 방법은 bntpool.com에서 seine을 쓰는 것입니다.
+채굴을 통해 새로 발행된 BNT를 받으려면 seine 채굴기를 bntpool.com과 함께 사용하세요.
 
 1. **주소를 준비하세요.** 공식 [명령줄 지갑](https://github.com/blocknetprivacy/blocknet/releases/latest)이나 [데스크톱 지갑](https://github.com/blocknetprivacy/blocknet-gui/releases/latest)을 설치해 주소를 복사하거나 `@name` 같은 Blocknet ID를 사용하세요.
 2. **seine을 다운로드하세요.** [seineminer.com](https://seineminer.com/ko/#download)에서 운영체제용 압축 파일을 받아 푸세요. 설치할 것은 없습니다.
