@@ -17,7 +17,7 @@ use crate::stats::PoolStats;
 use crate::store::PoolStore;
 use crate::stratum::StratumServer;
 use crate::telemetry::NamedTimedOperationTracker;
-use crate::validation::{ValidationEngine, ValidationStateStore};
+use crate::validation::{ValidationEngine, ValidationStateStore, CANDIDATE_VALIDATION_WORKERS};
 use pool_common::pow::Argon2PowHasher;
 use pool_common::protocol::{address_network, validate_miner_address, AddressNetwork};
 
@@ -89,7 +89,8 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
     // unmapped a 2 GiB arena ~20 times a minute; each munmap takes the
     // process-wide mmap lock and stalls page faults on every thread, which
     // pushed hot-accept p99 from ~50 ms to ~200 ms in production.
-    let retained_arenas = 1 + cfg.regular_verifier_count() + cfg.audit_verifier_count();
+    let retained_arenas =
+        CANDIDATE_VALIDATION_WORKERS + cfg.regular_verifier_count() + cfg.audit_verifier_count();
     let validation = tokio::task::spawn_blocking(move || {
         Arc::new(ValidationEngine::new_with_state_store(
             validation_cfg,
