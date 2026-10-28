@@ -66,6 +66,8 @@ setting `growth_submit_rate` to 0 (by reload) turns it off. Alerts:
 
 - 2026-10-28 · T3 · live growth-mode test (owner-approved, config reload only): growth_submit_rate lowered to 20/s below the live ~31/s at 04:12:07 UTC; the controller switched on at 04:12:32 (vardiff_target_shares 5, sample_rate 0.08, persisted). Submits fell 31.8 → ~13/s within ~4 min as vardiff enlarged shares while its normal-size rate held 28-34/s (no flapping); 100% Normal; 2,302-2,311 workers throughout. Slow acks unchanged in absolute terms (10 min: >50 ms 132 vs 132, >100 ms 29 vs 77, >250 ms 0 vs 13, mean 11.1 vs 10.9 ms); p99 rose to 60-90 ms only because there were half as many acks. Config restored at 04:29:07; growth mode switched off at 04:29:32 and submits returned to 33.9/s.
 
+- 2026-10-28 · T2 · the 2x replays re-run on the exact deployed revision 2d98924 (branch deploy-growth-20261027, matching /opt/blocknet/blocknet-pool/deploy-info.txt), deployed defaults: 1x → 2x ramp 100% Normal in 2/2 runs (0 transitions, 0 drops, 182/182 candidates answered, p99 1.3-1.4 s, growth on at minute 13.5); 2x restart storm resuming growth mode 100% Normal (126/126 candidates, p99 1.7 s). Control without growth mode: 31% Normal, 55% Emergency, 2.6 drops/s. Raw: perf-results/2026-10-27/pool-verify/replay-deployed-2d98924/.
+
 ## Goal "Done" criteria and evidence (BNTPOOL_VERIFY_GOAL.md, 2026-10-27)
 
 1. *Approved-ready batch with T2 evidence at 2x peak arrival and in a restart
