@@ -155,14 +155,26 @@ impl PowKernel {
 
 /// Compression path override for this host, or `None` for the kernel crate's
 /// default dispatch. AMD Zen 4/Zen 5 (family 19h/1Ah) with AVX-512 use the
-/// streaming kernel Seine mines with on that cohort: it measured 38-46% faster
-/// than every uniform kernel on a Ryzen 9950X3D at 8 and 16 concurrent hashes,
-/// the verifier's regime. The ISA support check stays mandatory.
+/// streaming kernels Seine mines with on those cohorts (+61% over plain
+/// AVX-512 on a Ryzen 7 7700X at 8 concurrent hashes, the verifier's regime).
+/// The ISA support check stays mandatory.
 fn host_kernel() -> Option<CpuKernel> {
     let (vendor, family) = cpu_vendor_family()?;
-    let zen4_or_zen5 = vendor == *b"AuthenticAMD" && matches!(family, 0x19 | 0x1a);
-    (zen4_or_zen5 && CpuKernel::Avx512256Stream.is_supported())
-        .then_some(CpuKernel::Avx512256Stream)
+    if vendor != *b"AuthenticAMD" {
+        return None;
+    }
+    // Zen 4 (family 19h with AVX-512) adds a far L2 prefetch: Seine measured
+    // +5.0% on a Ryzen 7 7700X at 8 workers and +6.9% on an EPYC 9124P; it
+    // costs Zen 5 1-3%, so family 1Ah keeps the plain streaming kernel.
+    let preferred: &[CpuKernel] = match family {
+        0x19 => &[CpuKernel::Avx512256StreamL2, CpuKernel::Avx512256Stream],
+        0x1a => &[CpuKernel::Avx512256Stream],
+        _ => &[],
+    };
+    preferred
+        .iter()
+        .copied()
+        .find(|kernel| kernel.is_supported())
 }
 
 #[cfg(target_arch = "x86_64")]
