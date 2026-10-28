@@ -943,6 +943,8 @@ impl RecoveryAgent {
         if !Path::new(target_cfg.cookie_path.trim()).exists() {
             bail!("target daemon cookie does not exist yet");
         }
+        self.ensure_target_on_active_chain(current, target, &status)
+            .await?;
 
         // Hold the payout sweep lock across the switch so no payout tick can
         // freeze or send a batch mid-cutover, and refuse while any earlier
@@ -971,6 +973,61 @@ impl RecoveryAgent {
         guard.release().await;
         result?;
         Ok(format!("cut over active daemon to {}", target.as_str()))
+    }
+
+    /// Compares the target with the serving daemon before a cutover. A
+    /// serving daemon that is down cannot be compared, and switching away
+    /// from it is the emergency this cutover exists for, so that is allowed.
+    async fn ensure_target_on_active_chain(
+        &self,
+        current: RecoveryInstanceId,
+        target: RecoveryInstanceId,
+        target_status: &RecoveryInstanceStatus,
+    ) -> Result<()> {
+        #[derive(Deserialize)]
+        struct BlockHash {
+            hash: String,
+        }
+        let current_cfg = self.cfg.recovery.instance(current);
+        let target_cfg = self.cfg.recovery.instance(target);
+        let active = match self.daemon_get_status(current_cfg).await {
+            Ok(status) => status,
+            Err(err) => {
+                tracing::warn!(
+                    active = current.as_str(),
+                    error = %err,
+                    "active daemon unreachable; cutting over without a chain comparison"
+                );
+                return Ok(());
+            }
+        };
+        let active_hash = self
+            .daemon_get_json::<BlockHash>(
+                current_cfg,
+                &format!("/api/block/{}", active.chain_height),
+            )
+            .await
+            .context("read the active daemon's tip block")?
+            .hash;
+        let target_hash_at_active_height = match self
+            .daemon_get_json::<BlockHash>(
+                target_cfg,
+                &format!("/api/block/{}", active.chain_height),
+            )
+            .await
+        {
+            Ok(block) => Some(block.hash),
+            Err(_) => None,
+        };
+        ensure_cutover_target_caught_up(
+            target,
+            &CutoverChainCheck {
+                active_height: active.chain_height,
+                active_hash,
+                target_height: target_status.chain_height.unwrap_or(0),
+                target_hash_at_active_height,
+            },
+        )
     }
 
     /// Whether `cfg`'s daemon has `tx_hash` in its mempool or chain.
@@ -1285,6 +1342,45 @@ fn lock_payout_sweeps_for_cutover(url: &str, wait: Duration) -> Result<postgres:
         }
         std::thread::sleep(PAYOUT_LOCK_RETRY);
     }
+}
+
+/// Where the serving daemon's tip is, and the target daemon's view of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CutoverChainCheck {
+    active_height: u64,
+    active_hash: String,
+    target_height: u64,
+    /// The target's canonical block hash at `active_height`, if it has one.
+    target_hash_at_active_height: Option<String>,
+}
+
+/// Refuse to switch the pool to a daemon that is behind the serving one or
+/// on another branch: miners would get older work, and the payout
+/// reconciliation would judge found blocks against the wrong chain.
+fn ensure_cutover_target_caught_up(
+    target: RecoveryInstanceId,
+    check: &CutoverChainCheck,
+) -> Result<()> {
+    if check.target_height < check.active_height {
+        bail!(
+            "refusing cutover to {}: it is at height {} but the active daemon is at {}; wait for it to catch up",
+            target.as_str(),
+            check.target_height,
+            check.active_height,
+        );
+    }
+    let agrees = check
+        .target_hash_at_active_height
+        .as_deref()
+        .is_some_and(|hash| hash.eq_ignore_ascii_case(check.active_hash.trim()));
+    if !agrees {
+        bail!(
+            "refusing cutover to {}: its block at height {} differs from the active daemon's; it is on another branch",
+            target.as_str(),
+            check.active_height,
+        );
+    }
+    Ok(())
 }
 
 /// Refuse a cutover while a payout send's outcome depends on the daemon
@@ -2204,6 +2300,43 @@ mod tests {
             fs::read_link(&active_cookie).expect("read active cookie"),
             new_cookie
         );
+    }
+
+    #[test]
+    fn cutover_requires_the_target_to_be_caught_up_on_the_active_chain() {
+        let check = CutoverChainCheck {
+            active_height: 100,
+            active_hash: "AA11".to_string(),
+            target_height: 101,
+            target_hash_at_active_height: Some("aa11".to_string()),
+        };
+        ensure_cutover_target_caught_up(RecoveryInstanceId::Standby, &check)
+            .expect("a target at or past the active tip on the same chain is fine");
+
+        let behind = CutoverChainCheck {
+            target_height: 97,
+            ..check.clone()
+        };
+        let message = ensure_cutover_target_caught_up(RecoveryInstanceId::Standby, &behind)
+            .expect_err("a lagging target must be refused")
+            .to_string();
+        assert!(message.contains("height 97"), "{message}");
+
+        let forked = CutoverChainCheck {
+            target_hash_at_active_height: Some("bb22".to_string()),
+            ..check.clone()
+        };
+        let message = ensure_cutover_target_caught_up(RecoveryInstanceId::Standby, &forked)
+            .expect_err("a target on another branch must be refused")
+            .to_string();
+        assert!(message.contains("another branch"), "{message}");
+
+        let unknown = CutoverChainCheck {
+            target_hash_at_active_height: None,
+            ..check
+        };
+        ensure_cutover_target_caught_up(RecoveryInstanceId::Standby, &unknown)
+            .expect_err("a target that cannot show the active tip must be refused");
     }
 
     #[test]

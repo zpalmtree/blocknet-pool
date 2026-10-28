@@ -205,8 +205,19 @@ class Deployment:
     def cutover(self, target, address, serving):
         if self.active() != serving:
             raise RuntimeError("routing changed before cutover")
-        self.wait(f"{target} readiness", lambda: self.ready(target, address, serving))
-        self.operation("cutover", target=target)
+        def switch():
+            self.ready(target, address, serving)
+            try:
+                self.operation("cutover", target=target)
+            except RuntimeError as error:
+                # recoveryd refuses a target behind or off the serving chain
+                # before touching routing; a block landing between the checks
+                # causes that, so retry rather than abort mid-deploy.
+                if "refusing cutover" in str(error):
+                    raise NotReady(str(error)) from error
+                raise
+
+        self.wait(f"{target} readiness and cutover", switch)
         switched_at = time.time()
 
         def pool_ready():

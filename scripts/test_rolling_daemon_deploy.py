@@ -248,6 +248,39 @@ class ReadinessTests(unittest.TestCase):
         subject.cutover("standby", "pool-wallet", "primary")
         subject.operation.assert_called_once_with("cutover", target="standby")
 
+    def test_cutover_retries_when_recovery_refuses_a_lagging_target(self):
+        subject = self.subject
+        subject.config.update(daemon_api="http://proxy", daemon_cookie_path="cookie")
+        subject.active = Mock(side_effect=["primary", "standby"])
+        subject.ready = Mock()
+        subject.operation = Mock(side_effect=[
+            RuntimeError("recovery cutover failed: refusing cutover to standby: it is at height 9"),
+            None])
+        subject.fetch = Mock(return_value={"template_id": "new"})
+        subject.node = Mock(return_value={"template_id": "new"})
+        subject.runtime = Mock(return_value={
+            "sampled_at": stamp(time.time() + 1), "jobs": {"last_refresh_success_millis": 0}})
+
+        def retrying_wait(description, probe):
+            while True:
+                try:
+                    return probe()
+                except deploy.NotReady:
+                    continue
+
+        subject.wait = retrying_wait
+        subject.cutover("standby", "pool-wallet", "primary")
+        self.assertEqual(subject.operation.call_count, 2)
+
+    def test_cutover_does_not_retry_other_recovery_failures(self):
+        subject = self.subject
+        subject.active = Mock(return_value="primary")
+        subject.ready = Mock()
+        subject.operation = Mock(side_effect=RuntimeError("recovery cutover failed: nginx reload failed"))
+        subject.wait = lambda description, probe: probe()
+        with self.assertRaisesRegex(RuntimeError, "nginx reload failed"):
+            subject.cutover("standby", "pool-wallet", "primary")
+
     def test_failed_recovery_operation_aborts(self):
         self.subject.rpc = Mock(return_value={"operation": {"id": 8}})
         self.subject.status = Mock(return_value={"operations": [
