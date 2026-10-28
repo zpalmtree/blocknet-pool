@@ -72,6 +72,8 @@ setting `growth_submit_rate` to 0 (by reload) turns it off. Alerts:
 
 - 2026-10-28 · T2 · candidate queue wait measured directly (replay on 2d98924 with a test-only `queue_wait_real_ms` output; histogram buckets, so values are upper bounds): 1x baseline p50 ≤5 ms, p99 ≤0.5 s; 1x → 2x ramp p50 ≤5 ms, p99 ≤1.25 s; 2x restart storm p50 ≤5 ms, p99 ≤1.25 s. All 100% Normal, 0 drops, 0 candidates refused. Regular audits never queue ahead of a candidate; the tail is one candidate waiting for another, because there is one candidate worker and the replay injects 0.05 candidates/s (one per 20 s, far above production) so ~3% land within one ~0.65 s hash of the previous one. At 2x the wait is longer because each hash is slower under memory contention. A second candidate worker would remove the tail, but at production's candidate rate it affects well under 1% of blocks. Raw: perf-results/2026-10-27/pool-verify/replay-candidate-wait-2d98924/.
 
+- 2026-10-28 · T0/T1 · seine v0.2.44 `avx512-256-stream-l2` (far L2 prefetch, Zen 4 only) vs the live v0.2.39 `avx512-256-stream`, rented EPYC 9554P (no 2-channel Zen 4 in stock). T0: full parity suite incl. the production-profile Argon2 reference passes on Zen 4; digests identical at 8 and 48 threads. T1 ABBA, mean time per hash (three runs per kernel, non-overlapping): 8 threads 516 → 511 ms (+1.0%), 11 threads flat, 32 threads 614 → 593 (+3.6%), 48 threads 667 → 632 (+5.6%), 64 threads 689 → 651 (+5.8%). The gain only appears once memory bandwidth is the limit; 48-64 threads on 12 channels matches production's 8 verifiers on 2 channels (production hashes take ~2x a lone hash), so expect ~+5% verifies/s on the 7900X, in line with Seine's +5.0% on a 7700X. Short-window verifies/s were too noisy to read (±2%). Zen 5 keeps the plain streaming kernel (Seine: -1-3%). Raw: perf-results/2026-10-27/pool-verify/pv-9554p-t8/, pv-9554p-wide/.
+
 ## Goal "Done" criteria and evidence (BNTPOOL_VERIFY_GOAL.md, 2026-10-27)
 
 1. *Approved-ready batch with T2 evidence at 2x peak arrival and in a restart
@@ -96,7 +98,9 @@ setting `growth_submit_rate` to 0 (by reload) turns it off. Alerts:
    for the old code at the same load (~1.4x faster).
 4. *No remaining lead with a plausible gain above 5% in verifies/s.* Zen 4
    variant screen: best alternative within ~1%; more verifier threads flat
-   (bandwidth-bound); arena retention and THP vs HugeTLB at most ~1.2%.
+   (bandwidth-bound); arena retention and THP vs HugeTLB at most ~1.2%. Seine
+   v0.2.44's Zen 4 far-L2 prefetch (+~5.7% per hash when bandwidth-bound) is
+   on master and pending rollout.
 
 Not part of these criteria, recorded for completeness: five large farms
 (old seine 0.2.21/0.2.36) left around the 08:56 Stratum restart and did not
