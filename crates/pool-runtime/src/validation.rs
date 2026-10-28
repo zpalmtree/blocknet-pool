@@ -3053,6 +3053,11 @@ mod tests {
         // Block-candidate claims per real second, sent through the candidate
         // lane; their verify latency is reported in real time.
         let candidate_rate = env_f64("VERIFY_REPLAY_CANDIDATE_RATE", 0.05);
+        // Real candidates for distinct heights arrive about a block apart; a
+        // gap keeps Poisson clusters from queueing candidates behind each
+        // other on the single candidate worker (0 = pure Poisson).
+        let candidate_min_gap = env_f64("VERIFY_REPLAY_CANDIDATE_MIN_GAP_S", 0.0) / speedup;
+        let mut last_candidate_at = f64::NEG_INFINITY;
         let candidate_latencies = Arc::new(Mutex::new(Vec::<f64>::new()));
         let mut candidate_refused = 0u64;
         let mut candidate_handles = Vec::new();
@@ -3195,7 +3200,10 @@ mod tests {
             }
             share_id += 1;
             let address = format!("replay-{}", pick.sample(&mut rng));
-            if rng.gen::<f64>() < candidate_rate * speedup / rate {
+            if rng.gen::<f64>() < candidate_rate * speedup / rate
+                && next_at - last_candidate_at >= candidate_min_gap
+            {
+                last_candidate_at = next_at;
                 let started = Instant::now();
                 match engine.submit(
                     ValidationTask {
