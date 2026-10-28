@@ -38,6 +38,8 @@ pub(crate) mod stratum;
 
 pub mod telemetry;
 
+pub(crate) mod tip_latency;
+
 pub(crate) mod growth;
 pub mod validation;
 

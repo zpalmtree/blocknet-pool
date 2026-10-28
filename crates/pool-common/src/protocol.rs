@@ -13,6 +13,8 @@ pub const STRATUM_PROTOCOL_VERSION_CURRENT: u32 = 2;
 pub const CAP_SUBMIT_CLAIMED_HASH: &str = "submit_claimed_hash";
 pub const CAP_DIFFICULTY_HINT: &str = "difficulty_hint";
 pub const CAP_SAME_TEMPLATE_REBIND_V1: &str = "same_template_rebind_v1";
+/// The pool accepts the optional miner-side timing fields on `submit`.
+pub const CAP_SUBMIT_TIMING_V1: &str = "submit_timing_v1";
 const STEALTH_ADDRESS_CHECKSUM_TAG: &[u8] = b"blocknet_stealth_address_checksum";
 const NETWORK_ID_MAINNET: &str = "blocknet_mainnet";
 const NETWORK_ID_TESTNET: &str = "blocknet_testnet";
@@ -74,6 +76,15 @@ pub struct SubmitParams {
     pub miner_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,
+    /// Miner-side delay from the backend finding the nonce to this submit
+    /// being sent, in microseconds (`submit_timing_v1`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub found_to_send_us: Option<u64>,
+    /// Miner-side delay from receiving this share's job to its backends
+    /// hashing it, in microseconds. Sent on the first submit per job
+    /// (`submit_timing_v1`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_switch_us: Option<u64>,
 }
 
 /// Worker names are logged and shown in the UI, so control characters
@@ -96,6 +107,7 @@ pub fn build_login_result() -> LoginResult {
         CAP_SUBMIT_CLAIMED_HASH.to_string(),
         CAP_DIFFICULTY_HINT.to_string(),
         CAP_SAME_TEMPLATE_REBIND_V1.to_string(),
+        CAP_SUBMIT_TIMING_V1.to_string(),
     ];
 
     LoginResult {
@@ -244,10 +256,34 @@ mod tests {
             .iter()
             .any(|c| c == CAP_SUBMIT_CLAIMED_HASH));
         assert!(result.capabilities.iter().any(|c| c == CAP_DIFFICULTY_HINT));
+        assert!(result
+            .capabilities
+            .iter()
+            .any(|c| c == CAP_SUBMIT_TIMING_V1));
         assert_eq!(
             result.required_capabilities,
             vec![CAP_SUBMIT_CLAIMED_HASH.to_string()]
         );
+    }
+
+    #[test]
+    fn submit_params_accept_optional_timing_fields() {
+        let raw = serde_json::json!({
+            "job_id": "job1",
+            "nonce": 7,
+            "claimed_hash": null,
+            "found_to_send_us": 850,
+            "job_switch_us": 1200
+        });
+        let parsed: SubmitParams = serde_json::from_value(raw).expect("parse submit params");
+        assert_eq!(parsed.found_to_send_us, Some(850));
+        assert_eq!(parsed.job_switch_us, Some(1200));
+
+        let legacy: SubmitParams =
+            serde_json::from_value(serde_json::json!({"job_id": "job1", "nonce": 7}))
+                .expect("parse legacy submit params");
+        assert_eq!(legacy.found_to_send_us, None);
+        assert_eq!(legacy.job_switch_us, None);
     }
 
     #[test]

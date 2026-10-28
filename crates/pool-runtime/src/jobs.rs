@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -14,6 +14,8 @@ use crate::config::Config;
 use crate::dev_fee::superseded_assignment_grace;
 use crate::engine::{Job, JobRepository, SubmitJobBinding, SubmitJobResolveError};
 use crate::node::{http_error_body_contains, is_http_status, NodeClient};
+use crate::telemetry::LatencyHistogramSnapshot;
+use crate::tip_latency::{system_time_from_unix_micros, TipLatency, TipTrigger};
 use pool_common::pow::difficulty_to_target;
 
 const NONCE_RANGE_SIZE: u64 = 1_000_000;
@@ -126,6 +128,8 @@ impl SseFrameState {
 struct NewBlockEvent {
     hash: String,
     height: Option<u64>,
+    /// Daemon wall-clock acceptance time (`accepted_at_unix_us`), when sent.
+    accepted_at: Option<SystemTime>,
 }
 
 pub struct JobManager {
@@ -141,6 +145,7 @@ pub struct JobManager {
     tip_events: Mutex<TipEventState>,
     mempool_refresh: Mutex<MempoolRefreshState>,
     last_tip_stream_rotation: Mutex<Option<Instant>>,
+    tip_latency: TipLatency,
 
     tx: broadcast::Sender<Job>,
 }
@@ -341,6 +346,7 @@ impl JobManager {
             tip_events: Mutex::new(TipEventState::default()),
             mempool_refresh: Mutex::new(MempoolRefreshState::default()),
             last_tip_stream_rotation: Mutex::new(None),
+            tip_latency: TipLatency::default(),
             tx,
         })
     }
@@ -461,10 +467,21 @@ impl JobManager {
             return;
         };
 
-        self.on_new_block_event(&event.hash, event.height);
+        let received_at = Instant::now();
+        if let Some(accepted_at) = event.accepted_at {
+            self.tip_latency
+                .record_sse_delivery(accepted_at, SystemTime::now());
+        }
+        self.on_new_block_event(&event.hash, event.height, event.accepted_at, received_at);
     }
 
-    fn on_new_block_event(&self, hash: &str, event_height: Option<u64>) {
+    fn on_new_block_event(
+        &self,
+        hash: &str,
+        event_height: Option<u64>,
+        accepted_at: Option<SystemTime>,
+        received_at: Instant,
+    ) {
         let current_template_height = self
             .state
             .read()
@@ -482,6 +499,10 @@ impl JobManager {
             )
         };
 
+        // Also fills in the daemon acceptance time of a tip first seen through
+        // our own block submission, which needs no refresh of its own.
+        self.tip_latency
+            .observe(TipTrigger::Sse, event_height, accepted_at, received_at);
         if !should_refresh {
             return;
         }
@@ -509,6 +530,11 @@ impl JobManager {
 
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<Job> {
         self.tx.subscribe()
+    }
+
+    /// `tip_refresh` latency histograms (new tip → next job published).
+    pub(crate) fn tip_latency_histograms(&self) -> BTreeMap<String, LatencyHistogramSnapshot> {
+        self.tip_latency.snapshot()
     }
 
     pub(crate) fn runtime_snapshot(&self) -> JobRuntimeSnapshot {
@@ -770,6 +796,12 @@ impl JobManager {
                                 observed_best_hash = %status.best_hash,
                                 "daemon status poll detected a tip change"
                             );
+                            self.tip_latency.observe(
+                                TipTrigger::Poll,
+                                Some(status.chain_height),
+                                None,
+                                Instant::now(),
+                            );
                             self.refresh_template();
                         } else if self.should_refresh_for_mempool(&status, Instant::now()) {
                             tracing::info!(
@@ -953,11 +985,18 @@ impl JobManager {
         loop {
             self.refresh.begin_attempt();
             let pending_tip_generation = self.pending_tip_refresh_generation();
+            let fetch_started_at = Instant::now();
+            self.tip_latency.fetch_started(fetch_started_at);
             let mut fetched = self.fetch_template_job();
             let successful = fetched.is_some();
+            self.tip_latency
+                .record_template_fetch(fetch_started_at.elapsed(), successful);
             let next_work = self.refresh.finish_attempt(work, successful, || {
                 if let Some(fetched) = fetched.take() {
+                    let install_started_at = Instant::now();
                     self.install_refreshed_template(fetched, work.force_rotation);
+                    self.tip_latency
+                        .record_template_install(install_started_at.elapsed());
                     self.acknowledge_tip_refresh(pending_tip_generation);
                 }
             });
@@ -1126,7 +1165,11 @@ impl JobManager {
             self.cfg.stale_submit_grace_duration(),
         );
 
+        let job_height = parsed.height;
         let _ = self.tx.send(parsed);
+        drop(state);
+        self.tip_latency
+            .job_published(job_height, Instant::now(), SystemTime::now());
     }
 
     fn resolve_reward_address(&self) -> Option<String> {
@@ -1437,6 +1480,11 @@ impl JobRepository for JobManager {
     fn template_retained(&self, template_job_id: &str) -> bool {
         self.state.read().jobs.contains_key(template_job_id)
     }
+
+    fn note_block_accepted(&self, height: u64) {
+        self.tip_latency
+            .observe(TipTrigger::OwnBlock, Some(height), None, Instant::now());
+    }
 }
 
 fn parse_template_into_job(template: &crate::node::BlockTemplate) -> anyhow::Result<Job> {
@@ -1582,9 +1630,14 @@ fn parse_new_block_event_payload(payload: &str) -> Option<NewBlockEvent> {
     let value: Value = serde_json::from_str(payload).ok()?;
     let hash = value.get("hash").and_then(Value::as_str)?;
     let height = value.get("height").and_then(Value::as_u64);
+    let accepted_at = value
+        .get("accepted_at_unix_us")
+        .and_then(Value::as_u64)
+        .and_then(system_time_from_unix_micros);
     Some(NewBlockEvent {
         hash: hash.to_string(),
         height,
+        accepted_at,
     })
 }
 
@@ -3442,6 +3495,17 @@ mod tests {
         let parsed = parse_new_block_event_payload(payload).expect("event should parse");
         assert_eq!(parsed.hash, "ABC123");
         assert_eq!(parsed.height, Some(42));
+        assert!(parsed.accepted_at.is_none());
+    }
+
+    #[test]
+    fn parse_new_block_event_payload_reads_daemon_acceptance_time() {
+        let payload = r#"{"hash":"abc","height":42,"source":"gossip","received_at_unix_us":1738800241102345,"accepted_at_unix_us":1738800241290871}"#;
+        let parsed = parse_new_block_event_payload(payload).expect("event should parse");
+        assert_eq!(
+            parsed.accepted_at,
+            Some(UNIX_EPOCH + Duration::from_micros(1_738_800_241_290_871))
+        );
     }
 
     #[test]

@@ -87,18 +87,39 @@ struct ConnState {
 #[derive(Clone)]
 struct OutboundHandle {
     normal_tx: mpsc::Sender<String>,
-    latest_job: Arc<Mutex<Option<String>>>,
+    latest_job: Arc<Mutex<Option<QueuedJob>>>,
     latest_job_notify: Arc<Notify>,
+    job_fanout: Arc<NamedLatencyHistograms>,
+}
+
+/// The newest unwritten job for one connection, with the times the
+/// `job_fanout` latency family measures from.
+#[derive(Debug)]
+struct QueuedJob {
+    payload: String,
+    queued_at: Instant,
+    /// When the template behind a broadcast job was fetched; `None` for jobs
+    /// sent outside a template broadcast (login, difficulty updates).
+    template_created_at: Option<Instant>,
 }
 
 impl OutboundHandle {
+    #[cfg(test)]
     fn new(capacity: usize) -> (Self, mpsc::Receiver<String>) {
+        Self::with_job_fanout(capacity, Arc::default())
+    }
+
+    fn with_job_fanout(
+        capacity: usize,
+        job_fanout: Arc<NamedLatencyHistograms>,
+    ) -> (Self, mpsc::Receiver<String>) {
         let (normal_tx, normal_rx) = mpsc::channel(capacity);
         (
             Self {
                 normal_tx,
                 latest_job: Arc::new(Mutex::new(None)),
                 latest_job_notify: Arc::new(Notify::new()),
+                job_fanout,
             },
             normal_rx,
         )
@@ -779,6 +800,10 @@ pub struct StratumServer {
     post_login_idle_timeout: Duration,
     submit_rate_limit_window: Duration,
     submit_rate_limit_max: usize,
+    /// New template → job written to each connection.
+    job_fanout: Arc<NamedLatencyHistograms>,
+    /// Miner-reported timings carried on submits (`submit_timing_v1`).
+    miner_submit_timing: NamedLatencyHistograms,
 }
 
 impl StratumServer {
@@ -806,6 +831,8 @@ impl StratumServer {
             post_login_idle_timeout: POST_LOGIN_IDLE_TIMEOUT,
             submit_rate_limit_window: SUBMIT_RATE_LIMIT_WINDOW,
             submit_rate_limit_max: SUBMIT_RATE_LIMIT_MAX,
+            job_fanout: Arc::default(),
+            miner_submit_timing: NamedLatencyHistograms::default(),
         })
     }
 
@@ -834,7 +861,37 @@ impl StratumServer {
                 "block_submit".to_string(),
                 self.engine.block_submit_histograms(),
             ),
+            (
+                "block_candidate".to_string(),
+                self.engine.block_candidate_histograms(),
+            ),
+            (
+                "tip_refresh".to_string(),
+                self.jobs.tip_latency_histograms(),
+            ),
+            ("job_fanout".to_string(), self.job_fanout.snapshot()),
+            (
+                "miner_submit_timing".to_string(),
+                self.miner_submit_timing.snapshot(),
+            ),
         ])
+    }
+
+    /// Miner-reported timings are self-reported, so they only feed these
+    /// histograms; nothing is accounted or judged from them.
+    fn record_miner_submit_timing(&self, params: &SubmitParams, route: SubmitQueueRoute) {
+        if let Some(micros) = params.found_to_send_us {
+            let lane = match route {
+                SubmitQueueRoute::Candidate => "found_to_send_candidate",
+                SubmitQueueRoute::Regular => "found_to_send_share",
+            };
+            self.miner_submit_timing
+                .record(lane, Duration::from_micros(micros));
+        }
+        if let Some(micros) = params.job_switch_us {
+            self.miner_submit_timing
+                .record("job_switch", Duration::from_micros(micros));
+        }
     }
 
     pub(crate) fn submit_snapshot(&self) -> SubmitRuntimeSnapshot {
@@ -1117,11 +1174,20 @@ impl StratumServer {
             tokio::spawn(
                 async move { run_tcp_reader(BufReader::new(reader_half), inbound_tx).await },
             );
-        let (outbound, outbound_rx) = OutboundHandle::new(OUTBOUND_QUEUE_CAPACITY);
+        let (outbound, outbound_rx) =
+            OutboundHandle::with_job_fanout(OUTBOUND_QUEUE_CAPACITY, Arc::clone(&self.job_fanout));
         let latest_job = Arc::clone(&outbound.latest_job);
         let latest_job_notify = Arc::clone(&outbound.latest_job_notify);
+        let job_fanout = Arc::clone(&outbound.job_fanout);
         let writer_task = tokio::spawn(async move {
-            run_tcp_outbound_writer(writer_half, outbound_rx, latest_job, latest_job_notify).await
+            run_tcp_outbound_writer(
+                writer_half,
+                outbound_rx,
+                latest_job,
+                latest_job_notify,
+                job_fanout,
+            )
+            .await
         });
         self.handle_conn_loop(
             peer,
@@ -1193,7 +1259,13 @@ impl StratumServer {
                     }
                 }
                 maybe_job = rx_jobs.recv(), if logged_in.is_some() => {
-                    if maybe_job.is_ok() {
+                    if let Ok(job) = maybe_job {
+                        let template_created_at = job.template_created_at;
+                        let job_received_at = Instant::now();
+                        self.job_fanout.record(
+                            "template_to_conn",
+                            job_received_at.saturating_duration_since(template_created_at),
+                        );
                         if let Some((address, worker, difficulty)) = logged_in.as_mut() {
                             let next_difficulty = match retarget_on_job_tick(
                                 Arc::clone(&self.engine),
@@ -1218,17 +1290,27 @@ impl StratumServer {
                                     "stratum difficulty updated on job tick"
                                 );
                             }
+                            let build_started_at = Instant::now();
+                            self.job_fanout.record(
+                                "retarget",
+                                build_started_at.saturating_duration_since(job_received_at),
+                            );
                             if let Some(miner_job) =
                                 self.jobs.build_miner_job(&conn_id, *difficulty, address)
                             {
+                                self.job_fanout.record("build_job", build_started_at.elapsed());
                                 let notify = StratumNotify {
                                     method: "job".to_string(),
                                     params: serde_json::to_value(miner_job)?,
                                 };
-                                if let Err(err) = queue_job_json(&outbound, &notify) {
+                                if let Err(err) =
+                                    queue_job_json(&outbound, &notify, Some(template_created_at))
+                                {
                                     run_result = Err(err);
                                     break;
                                 }
+                                self.job_fanout
+                                    .record("template_to_queued", template_created_at.elapsed());
                             }
                         }
                     }
@@ -1451,6 +1533,7 @@ impl StratumServer {
                             if route == SubmitQueueRoute::Candidate {
                                 self.submit_dispatcher.record_candidate_classified();
                             }
+                            self.record_miner_submit_timing(&params, route);
                             let established_source = route == SubmitQueueRoute::Candidate
                                 && self.engine.source_established(&conn_id);
                             let lane = match route {
@@ -1825,7 +1908,7 @@ impl StratumServer {
                     method: "job".to_string(),
                     params: serde_json::to_value(miner_job)?,
                 };
-                queue_job_json(outbound, &notify)?;
+                queue_job_json(outbound, &notify, None)?;
             }
         }
         Ok(())
@@ -1995,6 +2078,7 @@ fn submit_metadata(params: &SubmitParams) -> SubmitMetadata {
             .as_deref()
             .and_then(nonempty_submit_metadata),
         backend: params.backend.as_deref().and_then(nonempty_submit_metadata),
+        found_to_send_us: params.found_to_send_us,
     }
 }
 
@@ -2068,9 +2152,25 @@ fn queue_json<T: serde::Serialize>(outbound: &OutboundHandle, value: &T) -> Resu
         .map_err(|err| anyhow!("stratum outbound queue saturated: {err}"))
 }
 
-fn queue_job_json<T: serde::Serialize>(outbound: &OutboundHandle, value: &T) -> Result<()> {
+fn queue_job_json<T: serde::Serialize>(
+    outbound: &OutboundHandle,
+    value: &T,
+    template_created_at: Option<Instant>,
+) -> Result<()> {
     let payload = serialize_json_text(value)?;
-    *outbound.latest_job.lock() = Some(payload);
+    let queued_at = Instant::now();
+    let replaced = outbound.latest_job.lock().replace(QueuedJob {
+        payload,
+        queued_at,
+        template_created_at,
+    });
+    if let Some(replaced) = replaced {
+        // The writer never got to the previous job: the miner skipped it.
+        outbound.job_fanout.record(
+            "superseded_unwritten",
+            queued_at.saturating_duration_since(replaced.queued_at),
+        );
+    }
     outbound.latest_job_notify.notify_one();
     Ok(())
 }
@@ -2105,28 +2205,44 @@ async fn run_tcp_reader<R: tokio::io::AsyncRead + Unpin>(
 async fn run_tcp_outbound_writer<W>(
     mut writer: W,
     mut rx: mpsc::Receiver<String>,
-    latest_job: Arc<Mutex<Option<String>>>,
+    latest_job: Arc<Mutex<Option<QueuedJob>>>,
     latest_job_notify: Arc<Notify>,
+    job_fanout: Arc<NamedLatencyHistograms>,
 ) -> Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    while let Some(data) =
+    while let Some(payload) =
         next_outbound_payload(&mut rx, latest_job.as_ref(), &latest_job_notify).await
     {
-        write_tcp_outbound_payload(&mut writer, &data).await?;
+        match payload {
+            OutboundPayload::Line(data) => write_tcp_outbound_payload(&mut writer, &data).await?,
+            OutboundPayload::Job(job) => {
+                write_tcp_outbound_payload(&mut writer, &job.payload).await?;
+                // In gateway mode "written" means handed to the gateway relay.
+                job_fanout.record("queued_to_written", job.queued_at.elapsed());
+                if let Some(template_created_at) = job.template_created_at {
+                    job_fanout.record("template_to_written", template_created_at.elapsed());
+                }
+            }
+        }
     }
     Ok(())
 }
 
+enum OutboundPayload {
+    Line(String),
+    Job(QueuedJob),
+}
+
 async fn next_outbound_payload(
     rx: &mut mpsc::Receiver<String>,
-    latest_job: &Mutex<Option<String>>,
+    latest_job: &Mutex<Option<QueuedJob>>,
     latest_job_notify: &Notify,
-) -> Option<String> {
+) -> Option<OutboundPayload> {
     loop {
-        if let Some(data) = take_priority_job(latest_job) {
-            return Some(data);
+        if let Some(job) = take_priority_job(latest_job) {
+            return Some(OutboundPayload::Job(job));
         }
 
         tokio::select! {
@@ -2134,15 +2250,15 @@ async fn next_outbound_payload(
             _ = latest_job_notify.notified() => {}
             maybe = rx.recv() => {
                 let Some(data) = maybe else {
-                    return take_priority_job(latest_job);
+                    return take_priority_job(latest_job).map(OutboundPayload::Job);
                 };
-                return Some(data);
+                return Some(OutboundPayload::Line(data));
             }
         }
     }
 }
 
-fn take_priority_job(latest_job: &Mutex<Option<String>>) -> Option<String> {
+fn take_priority_job(latest_job: &Mutex<Option<QueuedJob>>) -> Option<QueuedJob> {
     latest_job.lock().take()
 }
 
@@ -2623,9 +2739,10 @@ mod tests {
             .expect("seed payload should enqueue");
         drop(outbound);
 
-        let err = run_tcp_outbound_writer(writer, rx, latest_job, latest_job_notify)
-            .await
-            .expect_err("writer should time out when peer stops reading");
+        let err =
+            run_tcp_outbound_writer(writer, rx, latest_job, latest_job_notify, Arc::default())
+                .await
+                .expect_err("writer should time out when peer stops reading");
 
         assert!(err.to_string().contains("timed out"));
     }
@@ -2636,6 +2753,7 @@ mod tests {
         let (outbound, rx) = OutboundHandle::new(8);
         let latest_job = Arc::clone(&outbound.latest_job);
         let latest_job_notify = Arc::clone(&outbound.latest_job_notify);
+        let job_fanout = Arc::clone(&outbound.job_fanout);
 
         queue_json(
             &outbound,
@@ -2653,6 +2771,7 @@ mod tests {
                 method: "job".to_string(),
                 params: serde_json::json!({"job_id": "old"}),
             },
+            None,
         )
         .expect("old job should enqueue");
         queue_job_json(
@@ -2661,13 +2780,32 @@ mod tests {
                 method: "job".to_string(),
                 params: serde_json::json!({"job_id": "new"}),
             },
+            Some(Instant::now()),
         )
         .expect("new job should replace the stale one");
         drop(outbound);
 
-        run_tcp_outbound_writer(writer, rx, latest_job, latest_job_notify)
-            .await
-            .expect("writer should flush queued payloads");
+        run_tcp_outbound_writer(
+            writer,
+            rx,
+            latest_job,
+            latest_job_notify,
+            Arc::clone(&job_fanout),
+        )
+        .await
+        .expect("writer should flush queued payloads");
+        let fanout = job_fanout.snapshot();
+        for lane in [
+            "superseded_unwritten",
+            "queued_to_written",
+            "template_to_written",
+        ] {
+            assert_eq!(
+                fanout.get(lane).map(|histogram| histogram.count()),
+                Some(1),
+                "{lane} should record the coalesced and written jobs"
+            );
+        }
 
         let mut out = Vec::new();
         reader

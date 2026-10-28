@@ -98,6 +98,8 @@ pub struct ShareRecord {
 pub(crate) struct SubmitMetadata {
     pub miner_version: Option<String>,
     pub backend: Option<String>,
+    /// Miner-reported found → sent delay (`submit_timing_v1`), for block logs.
+    pub found_to_send_us: Option<u64>,
 }
 
 #[derive(Debug, Default)]
@@ -112,6 +114,8 @@ pub(crate) struct BlockSubmitResponse {
     pub accepted: bool,
     pub hash: Option<String>,
     pub height: Option<u64>,
+    /// The daemon's own `timings_us.total` for this submission, when reported.
+    pub daemon_total_us: Option<u64>,
 }
 
 pub(crate) trait NodeApi: Send + Sync + 'static {
@@ -145,6 +149,9 @@ pub(crate) trait JobRepository: Send + Sync + 'static {
     fn template_retained(&self, _template_job_id: &str) -> bool {
         true
     }
+    /// The daemon accepted a block this pool found at `height`; starts the
+    /// own-block → next-job latency measurement.
+    fn note_block_accepted(&self, _height: u64) {}
 }
 
 #[derive(Debug, Clone)]
@@ -562,6 +569,8 @@ pub struct PoolEngine {
     /// Daemon `submitblock` round trips by outcome; the daemon re-hashes the
     /// block, so this is the pool-side half of block propagation delay.
     block_submit_latency: NamedLatencyHistograms,
+    /// Stages of a block candidate from Stratum receipt to daemon acceptance.
+    block_candidate_latency: NamedLatencyHistograms,
 }
 
 /// One proven-fake share (the pool's hash differs from the claimed hash).
@@ -905,6 +914,7 @@ impl PoolEngine {
             _outbox_ownership: claim_found_block_outbox(),
             admission,
             block_submit_latency: NamedLatencyHistograms::default(),
+            block_candidate_latency: NamedLatencyHistograms::default(),
         };
         engine.recover_found_block_outbox();
         engine
@@ -1451,6 +1461,7 @@ impl PoolEngine {
                         }
                     }
                 };
+                let validate_started_at = Instant::now();
                 let validation = match self.validate_task(task, candidate_claim, inline_priority) {
                     Ok(v) => v,
                     Err(err) => {
@@ -1554,6 +1565,15 @@ impl PoolEngine {
                 let mut block_hash = None;
                 let mut block_accepted = false;
                 if validation.is_block_candidate {
+                    let validated_at = Instant::now();
+                    self.block_candidate_latency.record(
+                        "validate",
+                        validated_at.saturating_duration_since(validate_started_at),
+                    );
+                    self.block_candidate_latency.record(
+                        "received_to_validated",
+                        validated_at.saturating_duration_since(received_at),
+                    );
                     let computed_hash = hex::encode(validation.hash);
                     block_hash = Some(computed_hash.clone());
                     let staged_found = FoundBlockRecord {
@@ -1589,14 +1609,19 @@ impl PoolEngine {
                     }
 
                     let submit_started_at = Instant::now();
+                    self.block_candidate_latency.record(
+                        "stage_journal",
+                        submit_started_at.saturating_duration_since(validated_at),
+                    );
                     let submitted = self.node.submit_block(&job, nonce);
+                    let submit_elapsed = submit_started_at.elapsed();
                     self.block_submit_latency.record(
                         match &submitted {
                             Ok(submit) if submit.accepted => "accepted",
                             Ok(_) => "rejected",
                             Err(_) => "error",
                         },
-                        submit_started_at.elapsed(),
+                        submit_elapsed,
                     );
                     let submit = match submitted {
                         Ok(submit) => submit,
@@ -1629,11 +1654,22 @@ impl PoolEngine {
                     }
 
                     if block_accepted {
+                        let received_to_accepted = received_at.elapsed();
+                        self.block_candidate_latency
+                            .record("received_to_daemon_accepted", received_to_accepted);
+                        let daemon_http_overhead = submit.daemon_total_us.map(|daemon_us| {
+                            submit_elapsed.saturating_sub(Duration::from_micros(daemon_us))
+                        });
+                        if let Some(overhead) = daemon_http_overhead {
+                            self.block_candidate_latency
+                                .record("daemon_http_overhead", overhead);
+                        }
                         let mut persisted_found = staged_found.clone();
                         persisted_found.height = submit.height.unwrap_or(staged_found.height);
                         if let Some(network_hash) = submit.hash {
                             persisted_found.hash = network_hash;
                         }
+                        self.jobs.note_block_accepted(persisted_found.height);
                         let accepted_hash = block_hash
                             .clone()
                             .unwrap_or_else(|| persisted_found.hash.clone());
@@ -1645,9 +1681,22 @@ impl PoolEngine {
                             difficulty = job.network_difficulty,
                             nonce,
                             template_age_seconds = job.template_created_at.elapsed().as_secs(),
+                            received_to_accepted_ms = received_to_accepted.as_millis() as u64,
+                            validate_ms = validated_at
+                                .saturating_duration_since(validate_started_at)
+                                .as_millis() as u64,
+                            stage_journal_ms = submit_started_at
+                                .saturating_duration_since(validated_at)
+                                .as_millis() as u64,
+                            daemon_submit_ms = submit_elapsed.as_millis() as u64,
+                            daemon_total_us = submit.daemon_total_us,
+                            miner_found_to_send_us = metadata.found_to_send_us,
                             "POOL BLOCK FOUND"
                         );
+                        let persist_started_at = Instant::now();
                         self.persist_found_block(&staged_found, persisted_found);
+                        self.block_candidate_latency
+                            .record("persist_found_block", persist_started_at.elapsed());
                     } else if let Err(err) = self.clear_found_block_submission(&staged_found) {
                         tracing::warn!(
                             height = staged_found.height,
@@ -2246,6 +2295,10 @@ impl PoolEngine {
 
     pub(crate) fn block_submit_histograms(&self) -> BTreeMap<String, LatencyHistogramSnapshot> {
         self.block_submit_latency.snapshot()
+    }
+
+    pub(crate) fn block_candidate_histograms(&self) -> BTreeMap<String, LatencyHistogramSnapshot> {
+        self.block_candidate_latency.snapshot()
     }
 
     pub(crate) fn session_difficulty(&self, conn_id: &str) -> Option<u64> {
@@ -3256,6 +3309,7 @@ impl NodeApi for InMemoryNode {
             accepted: self.accepted,
             hash: Some(format!("{:x}", nonce)),
             height: Some(job.height),
+            daemon_total_us: None,
         })
     }
 
@@ -6007,6 +6061,7 @@ mod tests {
         let metadata = SubmitMetadata {
             miner_version: Some("0.2.44".to_string()),
             backend: Some("cpu#1".to_string()),
+            ..SubmitMetadata::default()
         };
         engine
             .submit("conn1", "job1".to_string(), 77, Some("ff".repeat(32)))

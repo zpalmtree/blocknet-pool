@@ -4,13 +4,15 @@
 
 mod core;
 
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use pool_common::gateway::{read_frame, write_frame, Frame};
+use pool_common::latency::LATENCY_BUCKET_BOUNDS_MILLIS;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, UnixListener};
 use tokio::sync::mpsc;
@@ -36,6 +38,59 @@ pub struct GatewayMetrics {
     pub rejected_connections: AtomicU64,
     pub miners_on_draining_engines: AtomicU64,
     pub forced_reconnects: AtomicU64,
+    /// Relay latency by lane: event-loop queue wait and handling per event
+    /// kind, and miner socket writes.
+    pub latency: LatencyHistograms,
+}
+
+/// Process-lifetime latency histograms keyed by lane, rendered as one
+/// Prometheus histogram with the pool's shared bucket bounds.
+#[derive(Debug, Default)]
+pub struct LatencyHistograms {
+    lanes: Mutex<BTreeMap<&'static str, LatencyHistogram>>,
+}
+
+#[derive(Debug)]
+struct LatencyHistogram {
+    counts: [u64; LATENCY_BUCKET_BOUNDS_MILLIS.len() + 1],
+    sum_micros: u64,
+}
+
+impl LatencyHistograms {
+    pub fn record(&self, lane: &'static str, elapsed: Duration) {
+        let micros = elapsed.as_micros().min(u64::MAX as u128) as u64;
+        let idx = LATENCY_BUCKET_BOUNDS_MILLIS
+            .partition_point(|bound| bound.saturating_mul(1_000) < micros);
+        let mut lanes = self.lanes.lock().unwrap_or_else(|err| err.into_inner());
+        let histogram = lanes.entry(lane).or_insert(LatencyHistogram {
+            counts: [0; LATENCY_BUCKET_BOUNDS_MILLIS.len() + 1],
+            sum_micros: 0,
+        });
+        histogram.counts[idx] = histogram.counts[idx].saturating_add(1);
+        histogram.sum_micros = histogram.sum_micros.saturating_add(micros);
+    }
+
+    fn render(&self, out: &mut String, name: &str) {
+        let lanes = self.lanes.lock().unwrap_or_else(|err| err.into_inner());
+        for (lane, histogram) in lanes.iter() {
+            let mut cumulative = 0u64;
+            for (idx, count) in histogram.counts.iter().enumerate() {
+                cumulative = cumulative.saturating_add(*count);
+                let le = LATENCY_BUCKET_BOUNDS_MILLIS
+                    .get(idx)
+                    .map(u64::to_string)
+                    .unwrap_or_else(|| "+Inf".to_string());
+                out.push_str(&format!(
+                    "{name}_bucket{{lane=\"{lane}\",le=\"{le}\"}} {cumulative}\n"
+                ));
+            }
+            out.push_str(&format!(
+                "{name}_sum{{lane=\"{lane}\"}} {}\n",
+                histogram.sum_micros as f64 / 1_000.0
+            ));
+            out.push_str(&format!("{name}_count{{lane=\"{lane}\"}} {cumulative}\n"));
+        }
+    }
 }
 
 impl GatewayMetrics {
@@ -77,7 +132,34 @@ impl GatewayMetrics {
         ] {
             out.push_str(&format!("{name} {}\n", value.load(Ordering::Relaxed)));
         }
+        self.latency
+            .render(&mut out, "blocknet_pool_gateway_latency_millis");
         out
+    }
+}
+
+/// An event stamped when its reader task produced it, so the core loop's
+/// queue wait is measurable.
+struct TimedEvent {
+    at: Instant,
+    event: Event,
+}
+
+impl TimedEvent {
+    fn now(event: Event) -> Self {
+        Self {
+            at: Instant::now(),
+            event,
+        }
+    }
+}
+
+/// Latency lanes (queue wait, handling) for the event kinds on the relay path.
+fn event_lanes(event: &Event) -> Option<(&'static str, &'static str)> {
+    match event {
+        Event::EngineFrame { .. } => Some(("engine_frame_wait", "engine_frame_handle")),
+        Event::MinerLine { .. } => Some(("miner_line_wait", "miner_line_handle")),
+        _ => None,
     }
 }
 
@@ -93,7 +175,7 @@ pub async fn run(
     max_miners: usize,
     metrics: Arc<GatewayMetrics>,
 ) -> Result<()> {
-    let (events_tx, mut events_rx) = mpsc::channel::<Event>(EVENT_QUEUE);
+    let (events_tx, mut events_rx) = mpsc::channel::<TimedEvent>(EVENT_QUEUE);
     let tick = timings.tick;
     let mut gateway = Gateway::new(timings, Arc::clone(&metrics));
 
@@ -108,14 +190,22 @@ pub async fn run(
         let mut interval = tokio::time::interval(tick);
         loop {
             interval.tick().await;
-            if events_tx.send(Event::Tick).await.is_err() {
+            if events_tx.send(TimedEvent::now(Event::Tick)).await.is_err() {
                 return;
             }
         }
     });
 
-    while let Some(event) = events_rx.recv().await {
-        gateway.handle(event, Instant::now());
+    while let Some(TimedEvent { at, event }) = events_rx.recv().await {
+        let now = Instant::now();
+        let lanes = event_lanes(&event);
+        gateway.handle(event, now);
+        if let Some((wait_lane, handle_lane)) = lanes {
+            metrics
+                .latency
+                .record(wait_lane, now.saturating_duration_since(at));
+            metrics.latency.record(handle_lane, now.elapsed());
+        }
         if miners.is_finished() || engines.is_finished() {
             break;
         }
@@ -131,7 +221,7 @@ pub async fn run(
 
 async fn accept_miners(
     listener: TcpListener,
-    events: mpsc::Sender<Event>,
+    events: mpsc::Sender<TimedEvent>,
     max_miners: usize,
     metrics: Arc<GatewayMetrics>,
 ) -> Result<()> {
@@ -148,21 +238,26 @@ async fn accept_miners(
         let (reader, mut writer) = stream.into_split();
         let (tx, mut rx) = mpsc::channel::<MinerOut>(MINER_QUEUE);
         if events
-            .send(Event::MinerConnected { conn, peer, tx })
+            .send(TimedEvent::now(Event::MinerConnected { conn, peer, tx }))
             .await
             .is_err()
         {
             return Ok(());
         }
+        let write_metrics = Arc::clone(&metrics);
         tokio::spawn(async move {
             while let Some(out) = rx.recv().await {
                 match out {
                     MinerOut::Line(line) => {
                         let mut bytes = line.into_bytes();
                         bytes.push(b'\n');
+                        let write_started_at = Instant::now();
                         if writer.write_all(&bytes).await.is_err() {
                             break;
                         }
+                        write_metrics
+                            .latency
+                            .record("miner_write", write_started_at.elapsed());
                     }
                     MinerOut::Close => break,
                 }
@@ -178,7 +273,7 @@ async fn read_miner(
     conn: u64,
     peer: SocketAddr,
     reader: tokio::net::tcp::OwnedReadHalf,
-    events: mpsc::Sender<Event>,
+    events: mpsc::Sender<TimedEvent>,
 ) {
     let mut reader = BufReader::new(reader);
     let mut line = Vec::with_capacity(256);
@@ -206,17 +301,19 @@ async fn read_miner(
                 } else {
                     Event::MinerLine { conn, line: text }
                 };
-                if events.send(event).await.is_err() {
+                if events.send(TimedEvent::now(event)).await.is_err() {
                     return;
                 }
             }
             Err(_) => break,
         }
     }
-    let _ = events.send(Event::MinerClosed { conn }).await;
+    let _ = events
+        .send(TimedEvent::now(Event::MinerClosed { conn }))
+        .await;
 }
 
-async fn accept_engines(listener: UnixListener, events: mpsc::Sender<Event>) -> Result<()> {
+async fn accept_engines(listener: UnixListener, events: mpsc::Sender<TimedEvent>) -> Result<()> {
     let mut next_engine = 1u64;
     loop {
         let (stream, _) = listener.accept().await?;
@@ -225,7 +322,7 @@ async fn accept_engines(listener: UnixListener, events: mpsc::Sender<Event>) -> 
         let (mut reader, mut writer) = stream.into_split();
         let (tx, mut rx) = mpsc::channel::<Frame>(ENGINE_QUEUE);
         if events
-            .send(Event::EngineConnected { engine, tx })
+            .send(TimedEvent::now(Event::EngineConnected { engine, tx }))
             .await
             .is_err()
         {
@@ -244,7 +341,7 @@ async fn accept_engines(listener: UnixListener, events: mpsc::Sender<Event>) -> 
                 match read_frame(&mut reader).await {
                     Ok(Some(frame)) => {
                         if events
-                            .send(Event::EngineFrame { engine, frame })
+                            .send(TimedEvent::now(Event::EngineFrame { engine, frame }))
                             .await
                             .is_err()
                         {
@@ -258,7 +355,41 @@ async fn accept_engines(listener: UnixListener, events: mpsc::Sender<Event>) -> 
                     }
                 }
             }
-            let _ = events.send(Event::EngineClosed { engine }).await;
+            let _ = events
+                .send(TimedEvent::now(Event::EngineClosed { engine }))
+                .await;
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn latency_histograms_render_cumulative_prometheus_buckets() {
+        let metrics = GatewayMetrics::default();
+        metrics
+            .latency
+            .record("miner_write", Duration::from_micros(400));
+        metrics
+            .latency
+            .record("miner_write", Duration::from_millis(3));
+        let out = metrics.render();
+        assert!(out.contains(
+            "blocknet_pool_gateway_latency_millis_bucket{lane=\"miner_write\",le=\"1\"} 1\n"
+        ));
+        assert!(out.contains(
+            "blocknet_pool_gateway_latency_millis_bucket{lane=\"miner_write\",le=\"5\"} 2\n"
+        ));
+        assert!(out.contains(
+            "blocknet_pool_gateway_latency_millis_bucket{lane=\"miner_write\",le=\"+Inf\"} 2\n"
+        ));
+        assert!(
+            out.contains("blocknet_pool_gateway_latency_millis_sum{lane=\"miner_write\"} 3.4\n")
+        );
+        assert!(
+            out.contains("blocknet_pool_gateway_latency_millis_count{lane=\"miner_write\"} 2\n")
+        );
     }
 }

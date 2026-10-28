@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::engine::{BlockSubmitResponse, Job, NodeApi};
+use crate::telemetry::LatencyHistogramSnapshot;
 
 const NODE_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 const WALLET_SEND_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
@@ -204,6 +205,15 @@ struct SubmitBlockRawResponse {
     pub hash: String,
     #[serde(default)]
     pub height: u64,
+    /// Daemon stage timings (blocknet `timings_us`); absent on older daemons.
+    #[serde(default)]
+    pub timings_us: Option<SubmitBlockTimings>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct SubmitBlockTimings {
+    #[serde(default)]
+    total: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -401,6 +411,20 @@ impl NodeClient {
         Ok(status)
     }
 
+    /// Daemon block-path latency histograms (`GET /api/perf/latency`), keyed
+    /// by family then lane. Older daemons answer 404.
+    pub fn get_perf_latency(
+        &self,
+    ) -> Result<BTreeMap<String, BTreeMap<String, LatencyHistogramSnapshot>>> {
+        #[derive(Deserialize)]
+        struct PerfLatency {
+            #[serde(default)]
+            families: BTreeMap<String, BTreeMap<String, LatencyHistogramSnapshot>>,
+        }
+        let resp: PerfLatency = self.get_json("/api/perf/latency")?;
+        Ok(resp.families)
+    }
+
     pub(crate) fn get_block_template(&self, reward_address: Option<&str>) -> Result<BlockTemplate> {
         let mut path = "/api/mining/blocktemplate".to_string();
         if let Some(address) = reward_address.filter(|v| !v.trim().is_empty()) {
@@ -548,6 +572,7 @@ impl NodeClient {
             } else {
                 Some(resp.height)
             },
+            daemon_total_us: resp.timings_us.and_then(|timings| timings.total),
         }))
     }
 
@@ -936,6 +961,7 @@ impl NodeApi for NodeClient {
             } else {
                 Some(resp.height)
             },
+            daemon_total_us: resp.timings_us.and_then(|timings| timings.total),
         })
     }
 
@@ -1020,6 +1046,23 @@ mod tests {
         .expect("generation-aware status should parse");
         assert_eq!(current.mempool_size, 3);
         assert_eq!(current.mempool_generation, Some(17));
+    }
+
+    #[test]
+    fn submit_block_response_reads_daemon_total_timing() {
+        let resp: SubmitBlockRawResponse = serde_json::from_str(
+            r#"{"accepted":true,"hash":"ab","height":9,"timings_us":{"process":180000,"total":185100}}"#,
+        )
+        .expect("parse submit response");
+        assert_eq!(
+            resp.timings_us.and_then(|timings| timings.total),
+            Some(185_100)
+        );
+
+        let legacy: SubmitBlockRawResponse =
+            serde_json::from_str(r#"{"accepted":true,"hash":"ab","height":9}"#)
+                .expect("parse legacy submit response");
+        assert!(legacy.timings_us.is_none());
     }
 
     #[test]

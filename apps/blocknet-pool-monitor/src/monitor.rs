@@ -137,6 +137,8 @@ struct MonitorSnapshot {
     api_performance: ApiPerformanceSnapshot,
     stratum_runtime_tasks: BTreeMap<String, TimedOperationSummary>,
     stratum_latency: BTreeMap<String, BTreeMap<String, LatencyHistogramSnapshot>>,
+    /// Daemon block-path histograms (families are already `daemon_*`).
+    daemon_latency: BTreeMap<String, BTreeMap<String, LatencyHistogramSnapshot>>,
     validation: Option<ValidationSnapshot>,
     growth_mode_active: Option<bool>,
     growth_normal_size_submits_per_s: Option<f64>,
@@ -356,6 +358,7 @@ struct MonitorSample {
     stratum_probe: ProbeOutcome<()>,
     db_probe: ProbeOutcome<()>,
     daemon_status: ProbeOutcome<NodeStatus>,
+    daemon_latency: Option<BTreeMap<String, BTreeMap<String, LatencyHistogramSnapshot>>>,
     wallet_probe: ProbeOutcome<()>,
     miner_balance_probe: Option<ProbeOutcome<u64>>,
     runtime_snapshot: Option<PersistedRuntimeSnapshot>,
@@ -512,6 +515,11 @@ impl MonitorRuntime {
         } else {
             ProbeOutcome::default()
         };
+        let daemon_latency = if daemon.error.is_none() {
+            self.probe_daemon_latency().await
+        } else {
+            None
+        };
         let miner_balance = if self.cfg.balance_probe_address.trim().is_empty() {
             None
         } else {
@@ -580,6 +588,7 @@ impl MonitorRuntime {
             stratum_probe: stratum,
             db_probe: db,
             daemon_status: daemon,
+            daemon_latency,
             wallet_probe: wallet,
             miner_balance_probe: miner_balance,
             runtime_snapshot,
@@ -1131,6 +1140,9 @@ impl MonitorRuntime {
         metrics.stratum_latency = runtime
             .map(|snapshot| snapshot.latency.clone())
             .unwrap_or_default();
+        if let Some(daemon_latency) = sample.daemon_latency.as_ref() {
+            metrics.daemon_latency = daemon_latency.clone();
+        }
         metrics.validation = runtime.map(|snapshot| snapshot.validation);
         metrics.growth_mode_active = runtime.map(|snapshot| snapshot.submit.growth_mode_active);
         metrics.growth_normal_size_submits_per_s =
@@ -1476,6 +1488,22 @@ impl MonitorRuntime {
             Ok(Ok(Err(err))) => ProbeOutcome::err(err.to_string()),
             Ok(Err(err)) => ProbeOutcome::err(format!("join error: {err}")),
             Err(_) => ProbeOutcome::err("daemon probe timed out"),
+        }
+    }
+
+    /// Best effort: a daemon without `/api/perf/latency` just exports none.
+    async fn probe_daemon_latency(
+        &self,
+    ) -> Option<BTreeMap<String, BTreeMap<String, LatencyHistogramSnapshot>>> {
+        let node = Arc::clone(&self.node);
+        match tokio::time::timeout(
+            LOCAL_DAEMON_PROBE_TIMEOUT,
+            tokio::task::spawn_blocking(move || node.get_perf_latency()),
+        )
+        .await
+        {
+            Ok(Ok(Ok(families))) => Some(families),
+            _ => None,
         }
     }
 
@@ -2521,7 +2549,11 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
         "task",
         &snapshot.stratum_runtime_tasks,
     );
-    for (family, by_lane) in &snapshot.stratum_latency {
+    for (family, by_lane) in snapshot
+        .stratum_latency
+        .iter()
+        .chain(&snapshot.daemon_latency)
+    {
         render_latency_histograms(
             &mut out,
             &format!("blocknet_pool_monitor_{family}_millis"),
@@ -3160,6 +3192,17 @@ mod tests {
                 },
             )]),
         )]);
+        snapshot.daemon_latency = BTreeMap::from([(
+            "daemon_submit_block".to_string(),
+            BTreeMap::from([(
+                "total".to_string(),
+                pool_runtime::telemetry::LatencyHistogramSnapshot {
+                    bounds_millis: vec![100, 250],
+                    counts: vec![0, 1, 0],
+                    sum_micros: 185_000,
+                },
+            )]),
+        )]);
         snapshot.validation = Some(ValidationSnapshot {
             overload_mode: pool_runtime::validation::OverloadMode::Emergency,
             overload_emergency_millis_total: 90_500,
@@ -3180,6 +3223,8 @@ mod tests {
             "blocknet_pool_monitor_validation_hash_millis_bucket{lane=\"sync\",le=\"+Inf\"} 6",
             "blocknet_pool_monitor_validation_hash_millis_sum{lane=\"sync\"} 9500",
             "blocknet_pool_monitor_validation_hash_millis_count{lane=\"sync\"} 6",
+            "blocknet_pool_monitor_daemon_submit_block_millis_bucket{lane=\"total\",le=\"250\"} 1",
+            "blocknet_pool_monitor_daemon_submit_block_millis_sum{lane=\"total\"} 185",
             "blocknet_pool_monitor_validation_overload_mode 2",
             "blocknet_pool_monitor_validation_overload_seconds_total{mode=\"emergency\"} 90.5",
             "blocknet_pool_monitor_validation_overload_transitions_total 7",
