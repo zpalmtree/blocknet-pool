@@ -35,6 +35,11 @@ const MAX_ASSIGNMENT_AGE: Duration = Duration::from_secs(10 * 60);
 const SSE_RETRY_DELAY_MIN: Duration = Duration::from_millis(100);
 const SSE_RETRY_DELAY_MAX: Duration = Duration::from_secs(10);
 const SSE_HEALTHY_CONNECTION_MIN_DURATION: Duration = Duration::from_secs(5);
+/// How long a daemon must keep offering a template below the current job
+/// before miners are moved to it. A lower height usually means a lagging
+/// daemon (e.g. a standby just switched to), whose work is already stale; a
+/// real reorg to a shorter, heavier chain persists and is then followed.
+const TEMPLATE_HEIGHT_REGRESSION_CONFIRM: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct MinerJob {
@@ -152,6 +157,9 @@ pub struct JobManager {
     tip_events: Mutex<TipEventState>,
     mempool_refresh: Mutex<MempoolRefreshState>,
     last_tip_stream_rotation: Mutex<Option<Instant>>,
+    /// Lower template height first offered and when (see
+    /// `TEMPLATE_HEIGHT_REGRESSION_CONFIRM`).
+    template_height_regression: Mutex<Option<(u64, Instant)>>,
     tip_latency: TipLatency,
 
     tx: broadcast::Sender<Job>,
@@ -354,6 +362,7 @@ impl JobManager {
             tip_events: Mutex::new(TipEventState::default()),
             mempool_refresh: Mutex::new(MempoolRefreshState::default()),
             last_tip_stream_rotation: Mutex::new(None),
+            template_height_regression: Mutex::new(None),
             tip_latency: TipLatency::default(),
             tx,
         })
@@ -1085,12 +1094,27 @@ impl JobManager {
             mempool_generation,
             lease,
         } = fetched;
-        if let Some(chain_height) = parsed.height.checked_sub(1) {
-            self.node.observe_chain_height(chain_height);
-        }
 
         let mut state = self.state.write();
         let now = Instant::now();
+        if let Some(current_height) = state.current.as_ref().map(|job| job.height) {
+            if !accept_template_height(
+                &mut self.template_height_regression.lock(),
+                current_height,
+                parsed.height,
+                now,
+            ) {
+                tracing::warn!(
+                    current_height,
+                    fetched_height = parsed.height,
+                    "daemon template is below the current job; keeping the current job unless the lower height persists"
+                );
+                return;
+            }
+        }
+        if let Some(chain_height) = parsed.height.checked_sub(1) {
+            self.node.observe_chain_height(chain_height);
+        }
         if let Some(current) = state.current.as_ref() {
             if same_template_identity(current, &parsed) && !force_rotation {
                 let current_id = current.id.clone();
@@ -1731,6 +1755,28 @@ fn should_refresh_for_new_block_event(
     });
     mark_tip_refresh_pending(state);
     true
+}
+
+/// Whether a fetched template may replace a current job at `current_height`.
+fn accept_template_height(
+    regression: &mut Option<(u64, Instant)>,
+    current_height: u64,
+    fetched_height: u64,
+    now: Instant,
+) -> bool {
+    if fetched_height >= current_height {
+        *regression = None;
+        return true;
+    }
+    match regression {
+        Some((height, since)) if *height == fetched_height => {
+            now.saturating_duration_since(*since) >= TEMPLATE_HEIGHT_REGRESSION_CONFIRM
+        }
+        _ => {
+            *regression = Some((fetched_height, now));
+            false
+        }
+    }
 }
 
 fn mark_tip_refresh_pending(state: &mut TipEventState) -> u64 {
@@ -3604,6 +3650,37 @@ mod tests {
         let mut different_target = base.clone();
         different_target.network_target[0] ^= 0xff;
         assert!(!same_template_identity(&base, &different_target));
+    }
+
+    #[test]
+    fn template_below_the_current_job_is_held_until_it_persists() {
+        let start = Instant::now();
+        let mut regression = None;
+        assert!(accept_template_height(&mut regression, 100, 101, start));
+        assert!(accept_template_height(&mut regression, 100, 100, start));
+        assert!(!accept_template_height(&mut regression, 100, 97, start));
+        assert!(!accept_template_height(
+            &mut regression,
+            100,
+            97,
+            start + Duration::from_secs(10)
+        ));
+        // A different lower height restarts the wait.
+        assert!(!accept_template_height(
+            &mut regression,
+            100,
+            98,
+            start + Duration::from_secs(20)
+        ));
+        assert!(accept_template_height(
+            &mut regression,
+            100,
+            98,
+            start + Duration::from_secs(20) + TEMPLATE_HEIGHT_REGRESSION_CONFIRM
+        ));
+        // Catching up clears it.
+        assert!(accept_template_height(&mut regression, 98, 101, start));
+        assert!(regression.is_none());
     }
 
     #[test]
