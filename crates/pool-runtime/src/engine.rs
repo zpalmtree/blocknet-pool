@@ -819,6 +819,7 @@ impl PoolEngine {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn record_prequeue_reject(
         &self,
         conn_id: &str,
@@ -827,6 +828,7 @@ impl PoolEngine {
         claimed_hash_hex: Option<&str>,
         received_at: Instant,
         reason: &str,
+        metadata: &SubmitMetadata,
     ) {
         let Some(session) = self.sessions.lock().get(conn_id).cloned() else {
             return;
@@ -854,6 +856,7 @@ impl PoolEngine {
                 replay,
                 reject_reason: Some(reason),
             },
+            metadata,
         );
     }
 
@@ -1244,6 +1247,7 @@ impl PoolEngine {
                     nonce,
                     fallback_difficulty,
                     &err_text,
+                    &metadata,
                 );
                 return Err(anyhow!(err_text));
             }
@@ -1260,6 +1264,7 @@ impl PoolEngine {
                     nonce,
                     share_difficulty,
                     "job not assigned to this miner",
+                    &metadata,
                 );
                 return Err(anyhow!("job not assigned to this miner"));
             }
@@ -1272,6 +1277,7 @@ impl PoolEngine {
                     nonce,
                     share_difficulty,
                     "nonce out of assigned range",
+                    &metadata,
                 );
                 return Err(anyhow!("nonce out of assigned range"));
             }
@@ -1296,6 +1302,7 @@ impl PoolEngine {
                 nonce,
                 share_difficulty,
                 "duplicate share",
+                &metadata,
             );
             return Err(anyhow!("duplicate share"));
         }
@@ -1311,6 +1318,7 @@ impl PoolEngine {
                         nonce,
                         share_difficulty,
                         &err,
+                        &metadata,
                     );
                     return Err(anyhow!(err));
                 }
@@ -1326,6 +1334,7 @@ impl PoolEngine {
                 nonce,
                 share_difficulty,
                 "claimed hash required",
+                &metadata,
             );
             return Err(anyhow!("claimed hash required"));
         }
@@ -1341,6 +1350,7 @@ impl PoolEngine {
                     nonce,
                     share_difficulty,
                     "duplicate share",
+                    &metadata,
                 );
                 return Err(anyhow!("duplicate share"));
             }
@@ -1352,6 +1362,7 @@ impl PoolEngine {
                     nonce,
                     share_difficulty,
                     &err.to_string(),
+                    &metadata,
                 );
                 return Err(err);
             }
@@ -1379,6 +1390,7 @@ impl PoolEngine {
                     nonce,
                     share_difficulty,
                     &message,
+                    &metadata,
                 );
                 return Err(anyhow!(message));
             }
@@ -1474,6 +1486,7 @@ impl PoolEngine {
                                 }),
                                 reject_reason: Some(&err.to_string()),
                             },
+                            &metadata,
                         );
                         return Err(err);
                     }
@@ -1523,6 +1536,7 @@ impl PoolEngine {
                             }),
                             reject_reason: Some(reason),
                         },
+                        &metadata,
                     );
                     if validation.followup_action == ValidationFollowupAction::Quarantine {
                         self.trigger_forced_validation_quarantine(
@@ -1569,6 +1583,7 @@ impl PoolEngine {
                                 }),
                                 reject_reason: Some(&err.to_string()),
                             },
+                            &metadata,
                         );
                         return Err(err);
                     }
@@ -1603,6 +1618,7 @@ impl PoolEngine {
                                     }),
                                     reject_reason: Some(&err.to_string()),
                                 },
+                                &metadata,
                             );
                             return Err(err);
                         }
@@ -1697,6 +1713,7 @@ impl PoolEngine {
                         nonce,
                         share_difficulty,
                         "claimed hash required",
+                        &metadata,
                     );
                     return Err(anyhow!("claimed hash required"));
                 }
@@ -1709,6 +1726,7 @@ impl PoolEngine {
                     nonce,
                     share_difficulty,
                     Some("low difficulty share"),
+                    &metadata,
                 );
                 return Err(anyhow!("low difficulty share"));
             }
@@ -1896,6 +1914,7 @@ impl PoolEngine {
         nonce: u64,
         difficulty: u64,
         reject_reason: Option<&str>,
+        metadata: &SubmitMetadata,
     ) {
         self.persist_rejected_share_with_evidence(
             session,
@@ -1906,6 +1925,7 @@ impl PoolEngine {
                 reject_reason,
                 ..RejectedShareEvidence::default()
             },
+            metadata,
         );
     }
 
@@ -1916,12 +1936,13 @@ impl PoolEngine {
         nonce: u64,
         difficulty: u64,
         evidence: RejectedShareEvidence<'_>,
+        metadata: &SubmitMetadata,
     ) {
         let claimed_hash = evidence
             .claimed_hash_hex
             .and_then(|value| parse_hash_hex(value).ok())
             .map(hex::encode);
-        if let Err(err) = self.store.add_share_with_replay(
+        if let Err(err) = self.store.add_share_with_replay_metadata(
             ShareRecord {
                 job_id: job_id.to_string(),
                 miner: session.address.clone(),
@@ -1938,6 +1959,7 @@ impl PoolEngine {
                 created_at: SystemTime::now(),
             },
             evidence.replay,
+            metadata,
         ) {
             tracing::warn!(
                 address = %session.address,
@@ -1957,8 +1979,9 @@ impl PoolEngine {
         nonce: u64,
         difficulty: u64,
         error: &str,
+        metadata: &SubmitMetadata,
     ) {
-        self.persist_rejected_share(session, job_id, nonce, difficulty, Some(error));
+        self.persist_rejected_share(session, job_id, nonce, difficulty, Some(error), metadata);
     }
 
     pub(crate) fn recover_found_block_outbox(&self) {
@@ -2869,6 +2892,8 @@ fn clear_found_block_outbox_record(path: &PathBuf, found: &FoundBlockRecord) -> 
 pub(crate) struct InMemoryStore {
     seen: Mutex<HashSet<(String, u64)>>,
     shares: Mutex<Vec<ShareRecord>>,
+    /// (miner_version, backend) recorded with each metadata-carrying insert.
+    share_metadata: Mutex<Vec<(Option<String>, Option<String>)>>,
     blocks: Mutex<Vec<FoundBlockRecord>>,
     address_risk: Mutex<HashMap<String, AddressRiskState>>,
     vardiff_hints: Mutex<HashMap<(String, String), (u64, SystemTime)>>,
@@ -2881,6 +2906,10 @@ pub(crate) struct InMemoryStore {
 impl InMemoryStore {
     pub(crate) fn shares(&self) -> Vec<ShareRecord> {
         self.shares.lock().clone()
+    }
+
+    pub(crate) fn share_metadata(&self) -> Vec<(Option<String>, Option<String>)> {
+        self.share_metadata.lock().clone()
     }
 
     pub(crate) fn fail_next_share_insert_after_commit(&self) {
@@ -2963,6 +2992,18 @@ impl ShareStore for InMemoryStore {
         _replay: Option<ShareReplayData>,
     ) -> Result<()> {
         self.add_share(share)
+    }
+
+    fn add_share_with_replay_metadata(
+        &self,
+        share: ShareRecord,
+        replay: Option<ShareReplayData>,
+        metadata: &SubmitMetadata,
+    ) -> Result<()> {
+        self.share_metadata
+            .lock()
+            .push((metadata.miner_version.clone(), metadata.backend.clone()));
+        self.add_share_with_replay(share, replay)
     }
 
     fn add_share_with_replay_and_id(
@@ -4273,6 +4314,7 @@ mod tests {
             Some(&claimed_hash),
             Instant::now(),
             "candidate claim busy, retry",
+            &SubmitMetadata::default(),
         );
 
         let shares = store.shares();
@@ -5940,6 +5982,63 @@ mod tests {
             .map(|share| share.nonce)
             .collect::<Vec<_>>();
         assert_eq!(credited, vec![1_234, 1_235]);
+    }
+
+    #[test]
+    fn rejected_shares_record_the_submitting_miner_version() {
+        let cfg = cfg();
+        let validation = Arc::new(ValidationEngine::new(
+            cfg.clone(),
+            Arc::new(DeterministicTestHasher),
+        ));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let store = Arc::new(InMemoryStore::default());
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode::default()),
+        );
+        engine
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
+            .expect("login");
+        let metadata = SubmitMetadata {
+            miner_version: Some("0.2.44".to_string()),
+            backend: Some("cpu#1".to_string()),
+        };
+        engine
+            .submit("conn1", "job1".to_string(), 77, Some("ff".repeat(32)))
+            .expect("first share accepted");
+        for job_id in ["job1", "no-such-job"] {
+            engine
+                .submit_with_received_at_and_metadata(
+                    "conn1",
+                    job_id.to_string(),
+                    77,
+                    Some("ff".repeat(32)),
+                    Instant::now(),
+                    metadata.clone(),
+                )
+                .expect_err("rejected");
+        }
+
+        let rejected = store
+            .shares()
+            .into_iter()
+            .filter(|share| share.status == SHARE_STATUS_REJECTED)
+            .count();
+        assert_eq!(rejected, 2);
+        let expected = (Some("0.2.44".to_string()), Some("cpu#1".to_string()));
+        assert_eq!(
+            store
+                .share_metadata()
+                .into_iter()
+                .filter(|recorded| *recorded == expected)
+                .count(),
+            2
+        );
     }
 
     #[test]

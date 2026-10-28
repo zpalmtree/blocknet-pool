@@ -1425,6 +1425,7 @@ impl StratumServer {
                             let submit_job_id = params.job_id.clone();
                             let submit_nonce = params.nonce;
                             let submit_claimed_hash = params.claimed_hash.clone();
+                            let prequeue_metadata = submit_metadata(&params);
                             let route = match self
                                 .engine
                                 .preclassify_submit_route(&params.job_id, params.claimed_hash.as_deref(), received_at)
@@ -1438,6 +1439,7 @@ impl StratumServer {
                                         params.claimed_hash.as_deref(),
                                         received_at,
                                         &err.to_string(),
+                                        submit_metadata(&params),
                                     );
                                     if let Err(queue_err) = queue_error(&outbound, req.id, &err.to_string()) {
                                         run_result = Err(queue_err);
@@ -1483,6 +1485,7 @@ impl StratumServer {
                                             params.claimed_hash.as_deref(),
                                             received_at,
                                             &err.to_string(),
+                                            submit_metadata(&params),
                                         );
                                         if let Err(queue_err) = queue_error(&outbound, req.id, &err.to_string()) {
                                             run_result = Err(queue_err);
@@ -1529,6 +1532,7 @@ impl StratumServer {
                                     submit_claimed_hash.as_deref(),
                                     received_at,
                                     err_text,
+                                    prequeue_metadata,
                                 );
                                 if let Err(queue_err) = queue_error(&outbound, req.id, err_text) {
                                     run_result = Err(queue_err);
@@ -1827,6 +1831,7 @@ impl StratumServer {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn persist_prequeue_reject_async(
         &self,
         conn_id: &str,
@@ -1835,6 +1840,7 @@ impl StratumServer {
         claimed_hash: Option<&str>,
         received_at: Instant,
         reason: &str,
+        metadata: SubmitMetadata,
     ) {
         // Admission-control rejects ("busy, retry", "rate limited, retry") are
         // not share outcomes: the miner is told to resubmit the same nonce, so
@@ -1857,6 +1863,7 @@ impl StratumServer {
                     claimed_hash.as_deref(),
                     received_at,
                     &reason,
+                    &metadata,
                 );
             })
             .await;
@@ -1888,18 +1895,7 @@ async fn run_submit_worker(
         let submit_job_id = job_id.clone();
         let nonce = queued.params.nonce;
         let claimed_hash = queued.params.claimed_hash.clone();
-        let metadata = SubmitMetadata {
-            miner_version: queued
-                .params
-                .miner_version
-                .as_deref()
-                .and_then(nonempty_submit_metadata),
-            backend: queued
-                .params
-                .backend
-                .as_deref()
-                .and_then(nonempty_submit_metadata),
-        };
+        let metadata = submit_metadata(&queued.params);
         let completion_tx = queued.completion_tx.clone();
         let req_id = queued.req_id;
         let received_at = queued.received_at;
@@ -1990,6 +1986,16 @@ fn sanitize_submit_metadata(value: &str) -> String {
         .filter(|ch| !ch.is_control())
         .take(64)
         .collect()
+}
+
+fn submit_metadata(params: &SubmitParams) -> SubmitMetadata {
+    SubmitMetadata {
+        miner_version: params
+            .miner_version
+            .as_deref()
+            .and_then(nonempty_submit_metadata),
+        backend: params.backend.as_deref().and_then(nonempty_submit_metadata),
+    }
 }
 
 fn nonempty_submit_metadata(value: &str) -> Option<String> {
@@ -2879,6 +2885,7 @@ mod tests {
                 Some(&"00".repeat(32)),
                 Instant::now(),
                 reason,
+                super::SubmitMetadata::default(),
             );
         }
         server.persist_prequeue_reject_async(
@@ -2888,6 +2895,7 @@ mod tests {
             None,
             Instant::now(),
             "claimed hash required",
+            super::SubmitMetadata::default(),
         );
         for _ in 0..100 {
             if !store.shares().is_empty() {
