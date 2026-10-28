@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::mem::ManuallyDrop;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -290,8 +291,24 @@ struct PayoutCreditAllocation {
     amount: u64,
 }
 
+/// A postgres `Client` drives its own runtime and panics when dropped on a
+/// Tokio thread (for example when the API runtime shuts down after a startup
+/// error). Inside a runtime, drop it on a plain thread instead.
+fn drop_client_off_runtime(client: Client) {
+    if tokio::runtime::Handle::try_current().is_err() {
+        drop(client);
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("pg-client-drop".to_string())
+        .spawn(move || drop(client));
+    if let Err(err) = spawned {
+        warn!(error = %err, "could not spawn a thread to close a postgres connection");
+    }
+}
+
 struct ManagedClient {
-    client: Client,
+    client: ManuallyDrop<Client>,
     url: String,
     schema: Option<String>,
     label: String,
@@ -299,10 +316,17 @@ struct ManagedClient {
     statement_timeout_ms: Option<u64>,
 }
 
+impl Drop for ManagedClient {
+    fn drop(&mut self) {
+        // SAFETY: `client` is never used again after this.
+        drop_client_off_runtime(unsafe { ManuallyDrop::take(&mut self.client) });
+    }
+}
+
 impl ManagedClient {
     fn new(client: Client, url: &str, schema: Option<&str>, label: &str) -> Self {
         Self {
-            client,
+            client: ManuallyDrop::new(client),
             url: url.to_string(),
             schema: schema.map(str::to_string),
             label: label.to_string(),
@@ -311,8 +335,8 @@ impl ManagedClient {
     }
 
     fn reconnect(&mut self) -> Result<()> {
-        self.client =
-            PostgresStore::connect_client(&self.url, self.schema.as_deref(), &self.label)?;
+        let fresh = PostgresStore::connect_client(&self.url, self.schema.as_deref(), &self.label)?;
+        drop_client_off_runtime(std::mem::replace(&mut *self.client, fresh));
         self.statement_timeout_ms = None;
         Ok(())
     }
