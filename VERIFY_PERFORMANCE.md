@@ -76,7 +76,10 @@ setting `growth_submit_rate` to 0 (by reload) turns it off. Alerts:
    storm: zero candidate delays, zero busy/shed/timeout rejects, no Shed or
    Emergency, share-ack p99 no worse at 1x.* The batch is the deployed code
    (kernel, hold 0.25, sync lane, arena retention, gateway, hot reload) plus
-   automatic growth mode (above). T2 with the deployed defaults: a 1x → 2x
+   automatic growth mode (above). T2 runs exist for both the master revision
+   (replay-growth/: master at the time plus growth mode, 950937f) and the
+   exact deployed revision (replay-deployed-2d98924/); results match. With the
+   deployed defaults: a 1x → 2x
    ramp and a 2x restart storm are 100% Normal with 0 transitions, 0 drops
    and 0 refused or delayed block candidates (growth-mode section). Without
    growth mode this hardware cannot hold 2x: ~11.6% coverage of ~96
