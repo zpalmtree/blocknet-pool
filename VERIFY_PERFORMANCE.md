@@ -74,6 +74,8 @@ setting `growth_submit_rate` to 0 (by reload) turns it off. Alerts:
 
 - 2026-10-28 · T0/T1 · seine v0.2.44 `avx512-256-stream-l2` (far L2 prefetch, Zen 4 only) vs the live v0.2.39 `avx512-256-stream`, rented EPYC 9554P (no 2-channel Zen 4 in stock). T0: full parity suite incl. the production-profile Argon2 reference passes on Zen 4; digests identical at 8 and 48 threads. T1 ABBA, mean time per hash (three runs per kernel, non-overlapping): 8 threads 516 → 511 ms (+1.0%), 11 threads flat, 32 threads 614 → 593 (+3.6%), 48 threads 667 → 632 (+5.6%), 64 threads 689 → 651 (+5.8%). The gain only appears once memory bandwidth is the limit; 48-64 threads on 12 channels matches production's 8 verifiers on 2 channels (production hashes take ~2x a lone hash), so expect ~+5% verifies/s on the 7900X, in line with Seine's +5.0% on a 7700X. Short-window verifies/s were too noisy to read (±2%). Zen 5 keeps the plain streaming kernel (Seine: -1-3%). Raw: perf-results/2026-10-27/pool-verify/pv-9554p-t8/, pv-9554p-wide/.
 
+- 2026-10-28 · T3 · far-L2-prefetch kernel rolled out (owner-approved) by handover 05:39:48 UTC from branch deploy-kernel-l2-20261028 (deployed 2d98924 + the live gateway fix + the kernel change only): 2,462 miners on the gateway, 2,476 migrations, 0 replay failures, 0 busy replies, 0 forced reconnects; @a retired 05:40:31; active engine now @b. 30 min before (ending 05:39) vs 30 min after (ending 06:11), similar load (audits 6.8 vs 7.2/s, 100% Normal both): live-audit hash mean 621 → 550 ms (-11%), p50 632 → 539; background-audit mean 555 → 478 ms (-14%); share-ack p99 25 ms both; regular queue depth 0. More than the rental's ~5.7%, so part of it may be load mix; Prometheus keeps the series for a longer comparison. One block per window, so the candidate ack/block-submit numbers (1.2 vs 1.7 s, single samples) carry no signal.
+
 ## Goal "Done" criteria and evidence (BNTPOOL_VERIFY_GOAL.md, 2026-10-27)
 
 1. *Approved-ready batch with T2 evidence at 2x peak arrival and in a restart
@@ -100,7 +102,7 @@ setting `growth_submit_rate` to 0 (by reload) turns it off. Alerts:
    variant screen: best alternative within ~1%; more verifier threads flat
    (bandwidth-bound); arena retention and THP vs HugeTLB at most ~1.2%. Seine
    v0.2.44's Zen 4 far-L2 prefetch (+~5.7% per hash when bandwidth-bound) is
-   on master and pending rollout.
+   live since 2026-10-28 05:39 UTC (live hash means -11 to -14%).
 
 Not part of these criteria, recorded for completeness: five large farms
 (old seine 0.2.21/0.2.36) left around the 08:56 Stratum restart and did not
