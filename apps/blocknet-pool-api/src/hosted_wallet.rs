@@ -106,22 +106,22 @@ where
 }
 
 fn routes() -> Router<Arc<Gateway>> {
-    Router::new()
-        .route("/api/wallet/v2/enroll/begin", post(forward))
-        .route("/api/wallet/v2/enroll/finish", post(forward))
-        .route("/api/wallet/v2/login", post(forward))
-        .route("/api/wallet/v2/logout", post(forward))
-        .route("/api/wallet/v2/session", get(forward))
-        .route("/api/wallet/v2/service-key", get(forward))
-        .route("/api/wallet/v2/approve/begin", post(forward))
-        .route("/api/wallet/v2/approve/finish", post(forward))
-        .route("/api/wallet/v2/passkeys", get(forward))
-        .route("/api/wallet/v2/passkeys/finish", post(forward))
-        .route("/api/wallet/v2/backup/confirm", post(forward))
-        .route("/api/wallet/v2/balance", get(forward))
-        .route("/api/wallet/v2/history", get(forward))
-        .route("/api/wallet/v2/sends", get(forward).post(forward))
-        .route("/api/wallet/v2/destinations", get(forward))
+    // The wallet service routes, authenticates and rejects unknown paths under
+    // its own prefix; the gateway only checks the path's shape, so wallet
+    // changes need no pool release.
+    Router::new().route("/api/wallet/v2/*path", get(forward).post(forward))
+}
+
+/// Lowercase path segments of letters, digits, '-' and '_' only: no empty,
+/// '.' or '..' segments, encodings or other characters reach the backend.
+fn valid_wallet_path(path: &str) -> bool {
+    path.len() <= 96
+        && path.split('/').all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+        })
 }
 
 fn failure(status: StatusCode, message: &str) -> Response {
@@ -134,6 +134,14 @@ fn failure(status: StatusCode, message: &str) -> Response {
 }
 
 async fn forward(State(gateway): State<Arc<Gateway>>, request: Request) -> Response {
+    let wallet_path = request
+        .uri()
+        .path()
+        .strip_prefix("/api/wallet/v2/")
+        .unwrap_or_default();
+    if !valid_wallet_path(wallet_path) {
+        return failure(StatusCode::NOT_FOUND, "not found");
+    }
     let Ok(_permit) = gateway.slots.try_acquire() else {
         return failure(
             StatusCode::TOO_MANY_REQUESTS,
@@ -307,26 +315,31 @@ mod tests {
         use tower::ServiceExt;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let backend = Router::new().route(
-            "/api/wallet/v2/approve/finish",
-            post(|headers: axum::http::HeaderMap, body: String| async move {
-                assert_eq!(
-                    headers[header::AUTHORIZATION],
-                    format!("Bearer {}", "ab".repeat(32))
-                );
-                assert_eq!(headers[header::COOKIE], "hw_session=test-session");
-                assert_eq!(headers[header::ORIGIN], "https://pool.example");
-                assert!(headers.get("x-user-id").is_none());
-                assert_eq!(body, r#"{"challenge_id":"c"}"#);
-                (
-                    [(
-                        header::SET_COOKIE,
-                        "hw_session=new; HttpOnly; Secure; SameSite=Strict; Path=/api/wallet",
-                    )],
-                    Json(json!({"envelope":"fixture only"})),
-                )
-            }),
-        );
+        let backend = Router::new()
+            .route(
+                "/api/wallet/v2/key-images/missing",
+                get(|| async { Json(json!({"outputs": []})) }),
+            )
+            .route(
+                "/api/wallet/v2/approve/finish",
+                post(|headers: axum::http::HeaderMap, body: String| async move {
+                    assert_eq!(
+                        headers[header::AUTHORIZATION],
+                        format!("Bearer {}", "ab".repeat(32))
+                    );
+                    assert_eq!(headers[header::COOKIE], "hw_session=test-session");
+                    assert_eq!(headers[header::ORIGIN], "https://pool.example");
+                    assert!(headers.get("x-user-id").is_none());
+                    assert_eq!(body, r#"{"challenge_id":"c"}"#);
+                    (
+                        [(
+                            header::SET_COOKIE,
+                            "hw_session=new; HttpOnly; Secure; SameSite=Strict; Path=/api/wallet",
+                        )],
+                        Json(json!({"envelope":"fixture only"})),
+                    )
+                }),
+            );
         let task = tokio::spawn(async move { axum::serve(listener, backend).await.unwrap() });
         let dir = tempfile::tempdir().unwrap();
         let token = dir.path().join("gateway-token");
@@ -364,12 +377,30 @@ mod tests {
             .to_str()
             .unwrap()
             .contains("HttpOnly"));
+        // Any well-formed wallet path reaches the wallet service.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/wallet/v2/key-images/missing")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         for path in [
             "/api/wallet/seed",
             "/api/wallet/load",
             "/api/wallet/send",
             "/api/wallet/export",
             "/api/wallet/v2/../seed",
+            "/api/wallet/v2/a/../../seed",
+            "/api/wallet/v2/%2e%2e/seed",
+            "/api/wallet/v2/Session",
+            "/api/wallet/v2//session",
+            "/api/wallet/v2/session.json",
             "/api/purge",
             "/api/mining/start",
         ] {

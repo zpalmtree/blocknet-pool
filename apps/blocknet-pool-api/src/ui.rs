@@ -894,7 +894,10 @@ mod tests {
         let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
         assert!(csp.contains("frame-ancestors 'none'"));
         assert!(csp.contains("script-src 'self' 'wasm-unsafe-eval';"));
-        assert!(!csp.contains(" 'unsafe-eval'"), "JavaScript eval stays disallowed");
+        assert!(
+            !csp.contains(" 'unsafe-eval'"),
+            "JavaScript eval stays disallowed"
+        );
         assert_eq!(
             headers
                 .get_all(header::X_CONTENT_TYPE_OPTIONS)
