@@ -78,6 +78,8 @@ setting `growth_submit_rate` to 0 (by reload) turns it off. Alerts:
 
 - 2026-10-28 · T2 · candidate queue wait with realistic candidate spacing (`VERIFY_REPLAY_CANDIDATE_MIN_GAP_S=2`; real candidates for distinct heights are ~5 min apart): W1 1x, W2 1x → 2x ramp and W3 2x restart storm, deployed defaults: every candidate (114 / 165 / 114) waited ≤5 ms (the histogram's smallest bucket), 0 refused, 100% Normal, 0 drops. The ≤1.25 s tail in the pure-Poisson runs above is therefore only candidates queued behind each other, never behind regular work. Raw: perf-results/2026-10-27/pool-verify/replay-candidate-gap-4093070/ (pre-rewrite tip; same content as 6a2e325).
 
+- 2026-10-28 · T2 · two candidate verifiers (CANDIDATE_VALIDATION_WORKERS 1 → 2, arena retained), replays exactly as first run (pure Poisson candidates, no spacing): every candidate waited ≤5 ms (smallest bucket) in W1 1x (126), W2 1x → 2x ramp (182) and W3 2x restart storm (126); 0 refused; 100% Normal; 0 drops; total candidate p99 1.17 / 1.17 / 1.43 s (W3 was 1.63 s with one worker). Raw: perf-results/2026-10-27/pool-verify/replay-two-candidate-workers/.
+
 ## Goal "Done" criteria and evidence (BNTPOOL_VERIFY_GOAL.md, 2026-10-27)
 
 1. *Approved-ready batch with T2 evidence at 2x peak arrival and in a restart
@@ -89,8 +91,10 @@ setting `growth_submit_rate` to 0 (by reload) turns it off. Alerts:
    exact deployed revision (replay-deployed-a644249/); results match. With the
    deployed defaults: a 1x → 2x
    ramp and a 2x restart storm are 100% Normal with 0 transitions, 0 drops
-   and 0 refused or delayed block candidates (growth-mode section; with realistic
-   candidate spacing every candidate waited ≤5 ms, see the 2026-10-28 entry). Without
+   and 0 refused block candidates (growth-mode section). With two candidate
+   verifiers every candidate waited ≤5 ms under the original pure-Poisson
+   replay (2026-10-28 entry); with one, candidates arriving within one hash
+   of each other queued up to ~1.25 s. Without
    growth mode this hardware cannot hold 2x: ~11.6% coverage of ~96
    shares/s needs ~11 verifies/s against ~7.7 capacity. At 1x the current config holds (100%
    Normal in 2/2 runs incl. a restart storm, candidates p99 1.2 s).
