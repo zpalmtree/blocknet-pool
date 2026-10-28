@@ -2,7 +2,7 @@
 title: تابع جهاز التعدين على bntpool.com
 description: ابحث بعنوانك أو @name لعرض المعدل والحصص والرصيد والدفعات، ثم تابع الكتل والحظ والتوافر أو استخدم API العام في نص برمجي.
 tags: [bntpool, إحصاءات التعدين, API المجمع, Blocknet]
-sourceHash: 'bde59962f8d3'
+sourceHash: '40197b2fa166'
 translation: draft
 faq:
   - q: 'لماذا يختلف معدل bntpool.com عن seine؟'
@@ -15,7 +15,7 @@ faq:
     a: 'تظهر عندما يجد المجمع كتلة وحصصك داخل نافذة الدفع. قد يحتاج المعدّن الجديد بضع جولات. تظهر الحصص المقبولة والمعدل أولًا، ثم المكافآت المقدرة التي تنضج إلى Confirmed Rewards وتُدفع تلقائيًا.'
 ---
 
-بمجرد تعدين seine على bntpool.com، يعرض المجمع كل ما يراه: معدلك وكل حصة مقبولة ومكاسبك وكل دفعة لعنوانك. يشرح الدليل My Stats وصفحات المجمع العامة وAPI للنصوص البرمجية واللوحات المنزلية.
+بعد أول حصة مقبولة، افتح My Stats للتأكد من أن المجمع يتلقى عملك. ابحث عن جهازك، وقارن معدل الهاش على مدى فترة أطول، ثم تابع المكافآت المقدرة حتى تأكيدها ودفعها. تأتي السكربتات وواجهة API العامة في نهاية الدليل.
 
 إذا لم تبدأ، يوصلك [دليل تثبيت seine](https://seineminer.com/ar/blog/how-to-mine-blocknet/) إلى أولى الحصص خلال دقائق.
 
@@ -27,17 +27,18 @@ faq:
 
 في [My Stats](/stats)، أدخل العنوان أو [اسم Blocknet ID](https://seineminer.com/ar/blog/blocknet-id-pay-by-name/) نفسه الذي أعطيته seine. تُحل أسماء `@name` أو `$name` عبر blocknet.id، ويظهر العنوان الكامل في البحث. يتذكر المتصفح آخر استعلام، فتجد أرقامك جاهزة عند العودة.
 
+1. تحقق من **Shares Accepted** و**Recent Shares**. تؤكد الحصص المقبولة وصول عملك إلى المجمع، حتى إذا ظلت جميع أرصدة المكافآت صفراً.
+2. ابحث عن جهازك ضمن **Workers**. طابق اسمه مع الاسم في Seine وتحقق من استمرار تحديث وقت آخر حصة.
+3. ظهور صفر في **Blocks Found** أمر طبيعي: فهو يعدّ الكتل التي حلّتها أجهزتك، ولا يحدد ما إذا كانت حصصك تحصل على جزء من مكافآت المجمع.
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-first-mobile.webp" width="352" height="379"><img src="/blog/tracking/tracking-first-desktop.webp" width="1180" height="900" alt="تحقق من الحصص المقبولة أولاً. واجهة إنجليزية حقيقية ببيانات توضيحية، وليست أرباحاً مباشرة." loading="lazy" decoding="async"></picture>
+<figcaption>تحقق من الحصص المقبولة أولاً. واجهة إنجليزية حقيقية ببيانات توضيحية، وليست أرباحاً مباشرة.</figcaption>
+</figure>
+
 ## ماذا تعرض My Stats؟
 
 تُقسم البطاقات والجداول إلى مجموعات، كل منها يجيب عن سؤال حول جهازك.
-
-### الرصيد
-
-- **Estimated Rewards:** نصيبك من كتل المجمع التي ما زالت تنضج.
-- **Confirmed Rewards:** رصيد ناضج ينتظر الدفعة التالية.
-- **Paid Balance:** كل ما أُرسل إلى عنوانك.
-
-عند وجود مكافآت معلقة، يعرض **Estimated From Recent Blocks** كل كتلة بارتفاعها ونصيبك المقدر والتأكيدات المتبقية ووقت الاكتشاف. كل ارتفاع رابط إلى [مستكشف Blocknet](https://explorer.blocknetcrypto.com) للفحص. يشرح [دليل PPLNS](/blog/ar/how-pplns-payouts-work/) التقسيم وموعد الدفع.
 
 ### التعدين والحصص
 
@@ -53,11 +54,7 @@ faq:
 ./seine --pool-worker rig-01
 ```
 
-يحصل الإصدار القديم على شارة **update available** ترتبط بـ[إصدارات seine](https://github.com/zpalmtree/seine/releases)، فتتعرف بسهولة على جهاز نسيت تحديثه.
-
-### الدفعات والحصص الحديثة
-
-يسرد **Recent Payouts** كل دفعة بعنوانك ومبلغها ورابط معاملتها وحالتها queued أو unconfirmed أو confirmed. يعرض **Recent Shares** أحدث 20 حصة بالمهمة والجهاز والصعوبة والحالة، وهو أسرع فحص لوصول جهاز جديد إلى المجمع.
+يعرض جدول **Workers** أيضاً إصدار المُعدّن لكل جهاز. إذا كان الإصدار قديماً أو غير معروف، يظهر إشعار فوق الإحصاءات يتضمن رابطاً إلى [صفحة إصدارات seine](https://github.com/zpalmtree/seine/releases).
 
 ## لماذا يختلف معدل المجمع عن seine؟
 
@@ -69,6 +66,29 @@ faq:
 - امنح الجهاز الجديد وقتًا. يحسب المجمع المتوسط على دقائق العمل الفعلية في البداية، فتستند القراءة إلى حصص قليلة. بعد ساعة تطبق النافذة الكاملة.
 
 تؤكد Recent Shares وصول الحصص فورًا قبل استقرار المعدل.
+
+## متى تتوقع الدفعة الأولى؟
+
+لا توجد مدة ثابتة من أول حصة إلى أول دفعة. يجب أن يجد المجمع كتلة بينما حصصك داخل نافذة الدفع. تحتاج تلك الكتلة بعد ذلك إلى 60 تأكيداً: نحو خمس ساعات في المتوسط **بعد العثور على الكتلة**، مع اختلاف المدة الفعلية. عندما يصل رصيدك المؤكد إلى الحد الأدنى الحالي البالغ 0.1 BNT، يصبح مؤهلاً لدورة دفع تلقائية. راجع [Get Started](/start) لمعرفة الإعدادات الحالية.
+
+تابع الحالة ورابط المعاملة في **Recent Payouts**. الدفعة الموجودة في قائمة الانتظار لم تُبث بعد إلى الشبكة. إذا لم تظهر دفعة مُرسلة في محفظتك، فاستخدم [دليل حل مشكلات الدفعات](/blog/ar/pool-payout-missing-from-wallet/).
+
+### الرصيد
+
+- **Estimated Rewards:** نصيبك من كتل المجمع التي ما زالت تنضج.
+- **Confirmed Rewards:** رصيد ناضج ينتظر الدفعة التالية.
+- **Paid Balance:** كل ما أُرسل إلى عنوانك.
+
+عند وجود مكافآت معلقة، يعرض **Estimated From Recent Blocks** كل كتلة بارتفاعها ونصيبك المقدر والتأكيدات المتبقية ووقت الاكتشاف. كل ارتفاع رابط إلى [مستكشف Blocknet](https://explorer.blocknetcrypto.com) للفحص. يشرح [دليل PPLNS](/blog/ar/how-pplns-payouts-work/) التقسيم وموعد الدفع.
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-rewards-mobile.webp" width="352" height="524"><img src="/blog/tracking/tracking-rewards-desktop.webp" width="1081" height="217" alt="الأرصدة المقدرة والمؤكدة والمدفوعة مراحل منفصلة. واجهة إنجليزية حقيقية بمبالغ توضيحية، وليست أرباحاً متوقعة." loading="lazy" decoding="async"></picture>
+<figcaption>الأرصدة المقدرة والمؤكدة والمدفوعة مراحل منفصلة. واجهة إنجليزية حقيقية بمبالغ توضيحية، وليست أرباحاً متوقعة.</figcaption>
+</figure>
+
+### الدفعات والحصص الحديثة
+
+يسرد **Recent Payouts** كل دفعة بعنوانك ومبلغها ورابط معاملتها وحالتها queued أو unconfirmed أو confirmed. يعرض **Recent Shares** أحدث 20 حصة بالمهمة والجهاز والصعوبة والحالة، وهو أسرع فحص لوصول جهاز جديد إلى المجمع.
 
 <span id="zero-hashrate"></span>
 
@@ -110,6 +130,10 @@ faq:
 
 تعرض [Status](/status) صحة المجمع: اتصال المجمع وHTTP العام وAPI وStratum وقاعدة البيانات وبرنامج العقدة، وحداثة قالب المهمة وارتفاع السلسلة والتوافر خلال 10 دقائق و6 ساعات و24 ساعة و7 أيام وتاريخ الحوادث. يقيسه مراقب على خادم المجمع وآخر خارجي على Cloudflare.
 
+## وماذا عن لوحة seine؟
+
+يعرض المجمع ما احتسبه لك. لرؤية الجهاز مباشرة، تعرض طرفية seine المعدل والحصص لحظة حدوثها. ويمكنه توفير API تحكم محلي عبر REST وتدفق أحداث يرسلها الخادم ومقاييس Prometheus على `/metrics`، مرتبطًا افتراضيًا بـ`127.0.0.1:9977`. يشرح [دليل API](https://github.com/zpalmtree/seine/blob/master/docs/API.md) الخيارات والمسارات. يستخدم كثيرون الاثنين: مقاييس seine لكل جهاز وAPI المجمع للأرصدة والدفعات.
+
 ## كيف تستخدم API bntpool.com؟
 
 <Answer>
@@ -146,29 +170,5 @@ curl -s https://bntpool.com/api/miner/YOUR_ADDRESS
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS | jq '{hashrate, total_accepted, total_rejected}'
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS/balance | jq '.balance.paid / 100000000'
 ```
-
-### عرض جهازك في لوحة منزلية
-
-يعمل المسار نفسه كمستشعر. في Home Assistant تقرأه إضافة RESTful ببضعة أسطر في `configuration.yaml`:
-
-```yaml
-rest:
-  - resource: https://bntpool.com/api/miner/YOUR_ADDRESS
-    scan_interval: 60
-    sensor:
-      - name: "bntpool hashrate"
-        value_template: "{{ value_json.hashrate | round(2) }}"
-        unit_of_measurement: "H/s"
-      - name: "bntpool accepted shares"
-        value_template: "{{ value_json.total_accepted }}"
-```
-
-يكفي الاستعلام كل 30 إلى 60 ثانية: المعدل متوسط ساعة، وتحدّث My Stats تفاصيلك كل 30 ثانية. يحد API الطلبات لكل عميل. إذا عاد HTTP 429، ينبغي التوقف وانتظار المدة في `Retry-After` قبل المحاولة التالية.
-
-## وماذا عن لوحة seine؟
-
-يعرض المجمع ما احتسبه لك. لرؤية الجهاز مباشرة، تعرض طرفية seine المعدل والحصص لحظة حدوثها. ويمكنه توفير API تحكم محلي عبر REST وتدفق أحداث يرسلها الخادم ومقاييس Prometheus على `/metrics`، مرتبطًا افتراضيًا بـ`127.0.0.1:9977`. يشرح [دليل API](https://github.com/zpalmtree/seine/blob/master/docs/API.md) الخيارات والمسارات. يستخدم كثيرون الاثنين: مقاييس seine لكل جهاز وAPI المجمع للأرصدة والدفعات.
-
-جديد على seine؟ [نزّله](https://seineminer.com/ar/#download) ووصّله بالمجمع الافتراضي، وسيظهر عنوانك في My Stats خلال دقائق من أول حصة مقبولة.
 
 <CTA target="pool" title="ابدأ التعدين وتابعه مباشرة" text="انضم إلى bntpool.com خلال دقائق، ثم تابع معدل التجزئة والحصص والرصيد على My Stats." />

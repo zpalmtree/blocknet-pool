@@ -2,7 +2,7 @@
 title: 'ติดตามเครื่องขุดบน bntpool.com'
 description: 'ค้นหาที่อยู่หรือ @name บน bntpool.com เพื่อดู hashrate, share ยอดและการจ่าย ติดตามบล็อก luck และ uptime หรือใช้ API สาธารณะในสคริปต์ของคุณ'
 tags: ['bntpool', 'สถิติขุด', 'API พูล', 'Blocknet']
-sourceHash: 'bde59962f8d3'
+sourceHash: '40197b2fa166'
 translation: draft
 faq:
   - q: 'ทำไม hashrate บน bntpool.com ต่างจาก seine?'
@@ -15,7 +15,7 @@ faq:
     a: 'Estimated Rewards ปรากฏเมื่อพูลพบบล็อกขณะ share ของคุณอยู่ในช่วงเวลาจ่าย นักขุดใหม่อาจต้องขุดผ่านสองสามรอบ Share ที่ยอมรับและ hashrate ปรากฏก่อน ตามด้วยรางวัลประมาณการ ซึ่งครบกำหนดเป็น Confirmed Rewards แล้วจ่ายอัตโนมัติ'
 ---
 
-เมื่อ seine ขุดกับ bntpool.com พูลแสดงทุกอย่างที่เห็น: hashrate, share ที่ยอมรับ รายได้ และทุกการจ่ายไปที่อยู่ของคุณ คู่มือนี้พาดู My Stats หน้าสาธารณะของทั้งพูล และ API สาธารณะที่ใช้ในสคริปต์หรือแดชบอร์ดในบ้านได้
+หลังจาก share แรกได้รับการยอมรับ ให้เปิด My Stats เพื่อตรวจสอบว่าพูลได้รับงานของคุณแล้ว ค้นหาเครื่องของคุณ เปรียบเทียบ hashrate ในช่วงเวลาที่นานขึ้น แล้วติดตามรางวัลโดยประมาณจนได้รับการยืนยันและจ่ายออก ส่วนสคริปต์และ API สาธารณะอยู่ท้ายคู่มือ
 
 หากยังไม่เริ่มขุด [คู่มือติดตั้ง seine](https://seineminer.com/th/blog/how-to-mine-blocknet/) พาไปถึง share แรกในไม่กี่นาที
 
@@ -27,17 +27,18 @@ faq:
 
 ไปที่ [My Stats](/stats) แล้วใส่ที่อยู่หรือ[ชื่อย่อ Blocknet ID](https://seineminer.com/th/blog/blocknet-id-pay-by-name/) เดียวกับที่ให้ seine ชื่อ `@name` หรือ `$name` ถูกแปลงผ่าน blocknet.id แล้วช่องค้นหาแสดงที่อยู่เต็ม หน้าจดจำการค้นหาล่าสุดในเบราว์เซอร์นั้น ครั้งต่อไปจึงมีตัวเลขพร้อมอยู่แล้ว
 
+1. ตรวจสอบ **Shares Accepted** และ **Recent Shares** โดย share ที่ยอมรับแล้วแสดงว่างานส่งถึงพูล แม้ยอดรางวัลทั้งหมดจะยังเป็นศูนย์
+2. ค้นหาเครื่องใน **Workers** ตรวจสอบว่าชื่อตรงกับใน Seine และเวลาของ share ล่าสุดยังอัปเดตอยู่
+3. **Blocks Found** เป็นศูนย์ถือเป็นเรื่องปกติ เพราะนับบล็อกที่เครื่องของคุณแก้ได้เอง ไม่ได้บอกว่า share ของคุณมีส่วนรับรางวัลของพูลหรือไม่
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-first-mobile.webp" width="352" height="379"><img src="/blog/tracking/tracking-first-desktop.webp" width="1180" height="900" alt="ตรวจสอบ share ที่ยอมรับแล้วก่อน ภาพจากอินเทอร์เฟซภาษาอังกฤษจริงพร้อมข้อมูลตัวอย่าง ไม่ใช่รายได้สด" loading="lazy" decoding="async"></picture>
+<figcaption>ตรวจสอบ share ที่ยอมรับแล้วก่อน ภาพจากอินเทอร์เฟซภาษาอังกฤษจริงพร้อมข้อมูลตัวอย่าง ไม่ใช่รายได้สด</figcaption>
+</figure>
+
 ## หน้า My Stats แสดงอะไร?
 
 หน้าแบ่งเป็นกลุ่มการ์ดกับตาราง แต่ละกลุ่มตอบคำถามหนึ่งเกี่ยวกับเครื่องขุด
-
-### ยอดคงเหลือ
-
-- **Estimated Rewards:** ส่วนแบ่งของบล็อกที่พูลพบและยังรอครบกำหนด
-- **Confirmed Rewards:** ยอดครบกำหนดที่รอการจ่ายรอบถัดไป
-- **Paid Balance:** ทั้งหมดที่ส่งไปยังที่อยู่แล้ว
-
-เมื่อมีรางวัลรออยู่ ตาราง **Estimated From Recent Blocks** แสดงแต่ละบล็อกพร้อมความสูง เครดิตประมาณการ จำนวนการยืนยันที่เหลือ และเวลาที่พบ ความสูงลิงก์ไปยังบล็อกใน [Blocknet explorer](https://explorer.blocknetcrypto.com) ให้ตรวจเองได้ [วิธีจ่าย PPLNS](/blog/th/how-pplns-payouts-work/) อธิบายวิธีแบ่งและเวลาจ่าย
 
 ### การขุดและ share
 
@@ -53,11 +54,7 @@ faq:
 ./seine --pool-worker rig-01
 ```
 
-เครื่องที่ใช้ seine เก่ามีป้าย **update available** ลิงก์ไป[หน้ารุ่นเผยแพร่ seine](https://github.com/zpalmtree/seine/releases) จึงมองเห็นเครื่องที่ลืมอัปเดตง่าย
-
-### การจ่ายและ share ล่าสุด
-
-**Recent Payouts** แสดงการจ่ายแต่ละครั้งไปที่อยู่ พร้อมจำนวน ลิงก์ธุรกรรมบน explorer และสถานะ queued, unconfirmed หรือ confirmed ส่วน **Recent Shares** แสดง 20 shares ล่าสุดพร้อม job เครื่อง ความยาก และสถานะ เป็นวิธีเร็วที่สุดในการยืนยันว่าเครื่องที่เพิ่งเปิดส่งถึงพูล
+ตาราง **Workers** ยังแสดงเวอร์ชันโปรแกรมขุดของแต่ละเครื่อง หากเวอร์ชันเก่าหรือไม่ทราบเวอร์ชัน จะมีข้อความแจ้งเตือนเหนือสถิติพร้อมลิงก์ไปยัง[หน้าเผยแพร่ seine](https://github.com/zpalmtree/seine/releases)
 
 ## ทำไม hashrate ของพูลต่างจาก seine?
 
@@ -69,6 +66,29 @@ seine นับทุก hash ที่คำนวณ พูลเห็นเ�
 - ให้เวลาเครื่องใหม่ พูลเฉลี่ยเฉพาะนาทีที่ขุดตั้งแต่เริ่ม ค่าแรกจึงอาศัย share ไม่กี่รายการ หลังหนึ่งชั่วโมงจึงใช้ช่วงเต็มหนึ่งชั่วโมง
 
 ตาราง Recent Shares บอกได้ทันทีว่า share มาถึง แม้ค่า hashrate ยังไม่นิ่ง
+
+## ควรคาดว่าจะได้รับเงินครั้งแรกเมื่อใด?
+
+ไม่มีเวลานับถอยหลังตายตัวจาก share แรกถึงการจ่ายเงินครั้งแรก พูลต้องพบบล็อกขณะที่ share ของคุณยังอยู่ในช่วงคำนวณการจ่าย จากนั้นบล็อกต้องได้รับ 60 การยืนยัน โดยเฉลี่ยประมาณห้าชั่วโมง **หลังจากพบบล็อก** แต่เวลาจริงแตกต่างกันได้ เมื่อยอดที่ยืนยันแล้วถึงขั้นต่ำปัจจุบัน 0.1 BNT จึงมีสิทธิ์เข้ารอบจ่ายเงินอัตโนมัติ ดูค่าปัจจุบันได้ที่ [Get Started](/start)
+
+ติดตามสถานะและลิงก์ธุรกรรมใน **Recent Payouts** รายการที่อยู่ในคิวยังไม่ได้เผยแพร่สู่เครือข่าย หากส่งเงินแล้วแต่ไม่ปรากฏในกระเป๋า ให้ดู[คู่มือแก้ปัญหาการจ่ายเงิน](/blog/th/pool-payout-missing-from-wallet/)
+
+### ยอดคงเหลือ
+
+- **Estimated Rewards:** ส่วนแบ่งของบล็อกที่พูลพบและยังรอครบกำหนด
+- **Confirmed Rewards:** ยอดครบกำหนดที่รอการจ่ายรอบถัดไป
+- **Paid Balance:** ทั้งหมดที่ส่งไปยังที่อยู่แล้ว
+
+เมื่อมีรางวัลรออยู่ ตาราง **Estimated From Recent Blocks** แสดงแต่ละบล็อกพร้อมความสูง เครดิตประมาณการ จำนวนการยืนยันที่เหลือ และเวลาที่พบ ความสูงลิงก์ไปยังบล็อกใน [Blocknet explorer](https://explorer.blocknetcrypto.com) ให้ตรวจเองได้ [วิธีจ่าย PPLNS](/blog/th/how-pplns-payouts-work/) อธิบายวิธีแบ่งและเวลาจ่าย
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-rewards-mobile.webp" width="352" height="524"><img src="/blog/tracking/tracking-rewards-desktop.webp" width="1081" height="217" alt="ยอดโดยประมาณ ยอดที่ยืนยันแล้ว และยอดที่จ่ายแล้วเป็นคนละขั้นตอน ภาพจากอินเทอร์เฟซภาษาอังกฤษจริงพร้อมจำนวนเงินตัวอย่าง ไม่ใช่การคาดการณ์รายได้" loading="lazy" decoding="async"></picture>
+<figcaption>ยอดโดยประมาณ ยอดที่ยืนยันแล้ว และยอดที่จ่ายแล้วเป็นคนละขั้นตอน ภาพจากอินเทอร์เฟซภาษาอังกฤษจริงพร้อมจำนวนเงินตัวอย่าง ไม่ใช่การคาดการณ์รายได้</figcaption>
+</figure>
+
+### การจ่ายและ share ล่าสุด
+
+**Recent Payouts** แสดงการจ่ายแต่ละครั้งไปที่อยู่ พร้อมจำนวน ลิงก์ธุรกรรมบน explorer และสถานะ queued, unconfirmed หรือ confirmed ส่วน **Recent Shares** แสดง 20 shares ล่าสุดพร้อม job เครื่อง ความยาก และสถานะ เป็นวิธีเร็วที่สุดในการยืนยันว่าเครื่องที่เพิ่งเปิดส่งถึงพูล
 
 <span id="zero-hashrate"></span>
 
@@ -110,6 +130,10 @@ seine นับทุก hash ที่คำนวณ พูลเห็นเ�
 
 [Status](/status) เป็นหน้าสุขภาพของพูล แสดงว่าพูล HTTP สาธารณะ API, Stratum ฐานข้อมูล และ daemon ออนไลน์หรือไม่ ความสดของเทมเพลตงาน ความสูงเชน uptime ใน 10 นาที 6 ชั่วโมง 24 ชั่วโมง และ 7 วันล่าสุด และประวัติเหตุขัดข้อง Uptime วัดสองทาง: monitor บนเซิร์ฟเวอร์พูลและตัวตรวจภายนอกบน Cloudflare
 
+## แล้วแดชบอร์ดของ seine เองล่ะ?
+
+พูลแสดงสิ่งที่ให้เครดิตแล้ว หากต้องการดูเครื่องแบบสด แดชบอร์ดเทอร์มินัล seine แสดง hashrate และ share ทันทีที่เกิด นอกจากนี้เปิด API ควบคุมในเครื่องได้ มี REST, server-sent event stream และเมตริก Prometheus ที่ `/metrics` โดยผูกกับ `127.0.0.1:9977` เป็นค่าเริ่มต้น [คู่มือ API ควบคุม](https://github.com/zpalmtree/seine/blob/master/docs/API.md) อธิบายแฟล็กและ endpoints นักขุดหลายคนใช้ทั้งสอง: เมตริก seine สำหรับแต่ละเครื่อง และ API พูลสำหรับยอดกับการจ่าย
+
 ## ใช้ API ของ bntpool.com อย่างไร?
 
 <Answer>
@@ -146,29 +170,5 @@ curl -s https://bntpool.com/api/miner/YOUR_ADDRESS
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS | jq '{hashrate, total_accepted, total_rejected}'
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS/balance | jq '.balance.paid / 100000000'
 ```
-
-### แสดงเครื่องขุดบนแดชบอร์ดในบ้าน
-
-Endpoint เดียวกันใช้เป็นเซนเซอร์ได้ ใน Home Assistant การเชื่อมต่อ RESTful อ่านด้วย `configuration.yaml` ไม่กี่บรรทัด:
-
-```yaml
-rest:
-  - resource: https://bntpool.com/api/miner/YOUR_ADDRESS
-    scan_interval: 60
-    sensor:
-      - name: "bntpool hashrate"
-        value_template: "{{ value_json.hashrate | round(2) }}"
-        unit_of_measurement: "H/s"
-      - name: "bntpool accepted shares"
-        value_template: "{{ value_json.total_accepted }}"
-```
-
-เรียกทุก 30 ถึง 60 วินาทีก็เพียงพอ เพราะ hashrate เป็นค่าเฉลี่ยรายชั่วโมง และ My Stats เองอัปเดตรายละเอียดนักขุดทุก 30 วินาที API สาธารณะจำกัดอัตราต่อ client หากสคริปต์ได้รับ HTTP 429 ควรถอยและรอตามเฮดเดอร์ `Retry-After` ก่อนลองใหม่
-
-## แล้วแดชบอร์ดของ seine เองล่ะ?
-
-พูลแสดงสิ่งที่ให้เครดิตแล้ว หากต้องการดูเครื่องแบบสด แดชบอร์ดเทอร์มินัล seine แสดง hashrate และ share ทันทีที่เกิด นอกจากนี้เปิด API ควบคุมในเครื่องได้ มี REST, server-sent event stream และเมตริก Prometheus ที่ `/metrics` โดยผูกกับ `127.0.0.1:9977` เป็นค่าเริ่มต้น [คู่มือ API ควบคุม](https://github.com/zpalmtree/seine/blob/master/docs/API.md) อธิบายแฟล็กและ endpoints นักขุดหลายคนใช้ทั้งสอง: เมตริก seine สำหรับแต่ละเครื่อง และ API พูลสำหรับยอดกับการจ่าย
-
-เพิ่งเริ่มใช้ seine? [ดาวน์โหลด](https://seineminer.com/th/#download) เชื่อมต่อพูลเริ่มต้น แล้วที่อยู่จะปรากฏใน My Stats ภายในไม่กี่นาทีหลัง share แรกที่ยอมรับ
 
 <CTA target="pool" title="เริ่มขุดและติดตามแบบสด" text="เข้าร่วม bntpool.com ในไม่กี่นาที แล้วติดตาม hashrate, share และยอดคงเหลือบน My Stats" />

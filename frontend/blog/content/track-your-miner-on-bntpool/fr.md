@@ -11,11 +11,11 @@ faq:
     a: 'Non. Les endpoints de statistiques, blocs, paiements, chance, statut et mineurs fournissent du JSON public via HTTPS. Un script curl ou un tableau de bord domestique peut donc les lire sans inscription. Les montants sont en unités atomiques : divisez par 100 000 000 pour obtenir des BNT et interrogez toutes les 30 à 60 secondes.'
   - q: 'Pourquoi My Stats affiche-t-il zéro dans Estimated Rewards ?'
     a: 'Les estimations apparaissent lorsque le pool trouve un bloc avec vos shares dans la fenêtre de paiement. Pour un nouveau mineur, cela peut prendre quelques périodes de minage. Shares acceptés et hashrate apparaissent d’abord, puis les récompenses estimées, qui deviennent Confirmed Rewards à maturité et sont payées automatiquement.'
-sourceHash: 'bde59962f8d3'
+sourceHash: '40197b2fa166'
 translation: draft
 ---
 
-Une fois seine connecté à bntpool.com, le pool vous montre tout ce qu’il voit : hashrate, shares acceptés, gains et paiements envoyés à votre adresse. Ce guide présente My Stats, les pages publiques du pool et l’API utilisable dans vos scripts et tableaux de bord domestiques.
+Après votre premier share accepté, ouvrez My Stats pour vérifier que le pool reçoit votre travail. Retrouvez votre machine, comparez le hashrate sur la durée, puis suivez les récompenses estimées jusqu’à leur confirmation et leur paiement. Les scripts et l’API publique viennent à la fin.
 
 Si vous n’avez pas commencé, le [guide d’installation de seine](https://seineminer.com/fr/blog/how-to-mine-blocknet/) vous mène aux premiers shares en quelques minutes.
 
@@ -27,17 +27,18 @@ Ouvrez My Stats sur bntpool.com/stats, collez votre adresse Blocknet ou @name et
 
 Dans [My Stats](/stats), saisissez l’adresse ou le [nom court Blocknet ID](https://seineminer.com/fr/blog/blocknet-id-pay-by-name/) fourni à seine. Un nom comme `@name` ou `$name` est résolu via blocknet.id et le champ affiche ensuite l’adresse complète. La dernière recherche est mémorisée dans ce navigateur : vos chiffres sont déjà là à la prochaine visite.
 
+1. Consultez **Shares Accepted** et **Recent Shares**. Les shares acceptés confirment que votre travail atteint le pool, même si tous les soldes sont encore nuls.
+2. Retrouvez votre machine dans **Workers**. Comparez son nom à celui de Seine et vérifiez que l’heure du dernier share se met à jour.
+3. Un compteur **Blocks Found** à zéro est normal : il compte les blocs résolus par vos propres machines, pas votre participation aux récompenses du pool.
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-first-mobile.webp" width="352" height="379"><img src="/blog/tracking/tracking-first-desktop.webp" width="1180" height="900" alt="Vérifiez d’abord les shares acceptés. Interface réelle en anglais avec des données d’exemple, pas des gains en direct." loading="lazy" decoding="async"></picture>
+<figcaption>Vérifiez d’abord les shares acceptés. Interface réelle en anglais avec des données d’exemple, pas des gains en direct.</figcaption>
+</figure>
+
 ## Que montre My Stats ?
 
 La page regroupe cartes et tableaux répondant chacun à une question sur votre mineur.
-
-### Solde
-
-- **Estimated Rewards :** votre part des blocs encore en maturation.
-- **Confirmed Rewards :** solde arrivé à maturité, en attente du prochain paiement.
-- **Paid Balance :** tous les montants déjà envoyés à votre adresse.
-
-Quand des récompenses sont en cours, **Estimated From Recent Blocks** liste chaque bloc avec sa hauteur, votre crédit estimé, les confirmations restantes et sa date de découverte. Chaque hauteur mène au bloc dans l’[explorateur Blocknet](https://explorer.blocknetcrypto.com), pour vérifier vous-même. [Les paiements PPLNS](/blog/fr/how-pplns-payouts-work/) expliquent la répartition et le calendrier des paiements.
 
 ### Minage et shares
 
@@ -53,11 +54,7 @@ Si vous avez plusieurs machines, donnez à chacune un nom distinct : le pool le
 ./seine --pool-worker rig-01
 ```
 
-Un rig utilisant une ancienne version reçoit un badge **update available** lié à la [page des versions seine](https://github.com/zpalmtree/seine/releases), pour repérer une machine oubliée lors des mises à jour.
-
-### Paiements et shares récents
-
-**Recent Payouts** liste chaque paiement avec montant, lien vers la transaction et statut en file d’attente, non confirmé ou confirmé. **Recent Shares** montre les 20 derniers shares avec tâche, rig, difficulté et statut : le moyen le plus rapide de confirmer qu’une machine fraîchement lancée atteint le pool.
+Le tableau **Workers** affiche aussi la version du mineur de chaque machine. Une notification au-dessus des statistiques mène à la [page des versions seine](https://github.com/zpalmtree/seine/releases) lorsqu’une version est ancienne ou inconnue.
 
 ## Pourquoi le hashrate du pool diffère-t-il de celui de seine ?
 
@@ -69,6 +66,29 @@ Deux habitudes permettent de comparer correctement :
 - Laissez du temps à un nouveau rig. Au début, le pool moyenne sur les minutes déjà minées : la première valeur dépend de quelques shares. Après une heure, la fenêtre complète s’applique.
 
 Recent Shares confirme immédiatement leur arrivée, avant même la stabilisation du hashrate.
+
+## Quand attendre votre premier paiement ?
+
+Il n’y a pas de délai fixe entre votre premier share et votre premier paiement. Le pool doit trouver un bloc pendant que vos shares sont dans sa fenêtre de paiement. Ce bloc nécessite ensuite 60 confirmations, soit environ cinq heures en moyenne **après sa découverte**, avec une durée réelle variable. Une fois votre solde confirmé au minimum actuel de 0,1 BNT, il est admissible à un paiement automatique. Consultez [Get Started](/start) pour les paramètres actuels.
+
+Suivez le statut et le lien de transaction dans **Recent Payouts**. Un paiement en file d’attente n’a pas encore été diffusé. Si un paiement envoyé manque dans votre portefeuille, consultez le [guide de dépannage des paiements](/blog/fr/pool-payout-missing-from-wallet/).
+
+### Solde
+
+- **Estimated Rewards :** votre part des blocs encore en maturation.
+- **Confirmed Rewards :** solde arrivé à maturité, en attente du prochain paiement.
+- **Paid Balance :** tous les montants déjà envoyés à votre adresse.
+
+Quand des récompenses sont en cours, **Estimated From Recent Blocks** liste chaque bloc avec sa hauteur, votre crédit estimé, les confirmations restantes et sa date de découverte. Chaque hauteur mène au bloc dans l’[explorateur Blocknet](https://explorer.blocknetcrypto.com), pour vérifier vous-même. [Les paiements PPLNS](/blog/fr/how-pplns-payouts-work/) expliquent la répartition et le calendrier des paiements.
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-rewards-mobile.webp" width="352" height="524"><img src="/blog/tracking/tracking-rewards-desktop.webp" width="1081" height="217" alt="Les soldes estimé, confirmé et payé correspondent à des étapes distinctes. Interface réelle en anglais avec des montants d’exemple, pas des gains prévus." loading="lazy" decoding="async"></picture>
+<figcaption>Les soldes estimé, confirmé et payé correspondent à des étapes distinctes. Interface réelle en anglais avec des montants d’exemple, pas des gains prévus.</figcaption>
+</figure>
+
+### Paiements et shares récents
+
+**Recent Payouts** liste chaque paiement avec montant, lien vers la transaction et statut en file d’attente, non confirmé ou confirmé. **Recent Shares** montre les 20 derniers shares avec tâche, rig, difficulté et statut : le moyen le plus rapide de confirmer qu’une machine fraîchement lancée atteint le pool.
 
 <span id="zero-hashrate"></span>
 
@@ -110,6 +130,10 @@ Ces pages ne nécessitent aucune recherche et montrent ouvertement l’activité
 
 [Status](/status) est la page de santé du pool. Elle indique si le pool, HTTP public, l’API, Stratum, la base et le daemon sont en ligne, la fraîcheur du modèle courant, la hauteur, la disponibilité sur 10 minutes, 6 heures, 24 heures et 7 jours, et les incidents. Deux mesures de disponibilité sont réalisées : un moniteur sur le serveur du pool et une sonde externe sur Cloudflare.
 
+## Et le tableau de bord de seine ?
+
+Le pool affiche ce qu’il vous a crédité. Pour voir la machine en direct, le tableau de bord terminal seine montre hashrate et shares immédiatement. seine peut aussi exposer une API locale avec REST, flux d’événements serveur et métriques Prometheus à `/metrics`, sur `127.0.0.1:9977` par défaut. Le [guide de l’API de contrôle](https://github.com/zpalmtree/seine/blob/master/docs/API.md) présente options et endpoints. Beaucoup de mineurs utilisent les deux : les métriques seine par machine, et l’API du pool pour soldes et paiements.
+
 ## Comment utiliser l’API bntpool.com ?
 
 <Answer>
@@ -146,29 +170,5 @@ Avec `jq`, extrayez par exemple hashrate et shares acceptés, ou le total payé 
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS | jq '{hashrate, total_accepted, total_rejected}'
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS/balance | jq '.balance.paid / 100000000'
 ```
-
-### Afficher votre mineur dans un tableau de bord domestique
-
-Le même endpoint peut servir de capteur. Dans Home Assistant, l’intégration RESTful le lit avec quelques lignes dans `configuration.yaml` :
-
-```yaml
-rest:
-  - resource: https://bntpool.com/api/miner/YOUR_ADDRESS
-    scan_interval: 60
-    sensor:
-      - name: "bntpool hashrate"
-        value_template: "{{ value_json.hashrate | round(2) }}"
-        unit_of_measurement: "H/s"
-      - name: "bntpool accepted shares"
-        value_template: "{{ value_json.total_accepted }}"
-```
-
-Une interrogation toutes les 30 à 60 secondes suffit : le hashrate est une moyenne horaire et My Stats actualise les détails toutes les 30 secondes. L’API publique limite le débit par client. Si un script reçoit HTTP 429, il doit ralentir et attendre le délai de l’en-tête `Retry-After` avant de réessayer.
-
-## Et le tableau de bord de seine ?
-
-Le pool affiche ce qu’il vous a crédité. Pour voir la machine en direct, le tableau de bord terminal seine montre hashrate et shares immédiatement. seine peut aussi exposer une API locale avec REST, flux d’événements serveur et métriques Prometheus à `/metrics`, sur `127.0.0.1:9977` par défaut. Le [guide de l’API de contrôle](https://github.com/zpalmtree/seine/blob/master/docs/API.md) présente options et endpoints. Beaucoup de mineurs utilisent les deux : les métriques seine par machine, et l’API du pool pour soldes et paiements.
-
-Vous découvrez seine ? [Téléchargez-le](https://seineminer.com/fr/#download), choisissez le pool par défaut et votre adresse apparaîtra sur My Stats dans les minutes suivant le premier share accepté.
 
 <CTA target="pool" title="Commencez à miner et suivez tout en direct" text="Rejoignez bntpool.com en quelques minutes, puis suivez votre hashrate, vos shares et votre solde sur My Stats." />

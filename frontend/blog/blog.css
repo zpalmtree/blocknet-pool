@@ -159,3 +159,12 @@ footer a:hover { color: var(--text); }
 .topic-section > h2:target { text-decoration: underline; text-underline-offset: 6px; text-decoration-thickness: 1px; }
 .topic-section .posts { padding-bottom: 56px; }
 .crumbs { line-height: 1.6; }
+
+/* Real responsive captures in the first-session tracking guide. */
+.prose .tracking-figure { margin: 2em 0; }
+.tracking-figure picture { display: block; }
+.tracking-figure img { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 12px; }
+.tracking-figure figcaption { margin-top: 10px; font-size: .85rem; color: var(--muted); }
+@media (max-width: 640px) {
+  .tracking-figure picture { max-width: 352px; margin-inline: auto; }
+}

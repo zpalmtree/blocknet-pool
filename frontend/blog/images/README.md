@@ -50,3 +50,13 @@ no language-dependent text or invented dashboard values. Added October 26, 2026.
 October 28, 2026: all covers now use the common light-paper frame in `scripts/editorial-cover.mjs`.
 Screenshot content and chart geometry are preserved using contain sizing. Dark illustration
 backgrounds become the shared paper color. See `editorial/cover-system.md`.
+
+- `tracking/tracking-{first,rewards}-{desktop,mobile}.webp`: real StatsPage
+  captures through the shared Windows Chrome Playwright MCP, October 28, 2026,
+  4:04–4:05 PM EDT. Current components at `3cddc78` with the isolated
+  `showcases/pool-tracking/fixtures.ts` examples. Invented address, shares and
+  amounts only; not a real account, live earnings, or an earnings forecast.
+  English interface with localized alt text and captions in all 20 articles.
+  Desktop 1180px / mobile 390px browser widths, including element crops.
+  Reproduce with the showcase README; Sharp converts PNG to WebP without
+  altering the interface. The build copies these into `/blog/tracking/`.

@@ -2,7 +2,7 @@
 title: bntpool.com'da madencinizi takip edin
 description: bntpool.com'da adres veya @name ile hashrate, share, bakiye ve ödemeleri görün; blokları, şansı, çalışma süresini izleyin veya açık API'yi kullanın.
 tags: [bntpool, Madencilik istatistikleri, Havuz API’si, Blocknet]
-sourceHash: 'bde59962f8d3'
+sourceHash: '40197b2fa166'
 translation: draft
 faq:
   - q: 'bntpool.com''daki hashrate''im neden seine''den farklı?'
@@ -15,7 +15,7 @@ faq:
     a: 'Estimated Rewards, share''leriniz ödeme penceresindeyken havuz blok bulduğunda görünür. Yeni madencide birkaç madencilik turu sürebilir. Önce kabul edilen share''ler ve hashrate, sonra tahmini ödüller görünür; bunlar Confirmed Rewards olarak olgunlaşır ve otomatik ödenir.'
 ---
 
-seine bntpool.com'da madencilik yapmaya başlayınca havuz gördüğü her şeyi gösterir: hashrate'iniz, kabul edilen her share, kazancınız ve adresinize gönderilen her ödeme. Bu rehber My Stats sayfasını, tüm havuzun herkese açık sayfalarını ve betiklerle ev panellerinden kullanabileceğiniz açık API'yi anlatır.
+İlk kabul edilen payınızdan sonra, havuzun çalışmanızı aldığını doğrulamak için My Stats sayfasını açın. Makinenizi bulun, hashrate’i zaman içinde karşılaştırın ve tahmini ödülleri onaylanıp ödenene kadar izleyin. Betikler ve genel API rehberin sonunda yer alır.
 
 Henüz madenciliğe başlamadıysanız [seine kurulum rehberi](https://seineminer.com/tr/blog/how-to-mine-blocknet/) birkaç dakikada ilk share'lerinize ulaştırır.
 
@@ -27,17 +27,18 @@ bntpool.com/stats adresindeki My Stats'ı açın, Blocknet adresinizi veya @name
 
 [My Stats](/stats) sayfasına gidip seine'e verdiğiniz adresi veya [Blocknet ID kısa adını](https://seineminer.com/tr/blog/blocknet-id-pay-by-name/) girin. `@name` veya `$name` gibi bir ad blocknet.id üzerinden çözümlenir; arama kutusu ardından gösterdiği tam adresi içerir. Sayfa o tarayıcıdaki son aramanızı hatırlar; sonraki gelişinizde sayılarınız hazırdır.
 
+1. **Shares Accepted** ve **Recent Shares** alanlarını kontrol edin. Tüm ödül bakiyeleri hâlâ sıfır olsa bile kabul edilen paylar çalışmanızın havuza ulaştığını gösterir.
+2. **Workers** altında makinenizi bulun. Adını Seine’deki adla karşılaştırın ve son pay zamanının güncellendiğini kontrol edin.
+3. **Blocks Found** değerinin sıfır olması normaldir: bu sayaç kendi makinelerinizin çözdüğü blokları sayar; paylarınızın havuz ödüllerinden pay alıp almadığını göstermez.
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-first-mobile.webp" width="352" height="379"><img src="/blog/tracking/tracking-first-desktop.webp" width="1180" height="900" alt="Önce kabul edilen payları kontrol edin. Örnek verilerle gerçek İngilizce arayüz; canlı kazanç değildir." loading="lazy" decoding="async"></picture>
+<figcaption>Önce kabul edilen payları kontrol edin. Örnek verilerle gerçek İngilizce arayüz; canlı kazanç değildir.</figcaption>
+</figure>
+
 ## My Stats sayfası neleri gösterir?
 
 Sayfa kart ve tablo gruplarına ayrılır; her biri madencinizle ilgili bir soruyu yanıtlar.
-
-### Bakiye
-
-- **Estimated Rewards:** Havuzun bulduğu, hâlâ olgunlaşan bloklardaki payınız.
-- **Confirmed Rewards:** Sonraki ödemeyi bekleyen olgunlaşmış bakiye.
-- **Paid Balance:** Adresinize gönderilmiş toplam tutar.
-
-Bekleyen ödülleriniz olduğunda **Estimated From Recent Blocks** tablosu her bloğu yüksekliği, tahmini kazancınız, kalan onay sayısı ve bulunma zamanı ile listeler. Her yükseklik [Blocknet gezginindeki](https://explorer.blocknetcrypto.com) bloğa bağlanır; kendiniz kontrol edebilirsiniz. [PPLNS ödemeleri nasıl çalışır?](/blog/tr/how-pplns-payouts-work/) her blok ödülünün paylaşımını ve bakiyenizin ne zaman ödendiğini açıklar.
 
 ### Madencilik ve share'ler
 
@@ -53,11 +54,7 @@ Birden fazla makine çalıştırıyorsanız her birine ayrı ad verin; havuz has
 ./seine --pool-worker rig-01
 ```
 
-Eski seine çalıştıran rig, [seine sürümler sayfasına](https://github.com/zpalmtree/seine/releases) bağlanan **update available** rozeti alır; güncellemeyi unuttuğunuz makineyi kolayca fark edersiniz.
-
-### Ödemeler ve son share'ler
-
-**Recent Payouts**, adresinize yapılan her ödemeyi tutarı, gezgindeki işlem bağlantısı ve queued, unconfirmed veya confirmed durumuyla listeler. **Recent Shares**, son 20 share'i görev, rig, zorluk ve durumuyla gösterir; yeni başlattığınız makinenin havuza ulaştığını doğrulamanın en hızlı yoludur.
+**Workers** tablosu her makinenin madenci sürümünü de gösterir. Eski veya bilinmeyen bir sürüm varsa istatistiklerin üstündeki bildirim [seine sürümleri sayfasına](https://github.com/zpalmtree/seine/releases) yönlendirir.
 
 ## Havuz hashrate'i neden seine'den farklı?
 
@@ -69,6 +66,29 @@ seine makinenizin hesapladığı her hash'i sayar. Havuz yalnızca gönderdiğin
 - Yeni rig'e zaman tanıyın. Yeni başlayan rig için havuz madencilik yaptığı dakikalar üzerinden ortalama alır; ilk okuma birkaç share'e dayanır. Bir saat sonra tam bir saatlik pencere uygulanır.
 
 Recent Shares tablosu, hashrate değeri oturmadan önce bile share'lerin geldiğini hemen gösterir.
+
+## İlk ödemenizi ne zaman beklemelisiniz?
+
+İlk paydan ilk ödemeye kadar sabit bir geri sayım yoktur. Paylarınız ödeme penceresindeyken havuzun bir blok bulması gerekir. Ardından bu blok 60 onay almalıdır: **blok bulunduktan sonra** ortalama yaklaşık beş saat, ancak gerçek süre değişir. Onaylanmış bakiyeniz güncel minimum olan 0,1 BNT’ye ulaştığında otomatik ödeme turuna alınabilir. Güncel ayarlar için [Get Started](/start) sayfasına bakın.
+
+Ödeme durumunu ve işlem bağlantısını **Recent Payouts** altında izleyin. Kuyruktaki bir ödeme henüz ağa yayınlanmamıştır. Gönderilmiş ödeme cüzdanınızda görünmüyorsa [ödeme sorunlarını giderme rehberini](/blog/tr/pool-payout-missing-from-wallet/) kullanın.
+
+### Bakiye
+
+- **Estimated Rewards:** Havuzun bulduğu, hâlâ olgunlaşan bloklardaki payınız.
+- **Confirmed Rewards:** Sonraki ödemeyi bekleyen olgunlaşmış bakiye.
+- **Paid Balance:** Adresinize gönderilmiş toplam tutar.
+
+Bekleyen ödülleriniz olduğunda **Estimated From Recent Blocks** tablosu her bloğu yüksekliği, tahmini kazancınız, kalan onay sayısı ve bulunma zamanı ile listeler. Her yükseklik [Blocknet gezginindeki](https://explorer.blocknetcrypto.com) bloğa bağlanır; kendiniz kontrol edebilirsiniz. [PPLNS ödemeleri nasıl çalışır?](/blog/tr/how-pplns-payouts-work/) her blok ödülünün paylaşımını ve bakiyenizin ne zaman ödendiğini açıklar.
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-rewards-mobile.webp" width="352" height="524"><img src="/blog/tracking/tracking-rewards-desktop.webp" width="1081" height="217" alt="Tahmini, onaylanmış ve ödenmiş bakiyeler ayrı aşamalardır. Örnek tutarlarla gerçek İngilizce arayüz; beklenen kazanç değildir." loading="lazy" decoding="async"></picture>
+<figcaption>Tahmini, onaylanmış ve ödenmiş bakiyeler ayrı aşamalardır. Örnek tutarlarla gerçek İngilizce arayüz; beklenen kazanç değildir.</figcaption>
+</figure>
+
+### Ödemeler ve son share'ler
+
+**Recent Payouts**, adresinize yapılan her ödemeyi tutarı, gezgindeki işlem bağlantısı ve queued, unconfirmed veya confirmed durumuyla listeler. **Recent Shares**, son 20 share'i görev, rig, zorluk ve durumuyla gösterir; yeni başlattığınız makinenin havuza ulaştığını doğrulamanın en hızlı yoludur.
 
 <span id="zero-hashrate"></span>
 
@@ -110,6 +130,10 @@ Bu sayfalar arama gerektirmez ve havuzun yaptığı her şeyi açıkça gösteri
 
 [Status](/status) havuzun kendi sağlık sayfasıdır. Havuz, genel HTTP, API, Stratum, veritabanı ve daemon'ın çevrimiçi olup olmadığını; güncel görev şablonunun tazeliğini; zincir yüksekliğini; son 10 dakika, 6 saat, 24 saat ve 7 gündeki çalışma süresini ve olay geçmişini gösterir. Çalışma süresi iki kez ölçülür: havuz sunucusundaki izleyici ve Cloudflare üzerinde çalışan dış prob tarafından.
 
+## Peki seine'in kendi paneli?
+
+Havuz size yazdığı kazancı gösterir. Makinenin canlı görünümü için seine'in terminal paneli hashrate ve share'leri anında gösterir. seine ayrıca REST, sunucu tarafından gönderilen olay akışı ve `/metrics` altında Prometheus metrikleri içeren yerel kontrol API'si sunabilir; varsayılan olarak `127.0.0.1:9977` adresine bağlanır. [Kontrol API'si rehberi](https://github.com/zpalmtree/seine/blob/master/docs/API.md) bayrakları ve uç noktaları anlatır. Birçok madenci ikisini birlikte kullanır: her makine için seine metrikleri, bakiye ve ödemeler için havuz API'si.
+
 ## bntpool.com API'si nasıl kullanılır?
 
 <Answer>
@@ -146,29 +170,5 @@ curl -s https://bntpool.com/api/miner/YOUR_ADDRESS
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS | jq '{hashrate, total_accepted, total_rejected}'
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS/balance | jq '.balance.paid / 100000000'
 ```
-
-### Madencinizi ev panelinde gösterin
-
-Aynı uç nokta ev panelinde sensör olarak çalışır. Home Assistant'ta RESTful entegrasyonu birkaç satır `configuration.yaml` ile okur:
-
-```yaml
-rest:
-  - resource: https://bntpool.com/api/miner/YOUR_ADDRESS
-    scan_interval: 60
-    sensor:
-      - name: "bntpool hashrate"
-        value_template: "{{ value_json.hashrate | round(2) }}"
-        unit_of_measurement: "H/s"
-      - name: "bntpool accepted shares"
-        value_template: "{{ value_json.total_accepted }}"
-```
-
-Her 30–60 saniyede sorgulamak yeterlidir: hashrate saatlik ortalamadır ve My Stats madenci ayrıntılarınızı her 30 saniyede yeniler. Açık API'de istemci başına hız sınırı vardır. Betik HTTP 429 yanıtı alırsa yavaşlamalı ve yeniden denemeden önce `Retry-After` başlığındaki süreyi beklemelidir.
-
-## Peki seine'in kendi paneli?
-
-Havuz size yazdığı kazancı gösterir. Makinenin canlı görünümü için seine'in terminal paneli hashrate ve share'leri anında gösterir. seine ayrıca REST, sunucu tarafından gönderilen olay akışı ve `/metrics` altında Prometheus metrikleri içeren yerel kontrol API'si sunabilir; varsayılan olarak `127.0.0.1:9977` adresine bağlanır. [Kontrol API'si rehberi](https://github.com/zpalmtree/seine/blob/master/docs/API.md) bayrakları ve uç noktaları anlatır. Birçok madenci ikisini birlikte kullanır: her makine için seine metrikleri, bakiye ve ödemeler için havuz API'si.
-
-seine'de yeni misiniz? [İndirin](https://seineminer.com/tr/#download), varsayılan havuza yönlendirin; ilk kabul edilen share'inizden birkaç dakika sonra adresiniz My Stats'ta görünür.
 
 <CTA target="pool" title="Madenciliğe başlayın, canlı takip edin" text="Birkaç dakika içinde bntpool.com'a katılın; ardından hashrate, share ve bakiyenizi My Stats'ta takip edin." />

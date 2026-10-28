@@ -2,7 +2,7 @@
 title: Deinen Miner auf bntpool.com überwachen
 description: Suche auf bntpool.com nach Adresse oder @name für Hashrate, Shares, Guthaben und Auszahlungen. Verfolge Blöcke, Glück und Verfügbarkeit oder nutze die öffentliche API.
 tags: [bntpool, Mining-Statistik, Pool-API, Blocknet]
-sourceHash: 'bde59962f8d3'
+sourceHash: '40197b2fa166'
 translation: draft
 faq:
   - q: 'Warum unterscheidet sich meine Hashrate auf bntpool.com von der in seine?'
@@ -15,7 +15,7 @@ faq:
     a: 'Estimated Rewards erscheinen, sobald der Pool einen Block findet, während deine Shares im Vergütungsfenster liegen. Bei neuen Minern kann das einige Runden dauern. Zuerst erscheinen akzeptierte Shares und Hashrate, dann geschätzte Belohnungen. Diese reifen zu Confirmed Rewards und werden automatisch ausgezahlt.'
 ---
 
-Sobald seine auf bntpool.com minet, zeigt dir der Pool alles, was er sieht: deine Hashrate, jeden akzeptierten Share, deine Einnahmen und jede Auszahlung an deine Adresse. Diese Anleitung führt durch My Stats, die öffentlichen Seiten für den ganzen Pool und die öffentliche API für Skripte und Heim-Dashboards.
+Öffne nach deinem ersten akzeptierten Share My Stats und prüfe, ob deine Arbeit beim Pool ankommt. Suche deinen Rechner, vergleiche die Hashrate über längere Zeit und verfolge geschätzte Erträge bis zur Bestätigung und Auszahlung. Skripte und die öffentliche API folgen am Ende.
 
 Falls du noch nicht minest, führt dich die [Installationsanleitung für seine](https://seineminer.com/de/blog/how-to-mine-blocknet/) in wenigen Minuten zu deinen ersten Shares.
 
@@ -27,17 +27,18 @@ Falls du noch nicht minest, führt dich die [Installationsanleitung für seine](
 
 Gib auf [My Stats](/stats) dieselbe Adresse oder denselben [Blocknet-ID-Kurznamen](https://seineminer.com/de/blog/blocknet-id-pay-by-name/) wie in seine ein. Ein Name wie `@name` oder `$name` wird über blocknet.id aufgelöst; danach zeigt das Suchfeld die vollständige Zieladresse. Die Seite merkt sich die letzte Suche in diesem Browser. Beim nächsten Besuch sind deine Zahlen schon da.
 
+1. Prüfe **Shares Accepted** und **Recent Shares**. Akzeptierte Shares zeigen, dass deine Arbeit den Pool erreicht, auch wenn alle Ertragsanzeigen noch null sind.
+2. Suche deinen Rechner unter **Workers**. Vergleiche seinen Namen mit dem in Seine und prüfe, ob sich die Zeit des letzten Shares aktualisiert.
+3. Null bei **Blocks Found** ist normal: Gezählt werden Blöcke, die deine eigenen Rechner gelöst haben, nicht deine Beteiligung an den Pool-Erträgen.
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-first-mobile.webp" width="352" height="379"><img src="/blog/tracking/tracking-first-desktop.webp" width="1180" height="900" alt="Prüfe zuerst die akzeptierten Shares. Echte englische Oberfläche mit Beispieldaten, keine Live-Erträge." loading="lazy" decoding="async"></picture>
+<figcaption>Prüfe zuerst die akzeptierten Shares. Echte englische Oberfläche mit Beispieldaten, keine Live-Erträge.</figcaption>
+</figure>
+
 ## Was zeigt My Stats?
 
 Karten und Tabellen sind in Gruppen aufgeteilt, die jeweils eine Frage zu deinem Miner beantworten.
-
-### Guthaben
-
-- **Estimated Rewards:** dein Anteil an gefundenen Pool-Blöcken, die noch reifen.
-- **Confirmed Rewards:** gereiftes Guthaben, das auf die nächste Auszahlung wartet.
-- **Paid Balance:** alles, was bereits an deine Adresse gesendet wurde.
-
-Bei noch ausstehenden Belohnungen listet **Estimated From Recent Blocks** jeden Block mit Höhe, geschätzter Gutschrift, verbleibenden Bestätigungen und Fundzeit auf. Jede Höhe führt zum Block im [Blocknet-Explorer](https://explorer.blocknetcrypto.com), damit du ihn selbst prüfen kannst. [So funktionieren PPLNS-Auszahlungen](/blog/de/how-pplns-payouts-work/) erklärt Aufteilung und Auszahlung der Belohnung.
 
 ### Mining und Shares
 
@@ -53,11 +54,7 @@ Gib bei mehreren Rechnern jedem einen eigenen Namen. Der Pool listet sie dann ge
 ./seine --pool-worker rig-01
 ```
 
-Ein Rig mit älterer seine-Version erhält den Hinweis **update available** mit Link zu den [seine-Releases](https://github.com/zpalmtree/seine/releases). So findest du leicht einen Rechner, dessen Update du vergessen hast.
-
-### Auszahlungen und letzte Shares
-
-**Recent Payouts** listet jede Zahlung an deine Adresse mit Betrag, Transaktionslink zum Explorer und Status queued, unconfirmed oder confirmed. **Recent Shares** zeigt die letzten 20 Shares mit Job, Rig, Difficulty und Status. Damit bestätigst du am schnellsten, dass ein gerade gestarteter Rechner den Pool erreicht.
+Die Tabelle **Workers** zeigt auch die Miner-Version jedes Rechners. Bei alten oder unbekannten Versionen führt ein Hinweis oberhalb der Statistiken zur [seine-Release-Seite](https://github.com/zpalmtree/seine/releases).
 
 ## Warum unterscheidet sich die Pool-Hashrate von der in seine?
 
@@ -69,6 +66,29 @@ Zwei Gewohnheiten helfen beim Vergleich:
 - Gib einem neuen Rig Zeit. Anfangs mittelt der Pool nur über die bisherigen Mining-Minuten; die erste Anzeige beruht auf wenigen Shares. Nach einer Stunde gilt das volle einstündige Fenster.
 
 Recent Shares zeigt sofort, dass Shares eintreffen, noch bevor sich die Hashrate stabilisiert.
+
+## Wann kannst du mit deiner ersten Auszahlung rechnen?
+
+Zwischen dem ersten Share und der ersten Auszahlung gibt es keine feste Wartezeit. Der Pool muss einen Block finden, während deine Shares im Auszahlungsfenster liegen. Dieser Block braucht anschließend 60 Bestätigungen: durchschnittlich etwa fünf Stunden **ab dem Blockfund**, wobei die tatsächliche Zeit schwankt. Erreicht dein bestätigtes Guthaben die aktuelle Mindestgrenze von 0,1 BNT, kann es beim automatischen Auszahlungslauf ausgezahlt werden. Aktuelle Einstellungen stehen unter [Get Started](/start).
+
+Status und Transaktionslink findest du unter **Recent Payouts**. Eine eingereihte Zahlung wurde noch nicht gesendet. Fehlt eine gesendete Zahlung in deiner Wallet, hilft der [Leitfaden zu fehlenden Auszahlungen](/blog/de/pool-payout-missing-from-wallet/).
+
+### Guthaben
+
+- **Estimated Rewards:** dein Anteil an gefundenen Pool-Blöcken, die noch reifen.
+- **Confirmed Rewards:** gereiftes Guthaben, das auf die nächste Auszahlung wartet.
+- **Paid Balance:** alles, was bereits an deine Adresse gesendet wurde.
+
+Bei noch ausstehenden Belohnungen listet **Estimated From Recent Blocks** jeden Block mit Höhe, geschätzter Gutschrift, verbleibenden Bestätigungen und Fundzeit auf. Jede Höhe führt zum Block im [Blocknet-Explorer](https://explorer.blocknetcrypto.com), damit du ihn selbst prüfen kannst. [So funktionieren PPLNS-Auszahlungen](/blog/de/how-pplns-payouts-work/) erklärt Aufteilung und Auszahlung der Belohnung.
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-rewards-mobile.webp" width="352" height="524"><img src="/blog/tracking/tracking-rewards-desktop.webp" width="1081" height="217" alt="Geschätztes, bestätigtes und ausgezahltes Guthaben sind getrennte Stufen. Echte englische Oberfläche mit Beispielbeträgen, keine Ertragsprognose." loading="lazy" decoding="async"></picture>
+<figcaption>Geschätztes, bestätigtes und ausgezahltes Guthaben sind getrennte Stufen. Echte englische Oberfläche mit Beispielbeträgen, keine Ertragsprognose.</figcaption>
+</figure>
+
+### Auszahlungen und letzte Shares
+
+**Recent Payouts** listet jede Zahlung an deine Adresse mit Betrag, Transaktionslink zum Explorer und Status queued, unconfirmed oder confirmed. **Recent Shares** zeigt die letzten 20 Shares mit Job, Rig, Difficulty und Status. Damit bestätigst du am schnellsten, dass ein gerade gestarteter Rechner den Pool erreicht.
 
 <span id="zero-hashrate"></span>
 
@@ -110,6 +130,10 @@ Diese Seiten brauchen keine Adresssuche und zeigen alle Aktivitäten des Pools �
 
 [Status](/status) ist die Zustandsseite des Pools. Sie zeigt, ob Pool, öffentliches HTTP, API, Stratum, Datenbank und Daemon online sind, wie aktuell die Jobvorlage ist, die Blockchain-Höhe, die Verfügbarkeit über die letzten 10 Minuten, 6 Stunden, 24 Stunden und 7 Tage sowie den Störungsverlauf. Zwei Systeme messen die Verfügbarkeit: ein Monitor auf dem Pool-Server und eine externe Prüfung auf Cloudflare.
 
+## Was ist mit dem eigenen Dashboard von seine?
+
+Der Pool zeigt seine Gutschriften an dich. Für den Live-Blick auf den Rechner zeigt das Terminal-Dashboard von seine Hashrate und Shares direkt bei ihrer Entstehung. Zusätzlich kann seine eine lokale Steuerungs-API mit REST, Server-Sent Events und Prometheus-Metriken unter `/metrics` bereitstellen, standardmäßig an `127.0.0.1:9977` gebunden. Die [Steuerungs-API-Anleitung](https://github.com/zpalmtree/seine/blob/master/docs/API.md) erklärt Optionen und Endpunkte. Viele Miner nutzen beides: die Metriken von seine je Rechner und die Pool-API für Guthaben und Auszahlungen.
+
 ## Wie nutzt du die API von bntpool.com?
 
 <Answer>
@@ -146,29 +170,5 @@ Mit `jq` extrahierst du einzelne Werte, etwa Hashrate und akzeptierte Shares ode
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS | jq '{hashrate, total_accepted, total_rejected}'
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS/balance | jq '.balance.paid / 100000000'
 ```
-
-### Deinen Miner auf einem Heim-Dashboard anzeigen
-
-Derselbe Endpunkt eignet sich als Sensor für ein Heim-Dashboard. In Home Assistant liest ihn die RESTful-Integration mit wenigen Zeilen in `configuration.yaml`:
-
-```yaml
-rest:
-  - resource: https://bntpool.com/api/miner/YOUR_ADDRESS
-    scan_interval: 60
-    sensor:
-      - name: "bntpool hashrate"
-        value_template: "{{ value_json.hashrate | round(2) }}"
-        unit_of_measurement: "H/s"
-      - name: "bntpool accepted shares"
-        value_template: "{{ value_json.total_accepted }}"
-```
-
-Abfragen alle 30 bis 60 Sekunden reichen aus: Die Hashrate ist ein Stundendurchschnitt, und My Stats aktualisiert die Miner-Details selbst alle 30 Sekunden. Die öffentliche API begrenzt Anfragen je Client. Erhält ein Skript HTTP 429, sollte es pausieren und vor dem nächsten Versuch die Zeit aus dem Header `Retry-After` abwarten.
-
-## Was ist mit dem eigenen Dashboard von seine?
-
-Der Pool zeigt seine Gutschriften an dich. Für den Live-Blick auf den Rechner zeigt das Terminal-Dashboard von seine Hashrate und Shares direkt bei ihrer Entstehung. Zusätzlich kann seine eine lokale Steuerungs-API mit REST, Server-Sent Events und Prometheus-Metriken unter `/metrics` bereitstellen, standardmäßig an `127.0.0.1:9977` gebunden. Die [Steuerungs-API-Anleitung](https://github.com/zpalmtree/seine/blob/master/docs/API.md) erklärt Optionen und Endpunkte. Viele Miner nutzen beides: die Metriken von seine je Rechner und die Pool-API für Guthaben und Auszahlungen.
-
-Neu bei seine? [Lade ihn herunter](https://seineminer.com/de/#download), verbinde ihn mit dem Standardpool und deine Adresse erscheint wenige Minuten nach dem ersten akzeptierten Share auf My Stats.
 
 <CTA target="pool" title="Starte das Mining und verfolge es live" text="Tritt bntpool.com in wenigen Minuten bei und verfolge Hashrate, Shares und Guthaben auf My Stats." />

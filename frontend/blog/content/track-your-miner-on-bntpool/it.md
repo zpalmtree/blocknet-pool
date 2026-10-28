@@ -11,11 +11,11 @@ faq:
     a: 'No. Statistiche, blocchi, pagamenti, fortuna, stato ed endpoint dei miner sono JSON pubblico via HTTPS, leggibile con curl o una dashboard domestica senza registrazione. Gli importi sono in unità atomiche: dividi per 100.000.000 per ottenere BNT e interroga ogni 30-60 secondi.'
   - q: 'Perché My Stats mostra zero Estimated Rewards?'
     a: 'Le stime appaiono quando la pool trova un blocco con le tue share nella finestra di pagamento. Per un nuovo miner possono servire alcuni round. Share accettate e hashrate compaiono prima, poi le ricompense stimate, che maturano in Confirmed Rewards e vengono pagate automaticamente.'
-sourceHash: 'bde59962f8d3'
+sourceHash: '40197b2fa166'
 translation: draft
 ---
 
-Quando seine mina su bntpool.com, la pool mostra tutto ciò che vede: hashrate, ogni share accettata, guadagni e pagamenti inviati al tuo indirizzo. Questa guida presenta My Stats, le pagine pubbliche dell’intera pool e l’API per script e dashboard domestiche.
+Dopo la prima share accettata, apri My Stats per verificare che il pool riceva il tuo lavoro. Individua la tua macchina, confronta l’hashrate nel tempo e segui le ricompense stimate fino alla conferma e al pagamento. Gli script e l’API pubblica sono in fondo alla guida.
 
 Se non hai iniziato, la [guida d’installazione di seine](https://seineminer.com/it/blog/how-to-mine-blocknet/) ti porta alle prime share in pochi minuti.
 
@@ -27,17 +27,18 @@ Apri My Stats su bntpool.com/stats, incolla indirizzo Blocknet o @name e premi L
 
 Vai su [My Stats](/stats) e inserisci lo stesso indirizzo o [shortname Blocknet ID](https://seineminer.com/it/blog/blocknet-id-pay-by-name/) dato a seine. `@name` o `$name` viene risolto tramite blocknet.id e la casella mostra poi l’indirizzo completo. La pagina ricorda l’ultima ricerca nel browser, così la prossima volta trovi già i tuoi numeri.
 
+1. Controlla **Shares Accepted** e **Recent Shares**. Le share accettate confermano che il tuo lavoro arriva al pool, anche se tutti i saldi sono ancora a zero.
+2. Trova la tua macchina in **Workers**. Confronta il nome con quello in Seine e verifica che l’orario dell’ultima share continui ad aggiornarsi.
+3. È normale che **Blocks Found** sia zero: conta i blocchi risolti dalle tue macchine, non la tua partecipazione alle ricompense del pool.
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-first-mobile.webp" width="352" height="379"><img src="/blog/tracking/tracking-first-desktop.webp" width="1180" height="900" alt="Controlla prima le share accettate. Interfaccia reale in inglese con dati di esempio, non guadagni in tempo reale." loading="lazy" decoding="async"></picture>
+<figcaption>Controlla prima le share accettate. Interfaccia reale in inglese con dati di esempio, non guadagni in tempo reale.</figcaption>
+</figure>
+
 ## Cosa mostra My Stats?
 
 Schede e tabelle sono raggruppate per rispondere a una domanda sul miner.
-
-### Saldo
-
-- **Estimated Rewards:** la tua quota dei blocchi ancora in maturazione.
-- **Confirmed Rewards:** saldo maturato in attesa del pagamento.
-- **Paid Balance:** tutto ciò che è stato inviato al tuo indirizzo.
-
-Quando hai ricompense in corso, **Estimated From Recent Blocks** elenca ogni blocco con altezza, credito stimato, conferme restanti e momento della scoperta. Ogni altezza collega il blocco sul [block explorer](https://explorer.blocknetcrypto.com), per verificarlo personalmente. [Come funzionano i pagamenti PPLNS](/blog/it/how-pplns-payouts-work/) spiega divisione e tempi.
 
 ### Mining e share
 
@@ -53,11 +54,7 @@ Assegna a ogni macchina un nome distinto: la pool mostra separatamente hashrate,
 ./seine --pool-worker rig-01
 ```
 
-Un rig con una vecchia versione riceve **update available**, collegato alle [release seine](https://github.com/zpalmtree/seine/releases), per individuare facilmente una macchina dimenticata negli aggiornamenti.
-
-### Pagamenti e share recenti
-
-**Recent Payouts** elenca ogni pagamento con importo, link alla transazione e stato in coda, non confermato o confermato. **Recent Shares** mostra le ultime 20 share con job, rig, difficoltà e stato: il modo più rapido per verificare che una macchina appena avviata raggiunga la pool.
+La tabella **Workers** mostra anche la versione del miner di ogni macchina. Un avviso sopra le statistiche rimanda alla [pagina delle release di seine](https://github.com/zpalmtree/seine/releases) quando una versione è vecchia o sconosciuta.
 
 ## Perché l’hashrate della pool differisce da seine?
 
@@ -69,6 +66,29 @@ Due abitudini aiutano il confronto:
 - Dai tempo a un nuovo rig. All’inizio la media copre solo i minuti trascorsi, quindi si basa su poche share. Dopo un’ora si applica la finestra completa.
 
 Recent Shares conferma subito l’arrivo del lavoro, prima che l’hashrate si stabilizzi.
+
+## Quando aspettarsi il primo pagamento?
+
+Non esiste un conto alla rovescia fisso dalla prima share al primo pagamento. Il pool deve trovare un blocco mentre le tue share sono nella finestra di pagamento. Quel blocco richiede poi 60 conferme: circa cinque ore in media **dal ritrovamento del blocco**, con tempi effettivi variabili. Quando il saldo confermato raggiunge il minimo attuale di 0,1 BNT, può essere incluso in un ciclo di pagamento automatico. Consulta [Get Started](/start) per i parametri attuali.
+
+Segui lo stato e il link alla transazione in **Recent Payouts**. Un pagamento in coda non è ancora stato trasmesso. Se un pagamento inviato manca nel wallet, consulta la [guida ai problemi di pagamento](/blog/it/pool-payout-missing-from-wallet/).
+
+### Saldo
+
+- **Estimated Rewards:** la tua quota dei blocchi ancora in maturazione.
+- **Confirmed Rewards:** saldo maturato in attesa del pagamento.
+- **Paid Balance:** tutto ciò che è stato inviato al tuo indirizzo.
+
+Quando hai ricompense in corso, **Estimated From Recent Blocks** elenca ogni blocco con altezza, credito stimato, conferme restanti e momento della scoperta. Ogni altezza collega il blocco sul [block explorer](https://explorer.blocknetcrypto.com), per verificarlo personalmente. [Come funzionano i pagamenti PPLNS](/blog/it/how-pplns-payouts-work/) spiega divisione e tempi.
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-rewards-mobile.webp" width="352" height="524"><img src="/blog/tracking/tracking-rewards-desktop.webp" width="1081" height="217" alt="I saldi stimato, confermato e pagato sono fasi distinte. Interfaccia reale in inglese con importi di esempio, non guadagni previsti." loading="lazy" decoding="async"></picture>
+<figcaption>I saldi stimato, confermato e pagato sono fasi distinte. Interfaccia reale in inglese con importi di esempio, non guadagni previsti.</figcaption>
+</figure>
+
+### Pagamenti e share recenti
+
+**Recent Payouts** elenca ogni pagamento con importo, link alla transazione e stato in coda, non confermato o confermato. **Recent Shares** mostra le ultime 20 share con job, rig, difficoltà e stato: il modo più rapido per verificare che una macchina appena avviata raggiunga la pool.
 
 <span id="zero-hashrate"></span>
 
@@ -110,6 +130,10 @@ Non richiedono una ricerca e mostrano apertamente l’attività. La [dashboard](
 
 [Status](/status) è la pagina di salute della pool. Mostra se pool, HTTP pubblico, API, Stratum, database e daemon sono online, quanto è recente il template, l’altezza, la disponibilità negli ultimi 10 minuti, 6 ore, 24 ore e 7 giorni e la cronologia degli incidenti. La disponibilità è misurata due volte: da un monitor sul server e da una sonda esterna su Cloudflare.
 
+## E la dashboard di seine?
+
+La pool mostra quanto ti ha accreditato. Per la macchina in diretta, la dashboard terminale mostra hashrate e share immediatamente. seine può anche esporre un’API locale REST con eventi server-sent e metriche Prometheus su `/metrics`, legata a `127.0.0.1:9977` per impostazione predefinita. La [guida API di controllo](https://github.com/zpalmtree/seine/blob/master/docs/API.md) descrive flag ed endpoint. Molti miner usano entrambi: metriche seine per ogni macchina e API pool per saldi e pagamenti.
+
 ## Come usare l’API bntpool.com?
 
 <Answer>
@@ -146,29 +170,5 @@ Con `jq` puoi estrarre singoli valori, come hashrate e share accettate, oppure t
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS | jq '{hashrate, total_accepted, total_rejected}'
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS/balance | jq '.balance.paid / 100000000'
 ```
-
-### Mostra il miner su una dashboard domestica
-
-Lo stesso endpoint funziona come sensore. In Home Assistant l’integrazione RESTful lo legge con poche righe di `configuration.yaml`:
-
-```yaml
-rest:
-  - resource: https://bntpool.com/api/miner/YOUR_ADDRESS
-    scan_interval: 60
-    sensor:
-      - name: "bntpool hashrate"
-        value_template: "{{ value_json.hashrate | round(2) }}"
-        unit_of_measurement: "H/s"
-      - name: "bntpool accepted shares"
-        value_template: "{{ value_json.total_accepted }}"
-```
-
-Interrogare ogni 30-60 secondi basta: l’hashrate è una media oraria e My Stats aggiorna i dettagli ogni 30 secondi. L’API limita le richieste per client. Se uno script riceve HTTP 429 deve rallentare e attendere il tempo indicato da `Retry-After` prima di riprovare.
-
-## E la dashboard di seine?
-
-La pool mostra quanto ti ha accreditato. Per la macchina in diretta, la dashboard terminale mostra hashrate e share immediatamente. seine può anche esporre un’API locale REST con eventi server-sent e metriche Prometheus su `/metrics`, legata a `127.0.0.1:9977` per impostazione predefinita. La [guida API di controllo](https://github.com/zpalmtree/seine/blob/master/docs/API.md) descrive flag ed endpoint. Molti miner usano entrambi: metriche seine per ogni macchina e API pool per saldi e pagamenti.
-
-Non conosci seine? [Scaricalo](https://seineminer.com/it/#download), usa la pool predefinita e l’indirizzo comparirà su My Stats entro pochi minuti dalla prima share accettata.
 
 <CTA target="pool" title="Inizia a minare e segui tutto in diretta" text="Entra in bntpool.com in pochi minuti, poi segui hashrate, share e saldo su My Stats." />

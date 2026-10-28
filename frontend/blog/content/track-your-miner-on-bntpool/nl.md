@@ -2,7 +2,7 @@
 title: 'Je miner volgen op bntpool.com'
 description: 'Zoek je adres of @name op bntpool.com voor hashrate, shares, saldo en betalingen. Volg blokken, luck en uptime of gebruik de openbare API in je scripts.'
 tags: ['bntpool', 'Miningstatistieken', 'Pool-API', 'Blocknet']
-sourceHash: 'bde59962f8d3'
+sourceHash: '40197b2fa166'
 translation: draft
 faq:
   - q: 'Waarom verschilt mijn hashrate op bntpool.com van seine?'
@@ -15,7 +15,7 @@ faq:
     a: 'Estimated Rewards verschijnen zodra de pool een blok vindt terwijl je shares in het uitbetalingsvenster zitten. Voor een nieuwe miner kan dat enkele rondes duren. Geaccepteerde shares en hashrate verschijnen eerst, dan geschatte beloningen. Die rijpen tot Confirmed Rewards en worden automatisch uitbetaald.'
 ---
 
-Zodra seine op bntpool.com mint, toont de pool alles wat hij ziet: je hashrate, elke geaccepteerde share, je verdiende bedragen en elke betaling naar je adres. Deze gids bespreekt My Stats, de openbare poolpagina’s en de API voor scripts en huisdashboards.
+Open na je eerste geaccepteerde share My Stats om te controleren of je werk de pool bereikt. Zoek je computer, vergelijk de hashrate over langere tijd en volg geschatte beloningen tot bevestiging en betaling. Scripts en de openbare API komen aan het eind.
 
 Nog niet begonnen? De [installatiegids voor seine](https://seineminer.com/nl/blog/how-to-mine-blocknet/) brengt je binnen enkele minuten naar je eerste shares.
 
@@ -27,17 +27,18 @@ Open My Stats op bntpool.com/stats, plak je Blocknet-adres of @name en druk op L
 
 Voer op [My Stats](/stats) hetzelfde adres of dezelfde [Blocknet ID-naam](https://seineminer.com/nl/blog/blocknet-id-pay-by-name/) in als in seine. Een naam als `@name` of `$name` wordt via blocknet.id opgezocht; daarna toont het zoekveld het volledige adres. De browser onthoudt je laatste zoekopdracht, zodat je cijfers bij een volgend bezoek al klaarstaan.
 
+1. Bekijk **Shares Accepted** en **Recent Shares**. Geaccepteerde shares bevestigen dat je werk aankomt, ook als alle beloningssaldi nog nul zijn.
+2. Zoek je computer onder **Workers**. Vergelijk de naam met die in Seine en controleer of de tijd van de laatste share blijft veranderen.
+3. Nul bij **Blocks Found** is normaal: dit telt blokken die je eigen computers hebben opgelost, niet of je shares recht geven op een deel van de poolbeloningen.
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-first-mobile.webp" width="352" height="379"><img src="/blog/tracking/tracking-first-desktop.webp" width="1180" height="900" alt="Controleer eerst de geaccepteerde shares. Echte Engelse interface met voorbeeldgegevens, geen live inkomsten." loading="lazy" decoding="async"></picture>
+<figcaption>Controleer eerst de geaccepteerde shares. Echte Engelse interface met voorbeeldgegevens, geen live inkomsten.</figcaption>
+</figure>
+
 ## Wat toont My Stats?
 
 De pagina is verdeeld in kaarten en tabellen, elk met een antwoord op een vraag over je miner.
-
-### Saldo
-
-- **Estimated Rewards:** je aandeel in gevonden poolblokken die nog rijpen.
-- **Confirmed Rewards:** gerijpt saldo dat wacht op de volgende uitbetaling.
-- **Paid Balance:** alles wat al naar je adres is gestuurd.
-
-Bij lopende beloningen toont **Estimated From Recent Blocks** ieder blok met hoogte, geschat bedrag, resterende bevestigingen en vindmoment. Elke hoogte linkt naar de [Blocknet-explorer](https://explorer.blocknetcrypto.com), zodat je het zelf controleert. [Hoe PPLNS-uitbetalingen werken](/blog/nl/how-pplns-payouts-work/) legt de verdeling en het betaalmoment uit.
 
 ### Mining en shares
 
@@ -53,11 +54,7 @@ Geef bij meerdere machines elke rig een eigen naam. De pool vermeldt ze apart me
 ./seine --pool-worker rig-01
 ```
 
-Een rig met een oudere seine-versie krijgt een badge **update available**, met een link naar de [releasepagina van seine](https://github.com/zpalmtree/seine/releases). Zo zie je snel welke machine je nog moet bijwerken.
-
-### Uitbetalingen en recente shares
-
-**Recent Payouts** vermeldt elke betaling aan je adres, inclusief bedrag, explorerlink en status queued, unconfirmed of confirmed. **Recent Shares** toont de laatste 20 shares met taak, rig, moeilijkheid en status. Dit is de snelste controle of een pas gestarte machine de pool bereikt.
+De tabel **Workers** toont ook de minerversie van iedere computer. Bij een oude of onbekende versie verwijst een melding boven je statistieken naar de [seine-releasepagina](https://github.com/zpalmtree/seine/releases).
 
 ## Waarom verschilt de poolhashrate van die in seine?
 
@@ -69,6 +66,29 @@ Twee gewoonten maken de cijfers vergelijkbaar:
 - Geef een nieuwe rig tijd. De pool middelt aanvankelijk alleen over de minuten dat hij draait. De eerste waarde rust dus op enkele shares; na een uur geldt het volledige uurvenster.
 
 Recent Shares toont meteen dat shares aankomen, nog voordat de hashrate stabiel is.
+
+## Wanneer kun je je eerste uitbetaling verwachten?
+
+Er is geen vaste wachttijd van je eerste share tot je eerste betaling. De pool moet een blok vinden terwijl je shares in het uitbetalingsvenster vallen. Dat blok heeft daarna 60 bevestigingen nodig: gemiddeld ongeveer vijf uur **nadat het blok is gevonden**, maar de werkelijke tijd varieert. Zodra je bevestigde saldo de huidige minimumgrens van 0,1 BNT bereikt, komt het in aanmerking voor een automatische uitbetalingsronde. Bekijk [Get Started](/start) voor de actuele instellingen.
+
+Volg de status en transactielink onder **Recent Payouts**. Een betaling in de wachtrij is nog niet uitgezonden. Ontbreekt een verzonden betaling in je wallet, gebruik dan de [handleiding voor ontbrekende uitbetalingen](/blog/nl/pool-payout-missing-from-wallet/).
+
+### Saldo
+
+- **Estimated Rewards:** je aandeel in gevonden poolblokken die nog rijpen.
+- **Confirmed Rewards:** gerijpt saldo dat wacht op de volgende uitbetaling.
+- **Paid Balance:** alles wat al naar je adres is gestuurd.
+
+Bij lopende beloningen toont **Estimated From Recent Blocks** ieder blok met hoogte, geschat bedrag, resterende bevestigingen en vindmoment. Elke hoogte linkt naar de [Blocknet-explorer](https://explorer.blocknetcrypto.com), zodat je het zelf controleert. [Hoe PPLNS-uitbetalingen werken](/blog/nl/how-pplns-payouts-work/) legt de verdeling en het betaalmoment uit.
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-rewards-mobile.webp" width="352" height="524"><img src="/blog/tracking/tracking-rewards-desktop.webp" width="1081" height="217" alt="Geschatte, bevestigde en betaalde saldi zijn afzonderlijke stappen. Echte Engelse interface met voorbeeldbedragen, geen verwachte inkomsten." loading="lazy" decoding="async"></picture>
+<figcaption>Geschatte, bevestigde en betaalde saldi zijn afzonderlijke stappen. Echte Engelse interface met voorbeeldbedragen, geen verwachte inkomsten.</figcaption>
+</figure>
+
+### Uitbetalingen en recente shares
+
+**Recent Payouts** vermeldt elke betaling aan je adres, inclusief bedrag, explorerlink en status queued, unconfirmed of confirmed. **Recent Shares** toont de laatste 20 shares met taak, rig, moeilijkheid en status. Dit is de snelste controle of een pas gestarte machine de pool bereikt.
 
 <span id="zero-hashrate"></span>
 
@@ -110,6 +130,10 @@ Deze pagina’s vereisen geen adreszoekopdracht en tonen openlijk wat de pool do
 
 [Status](/status) is de gezondheidspagina van de pool. Ze toont of pool, openbare HTTP, API, Stratum, database en daemon online zijn, hoe vers de huidige taaktemplate is, de ketenhoogte, uptime over 10 minuten, 6 uur, 24 uur en 7 dagen, plus incidentgeschiedenis. Uptime wordt dubbel gemeten: door een monitor op de poolserver en een externe probe op Cloudflare.
 
+## En het dashboard van seine zelf?
+
+De pool toont wat aan je is toegeschreven. Voor de machine zelf toont het terminaldashboard van seine live hashrate en shares. Seine kan ook een lokale control-API aanbieden met REST, een server-sent-eventstream en Prometheus-metrieken op `/metrics`, standaard gebonden aan `127.0.0.1:9977`. De [control-API-gids](https://github.com/zpalmtree/seine/blob/master/docs/API.md) behandelt opties en endpoints. Veel miners gebruiken beide: seine-metrieken per machine en de pool-API voor saldi en betalingen.
+
 ## Hoe gebruik je de API van bntpool.com?
 
 <Answer>
@@ -146,29 +170,5 @@ Met `jq` haal je afzonderlijke waarden op, zoals hashrate en geaccepteerde share
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS | jq '{hashrate, total_accepted, total_rejected}'
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS/balance | jq '.balance.paid / 100000000'
 ```
-
-### Toon je miner op een huisdashboard
-
-Hetzelfde endpoint werkt als sensor in een huisdashboard. De RESTful-integratie van Home Assistant leest het met enkele regels in `configuration.yaml`:
-
-```yaml
-rest:
-  - resource: https://bntpool.com/api/miner/YOUR_ADDRESS
-    scan_interval: 60
-    sensor:
-      - name: "bntpool hashrate"
-        value_template: "{{ value_json.hashrate | round(2) }}"
-        unit_of_measurement: "H/s"
-      - name: "bntpool accepted shares"
-        value_template: "{{ value_json.total_accepted }}"
-```
-
-Elke 30 tot 60 seconden pollen is voldoende: hashrate is een uurgemiddelde en My Stats vernieuwt de minergegevens zelf elke 30 seconden. De openbare API begrenst verzoeken per client. Krijgt een script HTTP 429, dan moet het wachten volgens de `Retry-After`-header voordat het opnieuw probeert.
-
-## En het dashboard van seine zelf?
-
-De pool toont wat aan je is toegeschreven. Voor de machine zelf toont het terminaldashboard van seine live hashrate en shares. Seine kan ook een lokale control-API aanbieden met REST, een server-sent-eventstream en Prometheus-metrieken op `/metrics`, standaard gebonden aan `127.0.0.1:9977`. De [control-API-gids](https://github.com/zpalmtree/seine/blob/master/docs/API.md) behandelt opties en endpoints. Veel miners gebruiken beide: seine-metrieken per machine en de pool-API voor saldi en betalingen.
-
-Nieuw met seine? [Download het](https://seineminer.com/nl/#download), gebruik de standaardpool en je adres verschijnt binnen enkele minuten na je eerste geaccepteerde share op My Stats.
 
 <CTA target="pool" title="Begin met minen en volg het live" text="Sluit binnen enkele minuten aan op bntpool.com en volg je hashrate, shares en saldo op My Stats." />

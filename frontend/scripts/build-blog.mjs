@@ -238,6 +238,13 @@ copyFileSync(new URL('theme.js', BLOG_DIR), new URL('theme.js', DIST));
 copyFileSync(new URL('lang.js', BLOG_DIR), new URL('lang.js', DIST));
 copyFileSync(new URL('article-metrics.js', BLOG_DIR), new URL('article-metrics.js', DIST));
 copyFileSync(new URL('seine-icon.png', BLOG_DIR), new URL('seine-icon.png', DIST));
+mkdirSync(new URL('tracking/', DIST), { recursive: true });
+for (const state of ['first', 'rewards']) {
+  for (const size of ['desktop', 'mobile']) {
+    const name = `tracking-${state}-${size}.webp`;
+    copyFileSync(new URL(`images/tracking/${name}`, BLOG_DIR), new URL(`tracking/${name}`, DIST));
+  }
+}
 // Bundle only on the calculator article; hashed URL covers changes to its math too.
 const calculatorBuild = await build({ configFile: false, logLevel: 'warn', build: {
   write: false, minify: true, lib: { entry: new URL('rewards-calculator.js', BLOG_DIR).pathname, formats: ['es'], fileName: 'calculator' },

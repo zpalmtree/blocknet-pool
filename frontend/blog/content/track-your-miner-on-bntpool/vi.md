@@ -2,7 +2,7 @@
 title: Theo dõi trình đào trên bntpool.com
 description: Tra địa chỉ hoặc @name trên bntpool.com để xem hashrate, share, số dư và thanh toán; theo dõi khối, may mắn, thời gian hoạt động hoặc dùng API công khai.
 tags: [bntpool, Thống kê đào coin, API pool, Blocknet]
-sourceHash: 'bde59962f8d3'
+sourceHash: '40197b2fa166'
 translation: draft
 faq:
   - q: 'Vì sao hashrate trên bntpool.com khác số seine hiển thị?'
@@ -15,7 +15,7 @@ faq:
     a: 'Estimated Rewards xuất hiện khi pool tìm khối trong lúc share của bạn ở cửa sổ trả thưởng. Với người mới, có thể cần vài vòng đào. Share được chấp nhận và hashrate xuất hiện trước, rồi phần thưởng ước tính, sau đó trưởng thành thành Confirmed Rewards và tự động được thanh toán.'
 ---
 
-Khi seine đào trên bntpool.com, pool hiển thị mọi thứ nó thấy: hashrate, từng share được chấp nhận, số tiền đã kiếm và từng khoản thanh toán gửi đến địa chỉ. Hướng dẫn này trình bày My Stats, các trang công khai cho toàn pool và API công khai dùng trong script hay bảng điều khiển tại nhà.
+Sau share được chấp nhận đầu tiên, mở My Stats để kiểm tra pool đang nhận công việc của bạn. Tìm máy của bạn, so sánh hashrate trong thời gian dài hơn rồi theo dõi phần thưởng ước tính đến khi xác nhận và thanh toán. Script và API công khai nằm ở cuối hướng dẫn.
 
 Nếu chưa bắt đầu đào, [hướng dẫn cài seine](https://seineminer.com/vi/blog/how-to-mine-blocknet/) đưa bạn đến share đầu trong vài phút.
 
@@ -27,17 +27,18 @@ Mở My Stats tại bntpool.com/stats, dán địa chỉ Blocknet hoặc @name r
 
 Vào [My Stats](/stats), nhập cùng địa chỉ hoặc [tên ngắn Blocknet ID](https://seineminer.com/vi/blog/blocknet-id-pay-by-name/) đã đưa cho seine. Tên như `@name` hoặc `$name` được phân giải qua blocknet.id; ô tìm kiếm sau đó hiển thị địa chỉ đầy đủ mà tên trỏ tới. Trang nhớ lần tra cuối trong trình duyệt đó, nên lần sau số liệu đã có sẵn.
 
+1. Kiểm tra **Shares Accepted** và **Recent Shares**. Share được chấp nhận xác nhận công việc đã đến pool, ngay cả khi mọi số dư phần thưởng vẫn bằng 0.
+2. Tìm máy trong **Workers**. Đối chiếu tên với tên trong Seine và kiểm tra thời gian share cuối vẫn cập nhật.
+3. **Blocks Found** bằng 0 là bình thường: chỉ số này đếm các block do chính máy của bạn giải được, không cho biết share có nhận phần thưởng của pool hay không.
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-first-mobile.webp" width="352" height="379"><img src="/blog/tracking/tracking-first-desktop.webp" width="1180" height="900" alt="Kiểm tra share được chấp nhận trước. Giao diện tiếng Anh thật với dữ liệu ví dụ, không phải thu nhập trực tiếp." loading="lazy" decoding="async"></picture>
+<figcaption>Kiểm tra share được chấp nhận trước. Giao diện tiếng Anh thật với dữ liệu ví dụ, không phải thu nhập trực tiếp.</figcaption>
+</figure>
+
 ## My Stats hiển thị gì?
 
 Trang chia thành nhóm thẻ và bảng, mỗi nhóm trả lời một câu hỏi về trình đào.
-
-### Số dư
-
-- **Estimated Rewards:** phần của bạn trong các khối pool tìm thấy vẫn đang trưởng thành.
-- **Confirmed Rewards:** số dư trưởng thành chờ lần thanh toán tiếp theo.
-- **Paid Balance:** tất cả đã gửi đến địa chỉ của bạn.
-
-Khi có phần thưởng đang chờ, bảng **Estimated From Recent Blocks** liệt kê từng khối với độ cao, khoản ghi ước tính, số xác nhận còn thiếu và thời gian tìm thấy. Mỗi độ cao liên kết đến khối trên [trình khám phá Blocknet](https://explorer.blocknetcrypto.com) để tự kiểm tra. [Thanh toán PPLNS hoạt động thế nào](/blog/vi/how-pplns-payouts-work/) giải thích chia thưởng mỗi khối và thời điểm trả số dư.
 
 ### Đào và share
 
@@ -53,11 +54,7 @@ Nếu chạy nhiều máy, đặt tên riêng cho từng máy; pool liệt kê r
 ./seine --pool-worker rig-01
 ```
 
-Máy chạy seine cũ nhận nhãn **update available** dẫn đến [trang phát hành seine](https://github.com/zpalmtree/seine/releases), giúp dễ phát hiện máy quên nâng cấp.
-
-### Thanh toán và share gần đây
-
-**Recent Payouts** liệt kê từng khoản trả đến địa chỉ với số tiền, liên kết giao dịch trên trình khám phá và trạng thái queued, unconfirmed hoặc confirmed. **Recent Shares** hiển thị 20 share mới nhất cùng job, dàn máy, độ khó và trạng thái; đây là cách nhanh nhất xác nhận máy vừa khởi động đang gửi tới pool.
+Bảng **Workers** cũng hiển thị phiên bản miner của từng máy. Khi có phiên bản cũ hoặc không xác định, thông báo phía trên thống kê dẫn đến [trang phát hành seine](https://github.com/zpalmtree/seine/releases).
 
 ## Vì sao hashrate pool khác seine?
 
@@ -69,6 +66,29 @@ Hai thói quen giúp đối chiếu số liệu:
 - Cho máy mới thời gian. Với máy vừa bắt đầu, pool lấy trung bình theo số phút đã đào, nên số đầu dựa trên vài share. Sau một giờ, cửa sổ đủ một giờ được áp dụng.
 
 Bảng Recent Shares cho biết ngay share đang đến, kể cả trước khi hashrate ổn định.
+
+## Khi nào bạn nhận được khoản thanh toán đầu tiên?
+
+Không có thời gian đếm ngược cố định từ share đầu tiên đến khoản thanh toán đầu tiên. Pool phải tìm được block khi share của bạn còn trong cửa sổ thanh toán. Sau đó block cần 60 xác nhận: trung bình khoảng năm giờ **sau khi tìm thấy block**, nhưng thời gian thực tế thay đổi. Khi số dư đã xác nhận đạt mức tối thiểu hiện tại 0,1 BNT, số dư đủ điều kiện vào đợt thanh toán tự động. Xem thiết lập hiện tại tại [Get Started](/start).
+
+Theo dõi trạng thái và liên kết giao dịch trong **Recent Payouts**. Khoản thanh toán đang xếp hàng chưa được phát lên mạng. Nếu khoản đã gửi chưa xuất hiện trong ví, xem [hướng dẫn xử lý vấn đề thanh toán](/blog/vi/pool-payout-missing-from-wallet/).
+
+### Số dư
+
+- **Estimated Rewards:** phần của bạn trong các khối pool tìm thấy vẫn đang trưởng thành.
+- **Confirmed Rewards:** số dư trưởng thành chờ lần thanh toán tiếp theo.
+- **Paid Balance:** tất cả đã gửi đến địa chỉ của bạn.
+
+Khi có phần thưởng đang chờ, bảng **Estimated From Recent Blocks** liệt kê từng khối với độ cao, khoản ghi ước tính, số xác nhận còn thiếu và thời gian tìm thấy. Mỗi độ cao liên kết đến khối trên [trình khám phá Blocknet](https://explorer.blocknetcrypto.com) để tự kiểm tra. [Thanh toán PPLNS hoạt động thế nào](/blog/vi/how-pplns-payouts-work/) giải thích chia thưởng mỗi khối và thời điểm trả số dư.
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-rewards-mobile.webp" width="352" height="524"><img src="/blog/tracking/tracking-rewards-desktop.webp" width="1081" height="217" alt="Số dư ước tính, đã xác nhận và đã trả là các giai đoạn riêng. Giao diện tiếng Anh thật với số tiền ví dụ, không phải thu nhập dự kiến." loading="lazy" decoding="async"></picture>
+<figcaption>Số dư ước tính, đã xác nhận và đã trả là các giai đoạn riêng. Giao diện tiếng Anh thật với số tiền ví dụ, không phải thu nhập dự kiến.</figcaption>
+</figure>
+
+### Thanh toán và share gần đây
+
+**Recent Payouts** liệt kê từng khoản trả đến địa chỉ với số tiền, liên kết giao dịch trên trình khám phá và trạng thái queued, unconfirmed hoặc confirmed. **Recent Shares** hiển thị 20 share mới nhất cùng job, dàn máy, độ khó và trạng thái; đây là cách nhanh nhất xác nhận máy vừa khởi động đang gửi tới pool.
 
 <span id="zero-hashrate"></span>
 
@@ -110,6 +130,10 @@ Những trang này không cần tra cứu và công khai mọi việc pool làm.
 
 [Status](/status) là trang sức khỏe riêng của pool. Nó hiển thị pool, HTTP công khai, API, Stratum, cơ sở dữ liệu và daemon có trực tuyến không; mẫu job hiện tại mới đến đâu; độ cao chuỗi; thời gian hoạt động trong 10 phút, 6 giờ, 24 giờ và 7 ngày qua; cùng lịch sử sự cố. Thời gian hoạt động được đo hai cách: bộ giám sát trên máy chủ pool và đầu dò bên ngoài chạy trên Cloudflare.
 
+## Còn bảng điều khiển riêng của seine?
+
+Pool hiển thị những gì đã ghi cho bạn. Để xem máy trực tiếp, bảng điều khiển terminal của seine hiển thị hashrate và share ngay khi xảy ra. seine còn có thể cung cấp API điều khiển cục bộ với REST, luồng sự kiện do máy chủ gửi và số liệu Prometheus tại `/metrics`, mặc định bind vào `127.0.0.1:9977`. [Hướng dẫn API điều khiển](https://github.com/zpalmtree/seine/blob/master/docs/API.md) trình bày cờ và endpoint. Nhiều thợ đào dùng cả hai: số liệu seine cho từng máy, API pool cho số dư và thanh toán.
+
 ## Dùng API bntpool.com thế nào?
 
 <Answer>
@@ -146,29 +170,5 @@ Với `jq`, bạn có thể lấy giá trị riêng, như hashrate, share chấp
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS | jq '{hashrate, total_accepted, total_rejected}'
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS/balance | jq '.balance.paid / 100000000'
 ```
-
-### Hiển thị trình đào trên bảng điều khiển tại nhà
-
-Cùng endpoint hoạt động như cảm biến trong bảng điều khiển tại nhà. Trong Home Assistant, tích hợp RESTful đọc bằng vài dòng `configuration.yaml`:
-
-```yaml
-rest:
-  - resource: https://bntpool.com/api/miner/YOUR_ADDRESS
-    scan_interval: 60
-    sensor:
-      - name: "bntpool hashrate"
-        value_template: "{{ value_json.hashrate | round(2) }}"
-        unit_of_measurement: "H/s"
-      - name: "bntpool accepted shares"
-        value_template: "{{ value_json.total_accepted }}"
-```
-
-Truy vấn mỗi 30–60 giây là đủ: hashrate là trung bình giờ, và chính My Stats làm mới chi tiết thợ đào mỗi 30 giây. API công khai giới hạn tần suất theo client. Nếu script nhận HTTP 429, nó nên chậm lại và chờ thời gian trong header `Retry-After` trước khi thử tiếp.
-
-## Còn bảng điều khiển riêng của seine?
-
-Pool hiển thị những gì đã ghi cho bạn. Để xem máy trực tiếp, bảng điều khiển terminal của seine hiển thị hashrate và share ngay khi xảy ra. seine còn có thể cung cấp API điều khiển cục bộ với REST, luồng sự kiện do máy chủ gửi và số liệu Prometheus tại `/metrics`, mặc định bind vào `127.0.0.1:9977`. [Hướng dẫn API điều khiển](https://github.com/zpalmtree/seine/blob/master/docs/API.md) trình bày cờ và endpoint. Nhiều thợ đào dùng cả hai: số liệu seine cho từng máy, API pool cho số dư và thanh toán.
-
-Mới dùng seine? [Tải xuống](https://seineminer.com/vi/#download), trỏ đến pool mặc định, và địa chỉ sẽ xuất hiện trên My Stats vài phút sau share được chấp nhận đầu tiên.
 
 <CTA target="pool" title="Bắt đầu đào và theo dõi trực tiếp" text="Tham gia bntpool.com trong vài phút, rồi theo dõi hashrate, share và số dư trên My Stats." />

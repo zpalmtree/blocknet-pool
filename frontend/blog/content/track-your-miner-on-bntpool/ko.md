@@ -2,7 +2,7 @@
 title: bntpool.com에서 채굴기 상태 확인하기
 description: bntpool.com에서 주소나 @name으로 해시레이트, 셰어, 잔액, 지급 내역을 확인하세요. 블록, 운, 가동률을 살펴보거나 공개 API를 활용할 수 있습니다.
 tags: [bntpool, 채굴 통계, 풀 API, Blocknet]
-sourceHash: 'bde59962f8d3'
+sourceHash: '40197b2fa166'
 translation: draft
 faq:
   - q: 'bntpool.com의 해시레이트가 seine에 표시되는 값과 다른 이유는 무엇인가요?'
@@ -15,7 +15,7 @@ faq:
     a: 'Estimated Rewards는 셰어가 지급 계산 창 안에 있는 동안 풀이 블록을 찾으면 나타납니다. 새 채굴자는 몇 라운드 동안 채굴해야 할 수 있습니다. 승인된 셰어와 해시레이트가 먼저 표시되고, 이후 예상 보상이 나타납니다. 이 보상은 성숙하면 Confirmed Rewards로 이동하며 자동 지급됩니다.'
 ---
 
-seine가 bntpool.com에서 채굴을 시작하면 풀은 자신이 확인한 모든 내용을 보여 줍니다. 해시레이트, 승인된 모든 셰어, 획득한 보상, 주소로 보낸 모든 지급 내역이 포함됩니다. 이 가이드에서는 My Stats 페이지, 풀 전체를 보여 주는 공개 페이지, 스크립트나 홈 대시보드에서 사용할 수 있는 공개 API를 살펴봅니다.
+첫 셰어가 승인되면 My Stats를 열어 풀이 작업을 받고 있는지 확인하세요. 내 컴퓨터를 찾고, 시간을 두고 해시레이트를 비교한 다음, 예상 보상이 확정되어 지급되는 과정을 살펴봅니다. 스크립트와 공개 API는 마지막에 설명합니다.
 
 아직 채굴을 시작하지 않았다면 [seine 설치 가이드](https://seineminer.com/ko/blog/how-to-mine-blocknet/)를 따라 몇 분 안에 첫 셰어를 제출할 수 있습니다.
 
@@ -27,17 +27,18 @@ bntpool.com/stats의 My Stats를 열고 Blocknet 주소나 @name을 붙여 넣�
 
 [My Stats](/stats)로 이동해 seine에 입력했던 주소나 [Blocknet ID 짧은 이름](https://seineminer.com/ko/blog/blocknet-id-pay-by-name/)을 입력하세요. `@name`이나 `$name` 같은 이름은 blocknet.id를 통해 주소로 변환되며, 검색창에는 해당 전체 주소가 표시됩니다. 페이지가 브라우저의 마지막 조회를 기억하므로 다음 방문 때도 자신의 수치를 바로 볼 수 있습니다.
 
+1. **Shares Accepted**와 **Recent Shares**를 확인하세요. 승인된 셰어가 있으면 보상 잔액이 모두 0이어도 작업이 풀에 도착한 것입니다.
+2. **Workers**에서 내 컴퓨터를 찾으세요. Seine의 이름과 일치하는지, 마지막 셰어 시간이 계속 갱신되는지 확인하세요.
+3. **Blocks Found**가 0이어도 정상입니다. 이 수치는 내 컴퓨터가 해결한 블록 수이며, 셰어가 풀 보상을 배분받는지를 뜻하지 않습니다.
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-first-mobile.webp" width="352" height="379"><img src="/blog/tracking/tracking-first-desktop.webp" width="1180" height="900" alt="먼저 승인된 셰어를 확인하세요. 실제 영어 인터페이스에 예시 데이터를 표시한 것으로, 실시간 수익이 아닙니다." loading="lazy" decoding="async"></picture>
+<figcaption>먼저 승인된 셰어를 확인하세요. 실제 영어 인터페이스에 예시 데이터를 표시한 것으로, 실시간 수익이 아닙니다.</figcaption>
+</figure>
+
 ## My Stats 페이지에는 무엇이 표시되나요?
 
 페이지는 카드와 표 그룹으로 나뉘며, 각 그룹은 채굴기에 관한 한 가지 질문에 답합니다.
-
-### 잔액
-
-- **Estimated Rewards:** 풀이 찾았지만 아직 성숙 중인 블록에서 받을 몫입니다.
-- **Confirmed Rewards:** 성숙을 마치고 다음 지급을 기다리는 잔액입니다.
-- **Paid Balance:** 이미 주소로 보낸 모든 금액입니다.
-
-처리 중인 보상이 있으면 **Estimated From Recent Blocks** 표에 각 블록의 높이, 예상 적립액, 남은 컨펌 수, 발견 시각이 표시됩니다. 각 높이는 [Blocknet 탐색기](https://explorer.blocknetcrypto.com)의 해당 블록으로 연결되어 직접 확인할 수 있습니다. [PPLNS 지급 방식](/blog/ko/how-pplns-payouts-work/)에서는 블록 보상 분배와 잔액 지급 시점을 설명합니다.
 
 ### 채굴과 셰어
 
@@ -53,11 +54,7 @@ bntpool.com/stats의 My Stats를 열고 Blocknet 주소나 @name을 붙여 넣�
 ./seine --pool-worker rig-01
 ```
 
-이전 seine 버전을 실행하는 리그에는 [seine 릴리스 페이지](https://github.com/zpalmtree/seine/releases)로 연결되는 **update available** 배지가 표시됩니다. 업데이트를 잊은 머신을 쉽게 찾을 수 있습니다.
-
-### 지급과 최근 셰어
-
-**Recent Payouts**에는 주소로 보내는 각 지급의 금액, 탐색기 트랜잭션 링크, queued·unconfirmed·confirmed 상태가 표시됩니다. **Recent Shares**에는 최근 20개 셰어의 작업, 리그, 난이도, 상태가 표시됩니다. 방금 시작한 머신이 풀에 도달하고 있는지 가장 빠르게 확인하는 방법입니다.
+**Workers** 표에는 각 컴퓨터의 마이너 버전도 표시됩니다. 오래되거나 알 수 없는 버전이 있으면 통계 위에 알림이 나타나며 [seine 릴리스 페이지](https://github.com/zpalmtree/seine/releases)로 연결됩니다.
 
 ## 풀의 해시레이트가 seine와 다른 이유는 무엇인가요?
 
@@ -69,6 +66,29 @@ seine는 머신이 계산하는 모든 해시를 셉니다. 풀은 제출된 셰
 - 새 리그에는 시간을 주세요. 방금 시작한 리그는 실제로 채굴한 시간만큼 평균을 내므로 첫 수치는 몇 개의 셰어에 의존합니다. 한 시간이 지나면 전체 한 시간 창이 적용됩니다.
 
 Recent Shares 표를 보면 해시레이트 수치가 안정되기 전에도 셰어가 도착하는지 바로 알 수 있습니다.
+
+## 첫 지급은 언제 받을 수 있나요?
+
+첫 셰어부터 첫 지급까지 정해진 시간은 없습니다. 내 셰어가 지급 창 안에 있는 동안 풀이 블록을 찾아야 합니다. 이후 해당 블록에 60번의 확인이 필요합니다. **블록을 찾은 뒤** 평균 약 5시간이지만 실제 시간은 달라집니다. 확정 잔액이 현재 최소 지급액인 0.1 BNT에 도달하면 자동 지급 처리 대상이 됩니다. 현재 설정은 [Get Started](/start)에서 확인하세요.
+
+**Recent Payouts**에서 지급 상태와 트랜잭션 링크를 확인하세요. 대기 중인 지급은 아직 네트워크에 전송되지 않았습니다. 전송된 지급이 지갑에 없다면 [지급 문제 해결 가이드](/blog/ko/pool-payout-missing-from-wallet/)를 참고하세요.
+
+### 잔액
+
+- **Estimated Rewards:** 풀이 찾았지만 아직 성숙 중인 블록에서 받을 몫입니다.
+- **Confirmed Rewards:** 성숙을 마치고 다음 지급을 기다리는 잔액입니다.
+- **Paid Balance:** 이미 주소로 보낸 모든 금액입니다.
+
+처리 중인 보상이 있으면 **Estimated From Recent Blocks** 표에 각 블록의 높이, 예상 적립액, 남은 컨펌 수, 발견 시각이 표시됩니다. 각 높이는 [Blocknet 탐색기](https://explorer.blocknetcrypto.com)의 해당 블록으로 연결되어 직접 확인할 수 있습니다. [PPLNS 지급 방식](/blog/ko/how-pplns-payouts-work/)에서는 블록 보상 분배와 잔액 지급 시점을 설명합니다.
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-rewards-mobile.webp" width="352" height="524"><img src="/blog/tracking/tracking-rewards-desktop.webp" width="1081" height="217" alt="예상·확정·지급 완료 잔액은 서로 다른 단계입니다. 실제 영어 인터페이스의 예시 금액이며, 예상 수익이 아닙니다." loading="lazy" decoding="async"></picture>
+<figcaption>예상·확정·지급 완료 잔액은 서로 다른 단계입니다. 실제 영어 인터페이스의 예시 금액이며, 예상 수익이 아닙니다.</figcaption>
+</figure>
+
+### 지급과 최근 셰어
+
+**Recent Payouts**에는 주소로 보내는 각 지급의 금액, 탐색기 트랜잭션 링크, queued·unconfirmed·confirmed 상태가 표시됩니다. **Recent Shares**에는 최근 20개 셰어의 작업, 리그, 난이도, 상태가 표시됩니다. 방금 시작한 머신이 풀에 도달하고 있는지 가장 빠르게 확인하는 방법입니다.
 
 <span id="zero-hashrate"></span>
 
@@ -110,6 +130,10 @@ Recent Shares 표를 보면 해시레이트 수치가 안정되기 전에도 셰
 
 [Status](/status)는 풀 자체의 상태 페이지입니다. 풀, 공개 HTTP, API, Stratum, 데이터베이스, 데몬이 온라인인지, 현재 작업 템플릿이 얼마나 최신인지, 체인 높이, 지난 10분·6시간·24시간·7일의 가동률, 장애 이력을 보여 줍니다. 가동률은 풀 서버의 모니터와 Cloudflare에서 실행되는 외부 점검기로 두 번 측정합니다.
 
+## seine 자체 대시보드는 어떤가요?
+
+풀은 자신이 적립한 내용을 보여 줍니다. 머신 자체의 실시간 상태를 보려면 seine 터미널 대시보드에서 해시레이트와 셰어를 즉시 확인할 수 있습니다. seine는 REST, 서버 전송 이벤트 스트림, `/metrics`의 Prometheus 지표를 제공하는 로컬 제어 API도 노출할 수 있으며, 기본 바인딩 주소는 `127.0.0.1:9977`입니다. [제어 API 가이드](https://github.com/zpalmtree/seine/blob/master/docs/API.md)에서 플래그와 엔드포인트를 설명합니다. 많은 채굴자는 머신별 상태에는 seine 지표를, 잔액과 지급에는 풀 API를 함께 사용합니다.
+
 ## bntpool.com API는 어떻게 사용하나요?
 
 <Answer>
@@ -146,29 +170,5 @@ curl -s https://bntpool.com/api/miner/YOUR_ADDRESS
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS | jq '{hashrate, total_accepted, total_rejected}'
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS/balance | jq '.balance.paid / 100000000'
 ```
-
-### 홈 대시보드에 채굴기 표시하기
-
-같은 엔드포인트를 홈 대시보드의 센서로 사용할 수 있습니다. Home Assistant에서는 RESTful 통합으로 `configuration.yaml` 몇 줄만 작성하면 읽을 수 있습니다.
-
-```yaml
-rest:
-  - resource: https://bntpool.com/api/miner/YOUR_ADDRESS
-    scan_interval: 60
-    sensor:
-      - name: "bntpool hashrate"
-        value_template: "{{ value_json.hashrate | round(2) }}"
-        unit_of_measurement: "H/s"
-      - name: "bntpool accepted shares"
-        value_template: "{{ value_json.total_accepted }}"
-```
-
-30~60초마다 조회하면 충분합니다. 해시레이트는 한 시간 평균이며 My Stats도 채굴자 세부 정보를 30초마다 갱신합니다. 공개 API에는 클라이언트별 요청 속도 제한이 있습니다. 스크립트가 HTTP 429를 받으면 요청을 늦추고 `Retry-After` 헤더의 시간만큼 기다린 뒤 다시 시도해야 합니다.
-
-## seine 자체 대시보드는 어떤가요?
-
-풀은 자신이 적립한 내용을 보여 줍니다. 머신 자체의 실시간 상태를 보려면 seine 터미널 대시보드에서 해시레이트와 셰어를 즉시 확인할 수 있습니다. seine는 REST, 서버 전송 이벤트 스트림, `/metrics`의 Prometheus 지표를 제공하는 로컬 제어 API도 노출할 수 있으며, 기본 바인딩 주소는 `127.0.0.1:9977`입니다. [제어 API 가이드](https://github.com/zpalmtree/seine/blob/master/docs/API.md)에서 플래그와 엔드포인트를 설명합니다. 많은 채굴자는 머신별 상태에는 seine 지표를, 잔액과 지급에는 풀 API를 함께 사용합니다.
-
-seine를 처음 사용하나요? [다운로드](https://seineminer.com/ko/#download)하고 기본 풀로 연결하면 첫 셰어가 승인된 뒤 몇 분 안에 My Stats에 주소가 나타납니다.
 
 <CTA target="pool" title="채굴을 시작하고 실시간으로 확인하세요" text="몇 분 안에 bntpool.com에 참여하고 My Stats에서 해시레이트, 셰어, 잔액을 확인하세요." />

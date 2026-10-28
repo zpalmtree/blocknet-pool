@@ -11,11 +11,11 @@ faq:
     a: '不需要。矿池统计、区块、支付、幸运值、状态以及单个矿工的接口都是通过 HTTPS 提供的公开 JSON，curl 命令或家庭仪表盘无需注册即可读取。金额以最小单位表示，除以 100,000,000 即为 BNT，建议每 30 到 60 秒轮询一次。'
   - q: '为什么 My Stats 显示的 Estimated Rewards 是零？'
     a: '矿池在你的份额处于支付窗口内时找到区块，Estimated Rewards（预估收益）才会出现。对新矿工来说，这可能需要挖几轮。你被接受的份额和算力会最先显示，随后是预估收益，它们成熟后转入 Confirmed Rewards（已确认收益），并自动支付。'
-sourceHash: 'bde59962f8d3'
+sourceHash: '40197b2fa166'
 translation: reviewed
 ---
 
-seine 在 bntpool.com 上开始挖矿后，矿池会把它看到的一切展示给你：你的算力、每一个被接受的份额、你已赚取的金额，以及发送到你地址的每一笔支付。本指南介绍 My Stats 页面、展示整个矿池的公开页面，以及可供脚本和家庭仪表盘使用的公开 API。
+收到第一份已接受份额后，打开 My Stats，确认矿池正在接收你的工作。找到自己的机器，观察一段时间内的算力，再跟踪预估奖励如何变为已确认奖励并完成付款。脚本和公共 API 放在指南最后介绍。
 
 如果你还没有开始挖矿，[seine 安装指南](https://seineminer.com/zh-hans/blog/how-to-mine-blocknet/)可以让你在几分钟内获得第一批份额。
 
@@ -27,17 +27,18 @@ seine 在 bntpool.com 上开始挖矿后，矿池会把它看到的一切展示�
 
 前往 [My Stats](/stats)，输入你提供给 seine 的同一个地址或 [Blocknet ID 短名称](https://seineminer.com/zh-hans/blog/blocknet-id-pay-by-name/)。像 `@name` 或 `$name` 这样的名称会通过 blocknet.id 解析，随后搜索框会显示它对应的完整地址。页面会在该浏览器中记住你上一次的查询，下次打开时你的数据已经在那里了。
 
+1. 查看 **Shares Accepted** 和 **Recent Shares**。即使奖励余额仍全部为零，已接受份额也说明你的工作已到达矿池。
+2. 在 **Workers** 中找到自己的机器。核对名称是否与 Seine 中一致，并检查最后一份份额的时间是否持续更新。
+3. **Blocks Found** 为零很正常：它统计你自己的机器解出的区块，不代表你的份额是否能获得矿池奖励。
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-first-mobile.webp" width="352" height="379"><img src="/blog/tracking/tracking-first-desktop.webp" width="1180" height="900" alt="首先检查已接受份额。真实英文界面中的示例数据，并非实时收益。" loading="lazy" decoding="async"></picture>
+<figcaption>首先检查已接受份额。真实英文界面中的示例数据，并非实时收益。</figcaption>
+</figure>
+
 ## My Stats 页面显示什么？
 
 页面分为若干组卡片和表格，每一组回答一个关于你矿机的问题。
-
-### Balance（余额）
-
-- **Estimated Rewards：** 矿池已找到、但仍在成熟中的区块里属于你的份额。
-- **Confirmed Rewards：** 已成熟、等待下一次支付的余额。
-- **Paid Balance：** 已经发送到你地址的全部金额。
-
-当你有尚在途中的奖励时，名为 **Estimated From Recent Blocks** 的表格会列出每个区块的高度、你的预估收益、剩余确认数和找到的时间。每个高度都链接到 [Blocknet 区块浏览器](https://explorer.blocknetcrypto.com)上的对应区块，你可以自己核对。[PPLNS 收益如何支付](/blog/zh-hans/how-pplns-payouts-work/)一文解释了每个区块的奖励如何分配，以及余额何时支付。
 
 ### Mining（挖矿）和份额
 
@@ -53,11 +54,7 @@ seine 在 bntpool.com 上开始挖矿后，矿池会把它看到的一切展示�
 ./seine --pool-worker rig-01
 ```
 
-运行旧版 seine 的矿机会显示 **update available** 标记，并链接到 [seine 发布页面](https://github.com/zpalmtree/seine/releases)，方便你发现忘记升级的机器。
-
-### 支付和最近的份额
-
-**Recent Payouts** 列出每一笔支付到你地址的款项，包括金额、区块浏览器上的交易链接，以及 queued（排队中）、unconfirmed（未确认）或 confirmed（已确认）状态。**Recent Shares** 显示你最近 20 个份额的任务、矿机、难度和状态，这是确认刚启动的机器已经连上矿池的最快方法。
+**Workers** 表还显示各台机器的矿工版本。如果某个版本过旧或未知，统计上方会出现通知，链接到 [seine 发布页面](https://github.com/zpalmtree/seine/releases)。
 
 ## 为什么矿池的算力和 seine 的不一样？
 
@@ -69,6 +66,29 @@ seine 统计的是你的机器算出的每一个哈希。矿池只能看到你�
 - 给新矿机一些时间。对刚启动的矿机，矿池按它已经挖矿的分钟数取平均，所以第一个读数只基于少量份额。一小时后就会采用完整的一小时窗口。
 
 即使算力数字还没稳定，Recent Shares 表格也能立即告诉你份额正在到达。
+
+## 第一笔付款什么时候到账？
+
+从第一份份额到第一笔付款，没有固定倒计时。矿池必须在你的份额仍处于支付窗口内时找到区块。该区块随后需要 60 次确认：**从找到区块之后**算起，平均约五小时，但实际时间会变化。已确认余额达到当前最低支付额 0.1 BNT 后，就有资格进入自动付款批次。最新设置请查看 [Get Started](/start)。
+
+在 **Recent Payouts** 中查看付款状态和交易链接。排队中的付款尚未广播。如果已发送的付款没有显示在钱包中，请参阅[付款排查指南](/blog/zh-hans/pool-payout-missing-from-wallet/)。
+
+### Balance（余额）
+
+- **Estimated Rewards：** 矿池已找到、但仍在成熟中的区块里属于你的份额。
+- **Confirmed Rewards：** 已成熟、等待下一次支付的余额。
+- **Paid Balance：** 已经发送到你地址的全部金额。
+
+当你有尚在途中的奖励时，名为 **Estimated From Recent Blocks** 的表格会列出每个区块的高度、你的预估收益、剩余确认数和找到的时间。每个高度都链接到 [Blocknet 区块浏览器](https://explorer.blocknetcrypto.com)上的对应区块，你可以自己核对。[PPLNS 收益如何支付](/blog/zh-hans/how-pplns-payouts-work/)一文解释了每个区块的奖励如何分配，以及余额何时支付。
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-rewards-mobile.webp" width="352" height="524"><img src="/blog/tracking/tracking-rewards-desktop.webp" width="1081" height="217" alt="预估、已确认和已支付余额是不同阶段。真实英文界面中的示例金额，并非预期收益。" loading="lazy" decoding="async"></picture>
+<figcaption>预估、已确认和已支付余额是不同阶段。真实英文界面中的示例金额，并非预期收益。</figcaption>
+</figure>
+
+### 支付和最近的份额
+
+**Recent Payouts** 列出每一笔支付到你地址的款项，包括金额、区块浏览器上的交易链接，以及 queued（排队中）、unconfirmed（未确认）或 confirmed（已确认）状态。**Recent Shares** 显示你最近 20 个份额的任务、矿机、难度和状态，这是确认刚启动的机器已经连上矿池的最快方法。
 
 <span id="zero-hashrate"></span>
 
@@ -110,6 +130,10 @@ seine 统计的是你的机器算出的每一个哈希。矿池只能看到你�
 
 [Status](/status) 是矿池自己的健康页面。它显示矿池、公共 HTTP、API、Stratum、数据库和节点是否在线，当前任务模板的新鲜程度，链高度，最近 10 分钟、6 小时、24 小时和 7 天的在线率，以及事件历史。在线率有两种测量方式：矿池服务器上的监控程序，以及运行在 Cloudflare 上的外部探测。
 
+## seine 自己的仪表盘呢？
+
+矿池显示的是它记入你名下的数据。若要实时查看机器本身，seine 的终端仪表盘会即时显示算力和份额；seine 还可以开启本地控制 API，提供 REST、服务器推送事件流以及位于 `/metrics` 的 Prometheus 指标，默认绑定到 `127.0.0.1:9977`。[控制 API 指南](https://github.com/zpalmtree/seine/blob/master/docs/API.md)介绍了相关参数和接口。许多矿工两者都用：用 seine 的指标查看每台机器，用矿池 API 查看余额和支付。
+
 ## 如何使用 bntpool.com 的 API？
 
 <Answer>
@@ -146,29 +170,5 @@ curl -s https://bntpool.com/api/miner/YOUR_ADDRESS
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS | jq '{hashrate, total_accepted, total_rejected}'
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS/balance | jq '.balance.paid / 100000000'
 ```
-
-### 在家庭仪表盘上显示你的矿机
-
-同一个接口可以作为家庭仪表盘中的传感器。在 Home Assistant 中，RESTful 集成只需在 `configuration.yaml` 中写几行即可读取它：
-
-```yaml
-rest:
-  - resource: https://bntpool.com/api/miner/YOUR_ADDRESS
-    scan_interval: 60
-    sensor:
-      - name: "bntpool hashrate"
-        value_template: "{{ value_json.hashrate | round(2) }}"
-        unit_of_measurement: "H/s"
-      - name: "bntpool accepted shares"
-        value_template: "{{ value_json.total_accepted }}"
-```
-
-每 30 到 60 秒轮询一次就足够了：算力数字是一小时的平均值，而 My Stats 本身每 30 秒刷新一次你的矿工详情。公开 API 按客户端限制请求频率。如果脚本收到 HTTP 429 响应，应当放慢请求，等待 `Retry-After` 头给出的时间后再重试。
-
-## seine 自己的仪表盘呢？
-
-矿池显示的是它记入你名下的数据。若要实时查看机器本身，seine 的终端仪表盘会即时显示算力和份额；seine 还可以开启本地控制 API，提供 REST、服务器推送事件流以及位于 `/metrics` 的 Prometheus 指标，默认绑定到 `127.0.0.1:9977`。[控制 API 指南](https://github.com/zpalmtree/seine/blob/master/docs/API.md)介绍了相关参数和接口。许多矿工两者都用：用 seine 的指标查看每台机器，用矿池 API 查看余额和支付。
-
-第一次使用 seine？[下载它](https://seineminer.com/zh-hans/#download)，使用默认矿池，在你的第一个份额被接受后几分钟内，你的地址就会出现在 My Stats 上。
 
 <CTA target="pool" title="开始挖矿并实时查看" text="几分钟内加入 bntpool.com，然后在“我的统计”里查看你的算力、份额和余额。" />

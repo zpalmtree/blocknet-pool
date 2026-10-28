@@ -12,11 +12,11 @@ faq:
     a: 'いいえ。プール統計、ブロック、支払い、運、状態、採掘者ごとのエンドポイントはHTTPSで公開されたJSONなので、登録せずにcurlやホームダッシュボードから読めます。金額は最小単位のため100,000,000で割るとBNTになります。ポーリングは30〜60秒ごとにしてください。'
   - q: 'My StatsのEstimated Rewardsがゼロなのはなぜですか？'
     a: 'Estimated Rewardsは、シェアが支払いウィンドウ内にある間にプールがブロックを発見すると表示されます。新しい採掘者では数ラウンドかかる場合があります。最初に受理シェアとハッシュレートが表示され、次に推定報酬が表示されます。報酬は成熟するとConfirmed Rewardsになり、自動的に支払われます。'
-sourceHash: 'bde59962f8d3'
+sourceHash: '40197b2fa166'
 translation: draft
 ---
 
-Seineがbntpool.comで採掘を始めると、プール側で把握している情報をすべて確認できます。ハッシュレート、受理された各シェア、獲得報酬、アドレスへの各支払いです。このガイドでは、My Statsページ、プール全体の公開ページ、スクリプトやホームダッシュボードで使える公開APIを紹介します。
+最初のシェアが受理されたら、My Statsを開いて作業がプールに届いているか確認しましょう。自分のマシンを見つけ、時間をかけてハッシュレートを比較し、推定報酬が確定して支払われるまでを追います。スクリプトと公開APIは最後に説明します。
 
 まだ採掘を始めていない場合は、[seineのインストールガイド](https://seineminer.com/ja/blog/how-to-mine-blocknet/)に従えば数分で最初のシェアを送信できます。
 
@@ -28,17 +28,18 @@ bntpool.com/statsでMy Statsを開き、Blocknetアドレスまたは@nameを貼
 
 [My Stats](/stats)に移動し、seineに指定したものと同じアドレスまたは[Blocknet ID短縮名](https://seineminer.com/ja/blog/blocknet-id-pay-by-name/)を入力します。`@name`や`$name`のような名前はblocknet.idを通じて解決され、検索欄にその名前が指す完全なアドレスが表示されます。ページはブラウザー内で前回の検索を記憶するため、次回はすぐに自分の数値を確認できます。
 
+1. **Shares Accepted**と**Recent Shares**を確認します。受理済みシェアがあれば、報酬残高がすべてゼロでも作業はプールに届いています。
+2. **Workers**で自分のマシンを探します。Seineに表示される名前と一致し、最後のシェアの時刻が更新されているか確認します。
+3. **Blocks Found**がゼロでも正常です。これは自分のマシンが解いたブロック数であり、プール報酬の配分を受けられるかどうかを示す値ではありません。
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-first-mobile.webp" width="352" height="379"><img src="/blog/tracking/tracking-first-desktop.webp" width="1180" height="900" alt="まず受理済みシェアを確認します。実際の英語版画面にサンプルデータを表示したもので、現在の収益ではありません。" loading="lazy" decoding="async"></picture>
+<figcaption>まず受理済みシェアを確認します。実際の英語版画面にサンプルデータを表示したもので、現在の収益ではありません。</figcaption>
+</figure>
+
 ## My Statsには何が表示されますか？
 
 ページはカードと表のグループに分かれており、それぞれがマイナーについての疑問に答えます。
-
-### 残高
-
-- **Estimated Rewards：** プールが発見した、まだ成熟中のブロックに対する自分の取り分。
-- **Confirmed Rewards：** 成熟済みで、次の支払いを待っている残高。
-- **Paid Balance：** すでに自分のアドレスへ送られた総額。
-
-処理中の報酬があると、**Estimated From Recent Blocks**という表に、各ブロックの高さ、推定付与額、残り承認数、発見時刻が表示されます。各高さから[Blocknetエクスプローラー](https://explorer.blocknetcrypto.com)の該当ブロックに移動できるため、自分で照合できます。[PPLNS支払いの仕組み](/blog/ja/how-pplns-payouts-work/)では、各ブロックの報酬の分配方法と残高が支払われる時期を説明しています。
 
 ### 採掘とシェア
 
@@ -54,11 +55,7 @@ bntpool.com/statsでMy Statsを開き、Blocknetアドレスまたは@nameを貼
 ./seine --pool-worker rig-01
 ```
 
-古いseineを使っている採掘機には**update available**バッジが付き、[seineのリリースページ](https://github.com/zpalmtree/seine/releases)へリンクします。更新し忘れたマシンを簡単に見つけられます。
-
-### 支払いと最近のシェア
-
-**Recent Payouts**には、自分のアドレスへの各支払いについて、金額、エクスプローラーの取引リンク、queued・unconfirmed・confirmedの状態が表示されます。**Recent Shares**には、最新20件のシェアのジョブ、採掘機、難易度、状態が表示されます。起動したばかりのマシンがプールに届いているかを最も早く確認できます。
+**Workers**表には各マシンのマイナーバージョンも表示されます。古いバージョンや不明なバージョンがあると、統計の上に通知が表示され、[seineのリリースページ](https://github.com/zpalmtree/seine/releases)へ進めます。
 
 ## プールとseineでハッシュレートが違うのはなぜですか？
 
@@ -70,6 +67,29 @@ Seineはマシンが計算する全ハッシュを数えます。プールが見
 - 新しい採掘機には時間を与えます。起動直後は採掘していた数分間で平均を計算するため、最初の値は少数のシェアに基づきます。1時間後には完全な1時間のウィンドウが適用されます。
 
 ハッシュレートが落ち着く前でも、Recent Shares表を見ればシェアが届いていることをすぐに確認できます。
+
+## 最初の支払いはいつ届きますか？
+
+最初のシェアから支払いまでの時間は決まっていません。まず、あなたのシェアが支払いウィンドウ内にある間にプールがブロックを発見する必要があります。そのブロックには60承認が必要で、**ブロック発見後**から平均で約5時間かかりますが、実際の時間は変動します。確定残高が現在の最低支払額0.1 BNTに達すると、自動支払い処理の対象になります。最新の設定は[Get Started](/start)で確認してください。
+
+**Recent Payouts**で支払い状況とトランザクションリンクを確認できます。待機中の支払いはまだネットワークへ送信されていません。送信済みの支払いがウォレットに表示されない場合は、[支払いのトラブル対処ガイド](/blog/ja/pool-payout-missing-from-wallet/)をご覧ください。
+
+### 残高
+
+- **Estimated Rewards：** プールが発見した、まだ成熟中のブロックに対する自分の取り分。
+- **Confirmed Rewards：** 成熟済みで、次の支払いを待っている残高。
+- **Paid Balance：** すでに自分のアドレスへ送られた総額。
+
+処理中の報酬があると、**Estimated From Recent Blocks**という表に、各ブロックの高さ、推定付与額、残り承認数、発見時刻が表示されます。各高さから[Blocknetエクスプローラー](https://explorer.blocknetcrypto.com)の該当ブロックに移動できるため、自分で照合できます。[PPLNS支払いの仕組み](/blog/ja/how-pplns-payouts-work/)では、各ブロックの報酬の分配方法と残高が支払われる時期を説明しています。
+
+<figure class="tracking-figure">
+<picture><source media="(max-width: 640px)" srcset="/blog/tracking/tracking-rewards-mobile.webp" width="352" height="524"><img src="/blog/tracking/tracking-rewards-desktop.webp" width="1081" height="217" alt="推定・確定・支払済み残高は別々の段階です。実際の英語版画面に例の金額を表示しており、予想収益ではありません。" loading="lazy" decoding="async"></picture>
+<figcaption>推定・確定・支払済み残高は別々の段階です。実際の英語版画面に例の金額を表示しており、予想収益ではありません。</figcaption>
+</figure>
+
+### 支払いと最近のシェア
+
+**Recent Payouts**には、自分のアドレスへの各支払いについて、金額、エクスプローラーの取引リンク、queued・unconfirmed・confirmedの状態が表示されます。**Recent Shares**には、最新20件のシェアのジョブ、採掘機、難易度、状態が表示されます。起動したばかりのマシンがプールに届いているかを最も早く確認できます。
 
 <span id="zero-hashrate"></span>
 
@@ -111,6 +131,10 @@ Seineはマシンが計算する全ハッシュを数えます。プールが見
 
 [Status](/status)はプール自身の稼働状況ページです。プール、公開HTTP、API、Stratum、データベース、デーモンの稼働状態、現在のジョブテンプレートの鮮度、チェーン高、直近10分・6時間・24時間・7日間の稼働率、障害履歴が表示されます。稼働率は、プールサーバー内の監視とCloudflare上の外部プローブの2か所で計測されます。
 
+## seine自身のダッシュボードは？
+
+プールは、付与された報酬を表示します。マシンそのものをリアルタイムで見るには、seineのターミナルダッシュボードでハッシュレートとシェアを確認できます。Seineは、REST、サーバー送信イベントストリーム、`/metrics`のPrometheusメトリクスを備えたローカル制御APIも公開でき、既定では`127.0.0.1:9977`にバインドされます。[制御APIガイド](https://github.com/zpalmtree/seine/blob/master/docs/API.md)でフラグとエンドポイントを説明しています。各マシンにはseineのメトリクス、残高と支払いにはプールAPIというように、両方を使う採掘者も多くいます。
+
 ## bntpool.comのAPIを使うには？
 
 <Answer>
@@ -147,29 +171,5 @@ curl -s https://bntpool.com/api/miner/YOUR_ADDRESS
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS | jq '{hashrate, total_accepted, total_rejected}'
 curl -s https://bntpool.com/api/miner/YOUR_ADDRESS/balance | jq '.balance.paid / 100000000'
 ```
-
-### ホームダッシュボードにマイナーを表示する
-
-同じエンドポイントをホームダッシュボードのセンサーとして使えます。Home Assistantでは、RESTful連携が`configuration.yaml`の数行で情報を読み込みます。
-
-```yaml
-rest:
-  - resource: https://bntpool.com/api/miner/YOUR_ADDRESS
-    scan_interval: 60
-    sensor:
-      - name: "bntpool hashrate"
-        value_template: "{{ value_json.hashrate | round(2) }}"
-        unit_of_measurement: "H/s"
-      - name: "bntpool accepted shares"
-        value_template: "{{ value_json.total_accepted }}"
-```
-
-30〜60秒ごとのポーリングで十分です。ハッシュレートは1時間の平均値であり、My Stats自体も採掘者情報を30秒ごとに更新しています。公開APIにはクライアントごとのレート制限があります。スクリプトがHTTP 429を受け取った場合は呼び出しを控え、`Retry-After`ヘッダーに示された時間を待ってから再試行してください。
-
-## seine自身のダッシュボードは？
-
-プールは、付与された報酬を表示します。マシンそのものをリアルタイムで見るには、seineのターミナルダッシュボードでハッシュレートとシェアを確認できます。Seineは、REST、サーバー送信イベントストリーム、`/metrics`のPrometheusメトリクスを備えたローカル制御APIも公開でき、既定では`127.0.0.1:9977`にバインドされます。[制御APIガイド](https://github.com/zpalmtree/seine/blob/master/docs/API.md)でフラグとエンドポイントを説明しています。各マシンにはseineのメトリクス、残高と支払いにはプールAPIというように、両方を使う採掘者も多くいます。
-
-Seineは初めてですか？[ダウンロード](https://seineminer.com/ja/#download)して既定のプールに接続すれば、最初のシェアが受理されてから数分でMy Statsに自分のアドレスが表示されます。
 
 <CTA target="pool" title="採掘を始めてリアルタイムで確認する" text="数分でbntpool.comに参加し、My Statsでハッシュレート、シェア、残高を確認しましょう。" />
