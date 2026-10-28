@@ -42,3 +42,23 @@ From the persisted runtime snapshot and Prometheus, before latency histograms ex
 
 Raw results: `perf-results/2026-10-27/pool-verify/pv-9700x5/results/` (runs.jsonl, host.txt, parity-fullsize.txt) and `perf-results/2026-10-27/pool-verify/replay/*.json`.
 
+## Approved load-growth runbook (2026-10-27)
+
+Approved by the pool owner as the plan if load grows; not applied today
+(~28 shares/s). When `BlocknetPoolLoadGrowthConfigDue` fires (submits above
+55/s for 30 min, where the current config nears verifier capacity of ~7.7
+verifies/s at ~11.6% coverage):
+
+1. In `/etc/blocknet/pool/config.json` set `"vardiff_target_shares": 5` and
+   `"sample_rate": 0.08` (keep a copy of the previous values).
+2. `sudo systemctl reload blocknet-pool-stratum@<active>`; the engine logs the
+   changed settings. No restart, no disconnects.
+3. Confirm with `scripts/verify_perf_report.py --host bntpool --window 1h`:
+   overload 100% Normal, audits deferred 0, regular queue near empty.
+
+Evidence (T2 replay, kernel capacity, hold 0.25): 2x arrivals and a 2x restart
+storm stay 100% Normal with 0 drops and 0 delayed block candidates in 3/3 runs.
+Trade-offs: per-worker hashrate readings are noisier (half the shares), and a
+cheater takes ~1.4x longer to catch than at today's load, though still faster
+than the old code would at 2x. Revert by restoring the two values and reloading.
+
