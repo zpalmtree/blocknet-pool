@@ -2302,3 +2302,11 @@ a.copy-field-value:hover {
 .command-option { margin-top: 24px; }
 .command-option summary { cursor: pointer; color: var(--text); font-weight: 600; }
 .command-option summary:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+
+/* Supporting help stays below the live dashboard and collapsed until requested. */
+.pool-guide > summary { cursor: pointer; font-weight: 600; }
+.pool-guide > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 6px; }
+.pool-guide-body { max-width: 68ch; padding-top: 16px; }
+.pool-guide-body h2 { font-size: 16px; margin: 16px 0 8px; }
+.pool-guide-body p { color: var(--muted); font-size: 14px; line-height: 1.6; margin-bottom: 12px; }
+#pool-information, #pool-guide { scroll-margin-top: 100px; }

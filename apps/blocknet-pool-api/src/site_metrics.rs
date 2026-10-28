@@ -31,6 +31,8 @@ struct Event {
     article: String,
     locale: String,
     action: String,
+    #[serde(default)]
+    source: Option<String>,
 }
 
 struct Inner {
@@ -165,7 +167,17 @@ impl SiteMetrics {
             return StatusCode::BAD_REQUEST;
         };
         if !LOCALES.contains(&event.locale.as_str())
-            || !["view", "download", "pool_setup"].contains(&event.action.as_str())
+            || ![
+                "view",
+                "download",
+                "pool_setup",
+                "setup_guide",
+                "worker_stats",
+            ]
+            .contains(&event.action.as_str())
+            || event.source.as_deref().is_some_and(|source| {
+                !["search", "direct", "internal", "referral"].contains(&source)
+            })
             || !self
                 .articles
                 .get(site)
@@ -177,10 +189,14 @@ impl SiteMetrics {
             return StatusCode::SERVICE_UNAVAILABLE;
         }
         let day = timestamp / 86400;
-        let key = format!(
+        let mut key = format!(
             "{day}|{site}|{}|{}|{}",
             event.article, event.locale, event.action
         );
+        if let Some(source) = event.source {
+            key.push('|');
+            key.push_str(&source);
+        }
         if inner.counts.len() >= MAX_KEYS && !inner.counts.contains_key(&key) {
             return StatusCode::SERVICE_UNAVAILABLE;
         }
@@ -330,6 +346,48 @@ mod tests {
         assert_eq!(
             metrics.record("bntpool.com", &event(), now()),
             StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+    #[test]
+    fn landing_events_accept_only_known_pages_actions_and_source_buckets() {
+        let metrics = SiteMetrics::default();
+        metrics.inner.lock().ready = true;
+        for (site, page) in [
+            ("seineminer.com", "home"),
+            ("bntpool.com", "home"),
+            ("bntpool.com", "pool-start"),
+        ] {
+            let event = serde_json::json!({"article": page, "locale": "en", "action": "setup_guide", "source": "search"});
+            assert_eq!(
+                metrics.record(site, &serde_json::to_vec(&event).unwrap(), now()),
+                StatusCode::ACCEPTED
+            );
+        }
+        for extra in [
+            serde_json::json!({"source": "https://google.com/?q=secret"}),
+            serde_json::json!({"source": "search", "wallet": "secret"}),
+        ] {
+            let mut event =
+                serde_json::json!({"article": "home", "locale": "en", "action": "view"});
+            event
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            assert_eq!(
+                metrics.record("bntpool.com", &serde_json::to_vec(&event).unwrap(), now()),
+                StatusCode::BAD_REQUEST
+            );
+        }
+        assert!(metrics
+            .inner
+            .lock()
+            .counts
+            .keys()
+            .all(|key| key.ends_with("|search")));
+        // Older deployed article scripts still use five-part keys.
+        assert_eq!(
+            metrics.record("bntpool.com", &event(), now()),
+            StatusCode::ACCEPTED
         );
     }
     #[test]

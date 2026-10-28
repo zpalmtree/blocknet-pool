@@ -17,16 +17,18 @@ from zoneinfo import ZoneInfo
 def report(data):
     rows = defaultdict(lambda: defaultdict(int))
     for key, count in data['counts'].items():
-        day, site, article, locale, action = key.split('|')
-        rows[(site, article, locale)][action] += count
+        day, site, article, locale, action, *extra = key.split('|')
+        source = extra[0] if extra else 'unclassified'
+        rows[(site, article, locale, source)][action] += count
     print(f"Ready: {data['ready']}; retention: {data['retention_days']} daily buckets")
     if data.get('last_persisted_at'):
         when = datetime.fromtimestamp(data['last_persisted_at'], timezone.utc).astimezone(ZoneInfo('America/New_York'))
         print('Last persisted:', when.strftime('%Y-%m-%d %I:%M:%S %p %Z'))
     print('Counts are page loads and click intent, not unique people or completed conversions.')
-    print('site\tarticle\tlanguage\tviews\tdownload clicks\tsetup clicks')
-    for (site, article, locale), actions in sorted(rows.items()):
-        print(site, article, locale, actions['view'], actions['download'], actions['pool_setup'], sep='\t')
+    print('Source is the document referrer category; search is not verified organic attribution. Direct includes missing referrers.')
+    print('site\tpage\tlanguage\tsource\tviews\tdownload clicks\tsetup clicks\tguide clicks\tstats clicks')
+    for (site, article, locale, source), actions in sorted(rows.items()):
+        print(site, article, locale, source, actions['view'], actions['download'], actions['pool_setup'], actions['setup_guide'], actions['worker_stats'], sep='\t')
 
 
 def main():

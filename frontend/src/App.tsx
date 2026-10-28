@@ -1,6 +1,7 @@
 import { t, localizePath, locale } from './i18n';
 import { type MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 
+import { startSiteMetrics } from '../blog/site-metrics.mjs';
 import { createApiClient } from './api/client';
 import { LanguageControl } from './components/LanguageControl';
 import { API_KEY_STORAGE_KEY, LAST_MINER_LOOKUP_KEY } from './lib/storage';
@@ -78,7 +79,11 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    window.scrollTo(0, 0);
+    // React replaces the initial HTML; restore fragment navigation after mounting.
+    let target: HTMLElement | null = null;
+    try { target = document.getElementById(decodeURIComponent(window.location.hash.slice(1))); } catch { /* Invalid fragments fall back to the page top. */ }
+    if (target) target.scrollIntoView();
+    else window.scrollTo(0, 0);
     setMobileNavOpen(false);
   }, [route]);
 
@@ -115,6 +120,11 @@ export function App() {
       .querySelector<HTMLMetaElement>('meta[name="theme-color"]')
       ?.setAttribute('content', theme === 'dark' ? '#071114' : '#f6f8f2');
   }, [poolInfo, route, theme]);
+
+  useEffect(() => {
+    if (route !== 'dashboard' && route !== 'start') return;
+    return startSiteMetrics(document.getElementById(`page-${route}`), route === 'dashboard' ? 'home' : 'pool-start', locale);
+  }, [route]);
 
   const onSaveApiKey = useCallback(() => {
     const key = apiKeyInput.trim();

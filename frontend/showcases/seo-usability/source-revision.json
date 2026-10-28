@@ -1,0 +1,45 @@
+{
+  "base_revision": "cf9f5cf0309b3609baf27e4475886b606f5059ef",
+  "source_sha256": {
+    "apps/blocknet-pool-api/build.rs": "0aaafd3fcbac2a9613c09a2e49391837bdf59c58d7b0e8ee4f9018e4a9fddad4",
+    "apps/blocknet-pool-api/src/blog.rs": "89d3255035d337eb39f3b09fa77719989303580b174cc88d26d69ef730eae527",
+    "apps/blocknet-pool-api/src/site_articles.json": "0afea756ed3855a289e19ef00a1a196baa6e3d0139232664e054c8f693f6239c",
+    "apps/blocknet-pool-api/src/site_metrics.rs": "f9e835b5add59c19e6a09cacc12077262673f9dcf09be8544b808a67e31d72cb",
+    "apps/blocknet-pool-api/src/ui.rs": "b3fd073cabfa86805561ba9c9adf89cb5d27e201d1bb3c58bf87e6f6c01daf95",
+    "frontend/package.json": "67c305fea29b75ce2c48bc87d9b8d1700efc9b3892f89cb0a71603a40681257e",
+    "frontend/scripts/build-blog.mjs": "acea94a51ce0b1dbfb7327aeb08198304ec5f72fba0c8df16bae2f8df7922aad",
+    "frontend/scripts/build-public-pages.mjs": "f5c21b89f10c3f4d4c65bb9ae7d9529e0be9a62d25ff0b2c666ee4ecf95d5200",
+    "frontend/src/App.tsx": "e5fdbf3557dc000b1df0c018eedd1df278bf6a92b4e4d9f0714297a04e881477",
+    "frontend/src/lib/page-meta.json": "5d7fc0e8b4088df8e54ea36e853c1f634dd5cea3c3274349439e44125581a1da",
+    "frontend/src/pages/DashboardPage.tsx": "cb58dac29f5de7a0e7bc916fbe80be0dd464293ae8694e4ff85898b578d25f51",
+    "frontend/src/pages/StartPage.tsx": "913895281e50b637c64a3e129a07db82210b734f2963acf7ee9a518e347552f7",
+    "frontend/src/styles.css": "4f22915b7a3773a280a2e6f257d32233a668760e378c81a498855b727f476a6d",
+    "frontend/tests/article-metrics.test.mjs": "29bdcb1b38b54808c4b0522ae03fa7d730fc00b21f88ef1712f7252a4306c362",
+    "scripts/site_metrics_report.py": "aed40a9faf266148e46ade0855aed7c6cd404a2df0b1738460c2c287a530b81c",
+    "frontend/src/components/PoolGuide.ts": "cafa155fc0dbf43c344aced3de6840ea7e65455f381af700e9399ede68009ae1"
+  },
+  "capture_date": "2026-10-28 EDT",
+  "widths": [
+    1366,
+    390
+  ],
+  "fixture": "Synthetic pool data; production static Seine build",
+  "reviewed_captures": [
+    "seo-pool-1366-dark.png",
+    "seo-pool-1366-empty.png",
+    "seo-pool-1366-error.png",
+    "seo-pool-1366-expanded-ar.png",
+    "seo-pool-1366-expanded-en.png",
+    "seo-pool-1366-farm.png",
+    "seo-pool-1366-initial-html.png",
+    "seo-pool-1366-loading.png",
+    "seo-pool-390-dark.png",
+    "seo-pool-390-empty.png",
+    "seo-pool-390-error.png",
+    "seo-pool-390-expanded-ar.png",
+    "seo-pool-390-expanded-en.png",
+    "seo-pool-390-farm.png",
+    "seo-pool-390-initial-html.png",
+    "seo-pool-390-loading.png"
+  ]
+}

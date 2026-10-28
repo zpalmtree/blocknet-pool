@@ -9,7 +9,9 @@
     "pool-vs-solo-mining-blocknet",
     "track-your-miner-on-bntpool",
     "what-is-a-mining-pool",
-    "what-is-hashrate"
+    "what-is-hashrate",
+    "home",
+    "pool-start"
   ],
   "seineminer.com": [
     "argon2id-proof-of-work-explained",
@@ -35,6 +37,7 @@
     "seine-dashboard-explained",
     "stealth-addresses-explained",
     "what-is-a-privacy-coin",
-    "what-is-blocknet"
+    "what-is-blocknet",
+    "home"
   ]
 }

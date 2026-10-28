@@ -56,6 +56,8 @@ mod tests {
         assert!(lookup("/blog/").is_some_and(|(ct, _)| ct.starts_with("text/html")));
         assert!(lookup("/blog/blog.css").is_some_and(|(ct, _)| ct.starts_with("text/css")));
         assert!(lookup("/blog/theme.js").is_some());
+        assert!(lookup("/blog/site-metrics.mjs")
+            .is_some_and(|(ct, _)| ct.starts_with("text/javascript")));
         assert!(blog_sitemap_paths().contains(&"/blog/"));
         for path in blog_sitemap_paths() {
             assert!(

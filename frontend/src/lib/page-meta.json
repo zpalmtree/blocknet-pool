@@ -1,6 +1,6 @@
 {
   "/": {
-    "title": "Blocknet Mining Pool",
+    "title": "Blocknet Mining Pool — 0% Fee",
     "description": "Mine Blocknet on bntpool.com with a 0% pool fee and PPLNS payouts. Track live hashrate, found blocks, payouts, and your miner’s shares.",
     "image": "og-dashboard.png",
     "index": true,

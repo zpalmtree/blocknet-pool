@@ -117,7 +117,7 @@ ${offers ? `<script type="application/json" id="blog-lang-offers">${JSON.stringi
   </nav>
 </div></header>
 ${body}
-${slug ? `<script defer src="${assetUrl('article-metrics.js')}"></script>` : ''}
+${slug ? `<script type="module" src="${assetUrl('site-events.js')}"></script>` : ''}
 ${slug === 'estimate-blocknet-mining-rewards' ? `<script type="module" src="${calculatorScript}"></script>` : ''}
 <footer><div class="wrap">
   <span>bntpool.com · ${esc(t(locale, 'footer'))}</span>
@@ -274,3 +274,6 @@ for (const l of LOCALES) {
 // The API lists these in /sitemap.xml.
 write('sitemap-paths.txt', sitemapPaths.join('\n') + '\n');
 console.log(`blog: ${sitemapPaths.length} pages in ${LOCALES.length} locales (${TRANSLATED.length} translated)`);
+
+copyFileSync(new URL('site-metrics.mjs', BLOG_DIR), new URL('site-metrics.mjs', DIST));
+copyFileSync(new URL('site-events.js', BLOG_DIR), new URL('site-events.js', DIST));

@@ -9,6 +9,7 @@ import { HashrateChart } from '../components/HashrateChart';
 import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
 import { PayoutTxLinks } from '../components/PayoutTxLinks';
 import { RangeTabs } from '../components/RangeTabs';
+import { PoolGuide } from '../components/PoolGuide';
 import { StatCard } from '../components/StatCard';
 import {
   effortLabel,
@@ -399,6 +400,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
         </div>
       </div>
 
+      <PoolGuide t={t} localizePath={localizePath} />
     </div>
   );
 }

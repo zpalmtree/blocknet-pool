@@ -562,10 +562,12 @@ mod tests {
                     "<title>{}</title>",
                     html_escape(&locale.pages[*path].title)
                 )));
-                assert!(html.contains(&format!(
-                    "<h1>{}</h1>",
-                    html_escape(&locale.pages[*path].title)
-                )));
+                let heading = if *path == "/" && locale.code == "en" {
+                    "Blocknet Mining Pool"
+                } else {
+                    &locale.pages[*path].title
+                };
+                assert!(html.contains(&format!("<h1>{}</h1>", html_escape(heading))));
                 assert!(html.contains(&html_escape(&locale.pages[*path].description)));
                 assert_eq!(html.matches("<h1>").count(), 1);
                 assert_eq!(
@@ -748,7 +750,7 @@ mod tests {
     #[test]
     fn unknown_routes_have_not_found_metadata() {
         let root = render_index_html("/", "https://bntpool.com");
-        assert!(root.contains("<title>Blocknet Mining Pool</title>"));
+        assert!(root.contains("<title>Blocknet Mining Pool — 0% Fee</title>"));
         assert!(root.contains(r#"content="https://bntpool.com/ui-assets/og-dashboard.png""#));
         assert!(root.contains(r#"<meta property="og:url" content="https://bntpool.com/" />"#));
 

@@ -142,7 +142,7 @@ fn embed_blog(frontend_dir: &Path, blog_dist_dir: &Path) {
         let content_type = match file.extension().and_then(|ext| ext.to_str()) {
             Some("html") => "text/html; charset=utf-8",
             Some("css") => "text/css; charset=utf-8",
-            Some("js") => "text/javascript; charset=utf-8",
+            Some("js" | "mjs") => "text/javascript; charset=utf-8",
             Some("xml") => "application/rss+xml; charset=utf-8",
             Some("png") => "image/png",
             Some("webp") => "image/webp",

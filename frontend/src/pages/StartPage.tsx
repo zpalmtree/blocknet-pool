@@ -155,7 +155,7 @@ export function StartPage({ poolInfo }: StartPageProps) {
         </div>
       </div>
 
-      <div className="card section">
+      <div className="card section" id="pool-information">
         <h3>{t("m469")}</h3>
         <table className="info-table" style={{ maxWidth: 500 }}>
           <tbody>
