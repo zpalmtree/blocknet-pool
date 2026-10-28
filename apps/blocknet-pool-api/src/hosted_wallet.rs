@@ -10,7 +10,7 @@ use axum::{
     extract::{Request, State},
     http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::get,
     Json, Router,
 };
 use serde::Deserialize;
@@ -219,6 +219,7 @@ async fn forward(State(gateway): State<Arc<Gateway>>, request: Request) -> Respo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::routing::post;
 
     #[tokio::test]
     async fn disabled_wallet_never_reads_credentials_or_registers_routes() {
