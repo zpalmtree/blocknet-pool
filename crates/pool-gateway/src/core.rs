@@ -22,6 +22,7 @@ const JOB_HISTORY: usize = 64;
 const BUSY_ERROR: &str = "server busy, retry";
 /// Wait after a rejected or unanswered replay before trying that miner again.
 const REPLAY_BACKOFF: Duration = Duration::from_secs(5);
+const MAX_PENDING_LOGINS: usize = 4;
 
 #[derive(Debug, Clone)]
 pub struct Timings {
@@ -36,6 +37,9 @@ pub struct Timings {
     pub engine_absent_timeout: Duration,
     /// Miners that never log in are disconnected after this.
     pub login_timeout: Duration,
+    /// Miners still on a draining engine after this are reconnected, so a
+    /// handover always completes.
+    pub drain_deadline: Duration,
     pub tick: Duration,
 }
 
@@ -47,6 +51,7 @@ impl Default for Timings {
             replay_timeout: Duration::from_secs(15),
             engine_absent_timeout: Duration::from_secs(120),
             login_timeout: Duration::from_secs(30),
+            drain_deadline: Duration::from_secs(180),
             tick: Duration::from_millis(100),
         }
     }
@@ -91,9 +96,13 @@ struct Miner {
     peer: SocketAddr,
     tx: mpsc::Sender<MinerOut>,
     connected_at: Instant,
-    /// The miner's first login request, replayed on each new engine.
+    /// The login request an engine accepted; replayed on each new engine.
     login_line: Option<String>,
-    login_id: Option<u64>,
+    /// Login requests awaiting an answer, by request ID. A miner may retry
+    /// with a new ID after a rejected login on the same connection.
+    pending_logins: VecDeque<(u64, String)>,
+    /// The most recent login request, accepted or not.
+    last_login: Option<String>,
     /// The login arrived while no engine was available; it is forwarded,
     /// unchanged, once one is.
     login_held: bool,
@@ -118,6 +127,8 @@ struct EngineLink {
     role: Option<GatewayRole>,
     /// Since when no miner has used this draining engine as current.
     drained_since: Option<Instant>,
+    /// Since when this engine has been draining.
+    draining_since: Option<Instant>,
     retired: bool,
 }
 
@@ -155,6 +166,7 @@ impl Gateway {
                         hello: None,
                         role: None,
                         drained_since: None,
+                        draining_since: None,
                         retired: false,
                     },
                 );
@@ -178,7 +190,8 @@ impl Gateway {
             tx,
             connected_at: now,
             login_line: None,
-            login_id: None,
+            pending_logins: VecDeque::new(),
+            last_login: None,
             login_held: false,
             logged_in: false,
             current: None,
@@ -211,9 +224,14 @@ impl Gateway {
             .and_then(|v| v.get("method"))
             .and_then(Value::as_str);
 
-        if method == Some("login") && miner.login_line.is_none() {
-            miner.login_line = Some(line.clone());
-            miner.login_id = id;
+        if method == Some("login") {
+            miner.last_login = Some(line.clone());
+            if let Some(id) = id {
+                miner.pending_logins.push_back((id, line.clone()));
+                while miner.pending_logins.len() > MAX_PENDING_LOGINS {
+                    miner.pending_logins.pop_front();
+                }
+            }
         }
         if miner.current.is_none() {
             if let Some(primary) = self.primary {
@@ -298,7 +316,7 @@ impl Gateway {
                 if let Some(link) = self.engines.get_mut(&engine) {
                     link.hello = Some(hello);
                 }
-                self.elect_primary();
+                self.elect_primary(now);
             }
             FrameKind::Line => self.engine_line(engine, frame, now),
             FrameKind::Close => {
@@ -412,8 +430,18 @@ impl Gateway {
                 }
             }
             None => {
-                if from_current && id.is_some() && id == miner.login_id && !failed {
-                    miner.logged_in = true;
+                let answered = id.and_then(|id| {
+                    miner
+                        .pending_logins
+                        .iter()
+                        .position(|(pending, _)| *pending == id)
+                });
+                if let (true, Some(index)) = (from_current, answered) {
+                    let (_, login) = miner.pending_logins.remove(index).expect("index");
+                    if !failed {
+                        miner.login_line = Some(login);
+                        miner.logged_in = true;
+                    }
                 }
             }
         }
@@ -445,7 +473,7 @@ impl Gateway {
         }
         if self.primary == Some(engine) {
             self.primary = None;
-            self.elect_primary();
+            self.elect_primary(now);
         }
     }
 
@@ -453,7 +481,7 @@ impl Gateway {
     /// others drain. The old primary is demoted before the new one is
     /// promoted, so singleton work never runs on both for longer than an
     /// in-flight tick.
-    fn elect_primary(&mut self) {
+    fn elect_primary(&mut self, now: Instant) {
         let newest = self
             .engines
             .iter()
@@ -467,6 +495,7 @@ impl Gateway {
             }
             if link.role != Some(GatewayRole::Draining) {
                 link.role = Some(GatewayRole::Draining);
+                link.draining_since = Some(now);
                 let _ = link.tx.try_send(role_frame(GatewayRole::Draining));
                 tracing::info!(engine = id, "engine draining");
             }
@@ -476,6 +505,7 @@ impl Gateway {
                 if link.role != Some(GatewayRole::Primary) {
                     link.role = Some(GatewayRole::Primary);
                     link.drained_since = None;
+                    link.draining_since = None;
                     let _ = link.tx.try_send(role_frame(GatewayRole::Primary));
                     tracing::info!(engine = newest, "engine primary");
                 }
@@ -507,7 +537,7 @@ impl Gateway {
                     Frame::new(FrameKind::Close, *conn, Vec::new()),
                 );
             }
-            let login_expired = miner.login_line.is_none()
+            let login_expired = miner.last_login.is_none()
                 && now.duration_since(miner.connected_at) >= self.timings.login_timeout;
             let orphan_expired = miner.orphaned_since.is_some_and(|since| {
                 now.duration_since(since) >= self.timings.engine_absent_timeout
@@ -537,7 +567,7 @@ impl Gateway {
                 break;
             }
             if miner.login_held && miner.current.is_none() {
-                let Some(login) = miner.login_line.clone() else {
+                let Some(login) = miner.last_login.clone() else {
                     continue;
                 };
                 if !open_on(&self.engines, miner, *conn, primary) {
@@ -587,6 +617,7 @@ impl Gateway {
     /// grace for late shares has passed.
     fn retire_drained(&mut self, now: Instant) {
         let mut retiring = Vec::new();
+        let mut overdue = Vec::new();
         for (id, link) in self.engines.iter_mut() {
             if link.retired || link.role != Some(GatewayRole::Draining) {
                 continue;
@@ -594,11 +625,41 @@ impl Gateway {
             let in_use = self.miners.values().any(|miner| miner.current == Some(*id));
             if in_use {
                 link.drained_since = None;
+                if link
+                    .draining_since
+                    .is_some_and(|since| now.duration_since(since) >= self.timings.drain_deadline)
+                {
+                    overdue.push(*id);
+                }
                 continue;
             }
             let since = *link.drained_since.get_or_insert(now);
             if now.duration_since(since) >= self.timings.retire_grace {
                 retiring.push(*id);
+            }
+        }
+        // Miners that could not be moved (e.g. never logged in) reconnect;
+        // they land on the primary.
+        for engine in overdue {
+            let stuck: Vec<u64> = self
+                .miners
+                .iter()
+                .filter(|(_, miner)| miner.current == Some(engine))
+                .map(|(conn, _)| *conn)
+                .collect();
+            tracing::warn!(
+                engine,
+                miners = stuck.len(),
+                "drain deadline passed; reconnecting miners left on the draining engine"
+            );
+            self.metrics
+                .forced_reconnects
+                .fetch_add(stuck.len() as u64, Ordering::Relaxed);
+            for conn in stuck {
+                if let Some(miner) = self.miners.get(&conn) {
+                    send_miner(miner, MinerOut::Close);
+                }
+                self.miner_closed(conn);
             }
         }
         for engine in retiring {
@@ -632,6 +693,20 @@ impl Gateway {
             Ordering::Relaxed,
         );
         let orphaned = self.miners.values().filter(|m| m.current.is_none()).count();
+        let on_draining = self
+            .miners
+            .values()
+            .filter(|m| {
+                m.current.is_some_and(|engine| {
+                    self.engines
+                        .get(&engine)
+                        .is_some_and(|link| link.role == Some(GatewayRole::Draining))
+                })
+            })
+            .count();
+        self.metrics
+            .miners_on_draining_engines
+            .store(on_draining as u64, Ordering::Relaxed);
         self.metrics
             .miners_without_engine
             .store(orphaned as u64, Ordering::Relaxed);
@@ -1053,6 +1128,65 @@ mod tests {
         h.advance(Duration::from_secs(31));
         assert_eq!(miner.rx.try_recv().unwrap(), MinerOut::Close);
         a.expect(FrameKind::Close, 7);
+    }
+
+    #[test]
+    fn a_login_retried_with_a_new_id_is_tracked_and_migrates() {
+        let mut h = Harness::new();
+        let mut a = h.engine(1, 100);
+        let mut miner = h.miner(7);
+        a.expect(FrameKind::Open, 7);
+        let bad = r#"{"id":1,"method":"login","params":{"address":"typo"}}"#;
+        let good = r#"{"id":2,"method":"login","params":{"address":"addr","worker":"rig"}}"#;
+        h.miner_says(&miner, bad);
+        assert_eq!(a.expect(FrameKind::Line, 7), bad);
+        h.engine_says(&a, 7, r#"{"id":1,"error":"invalid login params"}"#);
+        assert_eq!(miner.line(), r#"{"id":1,"error":"invalid login params"}"#);
+        h.miner_says(&miner, good);
+        assert_eq!(a.expect(FrameKind::Line, 7), good);
+        h.engine_says(&a, 7, r#"{"id":2,"status":"ok"}"#);
+        assert_eq!(miner.line(), r#"{"id":2,"status":"ok"}"#);
+
+        let mut b = h.engine(2, 200);
+        h.advance(Duration::from_millis(100));
+        b.expect(FrameKind::Open, 7);
+        let replay: Value = serde_json::from_str(&b.expect(FrameKind::Line, 7)).unwrap();
+        assert_eq!(
+            replay["params"]["address"], "addr",
+            "replays the accepted login"
+        );
+        h.engine_says(
+            &b,
+            7,
+            &format!(r#"{{"id":{REPLAY_LOGIN_REQUEST_ID},"status":"ok"}}"#),
+        );
+        assert_eq!(h.metrics.migrations.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn miners_that_cannot_move_are_reconnected_after_the_drain_deadline() {
+        let mut h = Harness::new();
+        let mut a = h.engine(1, 100);
+        let mut miner = h.miner(7);
+        a.expect(FrameKind::Open, 7);
+        // Its login is never answered, so it cannot be replayed elsewhere.
+        h.miner_says(&miner, LOGIN);
+        a.expect(FrameKind::Line, 7);
+        let _b = h.engine(2, 200);
+        h.advance(Duration::from_secs(60));
+        assert_eq!(
+            h.metrics.miners_on_draining_engines.load(Ordering::Relaxed),
+            1
+        );
+        miner.assert_quiet();
+
+        h.advance(Duration::from_secs(121));
+        assert_eq!(miner.rx.try_recv().unwrap(), MinerOut::Close);
+        assert_eq!(h.metrics.forced_reconnects.load(Ordering::Relaxed), 1);
+        a.expect(FrameKind::Close, 7);
+        h.advance(Duration::from_millis(100));
+        h.advance(Duration::from_secs(31));
+        a.expect(FrameKind::Retire, 0);
     }
 
     #[test]

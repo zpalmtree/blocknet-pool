@@ -34,6 +34,8 @@ pub struct GatewayMetrics {
     pub stale_engine_jobs: AtomicU64,
     pub retires: AtomicU64,
     pub rejected_connections: AtomicU64,
+    pub miners_on_draining_engines: AtomicU64,
+    pub forced_reconnects: AtomicU64,
 }
 
 impl GatewayMetrics {
@@ -63,6 +65,14 @@ impl GatewayMetrics {
             (
                 "blocknet_pool_gateway_rejected_connections_total",
                 &self.rejected_connections,
+            ),
+            (
+                "blocknet_pool_gateway_miners_on_draining_engines",
+                &self.miners_on_draining_engines,
+            ),
+            (
+                "blocknet_pool_gateway_forced_reconnects_total",
+                &self.forced_reconnects,
             ),
         ] {
             out.push_str(&format!("{name} {}\n", value.load(Ordering::Relaxed)));
