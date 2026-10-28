@@ -80,6 +80,8 @@ setting `growth_submit_rate` to 0 (by reload) turns it off. Alerts:
 
 - 2026-10-28 · T2 · two candidate verifiers (CANDIDATE_VALIDATION_WORKERS 1 → 2, arena retained), replays exactly as first run (pure Poisson candidates, no spacing): every candidate waited ≤5 ms (smallest bucket) in W1 1x (126), W2 1x → 2x ramp (182) and W3 2x restart storm (126); 0 refused; 100% Normal; 0 drops; total candidate p99 1.17 / 1.17 / 1.43 s (W3 was 1.63 s with one worker). Raw: perf-results/2026-10-27/pool-verify/replay-two-candidate-workers/.
 
+- 2026-10-28 · T3 · two candidate verifiers rolled out (owner-approved, coordinated with the miner-telemetry session) by handover 06:54:24 UTC from branch deploy-candidate-workers-20261028 (0a42044 = the live keepalive build 22c847f + the needrestart override + this change): @a retired 06:55:07, active engine now @b; gateway not restarted; 2,465 miners, 0 replay failures, 0 busy replies, 0 forced reconnects; /etc/needrestart/conf.d/blocknet-pool.conf installed. Note: before the gateway keepalive relay (live 06:34), every handover was followed 15 min later by ~1,500 idle-timeout disconnects of keepalive-only sessions, including the 05:39 kernel handover.
+
 ## Goal "Done" criteria and evidence (BNTPOOL_VERIFY_GOAL.md, 2026-10-27)
 
 1. *Approved-ready batch with T2 evidence at 2x peak arrival and in a restart
@@ -115,7 +117,8 @@ Batch approval: the whole batch (both kernel upgrades, hold_audit_rate 0.25,
 sync lane, per-thread arena retention, hot reload, Stratum gateway with the
 retried-login fix, automatic growth mode) was presented against these
 criteria and approved by the owner as bntpool's production setup on
-2026-10-28 (06:27 UTC). Candidate spacing in the replay (2 s minimum gap)
+2026-10-28 (06:27 UTC). The two-candidate-verifier change
+followed as an owner-approved deploy at 06:54 UTC. Candidate spacing in the replay (2 s minimum gap)
 is a modelling choice made after the first runs; it is recorded beside the
 pure-Poisson results, which show the only waits are candidate-on-candidate.
 
