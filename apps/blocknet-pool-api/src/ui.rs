@@ -348,8 +348,10 @@ pub(crate) fn app_fallback_response(method: Method, uri: &Uri, base_url: &str) -
 /// this origin except Google Fonts (stylesheet + font files) and the
 /// blocknet.id handle lookup the stats page performs with `fetch`. React
 /// `style` props go through CSSOM and need no `'unsafe-inline'`.
+/// `'wasm-unsafe-eval'` lets pages compile the WebAssembly modules served from
+/// this origin; it does not allow JavaScript `eval`.
 pub(crate) const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
-script-src 'self'; \
+script-src 'self' 'wasm-unsafe-eval'; \
 style-src 'self' https://fonts.googleapis.com; \
 font-src 'self' https://fonts.gstatic.com; \
 img-src 'self' data:; \
@@ -889,10 +891,10 @@ mod tests {
             headers[header::REFERRER_POLICY],
             "strict-origin-when-cross-origin"
         );
-        assert!(headers[header::CONTENT_SECURITY_POLICY]
-            .to_str()
-            .unwrap()
-            .contains("frame-ancestors 'none'"));
+        let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+        assert!(csp.contains("frame-ancestors 'none'"));
+        assert!(csp.contains("script-src 'self' 'wasm-unsafe-eval';"));
+        assert!(!csp.contains(" 'unsafe-eval'"), "JavaScript eval stays disallowed");
         assert_eq!(
             headers
                 .get_all(header::X_CONTENT_TYPE_OPTIONS)
