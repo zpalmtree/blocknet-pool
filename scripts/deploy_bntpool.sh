@@ -263,7 +263,7 @@ handover_stratum_engine() {
     if [[ -n \$old ]]; then \
       for _ in \$(seq 1 600); do systemctl is-active --quiet blocknet-pool-stratum@\$old.service || break; sleep 1; done; \
       if systemctl is-active --quiet blocknet-pool-stratum@\$old.service; then \
-        echo \"handover stalled: blocknet-pool-stratum@\$old still active after 10 min; both engines left running\" >&2; \
+        echo \"handover stalled: blocknet-pool-stratum@\$old still active after 10 min; both engines left running. Miners the gateway could not move are still on it; to finish, stop it (sudo systemctl stop blocknet-pool-stratum@\$old): only those miners reconnect. Gateways built from 2026-10-28 reconnect them by themselves after 3 min.\" >&2; \
         curl -s 127.0.0.1:24786/metrics >&2 || true; exit 1; \
       fi; \
       result=\$(systemctl show -p Result --value blocknet-pool-stratum@\$old.service); \
