@@ -70,6 +70,8 @@ setting `growth_submit_rate` to 0 (by reload) turns it off. Alerts:
 
 - 2026-10-28 · T3 · gateway handover fix made live (owner-approved): gateway built from branch deploy-gateway-fix-20261028 (deploy-growth-20261027 + the gateway fix only), uploaded alone and restarted 04:53:30 UTC. Engine @a reconnected within 1 s; 2,280 miners back within 5 s, all on the engine by 04:53:45, 2,403 connections by 04:54:30 (2,428 before); 0 busy replies; connected workers 2,311 vs 2,325 before. The live pool now runs everything built and tested: Stratum/monitor 2d98924, gateway with pending-login tracking and the 3-minute drain deadline.
 
+- 2026-10-28 · T2 · candidate queue wait measured directly (replay on 2d98924 with a test-only `queue_wait_real_ms` output; histogram buckets, so values are upper bounds): 1x baseline p50 ≤5 ms, p99 ≤0.5 s; 1x → 2x ramp p50 ≤5 ms, p99 ≤1.25 s; 2x restart storm p50 ≤5 ms, p99 ≤1.25 s. All 100% Normal, 0 drops, 0 candidates refused. Regular audits never queue ahead of a candidate; the tail is one candidate waiting for another, because there is one candidate worker and the replay injects 0.05 candidates/s (one per 20 s, far above production) so ~3% land within one ~0.65 s hash of the previous one. At 2x the wait is longer because each hash is slower under memory contention. A second candidate worker would remove the tail, but at production's candidate rate it affects well under 1% of blocks. Raw: perf-results/2026-10-27/pool-verify/replay-candidate-wait-2d98924/.
+
 ## Goal "Done" criteria and evidence (BNTPOOL_VERIFY_GOAL.md, 2026-10-27)
 
 1. *Approved-ready batch with T2 evidence at 2x peak arrival and in a restart
