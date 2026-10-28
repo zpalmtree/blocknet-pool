@@ -62,3 +62,35 @@ Trade-offs: per-worker hashrate readings are noisier (half the shares), and a
 cheater takes ~1.4x longer to catch than at today's load, though still faster
 than the old code would at 2x. Revert by restoring the two values and reloading.
 
+## Goal "Done" criteria and evidence (BNTPOOL_VERIFY_GOAL.md, 2026-10-27)
+
+1. *Approved-ready batch with T2 evidence at 2x peak arrival and in a restart
+   storm: zero candidate delays, zero busy/shed/timeout rejects, no Shed or
+   Emergency, share-ack p99 no worse at 1x.* The batch is the deployed code
+   (kernel, hold 0.25, sync lane, arena retention, gateway, hot reload) plus
+   the load-growth config (vardiff_target_shares 5, sample_rate 0.08), which
+   the owner approved as the plan to apply by reload at >55 submits/s
+   (runbook above; alert `BlocknetPoolLoadGrowthConfigDue`). T2: 2x arrivals
+   and a 2x restart storm 100% Normal in 3/3 runs, 0 transitions, 0 drops,
+   126/126 candidates answered (p99 1.3-1.7 s). The current config alone
+   cannot hold 2x on this hardware: ~11.6% coverage of ~96 shares/s needs ~11
+   verifies/s against ~7.7 capacity. At 1x the current config holds (100%
+   Normal in 2/2 runs incl. a restart storm, candidates p99 1.2 s).
+   Share-ack p99 at 1x in production: 25 ms vs 50 ms before.
+2. *Steady-state regular queue near empty.* Production 21:34-22:04 UTC:
+   depth avg 0 / max 0, live-audit wait p99 1 ms (was ~75 s).
+3. *Cheat-detection bounds unchanged or better.* Time to forced review is
+   5 / (cheater share rate x coverage). At 1x: coverage 8.9% -> 11.6%+
+   (~1.3x faster detection). At 2x with the growth config: ~78/r vs ~111/r
+   for the old code at the same load (~1.4x faster).
+4. *No remaining lead with a plausible gain above 5% in verifies/s.* Zen 4
+   variant screen: best alternative within ~1%; more verifier threads flat
+   (bandwidth-bound); arena retention and THP vs HugeTLB at most ~1.2%.
+
+Not part of these criteria, recorded for completeness: five large farms
+(old seine 0.2.21/0.2.36) left around the 08:56 Stratum restart and did not
+return. Their decline started before it (0.2.21 work 968 -> 685 at 08:40;
+7eseCPTm gone at 08:47), their audited shares were valid, and they made no
+login attempts afterwards. The cause is on their side and is not observable
+from the pool. The live gateway handover since then disconnected no one.
+
