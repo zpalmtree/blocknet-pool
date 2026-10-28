@@ -20,6 +20,7 @@
 - Use `./scripts/deploy_cloudflare_monitor_worker.sh` for the external Cloudflare public probe. Do not hand-run `wrangler` with copied secrets when the script can do it repeatably.
 - Use `./scripts/build_blocknet_daemon.sh` when you need a fresh daemon binary for the current primary production host without compiling on the live server.
 - Use `./scripts/deploy_blocknet_daemon_bntpool.sh` when you need to install or roll forward the daemon itself on the `bntpool` SSH alias. Keep daemon deploys separate from pool API/Stratum deploys.
+- Daemon deploys use `scripts/rolling_daemon_deploy.py`: upgrade the currently inactive instance, verify wallet/chain/template readiness, drain and pause payouts, cut over through recoveryd, then upgrade and return to the original active instance before restoring payout state. Never restart both daemon instances together. If a deploy fails after cutover begins, leave payouts paused until routing and the original wallet are verified.
 - The daemon build/deploy path resolves branch `pool` from the sibling `../blocknet-core` repo without changing your current checkout. If the needed branch/ref is missing or stale locally, fetch it before deploying. You can still override the branch/ref intentionally with `BLOCKNET_DAEMON_BRANCH` or `--daemon-branch`.
 - Do not manually `scp` individual files or restart pool services for routine deploys unless the user explicitly asks for an emergency hotfix path.
 - Production runs split services: `blocknet-pool-api.service`, `blocknet-pool-stratum.service`, and `blocknet-pool-monitor.service`.

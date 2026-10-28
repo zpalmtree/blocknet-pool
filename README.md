@@ -126,10 +126,43 @@ To stage it on the server without restarting the daemon yet:
 
 For the full repeatable deploy path, including the managed `blocknetd@primary`
 and `blocknetd@standby` units, release directory rotation, symlink switch,
-restart, and `/api/status` verification:
+rolling restarts, and wallet/mining readiness verification:
 
 ```bash
 ./scripts/deploy_blocknet_daemon_bntpool.sh
+```
+
+The deploy upgrades the **currently inactive** instance first. It waits for its
+wallet to load and catch up, agreement with the serving daemon's canonical chain,
+and a successful template fetch and renewal. Recoveryd must already be configured
+with the wallet secret and managed proxy/cookie routing. The helper also needs
+`python3` and `psql` on the host and a fresh Stratum runtime snapshot in Postgres.
+
+Before switching traffic, it pauses payouts and waits for a payout tick completed
+after the pause, so an existing batch can finish. It uses recoveryd's transactional
+proxy/cookie cutover, verifies the pool has refreshed its template, and only then
+restarts the original active instance. It returns traffic to that original wallet
+before restoring the previous payout pause state, preserving its unconfirmed-send
+state. API and Stratum services are not restarted. An old instance-local template
+can still produce a renewal alert during cutover; these alerts are not suppressed.
+A block found while the daemon is unreachable is resubmitted for up to five
+minutes, falling back to the full block when the daemon no longer knows the
+template, so a cutover or daemon restart does not lose it
+(`blocknet_pool_monitor_block_submit_retries_total`,
+`blocknet_pool_monitor_block_submit_recovered_total`).
+
+Each readiness/drain gate defaults to 900 seconds, configurable with
+`BNTPOOL_DAEMON_READY_TIMEOUT`. A failure before cutover leaves the original daemon
+serving and restores the previous release pointer. A failure once cutover starts
+leaves payouts paused and stops further restarts; inspect routing and wallet
+readiness and return to the original wallet before resuming payouts.
+
+Check the serving daemon, routing, recovery service, and runtime snapshot without
+deploying or changing service state:
+
+```bash
+ssh bntpool 'sudo -n python3 - --check' < scripts/rolling_daemon_deploy.py
+python3 -m unittest discover -s scripts -p 'test_rolling_daemon_deploy.py'
 ```
 
 By default the build script reads source from `../blocknet-core`, derives the required Go

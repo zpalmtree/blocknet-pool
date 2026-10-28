@@ -8,10 +8,12 @@ Deploy a host-built blocknet-core daemon binary to the current primary pool host
 Usage:
   scripts/deploy_blocknet_daemon_bntpool.sh [--skip-build] [--release-id VALUE] [--daemon-branch VALUE]
 
-This script targets the managed recovery topology and restarts
-`blocknetd@primary.service` and `blocknetd@standby.service`.
+This script upgrades the inactive daemon first, verifies wallet/mining readiness,
+then cuts over through recoveryd before upgrading the original active daemon.
+Payouts are drained and paused across cutovers; original routing is restored.
 
 Environment overrides:
+  BNTPOOL_DAEMON_READY_TIMEOUT  Seconds per readiness/drain gate (default: 900)
   BNTPOOL_HOST                  SSH host alias (default: bntpool)
   BNTPOOL_DAEMON_REMOTE_ROOT    Remote daemon root (default: /opt/blocknet/blocknet-core)
   BNTPOOL_DAEMON_LOCAL_BINARY   Local daemon artifact (default: build/blocknet-core-linux-amd64)
@@ -58,10 +60,20 @@ daemon_repo="${BLOCKNET_DAEMON_REPO:-${workspace_dir}/blocknet-core}"
 host="${BNTPOOL_HOST:-bntpool}"
 remote_root="${BNTPOOL_DAEMON_REMOTE_ROOT:-/opt/blocknet/blocknet-core}"
 remote_releases_dir="${remote_root}/releases"
-remote_current="${remote_root}/current"
 local_binary="${BNTPOOL_DAEMON_LOCAL_BINARY:-${repo_dir}/build/blocknet-core-linux-amd64}"
 template_unit_file="${repo_dir}/deploy/systemd/blocknetd@.service"
 allow_retired_host="${BNTPOOL_ALLOW_RETIRED_HOST:-0}"
+ready_timeout="${BNTPOOL_DAEMON_READY_TIMEOUT:-900}"
+rolling_helper="${script_dir}/rolling_daemon_deploy.py"
+if [[ ! "$ready_timeout" =~ ^[1-9][0-9]*$ ]]; then
+  echo "BNTPOOL_DAEMON_READY_TIMEOUT must be a positive integer" >&2
+  exit 1
+fi
+# Values below are interpolated into remote shell commands. Reject shell syntax.
+if [[ ! "$remote_root" =~ ^/[a-zA-Z0-9_./-]+$ ]]; then
+  echo "invalid daemon remote root" >&2
+  exit 1
+fi
 resolved_ref=""
 source_revision=""
 source_describe=""
@@ -193,6 +205,10 @@ if [[ -z "${release_id}" ]]; then
   release_id="${required_branch//\//-}-${release_suffix}"
 fi
 
+if [[ ! "$release_id" =~ ^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*$ ]]; then
+  echo "invalid daemon release ID" >&2
+  exit 1
+fi
 remote_release_dir="${remote_releases_dir}/${release_id}"
 remote_tmp_binary="${remote_release_dir}/blocknet.new"
 remote_binary="${remote_release_dir}/blocknet"
@@ -206,49 +222,24 @@ echo "source_ref=${metadata_source_ref}"
 echo "revision=${metadata_revision}"
 print_sha256 "${local_binary}"
 
+echo "==> checking live rolling-deploy prerequisites before uploading"
+ssh "${host}" "sudo -n python3 - --check --timeout '${ready_timeout}'" < "${rolling_helper}"
+
 echo "==> ensuring remote release directories on ${host}"
-ssh "${host}" "set -euo pipefail; mkdir -p '${remote_release_dir}' '${remote_root}'"
+ssh "${host}" "set -euo pipefail; mkdir -p '${remote_release_dir}'; test -f /etc/blocknet/recovery/primary.env; test -f /etc/blocknet/recovery/standby.env"
 
-echo "==> verifying managed recovery topology on ${host}"
-ssh "${host}" "set -euo pipefail; test -f /etc/blocknet/recovery/primary.env; test -f /etc/blocknet/recovery/standby.env"
-
-echo "==> uploading daemon binary"
+echo "==> uploading daemon binary and build metadata"
 scp "${local_binary}" "${host}:${remote_tmp_binary}"
-
-echo "==> uploading build metadata"
-scp "${local_metadata}" "${host}:${remote_metadata}"
-
-echo "==> uploading managed systemd template"
+scp "${local_metadata}" "${host}:${remote_metadata}.new"
 scp "${template_unit_file}" "${host}:${remote_tmp_template_unit}"
 
-echo "==> installing release and restarting managed daemon services"
+echo "==> installing staged release"
+# Rename rather than truncating a binary which may still be executing on a retry.
 ssh "${host}" "set -euo pipefail; \
-  install -m 0755 '${remote_tmp_binary}' '${remote_binary}'; \
-  rm -f '${remote_tmp_binary}'; \
-  ln -sfn '${remote_release_dir}' '${remote_root}/.current.new'; \
-  mv -Tf '${remote_root}/.current.new' '${remote_current}'; \
-  sudo install -m 0644 '${remote_tmp_template_unit}' '/etc/systemd/system/blocknetd@.service'; \
-  rm -f '${remote_tmp_template_unit}'; \
-  sudo systemctl daemon-reload; \
-  sudo systemctl disable --now 'blocknetd.service' >/dev/null 2>&1 || true; \
-  sudo systemctl enable 'blocknetd@primary.service' 'blocknetd@standby.service' >/dev/null; \
-  sudo systemctl restart 'blocknetd@primary.service' 'blocknetd@standby.service'; \
-  sudo systemctl is-active 'blocknetd@primary.service'; \
-  sudo systemctl is-active 'blocknetd@standby.service'"
+  chmod 0755 '${remote_tmp_binary}'; \
+  mv -f '${remote_tmp_binary}' '${remote_binary}'; \
+  mv -f '${remote_metadata}.new' '${remote_metadata}'"
 
-echo "==> verifying daemon API"
-# The daemons rewrite their api.cookie files during startup, so retry instead
-# of sampling once right after the restart.
-ssh "${host}" "set -euo pipefail; \
-  for attempt in \$(seq 1 18); do \
-    if token_primary=\$(sudo -n cat /var/lib/blocknet/data/api.cookie 2>/dev/null) \
-      && token_standby=\$(sudo -n cat /var/lib/blocknet-standby/data/api.cookie 2>/dev/null) \
-      && curl -fsS -H \"Authorization: Bearer \${token_primary}\" http://127.0.0.1:18331/api/status >/dev/null 2>&1 \
-      && curl -fsS -H \"Authorization: Bearer \${token_standby}\" http://127.0.0.1:18332/api/status >/dev/null 2>&1; then \
-      echo \"daemon API verified on both instances\"; break; \
-    fi; \
-    if [ \"\${attempt}\" -eq 18 ]; then echo \"daemon API verification timed out after 90s\" >&2; exit 1; fi; \
-    sleep 5; \
-  done; \
-  sudo journalctl -u 'blocknetd@primary.service' --no-pager -n 20; \
-  sudo journalctl -u 'blocknetd@standby.service' --no-pager -n 20"
+echo "==> rolling daemon upgrade"
+ssh "${host}" "sudo -n python3 - --release '${remote_release_dir}' --unit '${remote_tmp_template_unit}' --timeout '${ready_timeout}'" < "${rolling_helper}"
+ssh "${host}" "rm -f '${remote_tmp_template_unit}'"
