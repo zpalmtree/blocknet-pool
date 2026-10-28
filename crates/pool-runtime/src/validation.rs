@@ -47,7 +47,8 @@ const OVERLOAD_SAMPLE_RATE_FLOOR: f64 = 0.01;
 const INVALID_SAMPLE_COUNT_THRESHOLD: u64 = 5;
 const FORCED_VALIDATION_QUARANTINE_THRESHOLD: f64 = 0.20;
 const PROVISIONAL_BACKLOG_VERIFIED_MULTIPLIER: f64 = 8.0;
-const CANDIDATE_VALIDATION_WORKERS: usize = 1;
+/// Two, so a block candidate never waits for another one's ~0.5 s hash.
+pub(crate) const CANDIDATE_VALIDATION_WORKERS: usize = 2;
 /// Probation audits verify addresses that have never passed a sample. They
 /// run on the audit workers at the lowest priority, in their own bounded
 /// queue that is excluded from overload detection, so a flood of brand-new
