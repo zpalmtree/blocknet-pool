@@ -54,6 +54,13 @@ struct TipObservation {
     /// back below the new tip (the daemon was not serving it yet).
     fetches: u32,
     stale_fetches: u32,
+    /// When the daemon's SSE event for this tip arrived, if it was not the
+    /// first observation (e.g. after our own block's submit returned).
+    sse_after: Option<Duration>,
+    /// Whether a refresh was requested for the tip, and whether that request
+    /// found another refresh in flight and was folded into it.
+    refresh_requested: bool,
+    refresh_absorbed: bool,
 }
 
 #[derive(Debug, Default)]
@@ -97,6 +104,9 @@ impl TipLatency {
                 if pending.daemon_accepted_at.is_none() {
                     pending.daemon_accepted_at = daemon_accepted_at;
                 }
+                if trigger == TipTrigger::Sse && pending.sse_after.is_none() {
+                    pending.sse_after = Some(now.saturating_duration_since(pending.observed_at));
+                }
                 return;
             }
         }
@@ -108,6 +118,9 @@ impl TipLatency {
             fetch_started: false,
             fetches: 0,
             stale_fetches: 0,
+            sse_after: None,
+            refresh_requested: false,
+            refresh_absorbed: false,
         });
     }
 
@@ -131,6 +144,21 @@ impl TipLatency {
                 drop(state);
                 self.histograms.record(lane, waited);
             }
+        }
+    }
+
+    /// A template refresh was requested for the pending tip.
+    pub(crate) fn refresh_requested(&self) {
+        if let Some(pending) = self.state.lock().pending.as_mut() {
+            pending.refresh_requested = true;
+        }
+    }
+
+    /// A refresh request found another refresh in flight and was folded
+    /// into it.
+    pub(crate) fn refresh_absorbed(&self) {
+        if let Some(pending) = self.state.lock().pending.as_mut() {
+            pending.refresh_absorbed = true;
         }
     }
 
@@ -191,6 +219,9 @@ impl TipLatency {
                 fetch_started = pending.fetch_started,
                 fetches = pending.fetches,
                 stale_fetches = pending.stale_fetches,
+                sse_after_ms = pending.sse_after.map(|after| after.as_millis() as u64),
+                refresh_requested = pending.refresh_requested,
+                refresh_absorbed = pending.refresh_absorbed,
                 "slow tip refresh"
             );
         }

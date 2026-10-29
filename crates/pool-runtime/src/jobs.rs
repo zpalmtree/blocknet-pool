@@ -536,6 +536,7 @@ impl JobManager {
         if !should_refresh {
             return;
         }
+        self.tip_latency.refresh_requested();
 
         tracing::debug!(
             hash = %hash.trim(),
@@ -1019,6 +1020,7 @@ impl JobManager {
 
     fn request_template_refresh(&self, force_rotation: bool) {
         let Some(mut work) = self.refresh.request(force_rotation) else {
+            self.tip_latency.refresh_absorbed();
             return;
         };
 
