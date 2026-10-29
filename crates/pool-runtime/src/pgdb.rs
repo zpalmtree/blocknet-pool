@@ -580,7 +580,6 @@ CREATE TABLE IF NOT EXISTS shares (
     created_at BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_shares_created_at ON shares(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_shares_miner_created ON shares(miner, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shares_miner_status_created ON shares(miner, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shares_job_nonce ON shares(job_id, nonce);
 CREATE INDEX IF NOT EXISTS idx_shares_block_hash_created_at ON shares(block_hash, created_at DESC);
@@ -6124,7 +6123,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     /// Returns the most recent reported miner version per worker:
     /// Vec<(worker, miner_version, backend)>. Workers whose shares in the
     /// window never reported a version are omitted. The scan is bounded by
-    /// `since` and served by idx_shares_miner_created (miner, created_at DESC).
+    /// `since` and served by idx_shares_miner_read_window (miner, created_at DESC).
     #[cfg(test)]
     pub fn worker_versions_for_miner(
         &self,
