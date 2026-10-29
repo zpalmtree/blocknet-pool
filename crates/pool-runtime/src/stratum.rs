@@ -34,8 +34,6 @@ use pool_common::protocol::{
     NOTIFY_MINER_BLOCK_FOUND, NOTIFY_POOL_BLOCK_SOLVED,
 };
 
-const MAX_CONNS_PER_IP: usize = 256;
-const MAX_CONNS_TOTAL: usize = 4096;
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_STRATUM_REQUEST_BYTES: usize = 8 * 1024;
 const NOTIFICATION_CHANNEL_CAPACITY: usize = 256;
@@ -796,6 +794,8 @@ pub struct StratumServer {
     stats: Arc<PoolStats>,
     submit_dispatcher: Arc<SubmitDispatcher>,
     conn_state: Arc<Mutex<ConnState>>,
+    max_conns: usize,
+    max_conns_per_ip: usize,
     notifications: broadcast::Sender<StratumNotify>,
     post_login_idle_timeout: Duration,
     submit_rate_limit_window: Duration,
@@ -829,6 +829,8 @@ impl StratumServer {
                 counts: HashMap::new(),
                 total: 0,
             })),
+            max_conns: cfg.stratum_max_connections.max(1) as usize,
+            max_conns_per_ip: cfg.stratum_max_connections_per_ip.max(1) as usize,
             notifications,
             post_login_idle_timeout: POST_LOGIN_IDLE_TIMEOUT,
             submit_rate_limit_window: SUBMIT_RATE_LIMIT_WINDOW,
@@ -1117,11 +1119,11 @@ impl StratumServer {
 
     fn try_track_conn(&self, ip: &str) -> bool {
         let mut state = self.conn_state.lock();
-        if state.total >= MAX_CONNS_TOTAL {
+        if state.total >= self.max_conns {
             return false;
         }
         let count = state.counts.entry(ip.to_string()).or_default();
-        if *count >= MAX_CONNS_PER_IP {
+        if *count >= self.max_conns_per_ip {
             return false;
         }
         *count += 1;
@@ -3780,7 +3782,7 @@ mod tests {
         let host_a = ip_group_key("2001:db8:7:9::1".parse().unwrap());
         let host_b = ip_group_key("2001:db8:7:9:ffff::2".parse().unwrap());
         let other_net = ip_group_key("2001:db8:7:a::1".parse().unwrap());
-        for _ in 0..super::MAX_CONNS_PER_IP {
+        for _ in 0..server.max_conns_per_ip {
             assert!(server.try_track_conn(&host_a));
         }
         assert!(!server.try_track_conn(&host_b), "same /64 shares the cap");

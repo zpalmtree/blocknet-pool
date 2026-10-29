@@ -26,6 +26,10 @@ pub struct Config {
     /// Stratum serves miners relayed by the gateway instead of binding
     /// `stratum_host:stratum_port`.
     pub gateway_socket: String,
+    /// Miner connections Stratum accepts in total, and from one IP (IPv6
+    /// grouped by /64). Connections over either cap are closed at once.
+    pub stratum_max_connections: i32,
+    pub stratum_max_connections_per_ip: i32,
 
     pub daemon_data_dir: String,
     pub daemon_api: String,
@@ -141,6 +145,8 @@ impl Default for Config {
             stratum_host: "127.0.0.1".to_string(),
             stratum_port: 3333,
             gateway_socket: String::new(),
+            stratum_max_connections: 16_384,
+            stratum_max_connections_per_ip: 256,
             daemon_data_dir: "data".to_string(),
             daemon_api: "http://127.0.0.1:8332".to_string(),
             daemon_cookie_path: "/etc/blocknet/pool/daemon-active.api.cookie".to_string(),
@@ -454,6 +460,12 @@ impl Config {
         ensure_nonempty("daemon_cookie_path", &self.daemon_cookie_path)?;
         ensure_nonempty("payout_pause_file", &self.payout_pause_file)?;
         for (field, value, min) in [
+            ("stratum_max_connections", self.stratum_max_connections, 1),
+            (
+                "stratum_max_connections_per_ip",
+                self.stratum_max_connections_per_ip,
+                1,
+            ),
             ("regular_submit_queue", self.regular_submit_queue, 1),
             ("regular_submit_workers", self.regular_submit_workers, 1),
             ("sync_verify_slots", self.sync_verify_slots, 0),
@@ -779,6 +791,8 @@ mod tests {
         };
 
         for field in [
+            "stratum_max_connections",
+            "stratum_max_connections_per_ip",
             "regular_submit_queue",
             "regular_submit_workers",
             "regular_validation_queue",
