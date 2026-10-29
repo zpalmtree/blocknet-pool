@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex};
 use anyhow::{anyhow, Result};
 use blocknet_pow_kernel::{CpuKernel, FixedArgon2id, PowBlock};
 
+use crate::faraday;
+
 const POW_MEMORY_KIB: u32 = 2 * 1024 * 1024;
 
 /// The default validator has one candidate worker, two regular workers, and one audit worker.
@@ -150,6 +152,67 @@ impl PowKernel {
             )
             .map_err(|err| anyhow!("argon2 hash failure: {err:?}"))?;
         Ok(output)
+    }
+}
+
+/// Faraday PoW (core spec §6): BLAKE2b-512, no key or salt, the given
+/// personalization, over `header_base || nonce_le`. Returns the first 32 output
+/// bytes, which consensus compares big-endian against the target.
+pub fn blake2b_pow_hash(personal: &[u8; 16], header_base: &[u8], nonce: u64) -> [u8; 32] {
+    use blake2::digest::core_api::{Buffer, UpdateCore, VariableOutputCore};
+    use blake2::Blake2bVarCore;
+
+    let mut core = Blake2bVarCore::new_with_params(&[], personal, 0, 64);
+    let mut buffer = Buffer::<Blake2bVarCore>::default();
+    buffer.digest_blocks(header_base, |blocks| core.update_blocks(blocks));
+    buffer.digest_blocks(&nonce.to_le_bytes(), |blocks| core.update_blocks(blocks));
+    let mut out = Default::default();
+    core.finalize_variable_core(&mut buffer, &mut out);
+    out[..32].try_into().expect("32-byte prefix")
+}
+
+/// Consensus PoW for any height: Argon2id below the Faraday height, BLAKE2b-512
+/// from it. The hash is picked by the height field of the header being hashed,
+/// the same input the daemon picks it by, so a template on either side of the
+/// fork is checked with its own algorithm.
+#[derive(Debug, Clone)]
+pub struct ConsensusPowHasher {
+    argon2: Argon2PowHasher,
+}
+
+impl Default for ConsensusPowHasher {
+    fn default() -> Self {
+        Self::new(Argon2PowHasher::default())
+    }
+}
+
+impl ConsensusPowHasher {
+    pub fn new(argon2: Argon2PowHasher) -> Self {
+        Self { argon2 }
+    }
+
+    pub fn with_arena_limit(retained_limit: usize) -> Self {
+        Self::new(Argon2PowHasher::with_arena_limit(retained_limit))
+    }
+}
+
+impl PowHasher for ConsensusPowHasher {
+    fn hash(&self, header_base: &[u8], nonce: u64) -> Result<[u8; 32]> {
+        let height = faraday::header_height(header_base)
+            .ok_or_else(|| anyhow!("header too short to carry a height"))?;
+        if faraday::is_faraday(height) {
+            Ok(blake2b_pow_hash(
+                &faraday::BLAKE2B_POW_PERSONAL_MAINNET,
+                header_base,
+                nonce,
+            ))
+        } else {
+            self.argon2.hash(header_base, nonce)
+        }
+    }
+
+    fn arena_pool_stats(&self) -> Option<PowArenaPoolStats> {
+        Some(self.argon2.arena_pool_stats())
     }
 }
 
@@ -542,6 +605,113 @@ mod tests {
     use argon2::{Algorithm, Argon2, Params, Version};
 
     use super::*;
+
+    fn pattern_header(len: usize) -> Vec<u8> {
+        (0..len).map(|i| (i * 37 + 11) as u8).collect()
+    }
+
+    fn header_at_height(height: u64, len: usize) -> Vec<u8> {
+        let mut header = pattern_header(len);
+        header[4..12].copy_from_slice(&height.to_le_bytes());
+        header
+    }
+
+    #[test]
+    fn blake2b_pow_matches_independent_vectors() {
+        // First 32 bytes of hashlib.blake2b(header || nonce_le, person=b"blocknet/pow/v1"),
+        // the same vectors seine's pow-spec pins, until upstream publishes official ones.
+        for (len, nonce, expected) in [
+            (
+                156,
+                0,
+                "76cf2d15d076a3d5dadd576fc4c2e3c7d6b4e011ef8c8cb6507902585e622e1c",
+            ),
+            (
+                156,
+                1,
+                "a188c5989bbdb7cf6200088f8d9d4c5339e874e0371a563b2f77cc7fd02d7108",
+            ),
+            (
+                156,
+                u64::MAX,
+                "518203a6cef50bd5902d1638f4844a7ca3bfce4affcc35b5abdf35fc0b6aa60a",
+            ),
+            (
+                156,
+                0x0123456789abcdef,
+                "3394957d328818ef398464ab6456730d93751b852d8bd09deb6492fae9ffafa8",
+            ),
+            (
+                92,
+                42,
+                "0e15f71f5ea27ffd81e1292cda85d241e4f7976d9b32fadf74ba590375616d96",
+            ),
+            (
+                120,
+                7,
+                "d88985b7686e4e09e0f08c0c8aa53b60500613481748bea22945f285991a7ac9",
+            ),
+            (
+                124,
+                7,
+                "caa9bb01b9aa0b9c6cf40c77272edd053cc64a4d2205bcf7fa6ee62ec9f09693",
+            ),
+            (
+                248,
+                9,
+                "5a38bb2add0a55a16f794002f304823ed195f67b48309f696ff5a50456733dcd",
+            ),
+        ] {
+            let hash = blake2b_pow_hash(
+                &faraday::BLAKE2B_POW_PERSONAL_MAINNET,
+                &pattern_header(len),
+                nonce,
+            );
+            assert_eq!(hex::encode(hash), expected, "len={len} nonce={nonce:#x}");
+        }
+    }
+
+    #[test]
+    fn consensus_hasher_picks_the_algorithm_by_header_height() {
+        let hasher = ConsensusPowHasher::new(Argon2PowHasher::new(32, 1));
+        let legacy = header_at_height(faraday::FARADAY_HEIGHT - 1, 92);
+        assert_eq!(
+            hasher.hash(&legacy, 5).unwrap(),
+            reference_pow_hash(&legacy, 5, 32)
+        );
+        let fork = header_at_height(faraday::FARADAY_HEIGHT, faraday::FARADAY_HEADER_BASE_LEN);
+        assert_eq!(
+            hasher.hash(&fork, 5).unwrap(),
+            blake2b_pow_hash(&faraday::BLAKE2B_POW_PERSONAL_MAINNET, &fork, 5)
+        );
+        assert!(hasher.hash(&fork[..11], 5).is_err());
+    }
+
+    #[test]
+    fn gpu_scale_difficulty_targets_match_integer_reference_vectors() {
+        // Python: ((1 << 256) - 1) // difficulty. BLAKE2b difficulty will run
+        // orders of magnitude past Argon2's, up to u64::MAX.
+        for (difficulty, expected) in [
+            (
+                3,
+                "5555555555555555555555555555555555555555555555555555555555555555",
+            ),
+            (
+                1_000_000_000_000,
+                "000000000119799812dea11197f27f0f6e885c8ba7eb31f476caf7411a863387",
+            ),
+            (
+                9_007_199_254_740_993,
+                "00000000000007ffffffffffffc0000000000001fffffffffffff00000000000",
+            ),
+            (
+                u64::MAX,
+                "0000000000000001000000000000000100000000000000010000000000000001",
+            ),
+        ] {
+            assert_eq!(hex::encode(difficulty_to_target(difficulty)), expected);
+        }
+    }
 
     fn reference_pow_hash(header: &[u8], nonce: u64, memory_kib: u32) -> [u8; 32] {
         let params = Params::new(memory_kib, 1, 1, Some(32))

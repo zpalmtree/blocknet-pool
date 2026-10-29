@@ -2,6 +2,8 @@ pub mod cli;
 
 pub mod db;
 
+pub mod faraday;
+
 pub mod gateway;
 
 pub mod latency;

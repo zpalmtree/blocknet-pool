@@ -31,7 +31,7 @@ use pool_common::db::{
     allocate_proportional_fees, Balance, DbBlock, DbShare, Payout, PendingPayout,
     PendingPayoutBatchMember, PoolFeeRecord, ShareReplayUpdate,
 };
-use pool_common::pow::{check_target, difficulty_to_target, Argon2PowHasher, PowHasher};
+use pool_common::pow::{check_target, difficulty_to_target, ConsensusPowHasher, PowHasher};
 use pool_common::protocol::{address_network, validate_miner_address_for_network, AddressNetwork};
 
 const MIN_PAYOUT_INTERVAL: Duration = Duration::from_secs(1);
@@ -742,12 +742,16 @@ impl PayoutProcessor {
         };
 
         let current_height = self.node.chain_height();
-        let required_confirmations = self.cfg.blocks_before_payout.max(0) as u64;
+        let configured_confirmations = self.cfg.blocks_before_payout.max(0) as u64;
 
         for mut block in blocks {
             if current_height < block.height {
                 continue;
             }
+            let required_confirmations = pool_common::faraday::required_coinbase_depth(
+                block.height,
+                configured_confirmations,
+            );
             let depth = current_height.saturating_sub(block.height);
 
             let node_block = match self.node.get_block(&block.height.to_string()) {
@@ -2719,7 +2723,7 @@ pub fn recover_share_window_by_replay(
         );
     }
 
-    let hasher = Argon2PowHasher::default();
+    let hasher = ConsensusPowHasher::default();
     let mut recovery = ShareReplayRecovery {
         attempted: true,
         ..ShareReplayRecovery::default()

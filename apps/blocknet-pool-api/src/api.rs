@@ -78,7 +78,6 @@ const MAX_PAGE_LIMIT: usize = 200;
 const HASHRATE_WINDOW: Duration = Duration::from_secs(60 * 60);
 const HASHRATE_WARMUP_WINDOW: Duration = Duration::from_secs(5 * 60);
 const HASHRATE_BRAND_NEW_MIN_WINDOW: Duration = Duration::from_secs(60);
-const ROUND_TARGET_SECONDS: f64 = 300.0;
 const INSIGHTS_CACHE_TTL: Duration = Duration::from_secs(30);
 const REJECTION_ANALYTICS_CACHE_TTL: Duration = Duration::from_secs(30);
 const STATS_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(15);
@@ -3424,7 +3423,11 @@ fn estimate_unconfirmed_pending_snapshot(
                     trust_policy,
                     validation_state,
                 ),
-                confirmations_remaining: required_confirmations.saturating_sub(confirmations),
+                confirmations_remaining: pool_common::faraday::required_coinbase_depth(
+                    block.height,
+                    required_confirmations,
+                )
+                .saturating_sub(confirmations),
                 timestamp: block.timestamp,
             });
         }
@@ -5409,7 +5412,8 @@ impl ApiState {
 
         let expected_block_seconds = match (pool_hashrate, network_hashrate) {
             (pool, Some(network)) if pool > 0.0 && network > 0.0 => {
-                Some(ROUND_TARGET_SECONDS * (network / pool))
+                let height = current_job.as_ref().map_or(0, |job| job.height);
+                Some(pool_common::faraday::target_block_seconds(height) as f64 * (network / pool))
             }
             _ => None,
         };
@@ -5758,7 +5762,9 @@ fn estimate_explorer_network_hashrate_hps(
     let mut current = node.get_block_by_height_optional(chain_height)?;
     let mut height = chain_height;
 
-    while height > 0 && count < EXPLORER_HASHRATE_SAMPLE_COUNT {
+    // Difficulty resets at the fork, so pre-fork work never mixes with post-fork time.
+    let era_floor = pool_common::faraday::same_pow_era_floor(chain_height);
+    while height > era_floor && count < EXPLORER_HASHRATE_SAMPLE_COUNT {
         let previous = node.get_block_by_height_optional(height - 1)?;
         if let (Some(block), Some(prev_block)) = (&current, &previous) {
             let block_time = block.timestamp - prev_block.timestamp;

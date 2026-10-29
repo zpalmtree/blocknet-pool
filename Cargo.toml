@@ -21,6 +21,7 @@ anyhow = "1.0"
 blocknet-pow-kernel = { git = "https://github.com/zpalmtree/seine.git", rev = "752f6679d0656eb45404bf867a72a3c475c59cdf" }
 curve25519-dalek = "4.1"
 argon2 = "0.5"
+blake2 = "0.10"
 axum = "0.7"
 base64 = "0.22"
 bs58 = "0.5"

@@ -18,7 +18,7 @@ use crate::store::PoolStore;
 use crate::stratum::StratumServer;
 use crate::telemetry::NamedTimedOperationTracker;
 use crate::validation::{ValidationEngine, ValidationStateStore, CANDIDATE_VALIDATION_WORKERS};
-use pool_common::pow::Argon2PowHasher;
+use pool_common::pow::ConsensusPowHasher;
 use pool_common::protocol::{address_network, validate_miner_address, AddressNetwork};
 
 const HASHRATE_WARMUP_WINDOW: Duration = Duration::from_secs(5 * 60);
@@ -94,7 +94,7 @@ pub async fn bootstrap_shared_runtime(config_path: &Path) -> Result<SharedRuntim
     let validation = tokio::task::spawn_blocking(move || {
         Arc::new(ValidationEngine::new_with_state_store(
             validation_cfg,
-            Arc::new(Argon2PowHasher::with_arena_limit(retained_arenas)),
+            Arc::new(ConsensusPowHasher::with_arena_limit(retained_arenas)),
             validation_store,
         ))
     })
