@@ -15,7 +15,7 @@ use pool_common::gateway::{read_frame, write_frame, Frame};
 use pool_common::latency::LATENCY_BUCKET_BOUNDS_MILLIS;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, UnixListener};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 pub use crate::core::{Event, Gateway, MinerOut, Timings};
 
@@ -24,6 +24,10 @@ const MAX_MINER_LINE: usize = 8 * 1024;
 const EVENT_QUEUE: usize = 65_536;
 const MINER_QUEUE: usize = 256;
 const ENGINE_QUEUE: usize = 65_536;
+/// A miner that has not taken a line for this long is disconnected.
+const MINER_WRITE_TIMEOUT: Duration = Duration::from_secs(60);
+/// Pause after a failed accept (for example out of file descriptors).
+const ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Default)]
 pub struct GatewayMetrics {
@@ -227,7 +231,14 @@ async fn accept_miners(
 ) -> Result<()> {
     let mut next_conn = 1u64;
     loop {
-        let (stream, peer) = listener.accept().await?;
+        let (stream, peer) = match listener.accept().await {
+            Ok(accepted) => accepted,
+            Err(err) => {
+                tracing::warn!(error = %err, "miner accept failed");
+                tokio::time::sleep(ACCEPT_RETRY_DELAY).await;
+                continue;
+            }
+        };
         if metrics.miners.load(Ordering::Relaxed) as usize >= max_miners {
             metrics.rejected_connections.fetch_add(1, Ordering::Relaxed);
             continue;
@@ -244,6 +255,10 @@ async fn accept_miners(
         {
             return Ok(());
         }
+        // The reader holds the socket open until it ends, so the writer
+        // ending (Close, a failed or stalled write) must end the reader too;
+        // otherwise a peer that never closes keeps the descriptor forever.
+        let (closed_tx, closed_rx) = oneshot::channel::<()>();
         let write_metrics = Arc::clone(&metrics);
         tokio::spawn(async move {
             while let Some(out) = rx.recv().await {
@@ -252,8 +267,11 @@ async fn accept_miners(
                         let mut bytes = line.into_bytes();
                         bytes.push(b'\n');
                         let write_started_at = Instant::now();
-                        if writer.write_all(&bytes).await.is_err() {
-                            break;
+                        match tokio::time::timeout(MINER_WRITE_TIMEOUT, writer.write_all(&bytes))
+                            .await
+                        {
+                            Ok(Ok(())) => {}
+                            Ok(Err(_)) | Err(_) => break,
                         }
                         write_metrics
                             .latency
@@ -263,9 +281,10 @@ async fn accept_miners(
                 }
             }
             let _ = writer.shutdown().await;
+            drop(closed_tx);
         });
         let events = events.clone();
-        tokio::spawn(read_miner(conn, peer, reader, events));
+        tokio::spawn(read_miner(conn, peer, reader, closed_rx, events));
     }
 }
 
@@ -273,16 +292,18 @@ async fn read_miner(
     conn: u64,
     peer: SocketAddr,
     reader: tokio::net::tcp::OwnedReadHalf,
+    mut closed: oneshot::Receiver<()>,
     events: mpsc::Sender<TimedEvent>,
 ) {
     let mut reader = BufReader::new(reader);
     let mut line = Vec::with_capacity(256);
     loop {
         line.clear();
-        let read = (&mut reader)
-            .take(MAX_MINER_LINE as u64 + 1)
-            .read_until(b'\n', &mut line)
-            .await;
+        let mut limited = (&mut reader).take(MAX_MINER_LINE as u64 + 1);
+        let read = tokio::select! {
+            read = limited.read_until(b'\n', &mut line) => read,
+            _ = &mut closed => break,
+        };
         match read {
             Ok(0) => break,
             Ok(_) if line.len() > MAX_MINER_LINE => {
@@ -365,6 +386,36 @@ async fn accept_engines(listener: UnixListener, events: mpsc::Sender<TimedEvent>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn closing_a_miner_releases_its_socket_while_the_peer_stays_open() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (events_tx, mut events_rx) = mpsc::channel(16);
+        let accept = tokio::spawn(accept_miners(
+            listener,
+            events_tx,
+            16,
+            Arc::new(GatewayMetrics::default()),
+        ));
+        let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let tx = match events_rx.recv().await.unwrap().event {
+            Event::MinerConnected { tx, .. } => tx,
+            other => panic!("unexpected event {other:?}"),
+        };
+        tx.send(MinerOut::Close).await.unwrap();
+
+        // The client never closes its side; the gateway must still end the
+        // connection rather than wait on the read half.
+        let closed = tokio::time::timeout(Duration::from_secs(5), events_rx.recv())
+            .await
+            .expect("reader ended")
+            .unwrap();
+        assert!(matches!(closed.event, Event::MinerClosed { .. }));
+        let mut buf = [0u8; 1];
+        assert_eq!(client.read(&mut buf).await.unwrap(), 0);
+        accept.abort();
+    }
 
     #[test]
     fn latency_histograms_render_cumulative_prometheus_buckets() {
