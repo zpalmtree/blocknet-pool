@@ -125,3 +125,18 @@ One line each: hypothesis, stage, tier and host, result, verdict.
   Next: one fanout task builds all assignments in chunked lock passes,
   splices per-connection fields into the template's pre-serialized job,
   and queues bytes straight to each writer.
+- **Pipelined batch fanout** (pool `5c42fe3`). One task fans each template
+  out: a few threads take 256-connection chunks, and each chunk is
+  retargeted, built in one job-state lock pass and queued straight into
+  the connections' latest-job slots. T2 on a Ryzen 7700X, template →
+  written p50/p99: 4,000 idle connections base 15-16/49-71 ms → 7-8/26-40
+  ms; 12,000 base 50/239 → 27/50 ms. A first version (all retargets, then
+  all builds, then all queues) improved p99 but worsened p50 at 12k
+  (61/99 ms). **Win.**
+- **Prod template fetch regression.** Since ~13:00 EDT, template_fetch p50
+  went 9 → 77 ms. The daemon's template is 2.6 MB (mempool of 167 txs,
+  55 MB). The pool parsed it into a JSON tree and deep-copied it per job.
+  Pool `f517826` keeps the block as raw JSON and reads only the header:
+  10-20 → 7.5 ms on a desktop CPU. Next lead: a compact template from the
+  daemon, with the full block fetched off the critical path for the
+  fallback submit.
