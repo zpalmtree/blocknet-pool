@@ -132,6 +132,12 @@ rolling restarts, and wallet/mining readiness verification:
 ./scripts/deploy_blocknet_daemon_bntpool.sh
 ```
 
+`blocknetd@primary` is also the public seed node `seed.bntpool.com`: it runs
+with `--seed`, so it serves its peer ID on TCP 28081 next to P2P on 28080 (both
+open in ufw). Its peer ID comes from `/var/lib/blocknet/data/identity.key`; the
+seed list depends on that file, so back it up and never delete it. The standby
+listens for P2P on 28090, which stays closed, so it never takes the seed ports.
+
 The deploy upgrades the **currently inactive** instance first. It waits for its
 wallet to load and catch up, agreement with the serving daemon's canonical chain,
 and a successful template fetch and renewal. Recoveryd must already be configured

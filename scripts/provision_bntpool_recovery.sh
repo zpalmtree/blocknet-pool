@@ -66,12 +66,13 @@ BLOCKNET_INSTANCE_WALLET=/var/lib/blocknet/wallet.dat
 BLOCKNET_INSTANCE_DATA=/var/lib/blocknet/data
 BLOCKNET_INSTANCE_LISTEN=/ip4/0.0.0.0/tcp/28080
 BLOCKNET_P2P_KEY=/var/lib/blocknet/data/identity.key
+BLOCKNET_INSTANCE_EXTRA_ARGS=--seed --p2p-max-inbound 128
 EOF
 cat <<'EOF' | sudo tee '${remote_standby_env}' >/dev/null
 BLOCKNET_INSTANCE_API=127.0.0.1:18332
 BLOCKNET_INSTANCE_WALLET=/var/lib/blocknet-standby/wallet.dat
 BLOCKNET_INSTANCE_DATA=/var/lib/blocknet-standby/data
-BLOCKNET_INSTANCE_LISTEN=/ip4/0.0.0.0/tcp/28081
+BLOCKNET_INSTANCE_LISTEN=/ip4/0.0.0.0/tcp/28090
 BLOCKNET_P2P_KEY=/var/lib/blocknet-standby/data/identity.key
 EOF
 sudo chmod 0644 '${remote_primary_env}' '${remote_standby_env}'"
