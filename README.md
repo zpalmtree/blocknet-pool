@@ -355,6 +355,13 @@ Daemon log stream details:
 
 ## Payout Safeguards
 
+- Payout batches target at least 15 recipients when enough miners are eligible and
+  wallet liquidity permits. Smaller queues still pay on the scheduled sweep;
+  they do not wait for a full batch.
+- `payout_interval` defaults to `1h` and `min_payout_amount` defaults to `0.1` BNT.
+  A longer interval combines more earnings per miner into each payment, reducing
+  repeat payments at the cost of a longer wait. Existing production configuration
+  overrides these defaults and is preserved by the deploy script.
 - `payouts_enabled` toggles payout sending globally.
 - `payout_pause_file` pauses payouts when the file exists.
 - `pplns_window_duration` controls the time-based PPLNS lookback window (default `6h`).
