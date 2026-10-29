@@ -1350,13 +1350,14 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                  SET status = $2,
                      was_sampled = $3,
                      reject_reason = $4
-                 WHERE id = $1 AND created_at = $5",
+                 WHERE id = $1 AND created_at BETWEEN $5::bigint - $6::bigint AND $5::bigint + $6::bigint",
                 &[
                     &update.share_id,
                     &update.status,
                     &update.was_sampled,
                     &update.reject_reason,
                     &to_unix(update.created_at),
+                    &SHARE_KEY_CREATED_AT_SLACK_SECS,
                 ],
             )?;
         }
@@ -1374,13 +1375,15 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              SET status = $2,
                  was_sampled = $3,
                  reject_reason = $4
-             WHERE id = $1 AND created_at = $5 AND status = 'provisional'",
+             WHERE id = $1 AND created_at BETWEEN $5::bigint - $6::bigint AND $5::bigint + $6::bigint
+               AND status = 'provisional'",
             &[
                 &update.share_id,
                 &update.status,
                 &update.was_sampled,
                 &update.reject_reason,
                 &to_unix(update.created_at),
+                &SHARE_KEY_CREATED_AT_SLACK_SECS,
             ],
         )?;
         tx.execute(
@@ -1400,15 +1403,16 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
     ) -> Result<u64> {
         let mut total = 0u64;
         for chunk in shares.chunks(5_000) {
-            let (ids, created) = share_key_arrays(chunk);
+            let (ids, low, high) = share_key_arrays(chunk);
             let mut conn = self.conn();
             let mut tx = conn.transaction()?;
             let updated = tx.execute(
                 "UPDATE shares
                  SET status = 'rejected',
                      reject_reason = $2
-                 WHERE id = ANY($1) AND created_at = ANY($3) AND status = 'provisional'",
-                &[&ids, &reason, &created],
+                 WHERE id = ANY($1) AND created_at BETWEEN $3 AND $4
+                   AND status = 'provisional'",
+                &[&ids, &reason, &low, &high],
             )?;
             tx.execute(
                 "DELETE FROM validation_provisionals WHERE share_id = ANY($1)",
@@ -1443,15 +1447,15 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         if keys.is_empty() {
             return Ok(Vec::new());
         }
-        let (ids, created) = share_key_arrays(keys);
+        let (ids, low, high) = share_key_arrays(keys);
         let rows = self.conn().query(
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, claimed_hash, created_at
              FROM shares
              WHERE id = ANY($1)
-               AND created_at = ANY($2)
+               AND created_at BETWEEN $2 AND $3
                AND status = 'provisional'
              ORDER BY id ASC",
-            &[&ids, &created],
+            &[&ids, &low, &high],
         )?;
         Ok(rows.into_iter().map(row_to_share).collect())
     }
@@ -6758,15 +6762,23 @@ fn now_unix() -> i64 {
 /// Id and distinct `created_at` arrays for `id = ANY($ids) AND created_at =
 /// ANY($created)`. Ids are unique, so the pair of filters matches exactly the
 /// given shares while pruning to the partitions holding them.
-fn share_key_arrays(keys: &[ShareKey]) -> (Vec<i64>, Vec<i64>) {
+/// Slack around a share key's `created_at` in row lookups. The bound keeps
+/// partition pruning to one or two weekly partitions, while a key whose
+/// timestamp is off by a few seconds still matches its row; an exact match
+/// would silently skip it.
+const SHARE_KEY_CREATED_AT_SLACK_SECS: i64 = 86_400;
+
+/// Ids plus the inclusive `created_at` range that covers the keys.
+fn share_key_arrays(keys: &[ShareKey]) -> (Vec<i64>, i64, i64) {
     let ids = keys.iter().map(|key| key.id).collect::<Vec<_>>();
-    let mut created = keys
-        .iter()
-        .map(|key| to_unix(key.created_at))
-        .collect::<Vec<_>>();
-    created.sort_unstable();
-    created.dedup();
-    (ids, created)
+    let created = keys.iter().map(|key| to_unix(key.created_at));
+    let low = created.clone().min().unwrap_or(0);
+    let high = created.max().unwrap_or(0);
+    (
+        ids,
+        low.saturating_sub(SHARE_KEY_CREATED_AT_SLACK_SECS),
+        high.saturating_add(SHARE_KEY_CREATED_AT_SLACK_SECS),
+    )
 }
 
 fn floor_to_day_start_unix(ts: i64) -> i64 {
@@ -10174,7 +10186,8 @@ mod tests {
     #[test]
     fn share_updates_by_key_touch_only_their_partition_postgres() {
         let Some(store) = test_store() else { return };
-        let now = now_unix();
+        // Mid-week, so the lookup slack around `now` stays inside this week.
+        let now = share_partitions::week_start(now_unix()) + 2 * 86_400;
         let week = share_partitions::week_start(now);
         let next_week_at = week + share_partitions::WEEK_SECS + 60;
         let add = |nonce: u64, created_at: i64| {
@@ -10255,8 +10268,13 @@ mod tests {
             .query(
                 "EXPLAIN (COSTS OFF)
                  UPDATE shares SET status = status
-                 WHERE id = ANY($1) AND created_at = ANY($2) AND status = 'provisional'",
-                &[&vec![pending, elsewhere], &vec![now]],
+                 WHERE id = ANY($1) AND created_at BETWEEN $2 AND $3
+                   AND status = 'provisional'",
+                &[
+                    &vec![pending, elsewhere],
+                    &(now - SHARE_KEY_CREATED_AT_SLACK_SECS),
+                    &(now + SHARE_KEY_CREATED_AT_SLACK_SECS),
+                ],
             )
             .expect("explain keyed update")
             .iter()
@@ -10294,6 +10312,21 @@ mod tests {
         assert_eq!(statuses[&revoked], "rejected");
         assert_eq!(statuses[&pending], "provisional");
         assert_eq!(statuses[&elsewhere], "provisional");
+
+        // A key a few seconds off its row (another clock read) still matches.
+        let drifted = add(9, now);
+        assert_eq!(
+            store
+                .revoke_provisional_shares(
+                    &[ShareKey {
+                        id: drifted,
+                        created_at: from_unix(now + 3),
+                    }],
+                    "source revoked",
+                )
+                .expect("revoke a drifted key"),
+            1
+        );
         assert_share_projections_match_raw(&store);
     }
 
