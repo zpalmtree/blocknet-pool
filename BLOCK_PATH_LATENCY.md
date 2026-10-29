@@ -140,3 +140,15 @@ One line each: hypothesis, stage, tier and host, result, verdict.
   10-20 → 7.5 ms on a desktop CPU. Next lead: a compact template from the
   daemon, with the full block fetched off the critical path for the
   fallback submit.
+- **T3, pipelined fanout in prod** (engine `56fd15f`, 2026-10-29 15:55-16:36
+  EDT, ~5,000 connections, overlapping the template-cap daemon deploy).
+  Template → written p50 73 → 21.6 ms, p90 161 → 46 ms, p99 248 → 186 ms.
+  The p99 was build_chunk (p99 148 ms): chunks waited behind the
+  post-template assignment cleanup under the same write lock. Template
+  fetch p50 32 ms (the cap shrank templates to ~0.6 MB).
+- **Batched assignment cleanup** (pool `3f89eef`, deployed as `8c51e3d`
+  at 16:57 EDT). T3 over 9 tips: template → written p50 19.8 ms, p99
+  89.9 ms; build_chunk p99 148 → 47 ms; daemon accept → job published p50
+  34 ms, p99 50 ms. **Win.** The p99 is within ~10 ms of the 80 ms target.
+  What remains is lock time per chunk, at roughly twice T2's cost on the
+  busier prod host.
