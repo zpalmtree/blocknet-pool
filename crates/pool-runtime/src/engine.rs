@@ -636,7 +636,8 @@ pub struct PoolEngine {
     live_cfg: Arc<LiveConfig>,
     /// Settings as configured (file and reloads).
     base_cfg: Mutex<Config>,
-    growth_active: std::sync::atomic::AtomicBool,
+    /// Growth level (0 = off; see `crate::growth`).
+    growth_level: std::sync::atomic::AtomicU8,
     /// Last smoothed share rate at the normal share size (f64 bits).
     growth_rate_bits: std::sync::atomic::AtomicU64,
     expected_address_network: Option<AddressNetwork>,
@@ -990,7 +991,7 @@ impl PoolEngine {
         let engine = Self {
             live_cfg,
             base_cfg,
-            growth_active: std::sync::atomic::AtomicBool::new(false),
+            growth_level: std::sync::atomic::AtomicU8::new(0),
             growth_rate_bits: std::sync::atomic::AtomicU64::new(f64::NAN.to_bits()),
             expected_address_network,
             validation,
@@ -1047,22 +1048,27 @@ impl PoolEngine {
     }
 
     pub(crate) fn growth_mode_active(&self) -> bool {
-        self.growth_active.load(std::sync::atomic::Ordering::SeqCst)
+        self.growth_level() > 0
     }
 
-    /// Switches growth mode (see `crate::growth`); returns whether it changed.
-    pub(crate) fn set_growth_mode(&self, active: bool) -> bool {
+    pub(crate) fn growth_level(&self) -> u8 {
+        self.growth_level.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Switches the growth level (see `crate::growth`); returns whether it
+    /// changed.
+    pub(crate) fn set_growth_level(&self, level: u8) -> bool {
         let base = self.base_cfg.lock();
         if self
-            .growth_active
-            .swap(active, std::sync::atomic::Ordering::SeqCst)
-            == active
+            .growth_level
+            .swap(level, std::sync::atomic::Ordering::SeqCst)
+            == level
         {
             return false;
         }
         self.apply_effective(&base);
         tracing::info!(
-            active,
+            level,
             vardiff_target_shares = self.cfg().vardiff_target_shares,
             sample_rate = self.cfg().sample_rate,
             "growth mode changed"
@@ -1071,11 +1077,8 @@ impl PoolEngine {
     }
 
     fn apply_effective(&self, base: &Config) {
-        let effective = if self.growth_mode_active() && base.growth_submit_rate > 0.0 {
-            base.with_growth_mode()
-        } else {
-            base.clone()
-        };
+        let level = self.growth_level().min(base.max_growth_level());
+        let effective = base.with_growth_level(level);
         self.live_cfg.apply_hot(&effective);
         self.validation.reload_hot_config(&effective);
     }
@@ -6929,8 +6932,8 @@ mod tests {
             Arc::new(InMemoryNode::default()),
         );
 
-        assert!(engine.set_growth_mode(true));
-        assert!(!engine.set_growth_mode(true), "already active");
+        assert!(engine.set_growth_level(1));
+        assert!(!engine.set_growth_level(1), "already active");
         assert_eq!(engine.cfg().vardiff_target_shares, 5);
         assert_eq!(engine.cfg().sample_rate, 0.08);
         assert_eq!(validation.snapshot().effective_sample_rate, 0.08);
@@ -6946,7 +6949,22 @@ mod tests {
         assert_eq!(engine.cfg().hold_audit_rate, 0.5);
         assert_eq!(engine.base_cfg().sample_rate, 0.06);
 
-        assert!(engine.set_growth_mode(false));
+        assert!(engine.set_growth_level(2));
+        assert_eq!(engine.cfg().vardiff_target_shares, 3);
+        assert_eq!(engine.cfg().sample_rate, 0.08);
+        // Disabling the second level in config falls back to the first.
+        engine.reload_hot_config(&Config {
+            sample_rate: 0.06,
+            growth2_submit_rate: 0.0,
+            ..cfg.clone()
+        });
+        assert_eq!(engine.cfg().vardiff_target_shares, 5);
+        engine.reload_hot_config(&Config {
+            sample_rate: 0.06,
+            ..cfg.clone()
+        });
+
+        assert!(engine.set_growth_level(0));
         assert_eq!(engine.cfg().vardiff_target_shares, 10);
         assert_eq!(engine.cfg().sample_rate, 0.06);
         assert_eq!(validation.snapshot().effective_sample_rate, 0.06);

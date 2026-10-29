@@ -29,7 +29,7 @@ impl Default for GatewaySettings {
             stratum_port: 3333,
             gateway_socket: String::new(),
             gateway_metrics_addr: "127.0.0.1:24786".to_string(),
-            gateway_max_miners: 16_384,
+            gateway_max_miners: 32_768,
         }
     }
 }

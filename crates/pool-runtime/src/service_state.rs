@@ -8,7 +8,7 @@ use crate::payout::PayoutRuntimeSnapshot;
 use crate::stats::PoolSnapshot;
 use crate::telemetry::{LatencyHistogramSnapshot, TimedOperationSummary};
 
-pub use crate::stratum::{ConnectionSnapshot, SubmitRuntimeSnapshot};
+pub use crate::stratum::{ConnectionSnapshot, HeapSnapshot, SubmitRuntimeSnapshot};
 pub use crate::validation::ValidationSnapshot;
 
 pub const LIVE_RUNTIME_SNAPSHOT_META_KEY: &str = "live_runtime_snapshot_v1";

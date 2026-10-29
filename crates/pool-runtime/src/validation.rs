@@ -3134,7 +3134,8 @@ mod tests {
         let engine = ValidationEngine::new(cfg, hasher);
         let sim_start = Instant::now();
         let sim_now = |started: Instant| sim_start + started.elapsed().mul_f64(speedup);
-        let mut controller = crate::growth::GrowthController::new(growth_start_active, sim_start);
+        let mut controller =
+            crate::growth::GrowthController::new(u8::from(growth_start_active), sim_start);
         if growth && growth_start_active {
             engine.reload_hot_config(&replay_base_cfg.with_growth_mode());
         }
@@ -3145,7 +3146,7 @@ mod tests {
         };
         let mut share_size_target = share_size;
         let mut last_growth_tick = 0.0f64;
-        let mut growth_switches = Vec::<(f64, bool)>::new();
+        let mut growth_switches = Vec::<(f64, u8)>::new();
         let pick = WeightedIndex::new(&weights).expect("weights");
         let mut rng = StdRng::seed_from_u64(7);
         let difficulty = (60.0 / share_scale).round() as u64;
@@ -3169,17 +3170,14 @@ mod tests {
                 if next_at - last_growth_tick >= 30.0 / speedup {
                     let dt = next_at - last_growth_tick;
                     last_growth_tick = next_at;
-                    if let Some(active) =
+                    if let Some(level) =
                         controller.observe(sim_now(started), share_id as u64, &replay_base_cfg)
                     {
-                        growth_switches.push((next_at * speedup / 60.0, active));
-                        let effective = if active {
-                            replay_base_cfg.with_growth_mode()
-                        } else {
-                            replay_base_cfg.clone()
-                        };
+                        growth_switches.push((next_at * speedup / 60.0, level));
+                        let effective = replay_base_cfg.with_growth_level(level);
+                        share_size_target = replay_base_cfg.vardiff_target_shares as f64
+                            / effective.vardiff_target_shares.max(1) as f64;
                         engine.reload_hot_config(&effective);
-                        share_size_target = if active { 2.0 } else { 1.0 };
                     }
                     // Vardiff moves miners to the new share size over minutes.
                     let blend = 1.0 - (-(dt * speedup) / 120.0).exp();

@@ -54,6 +54,16 @@ is persisted (meta `growth_mode_v1`) so restarts and handovers resume it, and
 setting `growth_submit_rate` to 0 (by reload) turns it off. Alerts:
 `BlocknetPoolGrowthModeActive`, `BlocknetPoolBeyondGrowthCapacity`.
 
+Level 2 (owner-approved 2026-10-29): above `growth2_submit_rate` (110/s at the
+normal size, twice the level-1 trigger) Stratum asks for
+`growth2_vardiff_target_shares` (3) with the same sample rate, and returns to
+level 1 below `growth2_exit_submit_rate` (80/s). Levels change one step at a
+time with the same settle time; the persisted meta value is `0`, `1` or `2`
+(older engines treat `2` as off). `growth2_submit_rate` 0 disables level 2.
+Metric `blocknet_pool_monitor_growth_level`. On 2026-10-29 level 1 was active
+at ~59/s normal-size (30 shares/s actual), verifying ~6.6 hashes/s at ~540 ms;
+`BlocknetPoolBeyondGrowthCapacity` now fires above 150/s.
+
 - 2026-10-27 · T2 · load ramping 1x → 2x over 30 simulated minutes, then
   held at 2x, with the real controller in the loop and miners' share size
   following its target with a 2-minute lag: 100% Normal in 2/2 runs, 0

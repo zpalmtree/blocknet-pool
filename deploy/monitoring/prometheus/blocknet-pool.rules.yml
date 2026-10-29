@@ -41,15 +41,17 @@ groups:
           summary: Growth mode is on
           description: The share rate passed growth_submit_rate, so miners were moved to fewer, larger shares (growth_vardiff_target_shares, growth_sample_rate). Expected as the pool grows; see VERIFY_PERFORMANCE.md.
 
+      # Level 2 (growth2_vardiff_target_shares 3) keeps verification within
+      # capacity up to roughly 160/s at the normal share size.
       - alert: BlocknetPoolBeyondGrowthCapacity
-        expr: blocknet_pool_monitor_growth_normal_size_submits_per_s > 110
+        expr: blocknet_pool_monitor_growth_normal_size_submits_per_s > 150
         for: 30m
         labels:
           severity: warning
           visibility: private
         annotations:
           summary: Load is beyond what growth mode was tested for
-          description: The share rate at the normal share size exceeds twice the pre-growth peak; verification may fall behind. Plan more verifier capacity.
+          description: Even at growth level 2 verification is near capacity; coverage will fall. Add verifier capacity (a faster verifier host) or a further growth level.
 
       - alert: BlocknetPoolGatewayNoEngine
         expr: blocknet_pool_gateway_engines == 0
@@ -81,10 +83,9 @@ groups:
           summary: Engine handover is rejecting replayed logins
           description: Miners stay on the old engine and the deploy will stall; check the new engine's login rejections.
 
-      # 16,384 is both the gateway's gateway_max_miners and Stratum's
-      # stratum_max_connections default; keep it in step with config.json.
+      # Gateways before blocknet_pool_gateway_max_miners existed ran with 16,384.
       - alert: BlocknetPoolMinerConnectionsNearCap
-        expr: blocknet_pool_gateway_miners > 0.8 * 16384
+        expr: blocknet_pool_gateway_miners > 0.8 * scalar(blocknet_pool_gateway_max_miners or on() vector(16384))
         for: 10m
         labels:
           severity: warning
@@ -94,7 +95,7 @@ groups:
           description: Past the cap new miners are refused while existing ones look healthy; raise stratum_max_connections and gateway_max_miners.
 
       - alert: BlocknetPoolMinerConnectionsAtCap
-        expr: blocknet_pool_gateway_miners > 0.95 * 16384
+        expr: blocknet_pool_gateway_miners > 0.95 * scalar(blocknet_pool_gateway_max_miners or on() vector(16384))
         for: 5m
         labels:
           severity: critical
@@ -122,6 +123,16 @@ groups:
         annotations:
           summary: Stratum connections are above 80% of stratum_max_connections
           description: Raise stratum_max_connections (and gateway_max_miners) before the cap is reached.
+
+      - alert: BlocknetPoolGatewayDescriptorsHigh
+        expr: blocknet_pool_gateway_open_fds > 0.7 * blocknet_pool_gateway_open_fds_limit
+        for: 10m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: The gateway is using over 70% of its file descriptor limit
+          description: At the limit it stops accepting miners; check for half-closed miner sockets and raise LimitNOFILE.
 
       # TCP sockets beyond the gateway's live miners are mostly connections
       # the gateway has closed but still holds; the gateway allows 65,535

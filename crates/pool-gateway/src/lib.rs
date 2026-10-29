@@ -42,6 +42,8 @@ pub struct GatewayMetrics {
     pub rejected_connections: AtomicU64,
     pub miners_on_draining_engines: AtomicU64,
     pub forced_reconnects: AtomicU64,
+    /// The miner connection cap (`gateway_max_miners`).
+    pub max_miners: AtomicU64,
     /// Relay latency by lane: event-loop queue wait and handling per event
     /// kind, and miner socket writes.
     pub latency: LatencyHistograms,
@@ -133,8 +135,16 @@ impl GatewayMetrics {
                 "blocknet_pool_gateway_forced_reconnects_total",
                 &self.forced_reconnects,
             ),
+            ("blocknet_pool_gateway_max_miners", &self.max_miners),
         ] {
             out.push_str(&format!("{name} {}\n", value.load(Ordering::Relaxed)));
+        }
+        // Each miner holds a descriptor; running out stops accepting miners.
+        if let Ok(fds) = std::fs::read_dir("/proc/self/fd") {
+            out.push_str(&format!("blocknet_pool_gateway_open_fds {}\n", fds.count()));
+        }
+        if let Some(limit) = open_files_limit() {
+            out.push_str(&format!("blocknet_pool_gateway_open_fds_limit {limit}\n"));
         }
         self.latency
             .render(&mut out, "blocknet_pool_gateway_latency_millis");
@@ -167,6 +177,17 @@ fn event_lanes(event: &Event) -> Option<(&'static str, &'static str)> {
     }
 }
 
+/// The soft "Max open files" limit of this process.
+fn open_files_limit() -> Option<u64> {
+    let limits = std::fs::read_to_string("/proc/self/limits").ok()?;
+    let line = limits.lines().find(|l| l.starts_with("Max open files"))?;
+    line["Max open files".len()..]
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
+}
+
 pub struct GatewayListeners {
     pub miners: TcpListener,
     pub engines: UnixListener,
@@ -182,6 +203,9 @@ pub async fn run(
     let (events_tx, mut events_rx) = mpsc::channel::<TimedEvent>(EVENT_QUEUE);
     let tick = timings.tick;
     let mut gateway = Gateway::new(timings, Arc::clone(&metrics));
+    metrics
+        .max_miners
+        .store(max_miners as u64, Ordering::Relaxed);
 
     let miners = tokio::spawn(accept_miners(
         listeners.miners,
@@ -415,6 +439,16 @@ mod tests {
         let mut buf = [0u8; 1];
         assert_eq!(client.read(&mut buf).await.unwrap(), 0);
         accept.abort();
+    }
+
+    #[test]
+    fn metrics_report_the_cap_and_descriptor_use() {
+        let metrics = GatewayMetrics::default();
+        metrics.max_miners.store(32_768, Ordering::Relaxed);
+        let out = metrics.render();
+        assert!(out.contains("blocknet_pool_gateway_max_miners 32768\n"));
+        assert!(out.contains("blocknet_pool_gateway_open_fds "));
+        assert!(open_files_limit().is_some_and(|limit| limit > 0));
     }
 
     #[test]

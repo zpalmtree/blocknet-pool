@@ -88,6 +88,36 @@ struct ConnState {
     rejected_per_ip: u64,
 }
 
+/// The process heap as glibc's allocator accounts it. `in_use` growing means
+/// live allocations grew; `free_held` growing while `in_use` is flat means
+/// fragmentation (freed memory the allocator keeps).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct HeapSnapshot {
+    /// Bytes in allocator arenas obtained with brk/sbrk or arena mmaps.
+    pub arena_bytes: u64,
+    pub in_use_bytes: u64,
+    pub free_held_bytes: u64,
+    /// Large allocations served directly by mmap (Argon2 arenas among them).
+    pub mmapped_bytes: u64,
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub(crate) fn heap_snapshot() -> Option<HeapSnapshot> {
+    // SAFETY: mallinfo2 takes no arguments and only reads allocator state.
+    let info = unsafe { libc::mallinfo2() };
+    Some(HeapSnapshot {
+        arena_bytes: info.arena as u64,
+        in_use_bytes: info.uordblks as u64,
+        free_held_bytes: info.fordblks as u64,
+        mmapped_bytes: info.hblkhd as u64,
+    })
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+pub(crate) fn heap_snapshot() -> Option<HeapSnapshot> {
+    None
+}
+
 /// Miner connections against Stratum's caps, and the connections refused.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ConnectionSnapshot {
@@ -209,11 +239,16 @@ pub struct SubmitRuntimeSnapshot {
     pub unprocessed: UnprocessedSubmitSnapshot,
     #[serde(default)]
     pub growth_mode_active: bool,
+    /// Growth level (0 = off, 1, 2).
+    #[serde(default)]
+    pub growth_level: u8,
     /// Smoothed share rate at the normal share size (growth-mode input).
     #[serde(default)]
     pub growth_normal_size_submits_per_s: Option<f64>,
     #[serde(default)]
     pub connections: Option<ConnectionSnapshot>,
+    #[serde(default)]
+    pub heap: Option<HeapSnapshot>,
 }
 
 #[derive(Debug)]
@@ -757,8 +792,10 @@ impl SubmitDispatcher {
             regular_wait: regular.wait,
             unprocessed: UnprocessedSubmitSnapshot::default(),
             growth_mode_active: false,
+            growth_level: 0,
             growth_normal_size_submits_per_s: None,
             connections: None,
+            heap: None,
         }
     }
 }
@@ -933,8 +970,10 @@ impl StratumServer {
         let mut snapshot = self.submit_dispatcher.snapshot();
         snapshot.unprocessed = self.engine.admission().snapshot();
         snapshot.growth_mode_active = self.engine.growth_mode_active();
+        snapshot.growth_level = self.engine.growth_level();
         snapshot.growth_normal_size_submits_per_s = self.engine.growth_normal_size_rate();
         snapshot.connections = Some(self.connection_snapshot());
+        snapshot.heap = heap_snapshot();
         snapshot
     }
 
