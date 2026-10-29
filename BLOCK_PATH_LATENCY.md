@@ -152,3 +152,11 @@ One line each: hypothesis, stage, tier and host, result, verdict.
   34 ms, p99 50 ms. **Win.** The p99 is within ~10 ms of the 80 ms target.
   What remains is lock time per chunk, at roughly twice T2's cost on the
   busier prod host.
+- **T3, engine `052f409` (17:44-19:00 EDT; includes the pipelined fanout and
+  batched cleanup).** Template → written p50 19.6 ms, p90 42 ms, p99 76.2 ms
+  (n=369k writes); build_chunk p99 40 ms. Daemon accept → job published
+  p50 35 ms, p99 50 ms (n=7); template fetch p50 29 ms, p99 61 ms. The
+  fanout stage now meets 80 ms at p99. Accept → written end to end is
+  roughly 90-125 ms at p99, and the next lever is the template fetch: a
+  compact template from the daemon, with the full block fetched off the
+  critical path.
