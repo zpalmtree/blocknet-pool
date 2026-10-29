@@ -66,3 +66,15 @@ One line each: hypothesis, stage, tier and host, result, verdict.
   avx2-stream -0.1% (2), avx2 +1.4% (1); all neutral. Same-height refreshes
   still finish their hashes, because the pool credits them within
   `stale_submit_grace`. **Win**, ships with the next batched release.
+- **Upstream took the daemon PoW change.** blocknetprivacy/core merged #62
+  (reuse the 2 GiB buffer, THP) and #63 (shared kernel, same Zen 4/5
+  selection) on 2026-10-29. Core `pool` was rebuilt on them as `26d76f6`.
+  That dropped core `07fbe40` and kept two pool patches: the startup warm-up
+  and the new `<source>_lock_wait` timer. Under 0.23.0 (`a45b3ff`), peer
+  blocks averaged sync_total 1.57 s: 0.90 s of preverify (PoW) plus ~0.6 s
+  that no timer covered, presumably the chain-lock wait the new timer
+  records.
+- **Deployed 2026-10-29 (EDT).** Stratum `c364b5d` at 01:08; blocknet-91's
+  `b16a385` (adds Faraday) took over at 01:14. Rolling daemon deploy of core
+  `26d76f6` finished at 02:43, with payouts restored. T3 starts from those
+  times.
