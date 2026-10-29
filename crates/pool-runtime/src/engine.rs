@@ -153,6 +153,33 @@ pub(crate) trait JobRepository: Send + Sync + 'static {
     /// The daemon accepted a block this pool found at `height`; starts the
     /// own-block → next-job latency measurement.
     fn note_block_accepted(&self, _height: u64) {}
+    /// Height of the job miners are currently given, if any. Picks the share
+    /// difficulty era; must not block.
+    fn current_height(&self) -> Option<u64> {
+        None
+    }
+}
+
+/// Share difficulty bounds for the era of the current job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DifficultyEra {
+    min: u64,
+    max: u64,
+    initial: u64,
+    faraday: bool,
+}
+
+impl DifficultyEra {
+    /// A difficulty carried over from before the fork is below the fork floor
+    /// and restarts at the fork's initial difficulty instead of the floor.
+    /// Only used in the Faraday era; earlier code paths keep their own clamps.
+    fn admit(&self, difficulty: u64) -> u64 {
+        if difficulty < self.min {
+            self.initial
+        } else {
+            difficulty.min(self.max)
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1140,15 +1167,19 @@ impl PoolEngine {
                 return Err(anyhow!(quarantine_error_message(Some(&state), now_wall)));
             }
         }
-        let min_diff = self.cfg().min_share_difficulty.max(1);
-        let max_diff = self.cfg().max_share_difficulty.max(min_diff);
-        let initial_difficulty = self
-            .cfg()
-            .initial_share_difficulty
-            .clamp(min_diff, max_diff);
+        let era = self.difficulty_era();
+        let (min_diff, max_diff, initial_difficulty) = (era.min, era.max, era.initial);
+        // From the fork, hints saved before it are Argon2-sized; ignore them
+        // rather than clamp them up to the fork floor.
+        let era_scaled = |difficulty: u64| !era.faraday || difficulty >= era.min;
+        let difficulty_hint = difficulty_hint.filter(|hint| era_scaled(*hint));
         let mut difficulty = initial_difficulty;
         if self.cfg().enable_vardiff {
-            if let Some((cached, updated_at)) = self.store.get_vardiff_hint(address, &worker)? {
+            if let Some((cached, updated_at)) = self
+                .store
+                .get_vardiff_hint(address, &worker)?
+                .filter(|(cached, _)| era_scaled(*cached))
+            {
                 let age = now_wall.duration_since(updated_at).unwrap_or_default();
                 if let Some(derived) = derive_vardiff_login_difficulty(
                     cached,
@@ -1164,7 +1195,10 @@ impl PoolEngine {
         let address_bootstrap = if self.cfg().enable_vardiff && is_seine_dev_fee_address(address) {
             derive_address_vardiff_login_difficulty(
                 self.store
-                    .get_vardiff_hints_for_address(address, DEV_VARDIFF_BOOTSTRAP_HINT_LIMIT)?,
+                    .get_vardiff_hints_for_address(address, DEV_VARDIFF_BOOTSTRAP_HINT_LIMIT)?
+                    .into_iter()
+                    .filter(|(cached, _)| era_scaled(*cached))
+                    .collect(),
                 now_wall,
                 initial_difficulty,
                 min_diff,
@@ -1189,6 +1223,9 @@ impl PoolEngine {
             difficulty = difficulty.max(bootstrap);
         }
         difficulty = difficulty.max(login_difficulty_floor(address, initial_difficulty));
+        if era.faraday {
+            difficulty = era.admit(difficulty);
+        }
 
         let (address_good, _) = self.validation.address_sample_counts(address);
         let address_vouched =
@@ -2519,6 +2556,26 @@ impl PoolEngine {
             .map(|session| session.difficulty)
     }
 
+    fn difficulty_era(&self) -> DifficultyEra {
+        if self.jobs.current_height().is_some_and(faraday::is_faraday) {
+            return DifficultyEra {
+                min: faraday::FARADAY_MIN_SHARE_DIFFICULTY,
+                max: faraday::FARADAY_MAX_SHARE_DIFFICULTY,
+                initial: faraday::FARADAY_INITIAL_SHARE_DIFFICULTY,
+                faraday: true,
+            };
+        }
+        let cfg = self.cfg();
+        let min = cfg.min_share_difficulty.max(1);
+        let max = cfg.max_share_difficulty.max(min);
+        DifficultyEra {
+            min,
+            max,
+            initial: cfg.initial_share_difficulty.clamp(min, max),
+            faraday: false,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn retarget_on_job_if_needed(&self, conn_id: &str) -> Option<u64> {
         let (difficulty, hint) = self.retarget_on_job(conn_id)?;
@@ -2532,7 +2589,14 @@ impl PoolEngine {
     /// difficulty, plus a vardiff hint when one is due. It never touches the
     /// store, so a job can be sent before the hint is persisted.
     pub(crate) fn retarget_on_job(&self, conn_id: &str) -> Option<(u64, Option<VardiffHint>)> {
+        let era = self.difficulty_era();
         if !self.cfg().enable_vardiff {
+            if era.faraday {
+                let mut sessions = self.sessions.lock();
+                let session = sessions.get_mut(conn_id)?;
+                session.difficulty = era.admit(session.difficulty);
+                return Some((session.difficulty, None));
+            }
             return self
                 .session_difficulty(conn_id)
                 .map(|difficulty| (difficulty, None));
@@ -2541,9 +2605,12 @@ impl PoolEngine {
         let mut hint_to_write: Option<VardiffHint> = None;
         let mut sessions = self.sessions.lock();
         let session = sessions.get_mut(conn_id)?;
-        let min_diff = self.cfg().min_share_difficulty.max(1);
-        let max_diff = self.cfg().max_share_difficulty.max(min_diff);
-        session.difficulty = session.difficulty.clamp(min_diff, max_diff);
+        let (min_diff, max_diff) = (era.min, era.max);
+        session.difficulty = if era.faraday {
+            era.admit(session.difficulty)
+        } else {
+            session.difficulty.clamp(min_diff, max_diff)
+        };
 
         // Keep dev-fee sessions on submit-only retargeting so their long idle
         // periods do not collapse difficulty between the brief fee windows.
@@ -2695,9 +2762,13 @@ impl PoolEngine {
         now: Instant,
         unprocessed: bool,
     ) -> bool {
-        let min_diff = self.cfg().min_share_difficulty.max(1);
-        let max_diff = self.cfg().max_share_difficulty.max(min_diff);
-        session.difficulty = session.difficulty.clamp(min_diff, max_diff);
+        let era = self.difficulty_era();
+        let (min_diff, max_diff) = (era.min, era.max);
+        session.difficulty = if era.faraday {
+            era.admit(session.difficulty)
+        } else {
+            session.difficulty.clamp(min_diff, max_diff)
+        };
 
         let window = self
             .cfg()
@@ -3438,6 +3509,7 @@ impl ShareStore for InMemoryStore {
 pub(crate) struct InMemoryJobs {
     jobs: Mutex<HashMap<String, Job>>,
     assignments: Mutex<HashMap<String, InMemoryAssignment>>,
+    current_height: Mutex<Option<u64>>,
 }
 
 #[cfg(test)]
@@ -3452,6 +3524,10 @@ struct InMemoryAssignment {
 
 #[cfg(test)]
 impl InMemoryJobs {
+    pub(crate) fn set_current_height(&self, height: u64) {
+        *self.current_height.lock() = Some(height);
+    }
+
     pub(crate) fn insert(&self, job: Job) {
         let id = job.id.clone();
         self.jobs.lock().insert(id.clone(), job);
@@ -3481,6 +3557,10 @@ impl InMemoryJobs {
 
 #[cfg(test)]
 impl JobRepository for InMemoryJobs {
+    fn current_height(&self) -> Option<u64> {
+        *self.current_height.lock()
+    }
+
     fn resolve_submit_job_with_reason(
         &self,
         submitted_job_id: &str,
@@ -6013,6 +6093,146 @@ mod tests {
             after < before,
             "job-tick retarget should decay idle user sessions so they can recover from overshoot"
         );
+    }
+
+    fn faraday_vardiff_engine(
+        cfg: Config,
+        height: u64,
+    ) -> (PoolEngine, Arc<InMemoryStore>, Arc<InMemoryJobs>) {
+        struct ZeroHasher;
+        impl PowHasher for ZeroHasher {
+            fn hash(&self, _header_base: &[u8], _nonce: u64) -> anyhow::Result<[u8; 32]> {
+                Ok([0u8; 32])
+            }
+        }
+        let validation = Arc::new(ValidationEngine::new(cfg.clone(), Arc::new(ZeroHasher)));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        jobs.set_current_height(height);
+        let store = Arc::new(InMemoryStore::default());
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            Arc::clone(&jobs) as Arc<dyn JobRepository>,
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode::default()),
+        );
+        (engine, store, jobs)
+    }
+
+    #[test]
+    fn faraday_login_replaces_argon2_sized_difficulty() {
+        let mut cfg = cfg();
+        cfg.enable_vardiff = true;
+        let recent = SystemTime::now()
+            .checked_sub(Duration::from_secs(30))
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let address = test_miner_address();
+
+        // Before the fork the configured difficulties apply unchanged.
+        let (engine, store, _) = faraday_vardiff_engine(cfg.clone(), faraday::FARADAY_HEIGHT - 1);
+        store.seed_vardiff_hint(&address, "rig01", 222, recent);
+        engine
+            .login("conn1", address.clone(), "rig01", 2, submit_hash_cap())
+            .expect("login");
+        assert_eq!(engine.session_difficulty("conn1"), Some(222));
+
+        // From the fork an Argon2-sized stored hint or client hint restarts.
+        let (engine, store, _) = faraday_vardiff_engine(cfg.clone(), faraday::FARADAY_HEIGHT);
+        store.seed_vardiff_hint(&address, "rig01", 222, recent);
+        engine
+            .login("conn1", address.clone(), "rig01", 2, submit_hash_cap())
+            .expect("login");
+        assert_eq!(
+            engine.session_difficulty("conn1"),
+            Some(faraday::FARADAY_INITIAL_SHARE_DIFFICULTY)
+        );
+        engine
+            .login_with_hint(
+                "conn2",
+                address.clone(),
+                "rig02",
+                2,
+                submit_hash_cap(),
+                Some(500),
+            )
+            .expect("login");
+        assert_eq!(
+            engine.session_difficulty("conn2"),
+            Some(faraday::FARADAY_INITIAL_SHARE_DIFFICULTY)
+        );
+
+        // A hint saved after the fork is kept.
+        let (engine, store, _) = faraday_vardiff_engine(cfg, faraday::FARADAY_HEIGHT);
+        store.seed_vardiff_hint(&address, "rig01", 1 << 40, recent);
+        engine
+            .login("conn1", address, "rig01", 2, submit_hash_cap())
+            .expect("login");
+        assert_eq!(engine.session_difficulty("conn1"), Some(1 << 40));
+    }
+
+    #[test]
+    fn sessions_cross_onto_faraday_share_difficulty() {
+        let mut cfg = cfg();
+        cfg.enable_vardiff = true;
+        cfg.initial_share_difficulty = 60;
+        let configured_max = cfg.max_share_difficulty;
+        let (engine, _, jobs) = faraday_vardiff_engine(cfg, faraday::FARADAY_HEIGHT - 1);
+        engine
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
+            .expect("login");
+        engine
+            .login("conn2", test_miner_address(), "rig2", 2, submit_hash_cap())
+            .expect("login");
+        assert_eq!(engine.retarget_on_job_if_needed("conn1"), Some(60));
+
+        jobs.set_current_height(faraday::FARADAY_HEIGHT);
+        // The job tick moves a live session to the fork's start.
+        assert_eq!(
+            engine.retarget_on_job_if_needed("conn1"),
+            Some(faraday::FARADAY_INITIAL_SHARE_DIFFICULTY)
+        );
+        // So does the first share after the fork, before any job tick.
+        engine
+            .submit("conn2", "job1".to_string(), 400, Some("00".repeat(32)))
+            .expect("share");
+        assert_eq!(
+            engine.session_difficulty("conn2"),
+            Some(faraday::FARADAY_INITIAL_SHARE_DIFFICULTY)
+        );
+
+        // A reorg back below the fork clamps to the configured ceiling as before.
+        jobs.set_current_height(faraday::FARADAY_HEIGHT - 1);
+        assert_eq!(
+            engine.retarget_on_job_if_needed("conn1"),
+            Some(configured_max)
+        );
+    }
+
+    #[test]
+    fn faraday_vardiff_raises_fast_submitters_above_the_start() {
+        let mut cfg = cfg();
+        cfg.enable_vardiff = true;
+        cfg.validation_mode = "full".to_string();
+        cfg.vardiff_target_shares = 1;
+        cfg.vardiff_window = "5m".to_string();
+        cfg.vardiff_retarget_interval = "1s".to_string();
+        let (engine, _, _) = faraday_vardiff_engine(cfg, faraday::FARADAY_HEIGHT);
+        engine
+            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
+            .expect("login");
+        let mut last = None;
+        for nonce in 100..105 {
+            last = Some(
+                engine
+                    .submit("conn1", "job1".to_string(), nonce, Some("00".repeat(32)))
+                    .expect("share"),
+            );
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        let ack = last.expect("ack");
+        assert!(ack.next_difficulty > faraday::FARADAY_INITIAL_SHARE_DIFFICULTY);
+        assert!(ack.next_difficulty <= faraday::FARADAY_MAX_SHARE_DIFFICULTY);
     }
 
     fn vardiff_test_engine(cfg: Config) -> PoolEngine {
