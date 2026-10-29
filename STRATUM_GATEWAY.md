@@ -75,6 +75,46 @@ disconnects every miner once, like a Stratum restart used to. A staggered
 drain (a new gateway beside the old one with `SO_REUSEPORT`, the old one
 closing miners gradually) is a planned follow-up.
 
+## TLS miners (`stratum+ssl`)
+
+The gateway can also accept miners over TLS (`stratum+ssl://host:port` in
+seine): a TLS handshake, then the same newline-delimited JSON-RPC as port
+3333. Some networks forge TCP resets into plaintext Stratum; encryption
+hides the protocol from that inspection. TLS miners share the relay,
+`gateway_max_miners` and metrics with plain miners.
+
+| key | default | |
+|---|---|---|
+| `gateway_tls_port` | `0` (off) | TLS port on `stratum_host`, e.g. `3443` |
+| `gateway_tls_cert` | | PEM certificate chain, leaf first (Let's Encrypt `fullchain.pem`) |
+| `gateway_tls_key` | | PEM private key (`privkey.pem`) |
+
+- The gateway runs as `blocknet`, so both files must be readable by that
+  user. Certbot keeps `/etc/letsencrypt/{live,archive}` root-only; copy the
+  files from a deploy hook (below) rather than loosening those directories.
+- The gateway checks the files every 5 minutes and swaps in a renewed
+  certificate without a restart. A file it cannot load is logged as a
+  warning and the current certificate stays in use.
+- Open the port in the firewall (`ufw allow 3443/tcp`). Seine verifies the
+  certificate against the miner's pool host name, so miners use
+  `stratum+ssl://bntpool.com:3443` (a name the certificate covers).
+- Turning TLS on or changing its port needs a gateway restart.
+
+Deploy hook, `/etc/letsencrypt/renewal-hooks/deploy/blocknet-pool-gateway`
+(executable; run it once by hand after creating it):
+
+```sh
+#!/bin/sh
+set -e
+install -d -m 0750 -o root -g blocknet /etc/blocknet/pool/tls
+install -m 0640 -o root -g blocknet /etc/letsencrypt/live/bntpool.com/fullchain.pem /etc/blocknet/pool/tls/
+install -m 0640 -o root -g blocknet /etc/letsencrypt/live/bntpool.com/privkey.pem /etc/blocknet/pool/tls/
+```
+
+Miner sockets, plain and TLS, use TCP keepalive (after 60 s idle, every
+10 s, 3 probes) and a 60 s `TCP_USER_TIMEOUT`, so a miner that vanished
+without closing frees its slot within about two minutes.
+
 ## Operations
 
 - **Deploy Stratum**: `scripts/deploy_bntpool.sh --stratum-only`. In gateway
@@ -94,5 +134,5 @@ closing miners gradually) is a planned follow-up.
   miners, miners without an engine, miners on draining engines, engines,
   migrations, replay failures, busy replies, retires, forced reconnects (miners
   still on a draining engine after 3 minutes are reconnected so a handover
-  always completes). Alerts: `BlocknetPoolGatewayNoEngine`,
+  always completes), TLS miners and TLS handshake failures. Alerts: `BlocknetPoolGatewayNoEngine`,
   `BlocknetPoolGatewayMinersWithoutEngine`, `BlocknetPoolGatewayReplayFailures`.
