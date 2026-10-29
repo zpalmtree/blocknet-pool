@@ -25,14 +25,14 @@ blog pages retain their existing path URLs and hreflang clusters.
 
 ## Current ownership
 
-### SafeTrade acquisition and sale (drafts, October 29, 2026)
+### SafeTrade acquisition and sale (October 29, 2026)
 
 | Primary keyword cluster | URL | Search job | Supporting phrases |
 |---|---|---|---|
 | where to buy Blocknet BNT; buy Blocknet on SafeTrade | `/blog/buy-blocknet-bnt-safetrade/` | Fund an exchange account with USDT, buy BNT and withdraw to a personal wallet | Blocknet BNT exchange, BNT/USDT, how to buy Blocknet |
 | where to sell Blocknet BNT; sell mined BNT | `/blog/sell-blocknet-bnt-safetrade/` | Move spendable BNT to the exchange, sell it for USDT and reconcile the trade | sell Blocknet on SafeTrade, sell mining rewards, Blocknet to USDT |
 
-Both drafts belong to bntpool. Seine's `get-first-blocknet` remains the acquisition
+Both guides belong to bntpool. Seine's `get-first-blocknet` remains the acquisition
 starting point, `blocknet-desktop-wallet` owns wallet operation, and
 `blocknet-transfer-time` owns on-chain timing. PPLNS owns reward eligibility;
 the new selling guide owns the later wallet-to-exchange workflow. The guides

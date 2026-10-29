@@ -2,7 +2,6 @@
 title: Where to buy Blocknet (BNT) on SafeTrade
 description: Buy Blocknet (BNT) on SafeTrade using the BNT/USDT market. Follow account funding, buy orders, order status and withdrawal to your own Blocknet wallet.
 date: 2026-10-29
-draft: true
 tags: [Blocknet, BNT, SafeTrade]
 faq:
   - q: Where can I buy Blocknet BNT?

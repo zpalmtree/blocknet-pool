@@ -21,10 +21,13 @@ pool post never targets a search job a seineminer.com post owns; link to that po
   separate review has happened, then use `translation: reviewed`. A separate reviewer is not
   required to publish (owner decision, 2026-10-25); automated checks still require every
   translation to be complete, current and structurally valid. Add the keyword-map row and
-  publish by removing `draft: true`. Publishing needs the user's go-ahead.
+  publish by removing `draft: true`. A request to add or update blog articles authorizes
+  completing translations and publishing without a separate approval checkpoint (owner
+  decision, 2026-10-29). This overrides approval wording in shared editorial references.
 - **Build:** `npm --prefix frontend run build` renders `frontend/dist/blog` (the check runs first);
   the API embeds it through build.rs and serves it from `apps/blocknet-pool-api/src/blog.rs`.
   Pages can't use inline scripts or styles because of the app's CSP.
 - **Deploy:** `./scripts/deploy_bntpool.sh --api-only` (blog pages live in the API binary;
-  Stratum isn't restarted). Deploys need the user's request and must not collide with other
-  sessions' pool deploys.
+  Stratum isn't restarted). Routine requested blog work has standing permission for this
+  API-only deployment after required checks. Coordinate with other sessions' pool deploys.
+  This permission does not cover unrelated API/UI features, daemon, Stratum or gateway changes.

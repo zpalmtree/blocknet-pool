@@ -2,7 +2,6 @@
 title: How to sell Blocknet (BNT) on SafeTrade
 description: Sell Blocknet (BNT) for USDT on SafeTrade. Move spendable coins from your wallet, check deposit credit, place a sell order and follow the completed trade.
 date: 2026-10-29
-draft: true
 tags: [Blocknet, BNT, SafeTrade]
 faq:
   - q: Where can I sell Blocknet BNT?

@@ -14,6 +14,12 @@
 
 ## Deployment
 
+- Requested blog articles and corrections have standing permission to complete translations,
+  pass checks, and publish with `./scripts/deploy_bntpool.sh --api-only` without a separate
+  approval checkpoint (owner decision, 2026-10-29). This overrides approval wording in shared
+  blog references. Coordinate deployments and verify live pages. This exception does not
+  authorize unrelated API/UI features or daemon, Stratum, monitor, recovery or gateway changes.
+
 - Use `./scripts/deploy_bntpool.sh` for normal production deploys to the `bntpool` SSH alias. Keep that alias pointed at the current primary production host.
 - Use `bash scripts/provision_bntpool_hardening.sh --nginx-site-only` for nginx site routing changes. It uploads only the site config, validates it, rolls back on failure, and gracefully reloads nginx without restarting pool services.
 - Use `./scripts/provision_bntpool_monitoring.sh` when monitoring stack assets or on-host monitoring package config changes need to be installed on the current primary production host.
