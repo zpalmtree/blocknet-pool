@@ -20,6 +20,10 @@ pub const CAP_DIFFICULTY_HINT: &str = "difficulty_hint";
 pub const CAP_SAME_TEMPLATE_REBIND_V1: &str = "same_template_rebind_v1";
 /// The pool accepts the optional miner-side timing fields on `submit`.
 pub const CAP_SUBMIT_TIMING_V1: &str = "submit_timing_v1";
+/// The miner hashes Faraday BLAKE2b work. Required only for jobs at or past the
+/// fork height and never listed in `required_capabilities`, which older miners
+/// reject when they do not know a capability.
+pub const CAP_POW_BLAKE2B_V1: &str = "pow_blake2b_v1";
 const STEALTH_ADDRESS_CHECKSUM_TAG: &[u8] = b"blocknet_stealth_address_checksum";
 const NETWORK_ID_MAINNET: &str = "blocknet_mainnet";
 const NETWORK_ID_TESTNET: &str = "blocknet_testnet";

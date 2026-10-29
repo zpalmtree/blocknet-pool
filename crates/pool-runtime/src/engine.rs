@@ -38,7 +38,7 @@ use pool_common::faraday;
 use pool_common::pow::{check_target, difficulty_to_target};
 use pool_common::protocol::{
     build_login_result, normalize_worker_name, parse_hash_hex, validate_miner_address_for_network,
-    AddressNetwork, CAP_SUBMIT_CLAIMED_HASH, STRATUM_PROTOCOL_VERSION_CURRENT,
+    AddressNetwork, CAP_POW_BLAKE2B_V1, CAP_SUBMIT_CLAIMED_HASH, STRATUM_PROTOCOL_VERSION_CURRENT,
 };
 
 // Start retargeting after two accepted shares so reconnects/high starting diff
@@ -159,6 +159,9 @@ pub(crate) trait JobRepository: Send + Sync + 'static {
         None
     }
 }
+
+/// Sent to miners that cannot hash BLAKE2b once the pool's jobs reach the fork.
+pub(crate) const FARADAY_UPGRADE_MESSAGE: &str = "this miner cannot mine after the Faraday fork (block 103,680); update seine: https://github.com/zpalmtree/seine/releases/latest";
 
 /// Share difficulty bounds for the era of the current job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1157,6 +1160,9 @@ impl PoolEngine {
         }
         if !cap_set.contains(CAP_SUBMIT_CLAIMED_HASH) {
             return Err(anyhow!("pool requires submit_claimed_hash capability"));
+        }
+        if self.faraday_era() && !cap_set.contains(CAP_POW_BLAKE2B_V1) {
+            return Err(anyhow!(FARADAY_UPGRADE_MESSAGE));
         }
         let ip_group = source_ip_group(conn_id, peer_ip);
         let now_wall = SystemTime::now();
@@ -2556,8 +2562,19 @@ impl PoolEngine {
             .map(|session| session.difficulty)
     }
 
+    fn faraday_era(&self) -> bool {
+        self.jobs.current_height().is_some_and(faraday::is_faraday)
+    }
+
+    /// The message to close a session with when it cannot mine the current
+    /// job: from the fork, sessions that did not log in with BLAKE2b support.
+    pub(crate) fn faraday_upgrade_required(&self, conn_id: &str) -> Option<&'static str> {
+        (self.faraday_era() && !self.session_supports_capability(conn_id, CAP_POW_BLAKE2B_V1))
+            .then_some(FARADAY_UPGRADE_MESSAGE)
+    }
+
     fn difficulty_era(&self) -> DifficultyEra {
-        if self.jobs.current_height().is_some_and(faraday::is_faraday) {
+        if self.faraday_era() {
             return DifficultyEra {
                 min: faraday::FARADAY_MIN_SHARE_DIFFICULTY,
                 max: faraday::FARADAY_MAX_SHARE_DIFFICULTY,
@@ -3676,6 +3693,13 @@ mod tests {
 
     fn submit_hash_cap() -> Vec<String> {
         vec!["submit_claimed_hash".to_string()]
+    }
+
+    fn blake2b_miner_caps() -> Vec<String> {
+        vec![
+            "submit_claimed_hash".to_string(),
+            CAP_POW_BLAKE2B_V1.to_string(),
+        ]
     }
 
     /// Always hashes to ff..ff, so "ff" claims are genuine regular shares.
@@ -6121,6 +6145,35 @@ mod tests {
     }
 
     #[test]
+    fn faraday_requires_blake2b_capability_only_from_the_fork() {
+        let (engine, _, jobs) = faraday_vardiff_engine(cfg(), faraday::FARADAY_HEIGHT - 1);
+        // Before the fork today's miners log in and keep mining unchanged.
+        engine
+            .login("old", test_miner_address(), "old", 2, submit_hash_cap())
+            .expect("pre-fork login without BLAKE2b");
+        engine
+            .login("new", test_miner_address(), "new", 2, blake2b_miner_caps())
+            .expect("pre-fork login with BLAKE2b");
+        assert_eq!(engine.faraday_upgrade_required("old"), None);
+        assert_eq!(engine.faraday_upgrade_required("new"), None);
+
+        jobs.set_current_height(faraday::FARADAY_HEIGHT);
+        // Connected sessions without BLAKE2b are closed with the upgrade message.
+        assert_eq!(
+            engine.faraday_upgrade_required("old"),
+            Some(FARADAY_UPGRADE_MESSAGE)
+        );
+        assert_eq!(engine.faraday_upgrade_required("new"), None);
+        let err = engine
+            .login("old2", test_miner_address(), "old", 2, submit_hash_cap())
+            .expect_err("fork login without BLAKE2b");
+        assert!(format!("{err:#}").contains("Faraday fork"));
+        engine
+            .login("new2", test_miner_address(), "new", 2, blake2b_miner_caps())
+            .expect("fork login with BLAKE2b");
+    }
+
+    #[test]
     fn faraday_login_replaces_argon2_sized_difficulty() {
         let mut cfg = cfg();
         cfg.enable_vardiff = true;
@@ -6141,7 +6194,7 @@ mod tests {
         let (engine, store, _) = faraday_vardiff_engine(cfg.clone(), faraday::FARADAY_HEIGHT);
         store.seed_vardiff_hint(&address, "rig01", 222, recent);
         engine
-            .login("conn1", address.clone(), "rig01", 2, submit_hash_cap())
+            .login("conn1", address.clone(), "rig01", 2, blake2b_miner_caps())
             .expect("login");
         assert_eq!(
             engine.session_difficulty("conn1"),
@@ -6153,7 +6206,7 @@ mod tests {
                 address.clone(),
                 "rig02",
                 2,
-                submit_hash_cap(),
+                blake2b_miner_caps(),
                 Some(500),
             )
             .expect("login");
@@ -6166,7 +6219,7 @@ mod tests {
         let (engine, store, _) = faraday_vardiff_engine(cfg, faraday::FARADAY_HEIGHT);
         store.seed_vardiff_hint(&address, "rig01", 1 << 40, recent);
         engine
-            .login("conn1", address, "rig01", 2, submit_hash_cap())
+            .login("conn1", address, "rig01", 2, blake2b_miner_caps())
             .expect("login");
         assert_eq!(engine.session_difficulty("conn1"), Some(1 << 40));
     }
@@ -6219,7 +6272,7 @@ mod tests {
         cfg.vardiff_retarget_interval = "1s".to_string();
         let (engine, _, _) = faraday_vardiff_engine(cfg, faraday::FARADAY_HEIGHT);
         engine
-            .login("conn1", test_miner_address(), "", 2, submit_hash_cap())
+            .login("conn1", test_miner_address(), "", 2, blake2b_miner_caps())
             .expect("login");
         let mut last = None;
         for nonce in 100..105 {

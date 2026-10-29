@@ -1283,6 +1283,12 @@ impl StratumServer {
                             "template_to_conn",
                             job_received_at.saturating_duration_since(template_created_at),
                         );
+                        if let Some(message) = self.engine.faraday_upgrade_required(&conn_id) {
+                            // Its next login gets the same message as an error.
+                            tracing::info!(peer = %peer, "closing session without BLAKE2b support at the fork");
+                            run_result = Err(anyhow::anyhow!(message));
+                            break;
+                        }
                         if let Some((address, worker, difficulty)) = logged_in.as_mut() {
                             // In memory only, so it runs inline: the job goes
                             // out before any vardiff hint reaches the store.
@@ -1920,6 +1926,9 @@ impl StratumServer {
         difficulty: u64,
         outbound: Option<&OutboundHandle>,
     ) -> Result<()> {
+        if let Some(message) = self.engine.faraday_upgrade_required(conn_id) {
+            return Err(anyhow::anyhow!(message));
+        }
         let range_mode = if self
             .engine
             .session_supports_capability(conn_id, CAP_SAME_TEMPLATE_REBIND_V1)
@@ -2123,7 +2132,10 @@ impl StratumServer {
 }
 
 fn miner_update_notice(current: &str, latest: &str) -> Option<String> {
-    let (current_parsed, latest_parsed) = (parse_release_version(current)?, parse_release_version(latest)?);
+    let (current_parsed, latest_parsed) = (
+        parse_release_version(current)?,
+        parse_release_version(latest)?,
+    );
     (latest_parsed > current_parsed).then(|| {
         format!(
             "seine {} is available (this worker runs {}); newer releases mine faster on most CPUs: https://github.com/zpalmtree/seine/releases/latest",
@@ -3779,6 +3791,86 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn tcp_fork_job_closes_sessions_without_blake2b_and_refuses_their_login() {
+        use pool_common::faraday::FARADAY_HEIGHT;
+        let cfg = stratum_test_cfg();
+        let (server, jobs) = build_tcp_test_server(cfg).await;
+        let (addr, listener_task) = start_test_tcp_listener(Arc::clone(&server)).await;
+        let address = test_miner_address(0x71);
+        let login = |id: u64, worker: &str, capabilities: Value| StratumRequest {
+            id,
+            method: pool_common::protocol::METHOD_LOGIN.to_string(),
+            params: json!({
+                "address": address,
+                "worker": worker,
+                "protocol_version": 2,
+                "capabilities": capabilities,
+            }),
+        };
+
+        let (mut old_reader, mut old_writer) = connect_test_client(addr).await;
+        login_test_client(&mut old_reader, &mut old_writer, 1, &address, "old").await;
+        let (mut new_reader, mut new_writer) = connect_test_client(addr).await;
+        write_json_line(
+            &mut new_writer,
+            &login(1, "new", json!(["submit_claimed_hash", "pow_blake2b_v1"])),
+        )
+        .await;
+        assert_eq!(
+            read_json_line(&mut new_reader).await["status"].as_str(),
+            Some("ok")
+        );
+        assert_eq!(
+            read_json_line(&mut new_reader).await["method"].as_str(),
+            Some("job")
+        );
+
+        jobs.install_test_job(stratum_test_job("job-fork", FARADAY_HEIGHT));
+
+        let fork_job = loop {
+            let message = read_json_line(&mut new_reader).await;
+            if message["method"].as_str() == Some("job") {
+                break message;
+            }
+        };
+        assert_eq!(fork_job["params"]["height"].as_u64(), Some(FARADAY_HEIGHT));
+
+        // The session without BLAKE2b is closed and never sent fork work.
+        loop {
+            let mut line = String::new();
+            let read =
+                tokio::time::timeout(Duration::from_secs(2), old_reader.read_line(&mut line))
+                    .await
+                    .expect("the old session should be closed");
+            if read.map_or(true, |bytes| bytes == 0) {
+                break;
+            }
+            let message: Value = serde_json::from_str(line.trim()).expect("json");
+            assert!(
+                !(message["method"].as_str() == Some("job")
+                    && message["params"]["height"].as_u64() >= Some(FARADAY_HEIGHT)),
+                "fork work sent to a miner without BLAKE2b"
+            );
+        }
+
+        // Its reconnect gets the upgrade message.
+        let (mut retry_reader, mut retry_writer) = connect_test_client(addr).await;
+        write_json_line(
+            &mut retry_writer,
+            &login(1, "old", json!(["submit_claimed_hash"])),
+        )
+        .await;
+        let refused = read_json_line(&mut retry_reader).await;
+        assert!(refused["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("Faraday fork")));
+
+        drop((old_writer, new_writer, retry_writer));
+        drop((old_reader, new_reader, retry_reader));
+        shutdown_test_listener(listener_task, server, jobs).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
