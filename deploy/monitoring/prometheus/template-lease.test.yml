@@ -1,0 +1,265 @@
+# Run from this directory: promtool test rules template-lease.test.yml
+rule_files:
+- blocknet-pool.rules.yml
+evaluation_interval: 15s
+tests:
+- name: A lost template replaced promptly stays quiet throughout both lookback windows
+  interval: 15s
+  input_series:
+  - series: blocknet_pool_monitor_template_renewal_failures_total{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 0 1+0x64
+  - series: blocknet_pool_monitor_template_renewal_expired_responses_total{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 0 1+0x64
+  - series: blocknet_pool_monitor_last_refresh_success_millis{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 1000+0x65
+  alert_rule_test:
+  - eval_time: 30s
+    alertname: BlocknetPoolTemplateLeaseRenewalFailed
+    exp_alerts: []
+  - eval_time: 30s
+    alertname: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
+    exp_alerts: []
+  - eval_time: 1m
+    alertname: BlocknetPoolTemplateLeaseRenewalFailed
+    exp_alerts: []
+  - eval_time: 1m
+    alertname: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: BlocknetPoolTemplateLeaseRenewalFailed
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: BlocknetPoolTemplateLeaseRenewalFailed
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
+    exp_alerts: []
+- name: Persistent recovery failure escalates then resolves immediately on successful replacement
+  interval: 15s
+  input_series:
+  - series: blocknet_pool_monitor_template_renewal_failures_total{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 0 1+0x18
+  - series: blocknet_pool_monitor_template_renewal_expired_responses_total{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 0 1+0x18
+  - series: blocknet_pool_monitor_last_refresh_success_millis{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 0+15000x13 0+15000x5
+  alert_rule_test:
+  - eval_time: 45s
+    alertname: BlocknetPoolTemplateLeaseRenewalFailed
+    exp_alerts: []
+  - eval_time: 45s
+    alertname: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
+    exp_alerts: []
+  - eval_time: 105s
+    alertname: BlocknetPoolTemplateLeaseRenewalFailed
+    exp_alerts: []
+  - eval_time: 105s
+    alertname: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
+    exp_alerts: []
+  - eval_time: 2m
+    alertname: BlocknetPoolTemplateLeaseRenewalFailed
+    exp_alerts:
+    - exp_labels:
+        instance: pool-a
+        job: blocknet_pool_monitor
+        severity: warning
+        visibility: private
+      exp_annotations: &id001
+        summary: Pool template renewal has not recovered
+        description: A template renewal failed in the last five minutes, and for at least one minute the
+          pool has had no confirmed template fetch or renewal within 45 seconds. Check daemon connectivity
+          and template replacement.
+  - eval_time: 2m
+    alertname: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
+    exp_alerts: []
+  - eval_time: 3m
+    alertname: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
+    exp_alerts: []
+  - eval_time: 195s
+    alertname: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
+    exp_alerts:
+    - exp_labels:
+        instance: pool-a
+        job: blocknet_pool_monitor
+        severity: critical
+        visibility: private
+      exp_annotations: &id002
+        summary: Pool template recovery is stalled
+        description: The daemon reported an unknown or expired template ID in the last 15 minutes, and
+          for at least one minute the pool has had no confirmed template fetch or renewal within two minutes.
+          A daemon restart or switch can invalidate an ID before its lease expires.
+  - eval_time: 210s
+    alertname: BlocknetPoolTemplateLeaseRenewalFailed
+    exp_alerts: []
+  - eval_time: 210s
+    alertname: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
+    exp_alerts: []
+- name: Transport renewal failures warn without claiming an unknown template ID
+  interval: 15s
+  input_series:
+  - series: blocknet_pool_monitor_template_renewal_failures_total{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 0 1+0x18
+  - series: blocknet_pool_monitor_template_renewal_expired_responses_total{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 0+0x19
+  - series: blocknet_pool_monitor_last_refresh_success_millis{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 0+15000x19
+  alert_rule_test:
+  - eval_time: 195s
+    alertname: BlocknetPoolTemplateLeaseRenewalFailed
+    exp_alerts:
+    - exp_labels:
+        instance: pool-a
+        job: blocknet_pool_monitor
+        severity: warning
+        visibility: private
+      exp_annotations: *id001
+  - eval_time: 195s
+    alertname: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
+    exp_alerts: []
+- name: Missing freshness telemetry cannot silence a recorded renewal failure
+  interval: 15s
+  input_series:
+  - series: blocknet_pool_monitor_template_renewal_failures_total{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 0 1+0x8
+  - series: blocknet_pool_monitor_template_renewal_expired_responses_total{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 0 1+0x8
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: BlocknetPoolTemplateLeaseRenewalFailed
+    exp_alerts: []
+  - eval_time: 1m
+    alertname: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
+    exp_alerts: []
+  - eval_time: 75s
+    alertname: BlocknetPoolTemplateLeaseRenewalFailed
+    exp_alerts:
+    - exp_labels:
+        instance: pool-a
+        job: blocknet_pool_monitor
+        severity: warning
+        visibility: private
+      exp_annotations: *id001
+  - eval_time: 75s
+    alertname: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
+    exp_alerts:
+    - exp_labels:
+        instance: pool-a
+        job: blocknet_pool_monitor
+        severity: critical
+        visibility: private
+      exp_annotations: *id002
+- name: Healthy recovery on one instance cannot silence another instance
+  interval: 15s
+  input_series:
+  - series: blocknet_pool_monitor_template_renewal_failures_total{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 0 1+0x18
+  - series: blocknet_pool_monitor_template_renewal_expired_responses_total{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 0 1+0x18
+  - series: blocknet_pool_monitor_template_renewal_failures_total{instance="pool-b",job="blocknet_pool_monitor"}
+    values: 0 1+0x18
+  - series: blocknet_pool_monitor_template_renewal_expired_responses_total{instance="pool-b",job="blocknet_pool_monitor"}
+    values: 0 1+0x18
+  - series: blocknet_pool_monitor_last_refresh_success_millis{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 1000+0x19
+  - series: blocknet_pool_monitor_last_refresh_success_millis{instance="pool-b",job="blocknet_pool_monitor"}
+    values: 0+15000x19
+  alert_rule_test:
+  - eval_time: 195s
+    alertname: BlocknetPoolTemplateLeaseRenewalFailed
+    exp_alerts:
+    - exp_labels:
+        instance: pool-b
+        job: blocknet_pool_monitor
+        severity: warning
+        visibility: private
+      exp_annotations: *id001
+  - eval_time: 195s
+    alertname: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
+    exp_alerts:
+    - exp_labels:
+        instance: pool-b
+        job: blocknet_pool_monitor
+        severity: critical
+        visibility: private
+      exp_annotations: *id002
+- name: Repeated recoveries and counter resets do not page when work stays fresh
+  interval: 15s
+  input_series:
+  - series: blocknet_pool_monitor_template_renewal_failures_total{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 5+0x3 0+0x3 1+1x12
+  - series: blocknet_pool_monitor_template_renewal_expired_responses_total{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 5+0x3 0+0x3 1+1x12
+  - series: blocknet_pool_monitor_last_refresh_success_millis{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 1000+0x20
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: BlocknetPoolTemplateLeaseRenewalFailed
+    exp_alerts: []
+  - eval_time: 1m
+    alertname: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
+    exp_alerts: []
+  - eval_time: 3m
+    alertname: BlocknetPoolTemplateLeaseRenewalFailed
+    exp_alerts: []
+  - eval_time: 3m
+    alertname: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: BlocknetPoolTemplateLeaseRenewalFailed
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
+    exp_alerts: []
+- name: Sustained refresh failure still alerts without any renewal failure counter
+  interval: 15s
+  input_series:
+  - series: blocknet_pool_monitor_last_refresh_success_millis{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 0+15000x15
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: BlocknetPoolTemplateLeaseRefreshDelayed
+    exp_alerts:
+    - exp_labels:
+        instance: pool-a
+        job: blocknet_pool_monitor
+        severity: warning
+        visibility: private
+      exp_annotations:
+        summary: Pool template lease refresh is delayed
+        description: The pool has not fetched or renewed its current daemon template successfully for
+          more than 45 seconds.
+  - eval_time: 195s
+    alertname: BlocknetPoolTemplateLeaseRefreshCritical
+    exp_alerts:
+    - exp_labels:
+        instance: pool-a
+        job: blocknet_pool_monitor
+        severity: critical
+        visibility: private
+      exp_annotations:
+        summary: Pool template lease refresh is critically delayed
+        description: The pool has not fetched or renewed its current daemon template successfully for
+          more than two minutes.
+- name: Failed block submission fallback remains critical even with fresh templates
+  interval: 15s
+  input_series:
+  - series: blocknet_pool_monitor_block_submit_full_fallback_errors_total{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 0 1+0x8
+  - series: blocknet_pool_monitor_last_refresh_success_millis{instance="pool-a",job="blocknet_pool_monitor"}
+    values: 1000+0x9
+  alert_rule_test:
+  - eval_time: 75s
+    alertname: BlocknetPoolFullBlockFallbackFailed
+    exp_alerts:
+    - exp_labels:
+        instance: pool-a
+        job: blocknet_pool_monitor
+        severity: critical
+        visibility: private
+      exp_annotations:
+        summary: Pool full-block submission fallback failed
+        description: At least one retained full-block fallback encountered a transport error, unexpected
+          daemon rejection, or negative success response in the last 15 minutes. Stale tip races are excluded.

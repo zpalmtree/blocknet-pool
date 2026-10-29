@@ -101,6 +101,20 @@ Provision the on-host monitoring packages and configs on `bntpool` with:
 
 That script installs Prometheus, Alertmanager, node exporter, blackbox exporter, and the local Discord relay. Grafana provisioning files are included in-repo and can be installed separately if Grafana is present on the host.
 
+Template renewal errors remain counted, but notify only while template recovery is overdue.
+A recent successful template fetch or renewal suppresses the historical error alerts immediately.
+Unknown template IDs can follow a daemon restart or switch before their leases expire; they
+become critical only when recovery stays overdue. Missing freshness telemetry does not suppress
+a recorded failure. General refresh-stall and block-submission-failure alerts remain independent.
+
+Validate the rules and recovery scenarios before provisioning:
+
+```bash
+cd deploy/monitoring/prometheus
+promtool check rules blocknet-pool.rules.yml
+promtool test rules template-lease.test.yml
+```
+
 ## Build Blocknet Daemon For bntpool
 
 When you need a fresh `blocknet-core` daemon binary for the pool host, build it

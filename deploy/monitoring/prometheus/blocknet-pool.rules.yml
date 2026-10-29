@@ -227,22 +227,32 @@ groups:
           description: The pool has not fetched or renewed its current daemon template successfully for more than two minutes.
 
       - alert: BlocknetPoolTemplateLeaseRenewalFailed
-        expr: increase(blocknet_pool_monitor_template_renewal_failures_total[5m]) > 0
+        # Keep the event counter, but notify only while recovery is overdue.
+        # `unless` also preserves the alert if freshness telemetry is missing.
+        expr: >-
+          (increase(blocknet_pool_monitor_template_renewal_failures_total[5m]) > 0)
+          unless (blocknet_pool_monitor_last_refresh_success_millis <= 45000)
+        for: 1m
         labels:
           severity: warning
           visibility: private
         annotations:
-          summary: Pool template lease renewal failed
-          description: At least one daemon template renewal failed in the last five minutes; the pool should have fetched a replacement automatically.
+          summary: Pool template renewal has not recovered
+          description: A template renewal failed in the last five minutes, and for at least one minute the pool has had no confirmed template fetch or renewal within 45 seconds. Check daemon connectivity and template replacement.
 
       - alert: BlocknetPoolTemplateLeaseExpiredBeforeRenewal
-        expr: increase(blocknet_pool_monitor_template_renewal_expired_responses_total[15m]) > 0
+        # Unknown IDs can follow a restart or failover before the lease expires.
+        # A successful replacement or renewal clears this immediately.
+        expr: >-
+          (increase(blocknet_pool_monitor_template_renewal_expired_responses_total[15m]) > 0)
+          unless (blocknet_pool_monitor_last_refresh_success_millis <= 120000)
+        for: 1m
         labels:
           severity: critical
           visibility: private
         annotations:
-          summary: Pool template expired before renewal
-          description: The daemon reported an unknown or expired template during renewal in the last 15 minutes.
+          summary: Pool template recovery is stalled
+          description: The daemon reported an unknown or expired template ID in the last 15 minutes, and for at least one minute the pool has had no confirmed template fetch or renewal within two minutes. A daemon restart or switch can invalidate an ID before its lease expires.
 
       - alert: BlocknetPoolTemplateExpiredAtBlockSubmit
         expr: >-
