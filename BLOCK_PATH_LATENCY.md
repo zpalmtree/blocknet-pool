@@ -111,3 +111,7 @@ One line each: hypothesis, stage, tier and host, result, verdict.
   (p99 215 ms), which pool `8bddb1b` moves after the broadcast (pushed;
   deploy held by the owner). Seine job switch p50 729 ms. That is fleet
   telemetry, unchanged until the batched seine release ships `82830a7`.
+- **T3, peer blocks over the last 6 h (after the legacy window cleared at
+  ~70214).** Daemon sync_total p50 584 ms, p90 761 ms; preverify p50
+  551 ms (n=67). This meets the ≤600 ms target. Submit total p50 625 ms
+  (n=7).
