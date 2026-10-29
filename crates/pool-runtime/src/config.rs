@@ -28,6 +28,8 @@ pub struct Config {
     pub gateway_socket: String,
     /// Miner connections Stratum accepts in total, and from one IP (IPv6
     /// grouped by /64). Connections over either cap are closed at once.
+    /// Each seine rig holds two connections (its own and a dev-fee
+    /// session), and farms often share one IP.
     pub stratum_max_connections: i32,
     pub stratum_max_connections_per_ip: i32,
 
@@ -146,7 +148,7 @@ impl Default for Config {
             stratum_port: 3333,
             gateway_socket: String::new(),
             stratum_max_connections: 16_384,
-            stratum_max_connections_per_ip: 256,
+            stratum_max_connections_per_ip: 1024,
             daemon_data_dir: "data".to_string(),
             daemon_api: "http://127.0.0.1:8332".to_string(),
             daemon_cookie_path: "/etc/blocknet/pool/daemon-active.api.cookie".to_string(),
