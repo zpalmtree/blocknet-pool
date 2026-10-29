@@ -153,6 +153,9 @@ pub struct JobManager {
     cfg: Config,
 
     state: RwLock<JobState>,
+    /// Height of `state.current` (0 before the first job), readable without
+    /// the state lock from vardiff paths that hold the engine's session lock.
+    current_height: AtomicU64,
     nonce_counter: AtomicU64,
     refresh: RefreshCoordinator,
     reward_cache: Mutex<RewardAddressCache>,
@@ -355,6 +358,7 @@ impl JobManager {
             node,
             cfg,
             state: RwLock::new(JobState::default()),
+            current_height: AtomicU64::new(0),
             nonce_counter: AtomicU64::new(random_nonce_slot()),
             refresh: RefreshCoordinator::default(),
             reward_cache: Mutex::new(RewardAddressCache {
@@ -1166,6 +1170,7 @@ impl JobManager {
         }
 
         state.current = Some(parsed.clone());
+        self.current_height.store(parsed.height, Ordering::Release);
         state.jobs.insert(parsed.id.clone(), parsed.clone());
         state.job_meta.insert(
             parsed.id.clone(),
@@ -1420,6 +1425,7 @@ impl JobManager {
         }
 
         state.current = Some(job.clone());
+        self.current_height.store(job.height, Ordering::Release);
         state.jobs.insert(job.id.clone(), job.clone());
         state.job_meta.insert(
             job.id.clone(),
@@ -1452,6 +1458,13 @@ fn is_wallet_recoverable_template_error(err: &anyhow::Error) -> bool {
 }
 
 impl JobRepository for JobManager {
+    fn current_height(&self) -> Option<u64> {
+        match self.current_height.load(Ordering::Acquire) {
+            0 => None,
+            height => Some(height),
+        }
+    }
+
     fn resolve_submit_job_with_reason(
         &self,
         submitted_job_id: &str,

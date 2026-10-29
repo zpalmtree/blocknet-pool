@@ -11,6 +11,17 @@ pub const FARADAY_HEADER_BASE_LEN: usize = 156;
 /// BLAKE2b personalization, `blocknet/pow/v1` zero-padded to 16 bytes.
 pub const BLAKE2B_POW_PERSONAL_MAINNET: [u8; 16] = *b"blocknet/pow/v1\0";
 
+/// Share difficulty bounds from the fork. BLAKE2b runs at about 8 MH/s per CPU
+/// core and 15 GH/s on an RTX 5090, so Argon2-era difficulties (tens to about
+/// 10^5) would flood the pool with shares. The start gives a 16-core CPU about
+/// one share per 30 s and a 5090 a few per second until vardiff settles; the
+/// floor sits far above any Argon2-era difficulty, so an older value is
+/// recognised and replaced by the start instead of clamped to the floor. The
+/// ceiling stays below 2^53 so API consumers keep exact values.
+pub const FARADAY_MIN_SHARE_DIFFICULTY: u64 = 1 << 24;
+pub const FARADAY_INITIAL_SHARE_DIFFICULTY: u64 = 1 << 32;
+pub const FARADAY_MAX_SHARE_DIFFICULTY: u64 = 1 << 50;
+
 const LEGACY_BLOCK_SECONDS: u64 = 300;
 const FARADAY_BLOCK_SECONDS: u64 = 600;
 
