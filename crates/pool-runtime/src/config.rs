@@ -84,6 +84,10 @@ pub struct Config {
     /// When false, proven fakes are only logged per source and evidence is
     /// booked against the address as before (shadow mode for rollout).
     pub source_penalties_enabled: bool,
+    /// Send an established source's block claim to the daemon while the pool
+    /// verifies it, instead of after. The daemon re-hashes every block, so
+    /// the two checks overlap; the pool's verdict still decides the share.
+    pub parallel_candidate_submit: bool,
     /// A proven fake from a source with less verified history than this
     /// (in memory for the source, persisted for the address) is a full
     /// strike; with more history it is judged on its invalid ratio.
@@ -175,6 +179,7 @@ impl Default for Config {
             source_max_ban_duration: "24h".to_string(),
             source_ip_strike_threshold: 3,
             source_penalties_enabled: true,
+            parallel_candidate_submit: true,
             source_full_strike_min_source_good: 20,
             source_full_strike_min_address_good: 100,
             source_honest_invalid_rate: 0.02,

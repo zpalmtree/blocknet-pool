@@ -489,6 +489,56 @@ pub(crate) trait ShareStore: Send + Sync + 'static {
     }
 }
 
+/// Most early block submissions started per window. Real blocks arrive a
+/// few times an hour at most, so this only ever binds on false claims, and
+/// caps them at a handful of extra daemon hashes per window.
+const EARLY_SUBMIT_MAX_PER_WINDOW: usize = 4;
+const EARLY_SUBMIT_WINDOW: Duration = Duration::from_secs(600);
+
+type EarlySubmitOutcome = (
+    FoundBlockRecord,
+    Result<BlockSubmitResponse>,
+    Duration,
+    Instant,
+);
+
+/// A block claim already sent to the daemon while the pool verifies it.
+/// `wait` hands the daemon's answer to the normal block path; dropping it
+/// unclaimed (the pool's verify rejected or never judged the share) still
+/// waits for the daemon and reconciles the staged journal entry.
+struct EarlyBlockSubmit<'a> {
+    engine: &'a PoolEngine,
+    staged: FoundBlockRecord,
+    started_at: Instant,
+    handle: Option<std::thread::JoinHandle<(Result<BlockSubmitResponse>, Duration)>>,
+}
+
+impl EarlyBlockSubmit<'_> {
+    fn join(&mut self) -> Option<(Result<BlockSubmitResponse>, Duration)> {
+        let handle = self.handle.take()?;
+        Some(handle.join().unwrap_or_else(|_| {
+            (
+                Err(anyhow!("early block submit thread panicked")),
+                self.started_at.elapsed(),
+            )
+        }))
+    }
+
+    fn wait(mut self) -> EarlySubmitOutcome {
+        let (submitted, elapsed) = self.join().expect("early block submit joined once");
+        (self.staged.clone(), submitted, elapsed, self.started_at)
+    }
+}
+
+impl Drop for EarlyBlockSubmit<'_> {
+    fn drop(&mut self) {
+        if let Some((submitted, _)) = self.join() {
+            self.engine
+                .reconcile_unclaimed_early_submit(&self.staged, submitted);
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct FoundBlockRecord {
     pub height: u64,
@@ -571,6 +621,10 @@ pub struct PoolEngine {
     block_submit_latency: NamedLatencyHistograms,
     /// Stages of a block candidate from Stratum receipt to daemon acceptance.
     block_candidate_latency: NamedLatencyHistograms,
+    /// Start times of recent early block submissions (see
+    /// `start_early_block_submit`), bounding what false claims can cost the
+    /// daemon.
+    early_submit_starts: Mutex<VecDeque<Instant>>,
 }
 
 /// One proven-fake share (the pool's hash differs from the claimed hash).
@@ -915,6 +969,7 @@ impl PoolEngine {
             admission,
             block_submit_latency: NamedLatencyHistograms::default(),
             block_candidate_latency: NamedLatencyHistograms::default(),
+            early_submit_starts: Mutex::new(VecDeque::new()),
         };
         engine.recover_found_block_outbox();
         engine
@@ -1442,6 +1497,16 @@ impl PoolEngine {
                 // it is a one-shot privilege, since a false claim strikes the
                 // source and removes it.
                 let inline_priority = candidate_claim && source_established;
+                // The same claim also goes to the daemon now rather than after
+                // the pool's hash: the daemon re-verifies the PoW before it
+                // accepts, so the two checks overlap instead of running back
+                // to back. The pool's own verdict still decides the share.
+                let mut early_submit = match claimed_hash {
+                    Some(hash) if inline_priority => {
+                        self.start_early_block_submit(&session, &job, nonce, hash)
+                    }
+                    _ => None,
+                };
                 // This submit now holds a regular submit worker until the
                 // verifier answers. Bound how many may do that at once so a
                 // few addresses under forced verification cannot occupy every
@@ -1576,45 +1641,55 @@ impl PoolEngine {
                     );
                     let computed_hash = hex::encode(validation.hash);
                     block_hash = Some(computed_hash.clone());
-                    let staged_found = FoundBlockRecord {
-                        height: job.height,
-                        hash: computed_hash.clone(),
-                        difficulty: job.network_difficulty,
-                        reward: 0,
-                        finder: session.address.clone(),
-                        finder_worker: session.worker.clone(),
-                        timestamp: SystemTime::now(),
-                    };
-                    if let Err(err) = self.stage_found_block_submission(&staged_found) {
-                        release_claim_on_error = false;
-                        let created_at = SystemTime::now();
-                        self.persist_rejected_share_with_evidence(
-                            &session,
-                            &job_id_for_share,
-                            nonce,
-                            share_difficulty,
-                            RejectedShareEvidence {
-                                claimed_hash_hex: claimed_hash_hex.as_deref(),
-                                replay: Some(ShareReplayData {
-                                    job_id: job_id_for_share.clone(),
-                                    header_base: job.header_base.clone(),
-                                    network_target: job.network_target,
-                                    created_at,
-                                }),
-                                reject_reason: Some(&err.to_string()),
-                            },
-                            &metadata,
-                        );
-                        return Err(err);
-                    }
+                    let (staged_found, submitted, submit_elapsed, submit_started_at) =
+                        if let Some(early) = early_submit.take() {
+                            let wait_started_at = Instant::now();
+                            let outcome = early.wait();
+                            self.block_candidate_latency
+                                .record("early_submit_wait", wait_started_at.elapsed());
+                            outcome
+                        } else {
+                            let staged_found = FoundBlockRecord {
+                                height: job.height,
+                                hash: computed_hash.clone(),
+                                difficulty: job.network_difficulty,
+                                reward: 0,
+                                finder: session.address.clone(),
+                                finder_worker: session.worker.clone(),
+                                timestamp: SystemTime::now(),
+                            };
+                            if let Err(err) = self.stage_found_block_submission(&staged_found) {
+                                release_claim_on_error = false;
+                                let created_at = SystemTime::now();
+                                self.persist_rejected_share_with_evidence(
+                                    &session,
+                                    &job_id_for_share,
+                                    nonce,
+                                    share_difficulty,
+                                    RejectedShareEvidence {
+                                        claimed_hash_hex: claimed_hash_hex.as_deref(),
+                                        replay: Some(ShareReplayData {
+                                            job_id: job_id_for_share.clone(),
+                                            header_base: job.header_base.clone(),
+                                            network_target: job.network_target,
+                                            created_at,
+                                        }),
+                                        reject_reason: Some(&err.to_string()),
+                                    },
+                                    &metadata,
+                                );
+                                return Err(err);
+                            }
 
-                    let submit_started_at = Instant::now();
-                    self.block_candidate_latency.record(
-                        "stage_journal",
-                        submit_started_at.saturating_duration_since(validated_at),
-                    );
-                    let submitted = self.node.submit_block(&job, nonce);
-                    let submit_elapsed = submit_started_at.elapsed();
+                            let submit_started_at = Instant::now();
+                            self.block_candidate_latency.record(
+                                "stage_journal",
+                                submit_started_at.saturating_duration_since(validated_at),
+                            );
+                            let submitted = self.node.submit_block(&job, nonce);
+                            let submit_elapsed = submit_started_at.elapsed();
+                            (staged_found, submitted, submit_elapsed, submit_started_at)
+                        };
                     self.block_submit_latency.record(
                         match &submitted {
                             Ok(submit) if submit.accepted => "accepted",
@@ -2048,6 +2123,128 @@ impl PoolEngine {
                     error = %err,
                     "cannot lock peer found-block outbox"
                 ),
+            }
+        }
+    }
+
+    /// Stages the journal entry and sends an established source's block claim
+    /// to the daemon on its own thread. Returns `None` (the caller submits
+    /// after verifying, as before) when disabled, over the rate bound, or if
+    /// staging fails.
+    fn start_early_block_submit(
+        &self,
+        session: &MinerSession,
+        job: &Job,
+        nonce: u64,
+        claimed_hash: [u8; 32],
+    ) -> Option<EarlyBlockSubmit<'_>> {
+        if !self.cfg().parallel_candidate_submit {
+            return None;
+        }
+        {
+            let now = Instant::now();
+            let mut starts = self.early_submit_starts.lock();
+            while starts
+                .front()
+                .is_some_and(|started| now.duration_since(*started) >= EARLY_SUBMIT_WINDOW)
+            {
+                starts.pop_front();
+            }
+            if starts.len() >= EARLY_SUBMIT_MAX_PER_WINDOW {
+                tracing::warn!(
+                    finder = %session.address,
+                    worker = %session.worker,
+                    "early block submit rate bound reached; submitting after verify"
+                );
+                return None;
+            }
+            starts.push_back(now);
+        }
+
+        let staged = FoundBlockRecord {
+            height: job.height,
+            hash: hex::encode(claimed_hash),
+            difficulty: job.network_difficulty,
+            reward: 0,
+            finder: session.address.clone(),
+            finder_worker: session.worker.clone(),
+            timestamp: SystemTime::now(),
+        };
+        if let Err(err) = self.stage_found_block_submission(&staged) {
+            tracing::warn!(error = %err, "failed staging early block submission");
+            return None;
+        }
+        let node = Arc::clone(&self.node);
+        let job = job.clone();
+        let started_at = Instant::now();
+        let spawned = std::thread::Builder::new()
+            .name("early-block-submit".to_string())
+            .spawn(move || {
+                let submitted = node.submit_block(&job, nonce);
+                (submitted, started_at.elapsed())
+            });
+        match spawned {
+            Ok(handle) => Some(EarlyBlockSubmit {
+                engine: self,
+                staged,
+                started_at,
+                handle: Some(handle),
+            }),
+            Err(err) => {
+                tracing::warn!(error = %err, "failed starting early block submission");
+                if let Err(err) = self.clear_found_block_submission(&staged) {
+                    tracing::warn!(error = %err, "failed clearing early block journal entry");
+                }
+                None
+            }
+        }
+    }
+
+    /// Settles an early submission whose share the pool's verify did not
+    /// confirm. The daemon accepting it means consensus verified the block,
+    /// so it is recorded as found (and flagged: the two verifiers disagreed);
+    /// otherwise the staged journal entry is dropped.
+    fn reconcile_unclaimed_early_submit(
+        &self,
+        staged: &FoundBlockRecord,
+        submitted: Result<BlockSubmitResponse>,
+    ) {
+        match submitted {
+            Ok(submit) if submit.accepted => {
+                let mut found = staged.clone();
+                found.height = submit.height.unwrap_or(staged.height);
+                if let Some(hash) = submit.hash {
+                    found.hash = hash;
+                }
+                tracing::error!(
+                    height = found.height,
+                    hash = %found.hash,
+                    finder = %staged.finder,
+                    worker = %staged.finder_worker,
+                    "daemon accepted an early block submission the pool did not verify as a block"
+                );
+                self.jobs.note_block_accepted(found.height);
+                self.persist_found_block(staged, found);
+            }
+            Ok(_) => {
+                if let Err(err) = self.clear_found_block_submission(staged) {
+                    tracing::warn!(
+                        height = staged.height,
+                        hash = %staged.hash,
+                        error = %err,
+                        "failed clearing rejected early block journal entry"
+                    );
+                }
+            }
+            Err(err) => {
+                // Unknown outcome: the journal entry stays, and recovery
+                // replays it only if the block is on chain.
+                tracing::warn!(
+                    height = staged.height,
+                    hash = %staged.hash,
+                    error = %err,
+                    "early block submission failed for a claim the pool did not verify"
+                );
             }
         }
     }
@@ -3299,12 +3496,15 @@ impl JobRepository for InMemoryJobs {
 pub(crate) struct InMemoryNode {
     pub(crate) submits: Mutex<Vec<(String, u64)>>,
     pub(crate) accepted: bool,
+    /// Simulated daemon re-hash time per submission.
+    pub(crate) delay: Duration,
 }
 
 #[cfg(test)]
 impl NodeApi for InMemoryNode {
     fn submit_block(&self, job: &Job, nonce: u64) -> Result<BlockSubmitResponse> {
         self.submits.lock().push((job.id.clone(), nonce));
+        std::thread::sleep(self.delay);
         Ok(BlockSubmitResponse {
             accepted: self.accepted,
             hash: Some(format!("{:x}", nonce)),
@@ -5294,6 +5494,185 @@ mod tests {
         assert_eq!(shares.len(), 1);
         assert!(shares[0].block_hash.is_some());
         assert_eq!(store.blocks().len(), 1);
+    }
+
+    /// Nonce 7 hashes to a block (all zeros) after `delay`; every other
+    /// nonce is an instant ordinary share.
+    struct SlowBlockHasher {
+        delay: Duration,
+    }
+    impl PowHasher for SlowBlockHasher {
+        fn hash(&self, _header_base: &[u8], nonce: u64) -> anyhow::Result<[u8; 32]> {
+            if nonce == 7 {
+                std::thread::sleep(self.delay);
+                return Ok([0x00; 32]);
+            }
+            Ok(NonceHasher::hash_for(nonce))
+        }
+    }
+
+    /// An engine with an established honest source on "203.0.113.1:4000", a
+    /// daemon that takes `daemon_delay` per submit and a verifier that takes
+    /// `verify_delay` for the block at nonce 7.
+    fn early_submit_engine(
+        mut cfg: Config,
+        verify_delay: Duration,
+        daemon_delay: Duration,
+        daemon_accepts: bool,
+    ) -> (PoolEngine, Arc<InMemoryStore>, Arc<InMemoryNode>) {
+        cfg.validation_mode = "full".to_string();
+        cfg.provisional_share_delay = "0s".to_string();
+        cfg.payout_provisional_cap_multiplier = 0.0;
+        let validation = Arc::new(ValidationEngine::new(
+            cfg.clone(),
+            Arc::new(SlowBlockHasher {
+                delay: verify_delay,
+            }),
+        ));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let store = Arc::new(InMemoryStore::default());
+        let node = Arc::new(InMemoryNode {
+            accepted: daemon_accepts,
+            delay: daemon_delay,
+            ..InMemoryNode::default()
+        });
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::clone(&node) as Arc<dyn NodeApi>,
+        );
+        let honest = "203.0.113.1:4000";
+        engine
+            .login(honest, test_miner_address(), "rig", 2, submit_hash_cap())
+            .expect("login");
+        for nonce in 100..100 + crate::source_risk::SOURCE_ESTABLISHED_MIN_VERIFIED {
+            engine
+                .submit(
+                    honest,
+                    "job1".to_string(),
+                    nonce,
+                    NonceHasher::honest(nonce),
+                )
+                .expect("verified share");
+        }
+        assert!(engine.source_established(honest));
+        (engine, store, node)
+    }
+
+    #[test]
+    fn established_block_claim_overlaps_daemon_submit_with_verify() {
+        let delay = Duration::from_millis(300);
+        let (engine, store, node) = early_submit_engine(cfg(), delay, delay, true);
+        let started = Instant::now();
+        let ack = engine
+            .submit(
+                "203.0.113.1:4000",
+                "job1".to_string(),
+                7,
+                Some("00".repeat(32)),
+            )
+            .expect("block accepted");
+        let elapsed = started.elapsed();
+        assert!(ack.block_accepted);
+        assert!(
+            elapsed < Duration::from_millis(550),
+            "verify and daemon submit should overlap ({elapsed:?})"
+        );
+        assert_eq!(node.submits.lock().len(), 1);
+        assert_eq!(store.blocks().len(), 1);
+        assert!(engine
+            .block_candidate_histograms()
+            .contains_key("early_submit_wait"));
+    }
+
+    #[test]
+    fn disabled_parallel_submit_verifies_before_submitting() {
+        let mut cfg = cfg();
+        cfg.parallel_candidate_submit = false;
+        let delay = Duration::from_millis(200);
+        let (engine, store, node) = early_submit_engine(cfg, delay, delay, true);
+        let started = Instant::now();
+        let ack = engine
+            .submit(
+                "203.0.113.1:4000",
+                "job1".to_string(),
+                7,
+                Some("00".repeat(32)),
+            )
+            .expect("block accepted");
+        assert!(ack.block_accepted);
+        assert!(started.elapsed() >= Duration::from_millis(400));
+        assert_eq!(node.submits.lock().len(), 1);
+        assert_eq!(store.blocks().len(), 1);
+        assert!(!engine
+            .block_candidate_histograms()
+            .contains_key("early_submit_wait"));
+    }
+
+    #[test]
+    fn false_block_claim_from_established_source_is_rejected_and_struck() {
+        let (engine, store, node) =
+            early_submit_engine(cfg(), Duration::ZERO, Duration::ZERO, false);
+        let err = engine
+            .submit(
+                "203.0.113.1:4000",
+                "job1".to_string(),
+                8,
+                fake_candidate_claim(),
+            )
+            .expect_err("false claim rejected");
+        assert!(err.to_string().contains("invalid share proof"));
+        // The claim reached the daemon early, which rejected it; nothing is
+        // recorded as found and the source is struck as before.
+        assert_eq!(node.submits.lock().len(), 1);
+        assert!(store.blocks().is_empty());
+        assert!(engine.source_blocked("203.0.113.1:4000"));
+    }
+
+    #[test]
+    fn daemon_accepted_early_submit_is_recorded_even_if_pool_verify_disagrees() {
+        // The daemon is the consensus check: if it accepted the block, the
+        // block is on chain and must be recorded whatever the pool hashed.
+        let (engine, store, node) =
+            early_submit_engine(cfg(), Duration::ZERO, Duration::ZERO, true);
+        let _ = engine.submit(
+            "203.0.113.1:4000",
+            "job1".to_string(),
+            8,
+            fake_candidate_claim(),
+        );
+        assert_eq!(node.submits.lock().len(), 1);
+        assert_eq!(store.blocks().len(), 1);
+    }
+
+    #[test]
+    fn early_submits_are_rate_bounded() {
+        let (engine, store, node) =
+            early_submit_engine(cfg(), Duration::ZERO, Duration::ZERO, true);
+        {
+            let mut starts = engine.early_submit_starts.lock();
+            for _ in 0..EARLY_SUBMIT_MAX_PER_WINDOW {
+                starts.push_back(Instant::now());
+            }
+        }
+        // Over the bound the block still goes through, verified first.
+        let ack = engine
+            .submit(
+                "203.0.113.1:4000",
+                "job1".to_string(),
+                7,
+                Some("00".repeat(32)),
+            )
+            .expect("block accepted");
+        assert!(ack.block_accepted);
+        assert_eq!(node.submits.lock().len(), 1);
+        assert_eq!(store.blocks().len(), 1);
+        assert!(!engine
+            .block_candidate_histograms()
+            .contains_key("early_submit_wait"));
     }
 
     #[test]
