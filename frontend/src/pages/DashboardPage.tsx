@@ -49,7 +49,9 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
   const [insights, setInsights] = useState<StatsInsightsResponse | null>(null);
   const [payouts, setPayouts] = useState<PayoutItem[]>([]);
   const [range, setRange] = useState<Range>('7d');
-  const [history, setHistory] = useState<HashratePoint[]>([]);
+  const [historyResult, setHistoryResult] = useState<{ range: Range; data: HashratePoint[] }>({ range, data: [] });
+  const history = historyResult.range === range ? historyResult.data : [];
+  const historyTick = Math.floor(liveTick / 6);
 
   const refreshStats = useCallback(async () => {
     try {
@@ -78,15 +80,6 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
     }
   }, [api]);
 
-  const loadHistory = useCallback(async () => {
-    try {
-      const d = await api.getStatsHistory(range);
-      setHistory(d);
-    } catch {
-      setHistory([]);
-    }
-  }, [api, range]);
-
   useEffect(() => {
     void refreshStats();
     void loadInsights();
@@ -100,14 +93,19 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
     }
     if (liveTick % 6 === 0) {
       void loadInsights();
-      void loadHistory();
       void loadPayouts();
     }
-  }, [liveTick, loadHistory, loadInsights, loadPayouts, refreshStats]);
+  }, [liveTick, loadInsights, loadPayouts, refreshStats]);
 
   useEffect(() => {
-    void loadHistory();
-  }, [loadHistory, range]);
+    let active = true;
+    void api.getStatsHistory(range).then((data) => {
+      if (active) setHistoryResult({ range, data });
+    }).catch(() => {
+      if (active) setHistoryResult({ range, data: [] });
+    });
+    return () => { active = false; };
+  }, [api, range, historyTick]);
 
   const poolUrl = poolInfo ? stratumUrl(poolInfo.stratum_port, poolInfo.pool_url) : null;
   const fee = poolInfo?.pool_fee_pct;

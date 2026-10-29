@@ -14,7 +14,8 @@
     "showcase:ui": "vite --config showcases/ui-simplify/vite.config.ts",
     "i18n:check": "node scripts/check-i18n.mjs",
     "postbuild": "node scripts/check-covers.mjs",
-    "showcase:round": "vite --config showcases/round-clarity/vite.config.ts"
+    "showcase:round": "vite --config showcases/round-clarity/vite.config.ts",
+    "showcase:performance": "vite --config showcases/performance/vite.config.ts"
   },
   "dependencies": {
     "qrcode.react": "4.2.0",

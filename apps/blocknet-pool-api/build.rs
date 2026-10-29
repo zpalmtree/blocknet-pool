@@ -41,6 +41,7 @@ fn main() {
     verify_ui_bundle(&frontend_dir, &frontend_src_dir, &frontend_dist_dir);
     embed_languages(&frontend_dist_dir);
     embed_wasm(&frontend_dist_dir);
+    embed_chunks(&frontend_dist_dir);
     embed_blog(&frontend_dir, &frontend_dist_dir.join("blog"));
 }
 
@@ -72,6 +73,31 @@ fn embed_languages(frontend_dist_dir: &Path) {
         format!("static UI_LANGUAGES: &[(&str, &[u8])] = &[\n{entries}];\n"),
     )
     .expect("write ui_languages.rs");
+}
+
+// Only serve chunks emitted by this build, never arbitrary request paths.
+fn embed_chunks(frontend_dist_dir: &Path) {
+    let mut files = walk_files(&frontend_dist_dir.join("chunks"));
+    files.sort();
+    let mut entries = String::new();
+    for file in files {
+        if file.extension().and_then(|ext| ext.to_str()) != Some("js") {
+            continue;
+        }
+        track_path(&file);
+        let name = file.file_name().expect("chunk filename").to_string_lossy();
+        entries.push_str(&format!(
+            "    ({:?}, include_bytes!({:?})),\n",
+            format!("chunks/{name}"),
+            file.display().to_string()
+        ));
+    }
+    let out = PathBuf::from(env::var("OUT_DIR").expect("out dir")).join("ui_chunks.rs");
+    fs::write(
+        out,
+        format!("static UI_CHUNKS: &[(&str, &[u8])] = &[\n{entries}];\n"),
+    )
+    .expect("write ui_chunks.rs");
 }
 
 // WebAssembly modules imported with ?url are emitted as content-hashed files

@@ -30,6 +30,7 @@ interface QueryParams {
 
 interface FetchOptions {
   auth?: boolean;
+  cacheMs?: number;
   pollAccepted?: boolean;
   method?: string;
   body?: BodyInit | null;
@@ -75,6 +76,7 @@ function cooldownKey(path: string): string {
 
 export function createApiClient(getApiKey: () => string, showError: (message: string) => void) {
   const inFlight = new Map<string, Promise<unknown>>();
+  const cache = new Map<string, { value: unknown; until: number }>();
   const cooldowns = new Map<string, number>();
   const fetchOnce = async <T,>(path: string, opts?: FetchOptions, polls = 0): Promise<T> => {
     const headers: Record<string, string> = { ...(opts?.headers ?? {}) };
@@ -126,6 +128,11 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
   const fetchJson = <T,>(path: string, opts?: FetchOptions): Promise<T> => {
     // Coalesce overlapping refreshes, but never deduplicate writes.
     if (opts?.method && opts.method !== 'GET') return fetchOnce<T>(path, opts);
+    for (const [key, entry] of cache) {
+      if (entry.until <= Date.now()) cache.delete(key);
+    }
+    const cached = opts?.cacheMs ? cache.get(path) : undefined;
+    if (cached) return Promise.resolve(cached.value as T);
     const current = inFlight.get(path);
     if (current) return current as Promise<T>;
     for (const [key, until] of cooldowns) {
@@ -134,7 +141,15 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
     if (cooldowns.has(cooldownKey(path))) {
       return Promise.reject(new Error('Temporarily busy; waiting before retrying'));
     }
-    const request = fetchOnce<T>(path, opts).finally(() => inFlight.delete(path));
+    const startedAt = Date.now();
+    const request = fetchOnce<T>(path, opts).then((value) => {
+      if (opts?.cacheMs && startedAt + opts.cacheMs > Date.now()) {
+        // Bound memory when many miner addresses/ranges are visited in one tab.
+        if (cache.size >= 12) cache.delete(cache.keys().next().value!);
+        cache.set(path, { value, until: startedAt + opts.cacheMs });
+      }
+      return value;
+    }).finally(() => inFlight.delete(path));
     inFlight.set(path, request);
     return request;
   };
@@ -150,7 +165,7 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
     getInfo: () => fetchJson<InfoResponse>('/api/info'),
     getCheckpoints: () => fetchJson<CheckpointsResponse>('/api/checkpoints'),
     getStats: () => fetchJson<StatsResponse>('/api/stats'),
-    getStatsHistory: (range: string) => fetchJson<HashratePoint[]>(`/api/stats/history?range=${encodeURIComponent(range)}`),
+    getStatsHistory: (range: string) => fetchJson<HashratePoint[]>(`/api/stats/history?range=${encodeURIComponent(range)}`, { cacheMs: 30_000 }),
     getStatsInsights: (rejectionWindow?: string) =>
       fetchJson<StatsInsightsResponse>(
         rejectionWindow
@@ -170,7 +185,7 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
         `/api/miner/${encodeURIComponent(address)}/balance?include_pending_estimate=${includePendingEstimate ? 'true' : 'false'}`
       ),
     getMinerHashrate: (address: string, range: string) =>
-      fetchJson<HashratePoint[]>(`/api/miner/${encodeURIComponent(address)}/hashrate?range=${encodeURIComponent(range)}`),
+      fetchJson<HashratePoint[]>(`/api/miner/${encodeURIComponent(address)}/hashrate?range=${encodeURIComponent(range)}`, { cacheMs: 10_000 }),
     resolveBlocknetHandle: (handle: string) =>
       fetchJson<BlocknetHandleResolution>(`https://blocknet.id/api/v1/resolve/${encodeURIComponent(handle)}`),
     getMiners: (limit: number, offset: number, sort: string, search?: string) =>

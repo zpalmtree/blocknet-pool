@@ -1,5 +1,6 @@
 import { t } from '../i18n';
-import { useLayoutEffect, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
+import { reduceChartPoints, type ChartPoint } from '../lib/chart';
 
 import { formatChartTick, humanRate, rangeToDurationMs, smoothChartPoints, toUnixMs } from '../lib/format';
 import type { ThemeMode } from '../lib/theme';
@@ -22,7 +23,7 @@ function traceSeriesPath(ctx: CanvasRenderingContext2D, coords: Array<{ x: numbe
   ctx.quadraticCurveTo(prev.x, prev.y, last.x, last.y);
 }
 
-function drawChartOn(canvas: HTMLCanvasElement, data: HashratePoint[], range: Range) {
+function drawChartOn(canvas: HTMLCanvasElement, points: ChartPoint[], range: Range) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   const styles = getComputedStyle(document.documentElement);
@@ -43,13 +44,6 @@ function drawChartOn(canvas: HTMLCanvasElement, data: HashratePoint[], range: Ra
   const H = rect.height;
   ctx.clearRect(0, 0, W, H);
 
-  const points = data
-    .map((p) => ({
-      t: typeof p.timestamp === 'number' && p.timestamp < 1e12 ? p.timestamp * 1000 : toUnixMs(p.timestamp),
-      v: p.hashrate || 0,
-    }))
-    .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.v));
-
   if (points.length < 2) {
     ctx.fillStyle = axisColor;
     ctx.font = '14px Manrope,sans-serif';
@@ -58,9 +52,7 @@ function drawChartOn(canvas: HTMLCanvasElement, data: HashratePoint[], range: Ra
     return;
   }
 
-  points.sort((a, b) => a.t - b.t);
-
-  const smoothed = smoothChartPoints(points, range);
+  const smoothed = reduceChartPoints(points, Math.ceil(W));
   const values = smoothed.map((p) => p.v);
   const timestamps = smoothed.map((p) => p.t);
 
@@ -162,31 +154,58 @@ function drawChartOn(canvas: HTMLCanvasElement, data: HashratePoint[], range: Ra
   ctx.restore();
 }
 
-export function HashrateChart({ data, range, theme }: { data: HashratePoint[]; range: Range; theme: ThemeMode }) {
+export const HashrateChart = memo(function HashrateChart({ data, range, theme }: { data: HashratePoint[]; range: Range; theme: ThemeMode }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
 
-  useLayoutEffect(() => {
+  const points = useMemo(() => {
+    const points = data
+      .map((p) => ({
+        t: typeof p.timestamp === 'number' && p.timestamp < 1e12 ? p.timestamp * 1000 : toUnixMs(p.timestamp),
+        v: p.hashrate || 0,
+      }))
+      .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.v));
+
+    points.sort((a, b) => a.t - b.t);
+    return smoothChartPoints(points, range);
+  }, [data, range]);
+
+  useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
     let frameId = 0;
-    const run = () => drawChartOn(canvas, data, range);
+    let drawnWidth = -1;
+    let drawnHeight = -1;
+    const run = () => {
+      frameId = 0;
+      const rect = canvas.getBoundingClientRect();
+      drawnWidth = rect.width;
+      drawnHeight = rect.height;
+      drawChartOn(canvas, points, range);
+    };
     const schedule = () => {
       if (frameId) window.cancelAnimationFrame(frameId);
       frameId = window.requestAnimationFrame(run);
     };
-    run();
     schedule();
-    const onResize = () => schedule();
-    window.addEventListener('resize', onResize);
+    const observer = new ResizeObserver(() => {
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width !== drawnWidth || rect.height !== drawnHeight) schedule();
+    });
+    observer.observe(canvas);
+    let active = true;
+    if (document.fonts.status !== 'loaded') {
+      void document.fonts.ready.then(() => { if (active) schedule(); });
+    }
     return () => {
       if (frameId) window.cancelAnimationFrame(frameId);
-      window.removeEventListener('resize', onResize);
+      active = false;
+      observer.disconnect();
     };
-  }, [data, range, theme]);
+  }, [points, range, theme]);
 
   return (
     <div className="chart-wrap">
       <canvas ref={ref} role="img" aria-label={t('chartDescription')} />
     </div>
   );
-}
+});

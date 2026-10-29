@@ -76,3 +76,51 @@ test('reward job polls 202 and only returns the completed breakdown', async () =
     globalThis.setTimeout = originalTimeout;
   }
 });
+
+test('history cache reuses fresh ranges and expires at the polling interval', async () => {
+  const originalNow = Date.now;
+  const originalFetch = globalThis.fetch;
+  try {
+    let now = 1000;
+    Date.now = () => now;
+    const calls = [];
+    globalThis.fetch = async (path) => {
+      calls.push(path);
+      return Response.json([{ timestamp: now, hashrate: calls.length }]);
+    };
+    const api = createApiClient(() => '', () => {});
+    const week = await api.getStatsHistory('7d');
+    await api.getStatsHistory('30d');
+    assert.strictEqual(await api.getStatsHistory('7d'), week);
+    assert.equal(calls.length, 2);
+    now += 30000;
+    assert.notDeepEqual(await api.getStatsHistory('7d'), week);
+    assert.equal(calls.length, 3);
+    const miner = await api.getMinerHashrate('alice', '1h');
+    assert.strictEqual(await api.getMinerHashrate('alice', '1h'), miner);
+    await api.getMinerHashrate('bob', '1h');
+    now += 10000;
+    assert.notDeepEqual(await api.getMinerHashrate('alice', '1h'), miner);
+    assert.equal(calls.length, 6);
+  } finally {
+    Date.now = originalNow;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('history cache bounds retained ranges and does not cache failures', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    let calls = 0;
+    globalThis.fetch = async () => { calls++; return Response.json([]); };
+    const api = createApiClient(() => '', () => {});
+    for (let i = 0; i < 13; i++) await api.getMinerHashrate(String(i), '1h');
+    await api.getMinerHashrate('0', '1h');
+    assert.equal(calls, 14);
+    globalThis.fetch = async () => { calls++; return Response.json({}, {status: 500}); };
+    await assert.rejects(api.getStatsHistory('7d'));
+    globalThis.fetch = async () => { calls++; return Response.json([]); };
+    assert.deepEqual(await api.getStatsHistory('7d'), []);
+    assert.equal(calls, 16);
+  } finally { globalThis.fetch = originalFetch; }
+});

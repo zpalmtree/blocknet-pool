@@ -18,6 +18,7 @@ const UI_ASSET_POOL_ENTERED_PNG: &[u8] = include_bytes!("ui/assets/pool-entered.
 const UI_ASSET_MINING_TUI_PNG: &[u8] = include_bytes!("ui/assets/mining-tui.png");
 include!(concat!(env!("OUT_DIR"), "/ui_languages.rs"));
 include!(concat!(env!("OUT_DIR"), "/ui_wasm.rs"));
+include!(concat!(env!("OUT_DIR"), "/ui_chunks.rs"));
 
 /// Per-route social preview cards, served from `/ui-assets/<name>`.
 const OG_IMAGES: &[(&str, &[u8])] = &[
@@ -457,6 +458,19 @@ pub(crate) async fn handle_favicon_svg() -> impl IntoResponse {
 }
 
 pub(crate) async fn handle_ui_asset(Path(name): Path<String>) -> Response {
+    if let Some((_, bytes)) = UI_CHUNKS.iter().find(|(path, _)| *path == name) {
+        return (
+            [
+                (
+                    header::CONTENT_TYPE,
+                    "application/javascript; charset=utf-8",
+                ),
+                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+            ],
+            *bytes,
+        )
+            .into_response();
+    }
     if let Some((_, bytes)) = UI_WASM.iter().find(|(path, _)| *path == name) {
         return (
             [
@@ -530,6 +544,37 @@ pub(crate) async fn handle_ui_asset(Path(name): Path<String>) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn built_page_chunks_are_served_with_immutable_caching() {
+        assert!(!UI_CHUNKS.is_empty());
+        for (name, expected) in UI_CHUNKS {
+            let response = handle_ui_asset(Path((*name).to_owned())).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response.headers()[header::CONTENT_TYPE],
+                "application/javascript; charset=utf-8"
+            );
+            assert_eq!(
+                response.headers()[header::CACHE_CONTROL],
+                "public, max-age=31536000, immutable"
+            );
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert_eq!(body.as_ref(), *expected);
+        }
+        for name in [
+            "chunks/missing.js",
+            "chunks/../../app.js",
+            "chunks/../app.js",
+        ] {
+            assert_eq!(
+                handle_ui_asset(Path(name.to_owned())).await.status(),
+                StatusCode::NOT_FOUND
+            );
+        }
+    }
 
     #[tokio::test]
     async fn every_public_language_has_localized_html_and_reciprocal_search_links() {

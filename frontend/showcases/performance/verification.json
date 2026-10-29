@@ -1,0 +1,25 @@
+{
+  "base_revision": "f4fee59680984306cc8fd893227636889fd25b78",
+  "checked_at": "2026-10-29 18:11 EDT",
+  "source_sha256": {
+    "frontend/src/App.tsx": "fef7e1019b69d8597b8f32332214cc811bf01ed49689e3ef1ad57def60f52596",
+    "frontend/src/components/DeferredPages.tsx": "cae1ce4294faeb02c9ebe08102098b7a1d2c9cd6b5804c13a1b894d23a9e25c3",
+    "frontend/src/components/HashrateChart.tsx": "45eaefeceb80b19833dfd7bcf4207ca40fcddb7c1655bac82e9f05ed2a86e4ca",
+    "frontend/src/lib/chart.ts": "de5e5dec47d7df0c02eb8cbd51504ebeeb837f049ffba572976dd925a65cac17",
+    "frontend/src/api/client.ts": "59952eb0494c3969fe4d8e211361ababff3ccf2d55c5e2d80a51de15423b8f4c",
+    "frontend/src/pages/DashboardPage.tsx": "26c9b62465b575205861439c1cc0f1eb152e24c3e70217746217e8a1472d3c51",
+    "frontend/vite.config.ts": "d000e68b8828557c68a5089949451a3679d27b2cefe46b5771da4a4b890f9a89"
+  },
+  "baseline_entry_bytes": 319868,
+  "entry_bytes": 234335,
+  "baseline_gzip_bytes": 94632,
+  "gzip_bytes": 73846,
+  "fixture_points": 8640,
+  "desktop_curve_calls_per_draw": 4322,
+  "desktop_canvas_css_width": 1080,
+  "viewports": [
+    1366,
+    390
+  ],
+  "captures": 16
+}

@@ -8,8 +8,6 @@ import { API_KEY_STORAGE_KEY, LAST_MINER_LOOKUP_KEY } from './lib/storage';
 import { applyTheme, getStoredTheme, setStoredTheme, type ThemeMode } from './lib/theme';
 import { metadataForPath, updatePageMetadata } from './lib/page-meta';
 import { pathForRoute, routeFromPathname, titleForRoute } from './lib/routes';
-import { WalletPage } from './pages/WalletPage';
-import { AdminPage } from './pages/AdminPage';
 import { BlocksPage } from './pages/BlocksPage';
 import { CheckpointsPage } from './pages/CheckpointsPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -17,7 +15,7 @@ import { LuckPage } from './pages/LuckPage';
 import { PayoutsPage } from './pages/PayoutsPage';
 import { StartPage } from './pages/StartPage';
 import { StatusPage } from './pages/StatusPage';
-import { StatsPage } from './pages/StatsPage';
+import { AdminPage, StatsPage, WalletPage, PageBoundary, preloadPage } from './components/DeferredPages';
 import type { InfoResponse, Route } from './types';
 
 export function App() {
@@ -253,6 +251,8 @@ export function App() {
               data-nav={item.route}
               className={route === item.route ? 'active' : ''}
               onClick={(event) => onNavLinkClick(event, item.route)}
+              onMouseEnter={() => preloadPage(item.route)}
+              onFocus={() => preloadPage(item.route)}
             >
               {item.label}
             </a>
@@ -349,7 +349,7 @@ export function App() {
       </div>
 
       <div className={route === 'admin' ? 'container container-wide' : 'container'}>
-        {currentPage}
+        <PageBoundary key={route} route={route}>{currentPage}</PageBoundary>
       </div>
 
       <footer className="site-footer">
@@ -359,6 +359,8 @@ export function App() {
             href={pathForRoute(item.route)}
             className={route === item.route ? 'active' : ''}
             onClick={(event) => onNavLinkClick(event, item.route)}
+            onMouseEnter={() => preloadPage(item.route)}
+            onFocus={() => preloadPage(item.route)}
           >
             {item.label}
           </a>

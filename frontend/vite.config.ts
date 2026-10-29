@@ -4,6 +4,8 @@ export default defineConfig({
   base: '/ui-assets/',
   build: {
     outDir: 'dist',
+    // The API serves one shared stylesheet alongside deferred page scripts.
+    cssCodeSplit: false,
     emptyOutDir: true,
     sourcemap: false,
     assetsInlineLimit: 0,
