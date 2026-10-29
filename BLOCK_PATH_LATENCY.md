@@ -101,3 +101,13 @@ One line each: hypothesis, stage, tier and host, result, verdict.
 - **Checkpoint save before notify.** Block 70200 spent 173 ms saving
   checkpoints before the broadcast and SSE. That happens on every 100th
   block only. **Not worth it** at p50.
+- **T3, 2026-10-29 04:25-12:46 EDT** (engine `8a0ddfe`; daemon `26d76f6` since
+  02:43). Share received → daemon accepted p50 ~650 ms (n=10, baseline
+  1633); the pool verify p50 571 ms runs inside it. Peer-block daemon
+  sync_total p50 639 ms, preverify p50 551 ms (n=113, baseline 1076/983).
+  Daemon accept → job published p50 30 ms, p99 427 ms (n=87). Before, 17%
+  of tips took 0.5-7.5 s. Fanout template → written p50 61 ms, p99 244 ms,
+  of which retarget is now p99 1.5 ms; the rest is template install
+  (p99 215 ms), which pool `8bddb1b` moves after the broadcast (pushed;
+  deploy held by the owner). Seine job switch p50 729 ms. That is fleet
+  telemetry, unchanged until the batched seine release ships `82830a7`.
