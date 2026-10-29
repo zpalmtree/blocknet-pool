@@ -26,6 +26,10 @@ const NONCE_RANGE_SIZE: u64 = 1_000_000;
 const FARADAY_NONCE_RANGE_SIZE: u64 = 1 << 44;
 const MAX_DB_NONCE: u64 = i64::MAX as u64;
 const BLOCK_POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// Refetches after a template that is still below an announced tip:
+/// 20 x 100 ms covers the 2 s status poll it would otherwise wait for.
+const STALE_TIP_TEMPLATE_RETRIES: u32 = 20;
+const STALE_TIP_TEMPLATE_RETRY_DELAY: Duration = Duration::from_millis(100);
 const ASSIGNMENT_PRUNE_INTERVAL: Duration = Duration::from_secs(30);
 const TEMPLATE_LIVENESS_PROBE_INTERVAL: Duration = Duration::from_secs(30);
 const MEMPOOL_REFRESH_DEBOUNCE: Duration = Duration::from_secs(10);
@@ -546,6 +550,13 @@ impl JobManager {
         self.tip_events.lock().pending_generation
     }
 
+    /// Height of the announced tip a pending refresh is waiting on.
+    fn pending_tip_refresh_height(&self) -> Option<u64> {
+        let tip_events = self.tip_events.lock();
+        tip_events.pending_generation?;
+        tip_events.last_new_block.as_ref()?.height
+    }
+
     fn acknowledge_tip_refresh(&self, generation: Option<u64>) {
         let Some(generation) = generation else {
             return;
@@ -1016,12 +1027,26 @@ impl JobManager {
             let pending_tip_generation = self.pending_tip_refresh_generation();
             let fetch_started_at = Instant::now();
             self.tip_latency.fetch_started(fetch_started_at);
+            let pending_tip_height = self.pending_tip_refresh_height();
             let mut fetched = self.fetch_template_job();
+            self.tip_latency
+                .fetch_finished(fetched.as_ref().map(|fetched| fetched.job.height));
+            // The daemon announced a new tip but can briefly still serve a
+            // template on the old one. Fetch again shortly rather than
+            // acknowledging the tip and waiting for the next status poll.
+            let mut stale_retries = 0;
+            while stale_retries < STALE_TIP_TEMPLATE_RETRIES
+                && template_below_tip(fetched.as_ref(), pending_tip_height)
+            {
+                stale_retries += 1;
+                thread::sleep(STALE_TIP_TEMPLATE_RETRY_DELAY);
+                fetched = self.fetch_template_job();
+                self.tip_latency
+                    .fetch_finished(fetched.as_ref().map(|fetched| fetched.job.height));
+            }
             let successful = fetched.is_some();
             self.tip_latency
                 .record_template_fetch(fetch_started_at.elapsed(), successful);
-            self.tip_latency
-                .fetch_finished(fetched.as_ref().map(|fetched| fetched.job.height));
             let next_work = self.refresh.finish_attempt(work, successful, || {
                 if let Some(fetched) = fetched.take() {
                     let install_started_at = Instant::now();
@@ -1809,6 +1834,16 @@ fn accept_template_height(
     }
 }
 
+/// A template that does not build on the announced tip (its height is not
+/// above it). A failed fetch is retried the same way.
+fn template_below_tip(fetched: Option<&FetchedTemplate>, tip_height: Option<u64>) -> bool {
+    match (fetched, tip_height) {
+        (_, None) => false,
+        (None, Some(_)) => true,
+        (Some(fetched), Some(tip)) => fetched.job.height <= tip,
+    }
+}
+
 fn mark_tip_refresh_pending(state: &mut TipEventState) -> u64 {
     state.next_generation = state.next_generation.saturating_add(1);
     state.pending_generation = Some(state.next_generation);
@@ -2175,6 +2210,67 @@ mod tests {
             }
         });
         (format!("http://{address}"), handle)
+    }
+
+    #[test]
+    fn announced_tip_refetches_until_the_template_builds_on_it() {
+        // The daemon announces block 10 but serves two more templates for
+        // height 10 before its first template for 11.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind template test server");
+        let address = listener.local_addr().expect("template server address");
+        let expires_at_unix_ms = (SystemTime::now() + Duration::from_secs(600))
+            .duration_since(UNIX_EPOCH)
+            .expect("future expiry")
+            .as_millis() as i64;
+        let server = thread::spawn(move || {
+            for (served, height) in [10u64, 10, 11].into_iter().enumerate() {
+                let (mut stream, _) = listener.accept().expect("accept daemon request");
+                let mut request = [0u8; 4096];
+                let read = stream.read(&mut request).expect("read daemon request");
+                let request = String::from_utf8_lossy(&request[..read]);
+                assert!(
+                    request.starts_with("GET /api/mining/blocktemplate"),
+                    "{request}"
+                );
+                let body = serde_json::json!({
+                    "block": {"header": {
+                        "Height": height,
+                        "Difficulty": 1,
+                        "PrevHash": vec![height as u8; 32]
+                    }},
+                    "target": hex::encode([0xBB; 32]),
+                    "header_base": hex::encode([served as u8; 92]),
+                    "template_id": format!("tmpl-{served}"),
+                    "template_expires_at_unix_ms": expires_at_unix_ms,
+                })
+                .to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("write daemon response");
+            }
+        });
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new(&format!("http://{address}"), "").expect("node")),
+            Config::default(),
+        );
+        manager.reward_cache.lock().checked_at = Some(Instant::now());
+        manager.install_test_job(positioned_job("current", 10, 0x09));
+
+        let started = Instant::now();
+        manager.on_new_block_event(&"0a".repeat(32), Some(10), None, Instant::now());
+        server.join().unwrap();
+
+        assert_eq!(manager.state.read().current.as_ref().unwrap().height, 11);
+        assert!(manager.pending_tip_refresh_generation().is_none());
+        assert!(
+            started.elapsed() < BLOCK_POLL_INTERVAL,
+            "refetched without waiting for the status poll ({:?})",
+            started.elapsed()
+        );
     }
 
     #[test]
