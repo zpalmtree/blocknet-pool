@@ -16,9 +16,14 @@ use crate::engine::{Job, JobRepository, SubmitJobBinding, SubmitJobResolveError}
 use crate::node::{http_error_body_contains, is_http_status, NodeClient};
 use crate::telemetry::LatencyHistogramSnapshot;
 use crate::tip_latency::{system_time_from_unix_micros, TipLatency, TipTrigger};
+use pool_common::faraday;
 use pool_common::pow::difficulty_to_target;
 
 const NONCE_RANGE_SIZE: u64 = 1_000_000;
+/// BLAKE2b runs at GH/s on GPUs, so a 1M window would last under a millisecond.
+/// 2^44 nonces is about 30 minutes for a 10 GH/s rig and still leaves 2^19
+/// windows per template.
+const FARADAY_NONCE_RANGE_SIZE: u64 = 1 << 44;
 const MAX_DB_NONCE: u64 = i64::MAX as u64;
 const BLOCK_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const ASSIGNMENT_PRUNE_INTERVAL: Duration = Duration::from_secs(30);
@@ -628,7 +633,6 @@ impl JobManager {
         assigned_miner: &str,
         range_mode: AssignmentRangeMode,
     ) -> Option<MinerJob> {
-        let slot_count = nonce_slot_count();
         let assignment_id = generate_job_id();
         let share_difficulty = share_difficulty.max(1);
         let share_target = difficulty_to_target(share_difficulty);
@@ -678,9 +682,11 @@ impl JobManager {
             }
         }
         let (start, nonce_end) = preserved_range.unwrap_or_else(|| {
-            let slot = self.nonce_counter.fetch_add(1, Ordering::Relaxed) % slot_count;
-            let start = slot.saturating_mul(NONCE_RANGE_SIZE);
-            let nonce_end = start.saturating_add(NONCE_RANGE_SIZE - 1);
+            let range_size = nonce_range_size(job.height);
+            let slot =
+                self.nonce_counter.fetch_add(1, Ordering::Relaxed) % nonce_slot_count(range_size);
+            let start = slot.saturating_mul(range_size);
+            let nonce_end = start.saturating_add(range_size - 1);
             debug_assert!(nonce_end <= MAX_DB_NONCE);
             (start, nonce_end)
         });
@@ -1595,13 +1601,22 @@ fn generate_job_id() -> String {
     hex::encode(bytes)
 }
 
-fn nonce_slot_count() -> u64 {
-    let max_start = MAX_DB_NONCE.saturating_sub(NONCE_RANGE_SIZE - 1);
-    (max_start / NONCE_RANGE_SIZE).saturating_add(1).max(1)
+fn nonce_range_size(height: u64) -> u64 {
+    if faraday::is_faraday(height) {
+        FARADAY_NONCE_RANGE_SIZE
+    } else {
+        NONCE_RANGE_SIZE
+    }
 }
 
+fn nonce_slot_count(range_size: u64) -> u64 {
+    let max_start = MAX_DB_NONCE.saturating_sub(range_size - 1);
+    (max_start / range_size).saturating_add(1).max(1)
+}
+
+/// A start slot for a new template; reduced per era where it is used.
 fn random_nonce_slot() -> u64 {
-    rand::random::<u64>() % nonce_slot_count()
+    rand::random::<u64>() % nonce_slot_count(NONCE_RANGE_SIZE)
 }
 
 /// Plain recent-job retention: the newest jobs kept regardless of position.
@@ -3361,7 +3376,7 @@ mod tests {
             state.current = Some(test_job("job1", 1));
         }
 
-        let slot_count = nonce_slot_count();
+        let slot_count = nonce_slot_count(NONCE_RANGE_SIZE);
         manager
             .nonce_counter
             .store(slot_count.saturating_sub(1), Ordering::Relaxed);
@@ -3377,6 +3392,30 @@ mod tests {
         assert_eq!(second.nonce_start, 0);
         assert!(first.nonce_end <= MAX_DB_NONCE);
         assert!(second.nonce_end <= MAX_DB_NONCE);
+    }
+
+    #[test]
+    fn faraday_templates_get_gpu_sized_nonce_windows() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config::default(),
+        );
+        for (height, size) in [
+            (faraday::FARADAY_HEIGHT - 1, NONCE_RANGE_SIZE),
+            (faraday::FARADAY_HEIGHT, FARADAY_NONCE_RANGE_SIZE),
+        ] {
+            manager.state.write().current = Some(test_job("job1", height));
+            let slot_count = nonce_slot_count(size);
+            manager
+                .nonce_counter
+                .store(slot_count - 1, Ordering::Relaxed);
+            let last = manager.build_miner_job("conn1", 1, "addr1").expect("job");
+            let wrapped = manager.build_miner_job("conn1", 1, "addr1").expect("job");
+            assert_eq!(last.nonce_end - last.nonce_start + 1, size);
+            assert_eq!(last.nonce_start, (slot_count - 1) * size);
+            assert!(last.nonce_end <= MAX_DB_NONCE);
+            assert_eq!(wrapped.nonce_start, 0);
+        }
     }
 
     #[test]

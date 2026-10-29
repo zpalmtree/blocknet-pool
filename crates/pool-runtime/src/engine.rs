@@ -34,6 +34,7 @@ use pool_common::db::{
     active_window_strikes, AddressRiskEscalation, AddressRiskState, PendingAuditShare,
     ShareReplayData, ValidationHoldCause,
 };
+use pool_common::faraday;
 use pool_common::pow::{check_target, difficulty_to_target};
 use pool_common::protocol::{
     build_login_result, normalize_worker_name, parse_hash_hex, validate_miner_address_for_network,
@@ -1483,7 +1484,11 @@ impl PoolEngine {
             let (address_good, address_invalid) =
                 self.validation.address_sample_counts(&session.address);
             let plan = self.validation.plan_regular_submit(&session.address);
-            let sync_full_verify = candidate_claim || risk_force_verify || plan.sync_full_verify;
+            // From the fork a share costs one BLAKE2b compression to check, so
+            // every share is hashed inline: no sampling, no verifier queue.
+            let cheap_pow = faraday::is_faraday(job.height);
+            let sync_full_verify =
+                cheap_pow || candidate_claim || risk_force_verify || plan.sync_full_verify;
 
             if sync_full_verify {
                 let task = ValidationTask {
@@ -1520,7 +1525,7 @@ impl PoolEngine {
                 // few addresses under forced verification cannot occupy every
                 // worker; past the bound only their shares are told to retry.
                 // Block candidates run on their own lane and are exempt.
-                let _sync_verify_permit = if candidate_claim {
+                let _sync_verify_permit = if candidate_claim || cheap_pow {
                     None
                 } else {
                     match self.admission.sync_verify().try_acquire() {
@@ -1535,46 +1540,47 @@ impl PoolEngine {
                     }
                 };
                 let validate_started_at = Instant::now();
-                let validation = match self.validate_task(task, candidate_claim, inline_priority) {
-                    Ok(v) => v,
-                    Err(err) => {
-                        // Busy/timeout: the share was never judged, so let the
-                        // miner resubmit it.
-                        let reason_code = canonical_share_reject_reason(&err.to_string());
-                        release_claim_on_error = is_retryable_reject_reason(reason_code);
-                        let unprocessed = match reason_code {
-                            "server busy" => Some(UnprocessedReason::ValidationQueueFull),
-                            "validation timeout" => Some(UnprocessedReason::ValidationTimeout),
-                            _ => None,
-                        };
-                        if let Some(reason) = unprocessed {
-                            // Like the pre-queue admission rejects, these are
-                            // not share outcomes: count them (and feed vardiff)
-                            // instead of writing a row under saturation.
-                            self.record_unprocessed_submit(conn_id, reason);
+                let validation =
+                    match self.validate_task(task, candidate_claim, inline_priority || cheap_pow) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            // Busy/timeout: the share was never judged, so let the
+                            // miner resubmit it.
+                            let reason_code = canonical_share_reject_reason(&err.to_string());
+                            release_claim_on_error = is_retryable_reject_reason(reason_code);
+                            let unprocessed = match reason_code {
+                                "server busy" => Some(UnprocessedReason::ValidationQueueFull),
+                                "validation timeout" => Some(UnprocessedReason::ValidationTimeout),
+                                _ => None,
+                            };
+                            if let Some(reason) = unprocessed {
+                                // Like the pre-queue admission rejects, these are
+                                // not share outcomes: count them (and feed vardiff)
+                                // instead of writing a row under saturation.
+                                self.record_unprocessed_submit(conn_id, reason);
+                                return Err(err);
+                            }
+                            let created_at = SystemTime::now();
+                            self.persist_rejected_share_with_evidence(
+                                &session,
+                                &job_id_for_share,
+                                nonce,
+                                share_difficulty,
+                                RejectedShareEvidence {
+                                    claimed_hash_hex: claimed_hash_hex.as_deref(),
+                                    replay: Some(ShareReplayData {
+                                        job_id: job_id_for_share.clone(),
+                                        header_base: job.header_base.clone(),
+                                        network_target: job.network_target,
+                                        created_at,
+                                    }),
+                                    reject_reason: Some(&err.to_string()),
+                                },
+                                &metadata,
+                            );
                             return Err(err);
                         }
-                        let created_at = SystemTime::now();
-                        self.persist_rejected_share_with_evidence(
-                            &session,
-                            &job_id_for_share,
-                            nonce,
-                            share_difficulty,
-                            RejectedShareEvidence {
-                                claimed_hash_hex: claimed_hash_hex.as_deref(),
-                                replay: Some(ShareReplayData {
-                                    job_id: job_id_for_share.clone(),
-                                    header_base: job.header_base.clone(),
-                                    network_target: job.network_target,
-                                    created_at,
-                                }),
-                                reject_reason: Some(&err.to_string()),
-                            },
-                            &metadata,
-                        );
-                        return Err(err);
-                    }
-                };
+                    };
 
                 if !validation.accepted {
                     let reason = validation.reject_reason.unwrap_or("invalid share");
@@ -3663,6 +3669,110 @@ mod tests {
                     .unwrap_or("missing")
             })
             .collect()
+    }
+
+    #[test]
+    fn faraday_shares_are_all_verified_inline_instead_of_sampled() {
+        // Sample rate 0: before the fork these claims would be hot-accepted.
+        let mut cfg = cfg();
+        cfg.provisional_share_delay = "0s".to_string();
+        cfg.payout_provisional_cap_multiplier = 0.0;
+        let validation = Arc::new(ValidationEngine::new(cfg.clone(), Arc::new(NonceHasher)));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(Job {
+            height: faraday::FARADAY_HEIGHT,
+            ..job()
+        });
+        let store = Arc::new(InMemoryStore::default());
+        let engine = PoolEngine::new(
+            cfg,
+            Arc::clone(&validation),
+            jobs,
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode {
+                accepted: true,
+                ..InMemoryNode::default()
+            }),
+        );
+        let conn = "203.0.113.1:4000";
+        engine
+            .login(conn, test_miner_address(), "rig", 2, submit_hash_cap())
+            .expect("login");
+
+        engine
+            .submit(conn, "job1".to_string(), 1, NonceHasher::honest(1))
+            .expect("honest share");
+        assert!(engine
+            .submit(conn, "job1".to_string(), 2, fake_claim())
+            .is_err());
+
+        assert_eq!(statuses(&store, 1..=1), vec![SHARE_STATUS_VERIFIED]);
+        assert!(store
+            .shares()
+            .iter()
+            .all(|share| share.status != SHARE_STATUS_PROVISIONAL));
+        assert_eq!(validation.snapshot().hot_accepts, 0);
+    }
+
+    #[test]
+    fn faraday_share_is_checked_with_blake2b_by_the_production_hasher() {
+        use pool_common::pow::{blake2b_pow_hash, ConsensusPowHasher};
+
+        let mut header_base = vec![0u8; faraday::FARADAY_HEADER_BASE_LEN];
+        header_base[..4].copy_from_slice(&2u32.to_le_bytes());
+        header_base[4..12].copy_from_slice(&faraday::FARADAY_HEIGHT.to_le_bytes());
+        let difficulty = 1_000;
+        let blake2b =
+            |nonce| blake2b_pow_hash(&faraday::BLAKE2B_POW_PERSONAL_MAINNET, &header_base, nonce);
+        let nonce = (0..)
+            .find(|&nonce| check_target(blake2b(nonce), difficulty_to_target(difficulty)))
+            .expect("a share within range");
+
+        let mut cfg = cfg();
+        cfg.initial_share_difficulty = difficulty;
+        cfg.min_share_difficulty = difficulty;
+        cfg.enable_vardiff = false;
+        let validation = Arc::new(ValidationEngine::new(
+            cfg.clone(),
+            Arc::new(ConsensusPowHasher::default()),
+        ));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(Job {
+            height: faraday::FARADAY_HEIGHT,
+            header_base: header_base.clone(),
+            network_target: [0; 32],
+            ..job()
+        });
+        let store = Arc::new(InMemoryStore::default());
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            jobs,
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::new(InMemoryNode::default()),
+        );
+        let conn = "203.0.113.1:4000";
+        engine
+            .login(conn, test_miner_address(), "rig", 2, submit_hash_cap())
+            .expect("login");
+        engine
+            .submit(
+                conn,
+                "job1".to_string(),
+                nonce,
+                Some(hex::encode(blake2b(nonce))),
+            )
+            .expect("real BLAKE2b share");
+        // The same claim on the next nonce does not match its BLAKE2b hash.
+        assert!(engine
+            .submit(
+                conn,
+                "job1".to_string(),
+                nonce + 1,
+                Some(hex::encode(blake2b(nonce)))
+            )
+            .is_err());
+        assert_eq!(statuses(&store, nonce..=nonce), vec![SHARE_STATUS_VERIFIED]);
     }
 
     #[test]

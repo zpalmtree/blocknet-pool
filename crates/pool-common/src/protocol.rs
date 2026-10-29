@@ -9,6 +9,11 @@ pub const NOTIFY_POOL_BLOCK_SOLVED: &str = "pool_block_solved";
 pub const NOTIFY_MINER_BLOCK_FOUND: &str = "miner_block_found";
 
 pub const STRATUM_PROTOCOL_VERSION_CURRENT: u32 = 2;
+/// Longest encoded address accepted anywhere. Faraday post-quantum addresses
+/// are 1,253 bytes, 1,710 or 1,711 base58 characters.
+pub const MAX_ENCODED_ADDRESS_LEN: usize = 2048;
+/// Decoded length of a Faraday address: `0x02 || ML-KEM-768 key || S || checksum`.
+const PQ_ADDRESS_BYTES: usize = 1253;
 
 pub const CAP_SUBMIT_CLAIMED_HASH: &str = "submit_claimed_hash";
 pub const CAP_DIFFICULTY_HINT: &str = "difficulty_hint";
@@ -142,6 +147,11 @@ fn parse_address_network(address: &str) -> Result<Option<AddressNetwork>, String
     if trimmed.is_empty() {
         return Err("address is required".to_string());
     }
+    if trimmed.len() > MAX_ENCODED_ADDRESS_LEN {
+        return Err(format!(
+            "address exceeds {MAX_ENCODED_ADDRESS_LEN} characters"
+        ));
+    }
 
     let decoded = bs58::decode(trimmed)
         .into_vec()
@@ -164,6 +174,9 @@ fn parse_address_network(address: &str) -> Result<Option<AddressNetwork>, String
             } else {
                 Err("invalid address checksum".to_string())
             }
+        }
+        PQ_ADDRESS_BYTES => {
+            Err("post-quantum addresses are not accepted until the Faraday release".to_string())
         }
         len => Err(format!(
             "invalid address length: expected 68 bytes, got {len}"
@@ -221,6 +234,36 @@ fn address_checksum(payload: &[u8], network_id: &str) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pq_sized_login_fits_a_stratum_line_and_gets_a_clear_error() {
+        let address = bs58::encode(vec![0x73; PQ_ADDRESS_BYTES]).into_string();
+        assert!((1_700..=MAX_ENCODED_ADDRESS_LEN).contains(&address.len()));
+        let request = StratumRequest {
+            id: 1,
+            method: "login".into(),
+            params: serde_json::json!({
+                "address": address,
+                "worker": "rig",
+                "protocol_version": STRATUM_PROTOCOL_VERSION_CURRENT,
+                "capabilities": [CAP_SUBMIT_CLAIMED_HASH],
+            }),
+        };
+        // The engine and the gateway both cap a Stratum line at 8 KiB.
+        let wire = serde_json::to_string(&request).unwrap();
+        assert!(wire.len() < 8 * 1024);
+        let decoded: StratumRequest = serde_json::from_str(&wire).unwrap();
+        let login: LoginParams = serde_json::from_value(decoded.params).unwrap();
+        assert_eq!(login.address, address);
+        assert!(validate_miner_address(&address)
+            .unwrap_err()
+            .contains("post-quantum"));
+        assert!(
+            validate_miner_address(&"1".repeat(MAX_ENCODED_ADDRESS_LEN + 1))
+                .unwrap_err()
+                .contains("exceeds")
+        );
+    }
 
     fn valid_point_payload(seed: u8) -> [u8; 64] {
         use curve25519_dalek::{RistrettoPoint, Scalar};
