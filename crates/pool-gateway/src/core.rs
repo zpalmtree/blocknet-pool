@@ -18,6 +18,9 @@ use crate::GatewayMetrics;
 /// Job IDs remembered per miner, newest last; older ones fall back to the
 /// miner's current engine.
 const JOB_HISTORY: usize = 64;
+/// Job IDs from `refill` answers remembered per miner, apart from
+/// `JOB_HISTORY` so a farm proxy's refills cannot push its jobs out.
+const REFILL_HISTORY: usize = 256;
 /// The engine's retryable message: seine resubmits shares rejected with it.
 const BUSY_ERROR: &str = "server busy, retry";
 /// Wait after a rejected or unanswered replay before trying that miner again.
@@ -125,6 +128,8 @@ struct Miner {
     replay_not_before: Option<Instant>,
     /// Job ID → issuing engine, newest last.
     jobs: VecDeque<(String, u64)>,
+    /// The same for job IDs handed out in `refill` answers.
+    refills: VecDeque<(String, u64)>,
     /// Since when the miner has had no engine.
     orphaned_since: Option<Instant>,
     /// When a line from this miner last reached its current engine.
@@ -210,6 +215,7 @@ impl Gateway {
             replay: None,
             replay_not_before: None,
             jobs: VecDeque::new(),
+            refills: VecDeque::new(),
             orphaned_since: Some(now),
             last_relayed_at: None,
         };
@@ -267,6 +273,7 @@ impl Gateway {
                         .jobs
                         .iter()
                         .rev()
+                        .chain(miner.refills.iter().rev())
                         .find(|(known, _)| known == job)
                         .map(|(_, engine)| *engine)
                 })
@@ -472,6 +479,20 @@ impl Gateway {
                 }
             }
             None => {
+                // A `refill` answer hands out a job like a `job` notification
+                // does; remember its issuer whichever engine answered.
+                let refill_job_id = (!failed)
+                    .then(|| parsed.as_ref().and_then(|v| v.get("result")))
+                    .flatten()
+                    .filter(|result| result.get("nonce_start").is_some())
+                    .and_then(|result| result.get("job_id"))
+                    .and_then(Value::as_str);
+                if let Some(job_id) = refill_job_id {
+                    miner.refills.push_back((job_id.to_string(), engine));
+                    while miner.refills.len() > REFILL_HISTORY {
+                        miner.refills.pop_front();
+                    }
+                }
                 let answered = id.and_then(|id| {
                     miner
                         .pending_logins
@@ -502,6 +523,7 @@ impl Gateway {
         for miner in self.miners.values_mut() {
             miner.opened.remove(&engine);
             miner.jobs.retain(|(_, issuer)| *issuer != engine);
+            miner.refills.retain(|(_, issuer)| *issuer != engine);
             if miner
                 .replay
                 .is_some_and(|(replay_engine, _)| replay_engine == engine)
@@ -714,6 +736,7 @@ impl Gateway {
                     );
                 }
                 miner.jobs.retain(|(_, issuer)| *issuer != engine);
+                miner.refills.retain(|(_, issuer)| *issuer != engine);
             }
             if let Some(link) = self.engines.get_mut(&engine) {
                 link.retired = true;
@@ -1059,6 +1082,52 @@ mod tests {
         assert_eq!(miner.line(), r#"{"id":4,"status":"OK"}"#);
         h.miner_says(&miner, &submit_line(5, "new-job"));
         assert_eq!(b.expect(FrameKind::Line, 7), submit_line(5, "new-job"));
+        a.assert_quiet();
+    }
+
+    #[test]
+    fn refilled_job_shares_stay_on_the_issuing_engine_after_handover() {
+        let mut h = Harness::new();
+        let mut a = h.engine(1, 100);
+        let mut miner = h.logged_in_miner(7, &mut a, "old-job");
+
+        let refill = r#"{"id":2,"method":"refill","params":{"job_id":"old-job"}}"#;
+        h.miner_says(&miner, refill);
+        assert_eq!(a.expect(FrameKind::Line, 7), refill);
+        let answer = r#"{"id":2,"status":"ok","result":{"job_id":"refill-job","nonce_start":1000,"nonce_end":1999}}"#;
+        h.engine_says(&a, 7, answer);
+        assert_eq!(miner.line(), answer);
+        // A refused refill hands out nothing.
+        h.miner_says(
+            &miner,
+            r#"{"id":3,"method":"refill","params":{"job_id":"x"}}"#,
+        );
+        a.expect(FrameKind::Line, 7);
+        h.engine_says(&a, 7, r#"{"id":3,"error":"stale job"}"#);
+        assert_eq!(miner.line(), r#"{"id":3,"error":"stale job"}"#);
+
+        let mut b = h.engine(2, 200);
+        h.advance(Duration::from_millis(100));
+        b.expect(FrameKind::Open, 7);
+        b.expect(FrameKind::Line, 7);
+        h.engine_says(
+            &b,
+            7,
+            &format!(r#"{{"id":{REPLAY_LOGIN_REQUEST_ID},"result":{{"protocol_version":2}}}}"#),
+        );
+        h.engine_says(&b, 7, &job_line("new-job"));
+        assert_eq!(miner.line(), job_line("new-job"));
+
+        // Shares on the refilled range still go to the engine that issued it.
+        h.miner_says(&miner, &submit_line(4, "refill-job"));
+        assert_eq!(a.expect(FrameKind::Line, 7), submit_line(4, "refill-job"));
+        // New refills, and shares for jobs never handed out, go to the
+        // current engine.
+        let refill = r#"{"id":5,"method":"refill","params":{"job_id":"new-job"}}"#;
+        h.miner_says(&miner, refill);
+        assert_eq!(b.expect(FrameKind::Line, 7), refill);
+        h.miner_says(&miner, &submit_line(6, "x"));
+        assert_eq!(b.expect(FrameKind::Line, 7), submit_line(6, "x"));
         a.assert_quiet();
     }
 

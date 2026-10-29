@@ -32,6 +32,14 @@ pub struct Config {
     /// session), and farms often share one IP.
     pub stratum_max_connections: i32,
     pub stratum_max_connections_per_ip: i32,
+    /// `refill` requests (`nonce_refill_v1`) one connection may make per
+    /// second, sustained, and in a burst. A farm proxy refills for every
+    /// rig it carries, so these allow a large farm per connection.
+    pub stratum_refill_rate: f64,
+    pub stratum_refill_burst: i32,
+    /// Most live assignments (its job plus refills) one connection may hold
+    /// for one template; refills beyond it answer `refill limit reached`.
+    pub stratum_refill_max_assignments: i32,
 
     pub daemon_data_dir: String,
     pub daemon_api: String,
@@ -156,6 +164,9 @@ impl Default for Config {
             gateway_socket: String::new(),
             stratum_max_connections: 32_768,
             stratum_max_connections_per_ip: 1024,
+            stratum_refill_rate: 4.0,
+            stratum_refill_burst: 8,
+            stratum_refill_max_assignments: 256,
             daemon_data_dir: "data".to_string(),
             daemon_api: "http://127.0.0.1:8332".to_string(),
             daemon_cookie_path: "/etc/blocknet/pool/daemon-active.api.cookie".to_string(),
@@ -505,6 +516,12 @@ impl Config {
                 self.stratum_max_connections_per_ip,
                 1,
             ),
+            ("stratum_refill_burst", self.stratum_refill_burst, 1),
+            (
+                "stratum_refill_max_assignments",
+                self.stratum_refill_max_assignments,
+                1,
+            ),
             ("regular_submit_queue", self.regular_submit_queue, 1),
             ("regular_submit_workers", self.regular_submit_workers, 1),
             ("sync_verify_slots", self.sync_verify_slots, 0),
@@ -583,6 +600,15 @@ impl Config {
             );
         }
         ensure_f64_range("sample_rate", self.sample_rate, 0.0, 1.0)?;
+        ensure_f64_range(
+            "stratum_refill_rate",
+            self.stratum_refill_rate,
+            0.0,
+            1_000.0,
+        )?;
+        if self.stratum_refill_rate <= 0.0 {
+            anyhow::bail!("stratum_refill_rate must be greater than 0");
+        }
         ensure_f64_range("hold_audit_rate", self.hold_audit_rate, 0.0, 1.0)?;
         ensure_f64_range("growth_sample_rate", self.growth_sample_rate, 0.0, 1.0)?;
         ensure_f64_range("growth_submit_rate", self.growth_submit_rate, 0.0, f64::MAX)?;
@@ -865,6 +891,9 @@ mod tests {
         for field in [
             "stratum_max_connections",
             "stratum_max_connections_per_ip",
+            "stratum_refill_burst",
+            "stratum_refill_max_assignments",
+            "stratum_refill_rate",
             "regular_submit_queue",
             "regular_submit_workers",
             "regular_validation_queue",

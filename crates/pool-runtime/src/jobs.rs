@@ -40,6 +40,9 @@ const MISSING_WALLET_PASSWORD_LOG_COOLDOWN: Duration = Duration::from_secs(60);
 const WALLET_LOAD_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 const WALLET_LOAD_WAIT_POLL: Duration = Duration::from_millis(250);
 const MAX_ACTIVE_ASSIGNMENTS: usize = 65_536;
+/// Pool-wide bound on refill assignments (`refill`), so refills cannot push
+/// other miners' jobs out under `MAX_ACTIVE_ASSIGNMENTS`.
+const MAX_REFILL_ASSIGNMENTS: usize = MAX_ACTIVE_ASSIGNMENTS / 4;
 const MAX_ASSIGNMENT_AGE: Duration = Duration::from_secs(10 * 60);
 const SSE_RETRY_DELAY_MIN: Duration = Duration::from_millis(100);
 const SSE_RETRY_DELAY_MAX: Duration = Duration::from_secs(10);
@@ -186,6 +189,12 @@ struct JobState {
     assignments: HashMap<String, MinerAssignment>,
     assignment_order: VecDeque<String>,
     active_assignments_by_template: HashMap<String, HashMap<String, String>>,
+    /// Refill assignments not yet superseded, by template and connection.
+    /// They stay valid beside the connection's active assignment and are
+    /// superseded with it.
+    refill_assignments_by_template: HashMap<String, HashMap<String, Vec<String>>>,
+    /// Refill assignments held in `assignments`, superseded or not.
+    refill_assignment_count: usize,
     assignment_ids_by_template: HashMap<String, HashSet<String>>,
     last_assignment_prune: Option<Instant>,
 }
@@ -353,6 +362,27 @@ struct MinerAssignment {
     created_at: Instant,
     superseded_at: Option<Instant>,
     superseded_grace: Duration,
+    /// Issued by `refill`: not the connection's active assignment.
+    refill: bool,
+}
+
+/// Why a `refill` request was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RefillError {
+    /// The job is not a live assignment of this connection on the current
+    /// template.
+    StaleJob,
+    /// The connection, or the pool as a whole, holds too many assignments.
+    LimitReached,
+}
+
+impl RefillError {
+    pub(crate) fn message(self) -> &'static str {
+        match self {
+            Self::StaleJob => "stale job",
+            Self::LimitReached => "refill limit reached",
+        }
+    }
 }
 
 impl JobManager {
@@ -757,15 +787,9 @@ impl JobManager {
                 assignment.superseded_at = Some(now);
             }
         }
-        let (nonce_start, nonce_end) = preserved_range.unwrap_or_else(|| {
-            let range_size = nonce_range_size(job.height);
-            let slot =
-                self.nonce_counter.fetch_add(1, Ordering::Relaxed) % nonce_slot_count(range_size);
-            let start = slot.saturating_mul(range_size);
-            let nonce_end = start.saturating_add(range_size - 1);
-            debug_assert!(nonce_end <= MAX_DB_NONCE);
-            (start, nonce_end)
-        });
+        supersede_refills_locked(state, &job.id, &request.conn_id, now);
+        let (nonce_start, nonce_end) =
+            preserved_range.unwrap_or_else(|| self.allocate_nonce_range(job.height));
         insert_assignment_locked(
             state,
             assignment_id.clone(),
@@ -779,11 +803,107 @@ impl JobManager {
                 created_at: now,
                 superseded_at: None,
                 superseded_grace: superseded_assignment_grace(assigned_miner, stale_submit_grace),
+                refill: false,
             },
         );
         Some(InstalledAssignment {
             assignment_id,
             share_difficulty,
+            nonce_start,
+            nonce_end,
+        })
+    }
+
+    /// The next nonce window for the current template, from the slot counter
+    /// shared by every assignment so windows never overlap.
+    fn allocate_nonce_range(&self, height: u64) -> (u64, u64) {
+        let range_size = nonce_range_size(height);
+        let slot =
+            self.nonce_counter.fetch_add(1, Ordering::Relaxed) % nonce_slot_count(range_size);
+        let start = slot.saturating_mul(range_size);
+        let nonce_end = start.saturating_add(range_size - 1);
+        debug_assert!(nonce_end <= MAX_DB_NONCE);
+        (start, nonce_end)
+    }
+
+    /// Issues `conn_id` another assignment with a fresh nonce window for the
+    /// same template, share difficulty and miner as `job_id`, which must be
+    /// a live (not superseded) assignment of that connection on the current
+    /// template. The new assignment does not supersede any other: all stay
+    /// valid until the connection's next job for this template (vardiff or
+    /// rebind) supersedes them together, or the template goes stale.
+    /// `max_live` bounds the connection's live assignments on the template,
+    /// counting its active one.
+    pub(crate) fn refill_miner_job(
+        &self,
+        conn_id: &str,
+        job_id: &str,
+        max_live: usize,
+    ) -> Result<MinerJob, RefillError> {
+        let stale_submit_grace = self.cfg.stale_submit_grace_duration();
+        let mut state = self.state.write();
+        let Some(job) = state.current.as_ref() else {
+            return Err(RefillError::StaleJob);
+        };
+        let Some(source) = state.assignments.get(job_id) else {
+            return Err(RefillError::StaleJob);
+        };
+        if source.owner_conn_id != conn_id
+            || source.template_job_id != job.id
+            || source.superseded_at.is_some()
+        {
+            return Err(RefillError::StaleJob);
+        }
+        let share_difficulty = source.share_difficulty;
+        let assigned_miner = source.assigned_miner.clone();
+        let template_job_id = job.id.clone();
+        let height = job.height;
+
+        let active = usize::from(
+            state
+                .active_assignments_by_template
+                .get(&template_job_id)
+                .is_some_and(|by_connection| by_connection.contains_key(conn_id)),
+        );
+        let refills = state
+            .refill_assignments_by_template
+            .get(&template_job_id)
+            .and_then(|by_connection| by_connection.get(conn_id))
+            .map_or(0, Vec::len);
+        if active + refills >= max_live || state.refill_assignment_count >= MAX_REFILL_ASSIGNMENTS {
+            return Err(RefillError::LimitReached);
+        }
+
+        let now = Instant::now();
+        let (nonce_start, nonce_end) = self.allocate_nonce_range(height);
+        let assignment_id = generate_job_id();
+        insert_assignment_locked(
+            &mut state,
+            assignment_id.clone(),
+            MinerAssignment {
+                owner_conn_id: conn_id.to_string(),
+                template_job_id,
+                share_difficulty,
+                superseded_grace: superseded_assignment_grace(&assigned_miner, stale_submit_grace),
+                assigned_miner,
+                nonce_start,
+                nonce_end,
+                created_at: now,
+                superseded_at: None,
+                refill: true,
+            },
+        );
+        evict_assignments_over_cap_locked(&mut state);
+        let job = state.current.as_ref().expect("current job checked above");
+        let template = EncodedTemplate::new(job);
+        Ok(MinerJob {
+            job_id: assignment_id,
+            template_id: template.template_id,
+            header_base: template.header_base,
+            target: hex::encode(difficulty_to_target(share_difficulty)),
+            difficulty: share_difficulty,
+            network_target: template.network_target,
+            height,
             nonce_start,
             nonce_end,
         })
@@ -2072,11 +2192,24 @@ fn insert_assignment_locked(
     assignment_id: String,
     assignment: MinerAssignment,
 ) {
-    state
-        .active_assignments_by_template
-        .entry(assignment.template_job_id.clone())
-        .or_default()
-        .insert(assignment.owner_conn_id.clone(), assignment_id.clone());
+    if assignment.refill {
+        state.refill_assignment_count += 1;
+        if assignment.superseded_at.is_none() {
+            state
+                .refill_assignments_by_template
+                .entry(assignment.template_job_id.clone())
+                .or_default()
+                .entry(assignment.owner_conn_id.clone())
+                .or_default()
+                .push(assignment_id.clone());
+        }
+    } else {
+        state
+            .active_assignments_by_template
+            .entry(assignment.template_job_id.clone())
+            .or_default()
+            .insert(assignment.owner_conn_id.clone(), assignment_id.clone());
+    }
     state
         .assignment_ids_by_template
         .entry(assignment.template_job_id.clone())
@@ -2087,10 +2220,65 @@ fn insert_assignment_locked(
     debug_assert!(previous.is_none());
 }
 
+/// Supersedes the refill assignments `conn_id` holds for `template_job_id`,
+/// as its active assignment is when the connection gets a new job for it.
+fn supersede_refills_locked(
+    state: &mut JobState,
+    template_job_id: &str,
+    conn_id: &str,
+    now: Instant,
+) {
+    let Some(by_connection) = state
+        .refill_assignments_by_template
+        .get_mut(template_job_id)
+    else {
+        return;
+    };
+    let Some(refill_ids) = by_connection.remove(conn_id) else {
+        return;
+    };
+    if by_connection.is_empty() {
+        state.refill_assignments_by_template.remove(template_job_id);
+    }
+    for refill_id in refill_ids {
+        if let Some(assignment) = state.assignments.get_mut(&refill_id) {
+            assignment.superseded_at = Some(now);
+        }
+    }
+}
+
+fn remove_refill_index_locked(
+    state: &mut JobState,
+    assignment_id: &str,
+    assignment: &MinerAssignment,
+) {
+    state.refill_assignment_count = state.refill_assignment_count.saturating_sub(1);
+    let Some(by_connection) = state
+        .refill_assignments_by_template
+        .get_mut(&assignment.template_job_id)
+    else {
+        return;
+    };
+    if let Some(refill_ids) = by_connection.get_mut(&assignment.owner_conn_id) {
+        refill_ids.retain(|id| id != assignment_id);
+        if refill_ids.is_empty() {
+            by_connection.remove(&assignment.owner_conn_id);
+        }
+    }
+    if by_connection.is_empty() {
+        state
+            .refill_assignments_by_template
+            .remove(&assignment.template_job_id);
+    }
+}
+
 fn remove_assignment_locked(state: &mut JobState, assignment_id: &str) -> bool {
     let Some(assignment) = state.assignments.remove(assignment_id) else {
         return false;
     };
+    if assignment.refill {
+        remove_refill_index_locked(state, assignment_id, &assignment);
+    }
 
     let remove_active_template = if let Some(by_connection) = state
         .active_assignments_by_template
@@ -2134,11 +2322,18 @@ fn remove_assignments_for_templates_locked(state: &mut JobState, template_ids: &
     for template_id in template_ids {
         if let Some(assignment_ids) = state.assignment_ids_by_template.remove(template_id) {
             for assignment_id in assignment_ids {
-                state.assignments.remove(&assignment_id);
+                if state
+                    .assignments
+                    .remove(&assignment_id)
+                    .is_some_and(|assignment| assignment.refill)
+                {
+                    state.refill_assignment_count = state.refill_assignment_count.saturating_sub(1);
+                }
                 removed_assignment_ids.insert(assignment_id);
             }
         }
         state.active_assignments_by_template.remove(template_id);
+        state.refill_assignments_by_template.remove(template_id);
     }
     if !removed_assignment_ids.is_empty() {
         state
@@ -2276,6 +2471,7 @@ mod tests {
             created_at,
             superseded_at: None,
             superseded_grace: Duration::from_secs(5),
+            refill: false,
         }
     }
 
@@ -2481,7 +2677,14 @@ mod tests {
                 .assignment_ids_by_template
                 .get(&assignment.template_job_id)
                 .is_some_and(|ids| ids.contains(assignment_id)));
-            if assignment.superseded_at.is_none() {
+            if assignment.refill {
+                let indexed = state
+                    .refill_assignments_by_template
+                    .get(&assignment.template_job_id)
+                    .and_then(|by_connection| by_connection.get(&assignment.owner_conn_id))
+                    .is_some_and(|ids| ids.contains(assignment_id));
+                assert_eq!(indexed, assignment.superseded_at.is_none());
+            } else if assignment.superseded_at.is_none() {
                 assert_eq!(
                     state
                         .active_assignments_by_template
@@ -2489,6 +2692,25 @@ mod tests {
                         .and_then(|by_connection| by_connection.get(&assignment.owner_conn_id)),
                     Some(assignment_id)
                 );
+            }
+        }
+        assert_eq!(
+            state.refill_assignment_count,
+            state.assignments.values().filter(|a| a.refill).count()
+        );
+        for (template_id, by_connection) in &state.refill_assignments_by_template {
+            for (connection_id, ids) in by_connection {
+                assert!(!ids.is_empty());
+                for id in ids {
+                    let assignment = state
+                        .assignments
+                        .get(id)
+                        .expect("refill index must point to an assignment");
+                    assert!(assignment.refill);
+                    assert_eq!(&assignment.template_job_id, template_id);
+                    assert_eq!(&assignment.owner_conn_id, connection_id);
+                    assert!(assignment.superseded_at.is_none());
+                }
             }
         }
         for (template_id, by_connection) in &state.active_assignments_by_template {
@@ -3622,6 +3844,276 @@ mod tests {
             err,
             SubmitJobResolveError::AssignmentSuperseded { .. }
         ));
+    }
+
+    fn refill_manager(stale_submit_grace: &str) -> Arc<JobManager> {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config {
+                stale_submit_grace: stale_submit_grace.to_string(),
+                ..Config::default()
+            },
+        );
+        manager.install_test_job(test_job("job1", 1));
+        manager
+    }
+
+    fn assert_disjoint(jobs: &[&MinerJob]) {
+        for (index, a) in jobs.iter().enumerate() {
+            for b in &jobs[index + 1..] {
+                assert!(
+                    a.nonce_end < b.nonce_start || b.nonce_end < a.nonce_start,
+                    "ranges overlap: {a:?} {b:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn refill_issues_a_fresh_range_without_superseding_held_jobs() {
+        let manager = refill_manager("5s");
+        let primary = manager.build_miner_job("conn1", 64, "addr1").expect("job");
+        let other = manager.build_miner_job("conn2", 32, "addr2").expect("job");
+        let first = manager
+            .refill_miner_job("conn1", &primary.job_id, 256)
+            .expect("refill");
+        // A refill can itself be refilled.
+        let second = manager
+            .refill_miner_job("conn1", &first.job_id, 256)
+            .expect("refill of a refill");
+
+        for refill in [&first, &second] {
+            assert_ne!(refill.job_id, primary.job_id);
+            assert_eq!(refill.template_id, primary.template_id);
+            assert_eq!(refill.header_base, primary.header_base);
+            assert_eq!(refill.target, primary.target);
+            assert_eq!(refill.difficulty, primary.difficulty);
+            assert_eq!(refill.network_target, primary.network_target);
+            assert_eq!(refill.height, primary.height);
+            assert_eq!(refill.nonce_end - refill.nonce_start, NONCE_RANGE_SIZE - 1);
+        }
+        assert_ne!(first.job_id, second.job_id);
+        assert_disjoint(&[&primary, &other, &first, &second]);
+
+        let now = Instant::now();
+        for job in [&primary, &first, &second] {
+            let binding = manager
+                .resolve_submit_job_with_reason(&job.job_id, now)
+                .expect("every held job stays valid");
+            assert_eq!(binding.nonce_start, Some(job.nonce_start));
+            assert_eq!(binding.nonce_end, Some(job.nonce_end));
+            assert_eq!(binding.share_difficulty, Some(64));
+            assert_eq!(binding.assigned_miner.as_deref(), Some("addr1"));
+        }
+        let state = manager.state.read();
+        assert!(state
+            .assignments
+            .values()
+            .all(|a| a.superseded_at.is_none()));
+        assert_eq!(state.refill_assignment_count, 2);
+        assert_assignment_indexes(&state);
+    }
+
+    #[test]
+    fn refill_refuses_jobs_the_connection_does_not_hold_live() {
+        let manager = refill_manager("5s");
+        let primary = manager.build_miner_job("conn1", 64, "addr1").expect("job");
+        assert_eq!(
+            manager.refill_miner_job("conn1", "missing", 256).err(),
+            Some(RefillError::StaleJob)
+        );
+        assert_eq!(
+            manager
+                .refill_miner_job("conn2", &primary.job_id, 256)
+                .err(),
+            Some(RefillError::StaleJob),
+            "another connection's job"
+        );
+
+        // A superseded job (vardiff re-issue) cannot be refilled.
+        let reissued = manager
+            .build_miner_job_with_range_mode(
+                "conn1",
+                96,
+                "addr1",
+                AssignmentRangeMode::PreserveCurrent,
+            )
+            .expect("re-issue");
+        assert_eq!(
+            manager
+                .refill_miner_job("conn1", &primary.job_id, 256)
+                .err(),
+            Some(RefillError::StaleJob)
+        );
+
+        // Nor can a job on a replaced template.
+        manager.install_test_job(test_job("job2", 2));
+        assert_eq!(
+            manager
+                .refill_miner_job("conn1", &reissued.job_id, 256)
+                .err(),
+            Some(RefillError::StaleJob)
+        );
+        let state = manager.state.read();
+        assert_eq!(state.refill_assignment_count, 0);
+        assert_assignment_indexes(&state);
+    }
+
+    #[test]
+    fn refill_is_capped_per_connection_and_pool_wide() {
+        let manager = refill_manager("5s");
+        let primary = manager.build_miner_job("conn1", 64, "addr1").expect("job");
+        // A cap of 3 live assignments: the job and two refills.
+        manager
+            .refill_miner_job("conn1", &primary.job_id, 3)
+            .expect("refill 1");
+        manager
+            .refill_miner_job("conn1", &primary.job_id, 3)
+            .expect("refill 2");
+        assert_eq!(
+            manager.refill_miner_job("conn1", &primary.job_id, 3).err(),
+            Some(RefillError::LimitReached)
+        );
+        // Other connections have their own allowance.
+        let other = manager.build_miner_job("conn2", 64, "addr2").expect("job");
+        manager
+            .refill_miner_job("conn2", &other.job_id, 3)
+            .expect("other connection");
+
+        // A re-issue supersedes the refills, so they no longer count.
+        let reissued = manager
+            .build_miner_job("conn1", 96, "addr1")
+            .expect("re-issue");
+        manager
+            .refill_miner_job("conn1", &reissued.job_id, 3)
+            .expect("refill after re-issue");
+
+        manager.state.write().refill_assignment_count = MAX_REFILL_ASSIGNMENTS;
+        assert_eq!(
+            manager.refill_miner_job("conn2", &other.job_id, 256).err(),
+            Some(RefillError::LimitReached),
+            "pool-wide refill bound"
+        );
+    }
+
+    #[test]
+    fn reissue_supersedes_refills_with_the_job_then_they_expire() {
+        let manager = refill_manager("5s");
+        let primary = manager.build_miner_job("conn1", 64, "addr1").expect("job");
+        let refill = manager
+            .refill_miner_job("conn1", &primary.job_id, 256)
+            .expect("refill");
+        let other = manager.build_miner_job("conn2", 64, "addr2").expect("job");
+        let other_refill = manager
+            .refill_miner_job("conn2", &other.job_id, 256)
+            .expect("refill");
+
+        let reissued = manager
+            .build_miner_job_with_range_mode(
+                "conn1",
+                96,
+                "addr1",
+                AssignmentRangeMode::PreserveCurrent,
+            )
+            .expect("vardiff re-issue");
+        assert_eq!(reissued.nonce_start, primary.nonce_start);
+        let superseded_at = {
+            let state = manager.state.read();
+            assert_assignment_indexes(&state);
+            let at = state.assignments[&refill.job_id]
+                .superseded_at
+                .expect("refill superseded with the job");
+            assert_eq!(state.assignments[&primary.job_id].superseded_at, Some(at));
+            assert!(state.assignments[&other_refill.job_id]
+                .superseded_at
+                .is_none());
+            at
+        };
+        assert!(manager
+            .resolve_submit_job(&refill.job_id, superseded_at + Duration::from_secs(1))
+            .is_some());
+        assert!(matches!(
+            manager.resolve_submit_job_with_reason(
+                &refill.job_id,
+                superseded_at + Duration::from_secs(6)
+            ),
+            Err(SubmitJobResolveError::AssignmentSuperseded { .. })
+        ));
+        // The other connection's refill is untouched.
+        assert!(manager
+            .resolve_submit_job(
+                &other_refill.job_id,
+                superseded_at + Duration::from_secs(60)
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn template_change_retires_refills_with_the_template() {
+        let manager = refill_manager("5s");
+        let primary = manager.build_miner_job("conn1", 64, "addr1").expect("job");
+        let refill = manager
+            .refill_miner_job("conn1", &primary.job_id, 256)
+            .expect("refill");
+
+        manager.install_test_job(test_job("job2", 2));
+        let stale_since = manager.state.read().job_meta["job1"]
+            .stale_since
+            .expect("old template stale");
+        for job in [&primary, &refill] {
+            assert!(manager
+                .resolve_submit_job(&job.job_id, stale_since + Duration::from_secs(1))
+                .is_some());
+            assert!(matches!(
+                manager.resolve_submit_job_with_reason(
+                    &job.job_id,
+                    stale_since + Duration::from_secs(6)
+                ),
+                Err(SubmitJobResolveError::TemplateStaleBeyondGrace { .. })
+            ));
+        }
+
+        // Retiring the template drops its refills from every index.
+        let mut state = manager.state.write();
+        remove_assignments_for_templates_locked(&mut state, &["job1".to_string()]);
+        assert!(state.assignments.is_empty());
+        assert_eq!(state.refill_assignment_count, 0);
+        assert!(state.refill_assignments_by_template.is_empty());
+        assert_assignment_indexes(&state);
+    }
+
+    #[test]
+    fn pruning_and_eviction_keep_refill_indexes_consistent() {
+        let manager = refill_manager("5s");
+        let primary = manager.build_miner_job("conn1", 64, "addr1").expect("job");
+        let refill = manager
+            .refill_miner_job("conn1", &primary.job_id, 256)
+            .expect("refill");
+        manager.install_test_job(test_job("job2", 2));
+        let mut state = manager.state.write();
+        let now = Instant::now() + Duration::from_secs(3600);
+        let removed = prune_expired_assignments_locked(
+            &mut state,
+            now,
+            Duration::from_secs(60),
+            Duration::from_secs(5),
+            Some("job2"),
+        );
+        assert_eq!(removed, 2);
+        assert!(!state.assignments.contains_key(&refill.job_id));
+        assert_eq!(state.refill_assignment_count, 0);
+        assert!(state.refill_assignments_by_template.is_empty());
+        assert_assignment_indexes(&state);
+        drop(state);
+
+        let current = manager.build_miner_job("conn1", 64, "addr1").expect("job");
+        let refill = manager
+            .refill_miner_job("conn1", &current.job_id, 256)
+            .expect("refill");
+        let mut state = manager.state.write();
+        assert!(remove_assignment_locked(&mut state, &refill.job_id));
+        assert_eq!(state.refill_assignment_count, 0);
+        assert_assignment_indexes(&state);
     }
 
     #[test]
