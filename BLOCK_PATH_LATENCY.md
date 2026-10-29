@@ -115,3 +115,13 @@ One line each: hypothesis, stage, tier and host, result, verdict.
   ~70214).** Daemon sync_total p50 584 ms, p90 761 ms; preverify p50
   551 ms (n=67). This meets the ≤600 ms target. Submit total p50 625 ms
   (n=7).
+- **Fanout gate (one-permit async semaphore around retarget + build).**
+  T2 on a Ryzen 7700X with 4,000 idle connections, 2 interleaved pairs:
+  template → written base p50 15-16 / p99 81-86 ms, gate 24 / 96 ms. The
+  gate cuts wakeup (template_to_conn p99 80 → 5 ms) but serializes ~24 µs
+  of task handoff per connection. A profile shows the build itself is
+  negligible CPU (PoW verify ~51%, socket writes ~11%), so the tail is task
+  scheduling for ~2 tasks per connection, not lock work. **Rejected.**
+  Next: one fanout task builds all assignments in chunked lock passes,
+  splices per-connection fields into the template's pre-serialized job,
+  and queues bytes straight to each writer.
