@@ -7,6 +7,9 @@ pub const METHOD_NOTIFICATION: &str = "notification";
 
 pub const NOTIFY_POOL_BLOCK_SOLVED: &str = "pool_block_solved";
 pub const NOTIFY_MINER_BLOCK_FOUND: &str = "miner_block_found";
+/// Sent to a miner refused at a connection cap just before the connection
+/// closes; `retry_after_ms` says how long to wait before reconnecting.
+pub const NOTIFY_CONNECTION_LIMIT: &str = "connection_limit";
 
 pub const STRATUM_PROTOCOL_VERSION_CURRENT: u32 = 2;
 /// Longest encoded address accepted anywhere. Faraday post-quantum addresses

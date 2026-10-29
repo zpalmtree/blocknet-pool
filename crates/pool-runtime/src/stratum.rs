@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
@@ -31,10 +32,13 @@ use pool_common::gateway::{
 use pool_common::protocol::{
     normalize_worker_name, LoginParams, StratumNotify, StratumRequest, StratumResponse,
     SubmitParams, CAP_SAME_TEMPLATE_REBIND_V1, METHOD_LOGIN, METHOD_NOTIFICATION, METHOD_SUBMIT,
-    NOTIFY_MINER_BLOCK_FOUND, NOTIFY_POOL_BLOCK_SOLVED,
+    NOTIFY_CONNECTION_LIMIT, NOTIFY_MINER_BLOCK_FOUND, NOTIFY_POOL_BLOCK_SOLVED,
 };
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
+/// Range of the reconnect delay suggested to miners refused at a connection
+/// cap, spread so refused miners do not all come back at once.
+const CONNECTION_LIMIT_RETRY_MS: std::ops::RangeInclusive<u64> = 15_000..=45_000;
 const MAX_STRATUM_REQUEST_BYTES: usize = 8 * 1024;
 const NOTIFICATION_CHANNEL_CAPACITY: usize = 256;
 const INBOUND_QUEUE_CAPACITY: usize = 256;
@@ -1094,6 +1098,11 @@ impl StratumServer {
         let ip = ip_group_key(peer.ip());
         if !self.try_track_conn(&ip) {
             tracing::warn!(ip = %ip, "rejecting relayed stratum connection due to limits");
+            let _ = frame_tx.try_send(Frame::new(
+                FrameKind::Line,
+                conn,
+                connection_limit_line().into_bytes(),
+            ));
             let _ = frame_tx.try_send(Frame::new(FrameKind::Close, conn, Vec::new()));
             return;
         }
@@ -1187,6 +1196,16 @@ impl StratumServer {
             let ip = ip_group_key(peer.ip());
             if !self.try_track_conn(&ip) {
                 tracing::warn!(ip = %ip, "rejecting stratum connection due to limits");
+                let mut line = connection_limit_line();
+                line.push('\n');
+                let mut stream = stream;
+                tokio::spawn(async move {
+                    let _ = tokio::time::timeout(
+                        Duration::from_secs(5),
+                        stream.write_all(line.as_bytes()),
+                    )
+                    .await;
+                });
                 continue;
             }
 
@@ -2372,6 +2391,20 @@ where
     }
 }
 
+/// The notification sent to a miner refused at a connection cap.
+fn connection_limit_line() -> String {
+    let retry_after_ms = rand::thread_rng().gen_range(CONNECTION_LIMIT_RETRY_MS);
+    serde_json::to_string(&StratumNotify {
+        method: METHOD_NOTIFICATION.to_string(),
+        params: serde_json::json!({
+            "kind": NOTIFY_CONNECTION_LIMIT,
+            "message": "pool connection limit reached; reconnecting shortly",
+            "retry_after_ms": retry_after_ms,
+        }),
+    })
+    .expect("notification serializes")
+}
+
 fn block_notification(kind: &str, message: &str) -> StratumNotify {
     StratumNotify {
         method: METHOD_NOTIFICATION.to_string(),
@@ -3242,6 +3275,74 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn gateway_miner_over_the_cap_is_told_to_back_off_before_closing() {
+        use crate::service_state::EngineRole;
+        use pool_gateway::{GatewayListeners, GatewayMetrics, Timings};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let socket = dir.path().join("gateway.sock");
+        let miner_listener =
+            TcpListener::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)))
+                .await
+                .expect("bind gateway");
+        let gateway_addr = miner_listener.local_addr().expect("gateway addr");
+        let engine_listener = tokio::net::UnixListener::bind(&socket).expect("bind engine socket");
+        let gateway = tokio::spawn(pool_gateway::run(
+            GatewayListeners {
+                miners: miner_listener,
+                engines: engine_listener,
+            },
+            Timings {
+                tick: Duration::from_millis(20),
+                ..Timings::default()
+            },
+            1_000,
+            Arc::new(GatewayMetrics::default()),
+        ));
+        let cfg = Config {
+            stratum_max_connections: 1,
+            ..stratum_test_cfg()
+        };
+        let (engine, jobs) = build_tcp_test_server(cfg).await;
+        let role = Arc::new(EngineRole::new(false));
+        let serve = tokio::spawn(Arc::clone(&engine).run_gateway_client(
+            socket.clone(),
+            "a".to_string(),
+            Arc::clone(&role),
+        ));
+        for _ in 0..500 {
+            if role.is_primary() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        let (mut held_reader, mut held_writer) = connect_test_client(gateway_addr).await;
+        let address = test_miner_address(0x55);
+        login_test_client(&mut held_reader, &mut held_writer, 1, &address, "rig").await;
+
+        let (mut reader, _writer) = connect_test_client(gateway_addr).await;
+        let notice = read_json_line(&mut reader).await;
+        assert_eq!(
+            notice["params"]["kind"],
+            pool_common::protocol::NOTIFY_CONNECTION_LIMIT
+        );
+        assert!(notice["params"]["retry_after_ms"].as_u64().is_some());
+        let mut rest = String::new();
+        let read = tokio::time::timeout(Duration::from_secs(2), reader.read_line(&mut rest))
+            .await
+            .expect("refused connection closes");
+        assert_eq!(read.unwrap(), 0);
+
+        drop((held_reader, held_writer));
+        serve.abort();
+        gateway.abort();
+        tokio::task::spawn_blocking(move || drop((engine, jobs)))
+            .await
+            .expect("drop engine");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn gateway_hands_a_miner_to_a_new_engine_without_disconnecting_it() {
         use crate::service_state::EngineRole;
         use pool_gateway::{GatewayListeners, GatewayMetrics, Timings};
@@ -3795,6 +3896,41 @@ mod tests {
         let response = read_json_line(&mut reader).await;
         assert_eq!(response["status"].as_str(), Some("ok"), "{response}");
         drop((reader, writer));
+        shutdown_test_listener(listener_task, server, jobs).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tcp_connection_over_the_cap_is_told_to_back_off_before_closing() {
+        let cfg = Config {
+            stratum_max_connections: 1,
+            ..stratum_test_cfg()
+        };
+        let (server, jobs) = build_tcp_test_server(cfg).await;
+        let (addr, listener_task) = start_test_tcp_listener(Arc::clone(&server)).await;
+        let (_held_reader, _held_writer) = connect_test_client(addr).await;
+        for _ in 0..40 {
+            if server.conn_state.lock().total == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        let (mut reader, _writer) = connect_test_client(addr).await;
+        let notice = read_json_line(&mut reader).await;
+        assert_eq!(notice["method"], pool_common::protocol::METHOD_NOTIFICATION);
+        assert_eq!(
+            notice["params"]["kind"],
+            pool_common::protocol::NOTIFY_CONNECTION_LIMIT
+        );
+        let retry = notice["params"]["retry_after_ms"].as_u64().unwrap();
+        assert!(super::CONNECTION_LIMIT_RETRY_MS.contains(&retry), "{retry}");
+        let mut rest = String::new();
+        let read = tokio::time::timeout(Duration::from_secs(2), reader.read_line(&mut rest))
+            .await
+            .expect("refused connection closes");
+        assert_eq!(read.unwrap(), 0);
+        assert_eq!(server.connection_snapshot().rejected_at_cap_total, 1);
+        drop((_held_reader, _held_writer));
         shutdown_test_listener(listener_task, server, jobs).await;
     }
 
