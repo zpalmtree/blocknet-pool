@@ -78,3 +78,11 @@ One line each: hypothesis, stage, tier and host, result, verdict.
   `b16a385` (adds Faraday) took over at 01:14. Rolling daemon deploy of core
   `26d76f6` finished at 02:43, with payouts restored. T3 starts from those
   times.
+- **T3, first 10 peer blocks on `26d76f6` (02:43-03:12 EDT).** Preverify
+  (PoW) 902 → 533 ms mean. The chain-lock wait is ~0 ms, so that is not
+  the gap. sync_total is 1062 ms, which leaves ~517 ms outside the timed
+  stages. It is the precheck before preverify: `passesCheapPrecheck` reads
+  61 ancestor headers, and `decodeBlockHeader` fully decodes any block
+  stored before 0.23.0 (legacy JSON, below ~70153). The window holds only
+  binary blocks once the tip passes ~70214, so the gap should close on its
+  own. If it doesn't, decode legacy headers without the full block.
