@@ -47,6 +47,10 @@ const VARDIFF_MIN_SAMPLE_COUNT: usize = 2;
 const VARDIFF_RATIO_DAMPING_EXPONENT: f64 = 0.45;
 const VARDIFF_MIN_ADJUSTMENT_FACTOR: f64 = 1.02;
 const VARDIFF_MAX_ADJUSTMENT_FACTOR: f64 = 1.5;
+/// Largest upward step from the Faraday fork. Every session restarts at the
+/// fork's initial difficulty, far below a fast GPU's, and the step there is
+/// sized from the measured hashrate rather than the share interval.
+const FARADAY_VARDIFF_MAX_UP_FACTOR: f64 = 4.0;
 const VARDIFF_HINT_DECAY_START: Duration = Duration::from_secs(60 * 60);
 const VARDIFF_HINT_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const VARDIFF_HINT_PERSIST_INTERVAL: Duration = Duration::from_secs(60);
@@ -618,6 +622,18 @@ pub(crate) enum SubmitQueueRoute {
     Regular,
 }
 
+/// Applies the Faraday floor to a session's difficulty. A session reset at
+/// the fork drops its rate window: shares of the previous PoW say nothing
+/// about the BLAKE2b hashrate.
+fn admit_faraday_session(era: &DifficultyEra, session: &mut MinerSession) {
+    let admitted = era.admit(session.difficulty);
+    if admitted != session.difficulty {
+        session.share_times.clear();
+        session.share_work.clear();
+    }
+    session.difficulty = admitted;
+}
+
 #[derive(Debug, Clone)]
 struct MinerSession {
     address: String,
@@ -627,6 +643,8 @@ struct MinerSession {
     /// Recent shares for the rate estimate: accepted shares plus submits the
     /// pool answered without processing (see `record_unprocessed_submit`).
     share_times: VecDeque<Instant>,
+    /// Difficulty each share in `share_times` was found at, oldest first.
+    share_work: VecDeque<u64>,
     last_share_at: Option<Instant>,
     last_unprocessed_at: Option<Instant>,
     last_difficulty_adjustment: Option<Instant>,
@@ -1253,6 +1271,7 @@ impl PoolEngine {
                 difficulty,
                 capabilities: cap_set,
                 share_times: VecDeque::new(),
+                share_work: VecDeque::new(),
                 last_share_at: None,
                 last_unprocessed_at: None,
                 last_difficulty_adjustment: None,
@@ -2615,7 +2634,7 @@ impl PoolEngine {
             if era.faraday {
                 let mut sessions = self.sessions.lock();
                 let session = sessions.get_mut(conn_id)?;
-                session.difficulty = era.admit(session.difficulty);
+                admit_faraday_session(&era, session);
                 return Some((session.difficulty, None));
             }
             return self
@@ -2627,11 +2646,11 @@ impl PoolEngine {
         let mut sessions = self.sessions.lock();
         let session = sessions.get_mut(conn_id)?;
         let (min_diff, max_diff) = (era.min, era.max);
-        session.difficulty = if era.faraday {
-            era.admit(session.difficulty)
+        if era.faraday {
+            admit_faraday_session(&era, session);
         } else {
-            session.difficulty.clamp(min_diff, max_diff)
-        };
+            session.difficulty = session.difficulty.clamp(min_diff, max_diff);
+        }
 
         // Keep dev-fee sessions on submit-only retargeting so their long idle
         // periods do not collapse difficulty between the brief fee windows.
@@ -2785,11 +2804,11 @@ impl PoolEngine {
     ) -> bool {
         let era = self.difficulty_era();
         let (min_diff, max_diff) = (era.min, era.max);
-        session.difficulty = if era.faraday {
-            era.admit(session.difficulty)
+        if era.faraday {
+            admit_faraday_session(&era, session);
         } else {
-            session.difficulty.clamp(min_diff, max_diff)
-        };
+            session.difficulty = session.difficulty.clamp(min_diff, max_diff);
+        }
 
         let window = self
             .cfg()
@@ -2804,9 +2823,13 @@ impl PoolEngine {
             session.last_unprocessed_at = Some(now);
         }
         session.share_times.push_back(now);
+        session.share_work.push_back(session.difficulty);
         let cutoff = now.checked_sub(window).unwrap_or(now);
         while session.share_times.front().is_some_and(|ts| *ts < cutoff) {
             session.share_times.pop_front();
+        }
+        while session.share_work.len() > session.share_times.len() {
+            session.share_work.pop_front();
         }
 
         let mut next_diff = session.difficulty;
@@ -2819,7 +2842,25 @@ impl PoolEngine {
                     observed_interval = elapsed / ((session.share_times.len() - 1) as f64);
                     let lower = target_interval * (1.0 - tolerance);
                     let upper = target_interval * (1.0 + tolerance);
-                    if observed_interval < lower {
+                    if observed_interval < lower && era.faraday {
+                        // Size the step from the work found in the window: the
+                        // share interval alone keeps counting shares found at an
+                        // older, lower difficulty and overshoots after a raise.
+                        let intervals = session.share_times.len() - 1;
+                        let work: f64 = session
+                            .share_work
+                            .iter()
+                            .rev()
+                            .take(intervals)
+                            .map(|difficulty| *difficulty as f64)
+                            .sum();
+                        next_diff = faraday_vardiff_raise(
+                            session.difficulty,
+                            work,
+                            elapsed,
+                            target_interval,
+                        );
+                    } else if observed_interval < lower {
                         let raw_ratio = target_interval / observed_interval;
                         let ratio = raw_ratio
                             .powf(VARDIFF_RATIO_DAMPING_EXPONENT)
@@ -3039,6 +3080,16 @@ fn clamp_login_difficulty_hint(
     let bounded_lower = lower.max(min_diff);
     let bounded_upper = upper.min(max_diff).max(bounded_lower);
     hint.clamp(bounded_lower, bounded_upper)
+}
+
+/// Faraday-era raise: the difficulty at which the hashrate measured over
+/// `elapsed` seconds (`work` = summed share difficulty) finds one share per
+/// `target_interval`, stepping up by at most `FARADAY_VARDIFF_MAX_UP_FACTOR`.
+fn faraday_vardiff_raise(current: u64, work: f64, elapsed: f64, target_interval: f64) -> u64 {
+    let wanted = work / elapsed.max(f64::EPSILON) * target_interval;
+    let ratio = (wanted / current.max(1) as f64)
+        .clamp(VARDIFF_MIN_ADJUSTMENT_FACTOR, FARADAY_VARDIFF_MAX_UP_FACTOR);
+    ((current as f64) * ratio).ceil() as u64
 }
 
 fn vardiff_target_interval_seconds(cfg: &Config) -> f64 {
@@ -6290,6 +6341,26 @@ mod tests {
         let ack = last.expect("ack");
         assert!(ack.next_difficulty > faraday::FARADAY_INITIAL_SHARE_DIFFICULTY);
         assert!(ack.next_difficulty <= faraday::FARADAY_MAX_SHARE_DIFFICULTY);
+    }
+
+    #[test]
+    fn faraday_vardiff_raise_follows_measured_hashrate() {
+        let start = faraday::FARADAY_INITIAL_SHARE_DIFFICULTY;
+        // A 16 GH/s GPU at the fork start: 3.7 shares/s, wants ~4.8e11 at 30 s.
+        let shares_per_sec = 16e9 / start as f64;
+        let work = start as f64 * shares_per_sec * 10.0;
+        assert_eq!(faraday_vardiff_raise(start, work, 10.0, 30.0), start * 4);
+        // The step tracks measured work, so it keeps climbing at the cap while
+        // far below the GPU's rate and stops at that rate (no overshoot from
+        // counting shares found at an older, lower difficulty).
+        let raised = start * 4;
+        assert_eq!(faraday_vardiff_raise(raised, work, 10.0, 30.0), raised * 4);
+        let near = 450_000_000_000u64;
+        let next = faraday_vardiff_raise(near, work, 10.0, 30.0);
+        assert!(
+            (480_000_000_000..=482_000_000_000).contains(&next),
+            "settles on the measured rate, got {next}"
+        );
     }
 
     fn vardiff_test_engine(cfg: Config) -> PoolEngine {
