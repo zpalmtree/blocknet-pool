@@ -3313,10 +3313,12 @@ fn estimate_unconfirmed_pending_snapshot(
     let trust_policy = PayoutTrustPolicy {
         min_verified_shares: config.runtime.payout_min_verified_shares.max(0) as u64,
         provisional_cap_multiplier: config.runtime.payout_provisional_cap_multiplier.max(0.0),
+        count: None,
     };
     let preview_trust_policy = PayoutTrustPolicy {
         min_verified_shares: 0,
         provisional_cap_multiplier: 0.0,
+        count: None,
     };
 
     let prepared_blocks =
@@ -3732,6 +3734,7 @@ fn build_block_reward_breakdown(
     let preview_trust_policy = PayoutTrustPolicy {
         min_verified_shares: 0,
         provisional_cap_multiplier: 0.0,
+        count: None,
     };
     let payout_trust_policy = PayoutTrustPolicy::from_values(
         config.runtime.payout_min_verified_shares,

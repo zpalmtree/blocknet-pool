@@ -382,6 +382,7 @@ Daemon log stream details:
 - `pplns_window_duration` controls the time-based PPLNS lookback window (default `6h`).
 - `payout_provisional_cap_multiplier` caps aged provisional difficulty relative to verified difficulty so undersampled miners receive reduced provisional credit instead of being fully excluded.
 - Keep `sample_rate` and `min_sample_every` comfortably above the payout policy's full-credit target so honest miners do not sit under the cap for long.
+- `verification_policy` (`ratio` by default) selects how verification is spent. `count` gives each large address about `count_target_samples` samples per `count_window` (never below `count_coverage_floor`) and also credits provisional shares that have a clean sample within `count_sample_radius`, once the window holds `count_payout_min_samples`. See `VERIFY_COUNT_SAMPLING.md`. The policy, `count_payout_min_samples` and `count_sample_radius` need a restart.
 - Optional caps:
   - `payout_max_recipients_per_tick`
   - `payout_max_total_per_tick`

@@ -47,6 +47,16 @@ const OVERLOAD_SAMPLE_RATE_FLOOR: f64 = 0.01;
 const INVALID_SAMPLE_COUNT_THRESHOLD: u64 = 5;
 const FORCED_VALIDATION_QUARANTINE_THRESHOLD: f64 = 0.20;
 const PROVISIONAL_BACKLOG_VERIFIED_MULTIPLIER: f64 = 8.0;
+/// Count policy: while a backlog or coverage hold is active, an address
+/// sampled below the ratio rate has at most this multiple of its count-policy
+/// sampling probability audited (and never more than `hold_audit_rate`). Its
+/// hold clears once a few samples arrive, so a quarter of a large farm's
+/// shares would be far more than needed.
+const COUNT_HOLD_AUDIT_BOOST: f64 = 4.0;
+/// Count policy: the backlog hold is waived once the shares inside the
+/// provisional delay hold this fraction of the samples the count target
+/// would give over that span (at least one).
+const COUNT_RECENT_SAMPLES_FRACTION: f64 = 0.25;
 /// Two, so a block candidate never waits for another one's ~0.5 s hash.
 pub(crate) const CANDIDATE_VALIDATION_WORKERS: usize = 2;
 /// Probation audits verify addresses that have never passed a sample. They
@@ -383,6 +393,10 @@ struct ValidationAddressState {
     provisional_at: VecDeque<TrackedProvisionalShare>,
     accepted_window: VecDeque<AcceptedWindowShare>,
     last_replay_backfill_at: Option<SystemTime>,
+    /// Latest failed sample (in memory only). Under the count policy an
+    /// address with a failure inside the PPLNS window is sampled at the ratio
+    /// rate again, so evidence of fakes restores today's detection power.
+    last_invalid_sample_at: Option<SystemTime>,
     last_seen_at: SystemTime,
 }
 
@@ -417,6 +431,7 @@ impl Default for ValidationAddressState {
             provisional_at: VecDeque::new(),
             accepted_window: VecDeque::new(),
             last_replay_backfill_at: None,
+            last_invalid_sample_at: None,
             last_seen_at: SystemTime::now(),
         }
     }
@@ -935,8 +950,22 @@ impl ValidationEngine {
         self.inner.finalize_result(task, computed)
     }
 
+    /// Plans a regular share's verification. Treats the source as
+    /// established; see `plan_regular_submit_for_source`.
+    #[cfg(test)]
     pub(crate) fn plan_regular_submit(&self, address: &str) -> RegularSubmitPlan {
-        self.inner.plan_regular_submit(address)
+        self.inner.plan_regular_submit(address, true)
+    }
+
+    /// Plans a regular share's verification. Under the count policy only an
+    /// established source (address and IP group with verified history) may
+    /// be sampled below the ratio rate; others keep the ratio sampler.
+    pub(crate) fn plan_regular_submit_for_source(
+        &self,
+        address: &str,
+        source_established: bool,
+    ) -> RegularSubmitPlan {
+        self.inner.plan_regular_submit(address, source_established)
     }
 
     pub(crate) fn record_hot_accept(
@@ -1331,7 +1360,7 @@ impl ValidationInner {
         self.rng.lock().gen::<f64>() < rate
     }
 
-    fn plan_regular_submit(&self, address: &str) -> RegularSubmitPlan {
+    fn plan_regular_submit(&self, address: &str, source_established: bool) -> RegularSubmitPlan {
         self.sync_external_clears(self.address_has_live_hold(address));
         let overload_mode = self.evaluate_overload(Instant::now());
         if self.config().validation_mode == "full" {
@@ -1389,6 +1418,23 @@ impl ValidationInner {
             };
         }
 
+        // Count policy: an established, high-volume address with no failed
+        // sample in the PPLNS window is sampled at a rate that gives it about
+        // `count_target_samples` per count window. None keeps the ratio
+        // sampler (and is all the ratio policy uses).
+        let recent_failure = effective.last_invalid_sample_at.is_some_and(|at| {
+            payout_coverage_window_start(&self.config(), now).is_none_or(|start| at >= start)
+        });
+        let count_rate =
+            if self.config().count_verification_policy() && source_established && !recent_failure {
+                count_sample_probability(
+                    &self.config(),
+                    count_window_shares(&effective, &self.config(), now),
+                )
+            } else {
+                None
+            };
+
         let audit_source = if forced_review {
             Some(ValidationAuditSource::ForcedReview)
         } else if active_temporary_hold {
@@ -1413,22 +1459,40 @@ impl ValidationInner {
             None
         } else if overload_mode == OverloadMode::Normal {
             let next_share_idx = effective.total_shares.saturating_add(1);
-            if (self.config().warmup_shares > 0
-                && next_share_idx <= self.config().warmup_shares as u64)
-                || (self.config().min_sample_every > 0
-                    && next_share_idx.is_multiple_of(self.config().min_sample_every as u64))
-            {
-                Some(ValidationAuditSource::Sampled)
-            } else {
-                let rate = self.effective_sample_rate(overload_mode);
-                if rate >= 1.0 || (rate > 0.0 && self.rng.lock().gen::<f64>() < rate) {
-                    Some(ValidationAuditSource::Sampled)
-                } else {
-                    None
+            let warmup = self.config().warmup_shares > 0
+                && next_share_idx <= self.config().warmup_shares as u64;
+            match count_rate {
+                // A count-sampled address draws at its own rate alone: no
+                // periodic every-Nth sample, which would otherwise set a
+                // coverage floor of 1/min_sample_every.
+                Some(rate) if !warmup => {
+                    if self.rng.lock().gen::<f64>() < rate {
+                        Some(ValidationAuditSource::Sampled)
+                    } else {
+                        None
+                    }
+                }
+                _ => {
+                    if warmup
+                        || (self.config().min_sample_every > 0
+                            && next_share_idx.is_multiple_of(self.config().min_sample_every as u64))
+                    {
+                        Some(ValidationAuditSource::Sampled)
+                    } else {
+                        let rate = self.effective_sample_rate(overload_mode);
+                        if rate >= 1.0 || (rate > 0.0 && self.rng.lock().gen::<f64>() < rate) {
+                            Some(ValidationAuditSource::Sampled)
+                        } else {
+                            None
+                        }
+                    }
                 }
             }
         } else {
-            let rate = self.effective_sample_rate(overload_mode);
+            let mut rate = self.effective_sample_rate(overload_mode);
+            if let Some(count_rate) = count_rate {
+                rate = rate.min(count_rate);
+            }
             if rate >= 1.0 || (rate > 0.0 && self.rng.lock().gen::<f64>() < rate) {
                 Some(ValidationAuditSource::Sampled)
             } else {
@@ -1438,14 +1502,17 @@ impl ValidationInner {
 
         // Auditing every share of a held farm floods the regular lane in
         // bursts; a fixed fraction still restores coverage, more slowly.
+        let hold_audit_rate = match count_rate {
+            Some(rate) => self
+                .config()
+                .hold_audit_rate
+                .min(rate * COUNT_HOLD_AUDIT_BOOST),
+            None => self.config().hold_audit_rate,
+        };
         let audit_source = match audit_source {
             Some(
                 ValidationAuditSource::ProvisionalBacklog | ValidationAuditSource::PayoutCoverage,
-            ) if self.config().hold_audit_rate < 1.0
-                && self.rng.lock().gen::<f64>() >= self.config().hold_audit_rate =>
-            {
-                None
-            }
+            ) if hold_audit_rate < 1.0 && self.rng.lock().gen::<f64>() >= hold_audit_rate => None,
             source => source,
         };
         let sync_full_verify = matches!(audit_source, Some(ValidationAuditSource::ForcedReview));
@@ -1536,6 +1603,9 @@ impl ValidationInner {
         let address_risk_sample = update.sampled && !(update.attributed && update.invalid_sample);
         if update.sampled {
             st.sampled_shares = st.sampled_shares.saturating_add(1);
+            if update.invalid_sample {
+                st.last_invalid_sample_at = Some(now);
+            }
             if update.invalid_sample && update.count_invalid_at_address {
                 st.invalid_samples = st.invalid_samples.saturating_add(1);
             }
@@ -2043,6 +2113,9 @@ impl ValidationInner {
 
         let invalid_sample = !accepted;
         entry.sampled_shares = entry.sampled_shares.saturating_add(1);
+        if invalid_sample {
+            entry.last_invalid_sample_at = Some(now);
+        }
         if invalid_sample && count_invalid_at_address {
             entry.invalid_samples = entry.invalid_samples.saturating_add(1);
         }
@@ -2692,6 +2765,7 @@ impl PayoutCoverageStats {
 #[derive(Debug, Clone, Copy, Default)]
 struct ProvisionalBacklogStats {
     recent_shares: u64,
+    recent_verified_shares: u64,
     recent_verified_difficulty: u64,
     recent_provisional_difficulty: u64,
 }
@@ -2714,6 +2788,7 @@ fn provisional_backlog_stats(
         }
         stats.recent_shares = stats.recent_shares.saturating_add(1);
         if share.verified {
+            stats.recent_verified_shares = stats.recent_verified_shares.saturating_add(1);
             stats.recent_verified_difficulty = stats
                 .recent_verified_difficulty
                 .saturating_add(share.difficulty);
@@ -2734,6 +2809,15 @@ fn should_force_for_provisional_backlog(
     let Some(stats) = provisional_backlog_stats(state, config, now) else {
         return false;
     };
+    if !ratio_provisional_backlog(stats, config) {
+        return false;
+    }
+    // Count policy: enough recent clean samples waive the ratio test.
+    !(config.count_verification_policy()
+        && stats.recent_verified_shares >= count_recent_samples_required(config))
+}
+
+fn ratio_provisional_backlog(stats: ProvisionalBacklogStats, config: &Config) -> bool {
     let min_recent_shares = config.warmup_shares.max(1) as u64;
     if stats.recent_shares < min_recent_shares {
         return false;
@@ -2788,7 +2872,11 @@ fn should_force_for_payout_coverage(
     if stats.eligible_shares() < min_eligible_shares.max(1) {
         return false;
     }
-    stats.eligible_provisional_shares > 0 && stats.verified_ratio() + f64::EPSILON < target_ratio
+    let ratio_short = stats.eligible_provisional_shares > 0
+        && stats.verified_ratio() + f64::EPSILON < target_ratio;
+    // Count policy: payouts give full credit to a window that is covered by
+    // count (see `count_window_covered`), so it needs no coverage hold.
+    ratio_short && !(config.count_verification_policy() && count_window_covered(state, config, now))
 }
 
 fn should_backfill_pending_window(
@@ -2802,6 +2890,165 @@ fn should_backfill_pending_window(
     ) && state.forced_until.is_some_and(|deadline| deadline > now);
 
     active_temporary_hold || should_force_for_payout_coverage(state, config, now)
+}
+
+/// Count policy: shares the address sent within the last `count_window`.
+/// Counted back from the newest entry; an out-of-order entry (an audit of a
+/// share that had left the window) ends the count early, which can only
+/// raise the address's sampling rate.
+fn count_window_shares(state: &ValidationAddressState, config: &Config, now: SystemTime) -> u64 {
+    let cutoff = now
+        .checked_sub(config.count_window_duration())
+        .unwrap_or(UNIX_EPOCH);
+    state
+        .accepted_window
+        .iter()
+        .rev()
+        .take_while(|share| share.created_at > cutoff)
+        .count() as u64
+}
+
+/// Expected fraction of an address's shares the ratio sampler verifies in
+/// Normal mode: `sample_rate` plus every `min_sample_every`-th share.
+fn ratio_base_coverage(config: &Config) -> f64 {
+    let rate = config.sample_rate.clamp(0.0, 1.0);
+    let periodic = if config.min_sample_every > 0 {
+        1.0 / config.min_sample_every as f64
+    } else {
+        0.0
+    };
+    1.0 - (1.0 - rate) * (1.0 - periodic)
+}
+
+/// Count policy: the sampling probability for an address that sent
+/// `window_shares` shares in the last count window, which aims at
+/// `count_target_samples` per window and never goes below
+/// `count_coverage_floor`. None when that is not below the ratio sampler's
+/// own coverage, so smaller addresses keep today's sampling unchanged.
+fn count_sample_probability(config: &Config, window_shares: u64) -> Option<f64> {
+    if window_shares == 0 {
+        return None;
+    }
+    let floor = config.count_coverage_floor.clamp(0.0, 1.0);
+    let target = (config.count_target_samples / window_shares as f64).max(floor);
+    (target < ratio_base_coverage(config)).then_some(target)
+}
+
+/// Count policy: clean samples the shares inside the provisional delay need
+/// before the backlog hold is waived.
+fn count_recent_samples_required(config: &Config) -> u64 {
+    let delay = config.provisional_share_delay_duration().as_secs_f64();
+    let window = config
+        .count_window_duration()
+        .as_secs_f64()
+        .max(f64::MIN_POSITIVE);
+    (config.count_target_samples * delay / window * COUNT_RECENT_SAMPLES_FRACTION)
+        .floor()
+        .max(1.0) as u64
+}
+
+/// Whether `sorted` (ascending sample times) has a sample within `radius` of
+/// `at`, on either side.
+pub(crate) fn sample_within(sorted: &[SystemTime], at: SystemTime, radius: Duration) -> bool {
+    let low = at.checked_sub(radius).unwrap_or(UNIX_EPOCH);
+    let idx = sorted.partition_point(|sample| *sample < low);
+    sorted
+        .get(idx)
+        .is_some_and(|sample| at.checked_add(radius).is_none_or(|high| *sample <= high))
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct CountCoverageStats {
+    verified_shares: u64,
+    eligible_provisional_shares: u64,
+    uncovered_provisional_shares: u64,
+}
+
+/// Count policy view of the address's PPLNS window: clean samples, and the
+/// payout-eligible provisional shares with no clean sample within
+/// `count_sample_radius`. Runs under the state lock on every share, so it is
+/// one pass over the (time-ordered) window; an out-of-order window falls back
+/// to sorting the sample times.
+fn count_coverage_stats(
+    state: &ValidationAddressState,
+    config: &Config,
+    now: SystemTime,
+) -> CountCoverageStats {
+    let delay = config.provisional_share_delay_duration();
+    let cutoff = now.checked_sub(delay).unwrap_or(now);
+    let radius = config.count_sample_radius_duration();
+    let eligible = |share: &AcceptedWindowShare| {
+        !share.verified && (delay.is_zero() || share.created_at <= cutoff)
+    };
+    let mut stats = CountCoverageStats::default();
+    // Eligible shares after the last sample and beyond its radius, waiting
+    // to see whether the next sample is close enough.
+    let mut waiting = VecDeque::<SystemTime>::new();
+    let mut last_sample: Option<SystemTime> = None;
+    let mut previous: Option<SystemTime> = None;
+    for share in &state.accepted_window {
+        if previous.is_some_and(|previous| share.created_at < previous) {
+            return count_coverage_stats_unordered(state, radius, eligible);
+        }
+        previous = Some(share.created_at);
+        if share.verified {
+            stats.verified_shares += 1;
+            let reach = share.created_at.checked_sub(radius).unwrap_or(UNIX_EPOCH);
+            while waiting.front().is_some_and(|at| *at < reach) {
+                waiting.pop_front();
+                stats.uncovered_provisional_shares += 1;
+            }
+            waiting.clear();
+            last_sample = Some(share.created_at);
+        } else if eligible(share) {
+            stats.eligible_provisional_shares += 1;
+            let covered_before = last_sample.is_some_and(|sample| {
+                sample
+                    .checked_add(radius)
+                    .is_none_or(|reach| share.created_at <= reach)
+            });
+            if !covered_before {
+                waiting.push_back(share.created_at);
+            }
+        }
+    }
+    stats.uncovered_provisional_shares += waiting.len() as u64;
+    stats
+}
+
+fn count_coverage_stats_unordered(
+    state: &ValidationAddressState,
+    radius: Duration,
+    eligible: impl Fn(&AcceptedWindowShare) -> bool,
+) -> CountCoverageStats {
+    let mut sampled_at = state
+        .accepted_window
+        .iter()
+        .filter(|share| share.verified)
+        .map(|share| share.created_at)
+        .collect::<Vec<_>>();
+    sampled_at.sort_unstable();
+    let mut stats = CountCoverageStats {
+        verified_shares: sampled_at.len() as u64,
+        ..CountCoverageStats::default()
+    };
+    for share in state.accepted_window.iter().filter(|share| eligible(share)) {
+        stats.eligible_provisional_shares += 1;
+        if !sample_within(&sampled_at, share.created_at, radius) {
+            stats.uncovered_provisional_shares += 1;
+        }
+    }
+    stats
+}
+
+/// Count policy: the window earns full provisional credit (the same rule as
+/// `payout::count_policy_provisional_credit`) once it holds
+/// `count_payout_min_samples` clean samples and every payout-eligible
+/// provisional share has one within `count_sample_radius`.
+fn count_window_covered(state: &ValidationAddressState, config: &Config, now: SystemTime) -> bool {
+    let stats = count_coverage_stats(state, config, now);
+    stats.verified_shares >= config.count_payout_min_samples.max(1) as u64
+        && stats.uncovered_provisional_shares == 0
 }
 
 fn refresh_dynamic_validation_hold(
@@ -2893,6 +3140,7 @@ fn load_initial_validation_state(
                 provisional_at: VecDeque::new(),
                 accepted_window: VecDeque::new(),
                 last_replay_backfill_at: None,
+                last_invalid_sample_at: None,
                 last_seen_at: entry.last_seen_at,
             },
         );
@@ -3022,6 +3270,219 @@ mod tests {
         }
     }
 
+    /// In-memory share table for the replay: what background audits load
+    /// from, using the production selection rules.
+    struct ReplayShareStore {
+        window: Duration,
+        difficulty: u64,
+        inner: Mutex<ReplayShares>,
+    }
+
+    #[derive(Default)]
+    struct ReplayShares {
+        by_id: HashMap<i64, ReplayShare>,
+        by_address: HashMap<String, VecDeque<i64>>,
+        adds: u64,
+    }
+
+    struct ReplayShare {
+        address: String,
+        created_at: SystemTime,
+        /// None = provisional, Some(true) = verified, Some(false) = rejected.
+        verdict: Option<bool>,
+        sampled: bool,
+    }
+
+    impl ReplayShareStore {
+        fn new(window: Duration, difficulty: u64) -> Self {
+            Self {
+                window,
+                difficulty,
+                inner: Mutex::new(ReplayShares::default()),
+            }
+        }
+
+        fn add(
+            &self,
+            id: i64,
+            address: &str,
+            created_at: SystemTime,
+            verified: bool,
+            sampled: bool,
+        ) {
+            let mut inner = self.inner.lock();
+            inner.by_id.insert(
+                id,
+                ReplayShare {
+                    address: address.to_string(),
+                    created_at,
+                    verdict: verified.then_some(true),
+                    sampled,
+                },
+            );
+            inner
+                .by_address
+                .entry(address.to_string())
+                .or_default()
+                .push_back(id);
+            inner.adds += 1;
+            if inner.adds.is_multiple_of(10_000) {
+                let cutoff = SystemTime::now() - self.window - self.window / 4;
+                let ReplayShares {
+                    by_id, by_address, ..
+                } = &mut *inner;
+                for ids in by_address.values_mut() {
+                    while ids
+                        .front()
+                        .is_some_and(|id| by_id.get(id).is_none_or(|s| s.created_at < cutoff))
+                    {
+                        let id = ids.pop_front().expect("front");
+                        by_id.remove(&id);
+                    }
+                }
+            }
+        }
+
+        fn pending(&self, id: i64, share: &ReplayShare) -> PendingAuditShare {
+            PendingAuditShare {
+                share_id: id,
+                job_id: format!("job-{id}"),
+                miner: share.address.clone(),
+                worker: "rig".to_string(),
+                difficulty: self.difficulty,
+                nonce: id as u64,
+                claimed_hash: Some(REPLAY_STORE_HASH),
+                header_base: id.to_le_bytes().to_vec(),
+                network_target: [0; 32],
+                created_at: share.created_at,
+            }
+        }
+    }
+
+    /// Same as the replay hasher's fixed hash: audits pass.
+    const REPLAY_STORE_HASH: [u8; 32] = {
+        let mut hash = [0u8; 32];
+        hash[31] = 1;
+        hash
+    };
+
+    impl ValidationStateStore for ReplayShareStore {
+        fn load_validation_state(
+            &self,
+            _state_cutoff: SystemTime,
+            _provisional_cutoff: SystemTime,
+            _accepted_window_cutoff: SystemTime,
+            _now: SystemTime,
+        ) -> Result<LoadedValidationState> {
+            Ok(LoadedValidationState::default())
+        }
+
+        fn upsert_validation_state(&self, _state: &PersistedValidationAddressState) -> Result<()> {
+            Ok(())
+        }
+
+        fn add_validation_provisional(
+            &self,
+            _address: &str,
+            _share_id: Option<i64>,
+            _created_at: SystemTime,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        fn clean_validation_state(
+            &self,
+            _state_cutoff: SystemTime,
+            _provisional_cutoff: SystemTime,
+            _now: SystemTime,
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        fn latest_validation_clear_event_id(&self) -> Result<i64> {
+            Ok(0)
+        }
+
+        fn load_validation_clear_events_since(
+            &self,
+            _cursor: i64,
+        ) -> Result<Vec<ValidationClearEvent>> {
+            Ok(Vec::new())
+        }
+
+        fn complete_validation_audit(&self, update: &ShareReplayUpdate) -> Result<bool> {
+            let mut inner = self.inner.lock();
+            let Some(share) = inner.by_id.get_mut(&update.share_id) else {
+                // Unknown to the store (pruned): settle like production.
+                return Ok(true);
+            };
+            if share.verdict.is_some() {
+                return Ok(false);
+            }
+            share.verdict = Some(update.status == SHARE_STATUS_VERIFIED);
+            share.sampled = true;
+            Ok(true)
+        }
+
+        fn load_recent_provisional_audit_shares(
+            &self,
+            address: &str,
+            provisional_cutoff: SystemTime,
+            limit: usize,
+        ) -> Result<Vec<PendingAuditShare>> {
+            let inner = self.inner.lock();
+            let Some(ids) = inner.by_address.get(address) else {
+                return Ok(Vec::new());
+            };
+            Ok(ids
+                .iter()
+                .filter_map(|id| inner.by_id.get(id).map(|share| (*id, share)))
+                .filter(|(_, share)| {
+                    share.created_at > provisional_cutoff
+                        && share.verdict.is_none()
+                        && !share.sampled
+                })
+                .take(limit)
+                .map(|(id, share)| self.pending(id, share))
+                .collect())
+        }
+
+        fn load_pending_payout_audit_shares(
+            &self,
+            address: &str,
+            config: &Config,
+            now: SystemTime,
+            limit: usize,
+        ) -> Result<Vec<PendingAuditShare>> {
+            let inner = self.inner.lock();
+            let Some(ids) = inner.by_address.get(address) else {
+                return Ok(Vec::new());
+            };
+            let start = now - config.pplns_window_duration();
+            let delay = config.provisional_share_delay_duration();
+            let candidates = ids
+                .iter()
+                .filter_map(|id| inner.by_id.get(id).map(|share| (*id, share)))
+                .filter(|(_, share)| share.created_at >= start && share.verdict != Some(false))
+                .map(|(id, share)| crate::store::BackfillShare {
+                    id,
+                    created_at: share.created_at,
+                    difficulty: self.difficulty,
+                    verified: share.verdict == Some(true),
+                    eligible_provisional: share.verdict.is_none()
+                        && (delay.is_zero() || share.created_at + delay <= now),
+                    sampled: share.sampled,
+                })
+                .collect::<Vec<_>>();
+            Ok(
+                crate::store::select_payout_backfill(&candidates, config, limit)
+                    .into_iter()
+                    .filter_map(|id| inner.by_id.get(&id).map(|share| self.pending(id, share)))
+                    .collect(),
+            )
+        }
+    }
+
     /// T2 replay (VERIFY_PERFORMANCE.md): drives the real validation policy
     /// (hot accepts, backlog holds, sampling, overload modes) with a production
     /// share mix and a hasher modelling the verifier's memory-bandwidth
@@ -3109,13 +3570,32 @@ mod tests {
             }
         }
         let scaled = |secs: f64| format!("{}ms", ((secs * 1000.0) / speedup).round() as u64);
+        // "ratio" (default) or "count" (VERIFY_COUNT_SAMPLING.md).
+        let policy = std::env::var("VERIFY_REPLAY_POLICY").unwrap_or_else(|_| "ratio".to_string());
+        // 1 backs background (payout-coverage and backlog) audits with an
+        // in-memory share store, as production's database does; 0 keeps the
+        // original harness, where background audits find no shares.
+        let backfill = env_f64("VERIFY_REPLAY_BACKFILL", 0.0) > 0.0;
+        // Simulated hours of history per address before the run starts, so
+        // the payout window and count-policy rates begin in steady state.
+        let seed_hours = env_f64("VERIFY_REPLAY_SEED_HOURS", 0.0);
+        let pplns_hours = env_f64("VERIFY_REPLAY_PPLNS_HOURS", 6.0);
+        // Addresses at or above this many simulated shares per hour (at the
+        // replay load) are reported as large.
+        let large_rate = env_f64("VERIFY_REPLAY_LARGE_PER_HOUR", 500.0);
         let cfg = Config {
             validation_mode: "probabilistic".to_string(),
             regular_verifiers: 8,
             audit_verifiers: 2,
             regular_validation_queue: 512,
             sample_rate: env_f64("VERIFY_REPLAY_SAMPLE_RATE", 0.05),
-            min_sample_every: 25,
+            min_sample_every: env_f64("VERIFY_REPLAY_MIN_SAMPLE_EVERY", 25.0) as i32,
+            verification_policy: policy.clone(),
+            count_target_samples: env_f64("VERIFY_REPLAY_COUNT_TARGET", 50.0),
+            count_coverage_floor: env_f64("VERIFY_REPLAY_COUNT_FLOOR", 0.01),
+            count_payout_min_samples: env_f64("VERIFY_REPLAY_COUNT_MIN_SAMPLES", 30.0) as i32,
+            count_window: scaled(3600.0),
+            count_sample_radius: scaled(env_f64("VERIFY_REPLAY_COUNT_RADIUS_S", 600.0)),
             // Production restores per-address state from the database, so
             // established miners are past warmup; VERIFY_REPLAY_WARMUP=5
             // models a restart that lost it (every address in probation).
@@ -3125,7 +3605,7 @@ mod tests {
             overload_emergency_oldest_age: scaled(10.0),
             overload_clear_oldest_age: scaled(4.0),
             forced_verify_duration: scaled(24.0 * 3600.0),
-            pplns_window_duration: scaled(6.0 * 3600.0),
+            pplns_window_duration: scaled(pplns_hours * 3600.0),
             hold_audit_rate: env_f64("VERIFY_REPLAY_HOLD_AUDIT_RATE", 1.0),
             ..Config::default()
         };
@@ -3138,7 +3618,67 @@ mod tests {
             vardiff_target_shares: 10,
             ..cfg.clone()
         };
-        let engine = ValidationEngine::new(cfg, hasher);
+        let difficulty = (60.0 / share_scale).round() as u64;
+        let replay_store = Arc::new(ReplayShareStore::new(
+            cfg.pplns_window_duration(),
+            difficulty,
+        ));
+        let state_store: Arc<dyn ValidationStateStore> = if backfill {
+            replay_store.clone()
+        } else {
+            Arc::new(NullValidationStateStore)
+        };
+        let engine = ValidationEngine::new_with_state_store(cfg.clone(), hasher, state_store);
+        let weight_total = weights.iter().sum::<f64>();
+        // Simulated shares per hour for address i at the replay load.
+        let address_rate = |i: usize| weights[i] / weight_total * base_rate * 3600.0 * load;
+        let mut seed_rng = StdRng::seed_from_u64(29);
+        let mut seeded_ids = 0i64;
+        if seed_hours > 0.0 {
+            let now = SystemTime::now();
+            let base_coverage = ratio_base_coverage(&cfg);
+            let mut state = engine.inner.state.lock();
+            for i in 0..weights.len() {
+                let rate = address_rate(i) * share_scale;
+                let coverage = if cfg.count_verification_policy() {
+                    count_sample_probability(&cfg, rate.round() as u64).unwrap_or(base_coverage)
+                } else {
+                    base_coverage
+                };
+                let count = (rate * seed_hours).round() as usize;
+                let mut ages = (0..count)
+                    .map(|_| seed_rng.gen::<f64>() * seed_hours * 3600.0 / speedup)
+                    .collect::<Vec<_>>();
+                ages.sort_by(|a, b| b.total_cmp(a));
+                let address = format!("replay-{i}");
+                let st = state.entry(address.clone()).or_default();
+                for age in ages {
+                    seeded_ids += 1;
+                    let created_at = now - Duration::from_secs_f64(age);
+                    let verified = seed_rng.gen::<f64>() < coverage;
+                    st.accepted_window.push_back(AcceptedWindowShare {
+                        share_id: seeded_ids,
+                        created_at,
+                        difficulty,
+                        verified,
+                    });
+                    st.total_shares += 1;
+                    st.sampled_shares += u64::from(verified);
+                    replay_store.add(seeded_ids, &address, created_at, verified, verified);
+                }
+            }
+        }
+        let sampled_before = {
+            let state = engine.inner.state.lock();
+            (0..weights.len())
+                .map(|i| {
+                    state
+                        .get(&format!("replay-{i}"))
+                        .map_or(0, |st| st.sampled_shares)
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut shares_by_address = vec![0u64; weights.len()];
         let sim_start = Instant::now();
         let sim_now = |started: Instant| sim_start + started.elapsed().mul_f64(speedup);
         let mut controller =
@@ -3156,10 +3696,9 @@ mod tests {
         let mut growth_switches = Vec::<(f64, u8)>::new();
         let pick = WeightedIndex::new(&weights).expect("weights");
         let mut rng = StdRng::seed_from_u64(7);
-        let difficulty = (60.0 / share_scale).round() as u64;
         let started = Instant::now();
         let mut next_at = 0.0f64;
-        let mut share_id = 0i64;
+        let mut share_id = seeded_ids;
         let mut sync_handles = Vec::new();
         loop {
             let factor = match surge {
@@ -3205,7 +3744,8 @@ mod tests {
                 std::thread::sleep(wait);
             }
             share_id += 1;
-            let address = format!("replay-{}", pick.sample(&mut rng));
+            let address_idx = pick.sample(&mut rng);
+            let address = format!("replay-{address_idx}");
             if rng.gen::<f64>() < candidate_rate * speedup / rate
                 && next_at - last_candidate_at >= candidate_min_gap
             {
@@ -3241,8 +3781,18 @@ mod tests {
                 }
                 continue;
             }
+            shares_by_address[address_idx] += 1;
             let plan = engine.plan_regular_submit(&address);
             let header_base = share_id.to_le_bytes().to_vec();
+            replay_store.add(
+                share_id,
+                &address,
+                SystemTime::now(),
+                plan.sync_full_verify,
+                // As production: provisional rows start unaudited even when a
+                // live audit is queued for them.
+                plan.sync_full_verify,
+            );
             if plan.sync_full_verify {
                 if let Some(rx) = engine.submit(
                     ValidationTask {
@@ -3346,9 +3896,70 @@ mod tests {
             + snap.overload_emergency_millis_total)
             .max(1) as f64;
         let elapsed = started.elapsed().as_secs_f64() * speedup;
+        let hashes = |lane: &str| -> f64 {
+            waits
+                .get("validation_hash")
+                .and_then(|lanes| lanes.get(lane))
+                .map_or(0, |histogram| histogram.count()) as f64
+                / elapsed
+        };
+        // Per-address coverage during the run: samples (of any kind) over
+        // shares, for large and small addresses.
+        let coverage_by_class = {
+            let state = engine.inner.state.lock();
+            let mut large = (0u64, 0u64, Vec::<f64>::new());
+            let mut small = (0u64, 0u64, Vec::<f64>::new());
+            for i in 0..weights.len() {
+                let shares = shares_by_address[i];
+                if shares == 0 {
+                    continue;
+                }
+                let sampled = state
+                    .get(&format!("replay-{i}"))
+                    .map_or(0, |st| st.sampled_shares)
+                    .saturating_sub(sampled_before[i]);
+                let class = if address_rate(i) >= large_rate {
+                    &mut large
+                } else {
+                    &mut small
+                };
+                class.0 += sampled;
+                class.1 += shares;
+                class.2.push(sampled as f64 / shares as f64);
+            }
+            let summary = |(sampled, shares, mut per): (u64, u64, Vec<f64>)| {
+                per.sort_by(f64::total_cmp);
+                serde_json::json!({
+                    "addresses": per.len(),
+                    "shares": shares,
+                    "coverage_pct": 100.0 * sampled as f64 / shares.max(1) as f64,
+                    "median_address_coverage_pct": per.get(per.len() / 2).map(|c| 100.0 * c),
+                    "samples_per_address_hour": sampled as f64 / per.len().max(1) as f64
+                        / (elapsed / 3600.0),
+                })
+            };
+            serde_json::json!({ "large": summary(large), "small": summary(small) })
+        };
         println!(
             "{}",
             serde_json::json!({
+                "policy": policy,
+                "backfill": backfill,
+                "seed_hours": seed_hours,
+                "pplns_hours": pplns_hours,
+                "count_target": cfg.count_target_samples,
+                "count_floor": cfg.count_coverage_floor,
+                "min_sample_every": cfg.min_sample_every,
+                "verifies_per_s": {
+                    "total": hashes("live_audit") + hashes("background_audit")
+                        + hashes("sync") + hashes("probation") + hashes("candidate"),
+                    "live_audit": hashes("live_audit"),
+                    "background_audit": hashes("background_audit"),
+                    "sync": hashes("sync"),
+                    "probation": hashes("probation"),
+                    "candidate": hashes("candidate"),
+                },
+                "coverage_by_class": coverage_by_class,
                 "speedup": speedup,
                 "load": load,
                 "share_scale": share_scale,
@@ -3362,8 +3973,8 @@ mod tests {
                 "growth_switches_sim_minute": growth_switches,
                 "growth_normal_size_rate": controller.normal_size_rate(),
                 "simulated_secs": elapsed,
-                "shares": share_id,
-                "shares_per_s": share_id as f64 / elapsed,
+                "shares": share_id - seeded_ids,
+                "shares_per_s": (share_id - seeded_ids) as f64 / elapsed,
                 "overload_pct": {
                     "normal": 100.0 * snap.overload_normal_millis_total as f64 / mode_total,
                     "shed": 100.0 * snap.overload_shed_millis_total as f64 / mode_total,
@@ -3373,7 +3984,7 @@ mod tests {
                 "audits_verified_per_s": snap.audit_verified as f64 / elapsed,
                 "audits_deferred_per_s": snap.audit_deferred as f64 / elapsed,
                 "coverage_pct": 100.0 * (snap.audit_verified + sync_answered as u64) as f64
-                    / share_id.max(1) as f64,
+                    / (share_id - seeded_ids).max(1) as f64,
                 "sync_answered": sync_answered,
                 "forced_addresses": snap.forced_verify_addresses,
                 "regular_wait_real_ms": {
@@ -3397,6 +4008,463 @@ mod tests {
                 },
             })
         );
+    }
+
+    /// Production-like sampling settings under the count policy, with the
+    /// holds switched off (no provisional delay, no payout cap) unless a test
+    /// turns them back on.
+    fn count_cfg() -> Config {
+        Config {
+            verification_policy: "count".to_string(),
+            sample_rate: 0.08,
+            min_sample_every: 25,
+            hold_audit_rate: 0.25,
+            provisional_share_delay: "0s".to_string(),
+            payout_provisional_cap_multiplier: 0.0,
+            pplns_window_duration: "6h".to_string(),
+            ..test_cfg()
+        }
+    }
+
+    /// `count` accepted shares for `address` spread evenly over the `span`
+    /// ending now, every `verified_every`-th verified (0 = none).
+    fn seeded_state(count: u64, span: Duration, verified_every: u64) -> ValidationAddressState {
+        let now = SystemTime::now();
+        let mut st = ValidationAddressState::default();
+        for i in 0..count {
+            let age = span.mul_f64((count - i) as f64 / count as f64);
+            let verified = verified_every > 0 && i % verified_every == 0;
+            st.accepted_window.push_back(AcceptedWindowShare {
+                share_id: 1_000_000 + i as i64,
+                created_at: now - age,
+                difficulty: 1,
+                verified,
+            });
+            st.total_shares += 1;
+            st.sampled_shares += u64::from(verified);
+        }
+        st
+    }
+
+    fn seed_address(engine: &ValidationEngine, address: &str, st: ValidationAddressState) {
+        engine.inner.state.lock().insert(address.to_string(), st);
+    }
+
+    fn sampled_fraction(engine: &ValidationEngine, address: &str, established: bool) -> f64 {
+        let trials = 20_000;
+        let sampled = (0..trials)
+            .filter(|_| {
+                let plan = engine.plan_regular_submit_for_source(address, established);
+                plan.audit_source == Some(ValidationAuditSource::Sampled)
+            })
+            .count();
+        sampled as f64 / trials as f64
+    }
+
+    #[test]
+    fn count_sample_probability_targets_count_and_respects_floor() {
+        let cfg = count_cfg();
+        let base = ratio_base_coverage(&cfg);
+        assert!((base - 0.1168).abs() < 1e-9, "{base}");
+        // Small and new addresses keep the ratio sampler.
+        assert_eq!(count_sample_probability(&cfg, 0), None);
+        assert_eq!(count_sample_probability(&cfg, 68), None);
+        assert_eq!(count_sample_probability(&cfg, 428), None);
+        // Above target / base (~428/h) the rate gives 50 samples per window.
+        assert_eq!(count_sample_probability(&cfg, 500), Some(0.1));
+        assert_eq!(count_sample_probability(&cfg, 2_000), Some(0.025));
+        // The floor holds for the largest farms.
+        assert_eq!(count_sample_probability(&cfg, 7_100), Some(0.01));
+        assert_eq!(count_sample_probability(&cfg, 1_000_000), Some(0.01));
+        // A floor at or above the ratio coverage turns scaling off.
+        let high_floor = Config {
+            count_coverage_floor: 0.2,
+            ..cfg.clone()
+        };
+        assert_eq!(count_sample_probability(&high_floor, 7_100), None);
+        // Growth mode lowers the base rate, and with it the scaling point.
+        let growth = Config {
+            sample_rate: 0.05,
+            ..cfg
+        };
+        assert!(ratio_base_coverage(&growth) < base);
+        assert_eq!(count_sample_probability(&growth, 500), None);
+        assert_eq!(count_sample_probability(&growth, 1_000), Some(0.05));
+    }
+
+    #[test]
+    fn count_policy_samples_large_addresses_less_and_small_addresses_as_before() {
+        let engine = ValidationEngine::new(count_cfg(), Arc::new(DeterministicTestHasher));
+        let hour = Duration::from_secs(3600);
+        seed_address(&engine, "farm", seeded_state(7_100, hour, 100));
+        seed_address(&engine, "mid", seeded_state(2_000, hour, 40));
+        seed_address(&engine, "small", seeded_state(68, hour, 8));
+
+        let farm = sampled_fraction(&engine, "farm", true);
+        assert!((0.008..0.012).contains(&farm), "farm sampled {farm}");
+        let mid = sampled_fraction(&engine, "mid", true);
+        assert!((0.022..0.028).contains(&mid), "mid sampled {mid}");
+        // The ratio sampler's random 8% (its every-25th share is fixed by the
+        // share count, which planning alone does not advance).
+        let small = sampled_fraction(&engine, "small", true);
+        assert!((0.07..0.09).contains(&small), "small sampled {small}");
+        // A source without verified history keeps the ratio sampler even on
+        // a large address.
+        let fresh = sampled_fraction(&engine, "farm", false);
+        assert!(
+            (0.07..0.09).contains(&fresh),
+            "unestablished source {fresh}"
+        );
+
+        // The ratio policy samples everyone the same.
+        let ratio = ValidationEngine::new(
+            Config {
+                verification_policy: "ratio".to_string(),
+                ..count_cfg()
+            },
+            Arc::new(DeterministicTestHasher),
+        );
+        seed_address(&ratio, "farm", seeded_state(7_100, hour, 100));
+        let farm_ratio = sampled_fraction(&ratio, "farm", true);
+        assert!(
+            (0.07..0.09).contains(&farm_ratio),
+            "ratio farm {farm_ratio}"
+        );
+    }
+
+    #[test]
+    fn count_policy_waives_holds_for_well_sampled_large_addresses() {
+        let held_cfg = |policy: &str| Config {
+            verification_policy: policy.to_string(),
+            provisional_share_delay: "15m".to_string(),
+            payout_provisional_cap_multiplier: 19.0,
+            ..count_cfg()
+        };
+        let ratio = held_cfg("ratio");
+        let count = held_cfg("count");
+        let now = SystemTime::now();
+        let six_hours = Duration::from_secs(6 * 3600);
+
+        // A 7,100 shares/h farm sampled at the count floor (1%).
+        let farm = seeded_state(42_600, six_hours, 100);
+        assert!(should_force_for_provisional_backlog(&farm, &ratio, now));
+        assert!(should_force_for_payout_coverage(&farm, &ratio, now));
+        assert!(!should_force_for_provisional_backlog(&farm, &count, now));
+        assert!(!should_force_for_payout_coverage(&farm, &count, now));
+
+        // The engine plans no hold audits for it, and samples it at ~1%.
+        let engine = ValidationEngine::new(count.clone(), Arc::new(DeterministicTestHasher));
+        seed_address(&engine, "farm", farm.clone());
+        for _ in 0..2_000 {
+            let plan = engine.plan_regular_submit_for_source("farm", true);
+            assert!(
+                matches!(
+                    plan.audit_source,
+                    None | Some(ValidationAuditSource::Sampled)
+                ),
+                "{plan:?}"
+            );
+        }
+
+        // A stretch with no clean sample is not covered: the coverage hold
+        // comes back until it is audited.
+        let mut gap = farm.clone();
+        let gap_from = now - Duration::from_secs(4 * 3600);
+        let gap_to = now - Duration::from_secs(3 * 3600);
+        for share in gap.accepted_window.iter_mut() {
+            if share.created_at > gap_from && share.created_at < gap_to {
+                share.verified = false;
+            }
+        }
+        assert!(should_force_for_payout_coverage(&gap, &count, now));
+
+        // Too few recent samples: the backlog hold applies as under ratio.
+        let mut quiet = farm.clone();
+        let recent = now - Duration::from_secs(15 * 60);
+        for share in quiet.accepted_window.iter_mut() {
+            if share.created_at > recent {
+                share.verified = false;
+            }
+        }
+        assert!(should_force_for_provisional_backlog(&quiet, &count, now));
+
+        // A small address with ratio-level coverage but few samples gets the
+        // ratio decisions under both policies.
+        let small = seeded_state(408, six_hours, 9);
+        for cfg in [&ratio, &count] {
+            assert_eq!(
+                should_force_for_payout_coverage(&small, cfg, now),
+                should_force_for_payout_coverage(&small, &ratio, now)
+            );
+            assert_eq!(
+                should_force_for_provisional_backlog(&small, cfg, now),
+                should_force_for_provisional_backlog(&small, &ratio, now)
+            );
+        }
+        let starved = seeded_state(408, six_hours, 0);
+        assert!(should_force_for_provisional_backlog(&starved, &count, now));
+    }
+
+    #[test]
+    fn count_policy_caps_hold_audits_for_count_sampled_addresses() {
+        let cfg = Config {
+            provisional_share_delay: "15m".to_string(),
+            payout_provisional_cap_multiplier: 19.0,
+            ..count_cfg()
+        };
+        let engine = ValidationEngine::new(cfg, Arc::new(DeterministicTestHasher));
+        // A farm with no recent samples is in backlog hold.
+        let mut farm = seeded_state(7_100, Duration::from_secs(3600), 100);
+        let recent = SystemTime::now() - Duration::from_secs(20 * 60);
+        for share in farm.accepted_window.iter_mut() {
+            if share.created_at > recent {
+                share.verified = false;
+            }
+        }
+        seed_address(&engine, "farm", farm);
+        let trials = 20_000;
+        let held = (0..trials)
+            .filter(|_| {
+                engine
+                    .plan_regular_submit_for_source("farm", true)
+                    .audit_source
+                    == Some(ValidationAuditSource::ProvisionalBacklog)
+            })
+            .count() as f64
+            / trials as f64;
+        // 4x its 1% count rate rather than the 25% hold rate.
+        assert!((0.034..0.046).contains(&held), "held farm audited {held}");
+    }
+
+    struct RecordingFeedback {
+        revoke: bool,
+        calls: Mutex<Vec<(i64, bool)>>,
+        pending: Vec<i64>,
+    }
+
+    impl AuditFeedback for RecordingFeedback {
+        fn on_audit_result(
+            &self,
+            share_id: i64,
+            address: &str,
+            proven_fake: bool,
+            _address_good: u64,
+            _address_invalid: u64,
+        ) -> AuditAttribution {
+            self.calls.lock().push((share_id, proven_fake));
+            if self.revoke && proven_fake {
+                AuditAttribution {
+                    attributed: true,
+                    count_invalid_at_address: true,
+                    revoked: vec![(
+                        address.to_string(),
+                        self.pending
+                            .iter()
+                            .map(|id| ShareKey {
+                                id: *id,
+                                created_at: SystemTime::now(),
+                            })
+                            .collect(),
+                    )],
+                }
+            } else {
+                AuditAttribution::default()
+            }
+        }
+    }
+
+    fn fake_audit_share(share_id: i64, address: &str) -> PendingAuditShare {
+        PendingAuditShare {
+            claimed_hash: Some([0xAA; 32]),
+            ..probation_share(share_id, address, share_id as u64)
+        }
+    }
+
+    #[test]
+    fn count_policy_failed_sample_still_revokes_and_strikes() {
+        let engine = ValidationEngine::new_with_state_store(
+            count_cfg(),
+            Arc::new(DeterministicTestHasher),
+            Arc::new(InMemoryAuditStore::default()),
+        );
+        seed_address(
+            &engine,
+            "farm",
+            seeded_state(7_100, Duration::from_secs(3600), 100),
+        );
+        assert!(sampled_fraction(&engine, "farm", true) < 0.02);
+        let pending = (1..=10).collect::<Vec<i64>>();
+        for id in &pending {
+            let plan = RegularSubmitPlan {
+                sync_full_verify: false,
+                enqueue_audit: false,
+                audit_source: None,
+                overload_mode: OverloadMode::Normal,
+                probation: false,
+            };
+            engine.record_hot_accept("farm", *id, 1, SystemTime::now(), None, plan);
+        }
+        let feedback = Arc::new(RecordingFeedback {
+            revoke: true,
+            calls: Mutex::new(Vec::new()),
+            pending: pending.clone(),
+        });
+        engine.attach_audit_feedback(feedback.clone());
+
+        // An attributed fake revokes the source's pending shares.
+        engine.enqueue_source_boost_audit(fake_audit_share(5, "farm"));
+        wait_for(|| !feedback.calls.lock().is_empty(), Duration::from_secs(5));
+        assert_eq!(feedback.calls.lock().as_slice(), &[(5, true)]);
+        wait_for(
+            || {
+                engine.inner.state.lock()["farm"]
+                    .accepted_window
+                    .iter()
+                    .all(|share| !pending.contains(&share.share_id))
+            },
+            Duration::from_secs(5),
+        );
+        let st = engine.inner.state.lock()["farm"].clone();
+        assert!(st
+            .accepted_window
+            .iter()
+            .all(|share| !pending.contains(&share.share_id)));
+        assert_eq!(st.invalid_samples, 1);
+        // The failure puts the address back on the ratio sampler (its random
+        // 8% here) for the rest of the PPLNS window.
+        let after = sampled_fraction(&engine, "farm", true);
+        assert!(
+            (0.07..0.09).contains(&after),
+            "sampled after a failure {after}"
+        );
+
+        // Unattributable fakes escalate the address as under ratio: forced
+        // review, every share verified synchronously.
+        let engine = ValidationEngine::new_with_state_store(
+            count_cfg(),
+            Arc::new(DeterministicTestHasher),
+            Arc::new(InMemoryAuditStore::default()),
+        );
+        seed_address(
+            &engine,
+            "farm",
+            seeded_state(7_100, Duration::from_secs(3600), 100),
+        );
+        let feedback = Arc::new(RecordingFeedback {
+            revoke: false,
+            calls: Mutex::new(Vec::new()),
+            pending: Vec::new(),
+        });
+        engine.attach_audit_feedback(feedback.clone());
+        for id in 0..INVALID_SAMPLE_COUNT_THRESHOLD as i64 {
+            engine.enqueue_source_boost_audit(fake_audit_share(100 + id, "farm"));
+        }
+        wait_for(
+            || feedback.calls.lock().len() == INVALID_SAMPLE_COUNT_THRESHOLD as usize,
+            Duration::from_secs(5),
+        );
+        wait_for(
+            || {
+                engine
+                    .plan_regular_submit_for_source("farm", true)
+                    .sync_full_verify
+            },
+            Duration::from_secs(5),
+        );
+        let plan = engine.plan_regular_submit_for_source("farm", true);
+        assert!(plan.sync_full_verify);
+        assert_eq!(plan.audit_source, Some(ValidationAuditSource::ForcedReview));
+    }
+
+    #[test]
+    fn count_coverage_one_pass_matches_sorted_lookup() {
+        let cfg = Config {
+            provisional_share_delay: "15m".to_string(),
+            ..count_cfg()
+        };
+        let radius = cfg.count_sample_radius_duration();
+        let now = SystemTime::now();
+        let mut rng = StdRng::seed_from_u64(11);
+        for verified_every in [3u64, 40, 200, 2_000] {
+            let mut st = seeded_state(6_000, Duration::from_secs(6 * 3600), 0);
+            for share in st.accepted_window.iter_mut() {
+                share.verified = rng.gen_range(0..verified_every) == 0;
+            }
+            let delay = cfg.provisional_share_delay_duration();
+            let eligible =
+                |share: &AcceptedWindowShare| !share.verified && share.created_at <= now - delay;
+            let one_pass = count_coverage_stats(&st, &cfg, now);
+            assert_eq!(
+                one_pass,
+                count_coverage_stats_unordered(&st, radius, eligible)
+            );
+            // An out-of-order entry takes the sorted path.
+            let mut shuffled = st.clone();
+            shuffled.accepted_window.swap(10, 3_000);
+            assert_eq!(
+                count_coverage_stats(&shuffled, &cfg, now),
+                count_coverage_stats_unordered(&shuffled, radius, eligible)
+            );
+        }
+    }
+
+    #[test]
+    fn ratio_policy_ignores_count_settings() {
+        let now = SystemTime::now();
+        let six_hours = Duration::from_secs(6 * 3600);
+        let states = [
+            seeded_state(42_600, six_hours, 100),
+            seeded_state(42_600, six_hours, 8),
+            seeded_state(408, six_hours, 9),
+            seeded_state(408, six_hours, 0),
+            seeded_state(20, Duration::from_secs(600), 3),
+        ];
+        let base = Config {
+            provisional_share_delay: "15m".to_string(),
+            payout_provisional_cap_multiplier: 19.0,
+            verification_policy: "ratio".to_string(),
+            ..count_cfg()
+        };
+        let odd = Config {
+            count_target_samples: 1.0,
+            count_coverage_floor: 0.000_001,
+            count_payout_min_samples: 1,
+            count_sample_radius: "6h".to_string(),
+            count_window: "1s".to_string(),
+            ..base.clone()
+        };
+        for st in &states {
+            assert_eq!(
+                should_force_for_provisional_backlog(st, &base, now),
+                should_force_for_provisional_backlog(st, &odd, now)
+            );
+            assert_eq!(
+                should_force_for_payout_coverage(st, &base, now),
+                should_force_for_payout_coverage(st, &odd, now)
+            );
+            assert_eq!(
+                should_backfill_pending_window(st, &base, now),
+                should_backfill_pending_window(st, &odd, now)
+            );
+        }
+        // Sampling (holds off) is the ratio sampler's 8%.
+        let engine = ValidationEngine::new(
+            Config {
+                verification_policy: "ratio".to_string(),
+                count_target_samples: 1.0,
+                count_coverage_floor: 0.000_001,
+                count_window: "1s".to_string(),
+                ..count_cfg()
+            },
+            Arc::new(DeterministicTestHasher),
+        );
+        seed_address(
+            &engine,
+            "farm",
+            seeded_state(7_100, Duration::from_secs(3600), 100),
+        );
+        let farm = sampled_fraction(&engine, "farm", true);
+        assert!((0.07..0.09).contains(&farm), "ratio farm {farm}");
     }
 
     #[test]

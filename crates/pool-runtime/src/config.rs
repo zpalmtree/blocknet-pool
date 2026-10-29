@@ -10,6 +10,8 @@ use serde::Deserialize;
 
 pub(crate) const CANDIDATE_SUBMIT_QUEUE_SIZE: usize = 64;
 pub const CANDIDATE_VALIDATION_QUEUE_SIZE: usize = 64;
+pub const VERIFICATION_POLICY_RATIO: &str = "ratio";
+pub const VERIFICATION_POLICY_COUNT: &str = "count";
 
 #[derive(Clone, PartialEq, Deserialize)]
 #[serde(default)]
@@ -86,6 +88,27 @@ pub struct Config {
     /// The second level drops back to the first below this rate.
     pub growth2_exit_submit_rate: f64,
     pub growth2_vardiff_target_shares: i32,
+    /// How share verification is spent across addresses (VERIFY_COUNT_SAMPLING.md).
+    /// "ratio" samples every address at `sample_rate` and requires verified
+    /// difficulty in proportion to provisional difficulty. "count" gives each
+    /// address about `count_target_samples` samples per `count_window` and
+    /// treats an address as covered once it has enough clean samples spread
+    /// over its shares. Restart-only, because payouts read it at startup.
+    pub verification_policy: String,
+    /// Count policy: samples per `count_window` an address should receive.
+    pub count_target_samples: f64,
+    /// Count policy: the window over which an address's share rate and
+    /// `count_target_samples` are measured.
+    pub count_window: String,
+    /// Count policy: lowest fraction of an address's shares that is sampled.
+    pub count_coverage_floor: f64,
+    /// Count policy: clean verified samples an address needs in the PPLNS
+    /// window for full provisional credit; credit ramps up to it. Restart-only.
+    pub count_payout_min_samples: i32,
+    /// Count policy: a provisional share counts as covered when a clean
+    /// verified sample of the same address lies within this distance of it.
+    /// Restart-only.
+    pub count_sample_radius: String,
     pub warmup_shares: i32,
     pub min_sample_every: i32,
     pub invalid_sample_threshold: f64,
@@ -195,6 +218,12 @@ impl Default for Config {
             growth2_submit_rate: 110.0,
             growth2_exit_submit_rate: 80.0,
             growth2_vardiff_target_shares: 3,
+            verification_policy: VERIFICATION_POLICY_RATIO.to_string(),
+            count_target_samples: 50.0,
+            count_window: "1h".to_string(),
+            count_coverage_floor: 0.01,
+            count_payout_min_samples: 30,
+            count_sample_radius: "10m".to_string(),
             warmup_shares: 20,
             min_sample_every: 10,
             invalid_sample_threshold: 0.10,
@@ -295,6 +324,9 @@ impl Config {
                 growth2_submit_rate,
                 growth2_exit_submit_rate,
                 growth2_vardiff_target_shares,
+                count_target_samples,
+                count_window,
+                count_coverage_floor,
             ]
         );
         (running, changed)
@@ -409,6 +441,19 @@ impl Config {
         self.audit_verifiers as usize
     }
 
+    /// Whether the count verification policy is selected.
+    pub fn count_verification_policy(&self) -> bool {
+        self.verification_policy == VERIFICATION_POLICY_COUNT
+    }
+
+    pub(crate) fn count_window_duration(&self) -> Duration {
+        config_duration("count_window", &self.count_window)
+    }
+
+    pub fn count_sample_radius_duration(&self) -> Duration {
+        config_duration("count_sample_radius", &self.count_sample_radius)
+    }
+
     pub(crate) fn forced_verify_duration(&self) -> Duration {
         config_duration("forced_verify_duration", &self.forced_verify_duration)
     }
@@ -499,6 +544,15 @@ impl Config {
         config_duration_result("vardiff_retarget_interval", &self.vardiff_retarget_interval)?;
         ensure_nonzero_duration("pplns_window_duration", &self.pplns_window_duration)?;
         config_duration_result("payout_interval", &self.payout_interval)?;
+        ensure_nonzero_duration("count_window", &self.count_window)?;
+        ensure_nonzero_duration("count_sample_radius", &self.count_sample_radius)?;
+        let pplns_window = config_duration("pplns_window_duration", &self.pplns_window_duration);
+        if config_duration("count_window", &self.count_window) > pplns_window {
+            anyhow::bail!("count_window must not exceed pplns_window_duration");
+        }
+        if config_duration("count_sample_radius", &self.count_sample_radius) > pplns_window {
+            anyhow::bail!("count_sample_radius must not exceed pplns_window_duration");
+        }
         Ok(())
     }
 
@@ -506,6 +560,10 @@ impl Config {
         match self.validation_mode.as_str() {
             "full" | "probabilistic" => {}
             _ => anyhow::bail!("validation_mode must be either \"full\" or \"probabilistic\""),
+        }
+        match self.verification_policy.as_str() {
+            VERIFICATION_POLICY_RATIO | VERIFICATION_POLICY_COUNT => {}
+            _ => anyhow::bail!("verification_policy must be either \"ratio\" or \"count\""),
         }
         ensure_nonempty("daemon_cookie_path", &self.daemon_cookie_path)?;
         ensure_nonempty("payout_pause_file", &self.payout_pause_file)?;
@@ -530,6 +588,7 @@ impl Config {
             ("regular_verifiers", self.regular_verifiers, 1),
             ("audit_verifiers", self.audit_verifiers, 1),
             ("warmup_shares", self.warmup_shares, 0),
+            ("count_payout_min_samples", self.count_payout_min_samples, 1),
             ("min_sample_every", self.min_sample_every, 0),
             ("invalid_sample_min", self.invalid_sample_min, 1),
             (
@@ -610,6 +669,19 @@ impl Config {
             anyhow::bail!("stratum_refill_rate must be greater than 0");
         }
         ensure_f64_range("hold_audit_rate", self.hold_audit_rate, 0.0, 1.0)?;
+        ensure_f64_range(
+            "count_target_samples",
+            self.count_target_samples,
+            0.0,
+            1_000_000.0,
+        )?;
+        if self.count_target_samples <= 0.0 {
+            anyhow::bail!("count_target_samples must be greater than 0");
+        }
+        ensure_f64_range("count_coverage_floor", self.count_coverage_floor, 0.0, 1.0)?;
+        if self.count_coverage_floor <= 0.0 {
+            anyhow::bail!("count_coverage_floor must be greater than 0");
+        }
         ensure_f64_range("growth_sample_rate", self.growth_sample_rate, 0.0, 1.0)?;
         ensure_f64_range("growth_submit_rate", self.growth_submit_rate, 0.0, f64::MAX)?;
         ensure_f64_range(
@@ -978,6 +1050,75 @@ mod tests {
         assert!(*applied != next, "restart-only differences remain visible");
 
         assert!(live.apply_hot(&next).is_empty(), "reapplying is a no-op");
+    }
+
+    #[test]
+    fn count_policy_settings_are_validated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let load = |json: &str| {
+            std::fs::write(&path, json).unwrap();
+            Config::load(&path)
+        };
+
+        let defaults = load("{}").unwrap();
+        assert_eq!(defaults.verification_policy, "ratio");
+        assert!(!defaults.count_verification_policy());
+        let count = load(r#"{"verification_policy":"count"}"#).unwrap();
+        assert!(count.count_verification_policy());
+
+        for (json, expected) in [
+            (
+                r#"{"verification_policy":"counted"}"#,
+                "verification_policy",
+            ),
+            (r#"{"count_target_samples":0.0}"#, "count_target_samples"),
+            (r#"{"count_target_samples":-5.0}"#, "count_target_samples"),
+            (r#"{"count_coverage_floor":0.0}"#, "count_coverage_floor"),
+            (r#"{"count_coverage_floor":1.5}"#, "count_coverage_floor"),
+            (
+                r#"{"count_payout_min_samples":0}"#,
+                "count_payout_min_samples",
+            ),
+            (r#"{"count_window":"0s"}"#, "count_window"),
+            (r#"{"count_window":"7h"}"#, "count_window"),
+            (r#"{"count_sample_radius":"0s"}"#, "count_sample_radius"),
+            (r#"{"count_sample_radius":"7h"}"#, "count_sample_radius"),
+        ] {
+            let err = match load(json) {
+                Ok(_) => panic!("{json} should fail config load"),
+                Err(err) => format!("{err:#}"),
+            };
+            assert!(err.contains(expected), "{json}: {err}");
+        }
+    }
+
+    #[test]
+    fn count_sampling_settings_reload_but_policy_and_payout_rule_do_not() {
+        let running = Config::default();
+        let next = Config {
+            verification_policy: "count".to_string(),
+            count_target_samples: 80.0,
+            count_window: "30m".to_string(),
+            count_coverage_floor: 0.02,
+            count_payout_min_samples: 50,
+            count_sample_radius: "5m".to_string(),
+            ..running.clone()
+        };
+        let live = LiveConfig::new(running);
+        let changed = live.apply_hot(&next);
+        assert_eq!(
+            changed,
+            vec![
+                "count_target_samples",
+                "count_window",
+                "count_coverage_floor"
+            ]
+        );
+        let applied = live.get();
+        assert_eq!(applied.verification_policy, "ratio");
+        assert_eq!(applied.count_payout_min_samples, 30);
+        assert_eq!(applied.count_sample_radius, "10m");
     }
 
     #[test]

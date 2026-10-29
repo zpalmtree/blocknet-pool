@@ -155,44 +155,26 @@ impl PoolStore {
             return Ok(Vec::new());
         }
 
-        let mut verified_difficulty = 0u64;
-        let mut eligible_provisional_difficulty = 0u64;
-        let mut replayable = Vec::<DbShare>::new();
-        for share in &window_shares {
-            if is_verified_share_status(&share.status) {
-                verified_difficulty = verified_difficulty.saturating_add(share.difficulty.max(1));
-            } else if is_share_payout_eligible(share, now, provisional_delay) {
-                eligible_provisional_difficulty =
-                    eligible_provisional_difficulty.saturating_add(share.difficulty.max(1));
-                if !share.was_sampled {
-                    replayable.push(share.clone());
-                }
-            }
-        }
-
-        let target_diff = payout_audit_deficit_difficulty(
-            verified_difficulty,
-            eligible_provisional_difficulty,
-            config.payout_provisional_cap_multiplier,
-        );
-        if target_diff == 0 {
-            return Ok(Vec::new());
-        }
-
-        replayable.sort_by(|a, b| {
-            a.created_at
-                .cmp(&b.created_at)
-                .then_with(|| a.id.cmp(&b.id))
-        });
-        let mut selected = Vec::<DbShare>::new();
-        let mut covered = 0u64;
-        for share in replayable {
-            selected.push(share.clone());
-            covered = covered.saturating_add(share.difficulty.max(1));
-            if selected.len() >= limit || covered >= target_diff {
-                break;
-            }
-        }
+        let candidates = window_shares
+            .iter()
+            .map(|share| BackfillShare {
+                id: share.id,
+                created_at: share.created_at,
+                difficulty: share.difficulty,
+                verified: is_verified_share_status(&share.status),
+                eligible_provisional: !is_verified_share_status(&share.status)
+                    && is_share_payout_eligible(share, now, provisional_delay),
+                sampled: share.was_sampled,
+            })
+            .collect::<Vec<_>>();
+        let by_id = window_shares
+            .into_iter()
+            .map(|share| (share.id, share))
+            .collect::<HashMap<_, _>>();
+        let selected = select_payout_backfill(&candidates, config, limit)
+            .into_iter()
+            .filter_map(|id| by_id.get(&id).cloned())
+            .collect::<Vec<_>>();
         self.build_pending_audit_shares(selected)
     }
 
@@ -576,6 +558,155 @@ impl ValidationStateStore for PoolStore {
     }
 }
 
+/// One share of an address's payout window, as backfill selection sees it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BackfillShare {
+    pub id: i64,
+    pub created_at: SystemTime,
+    pub difficulty: u64,
+    pub verified: bool,
+    /// Provisional and old enough to count toward payouts.
+    pub eligible_provisional: bool,
+    /// Already audited or queued for audit (`was_sampled`).
+    pub sampled: bool,
+}
+
+/// Picks the shares of one address's payout window to audit in the
+/// background (at most `limit`, in audit order).
+///
+/// Ratio: the oldest unaudited eligible provisional shares until their
+/// difficulty closes the gap to the provisional cap. Count policy: the same,
+/// unless closing the count criterion (every eligible provisional share within
+/// `count_sample_radius` of a clean sample, and `count_payout_min_samples`
+/// clean samples) takes no more audits; payouts credit whichever is higher.
+pub(crate) fn select_payout_backfill(
+    shares: &[BackfillShare],
+    config: &Config,
+    limit: usize,
+) -> Vec<i64> {
+    let mut verified_difficulty = 0u64;
+    let mut eligible_provisional_difficulty = 0u64;
+    let mut replayable = Vec::<BackfillShare>::new();
+    for share in shares {
+        if share.verified {
+            verified_difficulty = verified_difficulty.saturating_add(share.difficulty.max(1));
+        } else if share.eligible_provisional {
+            eligible_provisional_difficulty =
+                eligible_provisional_difficulty.saturating_add(share.difficulty.max(1));
+            if !share.sampled {
+                replayable.push(*share);
+            }
+        }
+    }
+
+    let target_diff = payout_audit_deficit_difficulty(
+        verified_difficulty,
+        eligible_provisional_difficulty,
+        config.payout_provisional_cap_multiplier,
+    );
+    if target_diff == 0 {
+        return Vec::new();
+    }
+
+    replayable.sort_by(|a, b| {
+        a.created_at
+            .cmp(&b.created_at)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+
+    if config.count_verification_policy() {
+        let mut covered = 0u64;
+        let ratio_needed = replayable
+            .iter()
+            .position(|share| {
+                covered = covered.saturating_add(share.difficulty.max(1));
+                covered >= target_diff
+            })
+            .map_or(usize::MAX, |idx| idx + 1);
+        if let Some(mut picks) = count_backfill_plan(shares, &replayable, config) {
+            if picks.len() <= ratio_needed {
+                picks.truncate(limit);
+                return picks;
+            }
+        }
+    }
+
+    let mut selected = Vec::<i64>::new();
+    let mut covered = 0u64;
+    for share in replayable {
+        selected.push(share.id);
+        covered = covered.saturating_add(share.difficulty.max(1));
+        if selected.len() >= limit || covered >= target_diff {
+            break;
+        }
+    }
+    selected
+}
+
+/// Count policy: audits that would make the window covered by count, or None
+/// when the unaudited shares cannot get it there. `replayable` is sorted by
+/// time.
+fn count_backfill_plan(
+    shares: &[BackfillShare],
+    replayable: &[BackfillShare],
+    config: &Config,
+) -> Option<Vec<i64>> {
+    let radius = config.count_sample_radius_duration();
+    let mut sampled_at = shares
+        .iter()
+        .filter(|share| share.verified)
+        .map(|share| share.created_at)
+        .collect::<Vec<_>>();
+    sampled_at.sort_unstable();
+    let mut uncovered = shares
+        .iter()
+        .filter(|share| {
+            share.eligible_provisional
+                && !crate::validation::sample_within(&sampled_at, share.created_at, radius)
+        })
+        .map(|share| share.created_at)
+        .collect::<Vec<_>>();
+    uncovered.sort_unstable();
+
+    // Greedy interval cover: for the earliest uncovered share, audit the
+    // latest replayable share within `radius` after it (or else before it),
+    // which covers everything up to that share plus `radius`.
+    let mut picks = Vec::<i64>::new();
+    let mut picked = std::collections::HashSet::<i64>::new();
+    let mut covered_until: Option<SystemTime> = None;
+    for at in uncovered {
+        if covered_until.is_some_and(|until| at <= until) {
+            continue;
+        }
+        let low = at.checked_sub(radius).unwrap_or(std::time::UNIX_EPOCH);
+        let high = at.checked_add(radius)?;
+        let end = replayable.partition_point(|share| share.created_at <= high);
+        let pick = replayable[..end]
+            .iter()
+            .rev()
+            .find(|share| share.created_at >= low && !picked.contains(&share.id))?;
+        picked.insert(pick.id);
+        picks.push(pick.id);
+        covered_until = pick.created_at.checked_add(radius);
+    }
+
+    // Then enough clean samples, spread over the remaining shares.
+    let have = sampled_at.len() + picks.len();
+    let need = config.count_payout_min_samples.max(1) as usize;
+    if have < need {
+        let rest = replayable
+            .iter()
+            .filter(|share| !picked.contains(&share.id))
+            .collect::<Vec<_>>();
+        let extra = need - have;
+        if rest.len() < extra {
+            return None;
+        }
+        picks.extend((0..extra).map(|i| rest[i * rest.len() / extra].id));
+    }
+    Some(picks)
+}
+
 fn payout_audit_deficit_difficulty(
     verified_difficulty: u64,
     provisional_difficulty: u64,
@@ -917,5 +1048,76 @@ mod tests {
         assert_eq!(payout_audit_deficit_difficulty(1, 39, 19.0), 1);
         assert_eq!(payout_audit_deficit_difficulty(5, 200, 19.0), 6);
         assert_eq!(payout_audit_deficit_difficulty(0, 25, 0.0), 25);
+    }
+
+    /// One share every `spacing`, oldest first, verified where `verified`
+    /// says so; all payout-eligible and unaudited otherwise.
+    fn backfill_window(
+        count: usize,
+        spacing: Duration,
+        verified: impl Fn(usize) -> bool,
+    ) -> Vec<BackfillShare> {
+        let start = SystemTime::now() - spacing * count as u32 - Duration::from_secs(3600);
+        (0..count)
+            .map(|i| BackfillShare {
+                id: i as i64 + 1,
+                created_at: start + spacing * i as u32,
+                difficulty: 1,
+                verified: verified(i),
+                eligible_provisional: !verified(i),
+                sampled: verified(i),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn count_backfill_audits_one_share_per_unsampled_stretch() {
+        // 2 h of a farm at 2 shares/s, 1% verified, except no sample in a
+        // 30-minute stretch (shares 3,600-7,199). A 60-minute stretch
+        // (shares 3,600-10,799) needs three audits.
+        let shares = backfill_window(14_400, Duration::from_millis(500), |i| {
+            i % 100 == 0 && !(3_600..7_200).contains(&i)
+        });
+        let ratio_cfg = Config::default();
+        let count_cfg = Config {
+            verification_policy: "count".to_string(),
+            ..Config::default()
+        };
+
+        // Ratio: the oldest unaudited shares, up to the limit.
+        let ratio = select_payout_backfill(&shares, &ratio_cfg, 8);
+        assert_eq!(ratio, vec![2, 3, 4, 5, 6, 7, 8, 9]);
+
+        // Count: samples 1,850 s apart leave 650 s farther than the 10-minute
+        // radius from both, which one audit covers.
+        let count = select_payout_backfill(&shares, &count_cfg, 8);
+        assert_eq!(count.len(), 1, "{count:?}");
+        let mut sampled_at = shares
+            .iter()
+            .filter(|share| share.verified)
+            .map(|share| share.created_at)
+            .chain(count.iter().map(|id| shares[(*id - 1) as usize].created_at))
+            .collect::<Vec<_>>();
+        sampled_at.sort_unstable();
+        let radius = count_cfg.count_sample_radius_duration();
+        assert!(
+            shares.iter().all(|share| share.verified
+                || crate::validation::sample_within(&sampled_at, share.created_at, radius)),
+            "the picks cover every provisional share"
+        );
+
+        let long_gap = backfill_window(14_400, Duration::from_millis(500), |i| {
+            i % 100 == 0 && !(3_600..10_800).contains(&i)
+        });
+        assert_eq!(select_payout_backfill(&long_gap, &count_cfg, 8).len(), 3);
+
+        // Too few samples in the window: spread extra audits up to the minimum.
+        let sparse = backfill_window(3_000, Duration::from_millis(500), |i| i % 300 == 0);
+        let picks = select_payout_backfill(&sparse, &count_cfg, 100);
+        assert_eq!(picks.len(), 30 - 10);
+
+        // Nothing to do while the ratio cap is satisfied.
+        let covered = backfill_window(1_000, Duration::from_millis(500), |i| i % 10 == 0);
+        assert!(select_payout_backfill(&covered, &count_cfg, 8).is_empty());
     }
 }

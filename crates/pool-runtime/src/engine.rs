@@ -1549,7 +1549,9 @@ impl PoolEngine {
             let count_invalid_at_address = source_vouched || !self.cfg().source_penalties_enabled;
             let (address_good, address_invalid) =
                 self.validation.address_sample_counts(&session.address);
-            let plan = self.validation.plan_regular_submit(&session.address);
+            let plan = self
+                .validation
+                .plan_regular_submit_for_source(&session.address, source_established);
             // From the fork a share costs one BLAKE2b compression to check, so
             // every share is hashed inline: no sampling, no verifier queue.
             let cheap_pow = faraday::is_faraday(job.height);

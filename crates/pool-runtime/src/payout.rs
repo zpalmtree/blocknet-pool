@@ -99,14 +99,33 @@ pub struct PayoutRuntimeSnapshot {
 pub struct PayoutTrustPolicy {
     pub min_verified_shares: u64,
     pub provisional_cap_multiplier: f64,
+    /// Count verification policy (VERIFY_COUNT_SAMPLING.md): provisional
+    /// credit may also be earned by clean-sample count and spread, on top of
+    /// (never instead of) the ratio cap.
+    pub count: Option<CountPayoutRule>,
+}
+
+/// Count policy payout rule: payout-eligible provisional shares with a clean
+/// verified sample of the same address within `sample_radius` are credited,
+/// scaled by `min(1, samples / min_samples)` for the window's clean samples.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CountPayoutRule {
+    pub min_samples: u64,
+    pub sample_radius: Duration,
 }
 
 impl PayoutTrustPolicy {
     fn from_config(cfg: &Config) -> Self {
-        Self::from_values(
-            cfg.payout_min_verified_shares,
-            cfg.payout_provisional_cap_multiplier,
-        )
+        Self {
+            count: cfg.count_verification_policy().then(|| CountPayoutRule {
+                min_samples: cfg.count_payout_min_samples.max(1) as u64,
+                sample_radius: cfg.count_sample_radius_duration(),
+            }),
+            ..Self::from_values(
+                cfg.payout_min_verified_shares,
+                cfg.payout_provisional_cap_multiplier,
+            )
+        }
     }
 
     pub fn from_values(
@@ -116,8 +135,28 @@ impl PayoutTrustPolicy {
         Self {
             min_verified_shares: payout_min_verified_shares.max(0) as u64,
             provisional_cap_multiplier: payout_provisional_cap_multiplier.max(0.0),
+            count: None,
         }
     }
+}
+
+/// Count policy: provisional difficulty an address earns by clean-sample
+/// count and spread. `sampled_at` holds the times of its verified shares in
+/// the window (any order), `eligible` the time and difficulty of each
+/// payout-eligible provisional share.
+pub fn count_policy_provisional_credit(
+    sampled_at: &mut [SystemTime],
+    eligible: &[(SystemTime, u64)],
+    rule: CountPayoutRule,
+) -> u64 {
+    sampled_at.sort_unstable();
+    let covered = eligible
+        .iter()
+        .filter(|(at, _)| crate::validation::sample_within(sampled_at, *at, rule.sample_radius))
+        .fold(0u64, |sum, (_, difficulty)| sum.saturating_add(*difficulty));
+    let need = rule.min_samples.max(1);
+    let have = (sampled_at.len() as u64).min(need);
+    ((covered as u128 * have as u128) / need as u128) as u64
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -3428,15 +3467,31 @@ where
     F: FnMut(&str) -> anyhow::Result<bool>,
 {
     let mut by_address = HashMap::<String, AddressShareWeights>::new();
+    // Count policy only: (verified share times, eligible provisional shares).
+    let mut timelines = HashMap::<String, (Vec<SystemTime>, Vec<(SystemTime, u64)>)>::new();
     for share in shares {
         let entry = by_address.entry(share.miner.clone()).or_default();
         if is_verified_share_status(&share.status) {
             entry.verified_shares = entry.verified_shares.saturating_add(1);
             entry.verified_difficulty = entry.verified_difficulty.saturating_add(share.difficulty);
+            if trust_policy.count.is_some() {
+                timelines
+                    .entry(share.miner.clone())
+                    .or_default()
+                    .0
+                    .push(share.created_at);
+            }
         } else if is_share_payout_eligible(share, now, provisional_delay) {
             entry.provisional_difficulty = entry
                 .provisional_difficulty
                 .saturating_add(share.difficulty);
+            if trust_policy.count.is_some() {
+                timelines
+                    .entry(share.miner.clone())
+                    .or_default()
+                    .1
+                    .push((share.created_at, share.difficulty));
+            }
         }
     }
 
@@ -3466,6 +3521,13 @@ where
                 * trust_policy.provisional_cap_multiplier)
                 .clamp(0.0, u64::MAX as f64) as u64;
             provisional_difficulty.min(provisional_cap)
+        };
+        let counted_provisional = match (trust_policy.count, timelines.get_mut(&address)) {
+            (Some(rule), Some((sampled_at, eligible))) => counted_provisional.max(
+                count_policy_provisional_credit(sampled_at, eligible, rule)
+                    .min(provisional_difficulty),
+            ),
+            _ => counted_provisional,
         };
         let weight = stats
             .verified_difficulty
@@ -3753,6 +3815,7 @@ mod tests {
         PayoutTrustPolicy {
             min_verified_shares,
             provisional_cap_multiplier,
+            count: None,
         }
     }
 
@@ -4131,6 +4194,121 @@ mod tests {
         assert_eq!(total, 50);
         assert_eq!(weights.get("a1").copied(), Some(10));
         assert_eq!(weights.get("a2").copied(), Some(40));
+    }
+
+    /// `hours` of one address's shares ending 20 minutes ago (so all are
+    /// payout-eligible), one per `spacing`, every `verified_every`-th
+    /// verified, minus any verified share inside `gap` (seconds before the
+    /// newest share).
+    fn timeline_shares(
+        miner: &str,
+        now: SystemTime,
+        count: u64,
+        spacing: Duration,
+        verified_every: u64,
+        gap: Option<(u64, u64)>,
+    ) -> Vec<DbShare> {
+        let newest = now - Duration::from_secs(20 * 60);
+        (0..count)
+            .map(|i| {
+                let age = spacing * (i as u32);
+                let in_gap = gap.is_some_and(|(from, to)| {
+                    age >= Duration::from_secs(from) && age < Duration::from_secs(to)
+                });
+                let status = if i % verified_every == 0 && !in_gap {
+                    SHARE_STATUS_VERIFIED
+                } else {
+                    SHARE_STATUS_PROVISIONAL
+                };
+                DbShare {
+                    id: i as i64 + 1,
+                    ..sample_share(miner, 1, status, newest - age)
+                }
+            })
+            .collect()
+    }
+
+    fn count_trust_policy(min_samples: u64) -> PayoutTrustPolicy {
+        PayoutTrustPolicy {
+            count: Some(CountPayoutRule {
+                min_samples,
+                sample_radius: Duration::from_secs(10 * 60),
+            }),
+            ..trust_policy(1, 19.0)
+        }
+    }
+
+    #[test]
+    fn count_policy_gives_a_well_sampled_farm_full_credit() {
+        let now = SystemTime::now();
+        // 6 h at ~7,100 shares/h with 1% verified: 426 samples, ~51 s apart.
+        let shares = timeline_shares("farm", now, 42_600, Duration::from_millis(507), 100, None);
+        let delay = Duration::from_secs(15 * 60);
+        let weigh = |policy| {
+            weight_shares(&shares, now, delay, policy, |_| Ok(false))
+                .expect("weight shares")
+                .0["farm"]
+        };
+        // Ratio: provisional capped at 19x verified, about 20% of the work.
+        assert_eq!(weigh(trust_policy(1, 19.0)), 426 * 20);
+        // Count: every provisional share has a sample within 10 minutes.
+        assert_eq!(weigh(count_trust_policy(30)), 42_600);
+        // Too few samples for the window: credit ramps with the sample count.
+        assert_eq!(weigh(count_trust_policy(852)), 426 + (42_600 - 426) / 2);
+    }
+
+    #[test]
+    fn count_policy_withholds_credit_for_unsampled_stretches() {
+        let now = SystemTime::now();
+        // No clean sample for 40 minutes (seconds 3,600-6,000 before the
+        // newest share): shares more than 10 minutes from any sample there
+        // are not covered.
+        let shares = timeline_shares(
+            "farm",
+            now,
+            42_600,
+            Duration::from_millis(507),
+            100,
+            Some((3_600, 6_000)),
+        );
+        let delay = Duration::from_secs(15 * 60);
+        let (weights, _) =
+            weight_shares(&shares, now, delay, count_trust_policy(30), |_| Ok(false))
+                .expect("weight shares");
+        let weight = weights["farm"];
+        let verified = shares
+            .iter()
+            .filter(|share| share.status == SHARE_STATUS_VERIFIED)
+            .count() as u64;
+        // The samples either side of the gap are 3,599.7 s and 6,033.3 s old,
+        // so shares aged 4,199.7-5,433.3 s are uncovered: 2,433 of them.
+        assert_eq!(42_600 - weight, 2_433);
+        assert!(
+            weight > verified * 20,
+            "count credit still beats the ratio cap"
+        );
+
+        // A forced-verification address gets no provisional credit at all.
+        let (weights, _) = weight_shares(&shares, now, delay, count_trust_policy(30), |_| Ok(true))
+            .expect("weight shares");
+        assert_eq!(weights["farm"], verified);
+    }
+
+    #[test]
+    fn count_policy_never_pays_less_than_the_ratio_cap() {
+        let now = SystemTime::now();
+        // A small miner: 68 shares/h for 2 h, every 8th verified (12.5%),
+        // so 17 samples, fewer than the 30 the count rule wants.
+        let shares = timeline_shares("small", now, 136, Duration::from_secs(53), 8, None);
+        let delay = Duration::from_secs(15 * 60);
+        let ratio = weight_shares(&shares, now, delay, trust_policy(1, 19.0), |_| Ok(false))
+            .expect("weight shares")
+            .0["small"];
+        let count = weight_shares(&shares, now, delay, count_trust_policy(30), |_| Ok(false))
+            .expect("weight shares")
+            .0["small"];
+        assert_eq!(ratio, 136, "12.5% coverage clears the 5% ratio cap");
+        assert_eq!(count, ratio);
     }
 
     #[test]
