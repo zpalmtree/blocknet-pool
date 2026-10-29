@@ -539,6 +539,14 @@ impl Drop for EarlyBlockSubmit<'_> {
     }
 }
 
+/// A connection's difficulty to persist so a reconnect resumes near it.
+#[derive(Debug, Clone)]
+pub(crate) struct VardiffHint {
+    address: String,
+    worker: String,
+    difficulty: u64,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct FoundBlockRecord {
     pub height: u64,
@@ -2505,12 +2513,26 @@ impl PoolEngine {
             .map(|session| session.difficulty)
     }
 
+    #[cfg(test)]
     pub(crate) fn retarget_on_job_if_needed(&self, conn_id: &str) -> Option<u64> {
+        let (difficulty, hint) = self.retarget_on_job(conn_id)?;
+        if let Some(hint) = hint {
+            self.persist_vardiff_hint(hint);
+        }
+        Some(difficulty)
+    }
+
+    /// The in-memory half of a job-tick retarget: the connection's next
+    /// difficulty, plus a vardiff hint when one is due. It never touches the
+    /// store, so a job can be sent before the hint is persisted.
+    pub(crate) fn retarget_on_job(&self, conn_id: &str) -> Option<(u64, Option<VardiffHint>)> {
         if !self.cfg().enable_vardiff {
-            return self.session_difficulty(conn_id);
+            return self
+                .session_difficulty(conn_id)
+                .map(|difficulty| (difficulty, None));
         }
 
-        let mut hint_to_write: Option<(String, String, u64)> = None;
+        let mut hint_to_write: Option<VardiffHint> = None;
         let mut sessions = self.sessions.lock();
         let session = sessions.get_mut(conn_id)?;
         let min_diff = self.cfg().min_share_difficulty.max(1);
@@ -2567,32 +2589,32 @@ impl PoolEngine {
                 .is_none_or(|last| now.duration_since(last) >= VARDIFF_HINT_PERSIST_INTERVAL);
             if should_write_hint {
                 session.last_difficulty_hint_write = Some(now);
-                hint_to_write = Some((
-                    session.address.clone(),
-                    session.worker.clone(),
-                    session.difficulty,
-                ));
+                hint_to_write = Some(VardiffHint {
+                    address: session.address.clone(),
+                    worker: session.worker.clone(),
+                    difficulty: session.difficulty,
+                });
             }
         }
 
-        let difficulty = session.difficulty;
-        drop(sessions);
+        Some((session.difficulty, hint_to_write))
+    }
 
-        if let Some((address, worker, difficulty)) = hint_to_write {
-            if let Err(err) =
-                self.store
-                    .upsert_vardiff_hint(&address, &worker, difficulty, SystemTime::now())
-            {
-                tracing::warn!(
-                    address = %address,
-                    worker = %worker,
-                    error = %err,
-                    "failed to persist vardiff hint on job tick"
-                );
-            }
+    /// Persists a vardiff hint from `retarget_on_job`. Blocking store call.
+    pub(crate) fn persist_vardiff_hint(&self, hint: VardiffHint) {
+        if let Err(err) = self.store.upsert_vardiff_hint(
+            &hint.address,
+            &hint.worker,
+            hint.difficulty,
+            SystemTime::now(),
+        ) {
+            tracing::warn!(
+                address = %hint.address,
+                worker = %hint.worker,
+                error = %err,
+                "failed to persist vardiff hint on job tick"
+            );
         }
-
-        Some(difficulty)
     }
 
     pub(crate) fn session_supports_capability(&self, conn_id: &str, capability: &str) -> bool {

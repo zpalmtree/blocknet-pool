@@ -1284,19 +1284,18 @@ impl StratumServer {
                             job_received_at.saturating_duration_since(template_created_at),
                         );
                         if let Some((address, worker, difficulty)) = logged_in.as_mut() {
-                            let next_difficulty = match retarget_on_job_tick(
-                                Arc::clone(&self.engine),
-                                conn_id.clone(),
-                                *difficulty,
-                            )
-                            .await
-                            {
-                                Ok(next_difficulty) => next_difficulty,
-                                Err(err) => {
-                                    run_result = Err(err);
-                                    break;
-                                }
-                            };
+                            // In memory only, so it runs inline: the job goes
+                            // out before any vardiff hint reaches the store.
+                            let (next_difficulty, hint) = self
+                                .engine
+                                .retarget_on_job(&conn_id)
+                                .unwrap_or((*difficulty, None));
+                            if let Some(hint) = hint {
+                                let engine = Arc::clone(&self.engine);
+                                tokio::task::spawn_blocking(move || {
+                                    engine.persist_vardiff_hint(hint)
+                                });
+                            }
                             if next_difficulty != *difficulty {
                                 *difficulty = next_difficulty;
                                 tracing::debug!(
@@ -2160,20 +2159,6 @@ fn nonempty_submit_metadata(value: &str) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
-async fn retarget_on_job_tick(
-    engine: Arc<PoolEngine>,
-    conn_id: String,
-    fallback_difficulty: u64,
-) -> Result<u64> {
-    tokio::task::spawn_blocking(move || {
-        engine
-            .retarget_on_job_if_needed(&conn_id)
-            .unwrap_or(fallback_difficulty)
-    })
-    .await
-    .map_err(|err| anyhow!("stratum job retarget task failed: {err}"))
-}
-
 fn queue_error(outbound: &OutboundHandle, id: u64, msg: &str) -> Result<()> {
     let response = StratumResponse {
         id,
@@ -2376,11 +2361,10 @@ fn log_rejection_at_info(reason_code: &str) -> bool {
 mod tests {
     use super::ip_group_key;
     use super::{
-        client_submit_ack_difficulty, log_rejection_at_info, miner_update_notice, nonempty_submit_metadata,
-        parse_release_version,
-        queue_job_json, queue_json, retarget_on_job_tick, run_tcp_outbound_writer,
-        CandidateClaimTracker, OutboundHandle, QueuedSource, QueuedSources, StratumResponse,
-        StratumServer,
+        client_submit_ack_difficulty, log_rejection_at_info, miner_update_notice,
+        nonempty_submit_metadata, parse_release_version, queue_job_json, queue_json,
+        run_tcp_outbound_writer, CandidateClaimTracker, OutboundHandle, QueuedSource,
+        QueuedSources, StratumResponse, StratumServer,
     };
     use crate::config::Config;
     use crate::engine::canonical_share_reject_reason;
@@ -3149,7 +3133,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn job_tick_retarget_runs_on_blocking_pool() {
+    async fn job_tick_hint_write_runs_on_blocking_pool() {
         struct RuntimeStartingStore;
 
         impl ShareStore for RuntimeStartingStore {
@@ -3211,15 +3195,14 @@ mod tests {
             )
             .expect("login should succeed");
 
-        let difficulty = retarget_on_job_tick(
-            Arc::clone(&engine),
-            "conn1".to_string(),
-            cfg.initial_share_difficulty,
-        )
-        .await
-        .expect("job tick should not panic on runtime-backed store");
-
+        // The retarget runs inline on the runtime; only the hint write
+        // touches the store, and it goes to the blocking pool.
+        let (difficulty, hint) = engine.retarget_on_job("conn1").expect("session");
         assert_eq!(difficulty, cfg.initial_share_difficulty);
+        let hint = hint.expect("first job tick persists a hint");
+        tokio::task::spawn_blocking(move || engine.persist_vardiff_hint(hint))
+            .await
+            .expect("hint write should not panic on runtime-backed store");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
