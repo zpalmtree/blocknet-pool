@@ -89,6 +89,7 @@ if [[ -z "${alertmanager_unit}" || -z "${node_exporter_unit}" || -z "${blackbox_
 fi
 
 sudo install -d -m 0755 /etc/prometheus/rules
+sudo install -d -m 0755 /etc/prometheus/scrape.d
 sudo install -d -m 0755 /etc/prometheus
 sudo install -d -m 0755 /etc/alertmanager
 sudo install -d -m 0755 /etc/systemd/system/prometheus.service.d
