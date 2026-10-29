@@ -81,6 +81,41 @@ groups:
           summary: Engine handover is rejecting replayed logins
           description: Miners stay on the old engine and the deploy will stall; check the new engine's login rejections.
 
+      # 16,384 is both the gateway's gateway_max_miners and Stratum's
+      # stratum_max_connections default; keep it in step with config.json.
+      - alert: BlocknetPoolMinerConnectionsNearCap
+        expr: blocknet_pool_gateway_miners > 0.8 * 16384
+        for: 10m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Miner connections are above 80% of the connection cap
+          description: Past the cap new miners are refused while existing ones look healthy; raise stratum_max_connections and gateway_max_miners.
+
+      - alert: BlocknetPoolMinerConnectionsAtCap
+        expr: blocknet_pool_gateway_miners > 0.95 * 16384
+        for: 5m
+        labels:
+          severity: critical
+          visibility: private
+        annotations:
+          summary: Miner connections are at the connection cap
+          description: New miners are being refused; raise stratum_max_connections and gateway_max_miners.
+
+      # TCP sockets beyond the gateway's live miners are mostly connections
+      # the gateway has closed but still holds; the gateway allows 65,535
+      # descriptors and stops accepting miners when they run out.
+      - alert: BlocknetPoolHeldSocketsHigh
+        expr: node_sockstat_TCP_inuse - scalar(blocknet_pool_gateway_miners) > 20000
+        for: 30m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Host holds far more TCP sockets than live miners
+          description: Check for half-closed (FIN-WAIT) miner sockets on :3333 and the gateway's open descriptors.
+
       - alert: BlocknetPoolDatabaseDown
         expr: blocknet_pool_monitor_db_up == 0
         for: 20s
