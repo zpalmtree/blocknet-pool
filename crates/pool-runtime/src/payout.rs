@@ -2766,6 +2766,7 @@ pub fn recover_share_window_by_replay(
         if accepted {
             updates.push(ShareReplayUpdate {
                 share_id: share.id,
+                created_at: share.created_at,
                 status: SHARE_STATUS_VERIFIED.to_string(),
                 was_sampled: true,
                 reject_reason: None,
@@ -2776,6 +2777,7 @@ pub fn recover_share_window_by_replay(
         } else {
             updates.push(ShareReplayUpdate {
                 share_id: share.id,
+                created_at: share.created_at,
                 status: SHARE_STATUS_REJECTED.to_string(),
                 was_sampled: true,
                 reject_reason: Some("low difficulty share".to_string()),

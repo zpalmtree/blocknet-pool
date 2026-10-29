@@ -31,7 +31,7 @@ use crate::validation::{
     SHARE_STATUS_REJECTED, SHARE_STATUS_VERIFIED,
 };
 use pool_common::db::{
-    active_window_strikes, AddressRiskEscalation, AddressRiskState, PendingAuditShare,
+    active_window_strikes, AddressRiskEscalation, AddressRiskState, PendingAuditShare, ShareKey,
     ShareReplayData, ValidationHoldCause,
 };
 use pool_common::faraday;
@@ -494,7 +494,7 @@ pub(crate) trait ShareStore: Send + Sync + 'static {
         Ok(())
     }
     /// Marks still-provisional shares as rejected with `reason`.
-    fn revoke_provisional_shares(&self, _share_ids: &[i64], _reason: &str) -> Result<u64> {
+    fn revoke_provisional_shares(&self, _shares: &[ShareKey], _reason: &str) -> Result<u64> {
         Ok(0)
     }
     fn get_vardiff_hint(&self, _address: &str, _worker: &str) -> Result<Option<(u64, SystemTime)>> {
@@ -741,18 +741,18 @@ fn penalize_proven_fake(
 
     let outcome = tracker.strike(source, reason);
     let mut revoked_rows = 0u64;
-    for (address, share_ids) in &outcome.revoked {
-        match store.revoke_provisional_shares(share_ids, SOURCE_REVOKED_REJECT_REASON) {
+    for (address, shares) in &outcome.revoked {
+        match store.revoke_provisional_shares(shares, SOURCE_REVOKED_REJECT_REASON) {
             Ok(rows) => revoked_rows = revoked_rows.saturating_add(rows),
             Err(err) => tracing::warn!(
                 address = %address,
-                shares = share_ids.len(),
+                shares = shares.len(),
                 error = %err,
                 "failed to revoke provisional shares after source strike"
             ),
         }
         if let Some(validation) = validation {
-            validation.forget_revoked_shares(address, share_ids);
+            validation.forget_revoked_shares(address, shares);
         }
     }
     tracing::warn!(
@@ -841,7 +841,7 @@ impl AuditFeedback for EngineAuditFeedback {
         self.tracker.record_audit_skipped(share_id);
     }
 
-    fn degraded_review_batch(&self, budget: usize) -> Vec<i64> {
+    fn degraded_review_batch(&self, budget: usize) -> Vec<ShareKey> {
         self.tracker
             .take_degraded_review_batch(budget, self.cfg().sample_rate)
     }
@@ -3377,12 +3377,12 @@ impl ShareStore for InMemoryStore {
         Ok(())
     }
 
-    fn revoke_provisional_shares(&self, share_ids: &[i64], reason: &str) -> Result<u64> {
+    fn revoke_provisional_shares(&self, keys: &[ShareKey], reason: &str) -> Result<u64> {
         // Ids are 1-based insertion positions (see add_share_with_replay_and_id).
         let mut shares = self.shares.lock();
         let mut revoked = 0u64;
-        for id in share_ids {
-            let Some(share) = usize::try_from(*id)
+        for key in keys {
+            let Some(share) = usize::try_from(key.id)
                 .ok()
                 .and_then(|id| id.checked_sub(1))
                 .and_then(|idx| shares.get_mut(idx))
@@ -4166,7 +4166,12 @@ mod tests {
         assert_eq!(store.shares().len(), 1);
         assert_eq!(validation.snapshot().probation_enqueued, 0);
         assert_eq!(
-            engine.source_risk.take_degraded_review_batch(8, 1.0),
+            engine
+                .source_risk
+                .take_degraded_review_batch(8, 1.0)
+                .iter()
+                .map(|key| key.id)
+                .collect::<Vec<_>>(),
             vec![1]
         );
 
@@ -4282,17 +4287,17 @@ mod tests {
         ) -> Result<Vec<PendingAuditShare>> {
             Ok(Vec::new())
         }
-        fn load_provisional_audit_shares_by_ids(
+        fn load_provisional_audit_shares_by_keys(
             &self,
-            ids: &[i64],
+            keys: &[ShareKey],
         ) -> Result<Vec<PendingAuditShare>> {
             let shares = self.shares.shares();
-            Ok(ids
+            Ok(keys
                 .iter()
-                .filter_map(|id| {
-                    let share = shares.get(usize::try_from(*id).ok()?.checked_sub(1)?)?;
+                .filter_map(|key| {
+                    let share = shares.get(usize::try_from(key.id).ok()?.checked_sub(1)?)?;
                     (share.status == SHARE_STATUS_PROVISIONAL).then(|| PendingAuditShare {
-                        share_id: *id,
+                        share_id: key.id,
                         job_id: share.job_id.clone(),
                         miner: share.miner.clone(),
                         worker: share.worker.clone(),

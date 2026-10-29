@@ -2,11 +2,26 @@
 -- Default scale factors allowed more than a million new shares between vacuums.
 -- Apply with psql -v ON_ERROR_STOP=1, outside a transaction; no restart required.
 SET lock_timeout = '2s';
-ALTER TABLE shares SET (
-    autovacuum_vacuum_insert_threshold = 20000,
-    autovacuum_vacuum_insert_scale_factor = 0,
-    autovacuum_analyze_scale_factor = 0.01
-);
+-- A partitioned shares table takes storage parameters per partition; new
+-- weekly partitions copy them from the newest one.
+DO $shares$
+DECLARE
+    target regclass;
+BEGIN
+    FOR target IN
+        SELECT 'shares'::regclass
+        WHERE (SELECT relkind FROM pg_class WHERE oid = 'shares'::regclass) = 'r'
+        UNION ALL
+        SELECT inhrelid::regclass FROM pg_inherits WHERE inhparent = 'shares'::regclass
+    LOOP
+        EXECUTE format('ALTER TABLE %s SET (
+            autovacuum_vacuum_insert_threshold = 20000,
+            autovacuum_vacuum_insert_scale_factor = 0,
+            autovacuum_analyze_scale_factor = 0.01
+        )', target);
+    END LOOP;
+END
+$shares$;
 ALTER TABLE payouts SET (
     autovacuum_vacuum_insert_threshold = 2000,
     autovacuum_vacuum_insert_scale_factor = 0

@@ -25,6 +25,7 @@ const HASHRATE_WARMUP_WINDOW: Duration = Duration::from_secs(5 * 60);
 const RUNTIME_TASK_SLOW_LOG_AFTER: Duration = Duration::from_millis(250);
 const SEEN_SHARE_GC_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const RETENTION_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const SHARE_PARTITION_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const GROWTH_MODE_META_KEY: &str = "growth_mode_v1";
 const GROWTH_MODE_TICK: Duration = Duration::from_secs(30);
 const SHARES_RETENTION: Duration = Duration::from_secs(90 * 24 * 60 * 60);
@@ -301,6 +302,11 @@ pub fn start_stratum_background_tasks(
         Arc::clone(&role),
         Arc::clone(&task_metrics),
     );
+    start_share_partition_maintenance(
+        Arc::clone(&shared.store),
+        Arc::clone(&role),
+        Arc::clone(&task_metrics),
+    );
     start_live_runtime_snapshot_persist(
         Arc::clone(&shared.jobs),
         Arc::clone(&payout),
@@ -525,6 +531,51 @@ fn start_retention_maintenance(
             record_runtime_task_observation(
                 &task_metrics,
                 "retention_maintenance",
+                started_at.elapsed(),
+                failed,
+            );
+        }
+    });
+}
+
+/// Keeps the coming weeks' share partitions created. A failure, or rows in the
+/// DEFAULT partition, counts as a failed `share_partition_maintenance` task.
+fn start_share_partition_maintenance(
+    store: Arc<PoolStore>,
+    role: Arc<EngineRole>,
+    task_metrics: Arc<NamedTimedOperationTracker>,
+) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(SHARE_PARTITION_MAINTENANCE_INTERVAL);
+        loop {
+            ticker.tick().await;
+            if !role.is_primary() {
+                continue;
+            }
+            let started_at = Instant::now();
+            let store = Arc::clone(&store);
+            let failed = match tokio::task::spawn_blocking(move || {
+                store.maintain_share_partitions()
+            })
+            .await
+            {
+                Ok(Ok(report)) => report.default_rows > 0,
+                Ok(Err(err)) => {
+                    tracing::warn!(
+                        error = %err,
+                        error_chain = %format!("{err:#}"),
+                        "share partition maintenance failed"
+                    );
+                    true
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "share partition maintenance task join failed");
+                    true
+                }
+            };
+            record_runtime_task_observation(
+                &task_metrics,
+                "share_partition_maintenance",
                 started_at.elapsed(),
                 failed,
             );

@@ -15,7 +15,7 @@ use crate::telemetry::{
     default_latency_window, LatencyHistogramSnapshot, LatencyWindow, NamedLatencyHistograms,
     PercentileSummary, QueueTracker,
 };
-use pool_common::db::{PendingAuditShare, ShareReplayUpdate, ValidationHoldCause};
+use pool_common::db::{PendingAuditShare, ShareKey, ShareReplayUpdate, ValidationHoldCause};
 use pool_common::pow::{check_target, PowArenaPoolStats, PowHasher};
 
 pub const SHARE_STATUS_VERIFIED: &str = "verified";
@@ -157,8 +157,8 @@ pub(crate) trait AuditFeedback: Send + Sync + 'static {
     /// An audit found its share already settled (e.g. revoked).
     fn audit_skipped(&self, _share_id: i64) {}
 
-    /// Share ids accepted while sampling was degraded that are due for review.
-    fn degraded_review_batch(&self, _budget: usize) -> Vec<i64> {
+    /// Shares accepted while sampling was degraded that are due for review.
+    fn degraded_review_batch(&self, _budget: usize) -> Vec<ShareKey> {
         Vec::new()
     }
 }
@@ -170,7 +170,7 @@ pub(crate) struct AuditAttribution {
     /// The failure counts toward the address's persisted invalid samples.
     pub count_invalid_at_address: bool,
     /// Shares revoked as a consequence, grouped by address.
-    pub revoked: Vec<(String, Vec<i64>)>,
+    pub revoked: Vec<(String, Vec<ShareKey>)>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -285,8 +285,11 @@ pub(crate) trait ValidationStateStore: Send + Sync + 'static {
         limit: usize,
     ) -> Result<Vec<PendingAuditShare>>;
 
-    /// Still-provisional shares by id, with replay data, for review audits.
-    fn load_provisional_audit_shares_by_ids(&self, _ids: &[i64]) -> Result<Vec<PendingAuditShare>> {
+    /// Still-provisional shares by key, with replay data, for review audits.
+    fn load_provisional_audit_shares_by_keys(
+        &self,
+        _keys: &[ShareKey],
+    ) -> Result<Vec<PendingAuditShare>> {
         Ok(Vec::new())
     }
 }
@@ -1000,8 +1003,8 @@ impl ValidationEngine {
     }
 
     /// Drops revoked shares from in-memory coverage/backlog accounting.
-    pub(crate) fn forget_revoked_shares(&self, address: &str, share_ids: &[i64]) {
-        self.inner.forget_revoked_shares(address, share_ids);
+    pub(crate) fn forget_revoked_shares(&self, address: &str, shares: &[ShareKey]) {
+        self.inner.forget_revoked_shares(address, shares);
     }
 
     pub(crate) fn attach_submit_regular_queue(&self, queue: Arc<QueueTracker>) {
@@ -1113,15 +1116,18 @@ impl ValidationInner {
         if budget == 0 {
             return;
         }
-        let ids = feedback.degraded_review_batch(budget);
-        if ids.is_empty() {
+        let keys = feedback.degraded_review_batch(budget);
+        if keys.is_empty() {
             return;
         }
-        let shares = match self.state_store.load_provisional_audit_shares_by_ids(&ids) {
+        let shares = match self
+            .state_store
+            .load_provisional_audit_shares_by_keys(&keys)
+        {
             Ok(shares) => shares,
             Err(err) => {
                 tracing::warn!(
-                    shares = ids.len(),
+                    shares = keys.len(),
                     error = %err,
                     "failed loading degraded-window review shares"
                 );
@@ -1132,9 +1138,9 @@ impl ValidationInner {
             .iter()
             .map(|share| share.share_id)
             .collect::<HashSet<_>>();
-        for id in ids.iter().filter(|id| !loaded.contains(id)) {
+        for key in keys.iter().filter(|key| !loaded.contains(&key.id)) {
             // Already verified or revoked; nothing left to review.
-            feedback.audit_skipped(*id);
+            feedback.audit_skipped(key.id);
         }
         let scheduled = shares.len();
         for share in shares {
@@ -1873,6 +1879,7 @@ impl ValidationInner {
 
         let update = ShareReplayUpdate {
             share_id: queued.share.share_id,
+            created_at: queued.share.created_at,
             status: if computed.accepted {
                 SHARE_STATUS_VERIFIED.to_string()
             } else {
@@ -1939,8 +1946,8 @@ impl ValidationInner {
                 )
             })
             .unwrap_or_default();
-        for (address, share_ids) in &attribution.revoked {
-            self.forget_revoked_shares(address, share_ids);
+        for (address, shares) in &attribution.revoked {
+            self.forget_revoked_shares(address, shares);
         }
 
         let followup = self.apply_audit_result(
@@ -2498,11 +2505,11 @@ impl ValidationInner {
         });
     }
 
-    fn forget_revoked_shares(&self, address: &str, share_ids: &[i64]) {
-        if share_ids.is_empty() {
+    fn forget_revoked_shares(&self, address: &str, shares: &[ShareKey]) {
+        if shares.is_empty() {
             return;
         }
-        let revoked = share_ids.iter().copied().collect::<HashSet<_>>();
+        let revoked = shares.iter().map(|share| share.id).collect::<HashSet<_>>();
         let mut state = self.state.lock();
         if let Some(st) = state.get_mut(address) {
             st.provisional_at
@@ -2512,8 +2519,8 @@ impl ValidationInner {
         }
         drop(state);
         let mut pending = self.audit_pending_shares.lock();
-        for id in share_ids {
-            pending.remove(id);
+        for share in shares {
+            pending.remove(&share.id);
         }
     }
 

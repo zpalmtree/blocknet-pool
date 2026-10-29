@@ -27,6 +27,8 @@ pub mod service_state;
 
 pub(crate) mod share_dedupe;
 
+pub(crate) mod share_partitions;
+
 pub(crate) mod source_risk;
 
 mod shortname;

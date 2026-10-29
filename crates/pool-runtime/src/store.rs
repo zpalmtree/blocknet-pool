@@ -19,8 +19,8 @@ use crate::validation::{
     ValidationClearEvent, ValidationStateStore,
 };
 use pool_common::db::{
-    AddressRiskEscalation, AddressRiskState, DbBlock, DbShare, PendingAuditShare, ShareReplayData,
-    ShareReplayUpdate,
+    AddressRiskEscalation, AddressRiskState, DbBlock, DbShare, PendingAuditShare, ShareKey,
+    ShareReplayData, ShareReplayUpdate,
 };
 use pool_common::protocol::parse_hash_hex;
 
@@ -196,11 +196,14 @@ impl PoolStore {
         self.build_pending_audit_shares(selected)
     }
 
-    fn load_provisional_audit_shares_by_ids(&self, ids: &[i64]) -> Result<Vec<PendingAuditShare>> {
-        if ids.is_empty() {
+    fn load_provisional_audit_shares_by_keys(
+        &self,
+        keys: &[ShareKey],
+    ) -> Result<Vec<PendingAuditShare>> {
+        if keys.is_empty() {
             return Ok(Vec::new());
         }
-        let shares = self.inner.get_provisional_shares_by_ids(ids)?;
+        let shares = self.inner.get_provisional_shares_by_keys(keys)?;
         self.build_pending_audit_shares(shares)
     }
 
@@ -461,8 +464,8 @@ impl ShareStore for PoolStore {
         Ok(())
     }
 
-    fn revoke_provisional_shares(&self, share_ids: &[i64], reason: &str) -> Result<u64> {
-        self.inner.revoke_provisional_shares(share_ids, reason)
+    fn revoke_provisional_shares(&self, shares: &[ShareKey], reason: &str) -> Result<u64> {
+        self.inner.revoke_provisional_shares(shares, reason)
     }
 
     fn get_vardiff_hint(&self, address: &str, worker: &str) -> Result<Option<(u64, SystemTime)>> {
@@ -555,8 +558,11 @@ impl ValidationStateStore for PoolStore {
         PoolStore::load_recent_provisional_audit_shares(self, address, provisional_cutoff, limit)
     }
 
-    fn load_provisional_audit_shares_by_ids(&self, ids: &[i64]) -> Result<Vec<PendingAuditShare>> {
-        PoolStore::load_provisional_audit_shares_by_ids(self, ids)
+    fn load_provisional_audit_shares_by_keys(
+        &self,
+        keys: &[ShareKey],
+    ) -> Result<Vec<PendingAuditShare>> {
+        PoolStore::load_provisional_audit_shares_by_keys(self, keys)
     }
 
     fn load_pending_payout_audit_shares(
