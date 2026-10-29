@@ -1216,6 +1216,19 @@ impl JobManager {
         self.nonce_counter
             .store(random_nonce_slot(), Ordering::Relaxed);
 
+        // Publish before housekeeping. Every connection builds its next
+        // assignment from `state.current` under this lock, so trimming and
+        // pruning (tens of thousands of assignments, up to ~150 ms) must not
+        // sit between a new tip and the miners' jobs. New assignments only
+        // reference the current job, which both steps keep.
+        let job_height = parsed.height;
+        let _ = self.tx.send(parsed);
+        drop(state);
+        self.tip_latency
+            .job_published(job_height, Instant::now(), SystemTime::now());
+
+        let mut state = self.state.write();
+        let now = Instant::now();
         // Keep recent jobs bounded.
         let removed_jobs = trim_recent_jobs_locked(&mut state);
         if !removed_jobs.is_empty() {
@@ -1238,12 +1251,6 @@ impl JobManager {
             self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE),
             self.cfg.stale_submit_grace_duration(),
         );
-
-        let job_height = parsed.height;
-        let _ = self.tx.send(parsed);
-        drop(state);
-        self.tip_latency
-            .job_published(job_height, Instant::now(), SystemTime::now());
     }
 
     fn resolve_reward_address(&self) -> Option<String> {
