@@ -22,6 +22,10 @@ use tokio::sync::Semaphore;
 pub(crate) struct HostedWalletConfig {
     /// Explicit opt-in; backend connection settings alone never enable wallets.
     pub enabled: bool,
+    /// Lists the wallet on the site (`/api/info` and the navigation). Off by
+    /// default: an enabled gateway then serves only clients that already know
+    /// the wallet routes.
+    pub advertise: bool,
     pub backend_url: String,
     pub gateway_token_file: String,
     /// The wallet key service's Ed25519 envelope-signing public key (hex).
@@ -284,6 +288,7 @@ mod tests {
                     backend_url: url.into(),
                     gateway_token_file: "token".into(),
                     service_key: "cd".repeat(32),
+                    ..Default::default()
                 }
                 .validate()
                 .is_err(),
@@ -295,6 +300,7 @@ mod tests {
             backend_url: "http://127.0.0.1:8335".into(),
             gateway_token_file: "token".into(),
             service_key: "cd".repeat(32),
+            ..Default::default()
         }
         .validate()
         .is_ok());
@@ -304,6 +310,7 @@ mod tests {
                 backend_url: "http://127.0.0.1:8335".into(),
                 gateway_token_file: "token".into(),
                 service_key: bad_key.into(),
+                ..Default::default()
             }
             .validate()
             .is_err());
@@ -355,6 +362,7 @@ mod tests {
             backend_url: format!("http://{addr}"),
             gateway_token_file: token.to_string_lossy().into(),
             service_key: "cd".repeat(32),
+            ..Default::default()
         }))
         .unwrap();
         let response = app

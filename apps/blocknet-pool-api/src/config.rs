@@ -73,6 +73,12 @@ impl Config {
         self.hosted_wallet.as_ref().filter(|wallet| wallet.enabled)
     }
 
+    pub(crate) fn advertised_hosted_wallet(
+        &self,
+    ) -> Option<&crate::hosted_wallet::HostedWalletConfig> {
+        self.active_hosted_wallet().filter(|wallet| wallet.advertise)
+    }
+
     pub(crate) fn active_wallet_hints(&self) -> Option<&crate::wallet_hints::WalletHintsConfig> {
         self.wallet_hints.as_ref().filter(|hints| hints.enabled)
     }
@@ -133,7 +139,10 @@ mod tests {
         assert!(cfg.validate().is_err(), "service_key is required");
         let cfg: Config = serde_json::from_str(&format!(r#"{{"hosted_wallet":{{"enabled":true,"backend_url":"http://127.0.0.1:8335","gateway_token_file":"/missing/token","service_key":"{}"}}}}"#, "ab".repeat(32))).unwrap();
         assert!(cfg.active_hosted_wallet().is_some());
+        assert!(cfg.advertised_hosted_wallet().is_none());
         cfg.validate().unwrap();
+        let cfg: Config = serde_json::from_str(&format!(r#"{{"hosted_wallet":{{"enabled":true,"advertise":true,"backend_url":"http://127.0.0.1:8335","gateway_token_file":"/missing/token","service_key":"{}"}}}}"#, "ab".repeat(32))).unwrap();
+        assert!(cfg.advertised_hosted_wallet().is_some());
         assert!(serde_json::from_str::<Config>(r#"{"hosted_wallet":{"enabled":"true"}}"#).is_err());
     }
 

@@ -13,12 +13,17 @@ backend connections and hides the navigation item.
 ```json
 "hosted_wallet": {
   "enabled": false,
+  "advertise": false,
   "backend_url": "http://127.0.0.1:8336",
   "gateway_token_file": "/path/outside/repository/gateway.token",
   "service_key": "<64 hex: the wallet service's Ed25519 envelope public key>"
 }
 ```
 
+- **`advertise`** lists the wallet on the site. While it is false (the
+  default), an enabled gateway still forwards wallet requests, but
+  `/api/info` reports the wallet as disabled, omits the service key and the
+  navigation item stays hidden.
 - **`backend_url`** is the wallet service's loopback listener.
 - **`gateway_token_file`** holds 32 random bytes as hex, mode `0600`, shared
   with the wallet service. The gateway injects it on every forwarded request
