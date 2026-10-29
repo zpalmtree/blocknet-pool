@@ -28,7 +28,10 @@ const ORIGINAL_TEMPLATE_LEASE_SECONDS: u64 = 10 * 60;
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct BlockTemplate {
-    pub block: Value,
+    /// The full template block, kept as raw JSON: it can run to megabytes
+    /// when the mempool is busy, and the pool only reads its header and
+    /// resubmits it whole in the rare full-block fallback.
+    pub block: Box<serde_json::value::RawValue>,
     pub target: String,
     pub header_base: String,
     pub template_id: String,
@@ -581,7 +584,8 @@ impl NodeClient {
         let Some(template_block) = job.template_block.as_ref() else {
             return Ok(None);
         };
-        let mut block = Value::clone(template_block);
+        let mut block: Value = serde_json::from_str(template_block)
+            .context("parse retained full block for fallback submit")?;
         set_full_block_nonce(&mut block, nonce)
             .context("prepare retained full block for fallback submit")?;
         self.block_submit_full_fallback_attempts
@@ -1304,7 +1308,7 @@ mod tests {
             template_id: "tmpl-1".to_string(),
             prev_hash: None,
             template_created_at: std::time::Instant::now(),
-            template_block: template_block.map(std::sync::Arc::new),
+            template_block: template_block.map(|block| std::sync::Arc::from(block.to_string())),
         }
     }
 
@@ -1636,7 +1640,7 @@ mod tests {
             template_id: "tmpl-lost".to_string(),
             prev_hash: None,
             template_created_at: std::time::Instant::now(),
-            template_block: Some(std::sync::Arc::new(template_block)),
+            template_block: Some(std::sync::Arc::from(template_block.to_string())),
         };
 
         let response = client
@@ -1708,10 +1712,13 @@ mod tests {
             template_id: "tmpl-stale".to_string(),
             prev_hash: None,
             template_created_at: std::time::Instant::now(),
-            template_block: Some(std::sync::Arc::new(serde_json::json!({
-                "header": {"Height": 11, "Difficulty": 3, "Nonce": 0},
-                "txns": []
-            }))),
+            template_block: Some(std::sync::Arc::from(
+                serde_json::json!({
+                    "header": {"Height": 11, "Difficulty": 3, "Nonce": 0},
+                    "txns": []
+                })
+                .to_string(),
+            )),
         };
 
         let err = client
@@ -1770,10 +1777,13 @@ mod tests {
             template_id: "tmpl-error".to_string(),
             prev_hash: None,
             template_created_at: std::time::Instant::now(),
-            template_block: Some(std::sync::Arc::new(serde_json::json!({
-                "header": {"Height": 11, "Difficulty": 3, "Nonce": 0},
-                "txns": []
-            }))),
+            template_block: Some(std::sync::Arc::from(
+                serde_json::json!({
+                    "header": {"Height": 11, "Difficulty": 3, "Nonce": 0},
+                    "txns": []
+                })
+                .to_string(),
+            )),
         };
 
         let err = client

@@ -1646,20 +1646,32 @@ impl JobRepository for JobManager {
     }
 }
 
+/// The header fields the pool reads from a template block. Deserializing
+/// just these skips the block's transactions without building them.
+#[derive(Deserialize)]
+struct TemplateBlockHeader {
+    header: TemplateHeaderFields,
+}
+
+#[derive(Deserialize)]
+struct TemplateHeaderFields {
+    #[serde(rename = "Height")]
+    height: Option<u64>,
+    #[serde(rename = "Difficulty")]
+    difficulty: Option<u64>,
+    #[serde(rename = "PrevHash", default)]
+    prev_hash: Option<Vec<u64>>,
+}
+
 fn parse_template_into_job(template: &crate::node::BlockTemplate) -> anyhow::Result<Job> {
-    let header = template
-        .block
-        .get("header")
-        .ok_or_else(|| anyhow::anyhow!("template missing header"))?;
-
+    let header = serde_json::from_str::<TemplateBlockHeader>(template.block.get())
+        .map_err(|err| anyhow::anyhow!("template missing header: {err}"))?
+        .header;
     let height = header
-        .get("Height")
-        .and_then(|v| v.as_u64())
+        .height
         .ok_or_else(|| anyhow::anyhow!("template header missing Height"))?;
-
     let difficulty = header
-        .get("Difficulty")
-        .and_then(|v| v.as_u64())
+        .difficulty
         .ok_or_else(|| anyhow::anyhow!("template header missing Difficulty"))?;
 
     let network_target = hex_decode_32(&template.target)?;
@@ -1673,10 +1685,21 @@ fn parse_template_into_job(template: &crate::node::BlockTemplate) -> anyhow::Res
         network_target,
         network_difficulty: difficulty.max(1),
         template_id: template.template_id.trim().to_string(),
-        prev_hash: block_prev_hash(header),
+        prev_hash: header.prev_hash.as_deref().and_then(prev_hash_bytes),
         template_created_at: Instant::now(),
-        template_block: Some(std::sync::Arc::new(template.block.clone())),
+        template_block: Some(std::sync::Arc::from(template.block.get())),
     })
+}
+
+fn prev_hash_bytes(values: &[u64]) -> Option<[u8; 32]> {
+    if values.len() != 32 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (idx, value) in values.iter().enumerate() {
+        out[idx] = u8::try_from(*value).ok()?;
+    }
+    Some(out)
 }
 
 fn generate_job_id() -> String {
@@ -1776,22 +1799,6 @@ fn same_template_identity(current: &Job, parsed: &Job) -> bool {
             (Some(a), Some(b)) => a == b,
             _ => true,
         }
-}
-
-fn block_prev_hash(header: &Value) -> Option<[u8; 32]> {
-    let values = header.get("PrevHash")?.as_array()?;
-    if values.len() != 32 {
-        return None;
-    }
-    let mut out = [0u8; 32];
-    for (idx, value) in values.iter().enumerate() {
-        let n = value.as_u64()?;
-        if n > u8::MAX as u64 {
-            return None;
-        }
-        out[idx] = n as u8;
-    }
-    Some(out)
 }
 
 fn parse_new_block_event_payload(payload: &str) -> Option<NewBlockEvent> {

@@ -77,7 +77,8 @@ pub struct Job {
     /// Full daemon template block, retained so a solved block can still be
     /// submitted if the daemon has discarded the compact template ID (for
     /// example after a restart cleared its in-memory lease cache).
-    pub template_block: Option<std::sync::Arc<serde_json::Value>>,
+    /// Raw JSON of the daemon's template block (see `BlockTemplate::block`).
+    pub template_block: Option<std::sync::Arc<str>>,
 }
 
 #[derive(Debug, Clone)]
