@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -15,11 +15,12 @@ use tokio::sync::{broadcast, mpsc, Notify};
 use crate::admission::{AdmissionState, UnprocessedReason, UnprocessedSubmitSnapshot};
 use crate::config::{Config, CANDIDATE_SUBMIT_QUEUE_SIZE};
 use crate::dev_fee::is_seine_dev_fee_address;
+use crate::engine::Job;
 use crate::engine::{
     canonical_share_reject_reason, is_retryable_reject_reason, PoolEngine, SubmitAck,
     SubmitMetadata, SubmitQueueRoute,
 };
-use crate::jobs::{AssignmentRangeMode, JobManager};
+use crate::jobs::{AssignmentRangeMode, JobManager, MinerJob, MinerJobRequest};
 use crate::service_state::EngineRole;
 use crate::source_risk::ip_group_key;
 use crate::stats::PoolStats;
@@ -147,6 +148,33 @@ struct QueuedJob {
     /// When the template behind a broadcast job was fetched; `None` for jobs
     /// sent outside a template broadcast (login, difficulty updates).
     template_created_at: Option<Instant>,
+}
+
+/// A logged-in connection as the job fanout sees it.
+struct FanoutConn {
+    address: String,
+    /// The difficulty of the connection's latest job, shared with its
+    /// connection task (which compares submit acks against it).
+    difficulty: Arc<AtomicU64>,
+    outbound: OutboundHandle,
+    /// Wakes the connection task to close the session with `kick_reason`.
+    kick: Arc<Notify>,
+    kick_reason: Arc<Mutex<Option<String>>>,
+}
+
+impl FanoutConn {
+    fn kick(&self, reason: String) {
+        *self.kick_reason.lock() = Some(reason);
+        self.kick.notify_one();
+    }
+}
+
+/// A `job` notification serialized straight from the miner job, without the
+/// intermediate `serde_json::Value` of `StratumNotify`. Same JSON.
+#[derive(Serialize)]
+struct JobNotify<'a> {
+    method: &'static str,
+    params: &'a MinerJob,
 }
 
 impl OutboundHandle {
@@ -860,6 +888,9 @@ pub struct StratumServer {
     submit_rate_limit_max: usize,
     /// New template → job written to each connection.
     job_fanout: Arc<NamedLatencyHistograms>,
+    /// Logged-in connections, which the job fanout delivers each new
+    /// template's job to (see `fan_out_job`).
+    fanout_conns: Mutex<HashMap<String, Arc<FanoutConn>>>,
     /// Miner-reported timings carried on submits (`submit_timing_v1`).
     miner_submit_timing: NamedLatencyHistograms,
     /// Newest stable seine release, for the once-per-connection upgrade notice.
@@ -896,6 +927,7 @@ impl StratumServer {
             submit_rate_limit_window: SUBMIT_RATE_LIMIT_WINDOW,
             submit_rate_limit_max: SUBMIT_RATE_LIMIT_MAX,
             job_fanout: Arc::default(),
+            fanout_conns: Mutex::new(HashMap::new()),
             miner_submit_timing: NamedLatencyHistograms::default(),
             miner_release: crate::miner_release::MinerRelease::new(&cfg.latest_miner_version),
         })
@@ -988,6 +1020,152 @@ impl StratumServer {
         }
     }
 
+    /// Delivers every new template's job to all logged-in connections from
+    /// one task. Connection tasks used to wake per template and build their
+    /// own job under the process-wide job-state lock; with thousands of
+    /// connections that queued them behind each other and behind runtime
+    /// scheduling (fanout p99 ~240 ms at 5k connections on bntpool).
+    fn spawn_job_fanout(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let server = Arc::clone(self);
+        let mut rx_jobs = self.jobs.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match rx_jobs.recv().await {
+                    Ok(job) => {
+                        let server = Arc::clone(&server);
+                        let _ = tokio::task::spawn_blocking(move || server.fan_out_job(&job)).await;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!(skipped, "job fanout lagged; serving the newest job");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        })
+    }
+
+    /// Retargets each logged-in connection, builds its job and queues it.
+    /// Connections are taken in chunks by a few threads, each chunk going
+    /// through retarget, one job-state lock pass and queueing before the
+    /// next, so the first miners get the job within milliseconds and the
+    /// lock is taken per chunk, not per connection.
+    fn fan_out_job(&self, job: &Job) {
+        let template_created_at = job.template_created_at;
+        let conns: Vec<(String, Arc<FanoutConn>)> = self
+            .fanout_conns
+            .lock()
+            .iter()
+            .map(|(conn_id, conn)| (conn_id.clone(), Arc::clone(conn)))
+            .collect();
+        let chunks: Vec<&[(String, Arc<FanoutConn>)]> =
+            conns.chunks(FANOUT_CHUNK_CONNECTIONS).collect();
+        let next_chunk = AtomicUsize::new(0);
+        let hints = Mutex::new(Vec::new());
+        let threads = fanout_threads(conns.len());
+        std::thread::scope(|scope| {
+            for _ in 0..threads {
+                scope.spawn(|| loop {
+                    let index = next_chunk.fetch_add(1, Ordering::Relaxed);
+                    let Some(chunk) = chunks.get(index) else {
+                        return;
+                    };
+                    let chunk_hints = self.fan_out_chunk(chunk, template_created_at);
+                    if !chunk_hints.is_empty() {
+                        hints.lock().extend(chunk_hints);
+                    }
+                });
+            }
+        });
+
+        let hints = hints.into_inner();
+        if !hints.is_empty() {
+            let engine = Arc::clone(&self.engine);
+            tokio::task::spawn_blocking(move || {
+                for hint in hints {
+                    engine.persist_vardiff_hint(hint);
+                }
+            });
+        }
+    }
+
+    /// One chunk of `fan_out_job`; returns the vardiff hints to persist.
+    fn fan_out_chunk(
+        &self,
+        chunk: &[(String, Arc<FanoutConn>)],
+        template_created_at: Instant,
+    ) -> Vec<crate::engine::VardiffHint> {
+        let reached_at = Instant::now();
+        self.job_fanout.record(
+            "template_to_chunk",
+            reached_at.saturating_duration_since(template_created_at),
+        );
+        let mut requests = Vec::with_capacity(chunk.len());
+        let mut targets = Vec::with_capacity(chunk.len());
+        let mut hints = Vec::new();
+        for (conn_id, conn) in chunk {
+            if let Some(message) = self.engine.faraday_upgrade_required(conn_id) {
+                // Its next login gets the same message as an error.
+                conn.kick(message.to_string());
+                continue;
+            }
+            let current = conn.difficulty.load(Ordering::Relaxed);
+            // In memory only; hints are persisted after the jobs go out.
+            let (next, hint) = self
+                .engine
+                .retarget_on_job(conn_id)
+                .unwrap_or((current, None));
+            hints.extend(hint);
+            if next != current {
+                conn.difficulty.store(next, Ordering::Relaxed);
+                tracing::debug!(
+                    conn = %conn_id,
+                    address = %conn.address,
+                    difficulty = next,
+                    "stratum difficulty updated on job tick"
+                );
+            }
+            requests.push(MinerJobRequest {
+                conn_id: conn_id.clone(),
+                share_difficulty: next,
+                assigned_miner: conn.address.clone(),
+                range_mode: AssignmentRangeMode::Fresh,
+            });
+            targets.push(conn);
+        }
+        let build_started_at = Instant::now();
+        self.job_fanout.record(
+            "retarget_chunk",
+            build_started_at.saturating_duration_since(reached_at),
+        );
+        let built = self.jobs.build_miner_jobs(&requests);
+        self.job_fanout
+            .record("build_chunk", build_started_at.elapsed());
+        for (conn, miner_job) in targets.into_iter().zip(built) {
+            let Some(miner_job) = miner_job else {
+                continue;
+            };
+            let notify = JobNotify {
+                method: "job",
+                params: &miner_job,
+            };
+            if queue_job_json(&conn.outbound, &notify, Some(template_created_at)).is_ok() {
+                self.job_fanout
+                    .record("template_to_queued", template_created_at.elapsed());
+            }
+        }
+        hints
+    }
+
+    fn register_fanout_conn(&self, conn_id: &str, conn: FanoutConn) {
+        self.fanout_conns
+            .lock()
+            .insert(conn_id.to_string(), Arc::new(conn));
+    }
+
+    fn deregister_fanout_conn(&self, conn_id: &str) {
+        self.fanout_conns.lock().remove(conn_id);
+    }
+
     pub async fn run(self: Arc<Self>) -> Result<()> {
         let listener = TcpListener::bind(self.listen_addr).await?;
         tracing::info!(addr = %self.listen_addr, "stratum listening");
@@ -1016,6 +1194,7 @@ impl StratumServer {
             started_at_ms,
         };
         let _refresh = AbortOnDrop(self.spawn_release_refresh());
+        let _fanout = AbortOnDrop(self.spawn_job_fanout());
         let mut connect_warned = false;
         loop {
             match tokio::net::UnixStream::connect(&socket).await {
@@ -1228,6 +1407,7 @@ impl StratumServer {
     }
 
     async fn run_tcp_listener(self: Arc<Self>, listener: TcpListener) -> Result<()> {
+        let _fanout = AbortOnDrop(self.spawn_job_fanout());
         loop {
             let (stream, peer) = listener.accept().await?;
             // Per-IP cap groups IPv6 by /64 (one host allocation), so a single
@@ -1322,7 +1502,11 @@ impl StratumServer {
         // One upgrade notice per connection, sent with the first submit that
         // reports an older miner version (login carries no version).
         let mut update_notice_sent = false;
-        let mut rx_jobs = self.jobs.subscribe();
+        // The job fanout delivers template jobs; it can also ask this task to
+        // close the session, and it updates the difficulty it shares here.
+        let kick = Arc::new(Notify::new());
+        let kick_reason = Arc::new(Mutex::new(None::<String>));
+        let mut shared_difficulty: Option<Arc<AtomicU64>> = None;
         let mut rx_notifications = self.notifications.subscribe();
         let post_login_idle_timeout = self.post_login_idle_timeout;
         let submit_rate_limit_window = self.submit_rate_limit_window;
@@ -1336,7 +1520,13 @@ impl StratumServer {
         tokio::pin!(idle_deadline);
 
         let mut run_result = Ok(());
+        // Difficulty seen when the last inbound frame was handled; published
+        // at the top of the next iteration, which every `continue` reaches.
+        let mut inbound_seen: Option<Option<u64>> = None;
         loop {
+            if let Some(seen) = inbound_seen.take() {
+                sync_difficulty_out(&logged_in, shared_difficulty.as_ref(), seen);
+            }
             tokio::select! {
                 writer_result = &mut writer_task => {
                     writer_task_finished = true;
@@ -1357,79 +1547,29 @@ impl StratumServer {
                 }
                 maybe_submit_result = submit_result_rx.recv() => {
                     if let Some(completion) = maybe_submit_result {
-                        if let Err(err) = self.handle_submit_completion(
+                        let seen = sync_difficulty_in(&mut logged_in, shared_difficulty.as_ref());
+                        let handled = self.handle_submit_completion(
                             peer,
                             &conn_id,
                             Some(&outbound),
                             &mut logged_in,
                             completion,
-                        ) {
+                        );
+                        sync_difficulty_out(&logged_in, shared_difficulty.as_ref(), seen);
+                        if let Err(err) = handled {
                             run_result = Err(err);
                             break;
                         }
                     }
                 }
-                maybe_job = rx_jobs.recv(), if logged_in.is_some() => {
-                    if let Ok(job) = maybe_job {
-                        let template_created_at = job.template_created_at;
-                        let job_received_at = Instant::now();
-                        self.job_fanout.record(
-                            "template_to_conn",
-                            job_received_at.saturating_duration_since(template_created_at),
-                        );
-                        if let Some(message) = self.engine.faraday_upgrade_required(&conn_id) {
-                            // Its next login gets the same message as an error.
-                            tracing::info!(peer = %peer, "closing session without BLAKE2b support at the fork");
-                            run_result = Err(anyhow::anyhow!(message));
-                            break;
-                        }
-                        if let Some((address, worker, difficulty)) = logged_in.as_mut() {
-                            // In memory only, so it runs inline: the job goes
-                            // out before any vardiff hint reaches the store.
-                            let (next_difficulty, hint) = self
-                                .engine
-                                .retarget_on_job(&conn_id)
-                                .unwrap_or((*difficulty, None));
-                            if let Some(hint) = hint {
-                                let engine = Arc::clone(&self.engine);
-                                tokio::task::spawn_blocking(move || {
-                                    engine.persist_vardiff_hint(hint)
-                                });
-                            }
-                            if next_difficulty != *difficulty {
-                                *difficulty = next_difficulty;
-                                tracing::debug!(
-                                    peer = %peer,
-                                    address = %address,
-                                    worker = %worker,
-                                    difficulty = next_difficulty,
-                                    "stratum difficulty updated on job tick"
-                                );
-                            }
-                            let build_started_at = Instant::now();
-                            self.job_fanout.record(
-                                "retarget",
-                                build_started_at.saturating_duration_since(job_received_at),
-                            );
-                            if let Some(miner_job) =
-                                self.jobs.build_miner_job(&conn_id, *difficulty, address)
-                            {
-                                self.job_fanout.record("build_job", build_started_at.elapsed());
-                                let notify = StratumNotify {
-                                    method: "job".to_string(),
-                                    params: serde_json::to_value(miner_job)?,
-                                };
-                                if let Err(err) =
-                                    queue_job_json(&outbound, &notify, Some(template_created_at))
-                                {
-                                    run_result = Err(err);
-                                    break;
-                                }
-                                self.job_fanout
-                                    .record("template_to_queued", template_created_at.elapsed());
-                            }
-                        }
-                    }
+                _ = kick.notified(), if logged_in.is_some() => {
+                    let reason = kick_reason
+                        .lock()
+                        .take()
+                        .unwrap_or_else(|| "session closed by the pool".to_string());
+                    tracing::info!(peer = %peer, "closing session without BLAKE2b support at the fork");
+                    run_result = Err(anyhow::anyhow!(reason));
+                    break;
                 }
                 maybe_notification = rx_notifications.recv(), if logged_in.is_some() => {
                     match maybe_notification {
@@ -1464,6 +1604,7 @@ impl StratumServer {
                             .as_mut()
                             .reset(tokio::time::Instant::now() + post_login_idle_timeout);
                     }
+                    inbound_seen = Some(sync_difficulty_in(&mut logged_in, shared_difficulty.as_ref()));
                     let trimmed = line.trim();
                     if trimmed.is_empty() {
                         continue;
@@ -1549,18 +1690,56 @@ impl StratumServer {
                                         break;
                                     }
 
-                                    if let Some(miner_job) = self.jobs.build_miner_job(
+                                    let login_template = match self.jobs.build_miner_job(
                                         &conn_id,
                                         difficulty,
                                         &address,
                                     ) {
-                                        let notify = StratumNotify {
-                                            method: "job".to_string(),
-                                            params: serde_json::to_value(miner_job)?,
-                                        };
-                                        if let Err(err) = queue_json(&outbound, &notify) {
-                                            run_result = Err(err);
-                                            break;
+                                        Some(miner_job) => {
+                                            let template_id = miner_job.template_id.clone();
+                                            let notify = StratumNotify {
+                                                method: "job".to_string(),
+                                                params: serde_json::to_value(miner_job)?,
+                                            };
+                                            if let Err(err) = queue_json(&outbound, &notify) {
+                                                run_result = Err(err);
+                                                break;
+                                            }
+                                            Some(template_id)
+                                        }
+                                        None => None,
+                                    };
+                                    // From here the job fanout serves this connection.
+                                    let shared = Arc::new(AtomicU64::new(difficulty));
+                                    self.register_fanout_conn(
+                                        &conn_id,
+                                        FanoutConn {
+                                            address: address.clone(),
+                                            difficulty: Arc::clone(&shared),
+                                            outbound: outbound.clone(),
+                                            kick: Arc::clone(&kick),
+                                            kick_reason: Arc::clone(&kick_reason),
+                                        },
+                                    );
+                                    shared_difficulty = Some(shared);
+                                    // A template installed between the login job and
+                                    // registration was fanned out without us.
+                                    let current_template = self
+                                        .jobs
+                                        .current_job()
+                                        .map(|job| job.template_id);
+                                    if current_template.is_some() && current_template != login_template {
+                                        if let Some(miner_job) =
+                                            self.jobs.build_miner_job(&conn_id, difficulty, &address)
+                                        {
+                                            let notify = JobNotify {
+                                                method: "job",
+                                                params: &miner_job,
+                                            };
+                                            if let Err(err) = queue_job_json(&outbound, &notify, None) {
+                                                run_result = Err(err);
+                                                break;
+                                            }
                                         }
                                     }
                                 }
@@ -1774,6 +1953,11 @@ impl StratumServer {
             }
         }
 
+        // The registry holds a clone of `outbound`; release it so the writer
+        // sees its channel close.
+        if shared_difficulty.is_some() {
+            self.deregister_fanout_conn(&conn_id);
+        }
         drop(outbound);
         if !writer_task_finished {
             let writer_result = writer_task.await;
@@ -2337,6 +2521,44 @@ fn queue_job_json<T: serde::Serialize>(
     }
     outbound.latest_job_notify.notify_one();
     Ok(())
+}
+
+/// Refreshes a connection's local difficulty from the one the job fanout
+/// shares with it; returns the value seen, for `sync_difficulty_out`.
+fn sync_difficulty_in(
+    logged_in: &mut Option<(String, String, u64)>,
+    shared: Option<&Arc<AtomicU64>>,
+) -> Option<u64> {
+    let (Some((_, _, difficulty)), Some(shared)) = (logged_in.as_mut(), shared) else {
+        return None;
+    };
+    *difficulty = shared.load(Ordering::Relaxed);
+    Some(*difficulty)
+}
+
+/// Publishes a difficulty the connection task changed, without overwriting
+/// one the fanout set in the meantime when the task left it alone.
+fn sync_difficulty_out(
+    logged_in: &Option<(String, String, u64)>,
+    shared: Option<&Arc<AtomicU64>>,
+    seen: Option<u64>,
+) {
+    if let (Some((_, _, difficulty)), Some(shared)) = (logged_in.as_ref(), shared) {
+        if seen != Some(*difficulty) {
+            shared.store(*difficulty, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Connections per fanout chunk: one job-state lock pass each.
+const FANOUT_CHUNK_CONNECTIONS: usize = 256;
+
+/// Threads that fan one template out: one per chunk, up to half the CPUs.
+fn fanout_threads(connections: usize) -> usize {
+    let cpus = std::thread::available_parallelism().map_or(2, |n| n.get());
+    connections
+        .div_ceil(FANOUT_CHUNK_CONNECTIONS)
+        .clamp(1, (cpus / 2).max(1))
 }
 
 fn serialize_json_text<T: serde::Serialize>(value: &T) -> Result<String> {
@@ -3853,6 +4075,48 @@ mod tests {
         assert_eq!(snapshot.candidate_enqueued_total, 2);
 
         drop((reader, writer));
+        shutdown_test_listener(listener_task, server, jobs).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn tcp_template_fanout_reaches_every_connection() {
+        let (server, jobs) = build_tcp_test_server(stratum_test_cfg()).await;
+        let (addr, listener_task) = start_test_tcp_listener(Arc::clone(&server)).await;
+        let mut clients = Vec::new();
+        for idx in 0..24u8 {
+            let (mut reader, mut writer) = connect_test_client(addr).await;
+            let job = login_test_client(
+                &mut reader,
+                &mut writer,
+                1,
+                &test_miner_address(0x55),
+                &format!("rig{idx}"),
+            )
+            .await;
+            assert_eq!(job.height, 100);
+            clients.push((reader, writer));
+        }
+
+        jobs.install_test_job(stratum_test_job("job-next", 101));
+
+        let mut job_ids = std::collections::HashSet::new();
+        for (reader, _) in clients.iter_mut() {
+            let job = tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    let message = read_json_line(reader).await;
+                    if message["method"].as_str() == Some("job") {
+                        break message;
+                    }
+                }
+            })
+            .await
+            .expect("every connection gets the new template's job");
+            assert_eq!(job["params"]["height"].as_u64(), Some(101));
+            assert!(job_ids.insert(job["params"]["job_id"].as_str().unwrap().to_string()));
+        }
+        assert_eq!(server.fanout_conns.lock().len(), 24);
+
+        drop(clients);
         shutdown_test_listener(listener_task, server, jobs).await;
     }
 

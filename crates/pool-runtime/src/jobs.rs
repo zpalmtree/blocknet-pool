@@ -649,42 +649,102 @@ impl JobManager {
         assigned_miner: &str,
         range_mode: AssignmentRangeMode,
     ) -> Option<MinerJob> {
-        let assignment_id = generate_job_id();
-        let share_difficulty = share_difficulty.max(1);
-        let share_target = difficulty_to_target(share_difficulty);
-        let assigned_miner = assigned_miner.trim().to_string();
+        let request = MinerJobRequest {
+            conn_id: conn_id.to_string(),
+            share_difficulty,
+            assigned_miner: assigned_miner.to_string(),
+            range_mode,
+        };
+        let mut built = self.build_miner_jobs(std::slice::from_ref(&request));
+        built.pop().flatten()
+    }
+
+    /// Builds one job per request against the current template, as
+    /// `build_miner_job_with_range_mode` does for one. The job-state write
+    /// lock is taken once per chunk of requests rather than once per
+    /// connection, and the template's hex fields are encoded once, so a
+    /// template broadcast to thousands of connections stays cheap.
+    pub(crate) fn build_miner_jobs(&self, requests: &[MinerJobRequest]) -> Vec<Option<MinerJob>> {
+        let stale_submit_grace = self.cfg.stale_submit_grace_duration();
+        let mut built: Vec<Option<MinerJob>> = Vec::with_capacity(requests.len());
+        let mut encoded: Option<(String, EncodedTemplate)> = None;
+        let mut targets: HashMap<u64, String> = HashMap::new();
+        for chunk in requests.chunks(MINER_JOB_BUILD_CHUNK) {
+            let mut installed = Vec::with_capacity(chunk.len());
+            let job = {
+                let mut state = self.state.write();
+                // Select the current job under the same write lock used to install the
+                // assignments. This linearizes assignment creation with template transitions so
+                // a transition cannot prune first and then have stale work inserted behind it.
+                let Some(job) = state.current.clone() else {
+                    built.extend(chunk.iter().map(|_| None));
+                    continue;
+                };
+                let now = Instant::now();
+                retain_current_job_locked(&mut state, &job, now);
+                for request in chunk {
+                    installed.push(self.install_assignment_locked(
+                        &mut state,
+                        &job,
+                        request,
+                        stale_submit_grace,
+                        now,
+                    ));
+                }
+                evict_assignments_over_cap_locked(&mut state);
+                job
+            };
+            if encoded.as_ref().is_none_or(|(id, _)| *id != job.id) {
+                encoded = Some((job.id.clone(), EncodedTemplate::new(&job)));
+            }
+            let template = &encoded.as_ref().expect("encoded above").1;
+            for assignment in installed {
+                built.push(assignment.map(|assignment| {
+                    let target = targets
+                        .entry(assignment.share_difficulty)
+                        .or_insert_with(|| {
+                            hex::encode(difficulty_to_target(assignment.share_difficulty))
+                        })
+                        .clone();
+                    MinerJob {
+                        job_id: assignment.assignment_id,
+                        template_id: template.template_id.clone(),
+                        header_base: template.header_base.clone(),
+                        target,
+                        difficulty: assignment.share_difficulty,
+                        network_target: template.network_target.clone(),
+                        height: job.height,
+                        nonce_start: assignment.nonce_start,
+                        nonce_end: assignment.nonce_end,
+                    }
+                }));
+            }
+        }
+        built
+    }
+
+    /// Installs one connection's assignment for `job` (the current job) and
+    /// supersedes the connection's previous assignment for it.
+    fn install_assignment_locked(
+        &self,
+        state: &mut JobState,
+        job: &Job,
+        request: &MinerJobRequest,
+        stale_submit_grace: Duration,
+        now: Instant,
+    ) -> Option<InstalledAssignment> {
+        let assigned_miner = request.assigned_miner.trim();
         if assigned_miner.is_empty() {
             return None;
         }
-        let superseded_grace =
-            superseded_assignment_grace(&assigned_miner, self.cfg.stale_submit_grace_duration());
-
-        let mut state = self.state.write();
-        // Select the current job under the same write lock used to install the assignment. This
-        // linearizes assignment creation with template transitions so a transition cannot prune
-        // first and then have stale work inserted behind it.
-        let job = state.current.clone()?;
-        let now = Instant::now();
-        state
-            .jobs
-            .entry(job.id.clone())
-            .or_insert_with(|| job.clone());
-        state
-            .job_meta
-            .entry(job.id.clone())
-            .or_insert(JobTemplateMeta {
-                created_at: now,
-                stale_since: None,
-                mempool_generation: None,
-                lease: None,
-                legacy_probe_at: now.checked_add(TEMPLATE_LIVENESS_PROBE_INTERVAL),
-            });
+        let share_difficulty = request.share_difficulty.max(1);
+        let assignment_id = generate_job_id();
         let active_assignment_id = state
             .active_assignments_by_template
             .get(&job.id)
-            .and_then(|by_connection| by_connection.get(conn_id))
+            .and_then(|by_connection| by_connection.get(&request.conn_id))
             .cloned();
-        let preserved_range = if range_mode == AssignmentRangeMode::PreserveCurrent {
+        let preserved_range = if request.range_mode == AssignmentRangeMode::PreserveCurrent {
             active_assignment_id
                 .as_ref()
                 .and_then(|assignment_id| state.assignments.get(assignment_id))
@@ -697,7 +757,7 @@ impl JobManager {
                 assignment.superseded_at = Some(now);
             }
         }
-        let (start, nonce_end) = preserved_range.unwrap_or_else(|| {
+        let (nonce_start, nonce_end) = preserved_range.unwrap_or_else(|| {
             let range_size = nonce_range_size(job.height);
             let slot =
                 self.nonce_counter.fetch_add(1, Ordering::Relaxed) % nonce_slot_count(range_size);
@@ -707,48 +767,24 @@ impl JobManager {
             (start, nonce_end)
         });
         insert_assignment_locked(
-            &mut state,
+            state,
             assignment_id.clone(),
             MinerAssignment {
-                owner_conn_id: conn_id.to_string(),
+                owner_conn_id: request.conn_id.clone(),
                 template_job_id: job.id.clone(),
                 share_difficulty,
-                assigned_miner,
-                nonce_start: start,
+                assigned_miner: assigned_miner.to_string(),
+                nonce_start,
                 nonce_end,
-                created_at: Instant::now(),
+                created_at: now,
                 superseded_at: None,
-                superseded_grace,
+                superseded_grace: superseded_assignment_grace(assigned_miner, stale_submit_grace),
             },
         );
-        let mut cap_evicted = 0usize;
-        while state.assignments.len() > MAX_ACTIVE_ASSIGNMENTS {
-            if let Some(oldest) = state.assignment_order.pop_front() {
-                if remove_assignment_locked(&mut state, &oldest) {
-                    cap_evicted = cap_evicted.saturating_add(1);
-                }
-            } else {
-                break;
-            }
-        }
-        if cap_evicted > 0 {
-            tracing::info!(
-                cap_evicted,
-                active_assignments = state.assignments.len(),
-                cap = MAX_ACTIVE_ASSIGNMENTS,
-                "evicted assignments due to active assignment cap"
-            );
-        }
-
-        Some(MinerJob {
-            job_id: assignment_id,
-            template_id: job.template_id.clone(),
-            header_base: hex::encode(&job.header_base),
-            target: hex::encode(share_target),
-            difficulty: share_difficulty,
-            network_target: hex::encode(job.network_target),
-            height: job.height,
-            nonce_start: start,
+        Some(InstalledAssignment {
+            assignment_id,
+            share_difficulty,
+            nonce_start,
             nonce_end,
         })
     }
@@ -1947,6 +1983,83 @@ fn template_content_expired(created_at: Instant, now: Instant) -> bool {
     now.saturating_duration_since(created_at) >= MAX_TEMPLATE_CONTENT_AGE
 }
 
+/// Connections per job-state write-lock acquisition when building a
+/// template's jobs in bulk; small enough that submits waiting on the lock
+/// are not held for long.
+const MINER_JOB_BUILD_CHUNK: usize = 256;
+
+/// One connection's job request for `JobManager::build_miner_jobs`.
+#[derive(Debug, Clone)]
+pub(crate) struct MinerJobRequest {
+    pub(crate) conn_id: String,
+    pub(crate) share_difficulty: u64,
+    pub(crate) assigned_miner: String,
+    pub(crate) range_mode: AssignmentRangeMode,
+}
+
+struct InstalledAssignment {
+    assignment_id: String,
+    share_difficulty: u64,
+    nonce_start: u64,
+    nonce_end: u64,
+}
+
+/// A template's hex fields, encoded once for all of its miner jobs.
+struct EncodedTemplate {
+    template_id: String,
+    header_base: String,
+    network_target: String,
+}
+
+impl EncodedTemplate {
+    fn new(job: &Job) -> Self {
+        Self {
+            template_id: job.template_id.clone(),
+            header_base: hex::encode(&job.header_base),
+            network_target: hex::encode(job.network_target),
+        }
+    }
+}
+
+/// Keeps the current job resolvable for submits against new assignments.
+fn retain_current_job_locked(state: &mut JobState, job: &Job, now: Instant) {
+    state
+        .jobs
+        .entry(job.id.clone())
+        .or_insert_with(|| job.clone());
+    state
+        .job_meta
+        .entry(job.id.clone())
+        .or_insert(JobTemplateMeta {
+            created_at: now,
+            stale_since: None,
+            mempool_generation: None,
+            lease: None,
+            legacy_probe_at: now.checked_add(TEMPLATE_LIVENESS_PROBE_INTERVAL),
+        });
+}
+
+fn evict_assignments_over_cap_locked(state: &mut JobState) {
+    let mut cap_evicted = 0usize;
+    while state.assignments.len() > MAX_ACTIVE_ASSIGNMENTS {
+        if let Some(oldest) = state.assignment_order.pop_front() {
+            if remove_assignment_locked(state, &oldest) {
+                cap_evicted = cap_evicted.saturating_add(1);
+            }
+        } else {
+            break;
+        }
+    }
+    if cap_evicted > 0 {
+        tracing::info!(
+            cap_evicted,
+            active_assignments = state.assignments.len(),
+            cap = MAX_ACTIVE_ASSIGNMENTS,
+            "evicted assignments due to active assignment cap"
+        );
+    }
+}
+
 fn insert_assignment_locked(
     state: &mut JobState,
     assignment_id: String,
@@ -3029,6 +3142,50 @@ mod tests {
         let mut job = test_job(id, height);
         job.prev_hash = Some([prev; 32]);
         job
+    }
+
+    #[test]
+    fn batched_job_builds_cover_every_request_across_chunks() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config::default(),
+        );
+        manager.install_test_job(test_job("current", 100));
+        let count = MINER_JOB_BUILD_CHUNK * 2 + 17;
+        let requests: Vec<MinerJobRequest> = (0..count)
+            .map(|idx| MinerJobRequest {
+                conn_id: format!("conn-{idx}"),
+                share_difficulty: 1 + (idx % 3) as u64,
+                assigned_miner: format!("miner-{idx}"),
+                range_mode: AssignmentRangeMode::Fresh,
+            })
+            .collect();
+
+        let first: Vec<MinerJob> = manager
+            .build_miner_jobs(&requests)
+            .into_iter()
+            .map(|job| job.expect("job for every request"))
+            .collect();
+        assert_eq!(first.len(), count);
+        let ids: HashSet<&str> = first.iter().map(|job| job.job_id.as_str()).collect();
+        assert_eq!(ids.len(), count);
+        for (request, job) in requests.iter().zip(&first) {
+            assert_eq!(job.height, 100);
+            assert_eq!(job.difficulty, request.share_difficulty);
+            assert_eq!(
+                job.target,
+                hex::encode(difficulty_to_target(request.share_difficulty))
+            );
+        }
+
+        // A second batch supersedes each connection's previous assignment.
+        let second = manager.build_miner_jobs(&requests);
+        assert!(second.iter().all(Option::is_some));
+        let state = manager.state.read();
+        for job in &first {
+            let assignment = state.assignments.get(&job.job_id).expect("still tracked");
+            assert!(assignment.superseded_at.is_some(), "{}", job.job_id);
+        }
     }
 
     #[test]
