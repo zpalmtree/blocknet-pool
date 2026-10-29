@@ -27,7 +27,7 @@ use pool_runtime::node::{NodeClient, NodeCurrentProcessBlock, NodeLastProcessBlo
 use pool_runtime::pool_activity::{assess_pool_activity, POOL_ACTIVITY_SNAPSHOT_STALE_AFTER};
 use pool_runtime::runtime::load_dotenv;
 use pool_runtime::service_state::{
-    ConnectionSnapshot, PersistedRuntimeSnapshot, ValidationSnapshot,
+    ConnectionSnapshot, HeapSnapshot, PersistedRuntimeSnapshot, ValidationSnapshot,
     LIVE_RUNTIME_SNAPSHOT_META_KEY,
 };
 use pool_runtime::store::PoolStore;
@@ -119,6 +119,7 @@ struct MonitorSnapshot {
     regular_submit_queue_depth: Option<u64>,
     submit_unprocessed: Option<UnprocessedSubmitSnapshot>,
     stratum_connections: Option<ConnectionSnapshot>,
+    stratum_heap: Option<HeapSnapshot>,
     stratum_snapshot_age_seconds: Option<u64>,
     connected_miners: Option<u64>,
     connected_workers: Option<u64>,
@@ -145,6 +146,7 @@ struct MonitorSnapshot {
     daemon_latency: BTreeMap<String, BTreeMap<String, LatencyHistogramSnapshot>>,
     validation: Option<ValidationSnapshot>,
     growth_mode_active: Option<bool>,
+    growth_level: Option<u8>,
     growth_normal_size_submits_per_s: Option<f64>,
     process_metrics: BTreeMap<String, ProcessMetrics>,
     open_public_incidents: u64,
@@ -1087,6 +1089,7 @@ impl MonitorRuntime {
             runtime.map(|snapshot| snapshot.submit.regular_queue_depth as u64);
         metrics.submit_unprocessed = runtime.map(|snapshot| snapshot.submit.unprocessed);
         metrics.stratum_connections = runtime.and_then(|snapshot| snapshot.submit.connections);
+        metrics.stratum_heap = runtime.and_then(|snapshot| snapshot.submit.heap);
         metrics.stratum_snapshot_age_seconds =
             runtime_snapshot_age(sample.sampled_at, runtime).map(|age| age.as_secs());
         metrics.connected_miners = runtime.map(|snapshot| snapshot.connected_miners as u64);
@@ -1154,6 +1157,13 @@ impl MonitorRuntime {
         }
         metrics.validation = runtime.map(|snapshot| snapshot.validation);
         metrics.growth_mode_active = runtime.map(|snapshot| snapshot.submit.growth_mode_active);
+        // Engines from before level 2 report only the flag.
+        metrics.growth_level = runtime.map(|snapshot| {
+            snapshot
+                .submit
+                .growth_level
+                .max(u8::from(snapshot.submit.growth_mode_active))
+        });
         metrics.growth_normal_size_submits_per_s =
             runtime.and_then(|snapshot| snapshot.submit.growth_normal_size_submits_per_s);
         metrics.process_metrics = sample.process_metrics.clone();
@@ -2516,6 +2526,21 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
             );
         }
     }
+    if let Some(heap) = snapshot.stratum_heap {
+        for (kind, bytes) in [
+            ("arena", heap.arena_bytes),
+            ("in_use", heap.in_use_bytes),
+            ("free_held", heap.free_held_bytes),
+            ("mmapped", heap.mmapped_bytes),
+        ] {
+            metric_line_labeled(
+                &mut out,
+                "blocknet_pool_monitor_stratum_heap_bytes",
+                &[("kind", kind)],
+                bytes,
+            );
+        }
+    }
     for (service, metrics) in &snapshot.process_metrics {
         metric_line_labeled(
             &mut out,
@@ -2616,6 +2641,9 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
             "blocknet_pool_monitor_growth_mode_active",
             u8::from(active),
         );
+    }
+    if let Some(level) = snapshot.growth_level {
+        metric_line(&mut out, "blocknet_pool_monitor_growth_level", level);
     }
     if let Some(rate) = snapshot.growth_normal_size_submits_per_s {
         metric_line(
@@ -2978,7 +3006,7 @@ mod tests {
     use pool_runtime::node::{NodeCurrentProcessBlock, NodeLastProcessBlock, NodeStatus};
     use pool_runtime::pool_activity::assess_pool_activity;
     use pool_runtime::service_state::{
-        ConnectionSnapshot, PersistedRuntimeSnapshot, SubmitRuntimeSnapshot,
+        ConnectionSnapshot, HeapSnapshot, PersistedRuntimeSnapshot, SubmitRuntimeSnapshot,
     };
     use pool_runtime::telemetry::{
         ApiPerformanceSnapshot, CacheCounterSummary, TimedOperationSummary,
@@ -3069,6 +3097,12 @@ mod tests {
                 rejected_at_cap_total: 12,
                 rejected_per_ip_total: 3,
             }),
+            stratum_heap: Some(HeapSnapshot {
+                arena_bytes: 300,
+                in_use_bytes: 200,
+                free_held_bytes: 100,
+                mmapped_bytes: 4096,
+            }),
             daemon_current_process_block: Some(NodeCurrentProcessBlock {
                 height: 5,
                 tx_count: 1,
@@ -3152,6 +3186,9 @@ mod tests {
         ));
         assert!(rendered.contains("blocknet_pool_monitor_vardiff_unprocessed_raises_total 2"));
         assert!(rendered.contains("blocknet_pool_monitor_stratum_connections 4096"));
+        assert!(
+            rendered.contains("blocknet_pool_monitor_stratum_heap_bytes{kind=\"free_held\"} 100")
+        );
         assert!(rendered.contains("blocknet_pool_monitor_stratum_connection_cap 16384"));
         assert!(rendered.contains(
             "blocknet_pool_monitor_stratum_connections_rejected_total{reason=\"cap\"} 12"

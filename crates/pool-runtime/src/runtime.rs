@@ -326,22 +326,27 @@ fn start_growth_mode(
         let load_store = Arc::clone(&store);
         let persisted =
             tokio::task::spawn_blocking(move || load_store.get_meta(GROWTH_MODE_META_KEY)).await;
-        let active = match persisted {
-            Ok(Ok(Some(value))) => value == b"1",
-            Ok(Ok(None)) => false,
+        // Stored as "0", "1" or "2" (engines before level 2 read only "1").
+        let level = match persisted {
+            Ok(Ok(Some(value))) => match value.as_slice() {
+                b"1" => 1,
+                b"2" => 2,
+                _ => 0,
+            },
+            Ok(Ok(None)) => 0,
             Ok(Err(err)) => {
                 warn!(error = %err, "failed loading growth mode; starting without it");
-                false
+                0
             }
             Err(err) => {
                 warn!(error = %err, "growth mode load task failed");
-                false
+                0
             }
         };
-        if active {
-            engine.set_growth_mode(true);
+        if level > 0 {
+            engine.set_growth_level(level);
         }
-        let mut controller = crate::growth::GrowthController::new(active, Instant::now());
+        let mut controller = crate::growth::GrowthController::new(level, Instant::now());
         let mut ticker = tokio::time::interval(GROWTH_MODE_TICK);
         loop {
             ticker.tick().await;
@@ -353,12 +358,16 @@ fn start_growth_mode(
             if let Some(rate) = controller.normal_size_rate() {
                 engine.record_growth_rate(rate);
             }
-            let Some(active) = switched else {
+            let Some(level) = switched else {
                 continue;
             };
-            engine.set_growth_mode(active);
+            engine.set_growth_level(level);
             let store = Arc::clone(&store);
-            let value: &'static [u8] = if active { b"1" } else { b"0" };
+            let value: &'static [u8] = match level {
+                0 => b"0",
+                1 => b"1",
+                _ => b"2",
+            };
             match tokio::task::spawn_blocking(move || store.set_meta(GROWTH_MODE_META_KEY, value))
                 .await
             {

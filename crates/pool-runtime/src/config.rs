@@ -71,6 +71,13 @@ pub struct Config {
     pub growth_exit_submit_rate: f64,
     pub growth_vardiff_target_shares: i32,
     pub growth_sample_rate: f64,
+    /// Second growth level: above this rate (same units) Stratum moves on to
+    /// `growth2_vardiff_target_shares`, keeping `growth_sample_rate`. 0
+    /// disables the second level.
+    pub growth2_submit_rate: f64,
+    /// The second level drops back to the first below this rate.
+    pub growth2_exit_submit_rate: f64,
+    pub growth2_vardiff_target_shares: i32,
     pub warmup_shares: i32,
     pub min_sample_every: i32,
     pub invalid_sample_threshold: f64,
@@ -147,7 +154,7 @@ impl Default for Config {
             stratum_host: "127.0.0.1".to_string(),
             stratum_port: 3333,
             gateway_socket: String::new(),
-            stratum_max_connections: 16_384,
+            stratum_max_connections: 32_768,
             stratum_max_connections_per_ip: 1024,
             daemon_data_dir: "data".to_string(),
             daemon_api: "http://127.0.0.1:8332".to_string(),
@@ -174,6 +181,9 @@ impl Default for Config {
             growth_exit_submit_rate: 40.0,
             growth_vardiff_target_shares: 5,
             growth_sample_rate: 0.08,
+            growth2_submit_rate: 110.0,
+            growth2_exit_submit_rate: 80.0,
+            growth2_vardiff_target_shares: 3,
             warmup_shares: 20,
             min_sample_every: 10,
             invalid_sample_threshold: 0.10,
@@ -271,17 +281,44 @@ impl Config {
                 growth_exit_submit_rate,
                 growth_vardiff_target_shares,
                 growth_sample_rate,
+                growth2_submit_rate,
+                growth2_exit_submit_rate,
+                growth2_vardiff_target_shares,
             ]
         );
         (running, changed)
     }
 
-    /// The configuration Stratum runs with while growth mode is active.
+    /// The configuration Stratum runs with at a growth level (0 = off).
+    pub fn with_growth_level(&self, level: u8) -> Config {
+        match level {
+            0 => self.clone(),
+            1 => Config {
+                vardiff_target_shares: self.growth_vardiff_target_shares,
+                sample_rate: self.growth_sample_rate,
+                ..self.clone()
+            },
+            _ => Config {
+                vardiff_target_shares: self.growth2_vardiff_target_shares,
+                sample_rate: self.growth_sample_rate,
+                ..self.clone()
+            },
+        }
+    }
+
+    /// The configuration Stratum runs with at the first growth level.
     pub fn with_growth_mode(&self) -> Config {
-        Config {
-            vardiff_target_shares: self.growth_vardiff_target_shares,
-            sample_rate: self.growth_sample_rate,
-            ..self.clone()
+        self.with_growth_level(1)
+    }
+
+    /// The highest growth level this configuration enables.
+    pub fn max_growth_level(&self) -> u8 {
+        if self.growth_submit_rate <= 0.0 {
+            0
+        } else if self.growth2_submit_rate <= 0.0 {
+            1
+        } else {
+            2
         }
     }
 
@@ -510,6 +547,11 @@ impl Config {
                 1,
             ),
             (
+                "growth2_vardiff_target_shares",
+                self.growth2_vardiff_target_shares,
+                1,
+            ),
+            (
                 "payout_min_verified_shares",
                 self.payout_min_verified_shares,
                 0,
@@ -553,6 +595,34 @@ impl Config {
         if self.growth_submit_rate > 0.0 && self.growth_exit_submit_rate >= self.growth_submit_rate
         {
             anyhow::bail!("growth_exit_submit_rate must be below growth_submit_rate");
+        }
+        ensure_f64_range(
+            "growth2_submit_rate",
+            self.growth2_submit_rate,
+            0.0,
+            f64::MAX,
+        )?;
+        ensure_f64_range(
+            "growth2_exit_submit_rate",
+            self.growth2_exit_submit_rate,
+            0.0,
+            f64::MAX,
+        )?;
+        if self.growth2_submit_rate > 0.0 {
+            if self.growth2_exit_submit_rate >= self.growth2_submit_rate {
+                anyhow::bail!("growth2_exit_submit_rate must be below growth2_submit_rate");
+            }
+            if self.growth2_submit_rate <= self.growth_submit_rate {
+                anyhow::bail!("growth2_submit_rate must be above growth_submit_rate");
+            }
+            if self.growth2_exit_submit_rate <= self.growth_exit_submit_rate {
+                anyhow::bail!("growth2_exit_submit_rate must be above growth_exit_submit_rate");
+            }
+            if self.growth2_vardiff_target_shares > self.growth_vardiff_target_shares {
+                anyhow::bail!(
+                    "growth2_vardiff_target_shares must not exceed growth_vardiff_target_shares"
+                );
+            }
         }
         ensure_f64_range(
             "source_honest_invalid_rate",
