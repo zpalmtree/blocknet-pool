@@ -48,6 +48,8 @@ const groups = {
     "pool-vs-solo-mining-blocknet"
   ],
   "blocknet": [
+    "buy-blocknet-bnt-safetrade",
+    "sell-blocknet-bnt-safetrade",
     "accept-blocknet-payments",
     "how-mining-secures-blocknet-payments",
     "blocknet-fair-launch",

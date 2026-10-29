@@ -93,6 +93,8 @@ function partTimeMining() {
 }
 
 const illustrations = {
+  'buy-blocknet-bnt-safetrade': () => scene({ main: 'coin', left: 'update', right: 'wallet' }),
+  'sell-blocknet-bnt-safetrade': () => scene({ main: 'update', left: 'miner', right: 'coin' }),
   'accept-blocknet-payments': () => scene({ main: 'wallet', left: 'document', right: 'check' }),
   'how-mining-secures-blocknet-payments': () => scene({ main: 'shield', left: 'block', right: 'wallet' }),
   'mine-blocknet-part-time': partTimeMining,
