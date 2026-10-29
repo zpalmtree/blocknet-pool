@@ -28,8 +28,15 @@ Options:
   --weeks N           weekly partitions the parent step creates (default 4)
   --lock-retries N    retries after a lock timeout (default 20)
 
-Example on bntpool (run in tmux; unique-index and check take minutes):
-  sudo -u postgres scripts/partition_shares.sh --db 'dbname=blocknet_pool' preflight
+Example on bntpool (run in tmux; unique-index and check take minutes). The
+postgres user cannot read /opt/blocknet, so copy both files somewhere it can:
+  d=/var/lib/postgresql/partition_shares
+  sudo install -d -o postgres -g postgres -m 0750 "$d"
+  sudo install -o postgres -g postgres -m 0640 scripts/partition_shares.sql "$d/"
+  sudo install -o postgres -g postgres -m 0750 scripts/partition_shares.sh "$d/"
+  cd /tmp && sudo -u postgres "$d/partition_shares.sh" --db 'dbname=blocknet_pool' preflight
+bntpool was converted on 2026-10-29 (shares_legacy holds rows before
+2026-11-02 00:00 UTC); `status` reports the layout.
 EOF
 }
 
