@@ -40,6 +40,10 @@ const MISSING_WALLET_PASSWORD_LOG_COOLDOWN: Duration = Duration::from_secs(60);
 const WALLET_LOAD_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 const WALLET_LOAD_WAIT_POLL: Duration = Duration::from_millis(250);
 const MAX_ACTIVE_ASSIGNMENTS: usize = 65_536;
+/// Assignments removed per job-state write-lock pass when retiring or
+/// pruning, so a fanout building under the same lock waits ~1 ms, not the
+/// whole cleanup.
+const ASSIGNMENT_REMOVAL_BATCH: usize = 2_048;
 /// Pool-wide bound on refill assignments (`refill`), so refills cannot push
 /// other miners' jobs out under `MAX_ACTIVE_ASSIGNMENTS`.
 const MAX_REFILL_ASSIGNMENTS: usize = MAX_ACTIVE_ASSIGNMENTS / 4;
@@ -1035,18 +1039,11 @@ impl JobManager {
     }
 
     fn prune_assignments_if_due(&self) {
-        let mut state = self.state.write();
-        let removed = maybe_prune_assignments_locked(
-            &mut state,
-            Instant::now(),
-            false,
-            self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE),
-            self.cfg.stale_submit_grace_duration(),
-        );
+        let removed = self.prune_assignments_batched(false);
         if removed > 0 {
             tracing::debug!(
                 assignments_removed = removed,
-                active_assignments = state.assignments.len(),
+                active_assignments = self.state.read().assignments.len(),
                 "pruned expired miner assignments"
             );
         }
@@ -1383,30 +1380,56 @@ impl JobManager {
         self.tip_latency
             .job_published(job_height, Instant::now(), SystemTime::now());
 
-        let mut state = self.state.write();
-        let now = Instant::now();
-        // Keep recent jobs bounded.
-        let removed_jobs = trim_recent_jobs_locked(&mut state);
-        if !removed_jobs.is_empty() {
-            let assignments_before = state.assignments.len();
-            remove_assignments_for_templates_locked(&mut state, &removed_jobs);
-            let assignments_removed = assignments_before.saturating_sub(state.assignments.len());
-            if assignments_removed > 0 {
-                tracing::info!(
-                    removed_templates = removed_jobs.len(),
-                    assignments_removed,
-                    active_assignments = state.assignments.len(),
-                    "removed assignments tied to retired templates"
-                );
-            }
+        // Keep recent jobs bounded. Retiring jobs is cheap; their assignments
+        // and the expired ones go in short batched lock passes so the job
+        // fanout, which builds under the same lock, is not held up.
+        let (removed_jobs, retired_assignments) = {
+            let mut state = self.state.write();
+            let removed_jobs = trim_recent_jobs_locked(&mut state);
+            let retired: Vec<String> = removed_jobs
+                .iter()
+                .filter_map(|template_id| state.assignment_ids_by_template.get(template_id))
+                .flat_map(|ids| ids.iter().cloned())
+                .collect();
+            (removed_jobs, retired)
+        };
+        let assignments_removed = self.remove_assignments_batched(&retired_assignments);
+        if assignments_removed > 0 {
+            tracing::info!(
+                removed_templates = removed_jobs.len(),
+                assignments_removed,
+                "removed assignments tied to retired templates"
+            );
         }
-        maybe_prune_assignments_locked(
-            &mut state,
-            now,
-            true,
-            self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE),
-            self.cfg.stale_submit_grace_duration(),
-        );
+        self.prune_assignments_batched(true);
+    }
+
+    /// Removes expired assignments: found under a read lock, removed in
+    /// short write-lock batches. Returns how many were removed.
+    fn prune_assignments_batched(&self, force: bool) -> usize {
+        let now = Instant::now();
+        let max_age = self.cfg.job_timeout_duration().min(MAX_ASSIGNMENT_AGE);
+        let stale_grace = self.cfg.stale_submit_grace_duration();
+        let expired = {
+            let state = self.state.read();
+            if !force
+                && state.last_assignment_prune.is_some_and(|last| {
+                    now.saturating_duration_since(last) < ASSIGNMENT_PRUNE_INTERVAL
+                })
+            {
+                return 0;
+            }
+            collect_expired_assignments(&state, now, max_age, stale_grace)
+        };
+        self.state.write().last_assignment_prune = Some(now);
+        self.remove_assignments_batched(&expired)
+    }
+
+    fn remove_assignments_batched(&self, assignment_ids: &[String]) -> usize {
+        assignment_ids
+            .chunks(ASSIGNMENT_REMOVAL_BATCH)
+            .map(|batch| remove_assignment_batch_locked(&mut self.state.write(), batch))
+            .sum()
     }
 
     fn resolve_reward_address(&self) -> Option<String> {
@@ -2317,6 +2340,7 @@ fn remove_assignment_locked(state: &mut JobState, assignment_id: &str) -> bool {
     true
 }
 
+#[cfg(test)]
 fn remove_assignments_for_templates_locked(state: &mut JobState, template_ids: &[String]) {
     let mut removed_assignment_ids = HashSet::new();
     for template_id in template_ids {
@@ -2374,8 +2398,39 @@ fn prune_expired_assignments_locked(
     stale_grace: Duration,
     current_template_job_id: Option<&str>,
 ) -> usize {
+    let expired =
+        collect_expired_assignments_for(state, now, max_age, stale_grace, current_template_job_id);
+    remove_assignment_batch_locked(state, &expired)
+}
+
+/// Assignments past their age and grace windows (see
+/// `prune_expired_assignments_locked`); read-only, so it can run under a
+/// read lock.
+fn collect_expired_assignments(
+    state: &JobState,
+    now: Instant,
+    max_age: Duration,
+    stale_grace: Duration,
+) -> Vec<String> {
+    let current_template_job_id = state.current.as_ref().map(|current| current.id.clone());
+    collect_expired_assignments_for(
+        state,
+        now,
+        max_age,
+        stale_grace,
+        current_template_job_id.as_deref(),
+    )
+}
+
+fn collect_expired_assignments_for(
+    state: &JobState,
+    now: Instant,
+    max_age: Duration,
+    stale_grace: Duration,
+    current_template_job_id: Option<&str>,
+) -> Vec<String> {
     if max_age.is_zero() {
-        return 0;
+        return Vec::new();
     }
     // Assignments for jobs still mining the current chain position stay
     // resolvable for as long as their job is retained (content-only
@@ -2418,17 +2473,26 @@ fn prune_expired_assignments_locked(
             };
             (!retain).then(|| assignment_id.clone())
         })
-        .collect::<HashSet<_>>();
+        .collect::<Vec<_>>();
 
-    for assignment_id in &expired_assignment_ids {
-        remove_assignment_locked(state, assignment_id);
+    expired_assignment_ids
+}
+
+/// Removes a batch of assignments and their order entries; returns how
+/// many were still present.
+fn remove_assignment_batch_locked(state: &mut JobState, assignment_ids: &[String]) -> usize {
+    let mut removed = HashSet::with_capacity(assignment_ids.len());
+    for assignment_id in assignment_ids {
+        if remove_assignment_locked(state, assignment_id) {
+            removed.insert(assignment_id.as_str());
+        }
     }
-    if !expired_assignment_ids.is_empty() {
+    if !removed.is_empty() {
         state
             .assignment_order
-            .retain(|assignment_id| !expired_assignment_ids.contains(assignment_id));
+            .retain(|assignment_id| !removed.contains(assignment_id.as_str()));
     }
-    expired_assignment_ids.len()
+    removed.len()
 }
 
 fn hex_decode(input: &str) -> anyhow::Result<Vec<u8>> {
@@ -3415,6 +3479,46 @@ mod tests {
             let assignment = state.assignments.get(&job.job_id).expect("still tracked");
             assert!(assignment.superseded_at.is_some(), "{}", job.job_id);
         }
+    }
+
+    #[test]
+    fn retiring_templates_removes_their_assignments_in_batches() {
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("node")),
+            Config::default(),
+        );
+        manager.install_test_job(test_job("old", 100));
+        let count = ASSIGNMENT_REMOVAL_BATCH * 2 + 5;
+        let requests: Vec<MinerJobRequest> = (0..count)
+            .map(|idx| MinerJobRequest {
+                conn_id: format!("conn-{idx}"),
+                share_difficulty: 1,
+                assigned_miner: format!("miner-{idx}"),
+                range_mode: AssignmentRangeMode::Fresh,
+            })
+            .collect();
+        assert!(manager
+            .build_miner_jobs(&requests)
+            .iter()
+            .all(Option::is_some));
+        let retired: Vec<String> = manager
+            .state
+            .read()
+            .assignment_ids_by_template
+            .get("old")
+            .expect("old template indexed")
+            .iter()
+            .cloned()
+            .collect();
+        assert_eq!(retired.len(), count);
+
+        assert_eq!(manager.remove_assignments_batched(&retired), count);
+        let state = manager.state.read();
+        assert!(state.assignments.is_empty());
+        assert!(state.assignment_order.is_empty());
+        assert!(!state.assignment_ids_by_template.contains_key("old"));
+        assert!(!state.active_assignments_by_template.contains_key("old"));
+        assert_assignment_indexes(&state);
     }
 
     #[test]
