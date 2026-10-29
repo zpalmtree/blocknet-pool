@@ -86,3 +86,18 @@ One line each: hypothesis, stage, tier and host, result, verdict.
   stored before 0.23.0 (legacy JSON, below ~70153). The window holds only
   binary blocks once the tip passes ~70214, so the gap should close on its
   own. If it doesn't, decode legacy headers without the full block.
+- **Slow new-tip refreshes are on the pool side.** A live watch on the
+  primary (`/api/events`, then template fetches) showed the daemon's
+  template at the new height within 21 ms of every new_block, three blocks
+  in a row. Yet every slow pool refresh logged `fetches=2 stale_fetches=1`:
+  the first fetch came back at the old height, and the job waited for the
+  2 s status poll. SSE delivery was ≤1 ms (34/34), nginx has
+  `proxy_buffering off`, and no fetch or install took over 250 ms. Own
+  blocks are a separate symptom: the first fetch starts ~1.2 s after the
+  submit returns, with stale_fetches=0. Pool `1d8ec39` refetches every
+  100 ms while the template is below the announced tip; `a75cfc3` traces
+  SSE arrival and absorbed refreshes. Both deployed as
+  `deploy-tip-refresh-20261029` (live b16a385 + cherry-picks) at 04:24 EDT.
+- **Checkpoint save before notify.** Block 70200 spent 173 ms saving
+  checkpoints before the broadcast and SSE. That happens on every 100th
+  block only. **Not worth it** at p50.
