@@ -47,7 +47,7 @@ const WALLET_SEND_MATCH_TIME_SLACK: Duration = Duration::from_secs(5 * 60);
 const PAYOUT_CONFIRMATIONS_REQUIRED: u64 = 1;
 const MIN_WALLET_SEND_SPACING: Duration = Duration::from_millis(2_100);
 const PAYOUT_TASK_SLOW_LOG_AFTER: Duration = Duration::from_millis(250);
-const DEFAULT_TARGET_RECIPIENTS_PER_TX: usize = 12;
+const DEFAULT_TARGET_RECIPIENTS_PER_TX: usize = 15;
 const MAX_RECIPIENTS_PER_TX: usize = 48;
 const MAX_TXS_PER_SWEEP: usize = 8;
 const PAYOUT_WAIT_PRIORITY_THRESHOLD: Duration = Duration::from_secs(6 * 60 * 60);
@@ -5630,6 +5630,67 @@ mod tests {
             .expect("miner balance after partial send");
         assert_eq!(balance.pending, 300_000_000);
         assert_eq!(balance.paid, 0);
+    }
+
+    #[test]
+    fn send_payouts_batches_fifteen_recipients_without_waiting_for_more() {
+        let store = require_test_store!();
+        for seed in 1..=15 {
+            store
+                .update_balance(&Balance {
+                    address: test_address(seed),
+                    pending: 100_000_000,
+                    paid: 0,
+                })
+                .expect("seed miner balance");
+        }
+        let below_minimum = test_address(16);
+        store
+            .update_balance(&Balance {
+                address: below_minimum.clone(),
+                pending: 99_999_999,
+                paid: 0,
+            })
+            .expect("seed balance below minimum");
+        let live_totals = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let base_url = spawn_wallet_send_server(
+            &test_address(99),
+            vec![
+                wallet_output("funds", 0, 2_000_000_000),
+                wallet_output("reserve", 0, 10_000_000_000),
+            ],
+            MockAdvancedSendPolicy {
+                live_recipient_totals: Some(Arc::clone(&live_totals)),
+                fee: 1_000,
+                ..MockAdvancedSendPolicy::default()
+            },
+            64,
+        );
+        let processor = PayoutProcessor::new(
+            Config {
+                min_payout_amount: 1.0,
+                ..Config::default()
+            },
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&base_url, "").expect("node")),
+        );
+
+        processor.send_payouts();
+
+        // A single broadcast pays all fifteen miners; no residual batch or
+        // idle wallet rebalance should add another transaction to this sweep.
+        assert_eq!(*live_totals.lock(), vec![1_500_000_000]);
+        let pending = store.get_pending_payouts().expect("pending payouts");
+        assert_eq!(pending.len(), 15);
+        assert!(store.get_pending_payout(&below_minimum).unwrap().is_none());
+        let held = store.get_balance(&below_minimum).unwrap();
+        assert_eq!(held.pending, 99_999_999);
+        assert_eq!(held.paid, 0);
+        assert!(pending
+            .iter()
+            .all(|p| p.tx_hash.as_deref() == Some("mock-live-send")));
+        assert_eq!(pending.iter().map(|p| p.fee.unwrap()).sum::<u64>(), 1_000);
+        assert!(pending.iter().all(|p| p.amount == 100_000_000));
     }
 
     #[test]
