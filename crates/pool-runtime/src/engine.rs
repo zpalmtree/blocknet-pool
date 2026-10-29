@@ -1,6 +1,4 @@
-#[cfg(test)]
-use std::collections::HashSet;
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::env;
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -38,7 +36,8 @@ use pool_common::faraday;
 use pool_common::pow::{check_target, difficulty_to_target};
 use pool_common::protocol::{
     build_login_result, normalize_worker_name, parse_hash_hex, validate_miner_address_for_network,
-    AddressNetwork, CAP_POW_BLAKE2B_V1, CAP_SUBMIT_CLAIMED_HASH, STRATUM_PROTOCOL_VERSION_CURRENT,
+    AddressNetwork, CAP_POW_BLAKE2B_V1, CAP_PROXY_WORKERS_V1, CAP_SUBMIT_CLAIMED_HASH,
+    STRATUM_PROTOCOL_VERSION_CURRENT,
 };
 
 // Start retargeting after two accepted shares so reconnects/high starting diff
@@ -68,6 +67,10 @@ const VALIDATION_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const SOURCE_REVOKED_REJECT_REASON: &str = "source revoked";
 const PROVEN_FAKE_REJECT_REASON: &str = "invalid share proof";
 
+
+/// Distinct per-share worker names one `proxy_workers_v1` connection may
+/// use; further names count as the session's own worker.
+const MAX_PROXY_WORKERS_PER_SESSION: usize = 4096;
 #[derive(Debug, Clone)]
 pub struct Job {
     pub id: String,
@@ -106,6 +109,8 @@ pub(crate) struct SubmitMetadata {
     pub backend: Option<String>,
     /// Miner-reported found → sent delay (`submit_timing_v1`), for block logs.
     pub found_to_send_us: Option<u64>,
+    /// Per-share worker from a `proxy_workers_v1` session.
+    pub worker: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -669,6 +674,8 @@ pub struct PoolEngine {
     node: Arc<dyn NodeApi>,
 
     sessions: Mutex<HashMap<String, MinerSession>>,
+    /// Per-share worker names each `proxy_workers_v1` connection has used.
+    proxy_workers: Mutex<HashMap<String, HashSet<String>>>,
     seen_in_memory: NonceLedger,
     source_risk: Arc<SourceRiskTracker>,
     found_block_outbox_lock: Mutex<()>,
@@ -1021,6 +1028,7 @@ impl PoolEngine {
             store,
             node,
             sessions: Mutex::new(HashMap::new()),
+            proxy_workers: Mutex::new(HashMap::new()),
             seen_in_memory: NonceLedger::default(),
             source_risk,
             found_block_outbox_lock: Mutex::new(()),
@@ -1302,6 +1310,7 @@ impl PoolEngine {
     }
 
     pub(crate) fn disconnect(&self, conn_id: &str) {
+        self.proxy_workers.lock().remove(conn_id);
         let session = self.sessions.lock().remove(conn_id);
         if let Some(session) = session {
             self.source_risk.close_session(session.source.session_id);
@@ -1367,6 +1376,7 @@ impl PoolEngine {
                 .cloned()
                 .ok_or_else(|| anyhow!("not logged in"))?
         };
+        let session = self.with_share_worker(conn_id, session, metadata.worker.as_deref());
         // Struck or banned sources are cut off before any store work; the
         // Stratum layer disconnects them on this error.
         if let Err(message) = self.source_risk.check_session(&session.source) {
@@ -2730,6 +2740,30 @@ impl PoolEngine {
                 "failed to persist vardiff hint on job tick"
             );
         }
+    }
+
+    /// Credits this share to the worker a `proxy_workers_v1` session named,
+    /// up to `MAX_PROXY_WORKERS_PER_SESSION` distinct names per connection.
+    fn with_share_worker(
+        &self,
+        conn_id: &str,
+        mut session: MinerSession,
+        worker: Option<&str>,
+    ) -> MinerSession {
+        let Some(worker) = worker else {
+            return session;
+        };
+        if !session.capabilities.contains(CAP_PROXY_WORKERS_V1) {
+            return session;
+        }
+        let worker = normalize_worker_name(worker);
+        let mut proxy_workers = self.proxy_workers.lock();
+        let names = proxy_workers.entry(conn_id.to_string()).or_default();
+        if names.contains(&worker) || names.len() < MAX_PROXY_WORKERS_PER_SESSION {
+            names.insert(worker.clone());
+            session.worker = worker;
+        }
+        session
     }
 
     pub(crate) fn session_supports_capability(&self, conn_id: &str, capability: &str) -> bool {
@@ -5319,6 +5353,83 @@ mod tests {
         let shares = store.shares();
         assert_eq!(shares.len(), 1);
         assert_eq!(shares[0].status, SHARE_STATUS_REJECTED);
+    }
+
+    fn proxy_worker_engine(
+        capabilities: Vec<String>,
+    ) -> (PoolEngine, Arc<InMemoryStore>) {
+        let cfg = cfg();
+        let validation = Arc::new(ValidationEngine::new(
+            cfg.clone(),
+            Arc::new(DeterministicTestHasher),
+        ));
+        let jobs = Arc::new(InMemoryJobs::default());
+        jobs.insert(job());
+        let store = Arc::new(InMemoryStore::default());
+        let node = Arc::new(InMemoryNode {
+            accepted: true,
+            ..InMemoryNode::default()
+        });
+        let engine = PoolEngine::new(
+            cfg,
+            validation,
+            Arc::clone(&jobs) as Arc<dyn JobRepository>,
+            Arc::clone(&store) as Arc<dyn ShareStore>,
+            Arc::clone(&node) as Arc<dyn NodeApi>,
+        );
+        engine
+            .login("conn1", test_miner_address(), "farm", 2, capabilities)
+            .expect("login");
+        (engine, store)
+    }
+
+    fn submit_as(engine: &PoolEngine, nonce: u64, worker: Option<&str>) {
+        engine
+            .submit_with_received_at_and_metadata(
+                "conn1",
+                "job1".to_string(),
+                nonce,
+                Some("ff".repeat(32)),
+                Instant::now(),
+                SubmitMetadata {
+                    worker: worker.map(str::to_string),
+                    ..SubmitMetadata::default()
+                },
+            )
+            .expect("share should be accepted");
+    }
+
+    #[test]
+    fn proxy_sessions_credit_shares_to_the_named_rig() {
+        let mut caps = submit_hash_cap();
+        caps.push(CAP_PROXY_WORKERS_V1.to_string());
+        let (engine, store) = proxy_worker_engine(caps);
+        submit_as(&engine, 1, Some("rig-07"));
+        submit_as(&engine, 2, None);
+        submit_as(&engine, 3, Some("  rig\n08  "));
+        let workers: Vec<String> = store.shares().iter().map(|share| share.worker.clone()).collect();
+        assert_eq!(workers, ["rig-07", "farm", "rig08"]);
+    }
+
+    #[test]
+    fn per_share_workers_need_the_capability_and_are_capped() {
+        let (engine, store) = proxy_worker_engine(submit_hash_cap());
+        submit_as(&engine, 1, Some("rig-07"));
+        assert_eq!(store.shares()[0].worker, "farm");
+
+        let mut caps = submit_hash_cap();
+        caps.push(CAP_PROXY_WORKERS_V1.to_string());
+        let (engine, _) = proxy_worker_engine(caps);
+        let mut session = engine.sessions.lock().get("conn1").cloned().unwrap();
+        for index in 0..MAX_PROXY_WORKERS_PER_SESSION {
+            session = engine.with_share_worker("conn1", session, Some(&format!("rig{index}")));
+        }
+        let over = engine.with_share_worker("conn1", session.clone(), Some("one-too-many"));
+        assert_ne!(over.worker, "one-too-many");
+        let known = engine.with_share_worker("conn1", session, Some("rig5"));
+        assert_eq!(known.worker, "rig5");
+        engine.disconnect("conn1");
+        assert!(engine.proxy_workers.lock().get("conn1").is_none());
     }
 
     #[test]

@@ -34,6 +34,10 @@ pub const CAP_POW_BLAKE2B_V1: &str = "pow_blake2b_v1";
 /// The pool answers `refill` requests. Never required: older miners reject
 /// required capabilities they do not know.
 pub const CAP_NONCE_REFILL_V1: &str = "nonce_refill_v1";
+/// A session that logs in with this capability may name the worker on each
+/// `submit` (a farm proxy naming the rig that found the share). Never
+/// required.
+pub const CAP_PROXY_WORKERS_V1: &str = "proxy_workers_v1";
 const STEALTH_ADDRESS_CHECKSUM_TAG: &[u8] = b"blocknet_stealth_address_checksum";
 const NETWORK_ID_MAINNET: &str = "blocknet_mainnet";
 const NETWORK_ID_TESTNET: &str = "blocknet_testnet";
@@ -104,6 +108,10 @@ pub struct SubmitParams {
     /// (`submit_timing_v1`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_switch_us: Option<u64>,
+    /// The worker this share is credited to, from sessions that logged in
+    /// with `proxy_workers_v1`; the session's worker otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -133,6 +141,7 @@ pub fn build_login_result() -> LoginResult {
         CAP_SAME_TEMPLATE_REBIND_V1.to_string(),
         CAP_SUBMIT_TIMING_V1.to_string(),
         CAP_NONCE_REFILL_V1.to_string(),
+        CAP_PROXY_WORKERS_V1.to_string(),
     ];
 
     LoginResult {

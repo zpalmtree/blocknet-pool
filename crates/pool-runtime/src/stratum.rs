@@ -2542,6 +2542,7 @@ fn submit_metadata(params: &SubmitParams) -> SubmitMetadata {
             .and_then(nonempty_submit_metadata),
         backend: params.backend.as_deref().and_then(nonempty_submit_metadata),
         found_to_send_us: params.found_to_send_us,
+        worker: params.worker.clone(),
     }
 }
 
