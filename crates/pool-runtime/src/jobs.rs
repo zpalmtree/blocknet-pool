@@ -1010,6 +1010,8 @@ impl JobManager {
             let successful = fetched.is_some();
             self.tip_latency
                 .record_template_fetch(fetch_started_at.elapsed(), successful);
+            self.tip_latency
+                .fetch_finished(fetched.as_ref().map(|fetched| fetched.job.height));
             let next_work = self.refresh.finish_attempt(work, successful, || {
                 if let Some(fetched) = fetched.take() {
                     let install_started_at = Instant::now();

@@ -10,6 +10,9 @@ use parking_lot::Mutex;
 
 use crate::telemetry::{LatencyHistogramSnapshot, NamedLatencyHistograms};
 
+/// Tip refreshes slower than this are logged with their fetch history.
+const SLOW_TIP_REFRESH: Duration = Duration::from_millis(500);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TipTrigger {
     /// The daemon accepted a block this pool submitted.
@@ -47,6 +50,10 @@ struct TipObservation {
     /// Daemon wall-clock acceptance time, when the daemon reported it.
     daemon_accepted_at: Option<SystemTime>,
     fetch_started: bool,
+    /// Template fetches since the observation, and how many of them came
+    /// back below the new tip (the daemon was not serving it yet).
+    fetches: u32,
+    stale_fetches: u32,
 }
 
 #[derive(Debug, Default)]
@@ -99,6 +106,8 @@ impl TipLatency {
             observed_at: now,
             daemon_accepted_at,
             fetch_started: false,
+            fetches: 0,
+            stale_fetches: 0,
         });
     }
 
@@ -121,6 +130,23 @@ impl TipLatency {
                 let waited = now.saturating_duration_since(pending.observed_at);
                 drop(state);
                 self.histograms.record(lane, waited);
+            }
+        }
+    }
+
+    /// A template fetch finished with a job at `job_height` (None: failed).
+    /// Counts fetches toward the pending tip, and those still below it.
+    pub(crate) fn fetch_finished(&self, job_height: Option<u64>) {
+        let mut state = self.state.lock();
+        if let Some(pending) = state.pending.as_mut() {
+            pending.fetches = pending.fetches.saturating_add(1);
+            let stale = match (job_height, pending.height) {
+                (Some(job_height), Some(tip)) => job_height <= tip,
+                (None, _) => true,
+                _ => false,
+            };
+            if stale {
+                pending.stale_fetches = pending.stale_fetches.saturating_add(1);
             }
         }
     }
@@ -153,10 +179,21 @@ impl TipLatency {
             return;
         };
         drop(state);
-        self.histograms.record(
-            pending.trigger.published_lane(),
-            now.saturating_duration_since(pending.observed_at),
-        );
+        let elapsed = now.saturating_duration_since(pending.observed_at);
+        self.histograms
+            .record(pending.trigger.published_lane(), elapsed);
+        if elapsed >= SLOW_TIP_REFRESH {
+            tracing::info!(
+                trigger = pending.trigger.published_lane(),
+                tip_height = pending.height,
+                job_height,
+                elapsed_ms = elapsed.as_millis() as u64,
+                fetch_started = pending.fetch_started,
+                fetches = pending.fetches,
+                stale_fetches = pending.stale_fetches,
+                "slow tip refresh"
+            );
+        }
         if let Some(accepted_at) = pending.daemon_accepted_at {
             if let Ok(elapsed) = wall_now.duration_since(accepted_at) {
                 self.histograms
@@ -185,6 +222,24 @@ mod tests {
             .get(lane)
             .map(LatencyHistogramSnapshot::count)
             .unwrap_or(0)
+    }
+
+    #[test]
+    fn fetches_below_the_new_tip_are_counted_as_stale() {
+        let latency = TipLatency::default();
+        let start = Instant::now();
+        latency.observe(TipTrigger::Sse, Some(100), None, start);
+        latency.fetch_finished(Some(100));
+        latency.fetch_finished(None);
+        latency.fetch_finished(Some(101));
+        {
+            let state = latency.state.lock();
+            let pending = state.pending.expect("pending tip");
+            assert_eq!((pending.fetches, pending.stale_fetches), (3, 2));
+        }
+        latency.job_published(101, start + Duration::from_secs(1), SystemTime::now());
+        assert_eq!(count(&latency, "sse_to_job_published"), 1);
+        assert!(latency.state.lock().pending.is_none());
     }
 
     #[test]
