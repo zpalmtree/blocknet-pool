@@ -3,6 +3,10 @@ use sha3::{Digest, Sha3_256};
 
 pub const METHOD_LOGIN: &str = "login";
 pub const METHOD_SUBMIT: &str = "submit";
+/// Asks for another nonce range on a job the connection holds
+/// (`nonce_refill_v1`). The answer carries a new job ID for the same
+/// template and share target; the connection's other jobs stay valid.
+pub const METHOD_REFILL: &str = "refill";
 pub const METHOD_NOTIFICATION: &str = "notification";
 
 pub const NOTIFY_POOL_BLOCK_SOLVED: &str = "pool_block_solved";
@@ -23,6 +27,9 @@ pub const CAP_DIFFICULTY_HINT: &str = "difficulty_hint";
 pub const CAP_SAME_TEMPLATE_REBIND_V1: &str = "same_template_rebind_v1";
 /// The pool accepts the optional miner-side timing fields on `submit`.
 pub const CAP_SUBMIT_TIMING_V1: &str = "submit_timing_v1";
+/// The pool answers `refill` requests. Never required: older miners reject
+/// required capabilities they do not know.
+pub const CAP_NONCE_REFILL_V1: &str = "nonce_refill_v1";
 const STEALTH_ADDRESS_CHECKSUM_TAG: &[u8] = b"blocknet_stealth_address_checksum";
 const NETWORK_ID_MAINNET: &str = "blocknet_mainnet";
 const NETWORK_ID_TESTNET: &str = "blocknet_testnet";
@@ -95,6 +102,11 @@ pub struct SubmitParams {
     pub job_switch_us: Option<u64>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RefillParams {
+    pub job_id: String,
+}
+
 /// Worker names are logged and shown in the UI, so control characters
 /// (newlines, escapes) are stripped before trimming and truncating.
 pub fn normalize_worker_name(worker: &str) -> String {
@@ -116,6 +128,7 @@ pub fn build_login_result() -> LoginResult {
         CAP_DIFFICULTY_HINT.to_string(),
         CAP_SAME_TEMPLATE_REBIND_V1.to_string(),
         CAP_SUBMIT_TIMING_V1.to_string(),
+        CAP_NONCE_REFILL_V1.to_string(),
     ];
 
     LoginResult {
@@ -306,6 +319,11 @@ mod tests {
             .capabilities
             .iter()
             .any(|c| c == CAP_SUBMIT_TIMING_V1));
+        assert!(result.capabilities.iter().any(|c| c == CAP_NONCE_REFILL_V1));
+        assert!(!result
+            .required_capabilities
+            .iter()
+            .any(|c| c == CAP_NONCE_REFILL_V1));
         assert_eq!(
             result.required_capabilities,
             vec![CAP_SUBMIT_CLAIMED_HASH.to_string()]

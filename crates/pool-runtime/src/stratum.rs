@@ -31,9 +31,10 @@ use pool_common::gateway::{
     read_frame, write_frame, EngineHello, Frame, FrameKind, GatewayRole, MAX_FRAME_PAYLOAD,
 };
 use pool_common::protocol::{
-    normalize_worker_name, LoginParams, StratumNotify, StratumRequest, StratumResponse,
-    SubmitParams, CAP_SAME_TEMPLATE_REBIND_V1, METHOD_LOGIN, METHOD_NOTIFICATION, METHOD_SUBMIT,
-    NOTIFY_CONNECTION_LIMIT, NOTIFY_MINER_BLOCK_FOUND, NOTIFY_POOL_BLOCK_SOLVED,
+    normalize_worker_name, LoginParams, RefillParams, StratumNotify, StratumRequest,
+    StratumResponse, SubmitParams, CAP_SAME_TEMPLATE_REBIND_V1, METHOD_LOGIN, METHOD_NOTIFICATION,
+    METHOD_REFILL, METHOD_SUBMIT, NOTIFY_CONNECTION_LIMIT, NOTIFY_MINER_BLOCK_FOUND,
+    NOTIFY_POOL_BLOCK_SOLVED,
 };
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
@@ -78,6 +79,39 @@ fn client_submit_ack_difficulty(
         current_difficulty.max(1)
     } else {
         next_difficulty.max(1)
+    }
+}
+
+/// Per-connection token bucket for `refill` requests: `rate` per second,
+/// up to `burst` at once.
+#[derive(Debug)]
+struct RefillBucket {
+    tokens: f64,
+    rate: f64,
+    burst: f64,
+    refilled_at: Instant,
+}
+
+impl RefillBucket {
+    fn new(rate: f64, burst: f64, now: Instant) -> Self {
+        Self {
+            tokens: burst,
+            rate,
+            burst,
+            refilled_at: now,
+        }
+    }
+
+    fn try_take(&mut self, now: Instant) -> bool {
+        let elapsed = now.saturating_duration_since(self.refilled_at);
+        self.refilled_at = now;
+        self.tokens = (self.tokens + elapsed.as_secs_f64() * self.rate).min(self.burst);
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -886,6 +920,10 @@ pub struct StratumServer {
     post_login_idle_timeout: Duration,
     submit_rate_limit_window: Duration,
     submit_rate_limit_max: usize,
+    /// `refill` limits per connection (`stratum_refill_*` config).
+    refill_rate: f64,
+    refill_burst: f64,
+    refill_max_assignments: usize,
     /// New template → job written to each connection.
     job_fanout: Arc<NamedLatencyHistograms>,
     /// Logged-in connections, which the job fanout delivers each new
@@ -926,6 +964,9 @@ impl StratumServer {
             post_login_idle_timeout: POST_LOGIN_IDLE_TIMEOUT,
             submit_rate_limit_window: SUBMIT_RATE_LIMIT_WINDOW,
             submit_rate_limit_max: SUBMIT_RATE_LIMIT_MAX,
+            refill_rate: cfg.stratum_refill_rate,
+            refill_burst: f64::from(cfg.stratum_refill_burst.max(1)),
+            refill_max_assignments: cfg.stratum_refill_max_assignments.max(1) as usize,
             job_fanout: Arc::default(),
             fanout_conns: Mutex::new(HashMap::new()),
             miner_submit_timing: NamedLatencyHistograms::default(),
@@ -1507,6 +1548,8 @@ impl StratumServer {
         let submit_rate_limit_window = self.submit_rate_limit_window;
         let submit_rate_limit_max = self.submit_rate_limit_max;
         let mut submit_timestamps = VecDeque::<Instant>::new();
+        let mut refill_bucket =
+            RefillBucket::new(self.refill_rate, self.refill_burst, Instant::now());
         let (submit_result_tx, mut submit_result_rx) = mpsc::unbounded_channel();
 
         let login_deadline = tokio::time::sleep(LOGIN_TIMEOUT);
@@ -1935,6 +1978,64 @@ impl StratumServer {
                                         break;
                                     }
                                 }
+                            }
+                        }
+                        METHOD_REFILL => {
+                            if logged_in.is_none() {
+                                if let Err(err) = queue_error(&outbound, req.id, "not logged in") {
+                                    run_result = Err(err);
+                                    break;
+                                }
+                                continue;
+                            }
+                            if !refill_bucket.try_take(Instant::now()) {
+                                if let Err(err) =
+                                    queue_error(&outbound, req.id, "refill rate limited")
+                                {
+                                    run_result = Err(err);
+                                    break;
+                                }
+                                continue;
+                            }
+                            let params: RefillParams = match serde_json::from_value(req.params.clone()) {
+                                Ok(v) => v,
+                                Err(_) => {
+                                    if let Err(err) =
+                                        queue_error(&outbound, req.id, "invalid refill params")
+                                    {
+                                        run_result = Err(err);
+                                        break;
+                                    }
+                                    continue;
+                                }
+                            };
+                            let queued = match self.jobs.refill_miner_job(
+                                &conn_id,
+                                &params.job_id,
+                                self.refill_max_assignments,
+                            ) {
+                                Ok(miner_job) => {
+                                    let response = StratumResponse {
+                                        id: req.id,
+                                        status: Some("ok".to_string()),
+                                        error: None,
+                                        result: Some(serde_json::to_value(miner_job)?),
+                                    };
+                                    queue_json(&outbound, &response)
+                                }
+                                Err(err) => {
+                                    tracing::debug!(
+                                        peer = %peer,
+                                        job_id = %params.job_id,
+                                        reason = err.message(),
+                                        "stratum refill refused"
+                                    );
+                                    queue_error(&outbound, req.id, err.message())
+                                }
+                            };
+                            if let Err(err) = queued {
+                                run_result = Err(err);
+                                break;
                             }
                         }
                         _ => {
@@ -4106,6 +4207,195 @@ mod tests {
         assert_eq!(server.fanout_conns.lock().len(), 24);
 
         drop(clients);
+        shutdown_test_listener(listener_task, server, jobs).await;
+    }
+
+    async fn send_refill(writer: &mut OwnedWriteHalf, req_id: u64, job_id: &str) {
+        write_json_line(
+            writer,
+            &StratumRequest {
+                id: req_id,
+                method: pool_common::protocol::METHOD_REFILL.to_string(),
+                params: json!({ "job_id": job_id }),
+            },
+        )
+        .await;
+    }
+
+    /// Sends a share for `job` and returns the pool's answer, which must be
+    /// the next line: nothing else (such as a job) may arrive in between.
+    async fn submit_and_answer(
+        reader: &mut BufReader<OwnedReadHalf>,
+        writer: &mut OwnedWriteHalf,
+        req_id: u64,
+        job_id: &str,
+        nonce: u64,
+    ) -> Value {
+        send_submit(
+            writer,
+            req_id,
+            job_id,
+            nonce,
+            SleepyQueueHasher::claimed_hash_hex(nonce),
+        )
+        .await;
+        let answer = read_json_line(reader).await;
+        assert_eq!(answer["id"].as_u64(), Some(req_id), "{answer}");
+        answer
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn tcp_refill_adds_a_range_without_invalidating_held_jobs() {
+        let (server, jobs) = build_tcp_test_server(stratum_test_cfg()).await;
+        let (addr, listener_task) = start_test_tcp_listener(Arc::clone(&server)).await;
+        let (mut reader, mut writer) = connect_test_client(addr).await;
+
+        // Answered like a submit before login.
+        send_refill(&mut writer, 1, "job").await;
+        let early = read_json_line(&mut reader).await;
+        assert_eq!(early["id"], 1);
+        assert_eq!(early["error"], "not logged in");
+
+        let address = test_miner_address(0x55);
+        let primary = login_test_client(&mut reader, &mut writer, 2, &address, "proxy").await;
+        send_refill(&mut writer, 3, &primary.job_id).await;
+        let answer = read_json_line(&mut reader).await;
+        assert_eq!(answer["id"], 3);
+        assert_eq!(answer["status"], "ok");
+        assert!(answer.get("error").is_none());
+        let fields: std::collections::BTreeSet<&str> = answer["result"]
+            .as_object()
+            .expect("result object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            fields,
+            [
+                "job_id",
+                "template_id",
+                "header_base",
+                "target",
+                "difficulty",
+                "network_target",
+                "height",
+                "nonce_start",
+                "nonce_end",
+            ]
+            .into_iter()
+            .collect()
+        );
+        let refill: MinerJob = serde_json::from_value(answer["result"].clone()).unwrap();
+        assert_ne!(refill.job_id, primary.job_id);
+        assert_eq!(refill.template_id, primary.template_id);
+        assert_eq!(refill.header_base, primary.header_base);
+        assert_eq!(refill.target, primary.target);
+        assert_eq!(refill.difficulty, primary.difficulty);
+        assert_eq!(refill.network_target, primary.network_target);
+        assert_eq!(refill.height, primary.height);
+        assert!(refill.nonce_end < primary.nonce_start || primary.nonce_end < refill.nonce_start);
+
+        // Shares on both ranges count; no job notification came with the refill.
+        let refill_nonce = nonce_with_parity(&refill, false, 0);
+        let accepted =
+            submit_and_answer(&mut reader, &mut writer, 4, &refill.job_id, refill_nonce).await;
+        assert_eq!(accepted["status"], "ok", "{accepted}");
+        let primary_nonce = nonce_with_parity(&primary, false, 0);
+        let accepted =
+            submit_and_answer(&mut reader, &mut writer, 5, &primary.job_id, primary_nonce).await;
+        assert_eq!(accepted["status"], "ok", "{accepted}");
+
+        // Duplicates and nonces outside the job's own range are refused.
+        let duplicate =
+            submit_and_answer(&mut reader, &mut writer, 6, &refill.job_id, refill_nonce).await;
+        assert!(
+            duplicate["error"]
+                .as_str()
+                .is_some_and(|error| error.starts_with("duplicate share")),
+            "{duplicate}"
+        );
+        let foreign = nonce_with_parity(&primary, false, 1);
+        let out_of_range =
+            submit_and_answer(&mut reader, &mut writer, 7, &refill.job_id, foreign).await;
+        assert_eq!(out_of_range["error"], "nonce out of assigned range");
+
+        // Unknown jobs and other connections' jobs are stale.
+        send_refill(&mut writer, 8, "0000000000000000").await;
+        assert_eq!(read_json_line(&mut reader).await["error"], "stale job");
+        let (mut other_reader, mut other_writer) = connect_test_client(addr).await;
+        let other =
+            login_test_client(&mut other_reader, &mut other_writer, 1, &address, "rig").await;
+        send_refill(&mut other_writer, 2, &primary.job_id).await;
+        assert_eq!(
+            read_json_line(&mut other_reader).await["error"],
+            "stale job"
+        );
+        assert!(other.nonce_end < refill.nonce_start || refill.nonce_end < other.nonce_start);
+
+        // A new template replaces the jobs: refills of them are stale, while
+        // shares on them keep the usual stale grace.
+        jobs.install_test_job(stratum_test_job("job-next", 101));
+        let next = read_json_line(&mut reader).await;
+        assert_eq!(next["method"], "job");
+        assert_eq!(next["params"]["height"], 101);
+        send_refill(&mut writer, 9, &refill.job_id).await;
+        assert_eq!(read_json_line(&mut reader).await["error"], "stale job");
+        let late = submit_and_answer(
+            &mut reader,
+            &mut writer,
+            10,
+            &refill.job_id,
+            nonce_with_parity(&refill, false, 2),
+        )
+        .await;
+        assert_eq!(late["status"], "ok", "{late}");
+        let next: MinerJob = serde_json::from_value(next["params"].clone()).unwrap();
+        send_refill(&mut writer, 11, &next.job_id).await;
+        let refilled = read_json_line(&mut reader).await;
+        assert_eq!(refilled["status"], "ok", "{refilled}");
+        assert_eq!(refilled["result"]["height"], 101);
+
+        drop((reader, writer, other_reader, other_writer));
+        shutdown_test_listener(listener_task, server, jobs).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tcp_refill_is_rate_limited_and_capped() {
+        let cfg = Config {
+            stratum_refill_rate: 0.001,
+            stratum_refill_burst: 3,
+            stratum_refill_max_assignments: 3,
+            ..stratum_test_cfg()
+        };
+        let (server, jobs) = build_tcp_test_server(cfg).await;
+        let (addr, listener_task) = start_test_tcp_listener(Arc::clone(&server)).await;
+        let (mut reader, mut writer) = connect_test_client(addr).await;
+        let primary = login_test_client(
+            &mut reader,
+            &mut writer,
+            1,
+            &test_miner_address(0x55),
+            "proxy",
+        )
+        .await;
+
+        // The job plus two refills fill the cap of three live jobs.
+        for id in 2..=3 {
+            send_refill(&mut writer, id, &primary.job_id).await;
+            assert_eq!(read_json_line(&mut reader).await["status"], "ok");
+        }
+        send_refill(&mut writer, 4, &primary.job_id).await;
+        assert_eq!(
+            read_json_line(&mut reader).await["error"],
+            "refill limit reached"
+        );
+        // The burst of three is spent; the next waits for the rate.
+        send_refill(&mut writer, 5, &primary.job_id).await;
+        let limited = read_json_line(&mut reader).await;
+        assert_eq!(limited["id"], 5);
+        assert_eq!(limited["error"], "refill rate limited");
+
+        drop((reader, writer));
         shutdown_test_listener(listener_task, server, jobs).await;
     }
 

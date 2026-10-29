@@ -14,9 +14,9 @@ miners ──TCP :3333──► blocknet-pool-gateway ──unix socket──►
 - **Gateway** (`apps/blocknet-pool-gateway`, rarely changed): owns port
   3333 and every miner TCP connection. It relays newline-delimited JSON-RPC
   between miners and engines. It parses only what it routes on: `login`
-  requests, `submit` job IDs, the engine's `job` notifications and the
-  responses to its own replayed logins. Everything else passes through
-  unchanged.
+  requests, `submit` job IDs, the engine's `job` notifications, job IDs in
+  `refill` answers and the responses to its own replayed logins. Everything
+  else passes through unchanged.
 - **Engine** (`blocknet-pool-stratum`, unchanged protocol logic): with
   `gateway_socket` set, it connects to the gateway instead of binding 3333.
   Each miner becomes a virtual connection, an in-memory duplex stream
@@ -48,9 +48,11 @@ miners ──TCP :3333──► blocknet-pool-gateway ──unix socket──►
    ID, then swallows the response. The engine then pushes a fresh `job`,
    which reaches the miner as an ordinary job update. A failed replay leaves
    the miner on the old engine, and it is retried.
-3. The gateway remembers which engine issued each job ID per miner, so a
-   share for an old job, including a **block candidate**, still goes to the
-   engine that can validate it and submit the block.
+3. The gateway remembers which engine issued each job ID per miner (from
+   `job` notifications and `refill` answers), so a share for an old job,
+   including a **block candidate**, still goes to the engine that can
+   validate it and submit the block. `refill` requests go to the current
+   engine, which answers `stale job` for another engine's jobs.
 4. Once every miner has moved and the stale-share grace has passed, the
    gateway closes the old engine's virtual connections and sends `Retire`.
    The old engine exits with status 0 and its unit stops.
