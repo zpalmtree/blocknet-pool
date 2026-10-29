@@ -80,6 +80,20 @@ fn client_submit_ack_difficulty(
 struct ConnState {
     counts: HashMap<String, usize>,
     total: usize,
+    rejected_at_cap: u64,
+    rejected_per_ip: u64,
+}
+
+/// Miner connections against Stratum's caps, and the connections refused.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ConnectionSnapshot {
+    pub open: usize,
+    pub max: usize,
+    pub max_per_ip: usize,
+    /// Refused because the total cap was reached.
+    pub rejected_at_cap_total: u64,
+    /// Refused because their IP (IPv6 /64) was at the per-IP cap.
+    pub rejected_per_ip_total: u64,
 }
 
 #[derive(Clone)]
@@ -194,6 +208,8 @@ pub struct SubmitRuntimeSnapshot {
     /// Smoothed share rate at the normal share size (growth-mode input).
     #[serde(default)]
     pub growth_normal_size_submits_per_s: Option<f64>,
+    #[serde(default)]
+    pub connections: Option<ConnectionSnapshot>,
 }
 
 #[derive(Debug)]
@@ -738,6 +754,7 @@ impl SubmitDispatcher {
             unprocessed: UnprocessedSubmitSnapshot::default(),
             growth_mode_active: false,
             growth_normal_size_submits_per_s: None,
+            connections: None,
         }
     }
 }
@@ -828,6 +845,8 @@ impl StratumServer {
             conn_state: Arc::new(Mutex::new(ConnState {
                 counts: HashMap::new(),
                 total: 0,
+                rejected_at_cap: 0,
+                rejected_per_ip: 0,
             })),
             max_conns: cfg.stratum_max_connections.max(1) as usize,
             max_conns_per_ip: cfg.stratum_max_connections_per_ip.max(1) as usize,
@@ -911,7 +930,19 @@ impl StratumServer {
         snapshot.unprocessed = self.engine.admission().snapshot();
         snapshot.growth_mode_active = self.engine.growth_mode_active();
         snapshot.growth_normal_size_submits_per_s = self.engine.growth_normal_size_rate();
+        snapshot.connections = Some(self.connection_snapshot());
         snapshot
+    }
+
+    fn connection_snapshot(&self) -> ConnectionSnapshot {
+        let state = self.conn_state.lock();
+        ConnectionSnapshot {
+            open: state.total,
+            max: self.max_conns,
+            max_per_ip: self.max_conns_per_ip,
+            rejected_at_cap_total: state.rejected_at_cap,
+            rejected_per_ip_total: state.rejected_per_ip,
+        }
     }
 
     pub async fn run(self: Arc<Self>) -> Result<()> {
@@ -1120,10 +1151,13 @@ impl StratumServer {
     fn try_track_conn(&self, ip: &str) -> bool {
         let mut state = self.conn_state.lock();
         if state.total >= self.max_conns {
+            state.rejected_at_cap += 1;
             return false;
         }
+        let max_per_ip = self.max_conns_per_ip;
         let count = state.counts.entry(ip.to_string()).or_default();
-        if *count >= self.max_conns_per_ip {
+        if *count >= max_per_ip {
+            state.rejected_per_ip += 1;
             return false;
         }
         *count += 1;
@@ -3787,6 +3821,10 @@ mod tests {
         }
         assert!(!server.try_track_conn(&host_b), "same /64 shares the cap");
         assert!(server.try_track_conn(&other_net));
+        let connections = server.connection_snapshot();
+        assert_eq!(connections.open, server.max_conns_per_ip + 1);
+        assert_eq!(connections.rejected_per_ip_total, 1);
+        assert_eq!(connections.rejected_at_cap_total, 0);
         tokio::task::spawn_blocking(move || {
             drop(server);
             drop(jobs);

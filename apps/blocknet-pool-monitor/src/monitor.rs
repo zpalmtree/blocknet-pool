@@ -27,7 +27,8 @@ use pool_runtime::node::{NodeClient, NodeCurrentProcessBlock, NodeLastProcessBlo
 use pool_runtime::pool_activity::{assess_pool_activity, POOL_ACTIVITY_SNAPSHOT_STALE_AFTER};
 use pool_runtime::runtime::load_dotenv;
 use pool_runtime::service_state::{
-    PersistedRuntimeSnapshot, ValidationSnapshot, LIVE_RUNTIME_SNAPSHOT_META_KEY,
+    ConnectionSnapshot, PersistedRuntimeSnapshot, ValidationSnapshot,
+    LIVE_RUNTIME_SNAPSHOT_META_KEY,
 };
 use pool_runtime::store::PoolStore;
 use pool_runtime::telemetry::{
@@ -117,6 +118,7 @@ struct MonitorSnapshot {
     candidate_submit_queue_depth: Option<u64>,
     regular_submit_queue_depth: Option<u64>,
     submit_unprocessed: Option<UnprocessedSubmitSnapshot>,
+    stratum_connections: Option<ConnectionSnapshot>,
     stratum_snapshot_age_seconds: Option<u64>,
     connected_miners: Option<u64>,
     connected_workers: Option<u64>,
@@ -1084,6 +1086,7 @@ impl MonitorRuntime {
         metrics.regular_submit_queue_depth =
             runtime.map(|snapshot| snapshot.submit.regular_queue_depth as u64);
         metrics.submit_unprocessed = runtime.map(|snapshot| snapshot.submit.unprocessed);
+        metrics.stratum_connections = runtime.and_then(|snapshot| snapshot.submit.connections);
         metrics.stratum_snapshot_age_seconds =
             runtime_snapshot_age(sample.sampled_at, runtime).map(|age| age.as_secs());
         metrics.connected_miners = runtime.map(|snapshot| snapshot.connected_miners as u64);
@@ -2483,6 +2486,36 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
             );
         }
     }
+    // Miner connections against Stratum's caps; refused connections never
+    // reach a session, so they show nowhere else.
+    if let Some(connections) = snapshot.stratum_connections {
+        metric_line(
+            &mut out,
+            "blocknet_pool_monitor_stratum_connections",
+            connections.open,
+        );
+        metric_line(
+            &mut out,
+            "blocknet_pool_monitor_stratum_connection_cap",
+            connections.max,
+        );
+        metric_line(
+            &mut out,
+            "blocknet_pool_monitor_stratum_connection_cap_per_ip",
+            connections.max_per_ip,
+        );
+        for (reason, total) in [
+            ("cap", connections.rejected_at_cap_total),
+            ("per_ip", connections.rejected_per_ip_total),
+        ] {
+            metric_line_labeled(
+                &mut out,
+                "blocknet_pool_monitor_stratum_connections_rejected_total",
+                &[("reason", reason)],
+                total,
+            );
+        }
+    }
     for (service, metrics) in &snapshot.process_metrics {
         metric_line_labeled(
             &mut out,
@@ -2944,7 +2977,9 @@ mod tests {
     use pool_runtime::jobs::JobRuntimeSnapshot;
     use pool_runtime::node::{NodeCurrentProcessBlock, NodeLastProcessBlock, NodeStatus};
     use pool_runtime::pool_activity::assess_pool_activity;
-    use pool_runtime::service_state::{PersistedRuntimeSnapshot, SubmitRuntimeSnapshot};
+    use pool_runtime::service_state::{
+        ConnectionSnapshot, PersistedRuntimeSnapshot, SubmitRuntimeSnapshot,
+    };
     use pool_runtime::telemetry::{
         ApiPerformanceSnapshot, CacheCounterSummary, TimedOperationSummary,
     };
@@ -3026,6 +3061,13 @@ mod tests {
                 fair_shed_total: 4,
                 vardiff_busy_raises_total: 2,
                 ..UnprocessedSubmitSnapshot::default()
+            }),
+            stratum_connections: Some(ConnectionSnapshot {
+                open: 4096,
+                max: 16384,
+                max_per_ip: 256,
+                rejected_at_cap_total: 12,
+                rejected_per_ip_total: 3,
             }),
             daemon_current_process_block: Some(NodeCurrentProcessBlock {
                 height: 5,
@@ -3109,6 +3151,14 @@ mod tests {
             "blocknet_pool_monitor_submit_unprocessed_total{reason=\"sync_verify_busy\"} 0"
         ));
         assert!(rendered.contains("blocknet_pool_monitor_vardiff_unprocessed_raises_total 2"));
+        assert!(rendered.contains("blocknet_pool_monitor_stratum_connections 4096"));
+        assert!(rendered.contains("blocknet_pool_monitor_stratum_connection_cap 16384"));
+        assert!(rendered.contains(
+            "blocknet_pool_monitor_stratum_connections_rejected_total{reason=\"cap\"} 12"
+        ));
+        assert!(rendered.contains(
+            "blocknet_pool_monitor_stratum_connections_rejected_total{reason=\"per_ip\"} 3"
+        ));
         assert!(
             rendered.contains("blocknet_pool_monitor_daemon_last_process_block_total_millis 4750")
         );

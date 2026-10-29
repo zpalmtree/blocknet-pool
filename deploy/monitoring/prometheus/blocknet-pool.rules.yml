@@ -103,6 +103,26 @@ groups:
           summary: Miner connections are at the connection cap
           description: New miners are being refused; raise stratum_max_connections and gateway_max_miners.
 
+      - alert: BlocknetPoolStratumRefusingMiners
+        expr: increase(blocknet_pool_monitor_stratum_connections_rejected_total{reason="cap"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+          visibility: private
+        annotations:
+          summary: Stratum is refusing miners at its connection cap
+          description: New miners cannot connect while existing ones look healthy; raise stratum_max_connections and hand over the engine.
+
+      - alert: BlocknetPoolStratumConnectionsNearCap
+        expr: blocknet_pool_monitor_stratum_connections > 0.8 * blocknet_pool_monitor_stratum_connection_cap
+        for: 10m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Stratum connections are above 80% of stratum_max_connections
+          description: Raise stratum_max_connections (and gateway_max_miners) before the cap is reached.
+
       # TCP sockets beyond the gateway's live miners are mostly connections
       # the gateway has closed but still holds; the gateway allows 65,535
       # descriptors and stops accepting miners when they run out.
