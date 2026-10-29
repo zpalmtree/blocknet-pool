@@ -13,6 +13,7 @@ use tracing::warn;
 
 use crate::engine::{ShareRecord, SubmitRisk};
 use crate::share_dedupe::TEMPLATE_SHARE_CLAIM_RETENTION;
+use crate::share_partitions;
 use crate::stats::RejectionReasonCount;
 use crate::validation::{
     LoadedValidationState, PersistedValidationAcceptedShare, PersistedValidationAddressState,
@@ -23,7 +24,7 @@ use pool_common::db::{
     AddressRiskEscalation, AddressRiskState, Balance, BlockCreditEvent, DbBlock, DbLuckRound,
     DbShare, MonitorHeartbeat, MonitorHeartbeatUpsert, MonitorIncident, MonitorIncidentUpsert,
     Payout, PendingPayout, PendingPayoutBatchMember, PoolFeeEvent, PoolFeeRecord,
-    PublicPayoutBatch, ShareReplayData, ShareReplayUpdate, ValidationHoldCause,
+    PublicPayoutBatch, ShareKey, ShareReplayData, ShareReplayUpdate, ValidationHoldCause,
     ValidationHoldState, WalletPayoutHint,
 };
 
@@ -563,22 +564,35 @@ impl PostgresStore {
         let mut conn = Self::connect_client(url, schema, "primary")?;
         conn.batch_execute(
             r#"
-CREATE TABLE IF NOT EXISTS shares (
-    id BIGSERIAL PRIMARY KEY,
-    job_id TEXT NOT NULL,
-    miner TEXT NOT NULL,
-    worker TEXT NOT NULL,
-    difficulty BIGINT NOT NULL,
-    nonce BIGINT NOT NULL,
-    status TEXT NOT NULL,
-    was_sampled BOOLEAN NOT NULL,
-    block_hash TEXT,
-    claimed_hash TEXT,
-    miner_version TEXT,
-    backend TEXT,
-    reject_reason TEXT,
-    created_at BIGINT NOT NULL
-);
+-- New databases partition shares by week (see share_partitions.rs). A plain
+-- table from before partitioning is left alone here and converted by
+-- scripts/partition_shares.sh. The share indexes below keep the same names in
+-- both layouts, so their IF NOT EXISTS is a no-op on either; on a partitioned
+-- table a new one would build on every partition under a SHARE lock.
+DO $shares$
+BEGIN
+    IF to_regclass('shares') IS NULL THEN
+        CREATE TABLE shares (
+            id BIGSERIAL,
+            job_id TEXT NOT NULL,
+            miner TEXT NOT NULL,
+            worker TEXT NOT NULL,
+            difficulty BIGINT NOT NULL,
+            nonce BIGINT NOT NULL,
+            status TEXT NOT NULL,
+            was_sampled BOOLEAN NOT NULL,
+            block_hash TEXT,
+            claimed_hash TEXT,
+            miner_version TEXT,
+            backend TEXT,
+            reject_reason TEXT,
+            created_at BIGINT NOT NULL,
+            PRIMARY KEY (id, created_at)
+        ) PARTITION BY RANGE (created_at);
+        CREATE TABLE shares_default PARTITION OF shares DEFAULT;
+    END IF;
+END
+$shares$;
 CREATE INDEX IF NOT EXISTS idx_shares_created_at ON shares(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shares_miner_status_created ON shares(miner, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_shares_job_nonce ON shares(job_id, nonce);
@@ -1147,6 +1161,15 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              ON payout_credit_allocations(source_kind, block_height, block_hash, address)",
         )
         .context("ensure payout_credit_allocations source_hash index")?;
+        // Best effort: the DEFAULT partition takes shares until the Stratum
+        // maintenance task retries.
+        match share_partitions::maintain(&mut conn, now_unix()) {
+            Ok(report) => log_share_partition_maintenance(&report),
+            Err(err) => warn!(
+                error = %format!("{err:#}"),
+                "share partition maintenance failed at startup"
+            ),
+        }
 
         let mut conns = Vec::with_capacity(pool_size);
         conns.push(Mutex::new(ManagedClient::new(conn, url, schema, "primary")));
@@ -1327,12 +1350,13 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
                  SET status = $2,
                      was_sampled = $3,
                      reject_reason = $4
-                 WHERE id = $1",
+                 WHERE id = $1 AND created_at = $5",
                 &[
                     &update.share_id,
                     &update.status,
                     &update.was_sampled,
                     &update.reject_reason,
+                    &to_unix(update.created_at),
                 ],
             )?;
         }
@@ -1350,12 +1374,13 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              SET status = $2,
                  was_sampled = $3,
                  reject_reason = $4
-             WHERE id = $1 AND status = 'provisional'",
+             WHERE id = $1 AND created_at = $5 AND status = 'provisional'",
             &[
                 &update.share_id,
                 &update.status,
                 &update.was_sampled,
                 &update.reject_reason,
+                &to_unix(update.created_at),
             ],
         )?;
         tx.execute(
@@ -1368,18 +1393,22 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
 
     /// Marks still-provisional shares as rejected (not creditable). Used when
     /// a source is struck for a proven fake share. Returns rows changed.
-    pub(crate) fn revoke_provisional_shares(&self, share_ids: &[i64], reason: &str) -> Result<u64> {
+    pub(crate) fn revoke_provisional_shares(
+        &self,
+        shares: &[ShareKey],
+        reason: &str,
+    ) -> Result<u64> {
         let mut total = 0u64;
-        for chunk in share_ids.chunks(5_000) {
-            let ids = chunk.to_vec();
+        for chunk in shares.chunks(5_000) {
+            let (ids, created) = share_key_arrays(chunk);
             let mut conn = self.conn();
             let mut tx = conn.transaction()?;
             let updated = tx.execute(
                 "UPDATE shares
                  SET status = 'rejected',
                      reject_reason = $2
-                 WHERE id = ANY($1) AND status = 'provisional'",
-                &[&ids, &reason],
+                 WHERE id = ANY($1) AND created_at = ANY($3) AND status = 'provisional'",
+                &[&ids, &reason, &created],
             )?;
             tx.execute(
                 "DELETE FROM validation_provisionals WHERE share_id = ANY($1)",
@@ -1410,18 +1439,19 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(rows.into_iter().map(row_to_share).collect())
     }
 
-    pub(crate) fn get_provisional_shares_by_ids(&self, ids: &[i64]) -> Result<Vec<DbShare>> {
-        if ids.is_empty() {
+    pub(crate) fn get_provisional_shares_by_keys(&self, keys: &[ShareKey]) -> Result<Vec<DbShare>> {
+        if keys.is_empty() {
             return Ok(Vec::new());
         }
-        let ids = ids.to_vec();
+        let (ids, created) = share_key_arrays(keys);
         let rows = self.conn().query(
             "SELECT id, job_id, miner, worker, difficulty, nonce, status, was_sampled, block_hash, claimed_hash, created_at
              FROM shares
              WHERE id = ANY($1)
+               AND created_at = ANY($2)
                AND status = 'provisional'
              ORDER BY id ASC",
-            &[&ids],
+            &[&ids, &created],
         )?;
         Ok(rows.into_iter().map(row_to_share).collect())
     }
@@ -5829,6 +5859,14 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(removed)
     }
 
+    /// Rolls up and removes shares older than the day containing `before`.
+    /// Returns how many share rows were removed.
+    ///
+    /// Weekly partitions are dropped whole once all of their range is past the
+    /// cutoff, so a partition straddling it keeps up to a week of expired rows
+    /// until then. Rows outside weekly partitions (all of a plain table, the
+    /// legacy and DEFAULT partitions) are deleted by row as they expire. Each
+    /// row is rolled up exactly once, in the transaction that removes it.
     pub(crate) fn rollup_and_prune_shares_before(&self, before: SystemTime) -> Result<u64> {
         let cutoff = floor_to_day_start_unix(to_unix(before));
         if cutoff <= 0 {
@@ -5836,61 +5874,80 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         }
 
         let mut conn = self.conn();
+        let partitions = share_partitions::list_partitions(&mut *conn.client)?.unwrap_or_default();
+        let weekly = partitions
+            .iter()
+            .filter(|partition| partition.is_bounded())
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let mut removed = 0u64;
         let mut tx = conn.transaction()?;
-        tx.execute(
-            "INSERT INTO share_daily_summaries
-                (day_start, accepted_count, rejected_count, accepted_difficulty, unique_miners, unique_workers)
-             SELECT
-                (created_at / $2) * $2 AS day_start,
-                SUM(CASE WHEN status IN ('verified','provisional') THEN 1 ELSE 0 END)::bigint AS accepted_count,
-                SUM(CASE WHEN status NOT IN ('verified','provisional') THEN 1 ELSE 0 END)::bigint AS rejected_count,
-                SUM(CASE WHEN status IN ('verified','provisional') THEN difficulty ELSE 0 END)::bigint AS accepted_difficulty,
-                COUNT(DISTINCT miner)::bigint AS unique_miners,
-                COUNT(DISTINCT worker)::bigint AS unique_workers
-             FROM shares
-             WHERE created_at < $1
-             GROUP BY day_start
-             ON CONFLICT(day_start) DO UPDATE SET
-                accepted_count = share_daily_summaries.accepted_count + EXCLUDED.accepted_count,
-                rejected_count = share_daily_summaries.rejected_count + EXCLUDED.rejected_count,
-                accepted_difficulty = share_daily_summaries.accepted_difficulty + EXCLUDED.accepted_difficulty,
-                unique_miners = share_daily_summaries.unique_miners + EXCLUDED.unique_miners,
-                unique_workers = share_daily_summaries.unique_workers + EXCLUDED.unique_workers",
-            &[&cutoff, &SECONDS_PER_DAY],
-        )
-        .context("roll up retained shares into share_daily_summaries")?;
-        tx.execute(
-            "INSERT INTO share_rejection_reason_daily_summaries
-                (day_start, reason, rejected_count)
-             SELECT
-                (created_at / $2) * $2 AS day_start,
-                reject_reason AS reason,
-                COUNT(*)::bigint AS rejected_count
-             FROM shares
-             WHERE created_at < $1
-               AND status NOT IN ('verified','provisional')
-             GROUP BY day_start, reason
-             ON CONFLICT(day_start, reason) DO UPDATE SET
-                rejected_count = share_rejection_reason_daily_summaries.rejected_count + EXCLUDED.rejected_count",
-            &[&cutoff, &SECONDS_PER_DAY],
-        )
-        .context(
-            "roll up retained rejected shares into share_rejection_reason_daily_summaries",
-        )?;
-        let removed = tx
-            .execute("DELETE FROM shares WHERE created_at < $1", &[&cutoff])
-            .context("prune retained shares")?;
-        tx.execute(
+        for (lower, upper) in share_partitions::row_retention_ranges(&weekly, cutoff) {
+            rollup_shares(
+                &mut tx,
+                "shares",
+                "created_at >= $2 AND created_at < $3",
+                &[&SECONDS_PER_DAY, &lower, &upper],
+            )?;
+            removed += tx
+                .execute(
+                    "DELETE FROM shares WHERE created_at >= $1 AND created_at < $2",
+                    &[&lower, &upper],
+                )
+                .context("prune retained shares")?;
+        }
+        tx.commit().context("commit share retention transaction")?;
+
+        let mut replay_bound = cutoff;
+        for partition in &weekly {
+            let expired = partition.upper.is_some_and(|upper| upper <= cutoff);
+            let dropped = if expired {
+                drop_share_partition(&mut conn, &partition.name, false)?
+            } else {
+                None
+            };
+            match dropped {
+                Some(rows) => removed += rows,
+                None => replay_bound = replay_bound.min(partition.lower.unwrap_or(cutoff)),
+            }
+        }
+        // The legacy partition empties once the cutoff passes its upper bound.
+        for partition in partitions.iter().filter(|partition| {
+            !partition.is_default
+                && !partition.is_bounded()
+                && partition.upper.is_some_and(|upper| upper <= cutoff)
+        }) {
+            drop_share_partition(&mut conn, &partition.name, true)?;
+        }
+
+        // A replay row keeps its first share's created_at, so one whose shares
+        // are all gone starts before the cutoff and, short of DEFAULT rows in a
+        // gap, before every weekly partition still present. The bound only
+        // narrows the scan (a replay it skips goes once the bound passes it);
+        // NOT EXISTS decides.
+        conn.execute(
             "DELETE FROM share_job_replays replay
-             WHERE NOT EXISTS (
+             WHERE replay.created_at < $1
+               AND NOT EXISTS (
                  SELECT 1 FROM shares share
                  WHERE share.job_id = replay.job_id
              )",
-            &[],
+            &[&replay_bound],
         )
         .context("prune orphaned share_job_replays after share retention")?;
-        tx.commit().context("commit share retention transaction")?;
         Ok(removed)
+    }
+
+    /// Creates missing weekly partitions and samples the DEFAULT partition.
+    pub(crate) fn maintain_share_partitions(
+        &self,
+    ) -> Result<share_partitions::SharePartitionMaintenance> {
+        let mut conn = self.conn();
+        conn.ensure_connected()?;
+        let report = share_partitions::maintain(&mut conn.client, now_unix())?;
+        log_share_partition_maintenance(&report);
+        Ok(report)
     }
 
     pub(crate) fn rollup_and_prune_payouts_before(&self, before: SystemTime) -> Result<u64> {
@@ -6528,8 +6585,188 @@ fn row_to_luck_round(row: &postgres::Row) -> DbLuckRound {
     }
 }
 
+/// Adds the shares on `source` matching `filter` to the daily summaries. `$1`
+/// is [`SECONDS_PER_DAY`]; `filter` may use the remaining `params`.
+fn rollup_shares(
+    tx: &mut Transaction<'_>,
+    source: &str,
+    filter: &str,
+    params: &[&(dyn ToSql + Sync)],
+) -> Result<()> {
+    tx.execute(
+        &format!(
+            "INSERT INTO share_daily_summaries
+                (day_start, accepted_count, rejected_count, accepted_difficulty, unique_miners, unique_workers)
+             SELECT
+                (created_at / $1) * $1 AS day_start,
+                SUM(CASE WHEN status IN ('verified','provisional') THEN 1 ELSE 0 END)::bigint AS accepted_count,
+                SUM(CASE WHEN status NOT IN ('verified','provisional') THEN 1 ELSE 0 END)::bigint AS rejected_count,
+                SUM(CASE WHEN status IN ('verified','provisional') THEN difficulty ELSE 0 END)::bigint AS accepted_difficulty,
+                COUNT(DISTINCT miner)::bigint AS unique_miners,
+                COUNT(DISTINCT worker)::bigint AS unique_workers
+             FROM {source}
+             WHERE {filter}
+             GROUP BY day_start
+             ON CONFLICT(day_start) DO UPDATE SET
+                accepted_count = share_daily_summaries.accepted_count + EXCLUDED.accepted_count,
+                rejected_count = share_daily_summaries.rejected_count + EXCLUDED.rejected_count,
+                accepted_difficulty = share_daily_summaries.accepted_difficulty + EXCLUDED.accepted_difficulty,
+                unique_miners = share_daily_summaries.unique_miners + EXCLUDED.unique_miners,
+                unique_workers = share_daily_summaries.unique_workers + EXCLUDED.unique_workers"
+        ),
+        params,
+    )
+    .context("roll up retained shares into share_daily_summaries")?;
+    tx.execute(
+        &format!(
+            "INSERT INTO share_rejection_reason_daily_summaries
+                (day_start, reason, rejected_count)
+             SELECT
+                (created_at / $1) * $1 AS day_start,
+                reject_reason AS reason,
+                COUNT(*)::bigint AS rejected_count
+             FROM {source}
+             WHERE {filter}
+               AND status NOT IN ('verified','provisional')
+             GROUP BY day_start, reason
+             ON CONFLICT(day_start, reason) DO UPDATE SET
+                rejected_count = share_rejection_reason_daily_summaries.rejected_count + EXCLUDED.rejected_count"
+        ),
+        params,
+    )
+    .context("roll up retained rejected shares into share_rejection_reason_daily_summaries")?;
+    Ok(())
+}
+
+/// Drops one expired share partition, rolling up its rows and queueing the
+/// read-projection deltas the share triggers would have written for a DELETE,
+/// in one transaction. With `require_empty` it only drops an empty partition.
+/// Returns the rows removed, or `None` when it stays (lock busy, or rows left
+/// in a partition that had to be empty).
+fn drop_share_partition(
+    conn: &mut ManagedClient,
+    name: &str,
+    require_empty: bool,
+) -> Result<Option<u64>> {
+    let table = share_partitions::quote_ident(name);
+    let mut tx = conn.transaction()?;
+    // SHARE keeps the rows fixed between the rollup and the drop; expired
+    // partitions take no writes, so it waits on nothing in practice.
+    let locked = tx.batch_execute(&format!(
+        "SET LOCAL lock_timeout = '{}';
+         SET LOCAL statement_timeout = '30min';
+         LOCK TABLE {table} IN SHARE MODE",
+        share_partitions::DDL_LOCK_TIMEOUT
+    ));
+    match locked {
+        Ok(()) => {}
+        Err(err) if share_partitions::is_lock_timeout(&err) => {
+            warn!(
+                partition = name,
+                "share partition busy; retrying its drop next cycle"
+            );
+            return Ok(None);
+        }
+        Err(err) => return Err(err).with_context(|| format!("lock share partition {name}")),
+    }
+
+    let rows = if require_empty {
+        let empty = tx
+            .query_one(&format!("SELECT NOT EXISTS (SELECT 1 FROM {table})"), &[])?
+            .get::<_, bool>(0);
+        if !empty {
+            warn!(
+                partition = name,
+                "expired share partition still has rows; keeping it"
+            );
+            return Ok(None);
+        }
+        0
+    } else {
+        rollup_shares(&mut tx, &table, "TRUE", &[&SECONDS_PER_DAY])?;
+        // Mirrors capture_share_read_minutes and capture_miner_share_count_delta
+        // for a DELETE of every row, which a DROP does not fire.
+        tx.query_one(
+            &format!(
+                "WITH removed AS (
+                    SELECT created_at / 60 * 60 AS minute, miner,
+                           CASE WHEN status IN ('','verified','provisional') THEN status ELSE 'rejected' END AS status,
+                           COUNT(*)::bigint AS n, SUM(difficulty)::bigint AS work
+                    FROM {table}
+                    GROUP BY 1, 2, 3
+                 ), minute_deltas AS (
+                    INSERT INTO share_read_deltas(minute,miner,status,shares,work)
+                    SELECT minute, miner, status, -n, -work FROM removed
+                 ), count_deltas AS (
+                    INSERT INTO miner_share_count_deltas(miner,accepted,rejected)
+                    SELECT miner,
+                           -COALESCE(SUM(n) FILTER (WHERE status IN ('verified','provisional')), 0),
+                           -COALESCE(SUM(n) FILTER (WHERE status NOT IN ('verified','provisional')), 0)
+                    FROM removed GROUP BY miner
+                 )
+                 SELECT COALESCE(SUM(n), 0)::bigint FROM removed"
+            ),
+            &[],
+        )
+        .with_context(|| format!("queue read deltas for share partition {name}"))?
+        .get::<_, i64>(0)
+        .max(0) as u64
+    };
+
+    // Dropping a partition detaches it under ACCESS EXCLUSIVE on `shares`.
+    for attempt in 1..=share_partitions::DDL_LOCK_ATTEMPTS {
+        let mut savepoint = tx.savepoint("drop_share_partition")?;
+        match savepoint.batch_execute(&format!("DROP TABLE {table}")) {
+            Ok(()) => {
+                savepoint.commit()?;
+                tx.commit()
+                    .with_context(|| format!("commit drop of share partition {name}"))?;
+                return Ok(Some(rows));
+            }
+            Err(err) if share_partitions::is_lock_timeout(&err) => {
+                drop(savepoint);
+                if attempt < share_partitions::DDL_LOCK_ATTEMPTS {
+                    std::thread::sleep(share_partitions::DDL_LOCK_RETRY_DELAY);
+                }
+            }
+            Err(err) => return Err(err).with_context(|| format!("drop share partition {name}")),
+        }
+    }
+    warn!(
+        partition = name,
+        "shares busy; retrying the partition drop next cycle"
+    );
+    Ok(None)
+}
+
+fn log_share_partition_maintenance(report: &share_partitions::SharePartitionMaintenance) {
+    if !report.created.is_empty() {
+        tracing::info!(partitions = ?report.created, "created share partitions");
+    }
+    if report.default_rows > 0 {
+        warn!(
+            rows = report.default_rows,
+            "default share partition holds rows outside every weekly partition"
+        );
+    }
+}
+
 fn now_unix() -> i64 {
     to_unix(SystemTime::now())
+}
+
+/// Id and distinct `created_at` arrays for `id = ANY($ids) AND created_at =
+/// ANY($created)`. Ids are unique, so the pair of filters matches exactly the
+/// given shares while pruning to the partitions holding them.
+fn share_key_arrays(keys: &[ShareKey]) -> (Vec<i64>, Vec<i64>) {
+    let ids = keys.iter().map(|key| key.id).collect::<Vec<_>>();
+    let mut created = keys
+        .iter()
+        .map(|key| to_unix(key.created_at))
+        .collect::<Vec<_>>();
+    created.sort_unstable();
+    created.dedup();
+    (ids, created)
 }
 
 fn floor_to_day_start_unix(ts: i64) -> i64 {
@@ -7597,6 +7834,7 @@ mod tests {
     fn revoked_provisional_shares_cannot_be_resurrected_by_late_audit_postgres() {
         let Some(store) = test_store() else { return };
         let suffix = unique_suffix();
+        let created_at = SystemTime::now();
         let share = |nonce: u64, status: &'static str| ShareRecord {
             job_id: format!("revoke-{suffix}"),
             miner: format!("miner-{suffix}"),
@@ -7608,7 +7846,7 @@ mod tests {
             block_hash: None,
             claimed_hash: None,
             reject_reason: None,
-            created_at: SystemTime::now(),
+            created_at,
         };
         let provisional = store
             .add_share_with_replay_and_id(share(1, "provisional"), None)
@@ -7616,6 +7854,7 @@ mod tests {
         let verified = store
             .add_share_with_replay_and_id(share(2, "verified"), None)
             .unwrap();
+        let key = |id: i64| ShareKey { id, created_at };
         store
             .add_validation_provisional(
                 &format!("miner-{suffix}"),
@@ -7625,7 +7864,7 @@ mod tests {
             .unwrap();
 
         let revoked = store
-            .revoke_provisional_shares(&[provisional, verified], "source revoked")
+            .revoke_provisional_shares(&[key(provisional), key(verified)], "source revoked")
             .unwrap();
         assert_eq!(revoked, 1, "verified shares are never revoked");
         let rows = store
@@ -7638,6 +7877,7 @@ mod tests {
         let applied = store
             .complete_validation_audit(&ShareReplayUpdate {
                 share_id: provisional,
+                created_at,
                 status: "verified".to_string(),
                 was_sampled: true,
                 reject_reason: None,
@@ -9655,5 +9895,866 @@ mod tests {
             )
             .expect("updated source row");
         assert_eq!(source_row.get::<_, i64>(0), 7);
+    }
+
+    /// Live plus rolled-up rejection counts; retention must keep them whole.
+    fn reason_totals(store: &PostgresStore) -> Vec<(String, u64)> {
+        store
+            .total_rejection_reason_counts()
+            .expect("rejection reason totals")
+            .into_iter()
+            .map(|count| (count.reason, count.count))
+            .collect()
+    }
+
+    /// `shares` as releases before partitioning created it, with the indexes
+    /// production carries outside the startup schema (including the empty
+    /// `idx_shares_miner_created` stub).
+    const PLAIN_SHARES_DDL: &str = "
+        CREATE TABLE shares (
+            id BIGSERIAL PRIMARY KEY,
+            job_id TEXT NOT NULL,
+            miner TEXT NOT NULL,
+            worker TEXT NOT NULL,
+            difficulty BIGINT NOT NULL,
+            nonce BIGINT NOT NULL,
+            status TEXT NOT NULL,
+            was_sampled BOOLEAN NOT NULL,
+            block_hash TEXT,
+            claimed_hash TEXT,
+            miner_version TEXT,
+            backend TEXT,
+            reject_reason TEXT,
+            created_at BIGINT NOT NULL
+        );
+        CREATE INDEX idx_shares_created_at ON shares(created_at DESC);
+        CREATE INDEX idx_shares_miner_status_created ON shares(miner, status, created_at DESC);
+        CREATE INDEX idx_shares_job_nonce ON shares(job_id, nonce);
+        CREATE INDEX idx_shares_block_hash_created_at ON shares(block_hash, created_at DESC);
+        CREATE INDEX idx_shares_miner_created ON shares(miner) WHERE false;
+        ALTER TABLE shares SET (autovacuum_vacuum_insert_threshold = 20000,
+                                autovacuum_vacuum_insert_scale_factor = 0);";
+
+    fn test_postgres_url() -> Option<String> {
+        std::env::var(POSTGRES_TEST_URL_ENV)
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    }
+
+    /// A store over a plain (unpartitioned) shares table.
+    fn plain_shares_store() -> Option<(String, String, Arc<PostgresStore>)> {
+        let url = test_postgres_url()?;
+        let schema = format!(
+            "blocknet_pool_pgdb_test_{}_{}",
+            std::process::id(),
+            rand::random::<u64>()
+        );
+        let mut admin = Client::connect(&url, NoTls).expect("connect postgres admin client");
+        admin
+            .batch_execute(&format!(
+                "CREATE SCHEMA {schema}; SET search_path = {schema}; {PLAIN_SHARES_DDL}"
+            ))
+            .expect("create plain shares fixture");
+        let store = PostgresStore::connect_with_schema(&url, 2, Some(&schema))
+            .expect("connect store over plain shares");
+        Some((url, schema, store))
+    }
+
+    fn psql_available() -> bool {
+        std::process::Command::new("psql")
+            .arg("--version")
+            .output()
+            .is_ok_and(|output| output.status.success())
+    }
+
+    fn run_partition_script(url: &str, schema: &str, args: &[&str]) -> String {
+        let output = std::process::Command::new("bash")
+            .arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../scripts/partition_shares.sh"
+            ))
+            .args(["--db", url, "--lock-retries", "2"])
+            .args(args)
+            .env("PGOPTIONS", format!("-c search_path={schema}"))
+            .output()
+            .expect("run scripts/partition_shares.sh");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.status.success(),
+            "partition_shares.sh {args:?} failed:\n{text}"
+        );
+        text
+    }
+
+    fn share_at(
+        job_id: &str,
+        miner: &str,
+        nonce: u64,
+        status: &'static str,
+        created_at: i64,
+    ) -> ShareRecord {
+        ShareRecord {
+            job_id: job_id.to_string(),
+            miner: miner.to_string(),
+            worker: "rig".to_string(),
+            difficulty: 1 + nonce % 5,
+            nonce,
+            status,
+            was_sampled: false,
+            block_hash: None,
+            claimed_hash: None,
+            reject_reason: (status == "rejected").then(|| "low difficulty share".to_string()),
+            created_at: from_unix(created_at),
+        }
+    }
+
+    fn replay_for(job_id: &str, created_at: i64) -> ShareReplayData {
+        ShareReplayData {
+            job_id: job_id.to_string(),
+            header_base: vec![1, 2, 3],
+            network_target: [0xff; 32],
+            created_at: from_unix(created_at),
+        }
+    }
+
+    fn partition_of_share(store: &PostgresStore, id: i64) -> String {
+        store
+            .conn()
+            .query_one(
+                "SELECT tableoid::regclass::text FROM shares WHERE id = $1",
+                &[&id],
+            )
+            .expect("share partition")
+            .get(0)
+    }
+
+    fn share_partition_names(store: &PostgresStore) -> Vec<String> {
+        share_partitions::list_partitions(&mut *store.conn().client)
+            .expect("list share partitions")
+            .expect("shares is partitioned")
+            .into_iter()
+            .map(|partition| partition.name)
+            .collect()
+    }
+
+    fn daily_share_summaries(store: &PostgresStore) -> Vec<(i64, i64, i64, i64)> {
+        store
+            .conn()
+            .query(
+                "SELECT day_start, accepted_count, rejected_count, accepted_difficulty
+                 FROM share_daily_summaries ORDER BY day_start",
+                &[],
+            )
+            .expect("daily share summaries")
+            .iter()
+            .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
+            .collect()
+    }
+
+    fn replay_job_ids(store: &PostgresStore) -> Vec<String> {
+        store
+            .conn()
+            .query("SELECT job_id FROM share_job_replays ORDER BY job_id", &[])
+            .expect("share replays")
+            .iter()
+            .map(|row| row.get(0))
+            .collect()
+    }
+
+    /// The minute and per-miner read projections net to the raw shares.
+    fn assert_share_projections_match_raw(store: &PostgresStore) {
+        let row = store
+            .conn()
+            .query_one(
+                "SELECT
+                    (SELECT COUNT(*) FROM (
+                        SELECT minute, miner, status FROM (
+                            SELECT minute, miner, status, shares AS n, work AS w FROM share_read_miners
+                            UNION ALL
+                            SELECT minute, miner, status, shares, work FROM share_read_deltas
+                            UNION ALL
+                            SELECT created_at / 60 * 60, miner,
+                                   CASE WHEN status IN ('','verified','provisional') THEN status ELSE 'rejected' END,
+                                   -COUNT(*), -SUM(difficulty)::bigint
+                            FROM shares GROUP BY 1, 2, 3
+                        ) x GROUP BY 1, 2, 3 HAVING SUM(n) <> 0 OR SUM(w) <> 0
+                    ) minutes),
+                    (SELECT COUNT(*) FROM (
+                        SELECT miner FROM (
+                            SELECT miner, accepted AS a, rejected AS r FROM miner_share_counts
+                            UNION ALL
+                            SELECT miner, accepted, rejected FROM miner_share_count_deltas
+                            UNION ALL
+                            SELECT miner,
+                                   -COUNT(*) FILTER (WHERE status IN ('verified','provisional')),
+                                   -COUNT(*) FILTER (WHERE status NOT IN ('verified','provisional'))
+                            FROM shares GROUP BY miner
+                        ) x GROUP BY miner HAVING SUM(a) <> 0 OR SUM(r) <> 0
+                    ) miners)",
+                &[],
+            )
+            .expect("compare read projections with raw shares");
+        assert_eq!(row.get::<_, i64>(0), 0, "minute projection drifted");
+        assert_eq!(row.get::<_, i64>(1), 0, "miner count projection drifted");
+    }
+
+    #[test]
+    fn share_inserts_land_in_weekly_partitions_and_default_catches_the_rest_postgres() {
+        let Some(store) = test_store() else { return };
+        let now = now_unix();
+        let week = share_partitions::week_start(now);
+        let names = share_partition_names(&store);
+        assert!(names.contains(&share_partitions::DEFAULT_PARTITION.to_string()));
+        for ahead in 0..=share_partitions::WEEKS_AHEAD {
+            let name =
+                share_partitions::weekly_partition_name(week + ahead * share_partitions::WEEK_SECS);
+            assert!(names.contains(&name), "missing {name} in {names:?}");
+        }
+
+        let add = |nonce: u64, created_at: i64| {
+            store
+                .add_share_with_replay_and_id(
+                    share_at("route", "route-miner", nonce, "provisional", created_at),
+                    None,
+                )
+                .expect("insert share")
+        };
+        let current = add(1, now);
+        let next_week = add(2, week + share_partitions::WEEK_SECS);
+        let ancient = add(3, 1_000);
+        let beyond = week + (share_partitions::WEEKS_AHEAD + 2) * share_partitions::WEEK_SECS;
+        let far_future = add(4, beyond + 5);
+        assert_eq!(
+            partition_of_share(&store, current),
+            share_partitions::weekly_partition_name(week)
+        );
+        assert_eq!(
+            partition_of_share(&store, next_week),
+            share_partitions::weekly_partition_name(week + share_partitions::WEEK_SECS)
+        );
+        for stray in [ancient, far_future] {
+            assert_eq!(
+                partition_of_share(&store, stray),
+                share_partitions::DEFAULT_PARTITION
+            );
+        }
+
+        let report = store
+            .maintain_share_partitions()
+            .expect("maintain partitions");
+        assert!(report.partitioned);
+        assert!(report.created.is_empty(), "{:?}", report.created);
+        assert_eq!(report.default_rows, 2, "DEFAULT rows are reported");
+
+        // A week later the next week is added. A DEFAULT row inside a week
+        // that is due makes maintenance fail loudly instead of hiding it.
+        let mut admin = store.open_independent_session().expect("admin session");
+        let later = share_partitions::maintain(&mut admin, now + share_partitions::WEEK_SECS)
+            .expect("maintain a week later");
+        assert_eq!(
+            later.created,
+            vec![share_partitions::weekly_partition_name(
+                week + (share_partitions::WEEKS_AHEAD + 1) * share_partitions::WEEK_SECS
+            )]
+        );
+        let blocked = share_partitions::maintain(&mut admin, now + 2 * share_partitions::WEEK_SECS)
+            .expect_err("DEFAULT row inside the new week");
+        assert!(
+            format!("{blocked:#}").contains(&share_partitions::weekly_partition_name(beyond)),
+            "{blocked:#}"
+        );
+        assert_share_projections_match_raw(&store);
+    }
+
+    #[test]
+    fn share_updates_by_key_touch_only_their_partition_postgres() {
+        let Some(store) = test_store() else { return };
+        let now = now_unix();
+        let week = share_partitions::week_start(now);
+        let next_week_at = week + share_partitions::WEEK_SECS + 60;
+        let add = |nonce: u64, created_at: i64| {
+            store
+                .add_share_with_replay_and_id(
+                    share_at("keys", "keys-miner", nonce, "provisional", created_at),
+                    None,
+                )
+                .expect("insert share")
+        };
+        let replayed = add(1, now);
+        let audited = add(2, now);
+        let revoked = add(3, now);
+        let pending = add(4, now);
+        let elsewhere = add(5, next_week_at);
+        let key = |id: i64| ShareKey {
+            id,
+            created_at: from_unix(now),
+        };
+
+        // Another session holds next week's partition. Lookups that prune to
+        // this week's partition never touch it.
+        let other = share_partitions::weekly_partition_name(week + share_partitions::WEEK_SECS);
+        let mut locker = store.open_independent_session().expect("lock session");
+        locker
+            .batch_execute(&format!(
+                "BEGIN; LOCK TABLE {other} IN ACCESS EXCLUSIVE MODE"
+            ))
+            .expect("lock next week's partition");
+        with_statement_timeout(Some(Duration::from_secs(5)), || {
+            store
+                .apply_share_replay_updates(&[ShareReplayUpdate {
+                    share_id: replayed,
+                    created_at: from_unix(now),
+                    status: "verified".to_string(),
+                    was_sampled: true,
+                    reject_reason: None,
+                }])
+                .expect("replay update by key");
+            assert!(store
+                .complete_validation_audit(&ShareReplayUpdate {
+                    share_id: audited,
+                    created_at: from_unix(now),
+                    status: "rejected".to_string(),
+                    was_sampled: true,
+                    reject_reason: Some("low difficulty share".to_string()),
+                })
+                .expect("audit by key"));
+            assert_eq!(
+                store
+                    .revoke_provisional_shares(&[key(revoked)], "source revoked")
+                    .expect("revoke by key"),
+                1
+            );
+            let loaded = store
+                .get_provisional_shares_by_keys(&[key(pending), key(revoked)])
+                .expect("load by key");
+            assert_eq!(
+                loaded.iter().map(|share| share.id).collect::<Vec<_>>(),
+                vec![pending]
+            );
+        });
+        // A lookup by id alone has to open every partition, so it waits.
+        let by_id_only = with_statement_timeout(Some(Duration::from_millis(300)), || {
+            store.conn().execute(
+                "UPDATE shares SET was_sampled = was_sampled WHERE id = $1",
+                &[&pending],
+            )
+        });
+        assert!(
+            by_id_only.is_err(),
+            "id-only update should wait on the lock"
+        );
+        locker.batch_execute("ROLLBACK").expect("release lock");
+
+        let plan = store
+            .conn()
+            .query(
+                "EXPLAIN (COSTS OFF)
+                 UPDATE shares SET status = status
+                 WHERE id = ANY($1) AND created_at = ANY($2) AND status = 'provisional'",
+                &[&vec![pending, elsewhere], &vec![now]],
+            )
+            .expect("explain keyed update")
+            .iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            plan.contains(&share_partitions::weekly_partition_name(week)),
+            "{plan}"
+        );
+        assert!(!plan.contains(&other), "{plan}");
+        assert!(
+            !plan.contains(share_partitions::DEFAULT_PARTITION),
+            "{plan}"
+        );
+
+        // created_at is part of the key: the wrong one matches nothing.
+        store
+            .apply_share_replay_updates(&[ShareReplayUpdate {
+                share_id: elsewhere,
+                created_at: from_unix(now),
+                status: "verified".to_string(),
+                was_sampled: true,
+                reject_reason: None,
+            }])
+            .expect("update with the wrong created_at");
+        let statuses = store
+            .get_shares_for_miner("keys-miner", 10)
+            .expect("shares")
+            .into_iter()
+            .map(|share| (share.id, share.status))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(statuses[&replayed], "verified");
+        assert_eq!(statuses[&audited], "rejected");
+        assert_eq!(statuses[&revoked], "rejected");
+        assert_eq!(statuses[&pending], "provisional");
+        assert_eq!(statuses[&elsewhere], "provisional");
+        assert_share_projections_match_raw(&store);
+    }
+
+    #[test]
+    fn share_claims_still_dedupe_with_partitioned_shares_postgres() {
+        let Some(store) = test_store() else { return };
+        assert!(store
+            .try_claim_share("assign-1", "template-key", 7)
+            .unwrap());
+        store
+            .add_share_with_replay_and_id(
+                share_at("assign-1", "dedupe-miner", 7, "provisional", now_unix()),
+                None,
+            )
+            .unwrap();
+        assert!(
+            !store
+                .try_claim_share("assign-1", "template-key", 7)
+                .unwrap(),
+            "the same work twice"
+        );
+        assert!(
+            !store
+                .try_claim_share("assign-2", "template-key", 7)
+                .unwrap(),
+            "the same work under another assignment"
+        );
+        assert!(store
+            .try_claim_share("assign-1", "template-key", 8)
+            .unwrap());
+    }
+
+    #[test]
+    fn share_retention_drops_expired_weekly_partitions_postgres() {
+        let Some(store) = test_store() else { return };
+        let week = share_partitions::WEEK_SECS;
+        let day = SECONDS_PER_DAY;
+        let base = share_partitions::week_start(now_unix()) - 20 * week;
+        let mut admin = store.open_independent_session().expect("admin session");
+        share_partitions::maintain(&mut admin, base).expect("create old weeks");
+
+        let rows: [(&str, &str, u64, &'static str, i64); 8] = [
+            ("job-a", "miner-a", 1, "verified", base + 3_600),
+            ("job-a", "miner-a", 2, "provisional", base + day + 10),
+            ("job-a", "miner-b", 3, "rejected", base + 2 * day),
+            ("job-span", "miner-b", 4, "verified", base + week - 30),
+            ("job-span", "miner-b", 5, "verified", base + week + 30),
+            ("job-b", "miner-a", 6, "rejected", base + week + day),
+            ("job-b", "miner-c", 7, "provisional", base + week + 3 * day),
+            ("job-stray", "miner-c", 8, "rejected", 5_000),
+        ];
+        for (job, miner, nonce, status, at) in rows {
+            store
+                .add_share_with_replay_and_id(
+                    share_at(job, miner, nonce, status, at),
+                    Some(replay_for(job, at)),
+                )
+                .expect("insert share");
+        }
+        store.compact_share_read_minutes().unwrap();
+        store.compact_miner_share_count_deltas().unwrap();
+        let reasons_before = reason_totals(&store);
+        let expected_summaries = |removed: &[u64]| {
+            let mut days = std::collections::BTreeMap::<i64, (i64, i64, i64, i64)>::new();
+            for (_, _, nonce, status, at) in rows.iter().filter(|row| removed.contains(&row.2)) {
+                let entry = days.entry(at - at % day).or_default();
+                entry.0 = at - at % day;
+                if matches!(*status, "verified" | "provisional") {
+                    entry.1 += 1;
+                    entry.3 += (1 + nonce % 5) as i64;
+                } else {
+                    entry.2 += 1;
+                }
+            }
+            days.into_values().collect::<Vec<_>>()
+        };
+
+        // The cutoff falls inside week 1: week 0 goes whole, week 1 waits.
+        let cutoff = base + week + 2 * day;
+        let removed = store
+            .rollup_and_prune_shares_before(from_unix(cutoff + 600))
+            .expect("first retention pass");
+        assert_eq!(removed, 5, "week 0 and the DEFAULT stray");
+        let names = share_partition_names(&store);
+        assert!(!names.contains(&share_partitions::weekly_partition_name(base)));
+        assert!(names.contains(&share_partitions::weekly_partition_name(base + week)));
+        let expired_but_kept: i64 = store
+            .conn()
+            .query_one(
+                "SELECT COUNT(*) FROM shares WHERE created_at < $1",
+                &[&cutoff],
+            )
+            .unwrap()
+            .get(0);
+        assert_eq!(
+            expired_but_kept, 2,
+            "the straddling week keeps its expired rows"
+        );
+        assert_eq!(
+            daily_share_summaries(&store),
+            expected_summaries(&[1, 2, 3, 4, 8])
+        );
+        assert_eq!(reason_totals(&store), reasons_before);
+        assert_eq!(replay_job_ids(&store), vec!["job-b", "job-span"]);
+        assert_share_projections_match_raw(&store);
+
+        // Rerunning the same cutoff changes nothing.
+        assert_eq!(
+            store
+                .rollup_and_prune_shares_before(from_unix(cutoff + 600))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            daily_share_summaries(&store),
+            expected_summaries(&[1, 2, 3, 4, 8])
+        );
+
+        // Once the cutoff passes week 1, it is rolled up and dropped too.
+        assert_eq!(
+            store
+                .rollup_and_prune_shares_before(from_unix(base + 2 * week + 10))
+                .unwrap(),
+            3
+        );
+        assert!(!share_partition_names(&store)
+            .contains(&share_partitions::weekly_partition_name(base + week)));
+        assert_eq!(
+            daily_share_summaries(&store),
+            expected_summaries(&[1, 2, 3, 4, 5, 6, 7, 8])
+        );
+        assert_eq!(reason_totals(&store), reasons_before);
+        assert!(replay_job_ids(&store).is_empty());
+        store.compact_share_read_minutes().unwrap();
+        store.compact_miner_share_count_deltas().unwrap();
+        assert_share_projections_match_raw(&store);
+        assert!(store.miner_lifetime_counts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn partition_script_converts_plain_shares_online_postgres() {
+        if test_postgres_url().is_none() || !psql_available() {
+            return;
+        }
+        let Some((url, schema, store)) = plain_shares_store() else {
+            return;
+        };
+        assert!(
+            share_partitions::list_partitions(&mut *store.conn().client)
+                .unwrap()
+                .is_none(),
+            "the startup schema leaves a plain table plain"
+        );
+        let now = now_unix();
+        store
+            .conn()
+            .client
+            .batch_execute(&format!(
+                "INSERT INTO shares(job_id,miner,worker,difficulty,nonce,status,was_sampled,reject_reason,created_at)
+                 SELECT 'fixture-' || (n % 40), 'miner-' || (n % 7), 'rig-' || (n % 3), 1 + n % 9, n,
+                        CASE n % 4 WHEN 0 THEN 'verified' WHEN 1 THEN 'provisional'
+                                   WHEN 2 THEN 'rejected' ELSE 'invalid' END,
+                        n % 5 = 0,
+                        CASE WHEN n % 4 >= 2 THEN 'low difficulty share' END,
+                        {now} - n * 3000
+                 FROM generate_series(1, 3000) n;
+                 INSERT INTO share_job_replays(job_id, header_base, network_target, created_at)
+                 SELECT 'fixture-' || j, '\\x01', '\\xff', {now} - 9100 * 3000
+                 FROM generate_series(0, 39) j;"
+            ))
+            .expect("fixture shares");
+        let count_and_sums = |store: &PostgresStore| -> (i64, i64, i64) {
+            let row = store
+                .conn()
+                .query_one(
+                    "SELECT COUNT(*), SUM(difficulty)::bigint, MAX(id) FROM shares",
+                    &[],
+                )
+                .unwrap();
+            (row.get(0), row.get(1), row.get(2))
+        };
+        let before = count_and_sums(&store);
+        let reasons_before = reason_totals(&store);
+
+        let dry_run = run_partition_script(&url, &schema, &["--dry-run", "parent"]);
+        assert!(
+            dry_run.contains("dry-run: CREATE TABLE shares_partitioned"),
+            "{dry_run}"
+        );
+        let parent_exists: bool = store
+            .conn()
+            .query_one("SELECT to_regclass('shares_partitioned') IS NOT NULL", &[])
+            .unwrap()
+            .get(0);
+        assert!(!parent_exists, "a dry run changes nothing");
+
+        run_partition_script(&url, &schema, &["migrate"]);
+        let partitions = share_partitions::list_partitions(&mut *store.conn().client)
+            .unwrap()
+            .expect("partitioned after the swap");
+        let legacy = partitions
+            .iter()
+            .find(|partition| partition.name == "shares_legacy")
+            .expect("legacy partition");
+        let cutoff = legacy.upper.expect("legacy upper bound");
+        assert_eq!(legacy.lower, None);
+        assert_eq!(
+            share_partitions::week_start(cutoff),
+            cutoff,
+            "cutoff is a Monday"
+        );
+        assert!(cutoff >= now + 48 * 3600);
+        let storage_options = |name: &str| -> Vec<String> {
+            store
+                .conn()
+                .query_one(
+                    "SELECT COALESCE(reloptions, '{}') FROM pg_class WHERE oid = to_regclass($1)",
+                    &[&name],
+                )
+                .unwrap()
+                .get(0)
+        };
+        let tuned = vec![
+            "autovacuum_vacuum_insert_threshold=20000".to_string(),
+            "autovacuum_vacuum_insert_scale_factor=0".to_string(),
+        ];
+        for ahead in 0..4 {
+            let name = share_partitions::weekly_partition_name(
+                cutoff + ahead * share_partitions::WEEK_SECS,
+            );
+            assert!(
+                partitions.iter().any(|partition| partition.name == name),
+                "{name}"
+            );
+            assert_eq!(
+                storage_options(&name),
+                tuned,
+                "{name} keeps the autovacuum tuning"
+            );
+        }
+        // Later partitions from the maintenance task copy the tuning too.
+        let mut admin = store.open_independent_session().unwrap();
+        let later =
+            share_partitions::maintain(&mut admin, cutoff + 4 * share_partitions::WEEK_SECS)
+                .unwrap();
+        assert_eq!(
+            later.created.len() as i64,
+            share_partitions::WEEKS_AHEAD + 1
+        );
+        for name in &later.created {
+            assert_eq!(storage_options(name), tuned, "{name}");
+        }
+        assert_eq!(count_and_sums(&store), before);
+        assert_eq!(reason_totals(&store), reasons_before);
+
+        // The parent took every index name, including the stub, and each
+        // index is valid with a child on every partition.
+        let indexes = store
+            .conn()
+            .query(
+                "SELECT c.relname::text, i.indisvalid,
+                        (SELECT COUNT(*) FROM pg_inherits ih WHERE ih.inhparent = c.oid),
+                        COALESCE(pg_get_expr(i.indpred, i.indrelid), '')
+                 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+                 WHERE i.indrelid = 'shares'::regclass ORDER BY 1",
+                &[],
+            )
+            .unwrap();
+        let names = indexes
+            .iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect::<Vec<_>>();
+        for expected in [
+            "idx_shares_accepted_time_difficulty",
+            "idx_shares_block_hash_created_at",
+            "idx_shares_created_at",
+            "idx_shares_job_nonce",
+            "idx_shares_miner_created",
+            "idx_shares_miner_read_window",
+            "idx_shares_miner_status_created",
+            "idx_shares_rejected_created_reason",
+            "idx_shares_worker_window",
+            "shares_pkey",
+        ] {
+            assert!(
+                names.contains(&expected.to_string()),
+                "{expected} in {names:?}"
+            );
+        }
+        let partition_count = share_partition_names(&store).len() as i64;
+        for row in &indexes {
+            assert!(row.get::<_, bool>(1), "{} valid", row.get::<_, String>(0));
+            assert_eq!(row.get::<_, i64>(2), partition_count);
+            if row.get::<_, String>(0) == "idx_shares_miner_created" {
+                assert_eq!(row.get::<_, String>(3), "false", "the stub stays empty");
+            }
+        }
+        let owned_sequence: Option<String> = store
+            .conn()
+            .query_one("SELECT pg_get_serial_sequence('shares', 'id')", &[])
+            .unwrap()
+            .get(0);
+        assert!(
+            owned_sequence.is_some(),
+            "the id sequence moved to the parent"
+        );
+
+        // Writes keep flowing: before the cutoff into the legacy partition,
+        // after it into weekly partitions, and keyed updates still apply.
+        let recent = store
+            .add_share_with_replay_and_id(
+                share_at("after-swap", "miner-new", 1, "provisional", now),
+                Some(replay_for("after-swap", now)),
+            )
+            .unwrap();
+        assert!(recent > before.2);
+        assert_eq!(partition_of_share(&store, recent), "shares_legacy");
+        let upcoming = store
+            .add_share_with_replay_and_id(
+                share_at("after-swap", "miner-new", 2, "provisional", cutoff + 10),
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            partition_of_share(&store, upcoming),
+            share_partitions::weekly_partition_name(cutoff)
+        );
+        store
+            .apply_share_replay_updates(&[ShareReplayUpdate {
+                share_id: recent,
+                created_at: from_unix(now),
+                status: "verified".to_string(),
+                was_sampled: true,
+                reject_reason: None,
+            }])
+            .unwrap();
+        assert_eq!(
+            store
+                .get_shares_for_miner("miner-new", 5)
+                .unwrap()
+                .iter()
+                .find(|s| s.id == recent)
+                .unwrap()
+                .status,
+            "verified"
+        );
+        assert_share_projections_match_raw(&store);
+
+        // A restart's schema batch and a second migration run change nothing.
+        let index_count = || -> i64 {
+            store
+                .conn()
+                .query_one(
+                    "SELECT COUNT(*) FROM pg_indexes
+                     WHERE schemaname = current_schema() AND tablename LIKE 'shares%'",
+                    &[],
+                )
+                .unwrap()
+                .get(0)
+        };
+        let indexes_before = index_count();
+        PostgresStore::connect_with_schema(&url, 1, Some(&schema))
+            .expect("restart on migrated table");
+        run_partition_script(&url, &schema, &["migrate"]);
+        assert_eq!(index_count(), indexes_before);
+
+        // Retention empties the legacy partition by row, then drops it; the id
+        // sequence survives the drop.
+        let removed = store
+            .rollup_and_prune_shares_before(from_unix(now - 30 * SECONDS_PER_DAY))
+            .unwrap();
+        assert!(removed > 0);
+        assert!(share_partition_names(&store).contains(&"shares_legacy".to_string()));
+        let removed_rest = store
+            .rollup_and_prune_shares_before(from_unix(cutoff + SECONDS_PER_DAY))
+            .unwrap();
+        assert_eq!(removed + removed_rest, before.0 as u64 + 1);
+        assert!(!share_partition_names(&store).contains(&"shares_legacy".to_string()));
+        assert_eq!(replay_job_ids(&store), vec!["after-swap"]);
+        let after_drop = store
+            .add_share_with_replay_and_id(
+                share_at("after-drop", "miner-new", 3, "verified", cutoff + 20),
+                None,
+            )
+            .unwrap();
+        assert!(after_drop > upcoming);
+        assert_eq!(reason_totals(&store), reasons_before);
+        store.compact_share_read_minutes().unwrap();
+        store.compact_miner_share_count_deltas().unwrap();
+        assert_share_projections_match_raw(&store);
+    }
+
+    #[test]
+    fn partition_script_rehearses_and_rolls_back_before_the_swap_postgres() {
+        if test_postgres_url().is_none() || !psql_available() {
+            return;
+        }
+        let Some((url, schema, store)) = plain_shares_store() else {
+            return;
+        };
+        let now = now_unix();
+        store
+            .add_share_with_replay_and_id(
+                share_at("rollback", "rollback-miner", 1, "verified", now),
+                None,
+            )
+            .unwrap();
+        run_partition_script(&url, &schema, &["preflight"]);
+        run_partition_script(&url, &schema, &["parent"]);
+        run_partition_script(&url, &schema, &["unique-index"]);
+        run_partition_script(&url, &schema, &["check"]);
+        let status = run_partition_script(&url, &schema, &["status"]);
+        assert!(status.contains("plain"), "{status}");
+        let dry_run = run_partition_script(&url, &schema, &["--dry-run", "swap"]);
+        assert!(
+            dry_run.contains("dry-run: ALTER TABLE shares ATTACH PARTITION shares_legacy"),
+            "{dry_run}"
+        );
+        let rehearsal = run_partition_script(&url, &schema, &["--rehearse", "swap"]);
+        assert!(rehearsal.contains("swap ok"), "{rehearsal}");
+        assert!(
+            share_partitions::list_partitions(&mut *store.conn().client)
+                .unwrap()
+                .is_none(),
+            "a rehearsal rolls the swap back"
+        );
+
+        run_partition_script(&url, &schema, &["rollback"]);
+        let leftovers = store
+            .conn()
+            .query_one(
+                "SELECT to_regclass('shares_partitioned') IS NOT NULL,
+                        to_regclass('shares_id_created_at_key') IS NOT NULL,
+                        to_regclass('shares_default') IS NOT NULL,
+                        EXISTS (SELECT 1 FROM pg_constraint
+                                WHERE conrelid = 'shares'::regclass
+                                  AND conname = 'shares_created_at_before_partitions')",
+                &[],
+            )
+            .unwrap();
+        for column in 0..4 {
+            assert!(!leftovers.get::<_, bool>(column), "leftover {column}");
+        }
+        // Inserts past the cutoff work again, and the migration can restart.
+        store
+            .add_share_with_replay_and_id(
+                share_at(
+                    "rollback",
+                    "rollback-miner",
+                    2,
+                    "verified",
+                    now + 400 * SECONDS_PER_DAY,
+                ),
+                None,
+            )
+            .unwrap();
+        store
+            .conn()
+            .client
+            .batch_execute("DELETE FROM shares WHERE nonce = 2")
+            .unwrap();
+        run_partition_script(&url, &schema, &["preflight"]);
     }
 }

@@ -31,9 +31,19 @@ pub struct ShareReplayData {
     pub created_at: SystemTime,
 }
 
+/// Identifies a stored share. `created_at` is the `shares` partition key, so
+/// lookups pass it with the id to touch a single partition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ShareKey {
+    pub id: i64,
+    pub created_at: SystemTime,
+}
+
 #[derive(Debug, Clone)]
 pub struct ShareReplayUpdate {
     pub share_id: i64,
+    /// The share's `created_at`, the partition key (see [`ShareKey`]).
+    pub created_at: SystemTime,
     pub status: String,
     pub was_sampled: bool,
     pub reject_reason: Option<String>,

@@ -35,6 +35,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use parking_lot::Mutex;
+use pool_common::db::ShareKey;
 
 use crate::config::Config;
 
@@ -174,7 +175,7 @@ pub(crate) struct SourceRef {
 /// Provisional shares revoked by a strike, grouped by address.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SourceStrike {
-    pub revoked: Vec<(String, Vec<i64>)>,
+    pub revoked: Vec<(String, Vec<ShareKey>)>,
     pub pair_strikes: u32,
     pub pair_banned_for: Duration,
     pub ip_banned_for: Option<Duration>,
@@ -186,16 +187,10 @@ impl SourceStrike {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct TrackedShare {
-    share_id: i64,
-    created_at: SystemTime,
-}
-
 #[derive(Debug)]
 struct DegradedReview {
     sampled: HashSet<i64>,
-    cohort: Vec<(i64, u64)>,
+    cohort: Vec<(ShareKey, u64)>,
     started_at: Instant,
 }
 
@@ -242,10 +237,10 @@ struct PairEntry {
     address_vouched: bool,
     strikes: StrikeCounter,
     ban: Option<Ban>,
-    shares: VecDeque<TrackedShare>,
+    shares: VecDeque<ShareKey>,
     /// Provisional shares accepted while sampling was degraded, not yet
     /// covered by a passing review: (share id, difficulty).
-    degraded_pending: Vec<(i64, u64)>,
+    degraded_pending: Vec<(ShareKey, u64)>,
     degraded_review: Option<DegradedReview>,
     open_sessions: u32,
     last_seen: Instant,
@@ -509,12 +504,13 @@ impl SourceRiskTracker {
         let Some(pair) = inner.pairs.get_mut(&pair_key) else {
             return;
         };
-        pair.shares.push_back(TrackedShare {
-            share_id,
+        let key = ShareKey {
+            id: share_id,
             created_at,
-        });
+        };
+        pair.shares.push_back(key);
         if degraded {
-            pair.degraded_pending.push((share_id, difficulty.max(1)));
+            pair.degraded_pending.push((key, difficulty.max(1)));
         }
         pair.last_seen = now;
         inner
@@ -652,7 +648,11 @@ impl SourceRiskTracker {
 
     /// Picks degraded-window shares to audit, largest unverified credit
     /// first: `ceil(n * sample_rate)` per pair, between 1 and 4.
-    pub(crate) fn take_degraded_review_batch(&self, budget: usize, sample_rate: f64) -> Vec<i64> {
+    pub(crate) fn take_degraded_review_batch(
+        &self,
+        budget: usize,
+        sample_rate: f64,
+    ) -> Vec<ShareKey> {
         use rand::seq::SliceRandom;
 
         if budget == 0 {
@@ -701,11 +701,15 @@ impl SourceRiskTracker {
                 .clamp(1, DEGRADED_REVIEW_MAX_SAMPLES)
                 .min(cohort.len())
                 .min(budget - picked.len());
-            let sampled = cohort
+            let sampled_keys = cohort
                 .choose_multiple(&mut rng, samples)
-                .map(|(id, _)| *id)
+                .map(|(key, _)| *key)
+                .collect::<Vec<_>>();
+            let sampled = sampled_keys
+                .iter()
+                .map(|key| key.id)
                 .collect::<HashSet<_>>();
-            picked.extend(sampled.iter().copied());
+            picked.extend(sampled_keys);
             pair.degraded_review = Some(DegradedReview {
                 sampled,
                 cohort,
@@ -718,23 +722,19 @@ impl SourceRiskTracker {
     fn drain_pair_shares_locked(
         inner: &mut Inner,
         pair_key: &Arc<str>,
-    ) -> Option<(String, Vec<i64>)> {
+    ) -> Option<(String, Vec<ShareKey>)> {
         let pair = inner.pairs.get_mut(pair_key)?;
         if pair.shares.is_empty() {
             return None;
         }
         pair.degraded_pending.clear();
         pair.degraded_review = None;
-        let ids = pair
-            .shares
-            .drain(..)
-            .map(|share| share.share_id)
-            .collect::<Vec<_>>();
+        let keys = pair.shares.drain(..).collect::<Vec<_>>();
         let address = pair.address.to_string();
-        for id in &ids {
-            inner.share_index.remove(id);
+        for key in &keys {
+            inner.share_index.remove(&key.id);
         }
-        Some((address, ids))
+        Some((address, keys))
     }
 
     /// Applies a strike for a proven fake share from `source`. Returns the
@@ -868,7 +868,7 @@ impl SourceRiskTracker {
                     .is_some_and(|share| share.created_at < cutoff)
                 {
                     if let Some(share) = pair.shares.pop_front() {
-                        share_index.remove(&share.share_id);
+                        share_index.remove(&share.id);
                     }
                 }
             }
@@ -886,9 +886,11 @@ impl SourceRiskTracker {
                     continue;
                 }
                 pair.degraded_pending
-                    .retain(|(id, _)| share_index.contains_key(id));
+                    .retain(|(key, _)| share_index.contains_key(&key.id));
                 let drop_review = pair.degraded_review.as_mut().is_some_and(|review| {
-                    review.cohort.retain(|(id, _)| share_index.contains_key(id));
+                    review
+                        .cohort
+                        .retain(|(key, _)| share_index.contains_key(&key.id));
                     review.cohort.is_empty()
                 });
                 if drop_review {
@@ -952,6 +954,18 @@ impl SourceRiskTracker {
 mod tests {
     use super::*;
 
+    fn revoked_ids(outcome: &SourceStrike) -> Vec<(String, Vec<i64>)> {
+        outcome
+            .revoked
+            .iter()
+            .map(|(address, keys)| (address.clone(), keys.iter().map(|key| key.id).collect()))
+            .collect()
+    }
+
+    fn review_ids(keys: Vec<ShareKey>) -> Vec<i64> {
+        keys.into_iter().map(|key| key.id).collect()
+    }
+
     fn policy() -> SourcePolicy {
         SourcePolicy {
             revoke_window: Duration::from_secs(6 * 60 * 60),
@@ -995,7 +1009,10 @@ mod tests {
         tracker.record_provisional(&attacker_b, 3, now, 1, false);
 
         let outcome = tracker.strike(&attacker_a, "invalid share proof");
-        assert_eq!(outcome.revoked, vec![("victim".to_string(), vec![2, 3])]);
+        assert_eq!(
+            revoked_ids(&outcome),
+            vec![("victim".to_string(), vec![2, 3])]
+        );
         assert!(tracker.check_session(&attacker_a).is_err());
         assert!(
             tracker.check_session(&attacker_b).is_err(),
@@ -1029,7 +1046,10 @@ mod tests {
 
         let second = tracker.strike(&fake_2, "invalid share proof");
         assert!(second.ip_banned_for.is_some());
-        assert_eq!(second.revoked, vec![("throwaway-1".to_string(), vec![11])]);
+        assert_eq!(
+            revoked_ids(&second),
+            vec![("throwaway-1".to_string(), vec![11])]
+        );
         assert!(tracker.open_session("throwaway-5", "198.51.100.9").is_err());
         // The established pair keeps its credit and access from that network.
         assert!(tracker.check_session(&honest).is_ok());
@@ -1238,18 +1258,18 @@ mod tests {
         tracker.record_provisional(&small, 200, now, 1, true);
 
         // Budget 1: the pair with the most degraded credit is reviewed first.
-        let first = tracker.take_degraded_review_batch(1, 0.05);
+        let first = review_ids(tracker.take_degraded_review_batch(1, 0.05));
         assert_eq!(first.len(), 1);
         assert!((1..=40).contains(&first[0]));
         // The big pair is in review; the small one comes next.
-        let second = tracker.take_degraded_review_batch(8, 0.05);
+        let second = review_ids(tracker.take_degraded_review_batch(8, 0.05));
         assert_eq!(second, vec![200]);
         assert!(tracker.take_degraded_review_batch(8, 0.05).is_empty());
 
         // Passing the sampled audit clears the cohort.
         assert!(tracker.record_audit_ok(first[0]));
         tracker.record_provisional(&big, 41, now, 100, true);
-        let third = tracker.take_degraded_review_batch(8, 0.05);
+        let third = review_ids(tracker.take_degraded_review_batch(8, 0.05));
         assert_eq!(
             third,
             vec![41],
