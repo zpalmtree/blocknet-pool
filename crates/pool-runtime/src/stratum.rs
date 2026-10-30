@@ -2517,7 +2517,10 @@ impl StratumServer {
 }
 
 fn miner_update_notice(current: &str, latest: &str) -> Option<String> {
-    let (current_parsed, latest_parsed) = (parse_release_version(current)?, parse_release_version(latest)?);
+    let (current_parsed, latest_parsed) = (
+        parse_release_version(current)?,
+        parse_release_version(latest)?,
+    );
     (latest_parsed > current_parsed).then(|| {
         format!(
             "seine {} is available (this worker runs {}); newer releases mine faster on most CPUs: https://github.com/zpalmtree/seine/releases/latest",
@@ -4545,16 +4548,18 @@ mod tests {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     #[test]
     fn heap_trim_returns_freed_memory_to_the_os() {
-        // Free a few hundred MB in small blocks, which glibc keeps for reuse.
-        let blocks: Vec<Vec<u8>> = (0..200_000).map(|i| vec![i as u8; 1_500]).collect();
-        drop(blocks);
-        let before = super::heap_snapshot().expect("mallinfo2").free_held_bytes;
-        super::trim_heap();
-        let after = super::heap_snapshot().expect("mallinfo2").free_held_bytes;
-        assert!(
-            after <= before,
-            "trim kept more free memory: {before} -> {after}"
-        );
+        // Other tests allocate concurrently, so one attempt can see their
+        // churn; a trim that works lowers held memory in at least one try.
+        let trimmed = (0..5).any(|_| {
+            // Free a few hundred MB in small blocks, which glibc keeps for reuse.
+            let blocks: Vec<Vec<u8>> = (0..200_000).map(|i| vec![i as u8; 1_500]).collect();
+            drop(blocks);
+            let before = super::heap_snapshot().expect("mallinfo2").free_held_bytes;
+            super::trim_heap();
+            let after = super::heap_snapshot().expect("mallinfo2").free_held_bytes;
+            after < before
+        });
+        assert!(trimmed, "malloc_trim never lowered held memory");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
