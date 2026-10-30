@@ -31,9 +31,14 @@ backend connections and hides the navigation item.
 - **`service_key`** is pinned and served through `/api/info`
   (`hosted_wallet_service_key`).
 
-The gateway forwards only the cookie, Origin and Content-Type request headers.
+The gateway forwards only the cookie, Origin, Content-Type and Idempotency-Key
+request headers, and adds `X-Client-IP`: the client's address as the API's
+client-IP policy resolves it (an IPv6 client's /64), for the wallet service's
+per-client limits. Clients cannot set it themselves.
 On responses it passes back Content-Type, Content-Disposition and Set-Cookie.
 Responses are `no-store` and `nosniff`. Request bodies are limited to 16 KiB.
+At most 4 requests are forwarded at once; others wait up to 5 seconds for a
+slot, then get 429.
 
 `wallet_hints` (also off by default) serves payout hints to the wallet service
 at `GET /api/internal/wallet-hints` behind a bearer token from a `0600` file.

@@ -917,7 +917,10 @@ fn join_result<R>(result: Result<anyhow::Result<R>, tokio::task::JoinError>) -> 
 
 pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
     state.site_metrics.start(Arc::clone(&state.store));
-    let hosted_wallet = crate::hosted_wallet::router(state.config.active_hosted_wallet())?;
+    let hosted_wallet = crate::hosted_wallet::router(
+        state.config.active_hosted_wallet(),
+        state.client_ip_policy.clone(),
+    )?;
     let wallet_hints =
         crate::wallet_hints::router(state.config.active_wallet_hints(), Arc::clone(&state.store))?;
     let app_state = state.clone();

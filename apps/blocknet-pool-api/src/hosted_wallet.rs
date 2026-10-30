@@ -2,12 +2,17 @@
 //! `/api/wallet/v2/*`). Wallet keys and the payout daemon cookie never enter
 //! this module. Sessions and passkey approvals are enforced by the wallet
 //! service; the gateway credential is not a user credential.
-use std::{net::IpAddr, path::Path, sync::Arc, time::Duration};
+use std::{
+    net::{IpAddr, SocketAddr},
+    path::Path,
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{bail, Context, Result};
 use axum::{
     body::{to_bytes, Body},
-    extract::{Request, State},
+    extract::{ConnectInfo, Request, State},
     http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
@@ -16,6 +21,17 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::Semaphore;
+
+use crate::protect::{client_key, ClientIpPolicy};
+
+/// Requests forwarded at once, and how long a request waits for a free slot
+/// before the gateway answers 429.
+const SLOTS: usize = 4;
+const SLOT_WAIT: Duration = Duration::from_secs(5);
+/// Carries the requesting client's address (an IPv6 client's /64) to the
+/// wallet service for its per-client sign-in limits. Clients cannot set it:
+/// the gateway forwards only the headers it names.
+const CLIENT_IP_HEADER: &str = "x-client-ip";
 
 #[derive(Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -66,9 +82,13 @@ struct Gateway {
     token: HeaderValue,
     client: reqwest::Client,
     slots: Semaphore,
+    client_ip: Arc<ClientIpPolicy>,
 }
 
-pub(crate) fn router<S>(config: Option<&HostedWalletConfig>) -> Result<Router<S>>
+pub(crate) fn router<S>(
+    config: Option<&HostedWalletConfig>,
+    client_ip: Arc<ClientIpPolicy>,
+) -> Result<Router<S>>
 where
     S: Clone + Send + Sync + 'static,
 {
@@ -104,7 +124,8 @@ where
             .connect_timeout(Duration::from_secs(3))
             .timeout(Duration::from_secs(240))
             .build()?,
-        slots: Semaphore::new(4),
+        slots: Semaphore::new(SLOTS),
+        client_ip,
     });
     Ok(routes().with_state(gateway))
 }
@@ -146,13 +167,21 @@ async fn forward(State(gateway): State<Arc<Gateway>>, request: Request) -> Respo
     if !valid_wallet_path(wallet_path) {
         return failure(StatusCode::NOT_FOUND, "not found");
     }
-    let Ok(_permit) = gateway.slots.try_acquire() else {
+    let Ok(Ok(_permit)) = tokio::time::timeout(SLOT_WAIT, gateway.slots.acquire()).await else {
         return failure(
             StatusCode::TOO_MANY_REQUESTS,
             "wallet service busy; retry shortly",
         );
     };
     let (parts, body) = request.into_parts();
+    let peer = parts
+        .extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|info| info.0.ip());
+    let client_ip = gateway
+        .client_ip
+        .resolve(&parts.headers, peer)
+        .map(client_key);
     let body = match to_bytes(body, 16 * 1024).await {
         Ok(body) => body,
         Err(_) => return failure(StatusCode::PAYLOAD_TOO_LARGE, "wallet request too large"),
@@ -169,6 +198,9 @@ async fn forward(State(gateway): State<Arc<Gateway>>, request: Request) -> Respo
         )
         .header(header::AUTHORIZATION, gateway.token.clone())
         .body(body);
+    if let Some(ip) = client_ip {
+        upstream = upstream.header(CLIENT_IP_HEADER, ip);
+    }
     for name in [
         header::COOKIE,
         header::ORIGIN,
@@ -238,7 +270,7 @@ mod tests {
         ] {
             let config: HostedWalletConfig = serde_json::from_str(json).unwrap();
             assert!(!config.enabled);
-            let app: Router = router(Some(&config)).unwrap();
+            let app: Router = router(Some(&config), Arc::default()).unwrap();
             for (method, path) in [
                 ("GET", "/api/wallet/v2/session"),
                 ("POST", "/api/wallet/v2/enroll/begin"),
@@ -259,7 +291,7 @@ mod tests {
                 assert_eq!(response.status(), StatusCode::NOT_FOUND, "{json}: {path}");
             }
         }
-        let app: Router = router(None).unwrap();
+        let app: Router = router(None, Arc::default()).unwrap();
         let response = app
             .oneshot(
                 Request::builder()
@@ -338,6 +370,8 @@ mod tests {
                     assert_eq!(headers[header::COOKIE], "hw_session=test-session");
                     assert_eq!(headers[header::ORIGIN], "https://pool.example");
                     assert!(headers.get("x-user-id").is_none());
+                    // From the trusted proxy's X-Real-IP, not the client's own header.
+                    assert_eq!(headers[CLIENT_IP_HEADER], "203.0.113.7");
                     assert_eq!(body, r#"{"challenge_id":"c"}"#);
                     (
                         [(
@@ -357,13 +391,16 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).unwrap();
         }
-        let app: Router = router(Some(&HostedWalletConfig {
-            enabled: true,
-            backend_url: format!("http://{addr}"),
-            gateway_token_file: token.to_string_lossy().into(),
-            service_key: "cd".repeat(32),
-            ..Default::default()
-        }))
+        let app: Router = router(
+            Some(&HostedWalletConfig {
+                enabled: true,
+                backend_url: format!("http://{addr}"),
+                gateway_token_file: token.to_string_lossy().into(),
+                service_key: "cd".repeat(32),
+                ..Default::default()
+            }),
+            Arc::default(),
+        )
         .unwrap();
         let response = app
             .clone()
@@ -375,6 +412,8 @@ mod tests {
                     .header(header::ORIGIN, "https://pool.example")
                     .header(header::AUTHORIZATION, "Bearer attacker")
                     .header("x-user-id", "other-user")
+                    .header("x-real-ip", "203.0.113.7")
+                    .header(CLIENT_IP_HEADER, "198.51.100.1")
                     .body(Body::from(r#"{"challenge_id":"c"}"#))
                     .unwrap(),
             )
