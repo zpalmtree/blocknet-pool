@@ -73,5 +73,14 @@
     "small-ar-mobile",
     "small-dark-desktop",
     "small-dark-mobile"
-  ]
+  ],
+  "alignment_update": {
+    "base_commit": "f7437745ac3b111cec3f26cf4f164e9a8ec58e82",
+    "styles_sha256": "35423a3c5c914223dd4586a4eb33143999dab618b4698b0bc2679029dfc2a616",
+    "captures": [
+      "status-alignment-desktop",
+      "status-alignment-mobile"
+    ],
+    "checks": "Desktop text centers match; mobile wraps without overflow."
+  }
 }

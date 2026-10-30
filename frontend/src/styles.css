@@ -678,6 +678,7 @@ html:lang(zh) .page-header h1 {
   margin-bottom: 16px;
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px 16px;
 }
 
