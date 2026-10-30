@@ -1,21 +1,12 @@
 import { locale, t } from '../i18n';
 import type { Range, UnixLike } from '../types';
+import { createCoinFormatters } from './coin-format';
+
+export const { formatCoins, formatCompactCoins, formatCoinAmount } = createCoinFormatters(locale);
 
 const relativeTime = new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'short' });
 const rateFormatter = new Intl.NumberFormat(locale, {
   numberingSystem: 'latn', minimumFractionDigits: 2, maximumFractionDigits: 2,
-});
-
-const COIN_FORMATTER = new Intl.NumberFormat(locale, {
-  numberingSystem: 'latn',
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-
-const COMPACT_COIN_FORMATTER = new Intl.NumberFormat(locale, {
-  numberingSystem: 'latn',
-  notation: 'compact',
-  maximumFractionDigits: 2,
 });
 
 const feeFormatter = (maximumFractionDigits: number) =>
@@ -97,24 +88,6 @@ export function humanRate(hps: number | null | undefined): string {
     i += 1;
   }
   return `${rateFormatter.format(v)} ${units[i]}`;
-}
-
-export function formatCoins(sats: number | null | undefined): string {
-  if (sats == null) return '0 BNT';
-  return `${COIN_FORMATTER.format(sats / 1e8)} BNT`;
-}
-
-export function formatCompactCoins(sats: number | null | undefined): string {
-  if (sats == null) return '0 BNT';
-  const amount = sats / 1e8;
-  if (!Number.isFinite(amount)) return '0 BNT';
-  if (Math.abs(amount) < 1000) return `${COIN_FORMATTER.format(amount)} BNT`;
-  return `${COMPACT_COIN_FORMATTER.format(amount)} BNT`;
-}
-
-export function formatCoinAmount(sats: number | null | undefined): string {
-  if (sats == null) return '0.00';
-  return COIN_FORMATTER.format(sats / 1e8);
 }
 
 export function formatFee(sats: number | null | undefined): string {

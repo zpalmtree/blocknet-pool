@@ -329,5 +329,9 @@
   "currentRound": "Huidige ronde",
   "roundAverageWork": "Gemiddeld werk",
   "roundAverageInterval": "Geschatte gemiddelde tijd tussen blokken: {0}",
-  "roundEffortExplanation": "100% is het gemiddeld verwachte werk, niet de voltooiing. Het volgende blok kan op elk moment worden gevonden."
+  "roundEffortExplanation": "100% is het gemiddeld verwachte werk, niet de voltooiing. Het volgende blok kan op elk moment worden gevonden.",
+  "statsWorkRecorded": "Je geaccepteerde shares zijn geregistreerd.",
+  "statsNoShares": "Nog geen geaccepteerde shares. Houd je miner verbonden om werk in te dienen.",
+  "statsLastSubmission": "Laatste share ingediend: {0}.",
+  "statsRewardsBasis": "Shares registreren werk, geen vaste betaling. PPLNS-beloningen hangen af van de moeilijkheidsgraad van de geldige shares wanneer de pool een blok vindt."
 }

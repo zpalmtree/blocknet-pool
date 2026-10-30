@@ -329,5 +329,9 @@
   "currentRound": "現在のラウンド",
   "roundAverageWork": "平均作業量",
   "roundAverageInterval": "推定平均ブロック間隔: {0}",
-  "roundEffortExplanation": "100%は予想される平均作業量であり、完了を意味しません。次のブロックがいつ見つかるかは決まっていません。"
+  "roundEffortExplanation": "100%は予想される平均作業量であり、完了を意味しません。次のブロックがいつ見つかるかは決まっていません。",
+  "statsWorkRecorded": "承認されたシェアは記録されています。",
+  "statsNoShares": "承認されたシェアはまだありません。マイナーを接続したままにして作業結果を送信してください。",
+  "statsLastSubmission": "最後のシェア送信：{0}。",
+  "statsRewardsBasis": "シェアは作業量を記録するもので、固定額の支払いではありません。PPLNS報酬は、プールがブロックを発見した時点で対象となるシェアの難易度に応じて決まります。"
 }

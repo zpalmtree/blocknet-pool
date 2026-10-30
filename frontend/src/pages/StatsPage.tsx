@@ -323,6 +323,10 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const minerRejectRate = minerChecked > 0 ? (minerRejected / minerChecked) * 100 : null;
   const recentShares = minerData?.shares ?? [];
   const previewBlocks = livePendingEstimate?.blocks ?? [];
+  const lastSubmission = Math.max(0,
+    ...(minerData?.workers ?? []).map((worker) => toUnixMs(worker.last_share_at) || 0),
+    ...recentShares.map((share) => toUnixMs(share.created_at) || 0),
+  );
   const verificationHold = minerData?.verification_hold ?? null;
   const verificationReason = verificationHold?.reason?.trim() || t('m599');
   const verificationPendingProvisional = verificationHold?.validation_pending_provisional ?? 0;
@@ -404,6 +408,32 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                 {minerBalanceData ? t("m489") : t("m490")}
               </div>
             </div>)}
+          {minerData && (
+            <section className="card miner-work-status" aria-label={t('m501')}>
+              <strong>{t('m501')}: {minerAccepted.toLocaleString(locale)}</strong>
+              {lastSubmission > 0 && (
+                <span title={timestampTitle(lastSubmission)}>{t('statsLastSubmission', [timeAgo(lastSubmission)])}</span>
+              )}
+              <p>{t(minerAccepted > 0 ? 'statsWorkRecorded' : 'statsNoShares')}</p>
+              <p>{t('statsRewardsBasis')}</p>
+            </section>
+          )}
+          {verificationHold && (<div
+              className="card"
+              style={{ marginBottom: 24, background: 'rgba(247, 180, 75, 0.12)', borderColor: 'rgba(247, 180, 75, 0.45)' }}
+            >
+              <div style={{ color: 'var(--text)', fontSize: 13 }}>
+                {verificationHold.mode === 'quarantined' ? t("m505", [timestampTitle(verificationQuarantineUntil) || t('m600')]) : t("m506", [timestampTitle(verificationOnlyUntil) || t('m600')])}
+                {verificationHold.mode === 'quarantined' &&
+                  verificationOnlyUntil &&
+                  verificationOnlyUntil !== verificationQuarantineUntil && (<> {t("m507", [timestampTitle(verificationOnlyUntil)])}</>)}
+                {verificationHold.validation_hold_cause === 'provisional_backlog' &&
+                verificationPendingProvisional > 0 ? t('m610', [verificationReason, verificationPendingProvisional]) : t("m509", [verificationReason])}
+                {verificationStartedAt && <> {t("m510", [timestampTitle(verificationStartedAt)])}</>}
+                {t("m511")}
+              </div>
+            </div>)}
+
           <div className="stats-card-group" style={{ marginBottom: 16 }}>
             <div className="stats-card-group-title">{t("m491")}</div>
             <div className="stats-card-group-grid">
@@ -446,22 +476,6 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
             <StatCard label={t("m503")} value={minerData ? formatPct(minerRejectRate) : '...'} />
             <StatCard label={t("m504")} value={minerData ? minerAvgDiff : '...'} />
           </div>
-
-          {verificationHold && (<div
-              className="card"
-              style={{ marginBottom: 24, background: 'rgba(247, 180, 75, 0.12)', borderColor: 'rgba(247, 180, 75, 0.45)' }}
-            >
-              <div style={{ color: 'var(--text)', fontSize: 13 }}>
-                {verificationHold.mode === 'quarantined' ? t("m505", [timestampTitle(verificationQuarantineUntil) || t('m600')]) : t("m506", [timestampTitle(verificationOnlyUntil) || t('m600')])}
-                {verificationHold.mode === 'quarantined' &&
-                  verificationOnlyUntil &&
-                  verificationOnlyUntil !== verificationQuarantineUntil && (<> {t("m507", [timestampTitle(verificationOnlyUntil)])}</>)}
-                {verificationHold.validation_hold_cause === 'provisional_backlog' &&
-                verificationPendingProvisional > 0 ? t('m610', [verificationReason, verificationPendingProvisional]) : t("m509", [verificationReason])}
-                {verificationStartedAt && <> {t("m510", [timestampTitle(verificationStartedAt)])}</>}
-                {t("m511")}
-              </div>
-            </div>)}
 
           {minerDetailLoading && (<div className="card" style={{ marginBottom: 24, color: 'var(--muted)', fontSize: 13 }}>{t("m512")}</div>)}
 

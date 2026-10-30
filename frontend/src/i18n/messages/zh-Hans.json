@@ -329,5 +329,9 @@
   "currentRound": "当前轮次",
   "roundAverageWork": "平均工作量",
   "roundAverageInterval": "预计平均出块间隔：{0}",
-  "roundEffortExplanation": "100%表示预期的平均工作量，并非完成进度。下一个区块随时可能被找到。"
+  "roundEffortExplanation": "100%表示预期的平均工作量，并非完成进度。下一个区块随时可能被找到。",
+  "statsWorkRecorded": "您被接受的份额已记录。",
+  "statsNoShares": "尚无被接受的份额。请保持矿工连接以提交工作。",
+  "statsLastSubmission": "最近一次份额提交：{0}。",
+  "statsRewardsBasis": "份额用于记录工作量，并非固定报酬。PPLNS 奖励取决于矿池发现区块时符合条件的份额难度。"
 }

@@ -329,5 +329,9 @@
   "currentRound": "Vòng hiện tại",
   "roundAverageWork": "Lượng công việc trung bình",
   "roundAverageInterval": "Khoảng thời gian trung bình ước tính giữa các khối: {0}",
-  "roundEffortExplanation": "100% là lượng công việc trung bình dự kiến, không phải mức hoàn thành. Khối tiếp theo có thể xuất hiện bất cứ lúc nào."
+  "roundEffortExplanation": "100% là lượng công việc trung bình dự kiến, không phải mức hoàn thành. Khối tiếp theo có thể xuất hiện bất cứ lúc nào.",
+  "statsWorkRecorded": "Các share được chấp nhận của bạn đã được ghi nhận.",
+  "statsNoShares": "Chưa có share nào được chấp nhận. Hãy giữ phần mềm đào kết nối để gửi kết quả công việc.",
+  "statsLastSubmission": "Share gần nhất được gửi {0}.",
+  "statsRewardsBasis": "Share ghi nhận công việc, không phải khoản thanh toán cố định. Phần thưởng PPLNS phụ thuộc vào độ khó của các share đủ điều kiện khi pool tìm thấy một khối."
 }

@@ -329,5 +329,9 @@
   "currentRound": "Ronda actual",
   "roundAverageWork": "Trabajo medio",
   "roundAverageInterval": "Intervalo medio estimado entre bloques: {0}",
-  "roundEffortExplanation": "El 100% representa el trabajo medio esperado, no la finalización. El siguiente bloque puede llegar en cualquier momento."
+  "roundEffortExplanation": "El 100% representa el trabajo medio esperado, no la finalización. El siguiente bloque puede llegar en cualquier momento.",
+  "statsWorkRecorded": "Tus shares aceptados están registrados.",
+  "statsNoShares": "Aún no hay shares aceptados. Mantén tu minero conectado para enviar trabajo.",
+  "statsLastSubmission": "Último share enviado {0}.",
+  "statsRewardsBasis": "Los shares registran trabajo, no un pago fijo. Las recompensas PPLNS dependen de la dificultad de los shares elegibles cuando el pool encuentra un bloque."
 }

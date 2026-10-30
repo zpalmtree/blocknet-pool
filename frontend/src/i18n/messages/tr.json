@@ -329,5 +329,9 @@
   "currentRound": "Geçerli tur",
   "roundAverageWork": "Ortalama iş",
   "roundAverageInterval": "Tahmini ortalama blok aralığı: {0}",
-  "roundEffortExplanation": "100%, tamamlanmayı değil beklenen ortalama işi gösterir. Bir sonraki blok her an bulunabilir."
+  "roundEffortExplanation": "100%, tamamlanmayı değil beklenen ortalama işi gösterir. Bir sonraki blok her an bulunabilir.",
+  "statsWorkRecorded": "Kabul edilen paylarınız kaydedildi.",
+  "statsNoShares": "Henüz kabul edilen pay yok. Çalışma göndermek için madencinizi bağlı tutun.",
+  "statsLastSubmission": "Son pay {0} gönderildi.",
+  "statsRewardsBasis": "Paylar sabit bir ödemeyi değil, yapılan çalışmayı kaydeder. PPLNS ödülleri, havuz bir blok bulduğunda uygun payların zorluğuna bağlıdır."
 }

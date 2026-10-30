@@ -1,0 +1,182 @@
+{
+  "tests": 29,
+  "captures": 26,
+  "checks": [
+    {
+      "state": "small",
+      "width": 390,
+      "overflow": false,
+      "amounts": [
+        "0.00001234 BNT",
+        "0.00001234 BNT",
+        "0.00001234 BNT"
+      ],
+      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+    },
+    {
+      "state": "zero",
+      "width": 390,
+      "overflow": false,
+      "amounts": [
+        "0.00 BNT",
+        "0.00 BNT",
+        "0.00 BNT"
+      ],
+      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+    },
+    {
+      "state": "no-shares",
+      "width": 390,
+      "overflow": false,
+      "amounts": [
+        "0.00 BNT",
+        "0.00 BNT",
+        "0.00 BNT"
+      ],
+      "status": "Shares Accepted: 0No accepted shares yet. Keep your miner connected to submit work.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+    },
+    {
+      "state": "old-shares",
+      "width": 390,
+      "overflow": false,
+      "amounts": [
+        "0.00 BNT",
+        "0.00 BNT",
+        "0.00 BNT"
+      ],
+      "status": "Shares Accepted: 5Last share submitted yesterday.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+    },
+    {
+      "state": "hold",
+      "width": 390,
+      "overflow": false,
+      "amounts": [],
+      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block.",
+      "hold": true,
+      "loading": false
+    },
+    {
+      "state": "quarantined",
+      "width": 390,
+      "overflow": false,
+      "amounts": [],
+      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block.",
+      "hold": true,
+      "loading": false
+    },
+    {
+      "state": "loading",
+      "width": 390,
+      "overflow": false,
+      "amounts": [],
+      "loading": true
+    },
+    {
+      "state": "balance-error",
+      "width": 390,
+      "overflow": false,
+      "amounts": [],
+      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block.",
+      "hold": false,
+      "loading": false
+    },
+    {
+      "state": "error",
+      "width": 390,
+      "overflow": false,
+      "amounts": [],
+      "loading": false
+    },
+    {
+      "state": "empty",
+      "width": 390,
+      "overflow": false,
+      "amounts": [],
+      "loading": false
+    },
+    {
+      "state": "small",
+      "width": 1366,
+      "overflow": false,
+      "amounts": "BalanceEstimated Rewards0.00001234 BNTYour share of unmatured blocksConfirmed Rewards0.00001234 BNTMatured balance awaiting payoutPaid Balance0.00001234 BNTAlready sent to this addressEstimated Rewards appear after the pool finds a block while your shares are in the payout window — for a new miner this can take a few rounds of mining. Found blocks then mature for several hours of confirmations before moving to Confirmed Rewards and being paid out automatically.",
+      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+    },
+    {
+      "state": "one-atom",
+      "width": 1366,
+      "overflow": false,
+      "amounts": "BalanceEstimated Rewards0.00000001 BNTYour share of unmatured blocksConfirmed Rewards0.00000001 BNTMatured balance awaiting payoutPaid Balance0.00000001 BNTAlready sent to this addressEstimated Rewards appear after the pool finds a block while your shares are in the payout window — for a new miner this can take a few rounds of mining. Found blocks then mature for several hours of confirmations before moving to Confirmed Rewards and being paid out automatically.",
+      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+    },
+    {
+      "state": "zero",
+      "width": 1366,
+      "overflow": false,
+      "amounts": "BalanceEstimated Rewards0.00 BNTYour share of unmatured blocksConfirmed Rewards0.00 BNTMatured balance awaiting payoutPaid Balance0.00 BNTAlready sent to this addressEstimated Rewards appear after the pool finds a block while your shares are in the payout window — for a new miner this can take a few rounds of mining. Found blocks then mature for several hours of confirmations before moving to Confirmed Rewards and being paid out automatically.",
+      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+    },
+    {
+      "state": "no-shares",
+      "width": 1366,
+      "overflow": false,
+      "amounts": "BalanceEstimated Rewards0.00 BNTYour share of unmatured blocksConfirmed Rewards0.00 BNTMatured balance awaiting payoutPaid Balance0.00 BNTAlready sent to this addressEstimated Rewards appear after the pool finds a block while your shares are in the payout window — for a new miner this can take a few rounds of mining. Found blocks then mature for several hours of confirmations before moving to Confirmed Rewards and being paid out automatically.",
+      "status": "Shares Accepted: 0No accepted shares yet. Keep your miner connected to submit work.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+    },
+    {
+      "state": "old-shares",
+      "width": 1366,
+      "overflow": false,
+      "amounts": "BalanceEstimated Rewards0.00 BNTYour share of unmatured blocksConfirmed Rewards0.00 BNTMatured balance awaiting payoutPaid Balance0.00 BNTAlready sent to this addressEstimated Rewards appear after the pool finds a block while your shares are in the payout window — for a new miner this can take a few rounds of mining. Found blocks then mature for several hours of confirmations before moving to Confirmed Rewards and being paid out automatically.",
+      "status": "Shares Accepted: 5Last share submitted yesterday.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+    },
+    {
+      "state": "hold",
+      "width": 1366,
+      "overflow": false,
+      "amounts": "BalanceEstimated Rewards0.00 BNTYour share of unmatured blocksConfirmed Rewards0.00 BNTMatured balance awaiting payoutPaid Balance0.00 BNTAlready sent to this addressEstimated Rewards appear after the pool finds a block while your shares are in the payout window — for a new miner this can take a few rounds of mining. Found blocks then mature for several hours of confirmations before moving to Confirmed Rewards and being paid out automatically.",
+      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block.",
+      "hold": true,
+      "loading": false
+    },
+    {
+      "state": "quarantined",
+      "width": 1366,
+      "overflow": false,
+      "amounts": "BalanceEstimated Rewards0.00 BNTYour share of unmatured blocksConfirmed Rewards0.00 BNTMatured balance awaiting payoutPaid Balance0.00 BNTAlready sent to this addressEstimated Rewards appear after the pool finds a block while your shares are in the payout window — for a new miner this can take a few rounds of mining. Found blocks then mature for several hours of confirmations before moving to Confirmed Rewards and being paid out automatically.",
+      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block.",
+      "hold": true,
+      "loading": false
+    },
+    {
+      "state": "loading",
+      "width": 1366,
+      "overflow": false,
+      "loading": true
+    },
+    {
+      "retryable": true,
+      "component": "shared-browser-bridge"
+    },
+    {
+      "state": "error",
+      "width": 1366,
+      "overflow": false,
+      "loading": false
+    },
+    {
+      "state": "empty",
+      "width": 1366,
+      "overflow": false,
+      "loading": false
+    }
+  ],
+  "additional_checks": [
+    "One atomic unit visible on mobile",
+    "German decimal comma",
+    "Arabic RTL",
+    "Light and dark themes",
+    "Clear removes result; relookup restores amount and work status",
+    "No clipped balance values",
+    "No application console errors in successful flows"
+  ]
+}
