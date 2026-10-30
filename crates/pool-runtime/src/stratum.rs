@@ -153,6 +153,20 @@ pub(crate) fn heap_snapshot() -> Option<HeapSnapshot> {
     None
 }
 
+/// Returns freed heap memory to the operating system. glibc keeps memory the
+/// process has freed for reuse, and under this workload's allocation pattern
+/// that held memory keeps growing (`free_held_bytes`) while live use is flat.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub(crate) fn trim_heap() {
+    // SAFETY: malloc_trim only releases free memory the allocator holds.
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+pub(crate) fn trim_heap() {}
+
 /// Miner connections against Stratum's caps, and the connections refused.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ConnectionSnapshot {
@@ -4526,6 +4540,21 @@ mod tests {
         assert_eq!(server.connection_snapshot().rejected_at_cap_total, 1);
         drop((_held_reader, _held_writer));
         shutdown_test_listener(listener_task, server, jobs).await;
+    }
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[test]
+    fn heap_trim_returns_freed_memory_to_the_os() {
+        // Free a few hundred MB in small blocks, which glibc keeps for reuse.
+        let blocks: Vec<Vec<u8>> = (0..200_000).map(|i| vec![i as u8; 1_500]).collect();
+        drop(blocks);
+        let before = super::heap_snapshot().expect("mallinfo2").free_held_bytes;
+        super::trim_heap();
+        let after = super::heap_snapshot().expect("mallinfo2").free_held_bytes;
+        assert!(
+            after <= before,
+            "trim kept more free memory: {before} -> {after}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
