@@ -160,3 +160,16 @@ One line each: hypothesis, stage, tier and host, result, verdict.
   roughly 90-125 ms at p99, and the next lever is the template fetch: a
   compact template from the daemon, with the full block fetched off the
   critical path.
+- **Compact templates** (core `22dc1ab`, pool `2a17070`). The daemon serves
+  `?compact=1` (header only) and `/api/mining/templateblock`; the pool
+  publishes from the header and attaches the full block in the
+  background. T2 on an EPYC 7313P: 22 blocks found and accepted end to
+  end. In prod a template is 904 bytes vs 734 KB. Deployed 2026-10-30
+  00:26 (daemons) and 00:29 EDT (engine `4691b36`). T3 over 10 tips:
+  daemon accept → job published p50 16.7 / p99 24.8 ms (was 35/50);
+  template fetch p50 15 / p99 25 ms (was 29/61). Template → written p50
+  19.5 / p99 90.7 ms; build_chunk p99 53 ms. **Win.** Accept → written
+  end to end is now ~100-115 ms at p99, all of the remainder in fanout
+  chunks waiting on the job-state write lock shared with submit lookups,
+  refill and cleanup. Next lever: split assignment state from the
+  submit-path lock, or shard it.
