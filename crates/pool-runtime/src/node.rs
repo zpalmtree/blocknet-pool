@@ -39,6 +39,10 @@ pub(crate) struct BlockTemplate {
     pub template_expires_at_unix_ms: Option<i64>,
     #[serde(default)]
     pub mempool_generation: Option<u64>,
+    /// The daemon left the transactions out (`compact=1`); the full block is
+    /// fetched separately with `get_template_block`.
+    #[serde(default)]
+    pub compact: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -491,12 +495,25 @@ impl NodeClient {
     }
 
     pub(crate) fn get_block_template(&self, reward_address: Option<&str>) -> Result<BlockTemplate> {
-        let mut path = "/api/mining/blocktemplate".to_string();
+        // Daemons without compact templates ignore the parameter and send the
+        // full block, which `BlockTemplate::compact` then reports as false.
+        let mut path = "/api/mining/blocktemplate?compact=1".to_string();
         if let Some(address) = reward_address.filter(|v| !v.trim().is_empty()) {
-            path.push_str("?address=");
+            path.push_str("&address=");
             path.push_str(&urlencoding::encode(address));
         }
         self.get_json(&path)
+    }
+
+    /// The full block of a template fetched compact, while its lease lasts.
+    pub(crate) fn get_template_block(
+        &self,
+        template_id: &str,
+    ) -> Result<Box<serde_json::value::RawValue>> {
+        self.get_json(&format!(
+            "/api/mining/templateblock?template_id={}",
+            urlencoding::encode(template_id)
+        ))
     }
 
     pub(crate) fn renew_block_template(&self, template_id: &str) -> Result<RenewTemplateResponse> {

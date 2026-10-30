@@ -162,6 +162,9 @@ struct NewBlockEvent {
 pub struct JobManager {
     node: Arc<NodeClient>,
     cfg: Config,
+    /// Lets background work (fetching a compact template's full block)
+    /// reach the manager without keeping it alive.
+    self_ref: std::sync::Weak<JobManager>,
 
     state: RwLock<JobState>,
     /// Height of `state.current` (0 before the first job), readable without
@@ -353,6 +356,9 @@ struct FetchedTemplate {
     job: Job,
     mempool_generation: Option<u64>,
     lease: Option<TemplateLease>,
+    /// The template came without its transactions; fetch the full block for
+    /// the job after it is published.
+    compact: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -392,7 +398,8 @@ impl RefillError {
 impl JobManager {
     pub fn new(node: Arc<NodeClient>, cfg: Config) -> Arc<Self> {
         let (tx, _) = broadcast::channel::<Job>(64);
-        Arc::new(Self {
+        Arc::new_cyclic(|self_ref| Self {
+            self_ref: self_ref.clone(),
             node,
             cfg,
             state: RwLock::new(JobState::default()),
@@ -1277,6 +1284,7 @@ impl JobManager {
             job,
             mempool_generation: template.mempool_generation,
             lease,
+            compact: template.compact,
         })
     }
 
@@ -1285,6 +1293,7 @@ impl JobManager {
             job: parsed,
             mempool_generation,
             lease,
+            compact,
         } = fetched;
 
         let mut state = self.state.write();
@@ -1375,10 +1384,14 @@ impl JobManager {
         // sit between a new tip and the miners' jobs. New assignments only
         // reference the current job, which both steps keep.
         let job_height = parsed.height;
+        let full_block_fetch = compact.then(|| (parsed.id.clone(), parsed.template_id.clone()));
         let _ = self.tx.send(parsed);
         drop(state);
         self.tip_latency
             .job_published(job_height, Instant::now(), SystemTime::now());
+        if let Some((job_id, template_id)) = full_block_fetch {
+            self.attach_template_block_in_background(job_id, template_id);
+        }
 
         // Keep recent jobs bounded. Retiring jobs is cheap; their assignments
         // and the expired ones go in short batched lock passes so the job
@@ -1402,6 +1415,40 @@ impl JobManager {
             );
         }
         self.prune_assignments_batched(true);
+    }
+
+    /// Fetches a compact template's full block off the job path and attaches
+    /// it to the job, for the full-block fallback submit.
+    fn attach_template_block_in_background(&self, job_id: String, template_id: String) {
+        let Some(manager) = self.self_ref.upgrade() else {
+            return;
+        };
+        let spawned = thread::Builder::new()
+            .name("template-block".to_string())
+            .spawn(
+                move || match manager.node.get_template_block(&template_id) {
+                    Ok(block) => manager.attach_template_block(&job_id, Arc::from(block.get())),
+                    Err(err) => tracing::warn!(
+                        job_id = %job_id,
+                        template_id = %template_id,
+                        error = %err,
+                        "failed fetching a compact template's full block"
+                    ),
+                },
+            );
+        if let Err(err) = spawned {
+            tracing::warn!(error = %err, "failed starting template block fetch");
+        }
+    }
+
+    fn attach_template_block(&self, job_id: &str, block: Arc<str>) {
+        let mut state = self.state.write();
+        if let Some(job) = state.jobs.get_mut(job_id) {
+            job.template_block = Some(Arc::clone(&block));
+        }
+        if let Some(current) = state.current.as_mut().filter(|job| job.id == job_id) {
+            current.template_block = Some(block);
+        }
     }
 
     /// Removes expired assignments: found under a read lock, removed in
@@ -1830,7 +1877,8 @@ fn parse_template_into_job(template: &crate::node::BlockTemplate) -> anyhow::Res
         template_id: template.template_id.trim().to_string(),
         prev_hash: header.prev_hash.as_deref().and_then(prev_hash_bytes),
         template_created_at: Instant::now(),
-        template_block: Some(std::sync::Arc::from(template.block.get())),
+        // A compact template's full block is attached after publishing.
+        template_block: (!template.compact).then(|| std::sync::Arc::from(template.block.get())),
     })
 }
 
@@ -2567,28 +2615,29 @@ mod tests {
                 let mut request = [0u8; 4096];
                 let read = stream.read(&mut request).expect("read daemon request");
                 let request = String::from_utf8_lossy(&request[..read]);
-                let (status, body) = if request.starts_with("GET /api/mining/blocktemplate ") {
-                    (
-                        "200 OK",
-                        serde_json::json!({
-                            "block": {
-                                "header": {
-                                    "Height": 10,
-                                    "Difficulty": 1,
-                                    "PrevHash": vec![0x11_u8; 32]
-                                }
-                            },
-                            "target": hex::encode([0xBB; 32]),
-                            "header_base": hex::encode([0xAA; 92]),
-                            "template_id": template_id,
-                            "template_expires_at_unix_ms": expires_at_unix_ms,
-                            "mempool_generation": 7
-                        })
-                        .to_string(),
-                    )
-                } else {
-                    panic!("unexpected daemon request: {request}");
-                };
+                let (status, body) =
+                    if request.starts_with("GET /api/mining/blocktemplate?compact=1 ") {
+                        (
+                            "200 OK",
+                            serde_json::json!({
+                                "block": {
+                                    "header": {
+                                        "Height": 10,
+                                        "Difficulty": 1,
+                                        "PrevHash": vec![0x11_u8; 32]
+                                    }
+                                },
+                                "target": hex::encode([0xBB; 32]),
+                                "header_base": hex::encode([0xAA; 92]),
+                                "template_id": template_id,
+                                "template_expires_at_unix_ms": expires_at_unix_ms,
+                                "mempool_generation": 7
+                            })
+                            .to_string(),
+                        )
+                    } else {
+                        panic!("unexpected daemon request: {request}");
+                    };
                 let response = format!(
                     "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
@@ -2599,6 +2648,91 @@ mod tests {
             }
         });
         (format!("http://{address}"), handle)
+    }
+
+    #[test]
+    fn compact_template_gets_its_full_block_after_the_job_is_published() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind template test server");
+        let address = listener.local_addr().expect("template server address");
+        let expires_at_unix_ms = (SystemTime::now() + Duration::from_secs(600))
+            .duration_since(UNIX_EPOCH)
+            .expect("future expiry")
+            .as_millis() as i64;
+        let full_block = serde_json::json!({
+            "header": {"Height": 11, "Difficulty": 1, "PrevHash": vec![0x0b_u8; 32]},
+            "transactions": [{"coinbase": true}]
+        });
+        let served_block = full_block.clone();
+        let server = thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().expect("accept daemon request");
+                let mut request = [0u8; 4096];
+                let read = stream.read(&mut request).expect("read daemon request");
+                let request = String::from_utf8_lossy(&request[..read]).to_string();
+                let body = if request.starts_with("GET /api/mining/blocktemplate?compact=1 ") {
+                    serde_json::json!({
+                        "block": {"header": served_block["header"].clone()},
+                        "compact": true,
+                        "tx_count": 1,
+                        "target": hex::encode([0xBB; 32]),
+                        "header_base": hex::encode([0xAA; 92]),
+                        "template_id": "tmpl-compact",
+                        "template_expires_at_unix_ms": expires_at_unix_ms,
+                    })
+                } else if request
+                    .starts_with("GET /api/mining/templateblock?template_id=tmpl-compact ")
+                {
+                    served_block.clone()
+                } else {
+                    panic!("unexpected daemon request: {request}");
+                }
+                .to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("write daemon response");
+            }
+        });
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new(&format!("http://{address}"), "").expect("node")),
+            Config::default(),
+        );
+        manager.reward_cache.lock().checked_at = Some(Instant::now());
+        let mut jobs = manager.subscribe();
+
+        manager.refresh_template();
+        let published = jobs
+            .try_recv()
+            .expect("job published from the compact template");
+        assert_eq!(published.height, 11);
+        assert!(published.template_block.is_none());
+
+        server.join().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let attached = loop {
+            let state = manager.state.read();
+            if let Some(block) = state
+                .jobs
+                .get(&published.id)
+                .and_then(|job| job.template_block.clone())
+            {
+                break block;
+            }
+            drop(state);
+            assert!(Instant::now() < deadline, "full block never attached");
+            thread::sleep(Duration::from_millis(10));
+        };
+        let attached: Value = serde_json::from_str(&attached).expect("attached block json");
+        assert_eq!(attached, full_block);
+        assert!(manager
+            .state
+            .read()
+            .current
+            .as_ref()
+            .is_some_and(|job| job.template_block.is_some()));
     }
 
     #[test]
@@ -2827,7 +2961,7 @@ mod tests {
                         break;
                     }
                 }
-                let replacement = request.starts_with("GET /api/mining/blocktemplate ");
+                let replacement = request.starts_with("GET /api/mining/blocktemplate?compact=1 ");
                 let (code, body) = if request.starts_with("POST /api/mining/renewtemplate ") {
                     let message = if renewal_status == 409 {
                         "template no longer builds on current tip"
@@ -4432,6 +4566,7 @@ mod tests {
                 job: replacement,
                 mempool_generation: Some(5),
                 lease: None,
+                compact: false,
             },
             true,
         );
@@ -4472,6 +4607,7 @@ mod tests {
                 job: replacement.clone(),
                 mempool_generation: None,
                 lease: None,
+                compact: false,
             },
             false,
         );
@@ -4485,6 +4621,7 @@ mod tests {
                 job: replacement,
                 mempool_generation: None,
                 lease: None,
+                compact: false,
             },
             true,
         );
