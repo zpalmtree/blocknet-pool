@@ -63,7 +63,6 @@ const VALIDATION_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const SOURCE_REVOKED_REJECT_REASON: &str = "source revoked";
 const PROVEN_FAKE_REJECT_REASON: &str = "invalid share proof";
 
-
 /// Distinct per-share worker names one `proxy_workers_v1` connection may
 /// use; further names count as the session's own worker.
 const MAX_PROXY_WORKERS_PER_SESSION: usize = 4096;
@@ -5278,9 +5277,7 @@ mod tests {
         assert_eq!(shares[0].status, SHARE_STATUS_REJECTED);
     }
 
-    fn proxy_worker_engine(
-        capabilities: Vec<String>,
-    ) -> (PoolEngine, Arc<InMemoryStore>) {
+    fn proxy_worker_engine(capabilities: Vec<String>) -> (PoolEngine, Arc<InMemoryStore>) {
         let cfg = cfg();
         let validation = Arc::new(ValidationEngine::new(
             cfg.clone(),
@@ -5330,7 +5327,11 @@ mod tests {
         submit_as(&engine, 1, Some("rig-07"));
         submit_as(&engine, 2, None);
         submit_as(&engine, 3, Some("  rig\n08  "));
-        let workers: Vec<String> = store.shares().iter().map(|share| share.worker.clone()).collect();
+        let workers: Vec<String> = store
+            .shares()
+            .iter()
+            .map(|share| share.worker.clone())
+            .collect();
         assert_eq!(workers, ["rig-07", "farm", "rig08"]);
     }
 
