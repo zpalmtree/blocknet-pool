@@ -674,18 +674,6 @@ html:lang(zh) .page-header h1 {
   white-space: nowrap;
 }
 
-.miner-work-status {
-  margin-bottom: 16px;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 16px;
-}
-
-.miner-work-status strong { color: var(--text); }
-.miner-work-status span { color: var(--muted); font-size: 13px; }
-.miner-work-status p { flex-basis: 100%; margin: 0; font-size: 13px; color: var(--muted); }
-
 .miner-payout-progress {
   margin-top: 14px;
   padding-top: 12px;

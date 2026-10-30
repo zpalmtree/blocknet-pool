@@ -1,6 +1,6 @@
 {
   "tests": 31,
-  "captures": 42,
+  "captures": 30,
   "checks": [
     {
       "state": "almost-paid",
@@ -23,13 +23,13 @@
     {
       "state": "settings-loading",
       "width": 1366,
-      "text": "Minimum payout: —Loading…Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "text": "Minimum payout: \u2014Loading\u2026Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
       "overflow": false
     },
     {
       "state": "settings-error",
       "width": 1366,
-      "text": "Minimum payout: —Payout minimum unavailable. Retrying automatically.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "text": "Minimum payout: \u2014Payout minimum unavailable. Retrying automatically.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
       "overflow": false
     },
     {
@@ -134,13 +134,13 @@
     {
       "state": "settings-loading",
       "width": 390,
-      "text": "Minimum payout: —Loading…Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "text": "Minimum payout: \u2014Loading\u2026Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
       "overflow": false
     },
     {
       "state": "settings-error",
       "width": 390,
-      "text": "Minimum payout: —Payout minimum unavailable. Retrying automatically.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "text": "Minimum payout: \u2014Payout minimum unavailable. Retrying automatically.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
       "overflow": false
     },
     {
@@ -221,13 +221,13 @@
     {
       "state": "small-de-desktop",
       "width": 1366,
-      "text": "Mindestauszahlung: 1,00 BNT\n\nEs fehlen noch 0,99998766 BNT an bestätigten Belohnungen.\n\nNur bestätigte Belohnungen zählen für den Mindestbetrag. Geschätzte Belohnungen müssen zuerst reifen.",
+      "text": "Mindestauszahlung: 1,00 BNT\n\nEs fehlen noch 0,99998766 BNT an best\u00e4tigten Belohnungen.\n\nNur best\u00e4tigte Belohnungen z\u00e4hlen f\u00fcr den Mindestbetrag. Gesch\u00e4tzte Belohnungen m\u00fcssen zuerst reifen.",
       "overflow": false
     },
     {
       "state": "small-ar-mobile",
       "width": 390,
-      "text": "الحد الأدنى للدفع: 1.00 BNT\n\nتحتاج إلى 0.99998766 BNT إضافية من المكافآت المؤكدة.\n\nتُحتسب المكافآت المؤكدة فقط ضمن الحد الأدنى. يجب أن تنضج المكافآت المقدرة أولاً.",
+      "text": "\u0627\u0644\u062d\u062f \u0627\u0644\u0623\u062f\u0646\u0649 \u0644\u0644\u062f\u0641\u0639: 1.00 BNT\n\n\u062a\u062d\u062a\u0627\u062c \u0625\u0644\u0649 0.99998766 BNT \u0625\u0636\u0627\u0641\u064a\u0629 \u0645\u0646 \u0627\u0644\u0645\u0643\u0627\u0641\u0622\u062a \u0627\u0644\u0645\u0624\u0643\u062f\u0629.\n\n\u062a\u064f\u062d\u062a\u0633\u0628 \u0627\u0644\u0645\u0643\u0627\u0641\u0622\u062a \u0627\u0644\u0645\u0624\u0643\u062f\u0629 \u0641\u0642\u0637 \u0636\u0645\u0646 \u0627\u0644\u062d\u062f \u0627\u0644\u0623\u062f\u0646\u0649. \u064a\u062c\u0628 \u0623\u0646 \u062a\u0646\u0636\u062c \u0627\u0644\u0645\u0643\u0627\u0641\u0622\u062a \u0627\u0644\u0645\u0642\u062f\u0631\u0629 \u0623\u0648\u0644\u0627\u064b.",
       "overflow": false
     },
     {
@@ -256,5 +256,20 @@
     "All captures visually reviewed",
     "German formatting, Arabic RTL, light and dark themes",
     "Production build, TypeScript and 20 translation catalogs pass"
-  ]
+  ],
+  "panel_removal": {
+    "states": [
+      "small",
+      "balance-error",
+      "hold",
+      "quarantined"
+    ],
+    "widths": [
+      1366,
+      390
+    ],
+    "panel_absent": true,
+    "overflow": false,
+    "build": "passed"
+  }
 }
