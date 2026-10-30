@@ -2,7 +2,7 @@ import { locale, t } from '../i18n';
 import type { Range, UnixLike } from '../types';
 import { createCoinFormatters } from './coin-format';
 
-export const { formatCoins, formatCompactCoins, formatCoinAmount } = createCoinFormatters(locale);
+export const { formatCoins, formatCompactCoins, formatCoinAmount, formatExactCoins } = createCoinFormatters(locale);
 
 const relativeTime = new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'short' });
 const rateFormatter = new Intl.NumberFormat(locale, {

@@ -333,5 +333,12 @@
   "statsWorkRecorded": "Share yang diterima telah tercatat.",
   "statsNoShares": "Belum ada share yang diterima. Biarkan miner tetap terhubung untuk mengirim hasil kerja.",
   "statsLastSubmission": "Share terakhir dikirim {0}.",
-  "statsRewardsBasis": "Share mencatat hasil kerja, bukan pembayaran tetap. Imbalan PPLNS bergantung pada kesulitan share yang memenuhi syarat saat pool menemukan blok."
+  "statsRewardsBasis": "Share mencatat hasil kerja, bukan pembayaran tetap. Imbalan PPLNS bergantung pada kesulitan share yang memenuhi syarat saat pool menemukan blok.",
+  "statsPayoutMinimum": "Pembayaran minimum: {0}",
+  "statsPayoutRemaining": "Masih perlu {0} imbalan terkonfirmasi.",
+  "statsPayoutMet": "Minimum tercapai. Imbalan terkonfirmasi menunggu pembayaran otomatis.",
+  "statsPayoutQueued": "Pembayaran dalam antrean: {0}.",
+  "statsPayoutBasis": "Hanya imbalan terkonfirmasi yang dihitung untuk minimum. Imbalan perkiraan harus matang terlebih dahulu.",
+  "statsPayoutUnavailable": "Minimum pembayaran tidak tersedia. Mencoba lagi secara otomatis.",
+  "statsPayoutBalanceUnavailable": "Saldo terkonfirmasi tidak tersedia; kemajuan pembayaran tidak dapat dihitung."
 }

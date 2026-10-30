@@ -8,7 +8,7 @@ import { LAST_MINER_LOOKUP_KEY } from '../../src/lib/storage';
 import type { MinerResponse } from '../../src/types';
 import '../../src/styles.css';
 
-const states = ['small', 'one-atom', 'zero', 'no-shares', 'old-shares', 'hold', 'quarantined', 'loading', 'balance-error', 'error', 'empty'];
+const states = ['small', 'one-atom', 'zero', 'no-shares', 'old-shares', 'hold', 'quarantined', 'loading', 'balance-error', 'error', 'empty', 'below-minimum', 'almost-paid', 'minimum-met', 'queued', 'settings-loading', 'settings-error', 'custom-minimum', 'zero-minimum'];
 const params = new URLSearchParams(location.search);
 const state = states.includes(params.get('state') || '') ? params.get('state')! : 'small';
 const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
@@ -21,6 +21,11 @@ const lastShare = now - (state === 'old-shares' ? 86400 : 120);
 const accepted = state === 'no-shares' ? 0 : 5;
 const held = state === 'hold' || state === 'quarantined';
 const reward = state === 'small' ? 1234 : state === 'one-atom' ? 1 : 0;
+const confirmed = state === 'below-minimum' ? 379117
+  : state === 'almost-paid' ? 99999999
+  : state === 'minimum-met' || state === 'queued' ? 100000000
+  : state === 'custom-minimum' ? 1 : reward;
+const estimated = state === 'below-minimum' ? 73690 : state === 'almost-paid' ? 100000000 : reward;
 const miner: MinerResponse = {
   hashrate: 0, mining_since: accepted ? lastShare - 3600 : null,
   blocks_found: 0, total_accepted: accepted, total_rejected: 0, latest_miner_version: '',
@@ -41,6 +46,11 @@ const nativeFetch = window.fetch.bind(window);
 window.fetch = async (input, init) => {
   const path = String(input);
   if (!path.startsWith('/api/')) return nativeFetch(input, init);
+  if (path === '/api/info') {
+    if (state === 'settings-loading') return new Promise<Response>(() => {});
+    if (state === 'settings-error') return Response.json({ error: 'Demo: pool settings unavailable' }, { status: 500 });
+    return Response.json({ min_payout_amount: state === 'custom-minimum' ? 5.12345678 : state === 'zero-minimum' ? 0 : 1 });
+  }
   if (path.startsWith('/api/miner/')) {
     if (state === 'loading') return new Promise<Response>(() => {});
     if (state === 'error' || (state === 'balance-error' && path.includes('/balance'))) {
@@ -48,8 +58,8 @@ window.fetch = async (input, init) => {
     }
     if (path.includes('/hashrate')) return Response.json([]);
     if (path.includes('/balance')) return Response.json({
-      address, balance: { pending_confirmed: reward, pending_queued: 0, paid: reward },
-      pending_estimate: { estimated_pending: reward, blocks: reward || held ? [{
+      address, balance: { pending_confirmed: confirmed, pending_queued: state === 'queued' ? 100000000 : 0, paid: reward },
+      pending_estimate: { estimated_pending: estimated, blocks: reward || held ? [{
         height: 123456, hash: 'demo-block', timestamp: now - 60,
         estimated_credit: reward, credit_withheld: state === 'quarantined',
         validation_state: held ? 'extra_verification' : 'normal',

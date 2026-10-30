@@ -333,5 +333,12 @@
   "statsWorkRecorded": "Deine akzeptierten Shares sind erfasst.",
   "statsNoShares": "Noch keine akzeptierten Shares. Lass deinen Miner verbunden, um Arbeit einzureichen.",
   "statsLastSubmission": "Letzter Share eingereicht: {0}",
-  "statsRewardsBasis": "Shares erfassen Arbeit, keine feste Zahlung. PPLNS-Belohnungen hängen von der Schwierigkeit der berechtigten Shares ab, wenn der Pool einen Block findet."
+  "statsRewardsBasis": "Shares erfassen Arbeit, keine feste Zahlung. PPLNS-Belohnungen hängen von der Schwierigkeit der berechtigten Shares ab, wenn der Pool einen Block findet.",
+  "statsPayoutMinimum": "Mindestauszahlung: {0}",
+  "statsPayoutRemaining": "Es fehlen noch {0} an bestätigten Belohnungen.",
+  "statsPayoutMet": "Mindestbetrag erreicht. Bestätigte Belohnungen warten auf die automatische Auszahlung.",
+  "statsPayoutQueued": "Auszahlung vorgemerkt: {0}.",
+  "statsPayoutBasis": "Nur bestätigte Belohnungen zählen für den Mindestbetrag. Geschätzte Belohnungen müssen zuerst reifen.",
+  "statsPayoutUnavailable": "Mindestauszahlung nicht verfügbar. Erneuter Versuch erfolgt automatisch.",
+  "statsPayoutBalanceUnavailable": "Bestätigter Saldo nicht verfügbar; der Auszahlungsfortschritt kann nicht berechnet werden."
 }

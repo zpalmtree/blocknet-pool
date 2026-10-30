@@ -333,5 +333,12 @@
   "statsWorkRecorded": "Seus shares aceitos estão registrados.",
   "statsNoShares": "Nenhum share aceito ainda. Mantenha seu minerador conectado para enviar trabalho.",
   "statsLastSubmission": "Último share enviado {0}.",
-  "statsRewardsBasis": "Shares registram trabalho, não um pagamento fixo. As recompensas PPLNS dependem da dificuldade dos shares elegíveis quando o pool encontra um bloco."
+  "statsRewardsBasis": "Shares registram trabalho, não um pagamento fixo. As recompensas PPLNS dependem da dificuldade dos shares elegíveis quando o pool encontra um bloco.",
+  "statsPayoutMinimum": "Pagamento mínimo: {0}",
+  "statsPayoutRemaining": "Faltam {0} em recompensas confirmadas.",
+  "statsPayoutMet": "Mínimo atingido. As recompensas confirmadas aguardam pagamento automático.",
+  "statsPayoutQueued": "Pagamento na fila: {0}.",
+  "statsPayoutBasis": "Somente recompensas confirmadas contam para o mínimo. As recompensas estimadas precisam amadurecer primeiro.",
+  "statsPayoutUnavailable": "Mínimo de pagamento indisponível. Tentando novamente automaticamente.",
+  "statsPayoutBalanceUnavailable": "Saldo confirmado indisponível; não é possível calcular o progresso do pagamento."
 }

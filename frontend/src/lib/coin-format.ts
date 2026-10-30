@@ -13,10 +13,11 @@ export function createCoinFormatters(locale: string) {
   };
   const formatCoins = (atoms: number | null | undefined): string =>
     atoms == null ? '0 BNT' : `${formatCoinAmount(atoms)} BNT`;
+  const formatExactCoins = (atoms: number): string => `${small.format(atoms / 1e8)} BNT`;
   const formatCompactCoins = (atoms: number | null | undefined): string => {
     if (atoms == null || !Number.isFinite(atoms)) return '0 BNT';
     const amount = atoms / 1e8;
     return Math.abs(amount) < 1000 ? formatCoins(atoms) : `${compact.format(amount)} BNT`;
   };
-  return { formatCoins, formatCompactCoins, formatCoinAmount };
+  return { formatCoins, formatCompactCoins, formatCoinAmount, formatExactCoins };
 }

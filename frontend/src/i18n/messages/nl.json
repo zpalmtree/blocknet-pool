@@ -333,5 +333,12 @@
   "statsWorkRecorded": "Je geaccepteerde shares zijn geregistreerd.",
   "statsNoShares": "Nog geen geaccepteerde shares. Houd je miner verbonden om werk in te dienen.",
   "statsLastSubmission": "Laatste share ingediend: {0}.",
-  "statsRewardsBasis": "Shares registreren werk, geen vaste betaling. PPLNS-beloningen hangen af van de moeilijkheidsgraad van de geldige shares wanneer de pool een blok vindt."
+  "statsRewardsBasis": "Shares registreren werk, geen vaste betaling. PPLNS-beloningen hangen af van de moeilijkheidsgraad van de geldige shares wanneer de pool een blok vindt.",
+  "statsPayoutMinimum": "Minimale uitbetaling: {0}",
+  "statsPayoutRemaining": "Nog {0} aan bevestigde beloningen nodig.",
+  "statsPayoutMet": "Minimum bereikt. Bevestigde beloningen wachten op automatische uitbetaling.",
+  "statsPayoutQueued": "Uitbetaling in wachtrij: {0}.",
+  "statsPayoutBasis": "Alleen bevestigde beloningen tellen mee voor het minimum. Geschatte beloningen moeten eerst rijpen.",
+  "statsPayoutUnavailable": "Minimale uitbetaling niet beschikbaar. Er wordt automatisch opnieuw geprobeerd.",
+  "statsPayoutBalanceUnavailable": "Bevestigd saldo niet beschikbaar; de voortgang naar uitbetaling kan niet worden berekend."
 }

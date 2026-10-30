@@ -1,17 +1,24 @@
 # Small miner rewards
 
 Start from the repository root with `npm --prefix frontend run showcase:rewards`.
-Open http://localhost:5197/showcases/small-rewards/?state=small&lang=en.
+Open http://localhost:5197/showcases/small-rewards/?state=below-minimum&lang=en.
 The state picker renders the real StatsPage through the real API client with
 synthetic responses; it never contacts the pool. Add `theme=dark` or `lang=de`
 (any supported language) to preview other appearances.
 
-The [capture gallery](./captures.html) contains 26 reviewed desktop (1366px) and
+The [capture gallery](./captures.html) contains 42 reviewed desktop (1366px) and
 mobile (390px) captures. `source-revision.json` records the base commit and exact
 source hashes. States cover small rewards, one atomic unit, zero rewards, no
 shares, old shares without active workers, verification holds, quarantine,
 loading, failed balance lookup, failed miner lookup and empty lookup. Disabled
 controls, dark mode, German decimal formatting and Arabic RTL are also covered.
+
+Payout progress fetches the pool’s configured minimum and refreshes it every minute.
+The shortfall uses confirmed rewards only, with eight-decimal precision even for
+custom minima above 1 BNT. Queued payouts take precedence; missing settings or
+balances never imply zero or payout eligibility. Captures also cover a one-atomic-unit
+shortfall, threshold reached, queued payouts, settings loading/failure, a custom
+minimum and a zero minimum with no balance.
 
 Amounts below 1 BNT retain up to eight decimals, with unnecessary trailing zeros
 removed (at least two decimals remain). Larger values keep their existing
@@ -23,7 +30,7 @@ eligibility, an active connection or a guaranteed reward. Verification holds
 appear before balances, and failed balance requests retain the existing unknown
 display instead of showing zero. No accounting or API changes are required.
 
-Validation: 29 frontend tests, production build (including type checks, all 20
+Validation: 31 frontend tests, production build (including type checks, all 20
 catalogs and static content), and the shared Windows Chrome Playwright MCP.
 Checked small amounts in cards and block rows, clear/relookup behavior, unknown
 balances, holds, no document overflow, and both themes. The only intermittent

@@ -333,5 +333,12 @@
   "statsWorkRecorded": "Your accepted shares are recorded.",
   "statsNoShares": "No accepted shares yet. Keep your miner connected to submit work.",
   "statsLastSubmission": "Last share submitted {0}.",
-  "statsRewardsBasis": "Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+  "statsRewardsBasis": "Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block.",
+  "statsPayoutMinimum": "Minimum payout: {0}",
+  "statsPayoutRemaining": "{0} more confirmed rewards needed.",
+  "statsPayoutMet": "Minimum reached. Confirmed rewards are awaiting automatic payout.",
+  "statsPayoutQueued": "Payout queued: {0}.",
+  "statsPayoutBasis": "Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+  "statsPayoutUnavailable": "Payout minimum unavailable. Retrying automatically.",
+  "statsPayoutBalanceUnavailable": "Confirmed balance unavailable; payout progress cannot be calculated."
 }

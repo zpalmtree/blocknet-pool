@@ -333,5 +333,12 @@
   "statsWorkRecorded": "承認されたシェアは記録されています。",
   "statsNoShares": "承認されたシェアはまだありません。マイナーを接続したままにして作業結果を送信してください。",
   "statsLastSubmission": "最後のシェア送信：{0}。",
-  "statsRewardsBasis": "シェアは作業量を記録するもので、固定額の支払いではありません。PPLNS報酬は、プールがブロックを発見した時点で対象となるシェアの難易度に応じて決まります。"
+  "statsRewardsBasis": "シェアは作業量を記録するもので、固定額の支払いではありません。PPLNS報酬は、プールがブロックを発見した時点で対象となるシェアの難易度に応じて決まります。",
+  "statsPayoutMinimum": "最低支払額：{0}",
+  "statsPayoutRemaining": "確定報酬があと{0}必要です。",
+  "statsPayoutMet": "最低額に達しました。確定報酬は自動支払いを待っています。",
+  "statsPayoutQueued": "支払い待ち：{0}。",
+  "statsPayoutBasis": "最低額に算入されるのは確定報酬のみです。推定報酬は先に成熟する必要があります。",
+  "statsPayoutUnavailable": "最低支払額を取得できません。自動的に再試行します。",
+  "statsPayoutBalanceUnavailable": "確定残高を取得できないため、支払いまでの進捗を計算できません。"
 }

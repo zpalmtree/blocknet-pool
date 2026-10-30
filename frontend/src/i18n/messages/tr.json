@@ -333,5 +333,12 @@
   "statsWorkRecorded": "Kabul edilen paylarınız kaydedildi.",
   "statsNoShares": "Henüz kabul edilen pay yok. Çalışma göndermek için madencinizi bağlı tutun.",
   "statsLastSubmission": "Son pay {0} gönderildi.",
-  "statsRewardsBasis": "Paylar sabit bir ödemeyi değil, yapılan çalışmayı kaydeder. PPLNS ödülleri, havuz bir blok bulduğunda uygun payların zorluğuna bağlıdır."
+  "statsRewardsBasis": "Paylar sabit bir ödemeyi değil, yapılan çalışmayı kaydeder. PPLNS ödülleri, havuz bir blok bulduğunda uygun payların zorluğuna bağlıdır.",
+  "statsPayoutMinimum": "Minimum ödeme: {0}",
+  "statsPayoutRemaining": "{0} tutarında daha fazla onaylanmış ödül gerekiyor.",
+  "statsPayoutMet": "Minimuma ulaşıldı. Onaylanmış ödüller otomatik ödeme bekliyor.",
+  "statsPayoutQueued": "Ödeme sırada: {0}.",
+  "statsPayoutBasis": "Minimum tutara yalnızca onaylanmış ödüller sayılır. Tahmini ödüllerin önce olgunlaşması gerekir.",
+  "statsPayoutUnavailable": "Minimum ödeme bilgisi alınamıyor. Otomatik olarak yeniden deneniyor.",
+  "statsPayoutBalanceUnavailable": "Onaylanmış bakiye bilgisi alınamıyor; ödeme ilerlemesi hesaplanamıyor."
 }

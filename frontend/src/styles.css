@@ -685,6 +685,15 @@ html:lang(zh) .page-header h1 {
 .miner-work-status span { color: var(--muted); font-size: 13px; }
 .miner-work-status p { flex-basis: 100%; margin: 0; font-size: 13px; color: var(--muted); }
 
+.miner-payout-progress {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.miner-payout-progress p { margin: 4px 0 0; color: var(--muted); }
+
 /* Keep small rewards readable without relying on a hover tooltip. */
 #page-stats .stats-card-group-grid .stat-card .value {
   white-space: normal;

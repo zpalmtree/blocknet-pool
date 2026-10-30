@@ -1,182 +1,260 @@
 {
-  "tests": 29,
-  "captures": 26,
+  "tests": 31,
+  "captures": 42,
   "checks": [
     {
-      "state": "small",
-      "width": 390,
-      "overflow": false,
-      "amounts": [
-        "0.00001234 BNT",
-        "0.00001234 BNT",
-        "0.00001234 BNT"
-      ],
-      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+      "state": "almost-paid",
+      "width": 1366,
+      "text": "Minimum payout: 1.00 BNT0.00000001 BNT more confirmed rewards needed.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
     },
     {
-      "state": "zero",
-      "width": 390,
-      "overflow": false,
-      "amounts": [
-        "0.00 BNT",
-        "0.00 BNT",
-        "0.00 BNT"
-      ],
-      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+      "state": "minimum-met",
+      "width": 1366,
+      "text": "Minimum payout: 1.00 BNTMinimum reached. Confirmed rewards are awaiting automatic payout.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
     },
     {
-      "state": "no-shares",
-      "width": 390,
-      "overflow": false,
-      "amounts": [
-        "0.00 BNT",
-        "0.00 BNT",
-        "0.00 BNT"
-      ],
-      "status": "Shares Accepted: 0No accepted shares yet. Keep your miner connected to submit work.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+      "state": "queued",
+      "width": 1366,
+      "text": "Minimum payout: 1.00 BNTPayout queued: 1.00 BNT.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
     },
     {
-      "state": "old-shares",
-      "width": 390,
-      "overflow": false,
-      "amounts": [
-        "0.00 BNT",
-        "0.00 BNT",
-        "0.00 BNT"
-      ],
-      "status": "Shares Accepted: 5Last share submitted yesterday.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+      "state": "settings-loading",
+      "width": 1366,
+      "text": "Minimum payout: —Loading…Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
     },
     {
-      "state": "hold",
-      "width": 390,
-      "overflow": false,
-      "amounts": [],
-      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block.",
-      "hold": true,
-      "loading": false
+      "state": "settings-error",
+      "width": 1366,
+      "text": "Minimum payout: —Payout minimum unavailable. Retrying automatically.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
     },
     {
-      "state": "quarantined",
-      "width": 390,
-      "overflow": false,
-      "amounts": [],
-      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block.",
-      "hold": true,
-      "loading": false
+      "state": "custom-minimum",
+      "width": 1366,
+      "text": "Minimum payout: 5.12345678 BNT5.12345677 BNT more confirmed rewards needed.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
     },
     {
-      "state": "loading",
-      "width": 390,
-      "overflow": false,
-      "amounts": [],
-      "loading": true
-    },
-    {
-      "state": "balance-error",
-      "width": 390,
-      "overflow": false,
-      "amounts": [],
-      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block.",
-      "hold": false,
-      "loading": false
-    },
-    {
-      "state": "error",
-      "width": 390,
-      "overflow": false,
-      "amounts": [],
-      "loading": false
-    },
-    {
-      "state": "empty",
-      "width": 390,
-      "overflow": false,
-      "amounts": [],
-      "loading": false
+      "state": "zero-minimum",
+      "width": 1366,
+      "text": "Minimum payout: 0.00 BNTOnly confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
     },
     {
       "state": "small",
       "width": 1366,
-      "overflow": false,
-      "amounts": "BalanceEstimated Rewards0.00001234 BNTYour share of unmatured blocksConfirmed Rewards0.00001234 BNTMatured balance awaiting payoutPaid Balance0.00001234 BNTAlready sent to this addressEstimated Rewards appear after the pool finds a block while your shares are in the payout window — for a new miner this can take a few rounds of mining. Found blocks then mature for several hours of confirmations before moving to Confirmed Rewards and being paid out automatically.",
-      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+      "text": "Minimum payout: 1.00 BNT0.99998766 BNT more confirmed rewards needed.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
     },
     {
       "state": "one-atom",
       "width": 1366,
-      "overflow": false,
-      "amounts": "BalanceEstimated Rewards0.00000001 BNTYour share of unmatured blocksConfirmed Rewards0.00000001 BNTMatured balance awaiting payoutPaid Balance0.00000001 BNTAlready sent to this addressEstimated Rewards appear after the pool finds a block while your shares are in the payout window — for a new miner this can take a few rounds of mining. Found blocks then mature for several hours of confirmations before moving to Confirmed Rewards and being paid out automatically.",
-      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+      "text": "Minimum payout: 1.00 BNT0.99999999 BNT more confirmed rewards needed.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
     },
     {
       "state": "zero",
       "width": 1366,
-      "overflow": false,
-      "amounts": "BalanceEstimated Rewards0.00 BNTYour share of unmatured blocksConfirmed Rewards0.00 BNTMatured balance awaiting payoutPaid Balance0.00 BNTAlready sent to this addressEstimated Rewards appear after the pool finds a block while your shares are in the payout window — for a new miner this can take a few rounds of mining. Found blocks then mature for several hours of confirmations before moving to Confirmed Rewards and being paid out automatically.",
-      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+      "text": "Minimum payout: 1.00 BNT1.00 BNT more confirmed rewards needed.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
     },
     {
       "state": "no-shares",
       "width": 1366,
-      "overflow": false,
-      "amounts": "BalanceEstimated Rewards0.00 BNTYour share of unmatured blocksConfirmed Rewards0.00 BNTMatured balance awaiting payoutPaid Balance0.00 BNTAlready sent to this addressEstimated Rewards appear after the pool finds a block while your shares are in the payout window — for a new miner this can take a few rounds of mining. Found blocks then mature for several hours of confirmations before moving to Confirmed Rewards and being paid out automatically.",
-      "status": "Shares Accepted: 0No accepted shares yet. Keep your miner connected to submit work.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+      "text": "Minimum payout: 1.00 BNT1.00 BNT more confirmed rewards needed.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
     },
     {
       "state": "old-shares",
       "width": 1366,
-      "overflow": false,
-      "amounts": "BalanceEstimated Rewards0.00 BNTYour share of unmatured blocksConfirmed Rewards0.00 BNTMatured balance awaiting payoutPaid Balance0.00 BNTAlready sent to this addressEstimated Rewards appear after the pool finds a block while your shares are in the payout window — for a new miner this can take a few rounds of mining. Found blocks then mature for several hours of confirmations before moving to Confirmed Rewards and being paid out automatically.",
-      "status": "Shares Accepted: 5Last share submitted yesterday.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block."
+      "text": "Minimum payout: 1.00 BNT1.00 BNT more confirmed rewards needed.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
     },
     {
       "state": "hold",
       "width": 1366,
-      "overflow": false,
-      "amounts": "BalanceEstimated Rewards0.00 BNTYour share of unmatured blocksConfirmed Rewards0.00 BNTMatured balance awaiting payoutPaid Balance0.00 BNTAlready sent to this addressEstimated Rewards appear after the pool finds a block while your shares are in the payout window — for a new miner this can take a few rounds of mining. Found blocks then mature for several hours of confirmations before moving to Confirmed Rewards and being paid out automatically.",
-      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block.",
-      "hold": true,
-      "loading": false
+      "text": "Minimum payout: 1.00 BNT1.00 BNT more confirmed rewards needed.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
     },
     {
       "state": "quarantined",
       "width": 1366,
-      "overflow": false,
-      "amounts": "BalanceEstimated Rewards0.00 BNTYour share of unmatured blocksConfirmed Rewards0.00 BNTMatured balance awaiting payoutPaid Balance0.00 BNTAlready sent to this addressEstimated Rewards appear after the pool finds a block while your shares are in the payout window — for a new miner this can take a few rounds of mining. Found blocks then mature for several hours of confirmations before moving to Confirmed Rewards and being paid out automatically.",
-      "status": "Shares Accepted: 5Last share submitted 2 min. ago.Your accepted shares are recorded.Shares record work, not a fixed payment. PPLNS rewards depend on eligible share difficulty when the pool finds a block.",
-      "hold": true,
-      "loading": false
+      "text": "Minimum payout: 1.00 BNT1.00 BNT more confirmed rewards needed.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
     },
     {
       "state": "loading",
       "width": 1366,
-      "overflow": false,
-      "loading": true
+      "overflow": false
     },
     {
-      "retryable": true,
-      "component": "shared-browser-bridge"
+      "state": "balance-error",
+      "width": 1366,
+      "text": "Minimum payout: 1.00 BNTConfirmed balance unavailable; payout progress cannot be calculated.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
     },
     {
       "state": "error",
       "width": 1366,
-      "overflow": false,
-      "loading": false
+      "overflow": false
     },
     {
       "state": "empty",
       "width": 1366,
-      "overflow": false,
-      "loading": false
+      "overflow": false
+    },
+    {
+      "state": "below-minimum",
+      "width": 390,
+      "text": "Minimum payout: 1.00 BNT0.99620883 BNT more confirmed rewards needed.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
+    },
+    {
+      "state": "almost-paid",
+      "width": 390,
+      "text": "Minimum payout: 1.00 BNT0.00000001 BNT more confirmed rewards needed.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
+    },
+    {
+      "state": "minimum-met",
+      "width": 390,
+      "text": "Minimum payout: 1.00 BNTMinimum reached. Confirmed rewards are awaiting automatic payout.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
+    },
+    {
+      "state": "queued",
+      "width": 390,
+      "text": "Minimum payout: 1.00 BNTPayout queued: 1.00 BNT.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
+    },
+    {
+      "state": "settings-loading",
+      "width": 390,
+      "text": "Minimum payout: —Loading…Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
+    },
+    {
+      "state": "settings-error",
+      "width": 390,
+      "text": "Minimum payout: —Payout minimum unavailable. Retrying automatically.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
+    },
+    {
+      "state": "custom-minimum",
+      "width": 390,
+      "text": "Minimum payout: 5.12345678 BNT5.12345677 BNT more confirmed rewards needed.Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
+    },
+    {
+      "state": "zero-minimum",
+      "width": 390,
+      "text": "Minimum payout: 0.00 BNTOnly confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
+    },
+    {
+      "state": "small",
+      "width": 390,
+      "text": "Minimum payout: 1.00 BNT\n\n0.99998766 BNT more confirmed rewards needed.\n\nOnly confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
+    },
+    {
+      "state": "one-atom",
+      "width": 390,
+      "text": "Minimum payout: 1.00 BNT\n\n0.99999999 BNT more confirmed rewards needed.\n\nOnly confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
+    },
+    {
+      "state": "zero",
+      "width": 390,
+      "text": "Minimum payout: 1.00 BNT\n\n1.00 BNT more confirmed rewards needed.\n\nOnly confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
+    },
+    {
+      "state": "no-shares",
+      "width": 390,
+      "text": "Minimum payout: 1.00 BNT\n\n1.00 BNT more confirmed rewards needed.\n\nOnly confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
+    },
+    {
+      "state": "old-shares",
+      "width": 390,
+      "text": "Minimum payout: 1.00 BNT\n\n1.00 BNT more confirmed rewards needed.\n\nOnly confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
+    },
+    {
+      "state": "hold",
+      "width": 390,
+      "text": "Minimum payout: 1.00 BNT\n\n1.00 BNT more confirmed rewards needed.\n\nOnly confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
+    },
+    {
+      "state": "quarantined",
+      "width": 390,
+      "text": "Minimum payout: 1.00 BNT\n\n1.00 BNT more confirmed rewards needed.\n\nOnly confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
+    },
+    {
+      "state": "loading",
+      "width": 390,
+      "overflow": false
+    },
+    {
+      "state": "balance-error",
+      "width": 390,
+      "text": "Minimum payout: 1.00 BNT\n\nConfirmed balance unavailable; payout progress cannot be calculated.\n\nOnly confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
+    },
+    {
+      "state": "error",
+      "width": 390,
+      "overflow": false
+    },
+    {
+      "state": "empty",
+      "width": 390,
+      "overflow": false
+    },
+    {
+      "state": "small-de-desktop",
+      "width": 1366,
+      "text": "Mindestauszahlung: 1,00 BNT\n\nEs fehlen noch 0,99998766 BNT an bestätigten Belohnungen.\n\nNur bestätigte Belohnungen zählen für den Mindestbetrag. Geschätzte Belohnungen müssen zuerst reifen.",
+      "overflow": false
+    },
+    {
+      "state": "small-ar-mobile",
+      "width": 390,
+      "text": "الحد الأدنى للدفع: 1.00 BNT\n\nتحتاج إلى 0.99998766 BNT إضافية من المكافآت المؤكدة.\n\nتُحتسب المكافآت المؤكدة فقط ضمن الحد الأدنى. يجب أن تنضج المكافآت المقدرة أولاً.",
+      "overflow": false
+    },
+    {
+      "state": "small-dark-desktop",
+      "width": 1366,
+      "text": "Minimum payout: 1.00 BNT\n\n0.99998766 BNT more confirmed rewards needed.\n\nOnly confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
+    },
+    {
+      "state": "small-dark-mobile",
+      "width": 390,
+      "text": "Minimum payout: 1.00 BNT\n\n0.99998766 BNT more confirmed rewards needed.\n\nOnly confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
+    },
+    {
+      "state": "below-minimum",
+      "width": 1366,
+      "text": "Minimum payout: 1.00 BNT\n\n0.99620883 BNT more confirmed rewards needed.\n\nOnly confirmed rewards count toward the minimum. Estimated rewards must mature first.",
+      "overflow": false
     }
   ],
   "additional_checks": [
-    "One atomic unit visible on mobile",
-    "German decimal comma",
-    "Arabic RTL",
-    "Light and dark themes",
-    "Clear removes result; relookup restores amount and work status",
-    "No clipped balance values",
-    "No application console errors in successful flows"
+    "Confirmed-only shortfall including final atomic unit",
+    "Queued payouts, zero and custom minima",
+    "Loading and failed settings, failed balance lookup",
+    "All captures visually reviewed",
+    "German formatting, Arabic RTL, light and dark themes",
+    "Production build, TypeScript and 20 translation catalogs pass"
   ]
 }

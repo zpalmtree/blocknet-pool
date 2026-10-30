@@ -333,5 +333,12 @@
   "statsWorkRecorded": "승인된 셰어가 기록되었습니다.",
   "statsNoShares": "아직 승인된 셰어가 없습니다. 작업을 제출하려면 마이너의 연결을 유지하세요.",
   "statsLastSubmission": "마지막 셰어 제출: {0}.",
-  "statsRewardsBasis": "셰어는 작업을 기록하며 고정 지급액을 뜻하지 않습니다. PPLNS 보상은 풀이 블록을 발견했을 때 유효한 셰어의 난이도에 따라 결정됩니다."
+  "statsRewardsBasis": "셰어는 작업을 기록하며 고정 지급액을 뜻하지 않습니다. PPLNS 보상은 풀이 블록을 발견했을 때 유효한 셰어의 난이도에 따라 결정됩니다.",
+  "statsPayoutMinimum": "최소 지급액: {0}",
+  "statsPayoutRemaining": "확정 보상이 {0} 더 필요합니다.",
+  "statsPayoutMet": "최소 금액에 도달했습니다. 확정 보상이 자동 지급을 기다리고 있습니다.",
+  "statsPayoutQueued": "지급 대기 중: {0}.",
+  "statsPayoutBasis": "확정 보상만 최소 금액에 포함됩니다. 예상 보상은 먼저 성숙해야 합니다.",
+  "statsPayoutUnavailable": "최소 지급액 정보를 사용할 수 없습니다. 자동으로 다시 시도합니다.",
+  "statsPayoutBalanceUnavailable": "확정 잔액을 사용할 수 없어 지급 진행 상황을 계산할 수 없습니다."
 }

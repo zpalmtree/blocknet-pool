@@ -7,6 +7,7 @@ import { Pager } from '../components/Pager';
 import { ExplorerLink } from '../components/ExplorerLink';
 import { HashrateChart } from '../components/HashrateChart';
 import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
+import { PayoutProgress } from '../components/PayoutProgress';
 import { RangeTabs } from '../components/RangeTabs';
 import { StatCard } from '../components/StatCard';
 import { MinerUpdateBanner } from '../components/MinerUpdateBanner';
@@ -434,7 +435,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
               </div>
             </div>)}
 
-          <div className="stats-card-group" style={{ marginBottom: 16 }}>
+          <div id="miner-balances" className="stats-card-group" style={{ marginBottom: 16 }}>
             <div className="stats-card-group-title">{t("m491")}</div>
             <div className="stats-card-group-grid">
               <StatCard
@@ -458,6 +459,12 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                 title={minerBalanceData ? formatCoins(livePaid) : undefined}
               />
             </div>
+            <PayoutProgress
+              api={api}
+              confirmed={balanceUnavailable ? undefined : liveBalance?.pending_confirmed}
+              queued={pendingQueued}
+              liveTick={liveTick}
+            />
             <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)' }}>{t("m498")}</div>
           </div>
 

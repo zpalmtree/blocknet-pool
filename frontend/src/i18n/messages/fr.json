@@ -333,5 +333,12 @@
   "statsWorkRecorded": "Vos shares acceptés sont enregistrés.",
   "statsNoShares": "Aucun share accepté pour le moment. Gardez votre mineur connecté pour soumettre du travail.",
   "statsLastSubmission": "Dernier share soumis {0}.",
-  "statsRewardsBasis": "Les shares enregistrent du travail, pas un paiement fixe. Les récompenses PPLNS dépendent de la difficulté des shares éligibles lorsque le pool trouve un bloc."
+  "statsRewardsBasis": "Les shares enregistrent du travail, pas un paiement fixe. Les récompenses PPLNS dépendent de la difficulté des shares éligibles lorsque le pool trouve un bloc.",
+  "statsPayoutMinimum": "Paiement minimum : {0}",
+  "statsPayoutRemaining": "Il manque {0} de récompenses confirmées.",
+  "statsPayoutMet": "Minimum atteint. Les récompenses confirmées attendent le paiement automatique.",
+  "statsPayoutQueued": "Paiement en file d’attente : {0}.",
+  "statsPayoutBasis": "Seules les récompenses confirmées comptent pour le minimum. Les récompenses estimées doivent d’abord arriver à maturité.",
+  "statsPayoutUnavailable": "Minimum de paiement indisponible. Nouvelle tentative automatique.",
+  "statsPayoutBalanceUnavailable": "Solde confirmé indisponible ; la progression du paiement ne peut pas être calculée."
 }

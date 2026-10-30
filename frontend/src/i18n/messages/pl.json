@@ -333,5 +333,12 @@
   "statsWorkRecorded": "Twoje zaakceptowane udziały są zapisane.",
   "statsNoShares": "Nie ma jeszcze zaakceptowanych udziałów. Pozostaw koparkę połączoną, aby przesyłać wyniki pracy.",
   "statsLastSubmission": "Ostatni udział przesłano {0}.",
-  "statsRewardsBasis": "Udziały rejestrują pracę, a nie stałą wypłatę. Nagrody PPLNS zależą od trudności kwalifikujących się udziałów w chwili znalezienia bloku przez pulę."
+  "statsRewardsBasis": "Udziały rejestrują pracę, a nie stałą wypłatę. Nagrody PPLNS zależą od trudności kwalifikujących się udziałów w chwili znalezienia bloku przez pulę.",
+  "statsPayoutMinimum": "Minimalna wypłata: {0}",
+  "statsPayoutRemaining": "Brakuje jeszcze {0} potwierdzonych nagród.",
+  "statsPayoutMet": "Minimum osiągnięte. Potwierdzone nagrody oczekują na automatyczną wypłatę.",
+  "statsPayoutQueued": "Wypłata w kolejce: {0}.",
+  "statsPayoutBasis": "Do minimum wliczają się tylko potwierdzone nagrody. Szacowane nagrody muszą najpierw dojrzeć.",
+  "statsPayoutUnavailable": "Minimalna wypłata jest niedostępna. Próba zostanie ponowiona automatycznie.",
+  "statsPayoutBalanceUnavailable": "Potwierdzone saldo jest niedostępne; nie można obliczyć postępu do wypłaty."
 }

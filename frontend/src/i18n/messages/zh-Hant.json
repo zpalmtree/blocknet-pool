@@ -333,5 +333,12 @@
   "statsWorkRecorded": "您被接受的份額已記錄。",
   "statsNoShares": "尚無被接受的份額。請保持礦工連線以提交工作。",
   "statsLastSubmission": "最近一次份額提交：{0}。",
-  "statsRewardsBasis": "份額用於記錄工作量，並非固定報酬。PPLNS 獎勵取決於礦池發現區塊時符合條件的份額難度。"
+  "statsRewardsBasis": "份額用於記錄工作量，並非固定報酬。PPLNS 獎勵取決於礦池發現區塊時符合條件的份額難度。",
+  "statsPayoutMinimum": "最低支付金額：{0}",
+  "statsPayoutRemaining": "還需要 {0} 已確認獎勵。",
+  "statsPayoutMet": "已達到最低金額。已確認獎勵正在等待自動支付。",
+  "statsPayoutQueued": "支付已排隊：{0}。",
+  "statsPayoutBasis": "只有已確認獎勵計入最低金額。預計獎勵必須先成熟。",
+  "statsPayoutUnavailable": "最低支付金額暫時無法取得。正在自動重試。",
+  "statsPayoutBalanceUnavailable": "已確認餘額暫時無法取得，無法計算支付進度。"
 }

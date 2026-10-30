@@ -333,5 +333,12 @@
   "statsWorkRecorded": "Các share được chấp nhận của bạn đã được ghi nhận.",
   "statsNoShares": "Chưa có share nào được chấp nhận. Hãy giữ phần mềm đào kết nối để gửi kết quả công việc.",
   "statsLastSubmission": "Share gần nhất được gửi {0}.",
-  "statsRewardsBasis": "Share ghi nhận công việc, không phải khoản thanh toán cố định. Phần thưởng PPLNS phụ thuộc vào độ khó của các share đủ điều kiện khi pool tìm thấy một khối."
+  "statsRewardsBasis": "Share ghi nhận công việc, không phải khoản thanh toán cố định. Phần thưởng PPLNS phụ thuộc vào độ khó của các share đủ điều kiện khi pool tìm thấy một khối.",
+  "statsPayoutMinimum": "Mức thanh toán tối thiểu: {0}",
+  "statsPayoutRemaining": "Cần thêm {0} phần thưởng đã xác nhận.",
+  "statsPayoutMet": "Đã đạt mức tối thiểu. Phần thưởng đã xác nhận đang chờ thanh toán tự động.",
+  "statsPayoutQueued": "Thanh toán đang xếp hàng: {0}.",
+  "statsPayoutBasis": "Chỉ phần thưởng đã xác nhận được tính vào mức tối thiểu. Phần thưởng ước tính phải đủ độ chín trước.",
+  "statsPayoutUnavailable": "Không có thông tin mức thanh toán tối thiểu. Đang tự động thử lại.",
+  "statsPayoutBalanceUnavailable": "Không có số dư đã xác nhận; không thể tính tiến độ thanh toán."
 }
