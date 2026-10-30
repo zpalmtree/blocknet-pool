@@ -28,6 +28,7 @@ const RETENTION_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const SHARE_PARTITION_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const GROWTH_MODE_META_KEY: &str = "growth_mode_v1";
 const GROWTH_MODE_TICK: Duration = Duration::from_secs(30);
+const HEAP_TRIM_INTERVAL: Duration = Duration::from_secs(60);
 const SHARES_RETENTION: Duration = Duration::from_secs(90 * 24 * 60 * 60);
 const PAYOUTS_RETENTION: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 
@@ -279,6 +280,7 @@ pub fn start_stratum_background_tasks(
         Arc::clone(&role),
     );
     start_found_block_recovery(engine, Arc::clone(&task_metrics));
+    start_heap_trim(Arc::clone(&task_metrics));
     let payout = PayoutProcessor::new_with_task_metrics(
         shared.cfg.clone(),
         Arc::clone(&shared.store),
@@ -381,6 +383,27 @@ fn start_growth_mode(
                 Ok(Err(err)) => warn!(error = %err, "failed persisting growth mode"),
                 Err(err) => warn!(error = %err, "growth mode persist task failed"),
             }
+        }
+    });
+}
+
+/// Hands freed heap memory back to the OS every `HEAP_TRIM_INTERVAL` (see
+/// `stratum::trim_heap`).
+fn start_heap_trim(task_metrics: Arc<NamedTimedOperationTracker>) {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(HEAP_TRIM_INTERVAL);
+        loop {
+            ticker.tick().await;
+            let started_at = Instant::now();
+            let failed = tokio::task::spawn_blocking(crate::stratum::trim_heap)
+                .await
+                .is_err();
+            record_runtime_task_observation(
+                &task_metrics,
+                "heap_trim",
+                started_at.elapsed(),
+                failed,
+            );
         }
     });
 }
