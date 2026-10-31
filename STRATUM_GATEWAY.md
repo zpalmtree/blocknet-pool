@@ -102,16 +102,85 @@ hides the protocol from that inspection. TLS miners share the relay,
   `stratum+ssl://bntpool.com:3443` (a name the certificate covers).
 - Turning TLS on or changing its port needs a gateway restart.
 
-Deploy hook, `/etc/letsencrypt/renewal-hooks/deploy/blocknet-pool-gateway`
-(executable; run it once by hand after creating it):
+### Prepare certificates while TLS remains disabled
+
+Run from the pool checkout:
 
 ```sh
-#!/bin/sh
-set -e
-install -d -m 0750 -o root -g blocknet /etc/blocknet/pool/tls
-install -m 0640 -o root -g blocknet /etc/letsencrypt/live/bntpool.com/fullchain.pem /etc/blocknet/pool/tls/
-install -m 0640 -o root -g blocknet /etc/letsencrypt/live/bntpool.com/privkey.pem /etc/blocknet/pool/tls/
+bash scripts/prepare_bntpool_tls.sh
 ```
+
+This requires the existing Certbot certificate for `bntpool.com` and gateway
+TLS to be disabled (`gateway_tls_port` absent or zero). It stages the certificate
+and key under `/etc/blocknet/pool/tls`, owned by `root:blocknet` with mode `0640`,
+and installs `/etc/letsencrypt/renewal-hooks/deploy/blocknet-pool-gateway`.
+The hook runs the root-owned helper at
+`/usr/local/libexec/blocknet-pool-gateway-tls.py`. Neither preparation nor renewal
+changes pool configuration, firewall rules, listeners or services. Repeating the
+command is safe; identical certificates do not trigger reloads.
+
+The helper validates the hostname, expiry and key pairing before replacing
+either file. Failed validation preserves the staged pair. Each file replacement
+is atomic; a gateway poll between replacements retains its previous certificate
+and retries on the next poll. Keys remain on the pool host.
+
+### Activate later, when a TLS-capable miner release is available
+
+1. Verify the published Seine build supports `stratum+ssl://`; v0.2.45 does not.
+   Leave the advertised endpoint on plaintext until the TLS endpoint passes checks.
+2. Run preparation again, then merge these fields into the existing pool config
+   without changing its other settings:
+
+   ```json
+   {
+     "gateway_tls_port": 3443,
+     "gateway_tls_cert": "/etc/blocknet/pool/tls/fullchain.pem",
+     "gateway_tls_key": "/etc/blocknet/pool/tls/privkey.pem"
+   }
+   ```
+
+3. Open TCP port 3443 and deploy a TLS-capable gateway during an explicitly
+   approved restart window. A gateway restart disconnects miners once. Engine
+   handovers alone do not load gateway listener settings. The deploy script's
+   `--restart-gateway` path currently restarts only when the gateway binary hash
+   changes; an already-uploaded binary or configuration-only activation needs
+   an explicitly scheduled gateway restart as well.
+4. Check `openssl s_client -connect bntpool.com:3443 -servername bntpool.com
+   -verify_hostname bntpool.com -verify_return_error </dev/null` from outside the
+   host, then verify a released Seine client logs in, receives jobs, submits shares
+   and reconnects using `stratum+ssl://bntpool.com:3443`. Check gateway TLS metrics
+   and confirm existing plaintext miners still work before advertising TLS.
+5. Roll back by keeping miners on port 3333. Disabling the TLS listener by setting
+   its port to zero requires another approved gateway restart; deleting certificate
+   files does not disable a running TLS listener.
+
+Use the hostname for certificate authentication. Seine's IP-address TLS mode
+encrypts traffic but does not verify certificate trust or identity. TLS does not
+replace the existing plaintext default automatically.
+
+### Local verification
+
+```sh
+python3 scripts/test_prepare_gateway_tls.py
+cargo test --locked -p pool-gateway
+cargo build --locked -p blocknet-pool-gateway-app
+```
+
+In a Seine checkout containing the TLS tests, run:
+
+```sh
+cargo +1.93.0 test --locked --no-default-features --bin seine pool::tls_tests
+SEINE_TEST_GATEWAY_BIN=/absolute/path/to/blocknet-pool/target/debug/blocknet-pool-gateway \
+  cargo +1.93.0 test --locked --no-default-features --bin seine \
+  tls_gateway_login_job_submit_and_reconnect -- --ignored
+```
+
+The cross-repo test starts an isolated gateway on loopback with fixture certificates
+and a fixture engine. It exercises the actual Seine client through TLS login, jobs,
+share messages and reconnects; it does not start hashing or test PoW acceptance.
+Hostname trust rejection and refusal to downgrade TLS to plaintext are covered by
+the miner's transport tests. The gateway tests cover renewal, failed renewal,
+invalid handshakes and plain/TLS relay compatibility.
 
 Miner sockets, plain and TLS, use TCP keepalive (after 60 s idle, every
 10 s, 3 probes) and a 60 s `TCP_USER_TIMEOUT`, so a miner that vanished
