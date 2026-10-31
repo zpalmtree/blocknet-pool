@@ -112,6 +112,7 @@ struct MonitorSnapshot {
     candidate_persisted_total: Option<u64>,
     candidate_rejected_total: Option<u64>,
     candidate_stale_block_total: Option<u64>,
+    candidate_invalid_nonce_total: Option<u64>,
     candidate_disproven_claims_total: Option<u64>,
     candidate_block_accepted_total: Option<u64>,
     candidate_worker_failure_total: Option<u64>,
@@ -1077,6 +1078,8 @@ impl MonitorRuntime {
             runtime.map(|snapshot| snapshot.submit.candidate_rejected_total);
         metrics.candidate_stale_block_total =
             runtime.map(|snapshot| snapshot.submit.candidate_stale_block_total);
+        metrics.candidate_invalid_nonce_total =
+            runtime.map(|snapshot| snapshot.submit.candidate_invalid_nonce_total);
         metrics.candidate_disproven_claims_total =
             runtime.map(|snapshot| snapshot.validation.candidate_false_claims);
         metrics.candidate_block_accepted_total =
@@ -2410,6 +2413,10 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
             snapshot.candidate_stale_block_total,
         ),
         (
+            "blocknet_pool_monitor_candidate_invalid_nonce_total",
+            snapshot.candidate_invalid_nonce_total,
+        ),
+        (
             "blocknet_pool_monitor_candidate_disproven_claims_total",
             snapshot.candidate_disproven_claims_total,
         ),
@@ -3079,6 +3086,7 @@ mod tests {
             candidate_persisted_total: Some(7),
             candidate_rejected_total: Some(2),
             candidate_stale_block_total: Some(1),
+            candidate_invalid_nonce_total: Some(1),
             candidate_disproven_claims_total: Some(1),
             candidate_block_accepted_total: Some(6),
             candidate_worker_failure_total: Some(0),
@@ -3171,6 +3179,7 @@ mod tests {
         assert!(rendered.contains("blocknet_pool_monitor_candidate_persisted_total 7"));
         assert!(rendered.contains("blocknet_pool_monitor_candidate_rejected_total 2"));
         assert!(rendered.contains("blocknet_pool_monitor_candidate_stale_block_total 1"));
+        assert!(rendered.contains("blocknet_pool_monitor_candidate_invalid_nonce_total 1"));
         assert!(rendered.contains("blocknet_pool_monitor_candidate_disproven_claims_total 1"));
         assert!(rendered.contains("blocknet_pool_monitor_candidate_block_accepted_total 6"));
         assert!(rendered.contains("blocknet_pool_monitor_candidate_worker_failure_total 0"));

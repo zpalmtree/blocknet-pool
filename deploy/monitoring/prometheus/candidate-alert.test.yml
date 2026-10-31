@@ -1,0 +1,219 @@
+# Run: promtool test rules deploy/monitoring/prometheus/candidate-alert.test.yml
+rule_files:
+- blocknet-pool.rules.yml
+evaluation_interval: 1m
+tests:
+- name: invalid nonce plus fake claim
+  interval: 1m
+  input_series:
+  - series: blocknet_pool_monitor_candidate_permit_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_enqueue_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2
+  - series: blocknet_pool_monitor_candidate_stale_block_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_disproven_claims_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+  - series: blocknet_pool_monitor_candidate_invalid_nonce_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+  - series: blocknet_pool_monitor_candidate_worker_failure_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: BlocknetPoolCandidatePipelineDropped
+    exp_alerts: []
+- name: stale block
+  interval: 1m
+  input_series:
+  - series: blocknet_pool_monitor_candidate_permit_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_enqueue_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+  - series: blocknet_pool_monitor_candidate_stale_block_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+  - series: blocknet_pool_monitor_candidate_disproven_claims_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_invalid_nonce_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_worker_failure_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: BlocknetPoolCandidatePipelineDropped
+    exp_alerts: []
+- name: real rejection alongside excluded inputs
+  interval: 1m
+  input_series:
+  - series: blocknet_pool_monitor_candidate_permit_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_enqueue_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3
+  - series: blocknet_pool_monitor_candidate_stale_block_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_disproven_claims_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+  - series: blocknet_pool_monitor_candidate_invalid_nonce_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+  - series: blocknet_pool_monitor_candidate_worker_failure_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: BlocknetPoolCandidatePipelineDropped
+    exp_alerts:
+    - exp_labels:
+        job: blocknet_pool_monitor
+        instance: test
+        severity: critical
+        visibility: private
+      exp_annotations:
+        summary: Pool dropped a candidate before completing validation
+        description: A network-target candidate was rejected by admission control, the queue, full validation/submission,
+          or a submit-worker failure in the last 15 minutes. Expected stale tip races, cryptographically disproven
+          candidate claims, and nonces outside their assigned range are excluded.
+- name: admission rejection
+  interval: 1m
+  input_series:
+  - series: blocknet_pool_monitor_candidate_permit_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+  - series: blocknet_pool_monitor_candidate_enqueue_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_stale_block_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_disproven_claims_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_invalid_nonce_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_worker_failure_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: BlocknetPoolCandidatePipelineDropped
+    exp_alerts:
+    - exp_labels:
+        job: blocknet_pool_monitor
+        instance: test
+        severity: critical
+        visibility: private
+      exp_annotations:
+        summary: Pool dropped a candidate before completing validation
+        description: A network-target candidate was rejected by admission control, the queue, full validation/submission,
+          or a submit-worker failure in the last 15 minutes. Expected stale tip races, cryptographically disproven
+          candidate claims, and nonces outside their assigned range are excluded.
+- name: queue rejection
+  interval: 1m
+  input_series:
+  - series: blocknet_pool_monitor_candidate_permit_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_enqueue_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+  - series: blocknet_pool_monitor_candidate_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_stale_block_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_disproven_claims_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_invalid_nonce_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_worker_failure_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: BlocknetPoolCandidatePipelineDropped
+    exp_alerts:
+    - exp_labels:
+        job: blocknet_pool_monitor
+        instance: test
+        severity: critical
+        visibility: private
+      exp_annotations:
+        summary: Pool dropped a candidate before completing validation
+        description: A network-target candidate was rejected by admission control, the queue, full validation/submission,
+          or a submit-worker failure in the last 15 minutes. Expected stale tip races, cryptographically disproven
+          candidate claims, and nonces outside their assigned range are excluded.
+- name: worker failure
+  interval: 1m
+  input_series:
+  - series: blocknet_pool_monitor_candidate_permit_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_enqueue_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_stale_block_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_disproven_claims_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_invalid_nonce_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_worker_failure_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: BlocknetPoolCandidatePipelineDropped
+    exp_alerts:
+    - exp_labels:
+        job: blocknet_pool_monitor
+        instance: test
+        severity: critical
+        visibility: private
+      exp_annotations:
+        summary: Pool dropped a candidate before completing validation
+        description: A network-target candidate was rejected by admission control, the queue, full validation/submission,
+          or a submit-worker failure in the last 15 minutes. Expected stale tip races, cryptographically disproven
+          candidate claims, and nonces outside their assigned range are excluded.
+- name: old monitor still alerts on rejection
+  interval: 1m
+  input_series:
+  - series: blocknet_pool_monitor_candidate_permit_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_enqueue_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+  - series: blocknet_pool_monitor_candidate_stale_block_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_disproven_claims_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_worker_failure_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: BlocknetPoolCandidatePipelineDropped
+    exp_alerts:
+    - exp_labels:
+        job: blocknet_pool_monitor
+        instance: test
+        severity: critical
+        visibility: private
+      exp_annotations:
+        summary: Pool dropped a candidate before completing validation
+        description: A network-target candidate was rejected by admission control, the queue, full validation/submission,
+          or a submit-worker failure in the last 15 minutes. Expected stale tip races, cryptographically disproven
+          candidate claims, and nonces outside their assigned range are excluded.
+- name: old monitor excludes fake claims
+  interval: 1m
+  input_series:
+  - series: blocknet_pool_monitor_candidate_permit_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_enqueue_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_rejected_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+  - series: blocknet_pool_monitor_candidate_stale_block_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: blocknet_pool_monitor_candidate_disproven_claims_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+  - series: blocknet_pool_monitor_candidate_worker_failure_total{job="blocknet_pool_monitor",instance="test"}
+    values: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: BlocknetPoolCandidatePipelineDropped
+    exp_alerts: []

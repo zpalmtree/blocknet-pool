@@ -276,6 +276,7 @@ groups:
           description: At least one retained full-block fallback encountered a transport error, unexpected daemon rejection, or negative success response in the last 15 minutes. Stale tip races are excluded.
 
       - alert: BlocknetPoolCandidatePipelineDropped
+        # Preserve rejection alerts while older monitors lack the invalid-nonce counter.
         expr: >-
           increase(blocknet_pool_monitor_candidate_permit_rejected_total[15m]) > 0
           or increase(blocknet_pool_monitor_candidate_enqueue_rejected_total[15m]) > 0
@@ -283,6 +284,10 @@ groups:
             increase(blocknet_pool_monitor_candidate_rejected_total[15m])
             > increase(blocknet_pool_monitor_candidate_stale_block_total[15m])
               + increase(blocknet_pool_monitor_candidate_disproven_claims_total[15m])
+              + (
+                increase(blocknet_pool_monitor_candidate_invalid_nonce_total[15m])
+                or 0 * increase(blocknet_pool_monitor_candidate_rejected_total[15m])
+              )
           )
           or increase(blocknet_pool_monitor_candidate_worker_failure_total[15m]) > 0
         labels:
@@ -290,7 +295,7 @@ groups:
           visibility: private
         annotations:
           summary: Pool dropped a candidate before completing validation
-          description: A network-target candidate was rejected by admission control, the queue, full validation/submission, or a submit-worker failure in the last 15 minutes. Expected stale tip races and cryptographically disproven candidate claims are excluded.
+          description: A network-target candidate was rejected by admission control, the queue, full validation/submission, or a submit-worker failure in the last 15 minutes. Expected stale tip races, cryptographically disproven candidate claims, and nonces outside their assigned range are excluded.
 
       - alert: BlocknetPoolCandidatePipelineDiverged
         expr: >-

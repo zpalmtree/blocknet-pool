@@ -290,6 +290,9 @@ pub struct SubmitRuntimeSnapshot {
     pub candidate_rejected_total: u64,
     #[serde(default)]
     pub candidate_stale_block_total: u64,
+    /// Candidate-lane submissions rejected before hashing for an unassigned nonce.
+    #[serde(default)]
+    pub candidate_invalid_nonce_total: u64,
     #[serde(default)]
     pub candidate_block_accepted_total: u64,
     #[serde(default)]
@@ -476,6 +479,7 @@ struct SubmitDispatcher {
     candidate_persisted: AtomicU64,
     candidate_rejected: AtomicU64,
     candidate_stale_block: AtomicU64,
+    candidate_invalid_nonce: AtomicU64,
     candidate_block_accepted: AtomicU64,
     candidate_worker_failure: AtomicU64,
     /// Received-to-answered latency of queued submits, by lane and outcome.
@@ -650,6 +654,7 @@ impl SubmitDispatcher {
             candidate_persisted: AtomicU64::new(0),
             candidate_rejected: AtomicU64::new(0),
             candidate_stale_block: AtomicU64::new(0),
+            candidate_invalid_nonce: AtomicU64::new(0),
             candidate_block_accepted: AtomicU64::new(0),
             candidate_worker_failure: AtomicU64::new(0),
             ack_latency: NamedLatencyHistograms::default(),
@@ -858,6 +863,7 @@ impl SubmitDispatcher {
             candidate_persisted_total: self.candidate_persisted.load(Ordering::Relaxed),
             candidate_rejected_total: self.candidate_rejected.load(Ordering::Relaxed),
             candidate_stale_block_total: self.candidate_stale_block.load(Ordering::Relaxed),
+            candidate_invalid_nonce_total: self.candidate_invalid_nonce.load(Ordering::Relaxed),
             candidate_block_accepted_total: self.candidate_block_accepted.load(Ordering::Relaxed),
             candidate_worker_failure_total: self.candidate_worker_failure.load(Ordering::Relaxed),
             candidate_queue_depth: candidate.depth,
@@ -2445,10 +2451,18 @@ async fn run_submit_worker(
                     dispatcher
                         .candidate_rejected
                         .fetch_add(1, Ordering::Relaxed);
-                    if canonical_share_reject_reason(&err.to_string()) == "stale block" {
-                        dispatcher
-                            .candidate_stale_block
-                            .fetch_add(1, Ordering::Relaxed);
+                    match canonical_share_reject_reason(&err.to_string()) {
+                        "stale block" => {
+                            dispatcher
+                                .candidate_stale_block
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                        "nonce out of assigned range" => {
+                            dispatcher
+                                .candidate_invalid_nonce
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                        _ => {}
                     }
                 }
                 SubmitCompletionOutcome::WorkerFailure(_) => {
@@ -4127,6 +4141,74 @@ mod tests {
         drop(writer_b);
         drop(reader_b);
         shutdown_test_listener(listener_task, server, _jobs).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn tcp_candidate_invalid_nonce_is_counted_separately() {
+        let (server, jobs) = build_tcp_test_server(stratum_test_cfg()).await;
+        let (addr, listener_task) = start_test_tcp_listener(Arc::clone(&server)).await;
+        let (mut reader, mut writer) = connect_test_client(addr).await;
+        let job = login_test_client(
+            &mut reader,
+            &mut writer,
+            1,
+            &test_miner_address(0x55),
+            "rig",
+        )
+        .await;
+        let invalid_nonce = if job.nonce_start > 0 {
+            job.nonce_start - 1
+        } else {
+            job.nonce_end
+                .checked_add(1)
+                .expect("bounded nonce assignment")
+        };
+        send_submit(
+            &mut writer,
+            2,
+            &job.job_id,
+            invalid_nonce,
+            hex::encode([0u8; 32]),
+        )
+        .await;
+        let response = read_json_line(&mut reader).await;
+        assert_eq!(
+            response["error"].as_str(),
+            Some("nonce out of assigned range")
+        );
+        let snapshot = server.submit_snapshot();
+        assert_eq!(snapshot.candidate_classified_total, 1);
+        assert_eq!(snapshot.candidate_worker_started_total, 1);
+        assert_eq!(snapshot.candidate_rejected_total, 1);
+        assert_eq!(snapshot.candidate_invalid_nonce_total, 1);
+        assert_eq!(snapshot.candidate_stale_block_total, 0);
+        assert_eq!(snapshot.candidate_worker_failure_total, 0);
+
+        // The exclusion does not change validation or accounting for valid work.
+        let nonce = nonce_with_parity(&job, true, 0);
+        send_submit(
+            &mut writer,
+            3,
+            &job.job_id,
+            nonce,
+            SleepyQueueHasher::claimed_hash_hex(nonce),
+        )
+        .await;
+        loop {
+            let response = read_json_line(&mut reader).await;
+            if response["id"].as_u64() == Some(3) {
+                assert_eq!(response["status"].as_str(), Some("ok"));
+                break;
+            }
+        }
+        let snapshot = server.submit_snapshot();
+        assert_eq!(snapshot.candidate_classified_total, 2);
+        assert_eq!(snapshot.candidate_persisted_total, 1);
+        assert_eq!(snapshot.candidate_rejected_total, 1);
+        assert_eq!(snapshot.candidate_invalid_nonce_total, 1);
+
+        drop((reader, writer));
+        shutdown_test_listener(listener_task, server, jobs).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
