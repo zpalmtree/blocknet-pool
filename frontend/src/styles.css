@@ -37,7 +37,7 @@
   --rejection-fill-end: rgba(171, 178, 114, 0.78);
   --shadow: 0 22px 48px rgba(33, 49, 34, 0.08);
   --shadow-soft: 0 12px 26px rgba(33, 49, 34, 0.05);
-  --nav-bg: rgba(246, 248, 242, 0.92);
+  --nav-bg: #f6f8f2;
   --progress-track: linear-gradient(90deg, #ecfdf3, #fefce8 55%, #fef2f2);
   --progress-ok-fill: rgba(22, 163, 74, 0.65);
   --progress-warn-fill: rgba(217, 119, 6, 0.6);
@@ -112,7 +112,7 @@
   --rejection-fill-end: rgba(194, 191, 136, 0.78);
   --shadow: 0 30px 80px rgba(0, 0, 0, 0.34);
   --shadow-soft: 0 14px 34px rgba(0, 0, 0, 0.22);
-  --nav-bg: rgba(7, 17, 20, 0.94);
+  --nav-bg: #071114;
   --progress-track: linear-gradient(90deg, #102818, #35260d 55%, #321414);
   --progress-ok-fill: rgba(74, 222, 128, 0.42);
   --progress-warn-fill: rgba(245, 158, 11, 0.4);
@@ -184,7 +184,6 @@ nav {
   z-index: 100;
   height: 56px;
   overflow: visible;
-  backdrop-filter: blur(16px) saturate(150%);
   box-shadow: var(--shadow-soft);
 }
 

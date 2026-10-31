@@ -1,25 +1,81 @@
 {
-  "base_revision": "f4fee59680984306cc8fd893227636889fd25b78",
-  "checked_at": "2026-10-29 18:11 EDT",
+  "base_revision": "7b24269361f1b1c25b593ebc8989cdd95146f912",
+  "checked_at": "2026-10-31 04:20 EDT",
   "source_sha256": {
+    "frontend/src/lib/display-format.ts": "80780c99724405ddacacce3688b688b9ac24cc7ba5ebcb1dfc553e04a908255e",
+    "frontend/src/lib/format.ts": "eebbf38681a39a4649ea0ea7e1e622eb1c2cf5f8ea9789507689e884a9a81fb8",
+    "frontend/src/styles.css": "9f529e53c603199d9d2eedfe15d6c530b836268d00454a40ef3a27354b7ccae6",
+    "frontend/showcases/performance/benchmark.mjs": "9342b5a4feabcfe21b8482258cfde3582a2ee9c48354fd7945463af3e6b44f02",
     "frontend/src/App.tsx": "fef7e1019b69d8597b8f32332214cc811bf01ed49689e3ef1ad57def60f52596",
-    "frontend/src/components/DeferredPages.tsx": "cae1ce4294faeb02c9ebe08102098b7a1d2c9cd6b5804c13a1b894d23a9e25c3",
     "frontend/src/components/HashrateChart.tsx": "45eaefeceb80b19833dfd7bcf4207ca40fcddb7c1655bac82e9f05ed2a86e4ca",
-    "frontend/src/lib/chart.ts": "de5e5dec47d7df0c02eb8cbd51504ebeeb837f049ffba572976dd925a65cac17",
-    "frontend/src/api/client.ts": "59952eb0494c3969fe4d8e211361ababff3ccf2d55c5e2d80a51de15423b8f4c",
     "frontend/src/pages/DashboardPage.tsx": "26c9b62465b575205861439c1cc0f1eb152e24c3e70217746217e8a1472d3c51",
+    "frontend/src/pages/StatsPage.tsx": "5b52badb08e85d3422931124eac644e7179b0407604d1745afd718644307109b",
     "frontend/vite.config.ts": "d000e68b8828557c68a5089949451a3679d27b2cefe46b5771da4a4b890f9a89"
   },
-  "baseline_entry_bytes": 319868,
-  "entry_bytes": 234335,
-  "baseline_gzip_bytes": 94632,
-  "gzip_bytes": 73846,
-  "fixture_points": 8640,
-  "desktop_curve_calls_per_draw": 4322,
-  "desktop_canvas_css_width": 1080,
+  "frontend_tests": 33,
   "viewports": [
     1366,
     390
   ],
-  "captures": 16
+  "captures": 18,
+  "formatting_benchmark": {
+    "browser": "shared Windows Chrome through Playwright MCP",
+    "rows": 250,
+    "pairs": 7,
+    "before_ms": [
+      11,
+      11.3,
+      10.6,
+      11.8,
+      11.9,
+      11.6,
+      10.7
+    ],
+    "after_ms": [
+      0.5,
+      0.3,
+      0.3,
+      0.2,
+      0.3,
+      0.2,
+      0.2
+    ],
+    "before_median_ms": 11.3,
+    "after_median_ms": 0.3,
+    "scope": "Synthetic timestamp/percentage formatting only; not whole-page timing"
+  },
+  "firefox_observations": {
+    "pool_main_thread_idle_pct": 96,
+    "pool_main_thread_javascript_pct": 0.6,
+    "pool_max_sampled_event_delay_ms": 7.5172,
+    "shared_renderer": "SWGL",
+    "max_scroll_presentation_ms": 81.8,
+    "limitation": "Renderer shared with other tabs. No post-change Firefox recording."
+  },
+  "render_contract": {
+    "light_nav_background": "rgb(246, 248, 242)",
+    "dark_nav_background": "rgb(7, 17, 20)",
+    "backdrop_filter": "none",
+    "scrolled_nav_top": 0
+  },
+  "capture_sha256": {
+    "dashboard-empty-desktop.jpg": "778ad6b3d2aeb96d9934cf28e864d4966426044d56bd837d5bfcb9321e0c422a",
+    "dashboard-empty-mobile.jpg": "f111246aff239021952720e915c380c244d5af9f92f8c5920bf59c375018ff59",
+    "dashboard-error-desktop.jpg": "7b973b5b625d036fc3c451213afcf9144279afc51439c8502cab8c80a6bd862f",
+    "dashboard-error-mobile.jpg": "4341711f254b99ddbb4b50e3d2c427e14c934fc352af7c58539fa7e13d591587",
+    "dashboard-loading-desktop.jpg": "b8499862f18be8673d713360f51b0ea3d98d75f1d43822eef44058f7724916fb",
+    "dashboard-loading-mobile.jpg": "ccb85ce3d071a28612014e3450c6dc089cfeb2919cbc05c6b9366c597071fff6",
+    "dashboard-success-desktop.jpg": "0267e03c6fe149ce96e95010ed21f2195ffd688b770a59e62fa54baefddf6ac2",
+    "dashboard-success-mobile.jpg": "601ed97c6c21026577ef5bfa0710ebac644c8ab1ca61c5e7b56e516ed87abcd7",
+    "nav-dark-desktop.jpg": "282fb264ed6bc464d5b244c3e517adf0ca4f886985069efe242f2b36073d8a7f",
+    "nav-dark-mobile.jpg": "2a0d46ff34cc6ef4e2e1e512d3db367eb3df9e8fc2565247164ddacf606f1f75",
+    "page-error-desktop.jpg": "dfeb049b89c34c098693c1f1e12a5efd5f70f178d6333d6438e6db3484ad46de",
+    "page-error-mobile.jpg": "41a10818cf145d9ce4cc177b80c68ec24c18ef641d394acdaf53509fbb2465e7",
+    "page-loading-desktop.jpg": "64ddbc1c330764beb65d0518b65998ce301bce94945552a280cff1b8b229c417",
+    "page-loading-mobile.jpg": "3ac892ea7c35bba04bc680230fb03dd2f51c6dbb0f364d3f06d64ff010f25829",
+    "stats-empty-desktop.jpg": "4b2928674d64bd330ac085b56f86d067e60192bec558c567f338f47514185e61",
+    "stats-empty-mobile.jpg": "6429e720c27ce9b220c8d500fa6e53cc09642105efbf2ed3bc262702d52e8389",
+    "stats-success-desktop.jpg": "914357eaa00fbfafd8d17b401f2c41f674fba135d41345d73d04f523f6c64460",
+    "stats-success-mobile.jpg": "421883305fb199a1f25357e91a4da67f878c7a82381ddd813d5bec9d30460464"
+  }
 }

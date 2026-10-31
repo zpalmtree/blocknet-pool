@@ -1,8 +1,10 @@
 import { locale, t } from '../i18n';
 import type { Range, UnixLike } from '../types';
 import { createCoinFormatters } from './coin-format';
+import { createDisplayFormatters } from './display-format';
 
 export const { formatCoins, formatCompactCoins, formatCoinAmount, formatExactCoins } = createCoinFormatters(locale);
+const display = createDisplayFormatters(locale);
 
 const relativeTime = new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'short' });
 const rateFormatter = new Intl.NumberFormat(locale, {
@@ -75,7 +77,7 @@ export function timeUntil(val: UnixLike): string {
 
 export function timestampTitle(val: UnixLike): string {
   const ms = toUnixMs(val);
-  return ms ? new Date(ms).toLocaleString(locale, { calendar: 'gregory' }) : '';
+  return ms ? display.timestamp(ms) : '';
 }
 
 export function humanRate(hps: number | null | undefined): string {
@@ -98,7 +100,7 @@ export function formatFee(sats: number | null | undefined): string {
 
 export function formatPct(value: number | null | undefined, digits = 1): string {
   if (value == null || !Number.isFinite(value)) return '-';
-  return `${new Intl.NumberFormat(locale, { numberingSystem: 'latn', maximumFractionDigits: digits, minimumFractionDigits: digits }).format(value)}%`;
+  return display.percent(value, digits);
 }
 
 export function ratioPct(numerator: number | null | undefined, denominator: number | null | undefined): number {
@@ -186,9 +188,9 @@ export function formatChartTick(ts: number, range: Range, compact: boolean): str
       const mm = String(d.getMinutes()).padStart(2, '0');
       return `${hh}:${mm}`;
     }
-    return d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+    return display.time(ts);
   }
 
-  if (compact) return d.toLocaleDateString(locale, { calendar: 'gregory', month: 'numeric', day: 'numeric' });
-  return d.toLocaleDateString(locale, { calendar: 'gregory', month: 'short', day: 'numeric' });
+  if (compact) return display.chartDate(ts, true);
+  return display.chartDate(ts, false);
 }
