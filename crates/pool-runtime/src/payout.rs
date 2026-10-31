@@ -49,13 +49,57 @@ const MIN_WALLET_SEND_SPACING: Duration = Duration::from_millis(2_100);
 const PAYOUT_TASK_SLOW_LOG_AFTER: Duration = Duration::from_millis(250);
 const DEFAULT_TARGET_RECIPIENTS_PER_TX: usize = 15;
 const MAX_RECIPIENTS_PER_TX: usize = 48;
-const MAX_TXS_PER_SWEEP: usize = 8;
+const MAX_TXS_PER_SWEEP: usize = 64;
+const MAX_PAYOUT_SWEEP_DURATION: Duration = Duration::from_secs(3 * 60);
+const PAYOUT_CONTINUATION_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const MAX_CONSOLIDATION_INPUTS: usize = 4;
+// Inputs below this floor are left for explicit dust handling (0.01 BNT).
+const MIN_CONSOLIDATION_AMOUNT: u64 = 1_000_000;
+const FRAGMENTED_OUTPUT_COUNT: usize = 128;
 const PAYOUT_WAIT_PRIORITY_THRESHOLD: Duration = Duration::from_secs(6 * 60 * 60);
 const CHAIN_RECOVERY_LOOKBACK_BLOCKS: i64 = 1024;
 const RECOVERY_PAYOUT_RECONCILIATION_BATCH_SIZE: i64 = 16;
 const MAX_CHANGE_SPLIT: u32 = 4;
 const REBALANCE_SPENDABLE_SHARE_NUMERATOR: u64 = 1;
 const REBALANCE_SPENDABLE_SHARE_DENOMINATOR: u64 = 4;
+
+struct PayoutSchedule {
+    regular: Instant,
+    retry: Option<Instant>,
+    interval: Duration,
+}
+
+impl PayoutSchedule {
+    fn new(now: Instant, interval: Duration) -> Self {
+        Self {
+            regular: now,
+            retry: None,
+            interval,
+        }
+    }
+
+    fn next_due(&self) -> Instant {
+        self.retry
+            .map_or(self.regular, |retry| retry.min(self.regular))
+    }
+
+    fn completed(&mut self, now: Instant, completed: bool, continuation: bool) {
+        // Skip missed regular slots; never replay them as a burst.
+        if self.regular <= now {
+            let slots = now.duration_since(self.regular).as_nanos() / self.interval.as_nanos() + 1;
+            self.regular += self
+                .interval
+                .saturating_mul(slots.min(u32::MAX as u128) as u32);
+        }
+        self.retry = if !completed {
+            Some(now + MAX_PAYOUT_MAINTENANCE_INTERVAL.min(self.interval))
+        } else if continuation {
+            Some(now + PAYOUT_CONTINUATION_INTERVAL.min(self.interval))
+        } else {
+            None
+        };
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct MissingCompletedPayoutSummary {
@@ -93,6 +137,14 @@ pub struct PayoutRuntimeSnapshot {
     pub rebalance_active: bool,
     #[serde(default)]
     pub inventory_health: String,
+    #[serde(default)]
+    pub blocked_address_count: usize,
+    #[serde(default)]
+    pub blocked_address_amount: u64,
+    #[serde(default)]
+    pub queued_recipient_count: usize,
+    #[serde(default)]
+    pub continuation_required: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -185,6 +237,7 @@ struct RecentPayoutStats {
 #[derive(Debug, Clone, Default)]
 struct OutputInventory {
     spendable_count: usize,
+    economical_output_count: usize,
     small_count: usize,
     medium_count: usize,
     large_count: usize,
@@ -354,21 +407,15 @@ impl PayoutProcessor {
             let payout_interval = bounded_payout_interval(this.cfg.payout_interval_duration());
             let maintenance_interval = bounded_payout_maintenance_interval(payout_interval);
             role.wait_primary().await;
-            {
+            let mut schedule = PayoutSchedule::new(Instant::now(), payout_interval);
+            let startup_completed = {
                 let this = Arc::clone(&this);
                 let task_metrics = this.task_metrics.clone();
                 let started_at = Instant::now();
                 let startup = tokio::task::spawn_blocking(move || {
                     let _running = TickRunning::start(&this.tick_running);
                     this.recover_pending_payouts();
-                    this.tick(true);
-                    let now = SystemTime::now();
-                    this.update_runtime_snapshot(
-                        payout_interval,
-                        maintenance_interval,
-                        now.checked_add(payout_interval),
-                        Some(now),
-                    );
+                    this.tick(true)
                 })
                 .await;
                 record_payout_task_observation(
@@ -377,10 +424,25 @@ impl PayoutProcessor {
                     started_at.elapsed(),
                     startup.is_err(),
                 );
-            }
+                startup.unwrap_or(false)
+            };
 
-            let mut next_send_due = Instant::now() + payout_interval;
-            let mut next_send_due_at = SystemTime::now().checked_add(payout_interval);
+            schedule.completed(
+                Instant::now(),
+                startup_completed,
+                this.runtime.read().continuation_required,
+            );
+            let now = SystemTime::now();
+            this.update_runtime_snapshot(
+                payout_interval,
+                maintenance_interval,
+                now.checked_add(
+                    schedule
+                        .next_due()
+                        .saturating_duration_since(Instant::now()),
+                ),
+                Some(now),
+            );
             let mut ticker = tokio::time::interval(maintenance_interval);
             ticker.tick().await;
             loop {
@@ -388,7 +450,7 @@ impl PayoutProcessor {
                 if !role.is_primary() {
                     continue;
                 }
-                let should_send = Instant::now() >= next_send_due;
+                let should_send = Instant::now() >= schedule.next_due();
                 let worker = Arc::clone(&this);
                 let started_at = Instant::now();
                 let send_completed = tokio::task::spawn_blocking(move || {
@@ -404,12 +466,18 @@ impl PayoutProcessor {
                     }
                 };
                 let now = SystemTime::now();
-                if send_completed {
-                    next_send_due = Instant::now() + payout_interval;
-                    next_send_due_at = now.checked_add(payout_interval);
-                } else if should_send {
-                    next_send_due_at = now.checked_add(maintenance_interval);
+                if should_send {
+                    schedule.completed(
+                        Instant::now(),
+                        send_completed,
+                        this.runtime.read().continuation_required,
+                    );
                 }
+                let next_send_due_at = now.checked_add(
+                    schedule
+                        .next_due()
+                        .saturating_duration_since(Instant::now()),
+                );
                 this.update_runtime_snapshot(
                     payout_interval,
                     maintenance_interval,
@@ -1200,6 +1268,14 @@ impl PayoutProcessor {
     }
 
     fn send_payouts(&self) {
+        let sweep_started = Instant::now();
+        {
+            let mut runtime = self.runtime.write();
+            runtime.continuation_required = false;
+            runtime.queued_recipient_count = 0;
+            runtime.blocked_address_count = 0;
+            runtime.blocked_address_amount = 0;
+        }
         if !self.cfg.payouts_enabled {
             tracing::warn!("payouts are disabled by config; skipping payout tick");
             return;
@@ -1210,6 +1286,7 @@ impl PayoutProcessor {
             return;
         }
         if !self.ensure_wallet_ready() {
+            self.runtime.write().continuation_required = true;
             return;
         }
         let reconciliation_blockers = match self.store.live_reconciliation_blockers() {
@@ -1309,6 +1386,12 @@ impl PayoutProcessor {
             if let Err(reason) =
                 validate_miner_address_for_network(&bal.address, expected_address_network)
             {
+                if bal.pending > 0 {
+                    let mut runtime = self.runtime.write();
+                    runtime.blocked_address_count += 1;
+                    runtime.blocked_address_amount =
+                        runtime.blocked_address_amount.saturating_add(bal.pending);
+                }
                 if existing_pending.is_some() {
                     if let Err(err) = self.store.cancel_pending_payout(&bal.address) {
                         tracing::warn!(
@@ -1388,6 +1471,11 @@ impl PayoutProcessor {
             })
             .collect::<Vec<_>>();
 
+        {
+            let mut runtime = self.runtime.write();
+            runtime.queued_recipient_count = queued.len();
+            runtime.continuation_required = !queued.is_empty();
+        }
         let wallet_balance = match self.node.get_wallet_balance() {
             Ok(v) => v,
             Err(err) => {
@@ -1480,11 +1568,14 @@ impl PayoutProcessor {
         let mut liquidity_backoff_budget = None::<u64>;
         let mut last_wallet_send_attempt = None::<Instant>;
         let mut send_outcome_unknown = false;
+        let mut deferred_recipients = 0usize;
+        let mut operator_cap_reached = false;
 
         while !queued.is_empty()
             && sent_txs < max_txs_per_sweep
             && sent_recipients < max_recipients_per_tick
             && sent_total < max_total_per_tick
+            && sweep_started.elapsed() < MAX_PAYOUT_SWEEP_DURATION
         {
             let remaining_recipient_cap = max_recipients_per_tick.saturating_sub(sent_recipients);
             if remaining_recipient_cap == 0 || spendable_outputs.is_empty() {
@@ -1522,6 +1613,7 @@ impl PayoutProcessor {
                 }
             }
             if batch_candidates.is_empty() {
+                operator_cap_reached = true;
                 break;
             }
 
@@ -1562,6 +1654,7 @@ impl PayoutProcessor {
                             "payout batch planning failed for oldest queued payout; skipping it this tick"
                         );
                         queued.remove(0);
+                        deferred_recipients += 1;
                         break None;
                     }
                 }
@@ -1694,6 +1787,7 @@ impl PayoutProcessor {
                                     lookup_error = %lookup_err,
                                     "wallet rejected stale payout inputs and send history could not rule out an earlier payment; holding batch for idempotent reconciliation"
                                 );
+                                send_outcome_unknown = true;
                                 remove_spent_outputs(&mut spendable_outputs, &plan.inputs);
                                 queued.drain(..plan.recipients.len());
                                 break;
@@ -1708,6 +1802,7 @@ impl PayoutProcessor {
                                 error = %reset_err,
                                 "wallet stale-input retry could not reset payout batch"
                             );
+                            send_outcome_unknown = true;
                             queued.drain(..plan.recipients.len());
                             break;
                         }
@@ -1734,6 +1829,7 @@ impl PayoutProcessor {
                                 error = %reset_err,
                                 "wallet send retry could not reset payout batch"
                             );
+                            send_outcome_unknown = true;
                         }
                         tracing::info!(
                             batch_id = %plan.batch_id,
@@ -1754,6 +1850,7 @@ impl PayoutProcessor {
                                 error = %reset_err,
                                 "wallet liquidity failure could not reset payout batch"
                             );
+                            send_outcome_unknown = true;
                             queued.drain(..plan.recipients.len());
                             break;
                         }
@@ -1808,8 +1905,10 @@ impl PayoutProcessor {
                     error = %err,
                     "critical payout batch broadcast persistence failure"
                 );
+                send_outcome_unknown = true;
+                remove_spent_outputs(&mut spendable_outputs, &plan.inputs);
                 queued.drain(..plan.recipients.len());
-                continue;
+                break;
             }
 
             sent_txs = sent_txs.saturating_add(1);
@@ -1833,7 +1932,22 @@ impl PayoutProcessor {
             queued.drain(..plan.recipients.len());
         }
 
-        if queued.is_empty() && !send_outcome_unknown && !inventory_is_healthy(&inventory) {
+        {
+            let mut runtime = self.runtime.write();
+            runtime.queued_recipient_count = queued.len() + deferred_recipients;
+            // Operator amount/recipient caps apply to the regular cadence. Only
+            // continue work stopped by time, internal capacity, or retryable failures.
+            runtime.continuation_required = runtime.queued_recipient_count > 0
+                && !operator_cap_reached
+                && !send_outcome_unknown
+                && sent_recipients < max_recipients_per_tick
+                && sent_total < max_total_per_tick;
+        }
+        if queued.is_empty()
+            && deferred_recipients == 0
+            && !send_outcome_unknown
+            && !inventory_is_healthy(&inventory)
+        {
             rebalance_active = self.maybe_rebalance_outputs(
                 &wallet_balance,
                 &spendable_outputs,
@@ -2342,7 +2456,7 @@ impl PayoutProcessor {
     }
 
     fn load_recent_payout_stats(&self) -> RecentPayoutStats {
-        let payouts = match self.store.get_recent_payouts(256) {
+        let payouts = match self.store.get_recent_payout_batches(64) {
             Ok(payouts) => payouts,
             Err(err) => {
                 tracing::warn!(error = %err, "failed to load recent payouts for adaptive planning");
@@ -2449,7 +2563,12 @@ impl PayoutProcessor {
         inventory: &OutputInventory,
         reserve_target: u64,
     ) -> bool {
-        if inventory_is_healthy(inventory) || spendable_outputs.is_empty() {
+        if inventory_is_healthy(inventory)
+            || spendable_outputs.is_empty()
+            || inventory.economical_output_count >= FRAGMENTED_OUTPUT_COUNT
+            || (inventory.small_count >= inventory.small_target_count
+                && inventory.medium_count >= inventory.medium_target_count)
+        {
             return false;
         }
         let destination = match self.rebalance_destination() {
@@ -2457,13 +2576,17 @@ impl PayoutProcessor {
             None => return false,
         };
 
+        // Sends earlier in this sweep have already locked their entire inputs.
+        let spendable = wallet_balance
+            .spendable
+            .min(sum_output_amounts(spendable_outputs));
         let safe_spend_budget = compute_safe_spend_budget(
-            wallet_balance.spendable,
+            spendable,
             reserve_target,
             Duration::ZERO,
             Duration::from_secs(1),
         );
-        let rebalance_cap = (wallet_balance.spendable / REBALANCE_SPENDABLE_SHARE_DENOMINATOR)
+        let rebalance_cap = (spendable / REBALANCE_SPENDABLE_SHARE_DENOMINATOR)
             .saturating_mul(REBALANCE_SPENDABLE_SHARE_NUMERATOR);
         let max_locked_amount = safe_spend_budget.min(rebalance_cap);
         if max_locked_amount
@@ -3215,6 +3338,10 @@ fn build_output_inventory(
     let spendable_total = sum_output_amounts(outputs);
     let mut inventory = OutputInventory {
         spendable_count: outputs.len(),
+        economical_output_count: outputs
+            .iter()
+            .filter(|output| output.amount >= MIN_CONSOLIDATION_AMOUNT)
+            .count(),
         small_target_amount,
         medium_target_amount,
         large_target_amount,
@@ -3242,13 +3369,16 @@ fn build_output_inventory(
 }
 
 fn inventory_is_healthy(inventory: &OutputInventory) -> bool {
-    inventory.small_count >= inventory.small_target_count
+    inventory.economical_output_count < FRAGMENTED_OUTPUT_COUNT
+        && inventory.small_count >= inventory.small_target_count
         && inventory.medium_count >= inventory.medium_target_count
         && inventory.large_count >= inventory.large_target_count
 }
 
 fn inventory_health_label(inventory: &OutputInventory) -> &'static str {
-    if inventory_is_healthy(inventory) {
+    if inventory.economical_output_count >= FRAGMENTED_OUTPUT_COUNT {
+        "fragmented"
+    } else if inventory_is_healthy(inventory) {
         "healthy"
     } else if inventory.large_count < inventory.large_target_count {
         "large_deficit"
@@ -3260,7 +3390,10 @@ fn inventory_health_label(inventory: &OutputInventory) -> &'static str {
 }
 
 fn choose_change_split(inventory: &OutputInventory, change_amount: u64, queue_light: bool) -> u32 {
-    if !queue_light || change_amount <= inventory.small_target_amount.saturating_mul(2) {
+    if inventory.economical_output_count >= FRAGMENTED_OUTPUT_COUNT
+        || !queue_light
+        || change_amount <= inventory.small_target_amount.saturating_mul(2)
+    {
         return 1;
     }
     let missing_small = inventory
@@ -3305,13 +3438,36 @@ fn select_inputs_for_target(
         .filter(|output| output.amount >= target_amount)
         .min_by_key(|output| output.amount)
     {
-        return Some(vec![single.clone()]);
+        let mut picked = vec![single.clone()];
+        if outputs
+            .iter()
+            .filter(|output| output.amount >= MIN_CONSOLIDATION_AMOUNT)
+            .count()
+            >= FRAGMENTED_OUTPUT_COUNT
+        {
+            let mut total = single.amount;
+            for extra in &available {
+                if picked.len() >= MAX_CONSOLIDATION_INPUTS {
+                    break;
+                }
+                if extra.txid == single.txid && extra.output_index == single.output_index
+                    || extra.amount < MIN_CONSOLIDATION_AMOUNT
+                    || extra.amount >= target_amount
+                    || total.saturating_add(extra.amount) > max_locked_amount
+                {
+                    continue;
+                }
+                total = total.saturating_add(extra.amount);
+                picked.push(extra.clone());
+            }
+        }
+        return Some(picked);
     }
 
     let mut picked = Vec::<WalletOutput>::new();
     let mut total = 0u64;
     for output in available.iter().rev() {
-        if total >= target_amount {
+        if total >= target_amount || picked.len() >= 256 {
             break;
         }
         if total.saturating_add(output.amount) > max_locked_amount {
@@ -3327,7 +3483,7 @@ fn select_inputs_for_target(
     let mut ascending_pick = Vec::<WalletOutput>::new();
     total = 0;
     for output in &available {
-        if total >= target_amount {
+        if total >= target_amount || ascending_pick.len() >= 256 {
             break;
         }
         if total.saturating_add(output.amount) > max_locked_amount {
@@ -3968,7 +4124,7 @@ mod tests {
                         })
                         .to_string(),
                     ),
-                    ("GET", "/api/wallet/outputs") => (
+                    ("GET", "/api/wallet/outputs?status=unspent") => (
                         "HTTP/1.1 200 OK",
                         serde_json::json!({
                             "chain_height": 1u64,
@@ -4139,6 +4295,247 @@ mod tests {
         store
             .complete_pending_payout(address, 100, 2, tx_hash)
             .expect("complete payout");
+    }
+
+    #[test]
+    fn rebalance_budget_uses_only_inputs_remaining_after_payouts() {
+        let store = require_test_store!();
+        let outputs = vec![wallet_output("remaining", 0, 1_000_000_000)];
+        let totals = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let url = spawn_wallet_send_server(
+            &test_address(200),
+            outputs.clone(),
+            MockAdvancedSendPolicy {
+                live_recipient_totals: Some(Arc::clone(&totals)),
+                fee: 1000,
+                ..Default::default()
+            },
+            16,
+        );
+        let processor = PayoutProcessor::new(
+            Config::default(),
+            store,
+            Arc::new(NodeClient::new(&url, "").unwrap()),
+        );
+        let inventory = build_output_inventory(&outputs, 1_000_000, &RecentPayoutStats::default());
+        let balance_before_sweep = crate::node::WalletBalance {
+            spendable: 10_000_000_000,
+            pending: 0,
+            pending_unconfirmed: 0,
+            pending_unconfirmed_eta: 0,
+            total: 10_000_000_000,
+        };
+        assert!(!processor.maybe_rebalance_outputs(
+            &balance_before_sweep,
+            &outputs,
+            &inventory,
+            4_000_000
+        ));
+        assert!(totals.lock().is_empty());
+    }
+
+    #[test]
+    fn operator_amount_cap_with_unused_remainder_does_not_trigger_retry() {
+        let store = require_test_store!();
+        for seed in 1..=3 {
+            store
+                .update_balance(&Balance {
+                    address: test_address(seed),
+                    pending: 100_000_000,
+                    paid: 0,
+                })
+                .unwrap();
+        }
+        let url = spawn_wallet_send_server(
+            &test_address(200),
+            vec![
+                wallet_output("funds", 0, 200_000_000),
+                wallet_output("reserve", 0, 1_000_000_000),
+            ],
+            MockAdvancedSendPolicy {
+                fee: 1000,
+                ..Default::default()
+            },
+            32,
+        );
+        let processor = PayoutProcessor::new(
+            Config {
+                min_payout_amount: 1.0,
+                payout_max_total_per_tick: 1.5,
+                ..Default::default()
+            },
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&url, "").unwrap()),
+        );
+        processor.send_payouts();
+        let pending = store.get_pending_payouts().unwrap();
+        assert_eq!(pending.iter().filter(|p| p.tx_hash.is_some()).count(), 1);
+        let runtime = processor.runtime_snapshot();
+        assert_eq!(runtime.queued_recipient_count, 2);
+        assert!(!runtime.continuation_required);
+    }
+
+    #[test]
+    fn operator_recipient_cap_does_not_schedule_a_continuation() {
+        let store = require_test_store!();
+        for seed in 1..=3 {
+            store
+                .update_balance(&Balance {
+                    address: test_address(seed),
+                    pending: 1_000_000,
+                    paid: 0,
+                })
+                .unwrap();
+        }
+        let url = spawn_wallet_send_server(
+            &test_address(200),
+            vec![
+                wallet_output("funds", 0, 100_000_000),
+                wallet_output("reserve", 0, 100_000_000),
+            ],
+            MockAdvancedSendPolicy {
+                fee: 1000,
+                ..Default::default()
+            },
+            32,
+        );
+        let processor = PayoutProcessor::new(
+            Config {
+                min_payout_amount: 0.01,
+                payout_max_recipients_per_tick: 2,
+                ..Default::default()
+            },
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&url, "").unwrap()),
+        );
+        processor.send_payouts();
+        let pending = store.get_pending_payouts().unwrap();
+        assert_eq!(pending.iter().filter(|p| p.tx_hash.is_some()).count(), 2);
+        let runtime = processor.runtime_snapshot();
+        assert_eq!(runtime.queued_recipient_count, 1);
+        assert!(!runtime.continuation_required);
+    }
+
+    #[test]
+    fn payout_schedule_preserves_cadence_across_sends_and_retries() {
+        let start = Instant::now();
+        let mut schedule = PayoutSchedule::new(start, Duration::from_secs(3600));
+        schedule.completed(start + Duration::from_secs(60), true, false);
+        assert_eq!(schedule.next_due(), start + Duration::from_secs(3600));
+        schedule.completed(start + Duration::from_secs(3660), true, true);
+        assert_eq!(schedule.next_due(), start + Duration::from_secs(3960));
+        schedule.completed(start + Duration::from_secs(3990), true, false);
+        assert_eq!(schedule.next_due(), start + Duration::from_secs(7200));
+        schedule.completed(start + Duration::from_secs(11000), false, false);
+        assert_eq!(schedule.next_due(), start + Duration::from_secs(11030));
+    }
+
+    #[test]
+    fn fragmented_inventory_consolidates_without_dust_or_reserve_spending() {
+        let mut outputs = (0..128)
+            .map(|i| wallet_output(&format!("small-{i}"), 0, 100_000_000))
+            .collect::<Vec<_>>();
+        outputs.push(wallet_output("funding", 0, 10_000_000_000));
+        outputs.push(wallet_output("dust", 0, 10));
+        let picked = select_inputs_for_target(&outputs, 5_000_000_000, 0, 10_200_000_000).unwrap();
+        assert_eq!(picked.len(), 3);
+        assert_eq!(sum_output_amounts(&picked), 10_200_000_000);
+        assert!(picked.iter().all(|o| o.txid != "dust"));
+        let inventory =
+            build_output_inventory(&outputs, 100_000_000, &RecentPayoutStats::default());
+        assert_eq!(inventory_health_label(&inventory), "fragmented");
+        assert_eq!(choose_change_split(&inventory, 10_000_000_000, true), 1);
+        let small_wallet = vec![
+            wallet_output("one", 0, 10_000_000_000),
+            wallet_output("two", 0, 100_000_000),
+        ];
+        assert_eq!(
+            select_inputs_for_target(&small_wallet, 5_000_000_000, 0, 20_000_000_000)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn dust_alone_does_not_trigger_consolidation() {
+        let mut outputs = (0..200)
+            .map(|i| wallet_output(&format!("dust-{i}"), 0, 100))
+            .collect::<Vec<_>>();
+        outputs.push(wallet_output("funding", 0, 10_000_000_000));
+        let inventory =
+            build_output_inventory(&outputs, 100_000_000, &RecentPayoutStats::default());
+        assert_ne!(inventory_health_label(&inventory), "fragmented");
+        assert_eq!(
+            select_inputs_for_target(&outputs, 5_000_000_000, 0, 20_000_000_000)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn payout_sweep_serves_more_than_eight_batches_and_reports_blocked_balances() {
+        let store = require_test_store!();
+        for seed in 1..=135u8 {
+            store
+                .update_balance(&Balance {
+                    address: test_address(seed),
+                    pending: 1_000_000,
+                    paid: 0,
+                })
+                .unwrap();
+        }
+        store
+            .update_balance(&Balance {
+                address: "invalid-address".into(),
+                pending: 123_456_789,
+                paid: 0,
+            })
+            .unwrap();
+        let totals = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let outputs = (0..20)
+            .map(|i| wallet_output(&format!("funds-{i}"), 0, 100_000_000))
+            .collect();
+        let url = spawn_wallet_send_server(
+            &test_address(200),
+            outputs,
+            MockAdvancedSendPolicy {
+                live_recipient_totals: Some(Arc::clone(&totals)),
+                fee: 1_000,
+                ..Default::default()
+            },
+            100,
+        );
+        let processor = PayoutProcessor::new(
+            Config {
+                min_payout_amount: 0.01,
+                payout_max_recipients_per_tick: 300,
+                ..Default::default()
+            },
+            Arc::clone(&store),
+            Arc::new(NodeClient::new(&url, "").unwrap()),
+        );
+        processor.send_payouts();
+        // An optional self-rebalance is separate from the nine payout batches.
+        assert_eq!(
+            totals
+                .lock()
+                .iter()
+                .filter(|amount| **amount == 15_000_000)
+                .count(),
+            9
+        );
+        assert_eq!(store.get_pending_payouts().unwrap().len(), 135);
+        assert_eq!(
+            store.get_balance("invalid-address").unwrap().pending,
+            123_456_789
+        );
+        let runtime = processor.runtime_snapshot();
+        assert_eq!(runtime.blocked_address_count, 1);
+        assert_eq!(runtime.blocked_address_amount, 123_456_789);
+        assert_eq!(runtime.queued_recipient_count, 0);
+        assert!(!runtime.continuation_required);
     }
 
     #[test]
@@ -4487,7 +4884,7 @@ mod tests {
                 },
                 Some(ShareReplayData {
                     job_id: "replay-job".to_string(),
-                    header_base: vec![1, 2, 3, 4, 5, 6, 7, 8],
+                    header_base: vec![0; 92],
                     network_target: [0xff; 32],
                     created_at: share_time,
                 }),
@@ -4599,7 +4996,7 @@ mod tests {
                 },
                 Some(ShareReplayData {
                     job_id: "candidate-replay-job".to_string(),
-                    header_base: vec![9, 8, 7, 6, 5, 4, 3, 2],
+                    header_base: vec![0; 92],
                     network_target: [0u8; 32],
                     created_at: share_time,
                 }),
@@ -6035,6 +6432,11 @@ mod tests {
             Arc::new(NodeClient::new(&base_url, "").expect("node")),
         );
         processor.send_payouts();
+        let pending = store.get_pending_payout(&miner).unwrap().unwrap();
+        assert_eq!(
+            processor.runtime_snapshot().continuation_required,
+            pending.send_started_at.is_none() && pending.tx_hash.is_none()
+        );
         (store, miner)
     }
 

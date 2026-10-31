@@ -780,7 +780,7 @@ impl NodeClient {
     }
 
     pub(crate) fn get_wallet_outputs(&self) -> Result<WalletOutputsResponse> {
-        self.get_json("/api/wallet/outputs")
+        self.get_json("/api/wallet/outputs?status=unspent")
     }
 
     pub(crate) fn wallet_send_advanced(

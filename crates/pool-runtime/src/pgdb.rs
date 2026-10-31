@@ -2812,6 +2812,25 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         Ok(())
     }
 
+    /// Return complete recent transactions, excluding reverted recipients.
+    pub fn get_recent_payout_batches(&self, limit: i64) -> Result<Vec<Payout>> {
+        let limit = limit.clamp(1, 256);
+        let tail_limit = limit * 64;
+        let rows = self.conn().query(
+            "WITH tail AS MATERIALIZED (
+                SELECT id, tx_hash FROM payouts WHERE reverted_at IS NULL
+                ORDER BY id DESC LIMIT $2
+             ), recent AS (
+                SELECT tx_hash FROM tail GROUP BY tx_hash ORDER BY max(id) DESC LIMIT $1
+             )
+             SELECT p.address, p.amount, p.fee, p.tx_hash, p.timestamp, 1 AS confirmed, p.batch_id
+             FROM payouts p JOIN recent USING (tx_hash)
+             WHERE p.reverted_at IS NULL ORDER BY p.id DESC",
+            &[&limit, &tail_limit],
+        )?;
+        rows.into_iter().map(row_to_payout).collect()
+    }
+
     pub fn get_recent_payouts(&self, limit: i64) -> Result<Vec<Payout>> {
         let rows = self.conn().query(
             "SELECT address, amount, fee, tx_hash, timestamp, 1 AS confirmed, batch_id
@@ -6871,6 +6890,43 @@ mod tests {
         store
             .open_independent_session()
             .expect("connect lock session")
+    }
+
+    #[test]
+    fn recent_payout_batches_are_complete_and_exclude_reverted_rows() {
+        let Some(store) = test_store() else {
+            return;
+        };
+        for i in 0..80 {
+            store
+                .add_payout_with_batch(
+                    &format!("miner-{i}"),
+                    100,
+                    1,
+                    "older-large-tx",
+                    Some("older-batch"),
+                )
+                .unwrap();
+        }
+        store
+            .add_payout_with_batch("newer", 200, 2, "newer-tx", Some("newer-batch"))
+            .unwrap();
+        store
+            .add_payout_with_batch("reverted", 900, 2, "reverted-tx", Some("reverted-batch"))
+            .unwrap();
+        store
+            .conn()
+            .execute(
+                "UPDATE payouts SET reverted_at = 1 WHERE tx_hash = 'reverted-tx'",
+                &[],
+            )
+            .unwrap();
+        let one = store.get_recent_payout_batches(1).unwrap();
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].amount, 200);
+        let two = store.get_recent_payout_batches(2).unwrap();
+        assert_eq!(two.len(), 81);
+        assert_eq!(two.iter().map(|p| p.amount).sum::<u64>(), 8200);
     }
 
     #[test]

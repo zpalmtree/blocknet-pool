@@ -5497,6 +5497,8 @@ mod tests {
         let now = SystemTime::now();
         let mut config = cfg();
         config.sync_verify_slots = 1;
+        // This test checks lane selection, not probabilistic hold sampling.
+        config.hold_audit_rate = 1.0;
         config.payout_min_verified_shares = 1;
         config.payout_provisional_cap_multiplier = 1.0;
         config.provisional_share_delay = match cause {

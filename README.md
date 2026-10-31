@@ -29,6 +29,33 @@ Workspace layout:
 - `crates/`: shared library packages with explicit dependency boundaries
 - `frontend/`: embedded React/Vite UI for the API binary
 
+## Payout operations
+
+The payout minimum and regular interval remain configurable; this change does not
+alter deployed settings. Sweeps honor the configured recipient and amount caps,
+with at most 64 transactions and a three-minute budget checked between sends.
+Capacity or temporary send failures can schedule a five-minute continuation;
+regular sweep times stay anchored instead of drifting by processing time. Unknown
+broadcast outcomes retain their existing idempotency state and are reconciled
+before retrying. Operator recipient/amount caps do not themselves trigger a continuation.
+
+Wallet inventories with at least 128 outputs worth 0.01 BNT or more are marked
+`fragmented`. Ordinary single-input payouts may include up to three additional
+small inputs, within the existing reserve budget. Dust is excluded, and fragmented
+wallets are not split further. Planning uses complete recent payout transactions.
+The daemon's optional `GET /api/wallet/outputs?status=unspent` filter reduces
+output transfer; older daemons that ignore the query remain compatible.
+
+The persisted runtime `payouts` snapshot includes `queued_recipient_count`,
+`continuation_required`, `blocked_address_count`, and `blocked_address_amount`
+(atomic units). Blocked balances remain credited and are excluded from sends.
+For a read-only mainnet report, run `python3 scripts/audit_payout_balances.py`;
+use `--include-addresses` only when an operator needs the destinations. The script
+uses SSH, local PostgreSQL read-only queries, and libsodium key validation.
+Invalid-address claims require ownership review and a validated replacement
+address before a separately authorized ledger correction. Never silently
+redirect, erase, or retry those funds against an invalid key.
+
 ## Runtime tests
 
 Database-backed tests require `BLOCKNET_POOL_TEST_POSTGRES_URL`; without it,

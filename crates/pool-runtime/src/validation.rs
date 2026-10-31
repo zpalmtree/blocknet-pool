@@ -5814,7 +5814,9 @@ mod tests {
 
     #[test]
     fn provisional_validation_state_survives_restart() {
-        let cfg = test_cfg();
+        let mut cfg = test_cfg();
+        // Assert persisted pressure deterministically, independently of sampling.
+        cfg.hold_audit_rate = 1.0;
         let store = require_test_store!();
         let engine = ValidationEngine::new_with_state_store(
             cfg.clone(),
