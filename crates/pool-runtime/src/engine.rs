@@ -438,6 +438,25 @@ impl SubmitRisk {
 }
 
 pub(crate) trait ShareStore: Send + Sync + 'static {
+    fn register_payout_destination(
+        &self,
+        destination: &pool_common::destination::PayoutDestination,
+    ) -> Result<String> {
+        if destination.memo.is_some() {
+            return Err(anyhow!("store does not support memo payouts"));
+        }
+        Ok(destination.account_id())
+    }
+    fn payout_destination(
+        &self,
+        account: &str,
+    ) -> Result<pool_common::destination::PayoutDestination> {
+        if account.starts_with(pool_common::destination::MEMO_ACCOUNT_PREFIX) {
+            return Err(anyhow!("missing payout destination"));
+        }
+        pool_common::destination::PayoutDestination::new(account, None).map_err(anyhow::Error::msg)
+    }
+
     /// Claims a share for crediting. `job_id` is the assignment id (checked
     /// against persisted rows) and `share_key` is the template-scoped key from
     /// [`template_share_key`]; the claim on `(share_key, nonce)` is kept after
@@ -1161,6 +1180,38 @@ impl PoolEngine {
         )
     }
 
+    pub(crate) fn prepare_payout_destination(
+        &self,
+        address: &str,
+        memo: Option<&str>,
+        capabilities: &[String],
+    ) -> Result<String> {
+        use pool_common::destination::{PayoutDestination, CAP_PAYOUT_MEMO};
+        validate_miner_address_for_network(address, self.expected_address_network)
+            .map_err(anyhow::Error::msg)?;
+        let destination = PayoutDestination::new(address, memo).map_err(anyhow::Error::msg)?;
+        if destination.memo.is_none()
+            && self
+                .cfg()
+                .shared_exchange_addresses
+                .iter()
+                .any(|entry| entry.address == address)
+        {
+            return Err(anyhow!(
+                "this shared exchange address requires a payout memo; use --payout-memo"
+            ));
+        }
+        if destination.memo.is_some()
+            && (!self.cfg().payout_memos_enabled
+                || !capabilities.iter().any(|cap| cap == CAP_PAYOUT_MEMO))
+        {
+            return Err(anyhow!(
+                "memo payouts require an enabled pool and payout_memo_v1 support"
+            ));
+        }
+        self.store.register_payout_destination(&destination)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn login_from_peer(
         &self,
@@ -1176,7 +1227,9 @@ impl PoolEngine {
         if address.is_empty() || address.len() > 128 {
             return Err(anyhow!("invalid address"));
         }
-        if let Err(err) = validate_miner_address_for_network(address, self.expected_address_network)
+        let destination = self.store.payout_destination(address)?;
+        if let Err(err) =
+            validate_miner_address_for_network(&destination.address, self.expected_address_network)
         {
             return Err(anyhow!("invalid address: {err}"));
         }
@@ -1305,7 +1358,16 @@ impl PoolEngine {
             }
         }
 
-        Ok(build_login_result())
+        let mut result = build_login_result();
+        if destination.memo.is_some() {
+            result
+                .capabilities
+                .push(pool_common::destination::CAP_PAYOUT_MEMO.into());
+            result.payout_account = Some(address.to_string());
+            result.min_payout_atomic =
+                Some((self.cfg().payout_minimum(address) * 100_000_000.0).round() as u64);
+        }
+        Ok(result)
     }
 
     pub(crate) fn disconnect(&self, conn_id: &str) {
@@ -7444,5 +7506,61 @@ mod tests {
             )
             .expect_err("submit should fail for nonce outside assignment");
         assert!(err.to_string().contains("out of assigned range"));
+    }
+    #[test]
+    fn payout_memo_login_isolates_same_address_and_worker_and_checks_policy() {
+        let Some(store) = crate::store::PoolStore::test_store() else {
+            return;
+        };
+        let mut config = cfg();
+        config.payout_memos_enabled = true;
+        config.memo_min_payout_amount = 1.0;
+        let validation = Arc::new(ValidationEngine::new(
+            config.clone(),
+            Arc::new(DeterministicTestHasher),
+        ));
+        let engine = PoolEngine::new(
+            config,
+            validation,
+            Arc::new(InMemoryJobs::default()),
+            store,
+            Arc::new(InMemoryNode::default()),
+        );
+        let address = test_miner_address();
+        let caps = vec![
+            "submit_claimed_hash".to_string(),
+            pool_common::destination::CAP_PAYOUT_MEMO.into(),
+        ];
+        let mut accounts = Vec::new();
+        for (index, memo) in [None, Some("ID001"), Some("ID002")].iter().enumerate() {
+            let account = engine
+                .prepare_payout_destination(&address, *memo, &caps)
+                .unwrap();
+            let conn = format!("memo-test-{index}");
+            let ack = engine
+                .login(&conn, account.clone(), "same-rig", 2, caps.clone())
+                .unwrap();
+            assert_eq!(engine.sessions.lock().get(&conn).unwrap().address, account);
+            assert_eq!(
+                ack.payout_account.as_deref(),
+                memo.map(|_| account.as_str())
+            );
+            if memo.is_some() {
+                assert_eq!(ack.min_payout_atomic, Some(100_000_000));
+            }
+            accounts.push(account);
+        }
+        assert_eq!(accounts.iter().collect::<HashSet<_>>().len(), 3);
+        let known = Config::default().shared_exchange_addresses[0]
+            .address
+            .clone();
+        assert!(engine
+            .prepare_payout_destination(&known, None, &caps)
+            .unwrap_err()
+            .to_string()
+            .contains("requires a payout memo"));
+        assert!(engine
+            .prepare_payout_destination(&address, Some("ID001"), &[])
+            .is_err());
     }
 }

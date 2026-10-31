@@ -1715,9 +1715,11 @@ impl StratumServer {
                             let login_protocol_version = params.protocol_version;
                             let login_capabilities = params.capabilities.clone();
                             let login_hint = params.difficulty_hint;
+                            let login_memo = params.payout_memo.clone();
                             let login_peer_ip = peer.ip();
                             let login = tokio::task::spawn_blocking(move || {
                                 let login_address = shortname_resolver.resolve(&login_address)?;
+                                let login_address = login_engine.prepare_payout_destination(&login_address, login_memo.as_deref(), &login_capabilities)?;
                                 let result = login_engine.login_from_peer(
                                     &login_conn_id,
                                     Some(login_peer_ip),

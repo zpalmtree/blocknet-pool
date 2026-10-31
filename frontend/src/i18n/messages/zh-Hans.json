@@ -336,5 +336,15 @@
   "statsPayoutQueued": "支付已排队：{0}。",
   "statsPayoutBasis": "只有已确认奖励计入最低金额。预计奖励必须先成熟。",
   "statsPayoutUnavailable": "最低支付金额暂不可用。正在自动重试。",
-  "statsPayoutBalanceUnavailable": "已确认余额暂不可用，无法计算支付进度。"
+  "statsPayoutBalanceUnavailable": "已确认余额暂不可用，无法计算支付进度。",
+  "memoTitle": "挖矿到交易所？",
+  "memoAddress": "交易所充值地址",
+  "memoLabel": "充值备注",
+  "memoAdd": "添加备注",
+  "memoRequired": "{0} 使用共享地址。请输入您的充值备注。",
+  "memoLimit": "请原样复制备注；最多 124 个 UTF-8 字节。",
+  "memoPolicy": "带备注的付款采用更高的最低金额，以减少小额充值。",
+  "memoMinimum": "带备注的最低付款金额：{0} BNT",
+  "memoUnavailable": "此矿池尚未启用带备注的付款。",
+  "memoLookupFailed": "无法加载此收款目标。请重试。"
 }

@@ -14,6 +14,7 @@ const state = states.includes(params.get('state') || '') ? params.get('state')! 
 const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
 document.documentElement.dataset.theme = theme;
 const address = 'demo-small-miner-not-a-real-wallet';
+localStorage.removeItem('pool_payout_destination_v1');
 if (state === 'empty') localStorage.removeItem(LAST_MINER_LOOKUP_KEY);
 else localStorage.setItem(LAST_MINER_LOOKUP_KEY, address);
 const now = Math.floor(Date.now() / 1000);

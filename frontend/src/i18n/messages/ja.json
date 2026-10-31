@@ -336,5 +336,15 @@
   "statsPayoutQueued": "支払い待ち：{0}。",
   "statsPayoutBasis": "最低額に算入されるのは確定報酬のみです。推定報酬は先に成熟する必要があります。",
   "statsPayoutUnavailable": "最低支払額を取得できません。自動的に再試行します。",
-  "statsPayoutBalanceUnavailable": "確定残高を取得できないため、支払いまでの進捗を計算できません。"
+  "statsPayoutBalanceUnavailable": "確定残高を取得できないため、支払いまでの進捗を計算できません。",
+  "memoTitle": "取引所へ直接入金しますか？",
+  "memoAddress": "取引所の入金アドレス",
+  "memoLabel": "入金メモ",
+  "memoAdd": "メモを追加",
+  "memoRequired": "{0} は共有アドレスを使用しています。入金メモを入力してください。",
+  "memoLimit": "メモを正確にコピーしてください。最大124 UTF-8バイトです。",
+  "memoPolicy": "少額入金を減らすため、メモ付き支払いの最低額は高く設定されています。",
+  "memoMinimum": "メモ付き支払いの最低額：{0} BNT",
+  "memoUnavailable": "このプールではメモ付き支払いがまだ有効になっていません。",
+  "memoLookupFailed": "この送金先を読み込めませんでした。もう一度お試しください。"
 }

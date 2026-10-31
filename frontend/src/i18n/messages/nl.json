@@ -336,5 +336,15 @@
   "statsPayoutQueued": "Uitbetaling in wachtrij: {0}.",
   "statsPayoutBasis": "Alleen bevestigde beloningen tellen mee voor het minimum. Geschatte beloningen moeten eerst rijpen.",
   "statsPayoutUnavailable": "Minimale uitbetaling niet beschikbaar. Er wordt automatisch opnieuw geprobeerd.",
-  "statsPayoutBalanceUnavailable": "Bevestigd saldo niet beschikbaar; de voortgang naar uitbetaling kan niet worden berekend."
+  "statsPayoutBalanceUnavailable": "Bevestigd saldo niet beschikbaar; de voortgang naar uitbetaling kan niet worden berekend.",
+  "memoTitle": "Minen naar een beurs?",
+  "memoAddress": "Stortingsadres van de beurs",
+  "memoLabel": "Stortingsmemo",
+  "memoAdd": "Memo toevoegen",
+  "memoRequired": "{0} gebruikt een gedeeld adres. Vul je stortingsmemo in.",
+  "memoLimit": "Kopieer de memo exact; maximaal 124 UTF-8-bytes.",
+  "memoPolicy": "Uitbetalingen met memo hebben een hoger minimum om kleine stortingen te beperken.",
+  "memoMinimum": "Minimale uitbetaling met memo: {0} BNT",
+  "memoUnavailable": "Uitbetalingen met memo zijn nog niet ingeschakeld op deze pool.",
+  "memoLookupFailed": "Deze bestemming kon niet worden geladen. Probeer opnieuw."
 }

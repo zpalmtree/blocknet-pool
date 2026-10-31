@@ -297,6 +297,19 @@ impl PoolStore {
 }
 
 impl ShareStore for PoolStore {
+    fn register_payout_destination(
+        &self,
+        destination: &pool_common::destination::PayoutDestination,
+    ) -> Result<String> {
+        self.inner.register_payout_destination(destination)
+    }
+    fn payout_destination(
+        &self,
+        account: &str,
+    ) -> Result<pool_common::destination::PayoutDestination> {
+        self.inner.payout_destination(account)
+    }
+
     fn try_claim_share(&self, job_id: &str, share_key: &str, nonce: u64) -> Result<bool> {
         self.inner.try_claim_share(job_id, share_key, nonce)
     }
@@ -1119,5 +1132,59 @@ mod tests {
         // Nothing to do while the ratio cap is satisfied.
         let covered = backfill_window(1_000, Duration::from_millis(500), |i| i % 10 == 0);
         assert!(select_payout_backfill(&covered, &count_cfg, 8).is_empty());
+    }
+    #[test]
+    fn payout_memo_accounts_keep_balances_shares_and_pending_payouts_separate() {
+        use pool_common::{db::Balance, destination::PayoutDestination};
+        let Some(store) = test_store() else {
+            return;
+        };
+        let destinations = [None, Some("ID001"), Some("ID002")]
+            .map(|memo| PayoutDestination::new("shared-address", memo).unwrap());
+        for (index, destination) in destinations.iter().enumerate() {
+            let account = store.register_payout_destination(destination).unwrap();
+            let amount = (index as u64 + 1) * 100;
+            store
+                .update_balance(&Balance {
+                    address: account.clone(),
+                    pending: amount,
+                    paid: 0,
+                })
+                .unwrap();
+            store.create_pending_payout(&account, amount).unwrap();
+            store
+                .add_share(ShareRecord {
+                    job_id: format!("memo-job-{index}"),
+                    miner: account.clone(),
+                    worker: "same-rig".into(),
+                    difficulty: amount,
+                    nonce: index as u64,
+                    status: "verified",
+                    was_sampled: true,
+                    block_hash: None,
+                    claimed_hash: None,
+                    reject_reason: None,
+                    created_at: SystemTime::now(),
+                })
+                .unwrap();
+        }
+        for (index, destination) in destinations.iter().enumerate() {
+            let account = destination.account_id();
+            assert_eq!(store.payout_destination(&account).unwrap(), *destination);
+            assert_eq!(
+                store.register_payout_destination(destination).unwrap(),
+                account
+            );
+            let amount = (index as u64 + 1) * 100;
+            assert_eq!(store.get_balance(&account).unwrap().pending, amount);
+            assert_eq!(
+                store.get_pending_payout(&account).unwrap().unwrap().amount,
+                amount
+            );
+            let shares = store.get_shares_for_miner(&account, 100).unwrap();
+            assert_eq!(shares.len(), 1);
+            assert_eq!(shares[0].difficulty, amount);
+        }
+        assert!(store.payout_destination("memo:missing").is_err());
     }
 }

@@ -156,6 +156,11 @@ pub struct Config {
     pub pplns_window_duration: String,
     pub blocks_before_payout: i32,
     pub min_payout_amount: f64,
+    /// Enables new memo accounts. Existing memo payouts remain recoverable when disabled.
+    pub payout_memos_enabled: bool,
+    /// BNT minimum for a memo payout; zero requires an operator to choose a floor.
+    pub memo_min_payout_amount: f64,
+    pub shared_exchange_addresses: Vec<pool_common::destination::SharedExchangeAddress>,
     pub payout_min_verified_shares: i32,
     pub payout_provisional_cap_multiplier: f64,
     pub payouts_enabled: bool,
@@ -254,6 +259,12 @@ impl Default for Config {
             pplns_window_duration: "6h".to_string(),
             blocks_before_payout: 60,
             min_payout_amount: 0.1,
+            payout_memos_enabled: false,
+            memo_min_payout_amount: 0.0,
+            shared_exchange_addresses: vec![pool_common::destination::SharedExchangeAddress {
+                address: "ZJZqGfDPCVg78CRH5Z33CtHafg911Dp5Bauf1Dnxg5jgXx7Whqsvqka96FCV8W6QZXNDKzJefkFU6bwDEGBewqPrTWjij".into(),
+                name: "SafeTrade".into(),
+            }],
             payout_min_verified_shares: 1,
             payout_provisional_cap_multiplier: 19.0,
             payouts_enabled: true,
@@ -286,6 +297,14 @@ macro_rules! hot_settings {
 }
 
 impl Config {
+    pub fn payout_minimum(&self, account: &str) -> f64 {
+        if account.starts_with(pool_common::destination::MEMO_ACCOUNT_PREFIX) {
+            self.min_payout_amount.max(self.memo_min_payout_amount)
+        } else {
+            self.min_payout_amount
+        }
+    }
+
     /// `self` with the hot-reloadable settings taken from `next`, and the
     /// names of the settings that changed.
     pub fn with_hot_settings_from(&self, next: &Config) -> (Config, Vec<&'static str>) {
@@ -557,6 +576,21 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        if !self.memo_min_payout_amount.is_finite()
+            || self.memo_min_payout_amount < 0.0
+            || (self.payout_memos_enabled
+                && (self.memo_min_payout_amount * 100_000_000.0).round() as u64
+                    <= (self.min_payout_amount * 100_000_000.0).round() as u64)
+        {
+            anyhow::bail!("memo_min_payout_amount must exceed min_payout_amount when payout memos are enabled");
+        }
+        for exchange in &self.shared_exchange_addresses {
+            pool_common::protocol::validate_miner_address(&exchange.address)
+                .map_err(anyhow::Error::msg)?;
+            if exchange.name.trim().is_empty() {
+                anyhow::bail!("shared exchange name is required");
+            }
+        }
         match self.validation_mode.as_str() {
             "full" | "probabilistic" => {}
             _ => anyhow::bail!("validation_mode must be either \"full\" or \"probabilistic\""),
@@ -842,6 +876,19 @@ impl LiveConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn memo_admission_requires_a_higher_atomic_payout_floor() {
+        let mut cfg = Config {
+            payout_memos_enabled: true,
+            ..Config::default()
+        };
+        assert!(cfg.validate().is_err());
+        cfg.memo_min_payout_amount = cfg.min_payout_amount + 0.000_000_001;
+        assert!(cfg.validate().is_err());
+        cfg.memo_min_payout_amount = 1.0;
+        assert!(cfg.validate().is_ok());
+    }
 
     #[test]
     fn fee_applies_pct() {

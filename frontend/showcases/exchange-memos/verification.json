@@ -1,0 +1,35 @@
+{
+  "viewports": {
+    "desktop": [
+      1440,
+      1000
+    ],
+    "mobile": [
+      390,
+      844
+    ]
+  },
+  "browser": "Configured Windows Chrome Playwright MCP",
+  "reviewed_captures": 34,
+  "passed": [
+    "Ordinary address-only lookup keeps memo field collapsed and normal threshold",
+    "Known and rotated shared addresses reveal memo field and block lookup without it",
+    "Late registry response clears address-only result",
+    "DEMO001 to DEMO002 changes balance and worker without retaining previous account",
+    "Exact address+memo pair persists locally",
+    "Unknown addresses support optional memo",
+    "Loading, empty, request error, UTF-8 limit and feature-disabled states",
+    "POSIX and PowerShell quoting; copied command verified with page-local clipboard stub",
+    "No horizontal page overflow; light theme and Arabic RTL reviewed"
+  ],
+  "environment_note": "Chrome extension emitted Cannot redefine property: ethereum; no app-origin console failures in successful states.",
+  "backend_checks": {
+    "seine": "75 pool protocol tests, 75 config tests, account contract test, default-feature cargo check passed",
+    "pool": "Full runtime suite: 443 passed, 1 pre-existing allocator timing failure passed isolated; new memo tests and cross-repo account hash contract passed",
+    "api": "128 passed in isolated schemas; 1 ignored; one pre-existing reward replay failure reproduced on untouched master",
+    "frontend": "36 tests and production build including TypeScript and all 20 locale catalogs passed",
+    "lint": "Clippy runtime, Stratum, gateway and API all targets with warnings denied passed",
+    "browser_cleanup": "All task-owned tabs closed; local static preview retained",
+    "payout_regression": "All 80 payout tests passed after final compatibility review, using isolated PostgreSQL schemas."
+  }
+}

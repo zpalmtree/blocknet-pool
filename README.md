@@ -31,6 +31,9 @@ Workspace layout:
 
 ## Payout operations
 
+[Exchange payout memos](EXCHANGE_PAYOUTS.md) are opt-in, with separate accounting
+and a configurable higher payout minimum. New memo mining is disabled by default.
+
 The payout minimum and regular interval remain configurable; this change does not
 alter deployed settings. Sweeps honor the configured recipient and amount caps,
 with at most 64 transactions and a three-minute budget checked between sends.

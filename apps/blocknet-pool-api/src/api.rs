@@ -441,6 +441,7 @@ impl<T: Clone> TimedValueCache<T> {
 
 #[derive(Clone, Serialize)]
 struct MinerBalancePayload {
+    min_payout_amount: f64,
     address: String,
     balance: MinerBalanceResponse,
     pending_estimate: MinerPendingEstimate,
@@ -1011,6 +1012,7 @@ pub(crate) async fn run_api(addr: SocketAddr, state: ApiState) -> anyhow::Result
         .route("/sitemap.xml", get(handle_sitemap_xml))
         .route("/ui-assets/*name", get(handle_ui_asset))
         .route("/api/info", get(handle_info))
+        .route("/api/payout-destination", post(handle_payout_destination))
         .route(
             "/api/site-events",
             post(handle_site_event).layer(axum::extract::DefaultBodyLimit::max(1024)),
@@ -1101,8 +1103,51 @@ struct PoolInfoResponse {
     stratum_port: u16,
     pool_fee_pct: f64,
     min_payout_amount: f64,
+    payout_memos_enabled: bool,
+    memo_min_payout_amount: f64,
+    shared_exchange_addresses: Vec<pool_common::destination::SharedExchangeAddress>,
     blocks_before_payout: i32,
     pplns_window_duration: String,
+}
+
+#[derive(Deserialize)]
+struct PayoutDestinationRequest {
+    address: String,
+    memo: Option<String>,
+}
+
+// Resolve locally: no account is created by a stats lookup and the memo is never
+// placed in a request URL, response, cache key or diagnostic message.
+async fn handle_payout_destination(
+    State(state): State<ApiState>,
+    Json(request): Json<PayoutDestinationRequest>,
+) -> Response {
+    use pool_common::destination::PayoutDestination;
+    if let Err(error) = pool_common::protocol::validate_miner_address(request.address.trim()) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": error}))).into_response();
+    }
+    let destination = match PayoutDestination::new(&request.address, request.memo.as_deref()) {
+        Ok(value) => value,
+        Err(error) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": error}))).into_response()
+        }
+    };
+    if destination.memo.is_none()
+        && state
+            .config
+            .runtime
+            .shared_exchange_addresses
+            .iter()
+            .any(|entry| entry.address == destination.address)
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "memo_required"})),
+        )
+            .into_response();
+    }
+    let account = destination.account_id();
+    Json(json!({"account": account, "min_payout_amount": state.config.runtime.payout_minimum(&account)})).into_response()
 }
 
 async fn handle_info(State(state): State<ApiState>) -> impl IntoResponse {
@@ -1117,6 +1162,13 @@ async fn handle_info(State(state): State<ApiState>) -> impl IntoResponse {
         stratum_port: state.config.runtime.stratum_port,
         pool_fee_pct: state.config.runtime.pool_fee_pct,
         min_payout_amount: state.config.runtime.min_payout_amount,
+        payout_memos_enabled: state.config.runtime.payout_memos_enabled,
+        memo_min_payout_amount: state
+            .config
+            .runtime
+            .memo_min_payout_amount
+            .max(state.config.runtime.min_payout_amount),
+        shared_exchange_addresses: state.config.runtime.shared_exchange_addresses.clone(),
         blocks_before_payout: state.config.runtime.blocks_before_payout,
         pplns_window_duration: state.config.runtime.pplns_window_duration.clone(),
     })
@@ -2486,7 +2538,7 @@ fn load_confirmed_payout_import_txs(
             continue;
         }
 
-        let recipients = aggregate_wallet_send_recipients(&body.recipients);
+        let recipients = aggregate_wallet_send_recipients(&body.recipients)?;
         if recipients.is_empty() {
             return Err(anyhow::anyhow!(
                 "wallet send tx {} in {} has no recipients",
@@ -4326,7 +4378,9 @@ impl ApiState {
             recovery: Arc::new(RecoveryAgentClient::new(
                 config.recovery.socket_path.clone(),
             )),
-            miner_release: pool_runtime::miner_release::MinerRelease::new(&config.latest_miner_version),
+            miner_release: pool_runtime::miner_release::MinerRelease::new(
+                &config.latest_miner_version,
+            ),
             config,
             store,
             jobs,
@@ -5154,6 +5208,7 @@ impl ApiState {
         };
 
         let payload = MinerBalancePayload {
+            min_payout_amount: self.config.runtime.payout_minimum(address),
             address: address.to_string(),
             balance: miner_balance_response(&balance, pending_payout.as_ref()),
             pending_estimate,
@@ -7120,6 +7175,54 @@ mod tests {
             Arc::new(NodeClient::new("http://127.0.0.1:1", "").expect("build test node client"));
         let jobs = JobManager::new(Arc::clone(&node), cfg.runtime.clone());
         ApiState::new(cfg, store, jobs, node)
+    }
+
+    #[test]
+    fn payout_destination_lookup_separates_memos_and_requires_known_exchange_memo() {
+        use super::{handle_payout_destination, PayoutDestinationRequest};
+        let store = require_test_store!();
+        let mut state = test_api_state(store);
+        state.config.runtime.memo_min_payout_amount = 10.0;
+        let address = state.config.runtime.shared_exchange_addresses[0]
+            .address
+            .clone();
+        let runtime = test_runtime();
+        let lookup = |memo: Option<&str>| {
+            runtime.block_on(handle_payout_destination(
+                State(state.clone()),
+                Json(PayoutDestinationRequest {
+                    address: address.clone(),
+                    memo: memo.map(str::to_owned),
+                }),
+            ))
+        };
+        assert_eq!(lookup(None).status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            lookup(Some("line\nbreak")).status(),
+            StatusCode::BAD_REQUEST
+        );
+        let first = response_json(&runtime, lookup(Some("ID001")));
+        let second = response_json(&runtime, lookup(Some("ID002")));
+        assert_ne!(first["account"], second["account"]);
+        assert_eq!(first["min_payout_amount"], 10.0);
+        assert!(first.get("memo").is_none());
+        for account in [
+            first["account"].as_str().unwrap(),
+            second["account"].as_str().unwrap(),
+        ] {
+            runtime.block_on(async {
+                let balance = state
+                    .cached_miner_balance_payload(account, false)
+                    .await
+                    .unwrap();
+                assert_eq!(balance.address, account);
+                assert_eq!(balance.min_payout_amount, 10.0);
+            });
+        }
+        assert_eq!(
+            state.performance.snapshot().operations["miner_balance_load"].count,
+            2
+        );
     }
 
     #[test]

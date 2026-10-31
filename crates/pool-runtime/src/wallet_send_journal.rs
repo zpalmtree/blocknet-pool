@@ -35,6 +35,8 @@ pub struct WalletSendIdempotencyBody {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WalletSendIdempotencyRecipient {
+    #[serde(default)]
+    pub memo_hex: String,
     pub address: String,
     #[serde(default)]
     pub amount: u64,
@@ -42,21 +44,24 @@ pub struct WalletSendIdempotencyRecipient {
 
 pub fn aggregate_wallet_send_recipients(
     recipients: &[WalletSendIdempotencyRecipient],
-) -> Vec<(String, u64)> {
+) -> anyhow::Result<Vec<(String, u64)>> {
     let mut by_address = HashMap::<String, u64>::new();
     for recipient in recipients {
         let address = recipient.address.trim();
         if address.is_empty() || recipient.amount == 0 {
             continue;
         }
+        let destination =
+            pool_common::destination::PayoutDestination::from_wallet(address, &recipient.memo_hex)
+                .map_err(anyhow::Error::msg)?;
         by_address
-            .entry(address.to_string())
+            .entry(destination.account_id())
             .and_modify(|amount| *amount = amount.saturating_add(recipient.amount))
             .or_insert(recipient.amount);
     }
     let mut aggregated = by_address.into_iter().collect::<Vec<_>>();
     aggregated.sort_by(|a, b| a.0.cmp(&b.0));
-    aggregated
+    Ok(aggregated)
 }
 
 pub fn decode_wallet_send_body(
@@ -72,4 +77,21 @@ pub fn decode_wallet_send_body(
     serde_json::from_slice(&decoded_body)
         .context("parse wallet send body")
         .map(Some)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn payout_memo_journal_never_merges_different_customers() {
+        let recipients =
+            ["", "4944303031", "4944303032"].map(|memo_hex| WalletSendIdempotencyRecipient {
+                address: "shared-address".into(),
+                memo_hex: memo_hex.into(),
+                amount: 100,
+            });
+        let totals = aggregate_wallet_send_recipients(&recipients).unwrap();
+        assert_eq!(totals.len(), 3);
+        assert!(totals.iter().all(|(_, amount)| *amount == 100));
+    }
 }

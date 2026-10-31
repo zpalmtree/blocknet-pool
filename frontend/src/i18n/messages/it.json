@@ -336,5 +336,15 @@
   "statsPayoutQueued": "Pagamento in coda: {0}.",
   "statsPayoutBasis": "Solo le ricompense confermate contano per il minimo. Le ricompense stimate devono prima maturare.",
   "statsPayoutUnavailable": "Pagamento minimo non disponibile. Nuovo tentativo automatico.",
-  "statsPayoutBalanceUnavailable": "Saldo confermato non disponibile; impossibile calcolare il progresso del pagamento."
+  "statsPayoutBalanceUnavailable": "Saldo confermato non disponibile; impossibile calcolare il progresso del pagamento.",
+  "memoTitle": "Mining verso un exchange?",
+  "memoAddress": "Indirizzo di deposito dell’exchange",
+  "memoLabel": "Memo di deposito",
+  "memoAdd": "Aggiungi memo",
+  "memoRequired": "{0} usa un indirizzo condiviso. Inserisci il tuo memo di deposito.",
+  "memoLimit": "Copia il memo esattamente; massimo 124 byte UTF-8.",
+  "memoPolicy": "I pagamenti con memo hanno un minimo più alto per ridurre i piccoli depositi.",
+  "memoMinimum": "Pagamento minimo con memo: {0} BNT",
+  "memoUnavailable": "I pagamenti con memo non sono ancora attivi in questo pool.",
+  "memoLookupFailed": "Impossibile caricare questa destinazione. Riprova."
 }

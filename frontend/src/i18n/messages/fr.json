@@ -336,5 +336,15 @@
   "statsPayoutQueued": "Paiement en file d’attente : {0}.",
   "statsPayoutBasis": "Seules les récompenses confirmées comptent pour le minimum. Les récompenses estimées doivent d’abord arriver à maturité.",
   "statsPayoutUnavailable": "Minimum de paiement indisponible. Nouvelle tentative automatique.",
-  "statsPayoutBalanceUnavailable": "Solde confirmé indisponible ; la progression du paiement ne peut pas être calculée."
+  "statsPayoutBalanceUnavailable": "Solde confirmé indisponible ; la progression du paiement ne peut pas être calculée.",
+  "memoTitle": "Miner vers une plateforme ?",
+  "memoAddress": "Adresse de dépôt de la plateforme",
+  "memoLabel": "Mémo de dépôt",
+  "memoAdd": "Ajouter un mémo",
+  "memoRequired": "{0} utilise une adresse partagée. Saisissez votre mémo de dépôt.",
+  "memoLimit": "Copiez le mémo exactement ; maximum 124 octets UTF-8.",
+  "memoPolicy": "Les paiements avec mémo ont un minimum supérieur pour réduire les petits dépôts.",
+  "memoMinimum": "Paiement minimum avec mémo : {0} BNT",
+  "memoUnavailable": "Les paiements avec mémo ne sont pas encore activés sur ce pool.",
+  "memoLookupFailed": "Impossible de charger cette destination. Réessayez."
 }

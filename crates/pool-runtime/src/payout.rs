@@ -220,8 +220,24 @@ struct AddressShareWeights {
 
 #[derive(Debug, Clone)]
 struct PayoutCandidate {
+    destination: pool_common::destination::PayoutDestination,
+    minimum: u64,
     balance: Balance,
     pending: PendingPayout,
+}
+
+impl PayoutCandidate {
+    fn wallet_recipient(&self) -> WalletRecipient {
+        WalletRecipient {
+            address: self.destination.address.clone(),
+            memo_hex: self
+                .destination
+                .memo
+                .as_ref()
+                .map(|memo| hex::encode(memo.as_bytes())),
+            amount: self.pending.amount,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1375,6 +1391,24 @@ impl PayoutProcessor {
         let mut candidates = Vec::with_capacity(balances.len());
 
         for bal in balances {
+            let destination = match self.store.payout_destination(&bal.address) {
+                Ok(destination) => destination,
+                Err(err) => {
+                    tracing::warn!(account = %bal.address, error = %err, "cannot resolve payout destination");
+                    continue;
+                }
+            };
+            // Shared address balances earned without a memo need operator reconciliation.
+            if destination.memo.is_none()
+                && self
+                    .cfg
+                    .shared_exchange_addresses
+                    .iter()
+                    .any(|entry| entry.address == destination.address)
+            {
+                continue;
+            }
+            let account_minimum = atomic_amount_from_coins(self.cfg.payout_minimum(&bal.address));
             let existing_pending = match self.store.get_pending_payout(&bal.address) {
                 Ok(v) => v,
                 Err(err) => {
@@ -1384,7 +1418,7 @@ impl PayoutProcessor {
             };
 
             if let Err(reason) =
-                validate_miner_address_for_network(&bal.address, expected_address_network)
+                validate_miner_address_for_network(&destination.address, expected_address_network)
             {
                 if bal.pending > 0 {
                     let mut runtime = self.runtime.write();
@@ -1417,7 +1451,10 @@ impl PayoutProcessor {
             let pending = match existing_pending {
                 Some(v) if v.send_started_at.is_some() => v,
                 refreshable_pending => {
-                    if bal.pending < min_amount || desired_pending_amount == 0 {
+                    if bal.pending < account_minimum
+                        || desired_pending_amount == 0
+                        || (destination.memo.is_some() && desired_pending_amount < account_minimum)
+                    {
                         if refreshable_pending.is_some() {
                             if let Err(err) = self.store.cancel_pending_payout(&bal.address) {
                                 tracing::warn!(
@@ -1457,6 +1494,12 @@ impl PayoutProcessor {
             }
 
             candidates.push(PayoutCandidate {
+                minimum: if destination.memo.is_some() {
+                    account_minimum
+                } else {
+                    1
+                },
+                destination,
                 balance: bal,
                 pending,
             });
@@ -1698,10 +1741,7 @@ impl PayoutProcessor {
             let recipients = plan
                 .recipients
                 .iter()
-                .map(|candidate| WalletRecipient {
-                    address: candidate.balance.address.clone(),
-                    amount: candidate.pending.amount,
-                })
+                .map(PayoutCandidate::wallet_recipient)
                 .collect::<Vec<_>>();
             let inputs = plan
                 .inputs
@@ -2551,6 +2591,8 @@ impl PayoutProcessor {
         );
 
         Some(PayoutCandidate {
+            destination: candidate.destination.clone(),
+            minimum: candidate.minimum,
             balance: candidate.balance.clone(),
             pending,
         })
@@ -2632,6 +2674,7 @@ impl PayoutProcessor {
             input.txid, input.output_index, input.amount
         ));
         let recipients = vec![WalletRecipient {
+            memo_hex: None,
             address: destination.clone(),
             amount: recipient_amount,
         }];
@@ -3020,14 +3063,23 @@ fn pending_batch_recipient_signature(entries: &[PendingPayout]) -> Vec<(String, 
     recipients
 }
 
-fn wallet_send_recipient_signature(send: &WalletSendHistoryEntry) -> Vec<(String, u64)> {
+fn wallet_send_recipient_signature(
+    send: &WalletSendHistoryEntry,
+) -> anyhow::Result<Vec<(String, u64)>> {
     let mut recipients = send
         .recipients
         .iter()
-        .map(|recipient| (recipient.address.trim().to_string(), recipient.amount))
-        .collect::<Vec<_>>();
+        .map(|recipient| {
+            let destination = pool_common::destination::PayoutDestination::from_wallet(
+                &recipient.address,
+                &recipient.memo_hex,
+            )
+            .map_err(anyhow::Error::msg)?;
+            Ok((destination.account_id(), recipient.amount))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
     recipients.sort_unstable();
-    recipients
+    Ok(recipients)
 }
 
 fn wallet_send_matches_pending_batch(
@@ -3041,7 +3093,7 @@ fn wallet_send_matches_pending_batch(
         && send.total_amount == expected_total
         && send.timestamp >= earliest_timestamp
         && send.timestamp <= latest_timestamp
-        && wallet_send_recipient_signature(send) == expected_recipients
+        && wallet_send_recipient_signature(send).is_ok_and(|actual| actual == expected_recipients)
 }
 
 fn pending_batch_send_time_window(entries: &[PendingPayout]) -> (i64, i64) {
@@ -3165,6 +3217,8 @@ fn payout_candidate_with_amount(candidate: &PayoutCandidate, amount: u64) -> Pay
     let mut pending = candidate.pending.clone();
     pending.amount = amount;
     PayoutCandidate {
+        destination: candidate.destination.clone(),
+        minimum: candidate.minimum,
         balance: candidate.balance.clone(),
         pending,
     }
@@ -3179,7 +3233,7 @@ fn find_reduced_payout_amount_for_liquidity(
     min_amount: u64,
     queue_light: bool,
 ) -> Option<u64> {
-    let mut low = min_amount.max(1);
+    let mut low = min_amount.max(candidate.minimum).max(1);
     let mut high = candidate.pending.amount.saturating_sub(1);
     let mut best_amount = None::<u64>;
 
@@ -3214,7 +3268,10 @@ fn plan_payout_batch_with_node(
     safe_spend_budget: u64,
     queue_light: bool,
 ) -> Option<PlannedPayoutBatch> {
-    if candidates.is_empty()
+    if candidates
+        .iter()
+        .any(|candidate| candidate.pending.amount < candidate.minimum)
+        || candidates.is_empty()
         || spendable_outputs.is_empty()
         || safe_spend_budget <= MIN_PAYOUT_FEE_BUFFER
     {
@@ -3232,10 +3289,7 @@ fn plan_payout_batch_with_node(
     let idempotency_key = payout_batch_idempotency_key(&batch_id);
     let recipients = candidates
         .iter()
-        .map(|candidate| WalletRecipient {
-            address: candidate.balance.address.clone(),
-            amount: candidate.pending.amount,
-        })
+        .map(PayoutCandidate::wallet_recipient)
         .collect::<Vec<_>>();
 
     let mut required_amount = recipient_total.saturating_add(MIN_PAYOUT_FEE_BUFFER);
@@ -3561,7 +3615,7 @@ fn load_recovered_wallet_send_for_batch(
     if txid.is_empty() {
         return Ok(None);
     }
-    let recipients = aggregate_wallet_send_recipients(&body.recipients);
+    let recipients = aggregate_wallet_send_recipients(&body.recipients)?;
     if recipients.is_empty() {
         return Err(anyhow::anyhow!(
             "daemon idempotency journal entry {} has no recipients",
@@ -3945,6 +3999,8 @@ mod tests {
     fn candidate(address: &str, amount: u64, age: Duration) -> PayoutCandidate {
         let now = SystemTime::now();
         PayoutCandidate {
+            destination: pool_common::destination::PayoutDestination::new(address, None).unwrap(),
+            minimum: 1,
             balance: Balance {
                 address: address.to_string(),
                 pending: amount,
@@ -4033,6 +4089,7 @@ mod tests {
 
     #[derive(Debug, Clone, Default)]
     struct MockAdvancedSendPolicy {
+        expected_memo_hex: Option<&'static str>,
         live_recipient_totals: Option<Arc<parking_lot::Mutex<Vec<u64>>>>,
         preview_recipient_cap: Option<u64>,
         live_recipient_cap: Option<u64>,
@@ -4145,6 +4202,13 @@ mod tests {
                     ("POST", "/api/wallet/send/advanced") => {
                         let payload = serde_json::from_str::<serde_json::Value>(body)
                             .expect("decode advanced send payload");
+                        if let Some(expected) = policy.expected_memo_hex {
+                            assert_eq!(payload["recipients"][0]["memo_hex"], expected);
+                            assert!(!payload["recipients"][0]["address"]
+                                .as_str()
+                                .unwrap()
+                                .starts_with("memo:"));
+                        }
                         let dry_run = payload
                             .get("dry_run")
                             .and_then(serde_json::Value::as_bool)
@@ -5991,6 +6055,71 @@ mod tests {
     }
 
     #[test]
+    fn payout_memo_plan_serializes_exact_destination_and_respects_floor() {
+        let outputs = vec![wallet_output("out-1", 0, 200_000_000)];
+        let base_url = spawn_wallet_send_server(
+            &test_address(98),
+            outputs.clone(),
+            MockAdvancedSendPolicy {
+                expected_memo_hex: Some("4944303031"),
+                ..MockAdvancedSendPolicy::default()
+            },
+            8,
+        );
+        let node = NodeClient::new(&base_url, "").unwrap();
+        let inventory = build_output_inventory(&outputs, 1_000_000, &RecentPayoutStats::default());
+        let destination =
+            pool_common::destination::PayoutDestination::new(&test_address(99), Some("ID001"))
+                .unwrap();
+        let mut recipient = candidate(
+            &destination.account_id(),
+            100_000_000,
+            Duration::from_secs(60),
+        );
+        recipient.destination = destination.clone();
+        recipient.minimum = 100_000_000;
+        let plan = plan_payout_batch_with_node(
+            &node,
+            &[recipient.clone()],
+            &outputs,
+            &inventory,
+            200_000_000,
+            true,
+        )
+        .unwrap();
+        let wire = serde_json::to_value(
+            plan.recipients
+                .iter()
+                .map(PayoutCandidate::wallet_recipient)
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        assert_eq!(wire[0]["address"], destination.address);
+        assert_eq!(wire[0]["memo_hex"], hex::encode("ID001"));
+        assert_eq!(wire[0]["amount"], 100_000_000);
+        assert!(find_reduced_payout_amount_for_liquidity(
+            &node,
+            &recipient,
+            &outputs,
+            &inventory,
+            200_000_000,
+            1_000_000,
+            true
+        )
+        .is_none());
+        recipient.pending.amount -= 1;
+        assert!(plan_payout_batch_with_node(
+            &node,
+            &[recipient],
+            &outputs,
+            &inventory,
+            200_000_000,
+            true
+        )
+        .is_none());
+    }
+
+    #[test]
     fn reduced_payout_amount_fits_when_full_pending_amount_does_not() {
         let outputs = vec![
             wallet_output("out-1", 0, 100_000_000),
@@ -7360,5 +7489,34 @@ mod tests {
             .expect("mature miner balance");
         assert_eq!(balance.pending, 100);
         assert!(processor.recovery_payout_reconciliation_active());
+    }
+    #[test]
+    fn payout_memo_recovery_matches_exact_recipient_and_rejects_other_memos() {
+        let destination =
+            pool_common::destination::PayoutDestination::new("shared-address", Some("ID001"))
+                .unwrap();
+        let mut pending = candidate(&destination.account_id(), 100, Duration::from_secs(1));
+        pending.destination = destination;
+        let send: WalletSendHistoryEntry = serde_json::from_value(serde_json::json!({
+            "txid": "memo-tx", "total_amount": 100, "timestamp": 1000,
+            "recipients": [{"address": "shared-address", "amount": 100, "memo_hex": hex::encode("ID001")}]
+        })).unwrap();
+        let expected = pending_batch_recipient_signature(&[pending.pending.clone()]);
+        assert!(wallet_send_matches_pending_batch(
+            &send, 100, &expected, 900, 1100
+        ));
+        let mut wrong = send.clone();
+        wrong.recipients[0].memo_hex = hex::encode("ID002");
+        assert!(!wallet_send_matches_pending_batch(
+            &wrong, 100, &expected, 900, 1100
+        ));
+        wrong.recipients[0].memo_hex.clear();
+        assert!(!wallet_send_matches_pending_batch(
+            &wrong, 100, &expected, 900, 1100
+        ));
+        wrong.recipients[0].memo_hex = "zz".into();
+        assert!(!wallet_send_matches_pending_batch(
+            &wrong, 100, &expected, 900, 1100
+        ));
     }
 }

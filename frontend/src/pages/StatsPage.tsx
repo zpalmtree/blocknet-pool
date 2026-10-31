@@ -11,10 +11,12 @@ import { PayoutProgress } from '../components/PayoutProgress';
 import { RangeTabs } from '../components/RangeTabs';
 import { StatCard } from '../components/StatCard';
 import { MinerUpdateBanner } from '../components/MinerUpdateBanner';
-import { LAST_MINER_LOOKUP_KEY } from '../lib/storage';
+import { knownExchange, validMemo } from '../lib/payout-destination';
+import { readDestination, rememberDestination } from '../lib/storage';
 import { formatCoins, formatCompactCoins, formatFee, formatPct, humanRate, timeAgo, timestampTitle, toUnixMs } from '../lib/format';
 import type { ThemeMode } from '../lib/theme';
 import type {
+  InfoResponse,
   HashratePoint,
   MinerBalancePayload,
   MinerResponse,
@@ -40,7 +42,20 @@ const lookupResult = async <T,>(promise: Promise<T>) =>
   promise.then((value) => ({ ok: true as const, value })).catch(() => ({ ok: false as const }));
 
 export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
-  const [minerInput, setMinerInput] = useState(localStorage.getItem(LAST_MINER_LOOKUP_KEY) || '');
+  const [savedDestination] = useState(readDestination);
+  const [minerInput, setMinerInput] = useState(savedDestination.address);
+  const [memoInput, setMemoInput] = useState(savedDestination.memo);
+  const [memoOpen, setMemoOpen] = useState(!!savedDestination.memo);
+  const [appliedDestination, setAppliedDestination] = useState({ address: '', memo: '' });
+  const [poolInfo, setPoolInfo] = useState<InfoResponse | null>(null);
+  const [lookupError, setLookupError] = useState('');
+  const exchange = knownExchange(poolInfo, minerInput);
+  const showMemo = memoOpen || !!exchange;
+  useEffect(() => {
+    let active = true;
+    api.getInfo().then(info => { if (active) setPoolInfo(info); }).catch(() => {});
+    return () => { active = false; };
+  }, [api]);
   const [minerAddress, setMinerAddress] = useState('');
   const [minerData, setMinerData] = useState<MinerResponse | null>(null);
   const [minerBalanceData, setMinerBalanceData] = useState<MinerBalancePayload | null>(null);
@@ -56,6 +71,19 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const [resolvedHandle, setResolvedHandle] = useState<string | null>(null);
   const [workersOffset, setWorkersOffset] = useState(0);
   const [payoutsOffset, setPayoutsOffset] = useState(0);
+
+  // A late registry response must not leave address-only results under a memo warning.
+  useEffect(() => {
+    if (!exchange || memoInput) return;
+    lookupRequestSeq.current += 1;
+    minerAddressRef.current = '';
+    hashrateRequestKeyRef.current = '';
+    setMinerAddress('');
+    setMinerData(null);
+    setMinerBalanceData(null);
+    setHistory([]);
+    setLookupLoading(false);
+  }, [exchange?.address, memoInput]);
 
   useEffect(() => {
     minerAddressRef.current = minerAddress;
@@ -124,12 +152,21 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   }, [api, minerAddress, range]);
 
   const loadMinerLookup = useCallback(
-    async (input?: string) => {
+    async (input?: string, memoOverride?: string) => {
+      const memo = memoOverride ?? memoInput;
       let addr = (input ?? minerInput).trim();
       let resolved: { address: string; handle: string } | null = null;
-      if (!addr) return;
+      if (!addr || !validMemo(memo)) return;
+      if (knownExchange(poolInfo, addr) && !memo) { setMemoOpen(true); return; }
       const requestId = ++lookupRequestSeq.current;
       setLookupLoading(true);
+      setLookupError('');
+      minerAddressRef.current = '';
+      hashrateRequestKeyRef.current = '';
+      setMinerAddress('');
+      setMinerData(null);
+      setMinerBalanceData(null);
+      setHistory([]);
 
       try {
         if (looksLikeHandle(addr)) {
@@ -151,14 +188,28 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
           setResolvedHandle(null);
         }
 
+        if (requestId !== lookupRequestSeq.current) return;
+        const walletAddress = addr;
+        if (knownExchange(poolInfo, walletAddress) && !memo) {
+          setMinerInput(walletAddress);
+          setMemoOpen(true);
+          return;
+        }
+        if (memo) {
+          const destination = await api.resolvePayoutDestination(walletAddress, memo);
+          if (requestId !== lookupRequestSeq.current) return;
+          addr = destination.account;
+        }
         let committed = false;
         let resetPreviousResult = minerAddressRef.current !== addr;
         const commitLookup = () => {
           if (committed) return;
           committed = true;
+          minerAddressRef.current = addr;
           setMinerAddress(addr);
-          setMinerInput(addr);
-          localStorage.setItem(LAST_MINER_LOOKUP_KEY, addr);
+          setMinerInput(walletAddress);
+          setAppliedDestination({ address: walletAddress, memo });
+          rememberDestination({ address: walletAddress, memo });
           setResolvedHandle(resolved?.handle ?? null);
         };
         const clearPreviousResult = () => {
@@ -206,13 +257,15 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
         } else {
           setResolvedHandle(null);
         }
+      } catch {
+        if (requestId === lookupRequestSeq.current) setLookupError(t('memoLookupFailed'));
       } finally {
         if (requestId === lookupRequestSeq.current) {
           setLookupLoading(false);
         }
       }
     },
-    [api, minerInput, range]
+    [api, minerInput, memoInput, poolInfo, range]
   );
 
   // Only the pool payout ETA is used here, for the liquidity notice.
@@ -225,20 +278,12 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
     }
   }, [api]);
 
+  const restoredLookup = useRef(false);
   useEffect(() => {
-    const stored = localStorage.getItem(LAST_MINER_LOOKUP_KEY) || '';
-    if (stored && stored !== minerAddress) {
-      if (stored !== minerInput) {
-        setMinerInput(stored);
-      }
-      void loadMinerLookup(stored);
-      return;
-    }
-
-    if (!minerAddress && minerInput.trim()) {
-      void loadMinerLookup(minerInput);
-    }
-  }, [loadMinerLookup, minerAddress, minerInput]);
+    if (restoredLookup.current) return;
+    restoredLookup.current = true;
+    if (savedDestination.address) void loadMinerLookup(savedDestination.address, savedDestination.memo);
+  }, [loadMinerLookup, savedDestination]);
 
   const currentHashrateKey = minerAddress ? `${minerAddress}:${range}` : '';
 
@@ -276,10 +321,10 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
 
   const lookupDisabled = useMemo(() => {
     const raw = minerInput.trim();
-    if (!raw) return true;
+    if (!raw || !validMemo(memoInput) || (!!exchange && !memoInput)) return true;
     if (looksLikeHandle(raw)) return false;
-    return !!minerAddress && raw === minerAddress;
-  }, [minerAddress, minerInput]);
+    return !!minerAddress && raw === appliedDestination.address && memoInput === appliedDestination.memo;
+  }, [minerAddress, minerInput, memoInput, exchange, appliedDestination]);
 
   const minerAvgDiff = useMemo(() => {
     if (!minerData) return '-';
@@ -336,7 +381,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   // A refresh can shrink a list under the current page; fall back to the first page.
   const workersStart = minerData && workersOffset < minerData.workers.length ? workersOffset : 0;
   const payoutsStart = minerData && payoutsOffset < minerData.payouts.length ? payoutsOffset : 0;
-  const showLookupResult = !!minerAddress && (!!minerData || !!minerBalanceData || history.length > 0);
+  const showLookupResult = !(exchange && !memoInput) && !!minerAddress && (!!minerData || !!minerBalanceData || history.length > 0);
   const minerDetailLoading = lookupLoading && !minerData;
 
 
@@ -365,7 +410,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
             }}
           />
           <button
-            className={`btn btn-primary ${minerAddress && minerInput.trim() === minerAddress ? 'is-faded' : ''}`}
+            className={`btn btn-primary ${lookupDisabled ? 'is-faded' : ''}`}
             disabled={lookupDisabled || resolving || lookupLoading}
             onClick={() => void loadMinerLookup()}
           >
@@ -376,6 +421,12 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
             onClick={() => {
               lookupRequestSeq.current += 1;
               hashrateRequestKeyRef.current = '';
+              minerAddressRef.current = '';
+              setMemoInput('');
+              setMemoOpen(false);
+              setLookupError('');
+              setLookupLoading(false);
+              setResolving(false);
               setMinerInput('');
               setMinerAddress('');
               setMinerData(null);
@@ -383,14 +434,26 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
               setBalanceUnavailable(false);
               setHistory([]);
               setResolvedHandle(null);
-              localStorage.removeItem(LAST_MINER_LOOKUP_KEY);
+              rememberDestination(null);
             }}
           >{t("m013")}</button>
           {resolvedHandle && minerAddress && (<span className="resolved-badge" style={{ alignSelf: 'center', fontSize: '0.85em', color: 'var(--success, #4caf50)' }}>
-              ${resolvedHandle} → {minerAddress.slice(0, 8)}…{minerAddress.slice(-6)}
+              ${resolvedHandle} → {appliedDestination.address.slice(0, 8)}…{appliedDestination.address.slice(-6)}
             </span>)}
         </div>
-        <p id="miner-lookup-help" className="section-lead" style={{ marginTop: 16 }}>{t('trackBody')}</p>
+        <p id="miner-lookup-help" className="section-lead">{t('trackBody')}</p>
+        <div className="memo-fields">
+          {!showMemo ? <button className="btn btn-secondary" type="button" onClick={() => setMemoOpen(true)}>{t('memoAdd')}</button> : <>
+            <label htmlFor="stats-memo">{t('memoLabel')}</label>
+            <input id="stats-memo" type="text" value={memoInput} autoComplete="off" spellCheck={false} dir="ltr"
+              aria-invalid={!validMemo(memoInput) || (!!exchange && !memoInput)} aria-describedby="stats-memo-help"
+              onChange={event => setMemoInput(event.target.value)}
+              onKeyDown={event => { if (event.key === 'Enter' && !lookupDisabled && !lookupLoading) void loadMinerLookup(); }} />
+            <p id="stats-memo-help" role={exchange && !memoInput ? 'alert' : undefined}>{exchange ? t('memoRequired', [exchange.name]) : t('memoLimit')}</p>
+            {!validMemo(memoInput) && <p role="alert">{t('memoLimit')}</p>}
+          </>}
+          {lookupError && <p role="alert">{lookupError}</p>}
+        </div>
       </div>
 
       {!minerAddress && !lookupLoading && (<p className="section-lead" style={{ marginBottom: 16 }}>{tx("statsEmpty", [<a href={localizePath("/start")}>{t("m002")}</a>])}</p>)}
@@ -447,6 +510,8 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
             </div>
             <PayoutProgress
               api={api}
+              memoAccount={!!appliedDestination.memo}
+              accountMinimum={minerBalanceData?.min_payout_amount}
               confirmed={balanceUnavailable ? undefined : liveBalance?.pending_confirmed}
               queued={pendingQueued}
               liveTick={liveTick}

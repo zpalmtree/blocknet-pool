@@ -54,6 +54,9 @@ export interface InfoResponse {
   stratum_port: number;
   pool_fee_pct: number;
   min_payout_amount: number;
+  payout_memos_enabled?: boolean;
+  memo_min_payout_amount?: number;
+  shared_exchange_addresses?: { address: string; name: string }[];
   blocks_before_payout: number;
   pplns_window_duration: string;
 }
@@ -156,6 +159,7 @@ interface MinerBalanceDetails {
 }
 
 export interface MinerBalancePayload {
+  min_payout_amount?: number;
   address: string;
   balance: MinerBalanceDetails;
   pending_estimate: MinerPendingEstimate;

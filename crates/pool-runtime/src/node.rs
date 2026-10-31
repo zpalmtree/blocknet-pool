@@ -146,6 +146,8 @@ pub(crate) struct WalletSendHistoryEntry {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct WalletSendHistoryRecipient {
     #[serde(default)]
+    pub memo_hex: String,
+    #[serde(default)]
     pub address: String,
     #[serde(default)]
     pub amount: u64,
@@ -196,6 +198,8 @@ impl From<&WalletOutput> for WalletOutputRef {
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct WalletRecipient {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memo_hex: Option<String>,
     pub address: String,
     pub amount: u64,
 }

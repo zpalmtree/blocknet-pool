@@ -336,5 +336,15 @@
   "statsPayoutQueued": "Pembayaran dalam antrean: {0}.",
   "statsPayoutBasis": "Hanya imbalan terkonfirmasi yang dihitung untuk minimum. Imbalan perkiraan harus matang terlebih dahulu.",
   "statsPayoutUnavailable": "Minimum pembayaran tidak tersedia. Mencoba lagi secara otomatis.",
-  "statsPayoutBalanceUnavailable": "Saldo terkonfirmasi tidak tersedia; kemajuan pembayaran tidak dapat dihitung."
+  "statsPayoutBalanceUnavailable": "Saldo terkonfirmasi tidak tersedia; kemajuan pembayaran tidak dapat dihitung.",
+  "memoTitle": "Menambang ke bursa?",
+  "memoAddress": "Alamat setoran bursa",
+  "memoLabel": "Memo setoran",
+  "memoAdd": "Tambahkan memo",
+  "memoRequired": "{0} menggunakan alamat bersama. Masukkan memo setoran Anda.",
+  "memoLimit": "Salin memo persis; maksimal 124 byte UTF-8.",
+  "memoPolicy": "Pembayaran dengan memo memiliki minimum lebih tinggi untuk mengurangi setoran kecil.",
+  "memoMinimum": "Minimum pembayaran dengan memo: {0} BNT",
+  "memoUnavailable": "Pembayaran dengan memo belum diaktifkan di pool ini.",
+  "memoLookupFailed": "Tujuan ini tidak dapat dimuat. Coba lagi."
 }

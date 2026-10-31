@@ -515,6 +515,47 @@ pub fn connect_payout_inspection_client(url: &str, label: &str) -> Result<Client
 }
 
 impl PostgresStore {
+    pub fn register_payout_destination(
+        &self,
+        destination: &pool_common::destination::PayoutDestination,
+    ) -> Result<String> {
+        let id = destination.account_id();
+        if let Some(memo) = &destination.memo {
+            self.conn().execute(
+                "INSERT INTO payout_destinations (account_id, address, memo) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+                &[&id, &destination.address, memo],
+            )?;
+            if self.payout_destination(&id)? != *destination {
+                anyhow::bail!("payout destination mismatch");
+            }
+        }
+        Ok(id)
+    }
+
+    pub fn payout_destination(
+        &self,
+        account: &str,
+    ) -> Result<pool_common::destination::PayoutDestination> {
+        use pool_common::destination::{PayoutDestination, MEMO_ACCOUNT_PREFIX};
+        if !account.starts_with(MEMO_ACCOUNT_PREFIX) {
+            return PayoutDestination::new(account, None).map_err(anyhow::Error::msg);
+        }
+        let row = self
+            .conn()
+            .query_opt(
+                "SELECT address, memo FROM payout_destinations WHERE account_id=$1",
+                &[&account],
+            )?
+            .ok_or_else(|| anyhow::anyhow!("missing payout destination"))?;
+        let destination =
+            PayoutDestination::new(&row.get::<_, String>(0), Some(&row.get::<_, String>(1)))
+                .map_err(anyhow::Error::msg)?;
+        if destination.account_id() != account {
+            anyhow::bail!("payout destination mismatch");
+        }
+        Ok(destination)
+    }
+
     pub fn read_performance(
         &self,
     ) -> std::collections::BTreeMap<String, crate::telemetry::TimedOperationSummary> {
@@ -625,6 +666,13 @@ CREATE INDEX IF NOT EXISTS idx_blocks_finder_height ON blocks(finder, height DES
 CREATE INDEX IF NOT EXISTS idx_blocks_unconfirmed ON blocks(confirmed, orphaned, height ASC);
 CREATE INDEX IF NOT EXISTS idx_blocks_hash ON blocks(hash);
 CREATE INDEX IF NOT EXISTS idx_blocks_timestamp_height ON blocks(timestamp DESC, height DESC);
+
+CREATE TABLE IF NOT EXISTS payout_destinations (
+    account_id TEXT PRIMARY KEY,
+    address TEXT NOT NULL,
+    memo TEXT NOT NULL CHECK (octet_length(memo) BETWEEN 1 AND 124),
+    UNIQUE (address, memo)
+);
 
 CREATE TABLE IF NOT EXISTS balances (
     address TEXT PRIMARY KEY,

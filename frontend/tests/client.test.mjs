@@ -124,3 +124,15 @@ test('history cache bounds retained ranges and does not cache failures', async (
     assert.equal(calls, 16);
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test('memo lookup sends exact memo in a POST body, with no credentials or URL memo', async () => {
+  globalThis.fetch = async (path, options) => {
+    assert.equal(path, '/api/payout-destination');
+    assert.equal(options.method, 'POST');
+    assert.deepEqual(JSON.parse(options.body), {address:'shared',memo:'ID000123'});
+    assert.equal(options.headers['x-api-key'], undefined);
+    return Response.json({account:'memo:opaque',min_payout_amount:10});
+  };
+  const api = createApiClient(() => 'admin-secret', () => {});
+  assert.equal((await api.resolvePayoutDestination('shared','ID000123')).account,'memo:opaque');
+});

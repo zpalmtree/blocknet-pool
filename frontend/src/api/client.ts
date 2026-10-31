@@ -179,6 +179,10 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
       fetchJson<PagedResponse<BlockItem>>(withQuery('/api/blocks', { limit, offset, status })),
     getRecentPayouts: (limit: number, offset: number) =>
       fetchJson<PagedResponse<PayoutItem>>(withQuery('/api/payouts/recent', { limit, offset })),
+    resolvePayoutDestination: (address: string, memo: string) =>
+      fetchJson<{ account: string; min_payout_amount: number }>('/api/payout-destination', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, memo }),
+      }),
     getMiner: (address: string) => fetchJson<MinerResponse>(`/api/miner/${encodeURIComponent(address)}`),
     getMinerBalance: (address: string, includePendingEstimate = true) =>
       fetchJson<MinerBalancePayload>(

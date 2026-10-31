@@ -336,5 +336,15 @@
   "statsPayoutQueued": "Auszahlung vorgemerkt: {0}.",
   "statsPayoutBasis": "Nur bestätigte Belohnungen zählen für den Mindestbetrag. Geschätzte Belohnungen müssen zuerst reifen.",
   "statsPayoutUnavailable": "Mindestauszahlung nicht verfügbar. Erneuter Versuch erfolgt automatisch.",
-  "statsPayoutBalanceUnavailable": "Bestätigter Saldo nicht verfügbar; der Auszahlungsfortschritt kann nicht berechnet werden."
+  "statsPayoutBalanceUnavailable": "Bestätigter Saldo nicht verfügbar; der Auszahlungsfortschritt kann nicht berechnet werden.",
+  "memoTitle": "An eine Börse auszahlen?",
+  "memoAddress": "Einzahlungsadresse der Börse",
+  "memoLabel": "Einzahlungs-Memo",
+  "memoAdd": "Memo hinzufügen",
+  "memoRequired": "{0} verwendet eine gemeinsame Adresse. Gib dein Einzahlungs-Memo ein.",
+  "memoLimit": "Memo exakt kopieren; maximal 124 UTF-8-Bytes.",
+  "memoPolicy": "Auszahlungen mit Memo haben einen höheren Mindestbetrag, um kleine Einzahlungen zu reduzieren.",
+  "memoMinimum": "Mindestauszahlung mit Memo: {0} BNT",
+  "memoUnavailable": "Auszahlungen mit Memo sind in diesem Pool noch nicht aktiviert.",
+  "memoLookupFailed": "Dieses Ziel konnte nicht geladen werden. Versuche es erneut."
 }

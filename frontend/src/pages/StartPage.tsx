@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { stratumUrl } from '../lib/format';
 import type { InfoResponse } from '../types';
+import { ExchangeSetup } from '../components/ExchangeSetup';
 
 interface StartPageProps {
   poolInfo: InfoResponse | null;
@@ -113,6 +114,7 @@ export function StartPage({ poolInfo }: StartPageProps) {
           </button>
         </div>
         </details>
+        <ExchangeSetup info={poolInfo} poolUrl={poolUrl} />
       </div>
 
       <div className="card section" id="wallet">

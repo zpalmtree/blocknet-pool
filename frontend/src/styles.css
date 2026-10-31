@@ -2322,3 +2322,10 @@ a.copy-field-value:hover {
 .pool-guide-body h2 { font-size: 16px; margin: 16px 0 8px; }
 .pool-guide-body p { color: var(--muted); font-size: 14px; line-height: 1.6; margin-bottom: 12px; }
 #pool-information, #pool-guide { scroll-margin-top: 100px; }
+
+.memo-fields { display: grid; gap: 10px; margin-top: 16px; }
+.memo-fields > input { width: 100%; min-width: 0; }
+.memo-fields > .btn { justify-self: start; }
+.memo-fields p { margin: 0; color: var(--muted); font-size: 13px; }
+.memo-fields [aria-invalid="true"] { border-color: var(--warning, #d9a441); }
+.memo-fields .config-block { white-space: pre-wrap; overflow-wrap: anywhere; }

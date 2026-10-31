@@ -109,6 +109,7 @@ struct Miner {
     connected_at: Instant,
     /// The login request an engine accepted; replayed on each new engine.
     login_line: Option<String>,
+    payout_account: Option<String>,
     /// Login requests awaiting an answer, by request ID. A miner may retry
     /// with a new ID after a rejected login on the same connection.
     pending_logins: VecDeque<(u64, String)>,
@@ -206,6 +207,7 @@ impl Gateway {
             tx,
             connected_at: now,
             login_line: None,
+            payout_account: None,
             pending_logins: VecDeque::new(),
             last_login: None,
             login_held: false,
@@ -430,7 +432,8 @@ impl Gateway {
                 .is_some_and(|(replay_engine, _)| replay_engine == engine)
             {
                 miner.replay = None;
-                if failed {
+                if failed || !memo_replay_matches(miner.payout_account.as_deref(), parsed.as_ref())
+                {
                     miner.replay_not_before = Some(now + REPLAY_BACKOFF);
                     self.metrics.replay_failures.fetch_add(1, Ordering::Relaxed);
                     tracing::warn!(conn, engine, peer = %miner.peer, response = %line, "replayed login rejected; miner stays on its engine");
@@ -502,6 +505,11 @@ impl Gateway {
                 if let (true, Some(index)) = (from_current, answered) {
                     let (_, login) = miner.pending_logins.remove(index).expect("index");
                     if !failed {
+                        miner.payout_account = parsed
+                            .as_ref()
+                            .and_then(|value| value.pointer("/result/payout_account"))
+                            .and_then(Value::as_str)
+                            .map(str::to_owned);
                         miner.login_line = Some(login);
                         miner.logged_in = true;
                     }
@@ -813,6 +821,28 @@ fn send_miner(miner: &Miner, out: MinerOut) {
 
 fn role_frame(role: GatewayRole) -> Frame {
     Frame::new(FrameKind::Role, 0, role.as_str().as_bytes().to_vec())
+}
+
+// A handover acknowledgement is hidden from the miner; enforce its destination here.
+fn memo_replay_matches(expected: Option<&str>, response: Option<&Value>) -> bool {
+    let Some(expected) = expected else {
+        return true;
+    };
+    let Some(result) = response.and_then(|value| value.get("result")) else {
+        return false;
+    };
+    result.get("payout_account").and_then(Value::as_str) == Some(expected)
+        && result
+            .get("min_payout_atomic")
+            .and_then(Value::as_u64)
+            .is_some_and(|minimum| minimum > 0)
+        && result
+            .get("capabilities")
+            .and_then(Value::as_array)
+            .is_some_and(|caps| {
+                caps.iter()
+                    .any(|cap| cap.as_str() == Some(pool_common::destination::CAP_PAYOUT_MEMO))
+            })
 }
 
 /// The miner's login request with the gateway's reserved request ID.
@@ -1357,5 +1387,28 @@ mod tests {
             let (_tx, rx) = mpsc::channel(1);
             FakeMiner { conn, rx }
         }
+    }
+    #[test]
+    fn memo_handover_refuses_engine_that_drops_destination() {
+        let mut h = Harness::new();
+        let mut a = h.engine(1, 100);
+        let mut miner = h.logged_in_miner(7, &mut a, "j1");
+        h.gateway.miners.get_mut(&7).unwrap().payout_account = Some("memo:customer".into());
+        let mut b = h.engine(2, 200);
+        h.advance(Duration::from_millis(100));
+        b.expect(FrameKind::Open, 7);
+        b.expect(FrameKind::Line, 7);
+        h.engine_says(
+            &b,
+            7,
+            &format!(r#"{{"id":{REPLAY_LOGIN_REQUEST_ID},"result":{{}}}}"#),
+        );
+        b.expect(FrameKind::Close, 7);
+        assert_eq!(h.metrics.migrations.load(Ordering::Relaxed), 0);
+        h.engine_says(&a, 7, &job_line("j2"));
+        assert_eq!(miner.line(), job_line("j2"));
+        let response = serde_json::json!({"result": {"payout_account": "memo:customer", "min_payout_atomic": 100, "capabilities": [pool_common::destination::CAP_PAYOUT_MEMO]}});
+        assert!(memo_replay_matches(Some("memo:customer"), Some(&response)));
+        assert!(!memo_replay_matches(Some("memo:another"), Some(&response)));
     }
 }

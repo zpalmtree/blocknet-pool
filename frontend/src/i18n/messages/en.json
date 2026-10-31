@@ -336,5 +336,15 @@
   "statsPayoutQueued": "Payout queued: {0}.",
   "statsPayoutBasis": "Only confirmed rewards count toward the minimum. Estimated rewards must mature first.",
   "statsPayoutUnavailable": "Payout minimum unavailable. Retrying automatically.",
-  "statsPayoutBalanceUnavailable": "Confirmed balance unavailable; payout progress cannot be calculated."
+  "statsPayoutBalanceUnavailable": "Confirmed balance unavailable; payout progress cannot be calculated.",
+  "memoTitle": "Mining to an exchange?",
+  "memoAddress": "Exchange deposit address",
+  "memoLabel": "Deposit memo",
+  "memoAdd": "Add memo",
+  "memoRequired": "{0} uses a shared address. Enter your deposit memo.",
+  "memoLimit": "Copy the memo exactly; maximum 124 UTF-8 bytes.",
+  "memoPolicy": "Memo payouts use a higher minimum to reduce small deposits.",
+  "memoMinimum": "Minimum memo payout: {0} BNT",
+  "memoUnavailable": "Memo payouts are not enabled on this pool yet.",
+  "memoLookupFailed": "Could not load this destination. Try again."
 }

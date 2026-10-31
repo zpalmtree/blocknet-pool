@@ -336,5 +336,15 @@
   "statsPayoutQueued": "Pago en cola: {0}.",
   "statsPayoutBasis": "Solo las recompensas confirmadas cuentan para el mínimo. Las recompensas estimadas deben madurar primero.",
   "statsPayoutUnavailable": "Mínimo de pago no disponible. Se reintentará automáticamente.",
-  "statsPayoutBalanceUnavailable": "Saldo confirmado no disponible; no se puede calcular el progreso del pago."
+  "statsPayoutBalanceUnavailable": "Saldo confirmado no disponible; no se puede calcular el progreso del pago.",
+  "memoTitle": "¿Minas hacia un exchange?",
+  "memoAddress": "Dirección de depósito del exchange",
+  "memoLabel": "Memo de depósito",
+  "memoAdd": "Añadir memo",
+  "memoRequired": "{0} usa una dirección compartida. Introduce tu memo de depósito.",
+  "memoLimit": "Copia el memo exactamente; máximo 124 bytes UTF-8.",
+  "memoPolicy": "Los pagos con memo tienen un mínimo mayor para reducir los depósitos pequeños.",
+  "memoMinimum": "Pago mínimo con memo: {0} BNT",
+  "memoUnavailable": "Este pool aún no admite pagos con memo.",
+  "memoLookupFailed": "No se pudo cargar este destino. Inténtalo de nuevo."
 }

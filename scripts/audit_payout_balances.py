@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import unicodedata
 
 ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
@@ -33,6 +34,28 @@ def address_problem(address, valid_point):
     return None
 
 
+DEFAULT_SHARED_ADDRESSES = {"ZJZqGfDPCVg78CRH5Z33CtHafg911Dp5Bauf1Dnxg5jgXx7Whqsvqka96FCV8W6QZXNDKzJefkFU6bwDEGBewqPrTWjij"}
+
+
+def payout_destination_problem(row, valid_point, shared_addresses):
+    account = row["address"]
+    if account.startswith("memo:"):
+        address, memo = row.get("destination"), row.get("memo")
+        if not address or not memo:
+            return "missing payout destination"
+        memo_bytes = memo.encode("utf-8")
+        if len(memo_bytes) > 124 or any(unicodedata.category(char) == "Cc" for char in memo):
+            return "invalid payout memo"
+        encoded = address.encode("utf-8")
+        expected = "memo:" + hashlib.sha3_256(b"blocknet_pool_payout_memo_v1\0" + len(encoded).to_bytes(8, "big") + encoded + memo_bytes).hexdigest()
+        if account != expected:
+            return "payout destination mismatch"
+        return address_problem(address, valid_point)
+    if account in shared_addresses:
+        return "shared exchange address requires a memo"
+    return address_problem(account, valid_point)
+
+
 def audit(database, config_path, include_addresses):
     library = ctypes.util.find_library("sodium")
     if not library:
@@ -43,18 +66,24 @@ def audit(database, config_path, include_addresses):
     valid.restype = ctypes.c_int
     config = json.loads(Path(config_path).read_text())
     minimum = round(float(config["min_payout_amount"]) * 100_000_000)
-    sql = """BEGIN READ ONLY;
+    psql = ["sudo", "-n", "-u", "postgres", "psql", "-XAtq", "-v", "ON_ERROR_STOP=1", "-d", database]
+    has_destinations = subprocess.run(psql, input="SELECT to_regclass('payout_destinations') IS NOT NULL;", text=True, capture_output=True, check=True, timeout=20).stdout.strip() == "t"
+    destination_fields = ", 'destination',d.address,'memo',d.memo" if has_destinations else ""
+    destination_join = "LEFT JOIN payout_destinations d ON d.account_id=b.address" if has_destinations else ""
+    shared_addresses = {entry["address"] for entry in config["shared_exchange_addresses"]} if "shared_exchange_addresses" in config else DEFAULT_SHARED_ADDRESSES
+    memo_minimum = max(minimum, round(float(config.get("memo_min_payout_amount", 0)) * 100_000_000))
+    sql = f"""BEGIN READ ONLY;
 SET LOCAL statement_timeout = '15s';
-SELECT json_build_object('address',address,'pending',pending)
-FROM balances WHERE pending > 0 ORDER BY pending DESC;
+SELECT json_build_object('address',b.address,'pending',b.pending{destination_fields})
+FROM balances b {destination_join} WHERE b.pending > 0 ORDER BY b.pending DESC;
 COMMIT;"""
-    result = subprocess.run(["sudo", "-n", "-u", "postgres", "psql", "-XAtq", "-v", "ON_ERROR_STOP=1", "-d", database], input=sql, text=True, capture_output=True, check=True, timeout=20)
-    report = {"minimum_atomic": minimum, "eligible_count": 0, "eligible_atomic": 0,
+    result = subprocess.run(psql, input=sql, text=True, capture_output=True, check=True, timeout=20)
+    report = {"minimum_atomic": minimum, "memo_minimum_atomic": memo_minimum, "eligible_count": 0, "eligible_atomic": 0,
               "below_minimum_count": 0, "below_minimum_atomic": 0,
               "blocked_atomic": 0, "blocked": []}
     for line in result.stdout.splitlines():
         row = json.loads(line)
-        problem = address_problem(row["address"], valid)
+        problem = payout_destination_problem(row, valid, shared_addresses)
         if problem:
             blocked = {"fingerprint": hashlib.sha256(row["address"].encode()).hexdigest()[:16], "amount_atomic": row["pending"], "reason": problem}
             if include_addresses:
@@ -62,7 +91,8 @@ COMMIT;"""
             report["blocked"].append(blocked)
             report["blocked_atomic"] += row["pending"]
         else:
-            bucket = "eligible" if row["pending"] >= minimum else "below_minimum"
+            account_minimum = memo_minimum if row["address"].startswith("memo:") else minimum
+            bucket = "eligible" if row["pending"] >= account_minimum else "below_minimum"
             report[bucket + "_count"] += 1
             report[bucket + "_atomic"] += row["pending"]
     report["blocked_count"] = len(report["blocked"])

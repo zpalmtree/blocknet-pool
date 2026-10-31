@@ -336,5 +336,15 @@
   "statsPayoutQueued": "Ödeme sırada: {0}.",
   "statsPayoutBasis": "Minimum tutara yalnızca onaylanmış ödüller sayılır. Tahmini ödüllerin önce olgunlaşması gerekir.",
   "statsPayoutUnavailable": "Minimum ödeme bilgisi alınamıyor. Otomatik olarak yeniden deneniyor.",
-  "statsPayoutBalanceUnavailable": "Onaylanmış bakiye bilgisi alınamıyor; ödeme ilerlemesi hesaplanamıyor."
+  "statsPayoutBalanceUnavailable": "Onaylanmış bakiye bilgisi alınamıyor; ödeme ilerlemesi hesaplanamıyor.",
+  "memoTitle": "Bir borsaya mı madencilik yapıyorsunuz?",
+  "memoAddress": "Borsa yatırma adresi",
+  "memoLabel": "Yatırma notu",
+  "memoAdd": "Not ekle",
+  "memoRequired": "{0} ortak bir adres kullanıyor. Yatırma notunuzu girin.",
+  "memoLimit": "Notu aynen kopyalayın; en fazla 124 UTF-8 baytı.",
+  "memoPolicy": "Küçük yatırmaları azaltmak için notlu ödemelerin alt sınırı daha yüksektir.",
+  "memoMinimum": "Notlu ödeme alt sınırı: {0} BNT",
+  "memoUnavailable": "Bu havuzda notlu ödemeler henüz etkin değil.",
+  "memoLookupFailed": "Bu hedef yüklenemedi. Tekrar deneyin."
 }

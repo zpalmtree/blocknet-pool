@@ -74,6 +74,8 @@ pub struct StratumNotify {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LoginParams {
+    #[serde(default)]
+    pub payout_memo: Option<String>,
     pub address: String,
     pub worker: String,
     pub protocol_version: u32,
@@ -83,6 +85,10 @@ pub struct LoginParams {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct LoginResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payout_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_payout_atomic: Option<u64>,
     pub protocol_version: u32,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
@@ -145,6 +151,8 @@ pub fn build_login_result() -> LoginResult {
     ];
 
     LoginResult {
+        payout_account: None,
+        min_payout_atomic: None,
         protocol_version: STRATUM_PROTOCOL_VERSION_CURRENT,
         capabilities,
         required_capabilities: vec![CAP_SUBMIT_CLAIMED_HASH.to_string()],
