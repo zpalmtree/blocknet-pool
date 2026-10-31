@@ -11,3 +11,7 @@ floor is a fixture, not an exchange deposit requirement or production setting.
 States cover normal address-only use, detected shared address, successful memo
 lookup, empty, loading, request error, invalid UTF-8 length, unrecognized address,
 setup, feature disabled, and a rotated address registry. `?lang=ar` exercises RTL.
+
+The source-based [Seine walkthrough](seine.html) shows first-run setup, login
+confirmation, and missing/unsupported memo messages. The stats footer now shows
+only the minimum and one status line; setup retains the exchange explanation.

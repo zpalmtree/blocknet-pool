@@ -12,7 +12,7 @@
     "frontend/src/components/LanguageControl.tsx": "b08673806d6a442820f0029191f064dd1781ab7b4e0b263f6f67848e3dd1a9b4",
     "frontend/src/components/MinerUpdateBanner.tsx": "2d7c25f10341084a5a0ce967ae438a92513519a9a72d62d1f3655d990e800465",
     "frontend/src/components/Pager.tsx": "6941c3e8df85c3235d132c95891a074e8f7d859b2a940e467ab6d0bac674fa88",
-    "frontend/src/components/PayoutProgress.tsx": "d999d5e28935d4076064b1fc6f2df00a8f1e5bac92a9c23e50be8ac5e14e5d04",
+    "frontend/src/components/PayoutProgress.tsx": "85d63c8e518e9afa86784774212be29151b085357efefd4f98596168551efdec",
     "frontend/src/components/PayoutStatusBadge.tsx": "0f29a595a33a3ae78b35c06c2d2bb9885dcfe883c9f4434dbb6b82b8521971fc",
     "frontend/src/components/PayoutTxLinks.tsx": "4ad832c8f1cd65f0373bd7f30942c6469ad8872c8b66c21bac0fdb9d212cbc01",
     "frontend/src/components/PoolGuide.ts": "cafa155fc0dbf43c344aced3de6840ea7e65455f381af700e9399ede68009ae1",
@@ -21,7 +21,7 @@
     "frontend/src/components/StatCard.tsx": "f3ddd007a57e0b9904f227c558e43e0527b11d33e3301ed043b215a4332ff347",
     "frontend/src/i18n/core.ts": "bd614ff9ee2cc7f5ac7f5f8f89a42725e6f05f38779166aab863388f445dce03",
     "frontend/src/i18n/index.tsx": "ee80aea3b3105f687301d746a9959eb714d7be659e007772c5beffa51701bb52",
-    "frontend/src/i18n/messages/en.json": "d6ca8934fd78b00fc5c01ee391523e85819667fd4ad72113735f6218c65ad4e8",
+    "frontend/src/i18n/messages/en.json": "d8c1724fee92f44f93a1c189f2deb0a6bd50b23b094d2238524366bd0995cabc",
     "frontend/src/lib/ansi.ts": "f71e2eec1177bc72779be032f602f8bb75020f50426036c5e9a60885a913f524",
     "frontend/src/lib/chart.ts": "de5e5dec47d7df0c02eb8cbd51504ebeeb837f049ffba572976dd925a65cac17",
     "frontend/src/lib/coin-format.ts": "4eab644fd2366cf716d7957447274db8442b5c695c7862e20a4bd40c5db5f6d8",
@@ -42,14 +42,18 @@
     "frontend/src/pages/LuckPage.tsx": "2b77b842adb88b1294a79ddacda8a488b74ac953228af177bda6a76454d3d62a",
     "frontend/src/pages/PayoutsPage.tsx": "dde82e886c5e92a2bfb8a897beb80f719b0528f113af0b33867fb5a946337f88",
     "frontend/src/pages/StartPage.tsx": "b04c3725c21550c9c78848cbacf6852787304ca0b9b3e25acef30d8288a9b87b",
-    "frontend/src/pages/StatsPage.tsx": "ac97fad97280d8e0412460fb8b453371a77ec7e2ab39d35eb8d14d4e0978baa2",
+    "frontend/src/pages/StatsPage.tsx": "c63980e149551a92825405a6b8643fe8dc921a963ddc596f9c7a26a5485a2d6b",
     "frontend/src/pages/StatusPage.tsx": "0b42c416fb77e8bc86379e93ff6aebbd9dccaa290c43efd26537f5862e2d1f89",
     "frontend/src/pages/WalletPage.tsx": "877cf51d46758badd6a61b16c5bf28961e1ebe50f30842be724603790409929c",
     "frontend/src/pages/adminDisplay.tsx": "f2a04468e18591ad8d97a1c6ea53defde0b097bef948c50a53c9e74c9f9a978c",
     "frontend/src/styles.css": "2e0dd63ea0d8a8458020e9f650e92b6627773350e3660f2583c2b097fa8783eb",
     "frontend/src/types.ts": "73de5b918cb8baf6b2eb65694f33fede468d8437ea577af88cf194d0253f48c7",
     "frontend/showcases/exchange-memos/showcase.tsx": "db2a4475e232ba01a2a19ee54b5ca4173f71fa9e09b5a09f7f4f879a9ccb39f2",
-    "frontend/showcases/exchange-memos/vite.config.ts": "4f217370138f4a7e2a83c77a64cba7ac951dee9b3f98b0f827ba62691d8f7d1f"
+    "frontend/showcases/exchange-memos/vite.config.ts": "4f217370138f4a7e2a83c77a64cba7ac951dee9b3f98b0f827ba62691d8f7d1f",
+    "frontend/showcases/exchange-memos/seine.html": "faf5503789fd883fd96266fb7c66184270e6c400ad3bf6bc1ace064079dcdc5d"
   },
-  "note": "Feature source hashes identify the reviewed working-tree revision; unchanged stats captures retained after threshold-fetch refactor. All memos are synthetic. 10 BNT is a fixture."
+  "note": "Feature source hashes identify the reviewed working-tree revision; unchanged stats captures retained after threshold-fetch refactor. All memos are synthetic. 10 BNT is a fixture.",
+  "copy_revision_base": "e30ed26",
+  "copy_review": "Payout footer reduced to minimum and status. Small rewards: all 30 captures refreshed. Exchange: balance-bearing captures refreshed; unaffected setup and lookup-only captures retained. Seine document contains source-based terminal text examples.",
+  "captured_at": "2026-10-31 18:03 EDT"
 }

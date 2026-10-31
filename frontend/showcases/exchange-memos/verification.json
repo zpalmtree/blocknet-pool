@@ -10,7 +10,7 @@
     ]
   },
   "browser": "Configured Windows Chrome Playwright MCP",
-  "reviewed_captures": 34,
+  "reviewed_captures": 36,
   "passed": [
     "Ordinary address-only lookup keeps memo field collapsed and normal threshold",
     "Known and rotated shared addresses reveal memo field and block lookup without it",
@@ -31,5 +31,10 @@
     "lint": "Clippy runtime, Stratum, gateway and API all targets with warnings denied passed",
     "browser_cleanup": "All task-owned tabs closed; local static preview retained",
     "payout_regression": "All 80 payout tests passed after final compatibility review, using isolated PostgreSQL schemas."
+  },
+  "copy_review": {
+    "checks": "Production build, 36 frontend tests, all 20 locale catalogs; 30 small rewards and 8 exchange balance captures refreshed, plus desktop/mobile Seine document review.",
+    "payout_footer": "Minimum plus one status line; no payout calculations changed.",
+    "seine_document": "Source-based terminal text, explicitly labeled; no persistent TUI badge claimed."
   }
 }

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Exchange memos in Seine</title>
+<style>
+:root{color-scheme:dark;--bg:#091114;--panel:#0d181d;--text:#e6eeeb;--muted:#a6b9b4;--accent:#64d58f;--line:#283936}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,sans-serif}main{max-width:850px;margin:0 auto;padding:40px 24px 64px}h1{font-size:clamp(28px,5vw,42px);line-height:1.15;margin:12px 0 16px;letter-spacing:-.03em}h2{font-size:19px;margin:28px 0 10px}p{margin:10px 0;color:var(--muted)}a{color:var(--accent)}.eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}.note{font-size:13px}.terminal{border:1px solid var(--line);border-radius:12px;background:#050c0e;margin:12px 0 16px;overflow:hidden}.bar{border-bottom:1px solid var(--line);padding:9px 16px;font-size:12px;color:var(--muted)}pre{font:13px/1.8 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:18px}.input{color:var(--accent)}strong{color:var(--text)}details{border-top:1px solid var(--line);margin-top:24px;padding-top:18px}summary{cursor:pointer;font-weight:600}code{font-family:ui-monospace,Consolas,monospace}footer{border-top:1px solid var(--line);margin-top:28px;padding-top:12px;font-size:12px;color:var(--muted)}@media print{body{background:white;color:#111}p,footer,.note{color:#444}.terminal{background:#f5f5f5;color:#111}a,.input,.eyebrow,strong{color:#111}details{display:block}main{padding:12px}a[href="./"]{display:none}}
+</style>
+</head>
+<body><main>
+<div class="eyebrow">Seine · Exchange deposits</div>
+<h1>One extra prompt, only when needed.</h1>
+<p>Personal wallets keep the usual setup. A recognized shared exchange address reveals the deposit-memo prompt.</p>
+<p class="note"><strong>Implemented, not released.</strong> These are terminal-text examples from Seine <a href="https://github.com/zpalmtree/seine/commit/4ea5963864052f475f2a57d53e9353c6a86b0348">4ea5963</a>, not screenshots or a new TUI design. The memo and 10 BNT minimum below are examples.</p>
+<h2>1. First-run setup</h2>
+<div class="terminal"><div class="bar">After entering a known exchange address</div><pre>Enter your Blocknet address or shortname (@name / $name): <span class="input">[your SafeTrade deposit address]</span>
+This exchange uses a shared address. A deposit memo is required.
+Enter your deposit memo: <span class="input">DEMO001</span></pre></div>
+<p>Setup saves the address and memo together. Your next launch reuses them.</p>
+<h2>2. Pool connection</h2>
+<div class="terminal"><div class="bar">Connection log · example pool minimum</div><pre>Memo accepted. Minimum payout: 10 BNT; larger payouts reduce small exchange deposits.</pre></div>
+<p>Seine waits for the pool to acknowledge the exact memo account before accepting work. This confirmation is a <strong>log message</strong>; there is no persistent exchange or memo badge in the mining screen yet.</p>
+<h2>Existing setup or an unrecognized exchange</h2>
+<div class="terminal"><div class="bar">Command-line option · replace both placeholders</div><pre>./seine --address 'EXCHANGE_ADDRESS' --payout-memo 'YOUR_DEPOSIT_MEMO'</pre></div>
+<p>Use the full address and memo from your deposit page. Command-line overrides apply to this run; edit <code>seine-data/seine.config.json</code> to change saved settings.</p>
+<details open><summary>If the memo is missing or unsupported</summary>
+<p>A saved known exchange address without a memo stops at startup. It does not open the first-run prompt again:</p>
+<div class="terminal"><pre>this shared exchange address requires a memo; use --payout-memo with the memo from your deposit page</pre></div>
+<p>If the pool does not confirm memo support:</p>
+<div class="terminal"><pre>pool did not acknowledge the payout memo; no shares will be submitted</pre></div>
+</details>
+<footer>Pool mining only; solo mining and Seine farm proxies do not support this memo flow. Pool admissions remain disabled until the higher minimum is configured and the updates are deployed.<br><a href="./">Pool preview</a> · <a href="captures.html">Desktop and mobile captures</a></footer>
+</main></body></html>

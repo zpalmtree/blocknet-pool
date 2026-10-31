@@ -40,7 +40,5 @@ export function PayoutProgress({ api, confirmed, queued, liveTick, memoAccount =
       : progress?.state === 'below' ? <p>{tx('statsPayoutRemaining', [<bdi dir="ltr">{formatExactCoins(progress.amount)}</bdi>])}</p>
       : progress?.state === 'queued' ? <p>{tx('statsPayoutQueued', [<bdi dir="ltr">{formatExactCoins(progress.amount)}</bdi>])}</p>
       : progress?.state === 'met' ? <p>{t('statsPayoutMet')}</p> : null}
-    {memoAccount && <p>{t('memoPolicy')}</p>}
-    <p>{t('statsPayoutBasis')}</p>
   </div>;
 }

@@ -516,7 +516,6 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
               queued={pendingQueued}
               liveTick={liveTick}
             />
-            <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)' }}>{t("m498")}</div>
           </div>
 
           <div className="stats-card-group" style={{ marginBottom: 24 }}>
