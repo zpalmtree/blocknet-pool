@@ -42,8 +42,6 @@
   "calcInvalid": "Masukkan hashrate dari 0 hingga hashrate jaringan.",
   "calcDay": "Per hari",
   "calcWeek": "Per minggu",
-  "calcGross": "Sebelum biaya",
-  "calcNet": "Setelah biaya",
   "calcAssumptions": "Perkiraan mengasumsikan mining terus-menerus pada hashrate jaringan saat ini dan 288 blok per hari. Perubahan imbalan terjadwal sudah diperhitungkan. Keberuntungan pool dan PPLNS memengaruhi kapan imbalan diterima; ini bukan jadwal pembayaran.",
   "calcNoScript": "Aktifkan JavaScript untuk perkiraan langsung, atau gunakan rumus di bawah.",
   "calcSource": "Hashrate Anda tetap di browser ini. Data jaringan berasal dari bntpool.com.",

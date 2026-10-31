@@ -42,8 +42,6 @@
   "calcInvalid": "Gib eine Hashrate zwischen 0 und der Netzwerk-Hashrate ein.",
   "calcDay": "Pro Tag",
   "calcWeek": "Pro Woche",
-  "calcGross": "Vor Gebühren",
-  "calcNet": "Nach Gebühren",
   "calcAssumptions": "Die Schätzung setzt durchgehendes Mining bei aktueller Netzwerk-Hashrate und 288 Blöcken pro Tag voraus. Geplante Änderungen der Blockbelohnung sind enthalten. Pool-Glück und PPLNS beeinflussen den Zeitpunkt der Belohnungen; dies ist kein Auszahlungsplan.",
   "calcNoScript": "Aktiviere JavaScript für Live-Schätzungen oder nutze die Formel unten.",
   "calcSource": "Deine Hashrate bleibt in diesem Browser. Die Netzwerkdaten stammen von bntpool.com.",

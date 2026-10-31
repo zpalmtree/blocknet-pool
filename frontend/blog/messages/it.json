@@ -42,8 +42,6 @@
   "calcInvalid": "Inserisci un hashrate tra 0 e quello della rete.",
   "calcDay": "Al giorno",
   "calcWeek": "Alla settimana",
-  "calcGross": "Prima delle commissioni",
-  "calcNet": "Dopo le commissioni",
   "calcAssumptions": "Le stime presuppongono mining continuo con l’hashrate attuale della rete e 288 blocchi al giorno. Sono inclusi i cambiamenti programmati della ricompensa. La fortuna del pool e PPLNS influiscono sull’arrivo delle ricompense; questo non è un calendario dei pagamenti.",
   "calcNoScript": "Attiva JavaScript per le stime in tempo reale o usa la formula qui sotto.",
   "calcSource": "Il tuo hashrate rimane in questo browser. I dati di rete provengono da bntpool.com.",

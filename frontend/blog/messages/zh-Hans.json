@@ -42,8 +42,6 @@
   "calcInvalid": "算力请输入 0 到全网算力之间的值。",
   "calcDay": "每日",
   "calcWeek": "每周",
-  "calcGross": "扣费前",
-  "calcNet": "扣费后",
   "calcAssumptions": "估算假设按当前全网算力持续挖矿，每天产生 288 个区块，已计入计划内的奖励变化。矿池运气和 PPLNS 会影响奖励到账时间；这不是付款时间表。",
   "calcNoScript": "启用 JavaScript 获取实时估算，或使用下方公式。",
   "calcSource": "你的算力仅保留在此浏览器中。网络数据来自 bntpool.com。",

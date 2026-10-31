@@ -16,9 +16,9 @@ export function calculatorHtml(locale) {
 <div><label for="calc-units">${text('calcUnit')}</label><select id="calc-units" data-calc="units" dir="ltr"><option value="1">H/s</option><option value="1000">kH/s</option><option value="1000000">MH/s</option></select></div></div>
 </fieldset>
 <p id="calc-hint" data-calc="hint" role="status">${text('calcEmpty')}</p>
-<div data-calc="result" aria-live="polite" hidden><table class="calc-results"><thead><tr><th scope="col">BNT</th><th scope="col">${text('calcGross')}</th><th scope="col">${text('calcNet')}</th></tr></thead><tbody>
-<tr><th scope="row">${text('calcDay')}</th><td><bdi data-calc="day">—</bdi></td><td><bdi data-calc="netDay">—</bdi></td></tr>
-<tr><th scope="row">${text('calcWeek')}</th><td><bdi data-calc="week">—</bdi></td><td><bdi data-calc="netWeek">—</bdi></td></tr>
+<div data-calc="result" aria-live="polite" hidden><table class="calc-results"><thead><tr><td></td><th scope="col">BNT</th></tr></thead><tbody>
+<tr><th scope="row">${text('calcDay')}</th><td><bdi data-calc="netDay">—</bdi></td></tr>
+<tr><th scope="row">${text('calcWeek')}</th><td><bdi data-calc="netWeek">—</bdi></td></tr>
 </tbody></table></div>
 <dl class="calc-inputs">${[['calcNetwork','network'],['calcHeight','height'],['calcReward','reward']].map(([key, field]) => `<div><dt>${text(key)}</dt><dd><bdi data-calc="${field}">—</bdi></dd></div>`).join('')}</dl>
 <div class="calc-refresh"><p data-calc="status" role="status"></p><button type="button" data-calc="refresh" class="btn" disabled>${text('calcRefresh')}</button></div>

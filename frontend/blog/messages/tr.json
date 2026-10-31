@@ -42,8 +42,6 @@
   "calcInvalid": "0 ile ağın hash gücü arasında bir değer girin.",
   "calcDay": "Günlük",
   "calcWeek": "Haftalık",
-  "calcGross": "Ücretlerden önce",
-  "calcNet": "Ücretlerden sonra",
   "calcAssumptions": "Tahminler, ağın mevcut hash gücünde kesintisiz madencilik ve günde 288 blok varsayar. Planlı ödül değişiklikleri dahildir. Havuz şansı ve PPLNS, ödüllerin geliş zamanını etkiler; bu bir ödeme takvimi değildir.",
   "calcNoScript": "Canlı tahminler için JavaScript’i etkinleştirin veya aşağıdaki formülü kullanın.",
   "calcSource": "Hash gücünüz bu tarayıcıda kalır. Ağ verileri bntpool.com’dan gelir.",

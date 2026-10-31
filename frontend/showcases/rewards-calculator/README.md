@@ -1,6 +1,8 @@
 # Rewards calculator showcase
 
-Source revision: `789495d`.
+Source base: `d1dd758`; calculator markup blob `46fecabb95b24d7aa3a8317e383e828c11bc2737`, runtime blob `8f5009a7034afcbbba02e942e0876f2c1503dc81`.
+
+Updated October 31, 2026 (EDT): one BNT estimate per day and week replaces the before-fees / after-fees comparison in all 20 languages. Existing fee-adjusted calculations are preserved.
 
 The production calculator and stylesheet are rendered with synthetic network data.
 All 18 desktop (1280px) and mobile (390px) screenshots were reviewed. States cover
@@ -11,7 +13,7 @@ Network hashrate uses the same scaled units and two decimal places as the pool
 dashboard. Reward calculations and input units are unchanged. Browser checks
 covered H/s through PH/s, including the 1000 H/s boundary.
 
-Validation: 21 frontend tests, TypeScript, translation checks, blog checks and
+Validation: 33 frontend tests, TypeScript, translation checks, blog checks and
 production build passed. Browser input changes recalculated results correctly.
 
 Stable gallery: http://localhost:5191/

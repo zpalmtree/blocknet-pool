@@ -42,8 +42,6 @@
   "calcInvalid": "Enter a hashrate from 0 to the network hashrate.",
   "calcDay": "Per day",
   "calcWeek": "Per week",
-  "calcGross": "Before fees",
-  "calcNet": "After fees",
   "calcAssumptions": "Estimates assume continuous mining at the current network hashrate and 288 blocks per day. Scheduled reward changes are included. Pool luck and PPLNS affect when rewards arrive; this is not a payout schedule.",
   "calcNoScript": "Enable JavaScript for live estimates, or use the formula below.",
   "calcSource": "Your hashrate stays in this browser. Network data comes from bntpool.com.",

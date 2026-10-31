@@ -25,7 +25,6 @@ export function App() {
     { route: 'stats', label: t("m005") },
     { route: 'blocks', label: t("m003") },
     { route: 'payouts', label: t("m004") },
-    { route: 'status', label: t("m006") },
   ];
   // Node operators and the pool operator need these, miners rarely do.
   const FOOTER_ITEMS: { route: Route; label: string }[] = [

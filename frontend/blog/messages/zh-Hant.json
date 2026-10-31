@@ -42,8 +42,6 @@
   "calcInvalid": "算力請輸入 0 到全網算力之間的值。",
   "calcDay": "每日",
   "calcWeek": "每週",
-  "calcGross": "扣費前",
-  "calcNet": "扣費後",
   "calcAssumptions": "估算假設按目前全網算力持續挖礦，每天產生 288 個區塊，已計入計畫內的獎勵變化。礦池運氣和 PPLNS 會影響獎勵入帳時間；這不是付款時間表。",
   "calcNoScript": "啟用 JavaScript 取得即時估算，或使用下方公式。",
   "calcSource": "你的算力僅保留在此瀏覽器中。網路資料來自 bntpool.com。",

@@ -31,7 +31,10 @@ if (root) {
     const hashrate = decimalInput(rate.value) * Number(units.value);
     try {
       const values = estimateRewards(snapshot, hashrate, minerFee);
-      for (const [key, value] of Object.entries(values)) find(key).textContent = value > 0 && value < 0.000001 ? '< ' + format.format(0.000001) : format.format(value);
+      for (const key of ['netDay', 'netWeek']) {
+        const value = values[key];
+        find(key).textContent = value > 0 && value < 0.000001 ? '< ' + format.format(0.000001) : format.format(value);
+      }
       result.hidden = false; hint.textContent = '';
     } catch {
       rate.setAttribute('aria-invalid', String(!Number.isFinite(hashrate) || hashrate < 0 || hashrate > snapshot.network));

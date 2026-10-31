@@ -42,8 +42,6 @@
   "calcInvalid": "Nhập hashrate từ 0 đến hashrate mạng.",
   "calcDay": "Mỗi ngày",
   "calcWeek": "Mỗi tuần",
-  "calcGross": "Trước phí",
-  "calcNet": "Sau phí",
   "calcAssumptions": "Ước tính giả định đào liên tục ở hashrate mạng hiện tại và 288 khối mỗi ngày. Đã tính các thay đổi phần thưởng theo lịch. Độ may mắn của pool và PPLNS ảnh hưởng đến thời điểm nhận thưởng; đây không phải lịch thanh toán.",
   "calcNoScript": "Bật JavaScript để ước tính trực tiếp hoặc dùng công thức bên dưới.",
   "calcSource": "Hashrate của bạn chỉ nằm trong trình duyệt này. Dữ liệu mạng đến từ bntpool.com.",

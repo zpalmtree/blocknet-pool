@@ -83,6 +83,11 @@ test('calculator retains the reviewed fee for estimates without rendering fee co
     assert.match(html, /data-miner-fee="2"/);
     assert.ok(!html.includes('id="calc-fee"'));
     assert.ok(!html.includes('data-calc="poolFee"'));
+    assert.ok(!html.includes('data-calc="day"'));
+    assert.ok(!html.includes('data-calc="week"'));
+    assert.ok(html.includes('data-calc="netDay"'));
+    assert.ok(html.includes('data-calc="netWeek"'));
+    assert.equal((html.match(/scope="col"/g) ?? []).length, 1);
     assert.ok(!html.includes(release.tag));
     assert.ok(!/\{(?:version|fee)\}/.test(html));
   }

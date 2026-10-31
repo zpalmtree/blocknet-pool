@@ -42,8 +42,6 @@
   "calcInvalid": "Wpisz hashrate od 0 do hashrate sieci.",
   "calcDay": "Dziennie",
   "calcWeek": "Tygodniowo",
-  "calcGross": "Przed opłatami",
-  "calcNet": "Po opłatach",
   "calcAssumptions": "Szacunki zakładają ciągłe wydobycie przy bieżącym hashrate sieci i 288 blokach dziennie. Uwzględniają zaplanowane zmiany nagrody. Szczęście puli i PPLNS wpływają na termin otrzymania nagród; to nie jest harmonogram wypłat.",
   "calcNoScript": "Włącz JavaScript, aby korzystać z bieżących szacunków, lub użyj wzoru poniżej.",
   "calcSource": "Twój hashrate pozostaje w tej przeglądarce. Dane sieci pochodzą z bntpool.com.",

@@ -42,8 +42,6 @@
   "calcInvalid": "Insira um hashrate entre 0 e o da rede.",
   "calcDay": "Por dia",
   "calcWeek": "Por semana",
-  "calcGross": "Antes das taxas",
-  "calcNet": "Após as taxas",
   "calcAssumptions": "As estimativas consideram mineração contínua com o hashrate atual da rede e 288 blocos por dia. As mudanças programadas de recompensa estão incluídas. A sorte do pool e o PPLNS afetam quando as recompensas chegam; isto não é um cronograma de pagamentos.",
   "calcNoScript": "Ative o JavaScript para estimativas ao vivo ou use a fórmula abaixo.",
   "calcSource": "Seu hashrate fica neste navegador. Os dados da rede vêm do bntpool.com.",
