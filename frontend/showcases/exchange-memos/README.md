@@ -15,3 +15,6 @@ setup, feature disabled, and a rotated address registry. `?lang=ar` exercises RT
 The source-based [Seine walkthrough](seine.html) shows first-run setup, login
 confirmation, and missing/unsupported memo messages. The stats footer now shows
 only the minimum and one status line; setup retains the exchange explanation.
+
+Memo accounts show the configured personal-wallet minimum when it is lower.
+This comparison replaces the explanation about reducing small deposits.

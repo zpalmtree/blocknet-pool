@@ -341,8 +341,8 @@
   "memoAdd": "Not ekle",
   "memoRequired": "{0} ortak bir adres kullanıyor. Yatırma notunuzu girin.",
   "memoLimit": "Notu aynen kopyalayın; en fazla 124 UTF-8 baytı.",
-  "memoPolicy": "Küçük yatırmaları azaltmak için notlu ödemelerin alt sınırı daha yüksektir.",
   "memoMinimum": "Notlu ödeme alt sınırı: {0} BNT",
   "memoUnavailable": "Bu havuzda notlu ödemeler henüz etkin değil.",
-  "memoLookupFailed": "Bu hedef yüklenemedi. Tekrar deneyin."
+  "memoLookupFailed": "Bu hedef yüklenemedi. Tekrar deneyin.",
+  "memoPersonalMinimum": "Kişisel cüzdanlar: {0} ve üzeri ödemeler."
 }

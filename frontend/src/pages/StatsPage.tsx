@@ -512,6 +512,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
               api={api}
               memoAccount={!!appliedDestination.memo}
               accountMinimum={minerBalanceData?.min_payout_amount}
+              personalMinimum={poolInfo?.min_payout_amount}
               confirmed={balanceUnavailable ? undefined : liveBalance?.pending_confirmed}
               queued={pendingQueued}
               liveTick={liveTick}

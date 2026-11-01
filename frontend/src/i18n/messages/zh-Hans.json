@@ -341,8 +341,8 @@
   "memoAdd": "添加备注",
   "memoRequired": "{0} 使用共享地址。请输入您的充值备注。",
   "memoLimit": "请原样复制备注；最多 124 个 UTF-8 字节。",
-  "memoPolicy": "带备注的付款采用更高的最低金额，以减少小额充值。",
   "memoMinimum": "带备注的最低付款金额：{0} BNT",
   "memoUnavailable": "此矿池尚未启用带备注的付款。",
-  "memoLookupFailed": "无法加载此收款目标。请重试。"
+  "memoLookupFailed": "无法加载此收款目标。请重试。",
+  "memoPersonalMinimum": "个人钱包：满 {0} 起付款。"
 }

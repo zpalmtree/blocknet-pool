@@ -341,8 +341,8 @@
   "memoAdd": "Memo hinzufügen",
   "memoRequired": "{0} verwendet eine gemeinsame Adresse. Gib dein Einzahlungs-Memo ein.",
   "memoLimit": "Memo exakt kopieren; maximal 124 UTF-8-Bytes.",
-  "memoPolicy": "Auszahlungen mit Memo haben einen höheren Mindestbetrag, um kleine Einzahlungen zu reduzieren.",
   "memoMinimum": "Mindestauszahlung mit Memo: {0} BNT",
   "memoUnavailable": "Auszahlungen mit Memo sind in diesem Pool noch nicht aktiviert.",
-  "memoLookupFailed": "Dieses Ziel konnte nicht geladen werden. Versuche es erneut."
+  "memoLookupFailed": "Dieses Ziel konnte nicht geladen werden. Versuche es erneut.",
+  "memoPersonalMinimum": "Persönliche Wallets: Auszahlungen ab {0}."
 }

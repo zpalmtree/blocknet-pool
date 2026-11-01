@@ -341,8 +341,8 @@
   "memoAdd": "Memo toevoegen",
   "memoRequired": "{0} gebruikt een gedeeld adres. Vul je stortingsmemo in.",
   "memoLimit": "Kopieer de memo exact; maximaal 124 UTF-8-bytes.",
-  "memoPolicy": "Uitbetalingen met memo hebben een hoger minimum om kleine stortingen te beperken.",
   "memoMinimum": "Minimale uitbetaling met memo: {0} BNT",
   "memoUnavailable": "Uitbetalingen met memo zijn nog niet ingeschakeld op deze pool.",
-  "memoLookupFailed": "Deze bestemming kon niet worden geladen. Probeer opnieuw."
+  "memoLookupFailed": "Deze bestemming kon niet worden geladen. Probeer opnieuw.",
+  "memoPersonalMinimum": "Persoonlijke wallets: uitbetalingen vanaf {0}."
 }

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import type { InfoResponse } from '../types';
-import { t } from '../i18n';
+import { t, tx } from '../i18n';
+import { formatExactCoins } from '../lib/format';
+import { minimumPayoutAtoms } from '../lib/payout-progress';
 import { knownExchange, shellQuote, validMemo } from '../lib/payout-destination';
 
 export function ExchangeSetup({ info, poolUrl }: { info: InfoResponse | null; poolUrl: string }) {
@@ -10,6 +12,8 @@ export function ExchangeSetup({ info, poolUrl }: { info: InfoResponse | null; po
   const [copied, setCopied] = useState(false);
   const exchange = knownExchange(info, address);
   const valid = /^[1-9A-HJ-NP-Za-km-z]{90,96}$/.test(address.trim()) && !!memo && validMemo(memo);
+  const personalMinimum = minimumPayoutAtoms(info?.min_payout_amount);
+  const memoMinimum = minimumPayoutAtoms(info?.memo_min_payout_amount);
   const enabled = info?.payout_memos_enabled === true;
   const command = `${windows ? '.\\seine.exe' : './seine'} --pool-url ${shellQuote(poolUrl, windows)} --address ${shellQuote(address.trim(), windows)} --payout-memo ${shellQuote(memo, windows)}`;
   return <details className="command-option">
@@ -22,8 +26,9 @@ export function ExchangeSetup({ info, poolUrl }: { info: InfoResponse | null; po
         aria-describedby="exchange-memo-help" onChange={e => { setMemo(e.target.value); setCopied(false); }} />
       <p id="exchange-memo-help" role={exchange && !memo ? 'alert' : undefined}>{exchange ? t('memoRequired', [exchange.name]) : t('memoLimit')}</p>
       {!validMemo(memo) && <p role="alert">{t('memoLimit')}</p>}
-      <p>{t('memoPolicy')}</p>
       {enabled ? <p>{t('memoMinimum', [info.memo_min_payout_amount ?? '—'])}</p> : <p role="status">{t('memoUnavailable')}</p>}
+      {enabled && personalMinimum != null && memoMinimum != null && personalMinimum < memoMinimum &&
+        <p>{tx('memoPersonalMinimum', [<bdi dir="ltr">{formatExactCoins(personalMinimum)}</bdi>])}</p>}
       <label><input type="checkbox" checked={windows} onChange={e => { setWindows(e.target.checked); setCopied(false); }} /> Windows · PowerShell</label>
       {valid && enabled && <pre className="config-block" dir="ltr">{command}</pre>}
       <button className="btn btn-secondary" type="button" disabled={!valid || !enabled} onClick={() => {

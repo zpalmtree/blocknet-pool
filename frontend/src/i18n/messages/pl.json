@@ -341,8 +341,8 @@
   "memoAdd": "Dodaj memo",
   "memoRequired": "{0} używa wspólnego adresu. Wpisz swoje memo wpłaty.",
   "memoLimit": "Skopiuj memo dokładnie; maksymalnie 124 bajty UTF-8.",
-  "memoPolicy": "Wypłaty z memo mają wyższe minimum, aby ograniczyć małe wpłaty.",
   "memoMinimum": "Minimalna wypłata z memo: {0} BNT",
   "memoUnavailable": "Wypłaty z memo nie są jeszcze włączone w tej puli.",
-  "memoLookupFailed": "Nie udało się wczytać tego odbiorcy. Spróbuj ponownie."
+  "memoLookupFailed": "Nie udało się wczytać tego odbiorcy. Spróbuj ponownie.",
+  "memoPersonalMinimum": "Portfele osobiste: wypłaty od {0}."
 }

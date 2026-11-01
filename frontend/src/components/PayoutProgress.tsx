@@ -8,12 +8,13 @@ interface PayoutProgressProps {
   api: ApiClient;
   memoAccount?: boolean;
   accountMinimum?: number;
+  personalMinimum?: number;
   confirmed?: number;
   queued: number;
   liveTick: number;
 }
 
-export function PayoutProgress({ api, confirmed, queued, liveTick, memoAccount = false, accountMinimum }: PayoutProgressProps) {
+export function PayoutProgress({ api, confirmed, queued, liveTick, memoAccount = false, accountMinimum, personalMinimum }: PayoutProgressProps) {
   // undefined is loading; null is unavailable. Never assume a configured minimum.
   const [minimum, setMinimum] = useState<number | null | undefined>(undefined);
   const refresh = Math.floor(liveTick / 12);
@@ -31,6 +32,7 @@ export function PayoutProgress({ api, confirmed, queued, liveTick, memoAccount =
     return () => { active = false; };
   }, [api, refresh, memoAccount, accountMinimum]);
 
+  const personalMinimumAtoms = memoAccount ? minimumPayoutAtoms(personalMinimum) : null;
   const progress = minimum == null ? null : payoutProgress(minimum, confirmed, queued);
   return <div className="miner-payout-progress">
     <strong>{tx('statsPayoutMinimum', [minimum == null ? '—' : <bdi dir="ltr">{formatExactCoins(minimum)}</bdi>])}</strong>
@@ -40,5 +42,7 @@ export function PayoutProgress({ api, confirmed, queued, liveTick, memoAccount =
       : progress?.state === 'below' ? <p>{tx('statsPayoutRemaining', [<bdi dir="ltr">{formatExactCoins(progress.amount)}</bdi>])}</p>
       : progress?.state === 'queued' ? <p>{tx('statsPayoutQueued', [<bdi dir="ltr">{formatExactCoins(progress.amount)}</bdi>])}</p>
       : progress?.state === 'met' ? <p>{t('statsPayoutMet')}</p> : null}
+    {minimum != null && personalMinimumAtoms != null && personalMinimumAtoms < minimum &&
+      <p>{tx('memoPersonalMinimum', [<bdi dir="ltr">{formatExactCoins(personalMinimumAtoms)}</bdi>])}</p>}
   </div>;
 }

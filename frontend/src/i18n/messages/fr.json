@@ -341,8 +341,8 @@
   "memoAdd": "Ajouter un mémo",
   "memoRequired": "{0} utilise une adresse partagée. Saisissez votre mémo de dépôt.",
   "memoLimit": "Copiez le mémo exactement ; maximum 124 octets UTF-8.",
-  "memoPolicy": "Les paiements avec mémo ont un minimum supérieur pour réduire les petits dépôts.",
   "memoMinimum": "Paiement minimum avec mémo : {0} BNT",
   "memoUnavailable": "Les paiements avec mémo ne sont pas encore activés sur ce pool.",
-  "memoLookupFailed": "Impossible de charger cette destination. Réessayez."
+  "memoLookupFailed": "Impossible de charger cette destination. Réessayez.",
+  "memoPersonalMinimum": "Portefeuilles personnels : paiements à partir de {0}."
 }

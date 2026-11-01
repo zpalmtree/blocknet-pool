@@ -341,8 +341,8 @@
   "memoAdd": "Añadir memo",
   "memoRequired": "{0} usa una dirección compartida. Introduce tu memo de depósito.",
   "memoLimit": "Copia el memo exactamente; máximo 124 bytes UTF-8.",
-  "memoPolicy": "Los pagos con memo tienen un mínimo mayor para reducir los depósitos pequeños.",
   "memoMinimum": "Pago mínimo con memo: {0} BNT",
   "memoUnavailable": "Este pool aún no admite pagos con memo.",
-  "memoLookupFailed": "No se pudo cargar este destino. Inténtalo de nuevo."
+  "memoLookupFailed": "No se pudo cargar este destino. Inténtalo de nuevo.",
+  "memoPersonalMinimum": "Billeteras personales: pagos a partir de {0}."
 }

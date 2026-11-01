@@ -341,8 +341,8 @@
   "memoAdd": "新增備註",
   "memoRequired": "{0} 使用共用地址。請輸入您的儲值備註。",
   "memoLimit": "請原樣複製備註；最多 124 個 UTF-8 位元組。",
-  "memoPolicy": "含備註的付款採用較高的最低金額，以減少小額儲值。",
   "memoMinimum": "含備註的最低付款金額：{0} BNT",
   "memoUnavailable": "此礦池尚未啟用含備註的付款。",
-  "memoLookupFailed": "無法載入此收款目標。請重試。"
+  "memoLookupFailed": "無法載入此收款目標。請重試。",
+  "memoPersonalMinimum": "個人錢包：滿 {0} 起付款。"
 }

@@ -341,8 +341,8 @@
   "memoAdd": "Add memo",
   "memoRequired": "{0} uses a shared address. Enter your deposit memo.",
   "memoLimit": "Copy the memo exactly; maximum 124 UTF-8 bytes.",
-  "memoPolicy": "Memo payouts use a higher minimum to reduce small deposits.",
   "memoMinimum": "Minimum memo payout: {0} BNT",
   "memoUnavailable": "Memo payouts are not enabled on this pool yet.",
-  "memoLookupFailed": "Could not load this destination. Try again."
+  "memoLookupFailed": "Could not load this destination. Try again.",
+  "memoPersonalMinimum": "Personal wallets: payouts from {0}."
 }

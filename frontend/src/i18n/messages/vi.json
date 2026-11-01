@@ -341,8 +341,8 @@
   "memoAdd": "Thêm memo",
   "memoRequired": "{0} sử dụng địa chỉ chung. Nhập memo nạp tiền của bạn.",
   "memoLimit": "Sao chép chính xác memo; tối đa 124 byte UTF-8.",
-  "memoPolicy": "Khoản thanh toán có memo có mức tối thiểu cao hơn để giảm các khoản nạp nhỏ.",
   "memoMinimum": "Thanh toán tối thiểu có memo: {0} BNT",
   "memoUnavailable": "Pool này chưa bật thanh toán có memo.",
-  "memoLookupFailed": "Không thể tải thông tin người nhận này. Hãy thử lại."
+  "memoLookupFailed": "Không thể tải thông tin người nhận này. Hãy thử lại.",
+  "memoPersonalMinimum": "Ví cá nhân: thanh toán từ {0}."
 }
