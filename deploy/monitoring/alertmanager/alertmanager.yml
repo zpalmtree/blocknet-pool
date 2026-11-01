@@ -9,8 +9,15 @@ route:
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 4h
+  routes:
+    # Expected operating state stays visible in Prometheus/Alertmanager.
+    # Capacity, coverage and backlog alerts still notify Discord normally.
+    - matchers:
+        - alertname="BlocknetPoolGrowthModeActive"
+      receiver: growth-status
 
 receivers:
+  - name: growth-status
   - name: discord-relay
     webhook_configs:
       - url: http://127.0.0.1:24810/webhook

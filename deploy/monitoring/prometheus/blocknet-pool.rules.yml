@@ -35,7 +35,7 @@ groups:
         expr: blocknet_pool_monitor_growth_mode_active == 1
         for: 5m
         labels:
-          severity: warning
+          severity: info
           visibility: private
         annotations:
           summary: Growth mode is on

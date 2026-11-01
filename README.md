@@ -131,6 +131,10 @@ Provision the on-host monitoring packages and configs on `bntpool` with:
 
 That script installs Prometheus, Alertmanager, node exporter, blackbox exporter, and the local Discord relay. Grafana provisioning files are included in-repo and can be installed separately if Grafana is present on the host.
 
+Growth mode is an informational operating state in Prometheus and Alertmanager;
+it does not send Discord notifications. Capacity, verification coverage, backlog
+and service-health alerts continue to notify Discord normally.
+
 Template renewal errors remain counted, but notify only while template recovery is overdue.
 A recent successful template fetch or renewal suppresses the historical error alerts immediately.
 Unknown template IDs can follow a daemon restart or switch before their leases expire; they
