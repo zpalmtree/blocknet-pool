@@ -9,9 +9,11 @@ the Seine v0.3.0 release and require an explicit deployment request.
   queries and prints aggregate activity and balances, without customer memos or
   worker names. Worker counts are distinct names, not customers or connections.
 - Review address-only shared balances and any pending sends. Do not guess who
-  owns a balance or assign it to a newly entered memo. Keep those credits for
-  separately authorized reconciliation. Repeat the audit immediately before
-  activation because miners may continue earning in the meantime.
+  owns a balance or assign it to a newly entered memo. Record the operator’s
+  disposition. A balance explicitly accepted as lost does not block release;
+  retain its accounting record without remapping it to a customer. Repeat the
+  audit immediately before activation because miners may continue earning in
+  the meantime. New accrual and pending sends still need review.
 - Verify the current exchange deposit address against the exchange deposit page.
   Retain previous shared addresses in the registry when adding rotated ones.
 - Back up accounting tables, including `payout_destinations` when present, and
@@ -49,9 +51,11 @@ before the complete stack is ready.
 2. Update the gateway using the deploy script's explicit `--restart-gateway`
    option. This step disconnects miners; schedule it with v0.3.0 and verify they
    reconnect. Do not restart the daemon for this feature.
-3. Re-run the audit and resolve the treatment of legacy untagged accounts with
-   the operator. Enabling enforcement rejects their future no-memo logins and
-   holds their old address-only payouts. Ordinary wallets keep their behavior.
+3. Re-run the audit and apply the recorded disposition of legacy untagged
+   balances. Do not reopen reconciliation for a balance already accepted as
+   lost. Review any additional accrual or pending sends separately. Enabling
+   enforcement rejects future no-memo logins and holds old address-only payouts.
+   Ordinary wallets keep their behavior.
 4. Explicitly set `enforce_shared_exchange_memos: true`,
    `payout_memos_enabled: true`, and `memo_min_payout_amount: 10.0` in the managed
    configuration. Apply to engine and API through the normal deploy workflow;
