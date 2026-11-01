@@ -71,6 +71,8 @@ def audit(database, config_path, include_addresses):
     destination_fields = ", 'destination',d.address,'memo',d.memo" if has_destinations else ""
     destination_join = "LEFT JOIN payout_destinations d ON d.account_id=b.address" if has_destinations else ""
     shared_addresses = {entry["address"] for entry in config["shared_exchange_addresses"]} if "shared_exchange_addresses" in config else DEFAULT_SHARED_ADDRESSES
+    if not config.get("enforce_shared_exchange_memos", False):
+        shared_addresses = set()
     memo_minimum = max(minimum, round(float(config.get("memo_min_payout_amount", 0)) * 100_000_000))
     sql = f"""BEGIN READ ONLY;
 SET LOCAL statement_timeout = '15s';

@@ -158,6 +158,8 @@ pub struct Config {
     pub min_payout_amount: f64,
     /// Enables new memo accounts. Existing memo payouts remain recoverable when disabled.
     pub payout_memos_enabled: bool,
+    /// Explicit rollout switch for rejecting and holding untagged shared destinations.
+    pub enforce_shared_exchange_memos: bool,
     /// BNT minimum for a memo payout; zero requires an operator to choose a floor.
     pub memo_min_payout_amount: f64,
     pub shared_exchange_addresses: Vec<pool_common::destination::SharedExchangeAddress>,
@@ -260,6 +262,7 @@ impl Default for Config {
             blocks_before_payout: 60,
             min_payout_amount: 0.1,
             payout_memos_enabled: false,
+            enforce_shared_exchange_memos: false,
             memo_min_payout_amount: 0.0,
             shared_exchange_addresses: vec![pool_common::destination::SharedExchangeAddress {
                 address: "ZJZqGfDPCVg78CRH5Z33CtHafg911Dp5Bauf1Dnxg5jgXx7Whqsvqka96FCV8W6QZXNDKzJefkFU6bwDEGBewqPrTWjij".into(),
@@ -297,6 +300,14 @@ macro_rules! hot_settings {
 }
 
 impl Config {
+    pub fn requires_payout_memo(&self, address: &str) -> bool {
+        self.enforce_shared_exchange_memos
+            && self
+                .shared_exchange_addresses
+                .iter()
+                .any(|entry| entry.address == address)
+    }
+
     pub fn payout_minimum(&self, account: &str) -> f64 {
         if account.starts_with(pool_common::destination::MEMO_ACCOUNT_PREFIX) {
             self.min_payout_amount.max(self.memo_min_payout_amount)
@@ -576,6 +587,9 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        if self.payout_memos_enabled && !self.enforce_shared_exchange_memos {
+            anyhow::bail!("payout_memos_enabled requires enforce_shared_exchange_memos");
+        }
         if !self.memo_min_payout_amount.is_finite()
             || self.memo_min_payout_amount < 0.0
             || (self.payout_memos_enabled
@@ -881,6 +895,7 @@ mod tests {
     fn memo_admission_requires_a_higher_atomic_payout_floor() {
         let mut cfg = Config {
             payout_memos_enabled: true,
+            enforce_shared_exchange_memos: true,
             ..Config::default()
         };
         assert!(cfg.validate().is_err());
@@ -888,6 +903,32 @@ mod tests {
         assert!(cfg.validate().is_err());
         cfg.memo_min_payout_amount = 1.0;
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn exchange_memo_rollout_is_explicit_and_not_hot_reloadable() {
+        let legacy: Config = serde_json::from_str(r#"{"min_payout_amount":1.0}"#).unwrap();
+        let address = &legacy.shared_exchange_addresses[0].address;
+        assert!(!legacy.requires_payout_memo(address));
+        assert_eq!(legacy.payout_minimum(address), 1.0);
+        let mut rollout = legacy.clone();
+        rollout.payout_memos_enabled = true;
+        rollout.memo_min_payout_amount = 10.0;
+        assert!(rollout.validate().is_err());
+        rollout.enforce_shared_exchange_memos = true;
+        assert!(rollout.validate().is_ok());
+        assert!(rollout.requires_payout_memo(address));
+        assert!(!rollout.requires_payout_memo("ordinary-wallet"));
+        assert_eq!(rollout.payout_minimum(address), 1.0);
+        assert_eq!(rollout.payout_minimum("memo:test"), 10.0);
+        let (running, _) = legacy.with_hot_settings_from(&rollout);
+        assert!(!running.requires_payout_memo(address));
+        assert!(!running.payout_memos_enabled);
+        // Disabling admissions retains the policy and floor for earned balances.
+        rollout.payout_memos_enabled = false;
+        assert!(rollout.validate().is_ok());
+        assert!(rollout.requires_payout_memo(address));
+        assert_eq!(rollout.payout_minimum("memo:test"), 10.0);
     }
 
     #[test]

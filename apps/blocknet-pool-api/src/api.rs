@@ -1136,9 +1136,7 @@ async fn handle_payout_destination(
         && state
             .config
             .runtime
-            .shared_exchange_addresses
-            .iter()
-            .any(|entry| entry.address == destination.address)
+            .requires_payout_memo(&destination.address)
     {
         return (
             StatusCode::BAD_REQUEST,
@@ -1168,7 +1166,11 @@ async fn handle_info(State(state): State<ApiState>) -> impl IntoResponse {
             .runtime
             .memo_min_payout_amount
             .max(state.config.runtime.min_payout_amount),
-        shared_exchange_addresses: state.config.runtime.shared_exchange_addresses.clone(),
+        shared_exchange_addresses: if state.config.runtime.enforce_shared_exchange_memos {
+            state.config.runtime.shared_exchange_addresses.clone()
+        } else {
+            Vec::new()
+        },
         blocks_before_payout: state.config.runtime.blocks_before_payout,
         pplns_window_duration: state.config.runtime.pplns_window_duration.clone(),
     })
@@ -7178,11 +7180,50 @@ mod tests {
     }
 
     #[test]
+    fn exchange_rollout_default_preserves_address_lookup_and_ui_contract() {
+        let store = require_test_store!();
+        let mut state = test_api_state(store);
+        state.config.runtime.min_payout_amount = 1.0;
+        let address = state.config.runtime.shared_exchange_addresses[0]
+            .address
+            .clone();
+        let runtime = test_runtime();
+        let response = runtime.block_on(super::handle_payout_destination(
+            State(state.clone()),
+            Json(super::PayoutDestinationRequest {
+                address: address.clone(),
+                memo: None,
+            }),
+        ));
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(&runtime, response);
+        assert_eq!(body["account"], address);
+        assert_eq!(body["min_payout_amount"], 1.0);
+        let info = response_json(
+            &runtime,
+            runtime
+                .block_on(super::handle_info(State(state.clone())))
+                .into_response(),
+        );
+        assert_eq!(info["shared_exchange_addresses"], serde_json::json!([]));
+        assert_eq!(info["payout_memos_enabled"], false);
+        state.config.runtime.enforce_shared_exchange_memos = true;
+        let info = response_json(
+            &runtime,
+            runtime
+                .block_on(super::handle_info(State(state)))
+                .into_response(),
+        );
+        assert_eq!(info["shared_exchange_addresses"][0]["address"], address);
+    }
+
+    #[test]
     fn payout_destination_lookup_separates_memos_and_requires_known_exchange_memo() {
         use super::{handle_payout_destination, PayoutDestinationRequest};
         let store = require_test_store!();
         let mut state = test_api_state(store);
         state.config.runtime.memo_min_payout_amount = 10.0;
+        state.config.runtime.enforce_shared_exchange_memos = true;
         let address = state.config.runtime.shared_exchange_addresses[0]
             .address
             .clone();

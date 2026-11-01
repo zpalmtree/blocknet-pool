@@ -10,21 +10,23 @@ import type { InfoResponse } from '../../src/types';
 import type { MinerResponse } from '../../src/types';
 import '../../src/styles.css';
 
-const states = ['regular', 'required', 'success', 'empty', 'loading', 'error', 'invalid', 'unknown', 'setup', 'disabled', 'rotated'];
+const states = ['rollout-off', 'rollout-off-setup', 'regular', 'required', 'success', 'empty', 'loading', 'error', 'invalid', 'unknown', 'setup', 'disabled', 'rotated'];
 const params = new URLSearchParams(location.search);
 const state = states.includes(params.get('state') || '') ? params.get('state')! : 'success';
+const rolloutOff = state.startsWith('rollout-off');
+const regularMinimum = rolloutOff ? 1 : 0.1;
 const theme = params.get('theme') === 'light' ? 'light' : 'dark';
 document.documentElement.dataset.theme = theme;
 const sharedAddress = 'ZJZqGfDPCVg78CRH5Z33CtHafg911Dp5Bauf1Dnxg5jgXx7Whqsvqka96FCV8W6QZXNDKzJefkFU6bwDEGBewqPrTWjij';
 const rotatedAddress = '2'.repeat(90);
 const address = state === 'rotated' ? rotatedAddress : state === 'regular' || state === 'unknown' ? '1'.repeat(90) : sharedAddress;
-const memo = state === 'invalid' ? 'é'.repeat(63) : ['regular', 'required', 'empty', 'setup', 'disabled', 'rotated'].includes(state) ? '' : 'DEMO001';
+const memo = rolloutOff ? '' : state === 'invalid' ? 'é'.repeat(63) : ['regular', 'required', 'empty', 'setup', 'disabled', 'rotated'].includes(state) ? '' : 'DEMO001';
 rememberDestination(state === 'empty' ? null : { address, memo });
 const info = {
-  min_payout_amount: 0.1, memo_min_payout_amount: 10, payout_memos_enabled: state !== 'disabled',
+  min_payout_amount: regularMinimum, memo_min_payout_amount: 10, payout_memos_enabled: !rolloutOff && state !== 'disabled',
   pool_name: 'Demo pool', pool_url: 'stratum+tcp://demo.invalid:3333', stratum_port: 3333,
   pool_fee_pct: 0, blocks_before_payout: 60, pplns_window_duration: '24h',
-  shared_exchange_addresses: [{ address: state === 'rotated' ? rotatedAddress : sharedAddress, name: 'SafeTrade' }],
+  shared_exchange_addresses: rolloutOff ? [] : [{ address: state === 'rotated' ? rotatedAddress : sharedAddress, name: 'SafeTrade' }],
 } as InfoResponse;
 const now = Math.floor(Date.now() / 1000);
 const lastShare = now - 120;
@@ -66,7 +68,7 @@ window.fetch = async (input, init) => {
     const secondCustomer = decodeURIComponent(path.split('/')[3]).endsWith('DEMO002');
     if (path.includes('/hashrate')) return Response.json([]);
     if (path.includes('/balance')) return Response.json({
-      address: decodeURIComponent(path.split('/')[3]), min_payout_amount: path.includes('memo') ? 10 : 0.1, balance: { pending_confirmed: secondCustomer ? 3450000000 : confirmed, pending_queued: 0, paid: reward },
+      address: decodeURIComponent(path.split('/')[3]), min_payout_amount: path.includes('memo') ? 10 : regularMinimum, balance: { pending_confirmed: secondCustomer ? 3450000000 : confirmed, pending_queued: 0, paid: reward },
       pending_estimate: { estimated_pending: estimated, blocks: reward || held ? [{
         height: 123456, hash: 'demo-block', timestamp: now - 60,
         estimated_credit: reward, credit_withheld: false,
@@ -91,7 +93,7 @@ function Showcase() {
     </header>
     <main className="container">
       {error && <p role="alert">{error}</p>}
-      {state === 'setup' || state === 'disabled' ? <StartPage poolInfo={info} /> : <StatsPage api={api} theme={theme} liveTick={0} />}
+      {state === 'setup' || state === 'disabled' || state === 'rollout-off-setup' ? <StartPage poolInfo={info} /> : <StatsPage api={api} theme={theme} liveTick={0} />}
     </main>
   </>;
 }

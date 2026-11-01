@@ -1,0 +1,28 @@
+{
+  "base_revision": "561934440eb421993218cdddca8f9d0914faf0db",
+  "captured_at": "2026-10-31 23:09:15 EDT",
+  "source_sha256": {
+    "crates/pool-runtime/src/config.rs": "e1f104a41f97a9e46f39db9a1e28fcf14d555a5704db23e48af176fab20c17c2",
+    "apps/blocknet-pool-api/src/api.rs": "bac1828cfff5cbe62442022200f3d0885d0c50dc8145fe693c5551018f9d6017",
+    "frontend/showcases/exchange-memos/showcase.tsx": "c3701a014f71cd41d42950d94842ca9ca980597aefec8f71e40f150632daa0c0",
+    "frontend/src/pages/StatsPage.tsx": "1faf038a65bc0c80f90154e9f8d1562add7cccc899826642e5bb2b338eaad547",
+    "frontend/src/pages/StartPage.tsx": "b04c3725c21550c9c78848cbacf6852787304ca0b9b3e25acef30d8288a9b87b",
+    "frontend/src/components/ExchangeSetup.tsx": "dd2d5c3702d6627a088a1fefc3b970cf5301035d0feffe990ed0d2682242b6fa"
+  },
+  "captures": [
+    "rollout-off-desktop.png",
+    "rollout-off-mobile.png",
+    "rollout-off-setup-desktop.png",
+    "rollout-off-setup-expanded-desktop.png",
+    "rollout-off-setup-expanded-mobile.png",
+    "rollout-off-setup-mobile.png"
+  ],
+  "reviewed": true,
+  "checks": [
+    "Shared address stats load without required memo while rollout is off",
+    "Regular minimum is 1 BNT in rollout-off fixtures",
+    "Exchange command is disabled while admissions are off",
+    "Desktop 1440x1000 and mobile 390x844; no horizontal page overflow"
+  ],
+  "console_note": "No app errors; shared Chrome extension reported an unrelated ethereum property conflict."
+}

@@ -9,10 +9,17 @@ or Stratum password for a deposit memo.
 
 ## Operator configuration
 
-New memo logins are disabled by default (`payout_memos_enabled: false`). Before
-enabling them, set `memo_min_payout_amount` in BNT to a value strictly above
-`min_payout_amount`, appropriate for the exchange. The 10 BNT shown in the local
-showcase is synthetic, not a production setting or an exchange requirement.
+Both memo admissions and shared-address enforcement default to off. With
+`payout_memos_enabled: false` and `enforce_shared_exchange_memos: false`, an
+ordinary code deployment preserves address-only logins, payouts and stats,
+including known exchange addresses. The API advertises no required-memo registry
+until enforcement is enabled. These settings are not hot-reloadable.
+
+Enabling admissions requires `enforce_shared_exchange_memos: true`. First set `memo_min_payout_amount` in BNT to a value strictly above
+`min_payout_amount`, appropriate for the exchange. The agreed bntpool rollout minimum is **10 BNT** for memo accounts. Keep the
+existing regular-wallet minimum (**1 BNT** at the pre-release audit); do not
+replace it with the example configuration’s default. These are pool policies,
+not exchange requirements.
 Ensure any `payout_max_per_recipient` and `payout_max_total_per_tick` caps can
 accommodate this minimum. Amount reduction for wallet liquidity never goes below
 the account's minimum. The API, setup UI, stats and Seine login report the floor.
@@ -24,8 +31,8 @@ adding rotated addresses so old configurations still require a memo. Unknown
 addresses can use memos without a registry entry. User submissions never alter
 the registry. Config changes require the affected services to restart.
 
-Known shared addresses without a memo are rejected at login and excluded from
-payout sending. Existing address-only balances are retained for operator
+With enforcement enabled, known shared addresses without a memo are rejected
+at login and excluded from payout sending. Existing address-only balances are retained for operator
 reconciliation; they cannot be assigned to a customer automatically. Changing an
 address or memo starts a separate account and does not move an old balance.
 
@@ -35,15 +42,18 @@ Deploy the updated gateway, pool engine/payout process and API/UI before enablin
 memo admissions or publishing miner instructions. The gateway restart disconnects
 miners; coordinate it as a separate deployment. Updated gateways reject handover
 to an engine that does not acknowledge the same memo account. Updated Seine also
-requires the `payout_memo_v1` capability, matching account ID and positive minimum
-before accepting jobs, including after reconnect/failover. Legacy miners retain
+requires the `payout_memo_v1` capability and matching account ID before accepting
+jobs, including after reconnect/failover. A reported positive minimum appears
+in the TUI; absent or invalid metadata is hidden. Longhorn has a separate
+provider-specific memo adapter; this pool uses the capability/account contract. Legacy miners retain
 their existing login contract. Seine farm proxies do not yet support memo mining.
 
 The additive `payout_destinations` PostgreSQL table maps opaque account IDs to
 immutable destinations. Include it in backups with the accounting tables. Never
 roll the payout process back to a version unaware of these keys after memo
 accounts have received credit. Disabling admissions does not delete accounts or
-stop already-earned memo payouts; keep their configured floor when disabling.
+stop already-earned memo payouts; keep enforcement enabled and their configured
+floor when disabling admissions. See [the v0.3.0 rollout checklist](EXCHANGE_PAYOUT_ROLLOUT.md).
 
 Wallet preview and live sends use the real address plus hex-encoded memo bytes.
 History/journal recovery matches the exact address, memo and amount. Completed

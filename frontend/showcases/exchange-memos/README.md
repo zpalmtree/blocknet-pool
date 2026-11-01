@@ -18,3 +18,9 @@ only the minimum and one status line; setup retains the exchange explanation.
 
 Memo accounts show the configured personal-wallet minimum when it is lower.
 This comparison replaces the explanation about reducing small deposits.
+
+`rollout-off` and `rollout-off-setup` exercise the legacy API contract: no
+required-memo registry, admissions disabled, and a 1 BNT regular minimum.
+These states confirm that a code-only deployment does not require existing
+shared-address users to enter a memo. The other fixtures retain their synthetic
+0.1 BNT regular minimum. The approved release policy is 10 BNT for memo accounts.

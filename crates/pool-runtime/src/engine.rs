@@ -1190,13 +1190,7 @@ impl PoolEngine {
         validate_miner_address_for_network(address, self.expected_address_network)
             .map_err(anyhow::Error::msg)?;
         let destination = PayoutDestination::new(address, memo).map_err(anyhow::Error::msg)?;
-        if destination.memo.is_none()
-            && self
-                .cfg()
-                .shared_exchange_addresses
-                .iter()
-                .any(|entry| entry.address == address)
-        {
+        if destination.memo.is_none() && self.cfg().requires_payout_memo(address) {
             return Err(anyhow!(
                 "this shared exchange address requires a payout memo; use --payout-memo"
             ));
@@ -7508,12 +7502,53 @@ mod tests {
         assert!(err.to_string().contains("out of assigned range"));
     }
     #[test]
+    fn exchange_rollout_default_preserves_legacy_login() {
+        let Some(store) = crate::store::PoolStore::test_store() else {
+            return;
+        };
+        let config = cfg();
+        let known = config.shared_exchange_addresses[0].address.clone();
+        let engine = PoolEngine::new(
+            config.clone(),
+            Arc::new(ValidationEngine::new(
+                config,
+                Arc::new(DeterministicTestHasher),
+            )),
+            Arc::new(InMemoryJobs::default()),
+            store,
+            Arc::new(InMemoryNode::default()),
+        );
+        let account = engine
+            .prepare_payout_destination(&known, None, &[])
+            .unwrap();
+        assert_eq!(account, known);
+        let ack = engine
+            .login(
+                "legacy-exchange",
+                account,
+                "rig",
+                2,
+                vec!["submit_claimed_hash".into()],
+            )
+            .unwrap();
+        assert!(ack.payout_account.is_none());
+        assert!(engine
+            .prepare_payout_destination(
+                &known,
+                Some("DEMO001"),
+                &[pool_common::destination::CAP_PAYOUT_MEMO.into()]
+            )
+            .is_err());
+    }
+
+    #[test]
     fn payout_memo_login_isolates_same_address_and_worker_and_checks_policy() {
         let Some(store) = crate::store::PoolStore::test_store() else {
             return;
         };
         let mut config = cfg();
         config.payout_memos_enabled = true;
+        config.enforce_shared_exchange_memos = true;
         config.memo_min_payout_amount = 1.0;
         let validation = Arc::new(ValidationEngine::new(
             config.clone(),

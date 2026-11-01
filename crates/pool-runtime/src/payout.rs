@@ -1399,13 +1399,7 @@ impl PayoutProcessor {
                 }
             };
             // Shared address balances earned without a memo need operator reconciliation.
-            if destination.memo.is_none()
-                && self
-                    .cfg
-                    .shared_exchange_addresses
-                    .iter()
-                    .any(|entry| entry.address == destination.address)
-            {
+            if destination.memo.is_none() && self.cfg.requires_payout_memo(&destination.address) {
                 continue;
             }
             let account_minimum = atomic_amount_from_coins(self.cfg.payout_minimum(&bal.address));
@@ -6278,6 +6272,72 @@ mod tests {
 
         assert_eq!(plan.inputs.len(), 1);
         assert_eq!(plan.inputs[0].txid, "large-topup");
+    }
+
+    #[test]
+    fn exchange_rollout_holds_untagged_balance_only_after_opt_in() {
+        for enforce in [false, true] {
+            let store = require_test_store!();
+            let cfg = Config {
+                enforce_shared_exchange_memos: enforce,
+                min_payout_amount: 1.0,
+                ..Config::default()
+            };
+            let shared = cfg.shared_exchange_addresses[0].address.clone();
+            let ordinary = test_address(11);
+            for address in [&shared, &ordinary] {
+                store
+                    .update_balance(&Balance {
+                        address: address.clone(),
+                        pending: 200_000_000,
+                        paid: 0,
+                    })
+                    .unwrap();
+            }
+            let base_url = spawn_wallet_send_server(
+                &test_address(99),
+                vec![
+                    wallet_output("funds", 0, 2_000_000_000),
+                    wallet_output("reserve", 0, 10_000_000_000),
+                ],
+                MockAdvancedSendPolicy {
+                    fee: 1_000,
+                    ..MockAdvancedSendPolicy::default()
+                },
+                64,
+            );
+            let processor = PayoutProcessor::new(
+                cfg,
+                Arc::clone(&store),
+                Arc::new(NodeClient::new(&base_url, "").unwrap()),
+            );
+            processor.send_payouts();
+            assert_eq!(
+                store.get_pending_payout(&shared).unwrap().is_some(),
+                !enforce
+            );
+            assert_eq!(
+                store
+                    .get_pending_payout(&ordinary)
+                    .unwrap()
+                    .unwrap()
+                    .tx_hash
+                    .as_deref(),
+                Some("mock-live-send")
+            );
+            if !enforce {
+                assert_eq!(
+                    store
+                        .get_pending_payout(&shared)
+                        .unwrap()
+                        .unwrap()
+                        .tx_hash
+                        .as_deref(),
+                    Some("mock-live-send")
+                );
+            }
+            assert_eq!(store.get_balance(&shared).unwrap().pending, 200_000_000);
+        }
     }
 
     #[test]
