@@ -344,5 +344,12 @@
   "memoMinimum": "Minimum memo payout: {0} BNT",
   "memoUnavailable": "Memo payouts are not enabled on this pool yet.",
   "memoLookupFailed": "Could not load this destination. Try again.",
-  "memoPersonalMinimum": "Personal wallets: payouts from {0}."
+  "memoPersonalMinimum": "Personal wallets: payouts from {0}.",
+  "minerSettingsTitle": "Change what seine mines with",
+  "minerSettingsNvidia": "NVIDIA GPU only, CPU off",
+  "minerSettingsAmd": "AMD GPU only, CPU off",
+  "minerSettingsCpu": "CPU only, GPU off",
+  "minerSettingsThreads": "Use 4 CPU threads",
+  "minerSettingsLead": "Seine mines on your CPU and graphics cards by default. To change that, close seine, open a terminal in its folder and run one of these commands. On Windows, use PowerShell and type {0} in place of {1}:",
+  "minerSettingsGuide": "Change seine settings: threads, CPU, GPU and pool"
 }

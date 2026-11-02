@@ -344,5 +344,12 @@
   "memoMinimum": "Notlu ödeme alt sınırı: {0} BNT",
   "memoUnavailable": "Bu havuzda notlu ödemeler henüz etkin değil.",
   "memoLookupFailed": "Bu hedef yüklenemedi. Tekrar deneyin.",
-  "memoPersonalMinimum": "Kişisel cüzdanlar: {0} ve üzeri ödemeler."
+  "memoPersonalMinimum": "Kişisel cüzdanlar: {0} ve üzeri ödemeler.",
+  "minerSettingsTitle": "seine’ın neyle kazdığını değiştirin",
+  "minerSettingsNvidia": "Yalnızca NVIDIA GPU, CPU kapalı",
+  "minerSettingsAmd": "Yalnızca AMD GPU, CPU kapalı",
+  "minerSettingsCpu": "Yalnızca CPU, GPU kapalı",
+  "minerSettingsThreads": "4 CPU iş parçacığı kullan",
+  "minerSettingsLead": "seine varsayılan olarak CPU’nuzla ve ekran kartlarınızla kazar. Bunu değiştirmek için seine’ı kapatın, klasöründe bir terminal açın ve şu komutlardan birini çalıştırın. Windows’ta PowerShell kullanın ve {1} yerine {0} yazın:",
+  "minerSettingsGuide": "seine ayarlarını değiştirin: iş parçacıkları, CPU, GPU ve havuz"
 }

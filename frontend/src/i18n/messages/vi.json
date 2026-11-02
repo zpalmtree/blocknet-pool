@@ -344,5 +344,12 @@
   "memoMinimum": "Thanh toán tối thiểu có memo: {0} BNT",
   "memoUnavailable": "Pool này chưa bật thanh toán có memo.",
   "memoLookupFailed": "Không thể tải thông tin người nhận này. Hãy thử lại.",
-  "memoPersonalMinimum": "Ví cá nhân: thanh toán từ {0}."
+  "memoPersonalMinimum": "Ví cá nhân: thanh toán từ {0}.",
+  "minerSettingsTitle": "Đổi thứ seine dùng để đào",
+  "minerSettingsNvidia": "Chỉ GPU NVIDIA, tắt CPU",
+  "minerSettingsAmd": "Chỉ GPU AMD, tắt CPU",
+  "minerSettingsCpu": "Chỉ CPU, tắt GPU",
+  "minerSettingsThreads": "Dùng 4 luồng CPU",
+  "minerSettingsLead": "Theo mặc định, seine đào bằng CPU và các card đồ họa của bạn. Để đổi, hãy đóng seine, mở terminal trong thư mục của nó và chạy một trong các lệnh sau. Trên Windows, dùng PowerShell và gõ {0} thay cho {1}:",
+  "minerSettingsGuide": "Đổi thiết lập seine: luồng, CPU, GPU và pool"
 }

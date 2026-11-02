@@ -5,6 +5,13 @@ import { stratumUrl } from '../lib/format';
 import type { InfoResponse } from '../types';
 import { ExchangeSetup } from '../components/ExchangeSetup';
 
+const minerSettings = [
+  ['minerSettingsNvidia', '--backend nvidia'],
+  ['minerSettingsAmd', '--backend amd'],
+  ['minerSettingsCpu', '--backend cpu'],
+  ['minerSettingsThreads', '--threads 4'],
+] as const;
+
 interface StartPageProps {
   poolInfo: InfoResponse | null;
 }
@@ -113,6 +120,18 @@ export function StartPage({ poolInfo }: StartPageProps) {
             {copiedKey === 'cmd' ? t("m386") : t("m461")}
           </button>
         </div>
+        </details>
+        <details className="command-option" id="miner-settings">
+          <summary>{t('minerSettingsTitle')}</summary>
+          <p className="quickstart-label">{tx('minerSettingsLead', [<code className="mono inline-code">.\seine.exe</code>, <code className="mono inline-code">./seine</code>])}</p>
+          <table className="info-table miner-settings-table">
+            <tbody>
+              {minerSettings.map(([key, flags]) => (
+                <tr key={key}><td>{t(key)}</td><td><code className="mono inline-code" dir="ltr">./seine {flags}</code></td></tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="quickstart-label"><a href={`${seineGuideBase}configure-seine-miner/`}>{t('minerSettingsGuide')}</a></p>
         </details>
         <ExchangeSetup info={poolInfo} poolUrl={poolUrl} />
       </div>

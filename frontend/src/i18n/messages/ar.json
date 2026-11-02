@@ -344,5 +344,12 @@
   "memoMinimum": "الحد الأدنى للدفع بمذكرة: {0} BNT",
   "memoUnavailable": "لم تُفعّل الدفعات ذات المذكرة في هذا المجمع بعد.",
   "memoLookupFailed": "تعذر تحميل بيانات هذه الوجهة. حاول مجددًا.",
-  "memoPersonalMinimum": "المحافظ الشخصية: دفعات بدءًا من {0}."
+  "memoPersonalMinimum": "المحافظ الشخصية: دفعات بدءًا من {0}.",
+  "minerSettingsTitle": "غيّر ما يعدّنه seine",
+  "minerSettingsNvidia": "GPU من NVIDIA فقط، وإيقاف CPU",
+  "minerSettingsAmd": "GPU من AMD فقط، وإيقاف CPU",
+  "minerSettingsCpu": "CPU فقط، وإيقاف GPU",
+  "minerSettingsThreads": "استخدام 4 خيوط CPU",
+  "minerSettingsLead": "يعدّن seine افتراضيًا باستخدام CPU وبطاقات الرسوميات. لتغيير ذلك، أغلق seine وافتح الطرفية في مجلده، ثم شغّل أحد هذه الأوامر. في Windows استخدم PowerShell واكتب {0} بدلًا من {1}:",
+  "minerSettingsGuide": "إعدادات seine: الخيوط وCPU وGPU والمجمع"
 }

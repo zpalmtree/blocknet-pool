@@ -344,5 +344,12 @@
   "memoMinimum": "带备注的最低付款金额：{0} BNT",
   "memoUnavailable": "此矿池尚未启用带备注的付款。",
   "memoLookupFailed": "无法加载此收款目标。请重试。",
-  "memoPersonalMinimum": "个人钱包：满 {0} 起付款。"
+  "memoPersonalMinimum": "个人钱包：满 {0} 起付款。",
+  "minerSettingsTitle": "更改 seine 的挖矿设备",
+  "minerSettingsNvidia": "只用 NVIDIA GPU，关闭 CPU",
+  "minerSettingsAmd": "只用 AMD GPU，关闭 CPU",
+  "minerSettingsCpu": "只用 CPU，关闭 GPU",
+  "minerSettingsThreads": "使用 4 个 CPU 线程",
+  "minerSettingsLead": "seine 默认使用 CPU 和显卡挖矿。要更改，请关闭 seine，在它的文件夹中打开终端，然后运行下面的某一条命令。在 Windows 上请使用 PowerShell，并输入 {0} 代替 {1}：",
+  "minerSettingsGuide": "seine 设置：线程、CPU、GPU 和矿池"
 }

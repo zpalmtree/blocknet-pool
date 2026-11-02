@@ -344,5 +344,12 @@
   "memoMinimum": "Минимальная выплата с мемо: {0} BNT",
   "memoUnavailable": "Выплаты с мемо пока не включены на этом пуле.",
   "memoLookupFailed": "Не удалось загрузить данные получателя. Повторите попытку.",
-  "memoPersonalMinimum": "Личные кошельки: выплаты от {0}."
+  "memoPersonalMinimum": "Личные кошельки: выплаты от {0}.",
+  "minerSettingsTitle": "Что майнит seine",
+  "minerSettingsNvidia": "Только GPU NVIDIA, CPU выключен",
+  "minerSettingsAmd": "Только GPU AMD, CPU выключен",
+  "minerSettingsCpu": "Только CPU, GPU выключены",
+  "minerSettingsThreads": "Использовать 4 потока CPU",
+  "minerSettingsLead": "По умолчанию seine майнит на CPU и видеокартах. Чтобы это изменить, закройте seine, откройте терминал в его папке и выполните одну из этих команд. В Windows используйте PowerShell и вводите {0} вместо {1}:",
+  "minerSettingsGuide": "Настройки seine: потоки, CPU, GPU и пул"
 }

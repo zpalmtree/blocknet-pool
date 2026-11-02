@@ -344,5 +344,12 @@
   "memoMinimum": "Mindestauszahlung mit Memo: {0} BNT",
   "memoUnavailable": "Auszahlungen mit Memo sind in diesem Pool noch nicht aktiviert.",
   "memoLookupFailed": "Dieses Ziel konnte nicht geladen werden. Versuche es erneut.",
-  "memoPersonalMinimum": "Persönliche Wallets: Auszahlungen ab {0}."
+  "memoPersonalMinimum": "Persönliche Wallets: Auszahlungen ab {0}.",
+  "minerSettingsTitle": "Ändern, womit seine mint",
+  "minerSettingsNvidia": "Nur NVIDIA-GPU, CPU aus",
+  "minerSettingsAmd": "Nur AMD-GPU, CPU aus",
+  "minerSettingsCpu": "Nur CPU, GPU aus",
+  "minerSettingsThreads": "4 CPU-Threads nutzen",
+  "minerSettingsLead": "Standardmäßig mint seine mit deiner CPU und deinen Grafikkarten. Um das zu ändern, schließe seine, öffne ein Terminal in seinem Ordner und führe einen dieser Befehle aus. Unter Windows nutzt du PowerShell und tippst {0} statt {1}:",
+  "minerSettingsGuide": "seine-Einstellungen ändern: Threads, CPU, GPU und Pool"
 }

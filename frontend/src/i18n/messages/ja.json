@@ -344,5 +344,12 @@
   "memoMinimum": "メモ付き支払いの最低額：{0} BNT",
   "memoUnavailable": "このプールではメモ付き支払いがまだ有効になっていません。",
   "memoLookupFailed": "この送金先を読み込めませんでした。もう一度お試しください。",
-  "memoPersonalMinimum": "個人ウォレット：{0}から支払い。"
+  "memoPersonalMinimum": "個人ウォレット：{0}から支払い。",
+  "minerSettingsTitle": "seineのマイニング対象を変える",
+  "minerSettingsNvidia": "NVIDIA GPUのみ、CPUはオフ",
+  "minerSettingsAmd": "AMD GPUのみ、CPUはオフ",
+  "minerSettingsCpu": "CPUのみ、GPUはオフ",
+  "minerSettingsThreads": "CPUスレッドを4つ使う",
+  "minerSettingsLead": "seineは標準でCPUとグラフィックスカードの両方でマイニングします。変更するには、seineを閉じ、そのフォルダーでターミナルを開いて、次のコマンドのいずれかを実行します。Windowsでは、PowerShellを使い、{1} の代わりに {0} と入力します。",
+  "minerSettingsGuide": "seineの設定変更：スレッド、CPU、GPU、プール"
 }

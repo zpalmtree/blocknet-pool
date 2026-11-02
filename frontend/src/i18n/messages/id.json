@@ -344,5 +344,12 @@
   "memoMinimum": "Minimum pembayaran dengan memo: {0} BNT",
   "memoUnavailable": "Pembayaran dengan memo belum diaktifkan di pool ini.",
   "memoLookupFailed": "Tujuan ini tidak dapat dimuat. Coba lagi.",
-  "memoPersonalMinimum": "Dompet pribadi: pembayaran mulai {0}."
+  "memoPersonalMinimum": "Dompet pribadi: pembayaran mulai {0}.",
+  "minerSettingsTitle": "Ubah dengan apa seine menambang",
+  "minerSettingsNvidia": "Hanya GPU NVIDIA, CPU mati",
+  "minerSettingsAmd": "Hanya GPU AMD, CPU mati",
+  "minerSettingsCpu": "Hanya CPU, GPU mati",
+  "minerSettingsThreads": "Pakai 4 thread CPU",
+  "minerSettingsLead": "Secara default, seine menambang dengan CPU dan kartu grafis Anda. Untuk mengubahnya, tutup seine, buka terminal di foldernya, lalu jalankan salah satu perintah ini. Di Windows, gunakan PowerShell dan ketik {0} sebagai pengganti {1}:",
+  "minerSettingsGuide": "Ubah pengaturan seine: thread, CPU, GPU, dan pool"
 }

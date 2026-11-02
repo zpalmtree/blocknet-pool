@@ -344,5 +344,12 @@
   "memoMinimum": "Pagamento minimo con memo: {0} BNT",
   "memoUnavailable": "I pagamenti con memo non sono ancora attivi in questo pool.",
   "memoLookupFailed": "Impossibile caricare questa destinazione. Riprova.",
-  "memoPersonalMinimum": "Wallet personali: pagamenti a partire da {0}."
+  "memoPersonalMinimum": "Wallet personali: pagamenti a partire da {0}.",
+  "minerSettingsTitle": "Cambia con cosa mina seine",
+  "minerSettingsNvidia": "Solo GPU NVIDIA, CPU disattivata",
+  "minerSettingsAmd": "Solo GPU AMD, CPU disattivata",
+  "minerSettingsCpu": "Solo CPU, GPU disattivata",
+  "minerSettingsThreads": "Usa 4 thread CPU",
+  "minerSettingsLead": "Per impostazione predefinita, seine mina con la tua CPU e le tue schede video. Per cambiarlo, chiudi seine, apri un terminale nella sua cartella ed esegui uno di questi comandi. Su Windows usa PowerShell e scrivi {0} al posto di {1}:",
+  "minerSettingsGuide": "Cambia le impostazioni di seine: thread, CPU, GPU e pool"
 }

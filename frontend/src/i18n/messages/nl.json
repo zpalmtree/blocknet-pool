@@ -344,5 +344,12 @@
   "memoMinimum": "Minimale uitbetaling met memo: {0} BNT",
   "memoUnavailable": "Uitbetalingen met memo zijn nog niet ingeschakeld op deze pool.",
   "memoLookupFailed": "Deze bestemming kon niet worden geladen. Probeer opnieuw.",
-  "memoPersonalMinimum": "Persoonlijke wallets: uitbetalingen vanaf {0}."
+  "memoPersonalMinimum": "Persoonlijke wallets: uitbetalingen vanaf {0}.",
+  "minerSettingsTitle": "Wijzig waarmee seine mint",
+  "minerSettingsNvidia": "Alleen NVIDIA-GPU, CPU uit",
+  "minerSettingsAmd": "Alleen AMD-GPU, CPU uit",
+  "minerSettingsCpu": "Alleen CPU, GPU uit",
+  "minerSettingsThreads": "4 CPU-threads gebruiken",
+  "minerSettingsLead": "Standaard mint seine op je CPU en videokaarten. Om dat te wijzigen sluit je seine, open je een terminal in de map ervan en voer je een van deze commando’s uit. Gebruik op Windows PowerShell en typ {0} in plaats van {1}:",
+  "minerSettingsGuide": "seine-instellingen wijzigen: threads, CPU, GPU en pool"
 }
