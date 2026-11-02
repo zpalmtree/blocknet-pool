@@ -1,0 +1,42 @@
+# Run from this directory: promtool test rules daemon-heights.test.yml
+rule_files:
+- blocknet-pool.rules.yml
+evaluation_interval: 15s
+tests:
+- name: A gap of two blocks or a short catch-up stays quiet, a lasting gap alerts
+  interval: 15s
+  input_series:
+  - series: blocknet_pool_monitor_daemon_height_spread_blocks{instance="pool-a",job="blocknet_pool_monitor"}
+    # Two blocks for 10 minutes, four blocks for 3 minutes, one block for 5 minutes, then four.
+    values: 2x40 4x12 1x20 4x40
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: BlocknetPoolDaemonHeightsDiverged
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: BlocknetPoolDaemonHeightsDiverged
+    exp_alerts: []
+  - eval_time: 18m
+    alertname: BlocknetPoolDaemonHeightsDiverged
+    exp_alerts: []
+  - eval_time: 24m
+    alertname: BlocknetPoolDaemonHeightsDiverged
+    exp_alerts:
+    - exp_labels:
+        alertname: BlocknetPoolDaemonHeightsDiverged
+        severity: warning
+        visibility: private
+        instance: pool-a
+        job: blocknet_pool_monitor
+      exp_annotations:
+        summary: Blocknet daemons disagree on chain height
+        description: The primary and standby daemons have been more than 2 blocks apart for 5 minutes. One of them may be behind without reporting syncing, so check which one serves the pool.
+- name: No metric means no alert while a daemon restarts
+  interval: 15s
+  input_series:
+  - series: blocknet_pool_monitor_daemon_height_spread_blocks{instance="pool-a",job="blocknet_pool_monitor"}
+    values: _x60
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: BlocknetPoolDaemonHeightsDiverged
+    exp_alerts: []

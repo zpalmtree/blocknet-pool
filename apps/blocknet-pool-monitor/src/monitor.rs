@@ -142,6 +142,8 @@ struct MonitorSnapshot {
     reference_height_max: Option<u64>,
     reference_heights: BTreeMap<String, u64>,
     reference_source_up: BTreeMap<String, bool>,
+    daemon_instance_heights: BTreeMap<String, u64>,
+    daemon_height_spread: Option<u64>,
     api_performance: ApiPerformanceSnapshot,
     stratum_runtime_tasks: BTreeMap<String, TimedOperationSummary>,
     stratum_latency: BTreeMap<String, BTreeMap<String, LatencyHistogramSnapshot>>,
@@ -162,6 +164,31 @@ struct ProcessMetrics {
     system_cpu_seconds: Option<f64>,
     rss_bytes: Option<u64>,
     thread_count: Option<u64>,
+}
+
+/// A daemon the pool can cut over to, from the recovery section of the config.
+#[derive(Clone)]
+struct DaemonInstance {
+    name: &'static str,
+    api: String,
+    cookie_path: String,
+}
+
+#[derive(Deserialize)]
+struct RecoveryInstancesFile {
+    recovery: Option<RecoveryInstances>,
+}
+
+#[derive(Deserialize)]
+struct RecoveryInstances {
+    primary: RecoveryInstanceEndpoint,
+    standby: RecoveryInstanceEndpoint,
+}
+
+#[derive(Deserialize)]
+struct RecoveryInstanceEndpoint {
+    api: String,
+    cookie_path: String,
 }
 
 #[derive(Clone)]
@@ -375,6 +402,7 @@ struct MonitorSample {
     process_metrics: BTreeMap<String, ProcessMetrics>,
     payout_summary: Option<PendingPayoutSummary>,
     reference_heights: Vec<ReferenceHeightSample>,
+    daemon_instance_heights: BTreeMap<String, u64>,
     summary_state: String,
 }
 
@@ -413,12 +441,14 @@ pub(crate) async fn run_monitor(config_path: &Path) -> Result<()> {
     let node = Arc::new(node);
     let api_client = build_http_client(LOCAL_API_PROBE_TIMEOUT, true)?;
     let external_client = build_http_client(EXTERNAL_REFERENCE_PROBE_TIMEOUT, false)?;
+    let daemon_instances = load_daemon_instances(config_path)?;
     let monitor = Arc::new(MonitorRuntime {
         cfg: cfg.clone(),
         store,
         node,
         api_client,
         external_client,
+        daemon_instances,
         discord_notifier: DiscordNotifier::from_env(),
         metrics: Arc::new(RwLock::new(MonitorSnapshot {
             summary_state: "starting".to_string(),
@@ -468,6 +498,7 @@ struct MonitorRuntime {
     node: Arc<NodeClient>,
     api_client: BlockingClient,
     external_client: BlockingClient,
+    daemon_instances: Vec<DaemonInstance>,
     discord_notifier: Option<DiscordNotifier>,
     metrics: Arc<RwLock<MonitorSnapshot>>,
     incidents: Arc<Mutex<IncidentState>>,
@@ -539,6 +570,7 @@ impl MonitorRuntime {
             )
         };
         let reference_heights = self.probe_reference_heights().await;
+        let daemon_instance_heights = self.probe_daemon_instance_heights().await;
 
         let mut runtime_snapshot = None;
         let mut payout_summary = None;
@@ -605,6 +637,7 @@ impl MonitorRuntime {
             process_metrics,
             payout_summary,
             reference_heights,
+            daemon_instance_heights,
             summary_state,
         }
     }
@@ -1150,6 +1183,8 @@ impl MonitorRuntime {
             .iter()
             .map(|item| (item.source.clone(), item.error.is_none()))
             .collect();
+        metrics.daemon_height_spread = daemon_height_spread(&sample.daemon_instance_heights);
+        metrics.daemon_instance_heights = sample.daemon_instance_heights.clone();
         metrics.api_performance = sample.api_performance.clone().unwrap_or_default();
         metrics.stratum_runtime_tasks = runtime
             .map(|snapshot| snapshot.runtime_tasks.clone())
@@ -1589,6 +1624,27 @@ impl MonitorRuntime {
         out
     }
 
+    /// Heights of the reachable daemon instances, read directly rather than through
+    /// the proxy. A daemon that is restarting is simply absent.
+    async fn probe_daemon_instance_heights(&self) -> BTreeMap<String, u64> {
+        let mut tasks = Vec::with_capacity(self.daemon_instances.len());
+        for instance in &self.daemon_instances {
+            let client = self.api_client.clone();
+            let instance = instance.clone();
+            tasks.push(tokio::task::spawn_blocking(move || {
+                let height = fetch_daemon_instance_height(&client, &instance);
+                (instance.name, height)
+            }));
+        }
+        let mut heights = BTreeMap::new();
+        for task in tasks {
+            if let Ok((name, Ok(height))) = task.await {
+                heights.insert(name.to_string(), height);
+            }
+        }
+        heights
+    }
+
     async fn notify_chain_divergence(&self, transition: ChainDivergenceTransition, detail: String) {
         let Some(notifier) = self.discord_notifier.clone() else {
             return;
@@ -1712,6 +1768,57 @@ fn build_http_client(timeout: Duration, accept_invalid_certs: bool) -> Result<Bl
         .danger_accept_invalid_certs(accept_invalid_certs)
         .build()
         .context("build monitor http client")
+}
+
+fn load_daemon_instances(config_path: &Path) -> Result<Vec<DaemonInstance>> {
+    let raw =
+        fs::read(config_path).with_context(|| format!("read config {}", config_path.display()))?;
+    let file: RecoveryInstancesFile = serde_json::from_slice(&raw)
+        .with_context(|| format!("parse config {}", config_path.display()))?;
+    Ok(file
+        .recovery
+        .map(|recovery| {
+            vec![
+                DaemonInstance {
+                    name: "primary",
+                    api: recovery.primary.api,
+                    cookie_path: recovery.primary.cookie_path,
+                },
+                DaemonInstance {
+                    name: "standby",
+                    api: recovery.standby.api,
+                    cookie_path: recovery.standby.cookie_path,
+                },
+            ]
+        })
+        .unwrap_or_default())
+}
+
+/// Reads the cookie each time because a daemon writes a new one when it restarts.
+fn fetch_daemon_instance_height(client: &BlockingClient, instance: &DaemonInstance) -> Result<u64> {
+    let cookie = fs::read_to_string(&instance.cookie_path)
+        .with_context(|| format!("read {} daemon cookie", instance.name))?;
+    let url = format!("{}/api/status", instance.api.trim_end_matches('/'));
+    let status: PublicChainStatusResponse = client
+        .get(&url)
+        .bearer_auth(cookie.trim())
+        .send()
+        .with_context(|| format!("GET {url}"))?
+        .error_for_status()
+        .with_context(|| format!("GET {url}"))?
+        .json()
+        .with_context(|| format!("parse {url}"))?;
+    Ok(status.chain_height)
+}
+
+/// None unless at least two daemons answered, so a restart can't look like a gap.
+fn daemon_height_spread(heights: &BTreeMap<String, u64>) -> Option<u64> {
+    if heights.len() < 2 {
+        return None;
+    }
+    let min = heights.values().min()?;
+    let max = heights.values().max()?;
+    Some(max - min)
 }
 
 fn fetch_public_chain_height(
@@ -2291,6 +2398,10 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
             snapshot.reference_height_spread,
         ),
         (
+            "blocknet_pool_monitor_daemon_height_spread_blocks",
+            snapshot.daemon_height_spread,
+        ),
+        (
             "blocknet_pool_monitor_reference_height_min",
             snapshot.reference_height_min,
         ),
@@ -2582,6 +2693,14 @@ fn render_metrics(snapshot: &MonitorSnapshot) -> String {
             "blocknet_pool_monitor_reference_height",
             &[("source", source)],
             height,
+        );
+    }
+    for (daemon, height) in &snapshot.daemon_instance_heights {
+        metric_line_labeled(
+            &mut out,
+            "blocknet_pool_monitor_daemon_instance_height",
+            &[("daemon", daemon)],
+            *height,
         );
     }
     for (source, up) in &snapshot.reference_source_up {
@@ -3002,12 +3121,15 @@ mod tests {
         let _ = worker.await;
     }
 
+    use std::fs;
+
     use super::{
-        daemon_slow_block_state, parse_proc_stat_metrics, payout_queue_state,
-        pool_activity_loss_state, reference_height_divergence_state, render_metrics,
-        runtime_snapshot_age, share_progress_state, summarize_state, validation_backlog_state,
-        MonitorSnapshot, PendingPayoutSummary, ProcessMetrics, ReferenceHeightSample,
-        SummaryStateInput, STRATUM_SNAPSHOT_STALE_AFTER,
+        daemon_height_spread, daemon_slow_block_state, load_daemon_instances,
+        parse_proc_stat_metrics, payout_queue_state, pool_activity_loss_state,
+        reference_height_divergence_state, render_metrics, runtime_snapshot_age,
+        share_progress_state, summarize_state, validation_backlog_state, MonitorSnapshot,
+        PendingPayoutSummary, ProcessMetrics, ReferenceHeightSample, SummaryStateInput,
+        STRATUM_SNAPSHOT_STALE_AFTER,
     };
     use crate::config::Config;
     use pool_runtime::admission::UnprocessedSubmitSnapshot;
@@ -3372,6 +3494,54 @@ mod tests {
         assert!(rendered.contains(
             "blocknet_pool_monitor_reference_source_up{source=\"seed:bnt-0.blocknetcrypto.com\"} 1"
         ));
+    }
+
+    #[test]
+    fn daemon_height_spread_needs_two_daemons() {
+        let mut heights = BTreeMap::new();
+        assert_eq!(daemon_height_spread(&heights), None);
+        heights.insert("primary".to_string(), 100);
+        assert_eq!(daemon_height_spread(&heights), None);
+        heights.insert("standby".to_string(), 104);
+        assert_eq!(daemon_height_spread(&heights), Some(4));
+    }
+
+    #[test]
+    fn daemon_heights_render_as_metrics() {
+        let mut snapshot = MonitorSnapshot::default();
+        snapshot
+            .daemon_instance_heights
+            .insert("standby".to_string(), 104);
+        snapshot.daemon_height_spread = Some(4);
+
+        let rendered = render_metrics(&snapshot);
+        assert!(rendered.contains("blocknet_pool_monitor_daemon_height_spread_blocks 4"));
+        assert!(rendered
+            .contains("blocknet_pool_monitor_daemon_instance_height{daemon=\"standby\"} 104"));
+    }
+
+    #[test]
+    fn daemon_instances_come_from_the_recovery_config() {
+        let dir = std::env::temp_dir().join(format!("monitor-instances-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("config.json");
+
+        fs::write(
+            &path,
+            r#"{"recovery":{"enabled":true,
+            "primary":{"api":"http://127.0.0.1:1","cookie_path":"/p","service":"a"},
+            "standby":{"api":"http://127.0.0.1:2","cookie_path":"/s","service":"b"}}}"#,
+        )
+        .expect("write config");
+        let instances = load_daemon_instances(&path).expect("load");
+        assert_eq!(instances.len(), 2);
+        assert_eq!(instances[1].name, "standby");
+        assert_eq!(instances[1].api, "http://127.0.0.1:2");
+        assert_eq!(instances[1].cookie_path, "/s");
+
+        fs::write(&path, r#"{"payout_pause_file":"/x"}"#).expect("write config");
+        assert!(load_daemon_instances(&path).expect("load").is_empty());
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

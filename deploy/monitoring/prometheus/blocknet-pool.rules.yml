@@ -177,6 +177,18 @@ groups:
           summary: Blocknet daemon is syncing
           description: The daemon is reachable but still reports syncing.
 
+      - alert: BlocknetPoolDaemonHeightsDiverged
+        # Catches a daemon that is behind without reporting syncing. A restarting
+        # daemon drops out of the metric, so restarts and catch-up stay quiet.
+        expr: blocknet_pool_monitor_daemon_height_spread_blocks > 2
+        for: 5m
+        labels:
+          severity: warning
+          visibility: private
+        annotations:
+          summary: Blocknet daemons disagree on chain height
+          description: The primary and standby daemons have been more than 2 blocks apart for 5 minutes. One of them may be behind without reporting syncing, so check which one serves the pool.
+
       - alert: BlocknetPoolTemplateStale
         # Template age legitimately grows for the length of a round (an hour or
         # more observed) because the pool ignores timestamp-only template
