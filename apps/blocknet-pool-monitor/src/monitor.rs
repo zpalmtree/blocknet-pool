@@ -45,6 +45,8 @@ const LOCAL_DAEMON_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 const LOCAL_STRATUM_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 const LOCAL_WALLET_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 const EXTERNAL_REFERENCE_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+// Matches BlocknetPoolDaemonSyncing's hold time: brief sync runs are not incidents.
+const DAEMON_SYNCING_INCIDENT_AFTER: Duration = Duration::from_secs(5 * 60);
 const HEIGHT_DIVERGENCE_THRESHOLD: u64 = 2;
 const SEED_STATUS_URLS: &[&str] = &[
     "http://bnt-0.blocknetcrypto.com:28081/status",
@@ -753,7 +755,7 @@ impl MonitorRuntime {
                 severity: "warn",
                 visibility: "public",
                 active: daemon_syncing,
-                threshold: Duration::from_secs(0),
+                threshold: DAEMON_SYNCING_INCIDENT_AFTER,
                 detail: Some("daemon reported syncing".to_string()),
             },
             now,

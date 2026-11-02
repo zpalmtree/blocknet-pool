@@ -169,7 +169,7 @@ groups:
 
       - alert: BlocknetPoolDaemonSyncing
         expr: blocknet_pool_monitor_daemon_syncing == 1
-        for: 2m
+        for: 5m
         labels:
           severity: warning
           visibility: public
