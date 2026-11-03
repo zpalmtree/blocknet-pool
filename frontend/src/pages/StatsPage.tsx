@@ -373,7 +373,6 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const minerRejected = minerData ? minerData.total_rejected : 0;
   const minerChecked = minerAccepted + minerRejected;
   const minerRejectRate = minerChecked > 0 ? (minerRejected / minerChecked) * 100 : null;
-  const recentShares = minerData?.shares ?? [];
   const previewBlocks = livePendingEstimate?.blocks ?? [];
   // The Type columns appear only for miners with solo blocks or rigs.
   const soloPreview = previewBlocks.some((block) => block.solo);
@@ -678,36 +677,6 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
               </div>
             </div>)}
 
-          {minerData && (<div className="section">
-              <div className="section-header">
-                <h2>{t("m536")}</h2>
-                <span className="section-meta">{t("m537")}</span>
-              </div>
-              <div className="card table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>{t("m538")}</th>
-                      <th>{t("m521")}</th>
-                      <th>{t("m539")}</th>
-                      <th>{t("m006")}</th>
-                      <th>{t("m377")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {!recentShares.length ? (<EmptyTableRow colSpan={5}>{t("m540")}</EmptyTableRow>) : (recentShares.map((s, idx) => (
-                        <tr key={`${s.job_id}-${idx}`}>
-                          <td>{s.job_id || ''}</td>
-                          <td>{s.worker || ''}</td>
-                          <td>{s.difficulty}</td>
-                          <td>{s.status === 'accepted' ? t('m083') : s.status === 'rejected' ? t('m084') : s.status || ''}</td>
-                          <td title={timestampTitle(s.created_at)}>{timeAgo(s.created_at)}</td>
-                        </tr>
-                      )))}
-                  </tbody>
-                </table>
-              </div>
-            </div>)}
         </div>)}
     </div>
   );
