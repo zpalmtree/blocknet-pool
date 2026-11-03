@@ -528,10 +528,12 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
           <div className="stats-card-group" style={{ marginBottom: 24 }}>
             <div className="stats-card-group-title">{t("m499")}</div>
             <div className="stats-card-group-grid">
-              <StatCard label={t("m082")} value={humanRate(liveHashrate)} />
-              {!!minerData?.solo_hashrate && (
-                <StatCard label={t("m620")} value={humanRate(minerData.solo_hashrate)} meta={t("m621")} />
-              )}
+              <StatCard
+                label={t("m082")}
+                value={humanRate(liveHashrate)}
+                meta={minerData?.solo_hashrate ? t("m620", [humanRate(minerData.solo_hashrate)]) : undefined}
+                title={minerData?.solo_hashrate ? t("m621") : undefined}
+              />
               <StatCard label={t("m411")} value={minerData ? minerData.blocks_found : '...'} />
               <StatCard label={t("m500")} value={minerData ? minerOldestShareDate : '...'} />
             </div>

@@ -353,6 +353,6 @@
   "minerSettingsLead": "seine varsayılan olarak CPU’nuzla ve ekran kartlarınızla kazar. Bunu değiştirmek için seine’ı kapatın, klasöründe bir terminal açın ve şu komutlardan birini çalıştırın. Windows’ta PowerShell kullanın ve {1} yerine {0} yazın:",
   "minerSettingsGuide": "seine ayarlarını değiştirin: iş parçacıkları, CPU, GPU ve havuz",
   "m619": "solo",
-  "m620": "Solo Hashrate",
-  "m621": "Yalnızca bulduğu bloklar için ödenir"
+  "m620": "{0} solo",
+  "m621": "Solo madencilik yalnızca bulduğu bloklar için ödenir."
 }

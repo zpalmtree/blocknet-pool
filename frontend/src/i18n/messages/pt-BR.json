@@ -353,6 +353,6 @@
   "minerSettingsLead": "Por padrão, o seine minera na sua CPU e nas placas de vídeo. Para mudar isso, feche o seine, abra um terminal na pasta dele e execute um destes comandos. No Windows, use o PowerShell e digite {0} no lugar de {1}:",
   "minerSettingsGuide": "Altere as configurações do seine: threads, CPU, GPU e pool",
   "m619": "solo",
-  "m620": "Hashrate solo",
-  "m621": "Recebe apenas pelos blocos que encontrar"
+  "m620": "{0} solo",
+  "m621": "A mineração solo recebe apenas pelos blocos que encontrar."
 }

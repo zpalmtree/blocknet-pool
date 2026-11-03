@@ -480,6 +480,7 @@ export interface LuckRound {
   duration_seconds: number;
   orphaned: boolean;
   confirmed: boolean;
+  solo?: boolean;
 }
 
 interface RejectionReasonCount {

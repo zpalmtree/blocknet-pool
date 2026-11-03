@@ -353,6 +353,6 @@
   "minerSettingsLead": "Domyślnie seine kopie na Twoim CPU i kartach graficznych. Aby to zmienić, zamknij seine, otwórz terminal w jego folderze i uruchom jedno z tych poleceń. W Windows użyj PowerShell i wpisz {0} zamiast {1}:",
   "minerSettingsGuide": "Zmiana ustawień seine: wątki, CPU, GPU i pula",
   "m619": "solo",
-  "m620": "Moc obliczeniowa solo",
-  "m621": "Wypłata tylko za samodzielnie znalezione bloki"
+  "m620": "{0} solo",
+  "m621": "Kopanie solo jest opłacane tylko za samodzielnie znalezione bloki."
 }

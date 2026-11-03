@@ -90,6 +90,7 @@ pub struct DbLuckRound {
     pub duration_seconds: u64,
     pub orphaned: bool,
     pub confirmed: bool,
+    pub solo: bool,
 }
 
 #[derive(Debug, Clone, Default)]

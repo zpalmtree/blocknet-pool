@@ -2,7 +2,7 @@ import { t } from '../i18n';
 import { useCallback } from 'react';
 
 import type { ApiClient } from '../api/client';
-import { BlockStatusBadge } from '../components/BlockStatusBadge';
+import { BlockStatusBadge, SoloBadge } from '../components/BlockStatusBadge';
 import { EmptyTableRow } from '../components/EmptyTableRow';
 import { ExplorerLink } from '../components/ExplorerLink';
 import { Pager } from '../components/Pager';
@@ -49,6 +49,7 @@ export function LuckPage({ api, liveTick }: LuckPageProps) {
                   <td>{fmtSeconds(row.duration_seconds)}</td>
                   <td>
                     <BlockStatusBadge confirmed={row.confirmed} orphaned={row.orphaned} />
+                    {row.solo && <> <SoloBadge /></>}
                   </td>
                   <td title={timestampTitle(row.timestamp)}>{timeAgo(row.timestamp)}</td>
                 </tr>

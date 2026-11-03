@@ -353,6 +353,6 @@
   "minerSettingsLead": "Seine mines on your CPU and graphics cards by default. To change that, close seine, open a terminal in its folder and run one of these commands. On Windows, use PowerShell and type {0} in place of {1}:",
   "minerSettingsGuide": "Change seine settings: threads, CPU, GPU and pool",
   "m619": "solo",
-  "m620": "Solo Hashrate",
-  "m621": "Paid only for blocks it finds"
+  "m620": "{0} solo",
+  "m621": "Solo mining pays only for blocks it finds."
 }

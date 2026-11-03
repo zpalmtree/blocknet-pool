@@ -353,6 +353,6 @@
   "minerSettingsLead": "Par défaut, seine mine avec votre CPU et vos cartes graphiques. Pour changer cela, fermez seine, ouvrez un terminal dans son dossier et lancez l’une de ces commandes. Sous Windows, utilisez PowerShell et tapez {0} à la place de {1} :",
   "minerSettingsGuide": "Modifier les réglages de seine : threads, CPU, GPU et pool",
   "m619": "solo",
-  "m620": "Taux de hachage solo",
-  "m621": "Payé uniquement pour les blocs trouvés"
+  "m620": "{0} en solo",
+  "m621": "Le minage solo n’est payé que pour les blocs qu’il trouve."
 }

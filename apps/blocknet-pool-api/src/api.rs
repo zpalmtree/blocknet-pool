@@ -839,6 +839,8 @@ struct LuckRoundResponse {
     duration_seconds: u64,
     orphaned: bool,
     confirmed: bool,
+    /// Found by a solo miner; it paid its finder alone.
+    solo: bool,
 }
 
 #[derive(Serialize)]
@@ -4268,6 +4270,7 @@ fn luck_round_response_from_db(round: DbLuckRound) -> LuckRoundResponse {
         duration_seconds: round.duration_seconds,
         orphaned: round.orphaned,
         confirmed: round.confirmed,
+        solo: round.solo,
     }
 }
 
@@ -8565,7 +8568,16 @@ mod tests {
         let block_ts = base + Duration::from_secs(120);
         add_test_shares(
             &store,
-            &[("j-1", "solo-est-pplns", "wa", 100, 1, "verified", true, base)],
+            &[(
+                "j-1",
+                "solo-est-pplns",
+                "wa",
+                100,
+                1,
+                "verified",
+                true,
+                base,
+            )],
         );
         let mut solo_share = test_share((
             "j-1",
@@ -8580,10 +8592,26 @@ mod tests {
         store.add_share(solo_share).expect("add solo share");
         add_test_block(
             &store,
-            (9_901, "blk-solo-est-9901", "solo-est-pplns", "wa", 1_000, block_ts, false, false),
+            (
+                9_901,
+                "blk-solo-est-9901",
+                "solo-est-pplns",
+                "wa",
+                1_000,
+                block_ts,
+                false,
+                false,
+            ),
         );
         let mut solo_block = test_block((
-            9_902, "blk-solo-est-9902", "solo-est-solo", "wb", 1_000, block_ts, false, false,
+            9_902,
+            "blk-solo-est-9902",
+            "solo-est-solo",
+            "wb",
+            1_000,
+            block_ts,
+            false,
+            false,
         ));
         solo_block.solo = true;
         store.add_block(&solo_block).expect("add solo block");
@@ -8610,6 +8638,12 @@ mod tests {
         assert_eq!(solo.blocks[0].height, 9_902);
         assert!(solo.blocks[0].solo);
         assert_eq!(solo.blocks[0].estimated_credit, distributable);
+
+        // Block 9901 opens the round that 9902, the solo block, ends.
+        let rounds = store
+            .get_luck_rounds_for_hashes(&["blk-solo-est-9902".to_string()])
+            .expect("luck rounds");
+        assert!(rounds["blk-solo-est-9902"].solo);
     }
 
     #[test]

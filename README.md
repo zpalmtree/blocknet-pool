@@ -425,8 +425,10 @@ unchanged: same port, gateway, vardiff, verification, memos and payouts.
 - Pool hashrate, round effort and luck are pool-wide: they include solo work, and solo
   blocks end a round like any other block.
 - The API and stats page accept `solo:` lookups and show the miner's address. `GET
-  /api/blocks` items carry `solo`, `GET /api/miner/{address}` adds `solo_hashrate`, and
-  pending-estimate block rows carry `solo`.
+  /api/blocks` items and `GET /api/luck` rounds carry `solo`, `GET /api/miner/{address}`
+  adds `solo_hashrate`, and pending-estimate block rows carry `solo`. The UI marks solo
+  blocks with a badge on the blocks, luck and dashboard tables and in pending
+  estimates, and shows a miner's solo hashrate under its Hashrate card.
 
 ## Payout Safeguards
 

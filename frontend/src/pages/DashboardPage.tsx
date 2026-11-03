@@ -2,7 +2,7 @@ import { t, tx, localizePath, locale } from '../i18n';
 import { useCallback, useEffect, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
-import { BlockStatusBadge } from '../components/BlockStatusBadge';
+import { BlockStatusBadge, SoloBadge } from '../components/BlockStatusBadge';
 import { EmptyTableRow } from '../components/EmptyTableRow';
 import { ExplorerLink } from '../components/ExplorerLink';
 import { HashrateChart } from '../components/HashrateChart';
@@ -350,6 +350,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
                     <td>{fmtSeconds(row.duration_seconds)}</td>
                     <td>
                       <BlockStatusBadge confirmed={row.confirmed} orphaned={row.orphaned} />
+                      {row.solo && <> <SoloBadge /></>}
                     </td>
                     <td title={timestampTitle(row.timestamp)}>{timeAgo(row.timestamp)}</td>
                   </tr>

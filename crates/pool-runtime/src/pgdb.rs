@@ -2200,7 +2200,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
             .get(0);
         let rows = conn.query(
             "WITH paged_blocks AS MATERIALIZED (
-                SELECT height, hash, difficulty, timestamp, confirmed, orphaned
+                SELECT height, hash, difficulty, timestamp, confirmed, orphaned, solo
                 FROM blocks
                 WHERE height <= $3
                   AND (timestamp, height) > (
@@ -2211,7 +2211,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
              )
              SELECT b.height, b.hash, b.difficulty, b.timestamp, b.confirmed, b.orphaned,
                     COALESCE(sw.round_work, 0)::bigint,
-                    GREATEST(b.timestamp - prev.timestamp, 0)::bigint
+                    GREATEST(b.timestamp - prev.timestamp, 0)::bigint, b.solo
              FROM paged_blocks b
              JOIN LATERAL (
                 SELECT timestamp FROM blocks
@@ -2240,7 +2240,7 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         let rows = self.conn().query(
             "SELECT b.height, b.hash, b.difficulty, b.timestamp, b.confirmed, b.orphaned,
                     COALESCE(sw.round_work, 0)::bigint,
-                    GREATEST(b.timestamp - prev.timestamp, 0)::bigint
+                    GREATEST(b.timestamp - prev.timestamp, 0)::bigint, b.solo
              FROM blocks b
              JOIN LATERAL (
                 SELECT timestamp FROM blocks
@@ -6710,6 +6710,7 @@ fn row_to_luck_round(row: &postgres::Row) -> DbLuckRound {
         orphaned: row.get::<_, bool>(5),
         round_work: row.get::<_, i64>(6).max(0) as u64,
         duration_seconds: row.get::<_, i64>(7).max(0) as u64,
+        solo: row.get::<_, bool>(8),
     }
 }
 

@@ -4,12 +4,13 @@ import { createRoot } from 'react-dom/client';
 import { createApiClient } from '../../src/api/client';
 import { initializeLanguage } from '../../src/i18n';
 import { BlocksPage } from '../../src/pages/BlocksPage';
+import { LuckPage } from '../../src/pages/LuckPage';
 import { StatsPage } from '../../src/pages/StatsPage';
 import { LAST_MINER_LOOKUP_KEY } from '../../src/lib/storage';
-import type { BlockItem, MinerResponse } from '../../src/types';
+import type { BlockItem, LuckRound, MinerResponse } from '../../src/types';
 import '../../src/styles.css';
 
-const states = ['solo', 'mixed', 'pplns', 'loading', 'error', 'empty', 'blocks', 'blocks-empty'];
+const states = ['solo', 'mixed', 'pplns', 'loading', 'error', 'empty', 'blocks', 'blocks-empty', 'luck'];
 const params = new URLSearchParams(location.search);
 const state = states.includes(params.get('state') || '') ? params.get('state')! : 'solo';
 const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
@@ -55,12 +56,19 @@ const blocks: BlockItem[] = state === 'blocks-empty' ? [] : [
   { height: 71_331, hash: 'demo-e', reward, confirmed: false, orphaned: true, solo: false, timestamp: now - 23_100, effort_pct: 102.4, duration_seconds: 3_060 },
 ];
 
+const luck: LuckRound[] = blocks.map((block) => ({
+  block_height: block.height, block_hash: block.hash, timestamp: block.timestamp,
+  effort_pct: block.effort_pct ?? 0, duration_seconds: block.duration_seconds ?? 0,
+  orphaned: block.orphaned, confirmed: block.confirmed, solo: block.solo,
+}));
+
 const nativeFetch = window.fetch.bind(window);
 window.fetch = async (input, init) => {
   const path = String(input);
   if (!path.startsWith('/api/')) return nativeFetch(input, init);
   if (path === '/api/info') return Response.json({ min_payout_amount: 1, pool_fee_pct: 1 });
   if (path.startsWith('/api/blocks')) return Response.json({ items: blocks, total: blocks.length });
+  if (path.startsWith('/api/luck')) return Response.json({ items: luck, total: luck.length });
   if (path.startsWith('/api/miner/')) {
     if (state === 'loading') return new Promise<Response>(() => {});
     if (state === 'error') return Response.json({ error: 'Demo: lookup unavailable' }, { status: 500 });
@@ -91,7 +99,9 @@ function Showcase() {
     </header>
     <main className="container">
       {error && <p role="alert">{error}</p>}
-      {blocksPage ? <BlocksPage api={api} liveTick={0} /> : <StatsPage api={api} theme={theme} liveTick={0} />}
+      {state === 'luck' ? <LuckPage api={api} liveTick={0} />
+        : blocksPage ? <BlocksPage api={api} liveTick={0} />
+        : <StatsPage api={api} theme={theme} liveTick={0} />}
     </main>
   </>;
 }
