@@ -316,8 +316,6 @@
   "typePool": "Pool",
   "typeSolo": "Solo",
   "heroFee": "Phí {0}.",
-  "heroPitch": "Trỏ seine tới {0} và nhận thanh toán vào ví của riêng bạn. PPLNS trong {1}, thanh toán tối thiểu {2}.",
-  "heroPitchExchange": "Trỏ seine tới {0} và nhận thanh toán vào ví của riêng bạn. PPLNS trong {1}, thanh toán tối thiểu {2}, {3} khi gửi tới sàn.",
   "checkMiner": "Kiểm tra máy đào của bạn",
   "yourAddress": "Địa chỉ của bạn",
   "bandMiners": "máy đào trực tuyến",

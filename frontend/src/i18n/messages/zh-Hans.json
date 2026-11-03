@@ -316,8 +316,6 @@
   "typePool": "矿池",
   "typeSolo": "单人",
   "heroFee": "{0} 手续费。",
-  "heroPitch": "将 seine 指向 {0}，奖励直接付到你自己的钱包。PPLNS 窗口 {1}，最低支付 {2}。",
-  "heroPitchExchange": "将 seine 指向 {0}，奖励直接付到你自己的钱包。PPLNS 窗口 {1}，最低支付 {2}，交易所 {3}。",
   "checkMiner": "查询你的矿机",
   "yourAddress": "你的地址",
   "bandMiners": "在线矿工",

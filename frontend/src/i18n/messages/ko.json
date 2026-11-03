@@ -316,8 +316,6 @@
   "typePool": "풀",
   "typeSolo": "솔로",
   "heroFee": "수수료 {0}.",
-  "heroPitch": "seine을 {0}에 연결하면 본인 지갑으로 바로 지급됩니다. PPLNS {1}, 최소 지급액 {2}.",
-  "heroPitchExchange": "seine을 {0}에 연결하면 본인 지갑으로 바로 지급됩니다. PPLNS {1}, 최소 지급액 {2}, 거래소는 {3}.",
   "checkMiner": "내 마이너 확인",
   "yourAddress": "내 주소",
   "bandMiners": "온라인 마이너",

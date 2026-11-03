@@ -316,8 +316,6 @@
   "typePool": "Pool",
   "typeSolo": "Solo",
   "heroFee": "{0} kosten.",
-  "heroPitch": "Richt seine op {0} en ontvang uitbetalingen in je eigen wallet. PPLNS over {1}, minimale uitbetaling {2}.",
-  "heroPitchExchange": "Richt seine op {0} en ontvang uitbetalingen in je eigen wallet. PPLNS over {1}, minimale uitbetaling {2}, {3} naar een exchange.",
   "checkMiner": "Controleer je miner",
   "yourAddress": "Je adres",
   "bandMiners": "miners online",

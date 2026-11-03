@@ -45,14 +45,6 @@ interface DashboardPageProps {
 
 const RECENT_PAYOUT_MS = 60 * 60 * 1000;
 
-function hostOf(url: string | undefined): string {
-  try {
-    return url ? new URL(url).host : location.host;
-  } catch {
-    return location.host;
-  }
-}
-
 interface ReturningMiner {
   status: 'loading' | 'ready' | 'failed';
   miner: MinerResponse | null;
@@ -182,12 +174,6 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
 
   const fee = poolInfo?.pool_fee_pct;
   const feeLabel = fee != null && Number.isFinite(fee) ? `${fee.toLocaleString(locale, { maximumFractionDigits: 20 })}%` : '-';
-  const coins = (amount: number) => `${new Intl.NumberFormat(locale, { numberingSystem: 'latn', maximumFractionDigits: 8 }).format(amount)} BNT`;
-  const minPayout = poolInfo ? coins(poolInfo.min_payout_amount) : '-';
-  const memoMinimum = poolInfo?.payout_memos_enabled && poolInfo.memo_min_payout_amount != null ? coins(poolInfo.memo_min_payout_amount) : null;
-  const poolHost = hostOf(poolInfo?.pool_url);
-  const pitchValues = [<bdi key="host" dir="ltr">{poolHost}</bdi>, <bdi key="window" dir="ltr">{poolInfo?.pplns_window_duration ?? '-'}</bdi>,
-    <bdi key="min" dir="ltr">{minPayout}</bdi>];
 
   const poolHashrate = stats?.pool?.raw_hashrate ?? stats?.pool?.hashrate ?? 0;
   const networkHashrate = stats?.chain.network_hashrate ?? 0;
@@ -220,9 +206,6 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
                 <span className="home-kicker">{t('m399')}</span>
                 <span className="home-fee">{t('heroFee', [feeLabel])}</span>
               </h1>
-              <p className="home-sub">{memoMinimum
-                ? tx('heroPitchExchange', [...pitchValues, <bdi key="memo" dir="ltr">{memoMinimum}</bdi>])
-                : tx('heroPitch', pitchValues)}</p>
               <div className="home-cta">
                 <a className="home-btn" href={localizePath('/start')}>{t('m002')}</a>
                 <a className="home-link" href={localizePath('/blog/') + 'estimate-blocknet-mining-rewards/#mining-calculator'}>

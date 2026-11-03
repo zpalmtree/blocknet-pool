@@ -316,8 +316,6 @@
   "typePool": "Pool",
   "typeSolo": "Solo",
   "heroFee": "Commissione del {0}.",
-  "heroPitch": "Punta seine su {0} e ricevi i pagamenti direttamente nel tuo wallet. PPLNS su {1}, pagamento minimo {2}.",
-  "heroPitchExchange": "Punta seine su {0} e ricevi i pagamenti direttamente nel tuo wallet. PPLNS su {1}, pagamento minimo {2}, {3} verso un exchange.",
   "checkMiner": "Controlla il tuo miner",
   "yourAddress": "Il tuo indirizzo",
   "bandMiners": "miner online",

@@ -559,7 +559,6 @@ html:lang(zh) .page-header h1 {
 .home-title { margin: 0; display: grid; gap: 12px; }
 .home-kicker { font-size: 14px; font-weight: 700; color: var(--hero-soft); letter-spacing: 0; }
 .home-fee { font-size: clamp(3.5rem, 8vw, 6rem); font-weight: 800; line-height: 0.95; letter-spacing: -0.06em; text-wrap: balance; }
-.home-sub { margin: 20px 0 0; font-size: 17px; line-height: 1.5; max-width: 44ch; color: var(--hero-dim); }
 .home-cta { display: flex; flex-wrap: wrap; gap: 12px 22px; align-items: center; margin-top: 28px; }
 .home-btn { background: var(--hero-mint); color: var(--hero-mint-ink); font-size: 15px; font-weight: 700; padding: 12px 20px; border-radius: 4px; }
 .home-btn:hover { text-decoration: none; filter: brightness(1.06); }
@@ -688,7 +687,6 @@ nav.nav-hero .pool-languages ul { background: #0b2a1f; }
 
 @media (max-width: 640px) {
   .home-hero-body { padding: 30px 14px 32px; gap: 26px; }
-  .home-sub { font-size: 15.5px; }
   .home-band { grid-template-columns: minmax(0, 1fr); padding: 0 14px; }
   .home-band > div { padding: 16px 0; border-inline-start: 0; border-top: 1px solid var(--hero-line); }
   .home-band > div:first-child { border-top: 0; }

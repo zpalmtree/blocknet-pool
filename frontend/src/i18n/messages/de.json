@@ -316,8 +316,6 @@
   "typePool": "Pool",
   "typeSolo": "Solo",
   "heroFee": "{0} Gebühr.",
-  "heroPitch": "Richte seine auf {0} aus und erhalte Auszahlungen direkt in deine eigene Wallet. PPLNS über {1}, Mindestauszahlung {2}.",
-  "heroPitchExchange": "Richte seine auf {0} aus und erhalte Auszahlungen direkt in deine eigene Wallet. PPLNS über {1}, Mindestauszahlung {2}, an eine Börse {3}.",
   "checkMiner": "Miner prüfen",
   "yourAddress": "Deine Adresse",
   "bandMiners": "Miner online",

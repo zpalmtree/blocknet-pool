@@ -316,8 +316,6 @@
   "typePool": "Pula",
   "typeSolo": "Solo",
   "heroFee": "Opłata {0}.",
-  "heroPitch": "Skieruj seine na {0} i otrzymuj wypłaty do własnego portfela. PPLNS z {1}, minimalna wypłata {2}.",
-  "heroPitchExchange": "Skieruj seine na {0} i otrzymuj wypłaty do własnego portfela. PPLNS z {1}, minimalna wypłata {2}, {3} na giełdę.",
   "checkMiner": "Sprawdź swojego górnika",
   "yourAddress": "Twój adres",
   "bandMiners": "górników online",

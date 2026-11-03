@@ -316,8 +316,6 @@
   "typePool": "Pool",
   "typeSolo": "Solo",
   "heroFee": "{0} de frais.",
-  "heroPitch": "Pointez seine vers {0} et soyez payé directement dans votre propre portefeuille. PPLNS sur {1}, paiement minimum de {2}.",
-  "heroPitchExchange": "Pointez seine vers {0} et soyez payé directement dans votre propre portefeuille. PPLNS sur {1}, paiement minimum de {2}, {3} vers un exchange.",
   "checkMiner": "Vérifier votre mineur",
   "yourAddress": "Votre adresse",
   "bandMiners": "mineurs en ligne",

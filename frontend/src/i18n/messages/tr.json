@@ -316,8 +316,6 @@
   "typePool": "Havuz",
   "typeSolo": "Solo",
   "heroFee": "{0} ücret.",
-  "heroPitch": "seine'ı {0} adresine yönlendirin ve ödemeleri kendi cüzdanınıza alın. {1} PPLNS, en az {2} ödeme.",
-  "heroPitchExchange": "seine'ı {0} adresine yönlendirin ve ödemeleri kendi cüzdanınıza alın. {1} PPLNS, en az {2} ödeme, borsaya {3}.",
   "checkMiner": "Madencinizi kontrol edin",
   "yourAddress": "Adresiniz",
   "bandMiners": "çevrimiçi madenci",

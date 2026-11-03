@@ -316,8 +316,6 @@
   "typePool": "プール",
   "typeSolo": "ソロ",
   "heroFee": "手数料{0}。",
-  "heroPitch": "seineを{0}に向けるだけで、自分のウォレットに直接支払われます。PPLNS（{1}）、最低支払額{2}。",
-  "heroPitchExchange": "seineを{0}に向けるだけで、自分のウォレットに直接支払われます。PPLNS（{1}）、最低支払額{2}、取引所宛ては{3}。",
   "checkMiner": "マイナーを確認",
   "yourAddress": "あなたのアドレス",
   "bandMiners": "オンラインのマイナー",

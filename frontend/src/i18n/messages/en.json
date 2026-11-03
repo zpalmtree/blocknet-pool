@@ -316,8 +316,6 @@
   "typePool": "Pool",
   "typeSolo": "Solo",
   "heroFee": "{0} fee.",
-  "heroPitch": "Point seine at {0} and get paid to your own wallet. PPLNS over {1}, {2} minimum payout.",
-  "heroPitchExchange": "Point seine at {0} and get paid to your own wallet. PPLNS over {1}, {2} minimum payout, {3} to an exchange.",
   "checkMiner": "Check your miner",
   "yourAddress": "Your address",
   "bandMiners": "miners online",

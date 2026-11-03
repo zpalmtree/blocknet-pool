@@ -316,8 +316,6 @@
   "typePool": "Pool",
   "typeSolo": "Solo",
   "heroFee": "Biaya {0}.",
-  "heroPitch": "Arahkan seine ke {0} dan terima pembayaran di dompet Anda sendiri. PPLNS {1}, pembayaran minimum {2}.",
-  "heroPitchExchange": "Arahkan seine ke {0} dan terima pembayaran di dompet Anda sendiri. PPLNS {1}, pembayaran minimum {2}, {3} ke exchange.",
   "checkMiner": "Periksa penambang Anda",
   "yourAddress": "Alamat Anda",
   "bandMiners": "penambang online",
