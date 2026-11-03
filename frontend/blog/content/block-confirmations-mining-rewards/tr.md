@@ -9,7 +9,7 @@ faq:
     a: 'Hayır. Beş dakikalık hedefle 60 aralık, planlama için 300 dakika yani beş saattir. Gerçek ilerleme değişken zamanlarda gelen bloklara bağlıdır. Olgunlaşma, ödeme eşiği ve ödeme işlemi ayrı aşamalardır.'
   - q: 'Mevcut ödül olgunlaşana kadar kazmalı mıyım?'
     a: 'Bulunan blok, madenciniz bağlı olmasa da ağ ilerledikçe derinleşir. Ödül hakkınız havuzun muhasebe kurallarına bağlıdır. Durmak olgunlaşmayı hızlandırmaz veya sıfırlamaz; My Stats üzerinden izleyin.'
-sourceHash: '7383b256ba1a'
+sourceHash: '2f9675c64c30'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ Gönderimden sonra işlemin kaydını ve cüzdanın alım/harcanabilirlik durumu
 
 [Blocks](/blocks) üzerinde yüksekliği, karmayı ve durumu bulun. Madencinizin ödeme adresiyle [My Stats](/stats) açıp tahmini ve onaylı ödülleri inceleyin. Ödeme oluşunca geçmişten işlem bağlantısını açın. Blok, hesap bakiyesi ve cüzdan ödemesi birbirinin yerine geçmez.
 
-Güncel ayarlar [Get Started](/start) veya `https://bntpool.com/api/info`, hizmet durumu [pool status](/status) üzerindedir. İnceleme için adresi, blok/işlem kimliğini ve gözlem zamanını kaydedin; kurtarma kelimelerini paylaşmayın. [Takip rehberi](/blog/tr/track-your-miner-on-bntpool/) diğer istatistikleri açıklar. Çevrimdışıyken de derinlik artar; hak ediş kayıtlı işe ve zincire bağlıdır.
+Güncel ayarlar [Get Started](/start) veya `https://bntpool.com/api/info` üzerindedir. İnceleme için adresi, blok/işlem kimliğini ve gözlem zamanını kaydedin; kurtarma kelimelerini paylaşmayın. [Takip rehberi](/blog/tr/track-your-miner-on-bntpool/) diğer istatistikleri açıklar. Çevrimdışıyken de derinlik artar; hak ediş kayıtlı işe ve zincire bağlıdır.
 
 <CTA target="pool" title="Madencilik ödüllerinizi izleyin" text="bntpool.com’a bağlanın; tahmini ödülleri, onaylı bakiyeleri ve ödemeleri My Stats üzerinden takip edin." />

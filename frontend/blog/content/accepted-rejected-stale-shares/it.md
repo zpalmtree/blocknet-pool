@@ -9,7 +9,7 @@ faq:
     a: 'Stale job indica un’assegnazione non più valida, per esempio scaduta o legata a un template oltre il periodo di tolleranza. Controlla nuovi job e la ripresa delle share accettate. Messaggi ripetuti richiedono di verificare connessione e versione del miner.'
   - q: 'Una difficoltà maggiore riduce la ricompensa?'
     a: 'La difficoltà cambia il lavoro rappresentato da ogni share idonea e la frequenza attesa. Confronta il lavoro ponderato per difficoltà in periodi equivalenti, non il conteggio grezzo. La ricompensa dipende anche dalla finestra PPLNS, dal lavoro idoneo, dai blocchi trovati e dalle regole di validazione.'
-sourceHash: 5be830208e6c
+sourceHash: 92eae02aa6e4
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ Confronta invii accettati e rifiutati nello stesso intervallo e ambito. Il miner
 
 ## Cosa fare se i rifiuti si ripetono?
 
-Parti da una macchina interessata. Annota versione, messaggio esatto, inizio e arrivo di nuovi job. Controlla [Stato](/status) e poi eventuali interruzioni della connessione. Aggiorna dalle [release ufficiali di seine](https://github.com/zpalmtree/seine/releases) e confronta dopo una sola modifica alla volta.
+Parti da una macchina interessata. Annota versione, messaggio esatto, inizio e arrivo di nuovi job. Controlla eventuali interruzioni della connessione. Aggiorna dalle [release ufficiali di seine](https://github.com/zpalmtree/seine/releases) e confronta dopo una sola modifica alla volta.
 
 Un proxy o un’integrazione personalizzata deve preservare job, intervallo nonce e difficoltà negli invii. Se il problema continua, fornisci un breve log e i dettagli della macchina al canale di supporto del progetto. Rimuovi segreti e dati privati: la frase di recupero non serve mai per diagnosticare share.
 

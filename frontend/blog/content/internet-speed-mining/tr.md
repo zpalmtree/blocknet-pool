@@ -9,7 +9,7 @@ faq:
     a: 'Evet, bağlantı havuzla kararlı iletişim sağlıyorsa. Normal kullanımda kabul edilen payları ve yeniden bağlantı mesajlarını izleyin. Kesinti varsa Ethernet karşılaştırması kablosuz kısmı ayırabilir. Karşılaştırma sırasında madenci ayarlarını ve hedefi değiştirmeyin.'
   - q: 'Başarılı ping havuz bağlantısının çalıştığını kanıtlar mı?'
     a: 'Ping, yanıt veren makineyle ICMP alışverişini sınar. Madencilik ayrıca doğru uç nokta, taşıma bağlantısı, giriş, güncel işler ve kabul edilen gönderimler ister. Site veya ping çalışırken başka hizmet erişilemez olabilir. Madenci günlüğü ve havuz kayıtlarını inceleyin.'
-sourceHash: 'bf51814bc06d'
+sourceHash: 'c23da77f349f'
 translation: draft
 ---
 
@@ -43,7 +43,7 @@ Büyük yükleme, bulut yedeği veya evdeki başka aktarım gecikmelerle çakı�
 
 ## Hangi gözlemler havuz bağlantısı sorununu gösterir?
 
-Uç noktaya bağlantı, giriş, iş alımı, pay gönderimi ve yanıt sırasını izleyin. Giriş reddedilirse Wi-Fi’yi suçlamadan adresi ve tam mesajı inceleyin. Tekrarlayan kopmalarda zamanları ve çevredeki günlük satırlarını saklayın. [İzleme rehberi](/blog/tr/track-your-miner-on-bntpool/) uç nokta ve sıfır hash gücünü, [durum sayfası](/status) hizmet bağlamını sunar.
+Uç noktaya bağlantı, giriş, iş alımı, pay gönderimi ve yanıt sırasını izleyin. Giriş reddedilirse Wi-Fi’yi suçlamadan adresi ve tam mesajı inceleyin. Tekrarlayan kopmalarda zamanları ve çevredeki günlük satırlarını saklayın. [İzleme rehberi](/blog/tr/track-your-miner-on-bntpool/) uç nokta ve sıfır hash gücünü ele alır.
 
 Düzeldikten sonra kullanılabilir yeni iş ve yeni kabul edilen payları arayın. Sitenin dönmesi veya başarılı ping, madenciliğin bu aşamalardan geçtiğini kanıtlamaz. Tarayıcı hatası da tek başına Stratum’un durduğunu göstermez. Siteyi, madenci taşımasını ve havuz yanıtını ayırmak için her kontrolün neyi sınadığını yazın.
 

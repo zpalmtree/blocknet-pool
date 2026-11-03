@@ -9,7 +9,7 @@ faq:
     a: 'Sim, se a conexão permitir comunicação estável com o pool. Observe shares aceitas e reconexões durante o uso normal. Se houver cortes, uma comparação por Ethernet pode isolar o trecho sem fio. Mantenha as opções do minerador e o destino durante o teste.'
   - q: 'Um ping bem-sucedido prova que a conexão ao pool funciona?'
     a: 'Ping testa uma troca ICMP com o host que responde. A mineração também exige endpoint configurado, transporte, login, jobs atuais e envios aceitos. Site ou ping podem funcionar enquanto outro serviço está inacessível. Confira os logs do minerador e os registros do pool.'
-sourceHash: 'bf51814bc06d'
+sourceHash: 'c23da77f349f'
 translation: draft
 ---
 
@@ -43,7 +43,7 @@ Confira se uploads grandes, backups na nuvem ou transferências domésticas coin
 
 ## Quais observações mostram um problema de conexão?
 
-Siga endpoint, login, recebimento do job, envio e resposta. Se o login for rejeitado, examine endereço e mensagem exata antes de culpar Wi-Fi. Para quedas repetidas, preserve horários e linhas próximas do log. O [guia de acompanhamento](/blog/pt-br/track-your-miner-on-bntpool/) cobre endpoint e hashrate zero; a [página de status](/status) fornece o contexto do serviço.
+Siga endpoint, login, recebimento do job, envio e resposta. Se o login for rejeitado, examine endereço e mensagem exata antes de culpar Wi-Fi. Para quedas repetidas, preserve horários e linhas próximas do log. O [guia de acompanhamento](/blog/pt-br/track-your-miner-on-bntpool/) cobre endpoint e hashrate zero.
 
 Após recuperar a conexão, procure um novo job utilizável e shares aceitas recentes. Site restabelecido ou ping respondendo não provam essas etapas da mineração. Da mesma forma, erro no navegador não prova interrupção do Stratum. Registre o que cada teste verificou para separar site público, transporte e resposta do pool.
 

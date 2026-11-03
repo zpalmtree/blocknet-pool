@@ -1,8 +1,8 @@
 ---
 title: Deinen Miner auf bntpool.com überwachen
-description: Suche auf bntpool.com nach Adresse oder @name für Hashrate, Shares, Guthaben und Auszahlungen. Verfolge Blöcke, Glück und Verfügbarkeit oder nutze die öffentliche API.
+description: Suche auf bntpool.com nach Adresse oder @name für Hashrate, Shares, Guthaben und Auszahlungen. Verfolge Blöcke und Glück oder nutze die öffentliche API.
 tags: [bntpool, Mining-Statistik, Pool-API, Blocknet]
-sourceHash: '40197b2fa166'
+sourceHash: 'f74ae9281fd2'
 translation: draft
 faq:
   - q: 'Warum unterscheidet sich meine Hashrate auf bntpool.com von der in seine?'
@@ -99,7 +99,7 @@ Prüfe zuerst die Auszahlungsadresse, die Poolverbindung und die akzeptierten Sh
 1. **Adresse abgleichen.** Suche nach derselben Empfangsadresse oder dem registrierten `@name`, den seine verwendet. Hast du die Adresse eines Kurznamens geändert, starte seine neu, damit der Name erneut aufgelöst wird. Prüfe anschließend die aufgelöste Adresse in My Stats.
 2. **Pool abgleichen.** Prüfe, ob seine `stratum+tcp://bntpool.com:3333` verwendet. Ein Rechner, der anderswo oder im Solo-Modus mint, liefert hier keine Shares. Die [Pool-Einrichtungsanleitung](/blog/de/mine-blocknet-on-bntpool/) erklärt die Verbindung.
 3. **Recent Shares prüfen.** Warte auf akzeptierte Shares und die nächste Seitenaktualisierung. Shares treffen in wechselnden Abständen ein; eine lokale Hashrate garantiert keine sofortige Poolschätzung. Treffen akzeptierte Shares ein, vergleiche Durchschnittswerte über längere Zeit.
-4. **Verbindungsmeldung lesen.** Nutze die Tabelle, solange der Miner noch keine akzeptierten Shares liefert. Aktuelle Störungen findest du unter [Status](/status).
+4. **Verbindungsmeldung lesen.** Nutze die Tabelle, solange der Miner noch keine akzeptierten Shares liefert.
 
 | Meldung in seine | Nächster Prüfschritt |
 |---|---|
@@ -125,10 +125,6 @@ Diese Seiten brauchen keine Adresssuche und zeigen alle Aktivitäten des Pools �
 ### Glück
 
 [Luck](/luck) zeigt den Effort jeder Runde: akzeptierte Share-Arbeit geteilt durch die Block-Difficulty. 100 % bedeutet exakt den erwarteten Aufwand, ein niedrigerer Wert einen schnelleren Fund. Einzelne Runden schwanken stark in beide Richtungen. Beobachte deshalb **Average Luck** im Dashboard. Dessen Tabelle **Pool Luck History** verlinkt die Seite über **View All**.
-
-### Status
-
-[Status](/status) ist die Zustandsseite des Pools. Sie zeigt, ob Pool, öffentliches HTTP, API, Stratum, Datenbank und Daemon online sind, wie aktuell die Jobvorlage ist, die Blockchain-Höhe, die Verfügbarkeit über die letzten 10 Minuten, 6 Stunden, 24 Stunden und 7 Tage sowie den Störungsverlauf. Zwei Systeme messen die Verfügbarkeit: ein Monitor auf dem Pool-Server und eine externe Prüfung auf Cloudflare.
 
 ## Was ist mit dem eigenen Dashboard von seine?
 

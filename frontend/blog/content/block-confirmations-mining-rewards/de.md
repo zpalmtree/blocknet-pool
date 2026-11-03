@@ -9,7 +9,7 @@ faq:
     a: 'Nein. Sechzig Intervalle mit fünf Minuten Zielzeit ergeben geschätzte 300 Minuten oder fünf Stunden. Tatsächlich zählen neue Blöcke, deren Ankunftszeiten schwanken. Reife, Auszahlungsschwelle und spätere Zahlungstransaktion sind getrennte Schritte.'
   - q: 'Muss ich weiter minen, damit eine bestehende Belohnung reift?'
     a: 'Ein gefundener Block gewinnt Tiefe durch neue Netzwerkblöcke, unabhängig von deiner Verbindung. Dein Anspruch folgt den Abrechnungsregeln des Pools. Ein Stopp beschleunigt oder startet die Reifung nicht neu; verfolge den erfassten Betrag unter My Stats.'
-sourceHash: '7383b256ba1a'
+sourceHash: '2f9675c64c30'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ Nach dem Senden verfolgst du die eigene Transaktion sowie Eingang und Ausgebbark
 
 Beginne unter [Blocks](/blocks) mit Höhe, Hash und Status. Öffne [My Stats](/stats) mit der Mining-Adresse und prüfe geschätzte und bestätigte Belohnungen. Sobald eine Zahlung existiert, folge ihrem Transaktionslink. So hat jede Beobachtung ihren Platz: Block, Kontoguthaben und Wallet-Zahlung.
 
-Prüfe aktuelle Werte unter [Get Started](/start) oder `https://bntpool.com/api/info` und den [Poolstatus](/status). Notiere für Untersuchungen Adresse, Block- oder Transaktionskennung und Beobachtungszeit; teile niemals Wiederherstellungswörter. Der [Tracking-Leitfaden](/blog/de/track-your-miner-on-bntpool/) erklärt weitere Statistiken. Bestehende Blöcke gewinnen auch bei ausgeschaltetem Miner Tiefe; Berechtigung folgt erfasster Arbeit und Kettenzustand.
+Prüfe aktuelle Werte unter [Get Started](/start) oder `https://bntpool.com/api/info`. Notiere für Untersuchungen Adresse, Block- oder Transaktionskennung und Beobachtungszeit; teile niemals Wiederherstellungswörter. Der [Tracking-Leitfaden](/blog/de/track-your-miner-on-bntpool/) erklärt weitere Statistiken. Bestehende Blöcke gewinnen auch bei ausgeschaltetem Miner Tiefe; Berechtigung folgt erfasster Arbeit und Kettenzustand.
 
 <CTA target="pool" title="Verfolge deine Mining-Belohnungen" text="Verbinde dich mit bntpool.com und beobachte geschätzte Belohnungen, bestätigte Guthaben und Zahlungen unter My Stats." />

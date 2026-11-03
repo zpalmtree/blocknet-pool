@@ -2,7 +2,7 @@
 title: Was ist ein Mining-Pool?
 description: Ein Mining-Pool bündelt die Hashrate vieler Miner und teilt jede Blockbelohnung unter ihnen auf. Erfahre, wie Pools, PPLNS, PPS und Solo-Mining funktionieren und worauf du achten solltest.
 tags: [Mining-Grundlagen, Mining-Pools, PPLNS, bntpool]
-sourceHash: 'a17a47ab1d73'
+sourceHash: '15d1453f41d9'
 translation: draft
 faq:
   - q: 'Verdiene ich durch den Beitritt zu einem Mining-Pool mehr?'
@@ -77,7 +77,7 @@ Beim Vergleich von Pools bestimmen diese Einzelheiten, wie du bezahlt wirst und 
 
 - **Ein klar beschriebenes Vergütungsmodell.** Der Pool sollte Modell und Einstellungen, etwa das PPLNS-Fenster, nennen. bntpool.com zeigt sie unter [Get Started](/start) und veröffentlicht sie unter `https://bntpool.com/api/info`.
 - **Bestätigungen und Mindestauszahlung.** Belohnungen warten normalerweise, bis der Block tief genug in der Kette liegt. Zahlungen erfolgen ab einem Mindestguthaben. Auf bntpool.com ist eine Belohnung nach 60 Blöcken bestätigt, entsprechend Blocknets Coinbase-Reife. Guthaben ab 0,1 BNT werden automatisch ausgezahlt.
-- **Öffentliche, überprüfbare Zahlen.** Du solltest jeden gefundenen Block und jede Zahlung sehen können. bntpool.com zeigt sie auf den Seiten [Blocks](/blocks) und [Payouts](/payouts), den Effort jeder Runde auf [Luck](/luck) und den Dienstzustand auf [Status](/status).
+- **Öffentliche, überprüfbare Zahlen.** Du solltest jeden gefundenen Block und jede Zahlung sehen können. bntpool.com zeigt sie auf den Seiten [Blocks](/blocks) und [Payouts](/payouts) sowie den Effort jeder Runde auf [Luck](/luck).
 - **Deine eigene Statistik.** Über deine Adresse solltest du Hashrate, Shares und Guthaben finden. Bei bntpool.com geht das auf der [Statistikseite](/stats); die [Anleitung zur Miner-Überwachung](/blog/de/track-your-miner-on-bntpool/) erklärt jede Karte.
 - **Einfache Einrichtung.** Je weniger Einstellungen nötig sind, desto schneller minest du. bntpool.com ist der Standardpool von seine, der Threads, Kernel und Speicher selbst abstimmt. Statt einer vollständigen Adresse kannst du dich mit einem [Blocknet-ID-Namen](https://seineminer.com/de/blog/blocknet-id-pay-by-name/) wie `@name` anmelden.
 

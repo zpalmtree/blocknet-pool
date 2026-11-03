@@ -9,7 +9,7 @@ faq:
     a: 'Nie. Sześćdziesiąt docelowych interwałów po pięć minut daje szacunek 300 minut, pięciu godzin. Rzeczywisty postęp zależy od bloków o zmiennych czasach nadejścia. Dojrzałość, próg salda i późniejsza transakcja są osobnymi etapami.'
   - q: 'Czy muszę dalej kopać, aby nagroda dojrzała?'
     a: 'Znaleziony blok zyskuje głębokość z nowymi blokami sieci, nawet przy odłączonym minerze. Uprawnienie wynika z zasad rozliczeń puli. Zatrzymanie nie przyspiesza ani nie zeruje dojrzewania; obserwuj zapis w My Stats.'
-sourceHash: '7383b256ba1a'
+sourceHash: '2f9675c64c30'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ Po wysłaniu śledź transakcję oraz odbiór i możliwość wydania w portfelu.
 
 Na [Blocks](/blocks) ustal wysokość, hash i status. Otwórz [My Stats](/stats) z adresem minera i zobacz szacowane oraz potwierdzone nagrody. Gdy powstanie wypłata, przejdź do jej transakcji z historii. Każda obserwacja dotyczy bloku, salda konta lub płatności do portfela.
 
-Sprawdź wartości w [Get Started](/start) lub `https://bntpool.com/api/info` oraz [status puli](/status). Przy analizie zanotuj adres, ID bloku lub transakcji i czas; nigdy nie udostępniaj słów odzyskiwania. [Poradnik śledzenia](/blog/pl/track-your-miner-on-bntpool/) opisuje resztę. Bloki zyskują głębokość offline; kwalifikacja wynika z zapisanej pracy i łańcucha.
+Sprawdź wartości w [Get Started](/start) lub `https://bntpool.com/api/info`. Przy analizie zanotuj adres, ID bloku lub transakcji i czas; nigdy nie udostępniaj słów odzyskiwania. [Poradnik śledzenia](/blog/pl/track-your-miner-on-bntpool/) opisuje resztę. Bloki zyskują głębokość offline; kwalifikacja wynika z zapisanej pracy i łańcucha.
 
 <CTA target="pool" title="Śledź nagrody za kopanie" text="Połącz się z bntpool.com i obserwuj szacunki, potwierdzone salda oraz wypłaty w My Stats." />

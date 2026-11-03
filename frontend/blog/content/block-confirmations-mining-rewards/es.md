@@ -9,7 +9,7 @@ faq:
     a: 'No. Sesenta intervalos de cinco minutos equivalen a 300 minutos, cinco horas, como estimación. El progreso real depende de nuevos bloques, cuyos tiempos varían. Madurez de la recompensa, umbral de pago y transacción posterior son etapas separadas.'
   - q: '¿Debo seguir minando para que madure una recompensa existente?'
     a: 'Un bloque ya encontrado gana profundidad al crecer la cadena, aunque tu minero esté desconectado. Tu participación depende de las reglas contables del pool. Parar no acelera ni reinicia la madurez; sigue la recompensa registrada en My Stats.'
-sourceHash: '7383b256ba1a'
+sourceHash: '2f9675c64c30'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ Una vez enviado, sigue el registro de esa transacción y la recepción y disponi
 
 Empieza en [Bloques](/blocks) por altura, hash y estado. Abre [My Stats](/stats) con la dirección usada por tu minero y revisa recompensas estimadas y confirmadas. Cuando exista un pago, sigue su transacción desde el historial. Cada observación tiene su sitio: bloque, saldo de cuenta y pago a la cartera.
 
-Confirma las condiciones en [Get Started](/start) o `https://bntpool.com/api/info` y consulta el [estado del pool](/status). Para investigar, anota dirección, identificador de bloque o transacción y hora; nunca compartas palabras de recuperación. La [guía de seguimiento](/blog/es/track-your-miner-on-bntpool/) explica el resto. Los bloques existentes ganan profundidad con tu minero desconectado; su elegibilidad depende del trabajo registrado y la cadena.
+Confirma las condiciones en [Get Started](/start) o `https://bntpool.com/api/info`. Para investigar, anota dirección, identificador de bloque o transacción y hora; nunca compartas palabras de recuperación. La [guía de seguimiento](/blog/es/track-your-miner-on-bntpool/) explica el resto. Los bloques existentes ganan profundidad con tu minero desconectado; su elegibilidad depende del trabajo registrado y la cadena.
 
 <CTA target="pool" title="Sigue tus recompensas" text="Conéctate a bntpool.com y usa My Stats para seguir recompensas estimadas, saldos confirmados y pagos." />

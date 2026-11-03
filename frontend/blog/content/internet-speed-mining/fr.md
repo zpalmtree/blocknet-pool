@@ -9,7 +9,7 @@ faq:
     a: 'Oui, si la liaison communique de façon stable avec le pool. Observez shares acceptées et reconnexions en usage normal. Si des coupures surviennent, une comparaison Ethernet peut isoler le segment sans fil. Conservez réglages du mineur et destination pendant cette comparaison.'
   - q: 'Un ping réussi prouve-t-il que la connexion au pool fonctionne ?'
     a: 'Ping teste un échange ICMP avec l’hôte qui répond. Le minage exige aussi endpoint configuré, transport, connexion au compte, jobs actuels et soumissions acceptées. Le site ou ping peut fonctionner tandis qu’un autre service est inaccessible. Vérifiez journal du mineur et données du pool.'
-sourceHash: 'bf51814bc06d'
+sourceHash: 'c23da77f349f'
 translation: draft
 ---
 
@@ -43,7 +43,7 @@ Cherchez une coïncidence avec gros téléversements, sauvegardes cloud ou trans
 
 ## Quelles observations indiquent un problème de connexion ?
 
-Suivez endpoint, connexion au compte, réception du job, soumission et réponse. Pour un accès refusé, examinez adresse et message exact avant d’accuser le Wi-Fi. Pour des coupures répétées, gardez horaires et lignes voisines du journal. Le [guide de suivi](/blog/fr/track-your-miner-on-bntpool/) couvre endpoint et hashrate nul ; la [page d’état](/status) donne le contexte du service.
+Suivez endpoint, connexion au compte, réception du job, soumission et réponse. Pour un accès refusé, examinez adresse et message exact avant d’accuser le Wi-Fi. Pour des coupures répétées, gardez horaires et lignes voisines du journal. Le [guide de suivi](/blog/fr/track-your-miner-on-bntpool/) couvre endpoint et hashrate nul.
 
 Après rétablissement, cherchez un nouveau job exploitable et des shares acceptées récentes. Un site revenu ou un ping réussi ne prouve pas ces étapes de minage. Inversement, une erreur de navigateur ne prouve pas l’arrêt de Stratum. Notez ce que chaque test vérifie : site public, transport du mineur ou réponse du pool.
 

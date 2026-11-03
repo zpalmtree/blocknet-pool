@@ -83,7 +83,7 @@ Your balance can therefore move in steps even while your miner keeps submitting 
 
 ## What should you check during a long round?
 
-Check the parts you can observe directly: your miner is running, accepted shares continue, and the correct address appears on [My Stats](/stats). Use [Status](/status) for public service health. If your own accepted shares stop, follow the [miner-statistics troubleshooting guide](/blog/track-your-miner-on-bntpool/#zero-hashrate); a long pool round and a disconnected rig need different checks.
+Check the parts you can observe directly: your miner is running, accepted shares continue, and the correct address appears on [My Stats](/stats). If your own accepted shares stop, follow the [miner-statistics troubleshooting guide](/blog/track-your-miner-on-bntpool/#zero-hashrate); a long pool round and a disconnected rig need different checks.
 
 Once your connection is healthy, read luck across a meaningful history and keep using the same definitions. That gives each dashboard number a clear role: hashrate estimates work per second, effort compares work with a block's expected work, and your balances show reward accounting. None of those requires guessing when the next winning hash will arrive.
 

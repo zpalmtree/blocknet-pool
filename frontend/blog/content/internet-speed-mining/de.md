@@ -9,7 +9,7 @@ faq:
     a: 'Ja, wenn die Verbindung stabil mit dem Pool kommuniziert. Beobachte akzeptierte Shares und Reconnect-Meldungen im Alltag. Bei Unterbrechungen kann ein Vergleich über Ethernet den drahtlosen Abschnitt eingrenzen. Behalte Miner-Einstellungen und Ziel während des Vergleichs bei.'
   - q: 'Beweist ein erfolgreicher Ping eine funktionierende Poolverbindung?'
     a: 'Ping prüft einen ICMP-Austausch mit dem antwortenden Host. Mining benötigt zusätzlich den richtigen Endpunkt, Transportverbindung, erfolgreichen Login, aktuelle Jobs und akzeptierte Übermittlungen. Website oder Ping können funktionieren, obwohl ein anderer Dienst unerreichbar ist. Prüfe Miner-Log und Poolaufzeichnungen.'
-sourceHash: 'bf51814bc06d'
+sourceHash: 'c23da77f349f'
 translation: draft
 ---
 
@@ -43,7 +43,7 @@ Prüfe, ob große Uploads, Cloud-Backups oder andere Haushaltstransfers zeitlich
 
 ## Welche Beobachtungen zeigen ein Verbindungsproblem?
 
-Verfolge Endpunktverbindung, Login, Jobempfang, Share und Antwort. Bei abgelehntem Login prüfst du Adresse und genaue Meldung, statt WLAN verantwortlich zu machen. Bei wiederholten Abbrüchen sichere Zeiten und umgebende Logzeilen. Die [Tracking-Anleitung](/blog/de/track-your-miner-on-bntpool/) behandelt Endpunkte und Null-Hashrate; die [Statusseite](/status) zeigt den Dienstzustand.
+Verfolge Endpunktverbindung, Login, Jobempfang, Share und Antwort. Bei abgelehntem Login prüfst du Adresse und genaue Meldung, statt WLAN verantwortlich zu machen. Bei wiederholten Abbrüchen sichere Zeiten und umgebende Logzeilen. Die [Tracking-Anleitung](/blog/de/track-your-miner-on-bntpool/) behandelt Endpunkte und Null-Hashrate.
 
 Nach Wiederherstellung suche einen neuen brauchbaren Job und frische akzeptierte Shares. Eine erreichbare Website oder ein erfolgreicher Ping bestätigt diese Mining-Stufen nicht. Umgekehrt beweist ein Browserfehler keinen Stratum-Ausfall. Notiere, was jede Prüfung tatsächlich getestet hat: Website, Miner-Transport oder Poolantwort.
 

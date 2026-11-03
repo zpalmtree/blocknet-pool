@@ -9,7 +9,7 @@ faq:
     a: 'O explorador permite verificar o estado público de uma transação na cadeia. Blocknet usa saídas privadas; uma busca comum por endereço não exibe o saldo da carteira nem comprova que determinada saída é sua. A carteira escaneia a cadeia para reconhecer as próprias saídas.'
   - q: 'O que informar sobre um pagamento que não aparece?'
     a: 'Forneça endereço completo usado na consulta do pool, identificador da transação, horário aproximado, estado do pool e progresso da sincronização. Diga se a transação aparece no histórico. Compartilhe dados de conta somente no contexto de suporte apropriado, nunca frase de recuperação, chaves privadas ou senha da carteira.'
-sourceHash: '915075cf4e2b'
+sourceHash: '7927c9203d7f'
 translation: draft
 ---
 
@@ -31,13 +31,13 @@ A página pública Payouts descreve lotes com possíveis múltiplos destinatári
 
 ## O pagamento está na fila, não confirmado ou confirmado?
 
-Leia o estado atual antes de assumir que uma entrada completou todas as etapas. Um pagamento na fila ainda está no processamento do pool; uma transação não confirmada precisa de confirmação na cadeia. Atualize o registro e abra o link quando existir. A [página de status](/status) oferece contexto operacional se várias observações indicam uma interrupção.
+Leia o estado atual antes de assumir que uma entrada completou todas as etapas. Um pagamento na fila ainda está no processamento do pool; uma transação não confirmada precisa de confirmação na cadeia. Atualize o registro e abra o link quando existir.
 
 Separe a maturidade da recompensa de mineração da confirmação da transação de pagamento. O bloco que gerou a recompensa e a transação posterior têm identificadores e funções diferentes. O [guia de confirmações](/blog/pt-br/block-confirmations-mining-rewards/) explica isso. Um identificador é um objeto concreto para investigar, mas não comprova que a carteira local já escaneou e reconheceu o pagamento.
 
 ## Confira a transação na cadeia
 
-Abra o explorador pelo link do pagamento e compare o identificador completo com suas anotações. Leia o estado na cadeia e as informações do bloco disponíveis. Se ainda não for encontrada, compare o registro atualizado e o estado do serviço antes de concluir. Um resultado temporário de busca sozinho não identifica a causa.
+Abra o explorador pelo link do pagamento e compare o identificador completo com suas anotações. Leia o estado na cadeia e as informações do bloco disponíveis. Se ainda não for encontrada, confira o registro atualizado antes de concluir. Um resultado temporário de busca sozinho não identifica a causa.
 
 A privacidade do Blocknet significa que uma busca comum por endereço no explorador não exibe saldo público do destinatário. O estado da transação e a verificação de propriedade da carteira respondem perguntas diferentes. A carteira reconhece entradas ao escanear a cadeia. O [guia de endereços furtivos](https://seineminer.com/pt-br/blog/stealth-addresses-explained/) explica o processo; uma lista pública não reproduz o histórico privado da carteira.
 

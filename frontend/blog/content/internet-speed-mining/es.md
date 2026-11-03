@@ -9,7 +9,7 @@ faq:
     a: 'Sí, si permite una comunicación estable con el pool. Observa shares aceptadas y reconexiones durante el uso normal. Si hay cortes, una comparación con Ethernet puede aislar el tramo inalámbrico. Mantén las opciones del minero y el destino mientras comparas.'
   - q: '¿Un ping correcto demuestra que funciona la conexión al pool?'
     a: 'Ping comprueba un intercambio ICMP con el host que responde. La sesión de minería también necesita el endpoint configurado, transporte, inicio de sesión, trabajos actuales y envíos aceptados. Una web o ping pueden funcionar aunque otro servicio no sea accesible; consulta el registro del minero y del pool.'
-sourceHash: 'bf51814bc06d'
+sourceHash: 'c23da77f349f'
 translation: draft
 ---
 
@@ -43,7 +43,7 @@ Comprueba si las demoras coinciden con subidas grandes, copias en la nube u otra
 
 ## ¿Qué indica un problema de conexión al pool?
 
-Sigue la secuencia: conexión al endpoint, inicio de sesión, trabajo, envío y respuesta. Si se rechaza el acceso, comprueba dirección y mensaje exacto en vez de atribuirlo a Wi-Fi. Ante cortes repetidos, conserva horas y líneas de registro cercanas. La [guía de seguimiento](/blog/es/track-your-miner-on-bntpool/) cubre endpoint y hashrate cero; la [página de estado](/status) aporta contexto del servicio.
+Sigue la secuencia: conexión al endpoint, inicio de sesión, trabajo, envío y respuesta. Si se rechaza el acceso, comprueba dirección y mensaje exacto en vez de atribuirlo a Wi-Fi. Ante cortes repetidos, conserva horas y líneas de registro cercanas. La [guía de seguimiento](/blog/es/track-your-miner-on-bntpool/) cubre endpoint y hashrate cero.
 
 Tras recuperarse, busca un trabajo nuevo utilizable y shares aceptadas recientes. Que vuelva la web o responda ping no demuestra que la minería haya completado esas etapas. Tampoco un error del navegador demuestra que Stratum se detuvo. Registra qué comprobó cada prueba para separar web, transporte y respuesta del pool.
 

@@ -9,7 +9,7 @@ faq:
     a: 'Leggi prima l’etichetta e la definizione. La colonna Sforzo e la scheda Fortuna media di bntpool.com esprimono il lavoro rispetto a quello atteso: valori inferiori indicano meno lavoro registrato per blocco. Altri siti possono usare la convenzione inversa. Confronta metriche e dimensioni dei campioni equivalenti, non solo percentuali.'
   - q: 'Un round lungo aumenterà il mio prossimo pagamento?'
     a: 'Un round lungo non garantisce un pagamento personale maggiore. La scoperta del blocco determina quando diventa disponibile una ricompensa; la contabilità PPLNS stabilisce la tua quota usando il lavoro accettato idoneo. Seguono le regole di conferma e pagamento. Controlla i saldi in Le mie statistiche e la sequenza nella guida ai pagamenti.'
-sourceHash: 'f7051fa67591'
+sourceHash: '3dce88998f4a'
 translation: draft
 ---
 
@@ -83,7 +83,7 @@ Il saldo può quindi cambiare a scatti mentre il miner continua a inviare share 
 
 ## Che cosa controllare durante un round lungo?
 
-Controlla ciò che puoi osservare direttamente: miner in esecuzione, share ancora accettate e indirizzo corretto in [Le mie statistiche](/stats). Consulta [Stato](/status) per la salute pubblica del servizio. Se le tue share accettate si fermano, segui la [guida alla risoluzione dei problemi delle statistiche](/blog/it/track-your-miner-on-bntpool/#zero-hashrate); un round lungo e un rig disconnesso richiedono controlli diversi.
+Controlla ciò che puoi osservare direttamente: miner in esecuzione, share ancora accettate e indirizzo corretto in [Le mie statistiche](/stats). Se le tue share accettate si fermano, segui la [guida alla risoluzione dei problemi delle statistiche](/blog/it/track-your-miner-on-bntpool/#zero-hashrate); un round lungo e un rig disconnesso richiedono controlli diversi.
 
 Quando la connessione funziona, leggi la fortuna su uno storico significativo mantenendo le stesse definizioni. Ogni numero della dashboard ha così un ruolo chiaro: l’hashrate stima lavoro al secondo, lo sforzo lo confronta con quello atteso per un blocco e i saldi mostrano la contabilità delle ricompense. Nulla richiede di indovinare quando arriverà il prossimo hash vincente.
 

@@ -9,7 +9,7 @@ faq:
     a: 'Gezgin işlemin herkese açık zincir durumunu kontrol etmeye yardımcı olur. Blocknet özel çıktılar kullanır; sıradan adres araması cüzdan bakiyenizi göstermez veya belirli çıktının size ait olduğunu kanıtlamaz. Cüzdan kendi çıktılarını tanımak için zinciri tarar.'
   - q: 'Görünmeyen ödeme için hangi bilgileri vermeliyim?'
     a: 'Havuz aramasındaki tam alıcı adresini, işlem kimliğini, yaklaşık saati, havuz durumunu ve cüzdan eşitleme ilerlemesini verin. İşlemin geçmişte görünüp görünmediğini açıklayın. Hesap bilgilerini yalnız uygun destek ortamında paylaşın; kurtarma ifadesi, özel anahtar veya cüzdan parolasını asla vermeyin.'
-sourceHash: '915075cf4e2b'
+sourceHash: '7927c9203d7f'
 translation: draft
 ---
 
@@ -31,13 +31,13 @@ Herkese açık Payouts sayfası birden fazla alıcı ve işlem bağlantısı iç
 
 ## Ödeme kuyrukta mı, onaysız mı, onaylı mı?
 
-Listelenen ödemenin tüm aşamaları bitirdiğini varsaymadan güncel durumu okuyun. Kuyruktaki kayıt havuzda işlenmektedir; onaysız işlem zincir onayı bekler. Kaydı yenileyip bağlantı hazır olduğunda işlemi açın. Birkaç gözlem hizmet kesintisine işaret ediyorsa [durum sayfası](/status) işletim bağlamını sağlar.
+Listelenen ödemenin tüm aşamaları bitirdiğini varsaymadan güncel durumu okuyun. Kuyruktaki kayıt havuzda işlenmektedir; onaysız işlem zincir onayı bekler. Kaydı yenileyip bağlantı hazır olduğunda işlemi açın.
 
 Madencilik ödülü olgunlaşmasını ödeme işleminin onayından ayırın. Ödülü kazandıran blok ve daha sonra cüzdana ödeme yapan işlem farklı kimlik ve rollere sahiptir. [Onay rehberi](/blog/tr/block-confirmations-mining-rewards/) farkı açıklar. İşlem kimliği somut inceleme noktasıdır, fakat yerel cüzdanın ödemeyi tarayıp tanıdığını tek başına kanıtlamaz.
 
 ## İşlemi zincirde kontrol edin
 
-Ödemenin gezgin bağlantısını açıp tam işlem kimliğini notlarınızla karşılaştırın. Zincir durumunu ve varsa blok bilgisini okuyun. Gezgin henüz bulamıyorsa sonuç çıkarmadan yenilenmiş havuz kaydı ve hizmet durumunu karşılaştırın. Geçici arama sonucu tek başına nedeni belirlemez.
+Ödemenin gezgin bağlantısını açıp tam işlem kimliğini notlarınızla karşılaştırın. Zincir durumunu ve varsa blok bilgisini okuyun. Gezgin henüz bulamıyorsa sonuç çıkarmadan yenilenmiş havuz kaydını kontrol edin. Geçici arama sonucu tek başına nedeni belirlemez.
 
 Blocknet gizliliği nedeniyle normal adres araması alıcının herkese açık bakiyesini göstermez. Gezgin işlem durumu ve cüzdan sahiplik kontrolü farklı soruları yanıtlar. Cüzdan zinciri tararken gelen çıktıları tanır. [Gizli adres rehberi](https://seineminer.com/tr/blog/stealth-addresses-explained/) süreci açıklar; sıradan adres listesi özel işlem geçmişini yeniden üretmez.
 

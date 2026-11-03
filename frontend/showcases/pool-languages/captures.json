@@ -93,13 +93,6 @@
     "file": "pool-languages-checkpoints-de-desktop.png"
   },
   {
-    "name": "status-fr",
-    "path": "/status?lang=fr",
-    "full": true,
-    "size": "desktop",
-    "file": "pool-languages-status-fr-desktop.png"
-  },
-  {
     "name": "stats-empty-es",
     "path": "/stats?lang=es&demo=empty",
     "size": "desktop",
@@ -136,13 +129,6 @@
     "full": true,
     "size": "mobile",
     "file": "pool-languages-checkpoints-de-mobile.png"
-  },
-  {
-    "name": "status-fr",
-    "path": "/status?lang=fr",
-    "full": true,
-    "size": "mobile",
-    "file": "pool-languages-status-fr-mobile.png"
   },
   {
     "name": "stats-empty-es",

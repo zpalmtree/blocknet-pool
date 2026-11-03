@@ -2,7 +2,7 @@
 title: Czym jest pula wydobywcza?
 description: Pula wydobywcza łączy hashrate wielu górników i dzieli między nich nagrodę za każdy blok. Poznaj działanie pul, PPLNS, PPS i kopania solo.
 tags: [Podstawy kopania, Pule wydobywcze, PPLNS, bntpool]
-sourceHash: 'a17a47ab1d73'
+sourceHash: '15d1453f41d9'
 translation: draft
 faq:
   - q: 'Czy dołączenie do puli wydobywczej zwiększa ilość wykopanych monet?'
@@ -77,7 +77,7 @@ Porównując pule, zwróć uwagę na szczegóły decydujące o wypłatach i łat
 
 - **Jasny system wypłat.** Pula powinna podać system i jego ustawienia, takie jak okno PPLNS. bntpool.com wymienia je na [stronie Get Started](/start) i publikuje pod adresem `https://bntpool.com/api/info`.
 - **Potwierdzenia i minimalna wypłata.** Nagrody zwykle czekają, aż blok znajdzie się wystarczająco głęboko w łańcuchu, a płatności wychodzą po osiągnięciu minimum przez saldo. Na bntpool.com nagroda za blok zostaje potwierdzona po 60 blokach, zgodnie z okresem dojrzewania coinbase w Blocknecie, a salda wynoszące co najmniej 0,1 BNT są wypłacane automatycznie.
-- **Publiczne, sprawdzalne liczby.** Powinieneś móc zobaczyć każdy blok znaleziony przez pulę i każdą wysłaną płatność. bntpool.com pokazuje je na stronach [bloków](/blocks) i [wypłat](/payouts), nakład pracy w każdej rundzie na [stronie szczęścia](/luck), a stan usług na [stronie statusu](/status).
+- **Publiczne, sprawdzalne liczby.** Powinieneś móc zobaczyć każdy blok znaleziony przez pulę i każdą wysłaną płatność. bntpool.com pokazuje je na stronach [bloków](/blocks) i [wypłat](/payouts), a nakład pracy w każdej rundzie na [stronie szczęścia](/luck).
 - **Własne statystyki.** Wyszukaj swój adres, aby zobaczyć hashrate, udziały i salda. Na bntpool.com służy do tego [strona statystyk](/stats); poradnik [monitorowania górnika](/blog/pl/track-your-miner-on-bntpool/) wyjaśnia każdą kartę.
 - **Łatwa konfiguracja.** Im mniej ustawień, tym szybciej zaczniesz kopać. bntpool.com jest domyślną pulą seine, który sam dostraja wątki, jądra obliczeniowe i pamięć. Możesz też zalogować się za pomocą [nazwy Blocknet ID](https://seineminer.com/pl/blog/blocknet-id-pay-by-name/), takiej jak `@name`, zamiast pełnego adresu.
 

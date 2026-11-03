@@ -1,8 +1,8 @@
 ---
 title: Theo dõi trình đào trên bntpool.com
-description: Tra địa chỉ hoặc @name trên bntpool.com để xem hashrate, share, số dư và thanh toán; theo dõi khối, may mắn, thời gian hoạt động hoặc dùng API công khai.
+description: Tra địa chỉ hoặc @name trên bntpool.com để xem hashrate, share, số dư và thanh toán; theo dõi khối và may mắn hoặc dùng API công khai.
 tags: [bntpool, Thống kê đào coin, API pool, Blocknet]
-sourceHash: '40197b2fa166'
+sourceHash: 'f74ae9281fd2'
 translation: draft
 faq:
   - q: 'Vì sao hashrate trên bntpool.com khác số seine hiển thị?'
@@ -99,7 +99,7 @@ Bắt đầu bằng địa chỉ nhận thanh toán, kết nối pool và các s
 1. **Đối chiếu địa chỉ.** Tra cứu đúng địa chỉ nhận hoặc `@name` đã đăng ký mà seine sử dụng. Nếu đã đổi địa chỉ của tên ngắn, hãy khởi động lại seine để phân giải lại tên, rồi kiểm tra địa chỉ đã phân giải trên My Stats.
 2. **Đối chiếu pool.** Kiểm tra seine có dùng `stratum+tcp://bntpool.com:3333` hay không. Máy đào ở nơi khác hoặc ở chế độ solo sẽ không thêm share vào đây. [Hướng dẫn thiết lập pool](/blog/vi/mine-blocknet-on-bntpool/) giải thích cách kết nối.
 3. **Kiểm tra Recent Shares.** Chờ share được chấp nhận, rồi để trang cập nhật. Share đến theo khoảng thời gian thay đổi; hashrate cục bộ đang chạy không bảo đảm pool có ước tính ngay. Nếu các share được chấp nhận vẫn đến, hãy so sánh giá trị trung bình theo thời gian.
-4. **Đọc thông báo kết nối.** Dùng bảng khi máy đào chưa có share được chấp nhận. Xem [Status](/status) để biết sự cố hiện tại.
+4. **Đọc thông báo kết nối.** Dùng bảng khi máy đào chưa có share được chấp nhận.
 
 | Thông báo trong seine | Nội dung cần kiểm tra |
 |---|---|
@@ -125,10 +125,6 @@ Những trang này không cần tra cứu và công khai mọi việc pool làm.
 ### May mắn
 
 [Luck](/luck) hiển thị effort mỗi vòng. Effort là công việc share pool chấp nhận trong vòng chia độ khó khối: 100% nghĩa là cần đúng lượng công việc kỳ vọng, thấp hơn nghĩa là pool tìm sớm hơn. Vòng riêng dao động mạnh cả hai hướng, nên **Average Luck** trên bảng điều khiển là số nên theo dõi. Bảng **Pool Luck History** liên kết tới đây qua **View All**.
-
-### Trạng thái
-
-[Status](/status) là trang sức khỏe riêng của pool. Nó hiển thị pool, HTTP công khai, API, Stratum, cơ sở dữ liệu và daemon có trực tuyến không; mẫu job hiện tại mới đến đâu; độ cao chuỗi; thời gian hoạt động trong 10 phút, 6 giờ, 24 giờ và 7 ngày qua; cùng lịch sử sự cố. Thời gian hoạt động được đo hai cách: bộ giám sát trên máy chủ pool và đầu dò bên ngoài chạy trên Cloudflare.
 
 ## Còn bảng điều khiển riêng của seine?
 

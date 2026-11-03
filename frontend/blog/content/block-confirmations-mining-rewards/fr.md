@@ -9,7 +9,7 @@ faq:
     a: 'Non. Soixante intervalles cibles de cinq minutes donnent une estimation de 300 minutes, soit cinq heures. Le progrès réel dépend des blocs ajoutés, à intervalles variables. Maturité, seuil de paiement et transaction ultérieure sont des étapes distinctes.'
   - q: 'Faut-il continuer à miner pour qu''une récompense mûrisse ?'
     a: 'Un bloc trouvé gagne de la profondeur avec les blocs du réseau, même si votre mineur est déconnecté. Votre droit dépend des règles comptables du pool. Arrêter n''accélère ni ne réinitialise sa maturité ; suivez la récompense dans My Stats.'
-sourceHash: '7383b256ba1a'
+sourceHash: '2f9675c64c30'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ Après envoi, suivez cette transaction et l'état de réception et de disponibil
 
 Dans [Blocks](/blocks), identifiez hauteur, hash et statut. Ouvrez [My Stats](/stats) avec l'adresse du mineur et consultez estimations et soldes confirmés. Lorsqu'un paiement existe, suivez sa transaction depuis l'historique. Chaque observation correspond ainsi au bloc, au compte ou au portefeuille.
 
-Vérifiez les valeurs dans [Get Started](/start) ou `https://bntpool.com/api/info` et le [statut du pool](/status). Pour une investigation, notez adresse, identifiant de bloc ou transaction et heure ; ne partagez jamais les mots de récupération. Le [guide de suivi](/blog/fr/track-your-miner-on-bntpool/) complète l'explication. Les blocs gagnent de la profondeur hors ligne ; l'éligibilité suit travail enregistré et chaîne.
+Vérifiez les valeurs dans [Get Started](/start) ou `https://bntpool.com/api/info`. Pour une investigation, notez adresse, identifiant de bloc ou transaction et heure ; ne partagez jamais les mots de récupération. Le [guide de suivi](/blog/fr/track-your-miner-on-bntpool/) complète l'explication. Les blocs gagnent de la profondeur hors ligne ; l'éligibilité suit travail enregistré et chaîne.
 
 <CTA target="pool" title="Suivez vos récompenses" text="Connectez-vous à bntpool.com et suivez estimations, soldes confirmés et paiements dans My Stats." />

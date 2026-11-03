@@ -9,7 +9,7 @@ faq:
     a: 'De explorer helpt de openbare ketenstatus van een transactie te controleren. Blocknet gebruikt private outputs. Een gewone adreszoekopdracht toont daarom niet je walletsaldo en bewijst niet dat een bepaalde output van jou is. Je wallet scant de keten om zijn eigen outputs te herkennen.'
   - q: 'Welke gegevens zijn nodig bij een ontbrekende betaling?'
     a: 'Geef het volledige ontvangstadres van de poolzoekopdracht, transactie-ID, geschatte tijd, poolstatus en synchronisatievoortgang. Beschrijf of de transactie in de walletgeschiedenis staat. Deel accountgegevens alleen in de juiste ondersteuningscontext en nooit je herstelzin, privésleutels of walletwachtwoord.'
-sourceHash: '915075cf4e2b'
+sourceHash: '7927c9203d7f'
 translation: draft
 ---
 
@@ -31,13 +31,13 @@ De openbare Payouts-pagina beschrijft batches met mogelijk meerdere ontvangers e
 
 ## Staat de betaling in de wachtrij, onbevestigd of bevestigd?
 
-Lees de huidige status voordat je aanneemt dat alle stappen klaar zijn. Een wachtrijvermelding wordt nog aan poolzijde verwerkt; een onbevestigde transactie heeft ketenbevestiging nodig. Vernieuw de registratie en volg de link zodra beschikbaar. De [statuspagina](/status) geeft operationele context als meerdere waarnemingen op een onderbreking wijzen.
+Lees de huidige status voordat je aanneemt dat alle stappen klaar zijn. Een wachtrijvermelding wordt nog aan poolzijde verwerkt; een onbevestigde transactie heeft ketenbevestiging nodig. Vernieuw de registratie en volg de link zodra beschikbaar.
 
 Houd rijping van miningbeloningen en bevestiging van de betalingstransactie apart. Het blok dat de beloning opleverde en de latere betaling hebben verschillende ID’s en functies. De [bevestigingshandleiding](/blog/nl/block-confirmations-mining-rewards/) legt dat uit. Een transactie-ID geeft een concreet onderzoekspunt, maar bewijst niet dat je lokale wallet de betaling al heeft gescand en herkend.
 
 ## Controleer de transactie op de keten
 
-Open de explorerlink bij de betaling en vergelijk het volledige ID met je notities. Lees ketenstatus en beschikbare blokgegevens. Vindt de explorer de transactie nog niet, vergelijk dan de vernieuwde poolregistratie en servicestatus voordat je concludeert. Een tijdelijk zoekresultaat bepaalt op zichzelf geen oorzaak.
+Open de explorerlink bij de betaling en vergelijk het volledige ID met je notities. Lees ketenstatus en beschikbare blokgegevens. Vindt de explorer de transactie nog niet, controleer dan de vernieuwde poolregistratie voordat je concludeert. Een tijdelijk zoekresultaat bepaalt op zichzelf geen oorzaak.
 
 Door Blocknets privacy toont een gewone adreszoekopdracht geen openbaar ontvangersaldo. Transactiestatus en eigendomscontrole door de wallet beantwoorden andere vragen. Je wallet herkent inkomende outputs door de keten te scannen. De [stealth-adressenhandleiding](https://seineminer.com/nl/blog/stealth-addresses-explained/) beschrijft dit; een openbare adreslijst reproduceert niet de private walletgeschiedenis.
 

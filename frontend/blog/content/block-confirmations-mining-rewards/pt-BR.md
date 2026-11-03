@@ -9,7 +9,7 @@ faq:
     a: 'Não. Sessenta intervalos-alvo de cinco minutos dão uma estimativa de 300 minutos, cinco horas. O avanço real depende de novos blocos, cujos intervalos variam. Maturidade, limite de pagamento e transação posterior são etapas diferentes.'
   - q: 'Preciso continuar minerando para uma recompensa amadurecer?'
     a: 'Um bloco encontrado ganha profundidade com os blocos da rede, mesmo com seu minerador desconectado. Sua participação depende das regras contábeis do pool. Parar não acelera nem reinicia a maturidade; acompanhe o registro em My Stats.'
-sourceHash: '7383b256ba1a'
+sourceHash: '2f9675c64c30'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ Depois do envio, acompanhe a transação e o estado de recebimento e disponibili
 
 Em [Blocos](/blocks), identifique altura, hash e estado. Abra [My Stats](/stats) com o endereço do minerador e veja estimativas e recompensas confirmadas. Quando houver pagamento, siga sua transação no histórico. Cada observação corresponde a bloco, saldo da conta ou pagamento à carteira.
 
-Confira as condições em [Get Started](/start) ou `https://bntpool.com/api/info` e o [estado do pool](/status). Para investigar, registre endereço, identificador de bloco ou transação e horário; nunca compartilhe palavras de recuperação. O [guia de acompanhamento](/blog/pt-br/track-your-miner-on-bntpool/) explica o restante. Blocos ganham profundidade mesmo offline; elegibilidade segue trabalho registrado e cadeia.
+Confira as condições em [Get Started](/start) ou `https://bntpool.com/api/info`. Para investigar, registre endereço, identificador de bloco ou transação e horário; nunca compartilhe palavras de recuperação. O [guia de acompanhamento](/blog/pt-br/track-your-miner-on-bntpool/) explica o restante. Blocos ganham profundidade mesmo offline; elegibilidade segue trabalho registrado e cadeia.
 
 <CTA target="pool" title="Acompanhe suas recompensas" text="Conecte-se ao bntpool.com e acompanhe estimativas, saldos confirmados e pagamentos em My Stats." />

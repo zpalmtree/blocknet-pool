@@ -2,7 +2,7 @@ use axum::body::Body;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{header, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use axum::middleware::Next;
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 
 use crate::api::{error_response, ApiState};
 
@@ -35,7 +35,6 @@ const OG_IMAGES: &[(&str, &[u8])] = &[
     ("og-blocks.png", include_bytes!("ui/assets/og-blocks.png")),
     ("og-payouts.png", include_bytes!("ui/assets/og-payouts.png")),
     ("og-stats.png", include_bytes!("ui/assets/og-stats.png")),
-    ("og-status.png", include_bytes!("ui/assets/og-status.png")),
     ("og-admin.png", include_bytes!("ui/assets/og-admin.png")),
 ];
 
@@ -138,6 +137,9 @@ fn page_meta(path: &str) -> &'static PageMeta {
         .get(normalize_path(path))
         .unwrap_or(&PAGE_METADATA["/404"])
 }
+
+/// Removed pages whose old links now lead to the dashboard.
+const RETIRED_PATHS: &[&str] = &["/status"];
 
 fn is_spa_route(path: &str) -> bool {
     let path = normalize_path(path);
@@ -328,6 +330,12 @@ pub(crate) fn app_fallback_response(method: Method, uri: &Uri, base_url: &str) -
     }
 
     if matches!(method, Method::GET | Method::HEAD) {
+        if RETIRED_PATHS.contains(&normalize_path(uri.path())) {
+            let target = uri
+                .query()
+                .map_or_else(|| "/".to_owned(), |query| format!("/?{query}"));
+            return Redirect::permanent(&target).into_response();
+        }
         let mut response = ui_response(
             base_url,
             uri.path_and_query()
@@ -396,7 +404,6 @@ const SITEMAP_PATHS: &[&str] = &[
     "/payouts",
     "/stats",
     "/luck",
-    "/status",
     "/checkpoints",
 ];
 
@@ -582,7 +589,7 @@ mod tests {
         let sitemap = sitemap_entries("https://pool.example");
         assert_eq!(
             sitemap.matches("<loc>").count(),
-            160 + crate::blog::blog_sitemap_paths().len()
+            SITEMAP_PATHS.len() * PAGE_LANGUAGES.len() + crate::blog::blog_sitemap_paths().len()
         );
         for locale in PAGE_LANGUAGES.iter() {
             for path in SITEMAP_PATHS {
@@ -966,6 +973,20 @@ mod tests {
     }
 
     #[test]
+    fn retired_pages_redirect_to_the_dashboard() {
+        for (path, target) in [
+            ("/status", "/"),
+            ("/status/", "/"),
+            ("/status?lang=de", "/?lang=de"),
+        ] {
+            let uri: Uri = path.parse().unwrap();
+            let response = app_fallback_response(Method::GET, &uri, "https://bntpool.com");
+            assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT, "{path}");
+            assert_eq!(response.headers()[header::LOCATION], target, "{path}");
+        }
+    }
+
+    #[test]
     fn og_images_are_registered_for_every_route_card() {
         for path in [
             "/",
@@ -975,7 +996,6 @@ mod tests {
             "/blocks",
             "/payouts",
             "/stats",
-            "/status",
             "/admin",
         ] {
             let image = &page_meta(path).image;

@@ -9,7 +9,7 @@ faq:
     a: 'Không. Với mục tiêu năm phút, 60 khoảng là 300 phút, tức năm giờ để lập kế hoạch. Tiến độ thực phụ thuộc các khối đến không đều. Trưởng thành, ngưỡng thanh toán và giao dịch thanh toán là các giai đoạn riêng.'
   - q: 'Có phải tiếp tục đào để thưởng cũ trưởng thành?'
     a: 'Khối đã tìm tăng độ sâu khi mạng thêm khối, dù máy bạn ngắt kết nối. Quyền nhận thưởng theo quy tắc kế toán pool. Dừng không tăng tốc hay đặt lại độ trưởng thành; theo dõi trong My Stats.'
-sourceHash: '7383b256ba1a'
+sourceHash: '2f9675c64c30'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ Sau khi gửi, theo dõi giao dịch và trạng thái nhận/có thể chi tiê
 
 Trên [Blocks](/blocks), tìm chiều cao, hash và trạng thái. Mở [My Stats](/stats) với địa chỉ máy đào dùng, xem phần thưởng ước tính và đã xác nhận. Khi có thanh toán, mở liên kết giao dịch từ lịch sử. Khối, số dư tài khoản và khoản trả ví là những quan sát khác nhau.
 
-Xem thiết lập hiện tại ở [Get Started](/start) hoặc `https://bntpool.com/api/info`, tình trạng dịch vụ ở [pool status](/status). Khi cần kiểm tra, ghi địa chỉ, mã khối/giao dịch và thời điểm; không chia sẻ từ khôi phục ví. [Hướng dẫn theo dõi](/blog/vi/track-your-miner-on-bntpool/) giải thích số liệu khác. Khối tiếp tục sâu hơn khi máy ngoại tuyến; quyền nhận theo công việc đã ghi và chuỗi.
+Xem thiết lập hiện tại ở [Get Started](/start) hoặc `https://bntpool.com/api/info`. Khi cần kiểm tra, ghi địa chỉ, mã khối/giao dịch và thời điểm; không chia sẻ từ khôi phục ví. [Hướng dẫn theo dõi](/blog/vi/track-your-miner-on-bntpool/) giải thích số liệu khác. Khối tiếp tục sâu hơn khi máy ngoại tuyến; quyền nhận theo công việc đã ghi và chuỗi.
 
 <CTA target="pool" title="Theo dõi phần thưởng đào" text="Kết nối bntpool.com và dùng My Stats để theo dõi thưởng ước tính, số dư đã xác nhận và thanh toán." />

@@ -11,7 +11,7 @@ faq:
     a: 'No. El pool ejecuta el nodo, crea plantillas, comprueba shares y envía bloques. En bntpool.com solo necesitas seine y una dirección Blocknet o nombre Blocknet ID. Ejecuta seine, pega la dirección y acepta el pool predeterminado: tu parte de cada bloque se paga allí.'
   - q: '¿Cómo empiezo en bntpool.com?'
     a: 'Descarga seine para Windows, macOS o Linux desde seineminer.com, ejecútalo y pega tu dirección o @name. Acepta bntpool.com, el pool predeterminado, y empieza a minar. Busca tu dirección en las estadísticas para ver tasa de hash, shares y saldo.'
-sourceHash: 'a17a47ab1d73'
+sourceHash: '15d1453f41d9'
 translation: draft
 ---
 
@@ -77,7 +77,7 @@ Estos detalles determinan cómo cobras y cómo puedes comprobarlo:
 
 - **Un sistema claro.** Debe publicar el método y ajustes como la ventana PPLNS. bntpool.com los muestra en [Get Started](/start) y `https://bntpool.com/api/info`.
 - **Confirmaciones y mínimo.** Las recompensas esperan suficiente profundidad y se pagan al superar un mínimo. bntpool.com confirma tras 60 bloques, igual que la madurez coinbase, y paga automáticamente desde 0,1 BNT.
-- **Cifras públicas verificables.** Debes poder ver todos los bloques y pagos. bntpool.com ofrece [Blocks](/blocks), [Payouts](/payouts), esfuerzo por ronda en [Luck](/luck) y salud en [Status](/status).
+- **Cifras públicas verificables.** Debes poder ver todos los bloques y pagos. bntpool.com ofrece [Blocks](/blocks), [Payouts](/payouts) y esfuerzo por ronda en [Luck](/luck).
 - **Tus estadísticas.** Busca tu dirección para tasa, shares y saldo en [My Stats](/stats). La [guía de seguimiento](/blog/es/track-your-miner-on-bntpool/) explica sus tarjetas.
 - **Configuración sencilla.** Menos ajustes permiten empezar antes. bntpool.com es el valor predeterminado de seine, que ajusta hilos, kernels y memoria. Puedes acceder con un [nombre Blocknet ID](https://seineminer.com/es/blog/blocknet-id-pay-by-name/) como `@name` en lugar de la dirección completa.
 

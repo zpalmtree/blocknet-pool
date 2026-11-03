@@ -9,7 +9,7 @@ faq:
     a: 'Die Verbindungen haben verschiedene Aufgaben. bntpool.com verwendet HTTPS für Webseiten und API-Daten; der dokumentierte Mining-Endpunkt ist stratum+tcp://bntpool.com:3333. Trage ihn in der Pool-Einstellung des Miners ein. Das erfolgreiche Öffnen der Webseite stellt noch keine Mining-Verbindung her.'
   - q: 'Bedeutet ein akzeptierter Stratum-Share eine Auszahlung?'
     a: 'Nein. Eine Share-Antwort meldet das Ergebnis einer Einreichung innerhalb der Sitzung. Verifizierung, netzwerkgültiger Block, Belohnungsberechtigung und abgeschlossene Auszahlung sind getrennte Schritte. Verfolge akzeptierte Arbeit unter My Stats; die Auszahlungsanleitung erklärt Bestätigungen, PPLNS und die Auszahlungsschwelle.'
-sourceHash: '5cc5086d7b28'
+sourceHash: '29a40e87ac51'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ Die Antwort kann Akzeptanz, Verifizierungsstatus und Schwierigkeit enthalten. Li
 
 Prüfe der Reihe nach: Endpunkt erreicht, Anmeldung akzeptiert, Job empfangen, Hashing aktiv, Einreichungen beantwortet. Nach Verbindungsverlust verbindet sich der Client neu und baut eine Sitzung auf, bevor neue Arbeit eintrifft. Nutze genaue Logmeldung und Zeitpunkt zur Einordnung. Eine erreichbare Webseite beweist nicht, dass dieser Rechner den Mining-Port erreicht.
 
-Öffne [My Stats](/stats) für die gewünschte Adresse und den [Poolstatus](/status) für den Dienstzustand. Gib Share-basierten Hashrate-Schätzungen nach Start oder Wiederverbindung Zeit für Beobachtungen. Trenne Protokoll und Auszahlungszeit: Anmeldung bereitet die Sitzung vor, Jobs liefern Arbeit, Shares melden Ergebnisse und die Abrechnung bestimmt die späteren Belohnungsschritte.
+Öffne [My Stats](/stats) für die gewünschte Adresse. Gib Share-basierten Hashrate-Schätzungen nach Start oder Wiederverbindung Zeit für Beobachtungen. Trenne Protokoll und Auszahlungszeit: Anmeldung bereitet die Sitzung vor, Jobs liefern Arbeit, Shares melden Ergebnisse und die Abrechnung bestimmt die späteren Belohnungsschritte.
 
 <CTA target="pool" title="seine mit bntpool.com verbinden" text="Nutze die Pool-Einrichtung und verfolge Jobs, Shares und dein Rig unter My Stats." />

@@ -127,22 +127,6 @@
     "descriptionKey": "statsDescription",
     "labelKey": "m005"
   },
-  "/status": {
-    "title": "Blocknet Pool Status",
-    "description": "Live operational status and health of the Blocknet mining pool.",
-    "image": "og-status.png",
-    "index": true,
-    "label": "Status",
-    "guides": [
-      {
-        "href": "/blog/track-your-miner-on-bntpool/#zero-hashrate",
-        "label": "Check connection and zero-hashrate problems"
-      }
-    ],
-    "titleKey": "m617",
-    "descriptionKey": "m548",
-    "labelKey": "m006"
-  },
   "/admin": {
     "title": "Pool Admin Dashboard",
     "description": "Operator dashboard for the Blocknet mining pool.",

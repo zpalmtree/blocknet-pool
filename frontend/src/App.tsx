@@ -14,7 +14,6 @@ import { DashboardPage } from './pages/DashboardPage';
 import { LuckPage } from './pages/LuckPage';
 import { PayoutsPage } from './pages/PayoutsPage';
 import { StartPage } from './pages/StartPage';
-import { StatusPage } from './pages/StatusPage';
 import { AdminPage, StatsPage, WalletPage, PageBoundary, preloadPage } from './components/DeferredPages';
 import type { InfoResponse, Route } from './types';
 
@@ -215,8 +214,6 @@ export function App() {
         onJumpToStats={onJumpToStats}
       />
     );
-  } else if (route === 'status') {
-    currentPage = <StatusPage api={api} liveTick={liveTick} />;
   } else {
     currentPage = (
       <DashboardPage

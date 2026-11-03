@@ -9,7 +9,7 @@ faq:
     a: 'Nee. Zestig doelintervallen van vijf minuten geven een schatting van 300 minuten, vijf uur. Werkelijke voortgang volgt nieuwe blokken met variabele aankomsttijden. Rijping, saldodrempel en latere betaling zijn afzonderlijke stappen.'
   - q: 'Moet ik blijven minen om een beloning te laten rijpen?'
     a: 'Een gevonden blok krijgt diepte door nieuwe netwerkblokken, ook als je miner offline is. Je aandeel volgt de boekhoudregels van de pool. Stoppen versnelt of herstart de rijping niet; volg de registratie in My Stats.'
-sourceHash: '7383b256ba1a'
+sourceHash: '2f9675c64c30'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ Volg na verzending de transactie en ontvangst en besteedbaarheid in je wallet. H
 
 Zoek op [Blocks](/blocks) hoogte, hash en status. Open [My Stats](/stats) met het miningadres en bekijk geschatte en bevestigde beloningen. Volg daarna de betalingstransactie vanuit de geschiedenis. Iedere observatie hoort zo bij blok, accountsaldo of walletbetaling.
 
-Controleer waarden op [Get Started](/start) of `https://bntpool.com/api/info` en de [poolstatus](/status). Noteer bij onderzoek adres, blok- of transactie-ID en tijd; deel nooit herstelwoorden. De [volggids](/blog/nl/track-your-miner-on-bntpool/) verklaart overige statistieken. Blokken groeien ook tijdens offline zijn; geschiktheid volgt geregistreerd werk en ketentoestand.
+Controleer waarden op [Get Started](/start) of `https://bntpool.com/api/info`. Noteer bij onderzoek adres, blok- of transactie-ID en tijd; deel nooit herstelwoorden. De [volggids](/blog/nl/track-your-miner-on-bntpool/) verklaart overige statistieken. Blokken groeien ook tijdens offline zijn; geschiktheid volgt geregistreerd werk en ketentoestand.
 
 <CTA target="pool" title="Volg je miningbeloningen" text="Verbind met bntpool.com en volg schattingen, bevestigde saldi en betalingen via My Stats." />

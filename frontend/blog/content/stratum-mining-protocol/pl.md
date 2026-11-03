@@ -9,7 +9,7 @@ faq:
     a: 'Obsługują różne połączenia. Strona bntpool.com używa HTTPS dla stron i API, a udokumentowany adres kopania to stratum+tcp://bntpool.com:3333. Wpisz go w ustawieniu poola w minerze. Samo otwarcie strony nie ustanawia połączenia do kopania.'
   - q: 'Czy zaakceptowany udział Stratum oznacza wysłaną wypłatę?'
     a: 'Nie. Odpowiedź udziału opisuje wynik zgłoszenia w sesji. Weryfikacja, poprawny blok, prawo do nagrody i zakończona wypłata to osobne etapy. Śledź przyjętą pracę w My Stats, a potwierdzenia, PPLNS i próg poznaj w poradniku wypłat.'
-sourceHash: '5cc5086d7b28'
+sourceHash: '29a40e87ac51'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ Odpowiedź może zawierać przyjęcie, status weryfikacji i trudność. Czytaj p
 
 Czytaj kolejno: serwer osiągnięty, login przyjęty, zadanie odebrane, haszowanie aktywne, zgłoszenia obsłużone. Po zerwaniu klient łączy się ponownie i ustanawia sesję przed odbiorem pracy. Dokładna wiadomość i czas wskazują etap. Działająca strona nie dowodzi dostępności portu kopania z tej maszyny.
 
-Otwórz [My Stats](/stats) dla właściwego adresu i [status poola](/status). Po starcie lub ponownym połączeniu daj estymatom hashrate czas na zebranie udziałów. Oddziel protokół od terminu wypłaty: login przygotowuje sesję, zadania dają pracę, udziały raportują wyniki, a rozliczenia ustalają kolejne etapy nagród.
+Otwórz [My Stats](/stats) dla właściwego adresu. Po starcie lub ponownym połączeniu daj estymatom hashrate czas na zebranie udziałów. Oddziel protokół od terminu wypłaty: login przygotowuje sesję, zadania dają pracę, udziały raportują wyniki, a rozliczenia ustalają kolejne etapy nagród.
 
 <CTA target="pool" title="Połącz seine z bntpool.com" text="Skorzystaj z konfiguracji poola, potem śledź zadania, udziały i riga w My Stats." />

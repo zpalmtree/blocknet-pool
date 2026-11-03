@@ -100,7 +100,7 @@ Start with the payout address, pool connection and accepted shares. A local hash
 1. **Match the address.** Look up the same receiving address or registered `@name` that seine uses. If you changed a shortname's address, restart seine so it resolves the name again, then check the resolved address on My Stats.
 2. **Match the pool.** Check that seine uses `stratum+tcp://bntpool.com:3333`. A rig mining elsewhere or in solo mode will not add shares here. The [pool setup guide](/blog/mine-blocknet-on-bntpool/) walks through the connection.
 3. **Check Recent Shares.** Wait for accepted shares, then let the page refresh. Shares arrive at variable intervals; a running local hashrate does not promise an immediate pool estimate. If accepted shares are arriving, compare averages over time.
-4. **Read the connection message.** Use the table below when the miner has not reached accepted shares. Check [Status](/status) for any current incident.
+4. **Read the connection message.** Use the table below when the miner has not reached accepted shares.
 
 | Message in seine | What to check next |
 |---|---|
@@ -126,10 +126,6 @@ These pages need no lookup and show everything the pool does in the open. The [d
 ### Luck
 
 [Luck](/luck) shows the effort of each round. Effort is the share work the pool accepted during the round divided by the block's difficulty: 100% means the block took exactly the expected amount of work, and lower means the pool found it sooner. Single rounds swing widely in both directions, so the dashboard's **Average Luck** is the figure to watch. The dashboard's **Pool Luck History** table links here through **View All**.
-
-### Status
-
-[Status](/status) is the pool's own health page. It shows whether the pool, public HTTP, API, Stratum, database and daemon are online, how fresh the current job template is, the chain height, uptime over the last 10 minutes, 6 hours, 24 hours and 7 days, and a history of incidents. Uptime is measured twice: by a monitor on the pool server and by an outside probe running on Cloudflare.
 
 ## What about seine's own dashboard?
 

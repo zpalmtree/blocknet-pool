@@ -77,7 +77,7 @@ When you compare pools, these are the details that decide how you are paid and h
 
 - **A clear payout scheme.** The pool should state its scheme and its settings, such as the PPLNS window. bntpool.com lists them on its [Get Started page](/start) and publishes them at `https://bntpool.com/api/info`.
 - **Confirmations and minimum payout.** Rewards usually wait until the block is deep enough in the chain, and payments go out once your balance passes a minimum. On bntpool.com, a block's reward is confirmed after 60 blocks, matching Blocknet's coinbase maturity, and balances of 0.1 BNT or more are paid automatically.
-- **Public, checkable numbers.** You should be able to see every block the pool found and every payment it sent. bntpool.com shows them on its [blocks](/blocks) and [payouts](/payouts) pages, round-by-round effort on the [luck page](/luck), and service health on the [status page](/status).
+- **Public, checkable numbers.** You should be able to see every block the pool found and every payment it sent. bntpool.com shows them on its [blocks](/blocks) and [payouts](/payouts) pages, and round-by-round effort on the [luck page](/luck).
 - **Your own stats.** Look up your address to see your hashrate, shares and balances. On bntpool.com that's the [stats page](/stats); the guide to [tracking your miner](/blog/track-your-miner-on-bntpool/) explains each card.
 - **Easy setup.** The fewer settings you need, the sooner you're mining. bntpool.com is the default pool in seine, which tunes threads, kernels and memory by itself, and you can log in with a [Blocknet ID name](https://seineminer.com/blog/blocknet-id-pay-by-name/) such as `@name` in place of a full address.
 

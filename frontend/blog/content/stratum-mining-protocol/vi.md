@@ -9,7 +9,7 @@ faq:
     a: 'Chúng phục vụ kết nối khác nhau. bntpool.com dùng HTTPS cho trang và API; đầu nối đào được ghi rõ là stratum+tcp://bntpool.com:3333. Nhập nó vào cấu hình pool của máy đào. Chỉ mở được website chưa thiết lập kết nối đào.'
   - q: 'Share Stratum được chấp nhận có nghĩa đã thanh toán không?'
     a: 'Không. Phản hồi share báo kết quả gửi trong phiên. Xác minh, khối hợp lệ trên mạng, quyền nhận thưởng và thanh toán hoàn tất là các bước riêng. Theo dõi công việc được chấp nhận ở My Stats và xem hướng dẫn thanh toán để hiểu xác nhận, PPLNS và ngưỡng.'
-sourceHash: '5cc5086d7b28'
+sourceHash: '29a40e87ac51'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ Phản hồi có thể báo chấp nhận, trạng thái xác minh và độ kh�
 
 Đọc lần lượt: tới đầu nối, login được nhận, có việc, băm hoạt động, lần gửi được trả lời. Khi mất kết nối, client nối lại và lập phiên trước khi nhận thêm việc. Dùng đúng thông báo và thời gian để xác định giai đoạn. Website hoạt động không chứng minh máy đó tới được cổng đào.
 
-Mở [My Stats](/stats) cho đúng địa chỉ và [trạng thái pool](/status) để xem dịch vụ. Sau khởi động hoặc nối lại, cho ước tính hashrate dựa trên share thời gian tích lũy. Tách giao thức khỏi lịch trả tiền: login chuẩn bị phiên, job giao việc, share báo kết quả, ghi sổ xác định các giai đoạn thưởng tiếp theo.
+Mở [My Stats](/stats) cho đúng địa chỉ. Sau khởi động hoặc nối lại, cho ước tính hashrate dựa trên share thời gian tích lũy. Tách giao thức khỏi lịch trả tiền: login chuẩn bị phiên, job giao việc, share báo kết quả, ghi sổ xác định các giai đoạn thưởng tiếp theo.
 
 <CTA target="pool" title="Kết nối seine với bntpool.com" text="Dùng trang thiết lập pool rồi theo dõi công việc, share và rig trong My Stats." />

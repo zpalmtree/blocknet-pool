@@ -9,7 +9,7 @@ faq:
     a: 'Stale job betekent dat de inzending hoort bij een niet meer geldige toewijzing, bijvoorbeeld verlopen of gekoppeld aan een template voorbij de respijtperiode. Controleer nieuwe jobs en opnieuw geaccepteerde shares. Herhaalde meldingen vragen om controle van verbinding en minerversie.'
   - q: 'Verlaagt hogere sharemoeilijkheid mijn beloning?'
     a: 'Moeilijkheid verandert hoeveel werk een geldige share vertegenwoordigt en hoe vaak deze wordt verwacht. Vergelijk op moeilijkheid gewogen werk over gelijke perioden, niet alleen aantallen. De beloning hangt ook af van het PPLNS-venster, meetellend werk, blokvondsten en validatieregels.'
-sourceHash: 5be830208e6c
+sourceHash: 92eae02aa6e4
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ Vergelijk geaccepteerde en afgewezen inzendingen binnen dezelfde periode en scop
 
 ## Wat doe je bij herhaalde afwijzingen?
 
-Begin met één getroffen apparaat. Noteer versie, exacte melding, begintijd en of nieuwe jobs aankomen. Controleer [Status](/status) en vervolgens verbindingsonderbrekingen. Werk bij via de [officiële seine-releases](https://github.com/zpalmtree/seine/releases) en vergelijk na één wijziging tegelijk.
+Begin met één getroffen apparaat. Noteer versie, exacte melding, begintijd en of nieuwe jobs aankomen. Controleer de verbinding op onderbrekingen. Werk bij via de [officiële seine-releases](https://github.com/zpalmtree/seine/releases) en vergelijk na één wijziging tegelijk.
 
 Een eigen proxy of integratie moet job, noncebereik en moeilijkheid bij doorsturen behouden. Blijft het probleem, deel dan een kort logfragment en apparaatdetails via het supportkanaal van het project. Verwijder geheimen en privégegevens; een herstelzin is nooit nodig voor sharediagnose.
 

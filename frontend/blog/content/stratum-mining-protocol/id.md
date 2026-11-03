@@ -9,7 +9,7 @@ faq:
     a: 'Keduanya melayani koneksi berbeda. Situs bntpool.com menggunakan HTTPS untuk halaman dan API; endpoint penambangan resminya adalah stratum+tcp://bntpool.com:3333. Masukkan endpoint itu ke pengaturan pool penambang. Berhasil membuka situs saja belum membentuk koneksi penambangan.'
   - q: 'Apakah share Stratum diterima berarti pembayaran sudah dikirim?'
     a: 'Tidak. Balasan share melaporkan hasil pengiriman dalam sesi. Verifikasi, blok valid di jaringan, kelayakan imbalan, dan pembayaran selesai merupakan tahap berbeda. Ikuti aktivitas diterima di My Stats dan baca panduan pembayaran untuk memahami konfirmasi, PPLNS, dan ambang pembayaran.'
-sourceHash: '5cc5086d7b28'
+sourceHash: '29a40e87ac51'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ Balasan dapat memuat penerimaan, status verifikasi, dan informasi kesulitan. Bac
 
 Baca tahap berurutan: endpoint terjangkau, login diterima, pekerjaan diterima, hashing aktif, dan pengiriman dibalas. Jika koneksi hilang, klien menyambung kembali dan membentuk sesi sebelum menerima pekerjaan baru. Gunakan pesan log tepat beserta waktu untuk menentukan tahapnya. Situs yang dapat dibuka tidak membuktikan port penambangan terjangkau dari mesin itu.
 
-Buka [My Stats](/stats) untuk alamat tujuan dan [status pool](/status) untuk kondisi layanan. Setelah mulai atau menyambung ulang, beri waktu estimasi hashrate berbasis share mengumpulkan pengamatan. Pisahkan komunikasi protokol dari jadwal pembayaran: login menyiapkan sesi, job memberikan pekerjaan, share melaporkan hasil, dan pencatatan menentukan tahap imbalan berikutnya.
+Buka [My Stats](/stats) untuk alamat tujuan. Setelah mulai atau menyambung ulang, beri waktu estimasi hashrate berbasis share mengumpulkan pengamatan. Pisahkan komunikasi protokol dari jadwal pembayaran: login menyiapkan sesi, job memberikan pekerjaan, share melaporkan hasil, dan pencatatan menentukan tahap imbalan berikutnya.
 
 <CTA target="pool" title="Hubungkan seine ke bntpool.com" text="Gunakan halaman pengaturan pool, lalu ikuti pekerjaan, share, dan aktivitas rig di My Stats." />

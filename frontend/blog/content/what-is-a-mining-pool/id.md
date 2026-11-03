@@ -11,7 +11,7 @@ faq:
     a: 'Tidak. Pool menjalankan node, menyusun template, memeriksa share dan mengirim blok temuan. Di bntpool.com Anda hanya perlu penambang seine dan alamat Blocknet atau nama Blocknet ID. Jalankan seine, tempel alamat, terima pool default, dan bagian setiap blok dibayar ke alamat itu.'
   - q: 'Bagaimana mulai menambang di bntpool.com?'
     a: 'Unduh seine untuk Windows, macOS atau Linux dari seineminer.com, jalankan dan tempel alamat Blocknet atau @name saat diminta. bntpool.com adalah pool default, jadi terima dan mulai menambang. Cari alamat di halaman statistik untuk melihat hashrate, share dan saldo.'
-sourceHash: 'a17a47ab1d73'
+sourceHash: '15d1453f41d9'
 translation: draft
 ---
 
@@ -77,7 +77,7 @@ Saat membandingkan pool, detail berikut menentukan pembayaran dan kemudahan meme
 
 - **Skema jelas.** Pool harus menyebutkan skema dan pengaturan seperti jendela PPLNS. bntpool.com mencantumkannya di [Get Started](/start) dan `https://bntpool.com/api/info`.
 - **Konfirmasi dan minimum pembayaran.** Imbalan biasanya menunggu blok cukup dalam, lalu dibayar setelah saldo melewati minimum. Di bntpool.com imbalan terkonfirmasi setelah 60 blok, sesuai coinbase maturity Blocknet, dan saldo setidaknya 0,1 BNT dibayar otomatis.
-- **Angka publik yang bisa diperiksa.** Anda harus dapat melihat semua blok temuan dan pembayaran. bntpool.com menyediakannya pada [blok](/blocks) dan [pembayaran](/payouts), effort per ronde di [luck](/luck), dan kesehatan layanan di [status](/status).
+- **Angka publik yang bisa diperiksa.** Anda harus dapat melihat semua blok temuan dan pembayaran. bntpool.com menyediakannya pada [blok](/blocks) dan [pembayaran](/payouts), serta effort per ronde di [luck](/luck).
 - **Statistik sendiri.** Cari alamat untuk hashrate, share dan saldo. Di bntpool.com gunakan [statistik](/stats); [panduan pemantauan](/blog/id/track-your-miner-on-bntpool/) menjelaskan tiap kartu.
 - **Pengaturan mudah.** Makin sedikit pengaturan, makin cepat mulai. bntpool.com default seine yang menyetel thread, kernel dan memori sendiri; Anda dapat login dengan [nama Blocknet ID](https://seineminer.com/id/blog/blocknet-id-pay-by-name/) seperti `@name` sebagai pengganti alamat lengkap.
 

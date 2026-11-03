@@ -9,7 +9,7 @@ faq:
     a: 'Baca label dan definisinya terlebih dahulu. Kolom Effort dan kartu Average Luck di bntpool.com menyatakan kerja relatif terhadap kerja yang diharapkan. Nilai lebih rendah berarti lebih sedikit kerja tercatat per blok. Situs lain mungkin memakai konvensi kebalikannya. Bandingkan metrik dan ukuran sampel yang setara, bukan persentase saja.'
   - q: 'Apakah putaran panjang meningkatkan pembayaran berikutnya?'
     a: 'Putaran panjang tidak menjamin pembayaran pribadi yang lebih besar. Penemuan blok menentukan kapan imbalan tersedia, sedangkan perhitungan PPLNS menentukan bagian Anda berdasarkan kerja diterima yang memenuhi syarat. Setelahnya berlaku aturan konfirmasi dan pembayaran. Periksa saldo di Statistik Saya dan urutannya di panduan pembayaran.'
-sourceHash: 'f7051fa67591'
+sourceHash: '3dce88998f4a'
 translation: draft
 ---
 
@@ -83,7 +83,7 @@ Karena itu, saldo dapat berubah bertahap meskipun penambang terus mengirim share
 
 ## Apa yang perlu diperiksa selama putaran panjang?
 
-Periksa hal yang dapat diamati langsung: penambang berjalan, share terus diterima, dan alamat yang benar muncul di [Statistik Saya](/stats). Gunakan [Status](/status) untuk kesehatan layanan publik. Jika share diterima Anda berhenti, ikuti [panduan pemecahan masalah statistik penambang](/blog/id/track-your-miner-on-bntpool/#zero-hashrate); putaran pool panjang dan rig terputus memerlukan pemeriksaan berbeda.
+Periksa hal yang dapat diamati langsung: penambang berjalan, share terus diterima, dan alamat yang benar muncul di [Statistik Saya](/stats). Jika share diterima Anda berhenti, ikuti [panduan pemecahan masalah statistik penambang](/blog/id/track-your-miner-on-bntpool/#zero-hashrate); putaran pool panjang dan rig terputus memerlukan pemeriksaan berbeda.
 
 Setelah koneksi sehat, baca keberuntungan dalam riwayat yang bermakna dengan definisi yang sama. Setiap angka dasbor pun punya peran jelas: hashrate memperkirakan kerja per detik, effort membandingkan kerja dengan kerja yang diharapkan untuk satu blok, dan saldo menunjukkan perhitungan imbalan. Tidak ada yang mengharuskan menebak kapan hash pemenang berikutnya datang.
 

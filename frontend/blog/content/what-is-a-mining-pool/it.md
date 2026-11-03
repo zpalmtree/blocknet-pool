@@ -11,7 +11,7 @@ faq:
     a: 'No. La pool gestisce nodo, template, verifica delle share e invio dei blocchi. Su bntpool.com servono solo seine e un indirizzo Blocknet o nome Blocknet ID. Avvia seine, incolla l’indirizzo e accetta la pool predefinita: la quota di ogni blocco viene pagata lì.'
   - q: 'Come inizio a minare su bntpool.com?'
     a: 'Scarica seine per Windows, macOS o Linux da seineminer.com, eseguilo e incolla indirizzo Blocknet o @name. bntpool.com è la pool predefinita: accettala e inizia. Cerca l’indirizzo nella pagina statistiche per vedere hashrate, share e saldo.'
-sourceHash: 'a17a47ab1d73'
+sourceHash: '15d1453f41d9'
 translation: draft
 ---
 
@@ -77,7 +77,7 @@ Questi dettagli determinano come vieni pagato e quanto è facile verificarlo:
 
 - **Uno schema chiaro.** La pool deve dichiarare schema e impostazioni, come la finestra PPLNS. bntpool.com li elenca su [Get Started](/start) e `https://bntpool.com/api/info`.
 - **Conferme e pagamento minimo.** Le ricompense attendono una profondità sufficiente e partono oltre una soglia. Su bntpool.com sono confermate dopo 60 blocchi, come la maturità coinbase, e saldi da 0,1 BNT vengono pagati automaticamente.
-- **Numeri pubblici verificabili.** Devi poter vedere ogni blocco e pagamento. bntpool.com li mostra su [Blocks](/blocks) e [Payouts](/payouts), l’effort dei round su [Luck](/luck) e la salute dei servizi su [Status](/status).
+- **Numeri pubblici verificabili.** Devi poter vedere ogni blocco e pagamento. bntpool.com li mostra su [Blocks](/blocks) e [Payouts](/payouts), oltre all’effort dei round su [Luck](/luck).
 - **Le tue statistiche.** Cerca l’indirizzo per hashrate, share e saldi nella [pagina statistiche](/stats); la [guida al monitoraggio](/blog/it/track-your-miner-on-bntpool/) spiega ogni scheda.
 - **Configurazione semplice.** Meno impostazioni, prima mini. bntpool.com è la pool predefinita di seine, che ottimizza thread, kernel e memoria da solo; puoi accedere con un [nome Blocknet ID](https://seineminer.com/it/blog/blocknet-id-pay-by-name/) come `@name` al posto dell’indirizzo completo.
 

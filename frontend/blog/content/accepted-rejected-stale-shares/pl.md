@@ -9,7 +9,7 @@ faq:
     a: 'Stale job oznacza przypisanie, które nie jest już dopuszczalne, na przykład wygasłe lub oparte na starym szablonie po okresie tolerancji. Sprawdź nowe zadania i powrót akceptowanych udziałów. Powtarzające się komunikaty wymagają sprawdzenia połączenia i wersji minera.'
   - q: 'Czy wyższa trudność udziałów zmniejsza nagrodę?'
     a: 'Trudność zmienia pracę reprezentowaną przez kwalifikujący się udział i oczekiwaną częstotliwość. Porównuj pracę ważoną trudnością w równych okresach, nie surowe liczby. Nagroda zależy też od okna PPLNS, kwalifikującej się pracy, znalezionych bloków i reguł walidacji.'
-sourceHash: 5be830208e6c
+sourceHash: 92eae02aa6e4
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ Porównuj przyjęcia i odrzucenia w tym samym okresie i zakresie. Miner może li
 
 ## Co robić przy powtarzających się odrzuceniach?
 
-Zacznij od jednej maszyny. Zapisz wersję, dokładny komunikat, początek i to, czy przychodzą nowe zadania. Sprawdź [Status](/status), potem przerwy połączenia. Aktualizuj z [oficjalnych wydań seine](https://github.com/zpalmtree/seine/releases) i porównuj po jednej zmianie naraz.
+Zacznij od jednej maszyny. Zapisz wersję, dokładny komunikat, początek i to, czy przychodzą nowe zadania. Sprawdź, czy połączenie nie jest przerywane. Aktualizuj z [oficjalnych wydań seine](https://github.com/zpalmtree/seine/releases) i porównuj po jednej zmianie naraz.
 
 Własne proxy lub integracja musi zachować zadanie, zakres nonce i trudność podczas przekazywania. Jeśli problem trwa, wyślij krótki fragment logu i dane maszyny przez kanał pomocy projektu. Usuń sekrety i prywatne dane; fraza odzyskiwania portfela nigdy nie jest potrzebna do diagnozy udziałów.
 

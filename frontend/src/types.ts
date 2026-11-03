@@ -8,7 +8,6 @@ export type Route =
   | "payouts"
   | "stats"
   | "admin"
-  | "status"
   | "not-found";
 export type AdminTab =
   | "miners"
@@ -503,58 +502,6 @@ export interface StatsInsightsResponse {
   avg_effort_pct: number | null;
   luck_history: LuckRound[];
   rejections: RejectionAnalytics;
-}
-
-interface StatusUptimeWindow {
-  label: string;
-  sample_count: number;
-  external_sample_count: number;
-  api_up_pct: number | null;
-  stratum_up_pct: number | null;
-  pool_up_pct: number | null;
-  daemon_up_pct: number | null;
-  database_up_pct: number | null;
-  public_http_up_pct: number | null;
-}
-
-interface StatusIncident {
-  id: number;
-  kind: string;
-  severity: string;
-  started_at: UnixLike;
-  duration_seconds: number | null;
-  message: string;
-  ongoing: boolean;
-}
-
-interface StatusServiceHealth {
-  observed: boolean;
-  healthy: boolean;
-}
-
-export interface StatusResponse {
-  healthy: boolean;
-  pool_uptime_seconds: number;
-  services: {
-    public_http: StatusServiceHealth;
-    api: StatusServiceHealth;
-    stratum: StatusServiceHealth;
-    database: StatusServiceHealth;
-    daemon: StatusServiceHealth;
-  };
-  daemon: {
-    reachable: boolean;
-    chain_height: number | null;
-    syncing: boolean | null;
-  };
-  template: {
-    observed: boolean;
-    fresh: boolean;
-    age_seconds: number | null;
-    last_refresh_millis: number | null;
-  };
-  uptime: StatusUptimeWindow[];
-  incidents: StatusIncident[];
 }
 
 export interface PagerState {

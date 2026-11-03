@@ -1,8 +1,8 @@
 ---
 title: 'Je miner volgen op bntpool.com'
-description: 'Zoek je adres of @name op bntpool.com voor hashrate, shares, saldo en betalingen. Volg blokken, luck en uptime of gebruik de openbare API in je scripts.'
+description: 'Zoek je adres of @name op bntpool.com voor hashrate, shares, saldo en betalingen. Volg blokken en luck of gebruik de openbare API in je scripts.'
 tags: ['bntpool', 'Miningstatistieken', 'Pool-API', 'Blocknet']
-sourceHash: '40197b2fa166'
+sourceHash: 'f74ae9281fd2'
 translation: draft
 faq:
   - q: 'Waarom verschilt mijn hashrate op bntpool.com van seine?'
@@ -99,7 +99,7 @@ Controleer eerst het uitbetalingsadres, de poolverbinding en de geaccepteerde sh
 1. **Controleer het adres.** Zoek hetzelfde ontvangstadres of geregistreerde `@name` op dat seine gebruikt. Heb je het adres van een korte naam gewijzigd, herstart seine om de naam opnieuw op te zoeken en controleer daarna het gevonden adres in My Stats.
 2. **Controleer de pool.** Controleer of seine `stratum+tcp://bntpool.com:3333` gebruikt. Een machine die elders of solo mint, voegt hier geen shares toe. De [poolinstallatiegids](/blog/nl/mine-blocknet-on-bntpool/) legt de verbinding uit.
 3. **Bekijk Recent Shares.** Wacht op geaccepteerde shares en laat de pagina vernieuwen. Shares komen met wisselende tussenpozen binnen; een actieve lokale hashrate garandeert geen onmiddellijke poolschatting. Komen er geaccepteerde shares binnen, vergelijk dan gemiddelden over langere tijd.
-4. **Lees de verbindingsmelding.** Gebruik de tabel zolang de miner nog geen geaccepteerde shares levert. Kijk op [Status](/status) voor actuele incidenten.
+4. **Lees de verbindingsmelding.** Gebruik de tabel zolang de miner nog geen geaccepteerde shares levert.
 
 | Melding in seine | Wat je vervolgens controleert |
 |---|---|
@@ -125,10 +125,6 @@ Deze pagina’s vereisen geen adreszoekopdracht en tonen openlijk wat de pool do
 ### Luck
 
 [Luck](/luck) toont de effort per ronde: geaccepteerd sharewerk gedeeld door de blokmoeilijkheid. 100% betekent precies de verwachte hoeveelheid werk; lager betekent eerder gevonden. Losse rondes kunnen sterk in beide richtingen schommelen. Let daarom op **Average Luck** op het dashboard. **View All** bij **Pool Luck History** brengt je naar deze pagina.
-
-### Status
-
-[Status](/status) is de gezondheidspagina van de pool. Ze toont of pool, openbare HTTP, API, Stratum, database en daemon online zijn, hoe vers de huidige taaktemplate is, de ketenhoogte, uptime over 10 minuten, 6 uur, 24 uur en 7 dagen, plus incidentgeschiedenis. Uptime wordt dubbel gemeten: door een monitor op de poolserver en een externe probe op Cloudflare.
 
 ## En het dashboard van seine zelf?
 

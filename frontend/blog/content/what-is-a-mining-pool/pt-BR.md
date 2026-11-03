@@ -2,7 +2,7 @@
 title: O que é um pool de mineração?
 description: Um pool combina a hashrate de vários mineradores e divide cada recompensa de bloco. Entenda seu funcionamento, PPLNS, PPS, mineração solo e o que avaliar.
 tags: [Fundamentos de mineração, Pools de mineração, PPLNS, bntpool]
-sourceHash: 'a17a47ab1d73'
+sourceHash: '15d1453f41d9'
 translation: draft
 faq:
   - q: 'Entrar em um pool aumenta quanto eu minero?'
@@ -77,7 +77,7 @@ Ao comparar pools, estes detalhes definem como você recebe e como pode conferir
 
 - **Sistema de pagamento claro.** O pool deve informar o sistema e as configurações, como a janela PPLNS. O bntpool.com os lista em [Get Started](/start) e publica em `https://bntpool.com/api/info`.
 - **Confirmações e mínimo.** Recompensas normalmente esperam o bloco atingir profundidade suficiente; pagamentos saem quando o saldo passa do mínimo. No bntpool.com, a recompensa confirma após 60 blocos, conforme a maturidade da coinbase do Blocknet, e saldos a partir de 0,1 BNT são pagos automaticamente.
-- **Números públicos e verificáveis.** Você deve poder ver cada bloco encontrado e pagamento enviado. O bntpool.com mostra tudo em [Blocks](/blocks) e [Payouts](/payouts), o esforço por rodada em [Luck](/luck) e a saúde dos serviços em [Status](/status).
+- **Números públicos e verificáveis.** Você deve poder ver cada bloco encontrado e pagamento enviado. O bntpool.com mostra tudo em [Blocks](/blocks) e [Payouts](/payouts), além do esforço por rodada em [Luck](/luck).
 - **Suas estatísticas.** Consulte o endereço para ver hashrate, shares e saldos. No bntpool.com, use a [página de estatísticas](/stats); o [guia de acompanhamento](/blog/pt-br/track-your-miner-on-bntpool/) explica cada cartão.
 - **Configuração simples.** Quanto menos ajustes, mais cedo você minera. O bntpool.com é o pool padrão do seine, que ajusta threads, kernels e memória sozinho. Você pode usar um [nome Blocknet ID](https://seineminer.com/pt-br/blog/blocknet-id-pay-by-name/) como `@name` no lugar do endereço completo.
 

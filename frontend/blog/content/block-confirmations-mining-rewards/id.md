@@ -9,7 +9,7 @@ faq:
     a: 'Tidak. Enam puluh interval target lima menit menghasilkan perkiraan 300 menit atau lima jam. Kemajuan nyata mengikuti blok baru dengan waktu kedatangan bervariasi. Kematangan, ambang saldo, dan transaksi pembayaran berikutnya adalah tahap terpisah.'
   - q: 'Haruskah terus menambang agar imbalan matang?'
     a: 'Blok yang telah ditemukan bertambah dalam saat jaringan menambah blok, meski miner terputus. Hak imbalan mengikuti aturan akuntansi pool. Berhenti tidak mempercepat atau mengulang kematangan; pantau catatannya di My Stats.'
-sourceHash: '7383b256ba1a'
+sourceHash: '2f9675c64c30'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ Setelah dikirim, ikuti transaksi serta status penerimaan dan kemampuan belanja d
 
 Di [Blocks](/blocks), temukan tinggi, hash, dan status. Buka [My Stats](/stats) dengan alamat miner untuk melihat perkiraan serta imbalan terkonfirmasi. Saat ada pembayaran, ikuti tautan transaksinya. Setiap pengamatan berhubungan dengan blok, saldo akun, atau pembayaran dompet.
 
-Periksa pengaturan di [Get Started](/start) atau `https://bntpool.com/api/info` dan [status pool](/status). Untuk investigasi, catat alamat, ID blok atau transaksi, dan waktu; jangan bagikan kata pemulihan. [Panduan pemantauan](/blog/id/track-your-miner-on-bntpool/) menjelaskan sisanya. Blok tetap bertambah dalam saat offline; kelayakan mengikuti pekerjaan tercatat dan rantai.
+Periksa pengaturan di [Get Started](/start) atau `https://bntpool.com/api/info`. Untuk investigasi, catat alamat, ID blok atau transaksi, dan waktu; jangan bagikan kata pemulihan. [Panduan pemantauan](/blog/id/track-your-miner-on-bntpool/) menjelaskan sisanya. Blok tetap bertambah dalam saat offline; kelayakan mengikuti pekerjaan tercatat dan rantai.
 
 <CTA target="pool" title="Pantau imbalan penambangan" text="Hubungkan ke bntpool.com dan ikuti perkiraan, saldo terkonfirmasi, serta pembayaran di My Stats." />

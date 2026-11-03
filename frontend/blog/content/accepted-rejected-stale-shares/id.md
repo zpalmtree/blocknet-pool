@@ -9,7 +9,7 @@ faq:
     a: 'Stale job berarti kiriman merujuk pada penugasan yang tidak lagi memenuhi syarat, misalnya kedaluwarsa atau template lama melewati masa tenggang. Periksa job baru dan kembalinya share diterima. Jika berulang, periksa koneksi dan versi penambang.'
   - q: 'Apakah kesulitan share lebih tinggi mengurangi imbalan?'
     a: 'Kesulitan mengubah pekerjaan yang diwakili setiap share layak dan frekuensi kedatangan yang diharapkan. Bandingkan pekerjaan berbobot kesulitan selama periode setara, bukan jumlah mentah share. Imbalan juga bergantung pada jendela PPLNS, pekerjaan layak, blok yang ditemukan, dan aturan validasi.'
-sourceHash: 5be830208e6c
+sourceHash: 92eae02aa6e4
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ Bandingkan kiriman diterima dan ditolak pada periode dan cakupan yang sama. Pena
 
 ## Apa yang dilakukan bila penolakan berulang?
 
-Mulai dari satu rig terdampak. Catat versi, pesan persis, waktu mulai, dan apakah job baru masih datang. Periksa [Status](/status), lalu gangguan koneksi rig. Perbarui dari [rilis resmi seine](https://github.com/zpalmtree/seine/releases) dan bandingkan setelah satu perubahan setiap kali.
+Mulai dari satu rig terdampak. Catat versi, pesan persis, waktu mulai, dan apakah job baru masih datang. Periksa gangguan koneksi rig. Perbarui dari [rilis resmi seine](https://github.com/zpalmtree/seine/releases) dan bandingkan setelah satu perubahan setiap kali.
 
 Proxy atau integrasi khusus harus mempertahankan job, rentang nonce, dan kesulitan saat meneruskan kiriman. Jika berlanjut, berikan potongan log singkat serta detail rig melalui kanal dukungan proyek. Hapus rahasia dan data akun pribadi; frasa pemulihan dompet tidak pernah diperlukan untuk diagnosis share.
 

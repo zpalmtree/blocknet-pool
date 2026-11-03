@@ -31,13 +31,13 @@ The public Payouts page describes payout batches, which may contain multiple rec
 
 ## Is the payout queued, unconfirmed or confirmed?
 
-Read the current status before assuming that a listed payment has completed every step. A queued entry is still a pool-side processing state; an unconfirmed transaction still needs chain confirmation. Refresh the record and follow the transaction link when it is available. The pool's [status page](/status) provides operational context if several observations point to a service interruption.
+Read the current status before assuming that a listed payment has completed every step. A queued entry is still a pool-side processing state; an unconfirmed transaction still needs chain confirmation. Refresh the record and follow the transaction link when it is available.
 
 Keep mining-reward maturity separate from payout-transaction confirmation. The block that earned your reward and the later transaction paying your wallet have different identifiers and roles. The [confirmation guide](/blog/block-confirmations-mining-rewards/) explains that distinction. A transaction identifier provides a concrete item to investigate, but its presence alone is not proof that your local wallet has scanned and recognized the payment.
 
 ## Check the transaction on the chain
 
-Open the explorer link attached to the payout and compare the full transaction identifier with your notes. Read the reported chain status and, when available, its block information. If the explorer has not found it yet, compare the refreshed pool record and service status before drawing a conclusion. A temporary lookup result alone does not identify the cause.
+Open the explorer link attached to the payout and compare the full transaction identifier with your notes. Read the reported chain status and, when available, its block information. If the explorer has not found it yet, check the refreshed pool record before drawing a conclusion. A temporary lookup result alone does not identify the cause.
 
 Blocknet's privacy means a normal explorer address search does not display a public recipient balance. The explorer's transaction status and your wallet's ownership checks answer different questions. Your wallet recognizes incoming outputs while scanning the chain. The [stealth-address guide](https://seineminer.com/blog/stealth-addresses-explained/) explains that process; avoid expecting an ordinary public address listing to reproduce the wallet's private transaction history.
 

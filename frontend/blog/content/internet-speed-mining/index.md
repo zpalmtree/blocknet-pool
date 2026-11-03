@@ -43,7 +43,7 @@ Check whether large uploads, cloud backups or another household transfer coincid
 
 ## Which observations show a pool connection problem?
 
-Follow the miner's sequence: endpoint connection, login, job reception, share submission and response. If login is rejected, inspect the address and exact message instead of assuming weak Wi-Fi. If connections repeatedly drop, retain their timestamps and surrounding log lines. The [tracking guide](/blog/track-your-miner-on-bntpool/) covers endpoint checks and zero pool hashrate; the [status page](/status) supplies service context.
+Follow the miner's sequence: endpoint connection, login, job reception, share submission and response. If login is rejected, inspect the address and exact message instead of assuming weak Wi-Fi. If connections repeatedly drop, retain their timestamps and surrounding log lines. The [tracking guide](/blog/track-your-miner-on-bntpool/) covers endpoint checks and zero pool hashrate.
 
 After recovery, look for a new usable job and fresh accepted shares. A restored website or a successful ping does not prove that the mining session completed those stages. Conversely, a browser error alone does not show that Stratum stopped. Record what each check actually tested so you can separate the public website, the miner's transport and the pool's response.
 

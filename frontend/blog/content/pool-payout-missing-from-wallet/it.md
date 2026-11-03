@@ -9,7 +9,7 @@ faq:
     a: 'L''explorer permette di verificare lo stato pubblico della transazione sulla catena. Blocknet usa output privati, quindi una normale ricerca per indirizzo non mostra il saldo del wallet né prova che un output ti appartenga. Il wallet scansiona la catena per riconoscere i propri output.'
   - q: 'Quali dati fornire per un pagamento mancante?'
     a: 'Fornisci indirizzo ricevente completo usato sul pool, identificatore di transazione, orario approssimativo, stato del pool e avanzamento della sincronizzazione. Indica se appare nella cronologia. Condividi dati dell''account solo nel contesto di assistenza appropriato, mai frase seed, chiavi private o password del wallet.'
-sourceHash: '915075cf4e2b'
+sourceHash: '7927c9203d7f'
 translation: draft
 ---
 
@@ -31,13 +31,13 @@ La pagina pubblica Payouts descrive lotti che possono includere più destinatari
 
 ## Il pagamento è in coda, non confermato o confermato?
 
-Leggi lo stato prima di presumere che una voce abbia completato ogni passaggio. In coda indica ancora elaborazione lato pool; una transazione non confermata necessita di conferma sulla catena. Aggiorna il record e segui il link quando disponibile. La [pagina di stato](/status) offre contesto operativo se più osservazioni indicano un'interruzione.
+Leggi lo stato prima di presumere che una voce abbia completato ogni passaggio. In coda indica ancora elaborazione lato pool; una transazione non confermata necessita di conferma sulla catena. Aggiorna il record e segui il link quando disponibile.
 
 Distingui maturazione della ricompensa e conferma della transazione di pagamento. Il blocco che ha generato il premio e la transazione successiva hanno identificatori e ruoli diversi. La [guida alle conferme](/blog/it/block-confirmations-mining-rewards/) chiarisce la distinzione. Un identificatore offre un elemento concreto da indagare, ma non prova che il wallet locale abbia già scansionato e riconosciuto il pagamento.
 
 ## Verifica la transazione sulla catena
 
-Apri il link dell'explorer associato al pagamento e confronta l'identificatore completo con i tuoi appunti. Leggi stato sulla catena e informazioni del blocco disponibili. Se l'explorer non la trova ancora, confronta record aggiornato e stato del servizio prima di concludere. Un risultato temporaneo da solo non identifica la causa.
+Apri il link dell'explorer associato al pagamento e confronta l'identificatore completo con i tuoi appunti. Leggi stato sulla catena e informazioni del blocco disponibili. Se l'explorer non la trova ancora, controlla il record aggiornato prima di concludere. Un risultato temporaneo da solo non identifica la causa.
 
 La privacy di Blocknet implica che una normale ricerca per indirizzo non mostri un saldo pubblico del destinatario. Stato della transazione e controlli di proprietà del wallet rispondono a domande diverse. Il wallet riconosce output in entrata scansionando la catena. La [guida agli indirizzi stealth](https://seineminer.com/it/blog/stealth-addresses-explained/) spiega il processo; un elenco pubblico non riproduce la cronologia privata del wallet.
 

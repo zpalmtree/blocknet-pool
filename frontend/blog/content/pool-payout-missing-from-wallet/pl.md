@@ -9,7 +9,7 @@ faq:
     a: 'Eksplorator pozwala sprawdzić publiczny stan transakcji w łańcuchu. Blocknet używa prywatnych wyjść, więc zwykłe wyszukiwanie adresu nie przedstawia salda portfela ani nie dowodzi własności danego wyjścia. Portfel skanuje łańcuch, aby rozpoznać własne wyjścia.'
   - q: 'Jakie dane przekazać w sprawie brakującej wypłaty?'
     a: 'Podaj pełny adres odbiorczy użyty w wyszukiwaniu puli, identyfikator transakcji, przybliżony czas, status puli i postęp synchronizacji. Wyjaśnij, czy transakcja jest w historii. Dane konta przekazuj tylko we właściwym kanale wsparcia, nigdy frazę odzyskiwania, klucze prywatne ani hasło portfela.'
-sourceHash: '915075cf4e2b'
+sourceHash: '7927c9203d7f'
 translation: draft
 ---
 
@@ -31,13 +31,13 @@ Publiczna strona Payouts opisuje partie wypłat, które mogą zawierać wielu od
 
 ## Czy wypłata jest w kolejce, niepotwierdzona czy potwierdzona?
 
-Przeczytaj bieżący status przed uznaniem wszystkich etapów za zakończone. Wpis w kolejce nadal jest przetwarzany po stronie puli; niepotwierdzona transakcja wymaga potwierdzenia w łańcuchu. Odśwież wpis i otwórz dostępny link. [Strona statusu](/status) daje kontekst operacyjny, gdy kilka obserwacji wskazuje przerwę w usłudze.
+Przeczytaj bieżący status przed uznaniem wszystkich etapów za zakończone. Wpis w kolejce nadal jest przetwarzany po stronie puli; niepotwierdzona transakcja wymaga potwierdzenia w łańcuchu. Odśwież wpis i otwórz dostępny link.
 
 Oddziel dojrzewanie nagrody od potwierdzenia transakcji wypłaty. Blok, który wygenerował nagrodę, i późniejsza płatność mają inne identyfikatory oraz role. [Poradnik potwierdzeń](/blog/pl/block-confirmations-mining-rewards/) wyjaśnia różnicę. Identyfikator to konkretny obiekt do zbadania, ale nie dowodzi, że lokalny portfel już przeskanował i rozpoznał płatność.
 
 ## Sprawdź transakcję w łańcuchu
 
-Otwórz link eksploratora przy wypłacie i porównaj pełny identyfikator z notatkami. Odczytaj stan w łańcuchu oraz dostępne dane bloku. Jeśli eksplorator jeszcze jej nie znajduje, porównaj odświeżony wpis puli i status usługi przed wyciąganiem wniosków. Sam chwilowy wynik wyszukiwania nie określa przyczyny.
+Otwórz link eksploratora przy wypłacie i porównaj pełny identyfikator z notatkami. Odczytaj stan w łańcuchu oraz dostępne dane bloku. Jeśli eksplorator jeszcze jej nie znajduje, sprawdź odświeżony wpis puli przed wyciąganiem wniosków. Sam chwilowy wynik wyszukiwania nie określa przyczyny.
 
 Prywatność Blocknet oznacza, że zwykłe wyszukiwanie adresu nie pokazuje publicznego salda odbiorcy. Stan transakcji w eksploratorze i sprawdzenie własności przez portfel odpowiadają na inne pytania. Portfel rozpoznaje otrzymane wyjścia podczas skanowania łańcucha. [Poradnik adresów stealth](https://seineminer.com/pl/blog/stealth-addresses-explained/) wyjaśnia proces; publiczna lista nie odtwarza prywatnej historii portfela.
 

@@ -9,7 +9,7 @@ faq:
     a: 'L’explorateur permet de vérifier l’état public d’une transaction sur la chaîne. Blocknet utilise des sorties privées : une recherche d’adresse ordinaire n’affiche donc pas le solde de votre portefeuille et ne prouve pas qu’une sortie vous appartient. Votre portefeuille scanne la chaîne pour reconnaître ses propres sorties.'
   - q: 'Que fournir pour un paiement manquant ?'
     a: 'Fournissez l’adresse de réception complète utilisée sur le pool, l’identifiant de transaction, l’heure approximative, le statut du pool et l’avancement de la synchronisation. Précisez si la transaction figure dans l’historique. Partagez les données de compte dans le contexte d’assistance approprié, jamais la phrase de récupération, les clés privées ou le mot de passe.'
-sourceHash: '915075cf4e2b'
+sourceHash: '7927c9203d7f'
 translation: draft
 ---
 
@@ -31,13 +31,13 @@ La page publique Payouts décrit des lots pouvant contenir plusieurs destinatair
 
 ## Le paiement est-il en file, non confirmé ou confirmé ?
 
-Lisez le statut actuel avant de supposer qu’un paiement listé a franchi toutes les étapes. Une entrée en file est encore traitée côté pool ; une transaction non confirmée attend une confirmation sur la chaîne. Actualisez l’entrée et suivez son lien lorsqu’il existe. La [page de statut](/status) apporte le contexte opérationnel si plusieurs indices évoquent une interruption.
+Lisez le statut actuel avant de supposer qu’un paiement listé a franchi toutes les étapes. Une entrée en file est encore traitée côté pool ; une transaction non confirmée attend une confirmation sur la chaîne. Actualisez l’entrée et suivez son lien lorsqu’il existe.
 
 Distinguez la maturité de la récompense minée de la confirmation de la transaction de paiement. Le bloc qui a produit la récompense et la transaction ultérieure ont des identifiants et rôles différents. Le [guide des confirmations](/blog/fr/block-confirmations-mining-rewards/) l’explique. Un identifiant donne un élément concret à examiner, mais ne prouve pas que votre portefeuille local a déjà scanné et reconnu le paiement.
 
 ## Vérifiez la transaction sur la chaîne
 
-Ouvrez le lien d’explorateur joint au paiement et comparez l’identifiant complet à vos notes. Lisez l’état sur la chaîne et les informations du bloc si disponibles. Si l’explorateur ne trouve pas encore la transaction, comparez l’entrée actualisée et le statut du service avant de conclure. Un résultat temporaire ne permet pas, seul, d’identifier la cause.
+Ouvrez le lien d’explorateur joint au paiement et comparez l’identifiant complet à vos notes. Lisez l’état sur la chaîne et les informations du bloc si disponibles. Si l’explorateur ne trouve pas encore la transaction, vérifiez l’entrée actualisée avant de conclure. Un résultat temporaire ne permet pas, seul, d’identifier la cause.
 
 Avec la confidentialité de Blocknet, une recherche d’adresse ordinaire dans l’explorateur n’affiche pas de solde public du destinataire. L’état de transaction et les vérifications de propriété du portefeuille répondent à des questions différentes. Votre portefeuille reconnaît ses sorties entrantes en scannant la chaîne. Le [guide des adresses furtives](https://seineminer.com/fr/blog/stealth-addresses-explained/) décrit ce mécanisme ; une liste publique ne reproduit pas l’historique privé du portefeuille.
 

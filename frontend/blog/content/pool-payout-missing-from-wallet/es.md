@@ -9,7 +9,7 @@ faq:
     a: 'El explorador permite comprobar el estado público de una transacción en la cadena. Blocknet utiliza salidas privadas, por lo que una búsqueda normal por dirección no muestra el saldo de tu billetera ni demuestra que una salida te pertenezca. Tu billetera escanea la cadena para reconocer sus propias salidas.'
   - q: '¿Qué datos debo aportar sobre un pago que no aparece?'
     a: 'Proporciona la dirección receptora completa usada en el pool, el identificador de transacción, hora aproximada, estado del pool y progreso de sincronización. Explica si aparece en el historial. Comparte datos de cuenta solo en el contexto de soporte adecuado y nunca envíes frase semilla, claves privadas ni contraseña.'
-sourceHash: '915075cf4e2b'
+sourceHash: '7927c9203d7f'
 translation: draft
 ---
 
@@ -31,13 +31,13 @@ La página pública Payouts describe lotes de pagos que pueden incluir varios de
 
 ## ¿Está en cola, sin confirmar o confirmado?
 
-Lee el estado actual antes de asumir que un pago listado completó todos los pasos. Una entrada en cola sigue en procesamiento del pool; una transacción sin confirmar todavía necesita confirmación en la cadena. Actualiza el registro y sigue su enlace cuando exista. La [página de estado](/status) aporta contexto operativo si varias observaciones apuntan a una interrupción.
+Lee el estado actual antes de asumir que un pago listado completó todos los pasos. Una entrada en cola sigue en procesamiento del pool; una transacción sin confirmar todavía necesita confirmación en la cadena. Actualiza el registro y sigue su enlace cuando exista.
 
 Distingue la madurez de la recompensa minera de la confirmación de la transacción de pago. El bloque que generó la recompensa y la transacción posterior que paga a tu billetera tienen identificadores y funciones diferentes. La [guía de confirmaciones](/blog/es/block-confirmations-mining-rewards/) lo explica. Tener un identificador permite investigar algo concreto, pero no demuestra que tu billetera local ya haya escaneado y reconocido el pago.
 
 ## Comprueba la transacción en la cadena
 
-Abre el enlace al explorador del pago y compara el identificador completo con tus notas. Lee el estado en la cadena y, si está disponible, la información del bloque. Si el explorador aún no la encuentra, compara el registro actualizado y el estado del servicio antes de concluir nada. Un resultado temporal por sí solo no identifica la causa.
+Abre el enlace al explorador del pago y compara el identificador completo con tus notas. Lee el estado en la cadena y, si está disponible, la información del bloque. Si el explorador aún no la encuentra, revisa el registro actualizado antes de concluir nada. Un resultado temporal por sí solo no identifica la causa.
 
 La privacidad de Blocknet implica que una búsqueda normal por dirección en el explorador no muestra el saldo público del destinatario. El estado de la transacción y la comprobación de propiedad de tu billetera responden preguntas distintas. La billetera reconoce salidas entrantes al escanear la cadena. La [guía de direcciones sigilosas](https://seineminer.com/es/blog/stealth-addresses-explained/) explica el proceso; no esperes que una lista pública reproduzca el historial privado.
 

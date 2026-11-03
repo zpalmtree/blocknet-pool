@@ -9,7 +9,7 @@ faq:
     a: 'La respuesta stale job indica que el envío corresponde a una asignación que ya no es válida, por ejemplo porque caducó o su plantilla superó el periodo de gracia. Comprueba que lleguen trabajos nuevos y vuelvan los shares aceptados. Si se repite, revisa la conexión y la versión del minero.'
   - q: '¿Una dificultad de share mayor reduce mi recompensa?'
     a: 'La dificultad cambia el trabajo que representa cada share elegible y su frecuencia esperada. Compara trabajo ponderado por dificultad durante periodos equivalentes, en lugar de contar shares sin ponderar. La recompensa real también depende de la ventana PPLNS, el trabajo elegible, los bloques encontrados y las reglas de validación.'
-sourceHash: 5be830208e6c
+sourceHash: 92eae02aa6e4
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ Como ejemplo, 99 envíos aceptados y uno rechazado producen un 1% de rechazo por
 
 ## ¿Qué hacer si los rechazos se repiten?
 
-Empieza por un equipo afectado. Anota la versión, el mensaje exacto, cuándo empezó y si siguen llegando trabajos nuevos. Comprueba [Estado](/status) por si hay una incidencia y revisa posibles interrupciones de la conexión. Actualiza desde las [versiones oficiales de seine](https://github.com/zpalmtree/seine/releases) y compara el comportamiento cambiando una cosa cada vez.
+Empieza por un equipo afectado. Anota la versión, el mensaje exacto, cuándo empezó y si siguen llegando trabajos nuevos. Revisa posibles interrupciones de la conexión. Actualiza desde las [versiones oficiales de seine](https://github.com/zpalmtree/seine/releases) y compara el comportamiento cambiando una cosa cada vez.
 
 Si utilizas un proxy o una integración propia, verifica que preserve el trabajo, el rango de nonce y la dificultad asignados al reenviar. Si continúa el problema, proporciona un extracto breve del registro y los detalles del equipo mediante el canal de soporte del proyecto. Elimina secretos y datos privados; nunca se necesita la frase de recuperación para diagnosticar shares.
 

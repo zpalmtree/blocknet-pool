@@ -10,7 +10,6 @@ const ROUTES = {
   blocks: ['/blocks', 'm614'],
   payouts: ['/payouts', 'm615'],
   stats: ['/stats', 'm616'],
-  status: ['/status', 'm617'],
   admin: ['/admin', 'm618'],
   'not-found': ['/404', 'notFoundTitle'],
 } as const satisfies Record<Route, readonly [string, string]>;

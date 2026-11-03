@@ -9,7 +9,7 @@ faq:
     a: 'Tak, jeśli połączenie zapewnia stabilną komunikację z pulą. Obserwuj zaakceptowane udziały i ponowne łączenia podczas zwykłego użycia. Jeśli występują przerwy, porównanie przez Ethernet pomoże wydzielić odcinek bezprzewodowy. Zachowaj ustawienia minera i cel połączenia.'
   - q: 'Czy udany ping potwierdza działanie połączenia z pulą?'
     a: 'Ping sprawdza wymianę ICMP z odpowiadającym hostem. Mining wymaga też właściwego endpointu, transportu, logowania, aktualnych zadań i zaakceptowanych zgłoszeń. Strona lub ping mogą działać, gdy inna usługa jest niedostępna. Sprawdź log minera i zapisy puli.'
-sourceHash: 'bf51814bc06d'
+sourceHash: 'c23da77f349f'
 translation: draft
 ---
 
@@ -43,7 +43,7 @@ Sprawdź, czy duże wysyłki, kopie w chmurze lub domowe transfery zbiegają si�
 
 ## Co wskazuje na problem z połączeniem do puli?
 
-Śledź endpoint, logowanie, zadanie, zgłoszenie i odpowiedź. Przy odrzuconym logowaniu sprawdź adres i dokładny komunikat, zamiast obwiniać Wi-Fi. Przy powtarzających się zerwaniach zachowaj godziny i sąsiednie linie logu. [Poradnik śledzenia](/blog/pl/track-your-miner-on-bntpool/) obejmuje endpoint i zerowy hashrate; [strona statusu](/status) podaje stan usługi.
+Śledź endpoint, logowanie, zadanie, zgłoszenie i odpowiedź. Przy odrzuconym logowaniu sprawdź adres i dokładny komunikat, zamiast obwiniać Wi-Fi. Przy powtarzających się zerwaniach zachowaj godziny i sąsiednie linie logu. [Poradnik śledzenia](/blog/pl/track-your-miner-on-bntpool/) obejmuje endpoint i zerowy hashrate.
 
 Po odzyskaniu połączenia szukaj nowego użytecznego zadania i świeżych zaakceptowanych udziałów. Powrót strony lub udany ping nie dowodzą przejścia tych etapów. Sam błąd przeglądarki również nie dowodzi zatrzymania Stratum. Zapisz, co faktycznie testujesz: stronę, transport minera czy odpowiedź puli.
 

@@ -9,7 +9,7 @@ faq:
     a: 'Ja, als de verbinding stabiel met de pool communiceert. Bekijk geaccepteerde shares en herverbindingsmeldingen bij normaal gebruik. Bij onderbrekingen kan een Ethernetvergelijking het draadloze deel isoleren. Houd minerinstellingen en bestemming tijdens die vergelijking gelijk.'
   - q: 'Bewijst een geslaagde ping dat de poolverbinding werkt?'
     a: 'Ping controleert een ICMP-uitwisseling met de antwoordende host. Mining vereist ook de ingestelde endpoint, transportverbinding, succesvolle login, actuele jobs en geaccepteerde inzendingen. Website of ping kan werken terwijl een andere dienst onbereikbaar is. Controleer minerlog en poolgegevens.'
-sourceHash: 'bf51814bc06d'
+sourceHash: 'c23da77f349f'
 translation: draft
 ---
 
@@ -43,7 +43,7 @@ Controleer of grote uploads, cloudback-ups of huishoudelijke transfers samenvall
 
 ## Wat wijst op problemen met de poolverbinding?
 
-Volg endpointverbinding, login, jobontvangst, inzending en antwoord. Bij een geweigerde login controleer je adres en exacte melding voordat je wifi verdenkt. Bewaar bij herhaalde uitval tijden en omliggende logregels. De [volggids](/blog/nl/track-your-miner-on-bntpool/) behandelt endpoints en nulhashrate; de [statuspagina](/status) geeft dienstcontext.
+Volg endpointverbinding, login, jobontvangst, inzending en antwoord. Bij een geweigerde login controleer je adres en exacte melding voordat je wifi verdenkt. Bewaar bij herhaalde uitval tijden en omliggende logregels. De [volggids](/blog/nl/track-your-miner-on-bntpool/) behandelt endpoints en nulhashrate.
 
 Zoek na herstel een nieuwe bruikbare job en verse geaccepteerde shares. Een teruggekeerde website of geslaagde ping bewijst die miningstappen niet. Omgekeerd bewijst een browserfout geen Stratum-uitval. Noteer wat elke controle werkelijk testte om website, minertransport en poolantwoord te onderscheiden.
 

@@ -1,8 +1,8 @@
 ---
 title: Acompanhe seu minerador no bntpool.com
-description: Consulte endereço ou @name no bntpool.com para ver hashrate, shares, saldo e pagamentos. Acompanhe blocos, sorte e disponibilidade ou use a API pública.
+description: Consulte endereço ou @name no bntpool.com para ver hashrate, shares, saldo e pagamentos. Acompanhe blocos e sorte ou use a API pública.
 tags: [bntpool, Estatísticas de mineração, API do pool, Blocknet]
-sourceHash: '40197b2fa166'
+sourceHash: 'f74ae9281fd2'
 translation: draft
 faq:
   - q: 'Por que minha hashrate no bntpool.com difere da mostrada pelo seine?'
@@ -99,7 +99,7 @@ Comece pelo endereço de pagamento, pela conexão com o pool e pelas shares acei
 1. **Confira o endereço.** Consulte o mesmo endereço de recebimento ou `@name` registrado usado pelo seine. Se mudou o endereço de um nome curto, reinicie o seine para resolvê-lo novamente e consulte o endereço resultante em My Stats.
 2. **Confira o pool.** Verifique se o seine usa `stratum+tcp://bntpool.com:3333`. Uma máquina minerando em outro lugar ou no modo solo não envia shares para cá. O [guia de configuração do pool](/blog/pt-br/mine-blocknet-on-bntpool/) explica a conexão.
 3. **Confira Recent Shares.** Aguarde shares aceitas e a atualização da página. As shares chegam em intervalos variáveis; um hashrate local ativo não garante uma estimativa imediata do pool. Se há shares aceitas chegando, compare as médias ao longo do tempo.
-4. **Leia a mensagem de conexão.** Use a tabela enquanto o minerador ainda não envia shares aceitas. Consulte [Status](/status) para verificar incidentes atuais.
+4. **Leia a mensagem de conexão.** Use a tabela enquanto o minerador ainda não envia shares aceitas.
 
 | Mensagem no seine | O que verificar |
 |---|---|
@@ -125,10 +125,6 @@ Elas não exigem busca e mostram publicamente toda a atividade. O [painel](/) re
 ### Sorte
 
 [Luck](/luck) mostra o esforço de cada rodada: trabalho dos shares aceitos dividido pela dificuldade do bloco. 100% significa exatamente o trabalho esperado; menos significa que o pool encontrou o bloco antes. Rodadas individuais variam muito nos dois sentidos, então acompanhe **Average Luck** no painel. A tabela **Pool Luck History** leva a essa página por **View All**.
-
-### Status
-
-[Status](/status) mostra a saúde do pool: disponibilidade do pool, HTTP público, API, Stratum, banco e daemon, idade do modelo de trabalho, altura da cadeia, uptime nos últimos 10 minutos, 6 horas, 24 horas e 7 dias e histórico de incidentes. A disponibilidade é medida por um monitor no servidor e por uma sonda externa na Cloudflare.
 
 ## E o painel do próprio seine?
 

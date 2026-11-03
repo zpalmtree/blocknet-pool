@@ -2,7 +2,7 @@
 title: 'Wat is een miningpool?'
 description: 'Een miningpool bundelt de hashrate van miners en verdeelt elke blokbeloning. Lees hoe pools werken, wat PPLNS, PPS en solo betekenen en waarop je let.'
 tags: ['Miningbasis', 'Miningpools', 'PPLNS', 'bntpool']
-sourceHash: 'a17a47ab1d73'
+sourceHash: '15d1453f41d9'
 translation: draft
 faq:
   - q: 'Verdien ik meer door bij een miningpool aan te sluiten?'
@@ -77,7 +77,7 @@ Deze details bepalen hoe je wordt betaald en hoe eenvoudig je dat controleert:
 
 - **Een helder uitbetalingssysteem.** De pool hoort het systeem en de instellingen, zoals het PPLNS-venster, te vermelden. bntpool.com doet dat op [Get Started](/start) en `https://bntpool.com/api/info`.
 - **Bevestigingen en minimumuitbetaling.** Beloningen wachten doorgaans tot het blok diep genoeg ligt. Betalingen volgen zodra je saldo het minimum bereikt. Op bntpool.com is een beloning na 60 blokken bevestigd, gelijk aan Blocknets coinbase maturity. Saldi vanaf 0,1 BNT worden automatisch betaald.
-- **Openbare, controleerbare cijfers.** Je moet elk gevonden blok en elke betaling kunnen zien. bntpool.com toont ze op [Blocks](/blocks) en [Payouts](/payouts), effort per ronde op [Luck](/luck) en de gezondheid van diensten op [Status](/status).
+- **Openbare, controleerbare cijfers.** Je moet elk gevonden blok en elke betaling kunnen zien. bntpool.com toont ze op [Blocks](/blocks) en [Payouts](/payouts), evenals effort per ronde op [Luck](/luck).
 - **Je eigen statistieken.** Zoek je adres voor hashrate, shares en saldi. Dat kan op de [statistiekenpagina](/stats); de [gids voor het volgen van je miner](/blog/nl/track-your-miner-on-bntpool/) legt elke kaart uit.
 - **Eenvoudige instelling.** Minder instellingen betekent sneller minen. bntpool.com is de standaard in seine, dat threads, kernels en geheugen zelf afstemt. Je kunt inloggen met een [Blocknet ID-naam](https://seineminer.com/nl/blog/blocknet-id-pay-by-name/) zoals `@name` in plaats van een volledig adres.
 

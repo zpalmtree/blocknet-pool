@@ -9,7 +9,7 @@ faq:
     a: 'Leia primeiro o rótulo e a definição. A coluna Esforço e o cartão Sorte média da bntpool.com expressam trabalho em relação ao esperado; valores menores significam menos trabalho registrado por bloco. Outros sites podem usar a convenção inversa. Compare métricas e tamanhos de amostra equivalentes, não apenas percentuais.'
   - q: 'Uma rodada longa aumentará meu próximo pagamento?'
     a: 'Uma rodada longa não garante um pagamento individual maior. A descoberta de blocos determina quando uma recompensa fica disponível, enquanto a contabilidade PPLNS do pool determina sua parte pelo trabalho aceito elegível. Depois se aplicam as regras de confirmação e pagamento. Consulte seus saldos em Minhas estatísticas e a sequência no guia de pagamentos.'
-sourceHash: 'f7051fa67591'
+sourceHash: '3dce88998f4a'
 translation: draft
 ---
 
@@ -83,7 +83,7 @@ Por isso, seu saldo pode mudar em etapas mesmo enquanto seu minerador continua e
 
 ## O que verificar durante uma rodada longa?
 
-Verifique o que você observa diretamente: o minerador está rodando, as shares continuam sendo aceitas e o endereço correto aparece em [Minhas estatísticas](/stats). Use [Status](/status) para consultar a saúde pública do serviço. Se suas próprias shares aceitas pararem, siga o [guia de diagnóstico das estatísticas](/blog/pt-br/track-your-miner-on-bntpool/#zero-hashrate); uma rodada longa do pool e uma máquina desconectada exigem verificações diferentes.
+Verifique o que você observa diretamente: o minerador está rodando, as shares continuam sendo aceitas e o endereço correto aparece em [Minhas estatísticas](/stats). Se suas próprias shares aceitas pararem, siga o [guia de diagnóstico das estatísticas](/blog/pt-br/track-your-miner-on-bntpool/#zero-hashrate); uma rodada longa do pool e uma máquina desconectada exigem verificações diferentes.
 
 Com a conexão funcionando, interprete a sorte ao longo de um histórico significativo e mantenha as mesmas definições. Assim cada número do painel tem um papel claro: o hashrate estima trabalho por segundo, o esforço compara trabalho com o esperado para um bloco e os saldos mostram a contabilidade das recompensas. Nada disso exige adivinhar quando chegará o próximo hash vencedor.
 

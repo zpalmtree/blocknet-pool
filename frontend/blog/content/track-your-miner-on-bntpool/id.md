@@ -1,6 +1,6 @@
 ---
 title: Pantau penambang Anda di bntpool.com
-description: Cari alamat atau @name di bntpool.com untuk melihat hashrate, share, saldo dan pembayaran, lalu pantau blok, luck, uptime atau gunakan API publik.
+description: Cari alamat atau @name di bntpool.com untuk melihat hashrate, share, saldo dan pembayaran, lalu pantau blok dan luck atau gunakan API publik.
 tags: [bntpool, Statistik penambangan, API pool, Blocknet]
 faq:
   - q: 'Mengapa hashrate di bntpool.com berbeda dari seine?'
@@ -11,7 +11,7 @@ faq:
     a: 'Tidak. Endpoint statistik, blok, pembayaran, luck, status dan per penambang menyediakan JSON publik melalui HTTPS, sehingga curl atau dasbor rumah dapat membacanya tanpa mendaftar. Jumlah memakai satuan atomik, jadi bagi 100.000.000 untuk BNT, dan lakukan polling setiap 30 hingga 60 detik.'
   - q: 'Mengapa My Stats menunjukkan Estimated Rewards nol?'
     a: 'Estimated Rewards muncul setelah pool menemukan blok saat share Anda berada dalam jendela pembayaran. Bagi penambang baru mungkin perlu beberapa ronde. Share diterima dan hashrate muncul dahulu, lalu perkiraan imbalan, yang matang menjadi Confirmed Rewards dan dibayar otomatis.'
-sourceHash: '40197b2fa166'
+sourceHash: 'f74ae9281fd2'
 translation: draft
 ---
 
@@ -99,7 +99,7 @@ Mulai dari alamat pembayaran, koneksi pool, dan share yang diterima. Hashrate lo
 1. **Cocokkan alamat.** Cari alamat penerima atau `@name` terdaftar yang sama dengan yang digunakan seine. Jika alamat nama singkat berubah, mulai ulang seine agar nama diresolusikan lagi, lalu periksa alamat hasil resolusi di My Stats.
 2. **Cocokkan pool.** Pastikan seine menggunakan `stratum+tcp://bntpool.com:3333`. Mesin yang menambang di tempat lain atau dalam mode solo tidak menambahkan share di sini. [Panduan pengaturan pool](/blog/id/mine-blocknet-on-bntpool/) menjelaskan koneksinya.
 3. **Periksa Recent Shares.** Tunggu share diterima, lalu biarkan halaman diperbarui. Share datang pada interval yang bervariasi; hashrate lokal yang berjalan tidak menjamin estimasi pool langsung muncul. Jika share diterima terus berdatangan, bandingkan rata-rata selama periode yang lebih panjang.
-4. **Baca pesan koneksi.** Gunakan tabel jika penambang belum mengirim share yang diterima. Periksa [Status](/status) untuk insiden yang sedang terjadi.
+4. **Baca pesan koneksi.** Gunakan tabel jika penambang belum mengirim share yang diterima.
 
 | Pesan di seine | Yang perlu diperiksa |
 |---|---|
@@ -125,10 +125,6 @@ Halaman ini tidak perlu pencarian dan menunjukkan semua kegiatan pool secara ter
 ### Luck
 
 [Luck](/luck) menampilkan effort tiap ronde. Effort adalah pekerjaan share diterima selama ronde dibagi kesulitan blok: 100% berarti tepat jumlah pekerjaan yang diharapkan, dan lebih rendah berarti pool menemukannya lebih cepat. Ronde tunggal berfluktuasi jauh ke dua arah, jadi **Average Luck** dasbor adalah angka yang perlu dipantau. Tabel **Pool Luck History** menautkan halaman ini lewat **View All**.
-
-### Status
-
-[Status](/status) adalah halaman kesehatan pool. Halaman menunjukkan apakah pool, HTTP publik, API, Stratum, database dan daemon online, kebaruan template job terkini, ketinggian blockchain, uptime selama 10 menit, 6 jam, 24 jam dan 7 hari terakhir, serta riwayat insiden. Uptime diukur dua kali: monitor pada server pool dan probe luar di Cloudflare.
 
 ## Bagaimana dengan dasbor seine sendiri?
 

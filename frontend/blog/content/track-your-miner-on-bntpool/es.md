@@ -1,6 +1,6 @@
 ---
 title: Sigue tu minero en bntpool.com
-description: Busca tu dirección o @name para ver tasa de hash, shares, saldo y pagos; sigue bloques, suerte y disponibilidad, o consulta el API público desde scripts.
+description: Busca tu dirección o @name para ver tasa de hash, shares, saldo y pagos; sigue bloques y suerte, o consulta el API público desde scripts.
 tags: [bntpool, Estadísticas de minería, API del pool, Blocknet]
 faq:
   - q: '¿Por qué la tasa de bntpool.com difiere de seine?'
@@ -11,7 +11,7 @@ faq:
     a: 'No. Estadísticas, bloques, pagos, suerte, estado y endpoints de mineros son JSON público sobre HTTPS, accesible mediante curl o un panel doméstico sin registro. Los importes son unidades atómicas: divide entre 100.000.000 para obtener BNT y consulta cada 30 a 60 segundos.'
   - q: '¿Por qué Estimated Rewards muestra cero?'
     a: 'Aparece cuando el pool encuentra un bloque mientras tus shares están en la ventana de pagos. Para un minero nuevo puede requerir algunas rondas. Primero aparecen shares aceptados y tasa de hash; después, recompensas estimadas que maduran a Confirmed Rewards y se pagan automáticamente.'
-sourceHash: '40197b2fa166'
+sourceHash: 'f74ae9281fd2'
 translation: draft
 ---
 
@@ -99,7 +99,7 @@ Empieza por la dirección de pago, la conexión al pool y los shares aceptados. 
 1. **Comprueba la dirección.** Busca la misma dirección receptora o el `@name` registrado que usa seine. Si cambiaste la dirección de un nombre corto, reinicia seine para resolverlo de nuevo y consulta la dirección resultante en My Stats.
 2. **Comprueba el pool.** Verifica que seine use `stratum+tcp://bntpool.com:3333`. Un equipo minando en otro pool o en modo solo no añade shares aquí. La [guía de configuración del pool](/blog/es/mine-blocknet-on-bntpool/) explica la conexión.
 3. **Comprueba Recent Shares.** Espera shares aceptados y deja que la página se actualice. Los shares llegan a intervalos variables; una tasa local activa no garantiza una estimación inmediata del pool. Si llegan shares aceptados, compara las medias a lo largo del tiempo.
-4. **Lee el mensaje de conexión.** Usa la tabla si el minero todavía no envía shares aceptados. Consulta [Status](/status) para ver incidentes actuales.
+4. **Lee el mensaje de conexión.** Usa la tabla si el minero todavía no envía shares aceptados.
 
 | Mensaje en seine | Qué comprobar |
 |---|---|
@@ -125,10 +125,6 @@ Estas páginas no requieren buscar una dirección y muestran abiertamente la act
 ### Suerte
 
 [Luck](/luck) muestra el esfuerzo de cada ronda: trabajo aceptado dividido por dificultad del bloque. El 100% es exactamente lo esperado; un valor menor indica un hallazgo más rápido. Las rondas individuales oscilan mucho, así que conviene observar **Average Luck**. La tabla **Pool Luck History** enlaza aquí con **View All**.
-
-### Estado
-
-[Status](/status) muestra la salud del pool: si están disponibles pool, HTTP público, API, Stratum, base de datos y daemon; la antigüedad de la plantilla actual; altura; disponibilidad durante 10 minutos, 6 horas, 24 horas y 7 días; e incidentes. Dos sistemas miden disponibilidad: un monitor en el servidor y una sonda externa en Cloudflare.
 
 ## ¿Y el panel de seine?
 

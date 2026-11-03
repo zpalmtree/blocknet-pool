@@ -9,7 +9,7 @@ faq:
     a: 'Sirven para conexiones distintas. La web bntpool.com usa HTTPS para páginas y datos de API; su punto de minería documentado es stratum+tcp://bntpool.com:3333. Introduce ese punto en la configuración del pool del minero. Abrir la web correctamente no establece por sí solo una conexión de minería.'
   - q: '¿Una participación Stratum aceptada significa que se envió un pago?'
     a: 'No. La respuesta informa del resultado de un envío dentro de la sesión. Verificación, bloque válido para la red, elegibilidad para recompensas y pago completado son etapas distintas. Sigue la actividad aceptada en My Stats y consulta la guía de pagos para entender confirmaciones, PPLNS y el umbral de pago.'
-sourceHash: '5cc5086d7b28'
+sourceHash: '29a40e87ac51'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ La respuesta puede indicar aceptación, estado de verificación e información d
 
 Lee las etapas en orden: punto accesible, sesión aceptada, trabajo recibido, hashing activo y envíos respondidos. Si se pierde la conexión, el cliente reconecta y establece una sesión antes de recibir más trabajo. Usa el mensaje exacto y su hora para ubicar la etapa. Una web funcional aporta contexto, pero no demuestra que ese equipo pueda acceder al puerto de minería.
 
-Abre [My Stats](/stats) con la dirección de pago deseada para seguir el equipo y consulta el [estado del pool](/status). Tras un arranque o reconexión, deja que las estimaciones de hashrate acumulen participaciones. Distingue la conversación del protocolo de los plazos de pago: login prepara la sesión, los trabajos entregan tareas, las participaciones informan resultados y la contabilidad determina las etapas posteriores de recompensa.
+Abre [My Stats](/stats) con la dirección de pago deseada para seguir el equipo. Tras un arranque o reconexión, deja que las estimaciones de hashrate acumulen participaciones. Distingue la conversación del protocolo de los plazos de pago: login prepara la sesión, los trabajos entregan tareas, las participaciones informan resultados y la contabilidad determina las etapas posteriores de recompensa.
 
 <CTA target="pool" title="Conecta seine a bntpool.com" text="Usa la página de configuración del pool y sigue los trabajos, participaciones y actividad de tu equipo en My Stats." />

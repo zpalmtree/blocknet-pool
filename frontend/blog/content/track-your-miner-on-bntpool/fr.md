@@ -1,6 +1,6 @@
 ---
 title: Suivre votre mineur sur bntpool.com
-description: Recherchez votre adresse ou @name pour suivre hashrate, shares, solde et paiements sur bntpool.com, puis explorez blocs, chance, disponibilité et API.
+description: Recherchez votre adresse ou @name pour suivre hashrate, shares, solde et paiements sur bntpool.com, puis explorez blocs, chance et API.
 tags: [bntpool, Statistiques de minage, API du pool, Blocknet]
 faq:
   - q: 'Pourquoi le hashrate bntpool.com diffère-t-il de celui de seine ?'
@@ -11,7 +11,7 @@ faq:
     a: 'Non. Les endpoints de statistiques, blocs, paiements, chance, statut et mineurs fournissent du JSON public via HTTPS. Un script curl ou un tableau de bord domestique peut donc les lire sans inscription. Les montants sont en unités atomiques : divisez par 100 000 000 pour obtenir des BNT et interrogez toutes les 30 à 60 secondes.'
   - q: 'Pourquoi My Stats affiche-t-il zéro dans Estimated Rewards ?'
     a: 'Les estimations apparaissent lorsque le pool trouve un bloc avec vos shares dans la fenêtre de paiement. Pour un nouveau mineur, cela peut prendre quelques périodes de minage. Shares acceptés et hashrate apparaissent d’abord, puis les récompenses estimées, qui deviennent Confirmed Rewards à maturité et sont payées automatiquement.'
-sourceHash: '40197b2fa166'
+sourceHash: 'f74ae9281fd2'
 translation: draft
 ---
 
@@ -99,7 +99,7 @@ Vérifiez d’abord l’adresse de paiement, la connexion au pool et les shares 
 1. **Vérifiez l’adresse.** Recherchez la même adresse de réception ou le même `@name` enregistré que seine utilise. Si vous avez modifié l’adresse d’un nom court, redémarrez seine pour le résoudre à nouveau, puis consultez cette adresse dans My Stats.
 2. **Vérifiez le pool.** Assurez-vous que seine utilise `stratum+tcp://bntpool.com:3333`. Une machine qui mine ailleurs ou en solo n’ajoute aucun share ici. Le [guide de configuration du pool](/blog/fr/mine-blocknet-on-bntpool/) détaille la connexion.
 3. **Consultez Recent Shares.** Attendez des shares acceptés, puis le rafraîchissement de la page. Les shares arrivent à intervalles variables ; un hashrate local actif ne garantit pas une estimation immédiate du pool. Si des shares sont acceptés, comparez les moyennes dans la durée.
-4. **Lisez le message de connexion.** Utilisez le tableau tant que le mineur n’envoie pas de shares acceptés. Consultez [Status](/status) pour les incidents en cours.
+4. **Lisez le message de connexion.** Utilisez le tableau tant que le mineur n’envoie pas de shares acceptés.
 
 | Message dans seine | Vérification suivante |
 |---|---|
@@ -125,10 +125,6 @@ Ces pages ne nécessitent aucune recherche et montrent ouvertement l’activité
 ### Chance
 
 [Luck](/luck) montre l’effort de chaque période : le travail des shares acceptés divisé par la difficulté du bloc. 100 % correspond au travail attendu, une valeur inférieure à une découverte plus rapide. Chaque période peut varier fortement dans les deux sens : surveillez donc **Average Luck** sur le tableau de bord. Son tableau **Pool Luck History** mène ici via **View All**.
-
-### Statut
-
-[Status](/status) est la page de santé du pool. Elle indique si le pool, HTTP public, l’API, Stratum, la base et le daemon sont en ligne, la fraîcheur du modèle courant, la hauteur, la disponibilité sur 10 minutes, 6 heures, 24 heures et 7 jours, et les incidents. Deux mesures de disponibilité sont réalisées : un moniteur sur le serveur du pool et une sonde externe sur Cloudflare.
 
 ## Et le tableau de bord de seine ?
 

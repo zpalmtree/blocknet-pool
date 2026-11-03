@@ -2,7 +2,7 @@
 title: 'マイニングプールとは？'
 description: 'マイニングプールは多くのマイナーのハッシュレートを合わせ、各ブロック報酬を分けます。仕組み、PPLNS・PPS・ソロの違い、参加前に確認する項目を説明します。'
 tags: ['マイニング入門', 'マイニングプール', 'PPLNS', 'bntpool']
-sourceHash: 'a17a47ab1d73'
+sourceHash: '15d1453f41d9'
 translation: draft
 faq:
   - q: 'プールに入ると採掘量は増えますか？'
@@ -77,7 +77,7 @@ Blocknetで計算は簡単です。目標は5分に1ブロック、1日288件な
 
 - **明確な支払い方式。** PPLNSウィンドウなどの設定も明示されるべきです。bntpool.comは[Get Started](/start)と`https://bntpool.com/api/info`に公開します。
 - **承認数と最低支払額。** 通常はブロックが十分深くなり、残高が最低額に達してから払います。bntpool.comはcoinbase maturityと同じ60ブロックで承認し、0.1 BNT以上を自動送金します。
-- **公開され検証できる数字。** 全発見と全送金を確認できることが重要です。[ブロック](/blocks)、[支払い](/payouts)、ラウンドごとの[luck](/luck)、サービスの[状態](/status)が公開されています。
+- **公開され検証できる数字。** 全発見と全送金を確認できることが重要です。[ブロック](/blocks)、[支払い](/payouts)、ラウンドごとの[luck](/luck)が公開されています。
 - **自分の統計。** アドレスで速度、シェア、残高を検索できます。[統計ページ](/stats)のカードは[マイナーの追跡ガイド](/blog/ja/track-your-miner-on-bntpool/)が説明します。
 - **簡単な設定。** 設定が少ないほど早く始められます。bntpool.comは、スレッド、カーネル、メモリを自動調整するseineの標準です。完全なアドレスの代わりに`@name`などの[Blocknet ID名](https://seineminer.com/ja/blog/blocknet-id-pay-by-name/)でもログインできます。
 

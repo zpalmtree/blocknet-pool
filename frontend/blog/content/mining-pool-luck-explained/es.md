@@ -9,7 +9,7 @@ faq:
     a: 'Primero consulta la etiqueta y su definición. La columna Esfuerzo y la tarjeta Suerte media de bntpool.com expresan el trabajo respecto al esperado: valores más bajos significan menos trabajo registrado por bloque. Otros sitios pueden utilizar la convención inversa. Compara métricas y tamaños de muestra equivalentes, no solo porcentajes.'
   - q: '¿Una ronda larga aumentará mi próximo pago?'
     a: 'Una ronda larga no garantiza un pago personal mayor. El hallazgo de bloques determina cuándo hay una recompensa disponible; la contabilidad PPLNS del pool determina tu parte según el trabajo aceptado elegible. Después se aplican las reglas de confirmación y pago. Consulta tus saldos en Mis estadísticas y la secuencia en la guía de pagos.'
-sourceHash: 'f7051fa67591'
+sourceHash: '3dce88998f4a'
 translation: draft
 ---
 
@@ -83,7 +83,7 @@ Por eso tu saldo puede cambiar por etapas aunque tu minero siga enviando partici
 
 ## ¿Qué debes comprobar durante una ronda larga?
 
-Comprueba lo que puedes observar directamente: que el minero funcione, que sigan aceptándose participaciones y que la dirección correcta aparezca en [Mis estadísticas](/stats). Consulta [Estado](/status) para ver la salud pública del servicio. Si dejan de aceptarse tus participaciones, sigue la [guía de diagnóstico de estadísticas](/blog/es/track-your-miner-on-bntpool/#zero-hashrate); una ronda larga del pool y un equipo desconectado requieren comprobaciones distintas.
+Comprueba lo que puedes observar directamente: que el minero funcione, que sigan aceptándose participaciones y que la dirección correcta aparezca en [Mis estadísticas](/stats). Si dejan de aceptarse tus participaciones, sigue la [guía de diagnóstico de estadísticas](/blog/es/track-your-miner-on-bntpool/#zero-hashrate); una ronda larga del pool y un equipo desconectado requieren comprobaciones distintas.
 
 Cuando tu conexión funcione correctamente, interpreta la suerte con un historial significativo y mantén las mismas definiciones. Así cada cifra del panel tiene una función clara: el hashrate estima trabajo por segundo, el esfuerzo compara trabajo realizado con el esperado para un bloque y los saldos muestran la contabilidad de recompensas. Nada de ello requiere adivinar cuándo llegará el siguiente hash ganador.
 

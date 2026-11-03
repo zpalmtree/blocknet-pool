@@ -9,7 +9,7 @@ faq:
     a: 'Lisez d’abord le libellé et sa définition. La colonne Effort et la carte Chance moyenne de bntpool.com expriment le travail par rapport au travail attendu : une valeur inférieure signifie moins de travail enregistré par bloc. D’autres sites utilisent parfois la convention inverse. Comparez des métriques et tailles d’échantillon équivalentes, pas seulement des pourcentages.'
   - q: 'Une longue ronde augmentera-t-elle mon prochain paiement ?'
     a: 'Une longue ronde ne garantit pas un paiement personnel supérieur. La découverte d’un bloc détermine quand une récompense devient disponible ; la comptabilité PPLNS du pool détermine votre part selon le travail accepté admissible. Les règles de confirmation et de paiement s’appliquent ensuite. Consultez vos soldes dans Mes statistiques et les étapes dans le guide des paiements.'
-sourceHash: 'f7051fa67591'
+sourceHash: '3dce88998f4a'
 translation: draft
 ---
 
@@ -83,7 +83,7 @@ Votre solde peut donc évoluer par paliers alors que votre mineur continue de so
 
 ## Que vérifier pendant une longue ronde ?
 
-Vérifiez les éléments directement observables : votre mineur fonctionne, les shares acceptées continuent et la bonne adresse apparaît dans [Mes statistiques](/stats). Consultez [État](/status) pour la santé publique du service. Si vos shares acceptées cessent, suivez le [guide de dépannage des statistiques](/blog/fr/track-your-miner-on-bntpool/#zero-hashrate) ; une longue ronde et une machine déconnectée demandent des vérifications différentes.
+Vérifiez les éléments directement observables : votre mineur fonctionne, les shares acceptées continuent et la bonne adresse apparaît dans [Mes statistiques](/stats). Si vos shares acceptées cessent, suivez le [guide de dépannage des statistiques](/blog/fr/track-your-miner-on-bntpool/#zero-hashrate) ; une longue ronde et une machine déconnectée demandent des vérifications différentes.
 
 Une fois votre connexion saine, interprétez la chance sur un historique pertinent en conservant les mêmes définitions. Chaque chiffre prend alors un sens clair : le hashrate estime le travail par seconde, l’effort compare le travail au travail attendu pour un bloc et vos soldes montrent la comptabilité des récompenses. Aucun ne nécessite de deviner l’arrivée du prochain hash gagnant.
 

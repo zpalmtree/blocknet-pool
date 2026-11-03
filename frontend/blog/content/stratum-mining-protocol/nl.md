@@ -9,7 +9,7 @@ faq:
     a: 'Ze dienen verschillende verbindingen. De website bntpool.com gebruikt HTTPS voor pagina''s en API-data; het gedocumenteerde miningadres is stratum+tcp://bntpool.com:3333. Vul dit in bij de poolinstelling van de miner. Alleen succesvol de website openen vormt nog geen miningverbinding.'
   - q: 'Betekent een geaccepteerde Stratum-share dat er is uitbetaald?'
     a: 'Nee. Een shareantwoord meldt het resultaat van een inzending binnen de sessie. Verificatie, een netwerkgeldig blok, beloningsrecht en afgeronde uitbetaling zijn aparte stappen. Volg geaccepteerde activiteit in My Stats en lees de uitbetalingsgids voor bevestigingen, PPLNS en de drempel.'
-sourceHash: '5cc5086d7b28'
+sourceHash: '29a40e87ac51'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ Het antwoord kan acceptatie, verificatiestatus en moeilijkheid bevatten. Lees de
 
 Lees de stappen op volgorde: endpoint bereikt, login geaccepteerd, taak ontvangen, hashing actief, inzendingen beantwoord. Na verbindingsverlies verbindt de client opnieuw en vormt een sessie voordat nieuw werk komt. Gebruik exacte logmelding en tijdstip om de stap te vinden. Een werkende website bewijst niet dat die computer de miningpoort bereikt.
 
-Open [My Stats](/stats) voor het juiste adres en [poolstatus](/status) voor de dienst. Laat na start of herverbinding sharegebaseerde hashrate voldoende waarnemingen verzamelen. Houd protocol en uitbetalingstijd apart: login bereidt de sessie voor, taken leveren werk, shares melden resultaten en de administratie bepaalt volgende beloningsstappen.
+Open [My Stats](/stats) voor het juiste adres. Laat na start of herverbinding sharegebaseerde hashrate voldoende waarnemingen verzamelen. Houd protocol en uitbetalingstijd apart: login bereidt de sessie voor, taken leveren werk, shares melden resultaten en de administratie bepaalt volgende beloningsstappen.
 
 <CTA target="pool" title="Verbind seine met bntpool.com" text="Gebruik de poolinstellingenpagina en volg taken, shares en je rig in My Stats." />

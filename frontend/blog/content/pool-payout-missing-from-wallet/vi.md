@@ -9,7 +9,7 @@ faq:
     a: 'Explorer giúp kiểm tra trạng thái công khai của giao dịch trên chuỗi. Blocknet dùng đầu ra riêng tư, nên tìm địa chỉ thông thường không hiển thị số dư ví hay chứng minh một đầu ra thuộc về bạn. Ví quét chuỗi để nhận ra đầu ra của mình.'
   - q: 'Cần cung cấp gì về khoản trả chưa xuất hiện?'
     a: 'Cung cấp địa chỉ nhận đầy đủ dùng tra cứu pool, mã giao dịch, giờ ước tính, trạng thái pool và tiến độ đồng bộ. Nêu giao dịch có trong lịch sử ví chưa. Chỉ chia sẻ dữ liệu tài khoản trong kênh hỗ trợ phù hợp, không cung cấp cụm từ khôi phục, khóa riêng hay mật khẩu.'
-sourceHash: '915075cf4e2b'
+sourceHash: '7927c9203d7f'
 translation: draft
 ---
 
@@ -31,13 +31,13 @@ Trang Payouts công khai mô tả lô thanh toán có thể gồm nhiều ngư�
 
 ## Khoản trả đang xếp hàng, chưa xác nhận hay đã xác nhận?
 
-Đọc trạng thái hiện tại trước khi cho rằng khoản được liệt kê đã hoàn tất mọi bước. Mục xếp hàng vẫn đang xử lý ở pool; giao dịch chưa xác nhận còn cần xác nhận chuỗi. Làm mới bản ghi và mở liên kết khi có. [Trang trạng thái](/status) cho bối cảnh vận hành nếu nhiều dấu hiệu chỉ tới gián đoạn dịch vụ.
+Đọc trạng thái hiện tại trước khi cho rằng khoản được liệt kê đã hoàn tất mọi bước. Mục xếp hàng vẫn đang xử lý ở pool; giao dịch chưa xác nhận còn cần xác nhận chuỗi. Làm mới bản ghi và mở liên kết khi có.
 
 Phân biệt độ chín của phần thưởng đào với xác nhận giao dịch chi trả. Khối tạo phần thưởng và giao dịch trả ví sau đó có mã và vai trò khác nhau. [Hướng dẫn xác nhận](/blog/vi/block-confirmations-mining-rewards/) giải thích sự khác biệt. Mã giao dịch là đối tượng cụ thể để kiểm tra, nhưng chưa chứng minh ví cục bộ đã quét và nhận ra khoản đó.
 
 ## Kiểm tra giao dịch trên chuỗi
 
-Mở liên kết explorer gắn với khoản trả và đối chiếu mã đầy đủ với ghi chú. Đọc trạng thái chuỗi và thông tin khối nếu có. Nếu explorer chưa tìm thấy, so sánh bản ghi pool đã làm mới và trạng thái dịch vụ trước khi kết luận. Kết quả tra cứu tạm thời tự nó không xác định nguyên nhân.
+Mở liên kết explorer gắn với khoản trả và đối chiếu mã đầy đủ với ghi chú. Đọc trạng thái chuỗi và thông tin khối nếu có. Nếu explorer chưa tìm thấy, kiểm tra bản ghi pool đã làm mới trước khi kết luận. Kết quả tra cứu tạm thời tự nó không xác định nguyên nhân.
 
 Tính riêng tư của Blocknet khiến tra cứu địa chỉ thông thường không hiện số dư công khai của người nhận. Trạng thái giao dịch trên explorer và kiểm tra quyền sở hữu trong ví trả lời câu hỏi khác nhau. Ví nhận ra đầu ra khi quét chuỗi. [Hướng dẫn địa chỉ ẩn](https://seineminer.com/vi/blog/stealth-addresses-explained/) giải thích quá trình; danh sách địa chỉ công khai không tái hiện lịch sử riêng tư của ví.
 

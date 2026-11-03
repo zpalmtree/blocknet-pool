@@ -12,7 +12,7 @@ faq:
     a: '아니요. 풀이 노드를 운영하고 블록 템플릿을 만들며 셰어를 검증하고 발견한 블록을 제출합니다. bntpool.com에서는 seine 채굴 프로그램과 Blocknet 주소 또는 Blocknet ID 이름만 있으면 됩니다. Seine을 실행하고 주소를 붙여 넣은 뒤 기본 풀을 선택하면 각 블록의 몫이 해당 주소로 지급됩니다.'
   - q: 'bntpool.com에서 어떻게 채굴을 시작하나요?'
     a: 'seineminer.com에서 Windows, macOS 또는 Linux용 seine을 내려받아 실행하고, 요청할 때 Blocknet 주소나 @name을 입력하세요. bntpool.com은 seine의 기본 풀이므로 그대로 선택해 채굴을 시작할 수 있습니다. 풀의 통계 페이지에서 주소를 조회하면 해시레이트, 셰어, 잔액을 확인할 수 있습니다.'
-sourceHash: 'a17a47ab1d73'
+sourceHash: '15d1453f41d9'
 translation: draft
 ---
 
@@ -78,7 +78,7 @@ Blocknet에서는 계산을 쉽게 확인할 수 있습니다. 네트워크는 5
 
 - **명확한 보상 방식.** 풀은 방식과 PPLNS 구간 같은 설정을 명시해야 합니다. bntpool.com은 [Get Started 페이지](/start)와 `https://bntpool.com/api/info`에 공개합니다.
 - **승인 수와 최소 지급액.** 보상은 보통 블록이 체인에 충분히 깊이 들어갈 때까지 기다리며, 잔액이 최소 금액에 도달하면 지급됩니다. bntpool.com에서는 Blocknet의 코인베이스 성숙 기간에 맞춰 60블록 후 보상이 확정되고, 0.1 BNT 이상의 잔액이 자동 지급됩니다.
-- **공개된 검증 가능한 수치.** 풀이 찾은 모든 블록과 보낸 모든 지급을 확인할 수 있어야 합니다. bntpool.com은 [블록](/blocks)과 [지급](/payouts) 페이지, 라운드별 작업 비율을 보여 주는 [운 페이지](/luck), 서비스 상태를 보여 주는 [상태 페이지](/status)를 제공합니다.
+- **공개된 검증 가능한 수치.** 풀이 찾은 모든 블록과 보낸 모든 지급을 확인할 수 있어야 합니다. bntpool.com은 [블록](/blocks)과 [지급](/payouts) 페이지, 그리고 라운드별 작업 비율을 보여 주는 [운 페이지](/luck)를 제공합니다.
 - **자신의 통계.** 주소를 조회해 해시레이트, 셰어, 잔액을 확인할 수 있어야 합니다. bntpool.com의 [통계 페이지](/stats)가 이 기능을 제공하며, [채굴기 모니터링 가이드](/blog/ko/track-your-miner-on-bntpool/)에서 각 카드를 설명합니다.
 - **쉬운 설정.** 필요한 설정이 적을수록 빨리 채굴을 시작합니다. bntpool.com은 스레드, 커널, 메모리를 자동 조정하는 seine의 기본 풀이며, 전체 주소 대신 `@name` 같은 [Blocknet ID 이름](https://seineminer.com/ko/blog/blocknet-id-pay-by-name/)으로 로그인할 수 있습니다.
 

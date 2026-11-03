@@ -9,7 +9,7 @@ faq:
     a: 'Stale job bedeutet, dass die Einreichung zu einer nicht mehr zulässigen Zuweisung gehört, etwa nach Ablauf oder nach der Schonfrist eines alten Templates. Prüfe neue Jobs und wieder akzeptierte Shares. Wiederholte Meldungen erfordern eine Prüfung von Verbindung und Miner-Version.'
   - q: 'Verringert höhere Share-Schwierigkeit meine Belohnung?'
     a: 'Die Schwierigkeit verändert die Arbeit pro anrechenbarem Share und dessen erwartete Häufigkeit. Vergleiche schwierigkeitsgewichtete Arbeit in gleichen Zeiträumen statt bloßer Share-Zahlen. Die tatsächliche Belohnung hängt außerdem vom PPLNS-Fenster, anrechenbarer Arbeit, Blockfunden und Validierungsregeln ab.'
-sourceHash: 5be830208e6c
+sourceHash: 92eae02aa6e4
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ Vergleiche akzeptierte und abgelehnte Einreichungen im selben Zeitraum und Umfan
 
 ## Was tun bei wiederholten Ablehnungen?
 
-Beginne mit einem betroffenen Gerät. Notiere Miner-Version, genaue Meldung, Beginn und ob neue Jobs ankommen. Prüfe [Status](/status) auf Störungen und danach die Geräteverbindung auf Unterbrechungen. Aktualisiere über die [offiziellen seine-Releases](https://github.com/zpalmtree/seine/releases) und ändere zum Vergleich jeweils nur eine Sache.
+Beginne mit einem betroffenen Gerät. Notiere Miner-Version, genaue Meldung, Beginn und ob neue Jobs ankommen. Prüfe die Geräteverbindung auf Unterbrechungen. Aktualisiere über die [offiziellen seine-Releases](https://github.com/zpalmtree/seine/releases) und ändere zum Vergleich jeweils nur eine Sache.
 
 Eigene Proxys oder Integrationen müssen Job, Nonce-Bereich und Schwierigkeit beim Weiterleiten erhalten. Bleibt das Problem bestehen, sende einen kurzen Logauszug und Gerätedetails über den Supportkanal des Projekts. Entferne Geheimnisse und private Kontodaten; eine Wallet-Wiederherstellungsphrase ist zur Share-Diagnose nie erforderlich.
 

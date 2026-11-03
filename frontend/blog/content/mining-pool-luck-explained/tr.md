@@ -9,7 +9,7 @@ faq:
     a: 'Önce etiketi ve tanımını okuyun. bntpool.com Efor sütunu ve Ortalama Şans kartı, yapılan işi beklenen işe oranlar; düşük değerler blok başına daha az kayıtlı iş anlamına gelir. Başka siteler ters tanımı kullanabilir. Yalnızca yüzdeleri değil, aynı ölçütleri ve örneklem büyüklüklerini karşılaştırın.'
   - q: 'Uzun bir tur sonraki ödememi artırır mı?'
     a: 'Uzun tur kişisel ödemenizin daha yüksek olacağını garanti etmez. Blok bulunması ödülün ne zaman kullanılabilir olduğunu, havuzun PPLNS muhasebesi ise uygun kabul edilmiş işe göre sizin payınızı belirler. Sonrasında onay ve ödeme kuralları uygulanır. Bakiyelerinizi İstatistiklerim''den, aşamaları ödeme rehberinden kontrol edin.'
-sourceHash: 'f7051fa67591'
+sourceHash: '3dce88998f4a'
 translation: draft
 ---
 
@@ -83,7 +83,7 @@ Bu nedenle madenciniz kabul edilen pay göndermeye devam ederken bakiyeniz basam
 
 ## Uzun tur sırasında neyi kontrol etmelisiniz?
 
-Doğrudan gözlemleyebildiklerinizi kontrol edin: madenciniz çalışıyor mu, paylar kabul edilmeye devam ediyor mu ve [İstatistiklerim](/stats) üzerinde doğru adres görünüyor mu? Hizmetin genel sağlığı için [Durum](/status) sayfasını kullanın. Kendi kabul edilen paylarınız durursa [madenci istatistikleri sorun giderme rehberini](/blog/tr/track-your-miner-on-bntpool/#zero-hashrate) izleyin; uzun havuz turu ile bağlantısı kopmuş sistem farklı kontroller gerektirir.
+Doğrudan gözlemleyebildiklerinizi kontrol edin: madenciniz çalışıyor mu, paylar kabul edilmeye devam ediyor mu ve [İstatistiklerim](/stats) üzerinde doğru adres görünüyor mu? Kendi kabul edilen paylarınız durursa [madenci istatistikleri sorun giderme rehberini](/blog/tr/track-your-miner-on-bntpool/#zero-hashrate) izleyin; uzun havuz turu ile bağlantısı kopmuş sistem farklı kontroller gerektirir.
 
 Bağlantınız sağlıklıysa şansı anlamlı bir geçmiş üzerinden, aynı tanımlarla okuyun. Böylece her pano rakamının rolü netleşir: hash gücü saniyedeki işi tahmin eder, efor işi bir blok için beklenen işle karşılaştırır, bakiyeler ödül muhasebesini gösterir. Bunların hiçbiri sonraki kazanan hash'in ne zaman geleceğini tahmin etmeyi gerektirmez.
 

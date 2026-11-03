@@ -1,8 +1,8 @@
 ---
 title: bntpool.com'da madencinizi takip edin
-description: bntpool.com'da adres veya @name ile hashrate, share, bakiye ve ödemeleri görün; blokları, şansı, çalışma süresini izleyin veya açık API'yi kullanın.
+description: bntpool.com'da adres veya @name ile hashrate, share, bakiye ve ödemeleri görün; blokları ve şansı izleyin veya açık API'yi kullanın.
 tags: [bntpool, Madencilik istatistikleri, Havuz API’si, Blocknet]
-sourceHash: '40197b2fa166'
+sourceHash: 'f74ae9281fd2'
 translation: draft
 faq:
   - q: 'bntpool.com''daki hashrate''im neden seine''den farklı?'
@@ -99,7 +99,7 @@ Bekleyen ödülleriniz olduğunda **Estimated From Recent Blocks** tablosu her b
 1. **Adresi eşleştirin.** Seine’in kullandığı alıcı adresini veya kayıtlı `@name` adını sorgulayın. Kısa adın adresini değiştirdiyseniz yeniden çözümlemesi için seine’i yeniden başlatın, ardından çözümlenen adresi My Stats’ta kontrol edin.
 2. **Havuzu eşleştirin.** Seine’in `stratum+tcp://bntpool.com:3333` kullandığını kontrol edin. Başka yerde veya solo modunda çalışan bir makine buraya pay eklemez. [Havuz kurulum rehberi](/blog/tr/mine-blocknet-on-bntpool/) bağlantıyı açıklar.
 3. **Recent Shares bölümünü kontrol edin.** Kabul edilen payları ve sayfanın yenilenmesini bekleyin. Paylar değişken aralıklarla gelir; yerel hashrate’in çalışması anında havuz tahmini garantilemez. Kabul edilen paylar geliyorsa zaman içindeki ortalamaları karşılaştırın.
-4. **Bağlantı mesajını okuyun.** Madenci henüz kabul edilen pay göndermiyorsa tabloyu kullanın. Güncel olaylar için [Status](/status) sayfasını kontrol edin.
+4. **Bağlantı mesajını okuyun.** Madenci henüz kabul edilen pay göndermiyorsa tabloyu kullanın.
 
 | Seine mesajı | Sonraki kontrol |
 |---|---|
@@ -125,10 +125,6 @@ Bu sayfalar arama gerektirmez ve havuzun yaptığı her şeyi açıkça gösteri
 ### Şans
 
 [Luck](/luck) her turun eforunu gösterir. Efor, havuzun tur sırasında kabul ettiği share işinin blok zorluğuna bölünmesidir: %100 tam beklenen iş miktarı, daha düşük değer daha erken bulunan blok demektir. Tek turlar iki yönde de geniş dalgalanır; bu nedenle izlenecek değer panelin **Average Luck** değeridir. Paneldeki **Pool Luck History** tablosu **View All** ile buraya bağlanır.
-
-### Durum
-
-[Status](/status) havuzun kendi sağlık sayfasıdır. Havuz, genel HTTP, API, Stratum, veritabanı ve daemon'ın çevrimiçi olup olmadığını; güncel görev şablonunun tazeliğini; zincir yüksekliğini; son 10 dakika, 6 saat, 24 saat ve 7 gündeki çalışma süresini ve olay geçmişini gösterir. Çalışma süresi iki kez ölçülür: havuz sunucusundaki izleyici ve Cloudflare üzerinde çalışan dış prob tarafından.
 
 ## Peki seine'in kendi paneli?
 

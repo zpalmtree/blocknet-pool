@@ -20,7 +20,6 @@ import type {
   RecoveryOperation,
   RecoveryStatusResponse,
   StatsInsightsResponse,
-  StatusResponse,
   StatsResponse,
 } from '../types';
 
@@ -174,7 +173,6 @@ export function createApiClient(getApiKey: () => string, showError: (message: st
       ),
     getLuckHistory: (limit: number, offset: number) =>
       fetchJson<PagedResponse<LuckRound>>(withQuery('/api/luck', { limit, offset })),
-    getStatus: () => fetchJson<StatusResponse>('/api/status'),
     getBlocks: (limit: number, offset: number, status?: string) =>
       fetchJson<PagedResponse<BlockItem>>(withQuery('/api/blocks', { limit, offset, status })),
     getRecentPayouts: (limit: number, offset: number) =>

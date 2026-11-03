@@ -9,7 +9,7 @@ faq:
     a: '不是。按五分鐘目標計算，60 個間隔為 300 分鐘，也就是五小時的規劃估計。實際進度由到達時間不固定的區塊決定。獎勵成熟、付款門檻與付款交易是不同階段。'
   - q: '既有獎勵成熟前必須一直挖礦嗎？'
     a: '網路增加區塊時，已發現區塊的深度就會增加，與自己的礦工是否在線無關。獎勵資格依礦池記帳規則決定。停止不會加速或重設成熟；可在 My Stats 追蹤。'
-sourceHash: '7383b256ba1a'
+sourceHash: '2f9675c64c30'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ Blocknet 目標網路出塊間隔為五分鐘。60 個間隔乘五分鐘等於 3
 
 在[Blocks](/blocks)找出高度、雜湊與狀態。用礦工付款地址開啟[My Stats](/stats)，查看估計和已確認獎勵。有付款後從紀錄開啟交易連結。區塊、帳戶餘額和錢包付款是不同觀察，不能視為可互換計數器。
 
-目前設定見[Get Started](/start)或 `https://bntpool.com/api/info`，服務狀態見[pool status](/status)。需要調查時記錄地址、區塊或交易識別碼和觀察時間，切勿分享錢包復原詞。[追蹤指南](/blog/zh-hant/track-your-miner-on-bntpool/)說明其他統計。礦工離線時深度仍增加；資格依已記錄工作與鏈狀態。
+目前設定見[Get Started](/start)或 `https://bntpool.com/api/info`。需要調查時記錄地址、區塊或交易識別碼和觀察時間，切勿分享錢包復原詞。[追蹤指南](/blog/zh-hant/track-your-miner-on-bntpool/)說明其他統計。礦工離線時深度仍增加；資格依已記錄工作與鏈狀態。
 
 <CTA target="pool" title="追蹤挖礦獎勵" text="連線 bntpool.com，透過 My Stats 查看估計獎勵、已確認餘額和付款。" />

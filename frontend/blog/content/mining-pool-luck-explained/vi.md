@@ -9,7 +9,7 @@ faq:
     a: 'Hãy đọc nhãn và định nghĩa trước. Cột Effort và thẻ Average Luck của bntpool.com thể hiện công việc so với lượng kỳ vọng, nên giá trị thấp hơn nghĩa là ít công việc được ghi nhận hơn cho mỗi khối. Trang khác có thể dùng quy ước ngược. Hãy so sánh cùng chỉ số và cỡ mẫu, không chỉ phần trăm.'
   - q: 'Vòng đào dài có làm khoản thanh toán tiếp theo lớn hơn không?'
     a: 'Vòng dài không đảm bảo khoản thanh toán cá nhân lớn hơn. Việc tìm khối quyết định khi nào có phần thưởng; kế toán PPLNS của pool quyết định phần của bạn theo công việc được chấp nhận đủ điều kiện. Sau đó mới áp dụng quy tắc xác nhận và thanh toán. Xem số dư trong Thống kê của tôi và trình tự trong hướng dẫn thanh toán.'
-sourceHash: 'f7051fa67591'
+sourceHash: '3dce88998f4a'
 translation: draft
 ---
 
@@ -83,7 +83,7 @@ Vì vậy số dư có thể tăng theo từng đợt dù phần mềm đào v�
 
 ## Nên kiểm tra gì trong vòng đào dài?
 
-Kiểm tra những gì quan sát được trực tiếp: phần mềm đào đang chạy, share tiếp tục được chấp nhận và đúng địa chỉ xuất hiện tại [Thống kê của tôi](/stats). Dùng [Trạng thái](/status) để xem sức khỏe dịch vụ công khai. Nếu share được chấp nhận của bạn dừng, theo [hướng dẫn xử lý lỗi thống kê thợ đào](/blog/vi/track-your-miner-on-bntpool/#zero-hashrate); vòng pool dài và giàn đào mất kết nối cần kiểm tra khác nhau.
+Kiểm tra những gì quan sát được trực tiếp: phần mềm đào đang chạy, share tiếp tục được chấp nhận và đúng địa chỉ xuất hiện tại [Thống kê của tôi](/stats). Nếu share được chấp nhận của bạn dừng, theo [hướng dẫn xử lý lỗi thống kê thợ đào](/blog/vi/track-your-miner-on-bntpool/#zero-hashrate); vòng pool dài và giàn đào mất kết nối cần kiểm tra khác nhau.
 
 Khi kết nối ổn định, hãy đọc may mắn qua lịch sử đủ ý nghĩa và giữ cùng định nghĩa. Mỗi con số trên bảng điều khiển sẽ có vai trò rõ ràng: hashrate ước tính công việc mỗi giây, effort so sánh công việc với mức kỳ vọng cho khối, số dư thể hiện kế toán phần thưởng. Không chỉ số nào đòi hỏi đoán lúc hash thắng tiếp theo xuất hiện.
 

@@ -9,7 +9,7 @@ faq:
     a: 'Có, nếu kết nối giao tiếp ổn định với pool. Quan sát share được chấp nhận và thông báo kết nối lại khi dùng bình thường. Nếu bị ngắt, so sánh Ethernet có thể tách phần không dây. Giữ nguyên cấu hình phần mềm đào và đích kết nối khi so sánh.'
   - q: 'Ping thành công có chứng minh kết nối pool hoạt động không?'
     a: 'Ping kiểm tra trao đổi ICMP với máy trả lời. Phiên đào còn cần đúng endpoint, kết nối truyền tải, đăng nhập, job hiện tại và gửi share được chấp nhận. Website hay ping có thể hoạt động dù dịch vụ khác không truy cập được. Kiểm tra log phần mềm và dữ liệu pool.'
-sourceHash: 'bf51814bc06d'
+sourceHash: 'c23da77f349f'
 translation: draft
 ---
 
@@ -43,7 +43,7 @@ Kiểm tra tải lên lớn, sao lưu đám mây hoặc truyền dữ liệu tro
 
 ## Dấu hiệu nào cho thấy vấn đề kết nối pool?
 
-Theo dõi kết nối endpoint, đăng nhập, nhận job, gửi share và phản hồi. Nếu đăng nhập bị từ chối, kiểm tra địa chỉ và thông báo chính xác trước khi đổ lỗi Wi-Fi. Nếu ngắt liên tục, giữ mốc giờ và dòng log xung quanh. [Hướng dẫn theo dõi](/blog/vi/track-your-miner-on-bntpool/) nói về endpoint và hashrate bằng không; [trang trạng thái](/status) cung cấp bối cảnh dịch vụ.
+Theo dõi kết nối endpoint, đăng nhập, nhận job, gửi share và phản hồi. Nếu đăng nhập bị từ chối, kiểm tra địa chỉ và thông báo chính xác trước khi đổ lỗi Wi-Fi. Nếu ngắt liên tục, giữ mốc giờ và dòng log xung quanh. [Hướng dẫn theo dõi](/blog/vi/track-your-miner-on-bntpool/) nói về endpoint và hashrate bằng không.
 
 Sau phục hồi, tìm job mới dùng được và share mới được chấp nhận. Website hoạt động lại hay ping thành công không chứng minh phiên đào qua đủ các bước đó. Ngược lại, lỗi trình duyệt không tự chứng minh Stratum dừng. Ghi rõ mỗi phép thử kiểm tra website, đường truyền phần mềm hay phản hồi pool.
 

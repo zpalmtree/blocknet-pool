@@ -11,7 +11,7 @@ faq:
     a: 'Non. Le pool gère le nœud, prépare les modèles, vérifie les shares et soumet les blocs. Sur bntpool.com, il suffit de seine et d’une adresse Blocknet ou d’un nom Blocknet ID. Lancez seine, collez votre adresse et acceptez le pool par défaut : votre part des blocs y est payée.'
   - q: 'Comment commencer sur bntpool.com ?'
     a: 'Téléchargez seine pour Windows, macOS ou Linux sur seineminer.com, lancez-le et collez votre adresse Blocknet ou @name. bntpool.com est le pool par défaut : acceptez-le pour commencer. Recherchez votre adresse dans les statistiques du pool pour voir hashrate, shares et solde.'
-sourceHash: 'a17a47ab1d73'
+sourceHash: '15d1453f41d9'
 translation: draft
 ---
 
@@ -77,7 +77,7 @@ Ces critères déterminent votre rémunération et la facilité de la contrôler
 
 - **Un système clair.** Le pool doit annoncer son système et ses paramètres, notamment la fenêtre PPLNS. bntpool.com les indique sur [Get Started](/start) et à `https://bntpool.com/api/info`.
 - **Confirmations et minimum.** Les récompenses attendent généralement une profondeur suffisante, puis le paiement part au seuil. Sur bntpool.com, la confirmation demande 60 blocs, comme la maturité coinbase Blocknet, et les soldes de 0,1 BNT ou plus sont payés automatiquement.
-- **Des chiffres publics et vérifiables.** Chaque bloc trouvé et paiement doit être visible. bntpool.com les affiche dans [blocs](/blocks) et [paiements](/payouts), l’effort par période sur [chance](/luck), et la santé des services sur [statut](/status).
+- **Des chiffres publics et vérifiables.** Chaque bloc trouvé et paiement doit être visible. bntpool.com les affiche dans [blocs](/blocks) et [paiements](/payouts), ainsi que l’effort par période sur [chance](/luck).
 - **Vos statistiques.** Recherchez votre adresse pour voir hashrate, shares et soldes. C’est la [page des statistiques](/stats) ; le [guide de suivi](/blog/fr/track-your-miner-on-bntpool/) explique chaque carte.
 - **Une installation simple.** Moins de réglages signifie un démarrage plus rapide. bntpool.com est le pool par défaut de seine, qui optimise seul threads, kernels et mémoire. Vous pouvez utiliser un [nom Blocknet ID](https://seineminer.com/fr/blog/blocknet-id-pay-by-name/) comme `@name` au lieu de l’adresse complète.
 

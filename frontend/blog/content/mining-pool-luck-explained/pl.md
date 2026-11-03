@@ -9,7 +9,7 @@ faq:
     a: 'Najpierw przeczytaj etykietę i definicję. Kolumna Wysiłek i karta Średnie szczęście na bntpool.com przedstawiają pracę względem oczekiwanej, więc niższe wartości oznaczają mniej zarejestrowanej pracy na blok. Inne witryny mogą stosować odwrotną konwencję. Porównuj zgodne wskaźniki i rozmiary próbek, nie tylko procenty.'
   - q: 'Czy długa runda zwiększy moją następną wypłatę?'
     a: 'Długa runda nie gwarantuje większej indywidualnej wypłaty. Znalezienie bloku określa, kiedy nagroda staje się dostępna, a rozliczenie PPLNS wyznacza twój udział na podstawie kwalifikującej się zaakceptowanej pracy. Potem obowiązują reguły potwierdzeń i wypłat. Sprawdź salda w Moich statystykach, a kolejność etapów w poradniku wypłat.'
-sourceHash: 'f7051fa67591'
+sourceHash: '3dce88998f4a'
 translation: draft
 ---
 
@@ -83,7 +83,7 @@ Dlatego saldo może zmieniać się skokowo, choć miner nadal przesyła zaakcept
 
 ## Co sprawdzać podczas długiej rundy?
 
-Sprawdzaj to, co można bezpośrednio obserwować: miner działa, udziały nadal są akceptowane, a właściwy adres widnieje w [Moich statystykach](/stats). [Status](/status) pokazuje publiczny stan usług. Jeśli twoje zaakceptowane udziały przestaną napływać, skorzystaj z [diagnostyki statystyk minera](/blog/pl/track-your-miner-on-bntpool/#zero-hashrate); długa runda puli i odłączona koparka wymagają innych kontroli.
+Sprawdzaj to, co można bezpośrednio obserwować: miner działa, udziały nadal są akceptowane, a właściwy adres widnieje w [Moich statystykach](/stats). Jeśli twoje zaakceptowane udziały przestaną napływać, skorzystaj z [diagnostyki statystyk minera](/blog/pl/track-your-miner-on-bntpool/#zero-hashrate); długa runda puli i odłączona koparka wymagają innych kontroli.
 
 Gdy połączenie działa prawidłowo, oceniaj szczęście na podstawie miarodajnej historii i tych samych definicji. Każda liczba na panelu ma wtedy jasną rolę: hashrate szacuje pracę na sekundę, wysiłek porównuje ją z pracą oczekiwaną dla bloku, a salda pokazują rozliczenie nagród. Żaden z tych wskaźników nie wymaga zgadywania, kiedy pojawi się kolejny zwycięski hash.
 

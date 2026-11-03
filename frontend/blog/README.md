@@ -33,7 +33,7 @@ shared editorial references; unrelated service or application changes retain the
 3. End the body with exactly one call to action written for the post (the check requires it):
    `<CTA target="pool" title="…" text="…" />` sends readers to `/start`; `target="seine"` to the
    seine download. Translations translate `title` and `text`. Avoid ASCII double quotes inside them.
-4. Link to pool pages as `/start`, `/stats`, `/blocks`, `/payouts`, `/luck`, `/status`,
+4. Link to pool pages as `/start`, `/stats`, `/blocks`, `/payouts`, `/luck`,
    `/checkpoints`, to other posts as `/blog/<slug>/`, and to seineminer.com with full URLs.
    Translations prefix blog links with their locale (`/blog/es/<slug>/`, `/blog/pt-br/<slug>/`)
    and seineminer.com links with theirs (`https://seineminer.com/es/...`). Keep pool app links

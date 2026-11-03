@@ -57,6 +57,6 @@ The response can report acceptance, verification status and difficulty informati
 
 Read the stages in order: endpoint reached, login accepted, job received, hashing active and submissions answered. If a connection is lost, the client reconnects and establishes a session before receiving more work. Use the exact log message and its timestamp to locate the stage involved. A working pool webpage is useful context, but it does not prove that the mining port is reachable from that machine.
 
-Open [My Stats](/stats) for the intended payout address to follow the rig, and check [pool status](/status) for service context. Allow share-based hashrate estimates time to accumulate observations after startup or reconnection. Keep the protocol conversation separate from payout timing: login gets the session ready, jobs supply work, shares report results and the pool's accounting determines the later reward stages.
+Open [My Stats](/stats) for the intended payout address to follow the rig. Allow share-based hashrate estimates time to accumulate observations after startup or reconnection. Keep the protocol conversation separate from payout timing: login gets the session ready, jobs supply work, shares report results and the pool's accounting determines the later reward stages.
 
 <CTA target="pool" title="Connect seine to bntpool.com" text="Use the pool setup page, then follow jobs, shares and your rig&#x27;s activity on My Stats." />

@@ -9,7 +9,7 @@ faq:
     a: 'Bisa, jika komunikasi dengan pool stabil. Amati share diterima dan pesan sambungan ulang dalam penggunaan normal. Jika terputus, perbandingan dengan Ethernet dapat mengisolasi bagian nirkabel. Pertahankan pengaturan penambang dan tujuan selama perbandingan.'
   - q: 'Apakah ping berhasil membuktikan koneksi pool berfungsi?'
     a: 'Ping memeriksa pertukaran ICMP dengan host yang menjawab. Sesi penambangan juga memerlukan endpoint, koneksi transport, login, job terkini, dan kiriman diterima. Situs atau ping bisa berfungsi sementara layanan lain tidak terjangkau. Periksa log penambang dan catatan pool.'
-sourceHash: 'bf51814bc06d'
+sourceHash: 'c23da77f349f'
 translation: draft
 ---
 
@@ -43,7 +43,7 @@ Periksa apakah unggahan besar, pencadangan cloud, atau transfer rumah tangga ber
 
 ## Pengamatan apa menunjukkan masalah koneksi pool?
 
-Ikuti koneksi endpoint, login, penerimaan job, kiriman, dan balasan. Jika login ditolak, periksa alamat serta pesan tepatnya sebelum menyalahkan Wi-Fi. Untuk putus berulang, simpan waktu dan baris log di sekitarnya. [Panduan pelacakan](/blog/id/track-your-miner-on-bntpool/) membahas endpoint dan hashrate nol; [halaman status](/status) memberi konteks layanan.
+Ikuti koneksi endpoint, login, penerimaan job, kiriman, dan balasan. Jika login ditolak, periksa alamat serta pesan tepatnya sebelum menyalahkan Wi-Fi. Untuk putus berulang, simpan waktu dan baris log di sekitarnya. [Panduan pelacakan](/blog/id/track-your-miner-on-bntpool/) membahas endpoint dan hashrate nol.
 
 Setelah pulih, cari job baru yang dapat dipakai dan share baru diterima. Situs pulih atau ping berhasil tidak membuktikan sesi mining melewati tahap tersebut. Sebaliknya, galat peramban saja tidak membuktikan Stratum berhenti. Catat apa yang benar-benar diuji agar situs, transport penambang, dan balasan pool tetap terpisah.
 

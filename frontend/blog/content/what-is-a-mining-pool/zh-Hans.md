@@ -11,7 +11,7 @@ faq:
     a: '不需要。矿池负责运行节点、构建区块模板、检查份额并提交找到的区块。在 bntpool.com 上，你只需要 seine 矿工软件和一个 Blocknet 地址或 Blocknet ID 名称。运行 seine，粘贴地址，接受默认矿池，你在每个区块中所得的部分就会支付到这个地址。'
   - q: '怎样开始在 bntpool.com 挖矿？'
     a: '从 seineminer.com 下载适用于 Windows、macOS 或 Linux 的 seine，运行它，并在提示时粘贴你的 Blocknet 地址或 @name。bntpool.com 是 seine 的默认矿池，接受即可开始挖矿。在矿池的统计页面查询你的地址，就能看到你的算力、份额和余额。'
-sourceHash: 'a17a47ab1d73'
+sourceHash: '15d1453f41d9'
 translation: reviewed
 ---
 
@@ -77,7 +77,7 @@ translation: reviewed
 
 - **明确的支付方式。** 矿池应当说明它的支付方式和相关设置，例如 PPLNS 窗口。bntpool.com 在 [Get Started 页面](/start)列出了这些设置，并发布在 `https://bntpool.com/api/info`。
 - **确认数和最低支付额。** 奖励通常要等区块在链上足够深之后才确认，余额超过最低额后才会付款。在 bntpool.com 上，区块奖励在 60 个区块后确认，与 Blocknet 的 coinbase 成熟期一致，余额达到 0.1 BNT 或以上即自动支付。
-- **公开、可核实的数据。** 你应当能看到矿池找到的每个区块和发出的每笔付款。bntpool.com 在[区块页面](/blocks)和[支付页面](/payouts)展示这些信息，在[幸运值页面](/luck)展示每一轮的努力值，在[状态页面](/status)展示服务运行状况。
+- **公开、可核实的数据。** 你应当能看到矿池找到的每个区块和发出的每笔付款。bntpool.com 在[区块页面](/blocks)和[支付页面](/payouts)展示这些信息，并在[幸运值页面](/luck)展示每一轮的努力值。
 - **你自己的统计数据。** 查询你的地址即可看到你的算力、份额和余额。在 bntpool.com 上就是[统计页面](/stats)；[追踪你的矿机](/blog/zh-hans/track-your-miner-on-bntpool/)指南解释了每张卡片。
 - **设置简单。** 需要设置的越少，越早开始挖矿。bntpool.com 是 seine 的默认矿池，seine 会自动调整线程、计算内核和内存，你还可以用 `@name` 这样的 [Blocknet ID 名称](https://seineminer.com/zh-hans/blog/blocknet-id-pay-by-name/)代替完整地址登录。
 

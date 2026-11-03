@@ -9,7 +9,7 @@ faq:
     a: 'Lees eerst het label en de definitie. De kolom Inspanning en kaart Gemiddeld geluk op bntpool.com vergelijken werk met verwacht werk. Lagere waarden betekenen minder geregistreerd werk per blok. Andere sites gebruiken soms de omgekeerde conventie. Vergelijk overeenkomstige metingen en steekproefgroottes in plaats van alleen percentages.'
   - q: 'Verhoogt een lange ronde mijn volgende uitbetaling?'
     a: 'Een lange ronde garandeert geen hogere persoonlijke uitbetaling. Een blokvondst bepaalt wanneer een beloning beschikbaar komt; de PPLNS-administratie bepaalt je aandeel op basis van in aanmerking komend geaccepteerd werk. Daarna gelden bevestigings- en uitbetalingsregels. Bekijk je saldi bij Mijn statistieken en de volgorde in de uitbetalingsgids.'
-sourceHash: 'f7051fa67591'
+sourceHash: '3dce88998f4a'
 translation: draft
 ---
 
@@ -83,7 +83,7 @@ Je saldo kan daarom stapsgewijs veranderen terwijl je miner geaccepteerde shares
 
 ## Wat controleer je tijdens een lange ronde?
 
-Controleer wat je direct kunt waarnemen: je miner draait, shares blijven geaccepteerd worden en het juiste adres staat bij [Mijn statistieken](/stats). Gebruik [Status](/status) voor de openbare servicestatus. Stoppen je eigen geaccepteerde shares, volg dan de [probleemoplossing voor minerstatistieken](/blog/nl/track-your-miner-on-bntpool/#zero-hashrate); een lange poolronde en een losgekoppelde rig vragen om andere controles.
+Controleer wat je direct kunt waarnemen: je miner draait, shares blijven geaccepteerd worden en het juiste adres staat bij [Mijn statistieken](/stats). Stoppen je eigen geaccepteerde shares, volg dan de [probleemoplossing voor minerstatistieken](/blog/nl/track-your-miner-on-bntpool/#zero-hashrate); een lange poolronde en een losgekoppelde rig vragen om andere controles.
 
 Als je verbinding goed werkt, beoordeel geluk dan over een betekenisvolle historie met dezelfde definities. Zo heeft ieder dashboardgetal een duidelijke rol: hashrate schat werk per seconde, inspanning vergelijkt werk met het verwachte werk voor een blok en saldi tonen de beloningsadministratie. Daarvoor hoef je niet te raden wanneer de volgende winnende hash komt.
 

@@ -9,7 +9,7 @@ faq:
     a: 'Lies zuerst die Bezeichnung und Definition. Die Spalte Aufwand und die Karte Durchschnittliches Glück auf bntpool.com setzen geleistete zu erwarteter Arbeit ins Verhältnis. Niedrigere Werte bedeuten weniger erfasste Arbeit pro Block. Andere Seiten verwenden eventuell den Kehrwert. Vergleiche passende Kennzahlen und Stichprobengrößen statt nur Prozentwerte.'
   - q: 'Erhöht eine lange Runde meine nächste Auszahlung?'
     a: 'Eine lange Runde garantiert keine höhere persönliche Auszahlung. Der Blockfund bestimmt, wann eine Belohnung verfügbar wird; die PPLNS-Abrechnung bestimmt deinen Anteil anhand berechtigter akzeptierter Arbeit. Danach gelten Bestätigungs- und Auszahlungsregeln. Prüfe deine Guthaben unter Meine Statistiken und den Ablauf im Auszahlungsleitfaden.'
-sourceHash: 'f7051fa67591'
+sourceHash: '3dce88998f4a'
 translation: draft
 ---
 
@@ -83,7 +83,7 @@ Dein Guthaben kann sich daher schrittweise ändern, während dein Miner weiter a
 
 ## Was solltest du während einer langen Runde prüfen?
 
-Prüfe direkt beobachtbare Dinge: Dein Miner läuft, Shares werden weiter akzeptiert und unter [Meine Statistiken](/stats) erscheint die richtige Adresse. [Status](/status) zeigt den öffentlichen Dienstzustand. Wenn deine akzeptierten Shares ausbleiben, nutze die [Fehlersuche für Miner-Statistiken](/blog/de/track-your-miner-on-bntpool/#zero-hashrate). Eine lange Pool-Runde und ein getrenntes Rig erfordern unterschiedliche Prüfungen.
+Prüfe direkt beobachtbare Dinge: Dein Miner läuft, Shares werden weiter akzeptiert und unter [Meine Statistiken](/stats) erscheint die richtige Adresse. Wenn deine akzeptierten Shares ausbleiben, nutze die [Fehlersuche für Miner-Statistiken](/blog/de/track-your-miner-on-bntpool/#zero-hashrate). Eine lange Pool-Runde und ein getrenntes Rig erfordern unterschiedliche Prüfungen.
 
 Ist deine Verbindung in Ordnung, beurteile Glück anhand eines aussagekräftigen Verlaufs und derselben Definitionen. So hat jede Dashboard-Zahl eine klare Rolle: Hashrate schätzt Arbeit pro Sekunde, Aufwand vergleicht Arbeit mit der für einen Block erwarteten Arbeit und Guthaben zeigen die Belohnungsabrechnung. Dafür musst du nicht erraten, wann der nächste erfolgreiche Hash kommt.
 

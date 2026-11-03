@@ -9,7 +9,7 @@ faq:
     a: 'Der Explorer zeigt den öffentlichen Chain-Status einer Transaktion. Blocknet verwendet private Outputs. Eine gewöhnliche Adresssuche zeigt deshalb weder deinen Wallet-Saldo noch beweist sie, dass ein bestimmter Output dir gehört. Deine Wallet scannt die Chain, um ihre eigenen Outputs zu erkennen.'
   - q: 'Welche Angaben helfen bei einer fehlenden Auszahlung?'
     a: 'Nenne vollständige Empfangsadresse der Pool-Abfrage, Transaktionskennung, ungefähre Zeit, Pool-Status und Synchronisierungsfortschritt. Beschreibe, ob die Transaktion in der Wallet-Historie steht. Teile Kontodaten nur im passenden Support-Kontext und niemals Seed-Phrase, private Schlüssel oder Wallet-Passwort.'
-sourceHash: '915075cf4e2b'
+sourceHash: '7927c9203d7f'
 translation: draft
 ---
 
@@ -31,13 +31,13 @@ Die öffentliche Payouts-Seite beschreibt Auszahlungsbatches mit möglicherweise
 
 ## Ist die Auszahlung vorgemerkt, unbestätigt oder bestätigt?
 
-Lies den aktuellen Status, bevor du alle Schritte als abgeschlossen betrachtest. Ein Warteschlangeneintrag ist noch ein Pool-Verarbeitungszustand; eine unbestätigte Transaktion braucht Chain-Bestätigung. Aktualisiere den Eintrag und öffne den Transaktionslink, sobald vorhanden. Die [Statusseite](/status) liefert Betriebskontext, wenn mehrere Beobachtungen auf eine Unterbrechung hindeuten.
+Lies den aktuellen Status, bevor du alle Schritte als abgeschlossen betrachtest. Ein Warteschlangeneintrag ist noch ein Pool-Verarbeitungszustand; eine unbestätigte Transaktion braucht Chain-Bestätigung. Aktualisiere den Eintrag und öffne den Transaktionslink, sobald vorhanden.
 
 Trenne Reife der Mining-Belohnung und Bestätigung der Auszahlungstransaktion. Der belohnende Block und die spätere Zahlung an deine Wallet haben unterschiedliche Kennungen und Aufgaben. Die [Bestätigungsanleitung](/blog/de/block-confirmations-mining-rewards/) erklärt dies. Eine Transaktionskennung ist ein konkreter Prüfpunkt, beweist aber nicht, dass deine lokale Wallet die Zahlung bereits gescannt und erkannt hat.
 
 ## Prüfe die Transaktion auf der Chain
 
-Öffne den Explorer-Link der Auszahlung und vergleiche die vollständige Kennung mit deinen Notizen. Lies den Chain-Status und verfügbare Blockinformationen. Findet der Explorer sie noch nicht, vergleiche aktualisierten Pool-Eintrag und Dienststatus, bevor du urteilst. Ein vorübergehendes Suchergebnis allein benennt keine Ursache.
+Öffne den Explorer-Link der Auszahlung und vergleiche die vollständige Kennung mit deinen Notizen. Lies den Chain-Status und verfügbare Blockinformationen. Findet der Explorer sie noch nicht, prüfe den aktualisierten Pool-Eintrag, bevor du urteilst. Ein vorübergehendes Suchergebnis allein benennt keine Ursache.
 
 Durch Blocknets Privatsphäre zeigt eine normale Explorer-Adresssuche keinen öffentlichen Empfängersaldo. Transaktionsstatus und Eigentumsprüfung der Wallet beantworten verschiedene Fragen. Die Wallet erkennt eingehende Outputs beim Chain-Scan. Die [Stealth-Adressen-Anleitung](https://seineminer.com/de/blog/stealth-addresses-explained/) erläutert das Verfahren; eine gewöhnliche öffentliche Adressliste bildet die private Wallet-Historie nicht nach.
 

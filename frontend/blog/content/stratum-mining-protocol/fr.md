@@ -9,7 +9,7 @@ faq:
     a: 'Ces adresses servent des connexions distinctes. Le site bntpool.com utilise HTTPS pour ses pages et son API ; son point de minage documenté est stratum+tcp://bntpool.com:3333. Saisissez celui-ci dans les paramètres du pool du mineur. Ouvrir le site ne crée pas à lui seul une connexion de minage.'
   - q: 'Une share Stratum acceptée signifie-t-elle un paiement ?'
     a: 'Non. La réponse indique le résultat d''un envoi dans la session. Vérification, bloc valide pour le réseau, admissibilité aux récompenses et paiement terminé sont des étapes distinctes. Suivez l''activité acceptée dans My Stats et consultez le guide des paiements pour les confirmations, PPLNS et le seuil.'
-sourceHash: '5cc5086d7b28'
+sourceHash: '29a40e87ac51'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ La réponse peut indiquer acceptation, état de vérification et difficulté. Ce
 
 Lisez les étapes dans l'ordre : point atteint, login accepté, tâche reçue, hachage actif, envois répondus. Après une perte de connexion, le client reconnecte et établit une session avant de recevoir du travail. Utilisez le message exact et son heure pour situer l'étape. Un site accessible ne prouve pas que le port de minage l'est depuis cette machine.
 
-Ouvrez [My Stats](/stats) pour l'adresse souhaitée et le [statut du pool](/status) pour le service. Après démarrage ou reconnexion, laissez les estimations de hashrate accumuler des shares. Distinguez protocole et calendrier des paiements : login prépare la session, les tâches fournissent le travail, les shares rapportent les résultats et la comptabilité détermine les étapes suivantes.
+Ouvrez [My Stats](/stats) pour l'adresse souhaitée. Après démarrage ou reconnexion, laissez les estimations de hashrate accumuler des shares. Distinguez protocole et calendrier des paiements : login prépare la session, les tâches fournissent le travail, les shares rapportent les résultats et la comptabilité détermine les étapes suivantes.
 
 <CTA target="pool" title="Connectez seine à bntpool.com" text="Utilisez la page de configuration du pool, puis suivez les tâches, shares et votre machine dans My Stats." />

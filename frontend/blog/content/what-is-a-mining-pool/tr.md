@@ -2,7 +2,7 @@
 title: Madencilik havuzu nedir?
 description: Madencilik havuzu birçok madencinin hashrate'ini birleştirip her blok ödülünü paylaşır. Havuzları, PPLNS, PPS ve solo madenciliği öğrenin.
 tags: [Madencilik temelleri, Madencilik havuzları, PPLNS, bntpool]
-sourceHash: 'a17a47ab1d73'
+sourceHash: '15d1453f41d9'
 translation: draft
 faq:
   - q: 'Madencilik havuzuna katılmak ürettiğim miktarı artırır mı?'
@@ -77,7 +77,7 @@ Havuzları karşılaştırırken nasıl ödeme alacağınızı ve bunu ne kadar 
 
 - **Açık ödeme yöntemi.** Havuz, yöntemini ve PPLNS penceresi gibi ayarlarını belirtmelidir. bntpool.com bunları [Get Started sayfasında](/start) listeler ve `https://bntpool.com/api/info` adresinde yayımlar.
 - **Onaylar ve en düşük ödeme.** Ödüller genelde blok zincirde yeterince derine ulaşana kadar bekler; bakiye alt sınırı geçtiğinde gönderilir. bntpool.com'da blok ödülü, Blocknet'in coinbase olgunlaşmasıyla uyumlu olarak 60 blok sonra onaylanır; 0,1 BNT ve üzeri bakiyeler otomatik ödenir.
-- **Herkese açık, kontrol edilebilir sayılar.** Havuzun bulduğu her bloğu ve gönderdiği her ödemeyi görebilmelisiniz. bntpool.com bunları [bloklar](/blocks) ve [ödemeler](/payouts) sayfalarında, tur bazında eforu [şans sayfasında](/luck), hizmet sağlığını [durum sayfasında](/status) gösterir.
+- **Herkese açık, kontrol edilebilir sayılar.** Havuzun bulduğu her bloğu ve gönderdiği her ödemeyi görebilmelisiniz. bntpool.com bunları [bloklar](/blocks) ve [ödemeler](/payouts) sayfalarında, tur bazında eforu ise [şans sayfasında](/luck) gösterir.
 - **Kendi istatistikleriniz.** Hashrate, share ve bakiyeleri görmek için adresinizi aratın. bntpool.com'da bu, [istatistikler sayfasıdır](/stats); [madencinizi takip etme](/blog/tr/track-your-miner-on-bntpool/) rehberi her kartı açıklar.
 - **Kolay kurulum.** Ne kadar az ayar gerekirse o kadar çabuk başlarsınız. bntpool.com, iş parçacıkları, kernel'ler ve belleği kendi ayarlayan seine'in varsayılan havuzudur. Tam adres yerine `@name` gibi bir [Blocknet ID adıyla](https://seineminer.com/tr/blog/blocknet-id-pay-by-name/) giriş yapabilirsiniz.
 

@@ -9,7 +9,7 @@ faq:
     a: 'No. Sessanta intervalli obiettivo da cinque minuti danno una stima di 300 minuti, cinque ore. L''avanzamento reale dipende dai blocchi aggiunti a intervalli variabili. Maturità, soglia del saldo e transazione successiva sono fasi separate.'
   - q: 'Devo continuare a minare perché una ricompensa maturi?'
     a: 'Un blocco trovato guadagna profondità con i nuovi blocchi della rete anche se il miner è scollegato. La tua quota segue le regole contabili del pool. Fermarsi non accelera né azzera la maturazione; segui la ricompensa in My Stats.'
-sourceHash: '7383b256ba1a'
+sourceHash: '2f9675c64c30'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ Dopo l'invio, segui la transazione e la ricezione e spendibilità nel wallet. Le
 
 In [Blocks](/blocks) identifica altezza, hash e stato. Apri [My Stats](/stats) con l'indirizzo del miner e controlla stime e ricompense confermate. Quando esiste un pagamento, segui il link della transazione. Ogni osservazione riguarda blocco, saldo del conto o pagamento al wallet.
 
-Verifica i valori in [Get Started](/start) o `https://bntpool.com/api/info` e lo [stato del pool](/status). Per indagare, annota indirizzo, identificatore del blocco o transazione e ora; non condividere parole di recupero. La [guida di monitoraggio](/blog/it/track-your-miner-on-bntpool/) completa le statistiche. I blocchi avanzano anche offline; l'idoneità segue lavoro registrato e catena.
+Verifica i valori in [Get Started](/start) o `https://bntpool.com/api/info`. Per indagare, annota indirizzo, identificatore del blocco o transazione e ora; non condividere parole di recupero. La [guida di monitoraggio](/blog/it/track-your-miner-on-bntpool/) completa le statistiche. I blocchi avanzano anche offline; l'idoneità segue lavoro registrato e catena.
 
 <CTA target="pool" title="Segui le tue ricompense" text="Collegati a bntpool.com e segui stime, saldi confermati e pagamenti in My Stats." />

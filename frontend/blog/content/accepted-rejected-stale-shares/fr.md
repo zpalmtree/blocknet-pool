@@ -9,7 +9,7 @@ faq:
     a: 'La réponse stale job indique une affectation devenue inéligible, par exemple expirée ou liée à un ancien modèle au-delà de son délai de grâce. Vérifiez l’arrivée de nouveaux jobs et de shares acceptés. Des réponses répétées demandent de vérifier la connexion et la version du mineur.'
   - q: 'Une difficulté supérieure réduit-elle ma récompense ?'
     a: 'La difficulté change le travail représenté par chaque share éligible et sa fréquence attendue. Comparez le travail pondéré par difficulté sur des périodes équivalentes plutôt que les nombres bruts de shares. La récompense dépend aussi de la fenêtre PPLNS, du travail éligible, des blocs trouvés et des règles de validation.'
-sourceHash: 5be830208e6c
+sourceHash: 92eae02aa6e4
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ Par exemple, 99 soumissions acceptées et une rejetée donnent 1% de rejet en no
 
 ## Que faire si les rejets se répètent ?
 
-Commencez par une machine touchée. Notez la version, le message exact, le début du problème et l’arrivée éventuelle de nouveaux jobs. Consultez [État](/status), puis recherchez des interruptions de connexion. Mettez à jour depuis les [versions officielles de seine](https://github.com/zpalmtree/seine/releases) et comparez après une seule modification à la fois.
+Commencez par une machine touchée. Notez la version, le message exact, le début du problème et l’arrivée éventuelle de nouveaux jobs. Recherchez des interruptions de connexion. Mettez à jour depuis les [versions officielles de seine](https://github.com/zpalmtree/seine/releases) et comparez après une seule modification à la fois.
 
 Un proxy ou une intégration personnalisée doit préserver le job, la plage de nonce et la difficulté attribués. Si le problème persiste, fournissez un court extrait de journal et les détails de la machine au canal d’assistance du projet. Retirez secrets et informations privées ; une phrase de récupération n’est jamais nécessaire pour diagnostiquer des shares.
 

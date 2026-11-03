@@ -60,7 +60,7 @@ As an arithmetic example, 99 accepted submissions and one rejected submission ma
 
 ## What should you do when rejections repeat?
 
-Start with one affected rig. Note its miner version, the exact rejection message, when it started, and whether new jobs still arrive. Check [Status](/status) for a pool incident, then check the machine's connection for interruptions. Use the official [seine releases](https://github.com/zpalmtree/seine/releases) when updating, and compare behavior after one change at a time.
+Start with one affected rig. Note its miner version, the exact rejection message, when it started, and whether new jobs still arrive. Check the machine's connection for interruptions. Use the official [seine releases](https://github.com/zpalmtree/seine/releases) when updating, and compare behavior after one change at a time.
 
 If you use a custom proxy or integration, verify that it preserves the assigned job, nonce range and difficulty when forwarding submissions. If the issue continues, provide a short log excerpt and the affected rig's details through the project's support channel. Remove secrets and private account details from anything you share; a wallet recovery phrase is never needed to diagnose shares.
 

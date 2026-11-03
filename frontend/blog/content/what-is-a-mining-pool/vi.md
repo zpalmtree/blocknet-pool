@@ -2,7 +2,7 @@
 title: Pool đào là gì?
 description: Pool đào kết hợp hashrate nhiều thợ đào và chia phần thưởng mỗi khối. Tìm hiểu cách pool hoạt động, PPLNS, PPS, solo và tiêu chí lựa chọn.
 tags: [Kiến thức đào coin, Pool đào, PPLNS, bntpool]
-sourceHash: 'a17a47ab1d73'
+sourceHash: '15d1453f41d9'
 translation: draft
 faq:
   - q: 'Tham gia pool có tăng lượng coin tôi đào được không?'
@@ -77,7 +77,7 @@ Khi so pool, những chi tiết sau quyết định cách được trả và m�
 
 - **Phương thức trả thưởng rõ ràng.** Pool nên nêu phương thức và cài đặt như cửa sổ PPLNS. bntpool.com liệt kê trên [trang Get Started](/start) và công bố tại `https://bntpool.com/api/info`.
 - **Xác nhận và mức thanh toán tối thiểu.** Phần thưởng thường chờ khối đủ sâu trong chuỗi; thanh toán gửi khi số dư vượt tối thiểu. Trên bntpool.com, phần thưởng khối xác nhận sau 60 khối, phù hợp độ trưởng thành coinbase của Blocknet; số dư từ 0,1 BNT tự động được trả.
-- **Số liệu công khai, kiểm tra được.** Bạn nên thấy mọi khối pool tìm và mọi khoản nó gửi. bntpool.com hiển thị trên các trang [khối](/blocks), [thanh toán](/payouts), effort từng vòng trên [trang may mắn](/luck) và sức khỏe dịch vụ trên [trang trạng thái](/status).
+- **Số liệu công khai, kiểm tra được.** Bạn nên thấy mọi khối pool tìm và mọi khoản nó gửi. bntpool.com hiển thị trên các trang [khối](/blocks), [thanh toán](/payouts) và effort từng vòng trên [trang may mắn](/luck).
 - **Thống kê riêng.** Tra địa chỉ để xem hashrate, share và số dư. Trên bntpool.com đó là [trang thống kê](/stats); hướng dẫn [theo dõi trình đào](/blog/vi/track-your-miner-on-bntpool/) giải thích từng thẻ.
 - **Thiết lập dễ dàng.** Cần ít cài đặt thì bắt đầu càng nhanh. bntpool.com là pool mặc định trong seine, vốn tự tinh chỉnh luồng, kernel và bộ nhớ; bạn có thể đăng nhập bằng [tên Blocknet ID](https://seineminer.com/vi/blog/blocknet-id-pay-by-name/) như `@name` thay địa chỉ đầy đủ.
 

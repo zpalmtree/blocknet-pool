@@ -9,7 +9,7 @@ faq:
     a: 'Stale job nghĩa là kết quả thuộc phân công không còn hợp lệ, chẳng hạn hết hạn hoặc mẫu cũ vượt thời gian gia hạn. Kiểm tra job mới và share được chấp nhận trở lại. Nếu lặp lại, kiểm tra kết nối và phiên bản phần mềm đào.'
   - q: 'Độ khó share cao hơn có giảm thưởng không?'
     a: 'Độ khó thay đổi công việc mỗi share đủ điều kiện đại diện và tần suất kỳ vọng. So sánh công việc có trọng số độ khó trong các khoảng tương đương, không chỉ số share. Thưởng còn phụ thuộc cửa sổ PPLNS, công việc hợp lệ, khối tìm thấy và quy tắc xác thực.'
-sourceHash: 5be830208e6c
+sourceHash: 92eae02aa6e4
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ So sánh gửi được nhận và từ chối trong cùng kỳ và phạm vi. B
 
 ## Làm gì khi từ chối lặp lại?
 
-Bắt đầu với một máy bị ảnh hưởng. Ghi phiên bản, đúng thông báo, lúc bắt đầu và job mới còn đến không. Kiểm tra [Trạng thái](/status), rồi gián đoạn kết nối máy. Cập nhật từ [bản phát hành chính thức của seine](https://github.com/zpalmtree/seine/releases) và so sánh sau từng thay đổi.
+Bắt đầu với một máy bị ảnh hưởng. Ghi phiên bản, đúng thông báo, lúc bắt đầu và job mới còn đến không. Kiểm tra xem kết nối của máy có bị gián đoạn không. Cập nhật từ [bản phát hành chính thức của seine](https://github.com/zpalmtree/seine/releases) và so sánh sau từng thay đổi.
 
 Proxy hoặc tích hợp riêng phải giữ nguyên job, phạm vi nonce và độ khó khi chuyển tiếp. Nếu vẫn lỗi, gửi đoạn log ngắn và chi tiết máy qua kênh hỗ trợ dự án. Xóa bí mật và dữ liệu tài khoản riêng; không bao giờ cần cụm từ khôi phục ví để chẩn đoán share.
 

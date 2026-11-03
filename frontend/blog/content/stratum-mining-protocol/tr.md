@@ -9,7 +9,7 @@ faq:
     a: 'Farklı bağlantılara hizmet ederler. bntpool.com sayfa ve API için HTTPS kullanır; belgelenmiş madencilik ucu stratum+tcp://bntpool.com:3333 adresidir. Bunu madencinin havuz ayarına girin. Web sitesini açabilmek tek başına madencilik bağlantısı kurmaz.'
   - q: 'Kabul edilen Stratum payı ödeme gönderildiği anlamına gelir mi?'
     a: 'Hayır. Pay yanıtı oturumdaki gönderimin sonucudur. Doğrulama, ağ açısından geçerli blok, ödüle uygunluk ve tamamlanmış ödeme ayrı aşamalardır. Kabul edilmiş işi My Stats üzerinden izleyin; onaylar, PPLNS ve eşik için ödeme rehberini okuyun.'
-sourceHash: '5cc5086d7b28'
+sourceHash: '29a40e87ac51'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ Yanıt kabul, doğrulama durumu ve zorluk bilgisi taşıyabilir. Her başarılı
 
 Aşamaları sırayla okuyun: uca erişildi, giriş kabul edildi, iş alındı, hashing aktif, gönderimler yanıtlandı. Bağlantı kaybolursa istemci yeniden bağlanıp yeni iş öncesi oturum kurar. Tam günlük mesajı ve zamanıyla aşamayı belirleyin. Web sitesinin çalışması, o makineden madencilik portuna erişildiğini kanıtlamaz.
 
-Doğru adres için [My Stats](/stats), hizmet bağlamı için [havuz durumunu](/status) açın. Başlangıç veya yeniden bağlantı sonrası pay tabanlı hash gücü tahminlerine veri toplama zamanı verin. Protokolü ödeme zamanından ayırın: giriş oturumu hazırlar, işler görev verir, paylar sonuç bildirir, muhasebe sonraki ödül aşamalarını belirler.
+Doğru adres için [My Stats](/stats) sayfasını açın. Başlangıç veya yeniden bağlantı sonrası pay tabanlı hash gücü tahminlerine veri toplama zamanı verin. Protokolü ödeme zamanından ayırın: giriş oturumu hazırlar, işler görev verir, paylar sonuç bildirir, muhasebe sonraki ödül aşamalarını belirler.
 
 <CTA target="pool" title="seine&#x27;ı bntpool.com&#x27;a bağlayın" text="Havuz kurulumunu kullanın, sonra işleri, payları ve rig etkinliğini My Stats üzerinden izleyin." />

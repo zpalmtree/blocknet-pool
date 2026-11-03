@@ -1,8 +1,8 @@
 ---
 title: Monitoruj kopanie na bntpool.com
-description: Wyszukaj adres lub @name na bntpool.com, aby zobaczyć hashrate, udziały, saldo i wypłaty. Śledź bloki, szczęście i dostępność lub użyj publicznego API.
+description: Wyszukaj adres lub @name na bntpool.com, aby zobaczyć hashrate, udziały, saldo i wypłaty. Śledź bloki i szczęście lub użyj publicznego API.
 tags: [bntpool, Statystyki kopania, API puli, Blocknet]
-sourceHash: '40197b2fa166'
+sourceHash: 'f74ae9281fd2'
 translation: draft
 faq:
   - q: 'Dlaczego mój hashrate na bntpool.com różni się od wyniku seine?'
@@ -99,7 +99,7 @@ Zacznij od adresu wypłat, połączenia z pulą i zaakceptowanych udziałów. Lo
 1. **Sprawdź adres.** Wyszukaj ten sam adres odbiorczy lub zarejestrowaną nazwę `@name`, której używa seine. Po zmianie adresu przypisanego do krótkiej nazwy uruchom seine ponownie, aby znów ustalił adres, a następnie sprawdź go w My Stats.
 2. **Sprawdź pulę.** Upewnij się, że seine używa `stratum+tcp://bntpool.com:3333`. Komputer kopiący gdzie indziej lub solo nie dodaje tu udziałów. [Poradnik konfiguracji puli](/blog/pl/mine-blocknet-on-bntpool/) opisuje połączenie.
 3. **Sprawdź Recent Shares.** Poczekaj na zaakceptowane udziały i odświeżenie strony. Udziały przychodzą w różnych odstępach; działający lokalny hashrate nie gwarantuje natychmiastowego oszacowania puli. Jeśli udziały są akceptowane, porównuj średnie w dłuższym okresie.
-4. **Przeczytaj komunikat połączenia.** Skorzystaj z tabeli, jeśli miner nie dostarcza jeszcze zaakceptowanych udziałów. Sprawdź bieżące incydenty na stronie [Status](/status).
+4. **Przeczytaj komunikat połączenia.** Skorzystaj z tabeli, jeśli miner nie dostarcza jeszcze zaakceptowanych udziałów.
 
 | Komunikat w seine | Co sprawdzić dalej |
 |---|---|
@@ -125,10 +125,6 @@ Te strony nie wymagają wyszukiwania i jawnie pokazują wszystkie działania pul
 ### Szczęście
 
 [Luck](/luck) pokazuje nakład pracy każdej rundy. To praca udziałów zaakceptowana przez pulę w rundzie podzielona przez trudność bloku: 100% oznacza dokładnie oczekiwaną ilość pracy, a mniej oznacza wcześniejsze znalezienie bloku. Pojedyncze rundy mocno wahają się w obie strony, więc obserwuj **Average Luck** w panelu. Tabela **Pool Luck History** prowadzi tutaj przez **View All**.
-
-### Status
-
-[Status](/status) jest własną stroną stanu usług puli. Pokazuje dostępność puli, publicznego HTTP, API, Stratum, bazy danych i demona, świeżość bieżącego szablonu zadania, wysokość łańcucha, dostępność z ostatnich 10 minut, 6 godzin, 24 godzin i 7 dni oraz historię incydentów. Dostępność jest mierzona na dwa sposoby: przez monitor na serwerze puli i zewnętrzną sondę działającą na Cloudflare.
 
 ## A co z własnym panelem seine?
 

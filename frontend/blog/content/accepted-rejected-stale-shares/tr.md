@@ -9,7 +9,7 @@ faq:
     a: 'Stale job, gönderimin artık uygun olmayan bir atamaya ait olduğunu belirtir; örneğin süresi dolmuş veya eski şablonun tolerans süresi aşılmıştır. Yeni işleri ve kabul edilen payların dönüşünü kontrol edin. Tekrar ediyorsa bağlantıyı ve madenci sürümünü inceleyin.'
   - q: 'Daha yüksek pay zorluğu ödülümü azaltır mı?'
     a: 'Zorluk her uygun payın temsil ettiği işi ve beklenen sıklığı değiştirir. Ham pay sayısı yerine eşdeğer dönemlerde zorluk ağırlıklı işi karşılaştırın. Ödül ayrıca PPLNS penceresine, uygun işe, bulunan bloklara ve doğrulama kurallarına bağlıdır.'
-sourceHash: 5be830208e6c
+sourceHash: 92eae02aa6e4
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ Kabul ve retleri aynı dönem ve kapsamda karşılaştırın. Madenci bir oturum
 
 ## Retler tekrarlanıyorsa ne yapılmalı?
 
-Bir etkilenen cihazla başlayın. Sürüm, tam mesaj, başlangıç zamanı ve yeni işlerin gelip gelmediğini kaydedin. [Durum](/status) sayfasını, ardından cihazın bağlantı kesintilerini kontrol edin. [Resmî seine sürümlerinden](https://github.com/zpalmtree/seine/releases) güncelleyin ve her seferinde tek değişiklikle karşılaştırın.
+Bir etkilenen cihazla başlayın. Sürüm, tam mesaj, başlangıç zamanı ve yeni işlerin gelip gelmediğini kaydedin. Cihazın bağlantı kesintilerini kontrol edin. [Resmî seine sürümlerinden](https://github.com/zpalmtree/seine/releases) güncelleyin ve her seferinde tek değişiklikle karşılaştırın.
 
 Özel proxy veya entegrasyon, gönderimi aktarırken iş, nonce aralığı ve zorluğu korumalıdır. Sorun sürerse proje destek kanalına kısa günlük kesiti ve cihaz ayrıntılarını verin. Sırları ve özel hesap verilerini çıkarın; pay teşhisinde cüzdan kurtarma ifadesi asla gerekmez.
 

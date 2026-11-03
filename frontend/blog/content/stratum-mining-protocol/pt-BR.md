@@ -9,7 +9,7 @@ faq:
     a: 'Eles atendem conexões diferentes. O site bntpool.com usa HTTPS para páginas e API; o endpoint de mineração documentado é stratum+tcp://bntpool.com:3333. Digite esse endpoint na configuração do pool do minerador. Abrir o site com sucesso, por si só, não estabelece uma conexão de mineração.'
   - q: 'Uma share Stratum aceita significa pagamento enviado?'
     a: 'Não. A resposta de share informa o resultado de um envio na sessão. Verificação, bloco válido na rede, elegibilidade para recompensas e pagamento concluído são etapas diferentes. Acompanhe a atividade aceita em My Stats e consulte o guia de pagamentos para entender confirmações, PPLNS e o limite mínimo.'
-sourceHash: '5cc5086d7b28'
+sourceHash: '29a40e87ac51'
 translation: draft
 ---
 
@@ -57,6 +57,6 @@ A resposta pode informar aceitação, estado de verificação e dificuldade. Lei
 
 Leia na ordem: endpoint alcançado, login aceito, trabalho recebido, hashing ativo e envios respondidos. Se a conexão cair, o cliente reconecta e estabelece a sessão antes de receber mais trabalho. Use a mensagem exata e o horário para localizar a etapa. O site funcionando não prova que a porta de mineração é acessível daquela máquina.
 
-Abra [My Stats](/stats) para o endereço desejado e confira o [status do pool](/status). Após início ou reconexão, dê tempo para o hashrate estimado acumular shares. Separe protocolo de prazo de pagamento: login prepara a sessão, trabalhos fornecem tarefas, shares relatam resultados e a contabilidade determina as etapas seguintes das recompensas.
+Abra [My Stats](/stats) para o endereço desejado. Após início ou reconexão, dê tempo para o hashrate estimado acumular shares. Separe protocolo de prazo de pagamento: login prepara a sessão, trabalhos fornecem tarefas, shares relatam resultados e a contabilidade determina as etapas seguintes das recompensas.
 
 <CTA target="pool" title="Conecte o seine ao bntpool.com" text="Use a página de configuração e acompanhe trabalhos, shares e seu rig em My Stats." />

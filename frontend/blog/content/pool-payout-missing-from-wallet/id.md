@@ -9,7 +9,7 @@ faq:
     a: 'Explorer membantu memeriksa status publik transaksi di blockchain. Blocknet menggunakan output privat, sehingga pencarian alamat biasa bukan tampilan saldo wallet atau bukti bahwa output tertentu milik Anda. Wallet memindai blockchain untuk mengenali outputnya sendiri.'
   - q: 'Data apa yang diperlukan untuk pembayaran yang belum terlihat?'
     a: 'Berikan alamat penerima lengkap untuk pencarian pool, ID transaksi, waktu perkiraan, status pool dan kemajuan sinkronisasi wallet. Jelaskan apakah transaksi terlihat dalam riwayat. Bagikan data akun hanya dalam konteks dukungan yang sesuai, jangan pernah memberikan seed phrase, private key atau kata sandi wallet.'
-sourceHash: '915075cf4e2b'
+sourceHash: '7927c9203d7f'
 translation: draft
 ---
 
@@ -31,13 +31,13 @@ Halaman publik Payouts menampilkan batch yang dapat memuat beberapa penerima dan
 
 ## Apakah pembayaran mengantre, belum terkonfirmasi atau terkonfirmasi?
 
-Baca status terkini sebelum menganggap pembayaran tercantum telah menyelesaikan seluruh tahap. Entri antrean masih diproses pool; transaksi belum terkonfirmasi masih membutuhkan konfirmasi blockchain. Segarkan catatan dan ikuti tautan transaksi ketika tersedia. [Halaman status](/status) memberi konteks operasional jika beberapa pengamatan mengarah pada gangguan layanan.
+Baca status terkini sebelum menganggap pembayaran tercantum telah menyelesaikan seluruh tahap. Entri antrean masih diproses pool; transaksi belum terkonfirmasi masih membutuhkan konfirmasi blockchain. Segarkan catatan dan ikuti tautan transaksi ketika tersedia.
 
 Pisahkan kematangan imbalan penambangan dari konfirmasi transaksi pembayaran. Blok yang menghasilkan imbalan dan transaksi berikutnya memiliki ID serta peran berbeda. [Panduan konfirmasi](/blog/id/block-confirmations-mining-rewards/) menjelaskan perbedaannya. ID transaksi memberi objek konkret untuk diperiksa, tetapi belum membuktikan wallet lokal sudah memindai dan mengenali pembayaran itu.
 
 ## Periksa transaksi di blockchain
 
-Buka tautan explorer pada pembayaran dan bandingkan ID lengkap dengan catatan Anda. Baca status blockchain dan informasi blok jika tersedia. Jika explorer belum menemukannya, bandingkan catatan pool terbaru dan status layanan sebelum menyimpulkan. Hasil pencarian sementara saja tidak menentukan penyebabnya.
+Buka tautan explorer pada pembayaran dan bandingkan ID lengkap dengan catatan Anda. Baca status blockchain dan informasi blok jika tersedia. Jika explorer belum menemukannya, periksa catatan pool terbaru sebelum menyimpulkan. Hasil pencarian sementara saja tidak menentukan penyebabnya.
 
 Privasi Blocknet berarti pencarian alamat biasa tidak menampilkan saldo publik penerima. Status transaksi di explorer dan pemeriksaan kepemilikan wallet menjawab pertanyaan berbeda. Wallet mengenali output masuk ketika memindai blockchain. [Panduan stealth address](https://seineminer.com/id/blog/stealth-addresses-explained/) menjelaskan prosesnya; daftar alamat publik tidak mereproduksi riwayat transaksi privat wallet.
 

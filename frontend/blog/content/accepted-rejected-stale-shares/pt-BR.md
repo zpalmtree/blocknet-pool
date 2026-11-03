@@ -9,7 +9,7 @@ faq:
     a: 'Stale job indica que o envio pertence a uma atribuição que não é mais elegível, por exemplo expirada ou ligada a um template além do período de tolerância. Verifique novos jobs e a retomada dos shares aceitos. Se persistir, confira conexão e versão do minerador.'
   - q: 'Uma dificuldade maior reduz minha recompensa?'
     a: 'A dificuldade muda o trabalho representado por cada share elegível e a frequência esperada dos envios. Compare trabalho ponderado por dificuldade em períodos equivalentes, não apenas quantidades. A recompensa também depende da janela PPLNS, do trabalho elegível, dos blocos encontrados e das regras de validação.'
-sourceHash: 5be830208e6c
+sourceHash: 92eae02aa6e4
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ Compare aceitos e rejeitados no mesmo período e escopo. O minerador pode contar
 
 ## O que fazer quando as rejeições se repetem?
 
-Comece por uma máquina afetada. Anote versão, mensagem exata, início do problema e se ainda chegam jobs novos. Confira [Status](/status) e depois interrupções na conexão da máquina. Atualize pelas [versões oficiais do seine](https://github.com/zpalmtree/seine/releases) e compare após uma mudança por vez.
+Comece por uma máquina afetada. Anote versão, mensagem exata, início do problema e se ainda chegam jobs novos. Confira se há interrupções na conexão da máquina. Atualize pelas [versões oficiais do seine](https://github.com/zpalmtree/seine/releases) e compare após uma mudança por vez.
 
 Se usar proxy ou integração própria, confira se preserva job, faixa de nonce e dificuldade ao encaminhar envios. Se persistir, forneça um trecho curto do log e os detalhes da máquina pelo canal de suporte do projeto. Remova segredos e dados privados; uma frase de recuperação nunca é necessária para diagnosticar shares.
 
