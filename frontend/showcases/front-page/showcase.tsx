@@ -22,6 +22,7 @@ const STATES = {
   stats: 'My Stats in the site-wide style',
   blocks: 'Blocks: effort and status columns',
   start: 'Get Started: the quick start steps',
+  payouts: 'Payouts: recent pool payouts',
 } as const;
 type State = keyof typeof STATES;
 
@@ -35,7 +36,7 @@ const WALLET = 'demo-miner-not-a-real-wallet';
 const EXCHANGE = 'demo-shared-exchange-deposit-address';
 const exchangeState = state === 'exchange' || state === 'exchange-ready';
 localStorage.removeItem('pool_last_miner_lookup_address');
-if (state === 'first' || state === 'loading' || state === 'empty' || state === 'luck' || state === 'blocks' || state === 'start') {
+if (state === 'first' || state === 'loading' || state === 'empty' || state === 'luck' || state === 'blocks' || state === 'start' || state === 'payouts') {
   localStorage.removeItem('pool_payout_destination_v1');
 } else {
   localStorage.setItem('pool_payout_destination_v1', JSON.stringify({
@@ -145,7 +146,7 @@ window.fetch = async (input, init) => {
 };
 
 // The app routes on the path; the showcase picks it, then App renders as on the live site.
-const ROUTES: Partial<Record<State, string>> = { luck: '/luck', stats: '/stats', blocks: '/blocks', start: '/start' };
+const ROUTES: Partial<Record<State, string>> = { luck: '/luck', stats: '/stats', blocks: '/blocks', start: '/start', payouts: '/payouts' };
 history.replaceState(null, '', `${ROUTES[state] ?? '/'}${location.search}`);
 
 function Bar() {

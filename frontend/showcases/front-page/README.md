@@ -23,6 +23,7 @@ pool, explorer or analytics endpoint. States:
 - `stats`: My Stats in the site-wide style.
 - `blocks`: Blocks, where effort and status badges share one width per column.
 - `start`: Get Started, with one row per quick start step and its action at the end.
+- `payouts`: Payouts, with the public data table layout.
 
 Every page shares the front page's style: the dark green nav, a deep green title band, flat
 square cards, number groups as one box split by hairlines, and labels and tables without all caps.

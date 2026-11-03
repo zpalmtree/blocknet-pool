@@ -2587,3 +2587,6 @@ td.chip-cell > .badge, td.chip-cell > .round-chip { display: block; width: 100%;
 .site-footer { max-width: none; margin: 56px 0 0; padding: 30px 20px 38px; background: #0b2a1f; border-top: 0; }
 .site-footer a { color: rgba(255, 255, 255, 0.74); }
 .site-footer a:hover, .site-footer a.active { color: #ffffff; }
+
+/* Public data tables centre their columns, which spaces short values evenly. */
+.container:not(.container-wide) .table-scroll th, .container:not(.container-wide) .table-scroll td { text-align: center; }
