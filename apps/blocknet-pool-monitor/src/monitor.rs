@@ -546,20 +546,52 @@ impl MonitorRuntime {
     }
 
     async fn collect_sample(&self, sampled_at: SystemTime) -> MonitorSample {
-        let api = self.probe_api().await;
-        let stratum = self.probe_stratum().await;
-        let db = self.probe_database().await;
-        let daemon = self.probe_daemon().await;
-        let wallet = if daemon.error.is_none() {
-            self.probe_wallet().await
-        } else {
-            ProbeOutcome::default()
+        // Probes are independent; each follow-up read runs only after the
+        // probe it depends on has succeeded.
+        let api_branch = async {
+            let api = self.probe_api().await;
+            let api_performance = if api.error.is_none() {
+                self.load_api_performance().await
+            } else {
+                None
+            };
+            (api, api_performance)
         };
-        let daemon_latency = if daemon.error.is_none() {
-            self.probe_daemon_latency().await
-        } else {
-            None
+        let db_branch = async {
+            let db = self.probe_database().await;
+            let (runtime_snapshot, payout_summary) = if db.error.is_none() {
+                tokio::join!(self.load_runtime_snapshot(), self.load_pending_payouts())
+            } else {
+                (None, None)
+            };
+            (db, runtime_snapshot, payout_summary)
         };
+        let daemon_branch = async {
+            let daemon = self.probe_daemon().await;
+            let (wallet, daemon_latency) = if daemon.error.is_none() {
+                tokio::join!(self.probe_wallet(), self.probe_daemon_latency())
+            } else {
+                (ProbeOutcome::default(), None)
+            };
+            (daemon, wallet, daemon_latency)
+        };
+        let (
+            (api, api_performance),
+            stratum,
+            (db, runtime_snapshot, payout_summary),
+            (daemon, wallet, daemon_latency),
+            reference_heights,
+            daemon_instance_heights,
+            process_metrics,
+        ) = tokio::join!(
+            api_branch,
+            self.probe_stratum(),
+            db_branch,
+            daemon_branch,
+            self.probe_reference_heights(),
+            self.probe_daemon_instance_heights(),
+            self.load_process_metrics(),
+        );
         let miner_balance = if self.cfg.balance_probe_address.trim().is_empty() {
             None
         } else {
@@ -569,21 +601,6 @@ impl MonitorRuntime {
                     .snapshot(std::time::Instant::now()),
             )
         };
-        let reference_heights = self.probe_reference_heights().await;
-        let daemon_instance_heights = self.probe_daemon_instance_heights().await;
-
-        let mut runtime_snapshot = None;
-        let mut payout_summary = None;
-        if db.error.is_none() {
-            runtime_snapshot = self.load_runtime_snapshot().await;
-            payout_summary = self.load_pending_payouts().await;
-        }
-        let api_performance = if api.error.is_none() {
-            self.load_api_performance().await
-        } else {
-            None
-        };
-        let process_metrics = self.load_process_metrics().await;
 
         let template_refresh_millis = runtime_snapshot
             .as_ref()
@@ -1025,9 +1042,9 @@ impl MonitorRuntime {
 
     async fn update_metrics(&self, sample: &MonitorSample) {
         let (open_public, open_private) = if sample.db_probe.error.is_none() {
-            (
-                self.open_monitor_incident_count("public").await,
-                self.open_monitor_incident_count("private").await,
+            tokio::join!(
+                self.open_monitor_incident_count("public"),
+                self.open_monitor_incident_count("private"),
             )
         } else {
             (0, 0)

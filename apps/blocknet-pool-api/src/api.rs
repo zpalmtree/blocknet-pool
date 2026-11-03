@@ -1605,11 +1605,15 @@ async fn handle_stats_insights(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
     let rejection_window = rejection_window_duration(query.rejection_window.as_deref());
-    let mut response = match state.stats_insights().await {
+    let (insights, rejections) = tokio::join!(
+        state.stats_insights(),
+        state.rejection_analytics_snapshot(rejection_window)
+    );
+    let mut response = match insights {
         Ok(value) => value,
         Err(err) => return internal_error("failed loading stats insights", err),
     };
-    match state.rejection_analytics_snapshot(rejection_window).await {
+    match rejections {
         Ok(snapshot) => {
             response.rejections = snapshot;
             Json(response).into_response()
@@ -2230,7 +2234,11 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
     let provisional_cutoff = SystemTime::now()
         .checked_sub(state.config.runtime.provisional_share_delay_duration())
         .unwrap_or(UNIX_EPOCH);
-    let persisted_runtime = state.persisted_runtime_snapshot().await;
+    let store = Arc::clone(&state.store);
+    let (persisted_runtime, active_verification_holds) = tokio::join!(
+        state.persisted_runtime_snapshot(),
+        spawn_blocking_result(move || store.list_active_verification_holds(provisional_cutoff)),
+    );
     let pool_activity = PoolActivityHealth {
         connected_miners: persisted_runtime
             .as_ref()
@@ -2242,12 +2250,7 @@ async fn handle_health(State(state): State<ApiState>) -> impl IntoResponse {
             .unwrap_or_default(),
     };
 
-    let store = Arc::clone(&state.store);
-    let active_verification_holds = match spawn_blocking_result(move || {
-        store.list_active_verification_holds(provisional_cutoff)
-    })
-    .await
-    {
+    let active_verification_holds = match active_verification_holds {
         Ok(v) => v,
         Err(err) => {
             return internal_error("failed loading active verification holds", err);
@@ -4551,20 +4554,13 @@ impl ApiState {
 
     async fn load_stats_response(&self) -> anyhow::Result<StatsResponse> {
         let started_at = Instant::now();
-        let connected_miners = self
-            .persisted_runtime_snapshot()
-            .await
-            .map(|snapshot| snapshot.connected_miners)
-            .unwrap_or_default();
-        let totals = self.db_totals().await?;
         let current_job = self.jobs.current_job();
         let current_job_height = current_job.as_ref().map(|j| j.height);
-        let network_hashrate = self.network_hashrate_for_job(current_job.as_ref()).await;
 
         let store = Arc::clone(&self.store);
-        let pool_hashrate_started_at = Instant::now();
-        let (pool_hashrate, avg_effort_pct, effort_sample_size) =
-            tokio::task::spawn_blocking(move || {
+        let pool_hashrate_load = async {
+            let pool_hashrate_started_at = Instant::now();
+            let loaded = tokio::task::spawn_blocking(move || {
                 let hashrate = db_pool_hashrate(&store);
                 let since = SystemTime::now()
                     .checked_sub(POOL_YIELD_WINDOW)
@@ -4575,12 +4571,25 @@ impl ApiState {
             })
             .await
             .unwrap_or((0.0, None, 0));
-        record_api_operation_observation(
-            self,
-            "pool_hashrate_load",
-            pool_hashrate_started_at.elapsed(),
-            false,
+            record_api_operation_observation(
+                self,
+                "pool_hashrate_load",
+                pool_hashrate_started_at.elapsed(),
+                false,
+            );
+            loaded
+        };
+        let (runtime_snapshot, totals, network_hashrate, pool_hashrate_loaded) = tokio::join!(
+            self.persisted_runtime_snapshot(),
+            self.db_totals(),
+            self.network_hashrate_for_job(current_job.as_ref()),
+            pool_hashrate_load,
         );
+        let connected_miners = runtime_snapshot
+            .map(|snapshot| snapshot.connected_miners)
+            .unwrap_or_default();
+        let totals = totals?;
+        let (pool_hashrate, avg_effort_pct, effort_sample_size) = pool_hashrate_loaded;
 
         let response = StatsResponse {
             pool: PoolSummary {
@@ -4633,17 +4642,13 @@ impl ApiState {
     async fn admin_balance_overview(&self) -> anyhow::Result<AdminBalanceOverviewResponse> {
         let store = Arc::clone(&self.store);
         let node = Arc::clone(&self.node);
-        let next_sweep_at = self
-            .persisted_runtime_snapshot()
-            .await
-            .and_then(|snapshot| snapshot.payouts.next_sweep_at);
         let fee_address = self
             .config
             .runtime
             .pool_fee_wallet_address
             .trim()
             .to_string();
-        spawn_blocking_result(move || {
+        let overview = spawn_blocking_result(move || {
             std::thread::scope(|scope| {
                 let wallet = scope.spawn(|| node.get_wallet_balance());
                 let balances = store.get_all_balances()?;
@@ -4730,7 +4735,7 @@ impl ApiState {
                         clean_unpaid_count,
                         queued_count: pending_payouts.len(),
                         queued_amount,
-                        next_sweep_at,
+                        next_sweep_at: None,
                     },
                     ledger: AdminBalanceOverviewLedger {
                         miner_paid_total,
@@ -4748,8 +4753,13 @@ impl ApiState {
                     },
                 })
             })
-        })
-        .await
+        });
+        let (persisted_runtime, overview) =
+            tokio::join!(self.persisted_runtime_snapshot(), overview);
+        let mut overview = overview?;
+        overview.payouts.next_sweep_at =
+            persisted_runtime.and_then(|snapshot| snapshot.payouts.next_sweep_at);
+        Ok(overview)
     }
 
     async fn admin_reconciliation_issues(
@@ -4984,7 +4994,12 @@ impl ApiState {
 
     async fn admin_share_diagnostics(&self) -> anyhow::Result<AdminShareDiagnosticsResponse> {
         let now = SystemTime::now();
-        let persisted_runtime = self.persisted_runtime_snapshot().await;
+        let store = Arc::clone(&self.store);
+        let (persisted_runtime, windows) = tokio::join!(
+            self.persisted_runtime_snapshot(),
+            spawn_blocking_result(move || collect_admin_share_windows(&store, now)),
+        );
+        let windows = windows?;
         let validation = persisted_runtime
             .as_ref()
             .map(|snapshot| snapshot.validation)
@@ -4993,9 +5008,6 @@ impl ApiState {
             .as_ref()
             .map(|snapshot| snapshot.submit.clone())
             .unwrap_or_default();
-        let store = Arc::clone(&self.store);
-        let windows =
-            spawn_blocking_result(move || collect_admin_share_windows(&store, now)).await?;
 
         Ok(AdminShareDiagnosticsResponse {
             windows,
@@ -5472,69 +5484,69 @@ impl ApiState {
         let current_difficulty = current_job
             .as_ref()
             .map(|job| job.network_difficulty.max(1));
-        let network_hashrate = self.network_hashrate_for_job(current_job.as_ref()).await;
         let daemon_chain_height = self.node.chain_height();
 
         let store = Arc::clone(&self.store);
         let node = Arc::clone(&self.node);
         let now = SystemTime::now();
+        let db_load = spawn_blocking_result(move || {
+            let pool_hashrate = db_pool_hashrate(&store);
+
+            let mut blocks = store.get_recent_blocks_up_to(64, daemon_chain_height)?;
+            flag_chain_mismatched_blocks(node.as_ref(), daemon_chain_height, &mut blocks);
+            let round_start = blocks
+                .iter()
+                .filter(|block| !block.orphaned)
+                .max_by(|a, b| a.timestamp.cmp(&b.timestamp))
+                .map(|b| b.timestamp)
+                .or_else(|| now.checked_sub(Duration::from_secs(3600)));
+
+            let round_work = if let Some(start) = round_start {
+                let (total_diff, _count, _oldest, _newest) = store.hashrate_stats_pool(start)?;
+                total_diff
+            } else {
+                0
+            };
+
+            let pending_total_amount = store
+                .get_pending_payouts()?
+                .iter()
+                .fold(0u64, |acc, payout| acc.saturating_add(payout.amount));
+            let payout_eta = PayoutEtaResponse {
+                next_sweep_at: None,
+                pending_total_amount,
+                wallet_spendable: None,
+                wallet_pending: None,
+            };
+            let luck_history = compute_chain_aware_luck_page(
+                store.as_ref(),
+                node.as_ref(),
+                daemon_chain_height,
+                16,
+                0,
+            )?
+            .0;
+            let avg_effort_pct = store.avg_effort_pct_up_to(daemon_chain_height)?;
+
+            Ok::<_, anyhow::Error>((
+                pool_hashrate,
+                round_start,
+                round_work,
+                payout_eta,
+                luck_history,
+                avg_effort_pct,
+            ))
+        });
+        let wallet_node = Arc::clone(&self.node);
+        let (network_hashrate, db_loaded, wallet_balance, persisted_runtime) = tokio::join!(
+            self.network_hashrate_for_job(current_job.as_ref()),
+            db_load,
+            spawn_blocking_result(move || wallet_node.get_wallet_balance()),
+            self.persisted_runtime_snapshot(),
+        );
         let (pool_hashrate, round_start, round_work, mut payout_eta, luck_history, avg_effort_pct) =
-            spawn_blocking_result(move || {
-                let pool_hashrate = db_pool_hashrate(&store);
-
-                let mut blocks = store.get_recent_blocks_up_to(64, daemon_chain_height)?;
-                flag_chain_mismatched_blocks(node.as_ref(), daemon_chain_height, &mut blocks);
-                let round_start = blocks
-                    .iter()
-                    .filter(|block| !block.orphaned)
-                    .max_by(|a, b| a.timestamp.cmp(&b.timestamp))
-                    .map(|b| b.timestamp)
-                    .or_else(|| now.checked_sub(Duration::from_secs(3600)));
-
-                let round_work = if let Some(start) = round_start {
-                    let (total_diff, _count, _oldest, _newest) =
-                        store.hashrate_stats_pool(start)?;
-                    total_diff
-                } else {
-                    0
-                };
-
-                let pending_total_amount = store
-                    .get_pending_payouts()?
-                    .iter()
-                    .fold(0u64, |acc, payout| acc.saturating_add(payout.amount));
-                let payout_eta = PayoutEtaResponse {
-                    next_sweep_at: None,
-                    pending_total_amount,
-                    wallet_spendable: None,
-                    wallet_pending: None,
-                };
-                let luck_history = compute_chain_aware_luck_page(
-                    store.as_ref(),
-                    node.as_ref(),
-                    daemon_chain_height,
-                    16,
-                    0,
-                )?
-                .0;
-                let avg_effort_pct = store.avg_effort_pct_up_to(daemon_chain_height)?;
-
-                Ok::<_, anyhow::Error>((
-                    pool_hashrate,
-                    round_start,
-                    round_work,
-                    payout_eta,
-                    luck_history,
-                    avg_effort_pct,
-                ))
-            })
-            .await?;
-
-        let node = Arc::clone(&self.node);
-        let wallet_balance = spawn_blocking_result(move || node.get_wallet_balance())
-            .await
-            .ok();
-        let persisted_runtime = self.persisted_runtime_snapshot().await;
+            db_loaded?;
+        let wallet_balance = wallet_balance.ok();
         if let Some(snapshot) = persisted_runtime.as_ref() {
             payout_eta.next_sweep_at = snapshot.payouts.next_sweep_at;
         }

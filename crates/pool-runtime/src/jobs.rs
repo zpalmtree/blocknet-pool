@@ -173,6 +173,7 @@ pub struct JobManager {
     nonce_counter: AtomicU64,
     refresh: RefreshCoordinator,
     reward_cache: Mutex<RewardAddressCache>,
+    reward_refresh_in_flight: AtomicBool,
     wallet_recovery_in_flight: Arc<AtomicBool>,
     last_template_wallet_recovery: Mutex<Option<Instant>>,
     last_missing_wallet_password_log: Mutex<Option<Instant>>,
@@ -410,6 +411,7 @@ impl JobManager {
                 address: None,
                 checked_at: None,
             }),
+            reward_refresh_in_flight: AtomicBool::new(false),
             wallet_recovery_in_flight: Arc::new(AtomicBool::new(false)),
             last_template_wallet_recovery: Mutex::new(None),
             last_missing_wallet_password_log: Mutex::new(None),
@@ -1488,7 +1490,7 @@ impl JobManager {
     }
 
     fn resolve_reward_address_with_password(&self, password: Option<String>) -> Option<String> {
-        {
+        let known = {
             let cache = self.reward_cache.lock();
             if cache
                 .checked_at
@@ -1496,47 +1498,90 @@ impl JobManager {
             {
                 return cache.address.clone();
             }
+            cache.address.clone()
+        };
+        // Once an address is known, template fetches keep using it while it
+        // is rechecked on a background thread, so they do not wait on the
+        // daemon wallet. Only the first lookup runs inline.
+        if known.is_some() && self.spawn_reward_address_refresh(password.clone()) {
+            return known;
         }
+        self.refresh_reward_address(password)
+    }
 
+    /// Rechecks the reward address on a background thread; at most one
+    /// recheck runs at a time. Returns false if none could be started.
+    fn spawn_reward_address_refresh(&self, password: Option<String>) -> bool {
+        let Some(manager) = self.self_ref.upgrade() else {
+            return false;
+        };
+        if self.reward_refresh_in_flight.swap(true, Ordering::AcqRel) {
+            return true;
+        }
+        let spawned = thread::Builder::new()
+            .name("pool-reward-address".to_string())
+            .spawn(move || {
+                manager.refresh_reward_address(password);
+                manager
+                    .reward_refresh_in_flight
+                    .store(false, Ordering::Release);
+            });
+        if let Err(err) = spawned {
+            self.reward_refresh_in_flight
+                .store(false, Ordering::Release);
+            tracing::warn!(error = %err, "failed to start reward address refresh");
+            return false;
+        }
+        true
+    }
+
+    /// Reads the wallet address from the daemon, recovering a missing or
+    /// locked wallet when a password is configured, and caches the result.
+    /// The cache lock is not held across daemon calls.
+    fn refresh_reward_address(&self, password: Option<String>) -> Option<String> {
+        let resolved = self.fetch_reward_address(password);
         let mut cache = self.reward_cache.lock();
         cache.checked_at = Some(Instant::now());
+        if let Some(resolved) = resolved {
+            cache.address = Some(resolved);
+        }
+        cache.address.clone()
+    }
 
-        match self.node.get_wallet_address() {
-            Ok(addr) => {
-                let resolved = addr.address.trim().to_string();
-                if !resolved.is_empty() {
-                    cache.address = Some(resolved.clone());
-                }
-                cache.address.clone()
+    fn fetch_reward_address(&self, password: Option<String>) -> Option<String> {
+        let non_empty = |address: &str| {
+            let address = address.trim();
+            (!address.is_empty()).then(|| address.to_string())
+        };
+        let err = match self.node.get_wallet_address() {
+            Ok(addr) => return non_empty(&addr.address),
+            Err(err) => err,
+        };
+        if let Some(password) = password {
+            if is_http_status(&err, 503) && self.reward_cache.lock().address.is_some() {
+                // A restarted daemon serves templates for an explicit
+                // address before its wallet is loaded, so keep mining to
+                // the known address and load the wallet beside it instead
+                // of holding template fetches for the load.
+                self.spawn_wallet_recovery(password);
+                return None;
             }
-            Err(err) => {
-                if let Some(password) = password {
-                    if is_http_status(&err, 503) && cache.address.is_some() {
-                        // A restarted daemon serves templates for an explicit
-                        // address before its wallet is loaded, so keep mining
-                        // to the known address and load the wallet beside it
-                        // instead of holding template fetches for the load.
-                        self.spawn_wallet_recovery(password);
-                        return cache.address.clone();
-                    }
-                    if is_http_status(&err, 503) {
-                        let _ = recover_wallet_loaded_and_unlocked(&self.node, &password);
-                    } else if is_http_status(&err, 403) {
-                        let _ = self.node.wallet_unlock(&password);
-                    }
-                    if let Ok(addr) = self.node.get_wallet_address() {
-                        let resolved = addr.address.trim().to_string();
-                        if !resolved.is_empty() {
-                            cache.address = Some(resolved.clone());
-                            return cache.address.clone();
-                        }
-                    }
-                }
-
-                tracing::warn!(error = %err, "wallet address unavailable");
-                cache.address.clone()
+            if is_http_status(&err, 503) {
+                let _ = recover_wallet_loaded_and_unlocked(&self.node, &password);
+            } else if is_http_status(&err, 403) {
+                let _ = self.node.wallet_unlock(&password);
+            }
+            if let Some(resolved) = self
+                .node
+                .get_wallet_address()
+                .ok()
+                .and_then(|addr| non_empty(&addr.address))
+            {
+                return Some(resolved);
             }
         }
+        tracing::warn!(error = %err, "wallet address unavailable");
+        None
     }
 
     /// Loads and unlocks the daemon wallet on a background thread; at most
@@ -2793,6 +2838,62 @@ mod tests {
             started.elapsed() < BLOCK_POLL_INTERVAL,
             "refetched without waiting for the status poll ({:?})",
             started.elapsed()
+        );
+    }
+
+    #[test]
+    fn expired_reward_address_is_rechecked_without_blocking_template_fetches() {
+        // The daemon is slow to answer the wallet address (for example while
+        // its wallet scans a new block). A known address must still be
+        // returned at once and the new one picked up afterwards.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind wallet test server");
+        let address = listener.local_addr().expect("wallet server address");
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut request = [0u8; 4096];
+                let _ = stream.read(&mut request);
+                thread::sleep(Duration::from_millis(800));
+                let body = r#"{"address":"new-address","view_only":false}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        let manager = JobManager::new(
+            Arc::new(NodeClient::new(&format!("http://{address}"), "").expect("node")),
+            Config::default(),
+        );
+        *manager.reward_cache.lock() = RewardAddressCache {
+            address: Some("old-address".to_string()),
+            checked_at: None,
+        };
+
+        let started_at = Instant::now();
+        let resolved = manager.resolve_reward_address_with_password(None);
+        assert_eq!(resolved.as_deref(), Some("old-address"));
+        let again = manager.resolve_reward_address_with_password(None);
+        assert_eq!(again.as_deref(), Some("old-address"));
+        assert!(
+            started_at.elapsed() < Duration::from_millis(500),
+            "template fetches must not wait for the wallet address"
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while manager.reward_cache.lock().address.as_deref() != Some("new-address") {
+            assert!(
+                Instant::now() < deadline,
+                "background recheck should finish"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            manager
+                .resolve_reward_address_with_password(None)
+                .as_deref(),
+            Some("new-address")
         );
     }
 
