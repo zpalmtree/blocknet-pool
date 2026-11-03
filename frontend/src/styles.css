@@ -2424,20 +2424,9 @@ nav.nav-hero { --accent-strong: #ffffff; --accent-contrast: #0b2a1f; }
   position: relative;
   isolation: isolate;
   max-width: none;
-  margin: calc(-1 * var(--page-top, 24px)) 0 16px;
-  padding: 44px 0 80px;
+  margin: calc(-1 * var(--page-top, 24px)) 0 44px;
+  padding: 44px 0 40px;
   color: #ffffff;
-}
-/* The page rises into the bottom of the band as a sheet with rounded top corners. */
-.page-header::after {
-  content: '';
-  position: absolute;
-  z-index: -1;
-  bottom: -1px;
-  inset-inline: calc(-1 * min(40px, (100vw - 100%) / 2 - 8px));
-  height: 41px;
-  background: var(--bg);
-  border-radius: 20px 20px 0 0;
 }
 .page-header::before {
   content: '';
@@ -2534,28 +2523,64 @@ td.chip-cell > .badge, td.chip-cell > .round-chip { display: block; width: 100%;
 .wallet-option { background: var(--surface); }
 .inline-code, .inline-copy-code { border-radius: 4px; }
 
-/* Front page: the same sheet rises into the bottom of the number band. */
-.home-band { position: relative; padding-bottom: 40px; }
-.home-band::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  left: 50%;
-  width: min(1160px, calc(100% - 16px));
-  height: 41px;
-  transform: translateX(-50%);
-  background: var(--bg);
-  border-radius: 20px 20px 0 0;
-}
-.home-body { padding-top: 16px; }
-/* Phones: the sheet spans the full width. */
+/* Pages start below the band's straight edge. */
+.home-body { padding-top: 52px; }
 @media (max-width: 600px) {
-  .page-header { padding-bottom: 60px; margin-bottom: 8px; }
-  /* Phones pad the page by 12px, so the sheet reaches both edges exactly. */
-  .page-header::after { inset-inline: -12px; height: 25px; border-radius: 18px 18px 0 0; }
-  .home-band { padding-bottom: 24px; }
-  .home-band::after { width: 100%; height: 25px; border-radius: 18px 18px 0 0; }
-  .home-body { padding-top: 12px; }
+  .page-header { margin-bottom: 28px; }
+  .home-body { padding-top: 32px; }
+}
+
+/* Wide screens: the page rises into the bottom of the band as a sheet with 6px corners, up to 40px wider
+   than the 1080px content (--sheet-out), and the band curves into the sheet's sides (--curve). Narrower
+   screens keep the straight edge: there is no room beside the sheet for the curves. */
+@media (min-width: 1136px) {
+  :root { --sheet-out: clamp(0px, 50vw - 578px, 40px); --curve: 14px; }
+  .container:not(.container-wide) .page-header { padding-bottom: 80px; margin-bottom: 16px; }
+  .container:not(.container-wide) .page-header::after {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    bottom: -1px;
+    inset-inline: calc(-1 * var(--sheet-out));
+    height: 41px;
+    background: var(--bg);
+    border-radius: 6px 6px 0 0;
+  }
+  /* The curves beside the sheet hang off the title, positioned against the header like the sheet. Each runs
+     1px under the sheet and below the band so no seam shows. */
+  .container:not(.container-wide) .page-header h1::before, .home-band::before {
+    background:
+      radial-gradient(circle at 0 0, #0000 calc(var(--curve) - 0.5px), var(--bg) var(--curve)) left bottom / calc(var(--curve) + 1px) calc(var(--curve) + 1px) no-repeat,
+      radial-gradient(circle at 100% 0, #0000 calc(var(--curve) - 0.5px), var(--bg) var(--curve)) right bottom / calc(var(--curve) + 1px) calc(var(--curve) + 1px) no-repeat;
+  }
+  .container:not(.container-wide) .page-header h1::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    bottom: -1px;
+    inset-inline: calc(-1 * (var(--sheet-out) + var(--curve)));
+    height: calc(var(--curve) + 1px);
+  }
+  .home-band { position: relative; padding-bottom: 40px; }
+  .home-band::before, .home-band::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+  .home-band::after {
+    bottom: -1px;
+    width: calc(1080px + 2 * var(--sheet-out));
+    height: 41px;
+    background: var(--bg);
+    border-radius: 6px 6px 0 0;
+  }
+  .home-band::before {
+    bottom: -1px;
+    width: calc(1080px + 2 * (var(--sheet-out) + var(--curve)));
+    height: calc(var(--curve) + 1px);
+  }
+  .home-body { padding-top: 16px; }
 }
 
 /* The footer closes the page in the header's green. */
