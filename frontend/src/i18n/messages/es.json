@@ -271,7 +271,6 @@
   "walletSeed": "Escribe tu frase de recuperación de 12 palabras en papel y guárdala sin conexión. Restaura tu billetera en cualquier ordenador. seine y el pool solo necesitan tu dirección.",
   "walletGuide": "Guía paso a paso de la billetera",
   "helpTitle": "Ayuda",
-  "dueNow": "Pendiente ahora",
   "statsEmpty": "Introduce la dirección de billetera o el nombre de Blocknet ID que usa tu minero. ¿Nuevo en el pool? {0}",
   "hostedWallet": "Monedero",
   "setupGuide": "Guía de configuración",
@@ -325,14 +324,11 @@
   "yourMiner": "Tu minero",
   "exchangeDeposit": "Depósito en {0}",
   "notYou": "¿No eres tú?",
-  "workersOnline": "Workers en línea: {0}",
-  "lastShareAgo": "última share {0}",
   "noWorkersHelp": "No hay workers en línea. {0}",
   "nextPayout": "Próximo pago",
   "payoutOf": "{0} de {1}",
   "lastPayout": "Último pago {0}, {1}.",
   "payoutReady": "Listo para el pago",
-  "payoutAtSweep": "Se paga en el próximo barrido: {0}",
   "payoutQueuedTag": "Pago en cola",
   "fullStats": "Estadísticas completas"
 }

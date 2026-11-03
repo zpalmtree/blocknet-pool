@@ -271,7 +271,6 @@
   "walletSeed": "12 kelimelik kurtarma ifadenizi kâğıda yazın ve çevrimdışı saklayın. Cüzdanınızı herhangi bir bilgisayarda geri yükler. seine ve havuz yalnızca adresinize ihtiyaç duyar.",
   "walletGuide": "Adım adım cüzdan rehberi",
   "helpTitle": "Yardım",
-  "dueNow": "Şimdi",
   "statsEmpty": "Madencinizin kullandığı cüzdan adresini veya Blocknet ID adını girin. Havuzda yeni misiniz? {0}",
   "hostedWallet": "Cüzdan",
   "setupGuide": "Kurulum rehberi",
@@ -325,14 +324,11 @@
   "yourMiner": "Madenciniz",
   "exchangeDeposit": "{0} yatırma",
   "notYou": "Siz değil misiniz?",
-  "workersOnline": "Çevrimiçi çalışanlar: {0}",
-  "lastShareAgo": "son pay {0}",
   "noWorkersHelp": "Çevrimiçi çalışan yok. {0}",
   "nextPayout": "Sonraki ödeme",
   "payoutOf": "{0} / {1}",
   "lastPayout": "Son ödeme {0}, {1}.",
   "payoutReady": "Ödemeye hazır",
-  "payoutAtSweep": "Sonraki toplamada ödenir: {0}",
   "payoutQueuedTag": "Ödeme sırada",
   "fullStats": "Tüm istatistikler"
 }

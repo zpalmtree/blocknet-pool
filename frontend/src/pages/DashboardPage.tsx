@@ -16,7 +16,6 @@ import {
   stratumUrl,
   timestampTitle,
   timeAgo,
-  timeUntil,
   toUnixMs,
 } from '../lib/format';
 import { knownExchange } from '../lib/payout-destination';
@@ -196,7 +195,6 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
               loading={returning.status === 'loading'}
               destination={destination}
               poolInfo={poolInfo}
-              insights={insights}
               onForget={forgetMiner}
             />
           ) : (
@@ -336,24 +334,20 @@ interface MinerHeroProps {
   loading: boolean;
   destination: SavedDestination;
   poolInfo: InfoResponse | null;
-  insights: StatsInsightsResponse | null;
   onForget: () => void;
 }
 
-function MinerHero({ miner, balance, loading, destination, poolInfo, insights, onForget }: MinerHeroProps) {
+function MinerHero({ miner, balance, loading, destination, poolInfo, onForget }: MinerHeroProps) {
   const exchange = knownExchange(poolInfo, destination.address);
   const memoAccount = !!destination.memo;
   const who = exchange ? t('exchangeDeposit', [exchange.name]) : shortAddr(destination.address);
   const workers = miner?.workers ?? [];
-  const lastShare = workers.reduce((latest, worker) => Math.max(latest, toUnixMs(worker.last_share_at)), 0);
   // Exchange (memo) accounts have their own, higher minimum; the balance API reports it.
   const accountMinimum = balance?.min_payout_amount ?? (memoAccount ? poolInfo?.memo_min_payout_amount : poolInfo?.min_payout_amount);
   const minimum = minimumPayoutAtoms(accountMinimum);
   const payout = balance ? heroPayout(minimum, balance.balance.pending_confirmed, balance.balance.pending_queued) : null;
   const lastPayout = miner?.payouts?.[0];
   const recentPayout = lastPayout && Date.now() - toUnixMs(lastPayout.timestamp) < RECENT_PAYOUT_MS ? lastPayout : null;
-  const nextSweepAt = insights?.payout_eta?.next_sweep_at;
-  const sweepLabel = !nextSweepAt ? null : toUnixMs(nextSweepAt) <= Date.now() ? t('dueNow') : timeUntil(nextSweepAt);
 
   return (
     <div className="home-pitch home-miner" aria-busy={loading}>
@@ -362,11 +356,11 @@ function MinerHero({ miner, balance, loading, destination, poolInfo, insights, o
         <button type="button" className="home-link-button" onClick={onForget}>{t('notYou')}</button>
       </p>
       <h1 className="home-me-hr" dir="ltr">{miner ? humanRate(miner.hashrate) : '-'}</h1>
-      <p className="home-me-sub">
-        {miner && !workers.length
-          ? tx('noWorkersHelp', [<a key="help" href={`${localizePath('/blog/')}track-your-miner-on-bntpool/#zero-hashrate`}>{t('minerHelp')}</a>])
-          : <>{t('workersOnline', [workers.length])}{lastShare > 0 && <> · {t('lastShareAgo', [timeAgo(lastShare)])}</>}</>}
-      </p>
+      {miner && !workers.length && (
+        <p className="home-me-sub">
+          {tx('noWorkersHelp', [<a key="help" href={`${localizePath('/blog/')}track-your-miner-on-bntpool/#zero-hashrate`}>{t('minerHelp')}</a>])}
+        </p>
+      )}
 
       {payout && payout.state !== 'unavailable' && (
         <div className="home-pay">
@@ -380,7 +374,6 @@ function MinerHero({ miner, balance, loading, destination, poolInfo, insights, o
             <div className="home-pay-top"><span className="home-tag"><i aria-hidden="true" />{t('payoutReady')}</span>
               <strong dir="ltr">{formatCoins(payout.amount)}</strong></div>
             <div className="home-bar"><div style={{ width: '100%' }} /></div>
-            {sweepLabel && <span className="home-pay-sub">{t('payoutAtSweep', [sweepLabel])}</span>}
           </>}
           {payout.state === 'queued' && <>
             <div className="home-pay-top"><span className="home-tag"><i aria-hidden="true" />{t('payoutQueuedTag')}</span>

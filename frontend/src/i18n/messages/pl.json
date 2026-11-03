@@ -271,7 +271,6 @@
   "walletSeed": "Zapisz 12-wyrazową frazę odzyskiwania na papierze i przechowuj ją offline. Przywraca ona portfel na dowolnym komputerze. seine i pool potrzebują tylko Twojego adresu.",
   "walletGuide": "Przewodnik po portfelu krok po kroku",
   "helpTitle": "Pomoc",
-  "dueNow": "Teraz",
   "statsEmpty": "Wpisz adres portfela lub nazwę Blocknet ID, której używa Twoja koparka. Nowy w puli? {0}",
   "hostedWallet": "Portfel",
   "setupGuide": "Instrukcja konfiguracji",
@@ -325,14 +324,11 @@
   "yourMiner": "Twój górnik",
   "exchangeDeposit": "Depozyt {0}",
   "notYou": "To nie ty?",
-  "workersOnline": "Workery online: {0}",
-  "lastShareAgo": "ostatni share {0}",
   "noWorkersHelp": "Brak workerów online. {0}",
   "nextPayout": "Następna wypłata",
   "payoutOf": "{0} z {1}",
   "lastPayout": "Ostatnia wypłata {0}, {1}.",
   "payoutReady": "Gotowe do wypłaty",
-  "payoutAtSweep": "Wypłata przy następnym sweepie: {0}",
   "payoutQueuedTag": "Wypłata w kolejce",
   "fullStats": "Pełne statystyki"
 }

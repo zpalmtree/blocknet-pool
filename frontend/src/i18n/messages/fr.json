@@ -271,7 +271,6 @@
   "walletSeed": "Écrivez votre phrase de récupération de 12 mots sur papier et conservez-la hors ligne. Elle restaure votre portefeuille sur n'importe quel ordinateur. seine et le pool n'ont besoin que de votre adresse.",
   "walletGuide": "Guide du portefeuille pas à pas",
   "helpTitle": "Aide",
-  "dueNow": "À effectuer maintenant",
   "statsEmpty": "Saisissez l'adresse de portefeuille ou le nom Blocknet ID utilisé par votre mineur. Nouveau sur le pool ? {0}",
   "hostedWallet": "Portefeuille",
   "setupGuide": "Guide de configuration",
@@ -325,14 +324,11 @@
   "yourMiner": "Votre mineur",
   "exchangeDeposit": "Dépôt {0}",
   "notYou": "Ce n’est pas vous ?",
-  "workersOnline": "Workers en ligne : {0}",
-  "lastShareAgo": "dernier share {0}",
   "noWorkersHelp": "Aucun worker en ligne. {0}",
   "nextPayout": "Prochain paiement",
   "payoutOf": "{0} sur {1}",
   "lastPayout": "Dernier paiement {0}, {1}.",
   "payoutReady": "Prêt pour le paiement",
-  "payoutAtSweep": "Payé au prochain balayage : {0}",
   "payoutQueuedTag": "Paiement en file d’attente",
   "fullStats": "Statistiques complètes"
 }

@@ -271,7 +271,6 @@
   "walletSeed": "请把 12 个单词的恢复助记词写在纸上并离线保存。它可以在任何电脑上恢复您的钱包。seine 和矿池只需要您的地址。",
   "walletGuide": "钱包分步指南",
   "helpTitle": "帮助",
-  "dueNow": "即将执行",
   "statsEmpty": "输入您的矿机使用的钱包地址或 Blocknet ID 名称。第一次使用本矿池？{0}",
   "hostedWallet": "钱包",
   "setupGuide": "设置指南",
@@ -325,14 +324,11 @@
   "yourMiner": "你的矿机",
   "exchangeDeposit": "{0} 充值",
   "notYou": "不是你？",
-  "workersOnline": "在线工人：{0}",
-  "lastShareAgo": "最后份额 {0}",
   "noWorkersHelp": "没有在线工人。{0}",
   "nextPayout": "下次支付",
   "payoutOf": "{0} / {1}",
   "lastPayout": "上次支付 {0}，{1}。",
   "payoutReady": "可以支付",
-  "payoutAtSweep": "下次清扫时支付：{0}",
   "payoutQueuedTag": "支付已排队",
   "fullStats": "完整统计"
 }

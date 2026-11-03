@@ -271,7 +271,6 @@
   "walletSeed": "Ghi cụm từ khôi phục 12 từ ra giấy và cất giữ ngoại tuyến. Cụm từ này khôi phục ví của bạn trên bất kỳ máy tính nào. seine và pool chỉ cần địa chỉ của bạn.",
   "walletGuide": "Hướng dẫn ví từng bước",
   "helpTitle": "Trợ giúp",
-  "dueNow": "Đến hạn",
   "statsEmpty": "Nhập địa chỉ ví hoặc tên Blocknet ID mà máy đào của bạn sử dụng. Mới dùng pool? {0}",
   "hostedWallet": "Ví",
   "setupGuide": "Hướng dẫn thiết lập",
@@ -325,14 +324,11 @@
   "yourMiner": "Máy đào của bạn",
   "exchangeDeposit": "Nạp vào {0}",
   "notYou": "Không phải bạn?",
-  "workersOnline": "Công nhân trực tuyến: {0}",
-  "lastShareAgo": "share gần nhất {0}",
   "noWorkersHelp": "Không có công nhân trực tuyến. {0}",
   "nextPayout": "Lần thanh toán tiếp theo",
   "payoutOf": "{0} trên {1}",
   "lastPayout": "Lần thanh toán gần nhất {0}, {1}.",
   "payoutReady": "Sẵn sàng thanh toán",
-  "payoutAtSweep": "Thanh toán ở lần quét tiếp theo: {0}",
   "payoutQueuedTag": "Thanh toán đang xếp hàng",
   "fullStats": "Thống kê đầy đủ"
 }

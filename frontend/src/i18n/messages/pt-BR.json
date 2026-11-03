@@ -271,7 +271,6 @@
   "walletSeed": "Escreva sua frase de recuperação de 12 palavras no papel e guarde-a offline. Ela restaura sua carteira em qualquer computador. O seine e o pool só precisam do seu endereço.",
   "walletGuide": "Guia da carteira passo a passo",
   "helpTitle": "Ajuda",
-  "dueNow": "Agora",
   "statsEmpty": "Digite o endereço da carteira ou o nome Blocknet ID que seu minerador usa. Novo no pool? {0}",
   "hostedWallet": "Carteira",
   "setupGuide": "Guia de configuração",
@@ -325,14 +324,11 @@
   "yourMiner": "Seu minerador",
   "exchangeDeposit": "Depósito na {0}",
   "notYou": "Não é você?",
-  "workersOnline": "Workers online: {0}",
-  "lastShareAgo": "última share {0}",
   "noWorkersHelp": "Nenhum worker online. {0}",
   "nextPayout": "Próximo pagamento",
   "payoutOf": "{0} de {1}",
   "lastPayout": "Último pagamento {0}, {1}.",
   "payoutReady": "Pronto para pagamento",
-  "payoutAtSweep": "Pago no próximo saque: {0}",
   "payoutQueuedTag": "Pagamento na fila",
   "fullStats": "Estatísticas completas"
 }

@@ -271,7 +271,6 @@
   "walletSeed": "Schreiben Sie Ihre 12-Wort-Wiederherstellungsphrase auf Papier und bewahren Sie sie offline auf. Damit stellen Sie Ihre Wallet auf jedem Computer wieder her. seine und der Pool brauchen nur Ihre Adresse.",
   "walletGuide": "Wallet-Anleitung Schritt für Schritt",
   "helpTitle": "Hilfe",
-  "dueNow": "Jetzt fällig",
   "statsEmpty": "Geben Sie die Wallet-Adresse oder den Blocknet-ID-Namen ein, den Ihr Miner verwendet. Neu im Pool? {0}",
   "hostedWallet": "Wallet",
   "setupGuide": "Einrichtungsanleitung",
@@ -325,14 +324,11 @@
   "yourMiner": "Dein Miner",
   "exchangeDeposit": "{0}-Einzahlung",
   "notYou": "Nicht du?",
-  "workersOnline": "Worker online: {0}",
-  "lastShareAgo": "letzter Share {0}",
   "noWorkersHelp": "Keine Worker online. {0}",
   "nextPayout": "Nächste Auszahlung",
   "payoutOf": "{0} von {1}",
   "lastPayout": "Letzte Auszahlung {0}, {1}.",
   "payoutReady": "Bereit zur Auszahlung",
-  "payoutAtSweep": "Wird beim nächsten Durchlauf ausgezahlt: {0}",
   "payoutQueuedTag": "Auszahlung vorgemerkt",
   "fullStats": "Alle Statistiken"
 }

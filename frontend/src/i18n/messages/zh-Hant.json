@@ -271,7 +271,6 @@
   "walletSeed": "請把 12 個單字的復原助記詞寫在紙上並離線保存。它可以在任何電腦上復原您的錢包。seine 和礦池只需要您的地址。",
   "walletGuide": "錢包分步指南",
   "helpTitle": "說明",
-  "dueNow": "即將執行",
   "statsEmpty": "輸入您的礦機使用的錢包地址或 Blocknet ID 名稱。第一次使用本礦池？{0}",
   "hostedWallet": "錢包",
   "setupGuide": "設定指南",
@@ -325,14 +324,11 @@
   "yourMiner": "你的礦機",
   "exchangeDeposit": "{0} 存款",
   "notYou": "不是你？",
-  "workersOnline": "在線工作節點：{0}",
-  "lastShareAgo": "最後工作份額 {0}",
   "noWorkersHelp": "沒有在線工作節點。{0}",
   "nextPayout": "下次支付",
   "payoutOf": "{0} / {1}",
   "lastPayout": "上次支付 {0}，{1}。",
   "payoutReady": "可以支付",
-  "payoutAtSweep": "下次掃帳時支付：{0}",
   "payoutQueuedTag": "支付已排隊",
   "fullStats": "完整統計"
 }

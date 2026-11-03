@@ -271,7 +271,6 @@
   "walletSeed": "Scrivi il seed di recupero di 12 parole su carta e conservalo offline. Ripristina il tuo wallet su qualsiasi computer. seine e il pool hanno bisogno solo del tuo indirizzo.",
   "walletGuide": "Guida al wallet passo dopo passo",
   "helpTitle": "Aiuto",
-  "dueNow": "In scadenza ora",
   "statsEmpty": "Inserisci l'indirizzo del wallet o il nome Blocknet ID usato dal tuo miner. Nuovo nel pool? {0}",
   "hostedWallet": "Portafoglio",
   "setupGuide": "Guida alla configurazione",
@@ -325,14 +324,11 @@
   "yourMiner": "Il tuo miner",
   "exchangeDeposit": "Deposito {0}",
   "notYou": "Non sei tu?",
-  "workersOnline": "Worker online: {0}",
-  "lastShareAgo": "ultima share {0}",
   "noWorkersHelp": "Nessun worker online. {0}",
   "nextPayout": "Prossimo pagamento",
   "payoutOf": "{0} di {1}",
   "lastPayout": "Ultimo pagamento {0}, {1}.",
   "payoutReady": "Pronto per il pagamento",
-  "payoutAtSweep": "Pagato al prossimo sweep: {0}",
   "payoutQueuedTag": "Pagamento in coda",
   "fullStats": "Statistiche complete"
 }

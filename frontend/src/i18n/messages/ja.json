@@ -271,7 +271,6 @@
   "walletSeed": "12 語のリカバリーシードは紙に書いてオフラインで保管してください。どのコンピューターでもウォレットを復元できます。seine とプールに必要なのはアドレスだけです。",
   "walletGuide": "ウォレットのステップバイステップガイド",
   "helpTitle": "ヘルプ",
-  "dueNow": "実行待ち",
   "statsEmpty": "マイナーが使っているウォレットアドレスまたは Blocknet ID 名を入力してください。プールを初めて使う場合は {0}",
   "hostedWallet": "ウォレット",
   "setupGuide": "設定ガイド",
@@ -325,14 +324,11 @@
   "yourMiner": "あなたのマイナー",
   "exchangeDeposit": "{0}入金",
   "notYou": "別の方ですか？",
-  "workersOnline": "オンラインのワーカー：{0}",
-  "lastShareAgo": "最終シェア {0}",
   "noWorkersHelp": "オンラインのワーカーがありません。{0}",
   "nextPayout": "次の支払い",
   "payoutOf": "{0} / {1}",
   "lastPayout": "前回の支払い：{0}（{1}）。",
   "payoutReady": "支払い準備完了",
-  "payoutAtSweep": "次のスウィープで支払い：{0}",
   "payoutQueuedTag": "支払い待ち",
   "fullStats": "すべての統計"
 }

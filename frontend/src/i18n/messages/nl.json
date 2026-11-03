@@ -271,7 +271,6 @@
   "walletSeed": "Schrijf je herstelzin van 12 woorden op papier en bewaar die offline. Daarmee herstel je je wallet op elke computer. seine en de pool hebben alleen je adres nodig.",
   "walletGuide": "Stapsgewijze walletgids",
   "helpTitle": "Hulp",
-  "dueNow": "Nu aan de beurt",
   "statsEmpty": "Voer het walletadres of de Blocknet ID-naam in die je miner gebruikt. Nieuw bij de pool? {0}",
   "hostedWallet": "Wallet",
   "setupGuide": "Installatiehandleiding",
@@ -325,14 +324,11 @@
   "yourMiner": "Je miner",
   "exchangeDeposit": "{0}-storting",
   "notYou": "Ben jij dit niet?",
-  "workersOnline": "Workers online: {0}",
-  "lastShareAgo": "laatste share {0}",
   "noWorkersHelp": "Geen workers online. {0}",
   "nextPayout": "Volgende uitbetaling",
   "payoutOf": "{0} van {1}",
   "lastPayout": "Laatste uitbetaling {0}, {1}.",
   "payoutReady": "Klaar voor uitbetaling",
-  "payoutAtSweep": "Wordt uitbetaald bij de volgende sweep: {0}",
   "payoutQueuedTag": "Uitbetaling in wachtrij",
   "fullStats": "Alle statistieken"
 }

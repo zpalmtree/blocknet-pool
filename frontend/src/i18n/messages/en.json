@@ -271,7 +271,6 @@
   "walletSeed": "Write your 12-word recovery seed on paper and keep it offline. It restores your wallet on any computer. Seine and the pool only need your address.",
   "walletGuide": "Step-by-step wallet guide",
   "helpTitle": "Help",
-  "dueNow": "Due now",
   "statsEmpty": "Enter the wallet address or Blocknet ID name your miner uses. New to the pool? {0}",
   "hostedWallet": "Wallet",
   "setupGuide": "Setup guide",
@@ -325,14 +324,11 @@
   "yourMiner": "Your miner",
   "exchangeDeposit": "{0} deposit",
   "notYou": "Not you?",
-  "workersOnline": "Workers online: {0}",
-  "lastShareAgo": "last share {0}",
   "noWorkersHelp": "No workers online. {0}",
   "nextPayout": "Next payout",
   "payoutOf": "{0} of {1}",
   "lastPayout": "Last payout {0}, {1}.",
   "payoutReady": "Ready for payout",
-  "payoutAtSweep": "Pays out at the next sweep: {0}",
   "payoutQueuedTag": "Payout queued",
   "fullStats": "Full stats"
 }

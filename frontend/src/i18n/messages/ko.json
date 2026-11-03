@@ -271,7 +271,6 @@
   "walletSeed": "12단어 복구 시드를 종이에 적어 오프라인으로 보관하세요. 이 시드로 어떤 컴퓨터에서든 지갑을 복구할 수 있습니다. seine과 풀에는 주소만 있으면 됩니다.",
   "walletGuide": "단계별 지갑 가이드",
   "helpTitle": "도움말",
-  "dueNow": "지금 예정",
   "statsEmpty": "채굴기가 사용하는 지갑 주소 또는 Blocknet ID 이름을 입력하세요. 풀이 처음이신가요? {0}",
   "hostedWallet": "지갑",
   "setupGuide": "설정 가이드",
@@ -325,14 +324,11 @@
   "yourMiner": "내 마이너",
   "exchangeDeposit": "{0} 입금",
   "notYou": "본인이 아닌가요?",
-  "workersOnline": "온라인 워커: {0}",
-  "lastShareAgo": "마지막 셰어 {0}",
   "noWorkersHelp": "온라인 워커가 없습니다. {0}",
   "nextPayout": "다음 지급",
   "payoutOf": "{0} / {1}",
   "lastPayout": "마지막 지급 {0}, {1}.",
   "payoutReady": "지급 준비 완료",
-  "payoutAtSweep": "다음 스윕에서 지급: {0}",
   "payoutQueuedTag": "지급 대기 중",
   "fullStats": "전체 통계"
 }

@@ -271,7 +271,6 @@
   "walletSeed": "Tulis recovery seed 12 kata Anda di kertas dan simpan secara offline. Seed ini memulihkan wallet Anda di komputer mana pun. seine dan pool hanya memerlukan alamat Anda.",
   "walletGuide": "Panduan wallet langkah demi langkah",
   "helpTitle": "Bantuan",
-  "dueNow": "Jatuh tempo sekarang",
   "statsEmpty": "Masukkan alamat wallet atau nama Blocknet ID yang digunakan miner Anda. Baru di pool ini? {0}",
   "hostedWallet": "Dompet",
   "setupGuide": "Panduan penyiapan",
@@ -325,14 +324,11 @@
   "yourMiner": "Penambang Anda",
   "exchangeDeposit": "Setoran {0}",
   "notYou": "Bukan Anda?",
-  "workersOnline": "Worker online: {0}",
-  "lastShareAgo": "share terakhir {0}",
   "noWorkersHelp": "Tidak ada worker online. {0}",
   "nextPayout": "Pembayaran berikutnya",
   "payoutOf": "{0} dari {1}",
   "lastPayout": "Pembayaran terakhir {0}, {1}.",
   "payoutReady": "Siap dibayar",
-  "payoutAtSweep": "Dibayar pada sweep berikutnya: {0}",
   "payoutQueuedTag": "Pembayaran dalam antrean",
   "fullStats": "Statistik lengkap"
 }
