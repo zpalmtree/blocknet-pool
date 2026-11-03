@@ -562,7 +562,7 @@ html:lang(zh) .page-header h1 {
 .home-link { color: var(--hero-ink); font-size: 14px; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
 [dir='rtl'] .home-link span { display: inline-block; transform: scaleX(-1); }
 .home-hero a:focus-visible, .home-hero button:focus-visible { outline: 2px solid var(--hero-ink); outline-offset: 3px; }
-.home-connect { background: transparent; border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 6px; padding: 22px; display: grid; gap: 8px; min-width: 0; }
+.home-connect { background: #061b13; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; padding: 22px; display: grid; gap: 8px; min-width: 0; }
 .home-label { font-size: 12.5px; font-weight: 700; color: var(--hero-soft); }
 .home-field { display: flex; min-width: 0; margin: 0 0 8px; border: 1px solid rgba(255, 255, 255, 0.22); border-radius: 4px; overflow: hidden; }
 .home-field:focus-within { border-color: rgba(255, 255, 255, 0.6); }
@@ -2478,3 +2478,43 @@ h2 { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
 @media (max-width: 600px) {
   .stats-card-group-grid, .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Chips in one table column share the width of the widest. */
+td.chip-cell { width: 1%; white-space: nowrap; }
+td.chip-cell > .badge, td.chip-cell > .round-chip { display: block; width: 100%; box-sizing: border-box; text-align: center; }
+
+/* Get Started steps: one row per step, with the step's action at the end. */
+.quickstart-grid { grid-template-columns: minmax(0, 1fr); gap: 0; margin-top: 14px; border-top: 1px solid var(--border); }
+.quickstart-card {
+  grid-template-columns: 34px minmax(0, 1fr) minmax(0, 360px);
+  gap: 8px 16px;
+  align-items: start;
+  padding: 18px 0;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+}
+.quickstart-card:last-child { border-bottom: 0; padding-bottom: 0; }
+.quickstart-step { width: 34px; height: 34px; border-radius: 4px; background: var(--accent-light); color: var(--accent-strong); font-family: 'JetBrains Mono', monospace; font-size: 15px; }
+.quickstart-text { display: grid; gap: 4px; min-width: 0; }
+.quickstart-text strong { font-size: 15px; }
+.quickstart-card .inline-code { background: none; padding: 0; border-radius: 0; font-size: 13px; color: var(--text); }
+.quickstart-action { display: grid; gap: 6px; justify-items: start; min-width: 0; }
+.quickstart-action .btn { text-decoration: none; }
+.quickstart-guides { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 14px; font-weight: 600; }
+.quickstart-copy { display: flex; width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; background: var(--bg); }
+.quickstart-copy code { flex: 1 1 auto; min-width: 0; padding: 9px 12px; font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: all; }
+.quickstart-copy button { flex: none; min-width: 72px; padding: 0 14px; border: 0; border-inline-start: 1px solid var(--border); background: var(--surface); color: var(--accent-strong); font-family: 'Manrope', sans-serif; font-size: 13px; font-weight: 700; cursor: pointer; }
+.quickstart-copy button:hover { background: var(--surface-hover); }
+@media (max-width: 760px) {
+  .quickstart-card { grid-template-columns: 34px minmax(0, 1fr); }
+  .quickstart-action { grid-column: 2; width: 100%; }
+  .quickstart-copy code { white-space: normal; overflow-wrap: anywhere; }
+}
+
+/* Secondary buttons are outlined rather than grey, so they don't read as disabled. */
+.btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); padding: 8px 17px; }
+.btn-secondary:hover { opacity: 1; border-color: var(--accent); color: var(--accent-strong); }
+.wallet-option { background: var(--surface); }
+.inline-code, .inline-copy-code { border-radius: 4px; }

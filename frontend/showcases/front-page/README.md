@@ -21,11 +21,13 @@ pool, explorer or analytics endpoint. States:
 - `loading`, `empty`: pool data pending, and a pool with no blocks or payouts yet.
 - `luck`: the Luck page, which now carries the Current Round card the old dashboard showed.
 - `stats`: My Stats in the site-wide style.
+- `blocks`: Blocks, where effort and status badges share one width per column.
+- `start`: Get Started, with one row per quick start step and its action at the end.
 
 Every page shares the front page's style: the dark green nav, a deep green title band, flat
 square cards, number groups as one box split by hairlines, and labels and tables without all caps.
 
-The 34 captures in `captures/` (see `captures.html`) cover these states at 1280 px and 390 px, dark
-mode and Arabic, plus Get Started, Blocks, Payouts, Status and Checkpoints captured with live data
+The 32 captures in `captures/` (see `captures.html`) cover these states at 1280 px and 390 px, dark
+mode and Arabic, plus Get Started, Blocks, Payouts and Checkpoints captured with live data
 from bntpool.com's public API through a local dev proxy. Source: blocknet-pool master 10f56ea plus the front page change. Captured
 2026-11-03 through the shared Playwright browser.

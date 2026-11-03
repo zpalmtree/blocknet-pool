@@ -659,7 +659,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                             <td>
                               {hasTx ? (<ExplorerLink kind="tx" value={p.tx_hash}>{p.tx_hash}</ExplorerLink>) : ('-')}
                             </td>
-                            <td>
+                            <td className="chip-cell">
                               <PayoutStatusBadge status={status} />
                             </td>
                             <td title={timestampTitle(p.timestamp)}>{timeAgo(p.timestamp)}</td>

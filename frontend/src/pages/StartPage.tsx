@@ -67,45 +67,54 @@ export function StartPage({ poolInfo }: StartPageProps) {
         <ol className="quickstart-grid">
           <li className="quickstart-card">
             <span className="quickstart-step">1</span>
-            <strong>{t("walletStep")}</strong>
-            <p>{tx("walletStepBody", [<a href="#wallet">{t("walletStepLink")}</a>])}</p>
+            <div className="quickstart-text">
+              <strong>{t("walletStep")}</strong>
+              <p>{tx("walletStepBody", [<a href="#wallet">{t("walletStepLink")}</a>])}</p>
+            </div>
           </li>
 
           <li className="quickstart-card">
             <span className="quickstart-step">2</span>
-            <strong>{t("m452")}</strong>
-            <p>{tx("m453", [<a href={`https://seineminer.com/${localeInfo.path ? `${localeInfo.path}/` : ''}#download`} target="_blank" rel="noopener">
-                seineminer.com
-              </a>])}</p>
-            <ul className="help-links">
-              {['windows', 'mac', 'linux'].map((platform, index) => <li key={platform}><a href={`${seineGuideBase}mine-blocknet-on-${platform}/`}>{['Windows', 'macOS', 'Linux'][index]} · {t('setupGuide')}</a></li>)}
-            </ul>
+            <div className="quickstart-text">
+              <strong>{t("m452")}</strong>
+              <p>{tx("m453", [<a href={`https://seineminer.com/${localeInfo.path ? `${localeInfo.path}/` : ''}#download`} target="_blank" rel="noopener">
+                  seineminer.com
+                </a>])}</p>
+            </div>
+            <div className="quickstart-action">
+              <span className="quickstart-inline-label">{t('setupGuide')}</span>
+              <span className="quickstart-guides">
+                {['windows', 'mac', 'linux'].map((platform, index) => <a key={platform} href={`${seineGuideBase}mine-blocknet-on-${platform}/`}>{['Windows', 'macOS', 'Linux'][index]}</a>)}
+              </span>
+            </div>
           </li>
 
           <li className="quickstart-card">
             <span className="quickstart-step">3</span>
-            <strong>{t("m454")}</strong>
-            <p>{tx("launchBody", [<code className="mono inline-code">seine.exe</code>, <code className="mono inline-code">./seine</code>, <code className="mono inline-code">@name</code>, <code className="mono inline-code">$name</code>])}</p>
-            <div className="quickstart-inline">
+            <div className="quickstart-text">
+              <strong>{t("m454")}</strong>
+              <p>{tx("launchBody", [<code className="mono inline-code">seine.exe</code>, <code className="mono inline-code">./seine</code>, <code className="mono inline-code">@name</code>, <code className="mono inline-code">$name</code>])}</p>
+            </div>
+            <div className="quickstart-action">
               <span className="quickstart-inline-label">{t("m456")}</span>
-              <button
-                type="button"
-                className="inline-copy-code mono"
-                onClick={() => copyToClipboard(poolUrl, setupPoolUrlKey)}
-                title={t("m457")}
-              >
-                {/* Narrow cards wrap the URL after the scheme rather than mid-host. */}
-                {poolUrl.includes('://') ? (<>{poolUrl.slice(0, poolUrl.indexOf('://') + 3)}<wbr />{poolUrl.slice(poolUrl.indexOf('://') + 3)}</>) : poolUrl}
-              </button>
-              {copiedKey === setupPoolUrlKey && <span className="inline-copy-note">{t("m386")}</span>}
+              <div className="quickstart-copy">
+                <code className="mono">{poolUrl}</code>
+                <button type="button" onClick={() => copyToClipboard(poolUrl, setupPoolUrlKey)} aria-label={t("m387")}>
+                  <span role="status">{copiedKey === setupPoolUrlKey ? t("m386") : t("m392")}</span>
+                </button>
+              </div>
             </div>
           </li>
 
           <li className="quickstart-card">
             <span className="quickstart-step">4</span>
-            <strong>{t("trackWorker")}</strong>
-            <p>{t('trackBody')}</p>
-            <a className="btn btn-secondary" href={localizePath('/stats')}>{t('m005')}</a>
+            <div className="quickstart-text">
+              <strong>{t("trackWorker")}</strong>
+              <p>{t('trackBody')}</p>
+            </div>
+            <div className="quickstart-action">
+              <a className="btn btn-secondary" href={localizePath('/stats')}>{t('m005')}</a>
+            </div>
           </li>
         </ol>
 

@@ -60,12 +60,12 @@ export function BlocksPage({ api, liveTick }: BlocksPageProps) {
                     <ExplorerLink kind="block" value={b.hash}>{b.height}</ExplorerLink>
                   </td>
                   <td>{formatCoins(b.reward)}</td>
-                  <td>
+                  <td className="chip-cell">
                     {b.effort_pct == null ? ('-') : (<span className={`round-chip ${roundToneClass(b.effort_pct)}`}>{formatPct(b.effort_pct)}</span>)}
                   </td>
                   <td>{b.duration_seconds == null ? '-' : fmtSeconds(b.duration_seconds)}</td>
                   <td><MiningType solo={b.solo} /></td>
-                  <td>
+                  <td className="chip-cell">
                     <BlockStatusBadge confirmed={b.confirmed} orphaned={b.orphaned} />
                   </td>
                   <td title={timestampTitle(b.timestamp)}>{timeAgo(b.timestamp)}</td>

@@ -48,7 +48,7 @@ export function PayoutsPage({ api, liveTick }: PayoutsPageProps) {
                   <td>
                     <PayoutTxLinks hashes={p.tx_hashes} />
                   </td>
-                  <td>
+                  <td className="chip-cell">
                     <PayoutStatusBadge status={p.confirmed ? 'confirmed' : 'unconfirmed'} />
                   </td>
                   <td title={timestampTitle(p.timestamp)}>{timeAgo(p.timestamp)}</td>

@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from '../../src/App';
 import { initializeLanguage } from '../../src/i18n';
 import { applyTheme } from '../../src/lib/theme';
-import type { InfoResponse, LuckRound, MinerResponse, PayoutItem } from '../../src/types';
+import type { BlockItem, InfoResponse, LuckRound, MinerResponse, PayoutItem } from '../../src/types';
 import '../../src/styles.css';
 
 const STATES = {
@@ -20,6 +20,8 @@ const STATES = {
   empty: 'New pool: no blocks or payouts yet',
   luck: 'Luck page with the Current Round card',
   stats: 'My Stats in the site-wide style',
+  blocks: 'Blocks: effort and status columns',
+  start: 'Get Started: the quick start steps',
 } as const;
 type State = keyof typeof STATES;
 
@@ -33,7 +35,7 @@ const WALLET = 'demo-miner-not-a-real-wallet';
 const EXCHANGE = 'demo-shared-exchange-deposit-address';
 const exchangeState = state === 'exchange' || state === 'exchange-ready';
 localStorage.removeItem('pool_last_miner_lookup_address');
-if (state === 'first' || state === 'loading' || state === 'empty' || state === 'luck') {
+if (state === 'first' || state === 'loading' || state === 'empty' || state === 'luck' || state === 'blocks' || state === 'start') {
   localStorage.removeItem('pool_payout_destination_v1');
 } else {
   localStorage.setItem('pool_payout_destination_v1', JSON.stringify({
@@ -63,6 +65,19 @@ const luck: LuckRound[] = [
 ].map(([height, effort, duration, ago, orphaned, solo]) => ({
   block_height: height as number, block_hash: `demo-block-${height}`, timestamp: ts(ago as number), effort_pct: effort as number,
   duration_seconds: duration as number, orphaned: orphaned as boolean, confirmed: false, solo: solo as boolean,
+}));
+
+const blocks: BlockItem[] = [
+  [71_587, 75.4, 960, 2_460, 'pending', false], [71_585, 117.6, 1_680, 3_420, 'pending', false],
+  [71_580, 175.9, 2_220, 3_900, 'pending', false], [71_570, 519.6, 6_197, 7_200, 'pending', false],
+  [71_552, 4.2, 48, 10_800, 'pending', true], [71_551, 237.4, 2_917, 11_000, 'pending', false],
+  [71_526, 58.0, 1_140, 21_600, 'confirmed', false], [71_521, 0.9, 15, 25_200, 'confirmed', false],
+  [71_504, 1_043.2, 12_610, 28_800, 'confirmed', false], [71_494, 54.8, 780, 29_000, 'confirmed', false],
+  [71_472, 6.3, 60, 36_000, 'orphaned', false], [71_471, 173.5, 2_340, 36_100, 'confirmed', false],
+].map(([height, effort, duration, ago, status, solo]) => ({
+  height: height as number, hash: `demo-block-${height}`, reward: Math.round(439.46 * BNT), timestamp: ts(ago as number),
+  effort_pct: effort as number, duration_seconds: duration as number, confirmed: status === 'confirmed',
+  orphaned: status === 'orphaned', solo: solo as boolean,
 }));
 
 const payouts: PayoutItem[] = [12.45, 16.68, 22.53, 33.43, 60.7].map((amount, index) => ({
@@ -118,6 +133,7 @@ window.fetch = async (input, init) => {
   if (path === '/api/stats/history') return json(hashrateHistory);
   if (path === '/api/payouts/recent') return json({ items: state === 'empty' ? [] : payouts, total: payouts.length });
   if (path === '/api/luck') return json({ items: luck, total: luck.length });
+  if (path === '/api/blocks') return json({ items: blocks, total: 41_048 });
   if (path === '/api/payout-destination') return json({ account: 'memo:demo-account', min_payout_amount: 10 });
   if (path.startsWith('/api/miner/')) {
     if (state === 'miner-error') return Response.json({ error: 'Demo: lookup unavailable' }, { status: 500 });
@@ -129,7 +145,8 @@ window.fetch = async (input, init) => {
 };
 
 // The app routes on the path; the showcase picks it, then App renders as on the live site.
-history.replaceState(null, '', `${state === 'luck' ? '/luck' : state === 'stats' ? '/stats' : '/'}${location.search}`);
+const ROUTES: Partial<Record<State, string>> = { luck: '/luck', stats: '/stats', blocks: '/blocks', start: '/start' };
+history.replaceState(null, '', `${ROUTES[state] ?? '/'}${location.search}`);
 
 function Bar() {
   return (

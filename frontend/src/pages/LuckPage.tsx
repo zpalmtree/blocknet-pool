@@ -54,12 +54,12 @@ export function LuckPage({ api, liveTick }: LuckPageProps) {
                   <td>
                     <ExplorerLink kind="block" value={row.block_hash}>{row.block_height}</ExplorerLink>
                   </td>
-                  <td>
+                  <td className="chip-cell">
                     <span className={`round-chip ${roundToneClass(row.effort_pct)}`}>{formatPct(row.effort_pct)}</span>
                   </td>
                   <td>{fmtSeconds(row.duration_seconds)}</td>
                   <td><MiningType solo={row.solo} /></td>
-                  <td>
+                  <td className="chip-cell">
                     <BlockStatusBadge confirmed={row.confirmed} orphaned={row.orphaned} />
                   </td>
                   <td title={timestampTitle(row.timestamp)}>{timeAgo(row.timestamp)}</td>
