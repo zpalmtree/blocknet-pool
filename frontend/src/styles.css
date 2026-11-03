@@ -2567,6 +2567,9 @@ td.chip-cell > .badge, td.chip-cell > .round-chip { display: block; width: 100%;
 .site-footer { max-width: none; margin: 56px 0 0; padding: 30px 20px 38px; background: #0b2a1f; border-top: 0; }
 .site-footer a { color: rgba(255, 255, 255, 0.74); }
 .site-footer a:hover, .site-footer a.active { color: #ffffff; }
+/* The page fills the window, so the footer stays at the bottom on short pages and while a page loads. */
+#root { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; }
+#root > .container, #root > .container-flush { flex: 1 0 auto; width: 100%; }
 
 /* Public data tables centre their columns, which spaces short values evenly. */
 .container:not(.container-wide) .table-scroll th, .container:not(.container-wide) .table-scroll td { text-align: center; }
