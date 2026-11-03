@@ -14,8 +14,6 @@ const UI_ASSET_APP_JS: &str =
     include_str!(concat!(env!("BLOCKNET_POOL_FRONTEND_DIST_DIR"), "/app.js"));
 const UI_ASSET_APP_CSS: &str =
     include_str!(concat!(env!("BLOCKNET_POOL_FRONTEND_DIST_DIR"), "/app.css"));
-const UI_ASSET_POOL_ENTERED_PNG: &[u8] = include_bytes!("ui/assets/pool-entered.png");
-const UI_ASSET_MINING_TUI_PNG: &[u8] = include_bytes!("ui/assets/mining-tui.png");
 include!(concat!(env!("OUT_DIR"), "/ui_languages.rs"));
 include!(concat!(env!("OUT_DIR"), "/ui_wasm.rs"));
 include!(concat!(env!("OUT_DIR"), "/ui_chunks.rs"));
@@ -516,22 +514,6 @@ pub(crate) async fn handle_ui_asset(Path(name): Path<String>) -> Response {
                 (header::CACHE_CONTROL, "no-cache"),
             ],
             UI_ASSET_APP_CSS,
-        )
-            .into_response(),
-        "pool-entered.png" => (
-            [
-                (header::CONTENT_TYPE, "image/png"),
-                (header::CACHE_CONTROL, "public, max-age=3600"),
-            ],
-            UI_ASSET_POOL_ENTERED_PNG,
-        )
-            .into_response(),
-        "mining-tui.png" => (
-            [
-                (header::CONTENT_TYPE, "image/png"),
-                (header::CACHE_CONTROL, "public, max-age=3600"),
-            ],
-            UI_ASSET_MINING_TUI_PNG,
         )
             .into_response(),
         other => match og_image_bytes(other) {

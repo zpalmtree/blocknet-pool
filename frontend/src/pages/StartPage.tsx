@@ -5,7 +5,12 @@ import { stratumUrl } from '../lib/format';
 import type { InfoResponse } from '../types';
 import { ExchangeSetup } from '../components/ExchangeSetup';
 import { MiningType } from '../components/MiningType';
+import { SeineScreen, type TerminalCapture } from '../components/SeineScreen';
+import seineScreensData from '../data/seine-screens.json';
 import { seineSupportsSolo } from '../lib/solo';
+
+// seine v0.3.1's own renderer with example data; regenerate with frontend/scripts/seine-screens-export.rs.
+const seineScreens = seineScreensData as unknown as Record<string, TerminalCapture>;
 
 const minerSettings = [
   ['minerSettingsNvidia', '--backend nvidia'],
@@ -271,15 +276,12 @@ export function StartPage({ poolInfo }: StartPageProps) {
 
       <div className="card section">
         <h3>{t("m481")}</h3>
-        <div className="screenshot-grid">
-          <div>
-            <img src="/ui-assets/pool-entered.png" alt={t("m482")} />
-            <div className="caption">{t("m483")}</div>
+        <div className="seine-screens">
+          <div className="seine-screens-prompts">
+            <SeineScreen desktop={seineScreens['address-desktop']} mobile={seineScreens['address-mobile']} caption={t('seineScreenAddress')} />
+            <SeineScreen desktop={seineScreens['pool-desktop']} mobile={seineScreens['pool-mobile']} caption={t('seineScreenPool')} />
           </div>
-          <div>
-            <img src="/ui-assets/mining-tui.png" alt={t("m484")} />
-            <div className="caption">{t("m485")}</div>
-          </div>
+          <SeineScreen desktop={seineScreens['mining-desktop']} mobile={seineScreens['mining-mobile']} caption={t('seineScreenMining')} />
         </div>
       </div>
 
