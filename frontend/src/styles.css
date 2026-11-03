@@ -1,32 +1,32 @@
 :root {
-  --bg: #f6f8f2;
-  --bg-elevated: #edf3e7;
+  --bg: #ecf6f0;
+  --bg-elevated: #dcefe4;
   --surface: #ffffff;
   --surface-raised: #ffffff;
-  --surface-hover: #eef4e8;
-  --accent: #16a34a;
-  --accent-strong: #15803d;
-  --accent-light: rgba(22, 163, 74, 0.12);
+  --surface-hover: #e4f3ea;
+  --accent: #0f7350;
+  --accent-strong: #0b5c3f;
+  --accent-light: rgba(95, 240, 160, 0.26);
   --accent-contrast: #f8fff9;
-  --text: #1f3121;
-  --muted: #5f705f;
-  --link: #15803d;
-  --border: rgba(33, 49, 34, 0.12);
+  --text: #0f271c;
+  --muted: #546e62;
+  --link: #0f7350;
+  --border: rgba(15, 90, 60, 0.14);
   --good: #16a34a;
   --warn: #d97706;
   --bad: #dc2626;
-  --tone-ok-bg: rgba(22, 163, 74, 0.1);
-  --tone-ok-border: rgba(22, 163, 74, 0.18);
-  --tone-ok-text: #23834c;
+  --tone-ok-bg: rgba(95, 240, 160, 0.2);
+  --tone-ok-border: rgba(15, 115, 80, 0.22);
+  --tone-ok-text: #0b5c3f;
   --tone-warn-bg: rgba(245, 158, 11, 0.16);
   --tone-warn-border: rgba(217, 119, 6, 0.24);
   --tone-warn-text: #975a05;
   --tone-bad-bg: rgba(239, 68, 68, 0.12);
   --tone-bad-border: rgba(220, 38, 38, 0.2);
   --tone-bad-text: #b91c1c;
-  --status-confirmed-bg: rgba(22, 163, 74, 0.1);
-  --status-confirmed-border: rgba(22, 163, 74, 0.18);
-  --status-confirmed-text: #23834c;
+  --status-confirmed-bg: rgba(95, 240, 160, 0.2);
+  --status-confirmed-border: rgba(15, 115, 80, 0.22);
+  --status-confirmed-text: #0b5c3f;
   --status-pending-bg: rgba(245, 158, 11, 0.14);
   --status-pending-border: rgba(217, 119, 6, 0.22);
   --status-pending-text: #9a6008;
@@ -38,7 +38,7 @@
   --rejection-fill-end: rgba(171, 178, 114, 0.78);
   --shadow: 0 22px 48px rgba(33, 49, 34, 0.08);
   --shadow-soft: none;
-  --nav-bg: #f6f8f2;
+  --nav-bg: #ecf6f0;
   --progress-track: linear-gradient(90deg, #ecfdf3, #fefce8 55%, #fef2f2);
   --progress-ok-fill: rgba(22, 163, 74, 0.65);
   --progress-warn-fill: rgba(217, 119, 6, 0.6);
@@ -66,28 +66,30 @@
   --log-ansi-bright-magenta: #f0abfc;
   --log-ansi-bright-cyan: #a5f3fc;
   --log-ansi-bright-white: #f8fafc;
-  --chart-axis: #6b7c6b;
-  --chart-grid: #d8e3d2;
-  --chart-line: #16a34a;
-  --chart-fill-start: rgba(22, 163, 74, 0.15);
-  --chart-fill-end: rgba(22, 163, 74, 0.01);
+  --chart-axis: #5d7469;
+  --chart-grid: #d6e9de;
+  --chart-line: #0f7350;
+  --chart-fill-start: rgba(95, 240, 160, 0.3);
+  --chart-fill-end: rgba(95, 240, 160, 0.03);
   --radius: 6px;
+  --primary: #0b2a1f;
+  --primary-ink: #ffffff;
 }
 
 :root[data-theme='dark'] {
-  --bg: #071114;
-  --bg-elevated: #0f1b20;
-  --surface: #0d181d;
-  --surface-raised: #132129;
-  --surface-hover: #14242b;
-  --accent: #57d78c;
-  --accent-strong: #2cbd70;
-  --accent-light: rgba(87, 215, 140, 0.14);
-  --accent-contrast: #02120a;
-  --text: #ecf5f0;
-  --muted: #9cb0a8;
-  --link: #57d78c;
-  --border: rgba(130, 160, 145, 0.18);
+  --bg: #06120d;
+  --bg-elevated: #0b1c15;
+  --surface: #0a1913;
+  --surface-raised: #0f231b;
+  --surface-hover: #11281f;
+  --accent: #5ff0a0;
+  --accent-strong: #5ff0a0;
+  --accent-light: rgba(95, 240, 160, 0.13);
+  --accent-contrast: #04150c;
+  --text: #e8f4ee;
+  --muted: #98b0a5;
+  --link: #6fe6a8;
+  --border: rgba(150, 220, 190, 0.13);
   --good: #57d78c;
   --warn: #f7b44b;
   --bad: #f87171;
@@ -114,7 +116,7 @@
   --rejection-fill-end: rgba(194, 191, 136, 0.78);
   --shadow: 0 30px 80px rgba(0, 0, 0, 0.34);
   --shadow-soft: none;
-  --nav-bg: #071114;
+  --nav-bg: #06120d;
   --progress-track: linear-gradient(90deg, #102818, #35260d 55%, #321414);
   --progress-ok-fill: rgba(74, 222, 128, 0.42);
   --progress-warn-fill: rgba(245, 158, 11, 0.4);
@@ -126,11 +128,13 @@
   --log-bg: #08111e;
   --log-border: #21364d;
   --log-text: #dbe7f5;
-  --chart-axis: #9cb0a8;
-  --chart-grid: rgba(130, 160, 145, 0.22);
-  --chart-line: #57d78c;
-  --chart-fill-start: rgba(87, 215, 140, 0.18);
-  --chart-fill-end: rgba(87, 215, 140, 0.02);
+  --chart-axis: #8fa89c;
+  --chart-grid: rgba(150, 220, 190, 0.14);
+  --chart-line: #5ff0a0;
+  --chart-fill-start: rgba(95, 240, 160, 0.16);
+  --chart-fill-end: rgba(95, 240, 160, 0.02);
+  --primary: #5ff0a0;
+  --primary-ink: #04150c;
 }
 
 *,
@@ -931,9 +935,9 @@ nav.nav-hero .pool-languages ul { background: #0b2a1f; }
 }
 
 .range-tabs button.active {
-  background: var(--accent);
-  color: var(--accent-contrast);
-  border-color: var(--accent);
+  background: var(--primary);
+  color: var(--primary-ink);
+  border-color: var(--primary);
   box-shadow: 0 10px 24px rgba(87, 215, 140, 0.2);
 }
 
@@ -1397,8 +1401,8 @@ input:focus {
 }
 
 .btn-primary {
-  background: var(--accent);
-  color: var(--accent-contrast);
+  background: var(--primary);
+  color: var(--primary-ink);
 }
 
 .btn-secondary {
@@ -2420,9 +2424,21 @@ nav.nav-hero { --accent-strong: #ffffff; --accent-contrast: #0b2a1f; }
   position: relative;
   isolation: isolate;
   max-width: none;
-  margin: calc(-1 * var(--page-top, 24px)) 0 28px;
-  padding: 44px 0 40px;
+  margin: calc(-1 * var(--page-top, 24px)) 0 0;
+  padding: 44px 0 80px;
   color: #ffffff;
+}
+/* The page rises into the bottom of the band as one sheet. */
+.page-header::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  bottom: -1px;
+  left: -20px;
+  right: -20px;
+  height: 41px;
+  background: var(--bg);
+  border-radius: 6px 6px 0 0;
 }
 .page-header::before {
   content: '';
@@ -2518,3 +2534,29 @@ td.chip-cell > .badge, td.chip-cell > .round-chip { display: block; width: 100%;
 .btn-secondary:hover { opacity: 1; border-color: var(--accent); color: var(--accent-strong); }
 .wallet-option { background: var(--surface); }
 .inline-code, .inline-copy-code { border-radius: 4px; }
+
+/* Front page: the same sheet rises into the bottom of the number band. */
+.home-band { position: relative; padding-bottom: 40px; }
+.home-band::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 50%;
+  width: min(1120px, 100%);
+  height: 41px;
+  transform: translateX(-50%);
+  background: var(--bg);
+  border-radius: 6px 6px 0 0;
+}
+.home-body { padding-top: 4px; }
+@media (max-width: 600px) {
+  .page-header { padding-bottom: 60px; }
+  .page-header::after { left: -10px; right: -10px; height: 25px; }
+  .home-band { padding-bottom: 24px; }
+  .home-band::after { width: calc(100% - 20px); height: 25px; }
+}
+
+/* The footer closes the page in the header's green. */
+.site-footer { max-width: none; margin: 56px 0 0; padding: 30px 20px 38px; background: #0b2a1f; border-top: 0; }
+.site-footer a { color: rgba(255, 255, 255, 0.74); }
+.site-footer a:hover, .site-footer a.active { color: #ffffff; }
