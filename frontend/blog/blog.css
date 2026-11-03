@@ -26,6 +26,8 @@ img { max-width: 100%; height: auto; }
 .wrap { max-width: 1080px; margin: 0 auto; padding-inline: max(20px, env(safe-area-inset-left)) max(20px, env(safe-area-inset-right)); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
+/* Link targets land below the sticky nav (about 61 px) with a little room. */
+html { scroll-padding-top: 80px; }
 .nav { position: sticky; top: 0; z-index: 10; background: var(--bg); border-bottom: 1px solid var(--border); }
 .nav .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 60px; }
 .brand { font-weight: 700; font-size: 1.1rem; text-decoration: none; letter-spacing: -0.01em; }
@@ -92,7 +94,6 @@ img { max-width: 100%; height: auto; }
 .prose table { border-collapse: collapse; display: block; overflow-x: auto; margin: 1.4em 0; font-size: 0.95rem; }
 .prose th, .prose td { border-bottom: 1px solid var(--border); padding-block: 9px; padding-inline: 0 16px; text-align: start; }
 .prose th { border-bottom-color: var(--muted); }
-.prose h2[id], .prose h3[id] { scroll-margin-top: 80px; }
 
 .block { margin: 1.6em 0; padding: 14px 18px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); border-inline-start: 3px solid var(--border); }
 .block > :last-child { margin-bottom: 0; }
@@ -122,7 +123,7 @@ footer a { text-decoration: none; }
 footer a:hover { color: var(--text); }
 
 /* Calculator shares the article's surface, type and utility button styles. */
-.calculator { scroll-margin-top: 80px; padding: 24px; margin: 0 0 36px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; }
+.calculator { padding: 24px; margin: 0 0 36px; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; }
 .prose .calculator h2 { margin-top: 0; }
 .calculator fieldset { padding: 0; border: 0; margin: 24px 0 0; min-width: 0; }
 .calc-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; align-items: end; }
@@ -155,7 +156,7 @@ footer a:hover { color: var(--text); }
 .topic-nav a { display: inline-block; padding-block: 8px; text-underline-offset: 4px; text-decoration-thickness: 1px; }
 .topic-nav a:hover { color: var(--text); }
 .topic-nav .topic-sibling { color: var(--muted); font-size: .9rem; }
-.topic-section > h2 { margin: 0 0 18px; font-size: 1.6rem; scroll-margin-top: 90px; }
+.topic-section > h2 { margin: 0 0 18px; font-size: 1.6rem; }
 .topic-section > h2:target { text-decoration: underline; text-underline-offset: 6px; text-decoration-thickness: 1px; }
 .topic-section .posts { padding-bottom: 56px; }
 .crumbs { line-height: 1.6; }
