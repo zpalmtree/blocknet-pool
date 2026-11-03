@@ -1,4 +1,4 @@
-import { locale, t, tx, localizePath } from '../i18n';
+import { t, tx, localizePath } from '../i18n';
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
@@ -9,12 +9,11 @@ import { HashrateChart } from '../components/HashrateChart';
 import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
 import { PayoutProgress } from '../components/PayoutProgress';
 import { RangeTabs } from '../components/RangeTabs';
-import { StatCard } from '../components/StatCard';
 import { MiningType } from '../components/MiningType';
 import { MinerUpdateBanner } from '../components/MinerUpdateBanner';
 import { knownExchange, validMemo } from '../lib/payout-destination';
 import { readDestination, rememberDestination } from '../lib/storage';
-import { formatCoins, formatCompactCoins, formatFee, formatPct, humanRate, timeAgo, timestampTitle, toUnixMs } from '../lib/format';
+import { formatCoins, formatCompactCoins, formatFee, humanRate, timeAgo, timestampTitle, toUnixMs } from '../lib/format';
 import type { ThemeMode } from '../lib/theme';
 import type {
   InfoResponse,
@@ -332,32 +331,6 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
     return !!minerAddress && raw === appliedDestination.address && memoInput === appliedDestination.memo;
   }, [minerAddress, minerInput, memoInput, exchange, appliedDestination]);
 
-  const minerAvgDiff = useMemo(() => {
-    if (!minerData) return '-';
-    const shares = minerData.shares;
-    const totalAccepted = minerData.total_accepted;
-    if (!shares.length || totalAccepted <= 0) return '-';
-    const take = Math.min(shares.length, totalAccepted);
-    const sum = shares.slice(0, take).reduce((acc, s) => acc + (s.difficulty || 0), 0);
-    if (!sum) return '-';
-    return (sum / take).toFixed(0);
-  }, [minerData]);
-
-  const minerOldestShareDate = useMemo(() => {
-    if (!minerData) return '-';
-    const miningSince = toUnixMs(minerData.mining_since);
-    if (miningSince) return new Date(miningSince).toLocaleDateString(locale, { calendar: 'gregory' });
-
-    const shares = minerData.shares;
-    let oldest = 0;
-    for (const s of shares) {
-      const t = toUnixMs(s.created_at);
-      if (!t) continue;
-      if (!oldest || t < oldest) oldest = t;
-    }
-    return oldest ? new Date(oldest).toLocaleDateString(locale, { calendar: 'gregory' }) : '-';
-  }, [minerData]);
-
   const liveBalance = minerBalanceData?.balance;
   const livePendingEstimate = minerBalanceData?.pending_estimate;
   const pendingConfirmed = liveBalance?.pending_confirmed ?? 0;
@@ -369,10 +342,6 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
       ? 0
       : Math.max(0, payoutEta.pending_total_amount - payoutEta.wallet_spendable);
   const payoutLiquidityConstrained = payoutEta != null && payoutEta.pending_total_amount > 0 && payoutShortfall > 0;
-  const minerAccepted = minerData ? minerData.total_accepted : 0;
-  const minerRejected = minerData ? minerData.total_rejected : 0;
-  const minerChecked = minerAccepted + minerRejected;
-  const minerRejectRate = minerChecked > 0 ? (minerRejected / minerChecked) * 100 : null;
   const previewBlocks = livePendingEstimate?.blocks ?? [];
   // The Type columns appear only for miners with solo blocks or rigs.
   const soloPreview = previewBlocks.some((block) => block.solo);
@@ -391,24 +360,44 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const payoutsStart = minerData && payoutsOffset < minerData.payouts.length ? payoutsOffset : 0;
   const showLookupResult = !(exchange && !memoInput) && !!minerAddress && (!!minerData || !!minerBalanceData || history.length > 0);
   const minerDetailLoading = lookupLoading && !minerData;
+  const noHashrate = !!minerData && (!minerData.workers.length || liveHashrate <= 0);
+  const balanceValue = (amount: number) => minerBalanceData
+    ? <span title={formatCoins(amount)}><bdi dir="ltr">{formatCompactCoins(amount)}</bdi></span>
+    : '—';
+
+  const clearLookup = () => {
+    lookupRequestSeq.current += 1;
+    hashrateRequestKeyRef.current = '';
+    minerAddressRef.current = '';
+    setMemoInput('');
+    setMemoOpen(false);
+    setLookupError('');
+    setLookupLoading(false);
+    setResolving(false);
+    setMinerInput('');
+    setMinerAddress('');
+    setMinerData(null);
+    setMinerBalanceData(null);
+    setBalanceUnavailable(false);
+    setHistory([]);
+    setResolvedHandle(null);
+    rememberDestination(null);
+  };
 
 
   return (
     <div id="page-stats">
       <div className="page-header">
         <h1>{t("m616")}</h1>
-        <p className="page-intro">{t('statsDescription')}</p>
       </div>
       <MinerUpdateBanner miner={minerData} />
-      <div className="card" style={{ marginBottom: 24 }}>
-        <div className="lookup-form" style={{ display: 'flex', gap: 10, marginBottom: 0, flexWrap: 'wrap' }}>
+      <div className="card stats-lookup">
+        <div className="lookup-form">
           <input
             type="text"
             dir="ltr"
             placeholder={t("m486")}
             aria-label={t('m486')}
-            aria-describedby="miner-lookup-help"
-            style={{ flex: 1, minWidth: 200 }}
             value={minerInput}
             onChange={(e) => setMinerInput(e.target.value)}
             onKeyDown={(e) => {
@@ -424,63 +413,31 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
           >
             {resolving ? t("m487") : lookupLoading ? t("m094") : t("m488")}
           </button>
-          <button
-            className="btn btn-secondary"
-            onClick={() => {
-              lookupRequestSeq.current += 1;
-              hashrateRequestKeyRef.current = '';
-              minerAddressRef.current = '';
-              setMemoInput('');
-              setMemoOpen(false);
-              setLookupError('');
-              setLookupLoading(false);
-              setResolving(false);
-              setMinerInput('');
-              setMinerAddress('');
-              setMinerData(null);
-              setMinerBalanceData(null);
-              setBalanceUnavailable(false);
-              setHistory([]);
-              setResolvedHandle(null);
-              rememberDestination(null);
-            }}
-          >{t("m013")}</button>
-          {resolvedHandle && minerAddress && (<span className="resolved-badge" style={{ alignSelf: 'center', fontSize: '0.85em', color: 'var(--success, #4caf50)' }}>
+        </div>
+        <div className="stats-lookup-links">
+          {!showMemo && <button type="button" className="link-button" onClick={() => setMemoOpen(true)}>{t('memoAdd')}</button>}
+          {(minerInput || minerAddress) && <button type="button" className="link-button" onClick={clearLookup}>{t("m013")}</button>}
+          {resolvedHandle && minerAddress && (<span className="resolved-badge" dir="ltr">
               ${resolvedHandle} → {appliedDestination.address.slice(0, 8)}…{appliedDestination.address.slice(-6)}
             </span>)}
         </div>
-        <p id="miner-lookup-help" className="section-lead">{t('trackBody')}</p>
-        <div className="memo-fields">
-          {!showMemo ? <button className="btn btn-secondary" type="button" onClick={() => setMemoOpen(true)}>{t('memoAdd')}</button> : <>
-            <label htmlFor="stats-memo">{t('memoLabel')}</label>
-            <input id="stats-memo" type="text" value={memoInput} autoComplete="off" spellCheck={false} dir="ltr"
-              aria-invalid={!validMemo(memoInput) || (!!exchange && !memoInput)} aria-describedby="stats-memo-help"
-              onChange={event => setMemoInput(event.target.value)}
-              onKeyDown={event => { if (event.key === 'Enter' && !lookupDisabled && !lookupLoading) void loadMinerLookup(); }} />
-            <p id="stats-memo-help" role={exchange && !memoInput ? 'alert' : undefined}>{exchange ? t('memoRequired', [exchange.name]) : t('memoLimit')}</p>
-            {!validMemo(memoInput) && <p role="alert">{t('memoLimit')}</p>}
-          </>}
-          {lookupError && <p role="alert">{lookupError}</p>}
-        </div>
+        {showMemo && <div className="memo-fields">
+          <label htmlFor="stats-memo">{t('memoLabel')}</label>
+          <input id="stats-memo" type="text" value={memoInput} autoComplete="off" spellCheck={false} dir="ltr"
+            aria-invalid={!validMemo(memoInput) || (!!exchange && !memoInput)} aria-describedby="stats-memo-help"
+            onChange={event => setMemoInput(event.target.value)}
+            onKeyDown={event => { if (event.key === 'Enter' && !lookupDisabled && !lookupLoading) void loadMinerLookup(); }} />
+          <p id="stats-memo-help" role={exchange && !memoInput ? 'alert' : undefined}>{exchange ? t('memoRequired', [exchange.name]) : t('memoLimit')}</p>
+          {!validMemo(memoInput) && <p role="alert">{t('memoLimit')}</p>}
+        </div>}
+        {lookupError && <p className="stats-lookup-error" role="alert">{lookupError}</p>}
       </div>
 
       {!minerAddress && !lookupLoading && (<p className="section-lead" style={{ marginBottom: 16 }}>{tx("statsEmpty", [<a href={localizePath("/start")}>{t("m002")}</a>])}</p>)}
-      <p className="section-lead" style={{ marginBottom: 16 }}><a href={`${localizePath("/blog/")}track-your-miner-on-bntpool/#zero-hashrate`}>{t("minerHelp")}</a></p>
 
       {showLookupResult && (<div id="lookup-result">
-          {balanceUnavailable && (<div
-              className="card"
-              style={{ marginBottom: 16, background: 'rgba(247, 180, 75, 0.12)', borderColor: 'rgba(247, 180, 75, 0.45)' }}
-            >
-              <div style={{ color: 'var(--text)', fontSize: 13 }}>
-                {minerBalanceData ? t("m489") : t("m490")}
-              </div>
-            </div>)}
-          {verificationHold && (<div
-              className="card"
-              style={{ marginBottom: 24, background: 'rgba(247, 180, 75, 0.12)', borderColor: 'rgba(247, 180, 75, 0.45)' }}
-            >
-              <div style={{ color: 'var(--text)', fontSize: 13 }}>
+          {balanceUnavailable && (<div className="card stats-notice">{minerBalanceData ? t("m489") : t("m490")}</div>)}
+          {verificationHold && (<div className="card stats-notice">
                 {verificationHold.mode === 'quarantined' ? t("m505", [timestampTitle(verificationQuarantineUntil) || t('m600')]) : t("m506", [timestampTitle(verificationOnlyUntil) || t('m600')])}
                 {verificationHold.mode === 'quarantined' &&
                   verificationOnlyUntil &&
@@ -489,67 +446,118 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                 verificationPendingProvisional > 0 ? t('m610', [verificationReason, verificationPendingProvisional]) : t("m509", [verificationReason])}
                 {verificationStartedAt && <> {t("m510", [timestampTitle(verificationStartedAt)])}</>}
                 {t("m511")}
+            </div>)}
+          {pendingQueued > 0 && payoutEta && payoutLiquidityConstrained && (<div className="card stats-notice">
+              {tx("m513", [<span className="mono">{formatCoins(payoutEta.wallet_spendable ?? 0)}</span>, <span className="mono">{formatCoins(payoutEta.wallet_pending ?? 0)}</span>, <span className="mono">{formatCoins(payoutEta.pending_total_amount)}</span>])}
+            </div>)}
+
+          <section id="miner-balances" className="card stats-summary" aria-busy={minerDetailLoading}>
+            <div className="stats-summary-top">
+              <div className="stats-summary-hr">
+                <span>{t("m082")}</span>
+                <strong dir="ltr">{humanRate(liveHashrate)}</strong>
+                {noHashrate && <a href={`${localizePath("/blog/")}track-your-miner-on-bntpool/#zero-hashrate`}>{t("minerHelp")}</a>}
+              </div>
+              <PayoutProgress
+                api={api}
+                memoAccount={!!appliedDestination.memo}
+                accountMinimum={minerBalanceData?.min_payout_amount}
+                confirmed={balanceUnavailable ? undefined : liveBalance?.pending_confirmed}
+                queued={pendingQueued}
+                liveTick={liveTick}
+              />
+            </div>
+            <dl className="stats-summary-nums">
+              <div><dt>{t("m492")}</dt><dd>{balanceValue(pendingEstimated)}</dd></div>
+              <div><dt>{t("m494")}</dt><dd>{balanceValue(pendingConfirmed)}</dd></div>
+              <div><dt>{t("m496")}</dt><dd>{balanceValue(livePaid)}</dd></div>
+            </dl>
+          </section>
+
+          <div className="section">
+            <div className="section-header">
+              <h2>{t("m520")}</h2>
+              <RangeTabs<Range> options={['1h', '24h', '7d', '30d']} value={range} onChange={setRange} />
+            </div>
+            <HashrateChart data={history} range={range} theme={theme} />
+          </div>
+
+          {minerData && (<div className="section">
+              <h2 id="miner-workers" tabIndex={-1}>{t("m081")}</h2>
+              <div className="card table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{t("m521")}</th>
+                      {soloWorkers && <th>{t("typeColumn")}</th>}
+                      <th>{t("m522")}</th>
+                      <th>{t("m082")}</th>
+                      <th>{t("m085")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {!minerData.workers.length ? (<EmptyTableRow colSpan={soloWorkers ? 5 : 4}>{t("m523")}</EmptyTableRow>) : (minerData.workers.slice(workersStart, workersStart + WORKERS_PAGE_SIZE).map((w) => (
+                        <tr key={w.worker}>
+                          <td>{w.worker || t("m524")}</td>
+                          {soloWorkers && <td><MiningType solo={w.solo} /></td>}
+                          <td className="mono">{w.miner_version?.trim() || t("m525")}</td>
+                          <td>{humanRate(w.hashrate || 0)}</td>
+                          <td title={timestampTitle(w.last_share_at)}>
+                            {timeAgo(w.last_share_at)}
+                          </td>
+                        </tr>
+                      )))}
+                  </tbody>
+                </table>
+                {minerData.workers.length > WORKERS_PAGE_SIZE && (<Pager
+                    offset={workersStart}
+                    limit={WORKERS_PAGE_SIZE}
+                    total={minerData.workers.length}
+                    onPrev={() => setWorkersOffset(Math.max(0, workersStart - WORKERS_PAGE_SIZE))}
+                    onNext={() => setWorkersOffset(workersStart + WORKERS_PAGE_SIZE)}
+                  />)}
               </div>
             </div>)}
 
-          <div id="miner-balances" className="stats-card-group" style={{ marginBottom: 16 }}>
-            <div className="stats-card-group-title">{t("m491")}</div>
-            <div className="stats-card-group-grid">
-              <StatCard
-                label={t("m492")}
-                value={minerBalanceData ? formatCompactCoins(pendingEstimated) : '—'}
-                meta={t("m493")}
-                className="stat-card--flow"
-                title={minerBalanceData ? formatCoins(pendingEstimated) : undefined}
-              />
-              <StatCard
-                label={t("m494")}
-                value={minerBalanceData ? formatCompactCoins(pendingConfirmed) : '—'}
-                meta={t("m495")}
-                className="stat-card--flow"
-                title={minerBalanceData ? formatCoins(pendingConfirmed) : undefined}
-              />
-              <StatCard
-                label={t("m496")}
-                value={minerBalanceData ? formatCompactCoins(livePaid) : '—'}
-                meta={t("m497")}
-                title={minerBalanceData ? formatCoins(livePaid) : undefined}
-              />
-            </div>
-            <PayoutProgress
-              api={api}
-              memoAccount={!!appliedDestination.memo}
-              accountMinimum={minerBalanceData?.min_payout_amount}
-              personalMinimum={poolInfo?.min_payout_amount}
-              confirmed={balanceUnavailable ? undefined : liveBalance?.pending_confirmed}
-              queued={pendingQueued}
-              liveTick={liveTick}
-            />
-          </div>
-
-          <div className="stats-card-group" style={{ marginBottom: 24 }}>
-            <div className="stats-card-group-title">{t("m499")}</div>
-            <div className="stats-card-group-grid">
-              <StatCard label={t("m082")} value={humanRate(liveHashrate)} />
-              <StatCard label={t("m411")} value={minerData ? minerData.blocks_found : '...'} />
-              <StatCard label={t("m500")} value={minerData ? minerOldestShareDate : '...'} />
-            </div>
-          </div>
-
-          <div className="stats-grid" style={{ marginBottom: 24 }}>
-            <StatCard label={t("m501")} value={minerData ? minerAccepted : '...'} />
-            <StatCard label={t("m502")} value={minerData ? minerRejected : '...'} />
-            <StatCard label={t("m503")} value={minerData ? formatPct(minerRejectRate) : '...'} />
-            <StatCard label={t("m504")} value={minerData ? minerAvgDiff : '...'} />
-          </div>
-
-          {minerDetailLoading && (<div className="card" style={{ marginBottom: 24, color: 'var(--muted)', fontSize: 13 }}>{t("m512")}</div>)}
-
-          {pendingQueued > 0 && payoutEta && payoutLiquidityConstrained && (<div
-              className="card"
-              style={{ marginBottom: 24, background: 'rgba(247, 180, 75, 0.12)', borderColor: 'rgba(247, 180, 75, 0.45)' }}
-            >
-              <div style={{ color: 'var(--text)', fontSize: 13 }}>{tx("m513", [<span className="mono">{formatCoins(payoutEta.wallet_spendable ?? 0)}</span>, <span className="mono">{formatCoins(payoutEta.wallet_pending ?? 0)}</span>, <span className="mono">{formatCoins(payoutEta.pending_total_amount)}</span>])}</div>
+          {minerData && (<div className="section">
+              <h2>{t("m437")}</h2>
+              <div className="card table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{t("m438")}</th>
+                      <th>{t("m526")}</th>
+                      <th>{t("m006")}</th>
+                      <th>{t("m377")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {!minerData.payouts.length ? (<EmptyTableRow colSpan={4}>{t("m440")}</EmptyTableRow>) : (minerData.payouts.slice(payoutsStart, payoutsStart + PAYOUTS_PAGE_SIZE).map((p, payoutIndex) => {
+                        const hasTx = Boolean(p.tx_hash.trim());
+                        const status = p.confirmed ? 'confirmed' : hasTx ? 'unconfirmed' : 'queued';
+                        return (
+                          <tr key={`${p.tx_hash}-${toUnixMs(p.timestamp)}-${payoutIndex}`}>
+                            <td title={p.fee ? t("m470") + ': ' + formatFee(p.fee) : undefined}>{formatCoins(p.amount)}</td>
+                            <td>
+                              {hasTx ? (<ExplorerLink kind="tx" value={p.tx_hash}>{p.tx_hash}</ExplorerLink>) : ('-')}
+                            </td>
+                            <td className="chip-cell">
+                              <PayoutStatusBadge status={status} />
+                            </td>
+                            <td title={timestampTitle(p.timestamp)}>{timeAgo(p.timestamp)}</td>
+                          </tr>
+                        );
+                      }))}
+                  </tbody>
+                </table>
+                {minerData.payouts.length > PAYOUTS_PAGE_SIZE && (<Pager
+                    offset={payoutsStart}
+                    limit={PAYOUTS_PAGE_SIZE}
+                    total={minerData.payouts.length}
+                    onPrev={() => setPayoutsOffset(Math.max(0, payoutsStart - PAYOUTS_PAGE_SIZE))}
+                    onNext={() => setPayoutsOffset(payoutsStart + PAYOUTS_PAGE_SIZE)}
+                  />)}
+              </div>
             </div>)}
 
           {!!previewBlocks.length && (<div className="section">
@@ -581,99 +589,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                     ))}
                   </tbody>
                 </table>
-                <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)' }}>{t("m519")}</div>
-              </div>
-            </div>)}
-
-          <div className="section">
-            <div className="section-header">
-              <h2>{t("m520")}</h2>
-              <RangeTabs<Range> options={['1h', '24h', '7d', '30d']} value={range} onChange={setRange} />
-            </div>
-            <HashrateChart data={history} range={range} theme={theme} />
-          </div>
-
-          {minerData && (<div className="section">
-              <h2 id="miner-workers" tabIndex={-1}>{t("m081")}</h2>
-              <div className="card table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>{t("m521")}</th>
-                      {soloWorkers && <th>{t("typeColumn")}</th>}
-                      <th>{t("m522")}</th>
-                      <th>{t("m082")}</th>
-                      <th>{t("m083")}</th>
-                      <th>{t("m084")}</th>
-                      <th>{t("m085")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {!minerData.workers.length ? (<EmptyTableRow colSpan={soloWorkers ? 7 : 6}>{t("m523")}</EmptyTableRow>) : (minerData.workers.slice(workersStart, workersStart + WORKERS_PAGE_SIZE).map((w) => (
-                        <tr key={w.worker}>
-                          <td>{w.worker || t("m524")}</td>
-                          {soloWorkers && <td><MiningType solo={w.solo} /></td>}
-                          <td className="mono">{w.miner_version?.trim() || t("m525")}</td>
-                          <td>{humanRate(w.hashrate || 0)}</td>
-                          <td>{w.accepted || 0}</td>
-                          <td>{w.rejected || 0}</td>
-                          <td title={timestampTitle(w.last_share_at)}>
-                            {timeAgo(w.last_share_at)}
-                          </td>
-                        </tr>
-                      )))}
-                  </tbody>
-                </table>
-                {minerData.workers.length > WORKERS_PAGE_SIZE && (<Pager
-                    offset={workersStart}
-                    limit={WORKERS_PAGE_SIZE}
-                    total={minerData.workers.length}
-                    onPrev={() => setWorkersOffset(Math.max(0, workersStart - WORKERS_PAGE_SIZE))}
-                    onNext={() => setWorkersOffset(workersStart + WORKERS_PAGE_SIZE)}
-                  />)}
-              </div>
-            </div>)}
-
-          {minerData && (<div className="section">
-              <h2>{t("m437")}</h2>
-              <div className="card table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>{t("m438")}</th>
-                      <th>{t("m470")}</th>
-                      <th>{t("m526")}</th>
-                      <th>{t("m006")}</th>
-                      <th>{t("m377")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {!minerData.payouts.length ? (<EmptyTableRow colSpan={5}>{t("m440")}</EmptyTableRow>) : (minerData.payouts.slice(payoutsStart, payoutsStart + PAYOUTS_PAGE_SIZE).map((p, payoutIndex) => {
-                        const hasTx = Boolean(p.tx_hash.trim());
-                        const status = p.confirmed ? 'confirmed' : hasTx ? 'unconfirmed' : 'queued';
-                        return (
-                          <tr key={`${p.tx_hash}-${toUnixMs(p.timestamp)}-${payoutIndex}`}>
-                            <td>{formatCoins(p.amount)}</td>
-                            <td>{formatFee(p.fee || 0)}</td>
-                            <td>
-                              {hasTx ? (<ExplorerLink kind="tx" value={p.tx_hash}>{p.tx_hash}</ExplorerLink>) : ('-')}
-                            </td>
-                            <td className="chip-cell">
-                              <PayoutStatusBadge status={status} />
-                            </td>
-                            <td title={timestampTitle(p.timestamp)}>{timeAgo(p.timestamp)}</td>
-                          </tr>
-                        );
-                      }))}
-                  </tbody>
-                </table>
-                {minerData.payouts.length > PAYOUTS_PAGE_SIZE && (<Pager
-                    offset={payoutsStart}
-                    limit={PAYOUTS_PAGE_SIZE}
-                    total={minerData.payouts.length}
-                    onPrev={() => setPayoutsOffset(Math.max(0, payoutsStart - PAYOUTS_PAGE_SIZE))}
-                    onNext={() => setPayoutsOffset(payoutsStart + PAYOUTS_PAGE_SIZE)}
-                  />)}
+                <p className="stats-table-note">{t("m519")}</p>
               </div>
             </div>)}
 

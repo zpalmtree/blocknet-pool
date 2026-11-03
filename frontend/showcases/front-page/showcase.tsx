@@ -96,6 +96,11 @@ const hashrateHistory = Array.from({ length: 168 }, (_, hour) => ({
   timestamp: ts((168 - hour) * 3_600),
   hashrate: 9_000 + hour * 40 + 1_400 * Math.sin(hour / 9) + (hour > 96 && hour < 101 ? 12_000 : 0),
 }));
+// One miner's last hour, one point a minute.
+const minerHistory = Array.from({ length: 60 }, (_, minute) => ({
+  timestamp: ts((60 - minute) * 60),
+  hashrate: 300 + 14 * Math.sin(minute / 5) + 6 * Math.cos(minute / 2),
+}));
 
 const worker = (name: string, rate: number, lastShare: number) => ({
   worker: name, hashrate: rate, accepted: 1_204, rejected: 4, last_share_at: ts(lastShare),
@@ -146,7 +151,7 @@ window.fetch = async (input, init) => {
   if (path.startsWith('/api/miner/')) {
     if (state === 'miner-error') return Response.json({ error: 'Demo: lookup unavailable' }, { status: 500 });
     if (path.endsWith('/balance')) return json(balance);
-    if (path.endsWith('/hashrate')) return json([]);
+    if (path.endsWith('/hashrate')) return json(minerHistory);
     return json(miner);
   }
   return json({});

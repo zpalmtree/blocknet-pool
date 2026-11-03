@@ -12,16 +12,18 @@ pool, explorer or analytics endpoint. States:
   under 1100 px, stacked on phones), Quick Start, recent blocks and payouts, the hashrate
   chart and the mining guide.
 - `below`, `ready`, `queued`, `paid`: a saved lookup turns the hero into the visitor's miner, with
-  hashrate, workers, last share, one next-payout bar and Full stats; the side panel keeps only
-  Stratum. Below the minimum the bar fills toward it; over it the bar is full with the sweep time; a
-  queued payout shows a striped bar; just after a payout a line names it.
+  hashrate, one next-payout bar and Full stats; the side panel keeps only Stratum. Below the minimum
+  the bar fills toward it; over it the bar is full; a queued payout shows a striped bar; just after a
+  payout a line names it.
 - `no-workers`: a saved miner with nothing online links to the zero-hashrate help.
 - `exchange`, `exchange-ready`: an exchange deposit with a memo uses its own 10 BNT minimum from the
   balance API.
 - `miner-error`: a saved lookup that fails falls back to the first-visit view.
 - `loading`, `empty`: pool data pending, and a pool with no blocks or payouts yet.
 - `luck`: the Luck page, which now carries the Current Round card the old dashboard showed.
-- `stats`: My Stats in the site-wide style.
+- `stats`: My Stats: one lookup row (memo and Clear as links), then a summary card in the hero's
+  shape (hashrate, next-payout bar, estimated, confirmed and paid), the miner's hashrate chart,
+  workers, payouts and, when present, blocks still maturing. Clear it for the empty state.
 - `blocks`: Blocks, where effort and status badges share one width per column.
 - `start`: Get Started, with one row per quick start step and its action at the end, and Seine in
   Action drawn as text from seine's own renderer (setup prompts and the mining dashboard).
@@ -34,7 +36,7 @@ wide screens, a straight edge under 1136 px), deep green buttons and tabs, a gre
 square cards, number groups as one box split by hairlines, centred public tables with equal-width
 badges, and labels and tables without all caps.
 
-The 32 captures in `captures/` (see `captures.html`) cover these states at 1280 px and 390 px, dark
+The 34 captures in `captures/` (see `captures.html`) cover these states at 1280 px and 390 px, dark
 mode and Arabic. Every capture uses synthetic data. `chrome=off` also hides the scrollbar, so a
 full-page phone capture keeps its full 390 px width. Source: blocknet-pool branch front-page-redesign.
 Captured 2026-11-03 through the shared Playwright browser.
