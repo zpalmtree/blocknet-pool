@@ -1289,9 +1289,6 @@ tr:hover td {
   outline-offset: 4px;
 }
 
-#miner-workers {
-  scroll-margin-top: 100px;
-}
 
 @media (max-width: 640px) {
   .miner-update-banner {
@@ -2385,7 +2382,6 @@ a.copy-field-value:hover {
 .pool-guide-body { max-width: 68ch; padding-top: 16px; }
 .pool-guide-body h2 { font-size: 16px; margin: 16px 0 8px; }
 .pool-guide-body p { color: var(--muted); font-size: 14px; line-height: 1.6; margin-bottom: 12px; }
-#pool-information, #pool-guide { scroll-margin-top: 100px; }
 
 .memo-fields { display: grid; gap: 10px; margin-top: 16px; }
 .memo-fields > input { width: 100%; min-width: 0; }
@@ -2567,6 +2563,8 @@ td.chip-cell > .badge, td.chip-cell > .round-chip { display: block; width: 100%;
 .site-footer { max-width: none; margin: 56px 0 0; padding: 30px 20px 38px; background: #0b2a1f; border-top: 0; }
 .site-footer a { color: rgba(255, 255, 255, 0.74); }
 .site-footer a:hover, .site-footer a.active { color: #ffffff; }
+/* Link targets land below the sticky nav (56 px) with a little room. */
+html { scroll-padding-top: 72px; }
 /* The page fills the window, so the footer stays at the bottom on short pages and while a page loads. */
 #root { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; }
 #root > .container, #root > .container-flush { flex: 1 0 auto; width: 100%; }
