@@ -317,7 +317,6 @@
   "typeSolo": "單人",
   "heroFee": "{0} 手續費。",
   "checkMiner": "查詢你的礦機",
-  "yourAddress": "你的地址",
   "bandMiners": "在線礦工",
   "bandHashrate": "礦池算力，佔全網 {0}",
   "bandNetwork": "全網算力",
@@ -331,12 +330,9 @@
   "noWorkersHelp": "沒有在線工作節點。{0}",
   "nextPayout": "下次支付",
   "payoutOf": "{0} / {1}",
-  "paidSoFar": "已向你支付 {0}。",
   "lastPayout": "上次支付 {0}，{1}。",
   "payoutReady": "可以支付",
   "payoutAtSweep": "下次掃帳時支付：{0}",
   "payoutQueuedTag": "支付已排隊",
-  "payoutQueuedNote": "將在本次掃帳中發出，發送後會顯示在近期支付中。",
-  "minimumTick": "最低 {0}",
   "fullStats": "完整統計"
 }

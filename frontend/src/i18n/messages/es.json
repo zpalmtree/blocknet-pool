@@ -317,7 +317,6 @@
   "typeSolo": "Solo",
   "heroFee": "Comisión del {0}.",
   "checkMiner": "Consulta tu minero",
-  "yourAddress": "Tu dirección",
   "bandMiners": "mineros en línea",
   "bandHashrate": "hashrate del pool, {0} de la red",
   "bandNetwork": "hashrate de la red",
@@ -331,12 +330,9 @@
   "noWorkersHelp": "No hay workers en línea. {0}",
   "nextPayout": "Próximo pago",
   "payoutOf": "{0} de {1}",
-  "paidSoFar": "{0} pagados a ti hasta ahora.",
   "lastPayout": "Último pago {0}, {1}.",
   "payoutReady": "Listo para el pago",
   "payoutAtSweep": "Se paga en el próximo barrido: {0}",
   "payoutQueuedTag": "Pago en cola",
-  "payoutQueuedNote": "Sale en este barrido y aparece en Pagos recientes cuando se envía.",
-  "minimumTick": "mínimo {0}",
   "fullStats": "Estadísticas completas"
 }

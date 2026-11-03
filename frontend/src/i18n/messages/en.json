@@ -317,7 +317,6 @@
   "typeSolo": "Solo",
   "heroFee": "{0} fee.",
   "checkMiner": "Check your miner",
-  "yourAddress": "Your address",
   "bandMiners": "miners online",
   "bandHashrate": "pool hashrate, {0} of the network",
   "bandNetwork": "network hashrate",
@@ -331,12 +330,9 @@
   "noWorkersHelp": "No workers online. {0}",
   "nextPayout": "Next payout",
   "payoutOf": "{0} of {1}",
-  "paidSoFar": "{0} paid to you so far.",
   "lastPayout": "Last payout {0}, {1}.",
   "payoutReady": "Ready for payout",
   "payoutAtSweep": "Pays out at the next sweep: {0}",
   "payoutQueuedTag": "Payout queued",
-  "payoutQueuedNote": "It goes out in this sweep and shows in Recent Payouts once it's sent.",
-  "minimumTick": "{0} minimum",
   "fullStats": "Full stats"
 }

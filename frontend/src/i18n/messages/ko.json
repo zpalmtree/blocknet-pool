@@ -317,7 +317,6 @@
   "typeSolo": "솔로",
   "heroFee": "수수료 {0}.",
   "checkMiner": "내 마이너 확인",
-  "yourAddress": "내 주소",
   "bandMiners": "온라인 마이너",
   "bandHashrate": "풀 해시레이트, 네트워크의 {0}",
   "bandNetwork": "네트워크 해시레이트",
@@ -331,12 +330,9 @@
   "noWorkersHelp": "온라인 워커가 없습니다. {0}",
   "nextPayout": "다음 지급",
   "payoutOf": "{0} / {1}",
-  "paidSoFar": "지금까지 {0} 지급되었습니다.",
   "lastPayout": "마지막 지급 {0}, {1}.",
   "payoutReady": "지급 준비 완료",
   "payoutAtSweep": "다음 스윕에서 지급: {0}",
   "payoutQueuedTag": "지급 대기 중",
-  "payoutQueuedNote": "이번 스윕에서 전송되며, 전송 후 최근 지급 내역에 표시됩니다.",
-  "minimumTick": "최소 {0}",
   "fullStats": "전체 통계"
 }

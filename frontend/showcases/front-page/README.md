@@ -12,12 +12,12 @@ pool, explorer or analytics endpoint. States:
   under 1100 px, stacked on phones), Quick Start, recent blocks and payouts, the hashrate
   chart and the mining guide.
 - `below`, `ready`, `queued`, `paid`: a saved lookup turns the hero into the visitor's miner, with
-  hashrate, workers, last share and the next payout. Below the minimum the bar fills toward it; over
-  it the bar is full and a tick marks the minimum; a queued payout shows a striped bar; just after a
-  payout the line names it.
+  hashrate, workers, last share, one next-payout bar and Full stats; the side panel keeps only
+  Stratum. Below the minimum the bar fills toward it; over it the bar is full with the sweep time; a
+  queued payout shows a striped bar; just after a payout a line names it.
 - `no-workers`: a saved miner with nothing online links to the zero-hashrate help.
 - `exchange`, `exchange-ready`: an exchange deposit with a memo uses its own 10 BNT minimum from the
-  balance API and notes where personal wallets start.
+  balance API.
 - `miner-error`: a saved lookup that fails falls back to the first-visit view.
 - `loading`, `empty`: pool data pending, and a pool with no blocks or payouts yet.
 - `luck`: the Luck page, which now carries the Current Round card the old dashboard showed.

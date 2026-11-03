@@ -317,7 +317,6 @@
   "typeSolo": "ソロ",
   "heroFee": "手数料{0}。",
   "checkMiner": "マイナーを確認",
-  "yourAddress": "あなたのアドレス",
   "bandMiners": "オンラインのマイナー",
   "bandHashrate": "プールのハッシュレート、ネットワークの{0}",
   "bandNetwork": "ネットワークのハッシュレート",
@@ -331,12 +330,9 @@
   "noWorkersHelp": "オンラインのワーカーがありません。{0}",
   "nextPayout": "次の支払い",
   "payoutOf": "{0} / {1}",
-  "paidSoFar": "これまでの支払い額：{0}。",
   "lastPayout": "前回の支払い：{0}（{1}）。",
   "payoutReady": "支払い準備完了",
   "payoutAtSweep": "次のスウィープで支払い：{0}",
   "payoutQueuedTag": "支払い待ち",
-  "payoutQueuedNote": "今回のスウィープで送金され、送信後に最近の支払いに表示されます。",
-  "minimumTick": "最低{0}",
   "fullStats": "すべての統計"
 }

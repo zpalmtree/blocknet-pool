@@ -317,7 +317,6 @@
   "typeSolo": "فردي",
   "heroFee": "رسوم {0}.",
   "checkMiner": "تحقق من منقّبك",
-  "yourAddress": "عنوانك",
   "bandMiners": "منقّبون متصلون",
   "bandHashrate": "معدل تجزئة المجمع، {0} من الشبكة",
   "bandNetwork": "معدل تجزئة الشبكة",
@@ -331,12 +330,9 @@
   "noWorkersHelp": "لا يوجد عاملون متصلون. {0}",
   "nextPayout": "الدفعة التالية",
   "payoutOf": "{0} من {1}",
-  "paidSoFar": "دُفع لك {0} حتى الآن.",
   "lastPayout": "آخر دفعة {0}، {1}.",
   "payoutReady": "جاهز للدفع",
   "payoutAtSweep": "يُدفع في الكنس التالي: {0}",
   "payoutQueuedTag": "دفعة في قائمة الانتظار",
-  "payoutQueuedNote": "تُرسل في هذا الكنس وتظهر في المدفوعات الأخيرة بعد إرسالها.",
-  "minimumTick": "الحد الأدنى {0}",
   "fullStats": "الإحصائيات الكاملة"
 }

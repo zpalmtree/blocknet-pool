@@ -317,7 +317,6 @@
   "typeSolo": "Solo",
   "heroFee": "Προμήθεια {0}.",
   "checkMiner": "Ελέγξτε το miner σας",
-  "yourAddress": "Η διεύθυνσή σας",
   "bandMiners": "miner σε σύνδεση",
   "bandHashrate": "hashrate του pool, {0} του δικτύου",
   "bandNetwork": "hashrate του δικτύου",
@@ -331,12 +330,9 @@
   "noWorkersHelp": "Κανένας εργαζόμενος σε σύνδεση. {0}",
   "nextPayout": "Επόμενη πληρωμή",
   "payoutOf": "{0} από {1}",
-  "paidSoFar": "Σας έχουν πληρωθεί {0} μέχρι τώρα.",
   "lastPayout": "Τελευταία πληρωμή {0}, {1}.",
   "payoutReady": "Έτοιμο για πληρωμή",
   "payoutAtSweep": "Πληρώνεται στην επόμενη καθαριστική πληρωμή: {0}",
   "payoutQueuedTag": "Πληρωμή σε αναμονή",
-  "payoutQueuedNote": "Φεύγει σε αυτόν τον κύκλο και εμφανίζεται στις Πρόσφατες Πληρωμές μόλις σταλεί.",
-  "minimumTick": "ελάχιστο {0}",
   "fullStats": "Πλήρη στατιστικά"
 }

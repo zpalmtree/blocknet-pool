@@ -621,15 +621,6 @@ html:lang(zh) .page-header h1 {
 .home-bar { position: relative; height: 10px; border-radius: 2px; background: rgba(255, 255, 255, 0.14); }
 .home-bar > div { height: 100%; border-radius: 2px; background: #ffffff; }
 .home-bar > .is-queued { background: repeating-linear-gradient(135deg, #ffffff 0 8px, rgba(255, 255, 255, 0.5) 8px 16px); }
-/* The minimum tick: a dark notch inside the full bar, with white stubs above and below it. */
-.home-bar > i { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--hero); transform: translateX(-1px); }
-.home-bar > i::before, .home-bar > i::after { content: ''; position: absolute; left: 0; width: 2px; height: 5px; background: #ffffff; }
-.home-bar > i::before { top: -6px; }
-.home-bar > i::after { bottom: -6px; }
-.home-bar-labels { position: relative; height: 16px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--hero-dim); }
-.home-bar-labels span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
-[dir='rtl'] .home-bar-labels span { transform: translateX(50%); }
-[dir='rtl'] .home-bar > i { transform: translateX(1px); }
 
 .home-body { max-width: 1120px; margin: 0 auto; padding: 38px 20px 34px; display: grid; gap: 36px; }
 .home-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 6px 12px; margin-bottom: 10px; }

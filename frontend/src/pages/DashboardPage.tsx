@@ -11,7 +11,6 @@ import {
   formatCoinAmount,
   formatCoins,
   formatCompactCoins,
-  formatExactCoins,
   humanRate,
   shortAddr,
   stratumUrl,
@@ -223,7 +222,8 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
               </button>
             </div>
             {copyState === 'error' && <p className="home-copy-error" role="alert">{t('copyUnavailable')}</p>}
-            <label className="home-label" htmlFor="dashboard-lookup">{showMiner ? t('yourAddress') : t('checkMiner')}</label>
+            {!showMiner && <>
+            <label className="home-label" htmlFor="dashboard-lookup">{t('checkMiner')}</label>
             <form
               className="home-field"
               onSubmit={(event) => {
@@ -245,6 +245,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
               />
               <button type="submit">{t('m488')}</button>
             </form>
+            </>}
           </div>
         </div>
       </section>
@@ -348,16 +349,11 @@ function MinerHero({ miner, balance, loading, destination, poolInfo, insights, o
   // Exchange (memo) accounts have their own, higher minimum; the balance API reports it.
   const accountMinimum = balance?.min_payout_amount ?? (memoAccount ? poolInfo?.memo_min_payout_amount : poolInfo?.min_payout_amount);
   const minimum = minimumPayoutAtoms(accountMinimum);
-  const personalMinimum = memoAccount ? minimumPayoutAtoms(poolInfo?.min_payout_amount) : null;
   const payout = balance ? heroPayout(minimum, balance.balance.pending_confirmed, balance.balance.pending_queued) : null;
-  const paid = balance?.balance.paid ?? 0;
   const lastPayout = miner?.payouts?.[0];
   const recentPayout = lastPayout && Date.now() - toUnixMs(lastPayout.timestamp) < RECENT_PAYOUT_MS ? lastPayout : null;
   const nextSweepAt = insights?.payout_eta?.next_sweep_at;
   const sweepLabel = !nextSweepAt ? null : toUnixMs(nextSweepAt) <= Date.now() ? t('dueNow') : timeUntil(nextSweepAt);
-  const paidLine = recentPayout
-    ? t('lastPayout', [formatCoins(recentPayout.amount), timeAgo(recentPayout.timestamp)])
-    : t('paidSoFar', [formatCoins(paid)]);
 
   return (
     <div className="home-pitch home-miner" aria-busy={loading}>
@@ -378,33 +374,25 @@ function MinerHero({ miner, balance, loading, destination, poolInfo, insights, o
             <div className="home-pay-top"><span>{t('nextPayout')}</span>
               <span>{tx('payoutOf', [<strong key="have" dir="ltr">{formatCoinAmount(payout.confirmed)}</strong>, <bdi key="min" dir="ltr">{formatCoins(payout.minimum)}</bdi>])}</span></div>
             <div className="home-bar"><div style={{ width: `${payout.fillPct}%` }} /></div>
-            <span className="home-pay-sub">{tx('statsPayoutRemaining', [<bdi key="left" dir="ltr">{formatExactCoins(payout.remaining)}</bdi>])} {paidLine}</span>
+            {recentPayout && <span className="home-pay-sub">{t('lastPayout', [formatCoins(recentPayout.amount), timeAgo(recentPayout.timestamp)])}</span>}
           </>}
           {payout.state === 'ready' && <>
             <div className="home-pay-top"><span className="home-tag"><i aria-hidden="true" />{t('payoutReady')}</span>
               <strong dir="ltr">{formatCoins(payout.amount)}</strong></div>
-            <div className="home-bar"><div style={{ width: '100%' }} /><i style={{ insetInlineStart: `${payout.minimumPct}%` }} aria-hidden="true" /></div>
-            <div className="home-bar-labels" aria-hidden="true"><span style={{ insetInlineStart: `${payout.minimumPct}%` }}>{tx('minimumTick', [<bdi key="min" dir="ltr">{formatCoins(payout.minimum)}</bdi>])}</span></div>
-            <span className="home-pay-sub">{sweepLabel ? t('payoutAtSweep', [sweepLabel]) : t('statsPayoutMet')} · {paidLine}</span>
+            <div className="home-bar"><div style={{ width: '100%' }} /></div>
+            {sweepLabel && <span className="home-pay-sub">{t('payoutAtSweep', [sweepLabel])}</span>}
           </>}
           {payout.state === 'queued' && <>
             <div className="home-pay-top"><span className="home-tag"><i aria-hidden="true" />{t('payoutQueuedTag')}</span>
               <strong dir="ltr">{formatCoins(payout.amount)}</strong></div>
             <div className="home-bar"><div className="is-queued" style={{ width: '100%' }} /></div>
-            <span className="home-pay-sub">{t('payoutQueuedNote')}</span>
           </>}
-          {personalMinimum != null && minimum != null && personalMinimum < minimum && (
-            <span className="home-pay-sub">{t('memoPersonalMinimum', [formatCoins(personalMinimum)])}</span>
-          )}
         </div>
       )}
       {balance && payout?.state === 'unavailable' && <p className="home-me-sub">{t('statsPayoutBalanceUnavailable')}</p>}
 
       <div className="home-cta">
         <a className="home-btn" href={localizePath('/stats')}>{t('fullStats')}</a>
-        <a className="home-link" href={localizePath('/blog/') + 'estimate-blocknet-mining-rewards/#mining-calculator'}>
-          {t('rewardsCalculator')}<span aria-hidden="true"> ↗</span>
-        </a>
       </div>
     </div>
   );

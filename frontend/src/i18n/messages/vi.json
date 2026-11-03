@@ -317,7 +317,6 @@
   "typeSolo": "Solo",
   "heroFee": "Phí {0}.",
   "checkMiner": "Kiểm tra máy đào của bạn",
-  "yourAddress": "Địa chỉ của bạn",
   "bandMiners": "máy đào trực tuyến",
   "bandHashrate": "hashrate của pool, {0} của mạng",
   "bandNetwork": "hashrate của mạng",
@@ -331,12 +330,9 @@
   "noWorkersHelp": "Không có công nhân trực tuyến. {0}",
   "nextPayout": "Lần thanh toán tiếp theo",
   "payoutOf": "{0} trên {1}",
-  "paidSoFar": "Đã trả cho bạn {0} đến nay.",
   "lastPayout": "Lần thanh toán gần nhất {0}, {1}.",
   "payoutReady": "Sẵn sàng thanh toán",
   "payoutAtSweep": "Thanh toán ở lần quét tiếp theo: {0}",
   "payoutQueuedTag": "Thanh toán đang xếp hàng",
-  "payoutQueuedNote": "Khoản này được gửi trong lần quét này và hiện trong Thanh toán gần đây sau khi gửi.",
-  "minimumTick": "tối thiểu {0}",
   "fullStats": "Thống kê đầy đủ"
 }

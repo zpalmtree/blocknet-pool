@@ -317,7 +317,6 @@
   "typeSolo": "Solo",
   "heroFee": "{0} Gebühr.",
   "checkMiner": "Miner prüfen",
-  "yourAddress": "Deine Adresse",
   "bandMiners": "Miner online",
   "bandHashrate": "Pool-Hashrate, {0} des Netzwerks",
   "bandNetwork": "Netzwerk-Hashrate",
@@ -331,12 +330,9 @@
   "noWorkersHelp": "Keine Worker online. {0}",
   "nextPayout": "Nächste Auszahlung",
   "payoutOf": "{0} von {1}",
-  "paidSoFar": "Bisher {0} an dich ausgezahlt.",
   "lastPayout": "Letzte Auszahlung {0}, {1}.",
   "payoutReady": "Bereit zur Auszahlung",
   "payoutAtSweep": "Wird beim nächsten Durchlauf ausgezahlt: {0}",
   "payoutQueuedTag": "Auszahlung vorgemerkt",
-  "payoutQueuedNote": "Sie geht in diesem Durchlauf raus und erscheint unter Letzte Auszahlungen, sobald sie gesendet ist.",
-  "minimumTick": "{0} Minimum",
   "fullStats": "Alle Statistiken"
 }

@@ -317,7 +317,6 @@
   "typeSolo": "Solo",
   "heroFee": "{0} ücret.",
   "checkMiner": "Madencinizi kontrol edin",
-  "yourAddress": "Adresiniz",
   "bandMiners": "çevrimiçi madenci",
   "bandHashrate": "havuz hashrate'i, ağın {0} kadarı",
   "bandNetwork": "ağ hashrate'i",
@@ -331,12 +330,9 @@
   "noWorkersHelp": "Çevrimiçi çalışan yok. {0}",
   "nextPayout": "Sonraki ödeme",
   "payoutOf": "{0} / {1}",
-  "paidSoFar": "Şu ana kadar size {0} ödendi.",
   "lastPayout": "Son ödeme {0}, {1}.",
   "payoutReady": "Ödemeye hazır",
   "payoutAtSweep": "Sonraki toplamada ödenir: {0}",
   "payoutQueuedTag": "Ödeme sırada",
-  "payoutQueuedNote": "Bu toplamada gönderilir ve gönderildiğinde Son Ödemeler'de görünür.",
-  "minimumTick": "en az {0}",
   "fullStats": "Tüm istatistikler"
 }

@@ -317,7 +317,6 @@
   "typeSolo": "单人",
   "heroFee": "{0} 手续费。",
   "checkMiner": "查询你的矿机",
-  "yourAddress": "你的地址",
   "bandMiners": "在线矿工",
   "bandHashrate": "矿池算力，占全网 {0}",
   "bandNetwork": "全网算力",
@@ -331,12 +330,9 @@
   "noWorkersHelp": "没有在线工人。{0}",
   "nextPayout": "下次支付",
   "payoutOf": "{0} / {1}",
-  "paidSoFar": "已向你支付 {0}。",
   "lastPayout": "上次支付 {0}，{1}。",
   "payoutReady": "可以支付",
   "payoutAtSweep": "下次清扫时支付：{0}",
   "payoutQueuedTag": "支付已排队",
-  "payoutQueuedNote": "将在本次清扫中发出，发送后会显示在最近支付中。",
-  "minimumTick": "最低 {0}",
   "fullStats": "完整统计"
 }

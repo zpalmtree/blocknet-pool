@@ -317,7 +317,6 @@
   "typeSolo": "Solo",
   "heroFee": "{0} kosten.",
   "checkMiner": "Controleer je miner",
-  "yourAddress": "Je adres",
   "bandMiners": "miners online",
   "bandHashrate": "pool-hashrate, {0} van het netwerk",
   "bandNetwork": "netwerk-hashrate",
@@ -331,12 +330,9 @@
   "noWorkersHelp": "Geen workers online. {0}",
   "nextPayout": "Volgende uitbetaling",
   "payoutOf": "{0} van {1}",
-  "paidSoFar": "Tot nu toe {0} aan je uitbetaald.",
   "lastPayout": "Laatste uitbetaling {0}, {1}.",
   "payoutReady": "Klaar voor uitbetaling",
   "payoutAtSweep": "Wordt uitbetaald bij de volgende sweep: {0}",
   "payoutQueuedTag": "Uitbetaling in wachtrij",
-  "payoutQueuedNote": "Gaat mee met deze sweep en verschijnt bij Recente Uitbetalingen zodra hij verzonden is.",
-  "minimumTick": "minimum {0}",
   "fullStats": "Alle statistieken"
 }

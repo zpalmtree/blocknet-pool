@@ -19,13 +19,12 @@ export function payoutProgress(minimum: number, confirmed: number | undefined, q
 export type HeroPayout =
   | { state: 'unavailable' }
   | { state: 'queued'; amount: number }
-  | { state: 'ready'; amount: number; minimum: number; minimumPct: number }
+  | { state: 'ready'; amount: number; minimum: number }
   | { state: 'below'; confirmed: number; minimum: number; remaining: number; fillPct: number };
 
 /**
- * The front page's next-payout block. Over the minimum the bar is full and
- * minimumPct marks where the minimum sits along it; below it the bar fills
- * toward the minimum.
+ * The front page's next-payout block. Over the minimum the bar is full; below
+ * it the bar fills toward the minimum.
  */
 export function heroPayout(minimum: number | null, confirmed: number | undefined, queued: number): HeroPayout {
   if (minimum == null) return { state: 'unavailable' };
@@ -34,7 +33,7 @@ export function heroPayout(minimum: number | null, confirmed: number | undefined
   if (progress.state === 'queued') return { state: 'queued', amount: progress.amount };
   const balance = confirmed ?? 0;
   if (progress.state === 'met') {
-    return { state: 'ready', amount: balance, minimum, minimumPct: Math.min(100, Math.max(0, (minimum / balance) * 100)) };
+    return { state: 'ready', amount: balance, minimum };
   }
   return {
     state: 'below', confirmed: balance, minimum, remaining: progress.amount,

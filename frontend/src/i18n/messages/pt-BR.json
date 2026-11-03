@@ -317,7 +317,6 @@
   "typeSolo": "Solo",
   "heroFee": "Taxa de {0}.",
   "checkMiner": "Consulte seu minerador",
-  "yourAddress": "Seu endereço",
   "bandMiners": "mineradores online",
   "bandHashrate": "hashrate do pool, {0} da rede",
   "bandNetwork": "hashrate da rede",
@@ -331,12 +330,9 @@
   "noWorkersHelp": "Nenhum worker online. {0}",
   "nextPayout": "Próximo pagamento",
   "payoutOf": "{0} de {1}",
-  "paidSoFar": "{0} pagos a você até agora.",
   "lastPayout": "Último pagamento {0}, {1}.",
   "payoutReady": "Pronto para pagamento",
   "payoutAtSweep": "Pago no próximo saque: {0}",
   "payoutQueuedTag": "Pagamento na fila",
-  "payoutQueuedNote": "Sai neste saque e aparece em Pagamentos Recentes depois de enviado.",
-  "minimumTick": "mínimo {0}",
   "fullStats": "Estatísticas completas"
 }
