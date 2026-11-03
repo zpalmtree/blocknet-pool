@@ -260,7 +260,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
                 value={lookupInput}
                 onChange={(event) => setLookupInput(event.target.value)}
               />
-              <button type="submit" disabled={!lookupInput.trim()}>{t('m488')}</button>
+              <button type="submit">{t('m488')}</button>
             </form>
           </div>
         </div>

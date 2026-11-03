@@ -19,6 +19,7 @@ const STATES = {
   loading: 'Pool data still loading',
   empty: 'New pool: no blocks or payouts yet',
   luck: 'Luck page with the Current Round card',
+  stats: 'My Stats in the site-wide style',
 } as const;
 type State = keyof typeof STATES;
 
@@ -86,7 +87,7 @@ const miner: MinerResponse = {
   payouts: [{ amount: Math.round(1.84 * BNT), fee: 24_000, tx_hash: 'demo-miner-payout', timestamp: ts(recentPayout ? 240 : 2 * 86_400), confirmed: true }],
 };
 const confirmed = {
-  below: 0.42, ready: 1.84, queued: 1.84, paid: 0.03, 'no-workers': 0.42, exchange: 4.2, 'exchange-ready': 12.4,
+  below: 0.42, stats: 0.42, ready: 1.84, queued: 1.84, paid: 0.03, 'no-workers': 0.42, exchange: 4.2, 'exchange-ready': 12.4,
 }[state as string] ?? 0;
 const balance = {
   address: exchangeState ? 'memo:demo-account' : WALLET, min_payout_amount: exchangeState ? 10 : 1,
@@ -128,7 +129,7 @@ window.fetch = async (input, init) => {
 };
 
 // The app routes on the path; the showcase picks it, then App renders as on the live site.
-history.replaceState(null, '', `${state === 'luck' ? '/luck' : '/'}${location.search}`);
+history.replaceState(null, '', `${state === 'luck' ? '/luck' : state === 'stats' ? '/stats' : '/'}${location.search}`);
 
 function Bar() {
   return (

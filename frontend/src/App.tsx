@@ -231,7 +231,7 @@ export function App() {
 
   return (
     <>
-      <nav className={[mobileNavOpen ? 'is-open' : '', route === 'dashboard' ? 'nav-hero' : ''].filter(Boolean).join(' ')}>
+      <nav className={mobileNavOpen ? 'nav-hero is-open' : 'nav-hero'}>
         <a
           href={pathForRoute('dashboard')}
           className="nav-brand"

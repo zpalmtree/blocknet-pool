@@ -20,7 +20,12 @@ pool, explorer or analytics endpoint. States:
 - `miner-error`: a saved lookup that fails falls back to the first-visit view.
 - `loading`, `empty`: pool data pending, and a pool with no blocks or payouts yet.
 - `luck`: the Luck page, which now carries the Current Round card the old dashboard showed.
+- `stats`: My Stats in the site-wide style.
 
-The 23 captures in `captures/` (see `captures.html`) cover these states at 1280 px and 390 px, dark
-mode and Arabic. Source: blocknet-pool master 10f56ea plus the front page change. Captured
+Every page shares the front page's style: the dark green nav, a deep green title band, flat
+square cards, number groups as one box split by hairlines, and labels and tables without all caps.
+
+The 34 captures in `captures/` (see `captures.html`) cover these states at 1280 px and 390 px, dark
+mode and Arabic, plus Get Started, Blocks, Payouts, Status and Checkpoints captured with live data
+from bntpool.com's public API through a local dev proxy. Source: blocknet-pool master 10f56ea plus the front page change. Captured
 2026-11-03 through the shared Playwright browser.
