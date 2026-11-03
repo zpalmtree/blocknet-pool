@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { stratumUrl } from '../lib/format';
 import type { InfoResponse } from '../types';
 import { ExchangeSetup } from '../components/ExchangeSetup';
-import { SoloBadge } from '../components/BlockStatusBadge';
+import { MiningType } from '../components/MiningType';
 import { seineSupportsSolo } from '../lib/solo';
 
 const minerSettings = [
@@ -257,7 +257,7 @@ export function StartPage({ poolInfo }: StartPageProps) {
         <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 10 }}>{tx("m478", [<strong style={{ color: 'var(--text)' }}>PPLNS</strong>, pplnsWindowLabel ? (<>{tx("m477", [<strong style={{ color: 'var(--text)' }}>{pplnsWindowLabel}</strong>])}</>) : null])}</p>
         <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 10 }}>{t("m479")}</p>
         <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 10 }}>{tx("m480", [<a href={localizePath("/stats")}>{t("m005")}</a>])}</p>
-        <p style={{ color: 'var(--muted)', fontSize: 14 }}>{tx("soloRewardsNote", [<SoloBadge />])}</p>
+        <p style={{ color: 'var(--muted)', fontSize: 14 }}>{tx("soloRewardsNote", [<MiningType solo />])}</p>
       </div>
 
       <div className="card section">

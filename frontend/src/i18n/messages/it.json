@@ -352,11 +352,13 @@
   "minerSettingsThreads": "Usa 4 thread CPU",
   "minerSettingsLead": "Per impostazione predefinita, seine mina con la tua CPU e le tue schede video. Per cambiarlo, chiudi seine, apri un terminale nella sua cartella ed esegui uno di questi comandi. Su Windows usa PowerShell e scrivi {0} al posto di {1}:",
   "minerSettingsGuide": "Cambia le impostazioni di seine: thread, CPU, GPU e pool",
-  "m619": "solo",
   "soloTitle": "Mina in solo",
   "soloLead": "Il mining in solo ti paga l’intera ricompensa di ogni blocco trovato dai tuoi rig e niente dei blocchi trovati da altri miner. I pagamenti arrivano più di rado ma sono molto più grandi. Commissione del pool: {0}.",
   "soloHow": "Metti {0} davanti al tuo indirizzo o nome breve, nel comando qui sotto o quando Seine ti chiede l’indirizzo. Prima aggiorna Seine all’ultima versione: le versioni precedenti lo rifiutano.",
   "soloFit": "Il solo è adatto a chi ha una grande quota dell’hashrate di rete. Con un rig piccolo potresti aspettare a lungo tra un blocco e l’altro.",
   "soloTrack": "{0} segnala i tuoi rig e blocchi in solo. Togli {1} per tornare alle ricompense condivise PPLNS.",
-  "soloRewardsNote": "I blocchi segnati con {0} sono stati trovati da miner in solo e pagano solo loro."
+  "soloRewardsNote": "I blocchi segnati con {0} sono stati trovati da miner in solo e pagano solo loro.",
+  "typeColumn": "Tipo",
+  "typePool": "Pool",
+  "typeSolo": "Solo"
 }

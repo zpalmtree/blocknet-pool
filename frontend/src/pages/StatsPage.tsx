@@ -10,7 +10,7 @@ import { PayoutStatusBadge } from '../components/PayoutStatusBadge';
 import { PayoutProgress } from '../components/PayoutProgress';
 import { RangeTabs } from '../components/RangeTabs';
 import { StatCard } from '../components/StatCard';
-import { SoloBadge } from '../components/BlockStatusBadge';
+import { MiningType } from '../components/MiningType';
 import { MinerUpdateBanner } from '../components/MinerUpdateBanner';
 import { knownExchange, validMemo } from '../lib/payout-destination';
 import { readDestination, rememberDestination } from '../lib/storage';
@@ -375,6 +375,9 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
   const minerRejectRate = minerChecked > 0 ? (minerRejected / minerChecked) * 100 : null;
   const recentShares = minerData?.shares ?? [];
   const previewBlocks = livePendingEstimate?.blocks ?? [];
+  // The Type columns appear only for miners with solo blocks or rigs.
+  const soloPreview = previewBlocks.some((block) => block.solo);
+  const soloWorkers = !!minerData?.workers.some((worker) => worker.solo);
   const verificationHold = minerData?.verification_hold ?? null;
   const verificationReason = verificationHold?.reason?.trim() || t('m599');
   const verificationPendingProvisional = verificationHold?.validation_pending_provisional ?? 0;
@@ -557,6 +560,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                   <thead>
                     <tr>
                       <th>{t("m374")}</th>
+                      {soloPreview && <th>{t("typeColumn")}</th>}
                       <th>{t("m515")}</th>
                       <th>{t("m516")}</th>
                       <th>{t("m377")}</th>
@@ -568,9 +572,9 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                         <td>
                           <ExplorerLink kind="block" value={b.hash || ''}>{b.height}</ExplorerLink>
                         </td>
+                        {soloPreview && <td><MiningType solo={b.solo} /></td>}
                         <td title={b.validation_detail || undefined}>
                           {b.credit_withheld ? t("m517") : b.validation_state === 'extra_verification' ? t("m518", [formatCoins(b.estimated_credit)]) : formatCoins(b.estimated_credit)}
-                          {b.solo && <> <SoloBadge /></>}
                         </td>
                         <td>{b.confirmations_remaining}</td>
                         <td title={timestampTitle(b.timestamp)}>{timeAgo(b.timestamp)}</td>
@@ -597,6 +601,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                   <thead>
                     <tr>
                       <th>{t("m521")}</th>
+                      {soloWorkers && <th>{t("typeColumn")}</th>}
                       <th>{t("m522")}</th>
                       <th>{t("m082")}</th>
                       <th>{t("m083")}</th>
@@ -605,9 +610,10 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {!minerData.workers.length ? (<EmptyTableRow colSpan={6}>{t("m523")}</EmptyTableRow>) : (minerData.workers.slice(workersStart, workersStart + WORKERS_PAGE_SIZE).map((w) => (
+                    {!minerData.workers.length ? (<EmptyTableRow colSpan={soloWorkers ? 7 : 6}>{t("m523")}</EmptyTableRow>) : (minerData.workers.slice(workersStart, workersStart + WORKERS_PAGE_SIZE).map((w) => (
                         <tr key={w.worker}>
-                          <td>{w.worker || t("m524")}{w.solo && <> <SoloBadge /></>}</td>
+                          <td>{w.worker || t("m524")}</td>
+                          {soloWorkers && <td><MiningType solo={w.solo} /></td>}
                           <td className="mono">{w.miner_version?.trim() || t("m525")}</td>
                           <td>{humanRate(w.hashrate || 0)}</td>
                           <td>{w.accepted || 0}</td>

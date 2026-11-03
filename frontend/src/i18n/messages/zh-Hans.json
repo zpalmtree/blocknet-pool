@@ -352,11 +352,13 @@
   "minerSettingsThreads": "使用 4 个 CPU 线程",
   "minerSettingsLead": "seine 默认使用 CPU 和显卡挖矿。要更改，请关闭 seine，在它的文件夹中打开终端，然后运行下面的某一条命令。在 Windows 上请使用 PowerShell，并输入 {0} 代替 {1}：",
   "minerSettingsGuide": "seine 设置：线程、CPU、GPU 和矿池",
-  "m619": "单人",
   "soloTitle": "单人挖矿",
   "soloLead": "单人挖矿时，您的矿机找到的每个区块的全部奖励都归您，其他矿工找到的区块则与您无关。收益到账次数更少，但每次金额大得多。矿池费用：{0}",
   "soloHow": "在下方命令中，或在 Seine 询问地址时，在您的地址或短名称前加上 {0}。请先将 Seine 更新到最新版本，旧版本会拒绝该前缀。",
   "soloFit": "单人挖矿适合占全网算力较大比例的矿工。矿机规模较小时，两次出块之间可能要等很久。",
   "soloTrack": "{0} 会标记您单人挖矿的矿机和区块。去掉 {1} 即可恢复共享的 PPLNS 奖励。",
-  "soloRewardsNote": "标有 {0} 的区块由单人矿工找到，奖励只归他们。"
+  "soloRewardsNote": "标有 {0} 的区块由单人矿工找到，奖励只归他们。",
+  "typeColumn": "类型",
+  "typePool": "矿池",
+  "typeSolo": "单人"
 }

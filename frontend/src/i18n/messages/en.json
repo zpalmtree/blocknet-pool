@@ -352,11 +352,13 @@
   "minerSettingsThreads": "Use 4 CPU threads",
   "minerSettingsLead": "Seine mines on your CPU and graphics cards by default. To change that, close seine, open a terminal in its folder and run one of these commands. On Windows, use PowerShell and type {0} in place of {1}:",
   "minerSettingsGuide": "Change seine settings: threads, CPU, GPU and pool",
-  "m619": "solo",
   "soloTitle": "Mine solo",
   "soloLead": "Solo mining pays you the whole reward of every block your rigs find and nothing from blocks other miners find. Payouts come less often but are much larger. Pool fee: {0}.",
   "soloHow": "Put {0} in front of your address or shortname, in the command below or when Seine asks for your address. Update Seine to the latest release first; older versions reject it.",
   "soloFit": "Solo suits miners with a large share of the network hashrate. With a small rig you may wait a long time between blocks.",
   "soloTrack": "{0} marks your solo rigs and blocks. Remove {1} to go back to shared PPLNS rewards.",
-  "soloRewardsNote": "Blocks marked {0} were found by solo miners and pay only them."
+  "soloRewardsNote": "Blocks marked {0} were found by solo miners and pay only them.",
+  "typeColumn": "Type",
+  "typePool": "Pool",
+  "typeSolo": "Solo"
 }

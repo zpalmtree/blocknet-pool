@@ -352,11 +352,13 @@
   "minerSettingsThreads": "4 CPU-Threads nutzen",
   "minerSettingsLead": "Standardmäßig mint seine mit deiner CPU und deinen Grafikkarten. Um das zu ändern, schließe seine, öffne ein Terminal in seinem Ordner und führe einen dieser Befehle aus. Unter Windows nutzt du PowerShell und tippst {0} statt {1}:",
   "minerSettingsGuide": "seine-Einstellungen ändern: Threads, CPU, GPU und Pool",
-  "m619": "solo",
   "soloTitle": "Solo minen",
   "soloLead": "Beim Solo-Mining erhältst du die gesamte Belohnung jedes Blocks, den deine Rigs finden, und nichts aus Blöcken anderer Miner. Auszahlungen kommen seltener, sind aber viel größer. Pool-Gebühr: {0}.",
   "soloHow": "Setze {0} vor deine Adresse oder deinen Kurznamen, im Befehl unten oder wenn Seine nach deiner Adresse fragt. Aktualisiere Seine vorher auf die neueste Version; ältere Versionen lehnen es ab.",
   "soloFit": "Solo lohnt sich für Miner mit einem großen Anteil an der Netzwerk-Hashrate. Mit einem kleinen Rig kann es lange dauern, bis du einen Block findest.",
   "soloTrack": "{0} kennzeichnet deine Solo-Rigs und Solo-Blöcke. Entferne {1}, um wieder geteilte PPLNS-Belohnungen zu erhalten.",
-  "soloRewardsNote": "Mit {0} markierte Blöcke wurden von Solo-Minern gefunden und zahlen nur an sie aus."
+  "soloRewardsNote": "Mit {0} markierte Blöcke wurden von Solo-Minern gefunden und zahlen nur an sie aus.",
+  "typeColumn": "Typ",
+  "typePool": "Pool",
+  "typeSolo": "Solo"
 }

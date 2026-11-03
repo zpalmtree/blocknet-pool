@@ -2,7 +2,8 @@ import { t, tx, localizePath, locale } from '../i18n';
 import { useCallback, useEffect, useState } from 'react';
 
 import type { ApiClient } from '../api/client';
-import { BlockStatusBadge, SoloBadge } from '../components/BlockStatusBadge';
+import { BlockStatusBadge } from '../components/BlockStatusBadge';
+import { MiningType } from '../components/MiningType';
 import { EmptyTableRow } from '../components/EmptyTableRow';
 import { ExplorerLink } from '../components/ExplorerLink';
 import { HashrateChart } from '../components/HashrateChart';
@@ -334,12 +335,13 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
                 <th>{t("m098")}</th>
                 <th>{t("m375")}</th>
                 <th>{t("m376")}</th>
+                <th>{t("typeColumn")}</th>
                 <th>{t("m006")}</th>
                 <th>{t("m435")}</th>
               </tr>
             </thead>
             <tbody>
-              {!dashboardLuckHistory.length ? (<EmptyTableRow colSpan={5}>{t("m436")}</EmptyTableRow>) : (dashboardLuckHistory.map((row) => (
+              {!dashboardLuckHistory.length ? (<EmptyTableRow colSpan={6}>{t("m436")}</EmptyTableRow>) : (dashboardLuckHistory.map((row) => (
                   <tr key={`${row.block_height}-${row.block_hash}`}>
                     <td>
                       <ExplorerLink kind="block" value={row.block_hash}>{row.block_height}</ExplorerLink>
@@ -348,9 +350,9 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
                       <span className={`round-chip ${roundToneClass(row.effort_pct)}`}>{formatPct(row.effort_pct)}</span>
                     </td>
                     <td>{fmtSeconds(row.duration_seconds)}</td>
+                    <td><MiningType solo={row.solo} /></td>
                     <td>
                       <BlockStatusBadge confirmed={row.confirmed} orphaned={row.orphaned} />
-                      {row.solo && <> <SoloBadge /></>}
                     </td>
                     <td title={timestampTitle(row.timestamp)}>{timeAgo(row.timestamp)}</td>
                   </tr>

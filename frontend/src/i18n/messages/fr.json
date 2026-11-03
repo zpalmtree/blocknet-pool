@@ -352,11 +352,13 @@
   "minerSettingsThreads": "Utiliser 4 threads CPU",
   "minerSettingsLead": "Par défaut, seine mine avec votre CPU et vos cartes graphiques. Pour changer cela, fermez seine, ouvrez un terminal dans son dossier et lancez l’une de ces commandes. Sous Windows, utilisez PowerShell et tapez {0} à la place de {1} :",
   "minerSettingsGuide": "Modifier les réglages de seine : threads, CPU, GPU et pool",
-  "m619": "solo",
   "soloTitle": "Miner en solo",
   "soloLead": "Le minage solo vous verse la récompense entière de chaque bloc trouvé par vos machines, et rien des blocs trouvés par les autres mineurs. Les paiements sont plus rares mais bien plus gros. Frais du pool : {0}.",
   "soloHow": "Ajoutez {0} devant votre adresse ou votre nom court, dans la commande ci-dessous ou quand Seine demande votre adresse. Mettez d’abord Seine à jour vers la dernière version ; les versions plus anciennes le refusent.",
   "soloFit": "Le solo convient aux mineurs qui détiennent une grande part du hashrate du réseau. Avec une petite machine, l’attente entre deux blocs peut être longue.",
   "soloTrack": "{0} signale vos machines et blocs en solo. Retirez {1} pour revenir aux récompenses partagées PPLNS.",
-  "soloRewardsNote": "Les blocs marqués {0} ont été trouvés par des mineurs solo et ne paient qu’eux."
+  "soloRewardsNote": "Les blocs marqués {0} ont été trouvés par des mineurs solo et ne paient qu’eux.",
+  "typeColumn": "Type",
+  "typePool": "Pool",
+  "typeSolo": "Solo"
 }
