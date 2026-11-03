@@ -8,7 +8,8 @@ The real App, front page and Luck page run against synthetic API responses; noth
 pool, explorer or analytics endpoint. States:
 
 - `first`: no saved lookup. The deep green hero leads with the pool fee, the Stratum address and a
-  miner lookup, followed by the number band, Quick Start, recent blocks and payouts, the hashrate
+  miner lookup, followed by the number band (miners, pool hashrate, network hashrate, paid; two by two
+  under 1100 px, stacked on phones), Quick Start, recent blocks and payouts, the hashrate
   chart and the mining guide.
 - `below`, `ready`, `queued`, `paid`: a saved lookup turns the hero into the visitor's miner, with
   hashrate, workers, last share and the next payout. Below the minimum the bar fills toward it; over
@@ -22,7 +23,8 @@ pool, explorer or analytics endpoint. States:
 - `luck`: the Luck page, which now carries the Current Round card the old dashboard showed.
 - `stats`: My Stats in the site-wide style.
 - `blocks`: Blocks, where effort and status badges share one width per column.
-- `start`: Get Started, with one row per quick start step and its action at the end.
+- `start`: Get Started, with one row per quick start step and its action at the end, and Seine in
+  Action drawn as text from seine's own renderer (setup prompts and the mining dashboard).
 - `payouts`: Payouts, with the public data table layout.
 - `checkpoints`: Checkpoints, with a synthetic checkpoint file.
 
