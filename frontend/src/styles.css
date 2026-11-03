@@ -633,7 +633,7 @@ html:lang(zh) .page-header h1 {
 .home-head h2 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
 .home-head a { font-size: 13px; font-weight: 700; color: var(--accent-strong); }
 .home-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
-.home-steps li { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 12px; align-items: start; min-width: 0; padding: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+.home-steps li { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 12px; align-content: center; align-items: center; min-width: 0; padding: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
 .home-steps b { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 4px; background: var(--accent-light); color: var(--accent-strong); font-family: 'JetBrains Mono', monospace; font-size: 15px; }
 .home-steps strong { display: block; font-size: 15px; }
 .home-steps span { display: block; margin-top: 2px; font-size: 13.5px; color: var(--muted); }
