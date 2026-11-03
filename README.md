@@ -426,9 +426,13 @@ unchanged: same port, gateway, vardiff, verification, memos and payouts.
   blocks end a round like any other block.
 - The API and stats page accept `solo:` lookups and show the miner's address. `GET
   /api/blocks` items and `GET /api/luck` rounds carry `solo`, `GET /api/miner/{address}`
-  adds `solo_hashrate`, and pending-estimate block rows carry `solo`. The UI marks solo
-  blocks with a badge on the blocks, luck and dashboard tables and in pending
-  estimates, and shows a miner's solo hashrate under its Hashrate card.
+  adds `solo_hashrate` and a `solo` flag on each worker (any solo share in the hashrate
+  window), and pending-estimate block rows carry `solo`. The UI marks solo blocks with a
+  badge on the blocks, luck and dashboard tables and in pending estimates, and marks
+  solo rigs in the miner's Workers table.
+- Get Started has a "Mine solo" section with the `solo:` command, and the rewards card
+  explains the SOLO badge. Deploy it only once a seine release that accepts `solo:` is
+  out; older seine versions reject the prefix.
 
 ## Payout Safeguards
 

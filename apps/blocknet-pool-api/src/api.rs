@@ -810,6 +810,8 @@ struct MinerWorkerResponse {
     miner_version: Option<String>,
     backend: Option<String>,
     version_status: &'static str,
+    /// Mined through a `solo:` login during the hashrate window.
+    solo: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -5299,6 +5301,18 @@ impl ApiState {
                     .get_recent_visible_payouts_for_address(&addr, MINER_PAYOUT_HISTORY_LIMIT)?;
                 let hr = db_miner_hashrate(&store, &addr);
                 let solo_fraction = miner_solo_work_fraction(&store, &addr);
+                // Only miners with recent solo work pay for the per-worker read.
+                let solo_workers = if solo_fraction > 0.0 {
+                    let since = SystemTime::now()
+                        .checked_sub(HASHRATE_WINDOW)
+                        .unwrap_or(UNIX_EPOCH);
+                    store
+                        .solo_workers_since(&addr, since)?
+                        .into_iter()
+                        .collect::<HashSet<_>>()
+                } else {
+                    HashSet::new()
+                };
                 let blocks_found = store.get_block_count_for_miner(&addr)?;
                 let risk_state = store.get_address_risk(&addr)?;
                 let validation_state = store.validation_hold_state(&addr, provisional_cutoff)?;
@@ -5312,6 +5326,7 @@ impl ApiState {
                     payouts,
                     hr,
                     solo_fraction,
+                    solo_workers,
                     workers.totals,
                     workers.hashrate,
                     workers.versions,
@@ -5341,6 +5356,7 @@ impl ApiState {
             payouts,
             hashrate,
             solo_fraction,
+            solo_workers,
             workers_raw,
             worker_hashrate_raw,
             worker_versions_raw,
@@ -5392,6 +5408,7 @@ impl ApiState {
                     miner_version,
                     backend,
                     version_status,
+                    solo: solo_workers.contains(worker),
                 }
             })
             .collect();
@@ -8330,6 +8347,52 @@ mod tests {
         assert_eq!(workers.len(), 1);
         assert_eq!(workers[0]["worker"].as_str(), Some("worker-recent"));
         assert_eq!(payload["total_accepted"].as_u64(), Some(2));
+    }
+
+    #[test]
+    fn miner_handler_marks_solo_workers() {
+        let store = require_test_store!();
+        let now = SystemTime::now() - Duration::from_secs(30);
+        for (job_id, worker, nonce, solo) in [
+            ("job-solo-a", "solo-rig", 1u64, true),
+            ("job-solo-b", "pool-rig", 2u64, false),
+        ] {
+            let mut share = test_share((
+                job_id,
+                "miner-solo-workers",
+                worker,
+                250,
+                nonce,
+                "verified",
+                now,
+            ));
+            share.solo = solo;
+            store.add_share(share).expect("add share");
+        }
+
+        let state = test_api_state(Arc::clone(&store));
+        let runtime = test_runtime();
+        let response = runtime
+            .block_on(handle_miner(
+                Path("solo:miner-solo-workers".to_string()),
+                State(state),
+            ))
+            .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let payload = response_json(&runtime, response);
+        let solo_by_worker = payload["workers"]
+            .as_array()
+            .expect("workers")
+            .iter()
+            .map(|row| {
+                (
+                    row["worker"].as_str().unwrap_or_default().to_string(),
+                    row["solo"].as_bool().unwrap_or_default(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        assert_eq!(solo_by_worker.get("solo-rig"), Some(&true));
+        assert_eq!(solo_by_worker.get("pool-rig"), Some(&false));
     }
 
     #[test]

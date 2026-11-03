@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { stratumUrl } from '../lib/format';
 import type { InfoResponse } from '../types';
 import { ExchangeSetup } from '../components/ExchangeSetup';
+import { SoloBadge } from '../components/BlockStatusBadge';
 
 const minerSettings = [
   ['minerSettingsNvidia', '--backend nvidia'],
@@ -25,6 +26,8 @@ export function StartPage({ poolInfo }: StartPageProps) {
   const poolUrl = stratumUrl(poolInfo?.stratum_port, poolInfo?.pool_url);
   const commandExample = `./seine --pool-url ${poolUrl} --address YOUR_BLOCKNET_ADDRESS`;
   const windowsCommand = `.\\seine.exe --pool-url ${poolUrl} --address YOUR_BLOCKNET_ADDRESS`;
+  const soloCommand = `./seine --pool-url ${poolUrl} --address solo:YOUR_BLOCKNET_ADDRESS`;
+  const soloWindowsCommand = `.\\seine.exe --pool-url ${poolUrl} --address solo:YOUR_BLOCKNET_ADDRESS`;
   const pplnsWindowLabel = poolInfo?.pplns_window_duration;
 
   useEffect(() => {
@@ -133,6 +136,27 @@ export function StartPage({ poolInfo }: StartPageProps) {
           </table>
           <p className="quickstart-label"><a href={`${seineGuideBase}configure-seine-miner/`}>{t('minerSettingsGuide')}</a></p>
         </details>
+        <details className="command-option" id="solo-mining">
+          <summary>{t('soloTitle')}</summary>
+          <p className="quickstart-label">{t('soloLead', [poolFeeLabel])}</p>
+          <p className="quickstart-label">{tx('soloHow', [<code className="mono inline-code">solo:</code>])}</p>
+          <p className="quickstart-label">Windows · PowerShell</p>
+          <div className="command-copy">
+            <pre className="config-block" dir="ltr">{soloWindowsCommand}</pre>
+            <button className="copy-btn" type="button" onClick={() => copyToClipboard(soloWindowsCommand, 'solo-windows')}>
+              {copiedKey === 'solo-windows' ? t('m386') : t('m461')}
+            </button>
+          </div>
+          <p className="quickstart-label">macOS / Linux</p>
+          <div className="command-copy">
+            <pre className="config-block" dir="ltr">{soloCommand}</pre>
+            <button className="copy-btn" type="button" onClick={() => copyToClipboard(soloCommand, 'solo')}>
+              {copiedKey === 'solo' ? t('m386') : t('m461')}
+            </button>
+          </div>
+          <p className="quickstart-label">{t('soloFit')}</p>
+          <p className="quickstart-label">{tx('soloTrack', [<a href={localizePath('/stats')}>{t('m005')}</a>, <code className="mono inline-code">solo:</code>])}</p>
+        </details>
         <ExchangeSetup info={poolInfo} poolUrl={poolUrl} />
       </div>
 
@@ -229,7 +253,8 @@ export function StartPage({ poolInfo }: StartPageProps) {
         <h3>{t("m476")}</h3>
         <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 10 }}>{tx("m478", [<strong style={{ color: 'var(--text)' }}>PPLNS</strong>, pplnsWindowLabel ? (<>{tx("m477", [<strong style={{ color: 'var(--text)' }}>{pplnsWindowLabel}</strong>])}</>) : null])}</p>
         <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 10 }}>{t("m479")}</p>
-        <p style={{ color: 'var(--muted)', fontSize: 14 }}>{tx("m480", [<a href={localizePath("/stats")}>{t("m005")}</a>])}</p>
+        <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 10 }}>{tx("m480", [<a href={localizePath("/stats")}>{t("m005")}</a>])}</p>
+        <p style={{ color: 'var(--muted)', fontSize: 14 }}>{tx("soloRewardsNote", [<SoloBadge />])}</p>
       </div>
 
       <div className="card section">

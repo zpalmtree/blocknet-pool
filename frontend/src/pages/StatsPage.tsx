@@ -528,12 +528,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
           <div className="stats-card-group" style={{ marginBottom: 24 }}>
             <div className="stats-card-group-title">{t("m499")}</div>
             <div className="stats-card-group-grid">
-              <StatCard
-                label={t("m082")}
-                value={humanRate(liveHashrate)}
-                meta={minerData?.solo_hashrate ? t("m620", [humanRate(minerData.solo_hashrate)]) : undefined}
-                title={minerData?.solo_hashrate ? t("m621") : undefined}
-              />
+              <StatCard label={t("m082")} value={humanRate(liveHashrate)} />
               <StatCard label={t("m411")} value={minerData ? minerData.blocks_found : '...'} />
               <StatCard label={t("m500")} value={minerData ? minerOldestShareDate : '...'} />
             </div>
@@ -612,7 +607,7 @@ export function StatsPage({ api, liveTick, theme }: StatsPageProps) {
                   <tbody>
                     {!minerData.workers.length ? (<EmptyTableRow colSpan={6}>{t("m523")}</EmptyTableRow>) : (minerData.workers.slice(workersStart, workersStart + WORKERS_PAGE_SIZE).map((w) => (
                         <tr key={w.worker}>
-                          <td>{w.worker || t("m524")}</td>
+                          <td>{w.worker || t("m524")}{w.solo && <> <SoloBadge /></>}</td>
                           <td className="mono">{w.miner_version?.trim() || t("m525")}</td>
                           <td>{humanRate(w.hashrate || 0)}</td>
                           <td>{w.accepted || 0}</td>

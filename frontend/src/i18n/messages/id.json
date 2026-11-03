@@ -353,6 +353,10 @@
   "minerSettingsLead": "Secara default, seine menambang dengan CPU dan kartu grafis Anda. Untuk mengubahnya, tutup seine, buka terminal di foldernya, lalu jalankan salah satu perintah ini. Di Windows, gunakan PowerShell dan ketik {0} sebagai pengganti {1}:",
   "minerSettingsGuide": "Ubah pengaturan seine: thread, CPU, GPU, dan pool",
   "m619": "solo",
-  "m620": "{0} solo",
-  "m621": "Penambangan solo hanya dibayar untuk blok yang ditemukannya."
+  "soloTitle": "Menambang solo",
+  "soloLead": "Penambangan solo membayar Anda seluruh hadiah setiap blok yang ditemukan rig Anda dan tidak ada dari blok yang ditemukan penambang lain. Pembayaran lebih jarang tetapi jauh lebih besar. Biaya pool: {0}.",
+  "soloHow": "Tambahkan {0} di depan alamat atau nama pendek Anda, di perintah di bawah atau saat Seine meminta alamat Anda. Perbarui Seine ke rilis terbaru terlebih dahulu; versi lama menolaknya.",
+  "soloFit": "Solo cocok untuk penambang dengan porsi besar dari hashrate jaringan. Dengan rig kecil, Anda mungkin menunggu lama di antara blok.",
+  "soloTrack": "{0} menandai rig dan blok solo Anda. Hapus {1} untuk kembali ke hadiah bersama PPLNS.",
+  "soloRewardsNote": "Blok bertanda {0} ditemukan oleh penambang solo dan hanya membayar mereka."
 }

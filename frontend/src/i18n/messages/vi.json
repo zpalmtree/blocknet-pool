@@ -353,6 +353,10 @@
   "minerSettingsLead": "Theo mặc định, seine đào bằng CPU và các card đồ họa của bạn. Để đổi, hãy đóng seine, mở terminal trong thư mục của nó và chạy một trong các lệnh sau. Trên Windows, dùng PowerShell và gõ {0} thay cho {1}:",
   "minerSettingsGuide": "Đổi thiết lập seine: luồng, CPU, GPU và pool",
   "m619": "solo",
-  "m620": "{0} solo",
-  "m621": "Đào solo chỉ nhận thưởng cho khối tự tìm thấy."
+  "soloTitle": "Đào solo",
+  "soloLead": "Đào solo trả cho bạn toàn bộ phần thưởng của mỗi khối mà máy đào của bạn tìm thấy và không có gì từ khối của thợ đào khác. Khoản thanh toán ít thường xuyên hơn nhưng lớn hơn nhiều. Phí pool: {0}.",
+  "soloHow": "Thêm {0} vào trước địa chỉ hoặc tên ngắn của bạn, trong lệnh bên dưới hoặc khi Seine hỏi địa chỉ. Hãy cập nhật Seine lên bản mới nhất trước; các phiên bản cũ sẽ từ chối.",
+  "soloFit": "Đào solo phù hợp với thợ đào có tỷ lệ lớn trong hashrate mạng. Với máy đào nhỏ, bạn có thể phải chờ rất lâu giữa các khối.",
+  "soloTrack": "{0} đánh dấu máy đào và khối solo của bạn. Bỏ {1} để quay lại phần thưởng chia sẻ PPLNS.",
+  "soloRewardsNote": "Các khối được đánh dấu {0} do thợ đào solo tìm thấy và chỉ trả cho họ."
 }

@@ -109,6 +109,7 @@ interface MinerWorker {
   miner_version: string | null;
   backend: string | null;
   version_status: WorkerVersionStatus;
+  solo?: boolean;
 }
 
 interface MinerShare {

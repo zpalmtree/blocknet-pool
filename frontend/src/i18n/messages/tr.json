@@ -353,6 +353,10 @@
   "minerSettingsLead": "seine varsayılan olarak CPU’nuzla ve ekran kartlarınızla kazar. Bunu değiştirmek için seine’ı kapatın, klasöründe bir terminal açın ve şu komutlardan birini çalıştırın. Windows’ta PowerShell kullanın ve {1} yerine {0} yazın:",
   "minerSettingsGuide": "seine ayarlarını değiştirin: iş parçacıkları, CPU, GPU ve havuz",
   "m619": "solo",
-  "m620": "{0} solo",
-  "m621": "Solo madencilik yalnızca bulduğu bloklar için ödenir."
+  "soloTitle": "Solo kaz",
+  "soloLead": "Solo madencilikte rig’lerinizin bulduğu her bloğun ödülünün tamamı size ödenir; diğer madencilerin bulduğu bloklardan ise pay almazsınız. Ödemeler daha seyrek gelir ama çok daha büyüktür. Havuz ücreti: {0}.",
+  "soloHow": "Aşağıdaki komutta veya Seine adresinizi sorduğunda adresinizin ya da kısa adınızın önüne {0} ekleyin. Önce Seine’i en son sürüme güncelleyin; eski sürümler bunu reddeder.",
+  "soloFit": "Solo, ağ hashrate’inin büyük bir payına sahip madenciler için uygundur. Küçük bir rig ile bloklar arasında uzun süre bekleyebilirsiniz.",
+  "soloTrack": "{0} solo rig’lerinizi ve bloklarınızı işaretler. Ortak PPLNS ödüllerine dönmek için {1} önekini kaldırın.",
+  "soloRewardsNote": "{0} işaretli blokları solo madenciler buldu ve yalnızca onlara ödeme yapar."
 }

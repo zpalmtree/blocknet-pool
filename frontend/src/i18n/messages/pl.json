@@ -353,6 +353,10 @@
   "minerSettingsLead": "Domyślnie seine kopie na Twoim CPU i kartach graficznych. Aby to zmienić, zamknij seine, otwórz terminal w jego folderze i uruchom jedno z tych poleceń. W Windows użyj PowerShell i wpisz {0} zamiast {1}:",
   "minerSettingsGuide": "Zmiana ustawień seine: wątki, CPU, GPU i pula",
   "m619": "solo",
-  "m620": "{0} solo",
-  "m621": "Kopanie solo jest opłacane tylko za samodzielnie znalezione bloki."
+  "soloTitle": "Kop solo",
+  "soloLead": "Kopanie solo wypłaca ci całą nagrodę za każdy blok znaleziony przez twoje koparki i nic z bloków znalezionych przez innych górników. Wypłaty są rzadsze, ale znacznie większe. Opłata puli: {0}.",
+  "soloHow": "Dodaj {0} przed adresem lub krótką nazwą, w poleceniu poniżej albo gdy Seine poprosi o adres. Najpierw zaktualizuj Seine do najnowszej wersji; starsze wersje go odrzucają.",
+  "soloFit": "Kopanie solo opłaca się górnikom z dużym udziałem w hashrate sieci. Z małą koparką możesz długo czekać na kolejny blok.",
+  "soloTrack": "{0} oznacza twoje koparki i bloki solo. Usuń {1}, aby wrócić do wspólnych nagród PPLNS.",
+  "soloRewardsNote": "Bloki oznaczone {0} znaleźli górnicy solo i wypłacają tylko im."
 }

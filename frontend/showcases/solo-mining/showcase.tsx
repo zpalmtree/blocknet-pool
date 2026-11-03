@@ -5,12 +5,13 @@ import { createApiClient } from '../../src/api/client';
 import { initializeLanguage } from '../../src/i18n';
 import { BlocksPage } from '../../src/pages/BlocksPage';
 import { LuckPage } from '../../src/pages/LuckPage';
+import { StartPage } from '../../src/pages/StartPage';
 import { StatsPage } from '../../src/pages/StatsPage';
 import { LAST_MINER_LOOKUP_KEY } from '../../src/lib/storage';
-import type { BlockItem, LuckRound, MinerResponse } from '../../src/types';
+import type { BlockItem, InfoResponse, LuckRound, MinerResponse } from '../../src/types';
 import '../../src/styles.css';
 
-const states = ['solo', 'mixed', 'pplns', 'loading', 'error', 'empty', 'blocks', 'blocks-empty', 'luck'];
+const states = ['solo', 'mixed', 'pplns', 'loading', 'error', 'empty', 'blocks', 'blocks-empty', 'luck', 'start'];
 const params = new URLSearchParams(location.search);
 const state = states.includes(params.get('state') || '') ? params.get('state')! : 'solo';
 const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
@@ -24,16 +25,16 @@ const now = Math.floor(Date.now() / 1000);
 const hashrate = 5_200_000;
 const soloHashrate = state === 'solo' ? hashrate : state === 'mixed' ? 2_100_000 : 0;
 const reward = 34_000_000_000;
-const worker = (name: string, rate: number) => ({
+const worker = (name: string, rate: number, solo: boolean) => ({
   worker: name, version_status: 'current' as const, hashrate: rate, accepted: 412, rejected: 1,
-  last_share_at: now - 40, miner_version: '0.3.1', backend: 'cpu',
+  last_share_at: now - 40, miner_version: '0.3.1', backend: 'cpu', solo,
 });
 const miner: MinerResponse = {
   hashrate, solo_hashrate: soloHashrate, mining_since: now - 86_400 * 3,
   blocks_found: state === 'pplns' ? 0 : 2, total_accepted: 824, total_rejected: 2, latest_miner_version: '0.3.1',
   workers: state === 'mixed'
-    ? [worker('pool-rig', hashrate - soloHashrate), worker('solo-rig', soloHashrate)]
-    : [worker('rig-1', hashrate)],
+    ? [worker('pool-rig', hashrate - soloHashrate, false), worker('solo-rig', soloHashrate, true)]
+    : [worker('rig-1', hashrate, state === 'solo')],
   shares: [{ job_id: 'demo-job', worker: 'rig-1', difficulty: 3200, status: 'verified', created_at: now - 40 }],
   payouts: state === 'pplns' ? [] : [{ amount: reward - 340_000_000, fee: 120_000, tx_hash: 'demo-solo-payout', timestamp: now - 86_400, confirmed: true }],
   verification_hold: null,
@@ -86,6 +87,12 @@ window.fetch = async (input, init) => {
   return Response.json({ round: {}, payout_eta: null, luck_history: [], rejections: {} });
 };
 
+// Only the fields the Get Started page reads; the rest of InfoResponse is unused here.
+const info = {
+  pool_url: 'https://bntpool.com', stratum_port: 3333, pool_fee_pct: 0, pplns_window_duration: '6h',
+  min_payout_amount: 0.1, payout_memos_enabled: true, memo_min_payout_amount: 1,
+} as unknown as InfoResponse;
+
 function Showcase() {
   const [error, setError] = useState('');
   const [api] = useState(() => createApiClient(() => '', setError));
@@ -99,7 +106,8 @@ function Showcase() {
     </header>
     <main className="container">
       {error && <p role="alert">{error}</p>}
-      {state === 'luck' ? <LuckPage api={api} liveTick={0} />
+      {state === 'start' ? <StartPage poolInfo={info} />
+        : state === 'luck' ? <LuckPage api={api} liveTick={0} />
         : blocksPage ? <BlocksPage api={api} liveTick={0} />
         : <StatsPage api={api} theme={theme} liveTick={0} />}
     </main>

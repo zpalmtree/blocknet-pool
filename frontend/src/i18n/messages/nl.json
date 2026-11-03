@@ -353,6 +353,10 @@
   "minerSettingsLead": "Standaard mint seine op je CPU en videokaarten. Om dat te wijzigen sluit je seine, open je een terminal in de map ervan en voer je een van deze commando’s uit. Gebruik op Windows PowerShell en typ {0} in plaats van {1}:",
   "minerSettingsGuide": "seine-instellingen wijzigen: threads, CPU, GPU en pool",
   "m619": "solo",
-  "m620": "{0} solo",
-  "m621": "Solo-minen wordt alleen betaald voor zelf gevonden blokken."
+  "soloTitle": "Solo minen",
+  "soloLead": "Bij solo-minen krijg je de volledige beloning van elk blok dat je rigs vinden, en niets van blokken die andere miners vinden. Uitbetalingen komen minder vaak maar zijn veel groter. Poolkosten: {0}.",
+  "soloHow": "Zet {0} voor je adres of korte naam, in het commando hieronder of wanneer Seine om je adres vraagt. Werk Seine eerst bij naar de nieuwste versie; oudere versies weigeren het.",
+  "soloFit": "Solo past bij miners met een groot deel van de netwerkhashrate. Met een kleine rig kun je lang moeten wachten tussen blokken.",
+  "soloTrack": "{0} markeert je solo-rigs en solo-blokken. Verwijder {1} om terug te gaan naar gedeelde PPLNS-beloningen.",
+  "soloRewardsNote": "Blokken gemarkeerd met {0} zijn gevonden door solo-miners en betalen alleen hen uit."
 }

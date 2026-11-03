@@ -353,6 +353,10 @@
   "minerSettingsLead": "Por defecto, seine mina con tu CPU y tus tarjetas gráficas. Para cambiarlo, cierra seine, abre una terminal en su carpeta y ejecuta uno de estos comandos. En Windows, usa PowerShell y escribe {0} en lugar de {1}:",
   "minerSettingsGuide": "Cambia los ajustes de seine: hilos, CPU, GPU y pool",
   "m619": "solo",
-  "m620": "{0} en solitario",
-  "m621": "La minería en solitario solo cobra por los bloques que encuentra."
+  "soloTitle": "Minar en solitario",
+  "soloLead": "La minería en solitario te paga la recompensa completa de cada bloque que encuentren tus equipos y nada de los bloques que encuentren otros mineros. Los pagos llegan con menos frecuencia, pero son mucho mayores. Comisión del pool: {0}.",
+  "soloHow": "Pon {0} delante de tu dirección o nombre corto, en el comando de abajo o cuando Seine te pida la dirección. Antes, actualiza Seine a la última versión; las versiones anteriores lo rechazan.",
+  "soloFit": "El modo en solitario conviene a mineros con una gran parte del hashrate de la red. Con un equipo pequeño puedes esperar mucho tiempo entre bloques.",
+  "soloTrack": "{0} marca tus equipos y bloques en solitario. Quita {1} para volver a las recompensas compartidas PPLNS.",
+  "soloRewardsNote": "Los bloques marcados con {0} los encontraron mineros en solitario y solo les pagan a ellos."
 }

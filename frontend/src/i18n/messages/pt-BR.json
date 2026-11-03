@@ -353,6 +353,10 @@
   "minerSettingsLead": "Por padrão, o seine minera na sua CPU e nas placas de vídeo. Para mudar isso, feche o seine, abra um terminal na pasta dele e execute um destes comandos. No Windows, use o PowerShell e digite {0} no lugar de {1}:",
   "minerSettingsGuide": "Altere as configurações do seine: threads, CPU, GPU e pool",
   "m619": "solo",
-  "m620": "{0} solo",
-  "m621": "A mineração solo recebe apenas pelos blocos que encontrar."
+  "soloTitle": "Minerar solo",
+  "soloLead": "A mineração solo paga a você a recompensa inteira de cada bloco que seus rigs encontrarem e nada dos blocos encontrados por outros mineradores. Os pagamentos são menos frequentes, mas muito maiores. Taxa da pool: {0}.",
+  "soloHow": "Coloque {0} antes do seu endereço ou nome curto, no comando abaixo ou quando o Seine pedir seu endereço. Atualize o Seine para a versão mais recente antes; versões antigas recusam o prefixo.",
+  "soloFit": "O modo solo é indicado para quem tem uma grande parte do hashrate da rede. Com um rig pequeno, você pode esperar muito tempo entre blocos.",
+  "soloTrack": "{0} marca seus rigs e blocos solo. Remova {1} para voltar às recompensas compartilhadas PPLNS.",
+  "soloRewardsNote": "Blocos marcados com {0} foram encontrados por mineradores solo e pagam só a eles."
 }

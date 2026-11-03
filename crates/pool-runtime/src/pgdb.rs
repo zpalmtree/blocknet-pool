@@ -1753,6 +1753,17 @@ CREATE INDEX IF NOT EXISTS idx_payout_daily_summaries_day_start
         ))
     }
 
+    /// Workers of `address` with a solo share since `since`.
+    pub fn solo_workers_since(&self, address: &str, since: SystemTime) -> Result<Vec<String>> {
+        let rows = self.conn().query(
+            "SELECT DISTINCT worker FROM shares
+             WHERE miner = $1 AND created_at >= $2 AND solo
+             ORDER BY worker",
+            &[&address, &to_unix(since)],
+        )?;
+        Ok(rows.into_iter().map(|row| row.get(0)).collect())
+    }
+
     /// `(solo, all)` accepted work for `address` in whole minutes from
     /// `since`, read from the minute projections. `(0, 0)` until they are
     /// initialized.
@@ -7425,6 +7436,16 @@ mod tests {
             .map(|share| share.nonce)
             .collect::<Vec<_>>();
         assert_eq!(pplns, vec![2]);
+        assert_eq!(
+            store
+                .solo_workers_since("split-miner", from_unix(60))
+                .unwrap(),
+            vec!["rig".to_string()]
+        );
+        assert!(store
+            .solo_workers_since("split-miner", from_unix(131))
+            .unwrap()
+            .is_empty());
         assert_share_projections_match_raw(&store);
     }
 
