@@ -588,6 +588,8 @@ html:lang(zh) .page-header h1 {
 .home-field input[type='text']:focus { outline: none; border: 0; box-shadow: none; }
 .home-field button { border: 0; background: #ffffff; color: var(--hero); font-family: 'Manrope', sans-serif; font-size: 13px; font-weight: 700; padding: 0 16px; min-width: 80px; cursor: pointer; }
 .home-field button:focus-visible { outline-offset: -4px; outline-color: var(--hero); }
+.home-fee-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 0; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, 0.1); font-size: 13px; font-weight: 700; color: var(--hero-soft); }
+.home-fee-row strong { font-family: 'JetBrains Mono', monospace; font-size: 18px; color: var(--hero-ink); }
 .home-copy-error { margin: -4px 0 6px; font-size: 13px; color: var(--hero-soft); }
 
 .home-band {

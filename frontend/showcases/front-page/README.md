@@ -12,7 +12,7 @@ pool, explorer or analytics endpoint. States:
   under 1100 px, stacked on phones), Quick Start, recent blocks and payouts, the hashrate
   chart and the mining guide.
 - `below`, `ready`, `queued`, `paid`: a saved lookup turns the hero into the visitor's miner, with
-  hashrate, one next-payout bar and Full stats; the side panel keeps only Stratum. Below the minimum
+  hashrate, one next-payout bar and Full stats; the side panel keeps Stratum and the pool fee. Below the minimum
   the bar fills toward it; over it the bar is full; a queued payout shows a striped bar; just after a
   payout a line names it.
 - `no-workers`: a saved miner with nothing online links to the zero-hashrate help.

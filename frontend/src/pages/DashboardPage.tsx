@@ -220,6 +220,7 @@ export function DashboardPage({ api, poolInfo, liveTick, theme, onJumpToStats }:
               </button>
             </div>
             {copyState === 'error' && <p className="home-copy-error" role="alert">{t('copyUnavailable')}</p>}
+            {showMiner && <p className="home-fee-row"><span>{t('poolFee')}</span><strong dir="ltr">{feeLabel}</strong></p>}
             {!showMiner && <>
             <label className="home-label" htmlFor="dashboard-lookup">{t('checkMiner')}</label>
             <form
