@@ -601,7 +601,11 @@ html:lang(zh) .page-header h1 {
 }
 .home-band > div { display: grid; gap: 4px; align-content: start; min-width: 0; padding: 26px 0; padding-inline-start: 24px; border-inline-start: 1px solid var(--hero-line); }
 .home-band > div:first-child { padding-inline-start: 0; border-inline-start: 0; }
-.home-num { font-family: 'JetBrains Mono', monospace; font-size: 34px; font-weight: 700; line-height: 1.1; letter-spacing: -0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.home-num { font-family: 'JetBrains Mono', system-ui, sans-serif; font-size: 30px; font-weight: 700; line-height: 1.1; letter-spacing: -0.03em; }
+/* Numbers sit at the start of their cell in both directions. Words the mono font lacks, like Arabic, fall back to the
+   system sans so their letters join; tight spacing would also break that joining. */
+.home-band .home-num { justify-self: start; }
+.home-num:lang(ar) { letter-spacing: normal; }
 .home-cap { font-size: 14px; color: var(--hero-dim); }
 
 .home-me-kicker { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; margin: 0 0 10px; font-size: 14px; font-weight: 700; color: var(--hero-soft); }
@@ -675,8 +679,8 @@ nav.nav-hero .pool-languages ul { background: #0b2a1f; }
   .home-steps { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* Tablets: four numbers don't fit in one row, so the band goes two by two. */
-@media (min-width: 641px) and (max-width: 999px) {
+/* Narrower screens: four numbers don't fit in one row, so the band goes two by two. */
+@media (min-width: 641px) and (max-width: 1099px) {
   .home-band { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .home-band > div:nth-child(odd) { padding-inline-start: 0; border-inline-start: 0; }
   .home-band > div:nth-child(n+3) { border-top: 1px solid var(--hero-line); }
